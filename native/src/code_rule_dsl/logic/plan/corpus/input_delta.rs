@@ -35,9 +35,19 @@ pub(in crate::code_rule_dsl) type Docs = HashMap<String, (Content, i64)>;
 /// `None` when an entry is not in the memo (it was emptied, or a chunk's rows were not attributable).
 pub(super) fn changed(old: &Docs, new: &Docs, held: &memo::Held, program: &[u8; 32]) -> Option<Vec<(Option<Entry>, Option<Entry>)>> {
     let held = held.lock().expect("the session memo");
+    let live = std::env::var_os("RERAIL_STRATA_LIVE").is_some();
     let entry = |path: &str, (content, key): (Content, i64)| -> Option<Entry> {
-        let Content::Held(digest) = content else { return None };
-        held.get(&(digest, path.to_owned(), *program)).filter(|e| e.key == key).cloned()
+        let Content::Held(digest) = content else {
+            if live {
+                eprintln!("RERAIL_STRATA_LIVE changed documents: {path}'s content is not held ({content:?})");
+            }
+            return None;
+        };
+        let found = held.get(&(digest, path.to_owned(), *program));
+        if live && found.is_none_or(|e| e.key != key) {
+            eprintln!("RERAIL_STRATA_LIVE changed documents: {path} has no memo entry (held {}, key {key} vs {:?})", held.len(), found.map(|e| e.key));
+        }
+        found.filter(|e| e.key == key).cloned()
     };
     let mut out = Vec::new();
     for (path, &now) in new {
@@ -89,7 +99,7 @@ pub(super) fn delta(changes: &[(Option<Entry>, Option<Entry>)], key: &str, cols:
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     fn entry(key: i64, rel: &str, rows: &[[i64; 2]]) -> Entry {

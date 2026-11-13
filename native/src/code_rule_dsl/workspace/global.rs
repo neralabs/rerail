@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) type QueryPlan = query::select_when::Plan<ClauseId>;
 
-/// A global `forbid` query's plan; each regex or AST leaf becomes a synthetic clause whose
+/// A global `forbid` query's plan; each regex, AST or file leaf becomes a synthetic clause whose
 /// witnesses are recorded as evidence. A leaf under an `exists` side only answers whether it has a
 /// witness: reporting configuration is dropped from it, and its evaluation in a file stops at the
 /// first witness.
@@ -142,7 +142,6 @@ pub(super) fn forget_evidence(state: &mut WorkspaceState, path: &str) {
     }
     // Lazy source reads can change while every projected metadata row stays equal,
     // including a source with no witnesses. Invalidate those repository scopes.
-    #[cfg(test)]
     for (index, clauses) in &state.globals {
         if state.code_rules[*index].scope.matches(path) && clauses.iter().any(|clause| {
             matches!(&clause.kind, ClauseKind::Relational(plan) if plan.reads_source && !plan.per_file)
@@ -152,7 +151,6 @@ pub(super) fn forget_evidence(state: &mut WorkspaceState, path: &str) {
 
 /// Source bytes of the resident files in `code_rule`'s scope. A file whose source was freed
 /// counts nothing, so the estimate errs low.
-#[cfg(test)]
 fn scoped_source_bytes(state: &WorkspaceState, code_rule: &CompiledCodeRule) -> usize {
     state
         .files
@@ -188,7 +186,7 @@ fn relation_rows(state: &WorkspaceState, id: ClauseId, relation: &FactQuery) -> 
 }
 
 // `snapshot` is read by P's relational clauses only (test-only, open item O18).
-#[cfg_attr(not(test), allow(unused_variables))]
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(unused_variables))]
 fn evaluate_relations(
     state: &WorkspaceState,
     code_rule: &CompiledCodeRule,
@@ -208,7 +206,6 @@ fn evaluate_relations(
         (ClauseKind::Budget { query, .. }, &[id]) => {
             evidence::budget(code_rule, clause, query, relation_rows(state, id, query))
         }
-        #[cfg(test)]
         (ClauseKind::Relational(plan), ids) => {
             let rows = plan
                 .inputs
@@ -364,11 +361,10 @@ pub(super) fn evaluate_global(
     snapshot: &Snapshot,
     mut batched: BTreeMap<String, Evaluation>,
 ) -> Result<Evaluation> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::install(std::sync::Arc::clone(
         &state.anchor_corpus,
     ));
-    #[cfg(test)]
     let _syntax = crate::code_rule_dsl::relational::syntax::Pool::install();
     let resident = std::sync::Arc::clone(&state.code_rules[index]);
     let code_rule = resident.as_ref();
@@ -432,10 +428,8 @@ pub(super) fn evaluate_global(
             .cloned()
         {
             // P's relational clauses (test-only, open item O18) may read their scope's sources.
-            #[cfg(test)]
-            let reads_source = matches!(&clause.kind, ClauseKind::Relational(plan) if plan.reads_source);
-            #[cfg(not(test))]
-            let reads_source = false;
+            let reads_source =
+                matches!(&clause.kind, ClauseKind::Relational(plan) if plan.reads_source);
             let source_snapshot = if reads_source {
                 let paths = state
                     .files
@@ -494,8 +488,7 @@ pub(super) fn evaluate_global(
 }
 
 /// Collect every dirty relational partition before advancing any SQL consumer. P's relational
-/// clauses are test-only in W (open item O18).
-#[cfg(test)]
+/// clauses retain their recorded input and diagnostic contract in the public API.
 pub(super) fn evaluate_batched_relations(
     state: &mut WorkspaceState,
     indices: &BTreeSet<usize>,
@@ -506,9 +499,6 @@ pub(super) fn evaluate_batched_relations(
         budget::Context,
         relational::{self, Job},
     };
-    let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::install(std::sync::Arc::clone(
-        &state.anchor_corpus,
-    ));
     let _syntax = crate::code_rule_dsl::relational::syntax::Pool::install();
     let _graph = state.crossfile.evaluation_slot();
     let catalog = indices
@@ -521,91 +511,8 @@ pub(super) fn evaluate_batched_relations(
             )
         })
         .collect::<Vec<_>>();
-    // Publish the corpus before producing any relational partition. Local AST evaluation
-    // normally supplied these entries already; persisted answers may have skipped restoration.
-    let paths = catalog
-        .iter()
-        .flat_map(|(index, _, clauses)| {
-            clauses
-                .iter()
-                .filter(|clause| match &clause.kind {
-                    ClauseKind::Relational(plan) => plan
-                        .inputs
-                        .iter()
-                        .any(|(_, input)| matches!(input.ast.query, Query::Ast { .. })),
-                    _ => false,
-                })
-                .flat_map(|clause| state.relation_plans.get(&(*index, clause.id.clone())))
-                .flatten()
-                .flat_map(|id| state.evidence.get(id))
-                .flat_map(|partitions| partitions.keys().cloned())
-        })
-        .collect::<BTreeSet<_>>();
-    let mut demands = BTreeMap::new();
-    for path in paths {
-        let input = state
-            .files
-            .get(&path)
-            .map(|file| file.input.clone())
-            .or_else(|| state.evicted_inputs.get(&path).cloned());
-        let Some(mut input) = input else {
-            continue;
-        };
-        let Some(language) = crate::code_rule_dsl::eval::file_language(&input) else {
-            continue;
-        };
-        let Some(version) = super::documents::current_version(state, &path) else {
-            continue;
-        };
-        let lang =
-            u32::from(crate::code_rule_dsl::language::tape_tag(language).expect("tape language"));
-        if state
-            .anchor_corpus
-            .contains(&path, lang, &version.source_digest())
-            .map_err(|e| invalid(e.to_string()))?
-        {
-            continue;
-        }
-        // Missing source is diagnosed by the individual partition, as before. Index
-        // preparation must not turn that diagnosis into a failed workspace apply.
-        let (_, document) = match super::documents::load(state, &path) {
-            Ok(document) => document,
-            Err(error) => {
-                eprintln!("SQL AST preparation unavailable for {path}: {error}");
-                continue;
-            }
-        };
-        input.source = std::sync::Arc::clone(&document.source);
-        let _tapes = crate::code_rule_dsl::eval::TapeCacheSlot::install();
-        if let Err(error) =
-            crate::code_rule_dsl::eval::TapeCacheSlot::seed(language, &input, &document.image)
-        {
-            eprintln!("SQL AST preparation unavailable for {path}: {error}");
-            continue;
-        }
-        let Some((doc, _)) = crate::code_rule_dsl::eval::file_tape(language, &input)? else {
-            continue;
-        };
-        let plans = catalog
-            .iter()
-            .flat_map(|(_, rule, _)| {
-                crate::code_rule_dsl::matcher::anchor_plans_for_file(rule, &input, &doc)
-            })
-            .collect();
-        demands.insert(path.clone(), plans);
-        if let Err(error) = state.anchor_corpus.put(&path, &doc, &|| {
-            closed.load(std::sync::atomic::Ordering::Acquire)
-        }) {
-            eprintln!("SQL AST preparation unavailable for {path}: {error}");
-        }
-    }
-    #[cfg(feature = "code-rule-profile")]
-    state
-        .anchor_corpus
-        .record_origins(catalog.iter().map(|(_, rule, _)| rule.as_ref()));
-    if let Err(error) = state.anchor_corpus.prepare_files(&demands) {
-        eprintln!("SQL AST corpus batch unavailable; retaining authoritative candidates: {error}");
-    }
+    // Compatibility queries use the production matcher and its demand boundary.
+    // Do not recreate the retired anchor corpus beside the current engine.
     #[cfg(feature = "code-rule-profile")]
     let mut preparation = crate::code_rule_dsl::profile::trace::Span::start(
         "input-preparation",
@@ -685,36 +592,20 @@ pub(super) fn evaluate_batched_relations(
                     keys.push((index, clause.id.clone(), Some((key, version, path))));
                 }
             } else {
-                let mut files = Vec::new();
-                if plan.reads_source {
-                    let paths = state
-                        .files
-                        .keys()
-                        .chain(state.evicted_inputs.keys())
-                        .filter(|p| code_rule.scope.matches(p))
-                        .cloned()
-                        .collect::<BTreeSet<_>>();
-                    if paths.len() > code_rule.capabilities.limits.max_files {
-                        return Err(invalid("relational source snapshot exceeds maxFiles"));
-                    }
-                    for path in paths {
-                        let mut input = state
-                            .files
-                            .get(&path)
-                            .map(|f| f.input.clone())
-                            .or_else(|| state.evicted_inputs.get(&path).cloned())
-                            .ok_or_else(|| invalid("relational source removed"))?;
-                        input.source = super::documents::source(state, &path)?;
-                        if input.source.len() > code_rule.capabilities.limits.max_source_bytes {
-                            return Err(invalid(
-                                "relational source snapshot exceeds maxSourceBytes",
-                            ));
-                        }
-                        files.push(input);
-                    }
-                } else {
-                    files = snapshot.files.clone();
-                }
+                // Queue file identities only; admission precedes source hydration.
+                let empty = std::sync::Arc::new(String::new());
+                let files = state
+                    .files
+                    .values()
+                    .map(|file| &file.input)
+                    .chain(state.evicted_inputs.values())
+                    .filter(|file| code_rule.scope.matches(&file.path))
+                    .map(|file| {
+                        let mut input = file.clone();
+                        input.source = std::sync::Arc::clone(&empty);
+                        input
+                    })
+                    .collect();
                 // A repository clause's work grows with the code in its scope, as a file's does.
                 let read_bytes = scoped_source_bytes(state, code_rule);
                 jobs.push(Job {
@@ -814,16 +705,45 @@ pub(super) fn evaluate_batched_relations(
             inputs.file_local = true;
         } else {
             let index = owners[&(std::ptr::from_ref(code_rule) as usize)];
-            let producers = &state.relation_plans[&(index, clause.id.clone())];
+            let producers = state.relation_plans[&(index, clause.id.clone())].clone();
             if phase == relational::Preparation::Gate {
                 let slot = plan.require_nonempty.expect("guarded preparation");
                 inputs.gate = Some(relation_rows(state, producers[slot], &plan.inputs[slot].1));
             } else {
+                if plan.reads_source {
+                    let paths = state
+                        .files
+                        .keys()
+                        .chain(state.evicted_inputs.keys())
+                        .filter(|path| code_rule.scope.matches(path))
+                        .cloned()
+                        .collect::<BTreeSet<_>>();
+                    if paths.len() > code_rule.capabilities.limits.max_files {
+                        return Err(invalid("relational source snapshot exceeds maxFiles"));
+                    }
+                    let mut files = Vec::with_capacity(paths.len());
+                    for path in paths {
+                        let mut input = state
+                            .files
+                            .get(&path)
+                            .map(|f| f.input.clone())
+                            .or_else(|| state.evicted_inputs.get(&path).cloned())
+                            .ok_or_else(|| invalid("relational source removed"))?;
+                        input.source = super::documents::source(state, &path)?;
+                        if input.source.len() > code_rule.capabilities.limits.max_source_bytes {
+                            return Err(invalid(
+                                "relational source snapshot exceeds maxSourceBytes",
+                            ));
+                        }
+                        files.push(input);
+                    }
+                    inputs.snapshot.files = files;
+                }
                 inputs.rows = Some(
                     plan.inputs
                         .iter()
                         .enumerate()
-                        .zip(producers)
+                        .zip(&producers)
                         .map(|((slot, (_, query)), id)| {
                             if inputs.gate.is_some() && plan.require_nonempty == Some(slot) {
                                 evidence::Rows::default()
@@ -857,11 +777,19 @@ pub(super) fn evaluate_batched_relations(
                         .enumerate()
                         .map(|(slot, file)| (file.path.clone(), slot))
                         .collect::<std::collections::HashMap<_, _>>();
-                    let mut remaining = code_rule.capabilities.limits.max_source_bytes;
+                    let per_file_limit = code_rule.capabilities.limits.max_source_bytes;
                     for paths in paths.chunks(128) {
-                        let documents = super::documents::load_many(state, paths, remaining)?;
+                        let documents = super::documents::load_many(
+                            state,
+                            paths,
+                            per_file_limit.saturating_mul(paths.len()),
+                        )?;
                         for (path, (version, document)) in paths.iter().zip(documents) {
-                            remaining = remaining.saturating_sub(document.source.len());
+                            if document.source.len() > per_file_limit {
+                                return Err(invalid(
+                                    "syntax source exceeds per-file maxSourceBytes",
+                                ));
+                            }
                             let slot = *file_slots
                                 .get(path)
                                 .ok_or_else(|| invalid("syntax source snapshot is incomplete"))?;
@@ -899,7 +827,12 @@ pub(super) fn evaluate_batched_relations(
         });
         Ok(())
     });
-    for ((index, name, key), evaluation) in keys.into_iter().zip(evaluations) {
+    for ((index, name, key), mut evaluation) in keys.into_iter().zip(evaluations) {
+        if let Some((_, _, path)) = &key {
+            for failure in &mut evaluation.failures {
+                failure["path"] = serde_json::Value::String(path.clone());
+            }
+        }
         if let Some((key, version, _path)) = key
             && evaluation.failures.is_empty()
         {

@@ -4,29 +4,29 @@
 //! rule matches, computed when first read and kept until an edit can change it. The inner rule
 //! runs per file as the term's seed query; the callee's subtree is never walked at query time.
 
-pub(crate) mod closure;
-pub(crate) mod contracts;
-pub(crate) mod names;
-pub(crate) mod php;
-pub(crate) mod rust;
-pub(crate) mod summary;
+pub mod closure;
+pub mod contracts;
+pub mod names;
+// cratify: `php` is rerail-lang-php's (it mounts it)
+// cratify: `python` is rerail-lang-python's (it mounts it)
+// cratify: `rust` is rerail-lang-rust's (it mounts it)
+pub mod summary;
 
-#[cfg(test)]
-mod php_tests;
-#[cfg(test)]
-mod python_tests;
-#[cfg(test)]
-mod tests;
+// cratify: `php_tests` is rerail-lang-php's (it mounts it)
+// cratify: `python_tests` is rerail-lang-python's (it mounts it)
+// cratify: `tests` is rerail-lang-python's (it mounts it)
 
 use crate::code_rule_dsl::json::{invalid, object};
-use crate::code_rule_dsl::language::adapter::{Adapter, CallRules, with_adapter};
 use crate::code_rule_dsl::language::is_stub_file;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::lines::Span;
 use crate::code_rule_dsl::module_path::ModulePath;
-use crate::code_rule_dsl::scope::php_names::PhpNames;
 use crate::code_rule_dsl::scope::{Reading, ScopeTable};
 use crate::content_store::HashKey;
+
+/// A super edge's kind (`Summary::supers`): the class-like's parent class, `(class, parent)`, which a closure
+/// also reads the other way (its children).
+pub const PARENT: u8 = 0;
 use ast_grep_core::{Doc, Node};
 use closure::{DefRef, Graph, GraphUpdate, Hop, Region};
 use names::Name;
@@ -37,10 +37,11 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 use summary::{ASYNC, CLASS, Callee, Summary};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Which definitions a chain may pass through: the callee and every definition after it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Through {
+pub enum Through {
     /// Synchronous functions only: an async function returns a coroutine instead of running.
     Sync,
     /// Any function.
@@ -48,9 +49,9 @@ pub(crate) enum Through {
 }
 
 impl Through {
-    const ALL: [Through; 2] = [Through::Sync, Through::Any];
+    pub const ALL: [Through; 2] = [Through::Sync, Through::Any];
 
-    pub(crate) fn allows(self, flags: u8) -> bool {
+    pub fn allows(self, flags: u8) -> bool {
         match self {
             Through::Sync => flags & (ASYNC | CLASS) == 0,
             Through::Any => flags & CLASS == 0,
@@ -67,11 +68,11 @@ impl Through {
 
 /// The graph relation and the node at which a term asks its reachability question.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct Mode {
-    pub(crate) through: Through,
-    pub(crate) references: bool,
+pub struct Mode {
+    pub through: Through,
+    pub references: bool,
     pub(crate) definition: bool,
-    pub(crate) links: contracts::Key,
+    pub links: contracts::Key,
 }
 
 impl From<Through> for Mode {
@@ -96,12 +97,12 @@ impl Mode {
 
 /// The `calls` term at a call node: its term's key.
 #[derive(Clone, Debug)]
-pub(crate) struct CallsTest {
-    pub(crate) key: Arc<str>,
+pub struct CallsTest {
+    pub key: Arc<str>,
     /// The language whose calls the term follows.
     pub(crate) family: Family,
     /// The dialect the term's rule is in: the one its files' tables are read in.
-    pub(crate) language: GrammarDialect,
+    pub language: GrammarDialect,
     /// The grammar's call kinds: the only nodes the term holds at.
     pub(crate) call_kinds: Box<[u16]>,
     /// `chain`: the capture a reaching call binds to its chain of definitions
@@ -120,7 +121,7 @@ pub(crate) struct FoundTerm {
 }
 
 /// Collects the `calls` terms of one query while its rules compile.
-pub(crate) struct CallsCollector {
+pub struct CallsCollector {
     /// What else a term's seed depends on: the query's utilities and language options.
     salt: String,
     /// Collecting for a seed query, which cannot hold `calls` (a shared utility may bring one).
@@ -190,7 +191,7 @@ impl CallsCollector {
         };
         let digest = |canonical: serde_json::Result<String>| -> Result<Arc<str>> {
             let canonical = canonical.map_err(|error| invalid(error.to_string()))?;
-            Ok(format!("{:x}", Sha256::digest(canonical.as_bytes())).into())
+            Ok(crate::code_rule_dsl::prof::lower_hex(&Sha256::digest(canonical.as_bytes())).into())
         };
         let key = digest(serde_json::to_string(&(
             through_name(through),
@@ -310,7 +311,7 @@ pub(crate) fn split(value: &Value, path: &str) -> Result<Split> {
 
 /// Which definitions a seed query's witnesses stand for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SeedScope {
+pub enum SeedScope {
     /// The witnesses are the definitions the inner rule matches.
     Definitions,
     /// The inner rule is `{ has: { stopBy: { kind: function_definition }, ...R } }`: the witnesses
@@ -372,10 +373,10 @@ pub(crate) fn seed_query(
     if mentions(inner, &|key, _| key == "calls") {
         return Err(nested());
     }
-    let (seed_language, function_kinds) = with_adapter!(family, A => (
-        <<A as Adapter>::Calls as CallRules>::SEED_LANGUAGE,
-        <<A as Adapter>::Calls as CallRules>::FUNCTION_KINDS,
-    ));
+    let (seed_language, function_kinds) = { let pack = language_pack::pack(family); (
+        pack.calls_seed_language(),
+        pack.calls_function_kinds(),
+    ) };
     let language = seed_language.unwrap_or(language);
     let mut seed = Map::new();
     seed.insert("language".into(), Value::String(language.into()));
@@ -461,15 +462,15 @@ pub(crate) type TermId = u32;
 /// those whose query is unknown for the whole file (it failed, or read around syntax errors).
 /// Each list is sorted.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
-pub(crate) struct FileSeeds {
+pub struct FileSeeds {
     pub(crate) matched: BTreeMap<u32, Vec<TermId>>,
-    pub(crate) unknown: Vec<TermId>,
+    pub unknown: Vec<TermId>,
 }
 
 impl FileSeeds {
     /// Records that `term`'s seed query matched the definition at `start`; terms are recorded in
     /// increasing order.
-    pub(crate) fn matched(&mut self, start: u32, term: TermId) {
+    pub fn matched(&mut self, start: u32, term: TermId) {
         let terms = self.matched.entry(start).or_default();
         if terms.last() != Some(&term) {
             terms.push(term);
@@ -547,7 +548,7 @@ impl Answer {
 
 /// A `calls` term's answer for one callee: the call reaches its seed, or may.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Verdict {
+pub struct Verdict {
     pub(crate) reach: bool,
     /// Not known to reach: a definition on the way calls something unknown.
     pub(crate) open: bool,
@@ -558,8 +559,8 @@ pub(crate) struct Verdict {
 /// edit can change them.
 type OpenRegions = BTreeMap<(bool, contracts::Key, usize), OnceLock<Arc<HashSet<DefRef>>>>;
 
-pub(crate) struct CallsView {
-    graph: Graph,
+pub struct CallsView {
+    pub graph: Graph,
     references: BTreeMap<contracts::Key, Graph>,
     keys: Vec<Arc<str>>,
     ids: HashMap<Arc<str>, TermId>,
@@ -587,13 +588,13 @@ impl Clone for CallsView {
 }
 
 impl CallsView {
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     pub(crate) fn reference_rows(&self, key: contracts::Key) -> Option<closure::ReferenceRows> {
         self.references.get(&key).map(Graph::reference_rows)
     }
     /// Links `summaries` for `terms` with `seeds`; no term is answered yet.
-    #[cfg(test)]
-    pub(crate) fn build(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn build(
         terms: Vec<(Arc<str>, Through)>,
         summaries: Vec<(Arc<str>, Arc<Summary>)>,
         seeds: &HashMap<Arc<str>, FileSeeds>,
@@ -675,7 +676,7 @@ impl CallsView {
     /// caller, a moved definition) or a changed file's edge calls into it. Returns the linked
     /// files whose stamp may have changed: the changed files, and those calling a definition
     /// whose answer changed.
-    pub(crate) fn update(
+    pub fn update(
         &mut self,
         changes: Vec<(Arc<str>, Option<Arc<Summary>>)>,
         seeds: &HashMap<Arc<str>, FileSeeds>,
@@ -836,7 +837,7 @@ impl CallsView {
         })
     }
 
-    fn open(&self, through: Mode) -> &HashSet<DefRef> {
+    pub fn open(&self, through: Mode) -> &HashSet<DefRef> {
         self.open[&through.index()]
             .get_or_init(|| Arc::new(open_region(self.graph_for(through), through.through)))
     }
@@ -860,14 +861,14 @@ impl CallsView {
     }
 
     /// Term `term`'s answer for a call of `name`.
-    pub(crate) fn verdict(&self, name: &Name, term: TermId) -> Verdict {
+    pub fn verdict(&self, name: &Name, term: TermId) -> Verdict {
         let (defs, open) = self.graph(term).link_of(name);
         self.verdict_of(&defs, open, term)
     }
 
     /// The definitions a call of `name` reaches `term`'s seed through, along a shortest chain:
     /// `a.fetch -> b.pause`.
-    pub(crate) fn chain(&self, name: &Name, term: TermId) -> String {
+    pub fn chain(&self, name: &Name, term: TermId) -> String {
         let graph = self.graph(term);
         let (defs, _) = graph.link_of(name);
         let answer = self.answer(term);
@@ -934,7 +935,7 @@ impl CallsView {
     /// What `summary`'s file reads of `terms`' answers: every callee name's verdict for each, and
     /// the chain of each it reaches, hashed. A file whose stamp is unchanged gets the same `calls`
     /// verdicts and chains at every call.
-    pub(crate) fn stamp(&self, path: &str, summary: &Summary, terms: &[TermId]) -> HashKey {
+    pub fn stamp(&self, path: &str, summary: &Summary, terms: &[TermId]) -> HashKey {
         let mut bytes = Vec::with_capacity(summary.targets.len() * 16);
         for &term in terms {
             let mode = self.questions[term as usize].through;
@@ -1171,13 +1172,19 @@ thread_local! {
 }
 
 // Read by P's and D's relational stages, test-only in W (O18).
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn reference_rows(key: contracts::Key) -> Option<closure::ReferenceRows> {
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+pub fn reference_rows(key: contracts::Key) -> Option<closure::ReferenceRows> {
     EVALUATION.with_borrow(|slot| slot.as_ref()?.view.reference_rows(key))
 }
 
+/// `read` of the installed evaluation's reference graph for `key`.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn with_reference_graph<R>(key: contracts::Key, read: impl FnOnce(&Graph) -> R) -> Option<R> {
+    EVALUATION.with_borrow(|slot| slot.as_ref()?.view.references.get(&key).map(read))
+}
+
 /// Installs an evaluation's `EvaluationCalls` until dropped.
-pub(crate) struct EvaluationSlot {
+pub struct EvaluationSlot {
     previous: Option<EvaluationCalls>,
 }
 
@@ -1205,12 +1212,12 @@ pub(crate) fn reading(path: &str) -> Reading {
 }
 
 /// Nodes one summary's scope table may visit before the file's summary is open.
-const MAX_TABLE_NODES: usize = 5_000_000;
+pub const MAX_TABLE_NODES: usize = 5_000_000;
 
 /// Whether `calls` follows the calls of files in `language`: those of a family whose calls join
 /// the call graph (`CallRules::SUPPORTED`).
 pub(crate) fn summarizes(language: GrammarDialect) -> bool {
-    with_adapter!(Family::of(language), A => <<A as Adapter>::Calls as CallRules>::SUPPORTED)
+    { let pack = language_pack::pack(Family::of(language)); pack.calls_supported() }
 }
 
 /// The document a `language` file's calls are read from, and its dialect: of a file that embeds
@@ -1236,7 +1243,7 @@ pub(crate) fn calls_document(
 /// budget or `MAX_TABLE_NODES` leaves the summary open. Returns the table it built, for the
 /// file's evaluation to reuse.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn summarize<D: Doc>(
+pub fn summarize<D: Doc>(
     root: Node<'_, D>,
     language: GrammarDialect,
     path: &str,
@@ -1257,41 +1264,18 @@ pub(crate) fn summarize<D: Doc>(
         .ok()
     });
     let table = known.or(built.as_ref().and_then(Option::as_ref));
-    let mut summary = with_adapter!(Family::of(language), A => {
-        <<A as Adapter>::Calls as CallRules>::summary(&root, path, module, table, has_errors)
-    });
+    let mut summary = { let pack = language_pack::pack(Family::of(language)); {
+        language_pack::calls_summary(pack, &root, path, module, table, has_errors)
+    } };
     summary.bytes = u32::try_from(bytes).unwrap_or(u32::MAX);
     (summary, built.flatten())
 }
 
-/// The summary of the PHP `program` in the file at `path`, through `table`, the file's scope
-/// table where one was built.
-pub(crate) fn extract_php<D: Doc>(
-    program: &Node<'_, D>,
-    path: &str,
-    table: Option<&ScopeTable>,
-    has_errors: bool,
-) -> Summary {
-    // The table's flow read the program's names; build them only where no table holds them.
-    let names = table
-        .and_then(|table| table.php.as_deref())
-        .map(|flow| Arc::clone(&flow.names))
-        .or_else(|| {
-            PhpNames::build(
-                program.clone(),
-                MAX_TABLE_NODES,
-                &crate::code_rule_dsl::budget::matcher_budget_exhausted,
-            )
-            .ok()
-            .map(Arc::new)
-        });
-    php::extract(program, path, table, names.as_deref(), has_errors)
-}
 
 /// A seed query's witnesses in one file, by their spans: the definitions (by node start) they
 /// stand for, read through the file's summary where they are nodes the definitions hold. `None`
 /// without it.
-pub(crate) fn seed_starts<'s>(
+pub fn seed_starts<'s>(
     spans: impl IntoIterator<Item = &'s Span>,
     scope: SeedScope,
     summary: Option<&Summary>,
@@ -1332,14 +1316,12 @@ pub(crate) enum Reach {
     Unknown,
 }
 
-/// What `calls` reads in a file to name a callee the summary did not record.
-pub(crate) enum FileTables {
-    /// Python's scope table and the file's module path.
-    Python(Arc<ScopeTable>, Option<Arc<ModulePath>>),
-    /// PHP's variable flow and name resolution (a Blade template's: its embedded program's).
-    Php(Arc<ScopeTable>, Arc<PhpNames>),
-    /// Rust's scope table.
-    Rust(Arc<ScopeTable>),
+/// What `calls` reads in a file to name a callee the summary did not record: its scope table, and what its
+/// family reads besides (Python's module path; PHP's names, a Blade template's its embedded program's).
+pub struct FileTables {
+    pub table: Arc<ScopeTable>,
+    pub module: Option<Arc<ModulePath>>,
+    pub names: Option<crate::code_rule_dsl::scope::NameTable>,
 }
 
 /// The `calls` verdict at `node`; `tables` gives what `calls` reads in `node`'s file for its
@@ -1393,16 +1375,16 @@ pub(crate) fn holds<'t, D: Doc>(
         Some(callee) => callee,
         None => {
             // A table that cannot be built fails the clause for the file (`UTIL_EXCEEDED`).
-            let Some(callee) = with_adapter!(test.family, A => <<A as Adapter>::Calls as CallRules>::callee_at(
+            let Some(callee) = ({ let pack = language_pack::pack(test.family); language_pack::calls_callee_at(pack, 
                 node,
                 &summary,
                 || tables(node, test.language),
-            )) else {
+            ) }) else {
                 return Reach::Unknown;
             };
             // A callee's name is in the namespace of the family's summaries (Blade's are PHP's).
             let names =
-                with_adapter!(test.family, A => <<A as Adapter>::Calls as CallRules>::NAMES);
+                { let pack = language_pack::pack(test.family); pack.calls_names() };
             let callee = callee.map(|callee| match callee {
                 Callee::Open => None,
                 Callee::Name(name) => names.map(|family| Name::new(family, &name)),

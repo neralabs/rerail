@@ -3,7 +3,7 @@ name = "rerail-tape-format"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The engine's tape (v9np, format 11) as bytes: its constants, and a writer a parser writes the tape with as it parses."
+description = "The engine's tape (v9np, format 15) as bytes: its constants, and a writer a parser writes the tape with as it parses."
 
 [dependencies]
 sha2 = "0.10"

@@ -16,7 +16,10 @@
 // tokens.
 #include "rust/syntax.rr"
 
+// The arguments are token trees: there the tape keeps every token but a closing bracket (each is one of the
+// grammar's token choices), so the `,`, `=` and `(` read below are on it.
 .decl lint_attr(at: node, name: symbol, args: node, a: node)
+.stored lint_attr "inside a token_tree every token but the closing bracket is stored: each is one of the grammar's token choices"
 lint_attr(p, x, g, a) :- (kind(a, "attribute_item") ; kind(a, "inner_attribute_item")), child(a, t, 0),
     kind(t, "attribute"), child(t, p, 0), kind(p, "identifier"), text(p, x), field(t, "arguments", g).
 // In the arguments of a live cfg_attr: `, name(…)`, the name right after a comma, its list right after it.
@@ -30,12 +33,14 @@ from_cfg_attr(p) :- lint_attr(p, _, _, _), child(c, p, _), cfg_args(c, _).
 .decl cfg_args(g: node, a: node)
 cfg_args(g, a) :- lint_attr(_, "cfg_attr", g, a), !dead_pred(g).
 .decl dead_pred(g: node)   // (test, …)   (any(), …)   (not(clippy), …)
+.stored dead_pred "inside a token_tree every token but the closing bracket is stored: each is one of the grammar's token choices"
 dead_pred(g) :- child(g, p, 0), text(p, "test"), token_after(p, k), text(k, ",").
 dead_pred(g) :- child(g, p, 0), text(p, "any"), next_sibling(p, q), text(q, s), match("\\(\\s*\\)", s).
 dead_pred(g) :- child(g, p, 0), text(p, "not"), next_sibling(p, q), text(q, s), match("\\(\\s*clippy\\s*\\)", s).
 
 // has_reason(g): the last item is `reason = "…"` (rustc takes the reason only there): `(x, reason = "why",)`.
 .decl has_reason(g: node)
+.stored has_reason "inside a token_tree every token but the closing bracket is stored: each is one of the grammar's token choices"
 has_reason(g) :- lint_attr(_, _, g, _), child(g, s, i), !child(g, _, i + 1),
     (kind(s, "string_literal") ; kind(s, "raw_string_literal")), token_before(s, e), text(e, "="),
     token_before(e, r), text(r, "reason"), token_before(r, k), (text(k, ",") ; text(k, "(")).

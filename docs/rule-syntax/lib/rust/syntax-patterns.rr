@@ -2,10 +2,10 @@
 //
 // tree-sitter-rust's pattern shapes, where they differ from rustc's:
 //   - `_` is an anonymous token, not a node. In `(0, _, ..)` the tuple_pattern's named children are `0` and
-//     the remaining_field_pattern `..`; the `_` is read through tokens, between two separators.
+//     the remaining_field_pattern `..`; the `_` is the tuple_pattern's own token, placed by its offset.
 //   - `ref mut a @ ..` nests as ref_pattern > mut_pattern > captured_pattern (`a @ ..`); rustc has one
 //     PatKind::Ident with its binding mode.
-//   - `c: _` in a struct pattern is a field_pattern with only its name as a named child.
+//   - `c: _` in a struct pattern is a field_pattern with a name and no pattern: the tape keeps no `_` there.
 //
 // What a rule gets from this library:
 //   bare_pat(p, q)          q is pattern p without `ref` / `mut` wrappers: `ref mut a @ ..` gives `a @ ..`
@@ -20,7 +20,7 @@
 //                           k is its text without parentheses or whitespace, rest = 1 for `..`
 //   elem_count(p, n)        p has n elements
 //
-// Builds on core (the tape, tokens, text) and rust/syntax.rr (comment_kind).
+// Builds on core (the tape, tokens, offsets, text) and rust/syntax.rr (comment_kind).
 #include "rust/syntax.rr"
 
 .decl bare_pat(p: node, q: node)
@@ -32,30 +32,21 @@ bare_pat(p, q) :- (kind(p, "ref_pattern") ; kind(p, "mut_pattern")), child(p, c,
 rest_pat(p, r) :- (kind(p, "tuple_pattern") ; kind(p, "tuple_struct_pattern") ; kind(p, "slice_pattern")),
     child(p, r, _), kind(r, "remaining_field_pattern").
 
-// A `_` element sits between separators: `(_,`, `, _,`, `, _)`. `&_`, `x @ _` and `_ | 0` are other patterns.
-// Comments are skipped: `(0, /* x */ _, ..)`.
+// A `_` element is `_` written as a whole element: `(_,`, `, _,`, `, _)`. `&_`, `x @ _` and `_ | 0` are other
+// patterns. Elements are p's named children (comments aside) and its own `_` tokens, in source order (elem_*).
 .decl wild_before(x: loc, w: span)
-wild_before(x, w) :- prev_tok(x, c), text(c, ","), prev_tok(c, w), text(w, "_"),
-    prev_tok(w, s), (text(s, ",") ; text(s, "(")).
+wild_before(x, w) :- elem_loc(p, i, x), elem_wild(p, i - 1, w).
 .decl wild_after(x: loc, w: span)
-wild_after(x, w) :- next_tok(x, c), text(c, ","), next_tok(c, w), text(w, "_"),
-    next_tok(w, s), (text(s, ",") ; text(s, ")")).
-.decl prev_tok(x: loc, t: span)   // token_before, comments skipped
-prev_tok(x, t) :- token_before(x, t), !comment_end(t, _).
-prev_tok(x, t) :- token_before(x, c), comment_end(c, k), prev_tok(k, t).
-.decl next_tok(x: loc, t: span)   // token_after, comments skipped
-next_tok(x, t) :- token_after(x, t), !comment_start(t, _).
-next_tok(x, t) :- token_after(x, c), comment_start(c, k), next_tok(k, t).
-// A comment's delimiters (`/*`, `*/`, `//`) are tokens of its own node.
-.decl comment_end(t: span, k: node)
-comment_end(t, k) :- kind(k, x), comment_kind(x), last_token(k, t).
-.decl comment_start(t: span, k: node)
-comment_start(t, k) :- kind(k, x), comment_kind(x), first_token(k, t).
+wild_after(x, w) :- elem_loc(p, i, x), elem_wild(p, i + 1, w).
 
+// `c: _` has a name and no pattern node: its `_` is no node, and the tape keeps it nowhere.
 .decl wild_field(f: node)
-wild_field(f) :- kind(f, "field_pattern"), op(f, "_"), !child(f, _, 1).
+wild_field(f) :- kind(f, "field_pattern"), field(f, "name", n), !kind(n, "shorthand_field_identifier"),
+    !field(f, "pattern", _).
 
 .decl paren_pat(p: node, q: node)
+// With one named child and no `_`, a `,` can only be the trailing comma `(q,)`, which the tape stores.
+.stored paren_pat "a tuple_pattern of one named child and no `_` has a comma only as its trailing comma, which the tape stores"
 paren_pat(p, q) :- kind(p, "tuple_pattern"), child(p, q, 0), !child(p, _, 1), !op(p, ","), !op(p, "_").
 .decl unparen(p: node, q: node)
 unparen(p, p) :- child(_, p, _), !paren_pat(p, _).
@@ -68,25 +59,37 @@ top_pattern(p) :- (kind(s, "let_declaration") ; kind(s, "let_condition") ; kind(
 top_pattern(p) :- kind(m, "match_pattern"), child(m, p, 0), !field(m, "condition", p).
 top_pattern(p) :- kind(c, "closure_parameters"), child(c, p, _), !kind(p, "parameter").
 
-// Elements are read along the tokens, so that `_` (a token, not a node) keeps its place: `(_, 1)` has two.
+// Elements, in source order: p's named children (comments and a tuple struct's path aside) and p's own `_`
+// tokens, which the tape keeps (a `_` is one of the grammar's pattern choices): `(_, 1)` has two.
+.stored seq_pat "the opener is read only beside a `_` element (elem_wild): a gap holding a `_` is not the implied word, so the tape keeps its tokens"
 .decl seq_pat(p: node, open: span)   // p's elements follow token `open`: `(`, `[`, or `S(`
 seq_pat(p, o) :- (kind(p, "tuple_pattern"), !paren_pat(p, _) ; kind(p, "slice_pattern")), first_token(p, o).
 seq_pat(p, o) :- kind(p, "tuple_struct_pattern"), field(p, "type", t), token_after(t, o).
-.decl elem_start(p: node, i: number, t: span)   // token t starts p's i-th element
-elem_start(p, 0, t) :- seq_pat(p, o), token_after(o, t), !closer(t).
-elem_start(p, i + 1, t) :- elem_node(p, i, c), token_after(c, k), text(k, ","), token_after(k, t), !closer(t).
-elem_start(p, i + 1, t) :- elem_wild(p, i, w), token_after(w, k), text(k, ","), token_after(k, t), !closer(t).
-.decl closer(t: span)
-closer(t) :- text(t, ")") ; text(t, "]").
+.decl elem_child(p: node, c: node)
+elem_child(p, c) :- seq_pat(p, _), child(p, c, _), kind(c, k), !comment_kind(k), !field(p, "type", c).
+.decl elem_pos(p: node, s: number)   // an element of p starts at offset s
+elem_pos(p, s) :- elem_child(p, c), node(_, c, _, s, _).
+elem_pos(p, s) :- seq_pat(p, _), (kind(p, "tuple_pattern") ; kind(p, "slice_pattern") ; kind(p, "tuple_struct_pattern")),
+    token(p, _, "_", s, _).
+.decl elem_index(p: node, s: number, i: number)
+elem_index(p, s, i) :- elem_pos(p, s), i = count : { elem_pos(p, t), t < s }.
 .decl elem_node(p: node, i: number, c: node)
-elem_node(p, i, c) :- elem_start(p, i, t), child(p, c, _), first_token(c, t).
+elem_node(p, i, c) :- elem_child(p, c), node(_, c, _, s, _), elem_index(p, s, i).
+.decl elem_is_wild(p: node, i: number)
+elem_is_wild(p, i) :- (kind(p, "tuple_pattern") ; kind(p, "slice_pattern") ; kind(p, "tuple_struct_pattern")),
+    token(p, _, "_", s, _), elem_index(p, s, i).
+// The `_` token itself, a span to report at: the token after the opener, or after the separator that follows
+// the element before. The tape keeps the tokens beside a `_` (its separators and brackets) with it.
+.stored elem_wild "a gap holding a `_` is not the implied word, so the tape keeps the opener, the separators and the `_`"
 .decl elem_wild(p: node, i: number, w: span)
-elem_wild(p, i, w) :- elem_start(p, i, w), text(w, "_"), !starts_child(p, w).
-.decl starts_child(p: node, t: span)
-starts_child(p, t) :- seq_pat(p, _), child(p, c, _), first_token(c, t).
+elem_wild(p, 0, w) :- elem_is_wild(p, 0), seq_pat(p, o), token_after(o, w).
+elem_wild(p, i, w) :- elem_is_wild(p, i), i > 0, elem_loc(p, i - 1, x), token_after(x, k), token_after(k, w).
+.decl elem_loc(p: node, i: number, x: loc)
+elem_loc(p, i, c) :- elem_node(p, i, c).
+elem_loc(p, i, w) :- elem_wild(p, i, w).
 .decl elem_key(p: node, i: number, k: symbol, rest: number)
 elem_key(p, i, k, r) :- elem_node(p, i, c), unparen(c, q), text(q, s), k = @replace_all(s, "\\s+", ""),
     (kind(q, "remaining_field_pattern"), r = 1 ; !kind(q, "remaining_field_pattern"), r = 0).
-elem_key(p, i, "_", 0) :- elem_wild(p, i, _).
+elem_key(p, i, "_", 0) :- elem_is_wild(p, i).
 .decl elem_count(p: node, n: number)
-elem_count(p, n) :- seq_pat(p, _), n = count : { elem_start(p, _, _) }.
+elem_count(p, n) :- seq_pat(p, _), n = count : { elem_pos(p, _) }.

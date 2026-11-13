@@ -3,7 +3,8 @@
 //! Each run of a corpus root records a manifest: the sources it read, the grammar version and tape format of their
 //! tapes, and its memo plan. Collection keeps
 //!
-//! 1. each root's last `protected_runs` manifests;
+//! 1. each root's last `protected_runs` manifests of each lane (what the runs were of, `record_corpus_run_lane`),
+//!    for the root's newest `protected_lanes` lanes;
 //! 2. older manifests, newest first, while the bytes they alone hold (the history) stay under a budget: no limit
 //!    below the high-water mark, the low-water mark once the history passes it;
 //!
@@ -26,13 +27,16 @@ fn plan_object(plan: &[u8]) -> i64 {
 }
 use rusqlite::{OptionalExtension, params, types::Value};
 use sha2::{Digest as _, Sha256};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 /// What collection keeps of corpus runs.
 #[derive(Clone, Copy, Debug)]
 pub struct CorpusPolicy {
-    /// Each root's last runs, always kept.
+    /// Each root's last runs of a lane, always kept, their plans live.
     pub protected_runs: usize,
+    /// The lanes of a root whose last runs are kept, its newest: the programs run over it one at a time (a policy set's,
+    /// one process each) keep their plans while the others run. One edited, or gone, its lane is not run again.
+    pub protected_lanes: usize,
     /// Above this many bytes of history, a pass evicts.
     pub high_water: u64,
     /// Eviction keeps history up to this many bytes.
@@ -52,6 +56,7 @@ impl Default for CorpusPolicy {
     fn default() -> Self {
         CorpusPolicy {
             protected_runs: 2,
+            protected_lanes: 64,
             high_water: 512 << 20,
             low_water: 384 << 20,
             backstop_secs: 30 * 86_400,
@@ -103,6 +108,35 @@ fn lapsed_plan_hold(connection: &rusqlite::Connection, now: i64) -> StoreResult<
         .is_some())
 }
 
+/// The holds (`object_pins`) of runs whose process is gone: a run killed (a watchdog, a crash) never releases its
+/// hold, which kept its plans live, and their memos (decision 0146), for the lease's 6 hours. A run's owner names its
+/// process (`corpus-run:<pid>:…`); a process of this host that no longer exists holds nothing. A pid used again by
+/// another process keeps the hold to its lease, as before.
+fn orphaned_holds(connection: &rusqlite::Connection) -> StoreResult<Vec<String>> {
+    let mut st = connection.prepare_cached(
+        "SELECT DISTINCT s.value FROM object_pins p JOIN strings s ON s.string_id = p.owner_string_id WHERE s.domain_id = ?1 AND s.value LIKE 'corpus-run:%'",
+    )?;
+    let owners = st.query_map([STRING_OWNER], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+    Ok(owners.into_iter().filter(|o| o.split(':').nth(1).and_then(|p| p.parse::<i32>().ok()).is_some_and(process_gone)).collect())
+}
+
+/// Whether no process `pid` exists on this host.
+fn process_gone(pid: i32) -> bool {
+    if pid <= 0 || pid as u32 == std::process::id() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        // SAFETY: signal 0 only checks that the process exists.
+        let r = unsafe { libc::kill(pid, 0) };
+        r != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 /// Memo rows of dead plans deleted per pass.
 const PLAN_ROWS_PER_PASS: i64 = 4096;
 
@@ -114,7 +148,31 @@ struct Manifest {
     grammar_version: i64,
     tape_format: i64,
     plan: Vec<u8>,
+    /// What the run was of (`record_corpus_run_lane`); `None`, the root's one lane.
+    lane: Option<Vec<u8>>,
     sources: Vec<i64>,
+}
+
+/// Which manifests, met newest first, are among their lane's last `protected_runs` and their lane among the root's
+/// newest `protected_lanes`.
+#[derive(Default)]
+struct Protection<'m> {
+    runs: HashMap<(i64, Option<&'m [u8]>), usize>,
+    lanes: HashMap<i64, Vec<Option<&'m [u8]>>>,
+}
+
+impl<'m> Protection<'m> {
+    fn protects(&mut self, m: &'m Manifest, runs: usize, lanes: usize) -> bool {
+        let lane = m.lane.as_deref();
+        let seen = self.lanes.entry(m.root).or_default();
+        let at = seen.iter().position(|l| *l == lane).unwrap_or_else(|| {
+            seen.push(lane);
+            seen.len() - 1
+        });
+        let n = self.runs.entry((m.root, lane)).or_default();
+        *n += 1;
+        at < lanes && *n <= runs
+    }
 }
 
 /// A file's stat when its source was read: what the stat index keeps of it.
@@ -279,6 +337,15 @@ impl ContentStore {
     /// their rows are collected once none does.
     #[allow(clippy::too_many_arguments)]
     pub fn record_corpus_run_naming(&self, root: &str, sources: &[SourceId], grammar_version: i64, tape_format: i64, plan: [u8; 32], also: &[[u8; 32]], now: i64) -> StoreResult<bool> {
+        self.record_corpus_run_lane(root, sources, grammar_version, tape_format, plan, also, None, now)
+    }
+
+    /// `record_corpus_run_naming`, the run of lane `lane`: what it was of, whichever build ran it (its programs'
+    /// texts). A root's last runs are protected by lane (`CorpusPolicy::protected_runs`): of policies run one process
+    /// each over a root, each keeps its plan, where by root only the last two did, and the rest of the set ran cold the
+    /// next time. A replaced build's plan is the same lane's, and dies as before. `None`: the root's one lane.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_corpus_run_lane(&self, root: &str, sources: &[SourceId], grammar_version: i64, tape_format: i64, plan: [u8; 32], also: &[[u8; 32]], lane: Option<[u8; 32]>, now: i64) -> StoreResult<bool> {
         let mut also: Vec<[u8; 32]> = also.iter().copied().filter(|p| *p != plan).collect();
         also.sort_unstable();
         also.dedup();
@@ -301,14 +368,23 @@ impl ContentStore {
             tx.execute("INSERT OR IGNORE INTO corpus_roots(path) VALUES (?1)", [root])?;
             let root_id: i64 = tx.query_row("SELECT root_id FROM corpus_roots WHERE path=?1", [root], |r| r.get(0))?;
             let run: i64 = tx.query_row("UPDATE corpus_state SET run=run+1 WHERE singleton=1 RETURNING run", [], |r| r.get(0))?;
-            let moved = tx.execute("UPDATE corpus_manifests SET last_run=?1, last_time=?2 WHERE root_id=?3 AND digest=?4", params![run, now, root_id, &digest[..]])?;
+            let moved: Option<i64> = tx
+                .query_row("UPDATE corpus_manifests SET last_run=?1, last_time=?2 WHERE root_id=?3 AND digest=?4 RETURNING manifest_id", params![run, now, root_id, &digest[..]], |r| r.get(0))
+                .optional()?;
+            let set_lane = |manifest: i64| -> rusqlite::Result<()> {
+                if let Some(lane) = &lane {
+                    tx.prepare_cached("UPDATE corpus_manifests SET lane = ?2 WHERE manifest_id = ?1")?.execute(params![manifest, &lane[..]])?;
+                }
+                Ok(())
+            };
             bounded_insert::insert(
                 tx,
                 "INSERT INTO corpus_plans(plan_digest, live)",
                 "ON CONFLICT(plan_digest) DO UPDATE SET live=1",
                 std::iter::once(&plan).chain(&also).map(|p| [Value::Blob(p.to_vec()), Value::Integer(1)]),
             )?;
-            if moved > 0 {
+            if let Some(manifest) = moved {
+                set_lane(manifest)?;
                 return Ok(false);
             }
             // The sources the root's newest manifest of the same tapes already made live need no row again.
@@ -328,6 +404,7 @@ impl ContentStore {
                 params![root_id, run, now, grammar_version, tape_format, &plan[..], &digest[..], blob],
             )?;
             let manifest = tx.last_insert_rowid();
+            set_lane(manifest)?;
             bounded_insert::insert(
                 tx,
                 "INSERT OR IGNORE INTO corpus_manifest_plans(manifest_id, plan_digest)",
@@ -412,7 +489,7 @@ impl ContentStore {
         let displaced: Option<i64> = connection
             .query_row(
                 "SELECT 1 FROM corpus_manifests m WHERE m.last_run > ?1 \
-                 AND (SELECT count(*) FROM corpus_manifests o WHERE o.root_id=m.root_id) > ?2 LIMIT 1",
+                 AND (SELECT count(*) FROM corpus_manifests o WHERE o.root_id=m.root_id AND o.lane IS m.lane) > ?2 LIMIT 1",
                 params![decided_run, policy.protected_runs as i64],
                 |r| r.get(0),
             )
@@ -451,12 +528,15 @@ impl ContentStore {
         // for the write lock, so a decision never drops what it did not see.
         self.immediate_transaction(|tx| {
             let manifests = tx
-                .prepare("SELECT manifest_id, root_id, last_time, grammar_version, tape_format, plan_digest, sources FROM corpus_manifests ORDER BY last_run DESC")?
-                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get::<_, Vec<u8>>(5)?, r.get::<_, Vec<u8>>(6)?)))?
-                .collect::<Result<Vec<(i64, i64, i64, i64, i64, Vec<u8>, Vec<u8>)>, _>>()?
+                .prepare(
+                    "SELECT manifest_id, root_id, last_time, grammar_version, tape_format, plan_digest, sources, lane FROM corpus_manifests \
+                     ORDER BY last_run DESC",
+                )?
+                .query_map([], |r| Ok(((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get::<_, Vec<u8>>(5)?, r.get::<_, Vec<u8>>(6)?), r.get::<_, Option<Vec<u8>>>(7)?)))?
+                .collect::<Result<Vec<((i64, i64, i64, i64, i64, Vec<u8>, Vec<u8>), Option<Vec<u8>>)>, _>>()?
                 .into_iter()
-                .map(|(id, root, last_time, grammar_version, tape_format, plan, blob)| {
-                    Ok(Manifest { id, root, last_time, grammar_version, tape_format, plan, sources: decode_ids(&blob)? })
+                .map(|((id, root, last_time, grammar_version, tape_format, plan, blob), lane)| {
+                    Ok(Manifest { id, root, last_time, grammar_version, tape_format, plan, lane, sources: decode_ids(&blob)? })
                 })
                 .collect::<StoreResult<Vec<_>>>()?;
             // Bytes of each live source, and of its tape of the live grammar version and format.
@@ -505,12 +585,26 @@ impl ContentStore {
             let mut keep_plans: BTreeSet<Vec<u8>> = BTreeSet::new();
             for m in manifests.iter().filter(|m| kept_ids.contains(&m.id)) {
                 keep_live.extend(m.sources.iter().map(|&s| (s, m.grammar_version, m.tape_format)));
+            }
+            // A plan is live while a root's protected runs name it (or a run holds it). A kept manifest past them
+            // keeps its sources and tapes (any build's warm run reads them), not its plan: a plan names the engine
+            // build and the program, and its memo (decision 0146: a space of frames, the size of every file's
+            // results) serves only runs of both. Manifests are kept by the bytes of their sources and tapes, which
+            // a small corpus never fills, so every build's memo stayed live (1.75 GB of 1.86 GB of frames).
+            let mut protection = Protection::default();
+            let protected_ids: HashSet<i64> = manifests
+                .iter()
+                .filter(|m| kept_ids.contains(&m.id))
+                .filter(|m| protection.protects(m, policy.protected_runs.max(1), policy.protected_lanes.max(1)))
+                .map(|m| m.id)
+                .collect();
+            for m in manifests.iter().filter(|m| protected_ids.contains(&m.id)) {
                 keep_plans.insert(m.plan.clone());
             }
-            // The other plans kept manifests name (`record_corpus_run_naming`).
+            // The other plans those manifests name (`record_corpus_run_naming`).
             {
                 let mut named = tx.prepare_cached("SELECT plan_digest FROM corpus_manifest_plans WHERE manifest_id=?1")?;
-                for m in manifests.iter().filter(|m| kept_ids.contains(&m.id)) {
+                for m in manifests.iter().filter(|m| protected_ids.contains(&m.id)) {
                     for p in named.query_map([m.id], |r| r.get::<_, Vec<u8>>(0))? {
                         keep_plans.insert(p?);
                     }
@@ -573,12 +667,22 @@ impl ContentStore {
             Ok(n)
         })?;
         pass.plan_rows = swept;
+        // Holds of runs whose process is gone are released: their plans may be dead now, so a decision is due.
+        let orphans = {
+            let connection = self.connection.lock().expect("content store connection unavailable");
+            orphaned_holds(&connection)?
+        };
+        for owner in &orphans {
+            self.release_pins(owner)?;
+        }
+        let orphaned = !orphans.is_empty();
         let due = match self.corpus_due()? {
+            _ if orphaned => 1,
             0 if self.lapsed_plan_hold(now)? => 1,
             due => due,
         };
         if due == 1 {
-            if !self.corpus_decision_worth(policy, now)? {
+            if !orphaned && !self.corpus_decision_worth(policy, now)? {
                 // Nothing a decision could change: no root went past its protected runs, and the last decision is
                 // recent. The sweep waits for the next decision too; a new manifest makes collection due again.
                 self.immediate_transaction(|tx| Ok(tx.execute("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=1", [])?))?;
@@ -589,20 +693,43 @@ impl ContentStore {
             }
             pass.kept = Some(self.keep_corpus_runs_held(policy, now)?);
         }
-        pass.plan_rows += self.immediate_transaction(|tx| {
-            let dead: Option<Vec<u8>> = tx.query_row("SELECT plan_digest FROM corpus_plans WHERE live=0 LIMIT 1", [], |r| r.get(0)).optional()?;
-            let Some(plan) = dead else { return Ok(0) };
-            let n = tx.execute(
-                "DELETE FROM facts_results WHERE (source_id, fact_schema, path, plan_digest) IN (\
-                 SELECT source_id, fact_schema, path, plan_digest FROM facts_results WHERE plan_digest=?1 LIMIT ?2)",
-                params![plan, PLAN_ROWS_PER_PASS],
-            )?;
-            if (n as i64) < PLAN_ROWS_PER_PASS {
-                tx.execute("DELETE FROM corpus_plans WHERE plan_digest=?1 AND live=0", [&plan])?;
-                tx.execute("DELETE FROM corpus_plan_relations WHERE plan_digest=?1", [&plan])?;
+        // Dead plans, one transaction each, until the pass's budget of rows is spent: a dead build's memo is a few
+        // frames (one statement), and one plan a pass left a store's dead builds for as many runs.
+        let mut budget = PLAN_ROWS_PER_PASS as usize;
+        while budget > 0 {
+            let n = self.immediate_transaction(|tx| {
+                let dead: Option<Vec<u8>> = tx.query_row("SELECT plan_digest FROM corpus_plans WHERE live=0 LIMIT 1", [], |r| r.get(0)).optional()?;
+                let Some(plan) = dead else { return Ok(0) };
+                let n = tx.execute(
+                    "DELETE FROM facts_results WHERE (source_id, fact_schema, path, plan_digest) IN (\
+                     SELECT source_id, fact_schema, path, plan_digest FROM facts_results WHERE plan_digest=?1 LIMIT ?2)",
+                    params![plan, PLAN_ROWS_PER_PASS],
+                )?;
+                if (n as i64) < PLAN_ROWS_PER_PASS {
+                    // The plan's per-file memo (decision 0146): its frames' space.
+                    let mut frames_gone = 0;
+                    if let Ok(digest) = <[u8; 32]>::try_from(plan.as_slice()) {
+                        let space = super::frames::local_space(&digest);
+                        let frames: i64 = tx.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='frames'", [], |r| r.get(0))?;
+                        if frames > 0 {
+                            frames_gone = tx.execute("DELETE FROM frames WHERE space = ?1", [&space[..]])?;
+                            tx.execute("DELETE FROM frame_part_used WHERE space = ?1", [&space[..]])?;
+                            tx.execute("DELETE FROM frame_spaces WHERE space = ?1", [&space[..]])?;
+                        }
+                    }
+                    tx.execute("DELETE FROM corpus_plans WHERE plan_digest=?1 AND live=0", [&plan])?;
+                    tx.execute("DELETE FROM corpus_plan_relations WHERE plan_digest=?1", [&plan])?;
+                    // A dead plan collected is work done, though its memo is frames now (decision 0146), not rows.
+                    return Ok(n + frames_gone + 1);
+                }
+                Ok(n)
+            })?;
+            pass.plan_rows += n;
+            if n == 0 {
+                break;
             }
-            Ok(n)
-        })?;
+            budget = budget.saturating_sub(n);
+        }
         pass.collection = self.collect_held(now, MAX_COLLECTION_BATCH)?;
         if !pass.did_work() {
             self.immediate_transaction(|tx| Ok(tx.execute("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=2", [])?))?;
@@ -638,13 +765,11 @@ struct Decided {
 /// The manifests to keep, `manifests` newest first (the module's rules).
 fn decide(manifests: &[Manifest], sizes: &Sizes, policy: &CorpusPolicy, now: i64) -> Decided {
     let walk = |cap: Option<u64>| -> Decided {
-        let mut per_root: BTreeMap<i64, usize> = BTreeMap::new();
+        let mut protection = Protection::default();
         let (mut seen_sources, mut seen_tapes) = (HashSet::new(), HashSet::new());
         let mut out = Decided { kept: Vec::new(), protected: 0, history: 0 };
         for m in manifests {
-            let rank = per_root.entry(m.root).or_default();
-            let protected = *rank < policy.protected_runs;
-            *rank += 1;
+            let protected = protection.protects(m, policy.protected_runs, policy.protected_lanes);
             if now - m.last_time > policy.backstop_secs {
                 continue;
             }

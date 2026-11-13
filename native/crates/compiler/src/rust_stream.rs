@@ -78,6 +78,9 @@ pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, ta
     if native.extras.len() > 1 {
         return Err("more than one kind of extra".into());
     }
+    if native.structural.iter().any(|b| matches!(b.operation, Op::NodeSuper { .. })) {
+        return Err("supertype classes in the tape's codes: not yet ahead of time".into());
+    }
     let records = native.block_programs.first().and_then(|b| b.records.as_ref());
     let starts = native.structural.iter().any(|b| matches!(b.operation, Op::Token { .. }));
     let in_code = records.map_or(0, |r| r.marks.len());
@@ -225,7 +228,7 @@ fn tape_consts(out: &mut String, x: &Facts<'_>) {
         "type SizeT = {};\ntype OffT = {};\ntype TailT = {};\nconst FROM_START: bool = {};\nconst TAIL_MAX: u32 = {:#x};\n\
          const STRIDE: u32 = {};\nconst STRIDE_LOG: u32 = {};\nconst WIDE_OFF: u32 = {};\nconst WIDE_TAIL: u32 = {};\n\
          const NO_CODE: u32 = {:#x};\nconst KIND_BITS: u32 = {};\nconst HEADER_BYTES: usize = {};\nconst COLUMN_ALIGN: usize = {};\n\
-         const CODE_EXTRA: u8 = {};\nconst SENTINEL: u16 = {:#x};\nconst MAGIC: u64 = {:#x};\nconst HEAD: u32 = {:#x};\nconst FORMAT_VERSION: u32 = {};\n",
+         const NODES_AT: usize = {};\nconst CODE_EXTRA: u8 = {};\nconst SENTINEL: u16 = {:#x};\nconst MAGIC: u64 = {:#x};\nconst HEAD: u32 = {:#x};\nconst FORMAT_VERSION: u32 = {};\n",
         ty(w.size),
         ty(w.off),
         ty(w.tail),
@@ -239,6 +242,7 @@ fn tape_consts(out: &mut String, x: &Facts<'_>) {
         t::KIND_BITS,
         t::HEADER_BYTES,
         t::COLUMN_ALIGN,
+        t::header::NODES,
         t::CODE_EXTRA,
         t::SENTINEL,
         u64::from_le_bytes(*t::MAGIC),
@@ -258,7 +262,7 @@ pub struct Ctx {
     out_rows: *mut u8, output_stride: u64, totals_stride: u64, totals_mask: u64, room_nodes: u64,
     room_supers: u64, room_pushes: u64, stack_base: u64, stack_limit: u64, frame_shift: u64,
     state: [u64; $STATE], size_c: *mut u8, off_c: *mut u8, tail_c: *mut u8, base_c: *mut u32,
-    image: *mut u8, id_of: *mut u16, code_kf: *mut u16, code_first: *mut u32,
+    image: *mut u8, id_of: *mut u16, code_kf: *mut u32, code_first: *mut u32,
 }
 
 /// A node's working row (`native_cpu_tape::ROW`): its key (kind and field), its bytes. Not
@@ -290,7 +294,7 @@ struct S {
     /// (the header's room, then the code column in place), each key's code id and each code's
     /// key and first node.
     size_c: *mut SizeT, off_c: *mut OffT, tail_c: *mut TailT, base_c: *mut u32,
-    image: *mut u8, id_of: *mut u16, code_kf: *mut u16, code_first: *mut u32,
+    image: *mut u8, id_of: *mut u16, code_kf: *mut u32, code_first: *mut u32,
     /// The last block's base; the nodes committed and the codes; the values past their width.
     block_base: u32, coded: u32, ncodes: u32, wide: u32,
     room_nodes: usize, room_supers: usize,
@@ -558,7 +562,7 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
                 let mut id = u32::from(*slot);
                 if id == NO_CODE {
                     *slot = c as u16;
-                    *self.code_kf.add(c as usize) = k as u16;
+                    *self.code_kf.add(c as usize) = k;
                     *self.code_first.add(c as usize) = i;
                     id = c;
                     c += 1;
@@ -934,8 +938,7 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
 
 /// `ACCEPT`: the root closed at the file's end; no provisional field left; no value past its
 /// width; the rest committed; the image's end (`native_cpu_tape::finish`): the columns moved
-/// into place after the code column, the code table, the header but its digest (the
-/// harness's).
+/// into place after the code column, the code table, the header.
 fn accept(out: &mut String, x: &Facts<'_>) {
     let n = x.native;
     let provisional = if n.readings.provisional.is_empty() {
@@ -1013,7 +1016,7 @@ $PROVISIONAL        if self.wide != 0 {
             at = self.padded(Self::put_column(at, self.tail_c as *const u8, n * core::mem::size_of::<TailT>()));
             let codes = self.ncodes as usize;
             for c in 0..codes {
-                let k = *self.code_kf.add(c);
+                let k = *self.code_kf.add(c) as u16;
                 let e = at.add(6 * c);
                 (e as *mut u16).write_unaligned(k);
                 *e.add(2) = if $IS_EXTRA { CODE_EXTRA } else { 0 };
@@ -1028,7 +1031,7 @@ $PROVISIONAL        if self.wide != 0 {
             (image.add(12) as *mut u32).write_unaligned(FORMAT_VERSION);
             (image.add(16) as *mut u64).write_unaligned(self.len as u64);
             for (k, v) in [n, codes, table, 0, 0].into_iter().enumerate() {
-                (image.add(56 + 8 * k) as *mut u64).write_unaligned(v as u64);
+                (image.add(NODES_AT + 8 * k) as *mut u64).write_unaligned(v as u64);
             }
             total
         }

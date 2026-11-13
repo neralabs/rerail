@@ -1,20 +1,57 @@
 //! Retained native document indexes. File edits replace only changed search paths and shared-fact counts.
-use super::super::model::FileInput;
 use super::*;
-mod shards;
-mod shared;
-mod tree;
+pub mod shards;
+pub mod shared;
+pub mod tree;
 use shards::Family;
 use shared::Shared;
 
 type Sources = BTreeMap<String, Arc<dyn Source>>;
+
+/// A file of a snapshot a session binds: its path, its dialect's label and its text.
 #[derive(Clone)]
-pub(super) struct Document {
-    file: FileInput,
-    key: u32,
-    pub(super) sources: Sources,
+pub struct File {
+    pub path: String,
+    pub language: String,
+    pub source: Arc<String>,
 }
-pub(super) struct Documents {
+
+impl crate::code_rule_dsl::facts::core::SourceFile for File {
+    fn language(&self) -> &str {
+        &self.language
+    }
+    fn source(&self) -> &Arc<String> {
+        &self.source
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// What reads a snapshot's files from its JSON (`{"files": [...]}`, the evaluator's request shape), registered at
+/// load (`install_snapshot_files`).
+pub(crate) type SnapshotFiles = fn(&str) -> Result<Vec<File>>;
+
+static SNAPSHOT_FILES: std::sync::OnceLock<SnapshotFiles> = std::sync::OnceLock::new();
+
+/// Registers what reads a snapshot's files (once, at load).
+pub fn install_snapshot_files(read: SnapshotFiles) {
+    let _ = SNAPSHOT_FILES.set(read);
+}
+
+fn snapshot_files(json: &str) -> Result<Vec<File>> {
+    match SNAPSHOT_FILES.get() {
+        Some(read) => read(json),
+        None => Err(error("no snapshot reader is registered")),
+    }
+}
+#[derive(Clone)]
+pub struct Document {
+    file: File,
+    key: u32,
+    pub sources: Sources,
+}
+pub struct Documents {
     files: BTreeMap<String, Document>,
     families: BTreeMap<String, Arc<Family>>,
     shared: Arc<Shared>,
@@ -44,7 +81,7 @@ fn native_sources(store: &ContentStore, docs: Vec<syntax::Document>) -> Result<S
     .map(|s| s.into_iter().collect())
     .map_err(error)
 }
-fn document(store: &ContentStore, file: FileInput) -> Result<Document> {
+fn document(store: &ContentStore, file: File) -> Result<Document> {
     let facts = match core::build_cached(&file, store).map_err(error)? {
         Built::Facts(facts) if !facts.syntax_errors => facts,
         _ => return Err(error(format!("{}: core facts are incomplete", file.path))),
@@ -56,6 +93,7 @@ fn document(store: &ContentStore, file: FileInput) -> Result<Document> {
         core: String::new(),
         digest: [0; 32],
         facts: Arc::new(facts),
+        tape: None,
         guest: None,
         module: None,
     };
@@ -126,11 +164,11 @@ impl Documents {
         self.shared = indexed.shared;
     }
     fn snapshot(&self, store: &ContentStore, json: &str) -> Result<(Changes, usize)> {
-        let (snapshot, _) = super::super::eval::parse_snapshot(json, false)?;
-        let examined = snapshot.files.len() + self.files.len();
+        let files = snapshot_files(json)?;
+        let examined = files.len() + self.files.len();
         let mut seen = BTreeSet::new();
         let mut changes = Changes::new();
-        for file in snapshot.files {
+        for file in files {
             if !seen.insert(file.path.clone()) {
                 return Err(error(format!("duplicate snapshot path: {}", file.path)));
             }
@@ -141,7 +179,7 @@ impl Documents {
         }
         Ok((changes, examined))
     }
-    fn upsert(&self, store: &ContentStore, file: FileInput, changes: &mut Changes) -> Result<()> {
+    fn upsert(&self, store: &ContentStore, file: File, changes: &mut Changes) -> Result<()> {
         if self
             .files
             .get(&file.path)
@@ -163,11 +201,10 @@ impl Documents {
         }
         let patch: Patch = serde_json::from_str(json).map_err(error)?;
         let examined = patch.upsert.len() + patch.delete.len();
-        let (files, _) =
-            super::super::eval::parse_snapshot(&json!({"files":patch.upsert}).to_string(), false)?;
+        let files = snapshot_files(&json!({"files":patch.upsert}).to_string())?;
         let mut seen = BTreeSet::new();
         let mut changes = Changes::new();
-        for file in files.files {
+        for file in files {
             if !seen.insert(file.path.clone()) {
                 return Err(error(format!("duplicate file change path: {}", file.path)));
             }

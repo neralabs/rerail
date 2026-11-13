@@ -77,8 +77,8 @@ fn_block(f, b) :- function_node(f), field(f, "body", b), kind(b, "statement_bloc
 .decl empty_block(b: node)
 empty_block(b) :- kind(b, "statement_block"), count : { before_close(b, x) } = 0.
 .decl before_close(b: node, x: node)  // x starts before b's `}`
-before_close(b, x) :- kind(b, "statement_block"), child(b, x, _), last_token(b, t), line(t, l), col(t, c),
-    line(x, lx), col(x, cx), (lx < l ; lx = l, cx < c).
+// The `}` is b's last character, so every child of b is before it.
+before_close(b, x) :- kind(b, "statement_block"), child(b, x, _).
 
 // ---- methods, properties and keys -------------------------------------------------------------------------------
 // fn_holder(f, h): the node ESLint calls the function's parent when that parent is a Property, MethodDefinition
@@ -123,8 +123,13 @@ member_kind(m, "method") :- kind(m, "method_definition"), !op(m, "get"), !op(m, 
 ctor(m) :- kind(m, "method_definition"), !op(m, "get"), !op(m, "set"), !is_static(m),
     child(c, m, _), kind(c, "class_body"), static_key(m, "constructor"), holder_key(m, k),
     !kind(k, "computed_property_name").
+// The member kinds that take `static`; a class_static_block (`static { }`) is no member, and its kind is all its
+// `static` says (the tape keeps none there).
 .decl is_static(m: node)
-is_static(m) :- op(m, "static").
+is_static(m) :- kind(m, k), static_member(k), op(m, "static").
+.decl static_member(k: symbol)
+static_member("method_definition"). static_member("public_field_definition"). static_member("field_definition").
+static_member("method_signature"). static_member("abstract_method_signature"). static_member("index_signature").
 
 // ---- accessors ----------------------------------------------------------------------------------------------------
 // accessor(l, s, m, k, w): m is a `get` or `set` accessor (w) with key k, in list l with static s ("static" or
@@ -217,7 +222,8 @@ fn_id(f, x) :- function_node(f), !kind(f, "method_definition"), field(f, "name",
 // at its `=>`, any other function at itself.
 .decl fn_head(f: node, at: loc)
 fn_head(f, h) :- fn_holder(f, h).
-fn_head(f, t) :- kind(f, "arrow_function"), !fn_holder(f, _), field(f, "body", b), token_before(b, t), text(t, "=>").
+// The tape keeps no `=>` (the arrow's kind implies it): it is the last `=>` in the arrow's source before its body.
+fn_head(f, m) :- kind(f, "arrow_function"), !fn_holder(f, _), arrow_op(f, m).
 fn_head(f, f) :- function_node(f), !kind(f, "arrow_function"), !fn_holder(f, _).
 // fn_start(f, at): the start of ESTree's function node. For a method that is its FunctionExpression, which
 // begins at the type parameters or the `(`; every other function is its own node.

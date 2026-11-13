@@ -1,8 +1,281 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl eager_call_set(kind: symbol)
+eager_call_set("call").
+.decl eager_cdef(kind: symbol)
+eager_cdef("class_definition").
+.decl eager_defs(kind: symbol)
+eager_defs("function_definition"). eager_defs("class_definition").
+.decl eager_fdef(kind: symbol)
+eager_fdef("function_definition").
+.decl eager_lambda_set(kind: symbol)
+eager_lambda_set("lambda").
+.decl eager_region_set(kind: symbol)
+eager_region_set("lambda"). eager_region_set("class_definition").
+.decl child(p: node, c: node, i: number)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl eager_ann(a: node, x: node)
+.decl eager_ann_name(t: node, s: symbol)
+.decl eager_approved(s: symbol)
+.decl eager_approved_configured(x: number)
+.decl eager_approved_pattern(p: symbol)
+.decl eager_arg(c: node, a: node, pos: number)
+.decl eager_arg_before(c: node, i: number, j: number)
+.decl eager_argc(c: node, a: node, i: number)
+.decl eager_asg(a: node, t: node)
+.decl eager_asg_fn(a: node, f: node)
+.decl eager_asg_module(a: node)
+.decl eager_asg_name(a: node, s: symbol)
+.decl eager_async(f: node)
+.decl eager_attr(a: node, attr: symbol)
+.decl eager_battr(a: node, f: node)
+.decl eager_battr_region(a: node, bs: number)
+.decl eager_bcall(c: node, f: node)
+.decl eager_body(f: node, bs: number, be: number)
+.decl eager_bound(a: node, n: node)
+.decl eager_bound_seq(m: node)
+.decl eager_call_attr(c: node)
+.decl eager_call_ident(c: node)
+.decl eager_callee(c: node, s: symbol)
+.decl eager_canonical(f: node)
+.decl eager_canonical_build(c: node, v: node)
+.decl eager_cls_between(n: node, f: node)
+.decl eager_comment_line(d: number, l: number)
+.decl eager_cover(d: number, l: number, f: node, k: number, n: number)
+.decl eager_cover_depth(d: number, l: number, k: number)
+.decl eager_cover_len(d: number, l: number, n: number)
+.decl eager_decl(n: node, name: symbol)
+.decl eager_decorator(f: node, nm: symbol)
+.decl eager_depth(n: node, k: number)
+.decl eager_direct(d: number, l: number, i: symbol)
+.decl eager_direct_exempt(d: number, l: number, i: symbol)
+.decl eager_direct_site(d: number, l: number, i: symbol)
+.decl eager_dirty(f: node, issue: symbol)
+.decl eager_docstmt(s: node)
+.decl eager_dwalk(f: node, x: node)
+.decl eager_edge(caller: node, target: node)
+.decl eager_empty(c: node, f: node)
+.decl eager_entry(e: symbol)
+.decl eager_entry_case(x: number)
+.decl eager_external(d: number, l: number, i: symbol)
+.decl eager_external_io(f: node)
+.decl eager_finding(d: number, l: number, i: symbol)
+.decl eager_full(c: node, s: symbol)
+.decl eager_func(f: node, name: symbol)
+.decl eager_getattr_call(c: node)
+.decl eager_has_lex(n: node)
+.decl eager_in_mlstr(d: number, l: number)
+.decl eager_indirect(e: node, t: node)
+.decl eager_kw(c: node, name: symbol, v: node)
+.decl eager_lazy_callee_call(z: node)
+.decl eager_lazy_core(s: symbol)
+.decl eager_lazy_expr(f: node, x: node)
+.decl eager_lazy_name(f: node, nm: symbol, since: number)
+.decl eager_legacy_alias(d: number, s: symbol)
+.decl eager_legacy_call(f: node, t: node, nm: symbol)
+.decl eager_legacy_callee(s: symbol)
+.decl eager_legacy_fn(f: node)
+.decl eager_legacy_name(s: symbol)
+.decl eager_legacy_wrapper_symbol(s: symbol)
+.decl eager_lex(n: node, p: node)
+.decl eager_line_issue(d: number, l: number, i: symbol)
+.decl eager_line_symbol(d: number, l: number, s: symbol)
+.decl eager_meaning(f: node, s: node, st: number)
+.decl eager_mlstr(d: number, a: number, b: number)
+.decl eager_modname(d: number, m: symbol)
+.decl eager_nargs(c: node, k: number)
+.decl eager_nmeaning(f: node, k: number)
+.decl eager_nonlazy(s: symbol)
+.decl eager_nonpos(a: node)
+.decl eager_param(f: node, nm: symbol, pos: number, p: node)
+.decl eager_param0(f: node, p: node, i: number, nm: symbol)
+.decl eager_param_before(f: node, i: number, j: number)
+.decl eager_param_kind(p: node)
+.decl eager_peek_helper(s: symbol)
+.decl eager_phase(f: node, ph: symbol)
+.decl eager_phase_pat(f: node, p: symbol)
+.decl eager_phase_site(d: number, l: number, i: symbol)
+.decl eager_phase_span(f: node, p: symbol, st: number, en: number)
+.decl eager_planning_shape(a: node)
+.decl eager_prefix(c: node, s: symbol)
+.decl eager_preprocess(d: number, l: number, i: symbol)
+.decl eager_qual(n: node, q: symbol)
+.decl eager_raw(f: node, st: number, en: number, pat: symbol, dirty: number, trans: number)
+.decl eager_raw_string(s: node)
+.decl eager_recv(c: node, r: node)
+.decl eager_recv_self(c: node)
+.decl eager_resolve_exempt(s: symbol)
+.decl eager_resolved_param(f: node)
+.decl eager_result_exempt(s: symbol)
+.decl eager_root(e: node, x: node)
+.decl eager_root_name(e: node, nm: symbol)
+.decl eager_scope_call(c: node)
+.decl eager_scope_cast(c: node)
+.decl eager_scope_name(f: node, nm: symbol)
+.decl eager_scope_recv(c: node, nm: symbol)
+.decl eager_seed_exempt(f: node, p: symbol)
+.decl eager_serverplan(d: number)
+.decl eager_signed(s: symbol, sig: symbol)
+.decl eager_slot(s: symbol)
+.decl eager_slot_arg(c: node, s: symbol)
+.decl eager_slot_call_trans(cn: symbol, s: symbol, t: number)
+.decl eager_slot_ok(d: number, s: symbol)
+.decl eager_slot_trans(s: symbol, t: number)
+.decl eager_source_line(d: number, l: number, t: symbol)
+.decl eager_span(n: node, st: number, en: number)
+.decl eager_sql_expr(f: node, x: node)
+.decl eager_stmt_call(f: node, s: node, c: node)
+.decl eager_str_at(x: node, v: symbol)
+.decl eager_string(s: node, v: symbol)
+.decl eager_string_kind(s: node)
+.decl eager_symbol(f: node, s: symbol)
+.decl eager_test_path(d: number)
+.decl eager_transitive(d: number, l: number, i: symbol)
+.decl eager_transitive_exempt(f: node, i: symbol)
+.decl eager_txn_name(f: node, nm: symbol)
+.decl eager_typed(f: node, nm: symbol, ty: symbol)
+.decl end_line(n: node, l: number)
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl op(n: node, s: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
+.decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
+.decl source(d: number, sp: node)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, op, line, value, source, end_line, node_text
+.output violation
+eager_approved_pattern("*.resolve()").
+eager_approved_pattern("*.resolve_async()").
+eager_approved_pattern("*.result()").
+eager_entry("_scan_transitive_eager_ast").
+eager_entry("_scan_lower_compile_ast").
+eager_entry("_scan_preprocess_ast").
+eager_entry("_scan_external_io_boundary_definition_ast").
+eager_entry("_scan_legacy_boundary_definition_ast").
+eager_lazy_core("l2055_lazy_result.lazy_result.NoneResultError.__init__").
+eager_legacy_callee("_legacy_delegate_stub").
+eager_legacy_callee("_legacy_delegate_stub_async").
+eager_legacy_callee("_resolve_legacy_result_sync").
+eager_legacy_callee("_resolve_legacy_result_async").
+eager_legacy_callee("run_in_legacy_execution_boundary").
+eager_legacy_callee("run_in_legacy_execution_boundary_async").
+eager_legacy_name("legacy_async").
+eager_legacy_name("legacy_module_async").
+eager_legacy_name("legacy_module_sync").
+eager_legacy_name("legacy_sync").
+eager_legacy_wrapper_symbol("l2070_batching.server_ref.deleted_planning_value_helper").
+eager_nonlazy("count").
+eager_nonlazy("count_async").
+eager_nonlazy("delete").
+eager_nonlazy("delete_async").
+eager_nonlazy("delete_by_id").
+eager_nonlazy("delete_by_id_async").
+eager_nonlazy("delete_by_key_many").
+eager_nonlazy("delete_by_key_many_async").
+eager_nonlazy("delete_many").
+eager_nonlazy("delete_many_async").
+eager_nonlazy("delete_many_returning").
+eager_nonlazy("delete_many_returning_async").
+eager_nonlazy("delete_returning").
+eager_nonlazy("delete_returning_async").
+eager_nonlazy("execute").
+eager_nonlazy("execute_async").
+eager_nonlazy("execute_one").
+eager_nonlazy("execute_one_async").
+eager_nonlazy("execute_raw").
+eager_nonlazy("execute_raw_async").
+eager_nonlazy("exists").
+eager_nonlazy("exists_async").
+eager_nonlazy("first").
+eager_nonlazy("first_async").
+eager_nonlazy("insert").
+eager_nonlazy("insert_async").
+eager_nonlazy("insert_many").
+eager_nonlazy("insert_many_async").
+eager_nonlazy("insert_many_raw").
+eager_nonlazy("insert_many_raw_async").
+eager_nonlazy("select_many").
+eager_nonlazy("select_many_async").
+eager_nonlazy("select_one").
+eager_nonlazy("select_one_async").
+eager_nonlazy("update").
+eager_nonlazy("update_async").
+eager_nonlazy("update_by_id").
+eager_nonlazy("update_by_id_async").
+eager_nonlazy("update_by_key").
+eager_nonlazy("update_by_key_async").
+eager_nonlazy("update_by_key_many").
+eager_nonlazy("update_by_key_many_async").
+eager_nonlazy("update_many").
+eager_nonlazy("update_many_async").
+eager_nonlazy("upsert").
+eager_nonlazy("upsert_async").
+eager_nonlazy("upsert_many").
+eager_nonlazy("upsert_many_async").
+eager_nonlazy("upsert_many_raw").
+eager_nonlazy("upsert_many_raw_async").
+eager_peek_helper("_append_revision_selector_filter").
+eager_peek_helper("_effective_diff_to_revision").
+eager_peek_helper("_safe_instance_dict").
+eager_peek_helper("_safe_type_attr").
+eager_peek_helper("deleted_ref_probe_helper").
+eager_peek_helper("get_deleted_state_value").
+eager_peek_helper("get_server_ref_id").
+eager_peek_helper("peek_instance_attr").
+eager_peek_helper("peek_resolved_value").
+eager_peek_helper("preprocess_resolved_get").
+eager_result_exempt("impl.l1570_llm_client.client._run_sync").
+eager_result_exempt("l5000_subscriptions.deferred_dispatch._run_async_callback_sync").
+eager_signed("l6500_evidence.blob_migration.migrate_blob_to_external", "SxVBqPVb9KxkaYdUj/l97y+Rpx7uyR7kQrlNMnCxmlqEV6rWn7k1TawVXskANwmi3z6K8A1oKmVitQVRo0V/DQ==").
+eager_signed("l6500_evidence.blob_migration.migrate_blob_to_external_async", "ZijivhYt9hPMIzRAPBVZdFUirXyY5rVlqQPN62XQ3E+/FaJTlZp8M/HKsboWYvnWeJNlW7IS/Wcpet8+4csxBw==").
+eager_signed("l6500_evidence.blob_migration.migrate_blob_to_internal", "x2BpGG1GHDMP8Nm+VzYXI9uk1t7r4H6dmchXWRsHO43fwxw/ViwXHrldNzfUR+ujYpzXXlXSyiE+sawIOHKYAQ==").
+eager_signed("l6500_evidence.blob_migration.migrate_blob_to_internal_async", "FFyel3rEwEppb6RV378cyla4xTjPIpUeU9hFWWWdnfOOcHqR3kRtrKQEU+mB0HhylaalrNW8BjRalknjOgViDA==").
+eager_signed("l6500_evidence.blob_migration.migrate_blobs_batch", "ReAFoGUDI8BFAeJroSsY/2fcX9njavvwOPDLZdR6ePlF01CJ+UAPcnfLae4PlZCkA8pii/ZPlWz5TVQ1oS3oCA==").
+eager_signed("l6500_evidence.blob_migration.migrate_blobs_batch_async", "9PdwDGHbMp4SvHIODp0Ue/HfA+qGwocDtzqVXUbBIFdIunB/kFpNvI1Fg8y6btjOj7BNFWvRDgZx2iQqHAyyCw==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blob", "8PbZXPairL4eX0ShonEI9QRzz2NDxjJjv71ezKEqMJEDjgDsj0FOqIeX9jlCEdrhmekub3IAIm+0mY3adx7MCg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blob_async", "dXES+mySa6cTtDJRLdXjyEcKcMQ9aHoWUjaDJQDWpyCRQ4sFZWTewv5GoTGPTmXt5MAf27ODB01JHGYiYyddCQ==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blobs_by_key", "OAQRMC57tWGD3TVnK7c4SoNMzWGBuXAVWaAoG9gKBwUxQo3WZIWo2QdW9SEKWAZF8NUmug2aoUayE/oWptigCg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.reencrypt_blobs_by_key_async", "bFwGkxEX8VWMjn9TK3U7gTz6CxLLT3Oen+PCfxzk0bJfvQkxJtgey7fP2G3AFeXuDqcl9kJlwGa+z1XcO/jHDg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.retrieve_blob", "8bedG9GYmwKQurZvg8xkGsvSyqK6rtK2FNtDVsEHw5DIxRH8kjjWGACD198QfvZlPUlOvzNKzoaC3E7/pTOmBg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.retrieve_blob_async", "Sps4LNefn4qNGle93W+WSj2Db/gu9KdlFmVrJ8dGM9MDGY2dQQRYWIJRLfNLgyQO4zJ8LxhXoMGQYTRf/aiGDg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.store_blob", "iaaqVCxgFsPXe7hjci5k9m5wwxajavmOLqpnB8atS/rXZCfMbKH5V4CNTq+pqNv5JetiHsMIxFy+EmRCRQKqAg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.store_blob_async", "0xre2ed+OMC+n+zyS2l/WwF7szoPTUdkLS9n9plkSPFs3POuusXTiwIk/bhJoQDmOfDhVHnfMXlYhsi1P3N8Cw==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.update_blob", "95XWP+nq9n+Wh8a2FyjcotT6aMUq/v/5syUgjh7IZTRNek9pmvgX/V+oPeJP5t5xwD1ikDQKyuzpIVIeKECkDg==").
+eager_signed("l6500_evidence.blob_service.EncryptedBlobService.update_blob_async", "bzrXSkqU9391El5po6H4F57AAplUb5l0whRLYZIEQrViMA84TVzsfyHL+9+q1nOGRpvQoDcJzk/1bOdEfciDAA==").
+eager_signed("l6500_evidence.sas_http.handle_sas_download", "N/erEChqtYJafCH8ZlIn3YHQb69WLbiXkbSj1yyyCndkxJNcHOlsybGyK3r6MK0D94Fn5wrlY1OfhSQxzINGBw==").
+eager_signed("l6500_evidence.sas_http.handle_sas_download_async", "beXjaIVGVQ+YeffcQexHq2m1k5G9qx7Az+TE8LwXZU3YUkCe3LIaXnhfegL1fWPF6S+ag984muFlG3vaOV6SDg==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.generate_sas_url_for_blob", "wh78V3IwKiUjGA+MLGRQ+OtusQzuJxr18qxjSYKv64vKLWod6YTv8JL6Q95bk4X3gaF1fmDxvoSBKagj3+NwAA==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.generate_sas_url_for_blob_async", "kbzUVWiTCLB0ZI/HAHlA64ICBS60eFyh45dYJiL7BKHBAOAxoMgRq6DqEfTEMDgWDNXrEr+jgkR13/p547LhBg==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.generate_token_for_blob", "IIUH3stpPr/HdGlUXMGhht8nSmVE5okrXKrYIecNKEqLZ1CJn3I0nc/treF0/fZ7rgx8Jw8+LJYjxoH5VDRjAg==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.generate_token_for_blob_async", "BMjtTQxGUyK0FTnSrdt3Lr41/HIZGf8rH1OYF0IhJNocU6zQfVTXUyv8hp6VfPuuD/5PZ2Z3Zta5Fyig22EgAg==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.issue_tracked_token_for_blob", "GQSgzK6hQ/rZIhOSroWjZCpH6yQBWmC0dspVZNZWWlyyG6JKEITgHwVz8nfF7Y0aTQVTBAKdywhhJYZdAngRBA==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.issue_tracked_token_for_blob_async", "3W/o1vc9dJsEY56KMth/UfpzDr4f/pq3/ioP9zQKx+TMos9knFH88meh9VU/3ZsRj9vRXJryOayYjTZMq2tGBw==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_access", "X1dLOHxDnX3PwdTArn8hgGes2Kpku2lsLsGOh+lFbk1A1rfqaGB/+c/zdzZiyllnhobyrpC3KIYG3yY5jqraCA==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_access_async", "OA6q+NrjCc2h0vzUC93gkvxs8Edr2z4cMUsisWxxt1Lg2HXcrQ5UV2AAKrgT4dwFSSaaR0r06w+aTMMCaFsvCg==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_and_serve", "GjQ0RwiUr6aLWiBBoxEuDZ+C3HInHoEuxgZKaIewVJ1x4wJ7hcmbTxiXd2j45PDU24K6jtmZKu+pgR/JJZP/CQ==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.resolve_and_serve_async", "ijb8tgNmebcvTQZg1u0j2J2ScNqiTYYZu1ebSBhgSZ59RMAauIbdLLOYOuMtUlqyQRMJpOOpU3zntUy2C2SxBg==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.validate_and_serve", "wYzZYNSb+CsK658aYDbgnZxQUZuFtceuOLRwguGzxC+mWoIHsC7Df1WPhx7qNNKmcIcBQhPVcVK4GEt8KfrgCw==").
+eager_signed("l6500_evidence.sas_service.SasUrlService.validate_and_serve_async", "oAYmZ/jJcMb+/5kFW57Q0EC6vMEFpBub2OXFUnOiE/wgCOkXfG1ypN5uOmS8GESKj386tH5I4HWcFCpIiMRQCQ==").
+eager_signed("l6530_managed_secrets.service._resolve_managed_secret_candidate", "5JjmhYeHUK7c6EFlODoRZitt7jDcBKrDYiF/gpXa7UxbGZccmLLXx77z4MUXudVqC8nrY3O6fidjqfeUQyo/AQ==").
+eager_signed("l6530_managed_secrets.service.create_managed_secret_async", "NiWtDaqhmV+co/9GQP96AkgDAHPJA1dgC0jwUzJBLsiuY/moDaLKMM46sXsJNXDhhVBFv3Y/JaXRd9tT3cxNAw==").
+eager_signed("l6530_managed_secrets.service.delete_managed_secret_async", "ZGPbLZxGELL3JbHbkIDaccknMm1yroIn9LPDh/QErOSwXxwKW+CVsBKoyPMN1s7Kk1UhUJbmfnb5S/6gVg1HCA==").
+eager_signed("l6530_managed_secrets.service.rotate_managed_secret_async", "KW677DkqIRmanQeWsxMP9o6a4oK0EmZQmXanKf+JsE7AwjAm7B6l5STi665WSRHcYqC4ySQAiWu32N74enwmAA==").
+eager_slot("__dict__").
+eager_slot("_deleted_state_slot").
+eager_slot("_ref_id").
+eager_slot("_step_ref_id").
+eager_slot("deleted_state_flag").
+eager_slot("deleted_state_value").
+eager_slot("is_resolved").
+eager_slot("resolved_value").
+option_value("entryPoint", "_scan_source").
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("api/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("l[0-9][0-9][0-9][0-9]_*/**/*.py", p).
@@ -17,4 +290,242 @@ out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
-.output violation
+tape_syntax_error(d) :- syntax_error(d).
+eager_modname(d, m) :- doc(d, p, m), !suffix("/__init__.py", p).
+eager_modname(d, x) :- doc(d, p, m), suffix("/__init__.py", p), x = @concat(m, ".__init__").
+eager_serverplan(d) :- doc(d, p, _), (prefix("impl/common/l2070_server_plan/", p) ; prefix("impl/common/l7300_sql_versioned_transactions/", p) ; prefix("l2050_transaction/", p) ; prefix("l2055_lazy_result/", p) ; prefix("l2070_batching/", p) ; prefix("l5100_fts/", p) ; prefix("l5200_vector_index/", p) ; prefix("l7200_versioned_transactions/", p)).
+eager_test_path(d) :- doc(d, p, _), match("(?:conform/|(?:.*/)?(?:tests|test_[^/]*)/).*", p).
+eager_test_path(d) :- doc(d, p, _), match("(?:.*/)?test_[^/]*", p).
+eager_decl(n, nm) :- node(_, n, "function_definition", _, _), field(n, "name", x), node_text(x, nm).
+eager_decl(n, nm) :- node(_, n, "class_definition", _, _), field(n, "name", x), node_text(x, nm).
+eager_lex(n, p) :- eager_decl(n, _), nearest(n, p, eager_defs).
+eager_has_lex(n) :- eager_lex(n, _).
+eager_qual(n, q) :- eager_decl(n, q), !eager_has_lex(n).
+eager_qual(n, q) :- eager_lex(n, p), eager_qual(p, q0), eager_decl(n, nm), q = @concat(@concat(q0, "."), nm).
+eager_depth(n, 0) :- eager_decl(n, _), !eager_has_lex(n).
+eager_depth(n, k) :- eager_lex(n, p), eager_depth(p, j), k = @add(j, 1).
+eager_func(f, nm) :- node(_, f, "function_definition", _, _), eager_decl(f, nm).
+eager_symbol(f, s) :- eager_func(f, _), eager_qual(f, q), node(d, f, _, _, _), eager_modname(d, m), s = @concat(@concat(m, "."), q).
+eager_async(f) :- eager_func(f, _), op(f, "async").
+eager_body(f, bs, be) :- eager_func(f, _), field(f, "body", b), node(_, b, _, bs, be).
+eager_call_attr(c) :- node(_, c, "call", _, _), field(c, "function", g), node(_, g, "attribute", _, _).
+eager_call_ident(c) :- node(_, c, "call", _, _), field(c, "function", g), node(_, g, "identifier", _, _).
+eager_attr(a, s) :- node(_, a, "attribute", _, _), field(a, "attribute", x), node_text(x, s).
+eager_callee(c, s) :- eager_call_attr(c), field(c, "function", g), eager_attr(g, s).
+eager_callee(c, s) :- node(_, c, "call", _, _), field(c, "function", g), !node(_, g, "attribute", _, _), node_text(g, s).
+eager_full(c, s) :- node(_, c, "call", _, _), field(c, "function", g), node_text(g, s).
+eager_recv(c, r) :- eager_call_attr(c), field(c, "function", g), field(g, "object", r).
+eager_recv_self(c) :- eager_recv(c, r), node(_, r, "identifier", _, _), node_text(r, "self").
+eager_cls_between(n, f) :- nearest(n, f, eager_fdef), nearest(n, k, eager_cdef), inside(k, f, eager_fdef).
+eager_bcall(c, f) :- node(_, c, "call", cs, ce), nearest(c, f, eager_fdef), eager_body(f, bs, be), cs >= bs, ce <= be, !eager_cls_between(c, f), !inside(c, _, eager_lambda_set).
+eager_battr(a, f) :- node(_, a, "attribute", as, ae), nearest(a, f, eager_fdef), eager_body(f, bs, be), as >= bs, ae <= be, !eager_battr_region(a, bs).
+eager_battr_region(a, bs) :- node(_, a, "attribute", _, _), nearest(a, f, eager_fdef), eager_body(f, bs, _), inside(a, l, eager_region_set), node(_, l, _, ls, _), ls > bs.
+eager_empty(c, f) :- eager_bcall(c, f), field(c, "arguments", g), !child(g, _, _).
+eager_nonpos(a) :- node(_, a, "keyword_argument", _, _).
+eager_nonpos(a) :- node(_, a, "list_splat", _, _).
+eager_nonpos(a) :- node(_, a, "dictionary_splat", _, _).
+eager_argc(c, a, i) :- node(_, c, "call", _, _), field(c, "arguments", g), node(_, g, "argument_list", _, _), child(g, a, i), !eager_nonpos(a).
+eager_arg(c, a, p) :- eager_argc(c, a, i), p = count : { eager_arg_before(c, i, _) }.
+eager_arg_before(c, i, j) :- eager_argc(c, _, i), eager_argc(c, _, j), j < i.
+eager_arg(c, g, 0) :- node(_, c, "call", _, _), field(c, "arguments", g), node(_, g, "generator_expression", _, _).
+eager_kw(c, nm, v) :- node(_, c, "call", _, _), field(c, "arguments", g), child(g, k, _), node(_, k, "keyword_argument", _, _), field(k, "name", x), node_text(x, nm), field(k, "value", v).
+eager_getattr_call(c) :- eager_call_ident(c), field(c, "function", g), node_text(g, s), (s = "getattr" ; s = "hasattr").
+eager_getattr_call(c) :- eager_call_attr(c), eager_callee(c, s), (s = "__getattribute__" ; s = "getattr_static").
+eager_string_kind(s) :- node(_, s, "string", _, _).
+eager_string_kind(s) :- node(_, s, "concatenated_string", _, _).
+eager_raw_string(s) :- eager_string_kind(s), node_text(s, t), match("(?is)[ru]*[\"'].*", t).
+eager_string(s, v) :- eager_raw_string(s), value(s, v), inside(s, c, eager_call_set), eager_getattr_call(c).
+eager_string(s, v) :- eager_raw_string(s), value(s, v), child(p, s, _), node(_, p, "subscript", _, _).
+eager_str_at(x, v) :- eager_string(s, v), node(d, s, _, st, _), node(d, x, _, st, _).
+eager_asg(a, t) :- node(_, a, "assignment", _, _), field(a, "left", t).
+eager_asg_fn(a, f) :- eager_asg(a, _), nearest(a, f, eager_fdef).
+eager_asg_module(a) :- eager_asg(a, _), !inside(a, _, eager_fdef).
+eager_asg_name(a, s) :- eager_asg(a, t), node(_, t, "identifier", _, _), node_text(t, s).
+eager_bound(a, t) :- eager_asg(a, t).
+eager_bound(a, n) :- eager_bound(a, m), eager_bound_seq(m), child(m, n, _).
+eager_bound_seq(m) :- node(_, m, "tuple", _, _).
+eager_bound_seq(m) :- node(_, m, "list", _, _).
+eager_bound_seq(m) :- node(_, m, "pattern_list", _, _).
+eager_bound_seq(m) :- node(_, m, "tuple_pattern", _, _).
+eager_bound_seq(m) :- node(_, m, "list_pattern", _, _).
+eager_param_kind(p) :- node(_, p, "identifier", _, _).
+eager_param_kind(p) :- node(_, p, "typed_parameter", _, _).
+eager_param_kind(p) :- node(_, p, "default_parameter", _, _).
+eager_param_kind(p) :- node(_, p, "typed_default_parameter", _, _).
+eager_param0(f, p, i, nm) :- eager_func(f, _), field(f, "parameters", ps), child(ps, p, i), node(_, p, "identifier", _, _), node_text(p, nm).
+eager_param0(f, p, i, nm) :- eager_func(f, _), field(f, "parameters", ps), child(ps, p, i), eager_param_kind(p), !node(_, p, "identifier", _, _), child(p, x, 0), node(_, x, "identifier", _, _), node_text(x, nm).
+eager_param(f, nm, pos, p) :- eager_param0(f, p, i, nm), pos = count : { eager_param_before(f, i, _) }.
+eager_param_before(f, i, j) :- eager_param0(f, _, i, _), eager_param0(f, _, j, _), j < i.
+eager_ann(t, t) :- eager_param(_, _, _, p), field(p, "type", t).
+eager_ann(t, t) :- eager_asg(a, _), field(a, "type", t).
+eager_ann(t, y) :- eager_ann(t, x), child(x, y, _).
+eager_ann_name(t, s) :- eager_ann(t, x), node(_, x, "identifier", _, _), node_text(x, s).
+eager_typed(f, nm, ty) :- eager_param(f, nm, _, p), field(p, "type", t), eager_ann_name(t, ty).
+eager_dwalk(f, x) :- eager_decl(f, _), child(w, f, _), node(_, w, "decorated_definition", _, _), child(w, dd, _), node(_, dd, "decorator", _, _), child(dd, x, _).
+eager_dwalk(f, g) :- eager_dwalk(f, c), node(_, c, "call", _, _), field(c, "function", g).
+eager_decorator(f, nm) :- eager_dwalk(f, x), node(_, x, "identifier", _, _), node_text(x, nm).
+eager_decorator(f, nm) :- eager_dwalk(f, x), eager_attr(x, nm).
+eager_external_io(f) :- eager_func(f, _), eager_decorator(f, "external_io_boundary_eager_async").
+eager_approved_configured(1) :- option_item("externalIoBoundaries", _, _).
+eager_approved(s) :- option_item("externalIoBoundaries", _, s).
+eager_approved(s) :- eager_signed(s, sig), !eager_approved_configured(1), m = @concat("{\"allowlist\":[", @concat(@json_str(s), "],\"linter\":\"lint_eager_resolve:external_io_boundary\",\"version\":1}")), @ed25519_ok("7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6", m, sig) = 1.
+eager_edge(f, t) :- eager_bcall(c, f), eager_call_attr(c), eager_recv_self(c), eager_callee(c, nm), eager_func(t, nm), node(d, c, _, _, _), node(d, t, _, _, _), eager_lex(t, p), eager_lex(f, p).
+eager_edge(f, t) :- eager_bcall(c, f), eager_call_ident(c), eager_callee(c, nm), eager_func(t, nm), node(d, c, _, _, _), node(d, t, _, _, _), !eager_has_lex(t).
+eager_phase(f, nm) :- eager_func(f, nm), (nm = "preprocess" ; nm = "lower" ; nm = "compile").
+eager_phase(t, ph) :- eager_phase(f, ph), eager_edge(f, t).
+eager_legacy_alias(d, s) :- node(d, _, "module", _, _), eager_legacy_name(s).
+eager_legacy_alias(d, s) :- node(d, n, "aliased_import", _, _), child(p, n, _), node(_, p, "import_from_statement", _, _), field(p, "module_name", m), node_text(m, "l2050_transaction.legacy_wrappers"), field(n, "name", x), node_text(x, nm), eager_legacy_name(nm), field(n, "alias", y), node_text(y, s).
+eager_legacy_alias(d, s) :- eager_asg_module(a), node(d, a, _, _, _), field(a, "right", r), node(_, r, "identifier", _, _), node_text(r, old), eager_legacy_alias(d, old), eager_bound(a, b), node(_, b, "identifier", _, _), node_text(b, s).
+eager_legacy_fn(f) :- eager_func(f, _), eager_decorator(f, s), node(d, f, _, _, _), eager_legacy_alias(d, s).
+eager_legacy_fn(f) :- eager_bcall(c, f), eager_full(c, s), eager_legacy_callee(s).
+eager_indirect(c, t) :- eager_bcall(c, f), eager_call_ident(c), eager_callee(c, "getattr"), eager_arg(c, a0, 0), node(_, a0, "identifier", _, _), node_text(a0, "self"), eager_arg(c, a1, 1), eager_str_at(a1, v), eager_func(t, v), node(d, c, _, _, _), node(d, t, _, _, _), eager_lex(t, p), eager_lex(f, p).
+eager_indirect(c, t) :- eager_bcall(c, f), eager_callee(c, "__getattribute__"), eager_recv_self(c), eager_arg(c, a0, 0), eager_str_at(a0, v), eager_func(t, v), node(d, c, _, _, _), node(d, t, _, _, _), eager_lex(t, p), eager_lex(f, p).
+eager_indirect(n, t) :- node(d, n, "subscript", _, _), child(n, v0, 0), eager_call_ident(v0), eager_callee(v0, "globals"), child(n, s1, 1), eager_str_at(s1, v), eager_func(t, v), node(d, t, _, _, _), !eager_has_lex(t).
+eager_legacy_call(f, t, nm) :- eager_bcall(c, f), eager_edge(f, t), eager_func(t, nm), eager_callee(c, nm), eager_legacy_fn(t), t != f.
+eager_legacy_call(f, t, nm) :- eager_bcall(c, f), field(c, "function", e), eager_indirect(e, t), eager_func(t, nm), eager_legacy_fn(t), t != f.
+eager_legacy_call(f, t, nm) :- eager_bcall(c, f), eager_call_ident(c), eager_callee(c, x), eager_asg_fn(a, f), eager_asg_name(a, x), field(a, "right", r), eager_indirect(r, t), eager_func(t, nm), eager_legacy_fn(t), t != f.
+eager_scope_name(f, nm) :- eager_param(f, nm, _, _), suffix("scope", nm).
+eager_scope_name(f, nm) :- node(_, n, "as_pattern", _, _), child(n, v, 0), node(_, v, "call", _, _), eager_callee(v, s), (s = "open_read_plan" ; s = "open_write_plan"), child(n, al, _), node(_, al, "as_pattern_target", _, _), child(al, x, _), node(_, x, "identifier", _, _), node_text(x, nm), nearest(n, f, eager_fdef).
+eager_scope_recv(c, nm) :- eager_recv(c, r), node(_, r, "call", _, _), eager_callee(r, "cast"), eager_arg(r, a, 1), node(_, a, "identifier", _, _), node_text(a, nm).
+eager_scope_recv(c, nm) :- eager_recv(c, r), node(_, r, "identifier", _, _), node_text(r, nm), !eager_scope_cast(c).
+eager_scope_cast(c) :- eager_recv(c, r), node(_, r, "call", _, _), eager_callee(r, "cast"), eager_arg(r, a, 1), node(_, a, "identifier", _, _).
+eager_scope_call(c) :- eager_empty(c, f), eager_call_attr(c), eager_callee(c, "execute"), eager_scope_recv(c, nm), eager_scope_name(f, nm).
+eager_lazy_name(f, nm, -1) :- eager_typed(f, nm, "LazyResult").
+eager_lazy_name(f, nm, st) :- eager_asg_fn(a, f), eager_asg_name(a, nm), field(a, "right", r), node(_, r, "call", _, _), eager_callee(r, s), suffix("_lazy", s), node(_, a, _, st, _).
+eager_lazy_name(f, nm, st) :- eager_asg_fn(a, f), eager_asg_name(a, nm), field(a, "type", t), eager_ann_name(t, "LazyResult"), node(_, a, _, st, _).
+eager_lazy_name(f, nm, st) :- eager_asg_fn(a, f), eager_asg_name(a, nm), field(a, "right", r), node(_, r, "identifier", _, _), node_text(r, old), eager_lazy_name(f, old, since), node(_, a, _, st, _), since < st.
+eager_lazy_expr(f, x) :- node(_, x, "identifier", _, _), nearest(x, f, eager_fdef), node_text(x, nm), eager_lazy_name(f, nm, _).
+eager_lazy_expr(f, c) :- eager_bcall(c, f), eager_callee(c, s), suffix("_lazy", s).
+eager_lazy_expr(f, c) :- eager_bcall(c, f), eager_callee(c, "cast"), eager_arg(c, a, 1), eager_lazy_expr(f, a).
+eager_sql_expr(f, c) :- eager_bcall(c, f), eager_callee(c, s), (s = "_resolve_lazy_in_external_boundary" ; s = "_resolve_transaction_value_async").
+eager_sql_expr(f, c) :- eager_bcall(c, f), eager_callee(c, s), (prefix("_find_", s) ; prefix("_get_", s) ; prefix("_list_", s)), !suffix("_lazy", s).
+eager_sql_expr(f, n) :- eager_sql_expr(f, old), eager_asg_fn(a, f), field(a, "right", old), eager_asg_name(a, nm), node(d, a, _, ast, _), node(d, n, "identifier", nst, _), node_text(n, nm), nst > ast, nearest(n, f, eager_fdef).
+eager_sql_expr(f, n) :- eager_sql_expr(f, old), child(n, old, _), node(_, n, "attribute", _, _).
+eager_sql_expr(f, n) :- eager_sql_expr(f, old), child(n, old, _), node(_, n, "await", _, _).
+eager_docstmt(s) :- node(_, s, "expression_statement", _, _), child(b, s, 0), child(s, v, _), node(_, v, "string", _, _), node(_, b, "block", _, _).
+eager_docstmt(s) :- node(_, s, "expression_statement", _, _), child(b, s, 0), child(s, v, _), node(_, v, "concatenated_string", _, _), node(_, b, "block", _, _).
+eager_meaning(f, s, st) :- eager_func(f, _), field(f, "body", b), child(b, s, _), !eager_docstmt(s), node(_, s, _, st, _).
+eager_nmeaning(f, k) :- eager_func(f, _), k = count : { eager_meaning(f, _, _) }.
+eager_stmt_call(f, s, c) :- eager_meaning(f, s, _), !eager_async(f), child(s, c, 0), node(_, c, "call", _, _).
+eager_stmt_call(f, s, c) :- eager_meaning(f, s, _), eager_async(f), child(s, v, 0), node(_, v, "await", _, _), child(v, c, _), node(_, c, "call", _, _).
+eager_lazy_callee_call(z) :- node(_, z, "call", _, _), eager_callee(z, s), suffix("_lazy", s), eager_full(z, t), !contains("(", t), !contains(")", t).
+eager_canonical(f) :- eager_nmeaning(f, 1), eager_meaning(f, s, _), node(_, s, "return_statement", _, _), eager_stmt_call(f, s, c), eager_call_ident(c), eager_callee(c, cn), eager_async(f), cn = "_resolve_legacy_result_async", eager_canonical_build(c, lm), node(_, lm, "lambda", _, _), field(lm, "body", z), eager_lazy_callee_call(z).
+eager_canonical(f) :- eager_nmeaning(f, 1), eager_meaning(f, s, _), node(_, s, "return_statement", _, _), eager_stmt_call(f, s, c), eager_call_ident(c), eager_callee(c, cn), !eager_async(f), cn = "_resolve_legacy_result_sync", eager_canonical_build(c, lm), node(_, lm, "lambda", _, _), field(lm, "body", z), eager_lazy_callee_call(z).
+eager_canonical(f) :- eager_nmeaning(f, 1), eager_meaning(f, s, _), node(_, s, "expression_statement", _, _), eager_stmt_call(f, s, c), eager_call_ident(c), eager_callee(c, cn), eager_async(f), cn = "_resolve_legacy_result_async", eager_canonical_build(c, lm), node(_, lm, "lambda", _, _), field(lm, "body", z), eager_lazy_callee_call(z).
+eager_canonical(f) :- eager_nmeaning(f, 1), eager_meaning(f, s, _), node(_, s, "expression_statement", _, _), eager_stmt_call(f, s, c), eager_call_ident(c), eager_callee(c, cn), !eager_async(f), cn = "_resolve_legacy_result_sync", eager_canonical_build(c, lm), node(_, lm, "lambda", _, _), field(lm, "body", z), eager_lazy_callee_call(z).
+eager_canonical_build(c, v) :- eager_arg(c, v, 2).
+eager_canonical_build(c, v) :- eager_kw(c, "build_lazy", v).
+eager_canonical(f) :- eager_nmeaning(f, 2), eager_meaning(f, s, sst), child(s, a, _), eager_asg_name(a, tt), !field(a, "type", _), field(a, "right", z), eager_lazy_callee_call(z), eager_meaning(f, r, rst), rst > sst, node(_, r, "return_statement", _, _), eager_stmt_call(f, r, c), eager_call_ident(c), eager_callee(c, cn), eager_async(f), cn = "run_in_legacy_execution_boundary_async", eager_arg(c, term, 0), eager_attr(term, ta), field(term, "object", o), node(_, o, "identifier", _, _), node_text(o, tt), ta = "resolve_async", eager_nargs(c, 1), !eager_kw(c, _, _).
+eager_canonical(f) :- eager_nmeaning(f, 2), eager_meaning(f, s, sst), child(s, a, _), eager_asg_name(a, tt), !field(a, "type", _), field(a, "right", z), eager_lazy_callee_call(z), eager_meaning(f, r, rst), rst > sst, node(_, r, "return_statement", _, _), eager_stmt_call(f, r, c), eager_call_ident(c), eager_callee(c, cn), eager_async(f), cn = "run_in_legacy_execution_boundary_async", eager_arg(c, term, 0), eager_attr(term, ta), field(term, "object", o), node(_, o, "identifier", _, _), node_text(o, tt), !eager_async(f), ta = "resolve", eager_nargs(c, 1), !eager_kw(c, _, _).
+eager_canonical(f) :- eager_nmeaning(f, 2), eager_meaning(f, s, sst), child(s, a, _), eager_asg_name(a, tt), !field(a, "type", _), field(a, "right", z), eager_lazy_callee_call(z), eager_meaning(f, r, rst), rst > sst, node(_, r, "return_statement", _, _), eager_stmt_call(f, r, c), eager_call_ident(c), eager_callee(c, cn), !eager_async(f), cn = "run_in_legacy_execution_boundary", eager_arg(c, term, 0), eager_attr(term, ta), field(term, "object", o), node(_, o, "identifier", _, _), node_text(o, tt), eager_async(f), ta = "resolve_async", eager_nargs(c, 1), !eager_kw(c, _, _).
+eager_canonical(f) :- eager_nmeaning(f, 2), eager_meaning(f, s, sst), child(s, a, _), eager_asg_name(a, tt), !field(a, "type", _), field(a, "right", z), eager_lazy_callee_call(z), eager_meaning(f, r, rst), rst > sst, node(_, r, "return_statement", _, _), eager_stmt_call(f, r, c), eager_call_ident(c), eager_callee(c, cn), !eager_async(f), cn = "run_in_legacy_execution_boundary", eager_arg(c, term, 0), eager_attr(term, ta), field(term, "object", o), node(_, o, "identifier", _, _), node_text(o, tt), ta = "resolve", eager_nargs(c, 1), !eager_kw(c, _, _).
+eager_nargs(c, k) :- node(_, c, "call", _, _), k = count : { eager_arg(c, _, _) }.
+eager_span(n, st, en) :- node(_, n, _, st, en).
+eager_prefix(c, "*.") :- eager_call_attr(c).
+eager_prefix(c, "") :- node(_, c, "call", _, _), !eager_call_attr(c).
+eager_raw(f, st, en, p, 1, 1) :- eager_empty(c, f), eager_call_attr(c), eager_callee(c, s), (s = "resolve" ; s = "resolve_async" ; s = "result"), eager_span(c, st, en), p = @concat(@concat("*.", s), "()").
+eager_raw(f, st, en, p, 1, 1) :- eager_bcall(c, f), eager_call_ident(c), eager_callee(c, s), (s = "_resolve_legacy_result_async" ; s = "_resolve_legacy_result_sync" ; s = "resolve_lazy_param" ; s = "resolve_lazy_param_str" ; s = "resolve_server_value"), eager_span(c, st, en), p = @concat(s, "()").
+eager_raw(f, st, en, p, 1, 1) :- eager_bcall(c, f), eager_callee(c, s), eager_peek_helper(s), eager_prefix(c, x), eager_span(c, st, en), p = @concat(@concat(x, s), "()").
+eager_raw(f, st, en, p, 1, 0) :- eager_bcall(c, f), eager_call_ident(c), eager_callee(c, "deleted_ref_value_helper"), eager_span(c, st, en), p = "deleted_ref_value_helper()".
+eager_raw(f, st, en, p, 1, 0) :- eager_bcall(c, f), node(d, c, _, _, _), eager_serverplan(d), eager_callee(c, s), prefix("peek_", s), eager_prefix(c, x), eager_span(c, st, en), p = @concat(@concat(x, s), "()").
+eager_slot_trans(s, 0) :- eager_slot(s), (s = "_step_ref_id" ; s = "__dict__").
+eager_slot_trans(s, 1) :- eager_slot(s), s != "_step_ref_id", s != "__dict__".
+eager_slot_ok(d, s) :- doc(d, _, _), eager_slot(s), s != "__dict__".
+eager_slot_ok(d, "__dict__") :- eager_serverplan(d).
+eager_planning_shape(a) :- eager_battr(a, f), eager_attr(a, "deleted_state_value"), field(a, "object", o), node_text(o, ot), eager_asg_fn(x, f), eager_asg(x, t), node_text(t, ot), field(x, "type", ty), eager_ann_name(ty, "PlanningServerValueShape").
+eager_raw(f, st, en, p, 1, tr) :- eager_battr(a, f), eager_attr(a, s), node(d, a, _, _, _), eager_slot_ok(d, s), eager_slot_trans(s, tr), !eager_planning_shape(a), eager_span(a, st, en), p = @concat("*.", s).
+eager_slot_arg(c, s) :- eager_call_ident(c), eager_callee(c, cn), (cn = "getattr" ; cn = "hasattr"), eager_arg(c, a, 1), eager_str_at(a, s), eager_slot(s).
+eager_slot_arg(c, s) :- eager_call_attr(c), eager_callee(c, "getattr_static"), node(d, c, _, _, _), eager_serverplan(d), eager_arg(c, a, 1), eager_str_at(a, s), eager_slot(s).
+eager_slot_arg(c, s) :- eager_call_attr(c), eager_callee(c, "__getattribute__"), eager_arg(c, a, k), k = max j : { eager_arg(c, _, j) }, eager_str_at(a, s), eager_slot(s).
+eager_raw(f, st, en, p, 1, tr) :- eager_bcall(c, f), eager_slot_arg(c, s), node(d, c, _, _, _), eager_slot_ok(d, s), eager_callee(c, cn), eager_slot_call_trans(cn, s, tr), eager_prefix(c, x), eager_span(c, st, en), p = @concat(@concat(@concat(@concat(x, cn), "("), s), ")").
+eager_slot_call_trans(cn, s, 0) :- eager_slot_arg(c, s), eager_callee(c, cn), s = "_step_ref_id".
+eager_slot_call_trans(cn, s, 0) :- eager_slot_arg(c, s), eager_callee(c, cn), s = "__dict__".
+eager_slot_call_trans(cn, s, 0) :- eager_slot_arg(c, s), eager_callee(c, cn), cn = "getattr_static".
+eager_slot_call_trans(cn, s, 1) :- eager_slot_arg(c, s), eager_callee(c, cn), s != "_step_ref_id", s != "__dict__", cn != "getattr_static".
+eager_raw(f, st, en, p, 1, 1) :- eager_bcall(c, f), eager_kw(c, _, v), eager_attr(v, s), (s = "resolve" ; s = "resolve_async"), eager_span(c, st, en), p = @concat(@concat("*.", s), "<bound>").
+eager_raw(f, st, en, p, 1, 1) :- eager_bcall(c, f), eager_arg(c, v, _), eager_attr(v, s), (s = "resolve" ; s = "resolve_async"), eager_span(c, st, en), p = @concat(@concat("*.", s), "<bound>").
+eager_raw(f, st, en, p, 1, 1) :- eager_asg_fn(a, f), field(a, "right", v), eager_attr(v, s), (s = "resolve" ; s = "resolve_async"), eager_span(a, st, en), p = @concat(@concat("*.", s), "<bound>").
+eager_raw(f, 0, 0, p, 0, 1) :- eager_legacy_call(f, _, nm), p = @concat(@concat("legacy-boundary-call:", nm), "()").
+eager_raw(f, st, en, "plan-scope:*.execute()", 0, 1) :- eager_bcall(c, f), eager_scope_call(c), eager_span(c, st, en).
+eager_root(e, e) :- eager_recv(_, e).
+eager_root(e, y) :- eager_root(e, x), node(_, x, "attribute", _, _), field(x, "object", y).
+eager_root(e, y) :- eager_root(e, x), node(_, x, "subscript", _, _), field(x, "value", y).
+eager_root(e, y) :- eager_root(e, x), node(_, x, "call", _, _), field(x, "function", y).
+eager_root(e, y) :- eager_root(e, x), node(_, x, "parenthesized_expression", _, _), child(x, y, 0).
+eager_root(e, y) :- eager_root(e, x), node(_, x, "type", _, _), child(x, y, 0).
+eager_root_name(e, nm) :- eager_root(e, x), node(_, x, "identifier", _, _), node_text(x, nm).
+eager_txn_name(f, nm) :- eager_param(f, nm, _, _), nm = "txn".
+eager_txn_name(f, nm) :- eager_param(f, nm, _, _), nm = "transaction".
+eager_txn_name(f, nm) :- eager_param(f, nm, _, _), nm = "read_txn".
+eager_txn_name(f, nm) :- eager_param(f, nm, _, _), nm = "write_txn".
+eager_txn_name(f, nm) :- eager_param(f, nm, _, _), suffix("_txn", nm).
+eager_txn_name(f, nm) :- eager_typed(f, nm, "Transaction").
+eager_raw(f, st, en, p, 0, 1) :- eager_bcall(c, f), eager_call_attr(c), eager_callee(c, s), eager_nonlazy(s), eager_recv(c, r), eager_root_name(r, nm), eager_txn_name(f, nm), !eager_scope_call(c), eager_span(c, st, en), p = @concat(@concat("non-lazy-call:*.", s), "()").
+eager_raw(f, st, en, p, 0, 1) :- eager_empty(c, f), eager_func(f, fnm), contains("callback", fnm), eager_call_attr(c), eager_callee(c, s), (s = "get" ; s = "get_async"), eager_recv(c, r), node(_, r, "identifier", _, _), node_text(r, rt), (rt = "lazy" ; rt = "lazy_row" ; rt = "lazy_value" ; rt = "result" ; rt = "row" ; rt = "value"), eager_span(c, st, en), p = @concat(@concat("callback-terminal:*.", s), "()").
+eager_raw(f, st, en, p, 0, 1) :- eager_bcall(c, f), eager_call_ident(c), eager_callee(c, s), (s = "bool" ; s = "len" ; s = "list" ; s = "set" ; s = "sorted" ; s = "tuple"), eager_arg(c, a, 0), eager_lazy_expr(f, a), eager_span(c, st, en), p = @concat(@concat("lazy-python:", s), "(lazy)").
+eager_raw(f, st, en, "lazy-python:lazy[...]", 0, 1) :- node(_, n, "subscript", st, en), child(n, x, 0), eager_lazy_expr(f, x).
+eager_raw(f, st, en, "lazy-python:for lazy", 0, 1) :- node(_, n, "for_statement", st, en), field(n, "right", x), eager_lazy_expr(f, x).
+eager_raw(f, st, en, "lazy-python:for lazy", 0, 1) :- node(_, n, "for_in_clause", st, en), field(n, "right", x), eager_lazy_expr(f, x).
+eager_raw(f, st, en, "lazy-python:if lazy", 0, 1) :- node(_, n, "if_statement", st, en), field(n, "condition", x), node(_, x, "identifier", _, _), eager_lazy_expr(f, x).
+eager_raw(f, st, en, "lazy-python:if lazy", 0, 1) :- node(_, n, "conditional_expression", st, en), field(n, "condition", x), node(_, x, "identifier", _, _), eager_lazy_expr(f, x).
+eager_raw(f, st, en, "sql-derived-python:permission-check", 0, 1) :- eager_bcall(c, f), eager_callee(c, s), (s = "_has_permission" ; s = "_require_permission"), field(c, "arguments", g), node(_, g, _, gs, ge), eager_sql_expr(f, x), node(_, x, _, xs, xe), xs >= gs, xe <= ge, eager_span(c, st, en).
+eager_raw(f, st, en, "permission-sql:direct-permission-expression", 0, 1) :- eager_bcall(c, f), eager_callee(c, "IN"), eager_arg(c, a0, 0), node(_, a0, "call", _, _), eager_callee(a0, "field"), eager_arg(a0, a1, 0), eager_attr(a1, s), (s = "required_metadata_read_permission" ; s = "required_read_permission" ; s = "required_resolve_permission" ; s = "required_write_permission"), node(d, c, _, _, _), doc(d, p, _), !prefix("l4000_permissions/", p), !suffix("permission_scheme.py", p), eager_span(c, st, en).
+eager_legacy_wrapper_symbol(s) :- eager_symbol(_, s), prefix("l2050_transaction.legacy_wrappers.", s).
+eager_resolve_exempt(s) :- eager_symbol(_, s), match("(?:impl\\.common\\.l2550_storage_backend\\.local_backend\\.|impl\\.l1570_llm_client\\.client\\.LLMClient\\._resolve_debug_dir|impl\\.sqlite\\.connection\\.SyncSqliteConnection\\.database_identity|l1000_schema\\.path_validation\\.|l1100_exceptions\\.safe_file_ops\\.|l8000_admin\\.tools\\.docs_search\\.|l8000_admin\\.tools\\.validation\\.|l8100_ops_analytics\\.connection\\.|l9600_graphs\\.dynamic_vector\\.resolve_dynamic_embedding_handler).*", s).
+eager_approved_pattern(p) :- eager_raw(_, _, _, p, _, _), prefix("non-lazy-call:", p).
+eager_seed_exempt(f, p) :- eager_raw(f, _, _, p, _, 1), (p = "_resolve_legacy_result_sync()" ; p = "_resolve_legacy_result_async()"), eager_canonical(f).
+eager_seed_exempt(f, p) :- eager_raw(f, _, _, p, _, 1), eager_symbol(f, s), eager_legacy_wrapper_symbol(s).
+eager_seed_exempt(f, "*.resolve()") :- eager_symbol(f, s), eager_resolve_exempt(s).
+eager_seed_exempt(f, "*.result()") :- eager_symbol(f, s), eager_result_exempt(s).
+eager_seed_exempt(f, p) :- eager_raw(f, _, _, p, _, 1), eager_approved_pattern(p), eager_symbol(f, s), eager_approved(s), eager_external_io(f).
+eager_dirty(f, i) :- eager_raw(f, _, _, p, _, 1), eager_func(f, _), !eager_seed_exempt(f, p), i = @concat("transitive:", p).
+eager_dirty(g, i) :- eager_dirty(f, i), eager_edge(g, f), eager_symbol(g, s), !eager_legacy_wrapper_symbol(s).
+eager_transitive_exempt(f, i) :- eager_dirty(f, i), node(d, f, _, _, _), doc(d, p, _), (p = "l2055_lazy_result/lazy_result.py" ; p = "l2055_lazy_result/lazy_seq.py"), eager_symbol(f, s), eager_lazy_core(s).
+eager_transitive_exempt(f, i) :- eager_dirty(f, i), node(d, f, _, _, _), doc(d, "l2070_batching/server_ref.py", _), (i = "transitive:*._deleted_state_slot" ; i = "transitive:*._ref_id").
+eager_transitive_exempt(f, "transitive:*._ref_id") :- eager_dirty(f, "transitive:*._ref_id"), node(d, f, _, _, _), doc(d, "l2070_batching/step.py", _), eager_symbol(f, s), prefix("l2070_batching.step.StepRef.", s).
+eager_lazy_core(s) :- eager_symbol(_, s), match("(?:l2055_lazy_result\\.lazy_result\\.LazyFieldRef\\.|l2055_lazy_result\\.lazy_result\\.LazyResult\\.|l2055_lazy_result\\.lazy_seq\\.LazySeq\\.).*", s).
+eager_transitive(d, l, i) :- eager_dirty(f, i), !eager_transitive_exempt(f, i), node(d, f, _, _, _), !eager_test_path(d), line(f, l).
+eager_phase_pat(f, p) :- eager_raw(f, _, _, p, 1, _), eager_phase(f, _), !prefix("_resolve_legacy_result_", p).
+eager_phase_span(f, p, st, en) :- eager_phase_pat(f, p), st = min s : { eager_raw(f, s, _, p, 1, _) }, en = min e : { eager_raw(f, _, e, p, 1, _) }.
+eager_phase_site(d, l, i) :- eager_phase_span(f, p, st, en), eager_phase(f, ph), eager_func(f, _), node(d, f, _, _, _), node(d, n, "call", st, en), line(n, l), i = @concat(@concat(ph, ":"), p).
+eager_phase_site(d, l, i) :- eager_phase_span(f, p, st, en), eager_phase(f, ph), eager_func(f, _), node(d, f, _, _, _), node(d, n, "attribute", st, en), line(n, l), i = @concat(@concat(ph, ":"), p).
+eager_external(d, l, i) :- eager_external_io(f), eager_func(f, nm), node(d, f, _, _, _), line(f, l), i = @concat(@concat("external-io-boundary:", nm), "()").
+eager_resolved_param(f) :- eager_param(f, "resolved", pos, p), pos >= 1, !node(_, p, "typed_default_parameter", _, _).
+eager_preprocess(d, l, i) :- eager_bcall(c, f), eager_func(f, "preprocess"), eager_call_ident(c), eager_callee(c, s), (s = "resolve_lazy_param" ; s = "resolve_lazy_param_str" ; s = "resolve_server_value"), node(d, c, _, _, _), line(c, l), i = @concat(@concat("preprocess:", s), "()").
+eager_preprocess(d, l, i) :- eager_bcall(c, f), eager_func(f, "preprocess"), eager_call_attr(c), eager_resolved_param(f), eager_callee(c, s), (s = "get" ; s = "peek" ; s = "resolve_server_ref"), eager_recv(c, r), node(_, r, "identifier", _, _), node_text(r, "resolved"), node(d, c, _, _, _), line(c, l), i = @concat(@concat("preprocess:resolved.", s), "()").
+eager_preprocess(d, l, "preprocess:*.resolve(resolved)") :- eager_bcall(c, f), eager_func(f, "preprocess"), eager_call_attr(c), eager_resolved_param(f), eager_callee(c, "resolve"), eager_arg(c, a, _), node(_, a, "identifier", _, _), node_text(a, "resolved"), node(d, c, _, _, _), line(c, l).
+eager_source_line(d, l, t) :- source(d, sp), match_group("(?m)^(?<LINE>[^\\n]*(?:\\.resolve\\(\\)|\\.resolve_async\\(\\)|\\.result\\(\\)|\\bint\\(\\s*lazy|\\bfloat\\(\\s*lazy|\\bbool\\(\\s*lazy)[^\\n]*)$", sp, _, "LINE", g), line(g, l), text(g, t).
+eager_line_issue(d, l, ".resolve()") :- eager_source_line(d, l, s), match("(?s:.*)(?:\\.resolve\\(\\))(?s:.*)", s).
+eager_line_issue(d, l, ".resolve_async()") :- eager_source_line(d, l, s), match("(?s:.*)(?:\\.resolve_async\\(\\))(?s:.*)", s).
+eager_line_issue(d, l, ".result()") :- eager_source_line(d, l, s), match("(?s:.*)(?:\\.result\\(\\))(?s:.*)", s).
+eager_line_issue(d, l, "int(lazy...)") :- eager_source_line(d, l, s), match("(?s:.*)(?:\\bint\\(\\s*lazy)(?s:.*)", s).
+eager_line_issue(d, l, "float(lazy...)") :- eager_source_line(d, l, s), match("(?s:.*)(?:\\bfloat\\(\\s*lazy)(?s:.*)", s).
+eager_line_issue(d, l, "bool(lazy...)") :- eager_source_line(d, l, s), match("(?s:.*)(?:\\bbool\\(\\s*lazy)(?s:.*)", s).
+eager_comment_line(d, l) :- eager_line_issue(d, l, _), eager_source_line(d, l, s), match("\\s*#(?s:.*)", s).
+eager_mlstr(d, a, b) :- node(d, s, "string", _, _), node_text(s, t), contains("\n", t), !match("(?s)[rRuUbB]*[fF].*", t), line(s, a), end_line(s, b).
+eager_mlstr(d, a, b) :- node(d, s, "concatenated_string", _, _), node_text(s, t), contains("\n", t), !match("(?s)[rRuUbB]*[fF].*", t), line(s, a), end_line(s, b).
+eager_in_mlstr(d, l) :- eager_line_issue(d, l, _), eager_mlstr(d, a, b), a <= l, l <= b.
+eager_direct_site(d, l, i) :- eager_line_issue(d, l, i), !eager_comment_line(d, l), !eager_test_path(d), !eager_in_mlstr(d, l).
+eager_cover(d, l, f, k, n) :- eager_direct_site(d, l, _), eager_func(f, _), node(d, f, _, _, _), line(f, a), end_line(f, b), a <= l, l <= b, eager_depth(f, k), node_text(f, t), n = @strlen(t).
+eager_cover_depth(d, l, k) :- eager_cover(d, l, _, _, _), k = max j : { eager_cover(d, l, _, j, _) }.
+eager_cover_len(d, l, n) :- eager_cover_depth(d, l, k), n = min m : { eager_cover(d, l, _, k, m) }.
+eager_line_symbol(d, l, s) :- eager_cover_len(d, l, n), eager_cover_depth(d, l, k), eager_cover(d, l, f, k, n), eager_symbol(f, s).
+eager_line_symbol(d, l, s) :- eager_direct_site(d, l, _), !eager_cover(d, l, _, _, _), eager_modname(d, m), s = @concat(m, "::<module>").
+eager_direct_exempt(d, l, i) :- eager_direct_site(d, l, i), doc(d, p, _), (p = "l2055_lazy_result/lazy_result.py" ; p = "l2055_lazy_result/lazy_seq.py"), eager_line_symbol(d, l, s), eager_lazy_core(s).
+eager_direct_exempt(d, l, ".resolve()") :- eager_direct_site(d, l, ".resolve()"), doc(d, "l2055_lazy_result/lazy_result.py", _), eager_line_symbol(d, l, "l2055_lazy_result.lazy_result.LazyResult.result").
+eager_direct_exempt(d, l, ".resolve()") :- eager_direct_site(d, l, ".resolve()"), eager_line_symbol(d, l, s), eager_resolve_exempt(s).
+eager_direct_exempt(d, l, ".result()") :- eager_direct_site(d, l, ".result()"), eager_line_symbol(d, l, s), eager_result_exempt(s).
+eager_direct_exempt(d, l, i) :- eager_direct_site(d, l, i), (i = ".resolve()" ; i = ".resolve_async()" ; i = ".result()"), eager_line_symbol(d, l, s), eager_approved(s).
+eager_direct_exempt(d, l, ".resolve()") :- eager_direct_site(d, l, ".resolve()"), eager_source_line(d, l, s), contains("ResolveVersionedForeignKeyTargetIntent(", s).
+eager_direct(d, l, i) :- eager_direct_site(d, l, i), !eager_direct_exempt(d, l, i).
+eager_entry_case(1) :- option_value("entryPoint", e), eager_entry(e).
+eager_finding(d, l, i) :- eager_transitive(d, l, i), !eager_entry_case(1).
+eager_finding(d, l, i) :- eager_transitive(d, l, i), option_value("entryPoint", "_scan_transitive_eager_ast").
+eager_finding(d, l, i) :- eager_phase_site(d, l, i), !eager_entry_case(1).
+eager_finding(d, l, i) :- eager_phase_site(d, l, i), option_value("entryPoint", "_scan_lower_compile_ast"), (prefix("lower:", i) ; prefix("compile:", i)).
+eager_finding(d, l, i) :- eager_external(d, l, i), !eager_entry_case(1).
+eager_finding(d, l, i) :- eager_external(d, l, i), option_value("entryPoint", "_scan_external_io_boundary_definition_ast").
+eager_finding(d, l, i) :- eager_preprocess(d, l, i), !eager_entry_case(1).
+eager_finding(d, l, i) :- eager_preprocess(d, l, i), option_value("entryPoint", "_scan_preprocess_ast").
+eager_finding(d, l, i) :- eager_direct(d, l, i), !eager_entry_case(1).
+violation("data-layer-eager-resolve", "eager-resolution", i, p, l) :- eager_finding(d, l, i), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _).

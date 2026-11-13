@@ -22,13 +22,13 @@ use std::collections::BTreeSet;
 
 /// A cache `out` by its key `key`.
 #[derive(Clone, Debug, PartialEq)]
-pub(in crate::code_rule_dsl) struct Cache {
-    pub(in crate::code_rule_dsl) out: String,
-    pub(in crate::code_rule_dsl) key: String,
+pub struct Cache {
+    pub out: String,
+    pub key: String,
 }
 
 /// The program's caches, linted (decision 0103); an error names what the lint refuses.
-pub(in crate::code_rule_dsl) fn caches(prog: &Program) -> Result<Vec<Cache>, Error> {
+pub fn caches(prog: &Program) -> Result<Vec<Cache>, Error> {
     let bad = |msg: String| Error::Syntax(format!(".cache: {msg} (decision 0103: a cache is a key rule with a version tag and an output rule that reads it)"));
     let mut out = Vec::new();
     let mut named = BTreeSet::new();
@@ -62,6 +62,4 @@ pub(in crate::code_rule_dsl) fn caches(prog: &Program) -> Result<Vec<Cache>, Err
     Ok(out)
 }
 
-#[cfg(test)]
-#[path = "caches_tests.rs"]
-mod tests;
+// cratify: `tests` is rerail-logic's (it mounts it)

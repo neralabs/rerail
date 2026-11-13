@@ -4,6 +4,10 @@
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
+// The self dev-dependency owns the production allocator. Keep it linked even
+// when split-crate tests no longer reference one of its exported types.
+#[cfg(test)]
+extern crate rerail_engine as _;
 /// `build.rs` compiles this file too; the library builds it only for tests, so `cargo test`
 /// checks the identities the build script computes.
 #[cfg(test)]
@@ -12,44 +16,53 @@ mod build_identity;
 /// so `cargo test` checks how the build validates the language registry.
 #[cfg(test)]
 mod build_languages;
+// Each test's time limit, enforced inside the test binary (`RERAIL_TEST_TIMEOUT`).
+#[cfg(test)]
+mod test_watchdog;
+#[cfg(test)]
+mod executors_guard_tests;
 mod code_rule_dsl;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;
+#[cfg(test)]
+pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 pub use rerail_store::content_store;
-pub mod git_ignore;
+pub use rerail_w::git_ignore;
 pub use rerail_store::git_workspace;
 mod main_instance;
 mod model;
+pub use rerail_w::panic_boundary;
 pub mod process;
-/// The most threads the process uses (`RERAIL_THREADS`).
-pub mod threads;
+pub use rerail_logic::threads;
 /// The browser's long-lived engine: `rerail_command` and its buffers (wasm/README.md).
 #[cfg(target_family = "wasm")]
 pub mod reactor;
 mod rules;
 
-use model::{ModelFingerprint, load_model};
+use model::{ModelFingerprint, load_model, verify_model};
 use napi::{Error, Result, Status, bindgen_prelude::Float32Array};
 use napi_derive::napi;
 use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSample, RuleSet};
 use std::path::Path;
 
-// jemalloc does not build for MSVC targets; Windows keeps the system allocator.
-#[cfg(not(any(windows, target_family = "wasm")))]
+// jemalloc does not build for MSVC targets; Windows keeps the system allocator. A test build links the engine
+// again as its own dev-dependency (`test-hooks`), whose copy declares the allocator (kept linked by the
+// `extern crate rerail_engine as _` above; `rust_allocations_reach_the_profile_allocator` checks it).
+#[cfg(not(any(test, windows, target_family = "wasm", feature = "system-allocator")))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-#[cfg(not(any(windows, target_family = "wasm")))]
+#[cfg(not(any(test, windows, target_family = "wasm")))]
 union JemallocConf {
     byte: &'static u8,
     character: &'static std::ffi::c_char,
 }
 
 // Freed pages stay for a second so an apply reuses them instead of mapping new ones (immediate
-// decay cost a tenth of the data-layer benchmark's CPU in mmap/munmap); every apply purges them
+// decay cost a tenth of a storage-heavy benchmark's CPU in mmap/munmap); every apply purges them
 // when it ends and again once its response is freed (`purge_allocator_pages`), so nothing dirty
 // is kept at rest.
-#[cfg(not(any(windows, target_family = "wasm")))]
+#[cfg(not(any(test, windows, target_family = "wasm")))]
 #[allow(non_upper_case_globals)]
 #[unsafe(export_name = "_rjem_malloc_conf")]
 pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
@@ -59,12 +72,13 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
     .character
 });
 
-/// Tree-sitter allocates through jemalloc, as Rust does: a parse allocates many small subtrees,
-/// which the system allocator served at 10% of the parse. Installed when the addon loads, before
-/// any Tree-sitter call; like Tree-sitter's own allocator, these abort when allocation fails.
 /// The engine's SQL functions, for every connection the store opens (its crate, `rerail-store`): the text tests'
 /// and the prefilter's tapes. Set as the library loads, before any store is opened.
 fn install_store_functions() {
+    code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), env!("RERAIL_GRAMMAR_BUILD_ID"));
+    code_rule_dsl::install_devices();
+    code_rule_dsl::install_languages();
+    content_store::set_language_tags(code_rule_dsl::stored_tape_tag, code_rule_dsl::path_tape_tag);
     content_store::set_connection_functions(|db| {
         code_rule_dsl::text::install(db)?;
         code_rule_dsl::prefilter::tapes::install(db)
@@ -75,7 +89,9 @@ fn install_store_functions() {
         sql_in_wave: code_rule_dsl::sql_hazards::sql_in_wave,
         wait_in_wave: code_rule_dsl::sql_hazards::wait_in_wave,
         behind_the_run: code_rule_dsl::sql_hazards::behind_the_run,
+        statement: code_rule_dsl::sql_hazards::strict_statement,
     });
+    code_rule_dsl::sql_hazards::strict_on_every_connection();
 }
 
 /// Windows has no jemalloc hook (below): the store's functions alone, as the library loads.
@@ -85,13 +101,17 @@ fn install_store_functions_on_load() {
     install_store_functions();
 }
 
+/// Tree-sitter allocates through jemalloc, as Rust does: a parse allocates many small subtrees,
+/// which the system allocator served at 10% of the parse. Installed when the addon loads, before
+/// any Tree-sitter call; like Tree-sitter's own allocator, these abort when allocation fails.
 #[cfg(not(any(windows, target_family = "wasm")))]
 #[napi_derive::module_init]
 fn install_tree_sitter_allocator() {
-    // And, as the library loads (before `main` in the engine's binary, as Node loads the addon), before any pool
-    // is made: the one pool, of the most threads the process uses (`RERAIL_THREADS`), the process's main thread
-    // one of them when it is the one loading.
-    threads::configure(threads::is_main_thread());
+    // Library callers and the test runner can park their main thread. Their pool needs
+    // actual workers, including with RERAIL_THREADS=1. The headless CLI registers its
+    // own main thread explicitly, before its first job.
+    #[cfg(not(feature = "headless"))]
+    threads::configure(false);
     install_store_functions();
     use std::ffi::c_void;
     unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
@@ -121,6 +141,7 @@ fn install_tree_sitter_allocator() {
     }
     // SAFETY: the four functions are jemalloc's, return no null for a nonzero size, and are
     // installed while the addon loads, before any Tree-sitter object exists.
+    #[cfg(not(feature = "system-allocator"))]
     unsafe {
         tree_sitter::set_allocator(Some(tree_sitter::Allocator {
             malloc,
@@ -129,6 +150,17 @@ fn install_tree_sitter_allocator() {
             free,
         }));
     }
+}
+
+/// The one pool, of the most threads the process uses (`RERAIL_THREADS`), the loading thread one of them when it is
+/// the process's main thread: made as Node registers the addon's exports, before any of them runs, and not in the
+/// library's constructor. A constructor runs inside `dlopen`, which holds glibc's loader lock; rayon's
+/// `use_current_thread` waits for every pool thread to start, and each one's first thread-local with a destructor
+/// registers it through `__cxa_thread_atexit_impl`, which takes that lock: the load never returned.
+#[cfg(not(target_family = "wasm"))]
+#[napi(module_exports)]
+pub fn configure_thread_pool(_exports: napi::bindgen_prelude::Object) {
+    threads::configure(threads::is_main_thread());
 }
 
 #[napi(object)]
@@ -159,7 +191,7 @@ pub struct ModelCheck {
 /// as a session's attach does, without loading the model.
 #[napi(catch_unwind)]
 pub fn verify_model_files(model_path: String) -> ModelCheck {
-    match model::verify_model(Path::new(&model_path)) {
+    match verify_model(Path::new(&model_path)) {
         Ok(()) => ModelCheck {
             problem: None,
             file: None,
@@ -172,7 +204,7 @@ pub fn verify_model_files(model_path: String) -> ModelCheck {
 }
 
 /// Check a pattern against the regex dialect and size limit structural rule conditions compile with.
-#[napi]
+#[napi(catch_unwind)]
 pub fn validate_regex(pattern: String) -> Result<()> {
     rules::compile_regex(&pattern)
         .map(|_| ())
@@ -249,7 +281,7 @@ pub fn native_memory_profile() -> String {
 
 /// SQLite's allocator set when the library loads, before anything can initialize SQLite
 /// (`content_store::sqlite_on_jemalloc`).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), not(feature = "system-allocator")))]
 #[used]
 #[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
 #[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
@@ -260,29 +292,6 @@ static SQLITE_ALLOCATOR: extern "C" fn() = {
     install
 };
 
-/// Return allocator pages after eviction closes idle SQLite connections.
-pub(crate) fn release_allocator_memory() {
-    // Background threads, where available, decay pages between applies too.
-    #[cfg(not(any(windows, target_family = "wasm")))]
-    let _ = tikv_jemalloc_ctl::background_thread::write(true);
-    purge_allocator_pages();
-}
-
-/// Return every arena's freed pages to the system.
-pub(crate) fn purge_allocator_pages() {
-    // SAFETY: arena.4096 is jemalloc's all-arenas selector; purge reads and writes no value, so
-    // jemalloc requires null value pointers (`raw::write` passes a non-null one and is refused).
-    #[cfg(not(any(windows, target_family = "wasm")))]
-    unsafe {
-        tikv_jemalloc_sys::mallctl(
-            c"arena.4096.purge".as_ptr(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            0,
-        );
-    }
-}
 
 #[napi]
 pub struct ConversationEngine {
@@ -293,7 +302,7 @@ pub struct ConversationEngine {
 
 #[napi]
 impl ConversationEngine {
-    #[napi(factory)]
+    #[napi(factory, catch_unwind)]
     pub fn load(model_path: String, max_input_tokens: u32) -> Result<Self> {
         if max_input_tokens == 0 {
             return Err(Error::new(
@@ -318,7 +327,7 @@ impl ConversationEngine {
     pub fn fingerprint(&self) -> ModelFingerprint {
         self.fingerprint.clone()
     }
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn embed_texts(&self, texts: Vec<String>) -> Result<Vec<Float32Array>> {
         if texts.iter().any(|text| text.trim().is_empty()) {
             return Err(Error::new(
@@ -357,7 +366,7 @@ impl ConversationEngine {
             })
             .collect()
     }
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn token_counts(&self, texts: Vec<String>) -> Result<Vec<u32>> {
         texts
             .iter()
@@ -378,7 +387,7 @@ impl ConversationEngine {
             .collect()
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn fit_texts(
         &self,
         texts: Vec<String>,
@@ -448,31 +457,44 @@ impl ConversationEngine {
             .collect()
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn replace_rules(&mut self, rules: Vec<NativeRuleInput>) -> Result<CompileSummary> {
         self.rules.replace(&self.encoder, rules)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn upsert_rules(&mut self, rules: Vec<NativeRuleInput>) -> Result<CompileSummary> {
         self.rules.upsert(&self.encoder, rules)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn remove_rules(&mut self, ids: Vec<String>) -> u32 {
         self.rules.remove(ids)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn match_text(&self, sample: NativeSample) -> Result<Vec<NativeMatch>> {
         self.rules.match_sample(&self.encoder, sample)
     }
 }
 
+pub(crate) use code_rule_dsl::prof::lower_hex;
+
 #[cfg(all(test, not(windows)))]
 mod tests {
     use tikv_jemalloc_ctl::{epoch, raw};
     use tikv_jemalloc_sys::{MALLOCX_ARENA, MALLOCX_TCACHE_NONE, dallocx, mallocx};
+
+    #[cfg(not(any(target_family = "wasm", feature = "system-allocator")))]
+    #[test]
+    fn rust_allocations_reach_the_profile_allocator() {
+        let allocated = || unsafe { raw::read::<u64>(b"thread.allocated\0") }.unwrap();
+        let before = allocated();
+        let bytes = std::hint::black_box(vec![0u8; 1 << 20]);
+        let after = allocated();
+        assert!(after - before >= bytes.len() as u64,
+            "Rust allocations must use production jemalloc and reach its profile counters: {} bytes recorded for {} allocated", after - before, bytes.len());
+    }
 
     #[test]
     fn purge_returns_freed_pages() {
@@ -483,19 +505,26 @@ mod tests {
             let key = format!("stats.arenas.{arena}.pdirty\0");
             unsafe { raw::read::<usize>(key.as_bytes()) }.unwrap()
         };
+        // Its pages kept dirty until purged: no decay by time (the default purges after 10 s, which a loaded run's
+        // pause can reach).
+        unsafe { raw::write::<isize>(format!("arena.{arena}.dirty_decay_ms\0").as_bytes(), -1) }.unwrap();
         let flags = MALLOCX_ARENA(arena as usize) | MALLOCX_TCACHE_NONE;
         let size = 4 << 20;
-        unsafe {
-            let block = mallocx(size, flags).cast::<u8>();
-            assert!(!block.is_null());
-            std::ptr::write_bytes(block, 1, size);
-            dallocx(block.cast(), flags);
-        }
-        assert!(
-            dirty() > 0,
-            "the freed block's pages are dirty until purged"
-        );
-        super::purge_allocator_pages();
-        assert_eq!(dirty(), 0);
+        // Other tests' runs purge every arena when they end (`purge_allocator_pages`): one of them can purge this
+        // arena between the free and its count. A few tries: one free seen dirty, then purged, is what is asked.
+        let seen = (0..20).any(|_| {
+            unsafe {
+                let block = mallocx(size, flags).cast::<u8>();
+                assert!(!block.is_null());
+                std::ptr::write_bytes(block, 1, size);
+                dallocx(block.cast(), flags);
+            }
+            if dirty() == 0 {
+                return false;
+            }
+            super::purge_allocator_pages();
+            dirty() == 0
+        });
+        assert!(seen, "a freed block's pages are dirty until purged, and none after");
     }
 }

@@ -1,6 +1,6 @@
 use super::parser::{self, Prop};
 use super::*;
-use crate::code_rule_dsl::oracle;
+use crate::code_rule_dsl::fixtures::oracle;
 use crate::code_rule_dsl::test_support::php_lossy;
 use serde_json::{Value as Json, json};
 

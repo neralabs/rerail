@@ -29,3 +29,15 @@ pub use rerail_compiler::Error;
 /// The process's one device (`rerail_accel::gpu::shared`, decision 0100 §2): the executor's lanes and the engine's
 /// own programs use the same.
 pub static METAL_DEVICE: std::sync::LazyLock<Option<metal::Device>> = std::sync::LazyLock::new(|| rerail_accel::gpu::shared::get().map(|s| s.device.clone()));
+
+/// The process's one device (`METAL_DEVICE`), or `UnsupportedBackend` without one.
+pub fn device() -> Result<metal::Device, Error> {
+    METAL_DEVICE.clone().ok_or(Error::UnsupportedBackend)
+}
+
+/// The process's one command queue (`rerail_accel::gpu::shared`, decision 0100 §2). Every command buffer the engine
+/// makes is made on it, so the engine's programs, its relational work and the executor's lanes are submitted in one
+/// order; no module makes a queue of its own (`executors_are_shared`, the engine's source guard).
+pub fn queue() -> Result<metal::CommandQueue, Error> {
+    rerail_accel::gpu::shared::get().map(|s| s.queue.clone()).ok_or(Error::UnsupportedBackend)
+}

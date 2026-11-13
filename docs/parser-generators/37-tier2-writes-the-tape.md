@@ -27,6 +27,8 @@ The tape's columns, written at their place as the node is made or closed:
 - `size` and `tail` at the node's close;
 - `off` at its push, from its block's `base` (each 16 nodes' least start);
 - `code` at a commit point: the code ids, numbered by first use.
+  A code is a node's kind and field and the supertypes it is in (`NODE_SUPER`):
+  a bit each in its key, so the classes are part of the code, as the format folds them.
 
 The parent goes. The tape has no parent column, so nothing keeps one:
 the wraps, drops and pending extras that remapped parents no longer do.
@@ -65,8 +67,8 @@ At `ACCEPT` the columns are moved into place after the code column,
 and the code table and header are written (the user's choice: the size column's place
 depends on the node count). On the CPU this is a generated function.
 
-Open: the header's digest (SHA-256 of the source). The CPU takes it
-from the CPU's SHA instructions, in the harness. On Metal it must be a kernel's.
+The header holds no digest (format 12 on): the engine keeps the source's
+SHA-256 beside the image, so nothing past the parse reads the source again.
 
 ## Order, each step tested
 
@@ -77,12 +79,17 @@ from the CPU's SHA instructions, in the harness. On Metal it must be a kernel's.
 3. Rust ahead of time (`rust_stream`), the same.
    Done: the JIT's bytes over the corpus and the in-place cases (1,366 inputs).
 4. Metal (`tier2_on`). Tier 2 there is the JIT's code over the device's tier 1:
-   its bytes are the JIT's. A kernel of its own, and the digest, are open.
+   its bytes are the JIT's. A kernel of its own is open.
 5. `NodeRow`, `Columns` and `engine_columns` go; `rr_parser::tape` gives bytes.
    Done. The language sets its tape tag on the lowered program (`Structure::tag`);
    the compiler has no default.
 
 Every step: the corpus's tapes are the lean parser's, byte for byte.
+
+JSON's Bitlex parser (the engine's stand-in for tree-sitter-json) is the same code:
+its tier 2 writes JSON's image, supertypes in its codes, and the engine reads it as stored.
+On the repository's 2,227 JSON files it is tree-sitter-json's, byte for byte.
+Ahead of time, a program with supertypes is refused for now (`.rr` has none).
 
 ## Cost
 

@@ -4,7 +4,7 @@ fn bind(e: &mut CodeRuleSqlExecutor, name: &str, columns: &[&str], values: Value
     e.bind_relation(json!({"name":name,"columns":columns,"rows":values}).to_string())
         .unwrap();
 }
-fn compare(e: &CodeRuleSqlExecutor) {
+fn compare(e: &mut CodeRuleSqlExecutor) {
     let (_d, mut oracle) = executor();
     oracle.cold_oracle = true;
     for (name, columns) in [
@@ -22,7 +22,7 @@ fn compare(e: &CodeRuleSqlExecutor) {
     oracle.run(PROGRAM.into(), "python".into(), None).unwrap();
     for output in ["a", "b", "other"] {
         let query = format!("SELECT * FROM {output} ORDER BY c0,c1");
-        assert_eq!(rows(e, &query), rows(&oracle, &query));
+        assert_eq!(rows(e, &query), rows(&mut oracle, &query));
     }
 }
 #[test]
@@ -41,8 +41,9 @@ fn different_rules_and_lookup_mappings_share_one_bag_and_keep_separate_values() 
         json!([[0, 1, 2], [1, 2, 1], [2, 3, 3]]),
     );
     bind(&mut e, "watch", &["id", "g"], json!([[0, 1]]));
-    e.run(PROGRAM.into(), "python".into(), None).unwrap();
-    compare(&e);
+    let initial:Value=serde_json::from_str(&e.run(PROGRAM.into(), "python".into(), None).unwrap()).unwrap();
+    assert!(initial["preparation"]["summary_transition_reuses"].as_u64().unwrap()>0,"{initial}");
+    compare(&mut e);
     let explain: Value = serde_json::from_str(&e.explain().unwrap()).unwrap();
     let pools = &explain["executions"][0]["scalar_storage"][0];
     assert_eq!(
@@ -58,10 +59,10 @@ fn different_rules_and_lookup_mappings_share_one_bag_and_keep_separate_values() 
             ["group"]
             .clone()
     };
-    assert_eq!(group("a"), group("b"));
+    assert_ne!(group("a"), group("b"), "Independent gates keep their own cursor roots");
     assert_ne!(group("a"), group("other"));
     assert_eq!(
-        rows(&e, "SELECT * FROM b WHERE c0=2"),
+        rows(&mut e, "SELECT * FROM b WHERE c0=2"),
         json!([[2, 3, 0, 0]])
     );
     for patch in [
@@ -72,11 +73,11 @@ fn different_rules_and_lookup_mappings_share_one_bag_and_keep_separate_values() 
         json!([{"name":"event","delete":[[2,1,3,4],[4,1,12,-4]]}]),
     ] {
         e.apply_changes(patch.to_string(), None).unwrap();
-        compare(&e);
+        compare(&mut e);
     }
     // A later consumer fails after the shared bag and earlier output have changed.
     e.connection().execute_batch("CREATE TEMP TRIGGER stop_b BEFORE INSERT ON b BEGIN SELECT RAISE(ABORT,'stop shared consumer'); END").unwrap();
-    let before = rows(&e, "SELECT * FROM event ORDER BY id");
+    let before = rows(&mut e, "SELECT * FROM event ORDER BY id");
     let patch = json!([{"name":"event","insert":[[5,1,6,2]]}]);
     assert!(
         e.apply_changes(patch.to_string(), None)
@@ -84,10 +85,10 @@ fn different_rules_and_lookup_mappings_share_one_bag_and_keep_separate_values() 
             .reason
             .contains("stop shared consumer")
     );
-    assert_eq!(rows(&e, "SELECT * FROM event ORDER BY id"), before);
+    assert_eq!(rows(&mut e, "SELECT * FROM event ORDER BY id"), before);
     e.connection().execute_batch("DROP TRIGGER stop_b").unwrap();
     e.apply_changes(patch.to_string(), None).unwrap();
-    compare(&e);
+    compare(&mut e);
 }
 
 #[test]
@@ -148,13 +149,13 @@ fn recursive_projection_proofs_remove_duplicate_stores_and_keep_computed_results
             &mut oracle,
             "edge",
             &["a", "b", "w"],
-            rows(&e, "SELECT * FROM edge"),
+            rows(&mut e, "SELECT * FROM edge"),
         );
-        bind(&mut oracle, "root", &["n"], rows(&e, "SELECT * FROM root"));
+        bind(&mut oracle, "root", &["n"], rows(&mut e, "SELECT * FROM root"));
         oracle.run(program.into(), "python".into(), None).unwrap();
         assert_eq!(
-            rows(&e, "SELECT * FROM distance ORDER BY c0"),
-            rows(&oracle, "SELECT * FROM distance ORDER BY c0")
+            rows(&mut e, "SELECT * FROM distance ORDER BY c0"),
+            rows(&mut oracle, "SELECT * FROM distance ORDER BY c0")
         );
     }
 }
@@ -188,18 +189,18 @@ fn walk_lowering_preserves_pools_shared_with_consumers_initialized_after_cold_ex
             &mut oracle,
             "event",
             &["g", "v"],
-            rows(&e, "SELECT * FROM event"),
+            rows(&mut e, "SELECT * FROM event"),
         );
         bind(
             &mut oracle,
             "owner",
             &["g"],
-            rows(&e, "SELECT * FROM owner"),
+            rows(&mut e, "SELECT * FROM owner"),
         );
         oracle.run(program.into(), "python".into(), None).unwrap();
         for output in ["a", "b", "walked"] {
             let query = format!("SELECT * FROM {output} ORDER BY c0");
-            assert_eq!(rows(&e, &query), rows(&oracle, &query));
+            assert_eq!(rows(&mut e, &query), rows(&mut oracle, &query));
         }
     }
 }
@@ -217,9 +218,9 @@ fn dependent_consumers_share_bag_storage_with_independent_dependency_indexes() {
     for patch in [json!([{"name":"event","insert":[[1,9]]}]),json!([{"name":"event","delete":[[1,3],[2,7]],"insert":[[3,11]]}])] {
         e.apply_changes(patch.to_string(),None).unwrap();
         let (_d,mut cold)=executor(); cold.cold_oracle=true;
-        bind(&mut cold,"event",&["g","v"],rows(&e,"SELECT * FROM event"));
-        bind(&mut cold,"owner",&["g"],rows(&e,"SELECT * FROM owner"));
+        bind(&mut cold,"event",&["g","v"],rows(&mut e,"SELECT * FROM event"));
+        bind(&mut cold,"owner",&["g"],rows(&mut e,"SELECT * FROM owner"));
         cold.run(p.into(),"python".into(),None).unwrap();
-        assert_eq!(rows(&e,"SELECT * FROM result ORDER BY c0"),rows(&cold,"SELECT * FROM result ORDER BY c0"));
+        assert_eq!(rows(&mut e,"SELECT * FROM result ORDER BY c0"),rows(&mut cold,"SELECT * FROM result ORDER BY c0"));
     }
 }

@@ -1,7 +1,6 @@
 use super::*;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use ast_grep_core::AstGrep;
-use ast_grep_core::matcher::Pattern;
 use ast_grep_core::tree_sitter::StrDoc;
 
 #[test]
@@ -10,7 +9,7 @@ fn tape_v8_persists_abstract_tree_sitter_supertypes() {
     let (_, tape, image, grammar) = fixture(source, GrammarDialect::Python);
     let bytes = image.to_bytes().unwrap();
     assert_eq!(&bytes[..8], b"TMPTAP9N");
-    assert_eq!(TAPE_FORMAT_VERSION, 11);
+    assert_eq!(TAPE_FORMAT_VERSION, 15);
 
     let memberships = tape.transducer_supertypes().collect::<Vec<_>>();
     assert!(!memberships.is_empty());
@@ -56,8 +55,9 @@ fn tape_v8_persists_abstract_tree_sitter_supertypes() {
     assert!(TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), &broken, &|| false).is_err());
     // A code table whose stated length disagrees with its codes.
     let mut corrupt = bytes.clone();
-    let stated = u64::from_le_bytes(corrupt[72..80].try_into().unwrap());
-    corrupt[72..80].copy_from_slice(&(stated + 2).to_le_bytes());
+    let slot = header::CODE_BYTES..header::CODE_BYTES + 8;
+    let stated = u64::from_le_bytes(corrupt[slot.clone()].try_into().unwrap());
+    corrupt[slot].copy_from_slice(&(stated + 2).to_le_bytes());
     assert!(TapeImage::from_bytes(&corrupt, &grammar).is_err());
 }
 
@@ -119,6 +119,25 @@ fn scala_contextual_aliases_preserve_native_node_identity() {
     }
 }
 
+/// The nodes of tree-sitter's tree a tape holds, in preorder: the tokens the grammar implies left
+/// out (`stored_children_for_test`).
+fn stored<'r>(native: &'r AstGrep<StrDoc<GrammarDialect>>) -> Vec<ast_grep_core::Node<'r, StrDoc<GrammarDialect>>> {
+    let kept = kept(native);
+    native.root().dfs().filter(|node| kept.contains(&node.get_inner_node().id())).collect()
+}
+
+/// The ids of the tree-sitter nodes a tape holds (`stored`).
+fn kept(native: &AstGrep<StrDoc<GrammarDialect>>) -> std::collections::HashSet<usize> {
+    let lang = *native.root().get_doc().get_lang();
+    let mut kept = std::collections::HashSet::new();
+    let mut stack = vec![native.root().get_doc().tree.root_node()];
+    while let Some(node) = stack.pop() {
+        kept.insert(node.id());
+        stack.extend(stored_children_for_test(lang, node).into_iter().map(|(child, _)| child));
+    }
+    kept
+}
+
 fn fixture(
     source: &str,
     lang: GrammarDialect,
@@ -154,7 +173,7 @@ fn known_field_edges_match_native_first_child_without_larger_records() {
         let (native, tape, _, grammar) = fixture(source, lang);
         let native = AstGrep::doc(native);
         let restored = AstGrep::doc(tape);
-        for (left, right) in native.root().dfs().zip(restored.root().dfs()) {
+        for (left, right) in stored(&native).into_iter().zip(restored.root().dfs()) {
             for field in 0..=grammar.kinds.field_count() as u16 {
                 let expected = left
                     .parent()
@@ -173,8 +192,10 @@ fn known_field_edges_match_native_first_child_without_larger_records() {
 
 type MatchResult = (Range<usize>, Vec<(String, Vec<Range<usize>>)>);
 
-fn matches<D: Doc>(doc: D, pattern: &str, lang: GrammarDialect) -> Vec<MatchResult> {
-    let matcher = Pattern::try_new(pattern, lang).unwrap();
+/// `pattern`'s matches over `doc`: a tape's pattern over a tape, the unfiltered one over tree-sitter's
+/// tree (`test_support::pattern_for`).
+fn matches<D: Doc + 'static>(doc: D, pattern: &str, lang: GrammarDialect) -> Vec<MatchResult> {
+    let matcher = crate::code_rule_dsl::test_support::pattern_for::<D>(pattern, lang);
     let root = AstGrep::doc(doc);
     root.root()
         .find_all(&matcher)
@@ -231,14 +252,15 @@ fn persisted_image_round_trips_without_parsing() {
         .collect::<String>();
     // The bytes number kinds by the grammar's symbol table: a grammar that adds a token (Patch 4's
     // `out`, Patch 13's `_arrow_body_end`, Patch 14's `yield` name, Patch 21's
-    // `_jsx_closing_tag_lt`, Patch 24's `_no_line_terminator_here`,
-    // `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; a tape format (7: one
-    // document per tape; 9: v9np's columns, decision 0025; 10: memberships in the codes; 11: columns at 16 bytes,
-    // decision 0032) changes
-    // the bytes.
+    // `_jsx_closing_tag_lt`, Patch 24's `_no_line_terminator_here`, Patch 28's
+    // `_member_name_here`, `grammars/tree-sitter-typescript/PATCHES.md`) renumbers them; a tape
+    // format (7: one document per tape; 9: v9np's columns, decision 0025; 10: memberships in the codes;
+    // 11: columns at 16 bytes, decision 0032; 12: named-only, no source digest, RER-131; 13: the
+    // version alone; 14: the tokens the grammar implies never written, RER-131; 15: delimiters left out where
+    // implied, other tokens only where always implied, RER-131) changes the bytes.
     assert_eq!(
         digest,
-        "bc05feccadd8b7779a4c39a2e056f2cd821fdadf580cbf4e1ffcd4d2e60d526c"
+        "df11d157b5916832e7ccd615205d8c0ff9ed1418c11a1716f3dab476a51d257e"
     );
 }
 
@@ -407,18 +429,20 @@ fn persisted_image_rejects_wrong_grammar_and_noncanonical_bytes() {
     trailing.push(0);
     assert!(TapeImage::from_bytes(&trailing, &grammar).is_err());
 
-    let mut header = bytes.clone();
-    header[9] = 1;
-    assert!(TapeImage::from_bytes(&header, &grammar).is_err());
+    let mut widths = bytes.clone();
+    widths[header::WIDTHS] = 1;
+    assert!(TapeImage::from_bytes(&widths, &grammar).is_err());
 
     let mut noncanonical = image.clone();
     noncanonical.codes[0].flags = 0x40;
     assert!(TapeImage::from_bytes(&noncanonical.to_bytes().unwrap(), &grammar).is_err());
 
+    // v12 stores no source digest (the store pairs a tape with its source), so a source of
+    // another length is what restore can tell apart.
     let decoded = TapeImage::from_bytes(&bytes, &grammar).unwrap();
     assert!(
         TapeDoc::restore(
-            Arc::new("x = 2 # extra\n".to_owned()),
+            Arc::new("x = 22 # extra\n".to_owned()),
             grammar,
             &decoded,
             &|| false,
@@ -433,15 +457,14 @@ fn persisted_image_rejects_wrong_grammar_and_noncanonical_bytes() {
 fn persisted_image_rejects_oversized_alias_counts_without_allocating() {
     let (_native, _tape, image, grammar) = fixture("x = 1\n", GrammarDialect::Python);
     let bytes = image.to_bytes().unwrap();
-    // Header count slots (v9np): codes at 64, code bytes at 72, aliases at 80, alias bytes at 88.
     for (offset, count) in [
-        (80, u64::MAX >> 1),
-        (80, 1 << 20),
-        (80, 1 << 16 | 1),
-        (64, u64::MAX >> 1),
-        (64, 1 << 20),
-        (72, u64::MAX >> 1),
-        (88, u64::MAX >> 1),
+        (header::ALIASES, u64::MAX >> 1),
+        (header::ALIASES, 1 << 20),
+        (header::ALIASES, 1 << 16 | 1),
+        (header::CODES, u64::MAX >> 1),
+        (header::CODES, 1 << 20),
+        (header::CODE_BYTES, u64::MAX >> 1),
+        (header::ALIAS_BYTES, u64::MAX >> 1),
     ] {
         let mut corrupt = bytes.clone();
         corrupt[offset..offset + 8].copy_from_slice(&count.to_le_bytes());
@@ -495,7 +518,7 @@ fn valid_native_root_ranges_survive_taping() {
             let (native, tape, _, _) = fixture(source, lang);
             let left = AstGrep::doc(native);
             let right = AstGrep::doc(tape);
-            let native_nodes = left.root().dfs().collect::<Vec<_>>();
+            let native_nodes = stored(&left);
             let tape_nodes = right.root().dfs().collect::<Vec<_>>();
             assert_eq!(native_nodes.len(), tape_nodes.len(), "{lang:?} {source:?}");
             for (a, b) in native_nodes.iter().zip(tape_nodes.iter()) {
@@ -573,7 +596,7 @@ fn positions_count_only_line_feeds_in_every_dialect() {
         // compares those against the Forte tree and the view.
         if lang != GrammarDialect::Blade {
             let native = AstGrep::doc(StrDoc::new(source, lang));
-            let native_nodes = native.root().dfs().collect::<Vec<_>>();
+            let native_nodes = stored(&native);
             let tape_nodes = restored.root().dfs().collect::<Vec<_>>();
             assert_eq!(native_nodes.len(), tape_nodes.len(), "{lang:?}");
             for (a, b) in native_nodes.iter().zip(&tape_nodes) {
@@ -604,35 +627,42 @@ fn direct_field_ids_and_navigation_match_native() {
         let (native, tape, _, grammar) = fixture(source, lang);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape);
-        let native_nodes = left.root().dfs().collect::<Vec<_>>();
+        // Tree-sitter's navigation over the nodes the tape holds.
+        let ids = kept(&left);
+        let held = |node: &ast_grep_core::Node<'_, StrDoc<GrammarDialect>>| ids.contains(&node.get_inner_node().id());
+        let native_nodes = stored(&left);
         let tape_nodes = right.root().dfs().collect::<Vec<_>>();
         assert_eq!(native_nodes.len(), tape_nodes.len());
         for (a, b) in native_nodes.iter().zip(tape_nodes.iter()) {
             assert_eq!(
-                a.next_all().map(|node| node.range()).collect::<Vec<_>>(),
+                a.next_all().filter(held).map(|node| node.range()).collect::<Vec<_>>(),
                 b.next_all().map(|node| node.range()).collect::<Vec<_>>(),
                 "{lang:?} next_all {:?}",
                 a.range()
             );
             assert_eq!(
-                a.prev_all().map(|node| node.range()).collect::<Vec<_>>(),
+                a.prev_all().filter(held).map(|node| node.range()).collect::<Vec<_>>(),
                 b.prev_all().map(|node| node.range()).collect::<Vec<_>>(),
                 "{lang:?} prev_all {:?}",
                 a.range()
             );
             assert_eq!(
-                a.next().map(|node| node.range()),
-                b.next().map(|node| node.range())
+                std::iter::successors(a.next(), |node| node.next()).find(held).map(|node| node.range()),
+                b.next().map(|node| node.range()),
+                "{lang:?} next {:?}",
+                a.range()
             );
             assert_eq!(
-                a.prev().map(|node| node.range()),
-                b.prev().map(|node| node.range())
+                std::iter::successors(a.prev(), |node| node.prev()).find(held).map(|node| node.range()),
+                b.prev().map(|node| node.range()),
+                "{lang:?} prev {:?}",
+                a.range()
             );
         }
-        for (a, b) in left
-            .root()
-            .get_inner_node()
-            .dfs()
+        let held = |node: &tree_sitter::Node<'_>| ids.contains(&node.id());
+        for (a, b) in native_nodes
+            .iter()
+            .map(|node| node.get_inner_node().clone())
             .zip(right.root().get_inner_node().dfs())
         {
             for id in [
@@ -644,6 +674,7 @@ fn direct_field_ids_and_navigation_match_native() {
             ] {
                 assert_eq!(
                     a.field_children(id)
+                        .filter(held)
                         .map(|node| node.byte_range())
                         .collect::<Vec<_>>(),
                     b.field_children(id)
@@ -654,7 +685,7 @@ fn direct_field_ids_and_navigation_match_native() {
                 );
                 if let Some(id) = id {
                     assert_eq!(
-                        a.child_by_field_id(id).map(|node| node.byte_range()),
+                        a.field_children(Some(id)).find(held).map(|node| node.byte_range()),
                         b.child_by_field_id(id).map(|node| node.range()),
                         "{lang:?} field {id:?} {:?}",
                         a.byte_range()
@@ -699,7 +730,7 @@ fn representative_alias_fields_and_flags_match_native() {
         let (native, tape, _, grammar) = fixture(source, lang);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape);
-        let native_nodes = left.root().dfs().collect::<Vec<_>>();
+        let native_nodes = stored(&left);
         let tape_nodes = right.root().dfs().collect::<Vec<_>>();
         assert_eq!(native_nodes.len(), tape_nodes.len(), "{lang:?}");
         for (a, b) in native_nodes.iter().zip(tape_nodes.iter()) {
@@ -777,7 +808,9 @@ fn punctuation_fields_ancestors_and_unicode_positions_match_native() {
         let (native, tape, _, _) = fixture(source, lang);
         let native_root = AstGrep::doc(native);
         let tape_root = AstGrep::doc(tape.clone());
-        let native_nodes = native_root.root().dfs().collect::<Vec<_>>();
+        let ids = kept(&native_root);
+        let held = |node: &ast_grep_core::Node<'_, StrDoc<GrammarDialect>>| ids.contains(&node.get_inner_node().id());
+        let native_nodes = stored(&native_root);
         let tape_nodes = tape_root.root().dfs().collect::<Vec<_>>();
         assert_eq!(native_nodes.len(), tape_nodes.len());
         for (left, right) in native_nodes.iter().zip(tape_nodes.iter()) {
@@ -807,6 +840,7 @@ fn punctuation_fields_ancestors_and_unicode_positions_match_native() {
             );
             assert_eq!(
                 left.children()
+                    .filter(held)
                     .map(|child| child.kind().into_owned())
                     .collect::<Vec<_>>(),
                 right
@@ -825,11 +859,12 @@ fn punctuation_fields_ancestors_and_unicode_positions_match_native() {
             );
             for field in ["function", "arguments", "name", "body", "left", "right"] {
                 assert_eq!(
-                    left.field(field).map(|child| child.range()),
+                    left.field_children(field).find(held).map(|child| child.range()),
                     right.field(field).map(|child| child.range())
                 );
                 assert_eq!(
                     left.field_children(field)
+                        .filter(held)
                         .map(|child| child.range())
                         .collect::<Vec<_>>(),
                     right
@@ -936,7 +971,9 @@ fn damaged_trees_keep_error_and_missing_nodes_like_native() {
         assert_eq!(!image.missing_nodes().is_empty(), missing, "{source}");
         let native_root = AstGrep::doc(native);
         let tape_root = AstGrep::doc(tape.clone());
-        let native_nodes = native_root.root().dfs().collect::<Vec<_>>();
+        let ids = kept(&native_root);
+        let held = |node: &ast_grep_core::Node<'_, StrDoc<GrammarDialect>>| ids.contains(&node.get_inner_node().id());
+        let native_nodes = stored(&native_root);
         let tape_nodes = tape_root.root().dfs().collect::<Vec<_>>();
         assert_eq!(native_nodes.len(), tape_nodes.len());
         for (left, right) in native_nodes.iter().zip(tape_nodes.iter()) {
@@ -949,7 +986,7 @@ fn damaged_trees_keep_error_and_missing_nodes_like_native() {
                     left.is_error(),
                     left.is_missing(),
                     left.range(),
-                    left.children().len(),
+                    left.children().filter(held).count(),
                 ),
                 (
                     right.kind(),
@@ -959,7 +996,7 @@ fn damaged_trees_keep_error_and_missing_nodes_like_native() {
                     right.is_error(),
                     right.is_missing(),
                     right.range(),
-                    right.children().len(),
+                    right.children().count(),
                 )
             );
         }
@@ -982,10 +1019,12 @@ fn damaged_trees_keep_error_and_missing_nodes_like_native() {
                 );
             }
         }
+        // The statement: `debugger` alone is natively its keyword, a token the grammar implies, which
+        // no tape stores (RER-131).
         let pattern = if lang == GrammarDialect::Python {
             "x = $A"
         } else {
-            "debugger"
+            "debugger;"
         };
         assert_eq!(
             matches(StrDoc::new(source, lang), pattern, lang),
@@ -1041,13 +1080,12 @@ fn cancellation_interrupts_mid_encode_without_partial_image() {
         "encode must poll before the final source digest"
     );
     let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap();
-    assert_eq!(
-        TapeDoc::restore(Arc::new(source), grammar, &image, &|| false)
-            .unwrap()
-            .data
-            .len(),
-        image.primary.node_count()
-    );
+    // A record per stored node: the tokens the grammar implies are in no tape (RER-131).
+    let nodes = native.tree.root_node().descendant_count();
+    let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
+    assert_eq!(doc.data.len(), doc.image.node_count());
+    assert_eq!(image.primary.node_count(), doc.data.len());
+    assert!(doc.data.len() < nodes);
 }
 
 #[test]
@@ -1070,13 +1108,8 @@ fn cancellation_interrupts_mid_restore_after_hashing() {
         .is_err()
     );
     assert_eq!(calls.get(), 5, "restore must poll after the source digest");
-    assert_eq!(
-        TapeDoc::restore(Arc::new(source), grammar, &image, &|| false)
-            .unwrap()
-            .data
-            .len(),
-        image.node_count()
-    );
+    let doc = TapeDoc::restore(Arc::new(source), grammar, &image, &|| false).unwrap();
+    assert_eq!(doc.data.len(), doc.image.node_count());
 }
 
 #[test]
@@ -1093,10 +1126,12 @@ fn checkpoint_stride_boundaries_preserve_native_nodes_and_matches() {
         (16, format!("{}#é\n", "x\n".repeat(7))),
         (17, "x\n".repeat(8)),
     ] {
-        let (native, tape, image, _) = fixture(&source, GrammarDialect::Python);
+        let (native, tape, _, _) = fixture(&source, GrammarDialect::Python);
+        // The document's tree image: the stored one is named-only (RER-131).
+        let image = Arc::clone(&tape.image);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape.clone());
-        let native_nodes = left.root().dfs().collect::<Vec<_>>();
+        let native_nodes = stored(&left);
         let tape_nodes = right.root().dfs().collect::<Vec<_>>();
         assert_eq!(
             native_nodes.len(),
@@ -1136,10 +1171,12 @@ fn checkpoint_stride_boundaries_preserve_native_nodes_and_matches() {
 fn span_varint_width_boundaries_preserve_utf8_ranges_and_captures() {
     for (length, expected_width) in [(127, 1), (128, 2), (16_383, 2), (16_384, 3)] {
         let source = format!("#é{}\nfoo(1)\n", "a".repeat(length - 3));
-        let (native, tape, image, _) = fixture(&source, GrammarDialect::Python);
+        let (native, tape, _, _) = fixture(&source, GrammarDialect::Python);
+        // The document's tree image: the stored one is named-only (RER-131).
+        let image = Arc::clone(&tape.image);
         let left = AstGrep::doc(native);
         let right = AstGrep::doc(tape.clone());
-        let native_nodes = left.root().dfs().collect::<Vec<_>>();
+        let native_nodes = stored(&left);
         let tape_nodes = right.root().dfs().collect::<Vec<_>>();
         assert_eq!(
             native_nodes.len(),
@@ -1476,9 +1513,8 @@ fn a_php_template_tapes_its_php_view() {
             &super::super::php_view::view(source),
             GrammarDialect::Php,
         ));
-        let native = view
-            .root()
-            .dfs()
+        let native = stored(&view)
+            .into_iter()
             .map(|node| (node.kind_id(), node.range()))
             .collect::<Vec<_>>();
         let taped = root
@@ -1789,6 +1825,370 @@ fn stored_memberships_are_the_cursors_on_a_corpus() {
     println!("{documents} documents, {nodes} nodes, {memberships} memberships: all equal the cursor's");
 }
 
+/// A JSON file's tape from the Bitlex parser, and from tree-sitter-json: `None` where the Bitlex
+/// parser refuses the file (`Some` of each tape's bytes otherwise).
+fn json_tapes(source: &str) -> Option<(Vec<u8>, Vec<u8>)> {
+    let grammar = Grammar::new(GrammarDialect::Json).unwrap();
+    let ours = crate::code_rule_dsl::transducer::packed::json_parser::image(source)?;
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
+    let tree = parser.parse(source, None).unwrap();
+    let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary.to_bytes().unwrap();
+    Some((ours, theirs))
+}
+
+/// The repository's `.rr` files (outside `.git`, `target` and `node_modules`), with their text.
+fn rr_files() -> Vec<(String, String)> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (mut files, mut work) = (Vec::new(), vec![root]);
+    while let Some(dir) = work.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
+            if p.is_dir() && !skip {
+                work.push(p);
+            } else if p.extension().is_some_and(|x| x == "rr") {
+                files.extend(std::fs::read_to_string(&p).ok().map(|t| (p.display().to_string(), t)));
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+/// A `.rr` file's tape as it was made before the parsers wrote rows: the statement parser's tree, packed
+/// (`Pending` records, `TapeImage::finish`).
+fn packed_rr_tape(grammar: &Grammar, source: &str) -> Vec<u8> {
+    let nodes = rerail_rr_syntax::engine_tape(source)
+        .into_iter()
+        .map(|n| {
+            let error = n.is_error();
+            Pending {
+                kf: if error { ERROR_CODE } else { n.kind | (n.field << 10) },
+                parent: n.parent,
+                start: n.start,
+                length: n.end - n.start,
+                size: 1,
+                extra: n.extra,
+                error,
+                missing: false,
+                kind_alias: None,
+            }
+        })
+        .collect();
+    TapeImage::finish(nodes, Vec::new(), grammar, source, &|| false).unwrap().to_bytes().unwrap()
+}
+
+/// A `.rr` file's tape from the lean parser's bytes (the engine's path, `encode_rr`, decision 0140) equals the
+/// statement parser's tree packed by the engine's own passes, byte for byte: every `.rr` file of the repository.
+#[test]
+fn rr_tapes_from_the_lean_parser_are_the_statement_parsers() {
+    let grammar = Grammar::new(GrammarDialect::Rr).unwrap();
+    let mut checked = 0;
+    for (path, source) in rr_files() {
+        let packed = packed_rr_tape(&grammar, &source);
+        let lean = TapeImage::encode_rr(&grammar, &source, &|| false).unwrap().to_bytes().unwrap();
+        assert!(lean == packed, "{path}: the lean parser's tape is not the statement parser's");
+        checked += 1;
+    }
+    eprintln!("{checked} files");
+    assert!(checked > 1000, "{checked}");
+}
+
+/// What a `.rr` tape costs, in instructions retired and thread CPU time, over the repository's `.rr` files
+/// the compiled parser takes: the lean parser's rows and its tape (the engine's path), the compiled Bitlex
+/// parser's rows, and the statement parser's tree and its tape. With `RERAIL_RR_COST_LOOP` set to a step's name, runs that step
+/// alone for 20 s (for a profiler).
+#[test]
+#[ignore = "a measurement: run by name with --nocapture"]
+fn rr_parse_costs() {
+    use crate::code_rule_dsl::transducer::packed::rr_parser;
+    let grammar = Grammar::new(GrammarDialect::Rr).unwrap();
+    let mut files: Vec<String> = rr_files().into_iter().map(|(_, t)| t).collect();
+    let all = files.len();
+    files.retain(|f| rr_parser::compiled_tape(f).is_some());
+    let bytes: usize = files.iter().map(String::len).sum();
+    let nodes: usize = files.iter().map(|f| rerail_rr_syntax::tape(f).len()).sum();
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let cpu = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+        ("lean: rows", Box::new(|f| rerail_rr_syntax::tape(f).len())),
+        ("lean: the tape (the engine's path)", Box::new(|f| usize::from(std::hint::black_box(TapeImage::encode_rr(&grammar, f, &|| false)).is_ok()))),
+        ("bitlex: rows (tiers 1 and 2, JIT)", Box::new(|f| rr_parser::compiled_tape(f).unwrap().len())),
+        ("statement parser: tree", Box::new(|f| rerail_rr_syntax::engine_tape(f).len())),
+        ("statement parser: the tape, packed (before)", Box::new(|f| packed_rr_tape(&grammar, f).len())),
+    ];
+    if let Ok(only) = std::env::var("RERAIL_RR_COST_LOOP") {
+        let (_, step) = steps.iter().find(|(name, _)| *name == only).expect("a step's name");
+        let t0 = cpu();
+        let mut n = 0;
+        while cpu() - t0 < 20.0 {
+            files.iter().for_each(|f| n += step(f));
+        }
+        std::hint::black_box(n);
+        return;
+    }
+    let mut best = vec![(f64::MAX, u64::MAX); steps.len()];
+    for _ in 0..3 {
+        for ((_, step), best) in steps.iter().zip(&mut best) {
+            let (i0, t0) = (retired().0, cpu());
+            let n: usize = files.iter().map(|f| step(f)).sum();
+            let (i1, t1) = (retired().0, cpu());
+            std::hint::black_box(n);
+            *best = (best.0.min(t1 - t0), best.1.min(i1 - i0));
+        }
+    }
+    let mb = bytes as f64 / 1e6;
+    for ((name, _), (t, i)) in steps.iter().zip(best) {
+        eprintln!("{name:44} {:8.1} M instructions {:6.0} a node {:7.1} ms {:7.1} MB/s", i as f64 / 1e6, i as f64 / nodes as f64, t * 1e3, mb / t);
+    }
+    eprintln!("{} of {all} files (the compiled parser takes them), {mb:.1} MB, {nodes} nodes", files.len());
+}
+
+/// The Bitlex parser's JSON tapes are tree-sitter-json's, byte for byte: kinds, fields, spans,
+/// extras (comments) and the `_value` supertype; and an invalid file is refused, so it goes to
+/// tree-sitter-json.
+#[test]
+fn json_tapes_from_the_bitlex_parser_are_tree_sitters() {
+    assert_eq!(crate::code_rule_dsl::transducer::packed::json_parser::compile_error(), None);
+    for source in [
+        "{}",
+        "[]",
+        "null\n",
+        "{\"a\": 1, \"b\": [true, false, null], \"c\": {\"d\": \"e\\n\\u00e9\"}}\n",
+        "[1, -2.5e10, 0, 3.0E-2]",
+        "// a comment\n{\n  \"a\": 1, /* inline */ \"b\": 2\n}\n// trailing\n",
+        "\u{feff}{\"bom\": true}",
+        "{\"nested\": [[[{\"x\": [1, {\"y\": []}]}]]]}",
+        "  \n\t{ \"spaced\" :\t[ 1 ,2 ] }  \n",
+    ] {
+        let (ours, theirs) = json_tapes(source).unwrap_or_else(|| panic!("refused {source:?}"));
+        assert!(ours == theirs, "the tapes of {source:?} differ");
+    }
+    // JSON allows an exponent's sign; tree-sitter-json refuses `+`, so these tapes are the Bitlex parser's alone.
+    for source in ["1e+2", "[1.5E+3]"] {
+        assert!(crate::code_rule_dsl::transducer::packed::json_parser::image(source).is_some(), "refused {source:?}");
+    }
+    for invalid in ["{", "[1,]", "{\"a\" 1}", "tru", ""] {
+        assert!(crate::code_rule_dsl::transducer::packed::json_parser::image(invalid).is_none(), "accepted {invalid:?}");
+    }
+}
+
+/// A JSON file's tape from simdjson, and from tree-sitter-json: `Err` with simdjson's reason where it
+/// refuses the file (`Ok` of each tape's bytes otherwise).
+fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let grammar = Grammar::new(GrammarDialect::Json).unwrap();
+    let ours = crate::code_rule_dsl::transducer::packed::json_parser::simdjson::encode(&grammar, source, &|| false)
+        .map_err(|why| why.to_string())?
+        .unwrap()
+        .to_bytes()
+        .unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
+    let tree = parser.parse(source, None).unwrap();
+    let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary.to_bytes().unwrap();
+    Ok((ours, theirs))
+}
+
+/// The product reads JSON with simdjson: a JSON file's image through the engine's parse
+/// (`TapeImage::parse`, the parsers the library installs as it loads) is simdjson's, its digest the
+/// one simdjson's stage 1 computed (the source's SHA-256); a file simdjson refuses goes to tree-sitter-json.
+#[test]
+fn the_product_reads_json_with_simdjson() {
+    use crate::code_rule_dsl::transducer::packed::json_parser as jp;
+    use sha2::Digest;
+    let grammar = Grammar::new(GrammarDialect::Json).unwrap();
+    assert!(tree_parser(GrammarDialect::Json).is_some(), "JSON's parser is installed");
+    let source = "\u{feff}{\"a\": [1, true, \"x\\ny\"], \"b\": {\"c\": null}}\n";
+    let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+    let simdjson = jp::simdjson::encode(&grammar, source, &|| false).unwrap().unwrap();
+    assert_eq!(product.primary.to_bytes().unwrap(), simdjson.to_bytes().unwrap());
+    assert_eq!(product.primary.source_digest, Some(<[u8; 32]>::from(sha2::Sha256::digest(source.as_bytes()))));
+    // Refused by simdjson, as JSON and as JSONC (a trailing comma): tree-sitter-json's tape.
+    let jsonc = "// c\n{\"a\": 1,}\n";
+    assert!(jp::simdjson::encode(&grammar, jsonc, &|| false).is_err());
+    assert!(TapeImage::parse(&grammar, jsonc, &|| false).unwrap().is_ok());
+}
+
+/// The parser router takes, for each dialect, the best implementation this host runs: for JSON the first
+/// kernel `Kernel::ALL` lists that this CPU runs; each other implementation this CPU runs writes the same
+/// tape, the DOM parser and the index writer included.
+#[test]
+fn the_router_takes_the_best_json_parser_this_cpu_runs() {
+    let routes: Vec<_> = parser_routes().into_iter().filter(|(r, _)| r.dialect == GrammarDialect::Json).collect();
+    let listing: Vec<String> = routes.iter().map(|(r, taken)| format!("{}{}{}", r.name, if r.runs { "" } else { " (not here)" }, if *taken { " <- taken" } else { "" })).collect();
+    eprintln!("JSON's implementations: {listing:#?}");
+    let taken: Vec<_> = routes.iter().filter(|(_, taken)| *taken).collect();
+    assert_eq!(taken.len(), 1, "one implementation taken");
+    let best = rerail_simdjson::Kernel::best().expect("a kernel this CPU runs");
+    assert_eq!(taken[0].0.name, best.name());
+    assert!(routes.iter().all(|(r, _)| !r.runs || r.rank >= taken[0].0.rank), "a better implementation runs here");
+    let grammar = Grammar::new(GrammarDialect::Json).unwrap();
+    let source = "{\"a\": [1, -2.5e3, true, false, null, \"x\\u00e9y\"], \"b\": {}}";
+    let want = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap().primary.to_bytes().unwrap();
+    for (r, _) in routes.iter().filter(|(r, _)| r.runs) {
+        let image = r.parser.parse(&grammar, source, &|| false).unwrap().unwrap();
+        assert_eq!(image.primary.to_bytes().unwrap(), want, "{}", r.name);
+    }
+    // Every kernel's name is registered, whether this CPU runs it or not.
+    for kernel in rerail_simdjson::Kernel::ALL {
+        assert!(routes.iter().any(|(r, _)| r.name == kernel.name()), "{:?}", kernel);
+    }
+}
+
+/// JSON's tapes from simdjson (the engine's JSON parser) are tree-sitter-json's, byte for byte: kinds,
+/// fields, spans and the `_value` supertype, on hand-written cases and on every `.json` file of the
+/// repository simdjson accepts. What it refuses (comments, a trailing comma, invalid JSON) goes to
+/// tree-sitter-json; the refused files are only counted.
+#[test]
+fn json_tapes_from_simdjson_are_tree_sitters() {
+    for source in [
+        "{}",
+        "[]",
+        "null\n",
+        "true",
+        " -0.5e-3 ",
+        "\"\"",
+        "{\"a\": 1, \"b\": [true, false, null], \"c\": {\"d\": \"e\\n\\u00e9\"}}\n",
+        "[1, -2.5e10, 0, 3.0E-2]",
+        "\u{feff}{\"bom\": true}",
+        "{\"nested\": [[[{\"x\": [1, {\"y\": []}]}]]]}",
+        "  \n\t{ \"spaced\" :\t[ 1 ,2 ] }  \n",
+        "[\"\\\\\", \"\\\\\\\"\", \"a\\tb\\u0041c\", \"\\ud83d\\ude00\", \"é \\/ ü\", \"  \"]",
+        "{\"\": {\"\": []}, \"k\\\"\": \"v\"}",
+        "[[],{},[{}],{\"a\":[]}]\r\n",
+        // JSONC: comments where tree-sitter-json places them (extras of the lowest node holding the tokens on
+        // either side), read again after the strict read refused them.
+        "// c\n{}",
+        "// a\n{ /*b*/ \"k\" /*c*/ : /*d*/ 1 /*e*/ , /*f*/ \"j\": [ /*g*/ 2 /*h*/ , 3 /*i*/ ] /*j*/ } // k\n",
+        "{\"a\": {} /*x*/, \"b\": [ /*y*/ ], \"c\": { /*z*/ }}",
+        "{\"a\": 1 // c\r\n}",
+        "/* a **/ /** b */1",
+        "\u{feff}// x\n{}",
+        "1 // eof",
+        "[\"/*x*/\", 1] /* a \" quote */",
+        "{\n  // The compiler's options.\n  \"compilerOptions\": {\n    \"strict\": true, // always\n    /* \"lib\": [\"dom\"], */\n    \"target\": \"es2022\"\n  }\n}\n",
+    ] {
+        let (ours, theirs) = simdjson_tapes(source).unwrap_or_else(|why| panic!("refused {source:?}: {why}"));
+        assert!(ours == theirs, "the tapes of {source:?} differ");
+    }
+    for invalid in ["{", "[1,]", "{\"a\" 1}", "tru", "", "{\"a\": 1,}", "// c\n{\"a\": 1,}", "[1 / 2]", "/* open"] {
+        assert!(simdjson_tapes(invalid).is_err(), "accepted {invalid:?}");
+    }
+    // JSON allows an exponent's sign; tree-sitter-json refuses `+`, so these tapes are simdjson's alone.
+    for source in ["1e+2", "[1.5E+3]"] {
+        let grammar = Grammar::new(GrammarDialect::Json).unwrap();
+        assert!(crate::code_rule_dsl::transducer::packed::json_parser::simdjson::encode(&grammar, source, &|| false).is_ok_and(|t| t.is_ok()), "refused {source:?}");
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (mut files, mut work) = (Vec::new(), vec![root]);
+    while let Some(dir) = work.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
+            if p.is_dir() && !skip {
+                work.push(p);
+            } else if p.extension().is_some_and(|x| x == "json") && e.metadata().is_ok_and(|m| m.len() <= 1 << 20) {
+                files.push(p);
+            }
+        }
+    }
+    files.sort();
+    let (mut equal, mut refused, mut corrected, mut bytes) = (0, 0, 0, 0);
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
+    let grammar = Grammar::new(GrammarDialect::Json).unwrap();
+    for path in &files {
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        match simdjson_tapes(&source) {
+            Err(_) => refused += 1,
+            Ok((ours, theirs)) if ours == theirs => {
+                equal += 1;
+                bytes += source.len();
+            }
+            // tree-sitter-json finds an error in a file simdjson accepts (it refuses an exponent's `+`, which JSON
+            // allows: `1e+2`). The tape is then the Bitlex parser's, a reading of its own.
+            Ok((ours, _)) => {
+                assert!(parser.parse(&source, None).is_some_and(|t| t.root_node().has_error()), "the tapes of {} differ", path.display());
+                let bitlex = crate::code_rule_dsl::transducer::packed::json_parser::image(&source);
+                assert!(bitlex.is_none_or(|b| b == ours), "{}: tree-sitter errs, and simdjson's tape is not the Bitlex parser's", path.display());
+                corrected += 1;
+            }
+        }
+    }
+    eprintln!("{equal} files ({bytes} bytes) equal tree-sitter-json's tapes; {corrected} where tree-sitter finds an error; {refused} refused");
+    assert!(equal > 1000, "{equal} files");
+}
+
+/// [`json_tapes_from_the_bitlex_parser_are_tree_sitters`] over files: `RERAIL_JSON_FILES`, a file
+/// listing one path a line. Each file the Bitlex parser accepts has tree-sitter-json's tape; the
+/// refused files are counted.
+#[test]
+#[ignore = "needs files: run by name with RERAIL_JSON_FILES"]
+fn json_tapes_over_files() {
+    let list = std::fs::read_to_string(std::env::var("RERAIL_JSON_FILES").expect("set RERAIL_JSON_FILES")).unwrap();
+    let (mut equal, mut refused, mut corrected, mut differ) = (0, Vec::new(), Vec::new(), Vec::new());
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
+    for path in list.lines().filter(|l| !l.is_empty()) {
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        match json_tapes(&source) {
+            None => refused.push(path.to_owned()),
+            Some((ours, theirs)) if ours == theirs => equal += 1,
+            // tree-sitter-json finds an error in a file the Bitlex parser accepts (it refuses an exponent's `+`,
+            // which JSON allows: `1e+2`): the Bitlex tree is the right one.
+            Some(_) if parser.parse(&source, None).is_some_and(|t| t.root_node().has_error()) => corrected.push(path.to_owned()),
+            Some(_) => differ.push(path.to_owned()),
+        }
+    }
+    eprintln!("{equal} equal, {} refused, {} where tree-sitter finds an error, {} differ", refused.len(), corrected.len(), differ.len());
+    for p in refused.iter().take(20) {
+        eprintln!("refused: {p}");
+    }
+    for p in corrected.iter().take(20) {
+        eprintln!("tree-sitter's error: {p}");
+    }
+    assert!(differ.is_empty(), "tapes differ:\n{}", differ.join("\n"));
+}
+
+/// [`json_tapes_from_simdjson_are_tree_sitters`] over files: `RERAIL_JSON_FILES`, a file listing one path
+/// a line (say a `node_modules`' `.json` files, its `tsconfig.json`s with comments). Each file simdjson
+/// reads, strictly or as JSONC, has tree-sitter-json's tape; what it refuses is counted, by whether it
+/// has a comment.
+#[test]
+#[ignore = "needs files: run by name with RERAIL_JSON_FILES"]
+fn simdjson_tapes_over_files() {
+    let list = std::fs::read_to_string(std::env::var("RERAIL_JSON_FILES").expect("set RERAIL_JSON_FILES")).unwrap();
+    let (mut strict, mut jsonc, mut refused, mut differ) = (0, 0, Vec::new(), Vec::new());
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
+    let kinds = &crate::code_rule_dsl::transducer::packed::json_parser::simdjson::kinds().unwrap().0;
+    let kernel = rerail_simdjson::Kernel::best().unwrap();
+    for path in list.lines().filter(|l| !l.is_empty()) {
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        match simdjson_tapes(&source) {
+            Err(_) => refused.push(path.to_owned()),
+            Ok((ours, theirs)) if ours == theirs => {
+                if rerail_simdjson::tape_with(kernel, source.as_bytes(), kinds).is_ok() { strict += 1 } else { jsonc += 1 }
+            }
+            // tree-sitter-json's error in valid JSON (an exponent's `+`): not this test's.
+            Ok(_) if parser.parse(&source, None).is_some_and(|t| t.root_node().has_error()) => {}
+            Ok(_) => differ.push(path.to_owned()),
+        }
+    }
+    eprintln!("{strict} strict and {jsonc} JSONC files equal tree-sitter-json's tapes; {} refused, {} differ", refused.len(), differ.len());
+    for p in refused.iter().take(40) {
+        eprintln!("refused: {p}");
+    }
+    assert!(differ.is_empty(), "tapes differ:\n{}", differ.join("\n"));
+}
+
 #[test]
 fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
     use crate::code_rule_dsl::facts::core;
@@ -1799,7 +2199,7 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
         assert!(TapeDoc::restore(Arc::clone(&source), Arc::clone(&grammar), image, &|| false).is_err());
         assert!(core::from_image(Arc::clone(&source), &grammar, image, Arc::clone(&lines)).is_err());
     };
-    let mut corrupt = image.clone(); corrupt.source_digest[0] ^= 1; reject(&corrupt);
+    let mut corrupt = image.clone(); corrupt.source_digest.as_mut().expect("the image holds its source's digest")[0] ^= 1; reject(&corrupt);
     let mut corrupt = image.clone(); corrupt.code.pop(); reject(&corrupt);
     let mut corrupt = image.clone(); corrupt.size[0..2].copy_from_slice(&0u16.to_le_bytes()); reject(&corrupt);
     let mut corrupt = image.clone(); corrupt.codes[0].alias = SENTINEL - 1; reject(&corrupt);
@@ -1812,6 +2212,88 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
     let mut corrupt = nested.clone();
     corrupt.size[2..4].copy_from_slice(&2u16.to_le_bytes());
     assert!(core::from_image(Arc::new("f(g(x))\n".into()), &ng, &corrupt, Arc::new(LineTable::new("f(g(x))\n", Terminators::Newlines))).is_err());
+}
+
+
+/// What reading the repository's JSON costs, in instructions retired and thread CPU time, over the files
+/// both simdjson and the Bitlex parser accept: each parser's parse, and its tape (the product's path).
+/// With `RERAIL_JSON_COST_LOOP` set to a step's name, runs that step alone for 20 s (for a profiler).
+#[test]
+#[ignore = "a measurement: run by name with --nocapture"]
+fn json_parse_costs() {
+    use crate::code_rule_dsl::transducer::packed::json_parser as jp;
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (mut files, mut work) = (Vec::new(), vec![root]);
+    while let Some(dir) = work.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
+            if p.is_dir() && !skip {
+                work.push(p);
+            } else if p.extension().is_some_and(|x| x == "json") && e.metadata().is_ok_and(|m| m.len() <= 1 << 20) {
+                files.extend(std::fs::read_to_string(&p).ok());
+            }
+        }
+    }
+    let all = files.len();
+    files.retain(|f| rerail_simdjson::structurals(f.as_bytes(), |_| ()).is_ok() && jp::image(f).is_some());
+    let bytes: usize = files.iter().map(String::len).sum();
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let cpu = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let parser = std::cell::RefCell::new(tree_sitter::Parser::new());
+    parser.borrow_mut().set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
+    let grammar = Grammar::new(GrammarDialect::Json).unwrap();
+    let kinds = &jp::simdjson::kinds().unwrap().0;
+    let nodes: usize = files.iter().map(|f| rerail_simdjson::tape(f.as_bytes(), kinds).unwrap().node_count()).sum();
+    let kernel = rerail_simdjson::Kernel::best().expect("a kernel this CPU runs");
+    let product = tree_parser(GrammarDialect::Json).expect("JSON's parser");
+    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+        ("simdjson: stage 1 alone", Box::new(|f| kernel.stage1(f.as_bytes(), false) as usize)),
+        ("simdjson: stage 1, SHA-256 in it", Box::new(|f| kernel.stage1(f.as_bytes(), true) as usize)),
+        ("simdjson: parse and index", Box::new(|f| rerail_simdjson::structurals(f.as_bytes(), <[u32]>::len).unwrap())),
+        ("simdjson: DOM parse, columns from index", Box::new(|f| rerail_simdjson::tape_from_index(f.as_bytes(), kinds).unwrap().node_count())),
+        ("simdjson: stage 1 (hashed), stage 2", Box::new(|f| rerail_simdjson::tape_with(kernel, f.as_bytes(), kinds).unwrap().node_count())),
+        // Through the router's `TreeParser::parse`, as the product calls it (the tape's generic code is made in the parser's crate).
+        ("simdjson: the tape", Box::new(|f| usize::from(std::hint::black_box(product.parse(&grammar, f, &|| false)).is_some_and(|t| t.is_ok())))),
+        ("bitlex: parse (the image)", Box::new(|f| jp::image(f).unwrap().len())),
+        ("bitlex: the tape", Box::new(|f| usize::from(std::hint::black_box(jp::tape::Bitlex.parse(&grammar, f, &|| false)).is_some_and(|t| t.is_ok())))),
+        ("tree-sitter-json: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
+        ("tree-sitter-json: the tape", Box::new(|f| {
+            let tree = parser.borrow_mut().parse(f, None).unwrap();
+            usize::from(std::hint::black_box(TapeImage::encode(tree.root_node(), &grammar, f, &|| false)).is_ok())
+        })),
+        ("the tape's source digest (SHA-256)", Box::new(|f| { use sha2::Digest; std::hint::black_box(sha2::Sha256::digest(f.as_bytes()))[0] as usize })),
+    ];
+    if let Ok(only) = std::env::var("RERAIL_JSON_COST_LOOP") {
+        let (_, step) = steps.iter().find(|(name, _)| *name == only).expect("a step's name");
+        let t0 = cpu();
+        let mut n = 0;
+        while cpu() - t0 < 20.0 {
+            files.iter().for_each(|f| n += step(f));
+        }
+        std::hint::black_box(n);
+        return;
+    }
+    let mut best = vec![(f64::MAX, u64::MAX); steps.len()];
+    for _ in 0..3 {
+        for ((_, step), best) in steps.iter().zip(&mut best) {
+            let (i0, t0) = (retired().0, cpu());
+            let n: usize = files.iter().map(|f| step(f)).sum();
+            let (i1, t1) = (retired().0, cpu());
+            std::hint::black_box(n);
+            *best = (best.0.min(t1 - t0), best.1.min(i1 - i0));
+        }
+    }
+    let mb = bytes as f64 / 1e6;
+    for ((name, _), (t, i)) in steps.iter().zip(best) {
+        eprintln!("{name:36} {:8.1} M instructions {:6.0} a node {:7.1} ms {:7.1} MB/s", i as f64 / 1e6, i as f64 / nodes as f64, t * 1e3, mb / t);
+    }
+    eprintln!("{} of {all} files (both parsers accept them), {mb:.1} MB, {nodes} nodes; {}", files.len(), kernel.name());
 }
 
 /// The lean `.rr` parser writes the engine's tape (decision 0140): its bytes are the engine's
@@ -1848,7 +2330,7 @@ fn lean_rr_tape_is_the_engines_image() {
             half -= 1;
         }
         for src in [text.as_str(), &text[..half]] {
-            let engine = TapeImage::encode_rr(&grammar, src, &|| false).expect("encoded").to_bytes().expect("bytes");
+            let engine = packed_rr_tape(&grammar, src);
             let lean = rerail_rr_syntax::lean::tape(src);
             if lean != engine {
                 let k = lean.iter().zip(&engine).position(|(a, b)| a != b).unwrap_or(lean.len().min(engine.len()));

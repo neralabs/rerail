@@ -2,7 +2,7 @@ use super::*;
 use crate::content_store::tests::store;
 
 fn manifest(id: i64, root: i64, last_time: i64, sources: &[i64]) -> Manifest {
-    Manifest { id, root, last_time, grammar_version: 1, tape_format: 1, plan: vec![id as u8; 32], sources: sources.to_vec() }
+    Manifest { id, root, last_time, grammar_version: 1, tape_format: 1, plan: vec![id as u8; 32], lane: None, sources: sources.to_vec() }
 }
 
 fn sizes(n: i64, bytes: u64) -> Sizes {
@@ -314,4 +314,77 @@ fn old_memo_rows_are_collected_while_their_source_lives() {
     passes(2_000);
     assert_eq!((rows(lapsed), rows(running), rows(unrecorded)), (0, 1, 1), "the lapsed hold's rows go, with no new run to prompt it");
     assert!(store.get_source(source).is_ok(), "the source lives on");
+}
+
+/// Decision 0117: a kept manifest past a root's protected runs keeps its sources, not its plan (a plan's memo serves
+/// one engine build only); and the hold of a run whose process is gone (a killed run never releases it) is released by
+/// the next collection pass, which then collects every dead plan, not one a pass.
+#[test]
+fn only_protected_runs_keep_plans_and_a_dead_process_holds_nothing() {
+    let (_path, store) = store("corpus-protected-plans");
+    let policy = CorpusPolicy { protected_runs: 1, high_water: u64::MAX / 4, low_water: u64::MAX / 4, backstop_secs: 86_400, ..CorpusPolicy::default() };
+    let live = |plan: [u8; 32]| -> Option<i64> {
+        store.connection.lock().unwrap().query_row("SELECT live FROM corpus_plans WHERE plan_digest=?1", [&plan[..]], |r| r.get(0)).optional().unwrap()
+    };
+    let plans = [[41u8; 32], [42u8; 32], [43u8; 32]];
+    for (i, plan) in plans.iter().enumerate() {
+        let source = store.put_source(&noise(60 + i as u64, 256), &[]).unwrap();
+        store.put_tape(source, 1, 7, 9, &noise(560 + i as u64, 256)).unwrap();
+        assert!(store.record_corpus_run("/repo", &[source], 7, 9, *plan, 1_000 + i as i64).unwrap());
+        store.keep_corpus_runs(&policy, 1_000 + i as i64).unwrap();
+    }
+    let manifests: i64 = store.connection.lock().unwrap().query_row("SELECT count(*) FROM corpus_manifests", [], |r| r.get(0)).unwrap();
+    assert_eq!(manifests, 3, "under the high-water mark every manifest is kept");
+    assert_eq!(plans.map(live), [Some(0), Some(0), Some(1)], "only the protected run's plan is live");
+    // A process that has exited: its hold is an orphan.
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let pid = child.id();
+    child.wait().unwrap();
+    store.hold_corpus_plan(plans[0], &format!("corpus-run:{pid}:0:0"), 9_000).unwrap();
+    store.hold_corpus_plan(plans[1], &format!("corpus-run:{}:0:0", std::process::id()), 9_000).unwrap();
+    assert_eq!(live(plans[0]), Some(1), "held, the plan is live");
+    for _ in 0..3 {
+        store.collect_corpus_pass(&policy, 1_010).unwrap();
+    }
+    assert_eq!(live(plans[0]), None, "the dead process's hold went, and its plan with it");
+    assert_eq!(live(plans[1]), Some(1), "a running process's hold stays");
+    assert_eq!(live(plans[2]), Some(1));
+}
+
+/// Programs run one at a time over a root, each its own lane (a policy set's, one process each): each keeps its plan
+/// live, however many run between; a lane's replaced build loses its plan as before; and past `protected_lanes`, the
+/// root's oldest lanes lose theirs.
+#[test]
+fn each_lane_keeps_its_last_runs_plans() {
+    let (_path, store) = store("corpus-lanes");
+    let policy = CorpusPolicy { protected_runs: 1, protected_lanes: 6, high_water: 0, low_water: 0, backstop_secs: 86_400, ..CorpusPolicy::default() };
+    let live = |plan: [u8; 32]| -> Option<i64> {
+        store.connection.lock().unwrap().query_row("SELECT live FROM corpus_plans WHERE plan_digest=?1", [&plan[..]], |r| r.get(0)).optional().unwrap()
+    };
+    let source = store.put_source(&noise(70, 256), &[]).unwrap();
+    store.put_tape(source, 1, 7, 9, &noise(570, 256)).unwrap();
+    let mut now = 1_000;
+    let mut run = |plan: [u8; 32], lane: u8| {
+        now += 1;
+        store.record_corpus_run_lane("/repo", &[source], 7, 9, plan, &[], Some([lane; 32]), now).unwrap();
+        store.keep_corpus_runs(&policy, now).unwrap();
+    };
+    // Five programs, then the five again: every plan live.
+    let plans: Vec<[u8; 32]> = (0..5u8).map(|i| [100 + i; 32]).collect();
+    for _ in 0..2 {
+        for (i, plan) in plans.iter().enumerate() {
+            run(*plan, i as u8);
+        }
+    }
+    assert_eq!(plans.iter().map(|p| live(*p)).collect::<Vec<_>>(), vec![Some(1); 5], "each lane keeps its plan");
+    // Lane 0 under a new build: its old plan dies, the others stay.
+    let rebuilt = [110u8; 32];
+    run(rebuilt, 0);
+    assert_eq!((live(plans[0]), live(rebuilt)), (Some(0), Some(1)), "a replaced build's plan dies");
+    assert!(plans[1..].iter().all(|p| live(*p) == Some(1)));
+    // Three new lanes: the root has eight, and its two oldest (lanes 1 and 2) are past the newest six.
+    for lane in 20..23u8 {
+        run([lane + 100; 32], lane);
+    }
+    assert_eq!(plans[1..].iter().map(|p| live(*p)).collect::<Vec<_>>(), vec![Some(0), Some(0), Some(1), Some(1)]);
 }

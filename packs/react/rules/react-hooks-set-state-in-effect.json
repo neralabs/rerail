@@ -1,0 +1,2808 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-hooks-set-state-in-effect",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid setting state synchronously in the body of a useEffect, useLayoutEffect or useInsertionEffect callback; derive the value during render or set it from a subscription callback.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "typescript",
+        "utils": {
+          "sse-fn": {
+            "any": [
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "generator_function_declaration"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "method_definition"
+              }
+            ]
+          },
+          "sse-react-source": {
+            "kind": "string",
+            "has": {
+              "kind": "string_fragment",
+              "regex": "^(?i:react|react-dom)$"
+            }
+          },
+          "sse-react-object": {
+            "kind": "identifier",
+            "regex": "^React$",
+            "any": [
+              {
+                "resolves": {
+                  "global": [
+                    "React"
+                  ]
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "any": [
+                        {
+                          "kind": "import_clause"
+                        },
+                        {
+                          "kind": "namespace_import"
+                        }
+                      ],
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "sse-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "sse-effect-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^(?:useEffect|useLayoutEffect|useInsertionEffect)$",
+                "resolves": {
+                  "global": [
+                    "useEffect",
+                    "useLayoutEffect",
+                    "useInsertionEffect"
+                  ]
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "has": {
+                        "field": "name",
+                        "regex": "^(?:useEffect|useLayoutEffect|useInsertionEffect)$"
+                      },
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "sse-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "sse-react-object"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^(?:useEffect|useLayoutEffect|useInsertionEffect)$"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "sse-state-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^(?:useState)$",
+                "resolves": {
+                  "global": [
+                    "useState"
+                  ]
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "has": {
+                        "field": "name",
+                        "regex": "^(?:useState)$"
+                      },
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "sse-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "sse-react-object"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^(?:useState)$"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "sse-callback-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^(?:useCallback)$",
+                "resolves": {
+                  "global": [
+                    "useCallback"
+                  ]
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "has": {
+                        "field": "name",
+                        "regex": "^(?:useCallback)$"
+                      },
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "sse-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "sse-react-object"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^(?:useCallback)$"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "sse-effect-event-callee": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^(?:useEffectEvent)$",
+                "resolves": {
+                  "global": [
+                    "useEffectEvent"
+                  ]
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "import_specifier",
+                      "has": {
+                        "field": "name",
+                        "regex": "^(?:useEffectEvent)$"
+                      },
+                      "inside": {
+                        "stopBy": "end",
+                        "kind": "import_statement",
+                        "has": {
+                          "field": "source",
+                          "matches": "sse-react-source"
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "member_expression",
+                "all": [
+                  {
+                    "has": {
+                      "field": "object",
+                      "matches": "sse-react-object"
+                    }
+                  },
+                  {
+                    "has": {
+                      "field": "property",
+                      "kind": "property_identifier",
+                      "regex": "^(?:useEffectEvent)$"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "sse-top-level-named": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  }
+                ],
+                "has": {
+                  "field": "name",
+                  "regex": "^(?:[A-Z]|use[A-Z0-9])"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "lexical_declaration"
+                  },
+                  {
+                    "kind": "variable_declaration"
+                  }
+                ],
+                "has": {
+                  "kind": "variable_declarator",
+                  "all": [
+                    {
+                      "has": {
+                        "field": "name",
+                        "kind": "identifier",
+                        "regex": "^(?:[A-Z]|use[A-Z0-9])"
+                      }
+                    },
+                    {
+                      "has": {
+                        "field": "value",
+                        "any": [
+                          {
+                            "kind": "arrow_function"
+                          },
+                          {
+                            "kind": "function_expression"
+                          },
+                          {
+                            "kind": "generator_function"
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "sse-react-file": {
+            "kind": "program",
+            "has": {
+              "any": [
+                {
+                  "matches": "sse-top-level-named"
+                },
+                {
+                  "kind": "export_statement",
+                  "has": {
+                    "any": [
+                      {
+                        "matches": "sse-top-level-named"
+                      },
+                      {
+                        "kind": "function_expression"
+                      },
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "generator_function"
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          },
+          "sse-bad-props-type": {
+            "kind": "type_annotation",
+            "has": {
+              "any": [
+                {
+                  "kind": "array_type"
+                },
+                {
+                  "kind": "tuple_type"
+                },
+                {
+                  "kind": "function_type"
+                },
+                {
+                  "kind": "constructor_type"
+                },
+                {
+                  "kind": "predefined_type",
+                  "regex": "^(?:string|number|boolean|symbol|bigint|never)$"
+                },
+                {
+                  "kind": "literal_type",
+                  "not": {
+                    "regex": "^(?:null|undefined)$"
+                  }
+                }
+              ]
+            }
+          },
+          "sse-param": {
+            "any": [
+              {
+                "kind": "required_parameter"
+              },
+              {
+                "kind": "optional_parameter"
+              }
+            ]
+          },
+          "sse-valid-params": {
+            "any": [
+              {
+                "kind": "arrow_function",
+                "has": {
+                  "field": "parameter",
+                  "kind": "identifier"
+                }
+              },
+              {
+                "has": {
+                  "field": "parameters",
+                  "kind": "formal_parameters",
+                  "all": [
+                    {
+                      "not": {
+                        "has": {
+                          "matches": "sse-param",
+                          "nthChild": {
+                            "position": 3,
+                            "ofRule": {
+                              "matches": "sse-param"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "matches": "sse-param",
+                          "nthChild": {
+                            "position": 1,
+                            "ofRule": {
+                              "matches": "sse-param"
+                            }
+                          },
+                          "has": {
+                            "field": "type",
+                            "matches": "sse-bad-props-type"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "not": {
+                            "has": {
+                              "matches": "sse-param",
+                              "nthChild": {
+                                "position": 2,
+                                "ofRule": {
+                                  "matches": "sse-param"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "matches": "sse-param",
+                            "nthChild": {
+                              "position": 2,
+                              "ofRule": {
+                                "matches": "sse-param"
+                              }
+                            },
+                            "not": {
+                              "has": {
+                                "field": "value",
+                                "regex": "[\\s\\S]"
+                              }
+                            },
+                            "has": {
+                              "field": "pattern",
+                              "kind": "identifier",
+                              "regex": "(?:ref|Ref)"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "not": {
+                        "has": {
+                          "matches": "sse-param",
+                          "nthChild": {
+                            "position": 1,
+                            "ofRule": {
+                              "matches": "sse-param"
+                            }
+                          },
+                          "has": {
+                            "field": "pattern",
+                            "kind": "rest_pattern"
+                          },
+                          "not": {
+                            "precedes": {
+                              "stopBy": "end",
+                              "matches": "sse-param"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "sse-non-node": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "object"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  },
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function"
+                  },
+                  {
+                    "kind": "class"
+                  },
+                  {
+                    "kind": "new_expression"
+                  },
+                  {
+                    "kind": "number",
+                    "regex": "n$"
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "kind": "as_expression"
+                  },
+                  {
+                    "kind": "satisfies_expression"
+                  },
+                  {
+                    "kind": "non_null_expression"
+                  }
+                ],
+                "has": {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "matches": "sse-non-node"
+                }
+              }
+            ]
+          },
+          "sse-own-body": {
+            "kind": "statement_block",
+            "inside": {
+              "field": "body",
+              "matches": "sse-fn"
+            }
+          },
+          "sse-returns-non-node": {
+            "any": [
+              {
+                "kind": "arrow_function",
+                "has": {
+                  "field": "body",
+                  "not": {
+                    "kind": "statement_block"
+                  },
+                  "matches": "sse-non-node"
+                }
+              },
+              {
+                "not": {
+                  "matches": "sse-ends-with-node-return"
+                },
+                "has": {
+                  "stopBy": {
+                    "matches": "sse-fn"
+                  },
+                  "kind": "return_statement",
+                  "any": [
+                    {
+                      "regex": "^return\\s*;?$"
+                    },
+                    {
+                      "has": {
+                        "nthChild": {
+                          "position": 1,
+                          "ofRule": {
+                            "not": {
+                              "kind": "comment"
+                            }
+                          }
+                        },
+                        "matches": "sse-non-node"
+                      }
+                    }
+                  ],
+                  "not": {
+                    "inside": {
+                      "stopBy": {
+                        "matches": "sse-own-body"
+                      },
+                      "precedes": {
+                        "stopBy": "end",
+                        "any": [
+                          {
+                            "kind": "return_statement"
+                          },
+                          {
+                            "has": {
+                              "stopBy": {
+                                "matches": "sse-fn"
+                              },
+                              "kind": "return_statement"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "sse-ends-with-node-return": {
+            "has": {
+              "field": "body",
+              "kind": "statement_block",
+              "has": {
+                "kind": "return_statement",
+                "has": {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "not": {
+                    "matches": "sse-non-node"
+                  }
+                },
+                "not": {
+                  "precedes": {
+                    "stopBy": "end",
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "regex": "^\\}$"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "sse-memo-callback": {
+            "any": [
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_expression"
+              }
+            ],
+            "inside": {
+              "kind": "arguments",
+              "inside": {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "regex": "^(?:memo|forwardRef)$"
+                    },
+                    {
+                      "kind": "member_expression",
+                      "all": [
+                        {
+                          "has": {
+                            "field": "object",
+                            "kind": "identifier",
+                            "regex": "^React$"
+                          }
+                        },
+                        {
+                          "has": {
+                            "field": "property",
+                            "regex": "^(?:memo|forwardRef)$"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "sse-component-or-hook": {
+            "any": [
+              {
+                "matches": "sse-hook-fn"
+              },
+              {
+                "all": [
+                  {
+                    "matches": "sse-component-fn"
+                  },
+                  {
+                    "matches": "sse-valid-params"
+                  },
+                  {
+                    "not": {
+                      "matches": "sse-returns-non-node"
+                    }
+                  }
+                ]
+              },
+              {
+                "matches": "sse-memo-callback"
+              }
+            ]
+          },
+          "sse-hook-fn": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  }
+                ],
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^use[A-Z0-9]"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  }
+                ],
+                "inside": {
+                  "field": "value",
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "name",
+                    "kind": "identifier",
+                    "regex": "^use[A-Z0-9]"
+                  }
+                }
+              }
+            ]
+          },
+          "sse-component-fn": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "function_declaration"
+                  },
+                  {
+                    "kind": "generator_function_declaration"
+                  }
+                ],
+                "has": {
+                  "field": "name",
+                  "kind": "identifier",
+                  "regex": "^[A-Z]"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "function_expression"
+                  },
+                  {
+                    "kind": "generator_function"
+                  },
+                  {
+                    "kind": "arrow_function"
+                  }
+                ],
+                "inside": {
+                  "field": "value",
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "name",
+                    "kind": "identifier",
+                    "regex": "^[A-Z]"
+                  }
+                }
+              }
+            ]
+          },
+          "sse-compiled-fn": {
+            "all": [
+              {
+                "matches": "sse-component-or-hook"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "any": [
+                      {
+                        "kind": "class_declaration"
+                      },
+                      {
+                        "kind": "abstract_class_declaration"
+                      },
+                      {
+                        "kind": "class"
+                      },
+                      {
+                        "matches": "sse-component-or-hook"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "end",
+                  "matches": "sse-react-file"
+                }
+              },
+              {
+                "not": {
+                  "matches": "sse-bails"
+                }
+              }
+            ]
+          },
+          "sse-bails": {
+            "has": {
+              "stopBy": "end",
+              "any": [
+                {
+                  "kind": "call_expression",
+                  "has": {
+                    "field": "function",
+                    "regex": "(?:^|\\.)(?:useReactTable|useVirtualizer)$"
+                  }
+                },
+                {
+                  "kind": "call_expression",
+                  "has": {
+                    "field": "function",
+                    "regex": "(?:^|\\.)(?:use[A-Z0-9][\\w$]*|createElement|cloneElement)$"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "arguments",
+                        "has": {
+                          "kind": "spread_element"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "required_parameter"
+                    },
+                    {
+                      "kind": "optional_parameter"
+                    }
+                  ],
+                  "has": {
+                    "field": "pattern",
+                    "kind": "this"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "kind": "catch_clause"
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "end",
+                    "matches": "sse-fn",
+                    "inside": {
+                      "stopBy": "end",
+                      "kind": "catch_clause"
+                    }
+                  }
+                },
+                {
+                  "kind": "call_expression",
+                  "has": {
+                    "field": "function",
+                    "regex": "^(?:React\\.)?useMemo$"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "arguments",
+                        "has": {
+                          "stopBy": "end",
+                          "kind": "try_statement",
+                          "has": {
+                            "field": "body",
+                            "has": {
+                              "stopBy": "end",
+                              "any": [
+                                {
+                                  "kind": "ternary_expression"
+                                },
+                                {
+                                  "kind": "optional_chain"
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "call_expression",
+                  "has": {
+                    "field": "function",
+                    "regex": "(?:^|\\.)watch$"
+                  },
+                  "inside": {
+                    "stopBy": "end",
+                    "matches": "sse-fn",
+                    "has": {
+                      "stopBy": "end",
+                      "kind": "call_expression",
+                      "has": {
+                        "field": "function",
+                        "regex": "(?:^|\\.)useForm$"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "sse-effect-call": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "sse-effect-callee"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "sse-fn"
+                  },
+                  "matches": "sse-compiled-fn"
+                }
+              }
+            ]
+          },
+          "sse-effect-arg": {
+            "any": [
+              {
+                "nthChild": {
+                  "position": 1,
+                  "ofRule": {
+                    "not": {
+                      "kind": "comment"
+                    }
+                  }
+                },
+                "inside": {
+                  "kind": "arguments",
+                  "inside": {
+                    "matches": "sse-effect-call"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "kind": "parenthesized_expression",
+                  "matches": "sse-effect-arg"
+                }
+              }
+            ]
+          },
+          "sse-effect-cb": {
+            "any": [
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "function_expression"
+              }
+            ],
+            "matches": "sse-effect-arg"
+          },
+          "sse-state-call": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "matches": "sse-state-callee"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "kind": "as_expression"
+                  },
+                  {
+                    "kind": "satisfies_expression"
+                  },
+                  {
+                    "kind": "non_null_expression"
+                  }
+                ],
+                "has": {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "matches": "sse-state-call"
+                }
+              }
+            ]
+          },
+          "sse-setter-name": {
+            "kind": "identifier",
+            "inside": {
+              "kind": "array_pattern",
+              "inside": {
+                "field": "name",
+                "kind": "variable_declarator",
+                "has": {
+                  "field": "value",
+                  "matches": "sse-state-call"
+                }
+              }
+            },
+            "follows": {
+              "stopBy": "neighbor",
+              "regex": "^,$",
+              "not": {
+                "follows": {
+                  "stopBy": "end",
+                  "regex": "^,$"
+                }
+              }
+            }
+          },
+          "sse-setter-ref": {
+            "params": [
+              "X"
+            ],
+            "rule": {
+              "kind": "identifier",
+              "pattern": "$X",
+              "any": [
+                {
+                  "all": [
+                    {
+                      "resolves": {
+                        "binding": {
+                          "occurrence": {
+                            "matches": "sse-setter-name"
+                          },
+                          "site": {
+                            "pattern": "$S",
+                            "layout": {
+                              "after": {
+                                "to": "capture.X",
+                                "breaks": {
+                                  "min": 0
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "not": {
+                        "matches": {
+                          "sse-hoisted": {
+                            "S": "$S"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "resolves": {
+                    "binding": {
+                      "value": {
+                        "kind": "identifier",
+                        "pattern": "$V",
+                        "matches": {
+                          "sse-setter-ref": {
+                            "X": "$V"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "sse-sets-state": {
+            "any": [
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "generator_function_declaration"
+              },
+              {
+                "kind": "function_expression"
+              },
+              {
+                "kind": "generator_function"
+              },
+              {
+                "kind": "arrow_function"
+              },
+              {
+                "kind": "method_definition"
+              }
+            ],
+            "all": [
+              {
+                "has": {
+                  "stopBy": {
+                    "matches": "sse-fn"
+                  },
+                  "matches": {
+                    "sse-qualifying-call": {
+                      "C": "$SC1"
+                    }
+                  },
+                  "not": {
+                    "any": [
+                      {
+                        "matches": "sse-maybe-ref-controlled"
+                      },
+                      {
+                        "matches": "sse-maybe-ref-arg"
+                      },
+                      {
+                        "matches": "sse-dropped"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": {
+                      "matches": "sse-fn"
+                    },
+                    "matches": {
+                      "sse-qualifying-call": {
+                        "C": "$SC2"
+                      }
+                    },
+                    "all": [
+                      {
+                        "matches": "sse-maybe-ref-arg"
+                      }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "sse-setter-fn-value": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "any": [
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "function_expression"
+                      }
+                    ],
+                    "matches": "sse-sets-state"
+                  },
+                  {
+                    "kind": "call_expression",
+                    "has": {
+                      "field": "function",
+                      "any": [
+                        {
+                          "matches": "sse-callback-callee"
+                        },
+                        {
+                          "matches": "sse-effect-event-callee"
+                        }
+                      ]
+                    },
+                    "all": [
+                      {
+                        "has": {
+                          "field": "arguments",
+                          "has": {
+                            "nthChild": {
+                              "position": 1,
+                              "ofRule": {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              }
+                            },
+                            "matches": "sse-setter-fn-value"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "kind": "as_expression"
+                  },
+                  {
+                    "kind": "satisfies_expression"
+                  },
+                  {
+                    "kind": "non_null_expression"
+                  }
+                ],
+                "has": {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "matches": "sse-setter-fn-value"
+                }
+              }
+            ]
+          },
+          "sse-setter-fn-site": {
+            "any": [
+              {
+                "kind": "function_declaration"
+              },
+              {
+                "kind": "generator_function_declaration"
+              },
+              {
+                "kind": "variable_declarator"
+              }
+            ],
+            "all": [
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "sse-fn"
+                  },
+                  "matches": "sse-compiled-fn"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "any": [
+                      {
+                        "kind": "function_declaration"
+                      },
+                      {
+                        "kind": "generator_function_declaration"
+                      }
+                    ],
+                    "matches": "sse-sets-state"
+                  },
+                  {
+                    "kind": "variable_declarator",
+                    "has": {
+                      "field": "name",
+                      "kind": "identifier"
+                    },
+                    "all": [
+                      {
+                        "has": {
+                          "field": "value",
+                          "matches": "sse-setter-fn-value"
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "sse-setter-fn-ref": {
+            "params": [
+              "X"
+            ],
+            "rule": {
+              "kind": "identifier",
+              "pattern": "$X",
+              "all": [
+                {
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "pattern": "$S",
+                        "matches": "sse-setter-fn-site",
+                        "layout": {
+                          "after": {
+                            "to": "capture.X",
+                            "breaks": {
+                              "min": 0
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "matches": {
+                      "sse-hoisted": {
+                        "S": "$S"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "sse-hoisted": {
+            "params": [
+              "S"
+            ],
+            "rule": {
+              "resolves": {
+                "binding": {
+                  "occurrence": {
+                    "not": {
+                      "matches": "sse-def-name"
+                    },
+                    "all": [
+                      {
+                        "not": {
+                          "layout": {
+                            "before": {
+                              "to": "capture.S",
+                              "breaks": {
+                                "min": 0
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "sse-def-name": {
+            "any": [
+              {
+                "inside": {
+                  "field": "name",
+                  "any": [
+                    {
+                      "kind": "variable_declarator"
+                    },
+                    {
+                      "kind": "function_declaration"
+                    },
+                    {
+                      "kind": "generator_function_declaration"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "kind": "array_pattern",
+                  "inside": {
+                    "field": "name",
+                    "kind": "variable_declarator"
+                  }
+                }
+              }
+            ]
+          },
+          "sse-qualifying-call": {
+            "params": [
+              "C"
+            ],
+            "rule": {
+              "kind": "call_expression",
+              "pattern": "$C",
+              "not": {
+                "has": {
+                  "field": "arguments",
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "kind": "spread_element"
+                  }
+                }
+              },
+              "has": {
+                "field": "function",
+                "kind": "identifier",
+                "pattern": "$CALLEE",
+                "any": [
+                  {
+                    "matches": {
+                      "sse-setter-ref": {
+                        "X": "$CALLEE"
+                      }
+                    }
+                  },
+                  {
+                    "matches": {
+                      "sse-setter-fn-ref": {
+                        "X": "$CALLEE"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "sse-ref-base-id": {
+            "kind": "identifier",
+            "any": [
+              {
+                "regex": "^ref$|Ref$",
+                "resolves": {
+                  "binding": {
+                    "occurrence": {
+                      "any": [
+                        {
+                          "inside": {
+                            "field": "object",
+                            "kind": "member_expression",
+                            "has": {
+                              "field": "property",
+                              "regex": "^current$"
+                            }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "field": "value",
+                            "kind": "variable_declarator",
+                            "has": {
+                              "field": "name",
+                              "kind": "object_pattern",
+                              "has": {
+                                "any": [
+                                  {
+                                    "kind": "shorthand_property_identifier_pattern",
+                                    "regex": "^current$"
+                                  },
+                                  {
+                                    "kind": "pair_pattern",
+                                    "has": {
+                                      "field": "key",
+                                      "regex": "^current$"
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "value",
+                        "matches": "sse-ref-call"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "occurrence": {
+                      "inside": {
+                        "kind": "jsx_expression",
+                        "inside": {
+                          "kind": "jsx_attribute",
+                          "has": {
+                            "kind": "property_identifier",
+                            "regex": "^ref$"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "sse-ref-call": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "regex": "^(?:React\\.)?useRef$"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "kind": "as_expression"
+                  },
+                  {
+                    "kind": "satisfies_expression"
+                  },
+                  {
+                    "kind": "non_null_expression"
+                  }
+                ],
+                "has": {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "matches": "sse-ref-call"
+                }
+              }
+            ]
+          },
+          "sse-ref-base-expr": {
+            "any": [
+              {
+                "matches": "sse-ref-base-id"
+              },
+              {
+                "has": {
+                  "stopBy": "end",
+                  "matches": "sse-ref-base-id"
+                }
+              }
+            ]
+          },
+          "sse-maybe-ref-id": {
+            "kind": "identifier",
+            "any": [
+              {
+                "matches": "sse-ref-base-id"
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "has": {
+                        "field": "value",
+                        "any": [
+                          {
+                            "matches": "sse-ref-chain"
+                          },
+                          {
+                            "matches": "sse-ref-returning-call"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "variable_declarator",
+                      "matches": "sse-in-local-fn",
+                      "has": {
+                        "field": "value",
+                        "matches": "sse-maybe-ref-expr"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "resolves": {
+                  "binding": {
+                    "occurrence": {
+                      "matches": "sse-in-local-fn",
+                      "all": [
+                        {
+                          "matches": "sse-ref-written"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "sse-ref-chain": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "matches": "sse-ref-base-id"
+                  },
+                  {
+                    "any": [
+                      {
+                        "kind": "member_expression"
+                      },
+                      {
+                        "kind": "subscript_expression"
+                      }
+                    ],
+                    "has": {
+                      "field": "object",
+                      "matches": "sse-ref-chain"
+                    }
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "kind": "as_expression"
+                  },
+                  {
+                    "kind": "satisfies_expression"
+                  },
+                  {
+                    "kind": "non_null_expression"
+                  }
+                ],
+                "has": {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "matches": "sse-ref-chain"
+                }
+              }
+            ]
+          },
+          "sse-ref-returning-call": {
+            "any": [
+              {
+                "kind": "call_expression",
+                "has": {
+                  "field": "function",
+                  "kind": "identifier",
+                  "resolves": {
+                    "binding": {
+                      "site": {
+                        "any": [
+                          {
+                            "any": [
+                              {
+                                "kind": "function_declaration"
+                              },
+                              {
+                                "kind": "generator_function_declaration"
+                              }
+                            ],
+                            "matches": "sse-returns-ref"
+                          },
+                          {
+                            "kind": "variable_declarator",
+                            "has": {
+                              "field": "value",
+                              "matches": "sse-ref-returning-value"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "kind": "as_expression"
+                  },
+                  {
+                    "kind": "satisfies_expression"
+                  },
+                  {
+                    "kind": "non_null_expression"
+                  }
+                ],
+                "has": {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "matches": "sse-ref-returning-call"
+                }
+              }
+            ]
+          },
+          "sse-ref-returning-value": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "any": [
+                      {
+                        "kind": "arrow_function"
+                      },
+                      {
+                        "kind": "function_expression"
+                      }
+                    ],
+                    "matches": "sse-returns-ref"
+                  },
+                  {
+                    "kind": "call_expression",
+                    "has": {
+                      "field": "function",
+                      "matches": "sse-callback-callee"
+                    },
+                    "all": [
+                      {
+                        "has": {
+                          "field": "arguments",
+                          "has": {
+                            "nthChild": {
+                              "position": 1,
+                              "ofRule": {
+                                "not": {
+                                  "kind": "comment"
+                                }
+                              }
+                            },
+                            "matches": "sse-ref-returning-value"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "any": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "kind": "as_expression"
+                  },
+                  {
+                    "kind": "satisfies_expression"
+                  },
+                  {
+                    "kind": "non_null_expression"
+                  }
+                ],
+                "has": {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "kind": "comment"
+                      }
+                    }
+                  },
+                  "matches": "sse-ref-returning-value"
+                }
+              }
+            ]
+          },
+          "sse-returns-ref": {
+            "any": [
+              {
+                "kind": "arrow_function",
+                "has": {
+                  "field": "body",
+                  "matches": "sse-ref-chain"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": {
+                    "matches": "sse-fn"
+                  },
+                  "kind": "return_statement",
+                  "has": {
+                    "nthChild": {
+                      "position": 1,
+                      "ofRule": {
+                        "not": {
+                          "kind": "comment"
+                        }
+                      }
+                    },
+                    "matches": "sse-ref-chain"
+                  }
+                }
+              }
+            ]
+          },
+          "sse-in-local-fn": {
+            "inside": {
+              "stopBy": {
+                "matches": "sse-fn"
+              },
+              "matches": "sse-fn",
+              "not": {
+                "matches": "sse-component-or-hook"
+              }
+            }
+          },
+          "sse-ref-written": {
+            "any": [
+              {
+                "inside": {
+                  "field": "left",
+                  "any": [
+                    {
+                      "kind": "assignment_expression"
+                    },
+                    {
+                      "kind": "augmented_assignment_expression"
+                    }
+                  ],
+                  "all": [
+                    {
+                      "any": [
+                        {
+                          "has": {
+                            "field": "right",
+                            "matches": "sse-ref-base-expr"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "stopBy": {
+                              "matches": "sse-fn"
+                            },
+                            "matches": "sse-base-ref-test"
+                          }
+                        },
+                        {
+                          "inside": {
+                            "stopBy": {
+                              "matches": "sse-fn"
+                            },
+                            "follows": {
+                              "stopBy": "end",
+                              "has": {
+                                "stopBy": {
+                                  "matches": "sse-fn"
+                                },
+                                "matches": "sse-base-ref-test",
+                                "has": {
+                                  "stopBy": {
+                                    "matches": "sse-fn"
+                                  },
+                                  "matches": "sse-exit"
+                                }
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "inside": {
+                            "stopBy": {
+                              "matches": "sse-fn"
+                            },
+                            "follows": {
+                              "stopBy": "end",
+                              "matches": "sse-base-ref-test",
+                              "has": {
+                                "stopBy": {
+                                  "matches": "sse-fn"
+                                },
+                                "matches": "sse-exit"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "field": "object",
+                  "kind": "member_expression",
+                  "inside": {
+                    "field": "function",
+                    "kind": "call_expression",
+                    "has": {
+                      "field": "arguments",
+                      "matches": "sse-ref-base-expr"
+                    }
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "field": "object",
+                  "kind": "member_expression",
+                  "inside": {
+                    "field": "left",
+                    "kind": "assignment_expression",
+                    "has": {
+                      "field": "right",
+                      "matches": "sse-ref-base-expr"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "sse-base-ref-test": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "if_statement"
+                  },
+                  {
+                    "kind": "ternary_expression"
+                  },
+                  {
+                    "kind": "while_statement"
+                  },
+                  {
+                    "kind": "do_statement"
+                  },
+                  {
+                    "kind": "for_statement"
+                  }
+                ],
+                "has": {
+                  "field": "condition",
+                  "matches": "sse-ref-base-expr"
+                }
+              },
+              {
+                "kind": "for_in_statement",
+                "has": {
+                  "field": "right",
+                  "matches": "sse-ref-base-expr"
+                }
+              },
+              {
+                "matches": "sse-logical",
+                "has": {
+                  "field": "left",
+                  "matches": "sse-ref-base-expr"
+                }
+              },
+              {
+                "kind": "switch_statement",
+                "has": {
+                  "field": "value",
+                  "matches": "sse-ref-base-expr"
+                }
+              }
+            ]
+          },
+          "sse-maybe-ref-expr": {
+            "any": [
+              {
+                "matches": "sse-maybe-ref-id"
+              },
+              {
+                "has": {
+                  "stopBy": "end",
+                  "matches": "sse-maybe-ref-id"
+                }
+              }
+            ]
+          },
+          "sse-maybe-ref-arg": {
+            "has": {
+              "field": "arguments",
+              "has": {
+                "nthChild": {
+                  "position": 1,
+                  "ofRule": {
+                    "not": {
+                      "kind": "comment"
+                    }
+                  }
+                },
+                "matches": "sse-maybe-ref-expr"
+              }
+            }
+          },
+          "sse-dropped": {
+            "inside": {
+              "stopBy": {
+                "matches": "sse-fn"
+              },
+              "any": [
+                {
+                  "kind": "finally_clause"
+                },
+                {
+                  "kind": "try_statement",
+                  "not": {
+                    "has": {
+                      "kind": "catch_clause"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "sse-exit": {
+            "any": [
+              {
+                "kind": "return_statement"
+              },
+              {
+                "kind": "throw_statement"
+              },
+              {
+                "kind": "break_statement"
+              },
+              {
+                "kind": "continue_statement"
+              }
+            ]
+          },
+          "sse-may-exit": {
+            "any": [
+              {
+                "matches": "sse-exit"
+              },
+              {
+                "has": {
+                  "stopBy": {
+                    "matches": "sse-fn"
+                  },
+                  "matches": "sse-exit"
+                }
+              }
+            ]
+          },
+          "sse-logical": {
+            "kind": "binary_expression",
+            "has": {
+              "field": "operator",
+              "regex": "^(?:&&|\\|\\||\\?\\?)$"
+            }
+          },
+          "sse-ref-switch": {
+            "kind": "switch_statement",
+            "any": [
+              {
+                "has": {
+                  "field": "value",
+                  "matches": "sse-maybe-ref-expr"
+                }
+              },
+              {
+                "has": {
+                  "field": "body",
+                  "has": {
+                    "kind": "switch_case",
+                    "has": {
+                      "field": "value",
+                      "matches": "sse-maybe-ref-expr"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "sse-ref-test": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "if_statement"
+                  },
+                  {
+                    "kind": "ternary_expression"
+                  },
+                  {
+                    "kind": "while_statement"
+                  },
+                  {
+                    "kind": "do_statement"
+                  },
+                  {
+                    "kind": "for_statement"
+                  }
+                ],
+                "has": {
+                  "field": "condition",
+                  "matches": "sse-maybe-ref-expr"
+                }
+              },
+              {
+                "kind": "for_in_statement",
+                "has": {
+                  "field": "right",
+                  "matches": "sse-maybe-ref-expr"
+                }
+              },
+              {
+                "matches": "sse-logical",
+                "has": {
+                  "field": "left",
+                  "matches": "sse-maybe-ref-expr"
+                }
+              },
+              {
+                "matches": "sse-ref-switch"
+              }
+            ]
+          },
+          "sse-branch": {
+            "any": [
+              {
+                "kind": "else_clause"
+              },
+              {
+                "kind": "switch_case"
+              },
+              {
+                "kind": "switch_default"
+              },
+              {
+                "kind": "catch_clause"
+              },
+              {
+                "kind": "finally_clause"
+              },
+              {
+                "inside": {
+                  "field": "consequence",
+                  "any": [
+                    {
+                      "kind": "if_statement"
+                    },
+                    {
+                      "kind": "ternary_expression"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "field": "alternative",
+                  "kind": "ternary_expression"
+                }
+              },
+              {
+                "inside": {
+                  "field": "body",
+                  "any": [
+                    {
+                      "kind": "while_statement"
+                    },
+                    {
+                      "kind": "do_statement"
+                    },
+                    {
+                      "kind": "for_statement"
+                    },
+                    {
+                      "kind": "for_in_statement"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "field": "right",
+                  "matches": "sse-logical"
+                }
+              },
+              {
+                "inside": {
+                  "field": "body",
+                  "kind": "try_statement"
+                }
+              }
+            ]
+          },
+          "sse-ref-branch": {
+            "any": [
+              {
+                "kind": "else_clause",
+                "inside": {
+                  "matches": "sse-ref-test"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "switch_case"
+                  },
+                  {
+                    "kind": "switch_default"
+                  }
+                ],
+                "inside": {
+                  "kind": "switch_body",
+                  "inside": {
+                    "matches": "sse-ref-switch"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "field": "consequence",
+                  "matches": "sse-ref-test"
+                }
+              },
+              {
+                "inside": {
+                  "field": "alternative",
+                  "kind": "ternary_expression",
+                  "matches": "sse-ref-test"
+                }
+              },
+              {
+                "inside": {
+                  "field": "body",
+                  "matches": "sse-ref-test"
+                }
+              },
+              {
+                "inside": {
+                  "field": "right",
+                  "matches": "sse-ref-test"
+                }
+              }
+            ]
+          },
+          "sse-statement": {
+            "inside": {
+              "any": [
+                {
+                  "kind": "statement_block"
+                },
+                {
+                  "kind": "program"
+                },
+                {
+                  "kind": "switch_case"
+                },
+                {
+                  "kind": "switch_default"
+                }
+              ]
+            }
+          },
+          "sse-after-exit": {
+            "matches": "sse-statement",
+            "follows": {
+              "stopBy": "end",
+              "matches": "sse-may-exit"
+            }
+          },
+          "sse-after-ref-exit": {
+            "matches": "sse-statement",
+            "follows": {
+              "stopBy": {
+                "matches": "sse-may-exit"
+              },
+              "any": [
+                {
+                  "matches": "sse-ref-test",
+                  "has": {
+                    "stopBy": {
+                      "matches": "sse-fn"
+                    },
+                    "matches": "sse-exit"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": {
+                      "matches": "sse-fn"
+                    },
+                    "matches": "sse-ref-test",
+                    "has": {
+                      "stopBy": {
+                        "matches": "sse-fn"
+                      },
+                      "matches": "sse-exit"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "sse-maybe-ref-controlled": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "sse-fn"
+                  },
+                  "kind": "try_statement",
+                  "has": {
+                    "field": "body",
+                    "has": {
+                      "stopBy": {
+                        "matches": "sse-fn"
+                      },
+                      "matches": "sse-ref-base-id"
+                    }
+                  }
+                }
+              },
+              {
+                "matches": "sse-ref-branch"
+              },
+              {
+                "not": {
+                  "matches": "sse-branch"
+                },
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "matches": "sse-fn"
+                      },
+                      {
+                        "matches": "sse-branch"
+                      },
+                      {
+                        "matches": "sse-after-exit"
+                      }
+                    ]
+                  },
+                  "any": [
+                    {
+                      "matches": "sse-ref-branch"
+                    },
+                    {
+                      "matches": "sse-after-ref-exit"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "sse-sure-ref-branch": {
+            "any": [
+              {
+                "kind": "else_clause",
+                "inside": {
+                  "kind": "if_statement",
+                  "matches": "sse-base-ref-test"
+                }
+              },
+              {
+                "any": [
+                  {
+                    "kind": "switch_case"
+                  },
+                  {
+                    "kind": "switch_default"
+                  }
+                ],
+                "inside": {
+                  "kind": "switch_body",
+                  "inside": {
+                    "kind": "switch_statement",
+                    "matches": "sse-base-ref-test"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "field": "consequence",
+                  "matches": "sse-base-ref-test"
+                }
+              },
+              {
+                "inside": {
+                  "field": "alternative",
+                  "kind": "ternary_expression",
+                  "matches": "sse-base-ref-test"
+                }
+              },
+              {
+                "inside": {
+                  "field": "body",
+                  "matches": "sse-base-ref-test"
+                }
+              },
+              {
+                "inside": {
+                  "field": "right",
+                  "matches": "sse-base-ref-test"
+                }
+              }
+            ]
+          },
+          "sse-after-sure-ref-exit": {
+            "matches": "sse-statement",
+            "follows": {
+              "stopBy": {
+                "matches": "sse-may-exit"
+              },
+              "kind": "if_statement",
+              "has": {
+                "field": "condition",
+                "matches": "sse-ref-base-expr"
+              },
+              "not": {
+                "has": {
+                  "stopBy": {
+                    "matches": "sse-fn"
+                  },
+                  "any": [
+                    {
+                      "kind": "if_statement"
+                    },
+                    {
+                      "kind": "switch_statement"
+                    },
+                    {
+                      "kind": "ternary_expression"
+                    },
+                    {
+                      "kind": "while_statement"
+                    },
+                    {
+                      "kind": "do_statement"
+                    },
+                    {
+                      "kind": "for_statement"
+                    },
+                    {
+                      "kind": "for_in_statement"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": {
+                      "matches": "sse-fn"
+                    },
+                    "matches": "sse-exit"
+                  }
+                }
+              }
+            }
+          },
+          "sse-sure-ref-controlled": {
+            "any": [
+              {
+                "matches": "sse-sure-ref-branch"
+              },
+              {
+                "not": {
+                  "matches": "sse-branch"
+                },
+                "inside": {
+                  "stopBy": {
+                    "any": [
+                      {
+                        "matches": "sse-fn"
+                      },
+                      {
+                        "matches": "sse-branch"
+                      },
+                      {
+                        "matches": "sse-after-exit"
+                      }
+                    ]
+                  },
+                  "any": [
+                    {
+                      "matches": "sse-sure-ref-branch"
+                    },
+                    {
+                      "matches": "sse-after-sure-ref-exit"
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "sse-earlier-call": {
+            "kind": "call_expression",
+            "all": [
+              {
+                "inside": {
+                  "stopBy": {
+                    "matches": "sse-fn"
+                  },
+                  "matches": "sse-effect-cb"
+                }
+              },
+              {
+                "matches": {
+                  "sse-qualifying-call": {
+                    "C": "$EC"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "any": [
+                    {
+                      "matches": "sse-dropped"
+                    },
+                    {
+                      "all": [
+                        {
+                          "matches": "sse-sure-ref-controlled"
+                        },
+                        {
+                          "not": {
+                            "matches": "sse-maybe-ref-arg"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          "sse-after-earlier-call": {
+            "inside": {
+              "stopBy": {
+                "matches": "sse-fn"
+              },
+              "follows": {
+                "stopBy": "end",
+                "any": [
+                  {
+                    "matches": "sse-earlier-call"
+                  },
+                  {
+                    "has": {
+                      "stopBy": "end",
+                      "matches": "sse-earlier-call"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "inline-effect",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "identifier",
+            "inside": {
+              "field": "function",
+              "kind": "call_expression",
+              "all": [
+                {
+                  "inside": {
+                    "stopBy": {
+                      "matches": "sse-fn"
+                    },
+                    "matches": "sse-effect-cb"
+                  }
+                },
+                {
+                  "not": {
+                    "matches": "sse-dropped"
+                  }
+                },
+                {
+                  "matches": {
+                    "sse-qualifying-call": {
+                      "C": "$RC"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "matches": "sse-maybe-ref-controlled"
+                  }
+                },
+                {
+                  "not": {
+                    "matches": "sse-maybe-ref-arg"
+                  }
+                },
+                {
+                  "not": {
+                    "matches": "sse-after-earlier-call"
+                  }
+                }
+              ]
+            }
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-hooks/set-state-in-effect",
+        "message": "Don't set state synchronously in this effect: derive the value during render, or set it from a callback the effect subscribes; a setState here re-renders right after every commit.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react-hooks/set-state-in-effect"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "set-state-in-effect"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "named-effect",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$FN",
+            "all": [
+              {
+                "matches": "sse-effect-arg"
+              },
+              {
+                "matches": {
+                  "sse-setter-fn-ref": {
+                    "X": "$FN"
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react-hooks/set-state-in-effect",
+        "message": "Don't pass a function that sets state synchronously as this effect: derive the value during render, or set it from a callback the effect subscribes.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react-hooks/set-state-in-effect"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "set-state-in-effect"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

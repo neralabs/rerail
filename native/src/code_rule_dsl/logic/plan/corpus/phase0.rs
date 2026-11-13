@@ -20,24 +20,16 @@
 
 use super::{Error as PlanError, Result};
 use crate::code_rule_dsl::logic::front::Error;
-use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
-thread_local! {
-    /// Set while this thread runs phase 0: `bootstrap.rr` itself is read by the builtin reader.
-    static IN_PHASE_0: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Whether this thread is running phase 0 (`bootstrap.rr` and `core.rr` are then read by the builtin reader).
-pub(in crate::code_rule_dsl) fn active() -> bool {
-    IN_PHASE_0.with(Cell::get)
-}
+// Whether this thread runs phase 0: the flag is the profiler's (`phase_clock`), which reads it too.
+pub use crate::code_rule_dsl::phase_clock::{IN_PHASE_0, active};
 
 /// What phase 0 starts from for one program: its text's includes, or its file.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub(in crate::code_rule_dsl) enum Seed {
+pub enum Seed {
     /// A program text: in T's shape, and its includes as (offset, name).
     Text { t_shape: bool, includes: Vec<(i64, String)> },
     /// A program file (canonical).
@@ -46,7 +38,7 @@ pub(in crate::code_rule_dsl) enum Seed {
 
 /// The include graph phase 0 derived.
 #[derive(Clone, Debug, Default)]
-pub(in crate::code_rule_dsl) struct Graph {
+pub struct Graph {
     /// For each includer ("text:0", a module's path, or "engine"), its includes in order: (offset, name, file).
     pub(in crate::code_rule_dsl) includes: BTreeMap<String, Vec<(i64, String, PathBuf)>>,
     /// The names with no file: (includer, offset, name).
@@ -55,6 +47,9 @@ pub(in crate::code_rule_dsl) struct Graph {
     pub(in crate::code_rule_dsl) absent: Vec<PathBuf>,
     /// Each module's digest, as phase 0's observer gives it.
     pub(in crate::code_rule_dsl) digests: BTreeMap<PathBuf, [u8; 32]>,
+    /// The plans the run of `bootstrap.rr` that derived it used (`Report::plans`): the run that reads the graph
+    /// names them in its record, so they stay live. Not part of the graph's digest.
+    pub(in crate::code_rule_dsl) plans: Vec<[u8; 32]>,
 }
 
 impl Graph {
@@ -65,7 +60,7 @@ impl Graph {
     }
 
     /// The program's key: its modules (path and digest) and its edges.
-    pub(in crate::code_rule_dsl) fn digest(&self) -> [u8; 32] {
+    pub fn digest(&self) -> [u8; 32] {
         use sha2::{Digest as _, Sha256};
         let mut h = Sha256::new();
         h.update(b"rerail.module-graph/v1\0");
@@ -108,6 +103,13 @@ impl Graph {
         Ok(())
     }
 
+    /// Its includes, missing names and absent candidates, for a test's message.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn describe(&self) -> String {
+        let digests: Vec<String> = self.digests.iter().map(|(p, d)| format!("{} {}", p.display(), d.iter().take(6).map(|b| format!("{b:02x}")).collect::<String>())).collect();
+        format!("includes {:#?}\nmissing {:?}\nabsent {:?}\ndigests {digests:#?}", self.includes, self.missing, self.absent)
+    }
+
     /// Every module, and every candidate found absent, as `rr::LibraryFile`s check them.
     pub(in crate::code_rule_dsl) fn files(&self) -> Vec<(PathBuf, Option<[u8; 32]>)> {
         self.digests.iter().map(|(p, d)| (p.clone(), Some(*d))).chain(self.absent.iter().map(|p| (p.clone(), None))).collect()
@@ -118,7 +120,7 @@ impl Graph {
 pub(in crate::code_rule_dsl) const TEXT: &str = "text";
 
 /// The include graph for `seed`: kept in this process while it holds, else derived by running `bootstrap.rr`.
-pub(in crate::code_rule_dsl) fn graph(seed: &Seed) -> std::result::Result<Arc<Graph>, Error> {
+pub fn graph(seed: &Seed) -> std::result::Result<Arc<Graph>, Error> {
     Ok(graphs(std::slice::from_ref(seed))?.remove(0))
 }
 
@@ -126,7 +128,7 @@ pub(in crate::code_rule_dsl) fn graph(seed: &Seed) -> std::result::Result<Arc<Gr
 /// of `bootstrap.rr` over all of them (a pack's programs are one run, not one each).
 static KEPT: OnceLock<Mutex<HashMap<Seed, Arc<Graph>>>> = OnceLock::new();
 
-pub(in crate::code_rule_dsl) fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
+pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     let kept = KEPT.get_or_init(Default::default);
     let mut found: Vec<Option<Arc<Graph>>> = {
         let map = kept.lock().expect("phase 0's graphs");
@@ -200,12 +202,12 @@ fn quote(s: &str) -> String {
 impl Graph {
     /// The part of a run's graph one seed reaches (its `k`, its place among the run's seeds), a text's key named
     /// [`TEXT`].
-    fn of(&self, seed: &Seed, k: usize) -> Graph {
+    pub fn of(&self, seed: &Seed, k: usize) -> Graph {
         let start = match seed {
             Seed::Text { .. } => text_key(k),
             Seed::File(p) => p.to_string_lossy().into_owned(),
         };
-        let mut g = Graph { absent: self.absent.clone(), ..Graph::default() };
+        let mut g = Graph { absent: self.absent.clone(), plans: self.plans.clone(), ..Graph::default() };
         let mut pending = vec![start.clone(), "engine".to_owned()];
         let mut seen = std::collections::BTreeSet::new();
         while let Some(from) = pending.pop() {
@@ -234,7 +236,7 @@ impl Graph {
 }
 
 /// Runs `bootstrap.rr` over the seeds' facts, as a corpus run with no corpus: every document it reads it loads.
-fn derive(seeds: &[Seed]) -> Result<Graph> {
+pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     let lib = crate::code_rule_dsl::logic::rr::library();
     let lib = std::fs::canonicalize(&lib).map_err(|e| PlanError::Plan(format!("{}: {e}", lib.display())))?;
     let bootstrap = lib.join("bootstrap.rr");
@@ -285,8 +287,8 @@ fn derive(seeds: &[Seed]) -> Result<Graph> {
     let read = |rel: &str| -> Vec<Vec<String>> {
         std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
     };
-    let result = run.map(|_| {
-        let mut g = Graph::default();
+    let result = run.map(|report| {
+        let mut g = Graph { plans: report.plans, ..Graph::default() };
         for r in read("p0_include") {
             if let [from, at, name, path] = r.as_slice() {
                 g.includes.entry(from.clone()).or_default().push((at.parse().unwrap_or(0), name.clone(), PathBuf::from(path)));
@@ -318,61 +320,12 @@ fn derive(seeds: &[Seed]) -> Result<Graph> {
     result
 }
 
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    /// Each library module's text, included by a program: the files phase 0's graph gives, in its order, are the
-    /// builtin reader's (the library first, then beside the includer; `core.rr` first; includes first).
-    #[test]
-    fn bootstrap_resolves_as_the_builtin_reader_does() {
-        let lib = crate::code_rule_dsl::logic::rr::library();
-        let mut names: Vec<String> = Vec::new();
-        for dir in ["python", "rust", "data-layer", "complexity", "php"] {
-            for e in std::fs::read_dir(lib.join(dir)).unwrap().flatten() {
-                let name = e.file_name().to_string_lossy().into_owned();
-                if name.ends_with(".rr") {
-                    names.push(format!("{dir}/{name}"));
-                }
-            }
-        }
-        names.sort();
-        names.truncate(40);
-        let order = |text: &str| -> Vec<PathBuf> { crate::code_rule_dsl::logic::rr::included_files(text).unwrap() };
-        for name in &names {
-            let text = format!("#include \"{name}\"\n.decl x(s: symbol)\n");
-            let graph = order(&text);
-            super::IN_PHASE_0.with(|c| c.set(true));
-            let builtin = order(&text);
-            super::IN_PHASE_0.with(|c| c.set(false));
-            assert_eq!(graph, builtin, "{name}");
-        }
-        // Two names, and a text in T's shape (no `core.rr`).
-        for text in ["#include \"python/env.rr\"\n#include \"python/imports.rr\"\n", "#include \"python/env.rr\"\n.decl doc(d: number, p: symbol, m: symbol)\n"] {
-            let graph = order(text);
-            super::IN_PHASE_0.with(|c| c.set(true));
-            let builtin = order(text);
-            super::IN_PHASE_0.with(|c| c.set(false));
-            assert_eq!(graph, builtin, "{text}");
-        }
-        // A text made from a program file keeps the graph a run of `bootstrap.rr` would give it (`keep_text`).
-        let programs = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs");
-        for file in [programs.join("calls_cx.rr"), lib.join("python/conditions.rr")] {
-            let text = crate::code_rule_dsl::tools::program_text(&file).unwrap();
-            let seed = crate::code_rule_dsl::logic::rr::text_seed(&text).unwrap().expect("includes");
-            let kept = super::graph(&seed).unwrap().digest();
-            let derived = super::derive(std::slice::from_ref(&seed)).unwrap().of(&seed, 0).digest();
-            assert_eq!(kept, derived, "{}", file.display());
-        }
-        // A name with no file is refused as before.
-        let err = crate::code_rule_dsl::logic::rr::parse("#include \"no/such.rr\"\n").err().expect("refused").to_string();
-        assert!(err.contains("no such file in the library"), "{err}");
-    }
-}
+// Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
+// engine registers as it loads (the languages, their `.rr` libraries).
 
 
 #[cfg(test)]
-mod benchmarks {
+pub mod benchmarks {
     /// Phase 0 over every `.rr` file of `RERAIL_P0_RULES` (a pack's directory), as a pack's run reads them
     /// (`tools::program_texts`): one run of `bootstrap.rr` for all. Run it twice for the warm figure.
     #[test]
@@ -387,7 +340,7 @@ mod benchmarks {
         });
         let start = super::super::thread_usage();
         let refs: Vec<&std::path::Path> = files.iter().map(|p| p.as_path()).collect();
-        let texts = crate::code_rule_dsl::tools::program_texts(&refs).unwrap();
+        let texts = crate::code_rule_dsl::logic::settings::program_texts(&refs).unwrap();
         let resolved = super::super::thread_usage();
         let seeds: Vec<super::Seed> = texts.iter().filter_map(|t| crate::code_rule_dsl::logic::rr::text_seed(t).unwrap()).collect();
         let graphs = super::graphs(&seeds).unwrap();

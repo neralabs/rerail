@@ -3,7 +3,7 @@
 //! From Data-layer-rule-expressivity's `matcher/anchors/sql/statistics/mod.rs`: the summaries are
 //! the content store's (`kind_size`, `term_node_freq`, `term_kind_freq`), keyed by kind atom.
 use crate::code_rule_dsl::matcher::{AnchorPlan, Condition, Required, Requirement};
-use crate::code_rule_dsl::prefilter::LANG_STRIDE;
+use crate::code_rule_dsl::facts::core::KIND_STRIDE as LANG_STRIDE;
 use rusqlite::{Connection, Result, limits::Limit, params_from_iter, types::Value};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
@@ -12,13 +12,13 @@ use std::sync::Arc;
 struct Key(u32, Required);
 
 #[derive(Clone, Copy)]
-pub(in crate::code_rule_dsl) struct Estimate {
+pub struct Estimate {
     pub rows: u64,
     pub uncovered: u64,
 }
 
 #[derive(Clone, Default)]
-pub(in crate::code_rule_dsl) struct Statistics(Arc<BTreeMap<Key, Estimate>>);
+pub struct Statistics(Arc<BTreeMap<Key, Estimate>>);
 
 fn patterns(plan: &AnchorPlan, seen: &mut HashSet<usize>, visit: &mut impl FnMut(&[Requirement])) {
     match &plan.condition {
@@ -153,5 +153,4 @@ pub(in crate::code_rule_dsl) struct Decision {
     pub uncovered_rows: Option<u64>,
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

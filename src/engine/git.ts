@@ -1,7 +1,9 @@
-import { spawn, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
-import { posix, win32 } from "node:path";
+import { dirname, join, posix, resolve, win32 } from "node:path";
+import { fileStamp } from "./file-stamp.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
 export interface GitSearch {
@@ -205,15 +207,25 @@ const SAFE_CONFIG: readonly string[] = ["-c", "core.fsmonitor=false", "-c", `cor
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 /**
- * `git -C <cwd> <args>` with fsmonitor and hooks disabled, no optional locks, and a 10 s default timeout; throws
- * {@link GitUnavailableError} when Git is missing, never on a non-zero exit.
+ * The environment of every Git process Rerail starts: no optional locks, and no lazy fetch of a partial clone's missing
+ * objects. Git honours `GIT_NO_LAZY_FETCH` from 2.45.0 and in the 2024-04-19 security releases 2.39.4, 2.40.2, 2.41.1,
+ * 2.42.2, 2.43.4 and 2.44.1; an older Git ignores it and may fetch from the remote.
+ */
+function gitEnvironment(): NodeJS.ProcessEnv {
+  return { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" };
+}
+
+/**
+ * `git -C <cwd> <args>` with fsmonitor and hooks disabled, in {@link gitEnvironment} (no optional locks, no lazy fetch
+ * of a partial clone's missing objects), and a 10 s default timeout; throws {@link GitUnavailableError} when Git is
+ * missing, never on a non-zero exit.
  */
 export function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
   const result = spawnSync(gitExecutable(), [...SAFE_CONFIG, "-C", cwd, ...args], {
     encoding: "utf8",
     timeout: DEFAULT_TIMEOUT_MS,
     ...options,
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+    env: gitEnvironment(),
   });
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }
@@ -222,6 +234,208 @@ export function runGit(cwd: string, args: readonly string[], options: RunGitOpti
 export function gitText(cwd: string, args: readonly string[]): string | undefined {
   const result = runGit(cwd, args);
   return result.status === 0 ? result.stdout.trim() : undefined;
+}
+
+/** Trimmed stdout of a successful Git command run under `runGit`'s safe configuration without blocking; else undefined. */
+async function gitOutput(cwd: string, args: readonly string[]): Promise<string | undefined> {
+  return (await gitStdout(cwd, args))?.trim();
+}
+
+/** Stdout, as Git wrote it, of a successful Git command run as `gitOutput` runs one; undefined past `maxBuffer` bytes. */
+async function gitStdout(cwd: string, args: readonly string[], maxBuffer = 1024 * 1024): Promise<string | undefined> {
+  let executable: string;
+  try {
+    executable = gitExecutable();
+  } catch {
+    return undefined;
+  }
+  const { promise, resolve: settle } = Promise.withResolvers<string | undefined>();
+  execFile(
+    executable,
+    [...SAFE_CONFIG, "-C", cwd, ...args],
+    { encoding: "utf8", maxBuffer, timeout: DEFAULT_TIMEOUT_MS, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" } },
+    (error, stdout) => settle(error === null ? stdout : undefined),
+  );
+  return await promise;
+}
+
+/** The commit `HEAD` names in `cwd`; undefined outside a repository, or before its first commit. */
+export async function gitHead(cwd: string): Promise<string | undefined> {
+  return await gitOutput(cwd, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+}
+
+/**
+ * The exclude files of the Git checkout at `cwd` that no diff shows, absolute: its `info/exclude` (the common Git
+ * folder's, which every worktree shares) and the file `core.excludesFile` names, else Git's default, `git/ignore` in
+ * `XDG_CONFIG_HOME` or `~/.config`. Empty outside a Git checkout, or without Git.
+ */
+export async function gitExcludeFiles(cwd: string): Promise<string[]> {
+  // Git prints the path relative to `cwd` unless it is elsewhere; `--path-format` would need Git 2.31.
+  const exclude = await gitOutput(cwd, ["rev-parse", "--git-path", "info/exclude"]);
+  if (exclude === undefined || exclude === "") return [];
+  const configured = await gitOutput(cwd, ["config", "--path", "--get", "core.excludesFile"]);
+  return [resolve(cwd, exclude), resolve(cwd, configured || defaultExcludesFile())];
+}
+
+/** The file Git reads as `core.excludesFile` when that names none: `git/ignore` in `XDG_CONFIG_HOME`, else in `~/.config`. */
+function defaultExcludesFile(): string {
+  const xdg = process.env.XDG_CONFIG_HOME;
+  return join(xdg === undefined || xdg === "" ? join(process.env.HOME ?? homedir(), ".config") : xdg, "git", "ignore");
+}
+
+/**
+ * The configuration files that can name the excludes file of the Git checkout at `cwd`, absolute: its repository's
+ * `config` and its worktree's `config.worktree`, and the global file, `GIT_CONFIG_GLOBAL` when set, else `~/.gitconfig`
+ * and `git/config` in `XDG_CONFIG_HOME` or `~/.config`. The system file, which only an administrator writes, and files
+ * `include.path` pulls in are left out. Empty outside a Git checkout, or without Git.
+ */
+export async function gitConfigFiles(cwd: string): Promise<string[]> {
+  const local = await gitOutput(cwd, ["rev-parse", "--git-path", "config", "--git-path", "config.worktree"]);
+  if (local === undefined || local === "") return [];
+  const global = process.env.GIT_CONFIG_GLOBAL;
+  const globals = global === undefined || global === ""
+    ? [join(process.env.HOME ?? homedir(), ".gitconfig"), join(dirname(defaultExcludesFile()), "config")]
+    : [global];
+  return [...local.split("\n").map(path => resolve(cwd, path)), ...globals.map(path => resolve(cwd, path))];
+}
+
+/** How far back {@link headMovedOnlyByCommits} looks: a window longer than this is no agent's one command. */
+const MAX_REFLOG_ENTRIES = 256;
+/** The reflog subject of `git commit` in all its forms (`commit (amend): …`, `commit (merge): …`). */
+const COMMIT_SUBJECT = /^commit(?: \([^)]*\))?: /u;
+
+/**
+ * Whether everything that moved `HEAD` in `cwd` since it named `from` was a commit, which leaves the working tree as it
+ * found it, by `HEAD`'s reflog. Anything else there (a checkout, pull, merge, rebase, reset, cherry-pick) wrote files, and
+ * so did a move the reflog cannot show (`from` is not in it). With no `from`, `HEAD`'s newest move is all there is to go by.
+ */
+export async function headMovedOnlyByCommits(cwd: string, from: string | undefined): Promise<boolean> {
+  const reflog = await gitOutput(cwd, ["reflog", "show", "-n", String(MAX_REFLOG_ENTRIES), "--format=%H %gs", "HEAD"]);
+  if (reflog === undefined) return false;
+  const entries = reflog.split("\n");
+  const moves = from === undefined ? 1 : entries.findIndex(entry => entry.startsWith(`${from} `));
+  return moves > 0 && entries.slice(0, moves).every(entry => COMMIT_SUBJECT.test(entry.slice(entry.indexOf(" ") + 1)));
+}
+
+/** The distinct commits `cwd`'s branches and remote-tracking branches point at; empty without Git or outside a repository. */
+export async function gitBranchTips(cwd: string): Promise<string[]> {
+  const tips = await gitOutput(cwd, ["for-each-ref", "--format=%(objectname)", "refs/heads", "refs/remotes"]);
+  return tips === undefined || tips === "" ? [] : [...new Set(tips.split("\n"))];
+}
+
+/** The commits reachable from `to` but not from `from` (`git rev-list from..to`); empty when Git cannot say. */
+export async function gitCommitsBetween(cwd: string, from: string, to: string): Promise<string[]> {
+  const commits = await gitOutput(cwd, ["rev-list", `${from}..${to}`]);
+  return commits === undefined || commits === "" ? [] : commits.split("\n");
+}
+
+/** The most bytes of a listing `gitModifiedOrUntrackedPaths` and `unmergedEntries` read: past it, the first lists none and the second cannot say. */
+const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;
+
+/**
+ * The files of the checkout at `cwd` whose text its index may not hold: modified since staged (or deleted), and untracked
+ * but not ignored; relative to `cwd`. Empty without Git, outside a repository, past the timeout, or past
+ * `MAX_LISTED_PATH_BYTES` of paths.
+ */
+export async function gitModifiedOrUntrackedPaths(cwd: string): Promise<string[]> {
+  const listed = await gitStdout(cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], MAX_LISTED_PATH_BYTES);
+  return listed === undefined ? [] : listed.split("\0").filter(path => path !== "");
+}
+
+/**
+ * The object id of each of `revisions` (as for {@link readGitBlobs}) that names a blob, by one `git cat-file
+ * --batch-check`: no blob is read. A revision Git does not resolve to a blob is absent, and so is every revision
+ * without Git, outside a repository, or past the timeout; one containing a newline cannot be asked for and is skipped.
+ */
+export async function readGitBlobIds(cwd: string, revisions: readonly string[]): Promise<Map<string, string>> {
+  const asked = revisions.filter(revision => !/[\r\n]/u.test(revision));
+  const ids = new Map<string, string>();
+  if (asked.length === 0) return ids;
+  let executable: string;
+  try {
+    executable = gitExecutable();
+  } catch {
+    return ids;
+  }
+  const { promise, resolve: settle } = Promise.withResolvers<void>();
+  const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, "cat-file", "--batch-check=%(objectname) %(objecttype)"], {
+    env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
+    stdio: ["pipe", "pipe", "ignore"],
+    timeout: DEFAULT_TIMEOUT_MS,
+  });
+  const chunks: Buffer[] = [];
+  child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+  child.on("error", () => settle());
+  child.on("close", () => settle());
+  child.stdin.on("error", () => undefined);
+  child.stdin.end(asked.map(revision => `${revision}\n`).join(""));
+  await promise;
+  // One line per revision, in order: `<oid> <type>`, or `<revision> missing` (or `ambiguous`), which repeats the
+  // revision and so may hold any text, spaces included; only a whole line of an object id and `blob` names one.
+  const lines = Buffer.concat(chunks).toString("utf8").split("\n");
+  asked.forEach((revision, index) => {
+    const id = /^([0-9a-f]{40}|[0-9a-f]{64}) blob$/u.exec(lines[index] ?? "")?.[1];
+    if (id !== undefined) ids.set(revision, id);
+  });
+  return ids;
+}
+
+/**
+ * The index's unmerged entries under `cwd`, by path relative to it. Each value holds the path's modes, blobs and stages,
+ * so a later conflict on the same path reads differently. Undefined when Git cannot say: outside a repository, past the
+ * timeout, or past `MAX_LISTED_PATH_BYTES` of entries.
+ */
+async function unmergedEntries(cwd: string): Promise<ReadonlyMap<string, string> | undefined> {
+  const listed = await gitStdout(cwd, ["ls-files", "--unmerged", "-z"], MAX_LISTED_PATH_BYTES);
+  if (listed === undefined) return undefined;
+  const entries = new Map<string, string>();
+  for (const record of listed.split("\0")) {
+    const tab = record.indexOf("\t");
+    if (tab < 0) continue;
+    const path = record.slice(tab + 1);
+    entries.set(path, `${entries.get(path) ?? ""}${record.slice(0, tab)}\n`);
+  }
+  return entries;
+}
+
+/** The file `cwd`'s checkout keeps its index in (a linked worktree's is under the main `.git`); undefined when Git cannot say. */
+async function gitIndexPath(cwd: string): Promise<string | undefined> {
+  const path = await gitOutput(cwd, ["rev-parse", "--git-path", "index"]);
+  return path === undefined ? undefined : resolve(cwd, path);
+}
+
+/**
+ * Reads the index's unmerged entries under a folder ({@link unmergedEntries}), for a caller that asks every pass: it
+ * starts a Git process only when the folder's index file changed since the last read, and otherwise costs one `stat`
+ * (plus one Git process the first time, to find the file). Git replaces that file with a new one on every write, so a
+ * write changes its inode even inside one clock tick. A folder whose file cannot be found or stamped is read every time,
+ * so this can cost more, never answer with stale entries. When Git cannot list them (it failed or timed out), the
+ * answer is undefined and nothing is kept, so the next read asks Git again.
+ */
+export function gitUnmergedReader(): (cwd: string) => Promise<ReadonlyMap<string, string> | undefined> {
+  const indexes = new Map<string, string>();
+  const held = new Map<string, { readonly stamp: string; readonly entries: ReadonlyMap<string, string> }>();
+  /** The stamp of `cwd`'s index file, found once and remembered; undefined when it cannot be found or stamped. */
+  const indexStamp = async (cwd: string): Promise<string | undefined> => {
+    const index = indexes.get(cwd) ?? await gitIndexPath(cwd);
+    if (index === undefined) return undefined;
+    indexes.set(cwd, index);
+    try {
+      return fileStamp(await stat(index));
+    } catch {
+      return undefined;
+    }
+  };
+  return async cwd => {
+    // Stamped before the read: an index written between the two reads as changed next time.
+    const stamp = await indexStamp(cwd);
+    const last = held.get(cwd);
+    if (last !== undefined && last.stamp === stamp) return last.entries;
+    held.delete(cwd);
+    const entries = await unmergedEntries(cwd);
+    if (entries !== undefined && stamp !== undefined) held.set(cwd, { stamp, entries });
+    return entries;
+  };
 }
 
 /** One object body of `git cat-file --batch` output being read: kept, or skipped as it streams past. */
@@ -257,7 +471,7 @@ export async function readGitBlobs(
   }
   const { promise, resolve: settle } = Promise.withResolvers<void>();
   const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, "cat-file", "--batch"], {
-    env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" },
+    env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
     stdio: ["pipe", "pipe", "ignore"],
     timeout: options.timeout ?? DEFAULT_TIMEOUT_MS,
   });

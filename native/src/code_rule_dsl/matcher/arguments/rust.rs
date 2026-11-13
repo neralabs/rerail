@@ -1,9 +1,16 @@
-use super::{Arguments, Passed, every, named_children, unparenthesized};
+use crate::code_rule_dsl::tree::Tree;
+use super::{Arguments, Passed, every, unparenthesized};
 use ast_grep_core::{Doc, Node};
 
-impl Arguments {
+/// Rust's passed arguments of a call (`ArgumentRules`).
+pub trait RustArguments {
     /// Returns the positional arguments passed by a Rust call expression.
-    pub(crate) fn rust<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
+    fn rust<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>>;
+}
+
+impl RustArguments for Arguments {
+    /// Returns the positional arguments passed by a Rust call expression.
+    fn rust<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>> {
         let unknown = || every(self.slots.len(), || Passed::Unknown);
         let Some(arguments) = call.field("arguments") else {
             return unknown();
@@ -18,7 +25,7 @@ impl Arguments {
         let mut passed = every(self.slots.len(), || Passed::Absent);
         let mut slot = 0;
         let mut attributed = false;
-        for argument in named_children(&arguments) {
+        for argument in arguments.named_code().collect::<Vec<_>>() {
             if argument.kind() == "attribute_item" {
                 attributed = true;
                 continue;

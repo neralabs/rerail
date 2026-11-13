@@ -4,48 +4,50 @@ use crate::content_store::{Binding, ContentStore, Derivation, DerivationRecord, 
 
 // The push path is wired into the workspace scan in a later slice; until then only tests call it.
 #[allow(dead_code)]
-pub(crate) mod core;
+pub mod core;
+pub mod nearest;
+pub mod span_prefilter;
+pub mod connection;
+pub mod grammar_shape;
 #[allow(dead_code)]
-pub(crate) mod families;
+pub mod families;
 #[allow(dead_code)]
-pub(crate) mod memo;
+pub mod memo;
 /// M's layered map as copied; `overlay` is its adaptation (open item O19).
 #[allow(dead_code)]
-pub(crate) mod lmap;
-#[allow(dead_code)]
-pub(crate) mod facts_a;
+pub mod lmap;
+// cratify: `facts_a` is rerail-w's (it mounts it)
 /// D's projection batches as copied; `runs` is their adaptation (open item O19).
 #[cfg(test)]
 #[allow(dead_code)]
-pub(crate) mod d_projection;
+pub mod d_projection;
 #[allow(dead_code)]
-pub(crate) mod observe;
+pub mod observe;
 #[allow(dead_code)]
-pub(crate) mod overlay;
+pub mod overlay;
 #[allow(dead_code)]
-pub(crate) mod pages;
+pub mod pages;
 #[allow(dead_code)]
-pub(crate) mod producers;
+pub mod producers;
 #[allow(dead_code)]
-pub(crate) mod propagate;
+pub mod propagate;
 #[allow(dead_code)]
-pub(crate) mod runs;
-#[cfg(test)]
-mod set_census;
+pub mod runs;
+// cratify: `set_census` is rerail-transducer's (it mounts it)
 #[allow(dead_code)]
-pub(crate) mod vtab;
+pub mod vtab;
 /// `core.rr`'s repository inputs (decision 0046).
-pub(crate) mod repository;
+pub mod repository;
 /// M's Y1 reference graph as copied (05 Phase 1 row 2's source; open item O19).
 #[allow(dead_code, unused_imports, clippy::all)]
-// Not in the browser build: it forks and reads macOS process counters.
-#[cfg(not(target_family = "wasm"))]
-pub(crate) mod ygraph;
+// Unix only (not the browser build, not Windows): it forks its checks and reads macOS' and Linux' memory counters.
+#[cfg(unix)]
+pub mod ygraph;
 
 /// The derivation graph as the push path reads and writes it: the store itself (every write a
 /// transaction) or the overlay over it (writes in memory, written back in the background).
 #[allow(dead_code)]
-pub(crate) trait Graph {
+pub trait Graph {
     /// The store the graph's facts live in (Git trees, sources, the facts memo).
     fn store(&self) -> &ContentStore;
     /// Binds each name; returns the names whose digest changed, in input order.

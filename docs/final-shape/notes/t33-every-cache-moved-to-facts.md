@@ -1,7 +1,27 @@
 # t33: Every cache moved to facts, one by one (decision 0104's moves)
 
-Status: plan (2026-11-10). Built so far: K1 for the cross-file strata (step 4, below). It takes decision 0104's eight steps and says, for each
+Status: plan (2026-11-10). Built so far: K1 for the cross-file strata (step 4, below), and K3's rule for the cone of requests (below, "A native step is a relation"). It takes decision 0104's eight steps and says, for each
 table and map that 0104's checks (`logic::facts_only`) list as "not yet facts", what replaces it.
+
+## A native step is a relation (built)
+
+A stratum that makes requests and answers them inside its fixpoint (the cone of requests: directories, files,
+loads; 0065 §2a), and a stratum of produced relations above their requests, are kept like any stratum, in the
+frames. A native step's answers are among what its stratum read, recorded as `answer:<p>` with their digest:
+
+- the stratum is clean while what it reads is unchanged and its stored requests, answered again, give the
+  recorded answers. Answering again is the observer's `stat` for a directory or a file, and the chunk path for a
+  load, which the run takes anyway;
+- a native answer is a function of its request: a load asked again gives the same document (`World::loaded_as`),
+  not sent through the chunks twice;
+- a relation that is a member of the stratum and an input too (a per-file relation, its workspace rows given and
+  the loaded documents' rows answered into it) is read as an input;
+- a view in a stratum is as its stratum's other relations and reads are (`view_digest`).
+
+Measured (237 Python files, a 204-document typeshed load, CPU user+sys, load 20 to 50): a comment edit 18 to 19 s
+before, 1.1 to 1.2 s now; a new import runs the cone in full (11.5 s), and loads what a run with nothing kept loads.
+Test: `corpus::tests::the_cone_of_requests_is_kept_while_its_reads_and_answers_are`. Next: maintain the cone from
+the delta of its inputs (K4), and drop `World::still` and the whole-run cutoff, which these rules now cover.
 
 ## Intro
 
@@ -101,6 +121,10 @@ removed with nothing in its place but K1–K4.
 | `recursive_spike.rs` `CARRY` | the spike's carried state | goes with the spike, or into K1 |
 
 ### Step 5: the phase store (the typing branch)
+
+**Done** (investigate-bend-vs-datalog, t32 stage 3): the phase store's tables, `.owner` and `Session::phase_rows` are
+gone. A phase's exports are its nested run's outputs, kept as that run keeps every relation, and handed on as input
+rows. The constants' rows (`constant_rows`, step 1) stay in the same `<store>.phases` file until step 1 moves them.
 
 | Today | Key and check today | Becomes |
 |---|---|---|

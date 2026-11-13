@@ -1,0 +1,14 @@
+[package]
+name = "rerail-simdjson"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "JSON's tape from simdjson: the portable side (the Tape, the index writer); the native code is rerail-simdjson-native's."
+
+[dependencies]
+memchr = "=2.8.3"
+rerail-simdjson-native = { path = "../simdjson_native" }
+
+[dev-dependencies]
+libc = "0.2.189"
+sha2 = "0.11"

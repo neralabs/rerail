@@ -18,7 +18,7 @@
 use crate::code_rule_dsl::logic::front::{Program, Value};
 use crate::code_rule_dsl::logic::program_facts::{self, Facts};
 use crate::code_rule_dsl::logic::rr::{self, LibraryFile};
-use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, SourceId, StoreResult};
+use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, StoreResult};
 use sha2::{Digest as _, Sha256};
 use std::path::PathBuf;
 
@@ -47,8 +47,8 @@ fn hex(bytes: &[u8]) -> String {
 fn plan() -> FactsPlanSet {
     let mut hash = Sha256::new();
     hash.update(b"rerail.combined/v1\0");
-    hash.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
-    hash.update(crate::code_rule_dsl::workspace::grammar_version().to_le_bytes());
+    hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
+    hash.update(crate::code_rule_dsl::build_ids::grammar_version().to_le_bytes());
     hash.update(rr::library().to_string_lossy().as_bytes());
     for switch in ["RERAIL_LIBRARIES", "RERAIL_REQUESTS"] {
         hash.update(b"\0");
@@ -63,7 +63,9 @@ pub(super) fn lookup(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option
     let set = plan();
     let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?;
     let Some(result) = memo.results.get(&set.plans[0]) else { return Ok(None) };
-    let Ok(facts) = program_facts::decode(&result.entry) else { return Ok(None) };
+    // Read in place (`decode_view`): the program off the encoding's rows, the files it read copied out (a few).
+    let Ok(view) = program_facts::decode_view(&result.entry) else { return Ok(None) };
+    let facts = view.owned(|r| r == READ_FILE);
     let read = facts.get(READ_FILE).into_iter().flatten().map(|row| match row.as_slice() {
         [Value::Str(path), Value::Str(digest)] => Some(LibraryFile { path: PathBuf::from(path), sha256: unhex(digest) }),
         _ => None,
@@ -74,7 +76,7 @@ pub(super) fn lookup(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option
             _ => return Ok(None),
         }
     }
-    Ok(program_facts::program(&facts, P).ok())
+    Ok(program_facts::Grouped::of_views(std::slice::from_ref(&view)).program(P).ok())
 }
 
 fn unhex(text: &str) -> Option<[u8; 32]> {
@@ -95,7 +97,7 @@ pub(super) fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile
     program_facts::write(&mut facts, P, program);
     // A program that does not read back the same is not kept: the next run combines it again.
     let back = program_facts::program(&facts, P);
-    if !back.is_ok_and(|back| format!("{back:?}") == format!("{program:?}")) {
+    if !back.is_ok_and(|back| program_facts::debug_digest(&back) == program_facts::debug_digest(program)) {
         return Ok(false);
     }
     let rows = read.iter().map(|f| vec![Value::Str(f.path.to_string_lossy().into_owned()), Value::Str(f.sha256.map(|d| hex(&d)).unwrap_or_default())]).collect();
@@ -119,40 +121,9 @@ pub(super) fn queued(key: &[u8; 32]) -> crate::content_store::write_back::Key {
 
 /// The source and plan the entry of texts `key` lives under, when the store keeps it: for the run's manifest. A
 /// queued write of it first.
-pub(super) fn named(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<(SourceId, [u8; 32])>> {
-    store.settle(&queued(key));
-    Ok(store.held_source_by_hash(HashKey::sha256(source_text(key).as_bytes()))?.map(|source| (source, plan().plans[0])))
+pub(super) fn named(key: &[u8; 32]) -> (String, [u8; 32]) {
+    (source_text(key), plan().plans[0])
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_combined_program_is_read_back_until_a_library_file_it_read_changes() {
-        let dir = std::env::temp_dir().join(format!("rerail-combined-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
-        let lib = dir.join("lib.rr");
-        std::fs::write(&lib, "a").unwrap();
-        let missing = dir.join("missing.rr");
-        let program = rr::parse(".decl e(x: int)\n.output e\ne(1).\n").unwrap();
-        let read = [LibraryFile { path: lib.clone(), sha256: Some(Sha256::digest(b"a").into()) }, LibraryFile { path: missing.clone(), sha256: None }];
-        let key = [7u8; 32];
-        assert!(remember(&store, &key, &read, &program).unwrap());
-        let back = lookup(&store, &key).unwrap().expect("kept");
-        assert_eq!(format!("{back:?}"), format!("{program:?}"));
-        assert!(named(&store, &key).unwrap().is_some());
-        // Another key finds nothing.
-        assert!(lookup(&store, &[8u8; 32]).unwrap().is_none());
-        // A file appearing where an include found none combines again.
-        std::fs::write(&missing, "b").unwrap();
-        assert!(lookup(&store, &key).unwrap().is_none());
-        std::fs::remove_file(&missing).unwrap();
-        assert!(lookup(&store, &key).unwrap().is_some());
-        // So does an edited library file.
-        std::fs::write(&lib, "c").unwrap();
-        assert!(lookup(&store, &key).unwrap().is_none());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
+pub mod tests;

@@ -6,6 +6,7 @@ use super::api::{
     ON_STORAGE_ATTACHED, StorageAttachment, WorkspaceApplyTask,
 };
 use super::persisted::{AFTER_FILES_PUBLISHED, LEASE_RENEWAL_ATTEMPTS};
+use super::secret_names::SecretNamePatterns;
 use super::storage::storage_context_in;
 use super::tests::{WORKSPACE_TEST_SLOT, git, result_page};
 use super::{STORE_BUSY_COOLDOWN, TEST_STORE_BUSY_CLOCK_ADVANCE, TEST_UNPUBLISHED_RESIDENT_BYTES};
@@ -211,7 +212,11 @@ fn storage_attaches_after_code_rule_registration_until_the_first_apply() {
     let mut registered = CodeRuleDslWorkspace::new();
     registered.add_code_rule(&needle_code_rule(), None).unwrap();
     let attached = registered
-        .storage_task(repository.root(), store_argument(&store))
+        .storage_task(
+            repository.root(),
+            store_argument(&store),
+            &SecretNamePatterns::default(),
+        )
         .unwrap()
         .compute();
     assert!(
@@ -226,7 +231,11 @@ fn storage_attaches_after_code_rule_registration_until_the_first_apply() {
     assert_eq!(apply_source(&applied, 1, "NEEDLE\n"), ["NEEDLE"]);
     assert!(
         applied
-            .storage_task(repository.root(), store_argument(&store))
+            .storage_task(
+                repository.root(),
+                store_argument(&store),
+                &SecretNamePatterns::default()
+            )
             .unwrap()
             .compute()
             .is_err(),
@@ -244,7 +253,11 @@ fn storage_attach_opens_the_store_named_when_it_was_requested() {
     let environment = StoreVariable::set(&changed);
     let workspace = CodeRuleDslWorkspace::new();
     let mut task = workspace
-        .storage_task(repository.root(), store_argument(&requested))
+        .storage_task(
+            repository.root(),
+            store_argument(&requested),
+            &SecretNamePatterns::default(),
+        )
         .unwrap();
     // The host changes its environment after asking for the attach, before a pool thread runs it.
     environment.replace(&repository.store("later.sqlite"));
@@ -271,7 +284,11 @@ fn closing_while_storage_attaches_releases_the_attached_storage() {
     let store = repository.store("content.sqlite");
     let workspace = Arc::new(CodeRuleDslWorkspace::new());
     let mut task = workspace
-        .storage_task(repository.root(), store_argument(&store))
+        .storage_task(
+            repository.root(),
+            store_argument(&store),
+            &SecretNamePatterns::default(),
+        )
         .unwrap();
     let closer = Arc::clone(&workspace);
     ON_STORAGE_ATTACHED.set(Some(Box::new(move || closer.close())));
@@ -298,7 +315,11 @@ fn storage_attach_reports_why_it_attached_no_store() {
     let outcome = format!(
         "{:?}",
         workspace
-            .storage_task(repository.root(), store_argument(&store))
+            .storage_task(
+                repository.root(),
+                store_argument(&store),
+                &SecretNamePatterns::default()
+            )
             .unwrap()
             .compute()
     );
@@ -317,6 +338,7 @@ fn storage_attach_reports_why_it_attached_no_store() {
         .storage_task(
             outside.to_string_lossy().into_owned(),
             store_argument(&store),
+            &SecretNamePatterns::default(),
         )
         .unwrap()
         .compute();
@@ -345,6 +367,7 @@ fn storage_attach_reports_the_time_of_each_phase() {
         .storage_task(
             repository.root(),
             store_argument(&repository.store("content.sqlite")),
+            &SecretNamePatterns::default(),
         )
         .unwrap()
         .compute()
@@ -363,6 +386,7 @@ fn storage_attach_reports_the_time_of_each_phase() {
         .storage_task(
             outside.to_string_lossy().into_owned(),
             store_argument(&repository.store("unused.sqlite")),
+            &SecretNamePatterns::default(),
         )
         .unwrap()
         .compute()
@@ -386,7 +410,11 @@ fn enable_storage_opens_exactly_the_store_the_caller_names() {
     let chosen = repository.store("chosen").join("content.sqlite");
 
     let missing = CodeRuleDslWorkspace::new();
-    let refused = missing.storage_task(repository.root(), String::new());
+    let refused = missing.storage_task(
+        repository.root(),
+        String::new(),
+        &SecretNamePatterns::default(),
+    );
     missing.close();
     assert!(
         refused.is_err(),
@@ -395,7 +423,11 @@ fn enable_storage_opens_exactly_the_store_the_caller_names() {
 
     let workspace = CodeRuleDslWorkspace::new();
     let attached = workspace
-        .storage_task(repository.root(), store_argument(&chosen))
+        .storage_task(
+            repository.root(),
+            store_argument(&chosen),
+            &SecretNamePatterns::default(),
+        )
         .unwrap()
         .compute();
     workspace.close();
@@ -417,6 +449,7 @@ fn enable_storage_opens_exactly_the_store_the_caller_names() {
         .storage_task(
             outside.to_string_lossy().into_owned(),
             store_argument(&unused),
+            &SecretNamePatterns::default(),
         )
         .unwrap()
         .compute();
@@ -580,7 +613,11 @@ fn storage_attaches_without_a_store_another_writer_holds_past_the_deadline() {
         let _writer = HeldWriter::hold(&store);
         let workspace = CodeRuleDslWorkspace::new();
         let outcome = workspace
-            .storage_task(repository.root(), store_argument(&store))
+            .storage_task(
+                repository.root(),
+                store_argument(&store),
+                &SecretNamePatterns::default(),
+            )
             .unwrap()
             .compute();
         workspace.close();
@@ -607,7 +644,11 @@ fn an_apply_returns_its_results_while_another_writer_holds_the_store() {
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace.add_code_rule(&needle_code_rule(), None).unwrap();
     let attached = workspace
-        .storage_task(repository.root(), store_argument(&store))
+        .storage_task(
+            repository.root(),
+            store_argument(&store),
+            &SecretNamePatterns::default(),
+        )
         .unwrap()
         .compute();
     assert!(
@@ -646,7 +687,11 @@ fn attached_workspace(
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace.add_code_rule(code_rule, None).unwrap();
     let attached = workspace
-        .storage_task(repository.root(), store_argument(store))
+        .storage_task(
+            repository.root(),
+            store_argument(store),
+            &SecretNamePatterns::default(),
+        )
         .unwrap()
         .compute();
     assert!(
@@ -1398,7 +1443,11 @@ fn an_attach_waits_out_a_writer_for_one_deadline_across_its_writes() {
     })));
     let workspace = CodeRuleDslWorkspace::new();
     let outcome = workspace
-        .storage_task(repository.root(), store_argument(&store))
+        .storage_task(
+            repository.root(),
+            store_argument(&store),
+            &SecretNamePatterns::default(),
+        )
         .unwrap()
         .compute();
     AFTER_GIT_TREE_TRANSACTION.set(None);
@@ -1448,7 +1497,11 @@ fn an_attach_shares_one_deadline_between_opening_the_store_and_publishing() {
     })));
     let workspace = CodeRuleDslWorkspace::new();
     let outcome = workspace
-        .storage_task(repository.root(), store_argument(&store))
+        .storage_task(
+            repository.root(),
+            store_argument(&store),
+            &SecretNamePatterns::default(),
+        )
         .unwrap()
         .compute();
     AFTER_GIT_TREE_TRANSACTION.set(None);
@@ -1775,5 +1828,145 @@ fn a_later_busy_period_is_reported_again() {
     assert_eq!(apply_source(&workspace, 4, "NEEDLE = 4\n"), ["NEEDLE"]);
     assert!(reported(), "the next busy period is reported again");
     drop(writer);
+    workspace.close();
+}
+
+/// The paths the store holds an overlay row for, and the raw length of every source it holds.
+fn stored_paths_and_sources(store: &Path) -> (Vec<String>, Vec<i64>) {
+    let connection =
+        rusqlite::Connection::open_with_flags(store, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
+    fn column<T: rusqlite::types::FromSql>(connection: &rusqlite::Connection, sql: &str) -> Vec<T> {
+        let mut statement = connection.prepare(sql).unwrap();
+        statement
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+    }
+    let paths = column(
+        &connection,
+        "SELECT strings.value FROM workspace_overlay JOIN paths USING (path_id) \
+         JOIN strings ON strings.string_id = paths.string_id ORDER BY strings.value",
+    );
+    let sources = column(
+        &connection,
+        "SELECT raw_length FROM source_objects ORDER BY raw_length",
+    );
+    (paths, sources)
+}
+
+/// A file named like one holding secrets is evaluated as any other, but the store gets no copy of
+/// it: not its source, its tapes or its results. It stays resident through eviction instead, so
+/// its findings still page, and the store holds only the other file.
+#[test]
+fn the_store_never_holds_a_file_named_like_one_holding_secrets() {
+    let _slot = test_slot();
+    let repository = Repository::new("secret-names");
+    let store = repository.store("content.sqlite");
+    let capabilities = json!({
+        "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
+            "languages": { "typescript": "tree-sitter-typescript@0.23" } },
+        "limits": { "maxAstPatternBytes": 16384, "maxRegexPatternBytes": 16384,
+            "maxFiles": 100, "maxGraphDepth": 16, "maxSourceBytes": 1000000,
+            "maxVisitedNodes": 100000, "maxWitnesses": 10000 }
+    });
+    let code_rule = CodeRuleDslRuntime::compile(
+        json!({
+            "format": "rerail.policy/v1", "id": "secret-needle", "revision": 1, "mode": "steer",
+            "scope": { "include": ["**/*"], "exclude": [] },
+            "clauses": [{
+                "id": "needle", "violation": { "anchor": "witness.span", "code": "NEEDLE",
+                    "message": "found needle" },
+                "forbid": { "regex": { "pattern": "NEEDLE", "source": "file.content" } }
+            }]
+        })
+        .to_string(),
+        "json".into(),
+        capabilities.to_string(),
+    )
+    .unwrap();
+    let mut workspace = CodeRuleDslWorkspace::new();
+    workspace.add_code_rule(&code_rule, None).unwrap();
+    let secret_names = SecretNamePatterns {
+        files: vec!["secrets.*".to_owned()],
+        folders: vec![".aws".to_owned()],
+    };
+    let attached = workspace
+        .storage_task(repository.root(), store_argument(&store), &secret_names)
+        .unwrap()
+        .compute();
+    assert!(
+        matches!(attached, Ok(StorageAttachment { attached: true, .. })),
+        "{attached:?}"
+    );
+    let apply = |revision: u32, files: &[(&str, &str)]| {
+        let files = files
+            .iter()
+            .map(|(path, source)| json!({ "path": path, "language": "typescript", "source": source }))
+            .collect::<Vec<_>>();
+        let mut task = WorkspaceApplyTask {
+            state: Arc::clone(&workspace.state),
+            closed: Arc::clone(&workspace.closed),
+            request_json: json!({ "revision": revision, "files": files, "removed": [] })
+                .to_string(),
+            request_buffer: None,
+            request_direct: None,
+        };
+        let response: Value = serde_json::from_str(&task.compute().unwrap()).unwrap();
+        let mut paths = response["evaluation"]["violations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|violation| violation["path"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>();
+        paths.sort();
+        paths
+    };
+    let secret = "token: 'NEEDLE in a secret'\n";
+    let source = "export const a = 'NEEDLE';\n";
+    assert_eq!(
+        apply(1, &[("config/secrets.yaml", secret), ("src/a.ts", source)]),
+        ["config/secrets.yaml", "src/a.ts"],
+        "both files are evaluated"
+    );
+    assert_eq!(
+        stored_paths_and_sources(&store),
+        (vec!["src/a.ts".to_owned()], vec![source.len() as i64]),
+        "the store holds only the file not named like a secret"
+    );
+
+    assert!(workspace.evict_inactive().unwrap());
+    {
+        let state = workspace.state.lock().unwrap();
+        assert_eq!(
+            state.files.keys().collect::<Vec<_>>(),
+            ["config/secrets.yaml"],
+            "eviction releases the stored file and keeps the withheld one"
+        );
+        assert_eq!(
+            state.files["config/secrets.yaml"].input.source.as_str(),
+            secret
+        );
+    }
+    assert_eq!(paged_codes(&workspace), ["NEEDLE", "NEEDLE"]);
+
+    // A folder on the way counts as well, and an edit of a withheld file is withheld again.
+    let edited = "token: 'NEEDLE edited'\n";
+    assert_eq!(
+        apply(
+            2,
+            &[
+                ("config/secrets.yaml", edited),
+                ("home/.AWS/config", "NEEDLE = 1\n")
+            ]
+        ),
+        ["config/secrets.yaml", "home/.AWS/config"]
+    );
+    assert_eq!(
+        stored_paths_and_sources(&store),
+        (vec!["src/a.ts".to_owned()], vec![source.len() as i64]),
+    );
+    assert_eq!(paged_codes(&workspace), ["NEEDLE", "NEEDLE", "NEEDLE"]);
     workspace.close();
 }

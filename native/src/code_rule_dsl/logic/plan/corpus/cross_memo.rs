@@ -72,8 +72,8 @@ pub(super) fn add(prog: &mut front::Program) -> Result<()> {
     let rules: Vec<front::Rule> = components.rules.into_iter().filter(|r| r.head.rel.starts_with("rr_")).collect();
     let mut needed: BTreeSet<String> = BTreeSet::new();
     for r in &rules {
-        needed.insert(r.head.rel.clone());
-        needed.extend(r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()));
+        needed.insert(r.head.rel.to_string());
+        needed.extend(r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()));
     }
     let natives: Vec<_> = components.natives.into_iter().filter(|(rel, _)| needed.contains(rel)).collect();
     for (rel, native) in natives {
@@ -149,7 +149,7 @@ fn free(cross: &front::Program, derived: &BTreeSet<String>) -> BTreeSet<String> 
         let more: Vec<String> = derived
             .iter()
             .filter(|r| !constants.contains(*r) && !cross.natives.contains_key(*r))
-            .filter(|rel| rules_of(cross, rel).all(|r| r.body.iter().filter_map(|l| l.atom()).all(|a| fact(&a.rel) || constants.contains(&a.rel))))
+            .filter(|rel| rules_of(cross, rel).all(|r| r.body.iter().filter_map(|l| l.atom()).all(|a| fact(&a.rel) || constants.contains(a.rel.as_str()))))
             .cloned()
             .collect();
         if more.is_empty() {
@@ -173,9 +173,9 @@ fn closed(cross: &front::Program, derived: &BTreeSet<String>) -> BTreeSet<String
         let out: Vec<String> = cross
             .rules
             .iter()
-            .filter(|r| set.contains(&r.head.rel))
-            .filter(|r| r.body.iter().filter_map(|l| l.atom()).any(|a| derived.contains(&a.rel) && !set.contains(&a.rel) && !a.rel.starts_with(PREFIX)))
-            .map(|r| r.head.rel.clone())
+            .filter(|r| set.contains(r.head.rel.as_str()))
+            .filter(|r| r.body.iter().filter_map(|l| l.atom()).any(|a| derived.contains(a.rel.as_str()) && !set.contains(a.rel.as_str()) && !a.rel.starts_with(PREFIX)))
+            .map(|r| r.head.rel.to_string())
             .collect();
         if out.is_empty() {
             return set;
@@ -188,7 +188,7 @@ fn closed(cross: &front::Program, derived: &BTreeSet<String>) -> BTreeSet<String
 
 pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, local: &[u8; 32], same_doc: &BTreeMap<String, Vec<usize>>) -> Result<Option<Plan>> {
     use front::{Atom, Literal, Rule, Term};
-    let heads: BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.clone()).collect();
+    let heads: BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.to_string()).collect();
     if !heads.contains(COMPONENT) {
         return Ok(None);
     }
@@ -199,9 +199,9 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
         let reads: Vec<String> = cross
             .rules
             .iter()
-            .filter(|r| cone.contains(&r.head.rel))
-            .flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()))
-            .filter(|rel| heads.contains(rel))
+            .filter(|r| cone.contains(r.head.rel.as_str()))
+            .flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()))
+            .filter(|rel| heads.contains(rel.as_str()))
             .collect();
         cone.extend(reads);
         if cone.len() == before {
@@ -214,27 +214,27 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
     let mut todo: Vec<String> = cross
         .rules
         .iter()
-        .filter(|r| !cone.contains(&r.head.rel))
-        .flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()))
-        .filter(|rel| cone.contains(rel))
+        .filter(|r| !cone.contains(r.head.rel.as_str()))
+        .flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()))
+        .filter(|rel| cone.contains(rel.as_str()))
         .collect();
     while let Some(rel) = todo.pop() {
-        if shared.insert(rel.clone()) {
-            todo.extend(cross.rules.iter().filter(|r| r.head.rel == rel).flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone())).filter(|x| cone.contains(x)));
+        if shared.insert(rel.to_string()) {
+            todo.extend(cross.rules.iter().filter(|r| r.head.rel == rel).flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())).filter(|x| cone.contains(x.as_str())));
         }
     }
     let mut components = cross.clone();
-    components.rules.retain(|r| cone.contains(&r.head.rel));
+    components.rules.retain(|r| cone.contains(r.head.rel.as_str()));
     components.natives.retain(|rel, _| cone.contains(rel));
     components.outputs = vec![COMPONENT.to_owned()];
-    cross.rules.retain(|r| !cone.contains(&r.head.rel) || shared.contains(&r.head.rel));
+    cross.rules.retain(|r| !cone.contains(r.head.rel.as_str()) || shared.contains(r.head.rel.as_str()));
     cross.natives.retain(|rel, _| !cone.contains(rel) || shared.contains(rel));
     cross.outputs.retain(|o| o != COMPONENT);
     // The plan: the engine, the grammars, the file-local part (what the exports are) and the cross-file part.
     let mut hash = Sha256::new();
     hash.update(SCHEMA.as_bytes());
-    hash.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
-    hash.update(crate::code_rule_dsl::workspace::grammar_version().to_le_bytes());
+    hash.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
+    hash.update(crate::code_rule_dsl::build_ids::grammar_version().to_le_bytes());
     hash.update(local);
     // A relation with no facts is left out: a program prepared afresh has `dir_entry: []` where the one read back from
     // the store (decision 0073) has nothing, and the two must store under one plan.
@@ -250,7 +250,7 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
     // A native relation of the cross-file part is derived across files too, and is not replayed: it has no rules to
     // copy into or guard.
     // What a memoised rule may read freely is not counted: the run's constants and the views of `node` (`free`).
-    let all: BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.clone()).chain(cross.natives.keys().cloned()).collect();
+    let all: BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.to_string()).chain(cross.natives.keys().cloned()).collect();
     let free = free(cross, &all);
     let derived: BTreeSet<String> = all.difference(&free).cloned().collect();
     let closed = closed(cross, &derived);
@@ -258,10 +258,10 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
         // What keeps the others out: cross-file relations that cannot be declared (no node column, or native), with
         // how many rules of node-column relations read each.
         let mut blockers: BTreeMap<&str, usize> = BTreeMap::new();
-        for r in cross.rules.iter().filter(|r| !closed.contains(&r.head.rel) && cross.decls.get(&r.head.rel).is_some_and(|c| c.iter().any(|(_, t)| t == "node"))) {
+        for r in cross.rules.iter().filter(|r| !closed.contains(r.head.rel.as_str()) && cross.decls.get(r.head.rel.as_str()).is_some_and(|c| c.iter().any(|(_, t)| t == "node"))) {
             for a in r.body.iter().filter_map(|l| l.atom()) {
-                let declarable = cross.decls.get(&a.rel).is_some_and(|c| c.iter().any(|(_, t)| t == "node")) && !cross.natives.contains_key(&a.rel);
-                if derived.contains(&a.rel) && !declarable && !a.rel.starts_with(PREFIX) {
+                let declarable = cross.decls.get(a.rel.as_str()).is_some_and(|c| c.iter().any(|(_, t)| t == "node")) && !cross.natives.contains_key(a.rel.as_str());
+                if derived.contains(a.rel.as_str()) && !declarable && !a.rel.starts_with(PREFIX) {
                     *blockers.entry(a.rel.as_str()).or_default() += 1;
                 }
             }
@@ -285,11 +285,11 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
         }
         let cols = &cross.decls[rel];
         let first = cols.iter().position(|(_, t)| t == "node").ok_or_else(|| Error::Plan(format!("{rel}: a `{PRAGMA}` relation needs a node column, the document its rows are about")))?;
-        memo.insert(rel.clone(), (first, cols.len()));
+        memo.insert(rel.to_string(), (first, cols.len()));
     }
-    for r in cross.rules.iter().filter(|r| memo.contains_key(&r.head.rel)) {
+    for r in cross.rules.iter().filter(|r| memo.contains_key(r.head.rel.as_str())) {
         for a in r.body.iter().filter_map(|l| l.atom()) {
-            if derived.contains(&a.rel) && !memo.contains_key(&a.rel) && !a.rel.starts_with(PREFIX) {
+            if derived.contains(a.rel.as_str()) && !memo.contains_key(a.rel.as_str()) && !a.rel.starts_with(PREFIX) {
                 return Err(Error::Plan(format!(
                     "{}: a `{PRAGMA}` relation reads {}, a cross-file relation the pragma does not name, whose rows may depend on files outside the import closure",
                     r.head.rel, a.rel
@@ -313,12 +313,12 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
         cross.decls.insert(input.clone(), cols);
         cross.inputs.push(input.clone());
         cross.rules.push(Rule {
-            head: Atom { rel: rel.clone(), args: vars.clone(), neg: false, gated: false },
-            body: vec![Literal::Atom(Atom { rel: input, args: vars, neg: false, gated: false })],
+            head: Atom { rel: rel.clone().into(), args: vars.clone(), neg: false, gated: false },
+            body: vec![Literal::Atom(Atom { rel: input.into(), args: vars, neg: false, gated: false })],
         });
     }
     for rule in &mut cross.rules {
-        let Some(&(first, _)) = memo.get(&rule.head.rel) else { continue };
+        let Some(&(first, _)) = memo.get(rule.head.rel.as_str()) else { continue };
         let copy = rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel.ends_with(SUFFIX)));
         if copy {
             continue;
@@ -334,7 +334,7 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
                 .iter()
                 .filter_map(|l| l.atom().filter(|a| !a.neg))
                 .flat_map(|a| {
-                    let decl = cross.decls.get(&a.rel);
+                    let decl = cross.decls.get(a.rel.as_str());
                     a.args.iter().enumerate().filter_map(move |(i, t)| match (t, decl.and_then(|d| d.get(i))) {
                         (Term::Var(x), Some((_, ty))) if ty == "node" => Some(x.as_str()),
                         _ => None,
@@ -350,7 +350,7 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
             for (i, x) in guarded.into_iter().enumerate() {
                 let d = if i == 0 { "rr_xd".to_owned() } else { format!("rr_xd{i}") };
                 rule.body.push(Literal::Cmp { l: Term::Var(d.clone()), op: "=", r: Term::Call("doc".to_owned(), vec![Term::Var(x)]) });
-                rule.body.push(Literal::Atom(Atom { rel: DOCS.to_owned(), args: vec![Term::Var(d)], neg: true, gated: false }));
+                rule.body.push(Literal::Atom(Atom { rel: DOCS.to_owned().into(), args: vec![Term::Var(d)], neg: true, gated: false }));
             }
         }
     }
@@ -393,15 +393,15 @@ pub(super) fn drop_guards(cross: &mut front::Program) -> usize {
 /// found, whose guards (`!rr_cross_doc`) every other rule's rows fail.
 /// What only those rules read is dropped too (`rr_cx_reach`); `kept` names what the run reads besides its outputs.
 pub(super) fn keep_copies(cross: &mut front::Program, plan: &Plan, kept: &BTreeSet<String>) {
-    cross.rules.retain(|r| !plan.memo.contains_key(&r.head.rel) || r.body.iter().any(|l| matches!(l, front::Literal::Atom(a) if a.rel.ends_with(SUFFIX))));
+    cross.rules.retain(|r| !plan.memo.contains_key(r.head.rel.as_str()) || r.body.iter().any(|l| matches!(l, front::Literal::Atom(a) if a.rel.ends_with(SUFFIX))));
     loop {
         let read: BTreeSet<&str> = cross.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str())).collect();
         let unread = |rel: &str| !read.contains(rel) && !kept.contains(rel) && !cross.outputs.iter().any(|o| o == rel);
-        let dead: BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.clone()).chain(cross.natives.keys().cloned()).filter(|r| unread(r)).collect();
+        let dead: BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.to_string()).chain(cross.natives.keys().cloned()).filter(|r| unread(r)).collect();
         if dead.is_empty() {
             return;
         }
-        cross.rules.retain(|r| !dead.contains(&r.head.rel));
+        cross.rules.retain(|r| !dead.contains(r.head.rel.as_str()));
         cross.natives.retain(|rel, _| !dead.contains(rel));
     }
 }

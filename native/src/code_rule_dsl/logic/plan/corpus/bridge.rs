@@ -31,7 +31,7 @@ const SEP: &str = "__";
 /// Whether `rel` is a bridged relation's name (`typing_<program>__<output>`). Such a relation is one fact family
 /// shared by every program of a run (`corpus::combine` does not prefix it), as `core.rr`'s are: the program's answers
 /// are the same whichever rule reads them.
-pub(crate) fn is_bridged(rel: &str) -> bool {
+pub fn is_bridged(rel: &str) -> bool {
     rel.strip_prefix(PREFIX).is_some_and(|rest| rest.split_once(SEP).is_some_and(|(p, o)| !p.is_empty() && !o.is_empty()))
 }
 
@@ -44,10 +44,15 @@ struct Bridged {
 
 /// The bridged relations a rule reaching one of `prog`'s outputs reads.
 fn wanted(prog: &Program) -> Vec<Bridged> {
+    // Only a declared relation named as bridged can be one: a program that declares none is not pruned or read.
+    if !prog.decls.keys().any(|rel| rel.starts_with(PREFIX)) {
+        return Vec::new();
+    }
     let pruned = front::prune(prog.clone());
     let read: BTreeSet<&str> = pruned.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str())).collect();
+    let derived: BTreeSet<&str> = pruned.rules.iter().map(|r| r.head.rel.as_str()).collect();
     read.into_iter()
-        .filter(|rel| prog.decls.contains_key(*rel) && !pruned.rules.iter().any(|r| r.head.rel == *rel))
+        .filter(|rel| rel.starts_with(PREFIX) && prog.decls.contains_key(*rel) && !derived.contains(rel))
         .filter_map(|rel| {
             let (program, output) = rel.strip_prefix(PREFIX)?.split_once(SEP)?;
             Some(Bridged { rel: rel.to_owned(), program: program.to_owned(), output: output.to_owned() })
@@ -57,9 +62,9 @@ fn wanted(prog: &Program) -> Vec<Bridged> {
 
 /// The typing program `name`'s text.
 fn source(name: &str) -> Result<String> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rr"));
+    let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join(format!("src/code_rule_dsl/typing/programs/{name}.rr"));
     // Its `#include`s read in (`python/modules.rr`, …).
-    crate::code_rule_dsl::tools::program_text(&path).map_err(Error::Plan)
+    crate::code_rule_dsl::logic::settings::program_text(&path).map_err(Error::Plan)
 }
 
 /// The rows of the bridged relations, by relation: added to the rule's facts as they are, not printed and parsed.

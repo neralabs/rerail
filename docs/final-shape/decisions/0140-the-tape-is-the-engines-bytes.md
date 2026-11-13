@@ -6,12 +6,12 @@ Corrects 0136.
 
 ## Intro
 
-**The problem.** The engine's tape is a byte string: the v9np image, format 11
+**The problem.** The engine's tape is a byte string: the v9np image, format 15
 (`code_rule_dsl::tape`, decision 0025). It holds a header, then five columns,
 each padded to 16 bytes, then a table of codes:
 
 ```
-header   magic, language, widths, version, source length and digest, five lengths
+header   magic, language, widths, version, source length, five lengths
 code     each node's code id, 2 bytes; codes numbered by first use
 size     each node's subtree, itself counted          (2 or 4 bytes)
 base     each 16 nodes' least start                   (4 bytes)
@@ -52,6 +52,20 @@ with no conversion after it (`rerail_tape_format::Writer`):
   (the user's choice: the size column's place depends on the node count),
   and the header and code table are written.
 - **One definition of the format.** The engine's constants are the crate's.
+
+## In the hub (2026-11-13)
+
+Written on a branch whose base was format 11; the hub was at 15 (12: named-only at rest and no
+stored source digest, RER-131; 14 and 15: implied tokens and keywords never written). The
+crate states format 15 (`rerail_tape_format::FORMAT_VERSION`, its `header` offsets, no digest),
+so the writer writes the hub's images. The engine's `encode_rr` reads the lean parser's image
+as it is (no `finish`, no `Pending`), and the statements are read off the same image
+(`rerail_tape_format::decode`, `rr_syntax::tape::nodes`), as a stored tape's are (decision 0062).
+The statement parser's tree through the engine's passes (`packed_rr_tape`) is the tests' oracle.
+
+In the hub the header holds no digest (format 12 on), so the writer computes none: the
+SHA-256 rows below are this branch's, before the merge. The engine's in-memory digest of a
+parsed source (`TapeImage::source_digest`) is made apart (`encode_rr`).
 
 ## Cost
 

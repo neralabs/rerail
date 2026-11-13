@@ -27,6 +27,7 @@
 //! Other dynamic callees (`$f()` of a parameter, `$o->$m()`, `new $class`) are unknown. `f(...)`
 //! makes a callable and calls nothing.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::names::Name;
 use super::summary::{CLASS, Def, OPEN, Summary};
 use crate::code_rule_dsl::language::Family;
@@ -38,7 +39,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 /// The node kinds a PHP `calls` term holds at.
-pub(crate) const CALL_KINDS: [&str; 5] = [
+pub const CALL_KINDS: [&str; 5] = [
     "function_call_expression",
     "member_call_expression",
     "nullsafe_member_call_expression",
@@ -62,8 +63,8 @@ const CLASS_KINDS: [&str; 5] = [
     "anonymous_class",
 ];
 
-/// A class-like's parent class: `(class, parent)`.
-pub(crate) const PARENT: u8 = 0;
+/// A class-like's parent class: `(class, parent)` (`calls::PARENT`).
+pub use super::PARENT;
 /// A trait the class-like uses: `(class, trait)`.
 pub(crate) const TRAIT: u8 = 1;
 /// An interface the class-like implements or extends: `(class, interface)`.
@@ -163,10 +164,10 @@ impl Enclosing {
 }
 
 /// What callee resolution reads of one file.
-pub(crate) struct Reader<'a, 'r, D: Doc> {
-    pub(crate) names: &'a PhpNames,
-    pub(crate) table: &'a ScopeTable,
-    pub(crate) root: Node<'r, D>,
+pub struct Reader<'a, 'r, D: Doc> {
+    pub names: &'a PhpNames,
+    pub table: &'a ScopeTable,
+    pub root: Node<'r, D>,
 }
 
 impl<'r, D: Doc> Reader<'_, 'r, D> {
@@ -258,8 +259,7 @@ impl<'r, D: Doc> Reader<'_, 'r, D> {
             })?,
         };
         let expression = argument
-            .children()
-            .filter(|child| child.is_named() && !child.kind().ends_with("comment"))
+            .named_code()
             .last()?;
         if expression.kind() == "variadic_unpacking"
             || argument
@@ -328,8 +328,7 @@ impl<'r, D: Doc> Reader<'_, 'r, D> {
         };
         let value = |element: &Node<'r, D>| {
             let mut named = element
-                .children()
-                .filter(|child| child.is_named() && !child.kind().ends_with("comment"));
+                .named_code();
             match (named.next(), named.next()) {
                 (Some(value), None) => Some(unparenthesized(&value)),
                 _ => None,
@@ -363,8 +362,7 @@ impl<'r, D: Doc> Reader<'_, 'r, D> {
     /// `X::class`: the class `X` names.
     fn class_constant(&self, access: &Node<'r, D>) -> Class {
         let mut named = access
-            .children()
-            .filter(|child| child.is_named() && !child.kind().ends_with("comment"));
+            .named_code();
         let (Some(scope), Some(constant), None) = (named.next(), named.next(), named.next()) else {
             return Class::Open;
         };
@@ -416,8 +414,7 @@ impl<'r, D: Doc> Reader<'_, 'r, D> {
     /// The class a `new` expression instantiates.
     fn created(&self, creation: &Node<'r, D>) -> Class {
         let Some(class) = creation
-            .children()
-            .find(|child| child.is_named() && !child.kind().ends_with("comment"))
+            .first_code()
         else {
             return Class::Open;
         };
@@ -477,7 +474,7 @@ impl<'r, D: Doc> Reader<'_, 'r, D> {
     /// binding's assigned value. `None` where a path reaches it unassigned or with a value no
     /// assignment gives (a parameter, a reference, `global`, `foreach`, a dynamic write).
     fn values(&self, variable: &Node<'r, D>) -> Option<Vec<Node<'r, D>>> {
-        let flow = self.table.php.as_ref()?;
+        let flow = self.table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of)?;
         let read = flow.read(variable.range().start)?;
         if read.defined != crate::code_rule_dsl::scope::php::Defined::Yes
             || read.aliased
@@ -588,7 +585,7 @@ impl<'r, D: Doc> Reader<'_, 'r, D> {
         {
             return false;
         }
-        let Some(flow) = self.table.php.as_ref() else {
+        let Some(flow) = self.table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of) else {
             return false;
         };
         let name = left.text();
@@ -684,8 +681,7 @@ fn unparenthesized<'r, D: Doc>(node: &Node<'r, D>) -> Node<'r, D> {
     let mut node = node.clone();
     while node.kind() == "parenthesized_expression" {
         let mut inner = node
-            .children()
-            .filter(|child| child.is_named() && !child.kind().ends_with("comment"));
+            .named_code();
         let (Some(expression), None) = (inner.next(), inner.next()) else {
             break;
         };
@@ -1108,14 +1104,13 @@ fn supers<D: Doc>(extractor: &mut Extractor, node: &Node<'_, D>, class: &str, na
         };
         for clause in list.children() {
             let parts = clause
-                .children()
-                .filter(|child| child.is_named() && !child.kind().ends_with("comment"))
+                .named_code()
                 .collect::<Vec<_>>();
             // `T::m`: the trait and the method.
             let method_of = |part: &Node<'_, D>| -> Option<(Option<String>, String)> {
                 match part.kind().as_ref() {
                     "class_constant_access_expression" => {
-                        let mut named = part.children().filter(|child| child.is_named());
+                        let mut named = part.named();
                         let (trait_name, method) = (named.next()?, named.next()?);
                         Some((resolved(&trait_name), method.text().to_ascii_lowercase()))
                     }
@@ -1192,7 +1187,7 @@ fn supers<D: Doc>(extractor: &mut Extractor, node: &Node<'_, D>, class: &str, na
 
 /// What the call `call` in `summary`'s file names: the same answer extraction recorded for it.
 /// `None` where it names nothing.
-pub(crate) fn callee_at<'r, D: Doc>(
+pub fn callee_at<'r, D: Doc>(
     reader: &Reader<'_, 'r, D>,
     summary: &Summary,
     call: &Node<'r, D>,
@@ -1243,4 +1238,28 @@ pub(crate) fn label(name: &str) -> String {
         Some((class, member)) => format!("{class}::{member}"),
         None => name.to_owned(),
     }
+}
+
+/// The summary of the PHP `program` in the file at `path`, through `table`, the file's scope
+/// table where one was built.
+pub(crate) fn extract_program<D: Doc>(
+    program: &Node<'_, D>,
+    path: &str,
+    table: Option<&crate::code_rule_dsl::scope::ScopeTable>,
+    has_errors: bool,
+) -> crate::code_rule_dsl::calls::summary::Summary {
+    // The table's flow read the program's names; build them only where no table holds them.
+    let names = table
+        .and_then(|table| table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of))
+        .map(|flow| std::sync::Arc::clone(&flow.names))
+        .or_else(|| {
+            crate::code_rule_dsl::scope::php_names::PhpNames::build(
+                program.clone(),
+                crate::code_rule_dsl::calls::MAX_TABLE_NODES,
+                &crate::code_rule_dsl::budget::matcher_budget_exhausted,
+            )
+            .ok()
+            .map(std::sync::Arc::new)
+        });
+    extract(program, path, table, names.as_deref(), has_errors)
 }

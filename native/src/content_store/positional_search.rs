@@ -11,7 +11,7 @@
 use super::{ContentStore, MAX_PUBLICATION_BATCH, StoreError, StoreResult, TapeId};
 use rusqlite::types::Value as SqlValue;
 use rusqlite::vtab::array::Array;
-use rusqlite::{Transaction, TransactionBehavior, params};
+use rusqlite::{Connection, TransactionBehavior, params};
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -87,14 +87,14 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         Self::put_search_indexes_transaction(&transaction, indexes)?;
         self.commit(transaction)?;
         Ok(())
     }
 
     fn put_search_indexes_transaction(
-        transaction: &Transaction<'_>,
+        transaction: &Connection,
         indexes: &[TapeSearchIndex],
     ) -> StoreResult<()> {
         if indexes.len() > MAX_PUBLICATION_BATCH {

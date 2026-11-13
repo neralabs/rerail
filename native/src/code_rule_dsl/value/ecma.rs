@@ -1,23 +1,25 @@
 //! TypeScript values (tree-sitter-typescript 0.23): literals as ECMAScript reads them, strings as
 //! UTF-16 code units, and operators folded, in the sense of eslint-utils' `getStaticValue`.
 
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::language::Family;
 
 #[rustfmt::skip]
 #[path = "ecma/builtins.generated.rs"]
-pub(crate) mod builtins;
-mod calls;
-mod destructure;
+pub mod builtins;
+pub mod calls;
+pub mod destructure;
 #[path = "ecma/entities.generated.rs"]
-mod entities;
-pub(crate) mod ops;
+pub mod entities;
+pub mod ops;
 
 use super::{ContainerKind, Context, MAX_ELEMENTS, MAX_STRING_BYTES, Value};
 use ast_grep_core::{Doc, Node};
-pub(crate) use destructure::destructured;
+pub use calls::to_precision;
+pub use destructure::destructured;
 
 /// Decodes `node` to its value; `Unknown` for anything that is not a literal this knows.
-pub(crate) fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
+pub fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     if !context.enter() {
         return Value::Unknown;
     }
@@ -67,7 +69,7 @@ fn decode_node<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
             }
         }
         "unary_expression" => {
-            let (Some(operator), Some(argument)) = (node.field("operator"), node.field("argument"))
+            let (Some(operator), Some(argument)) = (node.operator_token(), node.field("argument"))
             else {
                 return Value::Unknown;
             };
@@ -95,8 +97,7 @@ fn decode_node<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
         }
         // The last expression's value.
         "sequence_expression" => match node
-            .children()
-            .filter(|child| child.is_named() && child.kind() != "comment")
+            .named_code()
             .last()
         {
             Some(last) => decode(&last, context),
@@ -119,7 +120,7 @@ fn decode_node<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 /// (tree-sitter-typescript 0.23.2 `node-types.json`, TSX's JSX elements included), sequences, and
 /// shorthand properties. Only an expression has a value; on any other node (a statement, a type,
 /// a property name, punctuation) every value predicate fails.
-pub(crate) const EXPRESSION_KINDS: &[&str] = &[
+pub const EXPRESSION_KINDS: &[&str] = &[
     "array",
     "arrow_function",
     "as_expression",
@@ -164,7 +165,7 @@ pub(crate) const EXPRESSION_KINDS: &[&str] = &[
 ];
 
 /// Kinds whose value `decode` can know; any other expression is `Unknown`.
-pub(crate) const VALUE_KINDS: &[&str] = &[
+pub const VALUE_KINDS: &[&str] = &[
     "number",
     "string",
     "template_string",
@@ -220,7 +221,7 @@ fn follow<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 fn binary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     let (Some(left), Some(operator), Some(right)) = (
         node.field("left"),
-        node.field("operator"),
+        node.operator_token(),
         node.field("right"),
     ) else {
         return Value::Unknown;
@@ -246,18 +247,16 @@ fn binary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 }
 
 /// The expression a wrapper holds: its one named child that is not a type or a comment.
-pub(super) fn operand<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
+pub fn operand<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
     let kind = node.kind();
     if kind == "type_assertion" {
         // `<T>x`: type arguments first, then the expression.
         return node
-            .children()
-            .filter(|child| child.is_named() && child.kind() != "comment")
+            .named_code()
             .last();
     }
     let mut named = node
-        .children()
-        .filter(|child| child.is_named() && child.kind() != "comment");
+        .named_code();
     let first = named.next()?;
     if kind == "parenthesized_expression" && named.next().is_some() {
         return None;
@@ -267,7 +266,7 @@ pub(super) fn operand<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
 
 /// A numeric literal: decimal with `_` separators, `0x`/`0o`/`0b`, legacy octal (`010`) and legacy
 /// decimal (`08`), and BigInts (`n`).
-pub(crate) fn number(text: &str) -> Value {
+pub fn number(text: &str) -> Value {
     if !separators_valid(text) {
         return Value::Unknown;
     }
@@ -350,7 +349,7 @@ fn radix_body(lower: &str) -> (u32, &str) {
 }
 
 /// A string node's code units: a JSX attribute's value as JSX reads it, any other as a literal.
-pub(crate) fn string_node<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
+pub fn string_node<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
     let text = node.text();
     if node
         .parent()
@@ -492,8 +491,7 @@ fn template<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
         };
         units.extend(chunk);
         let Some(expression) = substitution
-            .children()
-            .find(|child| child.is_named() && child.kind() != "comment")
+            .first_code()
         else {
             return Value::Unknown;
         };
@@ -522,7 +520,7 @@ pub(crate) fn cooked_text(chunk: &str) -> Option<String> {
 }
 
 /// A template chunk's cooked code units: line terminators normalized to LF, escapes decoded.
-pub(super) fn cooked(chunk: &str) -> Option<Vec<u16>> {
+pub fn cooked(chunk: &str) -> Option<Vec<u16>> {
     let normalized = chunk.replace("\r\n", "\n").replace('\r', "\n");
     let units = escapes(&normalized, true)?;
     (units.len() * 2 <= MAX_STRING_BYTES).then_some(units)
@@ -649,8 +647,7 @@ fn array<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
             "spread_element" => {
                 after_element = true;
                 let spread = child
-                    .children()
-                    .find(|inner| inner.is_named() && inner.kind() != "comment")
+                    .first_code()
                     .map(|inner| decode(&inner, context));
                 let items = match spread {
                     Some(Value::Array(items)) => items,
@@ -736,8 +733,7 @@ fn regexp<D: Doc>(node: &Node<'_, D>) -> Value {
 /// An object literal: only that it is an object, which is truthy even when empty.
 fn object<D: Doc>(node: &Node<'_, D>) -> Value {
     let members = node
-        .children()
-        .filter(|child| child.is_named() && child.kind() != "comment")
+        .named_code()
         .collect::<Vec<_>>();
     let spreads = members
         .iter()
@@ -756,5 +752,35 @@ fn object<D: Doc>(node: &Node<'_, D>) -> Value {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
+
+/// ECMAScript's numbers as `toPrecision` reads them (`matcher::transform::NumberText`).
+pub struct Numbers;
+
+impl crate::code_rule_dsl::matcher::NumberText for Numbers {
+    fn to_precision(&self, text: &str, digits: u32) -> Option<String> {
+        let number = ecma_number(text)?;
+        Some(if number.is_finite() { to_precision(number, digits) } else { crate::code_rule_dsl::matcher::number_to_string(number) })
+    }
+}
+
+/// The number an ECMAScript numeric literal's text (`value::ecma::number`) or a value's `String(v)`
+/// (signed, `Infinity`, `NaN`) denotes; `None` for any other text, a BigInt included, whose
+/// `toPrecision` throws.
+fn ecma_number(text: &str) -> Option<f64> {
+    let text = text.trim();
+    let (negative, unsigned) = match text.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, text.strip_prefix('+').unwrap_or(text)),
+    };
+    let magnitude = match unsigned {
+        "Infinity" => f64::INFINITY,
+        "NaN" => f64::NAN,
+        _ => match number(unsigned) {
+            Value::Float(magnitude) => magnitude,
+            _ => return None,
+        },
+    };
+    Some(if negative { -magnitude } else { magnitude })
+}
+

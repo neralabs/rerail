@@ -101,7 +101,7 @@ fn allocator() -> (Option<usize>, Option<usize>) {
     (None, None)
 }
 #[cfg(test)]
-mod tests {
+pub mod tests {
     #[test]
     fn memory_probes_are_limited_to_selected_boundaries() {
         assert!(super::sample("anchor-lower").is_none());

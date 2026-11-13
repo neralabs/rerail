@@ -15,7 +15,51 @@
 
 use super::{Dialect, Projected, Relation};
 use crate::code_rule_dsl::facts::core::Facts;
-use std::collections::{BTreeSet, HashMap, HashSet};
+
+/// What a family reads of its own documents' core.rr facts, registered at load by the crate that knows it: the
+/// literals it decodes itself, its syntax verdict, and its strings' constant parts. Defaults: the common reading.
+pub trait DialectFacts: Send + Sync {
+    /// The literal facts of a node of `kind` with source `text`, where the family reads them itself (`.rr`'s);
+    /// `None`: the common reading.
+    fn literal(&self, kind: &str, text: &str) -> Option<Literal> {
+        let _ = (kind, text);
+        None
+    }
+    /// A string literal's decoded body (`prefix` its letters, lowercased), where the family decodes it itself.
+    fn string_body(&self, prefix: &str, text: &str) -> Option<String> {
+        let _ = (prefix, text);
+        None
+    }
+    /// A document's syntax verdict where the family gives its own (`verdict`); `None`: the tree's first error.
+    fn verdict(&self, f: &Facts) -> Option<Result<Option<(u32, String)>, String>> {
+        let _ = f;
+        None
+    }
+    /// The constant parts of the string literal at `local` (`str_part`; `words`: for `str_part_word`), as
+    /// (value, node, spec, offset).
+    fn str_parts(&self, p: &Projected, dialect: &Dialect, local: u32, words: bool) -> Vec<(String, i64, u8, usize)> {
+        let _ = (p, dialect, local, words);
+        Vec::new()
+    }
+    /// Whether `c` is a word character of `str_part_word`'s words.
+    fn is_word(&self, c: u32) -> bool {
+        char::from_u32(c).is_some_and(char::is_alphanumeric)
+    }
+}
+
+static DIALECT_FACTS: [std::sync::OnceLock<&'static dyn DialectFacts>; Family::COUNT] =
+    [const { std::sync::OnceLock::new() }; Family::COUNT];
+
+/// Registers `family`'s reading of its facts; the first registration holds.
+pub fn register_dialect_facts(family: Family, facts: &'static dyn DialectFacts) {
+    let _ = DIALECT_FACTS[family as usize].set(facts);
+}
+
+/// `family`'s registered reading, if any.
+fn dialect_facts(family: Family) -> Option<&'static dyn DialectFacts> {
+    DIALECT_FACTS[family as usize].get().copied()
+}
+use std::collections::{BTreeSet, HashSet};
 
 /// A document's text may be long: `text` holds a node's when it is at most this many bytes, or the node is
 /// token-like (a leaf, a comment, a string literal). Longer texts have no symbol: interning them all is
@@ -24,7 +68,7 @@ pub(super) const TEXT_INLINE: usize = 256;
 
 /// A language's literal and line rules.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum Family {
+pub enum Family {
     Python,
     Ecma,
     Php,
@@ -35,6 +79,9 @@ pub(super) enum Family {
 }
 
 impl Family {
+    /// How many families there are.
+    const COUNT: usize = 6;
+
     pub(super) fn of(label: Option<&str>) -> Self {
         match label {
             Some("python") => Self::Python,
@@ -48,7 +95,7 @@ impl Family {
 }
 
 /// A document's lines: where each starts and where its text ends (before its terminator).
-pub(super) struct Lines {
+pub struct Lines {
     source: std::sync::Arc<String>,
     python: bool,
     index: std::sync::OnceLock<LineIndex>,
@@ -88,7 +135,7 @@ impl Lines {
     /// Python ends a line at `\n`, `\r\n` or a lone `\r`; the others at `\n`, a `\r` before it left out of the
     /// line's text. A last line without a terminator counts when it is not empty (Python) or always (the others,
     /// so an empty file has one empty line, as `split('\n')` gives).
-    pub(super) fn new(src: &str, python: bool) -> Self {
+    pub fn new(src: &str, python: bool) -> Self {
         // A borrowed, one-shot source is indexed immediately without copying its text.
         Self { source: std::sync::Arc::new(String::new()), python, index: std::sync::OnceLock::from(Self::build(src, python)) }
     }
@@ -138,19 +185,19 @@ impl Lines {
         LineIndex { starts, ends }
     }
     /// Physical lines, as `src_line` numbers them.
-    pub(super) fn count(&self) -> usize {
+    pub fn count(&self) -> usize {
         self.index().ends.len()
     }
     /// Line `l`'s text, `[start, end)`, from 1.
-    pub(super) fn span(&self, l: usize) -> [u32; 2] {
+    pub fn span(&self, l: usize) -> [u32; 2] {
         [self.index().starts[l - 1], self.index().ends[l - 1]]
     }
     /// The 1-based line holding byte `at`.
-    pub(super) fn line(&self, at: u32) -> u32 {
+    pub fn line(&self, at: u32) -> u32 {
         self.index().starts.partition_point(|&s| s <= at).max(1) as u32
     }
     /// A span's first line, last line (of its last character) and 0-based start column (bytes).
-    pub(super) fn place(&self, [start, end]: [u32; 2]) -> (u32, u32, u32) {
+    pub fn place(&self, [start, end]: [u32; 2]) -> (u32, u32, u32) {
         let line = self.line(start);
         let last = if end > start { self.line(end - 1) } else { line };
         (line, last, start - self.index().starts[line as usize - 1])
@@ -181,7 +228,7 @@ pub(super) fn is_comment(kind: &str) -> bool {
 }
 
 /// A comment's text without its marker (`#`, `//`, `/* */`, `<!-- -->`, `--`), trimmed.
-pub(super) fn comment_body(t: &str) -> &str {
+pub fn comment_body(t: &str) -> &str {
     let t = t.trim_end();
     let body = if let Some(r) = t.strip_prefix("/*") {
         r.strip_suffix("*/").unwrap_or(r)
@@ -198,7 +245,7 @@ pub(super) fn is_spread(kind: &str) -> bool {
 }
 
 /// `name`: an identifier's text, or a dotted chain's without spaces, when it holds only name characters.
-pub(super) fn name(kind: &str, text: &str) -> Option<String> {
+pub fn name(kind: &str, text: &str) -> Option<String> {
     let chain = kind.contains("identifier")
         || matches!(kind, "member_expression" | "attribute" | "dotted_name" | "scoped_identifier" | "field_expression" | "qualified_name" | "nested_identifier" | "name");
     if !chain {
@@ -219,28 +266,20 @@ pub(super) fn name(kind: &str, text: &str) -> Option<String> {
 
 /// What a literal node gives: `strprefix`, `str`, and `value` with its `value_type`.
 #[derive(Default, Debug, PartialEq)]
-pub(super) struct Literal {
-    pub(super) prefix: Option<String>,
-    pub(super) str: Option<String>,
-    pub(super) value: Option<(String, &'static str)>,
+pub struct Literal {
+    pub prefix: Option<String>,
+    pub str: Option<String>,
+    pub value: Option<(String, &'static str)>,
 }
 
 /// The literal facts of a node of `kind` with source `text`; `interpolated` when it has a part other than
 /// constant text (a Python `interpolation`, a PHP `encapsed_string`'s variable).
-pub(super) fn literal(family: Family, kind: &str, text: &str, interpolated: bool) -> Literal {
+pub fn literal(family: Family, kind: &str, text: &str, interpolated: bool) -> Literal {
+    if let Some(own) = dialect_facts(family).and_then(|facts| facts.literal(kind, text)) {
+        return own;
+    }
     let mut out = Literal::default();
     match (family, kind) {
-        // A `.rr` string reads as the rule engine reads it; a backtick literal's `str` is its body.
-        (Family::Rr, "string") => {
-            if let Some(v) = crate::code_rule_dsl::logic::rr::string_value(text) {
-                out.value = Some((v.clone(), "string"));
-                out.str = Some(v);
-            }
-        }
-        (Family::Rr, "code_literal") => out.str = Some(crate::code_rule_dsl::logic::rr::code_body(text).to_owned()),
-        (Family::Rr, "number") => out.value = text.parse::<i64>().ok().map(|v| (v.to_string(), "number")),
-        (Family::Rr, "float") => out.value = text.parse::<f64>().ok().map(|v| (v.to_string(), "float")),
-        (Family::Rr, _) => {}
         (_, "string" | "string_literal" | "raw_string_literal" | "encapsed_string" | "interpreted_string_literal") => {
             let Some((prefix, body)) = string_contents(family, text) else { return out };
             let ty = if family == Family::Python { "str" } else { "string" };
@@ -254,7 +293,7 @@ pub(super) fn literal(family: Family, kind: &str, text: &str, interpolated: bool
         }
         (Family::Ecma, "template_string") => {
             if !text.contains("${") && text.len() >= 2 {
-                let body = crate::code_rule_dsl::value::ecma::cooked_text(&text[1..text.len() - 1]).unwrap_or_else(|| unescape(&text[1..text.len() - 1]));
+                let body = crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::Ecma).cooked_template(&text[1..text.len() - 1]).unwrap_or_else(|| unescape(&text[1..text.len() - 1]));
                 out.value = Some((body.clone(), "string"));
                 out.str = Some(body);
             }
@@ -290,17 +329,8 @@ pub(super) fn string_contents(family: Family, text: &str) -> Option<(String, Str
     let rest = &text[p.len()..];
     let prefix = p.to_lowercase();
     let raw = prefix.contains('r');
-    if family == Family::Python
-        && !prefix.contains('b')
-        && let Some(v) = crate::code_rule_dsl::value::python::str_value(text)
-    {
+    if let Some(v) = dialect_facts(family).and_then(|facts| facts.string_body(&prefix, text)) {
         return Some((prefix, v));
-    }
-    if family == Family::Ecma
-        && prefix.is_empty()
-        && let Some(units) = crate::code_rule_dsl::value::ecma::string(text)
-    {
-        return Some((prefix, String::from_utf16_lossy(&units)));
     }
     let rest = if family == Family::Rust && raw { rest.trim_matches('#') } else { rest };
     for q in ["\"\"\"", "'''", "\"", "'", "`"] {
@@ -322,7 +352,7 @@ pub(super) fn string_contents(family: Family, text: &str) -> Option<(String, Str
 /// A Python literal's escapes, as the language reference gives them: unknown escapes keep their backslash, octal up
 /// to three digits, `\x`, `\u`, `\U`, a backslash-newline joins lines. For bytes and f-string pieces, which
 /// `str_value` does not decode.
-pub(super) fn py_unescape(s: &str) -> String {
+pub fn py_unescape(s: &str) -> String {
     let c: Vec<char> = s.chars().collect();
     let mut out = String::new();
     let mut i = 0;
@@ -470,34 +500,21 @@ pub(super) fn js_number(t: &str) -> Option<String> {
     Some(if f.fract() == 0.0 && f.abs() < 1e21 { format!("{}", f as i128) } else { format!("{f}") })
 }
 
-/// Decoded parts and their source byte offsets, relative to the part's literal token.
-#[cfg(test)]
-pub(super) fn str_parts_with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)> {
-    super::python_parts::with_offsets(parts)
-}
-
-/// `str_part(lit, i, v, at, spec)`: the str constants CPython builds from Python literal `lit` (a `string`, or a
-/// `concatenated_string`'s parts `parts`, each with its node): plain runs join across adjacent literals; an
-/// f-string's fields split them; a format spec's literal runs are pieces of their own (`spec` 1). Bytes and
-/// t-strings give none. Returns (v, at, spec) per piece, in order.
-#[cfg(test)]
-pub(super) fn str_parts<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8)> {
-    super::python_parts::with_offsets(parts).into_iter().map(|(v, n, spec, _)| (v, n, spec)).collect()
+/// The error a batch reading CPython's facts of document `path` fails with, where `ast.parse` raises no `SyntaxError`.
+pub fn failure(path: &str, raised: &str) -> crate::content_store::StoreError {
+    crate::content_store::StoreError::Invalid(format!("{path}: CPython's ast.parse raises {raised}"))
 }
 
 /// A shared native grammar verdict. Raw text projections do not request it.
 /// Without `python-syntax-error` (the browser build), Python's verdict is tree-sitter's, as for the other languages:
-/// it misses what tree-sitter accepts and CPython does not (Python 2's `print "x"`).
-pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Option<(u32, String)> {
-    #[cfg(feature = "python-syntax-error")]
-    if dialect.family == Family::Python {
-        return f.python_syntax.get_or_init(|| super::python_syntax::error(&f.source)).clone();
+/// it misses what tree-sitter accepts and CPython does not (Python 2's `print "x"`). `Err`: `ast.parse` raises no
+/// `SyntaxError` but another exception, which fails the batch (`python_syntax::failure`).
+pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Result<Option<(u32, String)>, String> {
+    // A family's own verdict: Python's CPython's, a `.rr` file's the one running it gives.
+    if let Some(own) = dialect_facts(dialect.family).and_then(|facts| facts.verdict(f)) {
+        return own;
     }
-    // A `.rr` file's error is the one running it gives (`logic::rr::syntax_error`).
-    if dialect.family == Family::Rr {
-        return f.syntax_errors.then(|| crate::code_rule_dsl::logic::rr::syntax_error(&f.source)).flatten().map(|(line, message)| (line as u32, message));
-    }
-    first_error(f, &Lines::shared(std::sync::Arc::clone(&f.source), dialect.family == Family::Python), &|id| dialect.name(f, id))
+    Ok(first_error(f, &Lines::shared(std::sync::Arc::clone(&f.source), dialect.family == Family::Python), &|id| dialect.name(f, id)))
 }
 
 /// The first error of a document, in preorder: its line and message (`syntax_error/3`). tree-sitter's ERROR and
@@ -522,14 +539,21 @@ pub(super) fn first_error(f: &Facts, lines: &Lines, kind_name: &dyn Fn(u32) -> &
 pub(super) struct CoreRows {
     /// The per-node relations no rule reads (`Batch::build`, from the projection): their rows are not made.
     pub(super) skip: Skip,
+    /// The node kinds whose `text` is made at any length (`Projection::long_text`).
+    pub(super) long_text: BTreeSet<String>,
+    /// Every node's `text` at any length (`Projection::long_text_any`).
+    pub(super) long_text_any: bool,
+    /// The nodes whose `text` is made (`Projection::text_nodes`): of these kinds, or in one of these fields of their
+    /// parent. `None` every node.
+    pub(super) text_nodes: Option<(BTreeSet<String>, BTreeSet<String>)>,
     op: Vec<[i64; 2]>,
     op_at: Vec<[i64; 3]>,
     text: Vec<[i64; 2]>,
     name: Vec<[i64; 2]>,
     str: Vec<[i64; 2]>,
     strprefix: Vec<[i64; 2]>,
-    value: Vec<[i64; 2]>,
-    value_type: HashSet<[i64; 2]>,
+    /// `value(n, v)` with v's `value_type` t: (n, v, t).
+    value: Vec<[i64; 3]>,
     comment: Vec<[i64; 2]>,
     spread: Vec<i64>,
     next_sibling: Vec<[i64; 2]>,
@@ -546,14 +570,12 @@ pub(super) struct CoreRows {
     last_token: Vec<[i64; 2]>,
     token_before: Vec<[i64; 2]>,
     token_after: Vec<[i64; 2]>,
+    structural_before: Vec<[i64; 2]>,
+    structural_after: Vec<[i64; 2]>,
     tree_digest: Vec<[i64; 2]>,
     /// `def_digest(n, h)`: each definition unit's own-content hash (`digests`).
     def_digest: Vec<[i64; 2]>,
-    rx_span: Vec<[i64; 5]>,
     ast_match: Vec<[i64; 4]>,
-    /// A pattern's matches in a node's or capture's text, by pattern and text, for the batch (decision 0081): each
-    /// distinct text is scanned once. Each match's groups as (match, group, start, end), offsets in the text.
-    rx_memo: HashMap<(usize, Box<str>), std::sync::Arc<[(u32, u32, u32, u32)]>>,
 }
 
 /// `node`'s relations a program does not read, each family's rows left unmade (all made by default). Measured on
@@ -569,11 +591,13 @@ pub(super) struct Skip {
     pub(super) name: bool,
     /// `str`, `strprefix`, `value`, `static_value`, `value_type` (and `text` not read: a prefix makes a node token-like).
     pub(super) literal: bool,
+    /// `structural_before`, `structural_after`.
+    pub(super) structural: bool,
 }
 
 /// Every match of `re` in `text`, each named group (and the whole match, group 0) that takes part: (match, group,
-/// start, end), byte offsets in `text`.
-fn scan(re: &regex::Regex, names: &[Option<&str>], text: &str) -> std::sync::Arc<[(u32, u32, u32, u32)]> {
+/// start, end), byte offsets in `text`. `rx_span`'s scan (`Extra::document`).
+pub(super) fn scan(re: &regex::Regex, names: &[Option<&str>], text: &str) -> std::sync::Arc<[(u32, u32, u32, u32)]> {
     let mut out = Vec::new();
     for (j, caps) in re.captures_iter(text).enumerate() {
         for (g, name) in names.iter().enumerate() {
@@ -590,10 +614,10 @@ fn scan(re: &regex::Regex, names: &[Option<&str>], text: &str) -> std::sync::Arc
 
 /// A pattern `rx_span` runs: over which spans, its text, its regex, and over a document's source or lines its
 /// block program (`transducer::packed::regex_block`), which marks where a match can end.
-pub(super) type SpanPattern<'a> = (crate::code_rule_dsl::logic::front::SpanIn, &'a str, regex::Regex, Option<std::sync::Arc<crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter>>);
+pub(super) type SpanPattern<'a> = (crate::code_rule_dsl::logic::front::ast::SpanIn, &'a str, regex::Regex, Option<std::sync::Arc<dyn crate::code_rule_dsl::facts::span_prefilter::SpanEnds>>);
 
-/// Texts past this are scanned where they are, not kept in `CoreRows::rx_memo`.
-const RX_MEMO_TEXT: usize = 4096;
+/// Texts past this are scanned where they are, not kept in `Extra::rx_memo`.
+pub(super) const RX_MEMO_TEXT: usize = 4096;
 
 impl CoreRows {
     /// Node `local`'s rows: what its anonymous children, its kind and its own text give.
@@ -604,13 +628,10 @@ impl CoreRows {
         let kind = dialect.name(f, id);
         let text = f.text(id);
         let children = f.children(id);
-        // `op`: every anonymous child; `op_at`: those that are no punctuation, in order, Python's two-word
-        // operators as one ("not in", "is not"), which `op` has too.
+        // `op`: every anonymous child the tape stores (none the grammar implies); `op_at`: those that are no
+        // punctuation, in order, Python's two-word operators as one ("not in", "is not"), which `op` has too.
         let mut ops: Vec<String> = Vec::new();
-        for &c in children.iter().filter(|_| !self.skip.ops) {
-            if f.named(c) {
-                continue;
-            }
+        for &c in children.iter().filter(|&&c| !self.skip.ops && !f.named(c)) {
             let t = dialect.name(f, c);
             self.op.push([n, string(t) as i64]);
             if !is_punct(t) {
@@ -625,6 +646,28 @@ impl CoreRows {
             self.op_at.push([n, i as i64, string(t) as i64]);
             if t.contains(' ') {
                 self.op.push([n, string(t) as i64]);
+            }
+        }
+        // `structural_before`, `structural_after`: the source between each stored child and its
+        // neighbours (the sibling before or after it, else the parent's edge); a root's, between
+        // it and the source's edges.
+        if !self.skip.structural {
+            let (start, end) = (f.start[id as usize], f.end[id as usize]);
+            let between = |a: u32, b: u32| if a < b { &f.source[a as usize..b as usize] } else { "" };
+            if f.parent(id).is_none() {
+                self.structural_before.push([n, string(between(0, start)) as i64]);
+                self.structural_after.push([n, string(between(end, f.source.len() as u32)) as i64]);
+            }
+            for (k, &c) in children.iter().enumerate() {
+                let local_c = p.local[c as usize];
+                if local_c == crate::code_rule_dsl::facts::core::NONE {
+                    continue;
+                }
+                let a = if k == 0 { start } else { f.end[children[k - 1] as usize] };
+                let b = children.get(k + 1).map_or(end, |&d| f.start[d as usize]);
+                let c_global = p.global(local_c);
+                self.structural_before.push([c_global, string(between(a, f.start[c as usize])) as i64]);
+                self.structural_after.push([c_global, string(between(f.end[c as usize], b)) as i64]);
             }
         }
         let mut prev = None;
@@ -651,7 +694,7 @@ impl CoreRows {
                 self.name.push([n, string(text) as i64]);
             }
             let named_child = |k: &dyn Fn(&str) -> bool| children.iter().any(|&c| f.named(c) && k(dialect.name(f, c)));
-            let interpolated = match (dialect.family, kind) {
+            let interpolated = !self.skip.literal && match (dialect.family, kind) {
                 (Family::Python, _) => named_child(&|k| k == "interpolation"),
                 (Family::Php, "encapsed_string") => named_child(&|k| !matches!(k, "string_content" | "escape_sequence")),
                 _ => false,
@@ -665,24 +708,24 @@ impl CoreRows {
                 self.str.push([n, string(v) as i64]);
             }
             if let Some((v, ty)) = &lit.value {
-                let v = string(v) as i64;
-                self.value.push([n, v]);
-                self.value_type.insert([v, string(ty) as i64]);
+                self.value.push([n, string(v) as i64, string(ty) as i64]);
             }
             if dialect.family == Family::Python
                 && (wants_parts || wants_part_starts || wants_words)
                 && (kind == "concatenated_string" || kind == "string" && f.parent(id).is_none_or(|q| dialect.name(f, q) != "concatenated_string"))
             {
                 // A word-only reader also gets coordinates from this pass. It never interns full values.
-                let word_parts = if wants_words { super::python_parts::from_tape(p, dialect, local, true) } else { Vec::new() };
+                let own = dialect_facts(dialect.family);
+                let parts = |words: bool| own.map_or_else(Vec::new, |own| own.str_parts(p, dialect, local, words));
+                let word_parts = if wants_words { parts(true) } else { Vec::new() };
                 if wants_words {
                     for (i, (v, at, spec, _)) in word_parts.iter().enumerate() {
-                        for word in v.split(|c: char| !crate::code_rule_dsl::value::python::words::is_word(u32::from(c))).filter(|s| !s.is_empty()) {
+                        for word in v.split(|c: char| !own.is_some_and(|own| own.is_word(u32::from(c)))).filter(|s| !s.is_empty()) {
                             self.str_part_word.push([n, i as i64, string(word) as i64, *at, i64::from(*spec)]);
                         }
                     }
                 }
-                let position_parts = if wants_parts || wants_part_starts && !wants_words { super::python_parts::from_tape(p, dialect, local, false) }
+                let position_parts = if wants_parts || wants_part_starts && !wants_words { parts(false) }
                     else if wants_part_starts { word_parts } else { Vec::new() };
                 for (i, (v, at, spec, offset)) in position_parts.into_iter().enumerate() {
                     if wants_parts {
@@ -698,7 +741,8 @@ impl CoreRows {
                 }
             }
         }
-        if wants_text && (token_like || text.len() <= TEXT_INLINE) {
+        let read = self.text_nodes.as_ref().is_none_or(|(kinds, fields)| kinds.contains(kind) || dialect.catalog.field_name(f.field[id as usize]).is_some_and(|name| fields.contains(name)));
+        if wants_text && read && (token_like || text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind)) {
             self.text.push([n, string(text) as i64]);
         }
     }
@@ -709,8 +753,9 @@ impl CoreRows {
     }
 
     /// A document's rows: its source-text spans (a file's own, `own_text`; a guest's text is part of its file's), and
-    /// its tokens.
-    pub(super) fn document(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool, projection: &super::Projection) {
+    /// its tokens (none for a text-only document, `dialect` `None`: it has no node).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool, projection: &super::Projection) {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rr's spans");
         let key = i64::from(p.key);
@@ -740,15 +785,13 @@ impl CoreRows {
                 let [a, b] = p.span(p.len() + i as u32);
                 let requested_container = (wants_source_text && i == x.tokens as usize)
                     || (wants_line_text && i > x.tokens as usize && i <= x.tokens as usize + x.lines.count());
-                if requested_container || i < x.tokens as usize || i >= x.matched() as usize || (b - a) as usize <= TEXT_INLINE {
+                if requested_container || i < x.tokens as usize || (b - a) as usize <= TEXT_INLINE {
                     self.text.push([p.global(p.len() + i as u32), string(&f.source[a as usize..b as usize]) as i64]);
                 }
             }
         }
         drop(text_span);
-        if !wants_tokens {
-            return;
-        }
+        let Some(dialect) = dialect.filter(|_| wants_tokens) else { return };
         let _tokens_span = crate::code_rule_dsl::logic::profile::span(|| "tokens".into());
         // Tokens: the leaves, named or anonymous, other than comments, in source order (ESLint's token store).
         let mut toks: Vec<(u32, u32, i64)> = (0..p.len())
@@ -785,115 +828,10 @@ impl CoreRows {
         }
     }
 
-    /// `rx_span(p, c, j, g, m)`: group `g` of match `j` (from 0) of regex `p` in span `c` is span `m`, made here past
-    /// the lines (`Extra::matched`). Group "" is the whole match; a group that takes no part in a match has no row.
-    /// Matches do not overlap, as `match_all` says; a `match` pattern is anchored (`rr::lower`), so it has one.
-    ///
-    /// A span `c` is a document's `source`, one of its lines (`src_line`), a comment, a node of a kind, or a span an
-    /// earlier pattern's group captured (`SpanIn`). The source is scanned once per pattern (decision 0042 §3). A
-    /// line's, node's or capture's text is scanned once per distinct text in the batch (0042 §2, `rx_memo`), and its
-    /// matches placed at each span holding it: nodes of one kind seldom nest, and a capture lies inside its text.
-    pub(super) fn matches(&mut self, p: &mut Projected, dialect: &Dialect, patterns: &[SpanPattern<'_>], ends: &[Option<Vec<u64>>], string: &mut dyn FnMut(&str) -> usize) {
-        use crate::code_rule_dsl::logic::front::SpanIn;
-        let facts = std::sync::Arc::clone(&p.facts);
-        let src = facts.source.as_str();
-        let base = p.len();
-        // Nodes by kind, for the kinds a pattern runs over (comments by the dialect's test): their own spans.
-        let kinds: BTreeSet<&str> = patterns.iter().filter_map(|(w, _, _, _)| if let SpanIn::Kind(k) = w { Some(k.as_str()) } else { None }).collect();
-        let wants_comments = patterns.iter().any(|(w, _, _, _)| *w == SpanIn::Comment);
-        let mut of_kind: HashMap<&str, Vec<([u32; 2], u32)>> = HashMap::new();
-        let mut comments: Vec<([u32; 2], u32)> = Vec::new();
-        if wants_comments || !kinds.is_empty() {
-            for l in 0..base {
-                let name = dialect.name(&facts, p.core[l as usize]);
-                if wants_comments && is_comment(name) {
-                    comments.push((p.span(l), l));
-                }
-                if let Some(k) = kinds.get(name) {
-                    of_kind.entry(k).or_default().push((p.span(l), l));
-                }
-            }
-        }
-        let x = p.extra.as_mut().expect("core.rr's spans");
-        let source = x.tokens;
-        // Spans each (pattern, group) captured in this document: the containers of a `SpanIn::Capture`.
-        let mut captured: HashMap<(&str, &str), Vec<([u32; 2], u32)>> = HashMap::new();
-        // A capture's container is made by an earlier pattern: patterns run once theirs has.
-        // Patterns whose containers wait on each other (a cycle of captures) run in order, with what is made by then.
-        let mut done = vec![false; patterns.len()];
-        let mut force = false;
-        // Bytes scanned, reported as profile work.
-        let mut scanned = 0u64;
-        loop {
-            let mut progressed = false;
-            for (i, (within, pattern, re, prefilter)) in patterns.iter().enumerate() {
-                if done[i] {
-                    continue;
-                }
-                if !force
-                    && let SpanIn::Capture(from, _) = within
-                    && patterns.iter().enumerate().any(|(k, (_, q, _, _))| !done[k] && k != i && *q == from.as_str())
-                {
-                    continue;
-                }
-                done[i] = true;
-                progressed = true;
-                let pat = string(pattern) as i64;
-                let (containers, memo): (Vec<([u32; 2], u32)>, bool) = match within {
-                    SpanIn::Source => (vec![([0, src.len() as u32], base + source)], false),
-                    SpanIn::Line => ((1..=x.lines.count() as u32).map(|l| (x.lines.span(l as usize), base + source + l)).collect(), true),
-                    SpanIn::Comment => (comments.clone(), true),
-                    SpanIn::Kind(k) => (of_kind.get(k.as_str()).cloned().unwrap_or_default(), true),
-                    SpanIn::Capture(from, g) => (captured.get(&(from.as_str(), g.as_str())).cloned().unwrap_or_default(), true),
-                };
-                let names: Vec<Option<&str>> = re.capture_names().enumerate().map(|(g, n)| if g == 0 { Some("") } else { n }).collect();
-                // The bytes a match can end after (decision 0081 §3), from the batch's run of the block programs: a
-                // source or line where none can is not scanned.
-                let ends = match (&ends[i], prefilter) {
-                    (Some(e), _) => Some(std::borrow::Cow::Borrowed(e.as_slice())),
-                    (None, Some(f)) => Some(std::borrow::Cow::Owned(f.ends(src.as_bytes()))),
-                    (None, None) => None,
-                };
-                for ([a, b], c) in containers {
-                    if let Some(ends) = &ends
-                        && !crate::code_rule_dsl::transducer::packed::regex_block::SpanPrefilter::any_in(ends, a as usize, b as usize)
-                    {
-                        continue;
-                    }
-                    let cid = Projected::id(p.key, &p.defs, c);
-                    let text = &src[a as usize..b as usize];
-                    let found: std::sync::Arc<[(u32, u32, u32, u32)]> = match memo && text.len() <= RX_MEMO_TEXT {
-                        true => match self.rx_memo.get(&(pat as usize, Box::from(text))) {
-                            Some(f) => std::sync::Arc::clone(f),
-                            None => {
-                                let f = { scanned += text.len() as u64; scan(re, &names, text) };
-                                self.rx_memo.insert((pat as usize, Box::from(text)), std::sync::Arc::clone(&f));
-                                f
-                            }
-                        },
-                        false => { scanned += text.len() as u64; scan(re, &names, text) },
-                    };
-                    for &(j, g, s0, e0) in found.iter() {
-                        let name = names[g as usize].expect("a named group");
-                        let id = base + x.matched() + x.matches.len() as u32;
-                        x.matches.push([a + s0, a + e0]);
-                        self.rx_span.push([pat, cid, i64::from(j), string(name) as i64, Projected::id(p.key, &p.defs, id)]);
-                        captured.entry((pattern, name)).or_default().push(([a + s0, a + e0], id));
-                    }
-                }
-            }
-            if done.iter().all(|d| *d) {
-                break;
-            }
-            force = !progressed;
-        }
-        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, scanned);
-    }
-
     /// `ast_match(p, n, g, c)`: AST pattern `p` (``n ~ `p` ``, `rr::lower`) matches node `n`, and its metavariable
     /// `g` captured node `c`; capture "" is `n` itself. ast-grep matches each pattern over the document's tree once;
     /// a match is the projected node of its kind and byte range (the outermost, when nodes share both).
-    pub(super) fn patterns(&mut self, p: &Projected, dialect: &Dialect, lang: crate::code_rule_dsl::language::GrammarDialect, patterns: &[(&str, ast_grep_core::matcher::Pattern)], string: &mut dyn FnMut(&str) -> usize) {
+    pub(super) fn patterns(&mut self, p: &Projected, tape: Option<&crate::code_rule_dsl::tape::TapeDoc>, dialect: &Dialect, lang: crate::code_rule_dsl::language::GrammarDialect, patterns: &[(&str, ast_grep_core::matcher::Pattern)], string: &mut dyn FnMut(&str) -> usize) {
         if patterns.is_empty() {
             return;
         }
@@ -903,7 +841,16 @@ impl CoreRows {
             let id = p.core[local as usize];
             at.entry((f.start[id as usize], f.end[id as usize], dialect.name(f, id))).or_insert(local);
         }
-        let tree = crate::code_rule_dsl::language::adapter::ast_grep(lang, &f.source);
+        // A pattern is a tape, its implied tokens left out (RER-131's `tape::pattern_doc`): it is matched over the
+        // document's tape, kept for it or encoded here from tree-sitter's parse, not over tree-sitter's tree.
+        let tape = match tape {
+            Some(t) => t.clone(),
+            None => match crate::code_rule_dsl::tape::pattern_doc(lang, &f.source) {
+                Ok((t, _)) => t,
+                Err(_) => return,
+            },
+        };
+        let tree = ast_grep_core::AstGrep::doc(tape);
         let node_of = |n: &ast_grep_core::Node<'_, _>| {
             let r = n.range();
             at.get(&(r.start as u32, r.end as u32, &*n.kind())).map(|&local| p.global(local))
@@ -911,7 +858,7 @@ impl CoreRows {
         let empty = string("") as i64;
         for (text, pattern) in patterns {
             let pat = string(text) as i64;
-            let names = crate::code_rule_dsl::logic::rr::single_metavars(text);
+            let names = single_metavars(text);
             for m in tree.root().find_all(pattern) {
                 let Some(n) = node_of(&m) else { continue };
                 let captures: Option<Vec<(i64, i64)>> = names
@@ -924,7 +871,6 @@ impl CoreRows {
             }
         }
     }
-
     /// `tree_digest(n, h)` (`@tree_digest(n)`): a structural hash of n's subtree, without
     /// positions. This is not CPython ast.dump serialization. A node hashes its kind, and its children's field and hash in order; a leaf, or a literal with a
     /// static value, its text or value. Comments and punctuation are left out, and a parenthesized expression is
@@ -1022,6 +968,17 @@ impl CoreRows {
         }
     }
 
+    /// `text` rows made beside these: the text of `Extra`'s spans (`granules::ExtraSpan`), which `core_rr`'s `text` has not.
+    pub(super) fn extend_text(&mut self, rows: &[[i64; 2]]) {
+        self.text.extend_from_slice(rows);
+    }
+
+    /// The literal values (n, v, v's type) of the nodes of documents `docs`: where `Extra`'s W's values are bound, a
+    /// document W reads no values of (`Dialect::values`) has these.
+    pub(super) fn values_of<'a>(&'a self, docs: &'a HashSet<u32>) -> impl Iterator<Item = [i64; 3]> + 'a {
+        self.value.iter().filter(move |r| docs.contains(&((r[0] >> 32) as u32))).copied()
+    }
+
     /// The relations, the strings' indexes made atoms by `atom`.
     pub(super) fn relations(self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, Relation)> {
         fn make<const N: usize>(columns: &[&str], rows: &[[i64; N]], sym: [bool; N], atom: &dyn Fn(i64) -> i64) -> Relation {
@@ -1037,7 +994,8 @@ impl CoreRows {
         }
         let node_sym = |rows: &[[i64; 2]]| make(&["n", "s"], rows, [false, true], atom);
         let pair = |columns: &[&str; 2], rows: &[[i64; 2]]| make(columns, rows, [false, false], atom);
-        let mut value_type: Vec<[i64; 2]> = self.value_type.into_iter().collect();
+        let value: Vec<[i64; 2]> = self.value.iter().map(|&[n, v, _]| [n, v]).collect();
+        let mut value_type: Vec<[i64; 2]> = self.value.iter().map(|&[_, v, t]| [v, t]).collect::<HashSet<_>>().into_iter().collect();
         value_type.sort_unstable();
         let spread: Vec<[i64; 1]> = self.spread.iter().map(|&n| [n]).collect();
         vec![
@@ -1047,8 +1005,9 @@ impl CoreRows {
             ("name", node_sym(&self.name)),
             ("str", node_sym(&self.str)),
             ("strprefix", node_sym(&self.strprefix)),
-            ("value", node_sym(&self.value)),
-            ("static_value", node_sym(&self.value)),
+            // Named as `Extra`'s W's values are, which a batch binds instead where the program reads them.
+            ("value", make(&["n", "v"], &value, [false, true], atom)),
+            ("static_value", make(&["n", "v"], &value, [false, true], atom)),
             ("value_type", make(&["v", "t"], &value_type, [true, true], atom)),
             ("comment", node_sym(&self.comment)),
             ("spread", make(&["n"], &spread, [false], atom)),
@@ -1066,84 +1025,37 @@ impl CoreRows {
             ("last_token", pair(&["n", "t"], &self.last_token)),
             ("token_before", pair(&["x", "t"], &self.token_before)),
             ("token_after", pair(&["x", "t"], &self.token_after)),
+            ("structural_before", node_sym(&self.structural_before)),
+            ("structural_after", node_sym(&self.structural_after)),
             ("tree_digest", node_sym(&self.tree_digest)),
             ("def_digest", node_sym(&self.def_digest)),
-            ("rx_span", make(&["p", "c", "j", "g", "m"], &self.rx_span, [true, false, false, true, false], atom)),
             ("ast_match", make(&["p", "n", "g", "c"], &self.ast_match, [true, false, true, false], atom)),
         ]
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
-    /// Python's verdict is CPython's grammar's: Python 2's `print "x"`, which tree-sitter accepts, is an error; a
-    /// `match` statement is not; the line is the first error's.
-    #[test]
-    #[cfg(feature = "python-syntax-error")]
-    fn python_syntax_errors_follow_cpythons_grammar() {
-        use super::super::python_syntax::error as python_error;
-        assert_eq!(python_error("x = 1\n"), None);
-        assert_eq!(python_error("match x:\n    case 1:\n        pass\n"), None);
-        assert_eq!(python_error("y = 2\nprint \"x\"\n").map(|e| e.0), Some(2));
-        assert_eq!(python_error("y = 2\r\nz = 3\rdef (:\n").map(|e| e.0), Some(3), "lines as src_line counts them");
+/// A pattern's single-node metavariables (`$X`, not `$$$X` nor `$_X`), each once, in order.
+pub fn single_metavars(pattern: &str) -> Vec<String> {
+    let b = pattern.as_bytes();
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != b'$' {
+            i += 1;
+            continue;
+        }
+        let mut j = i;
+        while j < b.len() && b[j] == b'$' {
+            j += 1;
+        }
+        let k = j + b[j..].iter().take_while(|c| c.is_ascii_alphanumeric() || **c == b'_').count();
+        let name = &pattern[j..k];
+        if j - i == 1 && name.starts_with(|c: char| c.is_ascii_uppercase()) && !out.iter().any(|x| x == name) {
+            out.push(name.to_owned());
+        }
+        i = k.max(i + 1);
     }
-
-    #[test]
-    fn lines_follow_each_languages_terminators() {
-        let py = Lines::new("a\r\nb\rc\n\nd", true);
-        assert_eq!(py.count(), 5);
-        assert_eq!((1..=5).map(|l| py.span(l)).collect::<Vec<_>>(), [[0, 1], [3, 4], [5, 6], [7, 7], [8, 9]]);
-        assert_eq!(py.line(5), 3);
-        let js = Lines::new("a\r\nb\rc\n", false);
-        assert_eq!(js.count(), 2);
-        assert_eq!(js.span(1), [0, 1]);
-        assert_eq!(js.span(2), [3, 6]);
-        assert_eq!(Lines::new("", false).count(), 1);
-        assert_eq!(Lines::new("", true).count(), 0);
-        // A node ending at a line's start ends on the line before.
-        assert_eq!(js.place([0, 3]), (1, 1, 0));
-        assert_eq!(js.place([4, 5]), (2, 2, 1));
-    }
-
-    #[test]
-    fn literals_decode_per_language() {
-        let lit = |f, k, t| literal(f, k, t, false);
-        assert_eq!(lit(Family::Python, "string", r#""a\nb""#).str.as_deref(), Some("a\nb"));
-        assert_eq!(lit(Family::Python, "string", r#"r"a\nb""#).str.as_deref(), Some("a\\nb"));
-        let f = lit(Family::Python, "string", r#"F"x""#);
-        assert_eq!((f.prefix.as_deref(), f.str.as_deref(), f.value), (Some("f"), Some("x"), None));
-        assert_eq!(literal(Family::Python, "string", r#"f"x{y}""#, true).str, None);
-        assert_eq!(lit(Family::Python, "integer", "0xff").value, Some(("255".to_owned(), "int")));
-        assert_eq!(lit(Family::Ecma, "string", r"'aA'").str.as_deref(), Some("aA"));
-        assert_eq!(lit(Family::Ecma, "template_string", "`a\\tb`").value, Some(("a\tb".to_owned(), "string")));
-        assert_eq!(lit(Family::Ecma, "number", "1_000").value, Some(("1000".to_owned(), "number")));
-        assert_eq!(lit(Family::Rust, "raw_string_literal", r##"r#"a\n"#"##).str.as_deref(), Some("a\\n"));
-        assert_eq!(lit(Family::Rust, "integer_literal", "0x10u8").value, Some(("16".to_owned(), "int")));
-        assert_eq!(lit(Family::Php, "encapsed_string", r#""a\tb""#).str.as_deref(), Some("a\tb"));
-        assert_eq!(name("attribute", "a . b"), Some("a.b".to_owned()));
-        assert_eq!(name("member_expression", "a(b).c"), None);
-        assert_eq!(comment_body("# noqa: E501 "), "noqa: E501");
-        assert_eq!(comment_body("/* x */"), "x");
-    }
-
-    #[test]
-    fn decoded_string_constants_keep_precise_byte_starts() {
-        let parts = str_parts_with_offsets(&[(0, "f\"\"\"json\n{a}\njson\"\"\"")]);
-        assert_eq!(parts.iter().map(|p| p.3).collect::<Vec<_>>(), [4, 12]);
-        let parts = str_parts_with_offsets(&[(0, "f'λ{x}μ'")]);
-        assert_eq!(parts.iter().map(|p| p.3).collect::<Vec<_>>(), [2, 7]);
-        assert_eq!(str_parts_with_offsets(&[(0, "'plain'")])[0].3, 0);
-    }
-
-    #[test]
-    fn str_parts_follow_cpython() {
-        let parts = |lits: &[&str]| str_parts(&lits.iter().enumerate().map(|(i, t)| (i, *t)).collect::<Vec<_>>());
-        assert_eq!(parts(&["'a'", "\"b\\n\""]), [("ab\n".to_owned(), 0, 0)]);
-        assert_eq!(parts(&["f'x{y}z{{'"]), [("x".to_owned(), 0, 0), ("z{".to_owned(), 0, 0)]);
-        assert_eq!(parts(&["f'{x:>{w}d}'"]), [(">".to_owned(), 0, 1), ("d".to_owned(), 0, 1)]);
-        assert_eq!(parts(&["f'{x=}'"]), [("x=".to_owned(), 0, 0)]);
-        assert!(parts(&["b'x'"]).is_empty());
-    }
+    out
 }

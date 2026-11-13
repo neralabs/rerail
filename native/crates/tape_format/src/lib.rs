@@ -1,12 +1,11 @@
-//! The engine's tape (v9np, decision 0025; format 11) as bytes, and a writer a parser writes it
+//! The engine's tape (v9np, decision 0025; format 15) as bytes, and a writer a parser writes it
 //! with as it parses (decision 0140).
 //!
 //! An image is a header, then five columns, each padded to `COLUMN_ALIGN` bytes, then the code
 //! table and the alias table:
 //!
-//! - header: magic, language tag, the three column widths, version, source length, source
-//!   digest (SHA-256), and five lengths: nodes, codes, the code table's bytes, aliases, the
-//!   alias table's bytes;
+//! - header: magic, language tag, the three column widths, version, source length, and five
+//!   lengths: nodes, codes, the code table's bytes, aliases, the alias table's bytes (`header`);
 //! - `code`: each node's code id, 2 bytes, codes numbered by first use;
 //! - `size`: each node's subtree, itself counted (width 0);
 //! - `base`: each 16 nodes' least start, 4 bytes;
@@ -15,14 +14,38 @@
 //!   less its own start);
 //! - a code: kind and field (`kf`, kind in the low 10 bits), flags, alias, supertype classes.
 //!
-//! The engine reads and writes images (`code_rule_dsl::tape`); its constants are these.
-
-use sha2::{Digest, Sha256};
+//! The engine reads and writes images (`code_rule_dsl::tape`); its constants are these, and a
+//! format change is made here, once, for every writer.
 
 pub const MAGIC: &[u8; 8] = b"TMPTAP9N";
-pub const FORMAT_VERSION: u32 = 11;
-/// Magic 8, language 1, widths 3, version 4, source length 8, digest 32, five lengths 40.
-pub const HEADER_BYTES: usize = 56 + 5 * 8;
+/// 10: supertype memberships folded into the codes; 11: columns aligned (`COLUMN_ALIGN`); 12:
+/// named-only at rest, no stored source digest (RER-131); 14: the tokens the grammar implies
+/// never written (`tokens::TokenGrammar::stored_children`); 15: a keyword or operator left out
+/// only where its kind always implies it (`tokens::kept`).
+pub const FORMAT_VERSION: u32 = 15;
+/// Where an image's header fields are, as byte offsets: the one place a writer or a reader of
+/// stored bytes (`resident`, tests) learns the layout, so a format change moves them here.
+pub mod header {
+    /// The magic, 8 bytes.
+    pub const MAGIC: usize = 0;
+    /// The language's tape tag, one byte.
+    pub const LANGUAGE: usize = 8;
+    /// The `size`, `off` and `tail` widths, a byte each (with `TAIL_FROM_START`).
+    pub const WIDTHS: usize = 9;
+    /// `FORMAT_VERSION`, u32.
+    pub const VERSION: usize = 12;
+    /// The source's length in bytes, u64.
+    pub const SOURCE_LEN: usize = 16;
+    /// The node count, u64; then the code count, the code table's bytes, the alias count and
+    /// the alias table's bytes.
+    pub const NODES: usize = 24;
+    pub const CODES: usize = 32;
+    pub const CODE_BYTES: usize = 40;
+    pub const ALIASES: usize = 48;
+    pub const ALIAS_BYTES: usize = 56;
+}
+/// Magic 8, language 1, widths 3, version 4, source length 8, five lengths 40.
+pub const HEADER_BYTES: usize = header::ALIAS_BYTES + 8;
 pub const COLUMN_ALIGN: usize = 16;
 /// Nodes a `base` covers.
 pub const CHECKPOINT_STRIDE: usize = 16;
@@ -52,9 +75,14 @@ pub const fn key(kind: u16, field: u16, flags: u8) -> u32 {
 /// (itself counted): each closed where its subtree ends. The widths are the narrowest, from
 /// `Widths::guess` and again where it does not hold.
 pub fn preorder_image(tag: u8, src: &[u8], nodes: &[(u32, u32, u32, u32)]) -> Vec<u8> {
+    preorder_image_in(tag, &[], src, nodes)
+}
+
+/// `preorder_image`, the keys naming the supertype `classes` (`Writer::classes`).
+pub fn preorder_image_in(tag: u8, classes: &[u16], src: &[u8], nodes: &[(u32, u32, u32, u32)]) -> Vec<u8> {
     let mut widths = Widths::guess(src.len());
     loop {
-        let mut w = Writer::new(tag, widths, nodes.len());
+        let mut w = Writer::new(tag, widths, nodes.len()).classes(classes);
         // The open nodes, each its place and where its subtree ends.
         let mut open: Vec<(usize, usize, u32)> = Vec::new();
         for (i, &(key, start, end, size)) in nodes.iter().enumerate() {
@@ -78,8 +106,9 @@ pub fn preorder_image(tag: u8, src: &[u8], nodes: &[(u32, u32, u32, u32)]) -> Ve
     }
 }
 
-/// The header's digest of a source: SHA-256.
+/// A source's SHA-256 (not in the header since format 12; the engine keeps it in memory).
 pub fn digest(src: &[u8]) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
     Sha256::digest(src).into()
 }
 
@@ -150,8 +179,14 @@ impl Layout for Widths {
 pub const SIZE_GUESS_BYTES: usize = 320_000;
 
 const NO_CODE: u16 = u16::MAX;
-/// The id table's slots: a key is below this (`kf` 16 bits, flags 3).
+/// The id table's slots: a key is below this (`kf` 16 bits, flags 3), with no supertype
+/// classes (`Writer::classes`): each class doubles it.
 const ID_SLOTS: usize = 1 << 19;
+/// A key's first class bit (`Writer::classes`): bit `CLASS_SHIFT + j` puts the node in the
+/// writer's class `j`.
+pub const CLASS_SHIFT: u32 = 19;
+/// The most supertype classes a writer's keys name.
+pub const MAX_CLASSES: usize = 4;
 
 /// A tape written as a parser parses: each node's columns at their final widths, at its place,
 /// as it is made. The parser gives each node in preorder (`push`), its end and so its size at
@@ -160,7 +195,8 @@ const ID_SLOTS: usize = 1 << 19;
 /// (`truncate`). Each edit rewrites only the nodes from its place on. At the end (`finish`) the
 /// columns are moved into place after the code column, and the header and code table written.
 ///
-/// A node's key is its code: `kf | flags << 16`.
+/// A node's key is its code: `kf | flags << 16`, and a bit for each supertype class it is in
+/// (`classes`, from `CLASS_SHIFT`).
 pub struct Writer<L: Layout = Widths> {
     /// The header, then the code column: the image's start, as it will be. Reserved for the
     /// whole image at `cap` nodes, so that `finish` appends the columns in place.
@@ -183,6 +219,10 @@ pub struct Writer<L: Layout = Widths> {
     /// The nodes before this have their codes written; the rest only their keys.
     coded: usize,
     id_of: Vec<u16>,
+    /// The id table's slots in use: `ID_SLOTS`, doubled for each class.
+    slots: usize,
+    /// The supertype classes a key's bits name, ascending (none for most languages).
+    classes: Vec<u16>,
     layout: L,
     /// An offset or tail from which a push or close takes the long way: 0x10000, or 0 once a
     /// node is marked (then every node does, and its marks are kept exact).
@@ -247,11 +287,25 @@ impl<L: Layout> Writer<L> {
                 ids.resize(ID_SLOTS, NO_CODE);
                 ids
             }),
+            slots: ID_SLOTS,
+            classes: Vec::new(),
             layout,
             wide_from: 0x10000,
             marks: Vec::new(),
             tag,
         }
+    }
+
+    /// The supertype classes a key's bits from `CLASS_SHIFT` name, ascending, at most
+    /// `MAX_CLASSES`: each node's code carries the classes its key has. Before the first push.
+    pub fn classes(mut self, classes: &[u16]) -> Self {
+        assert!(classes.len() <= MAX_CLASSES && classes.windows(2).all(|w| w[0] < w[1]) && self.n == 0);
+        self.slots = ID_SLOTS << classes.len();
+        if self.id_of.len() < self.slots {
+            self.id_of.resize(self.slots, NO_CODE);
+        }
+        self.classes = classes.to_vec();
+        self
     }
 
     /// Room for twice the nodes: every column at once.
@@ -344,10 +398,10 @@ impl<L: Layout> Writer<L> {
         // The columns as locals: a store to one is not a store to the writer's fields.
         let keys = &self.keys[from..to];
         let code = &mut self.out[HEADER_BYTES + 2 * from..HEADER_BYTES + 2 * to];
-        let (id_of, codes) = (&mut self.id_of[..], &mut self.codes);
+        let (id_of, codes, mask) = (&mut self.id_of[..], &mut self.codes, self.slots - 1);
         for (k, (&key, cell)) in keys.iter().zip(code.chunks_exact_mut(2)).enumerate() {
-            // A key is below `ID_SLOTS` (`push`'s assertion): the mask is no change, and no check.
-            let slot = &mut id_of[(key as usize) & (ID_SLOTS - 1)];
+            // A key is below `slots` (`push`'s assertion): the mask is no change, and no check.
+            let slot = &mut id_of[(key as usize) & mask];
             if *slot == NO_CODE {
                 *slot = codes.len() as u16;
                 codes.push((key, (from + k) as u32));
@@ -385,7 +439,7 @@ impl<L: Layout> Writer<L> {
     /// close: every node is closed before `finish`. Its code is written when it is committed.
     #[inline(always)]
     pub fn push(&mut self, key: u32, start: u32) -> usize {
-        debug_assert!((key as usize) < ID_SLOTS);
+        debug_assert!((key as usize) < self.slots);
         let node = self.n;
         if node == self.cap {
             self.grow();
@@ -513,7 +567,8 @@ impl<L: Layout> Writer<L> {
         }
         let w = self.layout.widths();
         let nodes = self.n;
-        let code_bytes = 6 * self.codes.len();
+        let class_count = |key: u32| (key >> CLASS_SHIFT).count_ones() as usize;
+        let code_bytes: usize = self.codes.iter().map(|&(key, _)| 6 + 2 * class_count(key)).sum();
         let pad = |out: &mut Vec<u8>| out.resize(padded(out.len()), 0);
         let mut out = std::mem::take(&mut self.out);
         out.truncate(HEADER_BYTES + 2 * nodes);
@@ -532,9 +587,14 @@ impl<L: Layout> Writer<L> {
         pad(&mut out);
         for &(key, _) in &self.codes {
             out.extend_from_slice(&((key & 0xffff) as u16).to_le_bytes());
-            out.push((key >> 16) as u8);
+            out.push((key >> 16 & 0x7) as u8);
             out.extend_from_slice(&SENTINEL.to_le_bytes());
-            out.push(0);
+            out.push(class_count(key) as u8);
+            for (j, c) in self.classes.iter().enumerate() {
+                if key >> (CLASS_SHIFT + j as u32) & 1 != 0 {
+                    out.extend_from_slice(&c.to_le_bytes());
+                }
+            }
         }
         let mut h = Vec::with_capacity(HEADER_BYTES);
         h.extend_from_slice(MAGIC);
@@ -542,7 +602,6 @@ impl<L: Layout> Writer<L> {
         h.extend_from_slice(&[w.size, w.off, w.tail | if w.from_start { TAIL_FROM_START } else { 0 }]);
         h.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
         h.extend_from_slice(&(src.len() as u64).to_le_bytes());
-        h.extend_from_slice(&digest(src));
         for length in [nodes, self.codes.len(), code_bytes, 0, 0] {
             h.extend_from_slice(&(length as u64).to_le_bytes());
         }
@@ -567,8 +626,8 @@ pub fn place(bytes: &[u8], at: usize) -> String {
     if at < HEADER_BYTES || bytes.len() < HEADER_BYTES {
         return format!("the header (byte {at})");
     }
-    let n = u64::from_le_bytes(bytes[56..64].try_into().expect("8 bytes")) as usize;
-    let w = [usize::from(bytes[9]), usize::from(bytes[10]), usize::from(bytes[11] & !TAIL_FROM_START)];
+    let n = u64::from_le_bytes(bytes[header::NODES..header::NODES + 8].try_into().expect("8 bytes")) as usize;
+    let w = [usize::from(bytes[header::WIDTHS]), usize::from(bytes[header::WIDTHS + 1]), usize::from(bytes[header::WIDTHS + 2] & !TAIL_FROM_START)];
     let mut from = HEADER_BYTES;
     for (name, width, count) in [("code", 2, n), ("size", w[0], n), ("base", 4, n.div_ceil(CHECKPOINT_STRIDE)), ("off", w[1], n), ("tail", w[2], n)] {
         let to = padded(from + width * count);
@@ -578,4 +637,71 @@ pub fn place(bytes: &[u8], at: usize) -> String {
         from = to;
     }
     format!("the code table (byte {})", at - from)
+}
+
+/// A node as an image holds it: its code's key (`kf | flags << 16`, as `Writer::push` takes it),
+/// its span, and its parent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Decoded {
+    pub key: u32,
+    pub start: u32,
+    pub end: u32,
+    pub parent: Option<u32>,
+}
+
+/// The nodes of the image `bytes`, in preorder: `Writer`'s inverse, read in place (each node's
+/// code through the code table, its start from its block's base, its end from its tail and its
+/// last descendant's start, its parent from the sizes).
+pub fn decode(bytes: &[u8]) -> Result<Vec<Decoded>, String> {
+    let u64_at = |at: usize| -> Result<usize, String> {
+        let b = bytes.get(at..at + 8).ok_or("a short tape header")?;
+        usize::try_from(u64::from_le_bytes(b.try_into().expect("8 bytes"))).map_err(|_| "a tape length overflows".to_owned())
+    };
+    if bytes.len() < HEADER_BYTES || &bytes[..8] != MAGIC {
+        return Err("not a tape image".into());
+    }
+    if u32::from_le_bytes(bytes[header::VERSION..header::VERSION + 4].try_into().expect("4 bytes")) != FORMAT_VERSION {
+        return Err("a tape of another format".into());
+    }
+    let w = [usize::from(bytes[header::WIDTHS]), usize::from(bytes[header::WIDTHS + 1]), usize::from(bytes[header::WIDTHS + 2] & !TAIL_FROM_START)];
+    let from_start = bytes[header::WIDTHS + 2] & TAIL_FROM_START != 0;
+    let (n, code_count) = (u64_at(header::NODES)?, u64_at(header::CODES)?);
+    let mut at = HEADER_BYTES;
+    let mut column = |width: usize, count: usize| -> Result<&[u8], String> {
+        let c = bytes.get(at..at + width * count).ok_or("a short tape column")?;
+        at = padded(at + width * count);
+        Ok(c)
+    };
+    let (code, size, base, off, tail) = (column(2, n)?, column(w[0], n)?, column(4, n.div_ceil(CHECKPOINT_STRIDE))?, column(w[1], n)?, column(w[2], n)?);
+    let mut keys = Vec::with_capacity(code_count);
+    let mut c = at;
+    for _ in 0..code_count {
+        let entry = bytes.get(c..c + 6).ok_or("a short code table")?;
+        keys.push(u32::from(u16::from_le_bytes([entry[0], entry[1]])) | u32::from(entry[2]) << 16);
+        c += 6 + 2 * usize::from(entry[5]);
+    }
+    let get = |col: &[u8], width: usize, i: usize| -> u32 {
+        let mut v = [0u8; 4];
+        v[..width].copy_from_slice(&col[i * width..i * width + width]);
+        u32::from_le_bytes(v)
+    };
+    let start = |i: usize| get(base, 4, i / CHECKPOINT_STRIDE).wrapping_add(get(off, w[1], i));
+    let mut out = Vec::with_capacity(n);
+    let mut open: Vec<(u32, usize)> = Vec::new();
+    for i in 0..n {
+        while open.last().is_some_and(|&(_, end)| end <= i) {
+            open.pop();
+        }
+        let s = get(size, w[0], i) as usize;
+        let id = usize::from(u16::from_le_bytes([code[2 * i], code[2 * i + 1]]));
+        let key = *keys.get(id).ok_or("a node's code is not in the table")?;
+        let last = i + s.max(1) - 1;
+        if last >= n {
+            return Err("a node's size runs past the tape".into());
+        }
+        let from = if from_start { start(i) } else { start(last) };
+        out.push(Decoded { key, start: start(i), end: from.wrapping_add(get(tail, w[2], i)), parent: open.last().map(|&(p, _)| p) });
+        open.push((i as u32, i + s.max(1)));
+    }
+    Ok(out)
 }

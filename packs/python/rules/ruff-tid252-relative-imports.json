@@ -1,0 +1,60 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-tid252-relative-imports",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Prefer absolute imports over relative imports that reach into a parent package; relative imports from the same package are fine.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "parent-relative-import",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "dotted_name"
+              },
+              {
+                "kind": "aliased_import"
+              },
+              {
+                "kind": "wildcard_import"
+              }
+            ],
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "import_from_statement",
+              "pattern": "$S",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "module_name",
+                "kind": "relative_import",
+                "regex": "^\\.(?:\\s|\\\\\\r?\\n)*\\.",
+                "pattern": "$M"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.S",
+        "code": "TID252",
+        "message": "Replace the relative module `$M` in this import with its absolute dotted path; keep it relative only where the package layout makes an absolute path impractical.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "TID252"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

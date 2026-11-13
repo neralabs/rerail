@@ -7,10 +7,8 @@
 //! program it derives (`DerivedImage`), with a tape of its own over the program's text and the
 //! segments that map that text back to the document it was derived from. The store keeps each
 //! derived tape as a row of its own (`file_documents`); no tape holds another.
-use crate::code_rule_dsl::blade::forte::tree::{BladeNode, BladeTree, parse_tree};
-use crate::code_rule_dsl::blade::view::{ReadError, View};
-use crate::code_rule_dsl::embed::segments::{FileRanges, SegmentMap};
-use crate::code_rule_dsl::embed::{Embedder, Program};
+use crate::code_rule_dsl::embed::segments::SegmentMap;
+use crate::code_rule_dsl::embed::Program;
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog, Via};
 use crate::code_rule_dsl::lines::LineTable;
 use crate::code_rule_dsl::lines::Terminators;
@@ -24,32 +22,38 @@ use std::sync::{Arc, Weak};
 use tree_sitter::{Language, Node as TsNode, TreeCursor};
 
 /// v9np (decision 0025): structure-only, regular columns, no parent column; 10: supertype
-/// memberships folded into the codes.
-pub(super) const TAPE_FORMAT_VERSION: u32 = rerail_tape_format::FORMAT_VERSION;
-/// The format's constants are `rerail_tape_format`'s: the parsers write tapes with its writer,
-/// and an image is one byte string however it was made.
-use rerail_tape_format::{CODE_ERROR, CODE_EXTRA, CODE_MISSING, FIELD_LIMIT, HEADER_BYTES, KIND_LIMIT, MAGIC as TAPE_MAGIC, SENTINEL, padded};
-pub(super) use rerail_tape_format::COLUMN_ALIGN;
-pub(in crate::code_rule_dsl) use rerail_tape_format::TAIL_FROM_START;
-const NONE: u32 = u32::MAX;
-const CHECKPOINT_LIMIT: usize = 0x00ff_ffff;
-/// Tree-sitter's ERROR symbol does not fit the 10-bit kind code. ERROR records store the
-/// grammar's hidden end symbol, which never labels a visible node, and are listed in `error`.
-use rerail_tape_format::ERROR_CODE;
+/// memberships folded into the codes; later formats: `rerail_tape_format::FORMAT_VERSION`.
+pub const TAPE_FORMAT_VERSION: u32 = rerail_tape_format::FORMAT_VERSION;
+/// The format's constants are `rerail_tape_format`'s: the parsers write tapes with its writer
+/// (decision 0140), and an image is one byte string however it was made.
+pub use rerail_tape_format::{CODE_ERROR, CODE_MISSING, COLUMN_ALIGN, ERROR_CODE, FIELD_LIMIT, HEADER_BYTES, KIND_LIMIT, MAGIC as TAPE_MAGIC, SENTINEL, TAIL_FROM_START, header, padded};
+pub use rerail_tape_format::CODE_EXTRA;
+/// The language tag (`language::tape_tag`) a stored tape image names in its header, if `bytes`
+/// starts like one (any format version): the store picks a frame's dictionary by it.
+pub fn stored_tape_tag(bytes: &[u8]) -> Option<u8> {
+    (bytes.len() > header::LANGUAGE && bytes.starts_with(&TAPE_MAGIC[..6])).then(|| bytes[header::LANGUAGE])
+}
+pub const NONE: u32 = u32::MAX;
+pub const CHECKPOINT_LIMIT: usize = 0x00ff_ffff;
 
 // P's index columns, read by `prefilter`'s `nera_tree` (the §17 SQL fallback, tests only so far).
 #[allow(dead_code)]
-mod index;
+pub mod index;
+pub mod navigation;
 #[allow(unused_imports)]
-pub(in crate::code_rule_dsl) use index::IndexImage;
-mod wire;
-pub(in crate::code_rule_dsl) mod resident;
-pub(in crate::code_rule_dsl) mod validated;
-pub(super) use wire::index_span;
+pub use index::IndexImage;
+pub mod wire;
+pub mod tokens;
+// tokens_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
+// cratify: `token_readers` is rerail-w's (it mounts it)
+pub mod resident;
+pub mod validated;
+pub mod token_census;
+pub use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
-const ERROR_SYMBOL: u16 = u16::MAX;
+pub const ERROR_SYMBOL: u16 = u16::MAX;
 // QueryCursor uses the same fixed capacity in the pinned Tree-sitter query runtime.
-const MAX_NODE_SUPERTYPES: usize = 8;
+pub const MAX_NODE_SUPERTYPES: usize = 8;
 
 const _: () = {
     assert!(
@@ -75,8 +79,8 @@ unsafe extern "C" {
 }
 
 /// Reads the abstract symbols on the current cursor path from the pinned Tree-sitter runtime.
-#[cfg(test)]
-fn cursor_supertypes(cursor: &TreeCursor<'_>) -> ([u16; MAX_NODE_SUPERTYPES], usize) {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn cursor_supertypes(cursor: &TreeCursor<'_>) -> ([u16; MAX_NODE_SUPERTYPES], usize) {
     let (supertypes, count, _) = cursor_status(cursor);
     (supertypes, count)
 }
@@ -107,29 +111,29 @@ fn cursor_status(cursor: &TreeCursor<'_>) -> ([u16; MAX_NODE_SUPERTYPES], usize,
     (supertypes, count as usize, field)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// The largest table capacity `TapeImage::from_bytes` reserved on this thread since the last
     /// `take_table_reservation`.
     static TABLE_RESERVATION: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn note_table_reservation(capacity: usize) {
     TABLE_RESERVATION.set(TABLE_RESERVATION.get().max(capacity));
 }
 
 /// The largest alias or override table capacity reserved since the last call, then resets it.
-#[cfg(test)]
-pub(super) fn take_table_reservation() -> usize {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn take_table_reservation() -> usize {
     TABLE_RESERVATION.replace(0)
 }
 
 /// Deterministic grammar-wide codes: kind code is the dialect's kind id, field code its field id
 /// (zero means no field), both as `GrammarDialect::kinds` numbers them.
-pub(super) struct Grammar {
-    lang: GrammarDialect,
-    kinds: KindCatalog,
+pub struct Grammar {
+    pub lang: GrammarDialect,
+    pub kinds: KindCatalog,
     /// Each kind code's name and whether it is named, read once: Tree-sitter answers a name
     /// by measuring and validating its C string on every call, and `kind` is the matcher's
     /// most frequent question.
@@ -137,29 +141,27 @@ pub(super) struct Grammar {
 }
 
 impl Grammar {
-    pub(super) fn dialect(&self) -> GrammarDialect { self.lang }
+    pub fn dialect(&self) -> GrammarDialect { self.lang }
     /// The name of field `code` (M's facts-a, which read the private catalog directly).
     #[allow(dead_code)]
-    pub(super) fn field_name(&self, code: u16) -> Option<&'static str> {
+    pub fn field_name(&self, code: u16) -> Option<&'static str> {
         self.kinds.field_name(code)
     }
 
     /// The tree-sitter language of this grammar's dialect (Tempo's accessor; the packed runtime's
     /// Metal tests compile queries against it).
-    #[cfg(test)]
-    pub(super) fn language(&self) -> Language {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn language(&self) -> Language {
         self.lang.get_ts_language()
     }
 
-    #[cfg(test)]
-    pub(super) fn field_code(&self, name: &str) -> Option<u16> {
+    pub fn field_code(&self, name: &str) -> Option<u16> {
         self.kinds.field_id(name)
     }
-    #[cfg(test)]
-    pub(super) fn has_field(&self, name: &str) -> bool {
+    pub fn has_field(&self, name: &str) -> bool {
         self.kinds.field_id(name).is_some()
     }
-    pub(super) fn new(lang: GrammarDialect) -> Result<Arc<Self>, String> {
+    pub fn new(lang: GrammarDialect) -> Result<Arc<Self>, String> {
         let kinds = lang.kinds();
         if kinds.kind_count() > KIND_LIMIT || kinds.field_count() >= FIELD_LIMIT {
             return Err("grammar exceeds rec6 kind/field code width".into());
@@ -187,7 +189,7 @@ impl Grammar {
         Ok(grammar)
     }
 
-    fn kind_name(&self, code: u16) -> Option<&'static str> {
+    pub fn kind_name(&self, code: u16) -> Option<&'static str> {
         match self.named.get(usize::from(code)) {
             Some((name, _)) => *name,
             // ERROR's code lies past the grammar's symbols.
@@ -203,14 +205,98 @@ impl Grammar {
     }
 }
 
-/// Why a Blade template has no tape (`TapeImage::encode_template`).
+/// Why a file its dialect's own parser reads has no tape (`TreeParser`).
 #[derive(Debug)]
-pub(crate) enum TemplateError {
-    /// Forte stopped at a limit (its nesting depth, its step budget) on the template or on a
-    /// template it holds: that says nothing about its syntax, and nothing was read.
-    Parser(crate::code_rule_dsl::blade::forte::ParseError),
+pub enum TemplateError {
+    /// The parser stopped at a limit (Forte's nesting depth, its step budget) on the file or on a
+    /// template it holds: that says nothing about its syntax, and nothing was read. Why, as the parser says.
+    Parser(&'static str),
     /// Interrupted, or no tape could be encoded.
     Encode(String),
+}
+
+/// A parser's own kinds: its kind names by id (from 1), its first anonymous id, and its field names by id.
+pub type OwnTable = (&'static [&'static str], u16, &'static [&'static str]);
+
+/// A dialect whose files a language parses itself, not with tree-sitter (Blade's Forte), or with a parser
+/// standing in for tree-sitter's (JSON's simdjson kernels). The crate that owns the parser registers each
+/// implementation for its dialect as the engine loads (`install_parsers`, a `ParserImpl` each); the tape
+/// reads the file through the one the router takes (`tree_parser`, `TapeImage::parse`).
+pub trait TreeParser: Send + Sync {
+    /// The file's documents: `None` where the parser leaves the file to tree-sitter, `Err(Parser)` where
+    /// it stopped at a limit before it read the file.
+    fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>>;
+
+    /// Its own kinds, where its trees are not a tree-sitter grammar's.
+    fn kinds(&self) -> Option<OwnTable> {
+        None
+    }
+
+    /// The kinds a rule's `kind` names, where it names more than its own.
+    fn kind_names(&self, _kind: &str) -> Option<&'static [&'static str]> {
+        None
+    }
+
+    /// Its patterns, where they are its own trees: else they are tapes, as documents are (`pattern_doc`).
+    fn build_pattern(
+        &self,
+        _builder: &ast_grep_core::matcher::PatternBuilder,
+    ) -> Option<Result<ast_grep_core::matcher::Pattern, ast_grep_core::matcher::PatternError>> {
+        None
+    }
+}
+
+/// One implementation of a dialect's parser, as its language registers it (`install_parsers`). A dialect
+/// may have several (JSON's: a kernel for each CPU family, simdjson's DOM parser); the router reads its
+/// files with the best one this host runs, and a file that one leaves alone goes to tree-sitter.
+pub struct ParserImpl {
+    pub dialect: GrammarDialect,
+    /// Its name, for the profile and the route's listing (`parser_routes`).
+    pub name: &'static str,
+    /// Its place among the dialect's implementations: the lowest this host runs is taken. The order is
+    /// the registering language's, from its measurements (JSON's: decision 0148).
+    pub rank: u32,
+    /// Whether this host runs it: its CPU's instructions, its build's.
+    pub runs: bool,
+    pub parser: &'static dyn TreeParser,
+}
+
+/// The parser router: every implementation registered, and for each dialect the one taken.
+struct Router {
+    registered: Vec<ParserImpl>,
+    /// Each dialect's implementation, an index into `registered`.
+    chosen: Vec<(GrammarDialect, usize)>,
+}
+
+static ROUTER: std::sync::OnceLock<Router> = std::sync::OnceLock::new();
+
+/// The engine's parsers, by dialect; the first call holds. Each dialect's files are read by the
+/// lowest-ranked implementation this host runs (the first registered, among equals).
+pub fn install_parsers(registered: Vec<ParserImpl>) {
+    let mut chosen: Vec<(GrammarDialect, usize)> = Vec::new();
+    for (i, r) in registered.iter().enumerate() {
+        if !r.runs {
+            continue;
+        }
+        match chosen.iter_mut().find(|(dialect, _)| *dialect == r.dialect) {
+            Some((_, best)) if registered[*best].rank <= r.rank => {}
+            Some((_, best)) => *best = i,
+            None => chosen.push((r.dialect, i)),
+        }
+    }
+    let _ = ROUTER.set(Router { registered, chosen });
+}
+
+/// `dialect`'s own parser, where its language registered one this host runs: the router's choice.
+pub fn tree_parser(dialect: GrammarDialect) -> Option<&'static dyn TreeParser> {
+    let router = ROUTER.get()?;
+    router.chosen.iter().find(|(lang, _)| *lang == dialect).map(|&(_, i)| router.registered[i].parser)
+}
+
+/// Every registered implementation, in registration order, and whether the router took it.
+pub fn parser_routes() -> Vec<(&'static ParserImpl, bool)> {
+    let Some(router) = ROUTER.get() else { return Vec::new() };
+    router.registered.iter().enumerate().map(|(i, r)| (r, router.chosen.iter().any(|&(_, c)| c == i))).collect()
 }
 
 impl From<String> for TemplateError {
@@ -219,9 +305,14 @@ impl From<String> for TemplateError {
     }
 }
 
+
 /// Owns only compact structure and a binding to the exact source and grammar.
-/// The first derived class id (`TapeDoc::with_labels`), above every grammar's kinds and supertypes.
-pub(super) const DERIVED_CLASS_BASE: u16 = 0xf000;
+/// The first derived class id (`TapeDoc::with_labels`), above every grammar's kinds and supertypes
+/// (`KIND_LIMIT`). A wave's distinct labels take the ids from here to `u16::MAX`: 0x4000 leaves
+/// room for 49,151 of them (a whole Python pack's; 0xf000 held 4,095). The Metal sources spell it
+/// `16384u`.
+pub const DERIVED_CLASS_BASE: u16 = 0x4000;
+const _: () = assert!(DERIVED_CLASS_BASE as usize >= KIND_LIMIT);
 
 /// A tape image in v9np's columns (decision 0025; P decision 0003). Each node is a fixed-width
 /// row across five columns, in preorder:
@@ -235,20 +326,22 @@ pub(super) const DERIVED_CLASS_BASE: u16 = 0xf000;
 ///
 /// There is no parent column: `restore_tree` rebuilds parents from the sizes with a stack.
 #[derive(Clone)]
-pub(super) struct TapeImage {
-    code: Vec<u8>,
-    size: Vec<u8>,
-    base: Vec<u8>,
-    off: Vec<u8>,
-    tail: Vec<u8>,
-    widths: [u8; 3],
-    codes: Vec<Code>,
+pub struct TapeImage {
+    pub code: Vec<u8>,
+    pub size: Vec<u8>,
+    pub base: Vec<u8>,
+    pub off: Vec<u8>,
+    pub tail: Vec<u8>,
+    pub widths: [u8; 3],
+    pub codes: Vec<Code>,
     /// Contextual Tree-sitter aliases whose displayed kind or named flag differs from the static
     /// language catalog. The numeric kind remains the native `kind_id` for matcher parity.
-    kind_aliases: Vec<(String, bool)>,
-    language: GrammarDialect,
-    source_len: usize,
-    source_digest: [u8; 32],
+    pub kind_aliases: Vec<(String, bool)>,
+    pub language: GrammarDialect,
+    pub source_len: usize,
+    /// The source's SHA-256 where the image was encoded from it; not stored (v12), so `None` for
+    /// an image read from bytes, whose store pairs it with its source.
+    pub source_digest: Option<[u8; 32]>,
 }
 
 /// A folded code: kind (10 bits, ERROR's is `ERROR_CODE`) and field (6 bits) as v8's `kf`, the
@@ -257,15 +350,25 @@ pub(super) struct TapeImage {
 /// where the node sits, not on its kind alone, so they are the node's own, as the parser's
 /// cursor reports them; nodes in the same context share a code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct Code {
+pub struct Code {
     kf: u16,
-    flags: u8,
-    alias: u16,
-    class_count: u8,
-    classes: [u16; MAX_NODE_SUPERTYPES],
+    pub flags: u8,
+    pub alias: u16,
+    pub class_count: u8,
+    pub classes: [u16; MAX_NODE_SUPERTYPES],
 }
 
 impl Code {
+    /// A code of `kind` under `field`, with no flags or alias, in the supertypes `classes` (ascending).
+    pub fn plain(kind: u16, field: u16, classes: &[u16]) -> Result<Self, String> {
+        if kind as usize >= KIND_LIMIT || field as usize >= FIELD_LIMIT || kind == ERROR_CODE || classes.len() > MAX_NODE_SUPERTYPES {
+            return Err(format!("kind {kind}, field {field} or {} supertypes past the tape's codes", classes.len()));
+        }
+        let mut code = Code { kf: kind | (field << 10), flags: 0, alias: SENTINEL, class_count: classes.len() as u8, classes: [0; MAX_NODE_SUPERTYPES] };
+        code.classes[..classes.len()].copy_from_slice(classes);
+        Ok(code)
+    }
+
     fn classes(&self) -> &[u16] {
         &self.classes[..usize::from(self.class_count)]
     }
@@ -296,7 +399,7 @@ fn width_for(max: u32) -> usize {
 
 /// Which of a file's documents one is: the file's own tree, or one derived from another of them.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum DocumentRole {
+pub enum DocumentRole {
     /// The file's own tree, over the file's bytes.
     Primary,
     /// A program whose text is one contiguous, byte-exact slice of the document it was derived
@@ -309,7 +412,7 @@ pub(super) enum DocumentRole {
 
 impl DocumentRole {
     /// The role of a derived document of `text` that `source_map` maps to its parent.
-    fn derived(text: &str, source_map: &SegmentMap) -> Self {
+    pub fn derived(text: &str, source_map: &SegmentMap) -> Self {
         if !text.is_empty()
             && source_map.len() == 1
             && source_map.copied_span(0..text.len()).is_some()
@@ -321,7 +424,7 @@ impl DocumentRole {
     }
 
     /// Its persisted code (`file_documents.role_id`).
-    pub(super) fn code(self) -> i64 {
+    pub fn code(self) -> i64 {
         match self {
             Self::Primary => 0,
             Self::Embedded => 1,
@@ -341,7 +444,7 @@ impl DocumentRole {
 
 /// An embedding's persisted identity (`file_documents.via_id`): a nonnegative integer read from
 /// its registry name (`Via::id`), so it holds across builds that keep the name.
-pub(super) fn via_code(via: Via) -> i64 {
+pub fn via_code(via: Via) -> i64 {
     let digest = Sha256::digest(via.id().as_bytes());
     i64::from_be_bytes(digest[..8].try_into().expect("digest width")) & i64::MAX
 }
@@ -356,36 +459,36 @@ fn via_of_code(host: GrammarDialect, code: i64) -> Option<Via> {
 
 /// A file's documents as parsed: its own tree, and the ones derived from it.
 #[derive(Clone)]
-pub(super) struct FileImage {
-    pub(super) primary: TapeImage,
+pub struct FileImage {
+    pub primary: TapeImage,
     /// In ordinal order (`DerivedImage::parent` counts the primary as 0, the first of these as 1).
-    pub(super) derived: Vec<DerivedImage>,
+    pub derived: Vec<DerivedImage>,
 }
 
 /// A document derived from another of the file's: its own text, grammar and tape, and how it maps
 /// to the document it was derived from.
 #[derive(Clone)]
-pub(super) struct DerivedImage {
+pub struct DerivedImage {
     /// `Embedded` or `Generated`, never `Primary`.
-    pub(super) role: DocumentRole,
+    pub role: DocumentRole,
     /// The embedding that built it.
-    pub(super) via: Via,
+    pub via: Via,
     /// The document it was derived from: 0 the primary, `i` the `i`-th derived one. Embedders run
     /// on the primary only; the field makes nesting representable.
-    pub(super) parent: u32,
-    pub(super) text: Arc<String>,
+    pub parent: u32,
+    pub text: Arc<String>,
     /// Where its text stands in its parent's (`embed::segments`).
     pub(super) source_map: Arc<SegmentMap>,
     /// The parent's bytes it cannot be read through (`embed::Program::host_errors`).
     pub(super) host_errors: Arc<Vec<(u32, u32)>>,
     /// Its tree over `text`, in its own dialect.
-    pub(super) tape: TapeImage,
+    pub tape: TapeImage,
 }
 
 impl DerivedImage {
     /// The image of `program`, which `via` built from document `parent` of `host`'s dialect over
     /// `source`.
-    fn encode(
+    pub fn encode(
         via: Via,
         program: Program,
         parent: u32,
@@ -435,14 +538,14 @@ impl DerivedImage {
     }
 
     /// The dialect of its tree.
-    pub(super) fn dialect(&self) -> GrammarDialect {
+    pub fn dialect(&self) -> GrammarDialect {
         self.tape.language
     }
 
     /// Its source map's persisted form (`SegmentMap::write`).
     /// The program ranges its tape leaves out (`SegmentMap::omissions`), as little-endian `u32`
     /// pairs: with its text, all its tape depends on.
-    pub(super) fn omission_bytes(&self) -> Vec<u8> {
+    pub fn omission_bytes(&self) -> Vec<u8> {
         self.source_map
             .omissions()
             .flat_map(|range| [range.start as u32, range.end as u32])
@@ -450,7 +553,7 @@ impl DerivedImage {
             .collect()
     }
 
-    pub(super) fn source_map_bytes(&self) -> Vec<u8> {
+    pub fn source_map_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(
             SegmentMap::persisted_len(self.source_map.len()).unwrap_or_default(),
         );
@@ -459,7 +562,7 @@ impl DerivedImage {
     }
 
     /// Its host errors' persisted form: each range's start and end, little-endian `u32`s.
-    pub(super) fn host_error_bytes(&self) -> Vec<u8> {
+    pub fn host_error_bytes(&self) -> Vec<u8> {
         let mut bytes = Vec::with_capacity(self.host_errors.len() * 8);
         for &(start, end) in self.host_errors.iter() {
             bytes.extend_from_slice(&start.to_le_bytes());
@@ -478,20 +581,20 @@ impl DerivedImage {
 
 /// A derived document as the store keeps it (its `file_documents` row, text and tape), before
 /// `FileImage::read` checks it.
-pub(super) struct StoredDerived<'a> {
-    pub(super) ordinal: i64,
-    pub(super) parent: i64,
-    pub(super) role: i64,
-    pub(super) via: i64,
-    pub(super) text: &'a [u8],
-    pub(super) source_map: &'a [u8],
-    pub(super) host_errors: &'a [u8],
-    pub(super) tape: &'a [u8],
+pub struct StoredDerived<'a> {
+    pub ordinal: i64,
+    pub parent: i64,
+    pub role: i64,
+    pub via: i64,
+    pub text: &'a [u8],
+    pub source_map: &'a [u8],
+    pub host_errors: &'a [u8],
+    pub tape: &'a [u8],
 }
 
 impl FileImage {
     /// The documents of a file that derives none.
-    pub(super) fn single(primary: TapeImage) -> Self {
+    pub fn single(primary: TapeImage) -> Self {
         Self {
             primary,
             derived: Vec::new(),
@@ -503,7 +606,7 @@ impl FileImage {
     /// as a tape of its own, and against the document it was derived from: an embedding that
     /// document's dialect has, a tape of that embedding's dialect over its text, a source map and
     /// host errors within both texts, and the role its map gives it.
-    pub(super) fn read(
+    pub fn read(
         primary: &[u8],
         grammar: &Arc<Grammar>,
         derived: &[StoredDerived<'_>],
@@ -581,8 +684,8 @@ impl FileImage {
     }
 
     /// Every document's image written as the store keeps it and read back (`read`).
-    #[cfg(test)]
-    pub(super) fn round_trip(&self, grammar: &Arc<Grammar>) -> Result<Self, String> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn round_trip(&self, grammar: &Arc<Grammar>) -> Result<Self, String> {
         let primary = self.primary.to_bytes()?;
         let parts = self
             .derived
@@ -616,7 +719,7 @@ impl FileImage {
         Self::read(&primary, grammar, &stored)
     }
 
-    pub(super) fn estimated_bytes(&self) -> usize {
+    pub fn estimated_bytes(&self) -> usize {
         self.primary.estimated_bytes()
             + self
                 .derived
@@ -629,19 +732,19 @@ impl FileImage {
 
 /// What tests restore (`TapeDoc::restore`): a file's documents, or a lone tape, the documents of
 /// a file that derives none.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) trait Documents {
     fn file_image(&self) -> Cow<'_, FileImage>;
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl Documents for FileImage {
     fn file_image(&self) -> Cow<'_, FileImage> {
         Cow::Borrowed(self)
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl Documents for TapeImage {
     fn file_image(&self) -> Cow<'_, FileImage> {
         Cow::Owned(FileImage::single(self.clone()))
@@ -649,24 +752,31 @@ impl Documents for TapeImage {
 }
 
 #[derive(Clone)]
-struct Pending {
-    kf: u16,
-    parent: Option<u32>,
-    start: u32,
-    length: u32,
-    size: u32,
-    extra: bool,
-    error: bool,
-    missing: bool,
-    kind_alias: Option<(String, bool)>,
+pub struct Pending {
+    pub kf: u16,
+    pub parent: Option<u32>,
+    pub start: u32,
+    pub length: u32,
+    pub size: u32,
+    pub extra: bool,
+    pub error: bool,
+    pub missing: bool,
+    pub kind_alias: Option<(String, bool)>,
 }
 
-fn checked(budget: &impl Fn() -> bool) -> Result<(), String> {
+pub fn checked(budget: &impl Fn() -> bool) -> Result<(), String> {
     if budget() {
         Err("tape operation interrupted".into())
     } else {
         Ok(())
     }
+}
+
+/// The store's identity of a tape (`HashKey::tape_identity`) whose source hashes to `source` and
+/// whose stored bytes are `tape`.
+pub fn tape_identity(source: &[u8; 32], tape: &[u8]) -> [u8; 32] {
+    let key = crate::content_store::HashKey::tape_identity(crate::content_store::HashKey::from_sha256_digest(*source), tape);
+    key.sha256_bytes().expect("a SHA-256 identity")
 }
 
 fn source_digest(source: &str, budget: &impl Fn() -> bool) -> Result<[u8; 32], String> {
@@ -693,7 +803,7 @@ fn varint(mut value: u32, output: &mut Vec<u8>) {
     }
 }
 
-fn checkpoint(value: usize, bytes: &mut Vec<u8>) -> Result<(), String> {
+pub fn checkpoint(value: usize, bytes: &mut Vec<u8>) -> Result<(), String> {
     if value > CHECKPOINT_LIMIT {
         return Err("rec6 checkpoint overflow".into());
     }
@@ -741,11 +851,15 @@ impl<'a> TapeReader<'a> {
 
 /// Appends `root`'s tree to `nodes` in preorder, `language` its grammar. An embedded program's
 /// placeholders its segments mark (`omitted`) are left out, with their subtrees.
+/// Tree-sitter's tree under `root` into `nodes`, in preorder. Where `filter` (the grammar's token
+/// automata) is given, a token it implies is skipped as the walk meets it: it is never a record
+/// (`tokens::TokenGrammar::stored_children`, RER-131).
 fn encode_tree(
     nodes: &mut Vec<Pending>,
     supertypes: &mut Vec<(u32, u16)>,
     root: TsNode<'_>,
     language: &Language,
+    filter: Option<&tokens::TokenGrammar>,
     omitted: Option<&SegmentMap>,
     budget: &impl Fn() -> bool,
 ) -> Result<(), String> {
@@ -757,6 +871,13 @@ fn encode_tree(
     let mut cursor = root.walk();
     let mut parent = None;
     let mut above: Vec<Option<u32>> = Vec::new();
+    // Which children of the cursor's node's parent are stored (`None`: all), and the cursor's
+    // node's place among them; `levels` holds the same for each node the cursor descended through.
+    let mut stored: Option<Vec<bool>> = None;
+    let mut place = 0usize;
+    let mut levels: Vec<(Option<Vec<bool>>, usize)> = Vec::new();
+    let mut scratch = tokens::FilterScratch::default();
+    let mut filter_cursor = filter.map(|_| root.walk());
     let mut visited = 0usize;
     loop {
         // Every 256 nodes, omitted ones included.
@@ -764,29 +885,31 @@ fn encode_tree(
             checked(budget)?;
         }
         visited += 1;
-        let node = cursor.node();
-        let index = if omitted.is_some_and(|segments| segments.omitted(node.byte_range())) {
-            None
-        } else {
+        let implied = stored.as_ref().is_some_and(|stored| !stored.get(place).copied().unwrap_or(true));
+        // An implied token has no record or descendants. Do not reconstruct its
+        // TSNode (including its source position) merely to discard it.
+        let retained = (!implied).then(|| cursor.node()).filter(|node| !omitted.is_some_and(|segments| segments.omitted(node.byte_range())));
+        if let Some(node) = retained {
             // The cursor's root is `root` itself, which has no field.
             // One status call gives the field and the supertypes (the field alone walks the stack again).
             let (classes, count, field) = cursor_status(&cursor);
-            let field = if node.is_extra() { 0 } else { field };
-            let index = encode_node(nodes, node, parent, field, language, &mut catalog)?;
+            let extra = node.is_extra();
+            let field = if extra { 0 } else { field };
+            let index = encode_node(nodes, node, parent, field, extra, language, &mut catalog)?;
             for class in classes.into_iter().take(count) {
                 if usize::from(class) >= KIND_LIMIT {
                     return Err("supertype symbol exceeds tape limit".into());
                 }
                 supertypes.push((index, class));
             }
-            Some(index)
-        };
-        if let Some(index) = index
-            && cursor.goto_first_child()
-        {
-            above.push(parent);
-            parent = Some(index);
-            continue;
+            if cursor.goto_first_child() {
+                above.push(parent);
+                parent = Some(index);
+                levels.push((stored.take(), place));
+                stored = filter.and_then(|filter| filter.stored_children_in(node, filter_cursor.as_mut().expect("a cursor for the filter"), &mut scratch));
+                place = 0;
+                continue;
+            }
         }
         // The next sibling, of this node or of its nearest ancestor that has one.
         loop {
@@ -794,11 +917,14 @@ fn encode_tree(
                 return Ok(());
             };
             if cursor.goto_next_sibling() {
+                place += 1;
                 break;
             }
             cursor.goto_parent();
             above.pop();
             parent = grandparent;
+            if let Some(mask) = stored.take() { scratch.recycle(mask); }
+            (stored, place) = levels.pop().unwrap_or_default();
         }
     }
 }
@@ -809,20 +935,25 @@ fn encode_node<'l>(
     node: TsNode<'_>,
     parent: Option<u32>,
     field: u16,
+    extra: bool,
     language: &'l Language,
     catalog: &mut [Option<(Option<&'l str>, bool)>],
 ) -> Result<u32, String> {
     let index = u32::try_from(nodes.len()).map_err(|_| "rec6 node count overflow")?;
-    let kind = usize::from(node.kind_id());
-    let error = node.is_error();
+    let code = node.kind_id();
+    let kind = usize::from(code);
+    // ts_node_is_error repeats ts_node_symbol. The pinned runtime defines it
+    // as this comparison; read each node property once across the FFI boundary.
+    let error = code == ERROR_SYMBOL;
+    let missing = node.is_missing();
+    let span = node.byte_range();
     if usize::from(field) >= FIELD_LIMIT {
         return Err(format!(
             "grammar field id {field} exceeds tape limit {FIELD_LIMIT}"
         ));
     }
-    let code = node.kind_id();
     if error {
-        if code != ERROR_SYMBOL || node.is_missing() {
+        if missing {
             return Err("unsupported error or missing grammar symbol".into());
         }
     } else if kind >= language.node_kind_count() {
@@ -835,10 +966,9 @@ fn encode_node<'l>(
         ));
     } else if code == ERROR_CODE {
         return Err("grammar symbol conflicts with the reserved tape error code".into());
-    } else if node.is_missing() && !node.byte_range().is_empty() {
+    } else if missing && !span.is_empty() {
         return Err("missing grammar symbol has a non-empty source span".into());
     }
-    let span = node.byte_range();
     let start = u32::try_from(span.start).map_err(|_| "node span overflow")?;
     let end = u32::try_from(span.end).map_err(|_| "node span overflow")?;
     let length = end.checked_sub(start).ok_or("inverted node span")?;
@@ -847,8 +977,8 @@ fn encode_node<'l>(
     } else {
         let (name, named) = *catalog[kind].get_or_insert_with(|| {
             (
-                language.node_kind_for_id(node.kind_id()),
-                language.node_kind_is_named(node.kind_id()),
+                language.node_kind_for_id(code),
+                language.node_kind_is_named(code),
             )
         });
         // SAFETY: `node` is a live node of a tree in `language`, whose kind names are static
@@ -867,131 +997,16 @@ fn encode_node<'l>(
         start,
         length,
         size: 1,
-        extra: node.is_extra(),
+        extra,
         error,
-        missing: node.is_missing(),
+        missing,
         kind_alias,
     });
     Ok(index)
 }
 
-/// Where a Blade template's syntax error (`BladeTree::error_ranges`) sits in its tree as an ERROR
-/// leaf: under the deepest node whose span holds it with bytes on both sides (a zero-width error
-/// strictly inside), after the children that end at or before its start. Siblings then still end
-/// in byte order. The node's id and the child index the leaf goes before.
-fn error_place(root: BladeNode<'_>, error: &Range<usize>) -> (usize, usize) {
-    let mut node = root;
-    loop {
-        let inner = node.children().find(|child| {
-            let range = child.range();
-            range.start <= error.start
-                && error.end <= range.end
-                && range.start < error.end
-                && error.start < range.end
-        });
-        match inner {
-            Some(child) => node = child,
-            None => break,
-        }
-    }
-    let before = node
-        .children()
-        .take_while(|child| child.range().end <= error.start)
-        .count();
-    (node.node_id(), before)
-}
-
-/// Appends a Blade template's tree (`blade::forte::tree`) to `nodes` in preorder, its kinds and
-/// fields the tree's, and its syntax errors `errors` (as Blade reads them, `View::read`) as ERROR
-/// leaves (`error_place`).
-fn encode_blade_tree(
-    nodes: &mut Vec<Pending>,
-    tree: &BladeTree,
-    errors: &[Range<usize>],
-    budget: &impl Fn() -> bool,
-) -> Result<(), String> {
-    enum Item<'t> {
-        Node(BladeNode<'t>),
-        Error(Range<usize>),
-    }
-    let mut errors = errors
-        .iter()
-        .map(|error| {
-            let (node, before) = error_place(tree.root(), error);
-            (node, before, error.clone())
-        })
-        .collect::<Vec<_>>();
-    errors.sort_by_key(|(node, before, error)| (*node, *before, error.start, error.end));
-    let mut stack = vec![(Item::Node(tree.root()), None)];
-    let mut visited = 0usize;
-    while let Some((item, parent)) = stack.pop() {
-        if visited.is_multiple_of(256) {
-            checked(budget)?;
-        }
-        visited += 1;
-        let index = u32::try_from(nodes.len()).map_err(|_| "rec6 node count overflow")?;
-        let node = match item {
-            Item::Error(range) => {
-                let start = u32::try_from(range.start).map_err(|_| "node span overflow")?;
-                let end = u32::try_from(range.end).map_err(|_| "node span overflow")?;
-                nodes.push(Pending {
-                    kf: ERROR_CODE,
-                    parent,
-                    start,
-                    length: end.checked_sub(start).ok_or("inverted node span")?,
-                    size: 1,
-                    extra: false,
-                    error: true,
-                    missing: false,
-                    kind_alias: None,
-                });
-                continue;
-            }
-            Item::Node(node) => node,
-        };
-        let field = node.field_id();
-        let code = node.kind_id();
-        if code == ERROR_CODE
-            || usize::from(code) >= KIND_LIMIT
-            || usize::from(field) >= FIELD_LIMIT
-        {
-            return Err(format!(
-                "Blade kind {code} or field {field} exceeds the tape's codes"
-            ));
-        }
-        let range = node.range();
-        let start = u32::try_from(range.start).map_err(|_| "node span overflow")?;
-        let end = u32::try_from(range.end).map_err(|_| "node span overflow")?;
-        nodes.push(Pending {
-            kf: code | (field << 10),
-            parent,
-            start,
-            length: end.checked_sub(start).ok_or("inverted node span")?,
-            size: 1,
-            extra: false,
-            error: false,
-            missing: false,
-            kind_alias: None,
-        });
-        let id = node.node_id();
-        let here = errors.partition_point(|(node, ..)| *node < id)
-            ..errors.partition_point(|(node, ..)| *node <= id);
-        let mut placed = errors[here].iter().peekable();
-        let mut items = Vec::with_capacity(node.children().len() + placed.len());
-        for (position, child) in node.children().enumerate() {
-            while let Some((_, _, error)) = placed.next_if(|(_, before, _)| *before <= position) {
-                items.push(Item::Error(error.clone()));
-            }
-            items.push(Item::Node(child));
-        }
-        items.extend(placed.map(|(_, _, error)| Item::Error(error.clone())));
-        stack.extend(items.into_iter().rev().map(|item| (item, Some(index))));
-    }
-    Ok(())
-}
-
 impl TapeImage {
-    pub(super) fn to_bytes(&self) -> Result<Vec<u8>, String> {
+    pub fn to_bytes(&self) -> Result<Vec<u8>, String> {
         let language =
             super::language::tape_tag(self.language).ok_or("unsupported tape language")?;
         let alias_bytes = self.kind_aliases.iter().map(|(name, _)| 5 + name.len()).sum::<usize>();
@@ -1008,7 +1023,6 @@ impl TapeImage {
         bytes.extend_from_slice(&self.widths);
         bytes.extend_from_slice(&TAPE_FORMAT_VERSION.to_le_bytes());
         bytes.extend_from_slice(&(self.source_len as u64).to_le_bytes());
-        bytes.extend_from_slice(&self.source_digest);
         for length in lengths {
             bytes.extend_from_slice(&(length as u64).to_le_bytes());
         }
@@ -1038,7 +1052,20 @@ impl TapeImage {
         Ok(bytes)
     }
 
-    pub(super) fn from_bytes(bytes: &[u8], grammar: &Arc<Grammar>) -> Result<Self, String> {
+    pub fn from_bytes(bytes: &[u8], grammar: &Arc<Grammar>) -> Result<Self, String> {
+        Self::read_image(bytes, grammar)
+    }
+
+    /// The image a parser wrote as it parsed `source` (its bytes, the engine's: decision 0140), read as
+    /// stored, with the source's digest (not stored since format 12), as `encode_rr`'s.
+    pub fn parsed(bytes: &[u8], grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
+        let mut image = Self::read_image(bytes, grammar)?;
+        image.source_digest = Some(source_digest(source, budget)?);
+        Ok(image)
+    }
+
+    /// The image `bytes` hold, of a `grammar` file.
+    fn read_image(bytes: &[u8], grammar: &Grammar) -> Result<Self, String> {
         let mut reader = TapeReader { bytes, offset: 0 };
         if reader.take(8)? != TAPE_MAGIC {
             return Err("wrong tape image magic".into());
@@ -1056,7 +1083,6 @@ impl TapeImage {
             return Err("tape image grammar mismatch".into());
         }
         let source_len = usize::try_from(reader.u64()?).map_err(|_| "source length overflow")?;
-        let source_digest: [u8; 32] = reader.take(32)?.try_into().expect("digest width");
         let nodes = reader.length()?;
         let code_count = reader.length()?;
         let code_bytes = reader.length()?;
@@ -1095,7 +1121,7 @@ impl TapeImage {
         let mut next = || columns.next().expect("five columns");
         let (code, size, base, off, tail) = (next()?, next()?, next()?, next()?, next()?);
         drop(columns);
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         note_table_reservation(code_count);
         let codes_end = reader.offset + code_bytes;
         let mut codes = Vec::with_capacity(code_count);
@@ -1104,7 +1130,8 @@ impl TapeImage {
             let flags = reader.u8()?;
             let alias = u16::from_le_bytes(reader.take(2)?.try_into().expect("u16 width"));
             let class_count = reader.u8()?;
-            if flags & !(CODE_EXTRA | CODE_ERROR | CODE_MISSING) != 0
+            let allowed = CODE_EXTRA | CODE_ERROR | CODE_MISSING;
+            if flags & !allowed != 0
                 || (alias != SENTINEL && usize::from(alias) >= alias_count)
                 || usize::from(class_count) > MAX_NODE_SUPERTYPES
             {
@@ -1126,7 +1153,7 @@ impl TapeImage {
             return Err("noncanonical tape code table length".into());
         }
         let aliases_end = reader.offset + alias_bytes;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         note_table_reservation(alias_count);
         let mut kind_aliases = Vec::with_capacity(alias_count);
         for _ in 0..alias_count {
@@ -1148,23 +1175,26 @@ impl TapeImage {
         if reader.offset != bytes.len() {
             return Err("trailing tape image bytes".into());
         }
-        Ok(Self { code, size, base, off, tail, widths, codes, kind_aliases, language, source_len, source_digest })
+        Ok(Self { code, size, base, off, tail, widths, codes, kind_aliases, language, source_len, source_digest: None })
     }
 
     /// Parses `source` as `grammar`'s dialect and encodes its documents: with tree-sitter (a PHP
     /// file's view, `php_view`, against `source`), or a Blade template with Rerail's port of Forte
     /// (`encode_template`). `None` where the parser stopped before it read the file: tree-sitter
     /// gave up (`budget` interrupted it), or Forte reached a limit.
-    pub(super) fn parse(
+    pub fn parse(
         grammar: &Grammar,
         source: &str,
         budget: &impl Fn() -> bool,
     ) -> Option<Result<FileImage, String>> {
-        // A build without `lang-blade` routes no file to Blade (`GrammarDialect::built`), so Forte is not linked.
-        if cfg!(feature = "lang-blade") && grammar.lang == GrammarDialect::Blade {
-            return match Self::encode_template(grammar, source, budget) {
+        // A dialect its language parses itself (Blade's Forte), or reads with a parser standing in for
+        // tree-sitter's (JSON's Bitlex parser, which may leave the file to tree-sitter-json below).
+        if let Some(parser) = tree_parser(grammar.lang)
+            && let Some(parsed) = parser.parse(grammar, source, &budget)
+        {
+            return match parsed {
                 Ok(image) => Some(Ok(image)),
-                // Forte stopped at a limit: like tree-sitter giving up, it read nothing.
+                // The parser stopped at a limit: like tree-sitter giving up, it read nothing.
                 Err(TemplateError::Parser(_)) => None,
                 Err(TemplateError::Encode(error)) => Some(Err(error)),
             };
@@ -1177,7 +1207,7 @@ impl TapeImage {
         if let Err(error) = parser.set_language(&grammar.lang.get_ts_language()) {
             return Some(Err(error.to_string()));
         }
-        let parsed = super::language::adapter::parse_input(grammar.lang, source);
+        let parsed = super::language::base(super::language::Family::of(grammar.lang)).parse_input(source);
         let bytes = parsed.as_bytes();
         let mut input = |offset: usize, _: tree_sitter::Point| &bytes[offset..];
         let mut progress = |_: &tree_sitter::ParseState| {
@@ -1205,7 +1235,7 @@ impl TapeImage {
     /// The documents of a tree-sitter tree of `source`: its tape, and the programs its embedders
     /// build from the tree, each one per `via`. (Blade's compiled view is built from its Forte
     /// tree: `encode_blade`.)
-    pub(super) fn encode(
+    pub fn encode(
         root: TsNode<'_>,
         grammar: &Grammar,
         source: &str,
@@ -1219,13 +1249,11 @@ impl TapeImage {
             if embeds[..index].iter().any(|&(earlier, _)| earlier == via) {
                 continue;
             }
-            crate::code_rule_dsl::language::with_embedder!(via, E => {
-                if let Some(program) = <E as Embedder>::build(root, source) {
-                    image
-                        .derived
-                        .push(DerivedImage::encode(via, program, 0, grammar, source, budget)?);
-                }
-            });
+            if let Some(program) = crate::code_rule_dsl::embed::embedder(via).build(root, source) {
+                image
+                    .derived
+                    .push(DerivedImage::encode(via, program, 0, grammar, source, budget)?);
+            }
         }
         Ok(image)
     }
@@ -1256,63 +1284,15 @@ impl TapeImage {
         }
         let mut nodes = Vec::<Pending>::new();
         let mut supertypes = Vec::new();
-        encode_tree(&mut nodes, &mut supertypes, root, language, omitted, budget)?;
+        let filter = tokens::TokenGrammar::of(grammar.lang, language);
+        encode_tree(&mut nodes, &mut supertypes, root, language, filter.as_deref(), omitted, budget)?;
         Self::finish(nodes, supertypes, grammar, source, budget)
     }
 
-    /// The documents of a Blade template, parsed with Rerail's port of Forte (`encode_blade`).
-    pub(super) fn encode_template(
-        grammar: &Grammar,
-        source: &str,
-        budget: &impl Fn() -> bool,
-    ) -> Result<FileImage, TemplateError> {
-        checked(budget)?;
-        let tree = parse_tree(source.as_bytes()).map_err(TemplateError::Parser)?;
-        Self::encode_blade(&tree, grammar, source, budget)
-    }
-
-    /// The documents of a Blade template from its Forte tree (`tree::parse_tree`): the
-    /// template's tree, its syntax errors as ERROR leaves, and the document its embedded PHP
-    /// derives (`blade::view`, the `compiled-view` embedding).
-    pub(super) fn encode_blade(
-        tree: &BladeTree,
-        grammar: &Grammar,
-        source: &str,
-        budget: &impl Fn() -> bool,
-    ) -> Result<FileImage, TemplateError> {
-        checked(budget)?;
-        if grammar.lang != GrammarDialect::Blade {
-            return Err("only a Blade template is encoded from a Forte tree"
-                .to_owned()
-                .into());
-        }
-        if source.len() > u32::MAX as usize {
-            return Err("source exceeds tape range".to_owned().into());
-        }
-        // The template's syntax errors are ERROR leaves where Blade reads them (`View::read`).
-        let read = View::read(tree, source, budget).map_err(|error| match error {
-            ReadError::Parser(error) => TemplateError::Parser(error),
-            ReadError::Interrupted => TemplateError::Encode("tape operation interrupted".into()),
-        })?;
-        let mut nodes = Vec::<Pending>::new();
-        encode_blade_tree(&mut nodes, tree, &read.syntax_errors, budget)?;
-        let mut image = FileImage::single(Self::finish(nodes, Vec::new(), grammar, source, budget)?);
-        if let Some(view) = read.view {
-            image.derived.push(DerivedImage::encode(
-                Via::CompiledView,
-                view.into_program(),
-                0,
-                grammar,
-                source,
-                budget,
-            )?);
-        }
-        Ok(image)
-    }
-
     /// The tape of a `.rr` file: the tree `logic::rr::syntax` builds as it reads the statements, its comments as
-    /// extras and each statement that does not parse an ERROR leaf (decision 0061).
-    pub(super) fn encode_rr(grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
+    /// extras and each statement that does not parse an ERROR leaf (decision 0061). The lean parser writes it as
+    /// the image's bytes as it parses (decision 0140), so nothing here packs a node: the image is read as stored.
+    pub fn encode_rr(grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
         checked(budget)?;
         if grammar.lang != GrammarDialect::Rr {
             return Err("only a .rr file is encoded from its rule tree".into());
@@ -1320,31 +1300,15 @@ impl TapeImage {
         if source.len() > u32::MAX as usize {
             return Err("source exceeds tape range".into());
         }
-        let nodes = crate::code_rule_dsl::logic::rr::tape(source)
-            .into_iter()
-            .map(|node| {
-                let error = node.is_error();
-                if !error && (usize::from(node.kind) >= KIND_LIMIT || usize::from(node.field) >= FIELD_LIMIT) {
-                    return Err(format!("rr kind {} or field {} exceeds the tape's codes", node.kind, node.field));
-                }
-                Ok(Pending {
-                    kf: if error { ERROR_CODE } else { node.kind | (node.field << 10) },
-                    parent: node.parent,
-                    start: node.start,
-                    length: node.end.checked_sub(node.start).ok_or("inverted node span")?,
-                    size: 1,
-                    extra: node.extra,
-                    error,
-                    missing: false,
-                    kind_alias: None,
-                })
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        Self::finish(nodes, Vec::new(), grammar, source, budget)
+        // A parsed image carries its source's digest, as `finish`'s does (not stored since format 12): the
+        // documents and the memo are keyed by it.
+        let mut image = Self::read_image(&rerail_rr_syntax::tape(source), grammar)?;
+        image.source_digest = Some(source_digest(source, budget)?);
+        Ok(image)
     }
 
     /// The image of `nodes`, in preorder with their parents set.
-    fn finish(
+    pub fn finish(
         mut nodes: Vec<Pending>,
         mut supertypes: Vec<(u32, u16)>,
         grammar: &Grammar,
@@ -1371,6 +1335,57 @@ impl TapeImage {
             }
         }
         Self::pack(&nodes, std::mem::take(&mut supertypes), grammar, source, budget)
+    }
+
+    /// An image from columns a parser wrote itself, in this format (codes numbered by first use, `base`
+    /// per `CHECKPOINT_STRIDE` nodes, each of `size`, `off` and `tail` at its narrowest width): no node is
+    /// packed again, and only the columns' lengths are checked (a code's range is the writer's: a node's code
+    /// is numbered as the node is written). `digest`: the source's SHA-256, where the parser's pass computed
+    /// it. Not generic, so it is compiled once, here.
+    #[allow(clippy::too_many_arguments)]
+    pub fn written(
+        code: Vec<u8>,
+        size: Vec<u8>,
+        base: Vec<u8>,
+        off: Vec<u8>,
+        tail: Vec<u8>,
+        widths: [u8; 3],
+        codes: Vec<Code>,
+        digest: Option<[u8; 32]>,
+        grammar: &Grammar,
+        source: &str,
+        budget: &dyn Fn() -> bool,
+    ) -> Result<Self, String> {
+        let count = code.len() / 2;
+        let [size_width, off_width, tail_width] = widths.map(|w| usize::from(w & !TAIL_FROM_START));
+        if count == 0
+            || code.len() % 2 != 0
+            || ![size_width, off_width, tail_width].iter().all(|w| matches!(w, 2 | 4))
+            || size.len() != count * size_width
+            || off.len() != count * off_width
+            || tail.len() != count * tail_width
+            || base.len() != count.div_ceil(CHECKPOINT_STRIDE) * 4
+            || codes.is_empty()
+        {
+            return Err("a written tape's columns do not agree".into());
+        }
+        Ok(Self {
+            code,
+            size,
+            base,
+            off,
+            tail,
+            widths,
+            codes,
+            kind_aliases: Vec::new(),
+            language: grammar.lang,
+            source_len: source.len(),
+            // The parser's pass hashed the source as it read it, or it is hashed here.
+            source_digest: Some(match digest {
+                Some(digest) => digest,
+                None => source_digest(source, &budget)?,
+            }),
+        })
     }
 
     /// The columns of `nodes`, in preorder with their sizes set: codes folded and numbered by
@@ -1480,83 +1495,83 @@ impl TapeImage {
             kind_aliases,
             language: grammar.lang,
             source_len: source.len(),
-            source_digest: source_digest(source, budget)?,
+            source_digest: Some(source_digest(source, budget)?),
         })
     }
 
-    fn size_width(&self) -> usize {
+    pub fn size_width(&self) -> usize {
         usize::from(self.widths[0])
     }
 
-    fn off_width(&self) -> usize {
+    pub fn off_width(&self) -> usize {
         usize::from(self.widths[1])
     }
 
-    fn tail_width(&self) -> usize {
+    pub fn tail_width(&self) -> usize {
         usize::from(self.widths[2] & !TAIL_FROM_START)
     }
 
-    fn code_at(&self, i: usize) -> u16 {
+    pub fn code_at(&self, i: usize) -> u16 {
         u16::from_le_bytes([self.code[2 * i], self.code[2 * i + 1]])
     }
 
-    fn size_at(&self, i: usize) -> u32 {
+    pub fn size_at(&self, i: usize) -> u32 {
         cell(&self.size, i, self.size_width())
     }
 
-    fn start_at(&self, i: usize) -> u32 {
+    pub fn start_at(&self, i: usize) -> u32 {
         cell(&self.base, i / CHECKPOINT_STRIDE, 4).saturating_add(cell(&self.off, i, self.off_width()))
     }
 
-    fn tail_at(&self, i: usize) -> u32 {
+    pub fn tail_at(&self, i: usize) -> u32 {
         cell(&self.tail, i, self.tail_width())
     }
 
     /// The preorders of nodes whose code carries `flag`.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn flagged(&self, flag: u8) -> Vec<u32> {
         (0..self.node_count()).filter(|&i| self.codes[usize::from(self.code_at(i))].flags & flag != 0).map(|i| i as u32).collect()
     }
 
-    #[cfg(test)]
-    pub(super) fn error_nodes(&self) -> Vec<u32> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn error_nodes(&self) -> Vec<u32> {
         self.flagged(CODE_ERROR)
     }
 
-    #[cfg(test)]
-    pub(super) fn missing_nodes(&self) -> Vec<u32> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn missing_nodes(&self) -> Vec<u32> {
         self.flagged(CODE_MISSING)
     }
 
-    #[cfg(test)]
-    pub(super) fn extra_nodes(&self) -> Vec<u32> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn extra_nodes(&self) -> Vec<u32> {
         self.flagged(CODE_EXTRA)
     }
 
     /// The supertype memberships the tape holds.
-    #[cfg(test)]
-    pub(super) fn membership_count(&self) -> usize {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn membership_count(&self) -> usize {
         (0..self.node_count()).map(|i| usize::from(self.codes[usize::from(self.code_at(i))].class_count)).sum()
     }
 
     /// The code table's stored bytes.
-    #[cfg(test)]
-    pub(super) fn code_table_bytes(&self) -> usize {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn code_table_bytes(&self) -> usize {
         self.codes.iter().map(Code::stored_len).sum()
     }
 
     /// The nodes that carry a contextual alias.
-    #[cfg(test)]
-    pub(super) fn aliased_nodes(&self) -> usize {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn aliased_nodes(&self) -> usize {
         (0..self.node_count()).filter(|&i| self.codes[usize::from(self.code_at(i))].alias != SENTINEL).count()
     }
 
-    pub(super) fn node_count(&self) -> usize {
+    pub fn node_count(&self) -> usize {
         self.code.len() / 2
     }
 
     /// Node `i`'s subtree size, itself included (the `size` column).
-    pub(super) fn subtree_size(&self, i: usize) -> u32 {
+    pub fn subtree_size(&self, i: usize) -> u32 {
         self.size_at(i)
     }
 
@@ -1574,7 +1589,7 @@ impl TapeImage {
 }
 
 #[derive(Clone, Copy)]
-struct Rec {
+pub struct Rec {
     kind: u16,
     field: u16,
     start: u32,
@@ -1585,22 +1600,39 @@ struct Rec {
     next: u32,
     prev: u32,
     children: u32,
-    extra: bool,
-    error: bool,
-    missing: bool,
-    /// The first child under its field (P's `rec` flag bit 4); read by `index_image`.
-    #[allow(dead_code)]
-    first_field: bool,
+    /// `REC_*` bits.
+    flags: u8,
+}
+
+const REC_EXTRA: u8 = 1;
+const REC_ERROR: u8 = 2;
+const REC_MISSING: u8 = 4;
+/// The first child under its field (P's `rec` flag bit 4); read by `index_image`.
+const REC_FIRST_FIELD: u8 = 8;
+
+impl Rec {
+    fn extra(&self) -> bool {
+        self.flags & REC_EXTRA != 0
+    }
+    fn error(&self) -> bool {
+        self.flags & REC_ERROR != 0
+    }
+    fn missing(&self) -> bool {
+        self.flags & REC_MISSING != 0
+    }
+    fn first_field(&self) -> bool {
+        self.flags & REC_FIRST_FIELD != 0
+    }
 }
 
 #[derive(Clone)]
-pub(super) struct TapeDoc {
+pub struct TapeDoc {
     // P's: the source's digest, read by P's anchor corpus (`matcher::p_anchors`, test-only).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     source_digest: [u8; 32],
-    source: Arc<String>,
+    pub source: Arc<String>,
     grammar: Arc<Grammar>,
-    data: Arc<Vec<Rec>>,
+    pub data: Arc<Vec<Rec>>,
     lines: Arc<LineTable>,
     points: Arc<Points>,
     kind_aliases: Arc<Vec<(String, bool)>>,
@@ -1615,11 +1647,13 @@ pub(super) struct TapeDoc {
     /// A host's guests (`embed`); the host a guest reads links to them weakly, as they hold it.
     guests: Guests,
     /// A guest's link to the file it is embedded in.
-    host: Option<Arc<HostLink>>,
+    pub host: Option<Arc<HostLink>>,
     /// The image this document was restored from, and its stored bytes' SHA-256 once asked
     /// (`residency::slabs::admit_docs`, decision 0032): what the device reads in place.
-    image: Arc<TapeImage>,
+    pub image: Arc<TapeImage>,
     digest: Arc<std::sync::OnceLock<[u8; 32]>>,
+    /// The document's path, as a run's matchers read it (`with_path`: what a `filePath` test inside a matcher tests).
+    path: Option<Arc<str>>,
 }
 
 #[derive(Clone)]
@@ -1630,21 +1664,21 @@ enum Guests {
 
 /// A program a file embeds, as a document of its own (`embed`).
 #[derive(Clone)]
-pub(crate) struct Guest {
-    pub(crate) via: Via,
-    pub(crate) doc: TapeDoc,
+pub struct Guest {
+    pub via: Via,
+    pub doc: TapeDoc,
 }
 
 /// What a guest document reads of the file it is embedded in: the embedding, the segments that
 /// map its text to the file's bytes, the file's bytes it cannot be read through, and the host
 /// document (which links back to its guests weakly).
-struct HostLink {
-    via: Via,
-    segments: Arc<SegmentMap>,
-    host_errors: Arc<Vec<(u32, u32)>>,
-    host: TapeDoc,
+pub struct HostLink {
+    pub(in crate::code_rule_dsl) via: Via,
+    pub segments: Arc<SegmentMap>,
+    pub(in crate::code_rule_dsl) host_errors: Arc<Vec<(u32, u32)>>,
+    pub host: TapeDoc,
     /// Each node's extent in the program (`node_extents`), by preorder index.
-    extents: Vec<(u32, u32)>,
+    pub extents: Vec<(u32, u32)>,
 }
 
 /// The program bytes each node of a guest's records stands for: from the first of its leaves that
@@ -1652,10 +1686,32 @@ struct HostLink {
 /// from its first leaf to its last. A node's span may run past those leaves: a root's holds the
 /// white space after its last statement, and a statement ending in a `;` its embedder wrote over
 /// no bytes holds the white space before it, which stands for nothing of the node's.
-fn node_extents(nodes: &[Rec], segments: &SegmentMap) -> Vec<(u32, u32)> {
+///
+/// The tape stores no implied token (RER-131, `tokens`): `echo` and `;` a Blade echo is written as,
+/// the `;` marker Vue's script and template programs start with. Their text is in the gaps a node's
+/// stored children leave in its span, the source `structural_before` and `structural_after` hold
+/// (core.rr): comments are nodes, so a gap is implied tokens and white space only, and each run of
+/// it that is not white space (`implied`) is read as a leaf. Which tokens a run holds does not
+/// matter here (`TokenGrammar::gaps` would say): only whether its bytes stand for the file's.
+fn node_extents(doc: &TapeDoc, segments: &SegmentMap) -> Vec<(u32, u32)> {
+    let nodes = &doc.data[..];
     const NONE_YET: (u32, u32) = (u32::MAX, 0);
     let join = |into: &mut (u32, u32), (start, end): (u32, u32)| {
         *into = (into.0.min(start), into.1.max(end));
+    };
+    let text = doc.source.as_bytes();
+    // The implied tokens of `start..end`, a gap between a node's stored children (a
+    // `structural_before`/`structural_after` source): its runs of text that are not white space.
+    let implied = |start: u32, end: u32, leaf: &mut dyn FnMut(u32, u32)| {
+        let gap = text.get(start as usize..end as usize).unwrap_or_default();
+        let mut at = 0;
+        while at < gap.len() {
+            let Some(from) = gap[at..].iter().position(|b| !b.is_ascii_whitespace()) else { break };
+            let from = at + from;
+            let to = gap[from..].iter().position(|b| b.is_ascii_whitespace()).map_or(gap.len(), |n| from + n);
+            leaf(start + from as u32, start + to as u32);
+            at = to;
+        }
     };
     // Per node: the extent of its leaves standing for bytes, and of all its leaves.
     let mut standing = vec![NONE_YET; nodes.len()];
@@ -1666,6 +1722,30 @@ fn node_extents(nodes: &[Rec], segments: &SegmentMap) -> Vec<(u32, u32)> {
             all[index] = (rec.start, rec.end);
             if segments.stands_for(rec.start as usize..rec.end as usize) {
                 standing[index] = (rec.start, rec.end);
+            }
+        } else {
+            // The gaps its stored children leave in its span.
+            let mut at = rec.start;
+            let mut child = rec.first;
+            let mut gaps = Vec::new();
+            while child != NONE {
+                let c = &nodes[child as usize];
+                if c.start > at {
+                    gaps.push((at, c.start));
+                }
+                at = at.max(c.end);
+                child = c.next;
+            }
+            if rec.end > at {
+                gaps.push((at, rec.end));
+            }
+            for (start, end) in gaps {
+                implied(start, end, &mut |from, to| {
+                    join(&mut all[index], (from, to));
+                    if segments.stands_for(from as usize..to as usize) {
+                        join(&mut standing[index], (from, to));
+                    }
+                });
             }
         }
         if rec.parent != NONE {
@@ -1683,7 +1763,7 @@ fn node_extents(nodes: &[Rec], segments: &SegmentMap) -> Vec<(u32, u32)> {
         .collect()
 }
 
-pub(super) type KindPostings = rustc_hash::FxHashMap<u16, Vec<u32>>;
+pub type KindPostings = rustc_hash::FxHashMap<u16, Vec<u32>>;
 
 /// A node's row and column, as tree-sitter's `TSPoint` counts them: only `\n` ends a row. The
 /// evaluator's line table follows the linter a port mirrors (a lone `\r` ends a Ruff line), so
@@ -1708,7 +1788,7 @@ impl Points {
 /// Immutable source-bound tape input. Expanded navigation exists only while
 /// this file is packed or its result page is normalized.
 #[derive(Clone)]
-pub(super) struct TapeSource {
+pub struct TapeSource {
     pub source: Arc<String>,
     pub grammar: Arc<Grammar>,
     pub image: Arc<FileImage>,
@@ -1716,7 +1796,7 @@ pub(super) struct TapeSource {
 }
 
 impl TapeSource {
-    pub(super) fn restore(&self, budget: &impl Fn() -> bool) -> Result<TapeDoc, String> {
+    pub fn restore(&self, budget: &impl Fn() -> bool) -> Result<TapeDoc, String> {
         TapeDoc::restore_with_lines(
             Arc::clone(&self.source),
             Arc::clone(&self.grammar),
@@ -1731,14 +1811,14 @@ impl TapeDoc {
     /// P's: the digest of the source the tape was built from (P's SQL anchor engine,
     /// test-only). W's tape keeps no digest, so it is computed.
     /// G's: the shared source (G's literal anchors, test-only).
-    #[cfg(test)]
-    pub(super) fn transducer_source_arc(&self) -> Arc<String> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn transducer_source_arc(&self) -> Arc<String> {
         Arc::clone(&self.source)
     }
 
     /// The documents `image` encodes over `source`: the file's own, with the guests derived from
     /// it.
-    pub(super) fn restore_with_lines(
+    pub fn restore_with_lines(
         source: Arc<String>,
         grammar: Arc<Grammar>,
         image: &FileImage,
@@ -1801,7 +1881,7 @@ impl TapeDoc {
             segments: Arc::clone(&guest.source_map),
             host_errors: Arc::clone(&guest.host_errors),
             host: host.clone(),
-            extents: node_extents(&doc.data, &guest.source_map),
+            extents: node_extents(&doc, &guest.source_map),
         }));
         Ok(doc)
     }
@@ -1818,15 +1898,17 @@ impl TapeDoc {
         let mut nodes = Vec::new();
         let mut kind_overrides = Vec::new();
         let mut supertypes = Vec::new();
-        validated::visit(&source, &grammar, image, budget, |node, classes| {
+        let digest = validated::visit(&source, &grammar, image, budget, |node, classes| {
             if node.id == 0 { nodes.reserve_exact(count); }
             if node.alias != SENTINEL { kind_overrides.push((node.id, node.alias)); }
             supertypes.extend(classes.iter().map(|&class| (node.id, class)));
             nodes.push(Rec {
                 kind: node.kind, field: node.field, start: node.start, end: node.end,
                 size: node.size, parent: node.parent, first: NONE, next: NONE, prev: NONE, children: 0,
-                extra: node.flags & 2 != 0, error: node.flags & 8 != 0, missing: node.flags & 4 != 0,
-                first_field: node.first_field,
+                flags: if node.flags & 2 != 0 { REC_EXTRA } else { 0 }
+                    | if node.flags & 8 != 0 { REC_ERROR } else { 0 }
+                    | if node.flags & 4 != 0 { REC_MISSING } else { 0 }
+                    | if node.first_field { REC_FIRST_FIELD } else { 0 },
             });
         })?;
         let mut last = vec![NONE; count];
@@ -1848,7 +1930,7 @@ impl TapeDoc {
         }
         checked(budget)?;
         Ok(Self {
-            source_digest: image.source_digest,
+            source_digest: digest,
             points: Arc::new(Points {
                 source: Arc::clone(&source),
                 rows: std::sync::OnceLock::new(),
@@ -1866,23 +1948,24 @@ impl TapeDoc {
             host: None,
             image: Arc::new(image.clone()),
             digest: Arc::default(),
+            path: None,
         })
     }
 
     /// Ranges of ERROR nodes and MISSING tokens that no ERROR node contains, as
     /// `SyntaxErrors::collect` finds them on the native tree.
-    pub(super) fn syntax_error_ranges(&self) -> Vec<Range<usize>> {
+    pub fn syntax_error_ranges(&self) -> Vec<Range<usize>> {
         self.syntax_error_nodes().map(|(_, range)| range).collect()
     }
 
     /// The nodes `syntax_error_ranges` reads, each with its preorder index.
-    pub(super) fn syntax_error_nodes(&self) -> impl Iterator<Item = (usize, Range<usize>)> + '_ {
+    pub fn syntax_error_nodes(&self) -> impl Iterator<Item = (usize, Range<usize>)> + '_ {
         let mut skip_until = 0usize;
         self.data
             .iter()
             .enumerate()
             .filter_map(move |(index, rec)| {
-                if index < skip_until || !(rec.error || rec.missing) {
+                if index < skip_until || !(rec.error() || rec.missing()) {
                     return None;
                 }
                 skip_until = index + rec.size as usize;
@@ -1892,7 +1975,7 @@ impl TapeDoc {
 
     /// A host's guests (`embed`), in registry order; for the host a guest reads, the same ones.
     /// `None` once the host that owns them is gone.
-    pub(crate) fn guests(&self) -> Option<Arc<Vec<Guest>>> {
+    pub fn guests(&self) -> Option<Arc<Vec<Guest>>> {
         match &self.guests {
             Guests::Owned(guests) => Some(Arc::clone(guests)),
             Guests::Linked(guests) => guests.upgrade(),
@@ -1900,40 +1983,40 @@ impl TapeDoc {
     }
 
     /// Whether this is a guest document: a program a file embeds.
-    pub(crate) fn is_guest(&self) -> bool {
+    pub fn is_guest(&self) -> bool {
         self.host.is_some()
     }
 
     /// Whether `other` is this document restored once (a clone, a host a guest reads as this
     /// host): the same records.
-    pub(crate) fn same(&self, other: &Self) -> bool {
+    pub fn same(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.data, &other.data)
     }
 
     /// The embedding that built this guest; `None` for a host.
-    pub(crate) fn via(&self) -> Option<Via> {
+    pub fn via(&self) -> Option<Via> {
         self.host.as_ref().map(|link| link.via)
     }
 
     /// The host document this guest is embedded in.
-    pub(crate) fn host(&self) -> Option<&Self> {
+    pub fn host(&self) -> Option<&Self> {
         self.host.as_ref().map(|link| &link.host)
     }
 
     /// This document's own text, which its spans index.
-    pub(super) fn document_source(&self) -> &Arc<String> {
+    pub fn document_source(&self) -> &Arc<String> {
         &self.source
     }
 
     /// The file's source: a guest's host's, else this document's own.
-    pub(super) fn file_source(&self) -> &Arc<String> {
+    pub fn file_source(&self) -> &Arc<String> {
         self.host
             .as_ref()
             .map_or(&self.source, |link| &link.host.source)
     }
 
     /// The file's line table: a guest's host's, else this document's own.
-    pub(super) fn file_lines(&self) -> &Arc<LineTable> {
+    pub fn file_lines(&self) -> &Arc<LineTable> {
         self.host
             .as_ref()
             .map_or(&self.lines, |link| &link.host.lines)
@@ -1941,7 +2024,7 @@ impl TapeDoc {
 
     /// The file bytes a guest cannot be read through (`embed::Program::host_errors`); none for a
     /// host.
-    pub(crate) fn host_errors(&self) -> impl Iterator<Item = Range<usize>> + '_ {
+    pub fn host_errors(&self) -> impl Iterator<Item = Range<usize>> + '_ {
         self.host
             .iter()
             .flat_map(|link| link.host_errors.iter())
@@ -1949,7 +2032,7 @@ impl TapeDoc {
     }
 
     /// The dialect of the file this document is of: a guest's host's, else its own.
-    pub(super) fn file_dialect(&self) -> GrammarDialect {
+    pub fn file_dialect(&self) -> GrammarDialect {
         self.host
             .as_ref()
             .map_or(self.grammar.lang, |link| link.host.grammar.lang)
@@ -1957,8 +2040,8 @@ impl TapeDoc {
 
     /// The documents `image` encodes over `source`, with a fresh line table: a file's documents,
     /// or a lone tape (a file that derives none).
-    #[cfg(test)]
-    pub(super) fn restore(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn restore(
         source: Arc<String>,
         grammar: Arc<Grammar>,
         image: &impl Documents,
@@ -1968,48 +2051,54 @@ impl TapeDoc {
         Self::restore_with_lines(source, grammar, &image.file_image(), lines, budget)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn index_source_digest(&self) -> &[u8; 32] {
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn index_source_digest(&self) -> &[u8; 32] {
         &self.source_digest
     }
 
     /// The source's line table, shared with the evaluator that restored this document.
-    #[cfg(test)]
-    pub(super) fn line_table(&self) -> &LineTable {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn line_table(&self) -> &LineTable {
         &self.lines
     }
 
-    pub(super) fn transducer_len(&self) -> usize {
+    pub fn transducer_len(&self) -> usize {
         self.data.len()
     }
 
-    /// The SHA-256 of this document's image as stored (the store's key for it), computed once.
-    pub(super) fn tape_digest(&self) -> Result<[u8; 32], String> {
+    /// This document's tape identity, the store's key for it (`HashKey::tape_identity`: its image
+    /// as stored and its source's hash), computed once.
+    pub fn tape_digest(&self) -> Result<[u8; 32], String> {
         if let Some(digest) = self.digest.get() {
             return Ok(*digest);
         }
-        let digest = <[u8; 32]>::from(Sha256::digest(self.image.to_bytes()?));
+        let digest = tape_identity(&self.source_digest, &self.image.to_bytes()?);
         Ok(*self.digest.get_or_init(|| digest))
     }
 
-    /// This document's tape digest, known where it was restored from stored bytes (the SHA-256 of
-    /// those bytes, the residency's key): admission then reads it from the store, not from here.
-    pub(crate) fn stored_as(self, digest: [u8; 32]) -> Self {
+    /// The SHA-256 of this document's source.
+    pub fn source_digest(&self) -> &[u8; 32] {
+        &self.source_digest
+    }
+
+    /// This document's tape identity, known where it was restored from stored bytes
+    /// (`tape_identity`, the residency's key): admission then reads it from the store.
+    pub fn stored_as(self, digest: [u8; 32]) -> Self {
         let _ = self.digest.set(digest);
         self
     }
 
     /// The SHA-256 of this document's stored bytes, the residency's key (decision 0032).
-    pub(crate) fn resident_key(&self) -> Result<[u8; 32], String> {
+    pub fn resident_key(&self) -> Result<[u8; 32], String> {
         self.tape_digest()
     }
 
     /// This document's image as stored, its source and its grammar: what residency admits.
-    pub(super) fn resident_parts(&self) -> Result<(Vec<u8>, &str, &Arc<Grammar>), String> {
+    pub fn resident_parts(&self) -> Result<(Vec<u8>, &str, &Arc<Grammar>), String> {
         Ok((self.image.to_bytes()?, self.source.as_str(), &self.grammar))
     }
 
-    pub(super) fn transducer_kind(&self, node: u32) -> u16 {
+    pub fn transducer_kind(&self, node: u32) -> u16 {
         self.data[node as usize].kind
     }
 
@@ -2027,34 +2116,42 @@ impl TapeDoc {
         )
     }
 
-    pub(super) fn transducer_field(&self, node: u32) -> u16 {
+    pub fn transducer_field(&self, node: u32) -> u16 {
         self.data[node as usize].field
     }
 
-    pub(super) fn transducer_flags(&self, node: u32) -> u8 {
+    pub fn transducer_flags(&self, node: u32) -> u8 {
         let rec = &self.data[node as usize];
         u8::from(self.node_is_named(node))
-            | (u8::from(rec.extra) << 1)
-            | (u8::from(rec.missing) << 2)
-            | (u8::from(rec.error) << 3)
+            | (u8::from(rec.extra()) << 1)
+            | (u8::from(rec.missing()) << 2)
+            | (u8::from(rec.error()) << 3)
     }
 
-    pub(super) fn transducer_span(&self, node: u32) -> Range<usize> {
+    pub fn transducer_span(&self, node: u32) -> Range<usize> {
         let rec = &self.data[node as usize];
         rec.start as usize..rec.end as usize
     }
 
+    /// The grammar's named kinds, ERROR included, ascending: what a rule ranges over.
+    pub(in crate::code_rule_dsl) fn named_kinds(&self) -> Vec<u16> {
+        let mut kinds: Vec<u16> = (0..self.grammar.named.len() as u16).filter(|&kind| self.grammar.kind_is_named(kind)).collect();
+        kinds.push(ERROR_SYMBOL);
+        kinds
+    }
+
     /// Whether the node is named (its alias's, else its kind's).
-    pub(super) fn transducer_is_named(&self, node: u32) -> bool {
+    pub fn transducer_is_named(&self, node: u32) -> bool {
         self.node_is_named(node)
     }
 
-    pub(super) fn transducer_parent(&self, node: u32) -> Option<u32> {
+    pub fn transducer_parent(&self, node: u32) -> Option<u32> {
         let parent = self.data[node as usize].parent;
         (parent != NONE).then_some(parent)
     }
 
-    pub(super) fn transducer_children(&self, node: u32) -> impl Iterator<Item = u32> + '_ {
+    /// The node's children among the records, in order.
+    pub fn transducer_children(&self, node: u32) -> impl Iterator<Item = u32> + '_ {
         let mut next = self.data[node as usize].first;
         std::iter::from_fn(move || {
             if next == NONE {
@@ -2066,13 +2163,13 @@ impl TapeDoc {
         })
     }
 
-    pub(super) fn transducer_descendants(&self, node: u32) -> Range<u32> {
+    pub fn transducer_descendants(&self, node: u32) -> Range<u32> {
         let rec = &self.data[node as usize];
         node + 1..node + rec.size
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn transducer_next_sibling(&self, node: u32, named: bool) -> Option<u32> {
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn transducer_next_sibling(&self, node: u32, named: bool) -> Option<u32> {
         let mut next = self.data[node as usize].next;
         while next != NONE {
             if !named || self.node_is_named(next) {
@@ -2084,34 +2181,34 @@ impl TapeDoc {
     }
 
     /// The whole source, for the Metal backend's concatenated buffer.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn transducer_source(&self) -> &[u8] {
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn transducer_source(&self) -> &[u8] {
         self.source.as_bytes()
     }
 
     /// A node's source slice. Restoring the tape validates every span as a UTF-8 boundary.
-    pub(super) fn transducer_text_str(&self, node: u32) -> &str {
+    pub fn transducer_text_str(&self, node: u32) -> &str {
         &self.source[self.transducer_span(node)]
     }
 
     /// A node's source bytes, for the packed CPU and Metal backends.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn transducer_text(&self, node: u32) -> &[u8] {
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn transducer_text(&self, node: u32) -> &[u8] {
         &self.source.as_bytes()[self.transducer_span(node)]
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn transducer_is_named_leaf(&self, node: u32) -> bool {
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn transducer_is_named_leaf(&self, node: u32) -> bool {
         self.node_is_named(node) && self.data[node as usize].first == NONE
     }
 
     /// A collision-free encoding of the recursive kind and child structure used by ast-grep's
     /// repeated-capture equality when neither side is a named leaf.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn transducer_structural_key(&self, node: u32) -> String {
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn transducer_structural_key(&self, node: u32) -> String {
         fn encode(tape: &TapeDoc, node: u32, bytes: &mut Vec<u8>) {
             bytes.extend_from_slice(&tape.transducer_kind(node).to_le_bytes());
-            let children = tape.transducer_children(node).collect::<Vec<_>>();
+            let children: Vec<u32> = tape.transducer_children(node).collect();
             bytes.extend_from_slice(&(children.len() as u32).to_le_bytes());
             for child in children {
                 encode(tape, child, bytes);
@@ -2129,25 +2226,25 @@ impl TapeDoc {
     }
 
     /// The abstract grammar classes (supertypes) each node belongs to, as `(node, kind)` sorted.
-    pub(super) fn transducer_supertypes(&self) -> impl Iterator<Item = (u32, u16)> + '_ {
+    pub fn transducer_supertypes(&self) -> impl Iterator<Item = (u32, u16)> + '_ {
         self.supertypes.iter().copied()
     }
 
     /// The derived classes (`with_labels`): per class from `DERIVED_CLASS_BASE`, a bitset over the
     /// nodes. The packed batch carries them as bitsets over its nodes, which every backend tests
     /// directly (`PackedBatch::derived`).
-    pub(super) fn transducer_labels(&self) -> &[Vec<u64>] {
+    pub fn transducer_labels(&self) -> &[Vec<u64>] {
         &self.labels
     }
 
     /// The labels, shared (`transducer_labels`).
-    pub(super) fn transducer_labels_shared(&self) -> Arc<Vec<Vec<u64>>> {
+    pub fn transducer_labels_shared(&self) -> Arc<Vec<Vec<u64>>> {
         Arc::clone(&self.labels)
     }
 
     // The packed runtime's class test (Phase 4).
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn transducer_has_supertype(&self, node: u32, kind: u16) -> bool {
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn transducer_has_supertype(&self, node: u32, kind: u16) -> bool {
         if kind >= DERIVED_CLASS_BASE {
             return self
                 .labels
@@ -2161,16 +2258,26 @@ impl TapeDoc {
     /// This tape with derived node classes: a lowered matcher's label passes (06-first-slice S1),
     /// one bitset over the nodes per class from `DERIVED_CLASS_BASE`, which `SUPERTYPE` tests as it
     /// tests a grammar class.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn with_labels(&self, labels: Arc<Vec<Vec<u64>>>) -> Self {
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn with_labels(&self, labels: Arc<Vec<Vec<u64>>>) -> Self {
         Self {
             labels,
             ..self.clone()
         }
     }
 
+    /// This tape read at `path`: what a `filePath` test inside a matcher tests (`matcher::Fact::nth_bits`).
+    pub fn with_path(&self, path: &str) -> Self {
+        Self { path: Some(Arc::from(path)), ..self.clone() }
+    }
+
+    /// The path the run reads this tape at (`with_path`), if one was given.
+    pub fn path(&self) -> Option<&str> {
+        self.path.as_deref()
+    }
+
     /// This tape with its text tests' rows from the term index (`prefilter::terms`).
-    pub(super) fn with_texts(&self, texts: std::collections::BTreeMap<String, Arc<Vec<u64>>>) -> Self {
+    pub fn with_texts(&self, texts: std::collections::BTreeMap<String, Arc<Vec<u64>>>) -> Self {
         Self {
             texts: Arc::new(texts),
             ..self.clone()
@@ -2178,18 +2285,18 @@ impl TapeDoc {
     }
 
     /// A text test's row from the term index, by its slot key (`with_texts`).
-    pub(super) fn transducer_text_row(&self, key: &str) -> Option<&Arc<Vec<u64>>> {
+    pub fn transducer_text_row(&self, key: &str) -> Option<&Arc<Vec<u64>>> {
         self.texts.get(key)
     }
 
     /// The node at a preorder ordinal: `root.adopt(doc.node(ordinal))` is the node ast-grep
     /// matches on.
-    pub(super) fn node(&self, ordinal: u32) -> TapeNode<'_> {
+    pub fn node(&self, ordinal: u32) -> TapeNode<'_> {
         self.root_node().at(ordinal)
     }
 
     #[cfg(feature = "code-rule-profile")]
-    pub(super) fn navigation_bytes(&self) -> usize {
+    pub fn navigation_bytes(&self) -> usize {
         std::mem::size_of::<Self>()
             + self.data.capacity() * std::mem::size_of::<Rec>()
             + self.kind_aliases.capacity() * std::mem::size_of::<(String, bool)>()
@@ -2205,7 +2312,7 @@ impl TapeDoc {
 }
 
 #[derive(Clone, Copy)]
-pub(super) struct TapeNode<'a> {
+pub struct TapeNode<'a> {
     nodes: &'a [Rec],
     grammar: &'a Grammar,
     points: &'a Points,
@@ -2216,14 +2323,14 @@ pub(super) struct TapeNode<'a> {
 
 impl<'a> TapeNode<'a> {
     /// P's: the field this node fills in its parent (P's SQL anchor engine, test-only).
-    #[cfg(test)]
-    pub(super) fn incoming_field(&self) -> u16 {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn incoming_field(&self) -> u16 {
         self.rec().field
     }
 
     /// Whether this is the first direct child in `field`, as `child_by_field_id` selects it.
-    pub(super) fn is_first_field(&self, field: u16) -> bool {
-        field != 0 && self.rec().field == field && self.rec().first_field
+    pub fn is_first_field(&self, field: u16) -> bool {
+        field != 0 && self.rec().field == field && self.rec().first_field()
     }
 
     fn rec(&self) -> &Rec {
@@ -2239,7 +2346,7 @@ impl<'a> TapeNode<'a> {
             .map(|slot| &self.kind_aliases[self.kind_overrides[slot].1 as usize])
     }
     /// The structurally adjacent sibling, for traversal; `SgNode::next` follows Tree-sitter.
-    pub(super) fn next_sibling(&self) -> Option<Self> {
+    pub fn next_sibling(&self) -> Option<Self> {
         (self.rec().next != NONE).then(|| self.at(self.rec().next))
     }
     fn prev_sibling(&self) -> Option<Self> {
@@ -2392,13 +2499,13 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         self.children().all(|child| !child.is_named())
     }
     fn is_extra(&self) -> bool {
-        self.rec().extra
+        self.rec().extra()
     }
     fn is_error(&self) -> bool {
-        self.rec().error
+        self.rec().error()
     }
     fn is_missing(&self) -> bool {
-        self.rec().missing
+        self.rec().missing()
     }
     fn field(&self, name: &str) -> Option<Self> {
         let field = self.grammar.kinds.field_id(name)?;
@@ -2423,7 +2530,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
                 child.rec().field == field_id
             });
             #[cfg(feature = "code-rule-profile")]
-            super::profile::navigation::record(examined, found.is_some());
+            navigation::record(examined, found.is_some());
             found
         }
     }
@@ -2457,66 +2564,106 @@ impl Doc for TapeDoc {
     }
 }
 
-/// A host's bytes are the file's; a guest's program text stands for the file ranges its segments
-/// map it to (`SegmentMap::file_ranges`), and a guest node for those of its extent, from its first
-/// leaf standing for file bytes to its last (`node_extents`), white space between its ranges
-/// included, as a tree's node holds the white space between its tokens (`FileRanges::bridged`).
-impl crate::code_rule_dsl::origin::Origin for TapeDoc {
-    fn of_node(&self, id: usize, range: Range<usize>) -> Option<FileRanges> {
-        Some(match &self.host {
-            None => FileRanges::one(range),
-            Some(link) => {
-                let (start, end) = *link.extents.get(id)?;
-                link.segments
-                    .file_ranges(start as usize..end as usize)
-                    .bridged(&link.host.source)
+
+/// The children of `node` a tape of `lang` stores, in order: tree-sitter's, the tokens the grammar
+/// implies left out (`tokens::TokenGrammar::stored_children`). For tests that compare a tape with
+/// the tree it was written from.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn stored_children_for_test<'t>(lang: GrammarDialect, node: TsNode<'t>) -> Vec<(TsNode<'t>, u16)> {
+    let grammar = Grammar::new(lang).unwrap();
+    let stored = grammar.kinds.grammar().and_then(|language| tokens::TokenGrammar::of(lang, language)).and_then(|filter| filter.stored_children(node));
+    let mut cursor = node.walk();
+    let mut children = Vec::new();
+    if cursor.goto_first_child() {
+        loop {
+            children.push((cursor.node(), cursor.field_id().map_or(0, |id| id.get())));
+            if !cursor.goto_next_sibling() {
+                break;
             }
-        })
-    }
-
-    fn of_range(&self, range: Range<usize>) -> Option<FileRanges> {
-        Some(match &self.host {
-            None => FileRanges::one(range),
-            Some(link) => link.segments.file_ranges(range).bridged(&link.host.source),
-        })
-    }
-
-    fn bounds(&self, id: usize, range: Range<usize>) -> Option<Range<usize>> {
-        Some(match &self.host {
-            None => range,
-            Some(link) => {
-                let (start, end) = *link.extents.get(id)?;
-                link.segments.bounds(start as usize..end as usize)
-            }
-        })
-    }
-
-    fn copied(&self, range: Range<usize>) -> Option<Range<usize>> {
-        match &self.host {
-            None => Some(range),
-            Some(link) => link.segments.copied_span(range),
         }
     }
-
-    fn copies(&self, range: Range<usize>) -> bool {
-        self.host
-            .as_ref()
-            .is_none_or(|link| link.segments.copies(range))
+    match stored {
+        None => children,
+        Some(stored) => children.into_iter().zip(stored).filter_map(|(child, kept)| kept.then_some(child)).collect(),
     }
 }
 
+/// A pattern's tree as a tape: tree-sitter's parse of `source`, written as a document is
+/// (`TapeImage::encode_tree_image`), so the tokens the grammar implies are left out of patterns as
+/// they are of documents (RER-131). With it, per record, what tree-sitter's node says that the tape
+/// does not ([`PatternShape`]).
+pub fn pattern_doc(lang: GrammarDialect, source: &str) -> Result<(TapeDoc, PatternShape), String> {
+    use ast_grep_core::language::Language as _;
+    let grammar = Grammar::new(lang)?;
+    let tree = ast_grep_core::tree_sitter::StrDoc::try_new(source, lang)?;
+    let root = tree.tree.root_node();
+    let image = TapeImage::encode_tree_image(root, &grammar, source, None, &|| false)?;
+    let filter = grammar.kinds.grammar().and_then(|language| tokens::TokenGrammar::of(lang, language));
+    let ellipsis = |node: TsNode<'_>| {
+        node.utf8_text(source.as_bytes()).ok().and_then(|text| lang.extract_meta_var(text)).is_some_and(|var| {
+            matches!(var, ast_grep_core::meta_var::MetaVariable::Multiple | ast_grep_core::meta_var::MetaVariable::MultiCapture(_))
+        })
+    };
+    // In the encoder's preorder: a record per stored node.
+    let mut ends = Vec::new();
+    let mut single = Vec::new();
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        let at = ends.len();
+        ends.push(false);
+        let stored = filter.as_deref().and_then(|filter| filter.stored_children(node));
+        // `is_single_node` (ast-grep's `pattern.rs`) over tree-sitter's node, whose first child
+        // the tape holds (the walk descends to it).
+        single.push(
+            match node.child_count() {
+                1 => true,
+                2 => node.child(1).is_some_and(|second| second.is_missing() || second.kind().is_empty()),
+                _ => false,
+            } && stored.as_ref().is_none_or(|stored| stored[0]),
+        );
+        let mut cursor = node.walk();
+        let children: Vec<TsNode<'_>> = node.children(&mut cursor).collect();
+        let kept: Vec<TsNode<'_>> = match &stored {
+            None => children.clone(),
+            Some(stored) => children.iter().zip(stored).filter_map(|(child, &kept)| kept.then_some(*child)).collect(),
+        };
+        if let Some(stored) = &stored {
+            let last = stored.iter().rposition(|&kept| kept);
+            let implied_after = stored[last.map_or(0, |last| last + 1)..].iter().any(|&kept| !kept);
+            ends[at] = implied_after && last.is_none_or(|last| !ellipsis(children[last]));
+        }
+        stack.extend(kept.into_iter().rev());
+    }
+    let source = Arc::new(source.to_owned());
+    let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+    let doc = TapeDoc::restore_tree(source, grammar, &image, lines, &|| false)?;
+    if ends.len() != doc.transducer_len() {
+        return Err("a pattern's records disagree with its tree".into());
+    }
+    Ok((doc, PatternShape { ends, single }))
+}
+
+/// What a pattern's tree-sitter nodes say that its tape leaves out, per record
+/// (`ast_grep_core::matcher::PatternShape`, `native/vendor/ast-grep-core-0.51.0/PATCHES.md`).
+pub struct PatternShape {
+    /// Whether the node ended in implied tokens after its last child (unless that child is an
+    /// ellipsis, which takes every candidate anyway): its pattern ends its children there.
+    pub(crate) ends: Vec<bool>,
+    /// Whether tree-sitter's node is single (`is_single_node`): one child, or one and a MISSING
+    /// or empty one. A tape's node can have one child where tree-sitter's had tokens too.
+    pub(crate) single: Vec<bool>,
+}
+
 /// The tape document a node of any document is of, if a tape's.
-pub(crate) fn tape_doc<'t, D: Doc>(node: &ast_grep_core::Node<'t, D>) -> Option<&'t TapeDoc> {
+pub fn tape_doc<'t, D: Doc>(node: &ast_grep_core::Node<'t, D>) -> Option<&'t TapeDoc> {
     let doc: &'t dyn std::any::Any = node.get_doc();
     doc.downcast_ref::<TapeDoc>()
 }
 
 // P's tape spike (v7, v8, v9np), for O8's pre-lock measurements.
 #[allow(dead_code, unused_imports)]
-pub(crate) mod v9np;
+pub mod v9np;
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
-#[cfg(test)]
-mod corpus_parity;
+// cratify: `corpus_parity` is rerail-lang-php's (it mounts it)

@@ -1089,6 +1089,10 @@ impl<L: Layout> Parser<'_, L> {
             self.field(Field::Path);
             self.close();
             Ok(())
+        } else if self.is_p(DOT) && (self.is_word_at(1, b"test") || self.is_word_at(1, b"fixtures")) {
+            self.test()
+        } else if self.is_p(DOT) && self.is_word_at(1, b"end") {
+            Err(())
         } else if self.is_p(DOT) && self.is_id_at(1) {
             let d = self.t[self.i + 1].word;
             let policy = d == W_POLICY && self.is_p_at(2, LBRACE);
@@ -1128,6 +1132,50 @@ impl<L: Layout> Parser<'_, L> {
         } else {
             self.clause()
         }
+    }
+
+    /// Whether token `k` ahead is the word `w`.
+    fn is_word_at(&self, k: usize, w: &[u8]) -> bool {
+        self.is_id_at(k) && self.t.get(self.i + k).is_some_and(|t| &self.b[t.start as usize..t.end as usize] == w)
+    }
+
+    /// `syntax::Parser::test`: `.test name [exactly] [uses a, b]` or `.fixtures name`, its statements, `.end`.
+    fn test(&mut self) -> R<()> {
+        let test = self.is_word_at(1, b"test");
+        self.open(if test { Kind::TestBlock } else { Kind::FixturesBlock });
+        self.i += 2;
+        self.id()?;
+        self.field(Field::Name);
+        if test && self.is_word_at(0, b"exactly") {
+            self.bump_as(Kind::Identifier);
+            self.field(Field::Modifier);
+        }
+        if test && self.is_word_at(0, b"uses") {
+            self.i += 1;
+            self.id()?;
+            self.field(Field::Argument);
+            while self.is_p(COMMA) {
+                self.i += 1;
+                self.id()?;
+                self.field(Field::Argument);
+            }
+        }
+        loop {
+            if self.kind() == EOF {
+                return Err(());
+            }
+            if self.is_p(DOT) && self.is_word_at(1, b"end") {
+                self.i += 2;
+                break;
+            }
+            if self.is_p(DOT) && (self.is_word_at(1, b"test") || self.is_word_at(1, b"fixtures")) {
+                return Err(());
+            }
+            self.statement()?;
+            self.field(Field::Body);
+        }
+        self.close();
+        Ok(())
     }
 
     fn io_relation(&mut self) -> R<()> {
@@ -1509,12 +1557,14 @@ impl<L: Layout> Parser<'_, L> {
             self.agg_part()?;
             self.field(Field::Value);
         }
+        let mut keys_closed = false;
         if self.is_id(W_BY) {
             self.anon();
             if self.is_p(LPAREN) {
                 self.anon();
                 self.list(RPAREN, Field::Key, |p| p.term().map(|_| ()))?;
                 self.p_stored(RPAREN)?;
+                keys_closed = true;
             } else {
                 self.agg_part()?;
                 self.field(Field::Key);
@@ -1524,9 +1574,15 @@ impl<L: Layout> Parser<'_, L> {
             self.anon();
             self.string()?;
             self.field(Field::Separator);
+            keys_closed = false;
         }
-        self.p(COLON)?;
-        self.p(LBRACE)?;
+        // The `:` stored always, the `{` after a key list's `)` with no `sep` (the engine's parser's).
+        self.p_stored(COLON)?;
+        if keys_closed {
+            self.p_stored(LBRACE)?;
+        } else {
+            self.p(LBRACE)?;
+        }
         self.disjunction()?;
         self.field(Field::Body);
         self.p(RBRACE)?;
@@ -1684,7 +1740,7 @@ mod tests {
         for (src, want) in &cases {
             assert!(src.len() < rerail_tape_format::SIZE_GUESS_BYTES);
             let t = super::tape(src);
-            assert_eq!(t, crate::tape::image(&crate::tape(src), src), "{} bytes", src.len());
+            assert_eq!(t, crate::tape::image(&crate::engine_tape(src), src), "{} bytes", src.len());
             assert_eq!([t[9], t[10], t[11]], *want, "{} bytes", src.len());
         }
     }
@@ -1800,14 +1856,85 @@ mod tests {
             }
             for at in cuts {
                 let src = &text[..at];
-                let (lean, engine) = (super::tape(src), crate::tape::image(&crate::tape(src), src));
+                let (lean, engine) = (super::tape(src), crate::tape::image(&crate::engine_tape(src), src));
                 if lean != engine {
                     let k = lean.iter().zip(&engine).position(|(a, b)| a != b).unwrap_or(lean.len().min(engine.len()));
                     panic!("{path} cut at {at}: tapes of {} / {} bytes differ from byte {k}: {}", lean.len(), engine.len(), rerail_tape_format::place(&engine, k));
                 }
+                // And the image reads back as the tree it was written from (`tape::nodes`, what the
+                // engine reads a rule file's statements off).
+                assert_eq!(crate::tape::nodes(&lean).expect("decodes"), crate::engine_tape(src), "{path} cut at {at}: decoded");
                 checked += 1;
             }
         }
         eprintln!("{} files, {checked} texts", files.len());
+    }
+
+    /// The lean parser stands for the engine's on every rule a user writes, the broken ones included: each
+    /// `.rr` file of the repository, edited at random points (a character of `.rr`'s syntax inserted, a
+    /// character deleted, two swapped), gives the engine's tape. Seeded, so a failure names its text again.
+    #[test]
+    fn lean_tape_is_the_engines_on_edited_files() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let (mut files, mut work) = (Vec::new(), vec![root]);
+        while let Some(dir) = work.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            for e in entries.flatten() {
+                let p = e.path();
+                let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
+                if p.is_dir() && !skip {
+                    work.push(p);
+                } else if p.extension().is_some_and(|x| x == "rr") {
+                    files.extend(std::fs::read_to_string(&p).ok().map(|t| (p.display().to_string(), t)));
+                }
+            }
+        }
+        files.sort();
+        assert!(files.len() > 1000, "{} files", files.len());
+        const ALPHABET: &[u8] = b"(){}[],.:;!=<>+-*/%@$#_|&~?\\\"'`\n \taz09";
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let mut checked = 0;
+        for (path, text) in &files {
+            for round in 0..4 {
+                let mut bytes = text.as_bytes().to_vec();
+                for _ in 0..1 + round {
+                    if bytes.is_empty() {
+                        break;
+                    }
+                    let at = (next() % bytes.len() as u64) as usize;
+                    match next() % 3 {
+                        0 => bytes.insert(at, ALPHABET[(next() % ALPHABET.len() as u64) as usize]),
+                        1 => {
+                            bytes.remove(at);
+                        }
+                        _ => {
+                            let to = (at + 1 + (next() % 8) as usize).min(bytes.len() - 1);
+                            bytes.swap(at, to);
+                        }
+                    }
+                }
+                // Only texts that are still UTF-8 (an edit inside a multi-byte character is not one).
+                let Ok(src) = String::from_utf8(bytes) else { continue };
+                let (lean, engine) = (super::tape(&src), crate::tape::image(&crate::engine_tape(&src), &src));
+                if lean != engine {
+                    let k = lean.iter().zip(&engine).position(|(a, b)| a != b).unwrap_or(lean.len().min(engine.len()));
+                    panic!(
+                        "{path}, edit round {round}: tapes of {} / {} bytes differ from byte {k}: {}\n source {:?}",
+                        lean.len(),
+                        engine.len(),
+                        rerail_tape_format::place(&engine, k),
+                        src
+                    );
+                }
+                checked += 1;
+            }
+        }
+        eprintln!("{} files, {checked} edited texts", files.len());
     }
 }

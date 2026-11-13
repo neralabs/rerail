@@ -1,8 +1,8 @@
 //! Decode Python literal runs and retain each constant's source byte start.
 use super::core_rr::py_unescape;
 
-#[cfg(test)]
-pub(super) fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)> {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)> {
     use crate::code_rule_dsl::{facts::core::{self, Built}, model::FileInput};
     use std::sync::Arc;
     if parts.is_empty() { return Vec::new(); }
@@ -17,7 +17,7 @@ pub(super) fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, 
     let input = FileInput::new("a.py".into(), "python".into(), Arc::new(source), None, None, "core").unwrap();
     let Built::Facts(facts) = core::build(&input).unwrap() else { panic!("literal test failed to parse") };
     let dialect = Dialect::new(crate::code_rule_dsl::facts::core::facts_tag(&facts)).unwrap();
-    let p = Projected::new(0, Arc::new(facts), &dialect, super::Shape::Core, false, None);
+    let p = Projected::new(0, Arc::new(facts), Some(&dialect), super::Shape::Core, false, None);
     let local = p.core.iter().position(|&id| matches!(dialect.name(&p.facts, id), "string" | "concatenated_string")).unwrap() as u32;
     from_tape(&p, &dialect, local, false).into_iter().map(|(v, at, spec, offset)| {
         // `at` is a node id: its low bits are a local id only under preorder ids.
@@ -34,7 +34,7 @@ use super::{Dialect, Projected};
 
 type Piece = (String, i64, u8, usize);
 
-pub(super) fn from_tape(p: &Projected, dialect: &Dialect, local: u32, words: bool) -> Vec<Piece> {
+pub(crate) fn from_tape(p: &Projected, dialect: &Dialect, local: u32, words: bool) -> Vec<Piece> {
     let mut reader = Constants { p, dialect, words, pieces: Vec::new() };
     let id = p.core[local as usize];
     let mut current = None;
@@ -116,7 +116,7 @@ impl Constants<'_> {
         let p = self.p;
         let f = &p.facts;
         let children = f.children(id);
-        if children.iter().any(|&c| self.kind(c) == "=") {
+        if f.tokens(id).iter().any(|t| self.dialect.atom_name(t.kind) == "=") {
             let end = children.iter().copied().find(|&c| matches!(self.kind(c), "type_conversion" | "format_specifier"))
                 .map_or(f.end[id as usize] - 1, |c| f.start[c as usize]);
             // A debug label is source text, not a string-literal body: escapes stay literal.
@@ -143,3 +143,5 @@ impl Constants<'_> {
         self.flush(&mut current, false);
     }
 }
+
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

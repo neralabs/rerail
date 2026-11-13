@@ -5,6 +5,7 @@ import { CODE_RULE_AST_LANGUAGES } from "../engine/code-rule/code-rule-languages
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { openRerailDatabase } from "../engine/storage/database.js";
 import { upsertLibraryRule } from "../engine/catalog/rule-library.js";
+import { approve, ruleSubject } from "../engine/catalog/rule-approval.js";
 import { SqliteSessionStore, type WorkLink } from "../runtime/session-store.js";
 
 /**
@@ -129,8 +130,12 @@ export function seedRerailDatabase(path: string, options: SeedOptions = {}): See
   const database = openRerailDatabase(path);
   try {
     const ruleCatalog = loadRuleCatalog();
-    for (const rule of MOCK_CODE_RULES) upsertLibraryRule(database, ruleCatalog, rule, "code", { now });
-    for (const rule of MOCK_CONVERSATION_RULES) upsertLibraryRule(database, ruleCatalog, rule, "conversation", { now, revision: 1 });
+    // Mock data for development: its rules steer as a person's approved ones would.
+    const stored = [
+      ...MOCK_CODE_RULES.map(rule => upsertLibraryRule(database, ruleCatalog, rule, "code", { now })),
+      ...MOCK_CONVERSATION_RULES.map(rule => upsertLibraryRule(database, ruleCatalog, rule, "conversation", { now, revision: 1 })),
+    ];
+    for (const rule of stored) approve(database, ruleSubject(rule.document.rule.id, rule.payloadHash), now);
   } finally {
     database.$client.close();
   }

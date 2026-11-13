@@ -98,7 +98,7 @@ pub struct Ctx {
     base_c: *mut u32,
     image: *mut u8,
     id_of: *mut u16,
-    code_kf: *mut u16,
+    code_kf: *mut u32,
     code_first: *mut u32,
 }
 
@@ -250,6 +250,8 @@ pub struct CompiledStream {
     /// The widths the tape is written at (docs/parser-generators/37), and the language's tag.
     pub widths: rerail_tape_format::Widths,
     tag: u8,
+    /// The supertype classes the codes carry (`supertype_classes`).
+    classes: Vec<u16>,
     /// The program has context beside each return (`has_context`): two return slots a call.
     context: bool,
     pub clif: String,
@@ -1499,7 +1501,8 @@ impl Table<'_> {
         let code = f.ins().iadd_imm(image, rerail_tape_format::HEADER_BYTES as i64);
         let codes = (e.get)(f, Mem::Codes);
         let (id, sig, _) = &self.fns.commit;
-        let r = call_own(f, *id, sig, &[rows, code, id_of, kf, first, from, to, codes]);
+        let (snode, skind, supers) = ((e.ctx)(f, SUPER_NODE), (e.ctx)(f, SUPER_KIND), (e.get)(f, Mem::Supers));
+        let r = call_own(f, *id, sig, &[rows, code, id_of, kf, first, from, to, codes, snode, skind, supers]);
         (e.set)(f, Mem::Codes, r[0]);
         (e.set)(f, Mem::Coded, to);
     }
@@ -2042,6 +2045,18 @@ struct TableFns {
     finish: OwnFn,
 }
 
+/// The supertypes a program's nodes are put in (`NODE_SUPER`'s kinds), ascending: each a bit of
+/// a code's key (`native_cpu_tape::commit`). Past `MAX_CLASSES`, refused.
+pub(crate) fn supertype_classes(native: &Structure) -> Result<Vec<u16>, Error> {
+    let mut c: Vec<u16> = native.structural.iter().filter_map(|b| if let Op::NodeSuper { kind } = b.operation { Some(kind) } else { None }).collect();
+    c.sort_unstable();
+    c.dedup();
+    if c.len() > crate::native_cpu_tape::MAX_CLASSES {
+        return Err(Error::UnsupportedBackend);
+    }
+    Ok(c)
+}
+
 impl TableFns {
     fn make(module: &mut JITModule, words: &[crate::native_ir::StructuralBlock], x: crate::native_cpu_tape::Image<'_>) -> Result<Self, Error> {
         let w = x.widths;
@@ -2051,7 +2066,7 @@ impl TableFns {
         let shift = if wraps { Some(outline(module, "tempo_stream_shift", 8, 0, false, &[], |f, p, heads| shift_rows(f, p, inner, w, heads))?) } else { None };
         let drop = if drops { Some(outline(module, "tempo_stream_drop", 14, 4, false, &[], |f, p, heads| drop_rows(f, p, inner, w, heads))?) } else { None };
         let blocks = outline(module, "tempo_tape_blocks", 5, 2, false, &[], |f, p, heads| crate::native_cpu_tape::blocks_from(f, p, w.off, heads))?;
-        let commit = outline(module, "tempo_tape_commit", 8, 1, false, &[], crate::native_cpu_tape::commit)?;
+        let commit = outline(module, "tempo_tape_commit", 11, 1, false, &[], |f, p, heads| crate::native_cpu_tape::commit(f, p, x.classes, heads))?;
         let uncode = outline(module, "tempo_tape_uncode", 5, 1, false, &[], crate::native_cpu_tape::uncode)?;
         let finish = outline(module, "tempo_tape_finish", 10, 1, false, &[], |f, p, heads| crate::native_cpu_tape::finish(f, p, x, heads))?;
         Ok(TableFns { shift, drop, blocks, commit, uncode, finish })
@@ -2613,7 +2628,8 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     };
     let mut fctx = FunctionBuilderContext::new();
     // The node words' rare loops, outlined (`TableFns`).
-    let image = crate::native_cpu_tape::Image { tag: widths_tag.1, widths: widths_tag.0, extras: &native.readings.extras };
+    let classes = supertype_classes(native)?;
+    let image = crate::native_cpu_tape::Image { tag: widths_tag.1, widths: widths_tag.0, extras: &native.readings.extras, classes: &classes };
     let table_fns = TableFns::make(&mut module, &native.structural, image)?;
     let table = Table { inner: crate::rust_stream::marks(native), w: widths_tag.0, fns: &table_fns };
     // The words made as functions of their own (`WordFn`), with a function a grammar rule.
@@ -4531,7 +4547,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, wraps, widths, tag, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
+    Ok(CompiledStream { _module: module, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, wraps, widths, tag, classes: supertype_classes(native)?, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
 }
 
 /// What an instruction does to `ctx`'s fields (`state_in_registers`).
@@ -4961,7 +4977,7 @@ pub struct Tape {
     /// The code ids: each key's (the thread's table, cleared by the image's end), each code's key
     /// and first node.
     id_of: Vec<u16>,
-    code_kf: Vec<u16>,
+    code_kf: Vec<u32>,
     code_first: Vec<u32>,
     pub super_node: Vec<u32>,
     pub super_kind: Vec<u32>,
@@ -5027,10 +5043,13 @@ impl CompiledStream {
         let w = self.widths;
         let pad = rerail_tape_format::padded;
         let blocks = nodes.div_ceil(rerail_tape_format::CHECKPOINT_STRIDE) + 1;
-        let image = rerail_tape_format::HEADER_BYTES + pad(2 * nodes) + pad(usize::from(w.size) * nodes) + pad(4 * blocks) + pad(usize::from(w.off) * nodes) + pad(usize::from(w.tail) * nodes) + 6 * nodes + 2 * SLACK;
+        let image = rerail_tape_format::HEADER_BYTES + pad(2 * nodes) + pad(usize::from(w.size) * nodes) + pad(4 * blocks) + pad(usize::from(w.off) * nodes) + pad(usize::from(w.tail) * nodes) + (6 + 2 * self.classes.len()) * nodes + 2 * SLACK;
         let id_of = IDS.with(|t| {
             let mut ids = std::mem::take(&mut *t.borrow_mut());
-            ids.resize(crate::native_cpu_tape::ID_SLOTS, crate::native_cpu_tape::NO_CODE as u16);
+            let slots = crate::native_cpu_tape::id_slots(self.classes.len());
+            if ids.len() < slots {
+                ids.resize(slots, crate::native_cpu_tape::NO_CODE as u16);
+            }
             ids
         });
         let mut t = Tape {
@@ -5077,14 +5096,14 @@ impl CompiledStream {
         let r = unsafe { self.call_once(bytes, len, tier1, tape) };
         if r != OVERFLOW {
             // SAFETY: the code wrote the image and supertypes it counted.
-            unsafe { tape.written(r == 0, std::slice::from_raw_parts(bytes, len)) };
+            unsafe { tape.written(r == 0) };
             return r;
         }
         ROOM_RETRIES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         *tape = self.full_tape(tier1.nstarts);
         // SAFETY: as above, on the bound's tape.
         let r = unsafe { self.call_once(bytes, len, tier1, tape) };
-        unsafe { tape.written(r == 0, std::slice::from_raw_parts(bytes, len)) };
+        unsafe { tape.written(r == 0) };
         if r == OVERFLOW { self.overflow_pc() } else { r }
     }
 
@@ -5208,14 +5227,13 @@ impl Tape {
         self.code_kf.clear();
     }
 
-    /// The lengths after a call: where it accepted, the image's (`counts[2]`), its digest of
-    /// `src` written (the header's SHA-256: docs/parser-generators/37), and the supertypes;
-    /// else none.
+    /// The lengths after a call: where it accepted, the image's (`counts[2]`) and the
+    /// supertypes; else none.
     ///
     /// # Safety
     /// The call wrote, where it accepted, the image's `counts[2]` bytes and `counts[1]`
     /// supertypes.
-    unsafe fn written(&mut self, accepted: bool, src: &[u8]) {
+    unsafe fn written(&mut self, accepted: bool) {
         let (len, s) = (self.counts[2] as usize, self.counts[1] as usize);
         self.clear();
         if !accepted {
@@ -5229,7 +5247,6 @@ impl Tape {
             }
             self.image.set_len(len);
         }
-        self.image[24..56].copy_from_slice(&rerail_tape_format::digest(src));
     }
 
     /// The nodes the tape has room for.
@@ -5248,7 +5265,7 @@ impl Tape {
     pub fn nodes(&self) -> Vec<Node> {
         let b = &self.image;
         let u64_at = |at: usize| u64::from_le_bytes(b[at..at + 8].try_into().expect("8 bytes"));
-        let (n, codes) = (u64_at(56) as usize, u64_at(64) as usize);
+        let (n, codes) = (u64_at(rerail_tape_format::header::NODES) as usize, u64_at(rerail_tape_format::header::CODES) as usize);
         let (ws, wo, wt) = (usize::from(b[9]), usize::from(b[10]), usize::from(b[11] & 0x7f));
         let from_start = b[11] & rerail_tape_format::TAIL_FROM_START != 0;
         let pad = rerail_tape_format::padded;
@@ -5262,7 +5279,13 @@ impl Tape {
             let c = &b[at + w * i..at + w * i + w];
             if w == 2 { u32::from(u16::from_le_bytes([c[0], c[1]])) } else { u32::from_le_bytes([c[0], c[1], c[2], c[3]]) }
         };
-        let kfs: Vec<u16> = (0..codes).map(|c| u16::from_le_bytes([b[table_at + 6 * c], b[table_at + 6 * c + 1]])).collect();
+        // A code's entry: `kf`, flags, alias, its classes' count, the classes.
+        let mut kfs: Vec<u16> = Vec::with_capacity(codes);
+        let mut e = table_at;
+        for _ in 0..codes {
+            kfs.push(u16::from_le_bytes([b[e], b[e + 1]]));
+            e += 6 + 2 * usize::from(b[e + 5]);
+        }
         let starts: Vec<u32> = (0..n).map(|i| cell(base_at, 4, i / rerail_tape_format::CHECKPOINT_STRIDE) + cell(off_at, wo, i)).collect();
         let mut out: Vec<Node> = (0..n)
             .map(|i| {

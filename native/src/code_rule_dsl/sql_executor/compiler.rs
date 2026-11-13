@@ -3,8 +3,8 @@ use super::*;
 impl CodeRuleSqlExecutor {
     /// Lower and emit a program. Its SQL producers' steps are added last; their relations are
     /// returned beside the program, each with the session inputs its query reads.
-    pub(super) fn compile(
-        &self,
+    pub fn compile(
+        &mut self,
         mut program: front::Program,
         dialect: &str,
     ) -> Result<(plan::emit::Emitted, BTreeMap<String, Vec<String>>)> {
@@ -46,7 +46,7 @@ impl CodeRuleSqlExecutor {
                 r.body
                     .iter()
                     .filter_map(front::Literal::atom)
-                    .map(|a| a.rel.clone())
+                    .map(|a| a.rel.to_string())
             })
             .chain(program.outputs.iter().cloned())
             .collect();
@@ -132,7 +132,7 @@ impl CodeRuleSqlExecutor {
                 .db
                 .prepare(&format!("SELECT * FROM {}", quote(name)))
                 .map_err(error)?;
-            let columns = statement.column_names();
+            let columns: Vec<&str> = statement.column_names().collect();
             if columns.len() != lowered.program.decls[name].len() {
                 return Err(error(format!(
                     "{name}: input arity differs from its declaration"
@@ -169,15 +169,12 @@ impl CodeRuleSqlExecutor {
             plan::emit::emit(&lowered, &self.db, "main", "sql-extension", None, &batch)
                 .map_err(error)?;
         use sha2::Digest;
-        let key = format!(
-            "{:x}",
-            sha2::Sha256::digest(format!("{program:?}:{dialect:?}"))
-        );
+        let key = crate::code_rule_dsl::prof::lower_hex(&sha2::Sha256::digest(format!("{program:?}:{dialect:?}")));
         lattices::transfers(&mut emitted, &tops);
         emitted.for_session(&key[..16], &self.inputs.keys().cloned().collect());
         walks::optimize(&mut emitted);
         emitted.program.lattice_operations = lattice_operations;
-        let other = producers::steps(&self.db, &mut emitted, &program, &producers)?;
+        let other = producers::steps(&mut self.db, &mut emitted, &program, &producers)?;
         // A table a query reads that is a session input is watched under the input's own name.
         let inputs = |name: &String| {
             self.inputs

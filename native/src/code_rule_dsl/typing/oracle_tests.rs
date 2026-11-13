@@ -65,7 +65,7 @@ oracle_score_at(f, s, e) :- call_target(_, f), node(_, f, _, s, e).
 
 /// Runs `program` over the oracle project and gives each answered call's answer, keyed by (file, start, end).
 fn answers(program: &str, project: &Path, sources: &BTreeMap<String, String>) -> BTreeMap<(String, usize, usize), Answer> {
-    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("score");
+    let out = crate::code_rule_dsl::fixtures::temp().with_extension("score");
     let mut src = format!("{program}\n{SPANS}");
     // `RERAIL_PYTHON_CROSS_MEMO`, as the corpus benchmark reads it.
     if let Ok(rels) = std::env::var("RERAIL_PYTHON_CROSS_MEMO") {
@@ -104,7 +104,7 @@ fn answers(program: &str, project: &Path, sources: &BTreeMap<String, String>) ->
 
 /// Each call CPython ran where the program answers otherwise: `file:line `text``, with how.
 pub(super) fn score_python(program: &str) -> (usize, BTreeMap<String, Departure>, Vec<String>) {
-    let oracle = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/calls");
+    let oracle = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/calls");
     let expected: Json = serde_json::from_str(&std::fs::read_to_string(oracle.join("python.expected.json")).unwrap()).unwrap();
     let project = oracle.join("project");
     let sources = python_files(&project);
@@ -157,8 +157,21 @@ fn calls_name() -> String {
     std::env::var("RERAIL_PYTHON_PROGRAM").unwrap_or_else(|_| "calls".to_owned())
 }
 
+/// The combined `calls` program, as a run lowers it, holds no two relations that are one relation and no rule twice
+/// (`corpus::same_relations`): guest hiding's copies whose rules were another's, and its clones repeated, were 40% of
+/// O125's cross-file rules and a quarter of a one-file edit's CPU.
+#[test]
+fn the_combined_program_has_no_relation_twice_and_no_rule_twice() {
+    let text = program("calls");
+    let mut prog = crate::code_rule_dsl::logic::plan::corpus::combine_texts(&[text.as_str()], "").unwrap();
+    let same = crate::code_rule_dsl::logic::simplify::identical_classes(&prog);
+    assert!(same.is_empty(), "{} classes of relations that are one, e.g. {:?}", same.len(), same.iter().take(4).collect::<Vec<_>>());
+    let repeated = crate::code_rule_dsl::logic::plan::corpus::drop_repeated_rules(&mut prog);
+    assert_eq!(repeated, 0, "rules that repeat another");
+}
+
 fn program(name: &str) -> String {
-    crate::code_rule_dsl::tools::program_text(&Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rr"))).unwrap()
+    crate::code_rule_dsl::logic::settings::program_text(&Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rr"))).unwrap()
 }
 
 /// Where `calls.rr` answers otherwise than CPython ran, and why (2026-11-06: 84 agree, these 9 depart, none
@@ -220,7 +233,7 @@ rr_score_named(f) :- call_target(_, f), field(f, \"name\", _).
 /// agrees when the program names nothing there; one rust-analyzer resolves in the crate agrees when the program
 /// names exactly that definition.
 pub(super) fn score_rust(program: &str) -> (usize, BTreeMap<String, Departure>) {
-    let oracle = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("rust/calls");
+    let oracle = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("rust/calls");
     let recording: Json = serde_json::from_str(&std::fs::read_to_string(oracle.join("calls.expected.json")).unwrap()).unwrap();
     let root = oracle.join("crate");
     let sources: BTreeMap<String, String> = recording["files"]
@@ -229,7 +242,7 @@ pub(super) fn score_rust(program: &str) -> (usize, BTreeMap<String, Departure>) 
         .iter()
         .map(|p| (p.as_str().unwrap().to_owned(), std::fs::read_to_string(root.join(p.as_str().unwrap())).unwrap()))
         .collect();
-    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("score-rust");
+    let out = crate::code_rule_dsl::fixtures::temp().with_extension("score-rust");
     corpus::run(&format!("{program}\n{RUST_SPANS}"), &root, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let rows = |rel: &str| -> Vec<Vec<String>> {
         std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
@@ -341,11 +354,11 @@ struct Typed {
 
 /// `program`'s type relations at each receiver the CPython oracle records, keyed `file:line `text``.
 pub(super) fn score_python_types(program: &str) -> BTreeMap<String, TypeAnswer> {
-    let oracle = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/calls");
+    let oracle = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/calls");
     let expected: Json = serde_json::from_str(&std::fs::read_to_string(oracle.join("python.expected.json")).unwrap()).unwrap();
     let project = oracle.join("project");
     let sources = python_files(&project);
-    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("score-types");
+    let out = crate::code_rule_dsl::fixtures::temp().with_extension("score-types");
     corpus::run(&format!("{program}\n{TYPE_SPANS}"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let rows = |rel: &str| -> Vec<Vec<String>> {
         std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect()
@@ -438,7 +451,7 @@ fn python_type_relations_agree_with_the_runtime() {
 /// own nodes on `core.rr`'s facts, are exactly the program's on T's.
 #[test]
 fn rules_read_the_python_program_through_lib_calls() {
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/calls/project");
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/calls/project");
     let keyed = "
 .decl edge(cp: symbol, cs: number, fp: symbol, fs: number)
 edge(cp, cs, fp, fs) :- call_target(c, f), node(d, c, _, cs, _), doc(d, cp, _), node(g, f, _, fs, _), doc(g, fp, _).
@@ -451,9 +464,9 @@ unknown(cp, cs) :- call_open(c), node(d, c, _, cs, _), doc(d, cp, _).
     let rows = |out: &Path, rel: &str| -> BTreeSet<String> {
         std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect()
     };
-    let direct = crate::code_rule_dsl::prefilter::tests::temp().with_extension("direct");
+    let direct = crate::code_rule_dsl::fixtures::temp().with_extension("direct");
     corpus::run(&format!("{}\n{keyed}", program("calls")), &project, None, &direct, "program", Binding::Cpu, 1 << 18).unwrap();
-    let rule_dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rule");
+    let rule_dir = crate::code_rule_dsl::fixtures::temp().with_extension("rule");
     std::fs::create_dir_all(&rule_dir).unwrap();
     let rule = rule_dir.join("rule.rr");
     std::fs::write(&rule, format!("#include \"python/calls.rr\"\n#include \"python/types.rr\"\n{keyed}")).unwrap();
@@ -476,7 +489,7 @@ unknown(cp, cs) :- call_open(c), node(d, c, _, cs, _), doc(d, cp, _).
 #[test]
 fn quoted_annotations_are_read_as_their_code() {
     // fixtures/python/quoted_ann: `-> "Node"`, `Optional["Node"]`, `n: "Node"`, `"list[Node]"`, `"Node | None"`.
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/quoted_ann");
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/quoted_ann");
     let rule = "
 #include \"python/calls.rr\"
 .decl at(p: symbol, s: number, what: symbol)
@@ -484,7 +497,7 @@ at(p, s, \"target\") :- call_target(c, _), node(d, c, _, s, _), doc(d, p, _).
 at(p, s, \"open\") :- call_open(c), node(d, c, _, s, _), doc(d, p, _).
 .output at
 ";
-    let rule_dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("quoted");
+    let rule_dir = crate::code_rule_dsl::fixtures::temp().with_extension("quoted");
     std::fs::create_dir_all(&rule_dir).unwrap();
     let path = rule_dir.join("rule.rr");
     std::fs::write(&path, rule).unwrap();
@@ -509,7 +522,7 @@ fn imports_resolve_into_a_library_and_load_its_stubs() {
     // fixtures/python/world_load: ws/main.py imports os.path, json and collections; ws/rerail.env says `lib =
     // ../ts/stdlib`, a stub tree with os/__init__.pyi, os/path.pyi, collections/__init__.pyi and a VERSIONS file. The
     // rules walk it with dir_entry and file_line and load what resolves (t21 E1, E2, E4); json is in no root.
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/world_load/ws");
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/world_load/ws");
     let rule = r#"
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
@@ -545,7 +558,7 @@ got(m, p) :- doc(d, path, m), pkg(d, p), loaded(path, _, _).
 own(n) :- imp(n, _).
 .output got, own
 "#;
-    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world");
+    let out = crate::code_rule_dsl::fixtures::temp().with_extension("world");
     corpus::run(rule, &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
     assert_eq!(read("got"), "collections\tcollections\nos\tos\nos.path\tos\n");
@@ -560,8 +573,8 @@ fn calls_into_the_standard_library_reach_its_stubs() {
     // python/modules.rr, which resolves `import os.path` into ts/stdlib/os/path.pyi and loads it: `os.path.join("a",
     // "b")` targets the stub's `join`, and no row is about a stub. The stub defines `join` in both branches of a
     // `sys.version_info` test: only the branch the run's Python (3.13, the default) takes binds it.
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/world_load/ws");
-    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("stdlib");
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/world_load/ws");
+    let out = crate::code_rule_dsl::fixtures::temp().with_extension("stdlib");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let text = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
     let rows: Vec<(&str, &str)> = text.lines().filter_map(|l| l.split_once('\t')).collect();
@@ -581,8 +594,8 @@ fn imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order
     // in site-packages, is not a typed package: its call has no target. `cv.Var("x")` targets Var's `__new__` only:
     // typeshed's `Generic: type[_Generic]` is a special form as a base, not `_Generic` and its subclasses (else Box,
     // another generic class, would be Var's base and its `__init__` a target).
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/world_site/ws");
-    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("site");
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/world_site/ws");
+    let out = crate::code_rule_dsl::fixtures::temp().with_extension("site");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let text = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
     let mut got: Vec<String> = text
@@ -612,8 +625,8 @@ fn declarations_and_installed_sources_type_calls_without_declared_ret_facts() {
     // `typing::deps` and `typing::declare`, as t21 reads them (step 3): the user's declarations are `.pyi` files under
     // `python.declarations`, and the installed package `vendor` (no stubs, no `py.typed`) is read from its sources
     // with `python.untyped = read`. `make`'s declaration comes first (PEP 561's order), over vendor/core.py's int.
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/world_decl/app");
-    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("decl");
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/world_decl/app");
+    let out = crate::code_rule_dsl::fixtures::temp().with_extension("decl");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let text = std::fs::read_to_string(out.join("type_of.csv")).unwrap();
     let mut got: Vec<&str> = text.lines().filter_map(|l| l.split_once('\t')).map(|(_, t)| t).filter(|t| *t != "module").collect();
@@ -632,7 +645,7 @@ fn a_protocols_subclass_is_a_class_and_a_methods_self_annotation_declares_an_att
     // PEP 544: `Concrete` derives from the protocol `Sized` without listing `Protocol`, so it is an ordinary class: a
     // parameter declared `Concrete` holds a Concrete (or a subclass), and its method call has a target and is not
     // open. `self.names: list[Concrete] = []` in a method declares `names` on the class, as `names: ...` in its body.
-    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("proto");
+    let project = crate::code_rule_dsl::fixtures::temp().with_extension("proto");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("m.py"),
@@ -653,7 +666,7 @@ fn a_protocols_subclass_is_a_class_and_a_methods_self_annotation_declares_an_att
 fn a_method_declared_to_return_its_class_parameter_returns_what_the_receivers_generic_binds() {
     // t21 §5.1, first version: `x: M[str, Box]` binds M's `_V` to Box, so `x.get("a")` is a Box and `.m()` targets
     // Box.m; `class D(M[str, Box])` binds it for every D; `pick`'s own `_T` is the argument its parameter is given.
-    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("generic");
+    let project = crate::code_rule_dsl::fixtures::temp().with_extension("generic");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("m.py"),
@@ -674,7 +687,7 @@ fn a_subscript_is_a_call_of_its_receivers_getitem() {
     // `b[0]` is `b.__getitem__(0)`: its value is what B's `__getitem__` returns, so `.run()` targets V.run; a generic's
     // `__getitem__` returns what the receiver's annotation binds (`x: M[str, Box]`). A class's subscript
     // (`M[str, Box]`, a generic alias) is no call of `__getitem__`: calling it stays unknown.
-    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("subscript");
+    let project = crate::code_rule_dsl::fixtures::temp().with_extension("subscript");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("m.py"),
@@ -694,7 +707,7 @@ fn a_subscript_is_a_call_of_its_receivers_getitem() {
 fn a_loop_target_is_its_iterators_next_value_and_a_with_alias_the_value_entered() {
     // `for x in s`: x is `s.__iter__().__next__()`; `with c as z`: z is `c.__enter__()`. Their `async` forms call other
     // methods (`__aiter__`, `__aenter__`): their targets stay unknown.
-    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("protocols");
+    let project = crate::code_rule_dsl::fixtures::temp().with_extension("protocols");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("m.py"),
@@ -715,7 +728,7 @@ fn a_declared_generic_return_carries_the_receivers_binding() {
     // t21 §5.1: `Seq[V]`'s `__iter__() -> It[_T]` is an It of V, so the loop's `__next__() -> _T` is a V; `Gen`'s
     // `__iter__() -> It[V]` is one as written. The declared generic's class is exact: `Sub`'s `__next__` is typed by
     // It's and does not reach the loop.
-    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("genret");
+    let project = crate::code_rule_dsl::fixtures::temp().with_extension("genret");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("m.py"),
@@ -738,7 +751,7 @@ fn the_analysis_phase_binds_a_library_generics_type_variables_fits_overloads_and
     // calls_p3 over a miniature typeshed: `box.Box[V]`'s `get()` (the overload without a default) returns its `_T`,
     // bound by the annotation to V; a loop over it calls `__iter__() -> It[_T]`, whose `__next__() -> _T` is then a V;
     // an `async def`'s call holds a coroutine, so a method called on it is open.
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("p3-generics");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("p3-generics");
     let _ = std::fs::remove_dir_all(&dir);
     let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
     std::fs::create_dir_all(&ws).unwrap();
@@ -777,11 +790,52 @@ fn the_analysis_phase_binds_a_library_generics_type_variables_fits_overloads_and
 }
 
 #[test]
+fn the_analysis_phase_fits_a_library_overload_by_its_keywords_and_its_literal_arguments_types() {
+    // calls_p3 over a miniature typeshed: `e.get("k", default=1)` is the overload with a `default` parameter, not the
+    // one that has room for its one positional argument; `conv(1)` is the overload declaring an `int`, `conv("s")`
+    // the one declaring a `str`; `wide(1)` fits `x: float`.
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("p3-overloads");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(lib.join("VERSIONS"), "builtins: 3.0-\ntyping: 3.0-\nbox: 3.0-\n").unwrap();
+    std::fs::write(lib.join("builtins.pyi"), "class object: ...\nclass int: ...\nclass float: ...\nclass str: ...\n").unwrap();
+    std::fs::write(lib.join("typing.pyi"), "def overload(f: object) -> object: ...\n").unwrap();
+    std::fs::write(
+        lib.join("box.pyi"),
+        "from typing import overload\nclass A:\n    def run(self) -> int: ...\nclass B:\n    def run(self) -> int: ...\nclass Env:\n    @overload\n    def get(self, key: str, /) -> A: ...\n    @overload\n    def get(self, key: str, /, default: int) -> B: ...\n@overload\ndef conv(x: int) -> A: ...\n@overload\ndef conv(x: str) -> B: ...\n@overload\ndef wide(x: float) -> A: ...\n@overload\ndef wide(x: str) -> B: ...\n",
+    )
+    .unwrap();
+    std::fs::write(ws.join("rerail.env"), "python.typeshed = ../ts\n").unwrap();
+    std::fs::write(
+        ws.join("main.py"),
+        "from box import Env, conv, wide\ndef f(e: Env) -> None:\n    e.get(\"k\", default=1).run()\n    conv(1).run()\n    conv(\"s\").run()\n    wide(1).run()\n",
+    )
+    .unwrap();
+    let out = dir.join("out");
+    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    // The overloads each call fits (`lcfn`), by the call's line.
+    let text = format!("{}\n{JEDI_SPANS}\n.decl t_fit(c: node, f: symbol)\nt_fit(c, f) :- lcfn(c, _, f), struct__flag(f, \"overload\").\n.output t_fit\n", program("calls_p3"));
+    corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
+    let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
+    let starts: std::collections::HashMap<String, usize> =
+        read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
+    let mut fits: Vec<(u64, String)> = read("t_fit").lines().filter_map(|l| l.split_once('\t')).map(|(c, f)| (line(&src, starts[c]), f.to_owned())).collect();
+    fits.sort();
+    let want: Vec<(u64, String)> = [(3, "box.Env.get#1"), (4, "box.conv"), (5, "box.conv#1"), (6, "box.wide")].iter().map(|(l, f)| (*l, (*f).to_owned())).collect();
+    assert_eq!(fits, want, "{}", read("t_fit"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn the_analysis_phase_infers_a_library_constructors_type_variables_from_its_arguments() {
     // calls_p3 over a miniature typeshed: `Set(xs)`, where `__new__(cls, xs: Src[_T])` and `Lst(Src[_T])`, is a
     // `Set` of what xs holds. Of a workspace V (`xs: Lst[V]`), a loop over it binds V (`x.run()` targets V.run); of
     // a library str (`names() -> Lst[str]`), `s.upper()` is str's, not open.
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("p3-ctor");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("p3-ctor");
     let _ = std::fs::remove_dir_all(&dir);
     let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
     std::fs::create_dir_all(&ws).unwrap();
@@ -824,7 +878,7 @@ fn the_analysis_phase_binds_a_library_context_managers_type_variable_from_the_wr
     // is its `Enter[T, bool | None]` base's (its first base, `Base[Gen[T, S]]`, nests a generic). `opened()` holds a
     // Cm of V (the workspace function returns `It[V]`), so `with opened() as v` binds v to a V and `v.run()` targets
     // V.run.
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("p3-cm");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("p3-cm");
     let _ = std::fs::remove_dir_all(&dir);
     let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
     std::fs::create_dir_all(&ws).unwrap();
@@ -868,7 +922,7 @@ fn the_analysis_phase_rules_out_an_overload_whose_none_parameter_is_given_a_lite
     // calls_p3 over a miniature builtins: `setdefault(self, key, default: None = None) -> _VT | None` and
     // `setdefault(self, key, default: _VT) -> _VT` both fit two arguments, but `[]` is no None, so
     // `d.setdefault(k, []).append(v)` runs the second, holds a `list[V]`, and its `append` is list's, not open.
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("p3-none");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("p3-none");
     let _ = std::fs::remove_dir_all(&dir);
     let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
     std::fs::create_dir_all(&ws).unwrap();
@@ -908,7 +962,7 @@ fn the_analysis_phase_rules_out_an_overload_whose_none_parameter_is_given_a_lite
 fn the_analysis_phase_reads_a_library_generic_base_as_known() {
     // calls_p3 over a miniature typeshed: `class A(Cm[None])`, a library generic base written as a subscript, is a
     // known base, so `A()` runs A's own `__init__` and `A().go()` targets A.go; neither is open.
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("p3-gbase");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("p3-gbase");
     let _ = std::fs::remove_dir_all(&dir);
     let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
     std::fs::create_dir_all(&ws).unwrap();
@@ -942,7 +996,7 @@ fn the_analysis_phase_reads_a_library_generic_base_as_known() {
 fn the_analysis_phase_gives_an_awaited_call_what_the_async_def_returns() {
     // calls_p3: `await load()` holds what `async def load() -> V` declares, `await make()` what make returns (a V),
     // so both `run()` calls target V.run; the calls of load and make, coroutines, are not awaited values.
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("p3-await");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("p3-await");
     let _ = std::fs::remove_dir_all(&dir);
     let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
     std::fs::create_dir_all(&ws).unwrap();
@@ -974,12 +1028,50 @@ fn the_analysis_phase_gives_an_awaited_call_what_the_async_def_returns() {
 }
 
 #[test]
+fn the_analysis_phase_awaits_an_async_loops_next_value_and_an_async_withs_entered_value() {
+    // calls_p3 (t32 2.5): `async for x in s` binds x to the awaited `s.__aiter__().__anext__()`, `async with c as z` z
+    // to the awaited `c.__aenter__()`: the workspace's `async def`s' results, and a stub's `async def __aenter__(self)
+    // -> Self` the library instance itself. A plain `__anext__` that returns an awaitable leaves its target open.
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("p3-async");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(lib.join("VERSIONS"), "builtins: 3.0-\nconn: 3.0-\ntyping: 3.0-\n").unwrap();
+    std::fs::write(lib.join("builtins.pyi"), "class object: ...\nclass int: ...\n").unwrap();
+    std::fs::write(lib.join("typing.pyi"), "class _SpecialForm: ...\nSelf: _SpecialForm\n").unwrap();
+    std::fs::write(lib.join("conn.pyi"), "from typing import Self\nclass Conn:\n    async def __aenter__(self) -> Self: ...\n    def close(self) -> None: ...\n").unwrap();
+    std::fs::write(ws.join("rerail.env"), "python.typeshed = ../ts\n").unwrap();
+    std::fs::write(
+        ws.join("main.py"),
+        "from conn import Conn\nclass V:\n    def run(self) -> int: ...\nclass It:\n    async def __anext__(self) -> V: ...\nclass Seq:\n    def __aiter__(self) -> It: ...\nclass Cm:\n    async def __aenter__(self) -> V: ...\nclass Bare:\n    def __anext__(self): ...\nclass Raw:\n    def __aiter__(self) -> Bare: ...\nasync def f(s: Seq, c: Cm, k: Conn, r: Raw) -> None:\n    async for x in s:\n        x.run()\n    async with c as z:\n        z.run()\n    async with k as n:\n        n.close()\n    async for y in r:\n        y.run()\n",
+    )
+    .unwrap();
+    let out = dir.join("out");
+    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
+    corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let src = std::fs::read_to_string(ws.join("main.py")).unwrap();
+    let starts: std::collections::HashMap<String, usize> =
+        read("oracle_jedi_at").lines().map(|l| { let v: Vec<&str> = l.split('\t').collect(); (v[0].to_owned(), v[1].parse().unwrap()) }).collect();
+    let at_line = |cell: &str| line(&src, starts[cell]);
+    let to: Vec<u64> = read("call_target").lines().filter_map(|l| l.split_once('\t')).map(|(c, _)| at_line(c)).collect();
+    let open: Vec<u64> = read("call_open").lines().map(|l| at_line(l.split('\t').next().unwrap())).collect();
+    assert!(to.contains(&16) && to.contains(&18), "x.run() and z.run() through the awaited values: {}", read("call_target"));
+    assert!(!open.contains(&16) && !open.contains(&18) && !open.contains(&20), "open at lines {open:?}");
+    assert!(open.contains(&22), "y's `__anext__` returns no declared class: {}", read("call_open"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_session_maintains_the_typing_phase_from_struct_s_delta() {
     // P2 (types.rr) in a session: an edit to one workspace file changes struct's rows for that file only, and the
     // typing phase's run takes that delta: it maintains the strata the delta reaches, not every stratum, and its
     // exports are a full run's.
     use crate::code_rule_dsl::logic::plan::corpus::session;
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("p2-session");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("p2-session");
     let _ = std::fs::remove_dir_all(&dir);
     let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
     std::fs::create_dir_all(&ws).unwrap();
@@ -1016,36 +1108,35 @@ rtype(f, a, d) :- types__rtype(f, a, d).
             v
         }).collect()
     };
-    let types = |r: &corpus::Report| -> (Option<(usize, usize)>, (usize, usize, usize), Option<String>) {
+    let types = |r: &corpus::Report| -> (Option<(usize, usize)>, (usize, usize, usize)) {
         let p = r.phase_runs.iter().find(|p| p.name == "types").expect("the typing phase ran");
-        (p.report.cross_strata, p.report.cross_maintained, p.full_because.clone())
+        (p.report.cross_strata, p.report.cross_maintained)
     };
     session::start(&dir.join("session")).unwrap();
     let cold = run();
     println!("P2 cold: {:?}", types(&cold));
     std::fs::write(ws.join("b.py"), "from a import A\nclass B(A):\n    def go(self) -> str: ...\nclass C(B): ...\n").unwrap();
     let edited = run();
-    let (strata, maintained, why) = types(&edited);
-    println!("P2 edited: strata {strata:?}, maintained {maintained:?}, in full because {why:?}");
+    let (strata, maintained) = types(&edited);
+    println!("P2 edited: strata {strata:?}, maintained {maintained:?}");
     let kept = dump();
     assert!(kept[1].iter().any(|l| l == "b.C\ta.A"), "C's ancestors through the edit: {:?}", kept[1]);
-    // A second edit, then none: each run's exports are kept by the granules that changed (`keep_in_session`), and
-    // the unchanged run reads them back from the phase store.
+    // A second edit, then none: the phase's run keeps its relations as the session keeps any run's, so the
+    // unchanged run derives no stratum again.
     std::fs::write(ws.join("a.py"), "class A:\n    def run(self) -> int: ...\nclass Z: ...\n").unwrap();
     let _ = run();
     let second = dump();
     assert!(second[1].iter().any(|l| l == "b.C\ta.A") && second[0].iter().any(|l| l.starts_with("a\tZ\t")), "{second:?}");
     let unchanged = run();
-    let how: Vec<String> = unchanged.phase_runs.iter().map(|p| format!("{} {:?} {:?} {:?}", p.name, p.report.cross_strata, p.full_because, p.report.phases.iter().map(|x| x.0).collect::<Vec<_>>())).collect();
-    assert!(unchanged.phase_runs.iter().any(|p| p.name == "types" && p.report.cross_strata.is_none()), "the typing phase kept as it was: {how:?}");
-    assert_eq!(dump(), second, "read back from the phase store");
+    let how: Vec<String> = unchanged.phase_runs.iter().map(|p| format!("{} {:?} {:?}", p.name, p.report.cross_strata, p.report.phases.iter().map(|x| x.0).collect::<Vec<_>>())).collect();
+    assert!(unchanged.phase_runs.iter().any(|p| p.name == "types" && p.report.cross_strata.is_none_or(|(ran, _)| ran == 0)), "the typing phase kept as it was: {how:?}");
+    assert_eq!(dump(), second, "the unchanged run's exports");
     let full = session::full(run);
     assert_eq!(second, dump(), "the session's maintained typing phase against a full run");
     let _ = full;
     let (run_, all) = strata.expect("the typing phase's run is a session's");
     assert!(maintained.0 > 0, "strata maintained from struct's delta: {maintained:?}");
     assert!(run_ < all, "the edit runs the strata its delta reaches, {run_} of {all}");
-    assert_eq!(why, None, "maintained by the session, not run in full");
     let types_local = edited.phase_runs.iter().find(|p| p.name == "types").unwrap().report.phases.iter().find(|p| p.0 == "local").map_or(0.0, |p| p.1 + p.2);
     assert!(types_local < 0.05, "a phase reading no document has no file-local part: {types_local:.2} s");
     session::stop();
@@ -1056,7 +1147,7 @@ rtype(f, a, d) :- types__rtype(f, a, d).
 fn a_class_decorator_declared_type_t_to_type_t_keeps_the_class() {
     // `deco(cls: type[T]) -> type[T]` gives back the class it decorates, whatever its body returns (an unknown
     // `wrap(cls)`): A stays A, so B's base is known and `b.m()` targets A.m. Only `wrap(cls)` is unknown.
-    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("classdec");
+    let project = crate::code_rule_dsl::fixtures::temp().with_extension("classdec");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("m.py"),
@@ -1078,7 +1169,7 @@ fn a_paramspec_wrapper_call_holds_the_declared_class_bound_by_the_wrapped_return
     // `opened` and holds a Cm of V (`Gen[V]` is an It of V). Cm's parameter is read from its first base with a type
     // variable as an argument (`Enter[T]`, not `Base[It[T]]`), so `with opened() as v` binds v to a V and `v.run()`
     // targets V.run.
-    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("wrapcm");
+    let project = crate::code_rule_dsl::fixtures::temp().with_extension("wrapcm");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("m.py"),
@@ -1101,7 +1192,7 @@ fn a_functions_own_type_variable_is_bound_by_its_arguments_generic() {
     // `pick(xs: It[S]) -> S` and `ordered(xs: It[S]) -> Seq[S]` (`min`, `sorted`): S is what the argument's class gives
     // It's parameter, through its generic value (`Seq[V]`) or its class's bases (`class Vs(Seq[V])`). Every `run()`
     // targets V.run.
-    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("ownvar");
+    let project = crate::code_rule_dsl::fixtures::temp().with_extension("ownvar");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("m.py"),
@@ -1122,7 +1213,7 @@ fn a_functions_own_type_variable_is_bound_by_its_arguments_generic() {
 fn a_protocol_parameters_type_variable_is_what_the_arguments_method_returns() {
     // `step(i: HasNext[S]) -> S` (`next`): Feed does not derive from HasNext; S is what `feed.__next__()` returns, a
     // V, so `run()` targets V.run.
-    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("protovar");
+    let project = crate::code_rule_dsl::fixtures::temp().with_extension("protovar");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("m.py"),
@@ -1143,7 +1234,7 @@ fn a_call_is_typed_by_the_overloads_its_positional_arguments_fit() {
     // `get(1)` fits only the first overload (the second requires the keyword z), `get(1, 2, z=3)` only the second (the
     // first takes one positional argument), and `k.m()`, its `self` bound, only the first. Each call is one class, so
     // every `a()` and `b()` is a known method.
-    let project = crate::code_rule_dsl::prefilter::tests::temp().with_extension("ovlarity");
+    let project = crate::code_rule_dsl::fixtures::temp().with_extension("ovlarity");
     std::fs::create_dir_all(&project).unwrap();
     std::fs::write(
         project.join("m.py"),
@@ -1166,7 +1257,7 @@ fn a_call_is_typed_by_the_overloads_its_positional_arguments_fit() {
 /// are unknown, so not counted; `catalog.resolve(ref)` has an argument.
 #[test]
 fn leg_083_typed_counts_resolve_by_the_receivers_type() {
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/leg083");
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/leg083");
     let rule_src = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer/leg-083-typed.rr")).unwrap();
     let spans = "
 .decl at(p: symbol, s: number, what: symbol)
@@ -1175,7 +1266,7 @@ at(p, s, \"unknown\") :- terminal_unknown(c), node(d, c, _, s, _), doc(d, p, _).
 at(p, s, \"finding\") :- LEG_083_TYPED(f), node(d, f, _, s, _), doc(d, p, _).
 .output at
 ";
-    let rule_dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("leg083");
+    let rule_dir = crate::code_rule_dsl::fixtures::temp().with_extension("leg083");
     std::fs::create_dir_all(&rule_dir).unwrap();
     let rule = rule_dir.join("rule.rr");
     std::fs::write(&rule, format!("{rule_src}\n{spans}")).unwrap();
@@ -1237,11 +1328,17 @@ fn benchmark_python_calls_program_corpus() {
     let recording: Json = serde_json::from_str(&std::fs::read_to_string(std::env::var("RERAIL_PYTHON_CALLS").unwrap()).unwrap()).unwrap();
     let root = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").unwrap());
     // `RERAIL_PYTHON_CALLS_OUT`: write the outputs there and keep them (the program's other `.output`s too, for counting).
-    let out = std::env::var_os("RERAIL_PYTHON_CALLS_OUT").map(PathBuf::from).unwrap_or_else(|| crate::code_rule_dsl::prefilter::tests::temp().with_extension("jedi"));
+    let out = std::env::var_os("RERAIL_PYTHON_CALLS_OUT").map(PathBuf::from).unwrap_or_else(|| crate::code_rule_dsl::fixtures::temp().with_extension("jedi"));
     // `RERAIL_PYTHON_REUSE=on`: phase 0's cutoff, as the command line's runs have it (`corpus::reuse`).
     // `RERAIL_PYTHON_TYPESHED`: a typeshed checkout, so calls.rr loads the standard library's stubs (t21).
     let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
-    let mut text = format!("{}\n{JEDI_SPANS}", program(&calls_name()));
+    // `RERAIL_PYTHON_PROGRAM_FILE`: the program read from that file, in place of `RERAIL_PYTHON_PROGRAM`'s (to compare a
+    // rule's earlier form).
+    let source = match std::env::var("RERAIL_PYTHON_PROGRAM_FILE") {
+        Ok(f) => crate::code_rule_dsl::logic::settings::program_text(Path::new(&f)).unwrap(),
+        Err(_) => program(&calls_name()),
+    };
+    let mut text = format!("{source}\n{JEDI_SPANS}");
     // `RERAIL_PYTHON_ROUNDS`: the rounds' bound k, for measuring what more rounds decide.
     if let Ok(k) = std::env::var("RERAIL_PYTHON_ROUNDS") {
         text = text.replace(".pragma \"cross-rounds\" \"4\"", &format!(".pragma \"cross-rounds\" \"{k}\""));
@@ -1400,7 +1497,7 @@ fn benchmark_python_calls_program_corpus() {
 fn probe_the_analysis_phase() {
     let root = PathBuf::from(std::env::var("RERAIL_P3_PROBE_ROOT").unwrap());
     let rules = std::env::var("RERAIL_P3_PROBE_RULES").unwrap_or_default();
-    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("p3-probe");
+    let out = crate::code_rule_dsl::fixtures::temp().with_extension("p3-probe");
     let text = format!("{}\n{JEDI_SPANS}\n{rules}\n", program("calls_p3"));
     corpus::run(&text, &root, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let asked: Vec<String> = rules.lines().filter_map(|l| l.trim().strip_prefix(".output ")).flat_map(|l| l.split(',').map(|r| r.trim().to_owned())).collect();
@@ -1425,7 +1522,7 @@ fn spike_liveness_of_the_calls_program() {
     let live = liveness::program(&prog);
     println!("liveness: {} rules over {} relations", live.rules.len(), live.decls.len());
     let text = format!("{text}\n{}", crate::code_rule_dsl::logic::rr::print(&live).unwrap());
-    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension("liveness");
+    let out = crate::code_rule_dsl::fixtures::temp().with_extension("liveness");
     let report = corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings })).unwrap();
     let cpu: f64 = report.phases.iter().map(|p| p.1 + p.2).sum();
     println!("{} files: {cpu:.1} s CPU (main thread), peak RSS {:.0} MB", report.files, report.phases.iter().map(|p| p.3).fold(0.0, f64::max));
@@ -1501,10 +1598,8 @@ ats(s, p, l) :- struct__at(s, p, l).
         let cpu: f64 = p.report.phases.iter().map(|x| x.1 + x.2).sum();
         let rss = p.report.phases.iter().map(|x| x.3).fold(0.0, f64::max);
         println!("PHASE {what}: struct {cpu:.1} s CPU (main thread), peak RSS {rss:.0} MB, {} workspace files; modules {}, definitions {}, imports {}", p.report.files, count("modules"), count("defs"), count("imports"));
-        println!("PHASE {what}: freshness: definitions {} ({} changed, {} gone); granules {} ({} changed, frontier {}, unattributed {}); bookkeeping {:.2} s",
-            p.units.0, p.units.1, p.units.2, p.granules.0, p.granules.1, p.granules.2, p.granules.3, p.bookkeeping);
-        let changed: Vec<String> = p.exports.iter().filter(|e| e.2 + e.3 > 0).map(|(rel, n, add, gone)| format!("{rel} {n} (+{add} -{gone})")).collect();
-        println!("PHASE {what}: exports changed: {}; how: {}", if changed.is_empty() { "none".to_owned() } else { changed.join(", ") }, p.full_because.as_deref().map_or_else(|| p.report.phases.first().map_or("", |x| x.0).to_owned(), |w| format!("in full: {w}")));
+        let rows: Vec<String> = p.exports.iter().map(|(rel, n)| format!("{rel} {n}")).collect();
+        println!("PHASE {what}: exports: {}; strata {:?}, maintained {:?}", rows.join(", "), p.report.cross_strata, p.report.cross_maintained);
         let parts: Vec<String> = p.report.phases.iter().filter(|x| x.1 + x.2 >= 0.01).map(|x| format!("{} {:.2}", x.0, x.1 + x.2)).collect();
         println!("PHASE {what}: parts: {}", parts.join(", "));
         let outer: Vec<String> = r.phases.iter().filter(|x| x.1 + x.2 >= 0.01).map(|x| format!("{} {:.2}", x.0, x.1 + x.2)).collect();
@@ -1603,14 +1698,29 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
         for p in &r.phase_runs {
             let cpu: f64 = p.report.phases.iter().map(|x| x.1 + x.2).sum();
             let parts: Vec<String> = p.report.phases.iter().filter(|x| x.1 + x.2 >= 0.01).map(|x| format!("{} {:.2}", x.0, x.1 + x.2)).collect();
-            let changed: usize = p.exports.iter().map(|e| e.2 + e.3).sum();
-            println!("T28 {what}: {} {cpu:.2} s CPU, bookkeeping {:.2} s; strata {:?}, maintained {:?}; export rows changed {changed}; {}; parts: {}",
-                p.name, p.bookkeeping, p.report.cross_strata, p.report.cross_maintained, p.full_because.as_deref().map_or("kept or maintained".to_owned(), |w| format!("full run: {w}")), parts.join(", "));
+            let rows: usize = p.exports.iter().map(|e| e.1).sum();
+            println!("T28 {what}: {} {cpu:.2} s CPU; strata {:?} (a new process's {:?}), maintained {:?}; export rows {rows}; parts: {}",
+                p.name, p.report.cross_strata, p.report.cross_kept, p.report.cross_maintained, parts.join(", "));
         }
         println!("T28 {what}: the reader's run: {:.2} s", r.phases.iter().map(|x| x.1 + x.2).sum::<f64>());
     };
-    session::start(&base.join("session")).unwrap();
+    // `RERAIL_SPIKE_PROCESS`: no session; each run maintains from what the store kept, as a new process does
+    // (t32 4.1; the process's own caches of programs and files stay warm).
+    let in_session = std::env::var_os("RERAIL_SPIKE_PROCESS").is_none();
+    if in_session {
+        session::start(&base.join("session")).unwrap();
+    }
+    // `RERAIL_PROFILE`: each run's profile in a directory of its own, named as its line is.
+    let profile_as = |what: &str| {
+        if let Some(d) = std::env::var_os("RERAIL_PROFILE") {
+            let dir = Path::new(&d).join(what.replace(' ', "-"));
+            std::fs::create_dir_all(&dir).unwrap();
+            crate::code_rule_dsl::logic::profile::set_directory(&dir);
+        }
+    };
+    profile_as("cold");
     show("cold", &run());
+    profile_as("unchanged");
     show("unchanged", &run());
     let edits = std::env::var("RERAIL_SPIKE_EDITS").unwrap_or_else(|_| "E1,E2,E3".to_owned());
     for edit in edits.split(',') {
@@ -1628,22 +1738,28 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
         let path = root.join(file);
         let before = std::fs::read_to_string(&path).unwrap();
         std::fs::write(&path, change(&before)).unwrap();
+        profile_as(edit);
         show(edit, &run());
         let kept = dump();
         // The full run: no session, a phase store of its own.
         let store = std::env::var("RERAIL_TAPE_CACHE").expect("RERAIL_TAPE_CACHE");
         let full_store = format!("{store}.full");
-        let _ = std::fs::remove_file(format!("{full_store}.phases"));
         // SAFETY: the spike's thread is the only one running between runs.
         unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &full_store) };
+        // Its cross-file part derived, not maintained from what its store kept (t32 4.1).
+        unsafe { std::env::set_var("RERAIL_KEPT_PART", "off") };
+        profile_as(&format!("{edit} full"));
         let full = session::full(run);
+        unsafe { std::env::remove_var("RERAIL_KEPT_PART") };
         unsafe { std::env::set_var("RERAIL_TAPE_CACHE", &store) };
         show(&format!("{edit} full"), &full);
         let derived = dump();
         let differ: Vec<String> = exports.iter().filter(|e| kept[*e] != derived[*e]).map(|e| format!("{e} ({} kept, {} derived)", kept[e].len(), derived[e].len())).collect();
         println!("T28 {edit}: maintained vs full: {}", if differ.is_empty() { "the same".to_owned() } else { format!("differ: {}", differ.join(", ")) });
     }
-    session::stop();
+    if in_session {
+        session::stop();
+    }
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -1658,7 +1774,7 @@ fn spike_o125_a_session_maintains_calls_rr() {
     let root = PathBuf::from(std::env::var("RERAIL_PYTHON_CALLS_ROOT").unwrap());
     let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
     let text = format!("{}\n{JEDI_SPANS}", program("calls"));
-    let base = crate::code_rule_dsl::prefilter::tests::temp().with_extension("o125");
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("o125");
     let out = base.join("out");
     let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings, "reuse": std::env::var("RERAIL_PYTHON_REUSE").is_ok_and(|v| v == "on") })).unwrap();
     let dump = || -> BTreeMap<String, Vec<String>> {
@@ -1813,6 +1929,8 @@ fn spike_o125_session_maintains_calls() {
 #[test]
 #[ignore = "calls.rr in a session over real commits (minutes)"]
 fn spike_o125_replay() {
+    // Several sessions and full runs of the corpus: more than a test's 10 minutes, never hours.
+    crate::test_watchdog::allow(std::time::Duration::from_secs(1200));
     use crate::code_rule_dsl::logic::plan::corpus::session;
     let replay = PathBuf::from(std::env::var("O125_REPLAY").unwrap());
     let (a, b): (usize, usize) = {

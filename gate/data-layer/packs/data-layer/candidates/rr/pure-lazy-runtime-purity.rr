@@ -173,7 +173,7 @@ plp_ann_step(n, v) :- kind(n, "subscript"), field(n, "value", v), !plp_typeish(v
 plp_ann_step(n, k) :- kind(n, "subscript"), field(n, "value", v), !plp_typeish(v), field(n, "subscript", k).
 plp_ann_step(n, h) :- kind(n, "generic_type"), child(n, h, 0), !plp_typeish(h).
 plp_ann_step(n, k) :- kind(n, "generic_type"), child(n, h, 0), !plp_typeish(h), child(n, tp, 1), child(tp, k, _).
-plp_ann_step(n, k) :- (kind(n, "binary_operator") ; kind(n, "union_type")), op(n, "|"), child(n, k, _).
+plp_ann_step(n, k) :- (kind(n, "binary_operator"), op(n, "|") ; kind(n, "union_type")), child(n, k, _).
 plp_ann_step(n, k) :- (kind(n, "tuple") ; kind(n, "list")), child(n, k, _).
 .decl plp_ann_hit(f: node)
 plp_ann_hit(f) :- plp_ann_reach(f, n), leaf_name(n, x), !kind(n, "subscript"), plp_name("RUNTIME_HANDLE_TYPE_NAMES", x).

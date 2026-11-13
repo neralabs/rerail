@@ -1,43 +1,183 @@
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl async_patterns_classk(kind: symbol)
+async_patterns_classk("class_definition").
+.decl async_patterns_fnk(kind: symbol)
+async_patterns_fnk("function_definition"). async_patterns_fnk("lambda").
+.decl async_patterns_analyzer(d: number, p: symbol)
+.decl async_patterns_area(p: symbol, area: symbol)
+.decl async_patterns_call(family: symbol, d: number, c: node, o: node)
+.decl async_patterns_context(c: node, w: number, s: symbol)
+.decl async_patterns_doc(d: number, p: symbol)
+.decl async_patterns_in_async(c: node)
+.decl async_patterns_in_marked_class(c: node)
+.decl async_patterns_marked_class(k: node)
+.decl async_patterns_method(family: symbol, m: symbol)
+.decl async_patterns_plugin(d: number, p: symbol)
+.decl async_patterns_waived(c: node)
+.decl async_patterns_window(w: number, k: number)
+.decl async_patterns_wrapped(c: node)
 .decl child(p: node, c: node, i: number)
+.decl decorated_write_analyzer_decorator(c: node, dm: symbol)
+.decl doc(d: number, path: symbol, module: symbol)
 .decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl op(n: node, s: symbol)
-.decl line(n: node, l: number)
-.decl syntax_error(d: number)
-.input doc, node, child, field, text, op, line, syntax_error
-.decl k0(kind: symbol)
-k0("function_definition").
-.decl k1(kind: symbol)
-k1("function_definition"). k1("lambda").
 .decl in_scope(d: number)
-.decl m133(n: node)
-.decl m146(n: node)
-.decl m160(n: node)
-.decl m161(n: node)
-.decl m174(n: node)
-.decl m187(n: node)
-.decl m201(n: node)
-.decl m202(n: node)
-.decl m215(n: node)
-.decl m228(n: node)
-.decl m242(n: node)
-.decl m243(n: node)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl op(n: node, s: symbol)
+.decl option_on(name: symbol)
 .decl out_scope(d: number)
-.decl u137(n: node)
-.decl u138(n: node)
-.decl u156(n: node)
-.decl u178(n: node)
-.decl u179(n: node)
-.decl u197(n: node)
-.decl u219(n: node)
-.decl u220(n: node)
-.decl u238(n: node)
-.decl u251(n: node)
-.decl u259(n: node)
-.decl u267(n: node)
+.decl session_receiver_name_need(x: node, at: node)
+.decl session_receiver_receiver(c: node)
+.decl session_receiver_root_need(o: node, c: node)
+.decl session_receiver_session_assign(f: node, l: node, s: symbol)
+.decl session_receiver_session_call(v: node)
+.decl session_receiver_session_name(x: node, at: node)
+.decl session_receiver_session_root(o: node, c: node)
+.decl session_receiver_value(v: node, at: node)
+.decl session_receiver_value_need(v: node, at: node)
+.decl syntax_error(d: number)
+.decl tape_line(d: number, l: number, sp: node)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl transaction_receiver_annotation(t: node)
+.decl transaction_receiver_annotation_wrapper(t: node)
+.decl transaction_receiver_assign(f: node, l: node, s: symbol, r: node)
+.decl transaction_receiver_decorated(c: node)
+.decl transaction_receiver_down(o: node, x: node)
+.decl transaction_receiver_literal(t: node)
+.decl transaction_receiver_name_need(x: node, at: node)
+.decl transaction_receiver_need(o: node)
+.decl transaction_receiver_param(q: node, s: symbol)
+.decl transaction_receiver_query_assign(f: node, l: node, s: symbol)
+.decl transaction_receiver_query_chain(c: node)
+.decl transaction_receiver_query_name(x: node, at: node)
+.decl transaction_receiver_query_root(o: node, c: node)
+.decl transaction_receiver_receiver(c: node)
+.decl transaction_receiver_root_need(o: node, c: node)
+.decl transaction_receiver_splat(q: node)
+.decl transaction_receiver_txn_name(x: node)
+.decl transaction_receiver_txn_param_name(s: symbol)
+.decl transaction_receiver_txn_root(o: node)
+.decl transaction_receiver_txn_type_name(s: symbol)
+.decl transaction_receiver_typed(q: node)
+.decl transaction_receiver_typed_name(q: node, first: node, s: symbol)
+.decl transaction_receiver_value(v: node, at: node)
+.decl transaction_receiver_value_need(v: node, at: node)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, child, field, text, op, line, syntax_error, value, value_type_of, tape_line
+.output violation
+async_patterns_method("to-thread", "to_thread").
+async_patterns_method("executor", "run_in_executor").
+async_patterns_method("internal-io", "_execute_sql").
+async_patterns_method("internal-io", "_fetchone").
+async_patterns_method("internal-io", "_fetchall").
+async_patterns_method("internal-io", "raw_execute").
+async_patterns_method("internal-io", "_execute_template_with_params").
+async_patterns_method("internal-io", "nonportably_execute_sql").
+async_patterns_method("transaction-receiver", "insert").
+async_patterns_method("transaction-receiver", "insert_many").
+async_patterns_method("transaction-receiver", "update").
+async_patterns_method("transaction-receiver", "update_many").
+async_patterns_method("transaction-receiver", "delete_by_id").
+async_patterns_method("transaction-receiver", "delete_many").
+async_patterns_method("transaction-receiver", "delete_returning").
+async_patterns_method("transaction-receiver", "delete_many_returning").
+async_patterns_method("transaction-receiver", "delete_by_key_many").
+async_patterns_method("transaction-receiver", "upsert").
+async_patterns_method("transaction-receiver", "upsert_many").
+async_patterns_method("transaction-receiver", "commit").
+async_patterns_method("transaction-receiver", "rollback").
+async_patterns_method("transaction-receiver", "select_one").
+async_patterns_method("transaction-receiver", "execute").
+async_patterns_method("transaction-receiver", "execute_one").
+async_patterns_method("transaction-receiver", "count").
+async_patterns_method("transaction-receiver", "exists").
+async_patterns_method("transaction-receiver", "first").
+async_patterns_method("transaction-receiver", "execute_raw").
+async_patterns_method("transaction-receiver", "fetchone_raw").
+async_patterns_method("transaction-receiver", "fetchall_raw").
+async_patterns_method("transaction-receiver", "search").
+async_patterns_method("transaction-receiver", "commit_branch").
+async_patterns_method("transaction-receiver", "get_history").
+async_patterns_method("transaction-receiver", "get_branch_tip").
+async_patterns_method("transaction-receiver", "select_at_revision").
+async_patterns_method("session-receiver", "read").
+async_patterns_method("session-receiver", "write").
+async_patterns_method("decorated-write", "insert").
+async_patterns_method("decorated-write", "insert_many").
+async_patterns_method("decorated-write", "update").
+async_patterns_method("decorated-write", "update_many").
+async_patterns_method("decorated-write", "delete_by_id").
+async_patterns_method("decorated-write", "delete_many").
+async_patterns_method("decorated-write", "delete_returning").
+async_patterns_method("decorated-write", "delete_many_returning").
+async_patterns_method("decorated-write", "delete_by_key_many").
+async_patterns_method("decorated-write", "upsert").
+async_patterns_method("decorated-write", "upsert_many").
+async_patterns_method("decorated-write", "commit").
+async_patterns_method("decorated-write", "rollback").
+async_patterns_method("decorated-read", "select_one").
+async_patterns_method("decorated-read", "execute").
+async_patterns_method("decorated-read", "execute_one").
+async_patterns_method("decorated-read", "count").
+async_patterns_method("decorated-read", "exists").
+async_patterns_method("decorated-read", "first").
+async_patterns_method("polymorphic", "ensure_dynamic_polymorphic_metadata").
+async_patterns_method("polymorphic", "register_polymorphic_metadata_for_schema_update").
+async_patterns_window(5, -5).
+async_patterns_window(5, -4).
+async_patterns_window(5, -3).
+async_patterns_window(5, -2).
+async_patterns_window(5, -1).
+async_patterns_window(5, 0).
+async_patterns_window(5, 1).
+async_patterns_window(5, 2).
+async_patterns_window(5, 3).
+async_patterns_window(5, 4).
+async_patterns_window(5, 5).
+async_patterns_window(15, -15).
+async_patterns_window(15, -14).
+async_patterns_window(15, -13).
+async_patterns_window(15, -12).
+async_patterns_window(15, -11).
+async_patterns_window(15, -10).
+async_patterns_window(15, -9).
+async_patterns_window(15, -8).
+async_patterns_window(15, -7).
+async_patterns_window(15, -6).
+async_patterns_window(15, -5).
+async_patterns_window(15, -4).
+async_patterns_window(15, -3).
+async_patterns_window(15, -2).
+async_patterns_window(15, -1).
+async_patterns_window(15, 0).
+async_patterns_window(15, 1).
+async_patterns_window(15, 2).
+async_patterns_window(15, 3).
+async_patterns_window(15, 4).
+async_patterns_window(15, 5).
+async_patterns_window(15, 6).
+async_patterns_window(15, 7).
+async_patterns_window(15, 8).
+async_patterns_window(15, 9).
+async_patterns_window(15, 10).
+async_patterns_window(15, 11).
+async_patterns_window(15, 12).
+async_patterns_window(15, 13).
+async_patterns_window(15, 14).
+async_patterns_window(15, 15).
+transaction_receiver_txn_param_name("wtxn").
+transaction_receiver_txn_param_name("vtxn").
+transaction_receiver_txn_param_name("rtxn").
+transaction_receiver_txn_param_name("vrtxn").
+transaction_receiver_txn_param_name("txn").
+transaction_receiver_txn_param_name("tx").
+transaction_receiver_txn_type_name("LazyVersionedReadTransaction").
+transaction_receiver_txn_type_name("LazyVersionedWriteTransaction").
+transaction_receiver_txn_type_name("ReadTransaction").
+transaction_receiver_txn_type_name("WriteTransaction").
 in_scope(d) :- doc(d, p, _), glob("impl/sqlite/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/postgres/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/mariadb/**/*.py", p).
@@ -55,34 +195,124 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/*test_*", p).
-violation("data-layer-async-patterns", "decorated-write-impl", "ASYNC004", p, l) :- node(_, n, "call", _, _), field(n, "function", v25), node(_, v25, "attribute", _, _), field(v25, "attribute", v26), node(_, v26, "identifier", _, _), text(v26, v27), (v27 = "commit" ; v27 = "delete_by_id" ; v27 = "delete_by_key_many" ; v27 = "delete_many" ; v27 = "delete_many_returning" ; v27 = "delete_returning" ; v27 = "insert" ; v27 = "insert_many" ; v27 = "rollback" ; v27 = "update" ; v27 = "update_many" ; v27 = "upsert" ; v27 = "upsert_many"), field(v25, "object", v28), nearest(n, v29, k1), node(_, v29, "function_definition", _, _), op(v29, "async"), child(v30, v29, _), node(_, v30, "decorated_definition", _, _), child(v30, v31, _), node(_, v31, "decorator", _, _), child(v31, v32, _), node(_, v32, "call", _, _), field(v32, "function", v33), node(_, v33, "attribute", _, _), field(v33, "attribute", v34), node(_, v34, "identifier", _, _), text(v34, v35), v35 = "write_async", doc(d, p, m), prefix("impl/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-violation("data-layer-async-patterns", "decorated-write-api", "ASYNC004", p, l) :- node(_, n, "call", _, _), field(n, "function", v36), node(_, v36, "attribute", _, _), field(v36, "attribute", v37), node(_, v37, "identifier", _, _), text(v37, v38), (v38 = "commit" ; v38 = "delete_by_id" ; v38 = "delete_by_key_many" ; v38 = "delete_many" ; v38 = "delete_many_returning" ; v38 = "delete_returning" ; v38 = "insert" ; v38 = "insert_many" ; v38 = "rollback" ; v38 = "update" ; v38 = "update_many" ; v38 = "upsert" ; v38 = "upsert_many"), field(v36, "object", v39), nearest(n, v40, k1), node(_, v40, "function_definition", _, _), op(v40, "async"), child(v41, v40, _), node(_, v41, "decorated_definition", _, _), child(v41, v42, _), node(_, v42, "decorator", _, _), child(v42, v43, _), node(_, v43, "call", _, _), field(v43, "function", v44), node(_, v44, "attribute", _, _), field(v44, "attribute", v45), node(_, v45, "identifier", _, _), text(v45, v46), v46 = "write_async", doc(d, p, m), prefix("api/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-violation("data-layer-async-patterns", "decorated-write-conform", "ASYNC004", p, l) :- node(_, n, "call", _, _), field(n, "function", v47), node(_, v47, "attribute", _, _), field(v47, "attribute", v48), node(_, v48, "identifier", _, _), text(v48, v49), (v49 = "commit" ; v49 = "delete_by_id" ; v49 = "delete_by_key_many" ; v49 = "delete_many" ; v49 = "delete_many_returning" ; v49 = "delete_returning" ; v49 = "insert" ; v49 = "insert_many" ; v49 = "rollback" ; v49 = "update" ; v49 = "update_many" ; v49 = "upsert" ; v49 = "upsert_many"), field(v47, "object", v50), nearest(n, v51, k1), node(_, v51, "function_definition", _, _), op(v51, "async"), child(v52, v51, _), node(_, v52, "decorated_definition", _, _), child(v52, v53, _), node(_, v53, "decorator", _, _), child(v53, v54, _), node(_, v54, "call", _, _), field(v54, "function", v55), node(_, v55, "attribute", _, _), field(v55, "attribute", v56), node(_, v56, "identifier", _, _), text(v56, v57), v57 = "write_async", doc(d, p, m), prefix("conform/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-violation("data-layer-async-patterns", "decorated-read-impl", "ASYNC004", p, l) :- node(_, n, "call", _, _), field(n, "function", v58), node(_, v58, "attribute", _, _), field(v58, "attribute", v59), node(_, v59, "identifier", _, _), text(v59, v60), (v60 = "count" ; v60 = "execute" ; v60 = "execute_one" ; v60 = "exists" ; v60 = "first" ; v60 = "select_one"), field(v58, "object", v61), nearest(n, v62, k1), node(_, v62, "function_definition", _, _), op(v62, "async"), child(v63, v62, _), node(_, v63, "decorated_definition", _, _), child(v63, v64, _), node(_, v64, "decorator", _, _), child(v64, v65, _), node(_, v65, "call", _, _), field(v65, "function", v66), node(_, v66, "attribute", _, _), field(v66, "attribute", v67), node(_, v67, "identifier", _, _), text(v67, v68), (v68 = "read_async" ; v68 = "write_async"), doc(d, p, m), prefix("impl/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-violation("data-layer-async-patterns", "decorated-read-api", "ASYNC004", p, l) :- node(_, n, "call", _, _), field(n, "function", v69), node(_, v69, "attribute", _, _), field(v69, "attribute", v70), node(_, v70, "identifier", _, _), text(v70, v71), (v71 = "count" ; v71 = "execute" ; v71 = "execute_one" ; v71 = "exists" ; v71 = "first" ; v71 = "select_one"), field(v69, "object", v72), nearest(n, v73, k1), node(_, v73, "function_definition", _, _), op(v73, "async"), child(v74, v73, _), node(_, v74, "decorated_definition", _, _), child(v74, v75, _), node(_, v75, "decorator", _, _), child(v75, v76, _), node(_, v76, "call", _, _), field(v76, "function", v77), node(_, v77, "attribute", _, _), field(v77, "attribute", v78), node(_, v78, "identifier", _, _), text(v78, v79), (v79 = "read_async" ; v79 = "write_async"), doc(d, p, m), prefix("api/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-violation("data-layer-async-patterns", "decorated-read-conform", "ASYNC004", p, l) :- node(_, n, "call", _, _), field(n, "function", v80), node(_, v80, "attribute", _, _), field(v80, "attribute", v81), node(_, v81, "identifier", _, _), text(v81, v82), (v82 = "count" ; v82 = "execute" ; v82 = "execute_one" ; v82 = "exists" ; v82 = "first" ; v82 = "select_one"), field(v80, "object", v83), nearest(n, v84, k1), node(_, v84, "function_definition", _, _), op(v84, "async"), child(v85, v84, _), node(_, v85, "decorated_definition", _, _), child(v85, v86, _), node(_, v86, "decorator", _, _), child(v86, v87, _), node(_, v87, "call", _, _), field(v87, "function", v88), node(_, v88, "attribute", _, _), field(v88, "attribute", v89), node(_, v89, "identifier", _, _), text(v89, v90), (v90 = "read_async" ; v90 = "write_async"), doc(d, p, m), prefix("conform/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-violation("data-layer-async-patterns", "polymorphic-impl", "ASYNC008", p, l) :- node(_, n, "call", _, _), field(n, "function", v106), node(_, v106, "attribute", _, _), field(v106, "attribute", v107), node(_, v107, "identifier", _, _), text(v107, v108), (v108 = "ensure_dynamic_polymorphic_metadata" ; v108 = "register_polymorphic_metadata_for_schema_update"), field(v106, "object", v109), nearest(n, v110, k1), node(_, v110, "function_definition", _, _), op(v110, "async"), doc(d, p, m), prefix("impl/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-violation("data-layer-async-patterns", "polymorphic-api", "ASYNC008", p, l) :- node(_, n, "call", _, _), field(n, "function", v111), node(_, v111, "attribute", _, _), field(v111, "attribute", v112), node(_, v112, "identifier", _, _), text(v112, v113), (v113 = "ensure_dynamic_polymorphic_metadata" ; v113 = "register_polymorphic_metadata_for_schema_update"), field(v111, "object", v114), nearest(n, v115, k1), node(_, v115, "function_definition", _, _), op(v115, "async"), doc(d, p, m), prefix("api/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-violation("data-layer-async-patterns", "polymorphic-conform", "ASYNC008", p, l) :- node(_, n, "call", _, _), field(n, "function", v116), node(_, v116, "attribute", _, _), field(v116, "attribute", v117), node(_, v117, "identifier", _, _), text(v117, v118), (v118 = "ensure_dynamic_polymorphic_metadata" ; v118 = "register_polymorphic_metadata_for_schema_update"), field(v116, "object", v119), nearest(n, v120, k1), node(_, v120, "function_definition", _, _), op(v120, "async"), doc(d, p, m), prefix("conform/", p), node(d, n, _, _, _), in_scope(d), !syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).
-m133(n) :- nearest(n, v126, k1), node(_, v126, "function_definition", _, _), op(v126, "async"), child(v127, v126, _), node(_, v127, "decorated_definition", _, _), child(v127, v128, _), node(_, v128, "decorator", _, _), child(v128, v129, _), node(_, v129, "call", _, _), field(v129, "function", v130), node(_, v130, "attribute", _, _), field(v130, "attribute", v131), node(_, v131, "identifier", _, _), text(v131, v132), (v132 = "read_async" ; v132 = "write_async").
-m146(n) :- node(_, n, "typed_parameter", _, _).
-m146(n) :- node(_, n, "typed_default_parameter", _, _).
-m160(n) :- node(_, n, "identifier", _, _), text(n, v157), (v157 = "LazyVersionedReadTransaction" ; v157 = "LazyVersionedWriteTransaction" ; v157 = "ReadTransaction" ; v157 = "WriteTransaction").
-m160(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v158), node(_, v158, "identifier", _, _), text(v158, v159), (v159 = "LazyVersionedReadTransaction" ; v159 = "LazyVersionedWriteTransaction" ; v159 = "ReadTransaction" ; v159 = "WriteTransaction").
-m161(n) :- node(_, n, "string", _, _).
-m161(n) :- node(_, n, "concatenated_string", _, _).
-m174(n) :- nearest(n, v167, k1), node(_, v167, "function_definition", _, _), op(v167, "async"), child(v168, v167, _), node(_, v168, "decorated_definition", _, _), child(v168, v169, _), node(_, v169, "decorator", _, _), child(v169, v170, _), node(_, v170, "call", _, _), field(v170, "function", v171), node(_, v171, "attribute", _, _), field(v171, "attribute", v172), node(_, v172, "identifier", _, _), text(v172, v173), (v173 = "read_async" ; v173 = "write_async").
-m187(n) :- node(_, n, "typed_parameter", _, _).
-m187(n) :- node(_, n, "typed_default_parameter", _, _).
-m201(n) :- node(_, n, "identifier", _, _), text(n, v198), (v198 = "LazyVersionedReadTransaction" ; v198 = "LazyVersionedWriteTransaction" ; v198 = "ReadTransaction" ; v198 = "WriteTransaction").
-m201(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v199), node(_, v199, "identifier", _, _), text(v199, v200), (v200 = "LazyVersionedReadTransaction" ; v200 = "LazyVersionedWriteTransaction" ; v200 = "ReadTransaction" ; v200 = "WriteTransaction").
-m202(n) :- node(_, n, "string", _, _).
-m202(n) :- node(_, n, "concatenated_string", _, _).
-m215(n) :- nearest(n, v208, k1), node(_, v208, "function_definition", _, _), op(v208, "async"), child(v209, v208, _), node(_, v209, "decorated_definition", _, _), child(v209, v210, _), node(_, v210, "decorator", _, _), child(v210, v211, _), node(_, v211, "call", _, _), field(v211, "function", v212), node(_, v212, "attribute", _, _), field(v212, "attribute", v213), node(_, v213, "identifier", _, _), text(v213, v214), (v214 = "read_async" ; v214 = "write_async").
-m228(n) :- node(_, n, "typed_parameter", _, _).
-m228(n) :- node(_, n, "typed_default_parameter", _, _).
-m242(n) :- node(_, n, "identifier", _, _), text(n, v239), (v239 = "LazyVersionedReadTransaction" ; v239 = "LazyVersionedWriteTransaction" ; v239 = "ReadTransaction" ; v239 = "WriteTransaction").
-m242(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v240), node(_, v240, "identifier", _, _), text(v240, v241), (v241 = "LazyVersionedReadTransaction" ; v241 = "LazyVersionedWriteTransaction" ; v241 = "ReadTransaction" ; v241 = "WriteTransaction").
-m243(n) :- node(_, n, "string", _, _).
-m243(n) :- node(_, n, "concatenated_string", _, _).
-.output violation
+tape_syntax_error(d) :- syntax_error(d).
+async_patterns_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
+async_patterns_plugin(d, p) :- async_patterns_doc(d, p), !option_on("oracleAnalyzer").
+async_patterns_call(fam, d, c, o) :- async_patterns_method(fam, m), text(a, m), node(_, a, "identifier", _, _), field(f, "attribute", a), node(_, f, "attribute", _, _), field(c, "function", f), node(d, c, "call", _, _), field(f, "object", o), async_patterns_doc(d, _).
+async_patterns_in_async(c) :- async_patterns_call(fam, _, c, _), fam != "to-thread", fam != "executor", nearest(c, f, async_patterns_fnk), node(_, f, "function_definition", _, _), op(f, "async").
+async_patterns_marked_class(k) :- node(_, k, "class_definition", _, _), field(k, "name", nm), text(nm, s), (contains("Transaction", s) ; contains("Connection", s) ; contains("Query", s) ; contains("Handle", s) ; contains("Version", s)).
+async_patterns_marked_class(k) :- node(_, k, "class_definition", _, _), field(k, "superclasses", sc), child(sc, b, _), node(_, b, "identifier", _, _), text(b, "ABC").
+async_patterns_marked_class(k) :- node(_, k, "class_definition", _, _), field(k, "superclasses", sc), child(sc, b, _), node(_, b, "attribute", _, _), field(b, "attribute", a), node(_, a, "identifier", _, _), text(a, "ABC").
+async_patterns_in_marked_class(c) :- async_patterns_call(_, _, c, _), nearest(c, k, async_patterns_classk), async_patterns_marked_class(k).
+async_patterns_context(c, w, s) :- async_patterns_call(fam, d, c, _), fam != "session-receiver", line(c, l0), async_patterns_window(w, k), l = @add(l0, k), tape_line(d, l, sp), text(sp, s).
+async_patterns_waived(c) :- async_patterns_context(c, 5, s), contains("ASYNC_FALLBACK:", s).
+async_patterns_waived(c) :- async_patterns_context(c, 5, s), contains("TODO: Implement", s), async_patterns_context(c, 5, t), contains("native async", t).
+async_patterns_wrapped(c) :- async_patterns_context(c, 15, s), contains("_wrap_for_executor", s).
+violation("data-layer-async-patterns", "to-thread-impl", "ASYNC001", p, l) :- async_patterns_call("to-thread", d, c, _), async_patterns_plugin(d, p), prefix("impl/", p), !async_patterns_waived(c), line(c, l).
+violation("data-layer-async-patterns", "to-thread-api", "ASYNC001", p, l) :- async_patterns_call("to-thread", d, c, _), async_patterns_plugin(d, p), prefix("api/", p), !async_patterns_waived(c), !async_patterns_in_marked_class(c), line(c, l).
+violation("data-layer-async-patterns", "to-thread-conform", "ASYNC001", p, l) :- async_patterns_call("to-thread", d, c, _), async_patterns_plugin(d, p), prefix("conform/", p), !async_patterns_waived(c), line(c, l).
+violation("data-layer-async-patterns", "executor-impl", "ASYNC002", p, l) :- async_patterns_call("executor", d, c, _), async_patterns_plugin(d, p), prefix("impl/", p), !async_patterns_waived(c), line(c, l).
+violation("data-layer-async-patterns", "executor-api", "ASYNC002", p, l) :- async_patterns_call("executor", d, c, _), async_patterns_plugin(d, p), prefix("api/", p), !async_patterns_waived(c), !async_patterns_in_marked_class(c), !async_patterns_wrapped(c), line(c, l).
+violation("data-layer-async-patterns", "executor-conform", "ASYNC002", p, l) :- async_patterns_call("executor", d, c, _), async_patterns_plugin(d, p), prefix("conform/", p), !async_patterns_waived(c), !async_patterns_wrapped(c), line(c, l).
+violation("data-layer-async-patterns", "internal-io-impl", "ASYNC005", p, l) :- async_patterns_call("internal-io", d, c, _), async_patterns_plugin(d, p), prefix("impl/", p), async_patterns_in_async(c), !async_patterns_waived(c), line(c, l).
+violation("data-layer-async-patterns", "internal-io-api", "ASYNC005", p, l) :- async_patterns_call("internal-io", d, c, _), async_patterns_plugin(d, p), prefix("api/", p), async_patterns_in_async(c), !async_patterns_waived(c), !async_patterns_in_marked_class(c), line(c, l).
+violation("data-layer-async-patterns", "internal-io-conform", "ASYNC005", p, l) :- async_patterns_call("internal-io", d, c, _), async_patterns_plugin(d, p), prefix("conform/", p), async_patterns_in_async(c), !async_patterns_waived(c), line(c, l).
+transaction_receiver_decorated(c) :- async_patterns_call("transaction-receiver", _, c, _), nearest(c, f, async_patterns_fnk), node(_, f, "function_definition", _, _), op(f, "async"), child(dd, f, _), node(_, dd, "decorated_definition", _, _), child(dd, dec, _), node(_, dec, "decorator", _, _), child(dec, dc, _), node(_, dc, "call", _, _), field(dc, "function", df), node(_, df, "attribute", _, _), field(df, "attribute", da), node(_, da, "identifier", _, _), text(da, dm), (dm = "write_async" ; dm = "read_async").
+transaction_receiver_annotation(t) :- transaction_receiver_txn_type_name(s), text(t, s), node(_, t, "identifier", _, _).
+transaction_receiver_annotation(t) :- transaction_receiver_txn_type_name(s), text(a, s), node(_, a, "identifier", _, _), field(t, "attribute", a), node(_, t, "attribute", _, _).
+transaction_receiver_annotation(t) :- transaction_receiver_literal(t), value(t, v), value_type_of(t, "str"), match("(?s:.*)(?:LazyVersionedReadTransaction|LazyVersionedWriteTransaction|ReadTransaction|WriteTransaction)(?s:.*)", v).
+transaction_receiver_literal(t) :- node(_, t, "string", _, _).
+transaction_receiver_literal(t) :- node(_, t, "concatenated_string", _, _).
+transaction_receiver_annotation(t) :- transaction_receiver_annotation(x), child(t, x, _), transaction_receiver_annotation_wrapper(t).
+transaction_receiver_annotation_wrapper(t) :- node(_, t, "type", _, _).
+transaction_receiver_annotation_wrapper(t) :- node(_, t, "type_parameter", _, _).
+transaction_receiver_annotation_wrapper(t) :- node(_, t, "generic_type", _, _).
+transaction_receiver_annotation_wrapper(t) :- node(_, t, "subscript", _, _).
+transaction_receiver_annotation_wrapper(t) :- node(_, t, "tuple", _, _).
+transaction_receiver_annotation_wrapper(t) :- node(_, t, "union_type", _, _).
+transaction_receiver_annotation_wrapper(t) :- node(_, t, "binary_operator", _, _).
+transaction_receiver_param(q, s) :- node(_, q, "identifier", _, _), text(q, s), transaction_receiver_txn_param_name(s), child(ps, q, _), node(_, ps, "parameters", _, _).
+transaction_receiver_param(q, s) :- node(_, q, "default_parameter", _, _), field(q, "name", nm), node(_, nm, "identifier", _, _), text(nm, s), transaction_receiver_txn_param_name(s).
+transaction_receiver_param(q, s) :- transaction_receiver_splat(q), child(ps, q, _), node(_, ps, "parameters", _, _), child(q, i, _), node(_, i, "identifier", _, _), text(i, s), transaction_receiver_txn_param_name(s).
+transaction_receiver_splat(q) :- node(_, q, "list_splat_pattern", _, _).
+transaction_receiver_splat(q) :- node(_, q, "dictionary_splat_pattern", _, _).
+transaction_receiver_typed(q) :- node(_, q, "typed_parameter", _, _).
+transaction_receiver_typed(q) :- node(_, q, "typed_default_parameter", _, _).
+transaction_receiver_typed_name(q, c, s) :- transaction_receiver_typed(q), child(q, c, 0), node(_, c, "identifier", _, _), text(c, s).
+transaction_receiver_typed_name(q, c, s) :- transaction_receiver_typed(q), child(q, c, 0), child(c, i, _), node(_, i, "identifier", _, _), text(i, s).
+transaction_receiver_param(q, s) :- transaction_receiver_typed_name(q, c, s), node(_, c, "identifier", _, _), text(c, t), transaction_receiver_txn_param_name(t).
+transaction_receiver_param(q, s) :- transaction_receiver_typed_name(q, _, s), field(q, "type", ty), transaction_receiver_annotation(ty).
+transaction_receiver_need(o) :- async_patterns_call("transaction-receiver", _, _, o).
+transaction_receiver_need(r) :- transaction_receiver_assign(_, _, _, r).
+transaction_receiver_need(x) :- transaction_receiver_need(o), transaction_receiver_down(o, x).
+transaction_receiver_need(x) :- transaction_receiver_need(o), node(_, o, "assignment", _, _), field(o, "right", x).
+transaction_receiver_down(o, x) :- node(_, o, "attribute", _, _), field(o, "object", x).
+transaction_receiver_down(o, x) :- node(_, o, "call", _, _), field(o, "function", x).
+transaction_receiver_down(o, x) :- node(_, o, "subscript", _, _), field(o, "value", x).
+transaction_receiver_txn_name(x) :- transaction_receiver_need(x), node(_, x, "identifier", _, _), text(x, s), nearest(x, f, async_patterns_fnk), node(_, f, "function_definition", _, _), op(f, "async"), field(f, "parameters", ps), child(ps, q, _), transaction_receiver_param(q, s).
+transaction_receiver_txn_root(o) :- transaction_receiver_txn_name(o).
+transaction_receiver_txn_root(o) :- transaction_receiver_need(o), transaction_receiver_down(o, x), transaction_receiver_txn_root(x).
+transaction_receiver_query_chain(c) :- transaction_receiver_need(c), node(_, c, "call", _, _), field(c, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, m), (m = "select_at_revision" ; m = "query" ; m = "cross_branch"), field(f, "object", o), transaction_receiver_txn_root(o).
+transaction_receiver_query_chain(c) :- transaction_receiver_need(c), node(_, c, "call", _, _), field(c, "function", f), node(_, f, "attribute", _, _), field(f, "object", o), transaction_receiver_query_chain(o).
+transaction_receiver_assign(f, l, s, r) :- node(_, a, "assignment", _, _), field(a, "left", l), node(_, l, "identifier", _, _), text(l, s), field(a, "right", r), nearest(a, f, async_patterns_fnk), node(_, f, "function_definition", _, _), op(f, "async").
+transaction_receiver_value_need(r, l) :- transaction_receiver_assign(_, l, _, r).
+transaction_receiver_value_need(x, at) :- transaction_receiver_value_need(v, at), node(_, v, "assignment", _, _), field(v, "right", x).
+transaction_receiver_value(v, at) :- transaction_receiver_value_need(v, at), transaction_receiver_query_chain(v).
+transaction_receiver_value(v, at) :- transaction_receiver_value_need(v, at), transaction_receiver_query_name(v, at).
+transaction_receiver_value(v, at) :- transaction_receiver_value_need(v, at), node(_, v, "assignment", _, _), field(v, "right", x), transaction_receiver_value(x, at).
+transaction_receiver_query_assign(f, l, s) :- transaction_receiver_assign(f, l, s, r), transaction_receiver_value(r, l).
+transaction_receiver_name_need(v, at) :- transaction_receiver_value_need(v, at), node(_, v, "identifier", _, _).
+transaction_receiver_name_need(o, c) :- transaction_receiver_root_need(o, c), node(_, o, "identifier", _, _).
+transaction_receiver_query_name(x, at) :- transaction_receiver_name_need(x, at), text(x, s), nearest(x, f, async_patterns_fnk), transaction_receiver_query_assign(f, l, s), node(_, l, _, _, le), node(_, at, _, ats, _), le <= ats.
+transaction_receiver_root_need(o, c) :- async_patterns_call("transaction-receiver", _, c, o).
+transaction_receiver_root_need(x, c) :- transaction_receiver_root_need(o, c), transaction_receiver_down(o, x).
+transaction_receiver_query_root(o, c) :- transaction_receiver_root_need(o, c), transaction_receiver_query_name(o, c).
+transaction_receiver_query_root(o, c) :- transaction_receiver_root_need(o, c), transaction_receiver_down(o, x), transaction_receiver_query_root(x, c).
+transaction_receiver_receiver(c) :- async_patterns_call("transaction-receiver", _, c, o), node(_, o, "identifier", _, _), text(o, "self").
+transaction_receiver_receiver(c) :- async_patterns_call("transaction-receiver", _, c, o), transaction_receiver_txn_root(o).
+transaction_receiver_receiver(c) :- async_patterns_call("transaction-receiver", _, c, o), transaction_receiver_query_root(o, c).
+transaction_receiver_receiver(c) :- async_patterns_call("transaction-receiver", _, c, o), transaction_receiver_query_chain(o).
+violation("data-layer-async-patterns", "transaction-receiver-impl", "ASYNC006", p, l) :- async_patterns_call("transaction-receiver", d, c, _), async_patterns_plugin(d, p), prefix("impl/", p), async_patterns_in_async(c), !transaction_receiver_decorated(c), transaction_receiver_receiver(c), !async_patterns_waived(c), line(c, l).
+violation("data-layer-async-patterns", "transaction-receiver-api", "ASYNC006", p, l) :- async_patterns_call("transaction-receiver", d, c, _), async_patterns_plugin(d, p), prefix("api/", p), async_patterns_in_async(c), !transaction_receiver_decorated(c), transaction_receiver_receiver(c), !async_patterns_waived(c), !async_patterns_in_marked_class(c), line(c, l).
+violation("data-layer-async-patterns", "transaction-receiver-conform", "ASYNC006", p, l) :- async_patterns_call("transaction-receiver", d, c, _), async_patterns_plugin(d, p), prefix("conform/", p), async_patterns_in_async(c), !transaction_receiver_decorated(c), transaction_receiver_receiver(c), !async_patterns_waived(c), line(c, l).
+session_receiver_value_need(r, l) :- transaction_receiver_assign(_, l, _, r).
+session_receiver_value_need(x, at) :- session_receiver_value_need(v, at), node(_, v, "assignment", _, _), field(v, "right", x).
+session_receiver_session_call(v) :- node(_, v, "call", _, _), field(v, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, "session").
+session_receiver_value(v, at) :- session_receiver_value_need(v, at), session_receiver_session_call(v).
+session_receiver_value(v, at) :- session_receiver_value_need(v, at), session_receiver_session_name(v, at).
+session_receiver_value(v, at) :- session_receiver_value_need(v, at), node(_, v, "assignment", _, _), field(v, "right", x), session_receiver_value(x, at).
+session_receiver_session_assign(f, l, s) :- transaction_receiver_assign(f, l, s, r), session_receiver_value(r, l).
+session_receiver_name_need(v, at) :- session_receiver_value_need(v, at), node(_, v, "identifier", _, _).
+session_receiver_name_need(o, c) :- session_receiver_root_need(o, c), node(_, o, "identifier", _, _).
+session_receiver_session_name(x, at) :- session_receiver_name_need(x, at), text(x, s), nearest(x, f, async_patterns_fnk), session_receiver_session_assign(f, l, s), node(_, l, _, _, le), node(_, at, _, ats, _), le <= ats.
+session_receiver_root_need(o, c) :- async_patterns_call("session-receiver", _, c, o).
+session_receiver_root_need(x, c) :- session_receiver_root_need(o, c), transaction_receiver_down(o, x).
+session_receiver_session_root(o, c) :- session_receiver_root_need(o, c), session_receiver_session_name(o, c).
+session_receiver_session_root(o, c) :- session_receiver_root_need(o, c), transaction_receiver_down(o, x), session_receiver_session_root(x, c).
+session_receiver_receiver(c) :- async_patterns_call("session-receiver", _, c, o), session_receiver_session_root(o, c).
+session_receiver_receiver(c) :- async_patterns_call("session-receiver", _, c, o), node(_, o, "attribute", _, _), field(o, "object", s), node(_, s, "identifier", _, _), text(s, "self"), field(o, "attribute", a), node(_, a, "identifier", _, _), text(a, m), (m = "_conn" ; m = "conn" ; m = "connection" ; m = "_connection").
+violation("data-layer-async-patterns", "session-receiver-impl", "ASYNC007", p, l) :- async_patterns_call("session-receiver", d, c, _), async_patterns_plugin(d, p), prefix("impl/", p), async_patterns_in_async(c), session_receiver_receiver(c), line(c, l).
+violation("data-layer-async-patterns", "session-receiver-api", "ASYNC007", p, l) :- async_patterns_call("session-receiver", d, c, _), async_patterns_plugin(d, p), prefix("api/", p), async_patterns_in_async(c), session_receiver_receiver(c), line(c, l).
+violation("data-layer-async-patterns", "session-receiver-conform", "ASYNC007", p, l) :- async_patterns_call("session-receiver", d, c, _), async_patterns_plugin(d, p), prefix("conform/", p), async_patterns_in_async(c), session_receiver_receiver(c), line(c, l).
+async_patterns_analyzer(d, p) :- async_patterns_doc(d, p), option_on("oracleAnalyzer").
+decorated_write_analyzer_decorator(c, dm) :- async_patterns_call(fam, _, c, _), (fam = "decorated-write" ; fam = "decorated-read"), nearest(c, f, async_patterns_fnk), node(_, f, "function_definition", _, _), op(f, "async"), child(dd, f, _), node(_, dd, "decorated_definition", _, _), child(dd, dec, _), node(_, dec, "decorator", _, _), child(dec, dc, _), node(_, dc, "call", _, _), field(dc, "function", df), node(_, df, "attribute", _, _), field(df, "attribute", da), node(_, da, "identifier", _, _), text(da, dm).
+violation("data-layer-async-patterns", "to-thread-analyzer", "ASYNC001", p, l) :- async_patterns_call("to-thread", d, c, _), async_patterns_analyzer(d, p), line(c, l).
+violation("data-layer-async-patterns", "executor-analyzer", "ASYNC002", p, l) :- async_patterns_call("executor", d, c, _), async_patterns_analyzer(d, p), line(c, l).
+violation("data-layer-async-patterns", "decorated-write-analyzer", "ASYNC004", p, l) :- async_patterns_call("decorated-write", d, c, _), async_patterns_analyzer(d, p), decorated_write_analyzer_decorator(c, "write_async"), line(c, l).
+violation("data-layer-async-patterns", "decorated-read-analyzer", "ASYNC004", p, l) :- async_patterns_call("decorated-read", d, c, _), async_patterns_analyzer(d, p), decorated_write_analyzer_decorator(c, dm), (dm = "write_async" ; dm = "read_async"), line(c, l).
+violation("data-layer-async-patterns", "internal-io-analyzer", "ASYNC005", p, l) :- async_patterns_call("internal-io", d, c, _), async_patterns_analyzer(d, p), async_patterns_in_async(c), line(c, l).
+violation("data-layer-async-patterns", "polymorphic-analyzer", "ASYNC008", p, l) :- async_patterns_call("polymorphic", d, c, _), async_patterns_analyzer(d, p), async_patterns_in_async(c), line(c, l).
+violation("data-layer-async-patterns", "transaction-receiver-analyzer", "ASYNC006", p, l) :- async_patterns_call("transaction-receiver", d, c, _), async_patterns_analyzer(d, p), async_patterns_in_async(c), !transaction_receiver_decorated(c), transaction_receiver_receiver(c), line(c, l).
+violation("data-layer-async-patterns", "session-receiver-analyzer", "ASYNC007", p, l) :- async_patterns_call("session-receiver", d, c, _), async_patterns_analyzer(d, p), async_patterns_in_async(c), session_receiver_receiver(c), line(c, l).
+async_patterns_area(p, "impl") :- async_patterns_plugin(_, p), prefix("impl/", p).
+async_patterns_area(p, "api") :- async_patterns_plugin(_, p), prefix("api/", p).
+async_patterns_area(p, "conform") :- async_patterns_plugin(_, p), prefix("conform/", p).
+violation("data-layer-async-patterns", "decorated-write-impl", "ASYNC004", p, l) :- async_patterns_call("decorated-write", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "impl"), decorated_write_analyzer_decorator(c, "write_async"), line(c, l).
+violation("data-layer-async-patterns", "decorated-write-api", "ASYNC004", p, l) :- async_patterns_call("decorated-write", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "api"), decorated_write_analyzer_decorator(c, "write_async"), line(c, l).
+violation("data-layer-async-patterns", "decorated-write-conform", "ASYNC004", p, l) :- async_patterns_call("decorated-write", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "conform"), decorated_write_analyzer_decorator(c, "write_async"), line(c, l).
+violation("data-layer-async-patterns", "decorated-read-impl", "ASYNC004", p, l) :- async_patterns_call("decorated-read", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "impl"), decorated_write_analyzer_decorator(c, dm), (dm = "write_async" ; dm = "read_async"), line(c, l).
+violation("data-layer-async-patterns", "decorated-read-api", "ASYNC004", p, l) :- async_patterns_call("decorated-read", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "api"), decorated_write_analyzer_decorator(c, dm), (dm = "write_async" ; dm = "read_async"), line(c, l).
+violation("data-layer-async-patterns", "decorated-read-conform", "ASYNC004", p, l) :- async_patterns_call("decorated-read", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "conform"), decorated_write_analyzer_decorator(c, dm), (dm = "write_async" ; dm = "read_async"), line(c, l).
+violation("data-layer-async-patterns", "polymorphic-impl", "ASYNC008", p, l) :- async_patterns_call("polymorphic", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "impl"), async_patterns_in_async(c), line(c, l).
+violation("data-layer-async-patterns", "polymorphic-api", "ASYNC008", p, l) :- async_patterns_call("polymorphic", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "api"), async_patterns_in_async(c), line(c, l).
+violation("data-layer-async-patterns", "polymorphic-conform", "ASYNC008", p, l) :- async_patterns_call("polymorphic", d, c, _), async_patterns_plugin(d, p), async_patterns_area(p, "conform"), async_patterns_in_async(c), line(c, l).

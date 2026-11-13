@@ -7,14 +7,14 @@ const MAX_PREFIX_CHARS: usize = 8;
 /// Necessary conditions only: passing this probe never replaces regex matching.
 /// All lengths are UTF-8 byte lengths, as in the regex engine's HIR properties.
 #[derive(Clone, Debug, Default)]
-pub(super) struct TextProbe {
+pub struct TextProbe {
     min_len: usize,
     max_len: Option<usize>,
     prefixes: Option<Vec<String>>,
 }
 
 impl TextProbe {
-    pub(super) fn compile(pattern: &str) -> Self {
+    pub fn compile(pattern: &str) -> Self {
         // Parsing and extraction are optional optimizations. Bound their work,
         // and leave authoritative syntax/size validation to the actual matcher.
         if pattern.len() > MAX_PATTERN_BYTES {
@@ -107,7 +107,7 @@ fn literal_prefixes(hir: &Hir) -> Option<Vec<String>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::TextProbe;
     use regex::Regex;
 

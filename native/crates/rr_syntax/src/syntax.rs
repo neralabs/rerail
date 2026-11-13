@@ -303,7 +303,7 @@ pub enum Item {
     /// `.lattice L<base> { Op -> term, … }`.
     Lattice { name: String, base: String, ops: Vec<(String, Term)> },
     Pragma(Vec<String>),
-    /// `.violation V(at: loc, …) "message"`, its `fix` lines' relations, its `suppress` lines, and `options { … }`.
+    /// `.violation V(at: loc, …) "message"`, its `fix` lines, its `suppress` lines, and `options { … }`.
     /// `code {c}` names the column holding the finding's code (`in "re"`: the codes it may produce), `code "X"` gives
     /// it, and `tag {t}` names an extra key field.
     Violation {
@@ -313,7 +313,7 @@ pub enum Item {
         code_in: Option<String>,
         tag: Option<String>,
         message: String,
-        fixes: Vec<String>,
+        fixes: Vec<Fix>,
         suppress: Vec<Suppress>,
     },
     /// `.policy { … }`: a policy document in JSON.
@@ -321,6 +321,13 @@ pub enum Item {
     /// A setting directive (`.policy "id" revision 1`, `.mode`, `.scope`, …): its name and its text.
     Setting { key: String, text: String },
     Clause { heads: Vec<Head>, body: Vec<Lit>, edits: Vec<Term> },
+    /// `.test name [exactly]` … `.end` (decision 0130): a test of the file's rules, its statements (`.fixture`,
+    /// `.expect`: settings; the test's own declarations and clauses) in order. Lowering never reads it; only testing
+    /// mode does (`logic::rr::testing`).
+    Test { name: String, exactly: bool, uses: Vec<String>, items: Vec<Statement> },
+    /// `.fixtures name` … `.end` (decision 0130): what the tests that name it in `uses` read (`.fixture`s, `.given`s,
+    /// facts and rules). Like a test, never the program's.
+    Fixtures { name: String, items: Vec<Statement> },
 }
 
 /// A `.violation`'s code: a column's value (`code {c}`), or a constant (`code "E501"`).
@@ -330,12 +337,21 @@ pub enum Code {
     Constant(String),
 }
 
-/// A `.violation`'s `suppress TOOL "rule", … [over {c}]` line: the tool comments that silence its findings.
+/// A `.violation`'s `suppress TOOL "rule", … [over {c}]` line: the tool comments that silence its findings, and the
+/// column whose lines are read for them besides `at`'s.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Suppress {
     pub tool: String,
     pub rules: Vec<String>,
     pub over: Option<String>,
+}
+
+/// A `.violation`'s `fix [safe] F "title"` line: the fix relation it offers.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Fix {
+    pub name: String,
+    pub safe: bool,
+    pub title: String,
 }
 
 /// A statement and the line it starts on.
@@ -780,6 +796,10 @@ impl<'s> Parser<'s> {
             self.field(Field::Path);
             self.close();
             Ok(Item::Include(path))
+        } else if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if d == "test" || d == "fixtures") {
+            self.test()
+        } else if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if d == "end") {
+            self.fail("a `.test` or `.fixtures` before its `.end`")
         } else if self.is_p(".")
             && let Tok::Id(d) = self.peek_at(1).clone()
         {
@@ -825,6 +845,53 @@ impl<'s> Parser<'s> {
         } else {
             self.clause()
         }
+    }
+
+    /// `.test name [exactly] [uses a, b]` or `.fixtures name`, its statements, `.end` (decision 0130). The kind
+    /// implies `.test` (`.fixtures`), `uses`, its commas and `.end`.
+    fn test(&mut self) -> Result<Item, Error> {
+        let test = matches!(self.peek_at(1), Tok::Id(d) if d == "test");
+        self.open(if test { Kind::TestBlock } else { Kind::FixturesBlock });
+        self.implied();
+        self.implied();
+        let name = self.id()?;
+        self.field(Field::Name);
+        let exactly = test && self.is_id("exactly");
+        if exactly {
+            self.bump_as(Kind::Identifier);
+            self.field(Field::Modifier);
+        }
+        let mut uses = Vec::new();
+        if test && self.is_id("uses") {
+            self.implied();
+            uses.push(self.id()?);
+            self.field(Field::Argument);
+            while self.is_p(",") {
+                self.implied();
+                uses.push(self.id()?);
+                self.field(Field::Argument);
+            }
+        }
+        let mut items = Vec::new();
+        loop {
+            if *self.peek() == Tok::Eof {
+                return self.fail("`.end`");
+            }
+            if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if d == "end") {
+                self.implied();
+                self.implied();
+                break;
+            }
+            if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if d == "test" || d == "fixtures") {
+                return self.fail("`.end` (tests and fixtures do not nest)");
+            }
+            let line = self.line();
+            let item = self.statement(line)?;
+            self.field(Field::Body);
+            items.push((item, line));
+        }
+        self.close();
+        Ok(if test { Item::Test { name, exactly, uses, items } } else { Item::Fixtures { name, items } })
     }
 
     /// A directive's statement, after its `.word`.
@@ -990,15 +1057,17 @@ impl<'s> Parser<'s> {
                         // `fix` is stored, as `fix safe` is stored whole; and `safe`, as nothing
                         // else says it is there.
                         self.anon();
-                        if self.is_id("safe") && matches!(self.peek_at(1), Tok::Id(_)) {
+                        let safe = self.is_id("safe") && matches!(self.peek_at(1), Tok::Id(_));
+                        if safe {
                             self.anon();
                         }
-                        fixes.push(self.id()?);
+                        let name = self.id()?;
                         self.field(Field::Relation);
-                        self.string()?;
+                        let title = self.string()?;
                         self.field(Field::Description);
                         self.close();
                         self.field(Field::Fix);
+                        fixes.push(Fix { name, safe, title });
                     } else if self.is_id("suppress") && matches!(self.peek_at(1), Tok::Id(_)) && matches!(self.peek_at(2), Tok::Str(_)) {
                         self.open(Kind::SuppressLine);
                         self.implied();
@@ -1265,12 +1334,14 @@ impl<'s> Parser<'s> {
         let (mut by, mut sep) = (Vec::new(), None);
         // `by` and `sep` are stored (`by (k)` is stored whole, so `by` is wherever it stands); the
         // parentheses around keys too (`by (k)` is not `by k`).
+        let mut keys_closed = false;
         if self.is_id("by") {
             self.anon();
             if self.is_p("(") {
                 self.anon();
                 by = self.list(")", Field::Key, Self::term)?;
                 self.p_stored(")")?;
+                keys_closed = true;
             } else {
                 by.push(self.agg_part()?);
                 self.field(Field::Key);
@@ -1280,9 +1351,17 @@ impl<'s> Parser<'s> {
             self.anon();
             sep = Some(self.string()?);
             self.field(Field::Separator);
+            keys_closed = false;
         }
-        self.p(":")?;
-        self.p("{")?;
+        // The `:` is stored: `by (k) : {` holds it beside a stored `)`, so the gap is stored whole,
+        // and under an aggregate a `:` is then stored everywhere. The `{` is stored in that gap
+        // alone (after a key list's `)` with no `sep`); elsewhere it is implied.
+        self.p_stored(":")?;
+        if keys_closed {
+            self.p_stored("{")?;
+        } else {
+            self.p("{")?;
+        }
         let alts = self.disjunction()?;
         self.field(Field::Body);
         self.p("}")?;
@@ -1389,7 +1468,7 @@ impl<'s> Parser<'s> {
         t
     }
 
-    /// `min(a, b)` is a call unless a `:` follows the parentheses (`min (a + b) : { … }`).
+    /// `min (a, b)`: a call, or an aggregate `min (a + b) : { … }` when a `:` follows the parentheses.
     fn call_or_aggregate(&mut self, op: String) -> Result<Term, Error> {
         let save = self.save();
         self.open(Kind::Call);

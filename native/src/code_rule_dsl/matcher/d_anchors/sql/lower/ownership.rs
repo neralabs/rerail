@@ -204,7 +204,7 @@ pub fn compile(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use rusqlite::{Connection, Result};
     fn plan(graph: &[&str], outputs: &[&str]) -> (Compiled, Vec<String>) {
@@ -449,7 +449,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod retirement_tests {
+pub mod retirement_tests {
     #[test]
     fn empty_batches_need_no_delete_but_nonempty_members_keep_their_last_use_retirement() {
         let layout = super::Layout {
@@ -514,7 +514,7 @@ impl Retirement {
 }
 
 #[cfg(test)]
-mod cohort_tests {
+pub mod cohort_tests {
     use super::*;
     #[test]
     fn defers_small_retirements_flushes_under_row_pressure_and_keeps_live_slots()

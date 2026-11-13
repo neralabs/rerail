@@ -2,7 +2,7 @@
 
 use super::connection::configure_connection;
 use super::{ContentStore, StoreError, StoreResult};
-use rusqlite::{Connection, TransactionBehavior};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -21,13 +21,14 @@ use std::sync::LazyLock;
 // run against it. It is safe to delete by hand once no older binary runs; the CHANGELOG entry of
 // each floor raise names the file (with its -wal and -shm). STORE_FILE_FLOOR pins the pairing, so
 // raising SCHEMA_VERSION alone does not compile.
-pub(super) const SCHEMA_VERSION: i64 = 3;
+pub(super) const SCHEMA_VERSION: i64 = 4;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
-pub const STORE_FILE_NAME: &str = "content-v3.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at. 3: atoms stored as segments of the arena
-/// (decision 0049); 2 was the prefilter vocabulary keyed by atom.
-const STORE_FILE_FLOOR: i64 = 3;
+pub const STORE_FILE_NAME: &str = "content-v4.sqlite";
+/// The floor `STORE_FILE_NAME` was introduced at. 4: a corpus manifest's lane is a column of it
+/// (`corpus_manifests.lane`), not a table of its own (decision 0104); 3 was atoms stored as segments
+/// of the arena (decision 0049); 2 the prefilter vocabulary keyed by atom.
+const STORE_FILE_FLOOR: i64 = 4;
 const _: () = assert!(
     SCHEMA_VERSION == STORE_FILE_FLOOR,
     "raising the floor requires a new STORE_FILE_NAME"
@@ -179,6 +180,16 @@ CREATE TABLE IF NOT EXISTS store_state (
     generation INTEGER NOT NULL
 ) STRICT;
 INSERT OR IGNORE INTO store_state(singleton, generation) VALUES (1, 1);
+
+-- Which store this file is: random when it is created. What a process holds of a store by its path (its atoms,
+-- atoms.rs; its threads' connections, connection.rs) belongs to the store of this identity only, so a store
+-- deleted and created again at the same path, by any process, is not read with the old one's. Additive: older
+-- binaries never read it.
+CREATE TABLE IF NOT EXISTS store_identity (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    id INTEGER NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO store_identity(singleton, id) VALUES (1, random());
 
 CREATE TABLE IF NOT EXISTS candidate_catalogs (
     catalog_id INTEGER PRIMARY KEY,
@@ -349,6 +360,9 @@ CREATE TABLE IF NOT EXISTS corpus_manifests (
     plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
     digest BLOB NOT NULL CHECK(length(digest) = 32),
     sources BLOB NOT NULL,
+    -- What the run was of (`record_corpus_run_lane`): a root's last runs are protected by lane. NULL: the root's one
+    -- lane.
+    lane BLOB CHECK(lane IS NULL OR length(lane) = 32),
     UNIQUE (root_id, digest)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS corpus_manifests_by_run ON corpus_manifests(last_run);
@@ -680,27 +694,90 @@ CREATE TABLE IF NOT EXISTS text_pending (
 CREATE TRIGGER IF NOT EXISTS text_vocabulary_added AFTER INSERT ON term_freq BEGIN
     INSERT INTO text_pending(lang, term) VALUES(NEW.lang, NEW.term);
 END;
+-- A run's relations as stored frames (decision 0104, `frames`), by space, relation, identity and part.
+CREATE TABLE IF NOT EXISTS frames(space BLOB NOT NULL, rel TEXT NOT NULL, ident BLOB NOT NULL,
+    part INTEGER NOT NULL, digest INTEGER NOT NULL, reads BLOB NOT NULL, width INTEGER NOT NULL, rows INTEGER NOT NULL,
+    types BLOB NOT NULL, data BLOB NOT NULL, used INTEGER NOT NULL, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID;
+-- The run each frame was last used by (decision 0138): apart from `frames`, whose records hold the frame's encoded
+-- rows, since SQLite rewrites a whole record (its overflow pages too) to change one column, and reads past `data`
+-- to read `used`. Every frame has its row here: put with it, forgotten with it. `frames.used` is the run that put
+-- the frame, for an older binary. A store made before this table gets its rows from `frames.used`, once: SCHEMA is
+-- applied when an object is missing, and the rows are then all there (`OR IGNORE`).
+CREATE TABLE IF NOT EXISTS frame_part_used(space BLOB NOT NULL, rel TEXT NOT NULL, ident BLOB NOT NULL,
+    part INTEGER NOT NULL, used INTEGER NOT NULL, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID;
+INSERT OR IGNORE INTO frame_part_used(space, rel, ident, part, used) SELECT space, rel, ident, part, used FROM frames;
+-- How many runs each space has counted.
+CREATE TABLE IF NOT EXISTS frame_spaces(space BLOB PRIMARY KEY, runs INTEGER NOT NULL) WITHOUT ROWID;
+-- The spaces' confirmations (decision 0117 step 5): each frame found unchanged under other reads than it names.
+CREATE TABLE IF NOT EXISTS frame_confirmed(space BLOB PRIMARY KEY, data BLOB NOT NULL) WITHOUT ROWID;
+-- Each run's use of a space (decision 0117 step 5): the relations its programs used, as sorted keys, one row a
+-- run, the last `frames::RUNS` runs'. A frame is collected once the run that put it is that old and no run since
+-- used its relation.
+CREATE TABLE IF NOT EXISTS frame_used(space BLOB NOT NULL, run INTEGER NOT NULL, rels BLOB NOT NULL,
+    PRIMARY KEY (space, run)) WITHOUT ROWID;
+-- Each run's use of a space by program (decision 0117 step 5, O-store-single-program): the relations it used, as
+-- sorted keys, one row a program a run, each program's last `frames::RUNS`. Programs over one root share its space;
+-- counted by the space's runs alone, one policy's frames went unused while the others ran, and were collected. A
+-- frame is collected once the run that put it is that old and none of these rows names its relation. `frame_used`
+-- (one row a run, of every program) is read no more: it stays for an older binary.
+CREATE TABLE IF NOT EXISTS frame_program_used(space BLOB NOT NULL, program BLOB NOT NULL, run INTEGER NOT NULL,
+    rels BLOB NOT NULL, PRIMARY KEY (space, program, run)) WITHOUT ROWID;
 "#;
 
 impl ContentStore {
     /// Configures `connection` and brings its store up to SCHEMA. A store at this floor that holds
     /// every SCHEMA object is only read, so opening it never waits for another process's writer;
     /// creation, a floor raise or a missing object (an index this build added) takes the
-    /// exclusive lock and applies SCHEMA. Returns whether it created the store.
-    pub(super) fn initialize(connection: &mut Connection) -> StoreResult<bool> {
+    /// exclusive lock and applies SCHEMA. Returns the store's identity (`store_identity`).
+    pub(super) fn initialize(connection: &mut Connection) -> StoreResult<i64> {
         configure_connection(connection)?;
-        if compatible_version(connection)? == SCHEMA_VERSION && holds_schema_objects(connection)? {
-            return Ok(false);
+        if compatible_version(connection)? != SCHEMA_VERSION || !holds_schema_objects(connection)? {
+            // A store made here is made by a writer's thread (decision 0104: a run's own threads only read): once,
+            // before anything reads it.
+            rerail_accel::exec::scoped(|scope| {
+                scope
+                    .spawn(|| -> StoreResult<()> {
+                        super::hazards::behind_the_run();
+                        let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
+                        // Another open may have created the store since the read above.
+                        let version = compatible_version(&transaction)?;
+                        transaction.execute_batch(SCHEMA)?;
+                        if version != SCHEMA_VERSION {
+                            transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+                        }
+                        transaction.commit()?;
+                        Ok(())
+                    })
+                    .join()
+                    .unwrap_or_else(|p| std::panic::resume_unwind(p))
+            })?;
+            if let Some(path) = connection.path() {
+                super::atoms::forget_identity(path);
+                super::frames::forget_snapshot(path);
+            }
         }
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
-        // Another open may have created the store since the read above.
-        let version = compatible_version(&transaction)?;
-        transaction.execute_batch(SCHEMA)?;
-        if version != SCHEMA_VERSION {
-            transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        let id: Option<i64> = connection.query_row("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0)).optional()?;
+        if let Some(id) = id {
+            return Ok(id);
         }
-        transaction.commit()?;
-        Ok(version == 0)
+        // A copy of a store published without an identity (the tests' template, `corpus::test_store`): it becomes a
+        // store of its own at its first open, as a store made here does, by a writer's thread.
+        rerail_accel::exec::scoped(|scope| {
+            scope
+                .spawn(|| -> StoreResult<()> {
+                    super::hazards::behind_the_run();
+                    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                    transaction.execute("INSERT OR IGNORE INTO store_identity(singleton, id) VALUES (1, random())", [])?;
+                    transaction.commit()?;
+                    Ok(())
+                })
+                .join()
+                .unwrap_or_else(|p| std::panic::resume_unwind(p))
+        })?;
+        if let Some(path) = connection.path() {
+            super::atoms::forget_identity(path);
+        }
+        Ok(connection.query_row("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0))?)
     }
 }
 
@@ -735,12 +812,19 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
 
 /// Every object SCHEMA creates, as `(type, name)`: read once from SCHEMA applied to an in-memory
 /// database, so it cannot drift from SCHEMA.
+/// Made on a writer's thread (decision 0104: a run's own threads only read).
 static SCHEMA_OBJECTS: LazyLock<Result<Vec<(String, String)>, String>> = LazyLock::new(|| {
-    let connection = Connection::open_in_memory().map_err(|error| error.to_string())?;
-    connection
-        .execute_batch(SCHEMA)
-        .map_err(|error| error.to_string())?;
-    schema_object_names(&connection).map_err(|error| error.to_string())
+    rerail_accel::exec::scoped(|scope| {
+        scope
+            .spawn(|| {
+                super::hazards::behind_the_run();
+                let connection = Connection::open_in_memory().map_err(|error| error.to_string())?;
+                connection.execute_batch(SCHEMA).map_err(|error| error.to_string())?;
+                schema_object_names(&connection).map_err(|error| error.to_string())
+            })
+            .join()
+            .unwrap_or_else(|p| std::panic::resume_unwind(p))
+    })
 });
 
 fn schema_object_names(connection: &Connection) -> StoreResult<Vec<(String, String)>> {

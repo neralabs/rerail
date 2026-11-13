@@ -4,7 +4,6 @@
 use super::crossfile::{ConsumerRefresh, CrossFileScheduler};
 use super::documents;
 use super::evaluate::{Job, JobContext, evaluate_file, run_jobs};
-#[cfg(test)]
 use super::global::evaluate_batched_relations;
 use super::global::{compile_query_plan, compile_relation_producer, evaluate_global};
 use super::index::{RepositoryIndexOptions, WorkspaceIndexTask, reusable_directories};
@@ -18,11 +17,12 @@ use super::results::{
     ResultText, evicted_file_states, profile_result, replace_global_changes, serialize_result,
     serialize_result_page,
 };
+use super::secret_names::{SecretNamePatterns, SecretNames};
 use super::storage::{Attached, StorageContext, attach_storage, unix_seconds};
 use super::{
     CLAUSE_WORK_BUDGET, CandidateSets, STORED_RESULT_UNAVAILABLE, WorkspaceState, check_closed,
 };
-use crate::code_rule_dsl::CompiledCodeRuleDsl;
+use crate::code_rule_dsl::rule_api::CompiledCodeRuleDsl;
 use crate::code_rule_dsl::budget::MatchBudget;
 use crate::code_rule_dsl::eval::evidence::Side;
 use crate::code_rule_dsl::eval::{evaluation_json, overflow_evaluation};
@@ -35,7 +35,7 @@ use crate::code_rule_dsl::placement::parse_placement;
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::{matcher::GrammarMatcher, profile};
 use crate::content_store::{OperationDeadline, StoreError, WorkspaceCompletion};
-use crate::release_allocator_memory;
+use crate::code_rule_dsl::prof::release_allocator_memory;
 use napi::bindgen_prelude::{AsyncTask, Buffer};
 use napi::{Env, Result, Task};
 use napi_derive::napi;
@@ -43,7 +43,7 @@ use serde_json::json;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard, TryLockError};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 use std::time::{Duration, Instant};
 
 const INLINE_TIME_BUDGET: Duration = Duration::from_millis(5);
@@ -53,14 +53,16 @@ static WORKSPACE_INSTANCES: std::sync::atomic::AtomicU64 = std::sync::atomic::At
 
 #[napi]
 pub struct CodeRuleDslWorkspace {
-    pub(super) state: Arc<Mutex<WorkspaceState>>,
-    pub(super) scopes: Mutex<Vec<CodeRuleScope>>,
+    #[napi(skip)] pub state: Arc<Mutex<WorkspaceState>>,
+    /// Each registered code rule's scope, and whether the code rule reads text
+    /// (`CompiledCodeRule::reads_text`), answered without the state lock.
+    #[napi(skip)] pub scopes: Mutex<Vec<(CodeRuleScope, bool)>>,
     /// Whether a code rule reads `file.package.serverGraph`, answered without the state lock.
     pub(super) server_graph: AtomicBool,
     /// Whether a code rule has an AST clause in a family whose files read their nearest
     /// `package.json`, answered without the state lock.
     pub(super) package_manifests: AtomicBool,
-    pub(super) closed: Arc<AtomicBool>,
+    #[napi(skip)] pub closed: Arc<AtomicBool>,
 }
 
 impl Default for CodeRuleDslWorkspace {
@@ -87,7 +89,9 @@ impl CodeRuleDslWorkspace {
     }
 
     /// Attaches the content store file at `store_path` to the Git repository containing `root`.
-    /// The host chooses the file (each build owns its own); the binding never derives one.
+    /// The host chooses the file (each build owns its own); the binding never derives one. The
+    /// store never holds a copy of a file `secret_names` names: such a file is evaluated as any
+    /// other and stays resident instead.
     /// Not in a `headless` build, where `#[napi(object)]` derives nothing (napi-derive `noop`).
     #[cfg(not(feature = "headless"))]
     #[napi]
@@ -95,14 +99,20 @@ impl CodeRuleDslWorkspace {
         &self,
         root: String,
         store_path: String,
+        secret_names: SecretNamePatterns,
     ) -> Result<AsyncTask<WorkspaceStorageTask>> {
-        Ok(AsyncTask::new(self.storage_task(root, store_path)?))
+        Ok(AsyncTask::new(self.storage_task(
+            root,
+            store_path,
+            &secret_names,
+        )?))
     }
 
-    pub(super) fn storage_task(
+    pub fn storage_task(
         &self,
         root: String,
         store_path: String,
+        secret_names: &SecretNamePatterns,
     ) -> Result<WorkspaceStorageTask> {
         if store_path.is_empty() {
             return Err(invalid("content store path is required"));
@@ -112,6 +122,7 @@ impl CodeRuleDslWorkspace {
             closed: Arc::clone(&self.closed),
             root,
             store_path: PathBuf::from(store_path),
+            secret_names: Arc::new(SecretNames::compile(secret_names)?),
         })
     }
 
@@ -120,7 +131,7 @@ impl CodeRuleDslWorkspace {
     /// rule per folder of the checkout (`mode: null` is off there; `suppressions: "ignore"` reports
     /// violations a linter's suppression comment would silence, `"honour"` or no `suppressions`
     /// lets the comment silence them); the compiled code rule itself is never changed.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn add_code_rule(
         &mut self,
         compiled: &CompiledCodeRuleDsl,
@@ -130,8 +141,11 @@ impl CodeRuleDslWorkspace {
         let guard = match self.state.try_lock() {
             Ok(guard) => guard,
             Err(TryLockError::Poisoned(error)) => {
-                discard_poisoned_guard(error.into_inner(), &self.state, &self.closed);
-                return Err(invalid("policy workspace is evaluating"));
+                return Err(close_poisoned(
+                    error.into_inner(),
+                    &self.state,
+                    &self.closed,
+                ));
             }
             Err(TryLockError::WouldBlock) => return Err(invalid("policy workspace is evaluating")),
         };
@@ -204,7 +218,6 @@ impl CodeRuleDslWorkspace {
                             .insert((index, clause.id.clone()), vec![id]);
                     }
                     // P's relational producers (test-only, open item O18).
-                    #[cfg(test)]
                     ClauseKind::Relational(plan) => {
                         let ids = plan
                             .inputs
@@ -238,7 +251,7 @@ impl CodeRuleDslWorkspace {
         self.scopes
             .lock()
             .map_err(|_| invalid("policy workspace is unavailable"))?
-            .push(resident.scope.clone());
+            .push((resident.scope.clone(), resident.reads_text()));
         if resident.reads_server_graph() {
             self.server_graph.store(true, Ordering::Release);
         }
@@ -253,7 +266,7 @@ impl CodeRuleDslWorkspace {
                     matcher,
                     anchors,
                     ..
-                } in matchers
+                } in matchers.iter()
                 {
                     profile::record_query(
                         &resident.id,
@@ -265,7 +278,14 @@ impl CodeRuleDslWorkspace {
                 }
             }
         }
-        CrossFileScheduler::register(&mut state, index, Arc::make_mut(&mut resident))?;
+        CrossFileScheduler::register(&mut state, index, &mut resident)?;
+        // Global clauses read import targets through their synthetic file-local leaves.
+        for (clause_index, clause) in resident.clauses.iter().enumerate() {
+            if matches!(&clause.kind, ClauseKind::Forbid(query) if is_file_local(clause) && query.reads_import_targets())
+            {
+                state.import_clauses.insert((index, clause_index));
+            }
+        }
         state.code_rules.push(resident);
         if let Err(error) = check_closed(&self.closed) {
             *self
@@ -277,13 +297,27 @@ impl CodeRuleDslWorkspace {
         Ok(())
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn accepts_path(&self, path: String) -> bool {
+        self.scope_holds(&path, false)
+    }
+
+    /// `accepts_path` over the code rules that read text alone: whether a file no code-rule
+    /// language lists is read, as `text`.
+    #[napi]
+    pub fn accepts_text_path(&self, path: String) -> bool {
+        self.scope_holds(&path, true)
+    }
+
+    /// Whether an open workspace's code rule has `path` in scope; with `text`, a code rule that
+    /// reads text.
+    fn scope_holds(&self, path: &str, text: bool) -> bool {
         !self.closed.load(Ordering::Acquire)
-            && self
-                .scopes
-                .lock()
-                .is_ok_and(|scopes| scopes.iter().any(|scope| scope.matches(&path)))
+            && self.scopes.lock().is_ok_and(|scopes| {
+                scopes
+                    .iter()
+                    .any(|(scope, reads_text)| (!text || *reads_text) && scope.matches(path))
+            })
     }
 
     /// Whether a code rule reads `file.package.serverGraph`: a host then sends each file of a
@@ -301,18 +335,23 @@ impl CodeRuleDslWorkspace {
         self.package_manifests.load(Ordering::Acquire)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn try_apply(&self, request_json: String) -> Result<Option<String>> {
         if self.closed.load(Ordering::Acquire) || request_json.len() > 8192 {
             return Ok(None);
         }
-        let Ok(_slot) = cpu_slot().try_lock() else {
+        let Some(_slot) = cpu_slot().try_lock() else {
             return Ok(None);
         };
         let guard = match self.state.try_lock() {
             Ok(guard) => guard,
             Err(TryLockError::Poisoned(error)) => {
-                discard_poisoned_guard(error.into_inner(), &self.state, &self.closed);
+                // Closed now, so it answers as a closed workspace does: the async apply fails.
+                drop(close_poisoned(
+                    error.into_inner(),
+                    &self.state,
+                    &self.closed,
+                ));
                 return Ok(None);
             }
             Err(TryLockError::WouldBlock) => return Ok(None),
@@ -434,7 +473,7 @@ impl CodeRuleDslWorkspace {
         AsyncTask::new(self.completion_task())
     }
 
-    pub(super) fn completion_task(&self) -> WorkspaceCompletionTask {
+    pub fn completion_task(&self) -> WorkspaceCompletionTask {
         WorkspaceCompletionTask {
             state: Arc::clone(&self.state),
             closed: Arc::clone(&self.closed),
@@ -452,7 +491,7 @@ impl CodeRuleDslWorkspace {
         AsyncTask::new(self.result_page_task(cursor, maximum_bytes))
     }
 
-    pub(super) fn result_page_task(
+    pub fn result_page_task(
         &self,
         cursor: u32,
         maximum_bytes: u32,
@@ -465,46 +504,69 @@ impl CodeRuleDslWorkspace {
         }
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn memory_profile(&self) -> Result<String> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| invalid("policy workspace is unavailable"))?;
+        let state = match self.state.lock() {
+            Ok(guard) => StateLease {
+                guard: Some(guard),
+                mutex: &self.state,
+                closed: &self.closed,
+            },
+            Err(error) => {
+                return Err(close_poisoned(
+                    error.into_inner(),
+                    &self.state,
+                    &self.closed,
+                ));
+            }
+        };
         serde_json::to_string(&workspace_memory_profile(&state)).map_err(json_error)
     }
 
     /// Bound the bytes of documents the storage contract keeps resident; loads beyond it evict the
     /// least recently used documents, which later loads bring back from the store or a reparse.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn set_document_residency_limit(&self, bytes: u32) -> Result<()> {
-        self.state
-            .try_lock()
-            .map_err(|_| invalid("policy workspace is evaluating"))?
-            .documents
-            .set_limit(bytes as usize);
+        self.state_now()?.documents.set_limit(bytes as usize);
         Ok(())
     }
 
-    #[napi]
+    /// The absolute folder on disk the workspace's paths are relative to: import target
+    /// resolution reads the files below it the workspace does not hold, and nothing above it.
+    /// Without one, targets resolve among the held files alone. A changed root makes the next
+    /// apply that defers nothing evaluate again the files whose clauses read import targets.
+    #[napi(catch_unwind)]
+    pub fn set_root(&self, root: String) -> Result<()> {
+        let root = PathBuf::from(root);
+        if !root.is_absolute() {
+            return Err(invalid("workspace root must be an absolute path"));
+        }
+        let mut state = self.state_now()?;
+        if state.import_root.as_ref() != Some(&root) {
+            state.import_root = Some(root);
+            state.import_generation += 1;
+        }
+        Ok(())
+    }
+
+    #[napi(catch_unwind)]
     pub fn evict_inactive(&self) -> Result<bool> {
-        let mut state = self
-            .state
-            .try_lock()
-            .map_err(|_| invalid("policy workspace is evaluating"))?;
+        let mut state = self.state_now()?;
         // Cross-file clauses read the evidence index and the call graph, which eviction keeps: they
         // are summaries of the files, and an edit after eviction updates the graph in place.
-        // A file without stored results stays only when a busy store left it unpublished.
+        // A file without stored results stays only when a busy store left it unpublished, or the
+        // store never holds it (`withheld`).
         if state.storage.is_none()
             || state
                 .files
                 .values()
-                .any(|file| file.stored.is_none() && !file.unpublished)
+                .any(|file| file.stored.is_none() && !file.unpublished && !file.withheld)
         {
             return Ok(false);
         }
         // A file the store lacks results of (`FileState::stays_resident`: a transient evaluation,
-        // an unstored clause, or results a busy store left unpublished) has none to page; it stays.
+        // an unstored clause, results a busy store left unpublished, or a withheld file) has none
+        // to page; it stays.
         let evicted = state
             .files
             .values()
@@ -535,17 +597,14 @@ impl CodeRuleDslWorkspace {
 
     /// A snapshot-qualified reference to the deepest node spanning exactly `startByte..endByte`
     /// in `path`'s current version, or null when no node spans exactly that range.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn node_reference(
         &self,
         path: String,
         start_byte: u32,
         end_byte: u32,
     ) -> Result<Option<String>> {
-        let mut state = self
-            .state
-            .try_lock()
-            .map_err(|_| invalid("policy workspace is evaluating"))?;
+        let mut state = self.state_now()?;
         documents::reference(&mut state, &path, start_byte as usize, end_byte as usize)?
             .map(|reference| serde_json::to_string(&reference).map_err(json_error))
             .transpose()
@@ -553,24 +612,39 @@ impl CodeRuleDslWorkspace {
 
     /// The node a reference names, as JSON, loading its file through the storage contract. A
     /// reference whose file version is no longer current is refused.
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn resolve_node_reference(&self, reference: String) -> Result<String> {
         let reference: documents::NodeReference =
             serde_json::from_str(&reference).map_err(json_error)?;
-        let mut state = self
-            .state
-            .try_lock()
-            .map_err(|_| invalid("policy workspace is evaluating"))?;
+        let mut state = self.state_now()?;
         serde_json::to_string(&documents::resolve(&mut state, &reference)?).map_err(json_error)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn close(&self) {
         self.closed.store(true, Ordering::Release);
         clear_if_unlocked(&self.state);
         match self.scopes.lock() {
             Ok(mut scopes) => *scopes = Vec::new(),
             Err(error) => *error.into_inner() = Vec::new(),
+        }
+    }
+
+    /// The state without waiting: an evaluation holding it answers "evaluating", which the host
+    /// may retry; a state a panic poisoned closes the workspace (`close_poisoned`).
+    fn state_now(&self) -> Result<StateLease<'_>> {
+        match self.state.try_lock() {
+            Ok(guard) => Ok(StateLease {
+                guard: Some(guard),
+                mutex: &self.state,
+                closed: &self.closed,
+            }),
+            Err(TryLockError::Poisoned(error)) => Err(close_poisoned(
+                error.into_inner(),
+                &self.state,
+                &self.closed,
+            )),
+            Err(TryLockError::WouldBlock) => Err(invalid("policy workspace is evaluating")),
         }
     }
 }
@@ -586,7 +660,7 @@ fn reads_package_manifests(code_rule: &CompiledCodeRule) -> bool {
             Query::SelectWhen { select, exists } => {
                 in_manifest_family(select) || in_manifest_family(exists)
             }
-            Query::Regex { .. } => false,
+            Query::Regex { .. } | Query::File => false,
         }
     }
     code_rule.clauses.iter().any(|clause| match &clause.kind {
@@ -596,7 +670,6 @@ fn reads_package_manifests(code_rule: &CompiledCodeRule) -> bool {
         }
         ClauseKind::Budget { query, .. } => in_manifest_family(&query.ast.query),
         ClauseKind::Llm => false,
-        #[cfg(test)]
         ClauseKind::Relational(plan) => plan
             .inputs
             .iter()
@@ -641,24 +714,28 @@ fn clear_if_unlocked(mutex: &Mutex<WorkspaceState>) {
     }
 }
 
-// Poisoned state cannot be evaluated, but its guard still owns the close
-// handoff: release it, then retry cleanup if close lost the lock race.
-fn discard_poisoned_guard(
+/// A panic poisoned the state, so nothing proves it consistent: the workspace closes, and this
+/// call and every later one fail as on a closed workspace, which no host retries, rather than
+/// answer busy. The guard still owns the close handoff: dropped as a lease, it clears the state,
+/// or leaves that to whichever lease holds the lock by then.
+pub(super) fn close_poisoned(
     guard: MutexGuard<'_, WorkspaceState>,
     mutex: &Mutex<WorkspaceState>,
     closed: &AtomicBool,
-) {
+) -> napi::Error {
+    closed.store(true, Ordering::Release);
     drop(StateLease {
         guard: Some(guard),
         mutex,
         closed,
     });
+    invalid("policy workspace is closed")
 }
 
-pub(super) struct StateLease<'a> {
-    pub(super) guard: Option<MutexGuard<'a, WorkspaceState>>,
-    pub(super) mutex: &'a Mutex<WorkspaceState>,
-    pub(super) closed: &'a AtomicBool,
+pub struct StateLease<'a> {
+    pub guard: Option<MutexGuard<'a, WorkspaceState>>,
+    pub mutex: &'a Mutex<WorkspaceState>,
+    pub closed: &'a AtomicBool,
 }
 impl std::ops::Deref for StateLease<'_> {
     type Target = WorkspaceState;
@@ -680,22 +757,22 @@ impl Drop for StateLease<'_> {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Runs once, inside the next storage attach on this thread, while the attach still holds the
     /// workspace lock: a test lands `close` there.
-    pub(super) static ON_STORAGE_ATTACHED: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+    pub static ON_STORAGE_ATTACHED: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// The storage retries and the retry wait (nanoseconds) the last apply on this thread
     /// reported: they reach the host only in profile output.
-    pub(super) static LAST_APPLY_STORAGE_RETRIES: std::cell::Cell<(usize, u64)> =
+    pub static LAST_APPLY_STORAGE_RETRIES: std::cell::Cell<(usize, u64)> =
         const { std::cell::Cell::new((0, 0)) };
     /// The files the last apply on this thread left unpublished because the store was busy.
-    pub(super) static LAST_APPLY_UNPUBLISHED_FILES: std::cell::Cell<usize> =
+    pub static LAST_APPLY_UNPUBLISHED_FILES: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
 }
 
@@ -722,6 +799,8 @@ pub struct WorkspaceStorageTask {
     root: String,
     /// The store file the host named.
     store_path: PathBuf,
+    /// The names whose files the store never holds.
+    secret_names: Arc<SecretNames>,
 }
 
 #[cfg(not(feature = "headless"))]
@@ -730,70 +809,79 @@ impl Task for WorkspaceStorageTask {
     type JsValue = StorageAttachment;
 
     fn compute(&mut self) -> Result<StorageAttachment> {
-        check_closed(&self.closed)?;
-        // A workspace Git cannot describe (no repository, an unreadable untracked directory, a
-        // corrupt index) attaches no store: the host walks it, reporting what it cannot read,
-        // and interactive edits evaluate without reuse. Only a root outside any repository is
-        // expected; any other cause is reported, so reuse is never lost silently.
-        let discovery_started = Instant::now();
-        let discovered = crate::git_workspace::discover(std::path::Path::new(&self.root));
-        let discovery_milliseconds = discovery_started.elapsed().as_secs_f64() * 1000.0;
-        let discovered = match discovered {
-            Ok(discovered) => discovered,
-            Err(error) => {
-                return Ok(StorageAttachment {
-                    attached: false,
-                    reason: (!error.is_no_repository()).then(|| error.to_string()),
-                    discovery_milliseconds,
-                    publication_milliseconds: 0.0,
-                });
+        crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            check_closed(&self.closed)?;
+            // A workspace Git cannot describe (no repository, an unreadable untracked directory, a
+            // corrupt index) attaches no store: the host walks it, reporting what it cannot read,
+            // and interactive edits evaluate without reuse. Only a root outside any repository is
+            // expected; any other cause is reported, so reuse is never lost silently.
+            let discovery_started = Instant::now();
+            let discovered = crate::git_workspace::discover(std::path::Path::new(&self.root));
+            let discovery_milliseconds = discovery_started.elapsed().as_secs_f64() * 1000.0;
+            let discovered = match discovered {
+                Ok(discovered) => discovered,
+                Err(error) => {
+                    return Ok(StorageAttachment {
+                        attached: false,
+                        reason: (!error.is_no_repository()).then(|| error.to_string()),
+                        discovery_milliseconds,
+                        publication_milliseconds: 0.0,
+                    });
+                }
+            };
+            // A busy store is a cache miss: the workspace runs without reuse, and says why.
+            let publication_started = Instant::now();
+            let attached = attach_storage(
+                &self.root,
+                discovered,
+                std::mem::take(&mut self.store_path),
+                Arc::clone(&self.secret_names),
+            )?;
+            let publication_milliseconds = publication_started.elapsed().as_secs_f64() * 1000.0;
+            let context = match attached {
+                Attached::Storage(context) => context,
+                Attached::Busy(reason) => {
+                    return Ok(StorageAttachment {
+                        attached: false,
+                        reason: Some(reason),
+                        discovery_milliseconds,
+                        publication_milliseconds,
+                    });
+                }
+            };
+            let guard = match self.state.lock() {
+                Ok(guard) => guard,
+                Err(error) => {
+                    return Err(close_poisoned(
+                        error.into_inner(),
+                        &self.state,
+                        &self.closed,
+                    ));
+                }
+            };
+            // A close that lands while this holds the lock cannot clear the state; the lease does on drop.
+            let mut state = StateLease {
+                guard: Some(guard),
+                mutex: &self.state,
+                closed: &self.closed,
+            };
+            check_closed(&self.closed)?;
+            if state.revision != 0 || state.storage.is_some() {
+                return Err(invalid(
+                    "storage must be attached before the workspace's first apply",
+                ));
             }
-        };
-        // A busy store is a cache miss: the workspace runs without reuse, and says why.
-        let publication_started = Instant::now();
-        let attached =
-            attach_storage(&self.root, discovered, std::mem::take(&mut self.store_path))?;
-        let publication_milliseconds = publication_started.elapsed().as_secs_f64() * 1000.0;
-        let context = match attached {
-            Attached::Storage(context) => context,
-            Attached::Busy(reason) => {
-                return Ok(StorageAttachment {
-                    attached: false,
-                    reason: Some(reason),
-                    discovery_milliseconds,
-                    publication_milliseconds,
-                });
+            state.storage = Some(context);
+            #[cfg(any(test, feature = "test-hooks"))]
+            if let Some(on_attached) = ON_STORAGE_ATTACHED.take() {
+                on_attached();
             }
-        };
-        let guard = match self.state.lock() {
-            Ok(guard) => guard,
-            Err(error) => {
-                discard_poisoned_guard(error.into_inner(), &self.state, &self.closed);
-                return Err(invalid("policy workspace is unavailable"));
-            }
-        };
-        // A close that lands while this holds the lock cannot clear the state; the lease does on drop.
-        let mut state = StateLease {
-            guard: Some(guard),
-            mutex: &self.state,
-            closed: &self.closed,
-        };
-        check_closed(&self.closed)?;
-        if state.revision != 0 || state.storage.is_some() {
-            return Err(invalid(
-                "storage must be attached before the workspace's first apply",
-            ));
-        }
-        state.storage = Some(context);
-        #[cfg(test)]
-        if let Some(on_attached) = ON_STORAGE_ATTACHED.take() {
-            on_attached();
-        }
-        Ok(StorageAttachment {
-            attached: true,
-            reason: None,
-            discovery_milliseconds,
-            publication_milliseconds,
+            Ok(StorageAttachment {
+                attached: true,
+                reason: None,
+                discovery_milliseconds,
+                publication_milliseconds,
+            })
         })
     }
 
@@ -803,24 +891,33 @@ impl Task for WorkspaceStorageTask {
 }
 
 pub struct WorkspaceApplyTask {
-    pub(super) state: Arc<Mutex<WorkspaceState>>,
-    pub(super) closed: Arc<AtomicBool>,
-    pub(super) request_json: String,
-    pub(super) request_buffer: Option<Vec<u8>>,
-    pub(super) request_direct: Option<Request>,
+    pub state: Arc<Mutex<WorkspaceState>>,
+    pub closed: Arc<AtomicBool>,
+    pub request_json: String,
+    pub request_buffer: Option<Vec<u8>>,
+    pub request_direct: Option<Request>,
 }
-pub(super) fn cpu_slot() -> &'static Mutex<()> {
-    static SLOT: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+/// The message a workspace task fails with while another apply holds `cpu_slot`: the host reads this
+/// constant (`isWorkspaceBusy`), pauses and calls again.
+#[napi]
+pub const WORKSPACE_BUSY: &str = "WORKSPACE_BUSY";
+
+/// One apply at a time across the process's workspaces. It guards no data, so it is a mutex a
+/// panic does not poison: an apply that panics while holding it frees it for the next one.
+pub fn cpu_slot() -> &'static parking_lot::Mutex<()> {
+    static SLOT: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
     &SLOT
 }
 impl Task for WorkspaceApplyTask {
     type Output = ResultText;
     type JsValue = ResultText;
     fn compute(&mut self) -> Result<ResultText> {
-        let _slot = cpu_slot()
-            .try_lock()
-            .map_err(|_| invalid("WORKSPACE_BUSY"))?;
-        self.apply_with_slot()
+        crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            let Some(_slot) = cpu_slot().try_lock() else {
+                return Err(invalid(WORKSPACE_BUSY));
+            };
+            self.apply_with_slot()
+        })
     }
     fn resolve(&mut self, _env: Env, output: ResultText) -> Result<ResultText> {
         check_closed(&self.closed)?;
@@ -830,7 +927,7 @@ impl Task for WorkspaceApplyTask {
     /// own purge.
     fn finally(self, _env: Env) -> Result<()> {
         drop(self);
-        crate::purge_allocator_pages();
+        crate::code_rule_dsl::prof::purge_allocator_pages();
         Ok(())
     }
 }
@@ -864,8 +961,11 @@ impl WorkspaceApplyTask {
         let guard = match self.state.lock() {
             Ok(guard) => guard,
             Err(error) => {
-                discard_poisoned_guard(error.into_inner(), &self.state, &self.closed);
-                return Err(invalid("policy workspace is unavailable"));
+                return Err(close_poisoned(
+                    error.into_inner(),
+                    &self.state,
+                    &self.closed,
+                ));
             }
         };
         let mut state = StateLease {
@@ -908,15 +1008,23 @@ impl WorkspaceApplyTask {
         let storage = state.storage.clone();
         let producer_batch =
             CrossFileScheduler::prepare(&mut state, &mut jobs, &code_rules, deferred);
-        #[cfg(all(test, feature = "p-anchor-corpus"))]
+        #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
         let anchor_corpus = Arc::clone(&state.anchor_corpus);
+        // Every job reads the import targets of the files the workspace holds now, over disk
+        // below its root as this apply finds it.
+        let import_clauses = state.import_clauses.clone();
+        let import_generation = state.import_generation;
+        let import_view = (!import_clauses.is_empty())
+            .then(|| state.import_files.view(state.import_root.as_deref()));
         let context = JobContext {
-            #[cfg(all(test, feature = "p-anchor-corpus"))]
+            #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
             anchor_corpus: &anchor_corpus,
             code_rules: &code_rules,
             storage: storage.as_ref(),
             closed: &self.closed,
             summarize: CrossFileScheduler::summarizes(&producer_batch),
+            import_view: import_view.as_ref(),
+            import_clauses: &import_clauses,
         };
         let mut evaluation_error = None;
         let phase_a = match run_jobs(&mut jobs, &context) {
@@ -929,12 +1037,13 @@ impl WorkspaceApplyTask {
                 return Err(error);
             }
         };
-        for (path, file, work) in phase_a {
+        for (path, mut file, work) in phase_a {
             match work {
                 Ok(work) => metrics.merge(work),
                 Err(error) if evaluation_error.is_none() => evaluation_error = Some(error),
                 Err(_) => {}
             }
+            file.import_generation = import_generation;
             CrossFileScheduler::record(&mut state, &producer_batch, &path, &file);
             state.insert_file(path, file);
         }
@@ -981,6 +1090,17 @@ impl WorkspaceApplyTask {
             );
         }
         if let Some(storage) = state.storage.clone() {
+            // A file named like one holding secrets is evaluated but never published: the store,
+            // a cache shared by every checkout, keeps no copy of it, so it stays resident.
+            persistence_paths.retain(|path| {
+                if !storage.withholds(path) {
+                    return true;
+                }
+                if let Some(file) = state.files.get_mut(path) {
+                    file.withheld = true;
+                }
+                false
+            });
             let mut busy = removal_busy;
             if !busy && !state.pending_removals.is_empty() {
                 check_closed(&self.closed)?;
@@ -1082,7 +1202,7 @@ impl WorkspaceApplyTask {
                 metrics.storage_released_files += state.release_unpublished_over_budget();
             }
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         {
             LAST_APPLY_STORAGE_RETRIES.set((
                 metrics.storage_retries,
@@ -1143,13 +1263,9 @@ impl WorkspaceApplyTask {
                 files: Vec::new(),
             };
             let dirty = std::mem::take(&mut state.dirty_globals);
-            // P's relational clauses, batched across rules (test-only, open item O18).
-            #[cfg(test)]
+            // Compatibility relational clauses remain batched across dirty rules.
             let mut relational =
                 evaluate_batched_relations(&mut state, &dirty, &snapshot, &self.closed)?;
-            #[cfg(not(test))]
-            let mut relational =
-                std::collections::BTreeMap::<usize, std::collections::BTreeMap<String, Evaluation>>::new();
             for index in dirty {
                 check_closed(&self.closed)?;
                 let budget = MatchBudget::work(&self.closed, CLAUSE_WORK_BUDGET);
@@ -1159,7 +1275,7 @@ impl WorkspaceApplyTask {
                     &snapshot,
                     relational.remove(&index).unwrap_or_default(),
                 )?;
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-hooks"))]
                 super::pass_deadline_at_test_phase("global-done");
                 // Only exhaustion some step observed cut it short; a finished evaluation is kept.
                 if budget.observed() {
@@ -1167,6 +1283,7 @@ impl WorkspaceApplyTask {
                         overflow_evaluation("runtime", "global evaluation time budget exceeded");
                 }
                 metrics.visited_nodes += evaluation.metrics.visited_nodes;
+                metrics.observe_native_work(&evaluation.metrics);
                 let previous = state.global_results.insert(index, evaluation);
                 complete |= !replace_global_changes(
                     previous.as_ref(),
@@ -1201,7 +1318,7 @@ struct PurgeAfterApply;
 
 impl Drop for PurgeAfterApply {
     fn drop(&mut self) {
-        crate::purge_allocator_pages();
+        crate::code_rule_dsl::prof::purge_allocator_pages();
     }
 }
 
@@ -1217,26 +1334,31 @@ impl Task for WorkspaceResultPageTask {
     type JsValue = String;
 
     fn compute(&mut self) -> Result<String> {
-        if self.maximum_bytes == 0 || self.maximum_bytes > 64 * 1024 * 1024 {
-            return Err(invalid(
-                "result page limit must be between 1 byte and 64 MiB",
-            ));
-        }
-        check_closed(&self.closed)?;
-        let guard = match self.state.lock() {
-            Ok(guard) => guard,
-            Err(error) => {
-                discard_poisoned_guard(error.into_inner(), &self.state, &self.closed);
-                return Err(invalid("policy workspace is unavailable"));
+        crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            if self.maximum_bytes == 0 || self.maximum_bytes > 64 * 1024 * 1024 {
+                return Err(invalid(
+                    "result page limit must be between 1 byte and 64 MiB",
+                ));
             }
-        };
-        let mut state = StateLease {
-            guard: Some(guard),
-            mutex: &self.state,
-            closed: &self.closed,
-        };
-        check_closed(&self.closed)?;
-        serialize_result_page(&mut state, self.cursor, self.maximum_bytes)
+            check_closed(&self.closed)?;
+            let guard = match self.state.lock() {
+                Ok(guard) => guard,
+                Err(error) => {
+                    return Err(close_poisoned(
+                        error.into_inner(),
+                        &self.state,
+                        &self.closed,
+                    ));
+                }
+            };
+            let mut state = StateLease {
+                guard: Some(guard),
+                mutex: &self.state,
+                closed: &self.closed,
+            };
+            check_closed(&self.closed)?;
+            serialize_result_page(&mut state, self.cursor, self.maximum_bytes)
+        })
     }
 
     fn resolve(&mut self, _env: Env, output: String) -> Result<String> {
@@ -1263,8 +1385,11 @@ impl WorkspaceCompletionTask {
         let guard = match self.state.lock() {
             Ok(guard) => guard,
             Err(error) => {
-                discard_poisoned_guard(error.into_inner(), &self.state, &self.closed);
-                return Err(invalid("policy workspace is unavailable"));
+                return Err(close_poisoned(
+                    error.into_inner(),
+                    &self.state,
+                    &self.closed,
+                ));
             }
         };
         let state = StateLease {
@@ -1353,61 +1478,63 @@ impl Task for WorkspaceCompletionTask {
     type JsValue = ();
 
     fn compute(&mut self) -> Result<()> {
-        check_closed(&self.closed)?;
-        // One deadline for the publication under the lock and the completion write after it,
-        // so an apply waiting on the lock waits at most one.
-        let _deadline = OperationDeadline::enter();
-        let (storage, catalog, revision, server_graph) = {
-            let mut state = self.lock_state()?;
-            let Some(storage) = state.storage.clone() else {
-                return Ok(());
+        crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            check_closed(&self.closed)?;
+            // One deadline for the publication under the lock and the completion write after it,
+            // so an apply waiting on the lock waits at most one.
+            let _deadline = OperationDeadline::enter();
+            let (storage, catalog, revision, server_graph) = {
+                let mut state = self.lock_state()?;
+                let Some(storage) = state.storage.clone() else {
+                    return Ok(());
+                };
+                if state.store_cooling_down() {
+                    return Err(invalid(StoreError::Busy.to_string()));
+                }
+                let catalog = candidate_catalog(&state.code_rules)?;
+                // Files a busy store left unpublished are published before the completion is
+                // recorded; a store that stays busy keeps them unpublished and reports busy.
+                publish_unpublished(&mut state, &storage, &self.closed)?;
+                if state.store_cooling_down() {
+                    return Err(invalid(StoreError::Busy.to_string()));
+                }
+                let server_graph = state
+                    .code_rules
+                    .iter()
+                    .any(|code_rule| code_rule.reads_server_graph());
+                (storage, catalog, i64::from(state.revision), server_graph)
             };
-            if state.store_cooling_down() {
-                return Err(invalid(StoreError::Busy.to_string()));
-            }
-            let catalog = candidate_catalog(&state.code_rules)?;
-            // Files a busy store left unpublished are published before the completion is
-            // recorded; a store that stays busy keeps them unpublished and reports busy.
-            publish_unpublished(&mut state, &storage, &self.closed)?;
-            if state.store_cooling_down() {
-                return Err(invalid(StoreError::Busy.to_string()));
-            }
-            let server_graph = state
-                .code_rules
-                .iter()
-                .any(|code_rule| code_rule.reads_server_graph());
-            (storage, catalog, i64::from(state.revision), server_graph)
-        };
-        let completed_at = unix_seconds()?;
-        let written = if let Some(repository) = &storage.repository {
-            let mut manifests = crate::code_rule_dsl::package_manifest::Manifests::new(
-                repository.worktree_root.join(&storage.repository_prefix),
-            )
-            .reading_server_graphs(server_graph);
-            let directories =
-                reusable_directories(repository, &storage.repository_prefix, &mut manifests);
-            storage.store.complete_directories(
-                WorkspaceCompletion {
-                    workspace_id: storage.workspace_id,
+            let completed_at = unix_seconds()?;
+            let written = if let Some(repository) = &storage.repository {
+                let mut manifests = super::ingest::repository_context(
+                    repository.worktree_root.join(&storage.repository_prefix),
+                    server_graph,
+                );
+                let directories =
+                    reusable_directories(repository, &storage.repository_prefix, &mut *manifests);
+                storage.store.complete_directories(
+                    WorkspaceCompletion {
+                        workspace_id: storage.workspace_id,
+                        revision,
+                        completed_at,
+                    },
+                    catalog,
+                    &directories,
+                )
+            } else {
+                storage.store.complete_workspace_revision(
+                    storage.workspace_id,
                     revision,
+                    catalog,
                     completed_at,
-                },
-                catalog,
-                &directories,
-            )
-        } else {
-            storage.store.complete_workspace_revision(
-                storage.workspace_id,
-                revision,
-                catalog,
-                completed_at,
-            )
-        };
-        if matches!(written, Err(StoreError::Busy)) {
-            self.lock_state()?
-                .note_store_busy("while recording repository reuse");
-        }
-        written.map_err(|error| invalid(error.to_string()))
+                )
+            };
+            if matches!(written, Err(StoreError::Busy)) {
+                self.lock_state()?
+                    .note_store_busy("while recording repository reuse");
+            }
+            written.map_err(|error| invalid(error.to_string()))
+        })
     }
 
     fn resolve(&mut self, _env: Env, output: ()) -> Result<()> {

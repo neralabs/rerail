@@ -30,6 +30,7 @@ import type {
   CodeRuleDslCalls,
   CodeRuleDslFileCondition,
   CodeRuleDslFormatArgs,
+  CodeRuleDslImportTarget,
   CodeRuleDslLanguageOptions,
   CodeRuleDslLayout,
   CodeRuleDslParse,
@@ -146,7 +147,7 @@ export const codeRuleViolationSpecSchema = z
 export type CodeRuleAstRule = CodeRuleDslAstRule;
 export type CodeRuleAstRelation = CodeRuleDslAstRelation;
 
-const AST_RULE_KEYS = ["pattern", "kind", "regex", "nthChild", "all", "any", "not", "matches", "inside", "has", "precedes", "follows", "compare", "count", "resolves", "value", "arguments", "binds", "parse", "capture", "formatArgs", "layout", "filePath", "host", "embedded", "calls"] as const;
+const AST_RULE_KEYS = ["pattern", "kind", "regex", "nthChild", "all", "any", "not", "matches", "inside", "has", "precedes", "follows", "compare", "count", "resolves", "value", "arguments", "binds", "parse", "capture", "formatArgs", "layout", "filePath", "host", "embedded", "calls", "importTarget"] as const;
 /** The grammars `parse` applies and their kinds (the engine's `literal::Grammar`). */
 export const CODE_RULE_PARSE_GRAMMARS = ["percentFormat", "braceFormat", "annotation", "eslintDirective", "printfFormat", "scanfFormat", "phpDoc", "rustFormat", "identifierWords", "pythonFString"] as const;
 export const CODE_RULE_PARSE_KINDS: Record<(typeof CODE_RULE_PARSE_GRAMMARS)[number], readonly string[]> = {
@@ -404,6 +405,18 @@ export const codeRuleTransformationSchema = z.union([
     .strict(),
   z.object({ lines: z.object({ source: transformSource, default: z.string().optional() }).strict() }).strict(),
   z.object({ count: z.object({ source: transformSource, default: z.string().optional() }).strict() }).strict(),
+  z
+    .object({
+      toPrecision: z
+        .object({
+          source: transformSource,
+          default: z.string().optional(),
+          value: z.boolean().optional(),
+          digits: z.union([z.number().int().min(1).max(100), z.string().regex(/^\$[A-Z0-9_]+$/, "toPrecision digits are a number from 1 to 100 or a $NAME variable.")]),
+        })
+        .strict(),
+    })
+    .strict(),
 ]) as unknown as z.ZodType<CodeRuleDslTransformation>;
 
 /** The transformation's body: its source and settings. */
@@ -413,6 +426,7 @@ function transformBody(transformation: CodeRuleDslTransformation): { source: str
   if ("convert" in transformation) return transformation.convert;
   if ("line" in transformation) return transformation.line;
   if ("lines" in transformation) return transformation.lines;
+  if ("toPrecision" in transformation) return transformation.toPrecision;
   return transformation.count;
 }
 
@@ -439,9 +453,14 @@ export const codeRuleValueTestSchema = z
     le: z.number().optional(),
     truthy: z.boolean().optional(),
     follow: z.boolean().optional(),
+    name: z.boolean().optional(),
   })
   .strict()
-  .refine(value => Object.keys(value).some(key => key !== "follow"), "value must hold a predicate: eq, type, constant, startsWith, regex, bitsAny, gt, ge, lt, le or truthy.") as unknown as z.ZodType<CodeRuleDslValueTest>;
+  .refine(value => Object.keys(value).some(key => key !== "follow" && key !== "name"), "value must hold a predicate: eq, type, constant, startsWith, regex, bitsAny, gt, ge, lt, le or truthy.")
+  .refine(
+    value => value.name !== true || Object.keys(value).every(key => ["eq", "startsWith", "regex", "name"].includes(key)),
+    "name: true reads a name, a string, which only eq, startsWith and regex test.",
+  ) as unknown as z.ZodType<CodeRuleDslValueTest>;
 
 /** A signature entry: a slot name (an identifier), `/` or `*`. */
 const signatureEntry = z.string().max(256).regex(/^(?:[A-Za-z_$][A-Za-z0-9_$]*|\/|\*)$/, "Must be a slot name (an identifier), / or *.");
@@ -692,13 +711,20 @@ const moduleRegex = z
 const packageConditionSchema = z
   .object({
     bin: z.boolean().optional(),
-    nodeVersion: z.object({ subsetOf: nonEmptyString }).strict().optional(),
+    nodeVersion: z
+      .union([z.object({ subsetOf: nonEmptyString }).strict(), z.object({ notSubsetOf: nonEmptyString }).strict()])
+      .optional(),
     dependsOn: z.array(nonEmptyString).min(1).optional(),
     path: moduleRegex.optional(),
     serverGraph: z.boolean().optional(),
+    private: z.boolean().optional(),
+    published: z.boolean().optional(),
   })
   .strict()
-  .refine(condition => Object.values(condition).some(value => value !== undefined), "Set bin, nodeVersion, dependsOn, path or serverGraph.");
+  .refine(
+    condition => Object.values(condition).some(value => value !== undefined),
+    "Set bin, nodeVersion, dependsOn, path, serverGraph, private or published.",
+  );
 export const codeRuleFileConditionSchema = z
   .object({
     path: moduleRegex.optional(),
@@ -708,11 +734,12 @@ export const codeRuleFileConditionSchema = z
     package: z.union([moduleRegex, packageConditionSchema]).optional(),
     inPackage: z.boolean().optional(),
     jsxRuntime: z.array(z.enum(["react", "other", "unknown"])).min(1).optional(),
+    byteOrderMark: z.boolean().optional(),
   })
   .strict()
   .refine(
     file => Object.values(file).some(value => value !== undefined),
-    "Set path, declaration, module, moduleName, package, inPackage or jsxRuntime.",
+    "Set path, declaration, module, moduleName, package, inPackage, jsxRuntime or byteOrderMark.",
   ) as unknown as z.ZodType<CodeRuleDslFileCondition>;
 export const codeRuleLanguageOptionsSchema = z
   .object({
@@ -720,6 +747,7 @@ export const codeRuleLanguageOptionsSchema = z
       .union([z.literal("latest"), z.number().int().refine(isEcmaVersion, `ecmaVersion must be "latest", 3, 5, 6 to ${CODE_RULE_LATEST_ECMA_VERSION - 2009}, or 2015 to ${CODE_RULE_LATEST_ECMA_VERSION}.`)])
       .optional(),
     sourceType: z.enum(CODE_RULE_SOURCE_TYPES).optional(),
+    moduleSystem: z.enum(["file", "package-type"]).optional(),
     globals: z
       .record(resolveIdentifier, z.union([z.enum(CODE_RULE_GLOBAL_SETTINGS), z.boolean(), z.null()]))
       .refine(globals => Object.keys(globals).length <= CODE_RULE_MAX_LANGUAGE_GLOBALS, `At most ${CODE_RULE_MAX_LANGUAGE_GLOBALS} globals.`)
@@ -740,6 +768,10 @@ export const codeRuleLanguageOptionsSchema = z
   .refine(
     options => (options.sourceType ?? "module") !== "module" || options.ecmaVersion === undefined || options.ecmaVersion === "latest" || options.ecmaVersion >= 6,
     'sourceType "module" (the default) needs ecmaVersion 2015 or later; ESLint refuses it.',
+  )
+  .refine(
+    options => options.sourceType === undefined || options.moduleSystem === undefined || options.moduleSystem === "file",
+    "moduleSystem decides a file's module system only where sourceType does not; set one of them.",
   ) as unknown as z.ZodType<CodeRuleDslLanguageOptions>;
 
 const lineCountValue = z.number().int().nonnegative();
@@ -767,6 +799,25 @@ export const codeRuleLayoutSchema = z
     context: z.object({ before: z.number().int().min(0).max(64).optional(), after: z.number().int().min(0).max(64).optional(), through: z.string().optional(), regex: z.string() }).strict().optional() })
   .strict()
   .refine(layout => Object.values(layout).some(value => value !== undefined), "layout must hold span, start, before or after.") as unknown as z.ZodType<CodeRuleDslLayout>;
+
+/** `importTarget`'s module types, as eslint-plugin-n's `ImportTarget` names them (the engine's `ModuleType`). */
+const CODE_RULE_IMPORT_TARGET_MODULE_TYPES = ["unknown", "relative", "absolute", "node", "npm", "http", "data"] as const;
+const importTargetModuleType = z.enum(CODE_RULE_IMPORT_TARGET_MODULE_TYPES);
+/** `importTarget`: `via` and each fact listed; the engine refuses it outside JavaScript and TypeScript. */
+export const codeRuleImportTargetSchema = z
+  .object({
+    via: z.enum(["import", "require"]),
+    moduleType: z.union([importTargetModuleType, z.array(importTargetModuleType).min(1)]).optional(),
+    builtin: z.boolean().optional(),
+    resolved: z.boolean().optional(),
+    failed: z.boolean().optional(),
+    extensionSpelled: z.boolean().optional(),
+    published: z.boolean().optional(),
+    devDependency: z.boolean().optional(),
+    declared: z.boolean().optional(),
+    aliased: z.boolean().optional(),
+  })
+  .strict() as unknown as z.ZodType<CodeRuleDslImportTarget>;
 
 export const codeRuleNthChildSchema: z.ZodType<CodeRuleDslNthChild> = z.lazy(() =>
   z.union([
@@ -804,6 +855,7 @@ export const codeRuleAstRuleSchema: z.ZodType<CodeRuleDslAstRule> = z.lazy(() =>
         host: codeRuleAstRuleSchema,
         embedded: codeRuleAstRuleSchema,
         calls: codeRuleCallsSchema,
+        importTarget: codeRuleImportTargetSchema,
       }),
     })
     .strict()
@@ -841,6 +893,7 @@ export const codeRuleAstRelationSchema: z.ZodType<CodeRuleDslAstRelation> = z.la
         host: codeRuleAstRuleSchema,
         embedded: codeRuleAstRuleSchema,
         calls: codeRuleCallsSchema,
+        importTarget: codeRuleImportTargetSchema,
       }),
     })
     .strict()
@@ -902,6 +955,7 @@ export const codeRuleParseSchema: z.ZodType<CodeRuleDslParse> = z.lazy(() =>
       follows: codeRuleAstRelationSchema.optional(),
       compare: codeRuleCompareSchema.optional(),
       count: codeRuleAstCountSchema.optional(),
+      filePath: z.object({ regex: nonEmptyString.optional(), notRegex: nonEmptyString.optional() }).strict().refine(value => value.regex !== undefined || value.notRegex !== undefined).optional(),
       ...semanticRuleShape({
         resolves: codeRuleResolvesSchema,
         value: codeRuleValueTestSchema,
@@ -914,6 +968,7 @@ export const codeRuleParseSchema: z.ZodType<CodeRuleDslParse> = z.lazy(() =>
         host: codeRuleAstRuleSchema,
         embedded: codeRuleAstRuleSchema,
         calls: codeRuleCallsSchema,
+        importTarget: codeRuleImportTargetSchema,
       }),
     })
     .strict()
@@ -955,6 +1010,7 @@ export const codeRulePredicateSchema: z.ZodType<CodeRuleDslPredicate> = z.lazy((
     z.object({ le: codeRuleValuePair }).strict(),
     z.object({ gt: codeRuleValuePair }).strict(),
     z.object({ ge: codeRuleValuePair }).strict(),
+
   ]),
 );
 
@@ -1298,11 +1354,12 @@ export const codeRuleQuerySchema: z.ZodType<CodeRuleDslQuery> = z.lazy(() =>
         })
         .optional(),
       select_when: z.object({ select: codeRuleQuerySchema, exists: codeRuleQuerySchema }).strict().optional(),
+      file: z.strictObject({}).optional(),
     })
     .strict()
     .refine(
-      query => (["regex", "ast", "select_when"] as const).filter(key => query[key] !== undefined).length === 1,
-      "A query must contain exactly one source: regex, ast, or select_when.",
+      query => (["regex", "ast", "select_when", "file"] as const).filter(key => query[key] !== undefined).length === 1,
+      "A query must contain exactly one source: regex, ast, select_when, or file.",
     ) as unknown as z.ZodType<CodeRuleDslQuery>,
 );
 
@@ -1409,26 +1466,35 @@ const FIX_NEEDS_SOURCE_TEXT = "Only forbid clauses over an ast or file.content r
 
 type ViolationIssue = (path: string, message: string) => void;
 
-/** Anchors and fixes the emitting query's matches cannot carry: no query, a fact, or a file.path regex. */
+/** Whether the query's matches are a file's path, with no source location: a `file` query or a file.path regex. */
+function matchesPath(query: CodeRuleDslQuery): boolean {
+  if ("file" in query && query.file !== undefined) return true;
+  return "regex" in query && query.regex !== undefined && query.regex.source === "file.path";
+}
+
+/** Anchors and fixes the emitting query's matches cannot carry: no query, a fact, a file query, or a file.path regex. */
 function checkViolationSource(query: CodeRuleDslQuery | undefined, violation: CodeRuleDslReportingClause["violation"], issue: ViolationIssue): void {
   if (query === undefined) {
     if (violation.anchor !== "witness.span") issue("anchor", "require_each, budget, and llm violations support only witness.span.");
     if (violation.fix !== undefined) issue("fix", FIX_NEEDS_SOURCE_TEXT);
     return;
   }
+  if (matchesPath(query) && violation.anchor.startsWith("capture.")) {
+    issue("anchor", "A file query or file.path regex matches a file's path, which has no source location a capture can anchor.");
+  }
   if (violation.fix === undefined) return;
   if ("fact" in query && query.fact !== undefined) issue("fix", FIX_NEEDS_SOURCE_TEXT);
-  else if ("regex" in query && query.regex !== undefined && query.regex.source === "file.path") {
-    issue("fix", "A file.path regex match is not source text a fix can replace.");
-  }
+  else if ("file" in query && query.file !== undefined) issue("fix", FIX_NEEDS_SOURCE_TEXT);
+  else if (matchesPath(query)) issue("fix", "A file.path regex match is not source text a fix can replace.");
 }
 
-/** A non-ast violation's anchor and message may name only the regex's named groups. */
+/** A non-ast violation's anchor and message may name only the regex's named groups; a path match is anchored by no group. */
 function checkViolationCaptures(query: CodeRuleDslQuery | undefined, violation: CodeRuleDslReportingClause["violation"], issue: ViolationIssue): void {
   const regex = query !== undefined && "regex" in query ? query.regex : undefined;
   const groups = regex === undefined ? new Set<string>() : regexGroupNames(regex.pattern);
   const capture = /^capture\.(\w+)$/.exec(violation.anchor)?.[1];
-  if (capture !== undefined && !groups.has(capture)) issue("anchor", `capture.${capture} names no capture of the query.`);
+  const pathMatch = query !== undefined && matchesPath(query);
+  if (capture !== undefined && !pathMatch && !groups.has(capture)) issue("anchor", `capture.${capture} names no capture of the query.`);
   for (const name of codeRuleMessageVariables(violation.message)) {
     if (!groups.has(name)) issue("message", `$${name} names no capture of the query; write \\$${name} for literal text.`);
   }
@@ -1462,7 +1528,6 @@ function checkViolationAgainstQuery(clause: CodeRuleDslReportingClause, context:
 export const codeRuleDefineSchema = z
   .object({
     report_when: z.object({ count: z.object({ gt: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) }).strict() }).strict().optional(),
-
     language: z.enum(CODE_RULE_LANGUAGE_IDS).optional(),
     utils: z.record(utilityId, codeRuleUtilitySchema).optional(),
     options: z.record(optionName, codeRuleOptionDeclarationSchema).optional(),
@@ -1505,16 +1570,20 @@ export const codeRuleClauseSchema = z
         z.object({ name: nonEmptyString, query: nonEmptyString, indexes: z.array(z.array(nonEmptyString).min(1).max(16)).max(8).optional(),
           deferred: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/), nonEmptyString).refine(fields => Object.keys(fields).length >= 1 && Object.keys(fields).length <= 32 && new Set(Object.keys(fields).map(s => s.toLowerCase())).size === Object.keys(fields).length, "Deferred columns must contain 1 to 32 distinct fields.").optional(),
         }).strict(),
+        z.object({ name: nonEmptyString, pythonAst: z.object({ roots: nonEmptyString, syntax: nonEmptyString,
+          fields: z.array(z.enum(["dump", "body_sha256", "signature_sha256", "identifier", "unparse", "literal_json", "dump_sha256", "column", "repr_unparse"])).min(1).max(9).refine(fields => new Set(fields).size === fields.length, "Python AST fields must be distinct."),
+        }).strict() }).strict(),
         z.object({ name: nonEmptyString, reachability: z.object({ roots: nonEmptyString, edges: nonEmptyString.optional(), syntax: nonEmptyString.optional(),
           batchSize: z.number().int().min(1).max(4096).optional(),
           graph: z.enum(["directed", "forest"]).optional(),
-        }).strict().refine(s => s.syntax === undefined ? s.edges !== undefined : s.edges === undefined && s.graph === undefined, "Reachability requires either edges or syntax.") }).strict(),
+          selection: z.literal("memoized-first").optional(), sinks: nonEmptyString.optional(), match: z.enum(["node", "edge"]).optional(),
+        }).strict().refine(s => s.syntax === undefined ? s.edges !== undefined : s.edges === undefined && s.graph === undefined, "Reachability requires either edges or syntax.").refine(s => s.selection === undefined ? s.sinks === undefined && s.match === undefined : s.sinks !== undefined && s.edges !== undefined && s.syntax === undefined && s.graph === undefined && s.batchSize === undefined, "Memoized first-match requires roots, edges, sinks and one complete batch.") }).strict(),
       ])).max(64).optional(),
       references: z.object({ language: z.literal("python"),
         siblingLinks: z.array(z.object({ decorator: nonEmptyString, name: z.object({ replace: nonEmptyString, by: z.string() }).strict() }).strict()).min(1).max(32).optional(),
         constructorFields: z.object({ fieldToParameter: z.object({ replace: nonEmptyString, by: z.string() }).strict() }).strict().optional(),
       }).strict().optional(),
-      query: nonEmptyString, key: z.array(nonEmptyString).min(1).max(16).optional(), code: nonEmptyString.optional(),
+      query: nonEmptyString, key: z.array(nonEmptyString).min(1).max(16).optional(), code: nonEmptyString.optional(), message: nonEmptyString.optional(),
     }).strict().refine(plan => plan.requireNonemptyInput === undefined || Object.hasOwn(plan.inputs, plan.requireNonemptyInput),
       "requireNonemptyInput must name a declared input.").refine(plan => plan.partitionBy !== "file" || (plan.references === undefined && plan.locations === undefined),
       "File partitions cannot declare references or diagnostic locations.").optional(),

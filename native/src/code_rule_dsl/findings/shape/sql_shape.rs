@@ -69,7 +69,7 @@ pub(crate) struct SourceUse {
     pub cte: Option<String>,
 }
 #[derive(Debug)]
-pub(crate) struct Emission {
+pub struct Emission {
     pub sql: String,
     pub sources: BTreeMap<String, SourceUse>,
     pub derived_ctes: BTreeMap<String, String>,
@@ -419,7 +419,7 @@ fn fresh_cte(reserved: &mut BTreeSet<String>, prefix: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     fn select(relation: &str, alias: &str, columns: &[&str]) -> Select {
         Select {

@@ -101,7 +101,7 @@ function readsToolFields(condition: MatchCondition | undefined): boolean {
 
 /**
  * Internal testing: conversation rules, both a similarity (cosine) match over a `reference` and a structural match over
- * tool calls. Rerail 0.1.0 releases code rules only.
+ * tool calls. Rerail's latest release ships code rules only.
  */
 export const conversationRuleSchema = z
   .object({

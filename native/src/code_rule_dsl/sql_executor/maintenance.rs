@@ -4,54 +4,23 @@ use super::super::logic::sql::sql_ast::{SqlBinaryOperator as B, SqlExpression as
 use super::*;
 
 #[derive(Clone)]
-pub(super) struct Delta {
+pub struct Delta {
     pub plus: String,
     pub minus: String,
     pub inserted: u64,
     pub deleted: u64,
 }
-pub(super) use super::scratch::Work;
+pub use super::scratch::Work;
 impl Work<'_> {
     pub fn insert(&self, table: &str, query: &str, ignore: bool) -> Result<usize> {
         if let Some(store) = self.versions
             && let Some(old) = store.available(table)
         {
-            if old.len() == 0 {
-                let op = self.profiler.map(|p| {
-                    p.operation(
-                        "bulk relational storage",
-                        ("sql-extension", 0),
-                        0,
-                        vec![("old".into(), 0)],
-                    )
-                });
-                let n = store.select_available(self.db, table, query, ignore, false)?;
-                if let Some(op) = op {
-                    op.finish(n);
-                }
-                return Ok(n);
-            }
-            if self.preparing && ignore && old.len() >= 512 {
-                let op = self.profiler.map(|p| {
-                    p.operation(
-                        "bulk relational storage",
-                        ("sql-extension", 0),
-                        0,
-                        vec![("old".into(), old.len() as i64)],
-                    )
-                });
-                let n = store.select_available(
-                    self.db,
-                    table,
-                    &format!("SELECT * FROM {} UNION ALL {query}", quote(table)),
-                    true,
-                    true,
-                )?;
-                if let Some(op) = op {
-                    op.finish(n);
-                }
-                return Ok(n - old.len());
-            }
+            let mut phase=phase::Phase::default();
+            let input=phase.view(old.columns().len(),query);
+            phase.insert(store,table,&input,ignore)?;
+            return phase.execute(self).map(|counts|counts[table].rows);
+
         }
         self.db
             .execute(
@@ -89,6 +58,52 @@ impl Work<'_> {
             cols.join(",")
         ))
     }
+    pub fn set_table(&mut self,width:usize)->Result<String> {
+        if self.versions.is_some() {self.output_table(width)} else {self.table(width)}
+    }
+    pub fn clear(&self,table:&str)->Result<()> {
+        if let Some(store)=self.versions && let Some(old)=store.available(table) {
+            if old.len()>0 {store.replace_available(table,old.empty_like())?;}
+            return Ok(());
+        }
+        self.db.execute(&format!("DELETE FROM {}",quote(table)),[]).map_err(error)?;
+        Ok(())
+    }
+    pub fn remove(&self,table:&str,keys:&str,width:usize)->Result<usize> {
+        if let Some(store)=self.versions && let Some(old)=store.available(table) {
+            if old.primary_key_len()!=Some(width) || old.columns().len()!=width {return Err(error("Native set deletion requires complete tuple keys"));}
+        }
+        self.remove_keys(table,keys,width)
+    }
+    pub fn remove_keys(&self,table:&str,keys:&str,key_width:usize)->Result<usize> {
+        if let Some(store)=self.versions && let Some(old)=store.available(table) {
+            if old.primary_key_len()!=Some(key_width) {return Err(error("Native deletion requires the primary prefix"));}
+            let mut phase=phase::Phase::default();
+            let keys=phase.view(key_width,&format!("SELECT * FROM {}",quote(keys)));
+            let empty=phase.view(old.columns().len(),&format!("SELECT {} WHERE 0",vec!["NULL";old.columns().len()].join(",")));
+            phase.patch_computed(store,table,&keys,&empty)?;
+            phase.execute(self)?;
+            return Ok(old.len()-store.available(table).unwrap().len());
+        }
+        let cols=(0..key_width).map(|c|format!("c{c}")).collect::<Vec<_>>().join(",");
+        self.db.execute(&format!("DELETE FROM {} WHERE ({cols}) IN(SELECT {cols} FROM {})",quote(table),quote(keys)),[]).map_err(error)
+    }
+    pub fn fold_set(&self,rel:&str,width:usize,candidates:&str,delta:&str)->Result<usize> {
+        if let Some(store)=self.versions.filter(|s|[rel,candidates,delta].iter().all(|r|s.available(r).is_some())) {
+            let mut phase=phase::Phase::default();
+            let next=phase.relation(width,&format!("SELECT n.* FROM {} n WHERE NOT EXISTS(SELECT 1 FROM {} r WHERE {})",quote(candidates),quote(rel),same("r","n",width)));
+            let empty=phase.view(width,&format!("SELECT {} WHERE 0",vec!["NULL";width].join(",")));
+            phase.replace_all(store,delta,&next)?;
+            phase.patch_computed(store,rel,&next,&next)?;
+            phase.replace_all(store,candidates,&empty)?;
+            return phase.execute(self).map(|counts|counts[delta].rows);
+        }
+        self.clear(delta)?;
+        let n=self.insert(delta,&format!("SELECT n.* FROM {} n WHERE NOT EXISTS(SELECT 1 FROM {} r WHERE {})",quote(candidates),quote(rel),same("r","n",width)),false)?;
+        self.insert(rel,&format!("SELECT * FROM {}",quote(delta)),false)?;
+        self.clear(candidates)?;
+        Ok(n)
+    }
     pub fn readonly_rows(&mut self, width: usize, rows: &[Vec<i64>]) -> Result<String> {
         let Some(store) = self.versions else {
             return self.rows(width, rows);
@@ -114,7 +129,7 @@ impl Work<'_> {
         Ok(name)
     }
     pub fn rows(&mut self, width: usize, rows: &[Vec<i64>]) -> Result<String> {
-        let name = self.table(width)?;
+        let name = self.set_table(width)?;
         if let Some(store) = self.versions.filter(|s| s.owns(&name)) {
             let op = self.profiler.map(|p| {
                 p.operation(
@@ -151,30 +166,10 @@ impl Work<'_> {
         {
             return temporal::delta(self, &old, &new);
         }
-        let plus = self.table(width)?;
-        let minus = self.table(width)?;
-        let inserted = self
-            .db
-            .execute(
-                &format!(
-                    "INSERT INTO {plus} SELECT * FROM {} EXCEPT SELECT * FROM {}",
-                    quote(now),
-                    quote(old)
-                ),
-                [],
-            )
-            .map_err(error)? as u64;
-        let deleted = self
-            .db
-            .execute(
-                &format!(
-                    "INSERT INTO {minus} SELECT * FROM {} EXCEPT SELECT * FROM {}",
-                    quote(old),
-                    quote(now)
-                ),
-                [],
-            )
-            .map_err(error)? as u64;
+        let plus = self.set_table(width)?;
+        let minus = self.set_table(width)?;
+        let inserted=self.insert(&plus,&format!("SELECT * FROM {} EXCEPT SELECT * FROM {}",quote(now),quote(old)),false)? as u64;
+        let deleted=self.insert(&minus,&format!("SELECT * FROM {} EXCEPT SELECT * FROM {}",quote(old),quote(now)),false)? as u64;
         Ok(Delta {
             plus,
             minus,
@@ -183,7 +178,7 @@ impl Work<'_> {
         })
     }
     pub fn snapshot(&mut self, rel: &str, width: usize) -> Result<(String, u64)> {
-        let old = self.table(width)?;
+        let old = self.set_table(width)?;
         if let Some(store) = self.versions
             && let Some(source) = store.available(rel)
         {
@@ -191,18 +186,12 @@ impl Work<'_> {
                 return Ok((old, source.len() as u64));
             }
         }
-        let n = self
-            .db
-            .execute(
-                &format!("INSERT OR IGNORE INTO {old} SELECT * FROM {}", quote(rel)),
-                [],
-            )
-            .map_err(error)? as u64;
+        let n=self.insert(&old,&format!("SELECT * FROM {}",quote(rel)),true)? as u64;
         Ok((old, n))
     }
 }
 
-pub(super) fn barrier(q: &Query) -> bool {
+pub fn barrier(q: &Query) -> bool {
     if !q.ctes.is_empty() {
         return true;
     }
@@ -254,14 +243,10 @@ fn same(a: &str, b: &str, width: usize) -> String {
         .collect::<Vec<_>>()
         .join(" AND ")
 }
-fn insert_query(db: &rusqlite::Connection, table: &str, q: &Query) -> Result<usize> {
-    db.execute(
-        &format!("INSERT OR IGNORE INTO {} {}", quote(table), q.render()),
-        [],
-    )
-    .map_err(error)
+fn insert_query(w: &Work<'_>, table: &str, q: &Query) -> Result<usize> {
+    w.insert(table,&q.render(),true)
 }
-pub(super) fn anchor(q: &mut Query, at: usize) {
+pub fn anchor(q: &mut Query, at: usize) {
     let mut delta = q.body.from.remove(at);
     if let Join::On(conditions) = std::mem::replace(&mut delta.join, Join::Cross) {
         q.body.predicates.extend(conditions);
@@ -318,7 +303,7 @@ pub(super) fn anchor(q: &mut Query, at: usize) {
     }
     q.body.from = ordered;
 }
-fn targeted(mut q: Query, table: &str) -> Query {
+pub fn targeted(mut q: Query, table: &str) -> Query {
     let alias = "rr_update_target";
     for (i, (expr, _)) in q.body.columns.clone().iter().enumerate() {
         q.body.predicates.push(E::Binary {
@@ -373,7 +358,7 @@ fn targeted(mut q: Query, table: &str) -> Query {
     }
 }
 
-pub(super) fn maintain(
+pub fn maintain(
     w: &mut Work<'_>,
     run: &mut session::Execution,
     changes: &mut BTreeMap<String, Delta>,
@@ -563,8 +548,7 @@ fn maintain_pass(w: &mut Work<'_>, run: &mut session::Execution,
                     .get(r)
                     .is_some_and(|o| o.after.is_some())
                 {
-                    w.db.execute_batch(&format!("DELETE FROM __sql_changes_{r}"))
-                        .map_err(error)?;
+                    w.clear(&format!("__sql_changes_{r}"))?;
                 }
             }
             let mut p = e.program.clone();
@@ -572,7 +556,7 @@ fn maintain_pass(w: &mut Work<'_>, run: &mut session::Execution,
             p.steps.retain(|s| group.contains(&s.output));
             p.lattices.retain(|(r, _, _)| group.contains(r));
             p.lattice_operations.retain(|r, _| group.contains(r));
-            let waves = schedule::execute_existing(w.db, &p, limit).map_err(error)?;
+            let waves = super::frontiers::execute_existing(w, &p, limit)?;
             positives += u64::from(waves);
             refreshed.push(group.iter().cloned().collect::<Vec<_>>());
             for r in &group {
@@ -651,10 +635,10 @@ fn maintain_pass(w: &mut Work<'_>, run: &mut session::Execution,
         let mut journals = BTreeMap::new();
         let mut front_counts = BTreeMap::new();
         for r in &group {
-            over.insert(r.clone(), w.table(arities[r])?);
-            front.insert(r.clone(), w.table(arities[r])?);
-            candidates.insert(r.clone(), w.table(arities[r])?);
-            journals.insert(r.clone(), w.table(arities[r])?);
+            over.insert(r.clone(), w.set_table(arities[r])?);
+            front.insert(r.clone(), w.set_table(arities[r])?);
+            candidates.insert(r.clone(), w.set_table(arities[r])?);
+            journals.insert(r.clone(), w.set_table(arities[r])?);
             front_counts.insert(r.clone(), 0usize);
         }
         let mut round = 0;
@@ -693,18 +677,14 @@ fn maintain_pass(w: &mut Work<'_>, run: &mut session::Execution,
                             .column_count();
                     variant.body.from[i].relation = source(delta, width);
                     anchor(&mut variant, i);
-                    w.db.execute(&format!("INSERT OR IGNORE INTO {} SELECT n.* FROM ({}) n WHERE EXISTS(SELECT 1 FROM {} r WHERE {})",candidates[&s.output],variant.render(),quote(&s.output),same("r","n",arities[&s.output])),[]).map_err(error)?;
+                    w.insert(&candidates[&s.output],&format!("SELECT n.* FROM ({}) n WHERE EXISTS(SELECT 1 FROM {} r WHERE {})",variant.render(),quote(&s.output),same("r","n",arities[&s.output])),true)?;
                 }
             }
             for r in &group {
-                w.db.execute_batch(&format!("DELETE FROM {}", front[r]))
-                    .map_err(error)?;
-                let n=w.db.execute(&format!("INSERT INTO {} SELECT n.* FROM {} n WHERE NOT EXISTS(SELECT 1 FROM {} r WHERE {})",front[r],candidates[r],over[r],same("r","n",arities[r])),[]).map_err(error)?;
-                w.db.execute_batch(&format!(
-                    "INSERT INTO {} SELECT * FROM {}; DELETE FROM {}",
-                    over[r], front[r], candidates[r]
-                ))
-                .map_err(error)?;
+                w.clear(&front[r])?;
+                let n=w.insert(&front[r],&format!("SELECT n.* FROM {} n WHERE NOT EXISTS(SELECT 1 FROM {} r WHERE {})",candidates[r],over[r],same("r","n",arities[r])),false)?;
+                w.insert(&over[r],&format!("SELECT * FROM {}",front[r]),false)?;
+                w.clear(&candidates[r])?;
                 front_counts.insert(r.clone(), n);
                 added += n;
             }
@@ -746,25 +726,11 @@ fn maintain_pass(w: &mut Work<'_>, run: &mut session::Execution,
         let mut removed = BTreeMap::new();
         let mut added = BTreeMap::new();
         for r in &group {
-            let columns = (0..arities[r])
-                .map(|i| format!("c{i}"))
-                .collect::<Vec<_>>()
-                .join(",");
-            let n =
-                w.db.execute(
-                    &format!(
-                        "DELETE FROM {} WHERE ({columns}) IN (SELECT {columns} FROM {})",
-                        quote(r),
-                        over[r]
-                    ),
-                    [],
-                )
-                .map_err(error)? as u64;
-            removed.insert(r.clone(), n);
-            added.insert(r.clone(), 0u64);
-            w.db.execute_batch(&format!("DELETE FROM {}", front[r]))
-                .map_err(error)?;
-            front_counts.insert(r.clone(), 0);
+            let n=w.remove(r,&over[r],arities[r])? as u64;
+            removed.insert(r.clone(),n);
+            added.insert(r.clone(),0u64);
+            w.clear(&front[r])?;
+            front_counts.insert(r.clone(),0);
         }
         let mut round = 0;
         loop {
@@ -775,7 +741,7 @@ fn maintain_pass(w: &mut Work<'_>, run: &mut session::Execution,
                 if let Some(q) = q {
                     if round == 0 {
                         insert_query(
-                            w.db,
+                            w,
                             &candidates[&s.output],
                             &targeted(q.clone(), &over[&s.output]),
                         )?;
@@ -803,26 +769,18 @@ fn maintain_pass(w: &mut Work<'_>, run: &mut session::Execution,
                                 .column_count();
                         variant.body.from[i].relation = source(delta, width);
                         anchor(&mut variant, i);
-                        insert_query(w.db, &candidates[&s.output], &variant)?;
+                        insert_query(w, &candidates[&s.output], &variant)?;
                     }
                 } else if round == 0 && removed[&s.output] > 0 {
                     w.db.execute_batch(&s.sql).map_err(error)?;
-                    w.db.execute_batch(&format!(
-                        "INSERT OR IGNORE INTO {} SELECT * FROM new_{}; DELETE FROM new_{}",
-                        candidates[&s.output], s.output, s.output
-                    ))
-                    .map_err(error)?;
+                    w.insert(&candidates[&s.output],&format!("SELECT * FROM new_{}",s.output),true)?;
+                    w.clear(&format!("new_{}",s.output))?;
                 }
             }
             let mut grew = 0;
             for r in &group {
-                let n = schedule::sets::fold(w.db, r, arities[r], &candidates[r], &front[r])
-                    .map_err(error)?;
-                w.db.execute_batch(&format!(
-                    "INSERT OR IGNORE INTO {} SELECT * FROM {}",
-                    journals[r], front[r]
-                ))
-                .map_err(error)?;
+                let n=w.fold_set(r,arities[r],&candidates[r],&front[r])?;
+                w.insert(&journals[r],&format!("SELECT * FROM {}",front[r]),true)?;
                 front_counts.insert(r.clone(), n);
                 *added.get_mut(r).unwrap() += n as u64;
                 grew += n;
@@ -834,22 +792,14 @@ fn maintain_pass(w: &mut Work<'_>, run: &mut session::Execution,
             }
         }
         for r in &group {
-            let minus = w.table(arities[r])?;
-            let plus = w.table(arities[r])?;
-            let deleted=w.db.execute(&format!("INSERT INTO {minus} SELECT n.* FROM {} n WHERE NOT EXISTS(SELECT 1 FROM {} r WHERE {})",over[r],quote(r),same("r","n",arities[r])),[]).map_err(error)? as u64;
+            let minus = w.set_table(arities[r])?;
+            let plus = w.set_table(arities[r])?;
+            let deleted=w.insert(&minus,&format!("SELECT n.* FROM {} n WHERE NOT EXISTS(SELECT 1 FROM {} r WHERE {})",over[r],quote(r),same("r","n",arities[r])),false)? as u64;
             // Every new row outside the overdeleted set is an insertion. Candidate additions
             // are retained in a journal, rather than comparing whole result tables.
             let count = run.counts.get(r).copied().unwrap_or(0) + added[r] - removed[r];
             run.counts.insert(r.clone(), count);
-            let inserted =
-                w.db.execute(
-                    &format!(
-                        "INSERT INTO {plus} SELECT * FROM {} EXCEPT SELECT * FROM {}",
-                        journals[r], over[r]
-                    ),
-                    [],
-                )
-                .map_err(error)? as u64;
+            let inserted=w.insert(&plus,&format!("SELECT * FROM {} EXCEPT SELECT * FROM {}",journals[r],over[r]),false)? as u64;
             if run.outputs.contains(r) {
                 outputs.insert(r.clone(), json!({"inserted":inserted,"deleted":deleted}));
             }

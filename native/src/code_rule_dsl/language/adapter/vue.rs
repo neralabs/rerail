@@ -9,21 +9,23 @@
 
 use super::QueryWhen;
 use super::syntax::QueryOptions;
-use super::{Adapter, Ecma, Refusal, Refused, SyntaxFeature, SyntaxRules};
+use super::ecma::Ecma;
+use super::{Adapter, Refusal, Refused, SyntaxFeature, SyntaxRules};
 use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::language::{Family, SourceType};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::matcher::{file_eslint_directives, file_vue_directives};
+use crate::code_rule_dsl::matcher::{file_index};
 use crate::code_rule_dsl::model::ViolationSpec;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
-use crate::code_rule_dsl::suppress::{Suppress, VueDirectives, vue_script_directives};
+use crate::code_rule_dsl::suppress::Suppress;
+use crate::code_rule_dsl::suppress::vue::{VueDirectives, script_directives as vue_script_directives};
 use ast_grep_core::{Doc, Node};
 use std::borrow::Cow;
 use std::ops::Range;
 use std::path::Path;
 
 /// Vue single-file components (`.vue`).
-pub(crate) struct Vue;
+pub struct Vue;
 
 impl Adapter for Vue {
     const FAMILY: Family = Family::Vue;
@@ -35,6 +37,11 @@ impl Adapter for Vue {
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = <Ecma as Adapter>::DECLARATION_FILES;
+    const STRIPS_BOM: bool = <Ecma as Adapter>::STRIPS_BOM;
+    /// The component's own `<!-- -->` comments; its scripts' are read with the Ecma family.
+    const COMMENT_KINDS: &'static [&'static str] = &["comment"];
+    const PREAMBLE_KINDS: &'static [&'static str] = &[];
+    const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Ecma;
     type Value = Ecma;
     type Arguments = Ecma;
@@ -66,10 +73,10 @@ impl Adapter for Vue {
         _: (usize, usize),
     ) -> bool {
         let at = anchored.start;
-        suppress.eslint.as_ref().is_some_and(|rules| {
-            let scripts = file_eslint_directives(|| vue_script_directives(node, source, lines));
+        suppress.get::<crate::code_rule_dsl::suppress::eslint::Suppressions>().is_some_and(|rules| {
+            let scripts = file_index(|| vue_script_directives(node, source, lines));
             scripts.suppresses(rules, at, lines) || {
-                let template = file_vue_directives(|| VueDirectives::read(node, source, lines));
+                let template = file_index(|| VueDirectives::read(node, source, lines));
                 template.suppresses(rules, at, lines)
             }
         })
@@ -117,53 +124,4 @@ impl SyntaxRules for Vue {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::code_rule_dsl::language::GrammarDialect;
-    use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
-    use ast_grep_core::Doc;
-    use std::sync::Arc;
-
-    /// A component's embedded program is a document in the dialect its script's `lang` names
-    /// (`<script setup>`'s first).
-    #[test]
-    fn a_components_program_is_read_in_its_scripts_lang() {
-        for (source, dialect) in [
-            (
-                "<script>\nlet x = 1;\n</script>\n",
-                GrammarDialect::JavaScript,
-            ),
-            (
-                "<script lang=\"jsx\">\nlet x = 1;\n</script>\n",
-                GrammarDialect::JavaScript,
-            ),
-            (
-                "<script lang=\"ts\">\nlet x = 1;\n</script>\n",
-                GrammarDialect::TypeScript,
-            ),
-            (
-                "<script lang='tsx'>\nlet x = <a />;\n</script>\n",
-                GrammarDialect::Tsx,
-            ),
-            (
-                "<script>\nlet y = 1;\n</script>\n<script setup lang=\"ts\">\nlet x = 1;\n</script>\n",
-                GrammarDialect::TypeScript,
-            ),
-            ("<template>{{ x }}</template>\n", GrammarDialect::JavaScript),
-        ] {
-            let grammar = Grammar::new(GrammarDialect::Vue).expect("grammar");
-            let image = TapeImage::parse(&grammar, source, &|| false)
-                .expect("parses")
-                .expect("encodes");
-            let doc = TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false)
-                .expect("restores");
-            let dialects = doc
-                .guests()
-                .expect("owned")
-                .iter()
-                .map(|guest| *guest.doc.get_lang())
-                .collect::<Vec<_>>();
-            assert_eq!(dialects, [dialect], "{source:?}");
-        }
-    }
-}
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

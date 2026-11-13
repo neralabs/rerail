@@ -1,8 +1,24 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl child(p: node, c: node, i: number)
+.decl column_shape_cmp(n: node)
+.decl column_shape_line_of(n: node, s: symbol)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl op_at(n: node, i: number, s: symbol)
 .decl out_scope(d: number)
+.decl reference_parse_call(n: node)
+.decl reference_synthesis_call(n: node)
+.decl reference_synthesis_comment_before(g: node, st: number)
+.decl tape_line(d: number, l: number, sp: node)
+.decl text(n: node, s: symbol)
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, node, field, child, text, line, tape_line, node_text, op_at, token
+.output violation
 in_scope(d) :- doc(d, p, _), glob("l2060_query_builder/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("l2070_batching/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/**/*.py", p).
@@ -13,4 +29,13 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
-.output violation
+column_shape_line_of(n, s) :- node(d, n, _, _, _), line(n, l), tape_line(d, l, sp), text(sp, s).
+column_shape_cmp(n) :- node(_, n, "comparison_operator", _, _), op_at(n, _, "==").
+column_shape_cmp(n) :- node(_, n, "comparison_operator", _, _), op_at(n, _, "!=").
+violation("data-layer-serverplan-name-inference", "column-shape", "SPNI001", p, l) :- column_shape_cmp(n), node_text(n, t), match("(?s:.*)(?:column|\\.keys\\s*\\(|set\\s*\\(\\s*(?:row|rows|value)\\s*\\))(?s:.*)", t), column_shape_line_of(n, s), match("(?s:.*)['\"](?:count|deleted_count|ok|message|__exists|__result)['\"](?s:.*)", s), node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+reference_parse_call(n) :- node(_, n, "call", _, _), field(n, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, m), (m = "endswith" ; m = "partition" ; m = "removeprefix" ; m = "removesuffix" ; m = "rpartition" ; m = "rsplit" ; m = "split" ; m = "startswith").
+violation("data-layer-serverplan-name-inference", "reference-parse", "SPNI002", p, l) :- reference_parse_call(n), field(n, "arguments", g), child(g, s, _), node(_, s, "string", _, _), node_text(s, t), match("^['\"](?:\\.raw|\\.raw_rows|\\.write|\\.updated_rows|\\.updated_count|_count|_updated_rows|_updated_count)['\"]$", t), column_shape_line_of(n, ls), match("(?s:.*)ref[^\n]*?\\.(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)\\s*\\((?s:.*)", ls), node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+reference_synthesis_comment_before(g, st) :- field(_, "arguments", g), child(g, s, 0), node(_, s, _, st, _), token(g, _, t, s0, _), s0 < st, match("#(?s:.*)", t).
+reference_synthesis_call(n) :- node(_, n, "call", _, _), field(n, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, m), (m = "get" ; m = "pop" ; m = "setdefault").
+violation("data-layer-serverplan-name-inference", "reference-synthesis", "SPNI003", p, l) :- reference_synthesis_call(n), field(n, "arguments", g), child(g, s, 0), node(_, s, "string", st, _), !reference_synthesis_comment_before(g, st), node_text(s, t), match("f['\"][^\n]*?\\{[^}]*ref[^}]*\\}[^\n]*?(?:\\.raw|\\.raw_rows|\\.write|\\.updated_rows|\\.updated_count|_count|_updated_rows|_updated_count)(?s:.*)", t), column_shape_line_of(n, ls), match("(?s:.*)ref[^\n]*?\\.(?:get|pop|setdefault)\\s*\\((?s:.*)", ls), node(d, n, _, _, _), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).
+violation("data-layer-serverplan-name-inference", "column-type", "SPNI004", p, l) :- reference_parse_call(n), column_shape_line_of(n, ls), match("(?s:.*)column[^\n]*?\\.(?:endswith|partition|removeprefix|removesuffix|rpartition|rsplit|split|startswith)\\s*\\((?s:.*)", ls), node(d, n, _, _, _), doc(d, path, _), match("(?:(?s:.*)/)?sql_column_type_hints\\.py", path), in_scope(d), !out_scope(d), doc(d, p, _), line(n, l).

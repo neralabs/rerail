@@ -252,6 +252,14 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
     let mut refused = BTreeSet::new();
     for &ri in &readers {
         let rule = &prog.rules[ri];
+        // A reader with nothing but its demanded reads (`p :- !allow_status("plan_helpers", "valid")`), and no demand
+        // of its own: no `pre_<i>` binds it, so it would stay as written and demand nothing, while its reads' relations
+        // are computed only for their other readers' keys. Its keys would hold no rows, and each negation would hold
+        // (a constant finding reported where its status was valid). Its reads' relations are built whole.
+        if !candidates.contains(rule.head.rel.as_str()) && (0..rule.body.len()).all(|i| negated(rule, i)) {
+            refused.extend(rule.body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()));
+            continue;
+        }
         for (i, l) in rule.body.iter().enumerate() {
             let Literal::Atom(a) = l else { continue };
             if a.neg || !negated(rule, i) {
@@ -270,8 +278,8 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
             let (reach, small) = reached(prog, model, rule, own, |j| negated(rule, j));
             if anchors(false).is_none() && !vars.is_subset(&reach) {
                 match anchors(true) {
-                    Some(b) => refused.insert(b.rel.clone()),
-                    None => refused.insert(a.rel.clone()),
+                    Some(b) => refused.insert(b.rel.to_string()),
+                    None => refused.insert(a.rel.to_string()),
                 };
                 continue;
             }
@@ -279,13 +287,13 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
             // lookup (`reached`; an `inside_<set>` read from its ancestor, a rare kind, still reaches 18M nodes),
             // unless the reader is itself demanded, when its `pre_<i>` starts from that demand.
             if !own && !small {
-                refused.insert(a.rel.clone());
+                refused.insert(a.rel.to_string());
             }
             // The body less the demanded reads must be one join: kept atoms that only a demanded read connects
             // (`p13_er_body(f, n)` and `p13_unparen(e, m)`, joined by the read alone) would make `pre_<i>` their
             // cross product.
             if !own && disconnected(rule, |j| negated(rule, j)) {
-                refused.insert(a.rel.clone());
+                refused.insert(a.rel.to_string());
             }
         }
     }
@@ -309,9 +317,18 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
             if negated(rule, i) { cut.push(l) } else { kept.push(l) }
         }
         // A reader that is itself a demanded relation's rule: its `pre_<i>` reads that relation's demand too.
-        let own = candidates.contains(rule.head.rel.as_str()).then(|| Literal::Atom(Atom { rel: format!("demand_{}", rule.head.rel), args: rule.head.args.clone(), neg: false, gated: false }));
+        // Its head's computed columns are read as fresh variables, checked after (`demand_atom`); those checks go with
+        // the rule's kept literals.
+        let (own, own_computed) = match candidates.contains(rule.head.rel.as_str()) {
+            true => {
+                let (atom, computed) = demand_atom(&format!("demand_{}", rule.head.rel), &rule.head.args);
+                (Some(Literal::Atom(atom)), computed)
+            }
+            false => (None, Vec::new()),
+        };
         if let Some(own) = &own {
             kept.insert(0, own);
+            kept.extend(own_computed.iter());
         }
         // Nothing left to bind the demand (every literal is a negated read): a `pre_<i>` of an empty body is no
         // relation any engine makes, so the rule stays as it is.
@@ -333,7 +350,7 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
         let Some(types) = vars.iter().map(|v| var_type(prog, &kept, v)).collect::<Option<Vec<String>>>() else {
             // A variable of no known type (bound by a comparison alone): nothing is split.
             super::super::profile::decision("demand (decision 0048)", || format!("not demanded: a variable of a rule for {} has no known type", rule.head.rel));
-            untyped.extend(cut.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()));
+            untyped.extend(cut.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()));
             continue;
         };
         let pre = format!("pre_{ri}");
@@ -347,13 +364,13 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
             args.push(Term::Int(1));
         }
         out.decls.insert(pre.clone(), cols);
-        let pre_atom = Atom { rel: pre, args, neg: false, gated: false };
+        let pre_atom = Atom { rel: pre.into(), args, neg: false, gated: false };
         rules.push(Rule { head: pre_atom.clone(), body: kept.into_iter().cloned().collect() });
         let mut body = vec![Literal::Atom(pre_atom.clone())];
         for l in cut {
             let Literal::Atom(read) = l else { unreachable!("a read atom") };
             demand_rules.push(Rule {
-                head: Atom { rel: format!("demand_{}", read.rel), args: read.args.clone(), neg: false, gated: false },
+                head: Atom { rel: format!("demand_{}", read.rel).into(), args: read.args.clone(), neg: false, gated: false },
                 body: vec![Literal::Atom(pre_atom.clone())],
             });
             body.push(l.clone());
@@ -368,7 +385,9 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
         let name = format!("demand_{rel}");
         out.decls.insert(name.clone(), prog.decls[rel].clone());
         for rule in rules.iter_mut().filter(|r| &r.head.rel == rel) {
-            rule.body.insert(0, Literal::Atom(Atom { rel: name.clone(), args: rule.head.args.clone(), neg: false, gated: false }));
+            let (atom, computed) = demand_atom(&name, &rule.head.args);
+            rule.body.insert(0, Literal::Atom(atom));
+            rule.body.extend(computed);
         }
     }
     rules.extend(demand_rules);
@@ -396,6 +415,26 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
         failed.extend(mine);
     }
     Err(failed)
+}
+
+/// A demanded rule's read of its demand: the head's arguments, with each computed one (`@add(l, 1)`) a fresh variable
+/// and a check that it equals the term, after the body binds it. An atom with a computed argument has no native step
+/// (a strict run refuses its stratum); a variable and a comparison have.
+fn demand_atom(name: &str, args: &[Term]) -> (Atom, Vec<Literal>) {
+    let mut computed = Vec::new();
+    let args = args
+        .iter()
+        .enumerate()
+        .map(|(i, t)| match t {
+            Term::Call(..) => {
+                let v = format!("rr_demanded{i}");
+                computed.push(Literal::Cmp { l: Term::Var(v.clone()), op: "=", r: t.clone() });
+                Term::Var(v)
+            }
+            t => t.clone(),
+        })
+        .collect();
+    (Atom { rel: name.to_owned().into(), args, neg: false, gated: false }, computed)
 }
 
 /// Whether the body of `rule` less its demanded reads (`cut(j)`) is small: every kept positive literal is reached
@@ -459,7 +498,7 @@ fn base(prog: &Program, rel: &str) -> bool {
 /// The rows a base atom reaches: its relation's, or, with constants, the fewest postings of one of them.
 fn base_rows(prog: &Program, model: &super::Model, a: &Atom) -> f64 {
     let all = if a.rel.starts_with("nearest_") || a.rel.starts_with(super::super::front::AXIS) { model.stats.nodes } else { model.card(&a.rel) };
-    let names = prog.decls.get(&a.rel);
+    let names = prog.decls.get(a.rel.as_str());
     a.args
         .iter()
         .enumerate()
@@ -494,7 +533,7 @@ fn var_type(prog: &Program, body: &[&Literal], var: &str) -> Option<String> {
     body.iter().find_map(|l| match l {
         Literal::Atom(a) if !a.neg => {
             let c = a.args.iter().position(|t| matches!(t, Term::Var(v) if v == var))?;
-            prog.decls.get(&a.rel)?.get(c).map(|(_, t)| t.clone())
+            prog.decls.get(a.rel.as_str())?.get(c).map(|(_, t)| t.clone())
         }
         Literal::Nearest { n, a, .. } if n == var || a == var => Some("node".to_owned()),
         _ => None,
@@ -502,7 +541,7 @@ fn var_type(prog: &Program, body: &[&Literal], var: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     /// A split whose kept atoms only the demanded read joins is refused: its `pre_<i>` would be their cross product.
     #[test]
     fn kept_atoms_that_only_the_cut_joins_are_disconnected() {

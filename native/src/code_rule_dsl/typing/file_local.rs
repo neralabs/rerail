@@ -15,43 +15,20 @@
 
 use crate::content_store::{StoreError, StoreResult};
 
-/// No node: a root's parent, or a node with no ancestor in the set.
-pub(crate) const NONE: u32 = u32::MAX;
+pub use crate::code_rule_dsl::facts::nearest::{Binding, NONE, Trees};
 /// The flat lattice's absent and top values (`logic::native::BOT`, `TOP`).
 const BOT: i64 = i64::MIN;
 const TOP: i64 = 1 << 62;
 
-/// Where the file-local FIX runs.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Binding {
-    Cpu,
-    /// The device work queue; the CPU where there is no device.
-    Metal,
-}
 
-impl Binding {
-    pub(crate) fn of(backend: crate::code_rule_dsl::transducer::packed::ExecutionBackend) -> Self {
-        use crate::code_rule_dsl::transducer::packed::ExecutionBackend as B;
-        match backend {
-            B::MetalInterpreter | B::MetalJit => Binding::Metal,
-            _ => Binding::Cpu,
-        }
-    }
-}
-
-/// A chunk's trees: per node (a cell of the chunk), its parent's cell or `NONE`, and its kind atom.
-pub(crate) struct Trees<'a> {
-    pub(crate) parent: &'a [u32],
-    pub(crate) kind: &'a [i64],
-}
 
 /// The flat-lattice system: seeds, and copies `(cell, source)`.
-struct System {
-    seeds: Vec<i64>,
-    copies: Vec<(u32, u32)>,
+pub struct System {
+    pub seeds: Vec<i64>,
+    pub copies: Vec<(u32, u32)>,
 }
 
-fn system(trees: &Trees<'_>, sets: &[Vec<i64>]) -> StoreResult<System> {
+pub fn system(trees: &Trees<'_>, sets: &[Vec<i64>]) -> StoreResult<System> {
     let n = trees.parent.len();
     let cells = n.checked_mul(sets.len()).filter(|&c| c < u32::MAX as usize).ok_or_else(|| StoreError::Invalid(format!("nearest: {n} nodes in {} sets", sets.len())))?;
     let mut seeds = vec![BOT; cells];
@@ -74,7 +51,7 @@ fn system(trees: &Trees<'_>, sets: &[Vec<i64>]) -> StoreResult<System> {
 
 /// The system's least fixpoint on the CPU: a cell's value is its seed joined with its sources', evaluated
 /// again whenever a source rises.
-fn solve_cpu(system: &System) -> Vec<i64> {
+pub fn solve_cpu(system: &System) -> Vec<i64> {
     let n = system.seeds.len();
     // Sources and dependents as CSR (a cell has one source here; the solver does not rely on it).
     let csr = |edges: &mut Vec<(u32, u32)>| -> (Vec<u32>, Vec<u32>) {
@@ -111,7 +88,7 @@ fn solve_cpu(system: &System) -> Vec<i64> {
 const CELLS: usize = 1 << 18;
 
 /// Per set, per node of `trees`: its nearest strict ancestor whose kind is in the set, or `NONE`.
-pub(crate) fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<Vec<Vec<u32>>> {
+pub fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<Vec<Vec<u32>>> {
     let n = trees.parent.len();
     if n == 0 || sets.is_empty() {
         return Ok(vec![Vec::new(); sets.len()]);
@@ -144,8 +121,7 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
     let n = trees.parent.len();
     let member = |k: usize, node: u32| sets[k].contains(&trees.kind[node as usize]);
     crate::code_rule_dsl::prof::count("nearest.cells", n * sets.len());
-    #[cfg(target_os = "macos")]
-    if binding == Binding::Metal {
+    if let Some(dev) = crate::code_rule_dsl::logic::device::solver().filter(|_| binding == Binding::Metal) {
         let _span = profile::span(|| "nearest on Metal (pointer jumping)".into());
         profile::decision("nearest ancestors", || format!("solved per piece of at most {CELLS} cells on Metal by pointer jumping, one dispatch and one wait"));
         let mut target = Vec::with_capacity(n * sets.len());
@@ -156,10 +132,10 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
                 done.push(u8::from(p == NONE || member(k, p)));
             }
         }
-        use crate::code_rule_dsl::transducer::packed::{Error, metal_nearest};
+        use crate::code_rule_dsl::logic::device::{Refused, nearest};
         // `RERAIL_NEAREST_BUFFERS=fresh`: buffers made per piece, to measure the pre-pinned blocks against.
-        let how = if std::env::var("RERAIL_NEAREST_BUFFERS").is_ok_and(|v| v == "fresh") { metal_nearest::Buffers::Fresh } else { metal_nearest::Buffers::Blocks };
-        match metal_nearest::solve_with(n, &target, &done, how) {
+        let how = if std::env::var("RERAIL_NEAREST_BUFFERS").is_ok_and(|v| v == "fresh") { nearest::Buffers::Fresh } else { nearest::Buffers::Blocks };
+        match dev.nearest(n, &target, &done, how) {
             Ok(solved) => {
                 let kernel = "nearest ancestors (pointer jumping)";
                 profile::device(kernel, solved.launches as u64, solved.gpu, solved.wall, target.len() as u64);
@@ -167,10 +143,10 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
                 crate::code_rule_dsl::prof::count("nearest.device_steps", solved.rounds as usize);
                 return Ok(solved.targets.chunks(n.max(1)).map(<[u32]>::to_vec).collect());
             }
-            Err(Error::UnsupportedBackend) => {
+            Err(Refused::NoDevice) => {
                 profile::decision("fallback", || "nearest ancestors: the Metal binding found no device and solved on the CPU".into());
             }
-            Err(error) => return Err(StoreError::Invalid(format!("nearest on the device: {error:?}"))),
+            Err(Refused::Failed(error)) => return Err(StoreError::Invalid(format!("nearest on the device: {error}"))),
         }
     }
     let _ = binding;
@@ -207,8 +183,11 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
         .collect()
 }
 
-#[cfg(test)]
-mod tests;
+pub mod split_memo;
+pub mod export_demand;
+pub use export_demand::demand_exports;
+pub use split_memo::forget as forget_splits;
+// cratify: `tests` is rerail-device-metal's (it mounts it)
 
 /// The relations a program derives within one document (list step 29's split, R0): a relation is file-local when
 /// each of its rules joins only one document's rows. A rule is when every relation it reads (positive, negated or
@@ -218,7 +197,7 @@ mod tests;
 /// $x), text($b, $x)`) does not: those may be two files. The relations are the greatest set closed under this, so a
 /// recursion within a document is file-local. Evaluated per chunk of documents, a file-local relation's rows are the
 /// union of the chunks'.
-pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::collections::BTreeSet<String> {
+pub fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::collections::BTreeSet<String> {
     split_located(prog).0
 }
 
@@ -246,7 +225,7 @@ pub(crate) fn reads_no_document(prog: &crate::code_rule_dsl::logic::front::Progr
             Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
                 let constant = run_constant(prog, &a.rel);
                 phased |= constant && !option_input(&a.rel);
-                derived.contains(a.rel.as_str()) || constant || (prog.facts.contains_key(&a.rel) && !prog.inputs.contains(&a.rel))
+                derived.contains(a.rel.as_str()) || constant || (prog.facts.contains_key(a.rel.as_str()) && !prog.inputs.iter().any(|x| x == &a.rel))
             }
             Literal::Cmp { .. } => true,
             _ => false,
@@ -257,15 +236,35 @@ pub(crate) fn reads_no_document(prog: &crate::code_rule_dsl::logic::front::Progr
 /// Derived relations made from the program's constants alone (`la_side_queue(x) :- la_set("…", x)`): every rule
 /// reads only facts, the run's options (`option_input`), other such relations and comparisons. They are constants to
 /// the split, like facts: a rule reading one joins no document by it, and both parts derive them.
-pub(crate) fn constant_relations(prog: &crate::code_rule_dsl::logic::front::Program) -> std::collections::BTreeSet<String> {
-    use crate::code_rule_dsl::logic::front::Literal;
+pub fn constant_relations(prog: &crate::code_rule_dsl::logic::front::Program) -> std::collections::BTreeSet<String> {
+    let index = RuleIndex::of(prog);
     let derived: std::collections::BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
-    let mut constant: std::collections::BTreeSet<String> =
-        derived.iter().filter(|r| !prog.natives.contains_key(**r) && !prog.lattice.contains_key(**r) && !prog.inputs.iter().any(|i| i == *r)).map(|r| (*r).to_owned()).collect();
+    split_constants(prog, &index, &derived, &derived, None)
+}
+
+/// [`constant_relations`] for the relations in `scope`; any other derived relation is a constant where `prev` holds
+/// it (`split_in`).
+fn split_constants(
+    prog: &crate::code_rule_dsl::logic::front::Program,
+    index: &RuleIndex<'_>,
+    derived: &std::collections::BTreeSet<&str>,
+    scope: &std::collections::BTreeSet<&str>,
+    prev: Option<&std::collections::BTreeSet<String>>,
+) -> std::collections::BTreeSet<String> {
+    use crate::code_rule_dsl::logic::front::Literal;
+    let inputs: std::collections::HashSet<&str> = prog.inputs.iter().map(String::as_str).collect();
+    let candidate = |r: &str| !prog.natives.contains_key(r) && !prog.lattice.contains_key(r) && !inputs.contains(r);
+    let mut constant: std::collections::BTreeSet<String> = derived
+        .iter()
+        .filter(|r| match prev.filter(|_| !scope.contains(**r)) {
+            Some(p) => p.contains(**r),
+            None => candidate(r),
+        })
+        .map(|r| (*r).to_owned())
+        .collect();
     // A greatest fixpoint: a relation stays while every rule of it reads only constants. Each relation is checked
     // again only when one it reads leaves (a pack's program has tens of thousands of rules).
-    let index = RuleIndex::of(prog);
-    let mut queue: std::collections::VecDeque<&str> = derived.iter().copied().filter(|r| constant.contains(*r)).collect();
+    let mut queue: std::collections::VecDeque<&str> = scope.iter().copied().filter(|r| constant.contains(*r)).collect();
     let mut queued: std::collections::BTreeSet<&str> = queue.iter().copied().collect();
     while let Some(rel) = queue.pop_front() {
         queued.remove(rel);
@@ -275,7 +274,7 @@ pub(crate) fn constant_relations(prog: &crate::code_rule_dsl::logic::front::Prog
         let still = index.rules_of(rel).all(|r| {
             r.body.iter().all(|l| match l {
                 Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
-                    constant.contains(&a.rel) || run_constant(prog, &a.rel) || (!derived.contains(a.rel.as_str()) && prog.facts.contains_key(&a.rel) && !prog.inputs.contains(&a.rel))
+                    constant.contains(a.rel.as_str()) || run_constant(prog, &a.rel) || (!derived.contains(a.rel.as_str()) && prog.facts.contains_key(a.rel.as_str()) && !inputs.contains(a.rel.as_str()))
                 }
                 Literal::Cmp { .. } => true,
                 _ => false,
@@ -345,6 +344,12 @@ fn var_equalities(rule: &crate::code_rule_dsl::logic::front::Rule) -> Vec<(Strin
         .filter_map(|l| match l {
             Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } => Some((a.clone(), b.clone())),
             Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Call(f, xs) } if f == "doc" && let [Term::Var(b)] = xs.as_slice() => Some((a.clone(), b.clone())),
+            // `@doc(a) = @doc(b)`: a and b are of one document (a rule written for one file's nodes).
+            Literal::Cmp { l: Term::Call(f, xs), op: "=", r: Term::Call(g, ys) }
+                if f == "doc" && g == "doc" && let ([Term::Var(a)], [Term::Var(b)]) = (xs.as_slice(), ys.as_slice()) =>
+            {
+                Some((a.clone(), b.clone()))
+            }
             _ => None,
         })
         .collect()
@@ -365,17 +370,7 @@ fn close_under(vars: &mut std::collections::BTreeSet<String>, equal: &[(String, 
     }
 }
 
-/// A base relation's document column, including raw text views.
-pub(crate) fn document_column(relation: &str) -> Option<usize> {
-    match relation {
-        "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error" |
-        "source" | "src_line" | "split_line" | "lf_line" | "line_count" | "parsed"
-        // Decision 0055's: a guest and its host are one file (`corpus::guests` attributes its rows to the host).
-        | "doc_role" | "doc_root" | "tape_of" | "guest" | "host_node" => Some(0),
-        "docof" => Some(1),
-        _ => None,
-    }
-}
+pub use crate::code_rule_dsl::logic::front::document_column;
 
 /// Base relations whose rows a chunk makes for itself and that name no document (decision 0058 §4).
 const CHUNK_VALUES: [&str; 3] = ["parse_of", "unparse_of", "splice_of"];
@@ -455,7 +450,7 @@ fn value_tapes(rule: &crate::code_rule_dsl::logic::front::Rule) -> ValueTapes {
 /// [`split`], with each derived relation's location columns: those every rule fills from a location (a node, or a
 /// document of `node`, `doc`, …), and the same-document columns of each file-local or base relation: its location
 /// columns, whose values in one row are all of one document. A row's document is read off any of them (decision 0052).
-pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::collections::BTreeSet<String>, std::collections::BTreeMap<String, Vec<usize>>, std::collections::BTreeMap<String, Vec<usize>>) {
+pub fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::collections::BTreeSet<String>, std::collections::BTreeMap<String, Vec<usize>>, std::collections::BTreeMap<String, Vec<usize>>) {
     let (local, locations, same, _) = split_explained(prog);
     (local, locations, same)
 }
@@ -463,27 +458,70 @@ pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) 
 /// Why each derived relation is cross-file, by the first rule the split found not to join one document: a root
 /// cause ("joins 2 documents: {n} {m}", "reads field with no location", "made natively") or "reads cross-file r".
 /// Read through the second kind to the first to see what makes a check run over the whole corpus.
-pub(crate) fn cross_causes(prog: &crate::code_rule_dsl::logic::front::Program) -> std::collections::BTreeMap<String, String> {
+pub fn cross_causes(prog: &crate::code_rule_dsl::logic::front::Program) -> std::collections::BTreeMap<String, String> {
     split_explained(prog).3
 }
 
 #[allow(clippy::type_complexity)]
 fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::collections::BTreeSet<String>, std::collections::BTreeMap<String, Vec<usize>>, std::collections::BTreeMap<String, Vec<usize>>, std::collections::BTreeMap<String, String>) {
+    let split = split_memo::split(prog);
+    let derived: std::collections::BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
+    let mut same: std::collections::BTreeMap<String, Vec<usize>> =
+        prog.inputs.iter().filter(|i| !derived.contains(i.as_str())).map(|i| (i.clone(), base_locations(prog, i))).collect();
+    same.extend(split.local.iter().map(|rel| (rel.clone(), split.locations[rel].clone())));
+    (split.local.clone(), split.locations.clone(), same, split.causes.clone())
+}
+
+/// A base relation's location columns: node columns, the document column (`document_column`: `node`, `doc`, `pkg`,
+/// `syntax_error`, `cpython_syntax_error`, the source text's, the path's, the guests') and `docof(n, d)`'s document.
+fn base_locations(prog: &crate::code_rule_dsl::logic::front::Program, rel: &str) -> Vec<usize> {
+    // The reference graph's (`reference_edge`, `reference_open`) have none: an edge's ends are in any files, and the
+    // graph is made of every file's.
+    if matches!(rel, "reference_edge" | "reference_open") {
+        return Vec::new();
+    }
+    let mut columns: Vec<usize> = prog.decls.get(rel).map_or_else(Vec::new, |cols| cols.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
+    if let Some(column) = document_column(rel) {
+        columns.push(column);
+    }
+    if rel == "docof" && !columns.contains(&1) {
+        columns.push(1);
+    }
+    if rel == "docof" {
+        columns.push(1);
+    }
+    columns
+}
+
+/// A program's split, each part a greatest fixpoint over its derived relations: the constant relations
+/// (`constant_relations`), each relation's location columns, the string filters (decision 0037), and the file-local
+/// relations with each cross-file one's cause.
+#[derive(Clone, Debug, PartialEq)]
+struct Split {
+    constants: std::collections::BTreeSet<String>,
+    locations: std::collections::BTreeMap<String, Vec<usize>>,
+    filters: std::collections::BTreeSet<String>,
+    local: std::collections::BTreeSet<String>,
+    causes: std::collections::BTreeMap<String, String>,
+}
+
+/// The split of `prog`, computed for the relations in `scope` only; every other derived relation keeps its part in
+/// `prev`. That is exact when `scope` holds every relation whose rules changed since `prev` and every relation that
+/// reads one, transitively (`split_memo`): a relation outside reads none inside, so its place in each fixpoint is what
+/// it was, and each fixpoint inside starts from the top with that boundary fixed. With `prev` `None`, `scope` is every
+/// derived relation: the whole split.
+fn split_in(
+    prog: &crate::code_rule_dsl::logic::front::Program,
+    index: &RuleIndex<'_>,
+    derived: &std::collections::BTreeSet<&str>,
+    scope: &std::collections::BTreeSet<&str>,
+    prev: Option<&Split>,
+) -> Split {
     use crate::code_rule_dsl::logic::front::{Literal, Term};
     use std::collections::{BTreeMap, BTreeSet};
-    let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
-    // A base relation's location columns: node columns, the document column of `node`, `doc`, `pkg` and
-    // `syntax_error`, and `docof(n, d)`'s document.
-    let base_locations = |rel: &str| -> Vec<usize> {
-        let mut columns: Vec<usize> = prog.decls.get(rel).map_or_else(Vec::new, |cols| cols.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
-        if let Some(column) = document_column(rel) {
-            columns.push(column);
-        }
-        if rel == "docof" && !columns.contains(&1) {
-            columns.push(1);
-        }
-        columns
-    };
+    let was = |rel: &str| prev.filter(|_| !scope.contains(rel));
+    let base_locations = |rel: &str| base_locations(prog, rel);
+    let constants = split_constants(prog, index, derived, scope, prev.map(|p| &p.constants));
     // A derived relation's location columns: those every rule fills from a location.
     let mut locations: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     let location_vars = |rule: &crate::code_rule_dsl::logic::front::Rule, locations: &BTreeMap<String, Vec<usize>>| -> BTreeSet<String> {
@@ -492,7 +530,7 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
         let equal = var_equalities(rule);
         for literal in &rule.body {
             if let Some(a) = literal.atom().filter(|a| !a.neg) {
-                let columns = if derived.contains(a.rel.as_str()) { locations.get(&a.rel).cloned().unwrap_or_default() } else { base_locations(&a.rel) };
+                let columns = if derived.contains(a.rel.as_str()) { locations.get(a.rel.as_str()).cloned().unwrap_or_default() } else { base_locations(&a.rel) };
                 for c in columns {
                     if let Some(Term::Var(v)) = a.args.get(c) {
                         out.insert(v.clone());
@@ -504,15 +542,15 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
         out
     };
     // Location columns to a fixpoint (a column is one if every rule's head fills it from a location variable).
-    for rel in &derived {
+    for rel in derived {
+        let kept = was(rel).and_then(|p| p.locations.get(*rel).cloned());
         let width = prog.decls.get(*rel).map_or(0, Vec::len);
-        locations.insert((*rel).to_owned(), (0..width).collect());
+        locations.insert((*rel).to_owned(), kept.unwrap_or_else(|| (0..width).collect()));
     }
     // A greatest fixpoint (columns only leave), so any order reaches the same one: a relation is checked again only
     // when the locations of one its rules read changed (a pack's program has tens of thousands of rules).
-    let index = RuleIndex::of(prog);
-    let mut queue: std::collections::VecDeque<&str> = derived.iter().copied().collect();
-    let mut queued: BTreeSet<&str> = derived.clone();
+    let mut queue: std::collections::VecDeque<&str> = scope.iter().copied().collect();
+    let mut queued: BTreeSet<&str> = scope.clone();
     while let Some(rel) = queue.pop_front() {
         queued.remove(rel);
         let rules: Vec<&crate::code_rule_dsl::logic::front::Rule> = index.rules_of(rel).collect();
@@ -537,10 +575,10 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
     let text_columns = |rel: &str| crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(r, _)| *r == rel).map(|(_, c)| *c);
     let test_relation = |rel: &str| rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION);
     // To a fixpoint: a filter may read other filters.
-    let mut filters: BTreeSet<String> = derived.iter().map(|r| (*r).to_owned()).collect();
+    let mut filters: BTreeSet<String> = derived.iter().filter(|r| was(r).is_none_or(|p| p.filters.contains(**r))).map(|r| (*r).to_owned()).collect();
     // A greatest fixpoint: a relation is checked again only when one its rules read leaves.
-    let mut queue: std::collections::VecDeque<&str> = derived.iter().copied().collect();
-    let mut queued: BTreeSet<&str> = derived.clone();
+    let mut queue: std::collections::VecDeque<&str> = scope.iter().copied().collect();
+    let mut queued: BTreeSet<&str> = scope.clone();
     while let Some(rel) = queue.pop_front() {
         queued.remove(rel);
         if !filters.contains(rel) {
@@ -551,7 +589,7 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
                 index.rules_of(rel).all(|r| {
                     let mut strings = BTreeSet::new();
                     let reads_only_text = r.body.iter().all(|l| match l {
-                        Literal::Atom(a) if test_relation(&a.rel) || filters.contains(&a.rel) => true,
+                        Literal::Atom(a) if test_relation(&a.rel) || filters.contains(a.rel.as_str()) => true,
                         Literal::Atom(a) if !a.neg && let Some(cols) = text_columns(&a.rel) => {
                             strings.extend(cols.iter().filter_map(|&c| if let Some(Term::Var(v)) = a.args.get(c) { Some(v.clone()) } else { None }));
                             true
@@ -574,15 +612,20 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
     }
     // Python fact operators preserve each demanded node's document. Their proof rules must still
     // pass the ordinary dependency/location checks below. Other native operators remain cross-file.
-    let constants = constant_relations(prog);
     let cross_native = |r: &str| prog.natives.get(r).is_some_and(|n| match n {
         crate::code_rule_dsl::logic::front::Native::PythonCandidates { targets, .. } => !constants.contains(targets) && !(prog.facts.contains_key(targets) && !prog.inputs.contains(targets)),
         crate::code_rule_dsl::logic::front::Native::Python { targets, .. } => targets.as_ref().is_some_and(|t|
             !constants.contains(t) && !(prog.facts.contains_key(t) && !prog.inputs.contains(t))),
         _ => true,
     });
-    let mut local: BTreeSet<String> = derived.iter().filter(|r| !cross_native(r)).map(|r| (*r).to_owned()).collect();
-    let mut causes: BTreeMap<String, String> = derived.iter().filter(|r| cross_native(r)).map(|r| ((*r).to_owned(), "made natively".to_owned())).collect();
+    let mut local: BTreeSet<String> = derived.iter().filter(|r| match was(r) { Some(p) => p.local.contains(**r), None => !cross_native(r) }).map(|r| (*r).to_owned()).collect();
+    let mut causes: BTreeMap<String, String> = derived
+        .iter()
+        .filter_map(|r| match was(r) {
+            Some(p) => p.causes.get(*r).map(|c| ((*r).to_owned(), c.clone())),
+            None => cross_native(r).then(|| ((*r).to_owned(), "made natively".to_owned())),
+        })
+        .collect();
     let mut dirty: Option<BTreeSet<usize>> = None;
     loop {
         let rule_local = |rule: &crate::code_rule_dsl::logic::front::Rule| -> Result<(), String> {
@@ -603,16 +646,16 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
                     }
                     Literal::Cmp { .. } => continue,
                 };
-                let constant = (!derived.contains(atom.rel.as_str()) && prog.facts.contains_key(&atom.rel) && !prog.inputs.contains(&atom.rel)) || constants.contains(&atom.rel) || run_constant(prog, &atom.rel);
+                let constant = (!derived.contains(atom.rel.as_str()) && prog.facts.contains_key(atom.rel.as_str()) && !prog.inputs.iter().any(|x| x == &atom.rel)) || constants.contains(atom.rel.as_str()) || run_constant(prog, &atom.rel);
                 // A tape operation's rows (decision 0058 §4) are made in the chunk that asked: they place nothing.
                 let chunk_value = !derived.contains(atom.rel.as_str()) && CHUNK_VALUES.contains(&atom.rel.as_str());
-                if constant || chunk_value || test_relation(&atom.rel) || filters.contains(&atom.rel) || filters.contains(&rule.head.rel) {
+                if constant || chunk_value || test_relation(&atom.rel) || filters.contains(atom.rel.as_str()) || filters.contains(rule.head.rel.as_str()) {
                     continue;
                 }
-                if derived.contains(atom.rel.as_str()) && !local.contains(&atom.rel) {
+                if derived.contains(atom.rel.as_str()) && !local.contains(atom.rel.as_str()) {
                     return Err(format!("reads cross-file {}", atom.rel));
                 }
-                let columns = if derived.contains(atom.rel.as_str()) { locations[&atom.rel].clone() } else { base_locations(&atom.rel) };
+                let columns = if derived.contains(atom.rel.as_str()) { locations[atom.rel.as_str()].clone() } else { base_locations(&atom.rel) };
                 let mut vars: BTreeSet<String> = columns.iter().filter_map(|&c| if let Some(Term::Var(v)) = atom.args.get(c) { Some(v.clone()) } else { None }).collect();
                 // A value's text binder whose location is a wildcard (`q(_, x)`, as simplification leaves an
                 // existence check) still reads one document's row: the value's tape stands there.
@@ -654,7 +697,7 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
             }
             // A constant-only rule has no document owner. Run it once in the cross-file phase,
             // including an empty corpus. Vocabulary filters remain per-chunk producers.
-            if merged.len() == 1 || (merged.is_empty() && filters.contains(&rule.head.rel)) {
+            if merged.len() == 1 || (merged.is_empty() && filters.contains(rule.head.rel.as_str())) {
                 Ok(())
             } else if merged.is_empty() {
                 Err("reads no location".to_owned())
@@ -665,10 +708,10 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
         };
         let before = local.len();
         // In rounds, as before, so the causes are the same: a rule can newly fail only by reading a relation that left
-        // in the round before; the first round checks every rule.
+        // in the round before; the first round checks every rule in scope.
         let failing: Vec<(String, String)> = match &dirty {
-            None => prog.rules.iter().filter(|r| local.contains(&r.head.rel)).filter_map(|r| rule_local(r).err().map(|why| (r.head.rel.clone(), why))).collect(),
-            Some(rules) => rules.iter().map(|&i| &prog.rules[i]).filter(|r| local.contains(&r.head.rel)).filter_map(|r| rule_local(r).err().map(|why| (r.head.rel.clone(), why))).collect(),
+            None => prog.rules.iter().filter(|r| scope.contains(r.head.rel.as_str()) && local.contains(r.head.rel.as_str())).filter_map(|r| rule_local(r).err().map(|why| (r.head.rel.to_string(), why))).collect(),
+            Some(rules) => rules.iter().map(|&i| &prog.rules[i]).filter(|r| local.contains(r.head.rel.as_str())).filter_map(|r| rule_local(r).err().map(|why| (r.head.rel.to_string(), why))).collect(),
         };
         let mut next: BTreeSet<usize> = BTreeSet::new();
         for (rel, why) in failing {
@@ -679,10 +722,7 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
         }
         dirty = Some(next);
         if local.len() == before {
-            let mut same: BTreeMap<String, Vec<usize>> =
-                prog.inputs.iter().filter(|i| !derived.contains(i.as_str())).map(|i| (i.clone(), base_locations(i))).collect();
-            same.extend(local.iter().map(|rel| (rel.clone(), locations[rel].clone())));
-            return (local, locations, same, causes);
+            return Split { constants, locations, filters, local, causes };
         }
     }
 }
@@ -693,20 +733,23 @@ fn split_explained(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::
 /// which decode findings). In `cross`, both are inputs. `same_doc` names, for each file-local and base relation, the
 /// columns whose values in one row lie in one document (`cross_rounds::bound`: a join through them crosses no file).
 #[derive(Clone)]
-pub(crate) struct Programs {
-    pub(crate) local: crate::code_rule_dsl::logic::front::Program,
-    pub(crate) cross: crate::code_rule_dsl::logic::front::Program,
-    pub(crate) exports: Vec<String>,
-    pub(crate) base: Vec<String>,
+pub struct Programs {
+    pub local: crate::code_rule_dsl::logic::front::Program,
+    pub cross: crate::code_rule_dsl::logic::front::Program,
+    pub exports: Vec<String>,
+    pub base: Vec<String>,
     /// Each derived relation's location columns (`split_located`).
-    pub(crate) locations: std::collections::BTreeMap<String, Vec<usize>>,
+    pub locations: std::collections::BTreeMap<String, Vec<usize>>,
     /// The same-document columns of each file-local or base relation (`split_located`): what a cross-file hop reads.
-    pub(crate) same_doc: std::collections::BTreeMap<String, Vec<usize>>,
+    pub same_doc: std::collections::BTreeMap<String, Vec<usize>>,
+    /// What the split found, and the parts are made of (`assemble`): the file-local relations, and the relations of
+    /// constants derived in both parts. A prepared program keeps these, not the two parts: each is the program's own
+    /// rules, a part of them, so the parts are made from the program again when it is read.
+    pub file_local: std::collections::BTreeSet<String>,
+    pub constants: std::collections::BTreeSet<String>,
 }
 
-pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Programs {
-    use crate::code_rule_dsl::logic::front::Literal;
-    use std::collections::BTreeSet;
+pub fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Programs {
     let (mut local, locations, same_doc) = split_located(prog);
     // A program that reads no document (a later phase over an earlier one's exports, `corpus::phases`) has no
     // file-local part: its relations made from those exports alone would be constants, derived again whole in the
@@ -716,12 +759,30 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
     if no_document {
         local.clear();
     }
+    // A relation of constants is derived in both parts (`constant_relations`), but where no document is read: the
+    // file-local part then has nothing to give them to.
+    let constants = if no_document { Default::default() } else { constant_relations(prog) };
+    assemble(prog, local, constants, locations, same_doc)
+}
+
+/// `prog` split at its file-local relations `local` (`programs`), deriving the relations of `constants` in both parts:
+/// the parts and what passes between them. What is costly to find is the arguments; this only selects (`programs`
+/// finds them, a prepared program keeps them).
+pub fn assemble(
+    prog: &crate::code_rule_dsl::logic::front::Program,
+    local: std::collections::BTreeSet<String>,
+    constants: std::collections::BTreeSet<String>,
+    locations: std::collections::BTreeMap<String, Vec<usize>>,
+    same_doc: std::collections::BTreeMap<String, Vec<usize>>,
+) -> Programs {
+    use crate::code_rule_dsl::logic::front::Literal;
+    use std::collections::BTreeSet;
     let is_local = |rel: &str| local.contains(rel);
     let read = |rules: &mut dyn Iterator<Item = &crate::code_rule_dsl::logic::front::Rule>| -> BTreeSet<String> {
         rules
             .flat_map(|r| &r.body)
             .filter_map(|l| match l {
-                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.clone()),
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a.rel.to_string()),
                 _ => None,
             })
             .collect()
@@ -733,7 +794,7 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
         let mut rules = prog.rules.iter().filter(|r| r.head.rel == rel).peekable();
         rules.peek().is_some()
             && !prog.lattice.contains_key(rel)
-            && rules.all(|r| matches!(r.body.as_slice(), [Literal::Atom(a)] if !a.neg && prog.inputs.contains(&a.rel)))
+            && rules.all(|r| matches!(r.body.as_slice(), [Literal::Atom(a)] if !a.neg && prog.inputs.iter().any(|x| x == &a.rel)))
     };
     let projected: BTreeSet<String> = cross_reads.iter().filter(|r| is_local(r) && projection(r)).cloned().collect();
     let in_cross = |rel: &str| !is_local(rel) || projected.contains(rel);
@@ -752,14 +813,13 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
         }
     }
     let mut l = prog.clone();
-    // A relation of constants is derived in both parts (`constant_relations`), but where no document is read: the
-    // file-local part then has nothing to give them to.
-    let constants = if no_document { Default::default() } else { constant_relations(prog) };
-    l.rules.retain(|r| is_local(&r.head.rel) || constants.contains(&r.head.rel));
+    l.rules.retain(|r| is_local(&r.head.rel) || constants.contains(r.head.rel.as_str()));
     l.natives.retain(|rel, _| is_local(rel));
     l.lattice.retain(|rel, _| is_local(rel));
     l.gates.retain(|(rel, _)| is_local(rel));
     l.outputs = prog.outputs.iter().filter(|o| is_local(o)).cloned().chain(exports.iter().cloned()).collect::<BTreeSet<_>>().into_iter().collect();
+    // The reference graph is bound for the cross-file part only (no rule reading it is file-local): no chunk has it.
+    l.inputs.retain(|i| !matches!(i.as_str(), "reference_edge" | "reference_open"));
     let mut c = prog.clone();
     c.rules.retain(|r| in_cross(&r.head.rel));
     c.natives.retain(|rel, _| in_cross(rel));
@@ -767,7 +827,7 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
     c.gates.retain(|(rel, _)| !is_local(rel));
     c.outputs.retain(|o| !is_local(o));
     c.inputs = base_read.into_iter().chain(exports.iter().cloned()).collect();
-    Programs { local: l, cross: c, exports, base, locations, same_doc }
+    Programs { local: l, cross: c, exports, base, locations, same_doc, file_local: local, constants }
 }
 
 /// Pushes the file-local part of each cross-file rule into the chunks: the rule's positive reads of base relations
@@ -788,7 +848,7 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
 /// cross part off the base relations (so the per-file memo works); when the cross part reads them anyway, it reads
 /// these lookups there too. So is a component that enumerates subtrees (`descends`): `within(n, a)` with `n`
 /// narrowed only by its attributes.
-pub(crate) fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Vec<String> {
+pub fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Vec<String> {
     let original = prog.clone();
     let (made, local) = push_with(prog, false);
     if cross_reads_base(prog, &local) {
@@ -828,7 +888,7 @@ const FACTOR_COPIES: usize = 8;
 ///   at most `FACTOR_COPIES`).
 ///
 /// Returns a line per relation factorized. A relation whose parts the split does not find file-local is left whole.
-pub(crate) fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Vec<String> {
+pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Vec<String> {
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
     use std::collections::{BTreeMap, BTreeSet};
     let local = split(prog);
@@ -841,7 +901,7 @@ pub(crate) fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::P
         for (li, l) in r.body.iter().enumerate() {
             match l {
                 Literal::Atom(a) => {
-                    if a.neg || a.gated || local.contains(&r.head.rel) || a.args.iter().any(|t| matches!(t, Term::Call(..) | Term::Top)) {
+                    if a.neg || a.gated || local.contains(r.head.rel.as_str()) || a.args.iter().any(|t| matches!(t, Term::Call(..) | Term::Top)) {
                         unfit.insert(a.rel.as_str());
                     } else {
                         reads.entry(a.rel.as_str()).or_default().push((ri, li));
@@ -937,7 +997,7 @@ pub(crate) fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::P
                     part.iter().find_map(|l| match l {
                         Literal::Atom(a) if !a.neg => {
                             let c = a.args.iter().position(|t| matches!(t, Term::Var(x) if x == v))?;
-                            prog.decls.get(&a.rel)?.get(c).map(|(_, t)| (v.to_owned(), t.clone()))
+                            prog.decls.get(a.rel.as_str())?.get(c).map(|(_, t)| (v.to_owned(), t.clone()))
                         }
                         _ => None,
                     })
@@ -959,8 +1019,8 @@ pub(crate) fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::P
                     next.decls.insert(name.clone(), cols.clone());
                     let kname = format!("fzk{}_{rel}", next.decls.len());
                     next.decls.insert(kname.clone(), vec![cols.last().cloned().expect("the key")]);
-                    atoms.push(Atom { rel: name, args: iface.iter().map(|v| Term::Var(v.clone())).collect(), neg: false, gated: false });
-                    keys.push(Atom { rel: kname, args: vec![Term::Var(key.clone())], neg: false, gated: false });
+                    atoms.push(Atom { rel: name.into(), args: iface.iter().map(|v| Term::Var(v.clone())).collect(), neg: false, gated: false });
+                    keys.push(Atom { rel: kname.into(), args: vec![Term::Var(key.clone())], neg: false, gated: false });
                     bodies.push(part.clone());
                 }
                 if !ok {
@@ -971,7 +1031,7 @@ pub(crate) fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::P
                     let mut reduced = body.clone();
                     reduced.extend(keys.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, k)| Literal::Atom(k.clone())));
                     next.rules.push(Rule { head: atom.clone(), body: reduced });
-                    made.entry(rel.clone()).or_default().extend([atom.rel.clone(), keys[i].rel.clone()]);
+                    made.entry(rel.to_string()).or_default().extend([atom.rel.to_string(), keys[i].rel.to_string()]);
                 }
                 shown.push(format!(
                     "by ${key}: {}",
@@ -990,18 +1050,18 @@ pub(crate) fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::P
         let mut fresh = 0usize;
         let mut rules = Vec::with_capacity(next.rules.len());
         for rule in std::mem::take(&mut next.rules) {
-            if stands.contains_key(&rule.head.rel) {
+            if stands.contains_key(rule.head.rel.as_str()) {
                 continue;
             }
             let mut work = vec![rule];
             while let Some(rule) = work.pop() {
-                let at = rule.body.iter().position(|l| matches!(l, Literal::Atom(a) if !a.neg && stands.contains_key(&a.rel)));
+                let at = rule.body.iter().position(|l| matches!(l, Literal::Atom(a) if !a.neg && stands.contains_key(a.rel.as_str())));
                 let Some(at) = at else {
                     rules.push(rule);
                     continue;
                 };
                 let Literal::Atom(read) = &rule.body[at] else { unreachable!() };
-                for (head, atoms) in &stands[&read.rel] {
+                for (head, atoms) in &stands[read.rel.as_str()] {
                     fresh += 1;
                     let to = |v: &str| -> Term {
                         match head.iter().position(|h| h == v) {
@@ -1056,7 +1116,7 @@ fn determined(body: &[crate::code_rule_dsl::logic::front::Literal], mut known: s
                         Some(Term::Int(_) | Term::Str(_)) => true,
                         _ => false,
                     };
-                    if keys.get(&a.rel).is_some_and(|ks| ks.iter().any(|k| k.iter().all(fixed))) {
+                    if keys.get(a.rel.as_str()).is_some_and(|ks| ks.iter().any(|k| k.iter().all(fixed))) {
                         known.extend(a.vars());
                     }
                 }
@@ -1168,7 +1228,7 @@ fn relation_keys(prog: &crate::code_rule_dsl::logic::front::Program) -> std::col
 /// On the full data-layer tree, `lazy-architecture`'s cross part held 673 MB of these for about ten thousand
 /// lookups; on 200 files, the 66-rule pack's held 1.1M rows of each of `line`, `col` and `docof`, because one rule's
 /// walk turned the semi-join off for all of them.
-pub(crate) fn semijoin_bases(cross: &crate::code_rule_dsl::logic::front::Program, base: &[String]) -> Option<std::collections::BTreeSet<String>> {
+pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::front::Program, base: &[String]) -> Option<std::collections::BTreeSet<String>> {
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Term};
     use std::collections::{BTreeMap, BTreeSet};
     // Each attribute relation's node column: the base ones, and a view the cross part derives from one
@@ -1187,14 +1247,18 @@ pub(crate) fn semijoin_bases(cross: &crate::code_rule_dsl::logic::front::Program
     }
     // A view's base: a view is a semi-join exactly when its base is.
     let mut view_of: BTreeMap<String, String> = BTreeMap::new();
+    let mut heads: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for rule in &cross.rules {
+        *heads.entry(rule.head.rel.as_str()).or_default() += 1;
+    }
     for rule in &cross.rules {
         let [Literal::Atom(a)] = rule.body.as_slice() else { continue };
-        let Some(Term::Var(n)) = key.get(&a.rel).and_then(|&k| a.args.get(k)).filter(|_| !a.neg) else { continue };
+        let Some(Term::Var(n)) = key.get(a.rel.as_str()).and_then(|&k| a.args.get(k)).filter(|_| !a.neg) else { continue };
         let Some(at) = rule.head.args.iter().position(|t| matches!(t, Term::Var(v) if v == n)) else { continue };
-        let sole = cross.rules.iter().filter(|r| r.head.rel == rule.head.rel).count() == 1;
-        if sole && !key.contains_key(&rule.head.rel) && !view_of.contains_key(&a.rel) {
-            key.insert(rule.head.rel.clone(), at);
-            view_of.insert(rule.head.rel.clone(), a.rel.clone());
+        let sole = heads.get(rule.head.rel.as_str()) == Some(&1);
+        if sole && !key.contains_key(rule.head.rel.as_str()) && !view_of.contains_key(a.rel.as_str()) {
+            key.insert(rule.head.rel.to_string(), at);
+            view_of.insert(rule.head.rel.to_string(), a.rel.to_string());
         }
     }
     let root = |rel: &str| view_of.get(rel).cloned().unwrap_or_else(|| rel.to_owned());
@@ -1208,7 +1272,7 @@ pub(crate) fn semijoin_bases(cross: &crate::code_rule_dsl::logic::front::Program
     loop {
         let (semi_before, tainted_before) = (semi.len(), tainted.len());
         // A source of tainted nodes: a base relation that reaches nodes and is no attribute, or a tainted relation.
-        let source = |a: &Atom, tainted: &BTreeSet<String>| !a.neg && !key.contains_key(&a.rel) && (tainted.contains(&a.rel) || (is_base(&a.rel) && reaches_nodes(&a.rel)));
+        let source = |a: &Atom, tainted: &BTreeSet<String>| !a.neg && !key.contains_key(a.rel.as_str()) && (tainted.contains(a.rel.as_str()) || (is_base(&a.rel) && reaches_nodes(&a.rel)));
         for (rel, native) in &cross.natives {
             for r in native.reads() {
                 if key.contains_key(r) && semi.remove(&root(r)) {
@@ -1218,13 +1282,13 @@ pub(crate) fn semijoin_bases(cross: &crate::code_rule_dsl::logic::front::Program
                 }
             }
         }
-        for rule in cross.rules.iter().filter(|r| !view_of.contains_key(&r.head.rel)) {
+        for rule in cross.rules.iter().filter(|r| !view_of.contains_key(r.head.rel.as_str())) {
             // Held variables: bound by a positive read of a relation that is no attribute and holds no tainted node.
             let positive: Vec<&Atom> = rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None }).filter(|a| !a.neg).collect();
             let vars = |a: &Atom| a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.clone()) } else { None }).collect::<Vec<_>>();
             // A variable equal to a held one is held; one equal to a loose one is loose (`m = n`).
             let equal = var_equalities(rule);
-            let mut held: BTreeSet<String> = positive.iter().filter(|a| !key.contains_key(&a.rel) && !source(a, &tainted)).flat_map(|a| vars(a)).collect();
+            let mut held: BTreeSet<String> = positive.iter().filter(|a| !key.contains_key(a.rel.as_str()) && !source(a, &tainted)).flat_map(|a| vars(a)).collect();
             close_under(&mut held, &equal);
             let mut loose: BTreeSet<String> = positive.iter().filter(|a| source(a, &tainted)).flat_map(|a| vars(a)).collect();
             for l in &rule.body {
@@ -1233,7 +1297,7 @@ pub(crate) fn semijoin_bases(cross: &crate::code_rule_dsl::logic::front::Program
                     Literal::Agg { atom: a, .. } => (a, true),
                     _ => continue,
                 };
-                let Some(&k) = key.get(&a.rel) else { continue };
+                let Some(&k) = key.get(a.rel.as_str()) else { continue };
                 match a.args.get(k) {
                     Some(Term::Var(v)) if held.contains(v) => {}
                     found => {
@@ -1249,7 +1313,7 @@ pub(crate) fn semijoin_bases(cross: &crate::code_rule_dsl::logic::front::Program
             close_under(&mut loose, &equal);
             let head_tainted = rule.head.args.iter().any(|t| matches!(t, Term::Var(v) if loose.contains(v) && !held.contains(v)));
             if head_tainted {
-                tainted.insert(rule.head.rel.clone());
+                tainted.insert(rule.head.rel.to_string());
             }
         }
         if cross.outputs.iter().any(|o| tainted.contains(o)) && semi.remove("node") {
@@ -1263,7 +1327,7 @@ pub(crate) fn semijoin_bases(cross: &crate::code_rule_dsl::logic::front::Program
 
 /// Whether a rule outside the chunks (`local`: `split(prog)`) reads a base relation.
 fn cross_reads_base(prog: &crate::code_rule_dsl::logic::front::Program, local: &std::collections::BTreeSet<String>) -> bool {
-    prog.rules.iter().filter(|r| !local.contains(&r.head.rel)).any(|r| {
+    prog.rules.iter().filter(|r| !local.contains(r.head.rel.as_str())).any(|r| {
         r.body.iter().any(|l| l.atom().is_some_and(|a| prog.inputs.iter().any(|i| *i == a.rel)))
     })
 }
@@ -1278,7 +1342,7 @@ fn unrestricted(prog: &crate::code_rule_dsl::logic::front::Program, atoms: &[&cr
         a.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Wild)) && named.iter().collect::<std::collections::BTreeSet<_>>().len() == named.len()
     };
     atoms.iter().any(|a| matches!(a.rel.as_str(), "docof" | "line" | "end_line" | "col" | "visit_index" | "node_order" | "node"))
-        && atoms.iter().all(|a| (attribute(&a.rel) && plain(a)) || (!attribute(&a.rel) && !prog.decls.get(&a.rel).is_some_and(|cols| cols.iter().any(|(_, t)| matches!(t.as_str(), "node" | "loc" | "span")))))
+        && atoms.iter().all(|a| (attribute(&a.rel) && plain(a)) || (!attribute(&a.rel) && !prog.decls.get(a.rel.as_str()).is_some_and(|cols| cols.iter().any(|(_, t)| matches!(t.as_str(), "node" | "loc" | "span")))))
 }
 
 /// Whether a component enumerates subtrees: `within(n, a)` with `n` read by no other atom of it but a node's
@@ -1318,7 +1382,7 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
             .collect();
         let mut groups: Vec<BTreeSet<String>> = Vec::new();
         for atom in atoms {
-            let Some(columns) = prog.decls.get(&atom.rel) else { continue };
+            let Some(columns) = prog.decls.get(atom.rel.as_str()) else { continue };
             let mut nodes: BTreeSet<String> = atom.args.iter().zip(columns).filter_map(|(term, (_, ty))| {
                 if matches!(ty.as_str(), "node" | "loc" | "span") && let Term::Var(value) = term { Some(value.clone()) } else { None }
             }).collect();
@@ -1353,11 +1417,11 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
         let mut helpers: Vec<Rule> = Vec::new();
         for (i, rule) in prog.rules.iter().enumerate() {
             let at = level.get(&i).copied().unwrap_or(0);
-            if local.contains(&rule.head.rel) || at >= 2 {
+            if local.contains(rule.head.rel.as_str()) || at >= 2 {
                 continue;
             }
             let base = |rel: &str| prog.inputs.iter().any(|r| r == rel);
-            let candidate = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg && !prog.lattice.contains_key(&a.rel) && (base(&a.rel) || local.contains(&a.rel)));
+            let candidate = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg && !prog.lattice.contains_key(a.rel.as_str()) && (base(&a.rel) || local.contains(a.rel.as_str())));
             // Components of the candidates by shared variables. `a = b` between two variables (a disjunction's
             // branch, as lowering leaves it: `(e0 = d ; …)`) names one value, so it joins the atoms on each side; apart,
             // each would be pushed alone and their join left to the cross-file part (decision 0093 §4, O140).
@@ -1425,7 +1489,7 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                 for (j, l) in rule.body.iter().enumerate() {
                     let with = match l {
                         Literal::Cmp { .. } => true,
-                        Literal::Atom(a) => a.neg && !a.gated && !prog.lattice.contains_key(&a.rel) && (base(&a.rel) || (at == 0 && local.contains(&a.rel))),
+                        Literal::Atom(a) => a.neg && !a.gated && !prog.lattice.contains_key(a.rel.as_str()) && (base(&a.rel) || (at == 0 && local.contains(a.rel.as_str()))),
                         _ => false,
                     };
                     if with && !l.vars().is_empty() && l.vars().is_subset(&vars) {
@@ -1463,7 +1527,7 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                 });
                 let filtered = rule.body.iter().enumerate().any(|(j, l)| {
                     !lits.contains(&j)
-                        && matches!(l, Literal::Atom(a) if !a.neg && !prog.lattice.contains_key(&a.rel) && !candidate(l)
+                        && matches!(l, Literal::Atom(a) if !a.neg && !prog.lattice.contains_key(a.rel.as_str()) && !candidate(l)
                             && iface.iter().all(|v| a.args.iter().any(|t| matches!(t, Term::Var(x) if x == v))))
                 });
                 if joined_away && filtered {
@@ -1474,14 +1538,14 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                     .map(|v| {
                         atoms.iter().find_map(|a| {
                             let c = a.args.iter().position(|t| matches!(t, Term::Var(x) if x == v))?;
-                            prog.decls.get(&a.rel)?.get(c).map(|(_, t)| (v.clone(), t.clone()))
+                            prog.decls.get(a.rel.as_str())?.get(c).map(|(_, t)| (v.clone(), t.clone()))
                         })
                     })
                     .collect();
                 let Some(typed) = typed else { continue };
                 let name = format!("fl{}_{}", next.decls.len(), rule.head.rel);
                 next.decls.insert(name.clone(), typed);
-                let head = Atom { rel: name.clone(), args: iface.iter().map(|v| Term::Var(v.clone())).collect(), neg: false, gated: false };
+                let head = Atom { rel: name.clone().into(), args: iface.iter().map(|v| Term::Var(v.clone())).collect(), neg: false, gated: false };
                 helpers.push(Rule { head: head.clone(), body: lits.iter().map(|&j| rule.body[j].clone()).collect() });
                 replaced.push((*lits.iter().next().expect("a literal"), Literal::Atom(head)));
                 taken.extend(lits);
@@ -1518,10 +1582,11 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
 
 /// Gives every relation the chunks hand on (an export, or a file-local output) a location column, so each of its
 /// rows names its document (decision 0052): a relation without one, `r(p, l)`, is derived by the chunks as
-/// `r_at(d, p, l)`, `d` a document its rules bind (from `node`, `doc`, …, or a node through `node(d, n, …)`), and
-/// the cross-file part reads `r(p, l) :- r_at(_, p, l)`. A relation that file-local rules also read, a lattice, or
+/// `r_at(d, p, l)` (`r_at_` where the program has an `r_at` of its own), `d` a document its rules bind (from `node`,
+/// `doc`, `tape_line`, …, a document column left unnamed included, or a node through `node(d, n, …)`), and the
+/// cross-file part reads `r(p, l) :- r_at(_, p, l)`. A relation that file-local rules also read, a lattice, or
 /// one whose rule binds no location is left; its name is returned in the `Err`: its rows are not attributable.
-pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result<Vec<String>, Vec<String>> {
+pub fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result<Vec<String>, Vec<String>> {
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
     use std::collections::BTreeSet;
     let split = programs(prog);
@@ -1537,13 +1602,13 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
     let docof = prog.inputs.iter().any(|r| r == "docof");
     let decls = prog.decls.clone();
     let node_typed = |rel: &str, c: usize| decls.get(rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| t == "node");
-    let doc_type = prog.decls.get("node").and_then(|cols| cols.first()).map(|(_, t)| t.clone()).unwrap_or_else(|| "number".to_owned());
+    let doc_type = prog.decls.get("node").and_then(|cols| cols.first()).map(|(_, t)| t.clone()).unwrap_or_else(|| "int".to_owned());
     let (mut located, mut blocked) = (Vec::new(), Vec::new());
     let mut rules = std::mem::take(&mut prog.rules);
     // How many rules of a file-local head read each relation (not their own): a target read so is blocked. Kept as
     // the rules change (a located relation's rules move to `<rel>_at`, no file-local head), not counted again per
     // target over every rule.
-    let reads = |rule: &Rule| -> BTreeSet<String> { rule.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.clone()).filter(|a| *a != rule.head.rel).collect() };
+    let reads = |rule: &Rule| -> BTreeSet<String> { rule.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()).filter(|a| *a != rule.head.rel).collect() };
     let mut readers: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     for rule in rules.iter().filter(|r| local.contains(r.head.rel.as_str())) {
         for a in reads(rule) {
@@ -1556,7 +1621,13 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
             blocked.push(rel.clone());
             continue;
         };
-        // Each rule's document: a document column it binds, else one through a node it binds.
+        // The located relation: `r_at`, unless the program has a relation of that name (then `r_at_`, …).
+        let mut at = format!("{rel}_at");
+        while prog.decls.contains_key(&at) {
+            at.push('_');
+        }
+        // Each rule's document: a document column it binds, or one it leaves unnamed (`tape_line(_, l, sp)`, which
+        // then names it), else one through a node it binds.
         let mut made = Vec::new();
         for rule in rules.iter().filter(|r| r.head.rel == *rel) {
             let positive = || rule.body.iter().filter_map(|l| match l {
@@ -1568,13 +1639,26 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
                 _ => None,
             });
             let mut body = rule.body.clone();
-            let doc = match doc {
-                Some(d) => d,
-                None => {
+            let unnamed = rule.body.iter().enumerate().find_map(|(i, l)| match l {
+                Literal::Atom(a) if !a.neg => document_column(&a.rel).filter(|&c| matches!(a.args.get(c), Some(Term::Wild))).map(|c| (i, c)),
+                _ => None,
+            });
+            let doc = match (doc, unnamed) {
+                (Some(d), _) => d,
+                (None, Some((i, c))) => {
+                    let d = "__located_d".to_owned();
+                    if let Literal::Atom(a) = &mut body[i] {
+                        a.args[c] = Term::Var(d.clone());
+                    }
+                    d
+                }
+                (None, None) => {
+                    // Through `docof`, or `node` where the program declares it (one that declares neither, as a
+                    // program of a few base relations may, is not located).
                     let Some(node) = positive().find_map(|a| a.args.iter().enumerate().find_map(|(c, t)| match t {
                         Term::Var(v) if node_typed(&a.rel, c) => Some(v.clone()),
                         _ => None,
-                    })) else {
+                    })).filter(|_| docof || decls.contains_key("node")) else {
                         break;
                     };
                     let d = "__located_d".to_owned();
@@ -1587,7 +1671,7 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
                 }
             };
             let mut head = rule.head.clone();
-            head.rel = format!("{rel}_at");
+            head.rel = at.clone().into();
             head.args.insert(0, Term::Var(doc));
             made.push(Rule { head, body });
         }
@@ -1595,7 +1679,6 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
             blocked.push(rel.clone());
             continue;
         }
-        let at = format!("{rel}_at");
         let mut at_cols = vec![("d".to_owned(), doc_type.clone())];
         at_cols.extend(cols.iter().cloned());
         prog.decls.insert(at.clone(), at_cols);
@@ -1616,7 +1699,7 @@ pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> 
             }
         }
         rules.extend(made);
-        let read_at = Rule { head: Atom { rel: rel.clone(), args: vars, neg: false, gated: false }, body: vec![Literal::Atom(Atom { rel: at, args, neg: false, gated: false })] };
+        let read_at = Rule { head: Atom { rel: rel.clone().into(), args: vars, neg: false, gated: false }, body: vec![Literal::Atom(Atom { rel: at.into(), args, neg: false, gated: false })] };
         for a in reads(&read_at) {
             *readers.entry(a).or_default() += 1;
         }

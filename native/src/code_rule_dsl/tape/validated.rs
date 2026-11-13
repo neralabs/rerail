@@ -2,7 +2,7 @@
 //! The sink sees validated preorder nodes. No partially admitted result is published.
 use super::*;
 
-pub(in crate::code_rule_dsl) struct Node {
+pub struct Node {
     pub id: u32,
     pub kind: u16,
     pub field: u16,
@@ -24,17 +24,19 @@ struct Open {
     child_end: Option<u32>,
 }
 
-pub(in crate::code_rule_dsl) fn visit(
+pub fn visit(
     source: &str,
     grammar: &Grammar,
     image: &TapeImage,
     budget: &impl Fn() -> bool,
     mut sink: impl FnMut(Node, &[u16]),
-) -> Result<(), String> {
+) -> Result<[u8; 32], String> {
     checked(budget)?;
+    // The source's digest, returned: a tape decoded from the wire holds none of its own (`TapeImage::source_digest`).
+    let digest = source_digest(&source, budget)?;
     if image.language != grammar.lang
         || image.source_len != source.len()
-        || image.source_digest != source_digest(&source, budget)?
+        || image.source_digest.is_some_and(|stored| stored != digest)
     {
         return Err("tape grammar or source revision mismatch".into());
     }
@@ -188,5 +190,6 @@ pub(in crate::code_rule_dsl) fn visit(
             child_end: None,
         });
     }
-    checked(budget)
+    checked(budget)?;
+    Ok(digest)
 }

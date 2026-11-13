@@ -1,0 +1,490 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-grammar-node-kinds",
+  "revision": 1,
+  "mode": "log",
+  "description": "Name a grammar's node kinds only on its family's Engine Adapter or in the family's own modules; shared engine code reads them from the adapter.",
+  "scope": {
+    "include": [
+      "native/src/**/*.rs"
+    ],
+    "exclude": [
+      "native/src/code_rule_dsl/language/adapter.rs",
+      "native/src/code_rule_dsl/language/adapter/**",
+      "**/*tests.rs",
+      "**/tests/**",
+      "**/test_support.rs",
+      "**/*.generated.rs",
+      "native/src/code_rule_dsl/calls/summary.rs",
+      "native/src/code_rule_dsl/value/structure.rs",
+      "native/src/code_rule_dsl/value/key.rs",
+      "native/src/code_rule_dsl/module_graph.rs",
+      "native/src/code_rule_dsl/import_target/**",
+      "native/src/code_rule_dsl/embed/test_script.rs",
+      "native/src/code_rule_dsl/literal/annotation.rs",
+      "native/src/code_rule_dsl/literal/offsets.rs",
+      "native/src/code_rule_dsl/literal/semantic.rs",
+      "native/src/code_rule_dsl/literal/brace.rs",
+      "native/src/code_rule_dsl/literal/brace/**",
+      "native/src/code_rule_dsl/literal/percent.rs",
+      "native/src/code_rule_dsl/literal/printf.rs",
+      "native/src/code_rule_dsl/literal/printf/**",
+      "native/src/code_rule_dsl/literal/scanf.rs",
+      "native/src/code_rule_dsl/literal/scanf/**",
+      "native/src/code_rule_dsl/literal/eslint_directive.rs",
+      "native/src/code_rule_dsl/matcher/format_args/printf.rs",
+      "native/src/code_rule_dsl/matcher/format_args/scanf.rs",
+      "native/src/code_rule_dsl/suppress/biome.rs",
+      "native/src/code_rule_dsl/suppress/clippy.rs",
+      "native/src/code_rule_dsl/suppress/eslint.rs",
+      "native/src/code_rule_dsl/suppress/noqa.rs",
+      "native/src/code_rule_dsl/suppress/nosec.rs",
+      "native/src/code_rule_dsl/suppress/oxlint.rs",
+      "native/src/code_rule_dsl/suppress/phpcs.rs",
+      "native/src/code_rule_dsl/suppress/phpstan.rs",
+      "native/src/code_rule_dsl/suppress/psalm.rs",
+      "native/src/code_rule_dsl/suppress/ruff.rs",
+      "native/src/code_rule_dsl/suppress/sqlfluff.rs"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "node-kinds",
+      "define": {
+        "language": "rust",
+        "utils": {
+          "kind-literal": {
+            "kind": "string_literal",
+            "regex": "^\"[A-Za-z_][A-Za-z0-9_]*\"$",
+            "not": {
+              "regex": "^\"ERROR\"$"
+            }
+          },
+          "kind-call": {
+            "not": {
+              "kind": "string_literal"
+            },
+            "regex": "(?:^|[^A-Za-z0-9_\"])kind\\s*\\(\\s*\\)(?:\\s*\\.\\s*(?:as_ref|as_str)\\s*\\(\\s*\\))?$"
+          },
+          "kind-var": {
+            "regex": "^[&*\\s]*kind(?:\\s*\\.\\s*(?:as_ref|as_str)\\s*\\(\\s*\\))?$",
+            "inside": {
+              "kind": "function_item",
+              "stopBy": "end",
+              "any": [
+                {
+                  "has": {
+                    "kind": "call_expression",
+                    "regex": "\\.\\s*kind\\s*\\(\\s*\\)$",
+                    "stopBy": "end"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "parameters",
+                    "has": {
+                      "kind": "parameter",
+                      "regex": "^kind\\s*:"
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "kind-read": {
+            "any": [
+              {
+                "matches": "kind-call"
+              },
+              {
+                "matches": "kind-var"
+              }
+            ]
+          },
+          "cfg-test": {
+            "kind": "attribute_item",
+            "regex": "^#\\[cfg\\((?:test|all\\(test\\b[^\\]]*)\\)\\]$"
+          },
+          "test-item": {
+            "any": [
+              {
+                "kind": "mod_item"
+              },
+              {
+                "kind": "function_item"
+              },
+              {
+                "kind": "impl_item"
+              }
+            ],
+            "follows": {
+              "matches": "cfg-test",
+              "stopBy": {
+                "not": {
+                  "any": [
+                    {
+                      "kind": "attribute_item"
+                    },
+                    {
+                      "kind": "line_comment"
+                    },
+                    {
+                      "kind": "block_comment"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "family-arm": {
+            "kind": "match_arm",
+            "has": {
+              "field": "pattern",
+              "has": {
+                "kind": "scoped_identifier",
+                "regex": "::(?:Python|Ecma|Php|Blade|Vue|Rust|Sql|JavaScript|TypeScript|Tsx)[A-Za-z0-9_]*$",
+                "stopBy": "end"
+              }
+            }
+          },
+          "family-function": {
+            "kind": "function_item",
+            "has": {
+              "field": "name",
+              "regex": "(?:^|_)(?:python|ecma|php|blade|vue|rust|sql|javascript|typescript|tsx)(?:_|$)"
+            }
+          },
+          "node-kind-use": {
+            "all": [
+              {
+                "any": [
+                  {
+                    "kind": "binary_expression",
+                    "all": [
+                      {
+                        "has": {
+                          "field": "operator",
+                          "regex": "^(?:==|!=)$"
+                        }
+                      },
+                      {
+                        "has": {
+                          "matches": "kind-read"
+                        }
+                      },
+                      {
+                        "has": {
+                          "matches": "kind-literal"
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "kind": "match_pattern",
+                    "has": {
+                      "matches": "kind-literal",
+                      "stopBy": "end"
+                    },
+                    "inside": {
+                      "kind": "match_arm",
+                      "inside": {
+                        "kind": "match_block",
+                        "inside": {
+                          "kind": "match_expression",
+                          "has": {
+                            "field": "value",
+                            "matches": "kind-read"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "kind": "macro_invocation",
+                    "regex": "^matches!\\s*[\\(\\[\\{]\\s*[&*\\s]*(?:[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\(\\s*\\))?\\s*\\.\\s*)*kind(?:\\s*\\(\\s*\\))?(?:\\s*\\.\\s*(?:as_ref|as_str)\\s*\\(\\s*\\))?\\s*,[\\s\\S]*\"[A-Za-z_][A-Za-z0-9_]*\"",
+                    "has": {
+                      "kind": "token_tree",
+                      "has": {
+                        "kind": "identifier",
+                        "regex": "^kind$",
+                        "stopBy": "end"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "call_expression",
+                    "regex": "^&?\\[[^\\]]*\"[A-Za-z_][A-Za-z0-9_]*\"[^\\]]*\\]\\s*\\.\\s*contains\\s*\\(\\s*[&*\\s]*(?:[A-Za-z_][A-Za-z0-9_]*\\s*(?:\\(\\s*\\))?\\s*\\.\\s*)*kind(?:\\s*\\(\\s*\\))?(?:\\s*\\.\\s*(?:as_ref|as_str)\\s*\\(\\s*\\))?\\s*\\)$"
+                  },
+                  {
+                    "kind": "call_expression",
+                    "regex": "(?:^|[^A-Za-z0-9_\"])kind\\s*\\(\\s*\\)(?:\\s*\\.\\s*(?:as_ref|as_str)\\s*\\(\\s*\\))?\\s*\\.\\s*(?:ends_with|starts_with|contains|eq|strip_prefix|strip_suffix)\\s*\\(\\s*\"[A-Za-z_][A-Za-z0-9_]*\"\\s*\\)$"
+                  },
+                  {
+                    "kind": "call_expression",
+                    "has": {
+                      "field": "function",
+                      "regex": "(?:^|::|\\.)\\s*(?:kind_ids?|id_for_node_kind|kind_to_id)$"
+                    },
+                    "all": [
+                      {
+                        "has": {
+                          "field": "arguments",
+                          "has": {
+                            "matches": "kind-literal",
+                            "stopBy": "end"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "not": {
+                  "inside": {
+                    "matches": "test-item",
+                    "stopBy": "end"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "matches": "family-function",
+                    "stopBy": "end"
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "matches": "family-arm",
+                    "stopBy": "end"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "shared-code",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "matches": "node-kind-use"
+          },
+          "file": {
+            "path": {
+              "notRegex": "(?:^|/)(?:[a-z0-9_]+_)?(?:python|ecma|php|blade|vue|rust|sql|javascript|typescript|tsx)(?:_[a-z0-9_]+|doc)?(?:\\.rs$|/)|^(?:native/src/code_rule_dsl/language\\.rs|native/src/code_rule_dsl/matcher/arguments\\.rs|native/src/code_rule_dsl/matcher/format_args\\.rs|native/src/code_rule_dsl/matcher/resolve\\.rs|native/src/code_rule_dsl/scope/usage\\.rs)$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "GRAMMAR_NODE_KIND",
+        "anchor": "witness.span",
+        "message": "Put this grammar node kind on the family's Engine Adapter (a *_KINDS constant, like COMMENT_KINDS) and read it via with_adapter!; if only one family's code runs this, move it to that family's module."
+      }
+    },
+    {
+      "id": "after-dispatch-language",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "all": [
+              {
+                "matches": "node-kind-use"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "function_item",
+                    "stopBy": "end",
+                    "has": {
+                      "field": "name",
+                      "regex": "^(?:has_module_syntax|is_module_declaration|has_top_level_await|evaluated_where_defined|redeclares_commonjs_wrapper|binds_commonjs_wrapper|jsx_runtime_in_source)$"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "^native/src/code_rule_dsl/language\\.rs$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "GRAMMAR_NODE_KIND",
+        "anchor": "witness.span",
+        "message": "Put this grammar node kind on the family's Engine Adapter (a *_KINDS constant, like COMMENT_KINDS) and read it via with_adapter!; if only one family's code runs this, move it to that family's module."
+      }
+    },
+    {
+      "id": "after-dispatch-arguments",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "all": [
+              {
+                "matches": "node-kind-use"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "function_item",
+                    "stopBy": "end",
+                    "has": {
+                      "field": "name",
+                      "regex": "^(?:syntactic|literal_keywords)$"
+                    }
+                  }
+                }
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "if_expression",
+                    "stopBy": "end",
+                    "has": {
+                      "field": "condition",
+                      "regex": "\\bself\\.estree\\b"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "^native/src/code_rule_dsl/matcher/arguments\\.rs$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "GRAMMAR_NODE_KIND",
+        "anchor": "witness.span",
+        "message": "Put this grammar node kind on the family's Engine Adapter (a *_KINDS constant, like COMMENT_KINDS) and read it via with_adapter!; if only one family's code runs this, move it to that family's module."
+      }
+    },
+    {
+      "id": "after-dispatch-format-args",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "all": [
+              {
+                "matches": "node-kind-use"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "function_item",
+                    "stopBy": "end",
+                    "has": {
+                      "field": "name",
+                      "regex": "^(?:brace|mapping_values|named|percent_list|percent_operand|plain_literal|resolve|sequence_values|unparenthesized)$"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "^native/src/code_rule_dsl/matcher/format_args\\.rs$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "GRAMMAR_NODE_KIND",
+        "anchor": "witness.span",
+        "message": "Put this grammar node kind on the family's Engine Adapter (a *_KINDS constant, like COMMENT_KINDS) and read it via with_adapter!; if only one family's code runs this, move it to that family's module."
+      }
+    },
+    {
+      "id": "after-dispatch-resolve",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "all": [
+              {
+                "matches": "node-kind-use"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "function_item",
+                    "stopBy": "end",
+                    "has": {
+                      "field": "name",
+                      "regex": "^(?:is_global_scope_this|this_boundary|is_ordinary_function|is_strict|has_use_strict|is_seen_before|imported_name|statement_name|from_module|dotted)$"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "^native/src/code_rule_dsl/matcher/resolve\\.rs$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "GRAMMAR_NODE_KIND",
+        "anchor": "witness.span",
+        "message": "Put this grammar node kind on the family's Engine Adapter (a *_KINDS constant, like COMMENT_KINDS) and read it via with_adapter!; if only one family's code runs this, move it to that family's module."
+      }
+    },
+    {
+      "id": "after-dispatch-usage",
+      "forbid": {
+        "ast": {
+          "language": "rust",
+          "rule": {
+            "all": [
+              {
+                "matches": "node-kind-use"
+              },
+              {
+                "not": {
+                  "inside": {
+                    "kind": "function_item",
+                    "stopBy": "end",
+                    "has": {
+                      "field": "name",
+                      "regex": "^(?:dunder_all|extract_value|unparenthesized|builtin_sequence|extract)$"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "^native/src/code_rule_dsl/scope/usage\\.rs$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "GRAMMAR_NODE_KIND",
+        "anchor": "witness.span",
+        "message": "Put this grammar node kind on the family's Engine Adapter (a *_KINDS constant, like COMMENT_KINDS) and read it via with_adapter!; if only one family's code runs this, move it to that family's module."
+      }
+    }
+  ]
+}

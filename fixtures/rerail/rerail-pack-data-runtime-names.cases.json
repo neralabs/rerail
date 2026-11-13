@@ -1,0 +1,70 @@
+{
+  "caught": [
+    {
+      "path": "scripts/pack-data/recipes/typescript.ts",
+      "content": "import { readFileSync } from \"node:fs\";\nimport { npmRuntime, runtimeFile } from \"../runtimes.js\";\n\nexport async function derive({ runtimeCache, runner }) {\n  const runtime = JSON.parse(readFileSync(runtimeFile(\"typescript-eslint-8.70.1\", \"package.json\"), \"utf8\")) as { dependencies: Record<string, string> };\n  const tools = await npmRuntime(\"vitest-eslint-plugin-1.6.27\", runtimeCache, runner);\n  return { runtime, tools };\n}\n"
+    },
+    {
+      "path": "scripts/pack-data/recipes/python.ts",
+      "content": "import { join } from \"node:path\";\nimport { uvRuntime } from \"../runtimes.js\";\n\nexport async function derivePython({ tool, runtimeCache, runner }, pins: { version: string }) {\n  const executable = join((await uvRuntime(`${tool}-${pins.version}`, runtimeCache, runner)).directory, \".venv\", \"bin\", tool);\n  return executable;\n}\n"
+    },
+    {
+      "path": "scripts/pack-data/recipes/complexity.ts",
+      "content": "import { join } from \"node:path\";\nimport { uvRuntime } from \"../runtimes.js\";\n\nexport async function derive({ runtimeCache, runner }, version: string) {\n  const lizard = join((await uvRuntime(`lizard-${version}`, runtimeCache, runner)).directory, \".venv\", \"bin\", \"lizard\");\n  return lizard;\n}\n"
+    },
+    {
+      "path": "scripts/pack-data/recipes/legacy.ts",
+      "content": "import { readFileSync } from \"node:fs\";\nimport { join } from \"node:path\";\nimport { RUNTIMES_DIRECTORY } from \"../runtimes.js\";\n\nconst runtime = JSON.parse(readFileSync(join(RUNTIMES_DIRECTORY, \"typescript-eslint-8.70.1\", \"package.json\"), \"utf8\"));\n"
+    },
+    {
+      "path": "scripts/pack-data/recipes/php.ts",
+      "content": "import { composerRuntime } from \"../runtimes.js\";\n\nconst PHPCS_RUNTIME = \"php_codesniffer-3.13.4\";\n\nexport const project = (cache: string, runner: unknown) =>\n  composerRuntime(\n    PHPCS_RUNTIME,\n    cache,\n    runner,\n  );\n"
+    },
+    {
+      "path": "scripts/pack-data/recipes/ruby.ts",
+      "content": "import { pinnedPhp } from '../runtimes.js';\n\nexport const php = (runner: unknown) => pinnedPhp('php-8.4.1', runner);\n"
+    },
+    {
+      "path": "scripts/pack-data/recipes/vue.ts",
+      "content": "import { join } from \"node:path\";\nimport { RUNTIMES_DIRECTORY } from \"../runtimes.js\";\n\nexport const manifest = (tool: string, version: string) => join(RUNTIMES_DIRECTORY, `${tool}-${version}`, \"package.json\");\n"
+    },
+    {
+      "path": "scripts/pack-data/recipes/next.ts",
+      "content": "import { join } from \"node:path\";\n\nconst lock = join(root, \"scripts/pack-data/runtimes/eslint-config-next-16.3.8/package-lock.json\");\n"
+    },
+    {
+      "path": "scripts/pack-data/recipes/sql.ts",
+      "content": "import { uvRuntime } from \"../runtimes.js\";\n\nexport const tools = (tool: string, version: string, cache: string, runner: unknown) => uvRuntime(tool + \"-\" + version, cache, runner);\n"
+    },
+    {
+      "path": "scripts/pack-data/recipes/node.ts",
+      "content": "import { npmRuntime } from \"../runtimes.js\";\n\nexport async function derive({ runtimeCache, runner }, upstream: { name: string; version: string }) {\n  const runtime = `${upstream.name}-${upstream.version}`;\n  return npmRuntime(runtime, runtimeCache, runner);\n}\n"
+    },
+    {
+      "path": "scripts/pack-data/recipes/react.ts",
+      "content": "import { npmRuntime } from \"../runtimes.js\";\n\nexport const tools = (cache: string, runner: unknown) => npmRuntime(\"eslint-10.0.0-rc.1\", cache, runner);\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "scripts/pack-data/recipes/typescript.ts",
+      "content": "import { readFileSync } from \"node:fs\";\nimport { readGatesManifest } from \"../../../conformance/languages/manifest.js\";\nimport { npmRuntime, runtimeFile } from \"../runtimes.js\";\n\nexport async function derive({ root, pack, tool, runtimeCache, runner }) {\n  const runtime = JSON.parse(readFileSync(runtimeFile(readGatesManifest(root, pack, tool).upstream.runtime, \"package.json\"), \"utf8\")) as { dependencies: Record<string, string> };\n  const tools = await npmRuntime(readGatesManifest(root, pack, tool).upstream.runtime, runtimeCache, runner);\n  return { runtime, tools };\n}\n"
+    },
+    {
+      "path": "scripts/pack-data/recipes/php.ts",
+      "content": "import { readFileSync } from \"node:fs\";\nimport { runtimeFile, uvRuntime } from \"../runtimes.js\";\n\n// runs on runtimes/<tool>-<VERSION>, the release gates.yaml names\nconst PYTHON = readFileSync(runtimeFile(\"python\", \".python-version\"), \"utf8\").trim();\nexport const python = async (cache: string, runner: unknown) => (await uvRuntime(\"python\", cache, runner)).python;\n"
+    },
+    {
+      "path": "scripts/pack-data/recipes/blade.ts",
+      "content": "import { composerRuntime } from \"../runtimes.js\";\n\nexport const tools = (upstream: { runtime: string }, cache: string, runner: unknown) => composerRuntime(upstream.runtime, cache, runner);\nconst version = \"12.4.0\";\n"
+    },
+    {
+      "path": "scripts/pack-data/recipes/rust.ts",
+      "content": "import { npmRuntime } from \"../runtimes.js\";\n\n// installs scripts/pack-data/runtimes/typescript-eslint-8.70.1/ as gates.yaml names it\nexport const tools = (upstream: { runtime: string }, cache: string, runner: unknown) => npmRuntime(`${upstream.runtime}`, cache, runner);\nconst pins = { eslint: \"9.1.0\", parser: \"eslint@9.1.0\" };\n"
+    },
+    {
+      "path": "scripts/pack-data/runtimes.test.ts",
+      "content": "import { uvRuntime } from \"./runtimes.js\";\n\nawait uvRuntime(\"bandit-1.9.4\", \"/tmp/cache\", runner);\n"
+    }
+  ]
+}

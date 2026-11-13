@@ -1,0 +1,114 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-pth100-os-path-abspath",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Use Path.resolve() instead of os.path.abspath(); path objects read better than string-based os.path calls.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "os-path-abspath",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "utils": {
+      "target": {
+       "any": [
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "attribute"
+        }
+       ],
+       "resolves": {
+        "import": [
+         "os.path.abspath"
+        ]
+       }
+      },
+      "callee": {
+       "any": [
+        {
+         "matches": "target",
+         "pattern": "$F"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee"
+         }
+        }
+       ]
+      }
+     },
+     "rule": {
+      "kind": "call",
+      "has": {
+       "field": "function",
+       "matches": "callee"
+      },
+      "arguments": {
+       "signature": [
+        "path"
+       ],
+       "bind": {
+        "S": "path"
+       },
+       "mode": "syntactic"
+      },
+      "any": [
+       {
+        "has": {
+         "stopBy": "neighbor",
+         "kind": "argument_list",
+         "count": {
+          "has": {
+           "stopBy": "neighbor",
+           "not": {
+            "any": [
+             {
+              "regex": "^[(),\\[\\]{}]$"
+             },
+             {
+              "kind": "comment"
+             }
+            ]
+           }
+          },
+          "min": 1,
+          "max": 1
+         }
+        }
+       },
+       {
+        "has": {
+         "field": "arguments",
+         "kind": "generator_expression"
+        }
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.F",
+    "code": "PTH100",
+    "message": "Use `Path($S).resolve()` instead of `os.path.abspath($S)`; it follows symlinks and returns a `Path`, so leave it where unresolved symlinks, a string result or a bytes path is needed.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "PTH100"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

@@ -4,7 +4,6 @@ use super::resolve::{
 };
 use super::util::{UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
 use crate::code_rule_dsl::budget;
-use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect, kind_ids};
 use crate::code_rule_dsl::literal;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
@@ -18,37 +17,38 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// How a node's value is read: its grammar and the query's language options, which decide what
 /// is a builtin.
 #[derive(Clone)]
-pub(crate) struct Reading {
-    pub(crate) language: GrammarDialect,
+pub struct Reading {
+    pub language: GrammarDialect,
     /// The language's family, whose adapter decodes the values.
     pub(crate) family: Family,
     pub(crate) options: Option<Arc<LanguageOptions>>,
     pub(crate) python: Option<Arc<PythonOptions>>,
     /// The grammar's expression kinds: only these have values.
-    pub(crate) expressions: Arc<BTreeSet<u16>>,
+    pub expressions: Arc<BTreeSet<u16>>,
     /// `follow`: a name is the value its binding carries (see `ScopeTable::binding`).
-    pub(crate) follow: bool,
+    pub follow: bool,
     /// A parsed literal's nodes (`parse`): each has the value its grammar gives it, if any.
     pub(crate) literal: bool,
     /// Stable identity for this reading's cache entries, including its language options.
-    cache_id: usize,
+    pub cache_id: usize,
 }
 
 static NEXT_READING_ID: AtomicUsize = AtomicUsize::new(1);
 
 impl Reading {
-    pub(crate) fn new(
+    pub fn new(
         language: GrammarDialect,
         options: Option<Arc<LanguageOptions>>,
         python: Option<Arc<PythonOptions>>,
     ) -> Self {
         let family = Family::of(language);
         let kinds =
-            with_adapter!(family, A => <<A as Adapter>::Value as ValueRules>::EXPRESSION_KINDS);
+            { let pack = language_pack::pack(family); pack.value_expression_kinds() };
         Self {
             language,
             family,
@@ -83,7 +83,7 @@ impl Reading {
     }
 
     /// Whether the node is an expression, which has a value (known or not).
-    pub(crate) fn has_value<D: Doc>(&self, node: &Node<'_, D>) -> bool {
+    pub fn has_value<D: Doc>(&self, node: &Node<'_, D>) -> bool {
         if self.literal {
             return literal::sub_tree(node)
                 .is_some_and(|tree| tree.value(node.node_id()).is_some());
@@ -92,14 +92,14 @@ impl Reading {
     }
 
     /// The language whose semantics the reading's values follow.
-    pub(crate) fn lang(&self) -> Family {
-        with_adapter!(self.family, A => <<A as Adapter>::Value as ValueRules>::LANG)
+    pub fn lang(&self) -> Family {
+        { let pack = language_pack::pack(self.family); pack.value_lang() }
     }
 
     /// The node's value, decoded once per file and reading. Each node decoded spends a step of
     /// the root's utility budget; running out fails the clause for the file (`UtilLimit::Value`)
     /// and a deadline makes the value unknown, never false.
-    pub(crate) fn value<D: Doc>(&self, node: &Node<'_, D>) -> Rc<Value> {
+    pub fn value<D: Doc>(&self, node: &Node<'_, D>) -> Rc<Value> {
         if self.literal {
             return Rc::new(
                 literal::sub_tree(node)
@@ -149,10 +149,7 @@ impl Reading {
                 .following_constants(&mut constant)
                 .following_table(&mut table);
         }
-        let decoded = with_adapter!(
-            self.family,
-            A => <<A as Adapter>::Value as ValueRules>::decode(node, &mut context)
-        );
+        let decoded = { let pack = language_pack::pack(self.family); language_pack::value_decode(pack, node, &mut context) };
         let exhausted = context.exhausted();
         let decoded = Rc::new(decoded);
         // A decode cut short by the budget or a deadline is not the node's value.
@@ -176,10 +173,7 @@ impl Reading {
         }
         let mut spend = spend_step;
         let mut context = Context::new(&mut spend);
-        let tokens = with_adapter!(
-            self.family,
-            A => <<A as Adapter>::Value as ValueRules>::structure(node, equality, &mut context)
-        );
+        let tokens = { let pack = language_pack::pack(self.family); language_pack::value_structure(pack, node, equality, &mut context) };
         // A read cut short by the budget or a deadline is not the node's structure.
         if context.exhausted() || UTIL_EXCEEDED.get().is_some() {
             return Rc::new(None);
@@ -192,7 +186,7 @@ impl Reading {
 
 /// Spends one step of the root's utility budget for a decode; false once it or the deadline ran
 /// out (the budget then fails the clause for the file with `UtilLimit::Value`).
-pub(super) fn spend_step() -> bool {
+pub fn spend_step() -> bool {
     if UTIL_EXCEEDED.get().is_some() || budget::matcher_call_budget_exhausted() {
         return false;
     }
@@ -210,7 +204,7 @@ pub(super) fn spend_step() -> bool {
 
 /// A bound on a number: `gt`, `ge`, `lt` or `le`.
 #[derive(Clone, Copy)]
-pub(crate) enum Bound {
+pub enum Bound {
     Gt,
     Ge,
     Lt,
@@ -222,25 +216,43 @@ pub(crate) enum Bound {
 /// not known satisfies none of them and fails none of them, except `constant`, which asks exactly
 /// whether it is known.
 #[derive(Clone)]
-pub(crate) struct ValueTest {
-    pub(crate) reading: Reading,
-    pub(crate) eq: Option<Value>,
-    pub(crate) types: Vec<String>,
-    pub(crate) constant: Option<bool>,
-    pub(crate) starts_with: Vec<Value>,
-    pub(crate) regex: Option<TextRegex>,
-    pub(crate) bits_any: Option<u64>,
-    pub(crate) bounds: Vec<(Bound, Value)>,
-    pub(crate) truthy: Option<bool>,
+pub struct ValueTest {
+    pub reading: Reading,
+    pub eq: Option<Value>,
+    pub types: Vec<String>,
+    pub constant: Option<bool>,
+    pub starts_with: Vec<Value>,
+    pub regex: Option<TextRegex>,
+    pub bits_any: Option<u64>,
+    pub bounds: Vec<(Bound, Value)>,
+    pub truthy: Option<bool>,
+    /// `name: true`: the predicates read what the node names rather than its value: ESTree's
+    /// name (an identifier's, escapes decoded; a private name's without `#`) or a string literal's
+    /// value, as `compare`'s `name` text reads it; PHP's symbol name. A node without one fails.
+    pub(crate) name: bool,
 }
 
 impl ValueTest {
     /// `Some(true)`, `Some(false)`, or `None` when the verdict is unknown.
-    pub(crate) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> Option<bool> {
-        if !self.reading.has_value(node) {
-            return Some(false);
-        }
-        let value = self.reading.value(node);
+    pub fn holds<D: Doc>(&self, node: &Node<'_, D>) -> Option<bool> {
+        let value = if self.name {
+            let family = self.reading.family;
+            let Some(units) =
+                ({ let pack = language_pack::pack(family); language_pack::value_node_name(pack, node) })
+            else {
+                return Some(false);
+            };
+            // A name holding a lone surrogate has no text to compare.
+            let text = String::from_utf16(&units).ok()?;
+            Rc::new(
+                { let pack = language_pack::pack(family); pack.value_string(&text) },
+            )
+        } else {
+            if !self.reading.has_value(node) {
+                return Some(false);
+            }
+            self.reading.value(node)
+        };
         let lang = self.reading.lang();
         let mut verdict = Some(true);
         let mut all = |term: Option<bool>| match term {
@@ -314,7 +326,7 @@ impl ValueTest {
             }
         }
         if let Some(bits) = self.bits_any {
-            let integer = with_adapter!(lang, A => <<A as Adapter>::Value as ValueRules>::integer(value.as_ref()));
+            let integer = { let pack = language_pack::pack(lang); pack.value_integer(value.as_ref()) };
             if !all(Some(integer.is_some_and(|integer| {
                 !(integer & BigInt::from(bits)).is_zero()
             }))) {
@@ -322,7 +334,7 @@ impl ValueTest {
             }
         }
         for (bound, limit) in &self.bounds {
-            let numeric = with_adapter!(lang, A => <<A as Adapter>::Value as ValueRules>::numeric(value.as_ref()));
+            let numeric = { let pack = language_pack::pack(lang); pack.value_numeric(value.as_ref()) };
             let holds = numeric
                 && value
                     .order(limit, lang)
@@ -346,16 +358,90 @@ impl ValueTest {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::Reading;
-    use crate::code_rule_dsl::language::GrammarDialect;
+/// W's values of a file's expression nodes, as a clause's `value` reads them (`ValueTest::holds`) in its per-file
+/// context: the file's scopes installed as W's evaluation installs them (`FileScopeSlot`: its module, its path, its
+/// syntax errors hiding bindings), the query's language options the defaults, and no utility budget (past W's, its
+/// clause fails the file; here every node is decoded). For each reading asked (`plain`; `follow`: names followed
+/// through their file-local bindings, W's `value.follow`), `each(followed, ordinal, text, types)` for every tape node
+/// that is an expression (`Reading::has_value`) whose value is known: `text` the value as its language converts it to a
+/// string (`ValueRules::to_str`: Python's `str(v)` of a scalar, so a str, int, float, bool, None or Ellipsis; none for
+/// a container or bytes), `types` the type names W's `type` accepts of it (`Value::is_type`: its `type_name`, and
+/// `object` for a JavaScript RegExp). Each node is decoded once per reading, memoized per file as W memoizes it.
+pub(in crate::code_rule_dsl) fn file_values(
+    tape: &crate::code_rule_dsl::tape::TapeDoc,
+    file: &crate::code_rule_dsl::model::FileInput,
+    plain: bool,
+    follow: bool,
+    each: &mut ValueSink<'_>,
+) {
+    let language = tape.file_dialect();
+    let root = ast_grep_core::AstGrep::doc(tape.clone());
+    let hide = crate::code_rule_dsl::soundness::SyntaxErrors::of_doc(tape).hide_bindings();
+    let _scopes = super::FileScopeSlot::install(Vec::new(), file.module.clone(), hide).file(file);
+    for followed in [false, true] {
+        if !(if followed { follow } else { plain }) {
+            continue;
+        }
+        let reading = Reading::new(language, None, None);
+        let reading = if followed { reading.following() } else { reading };
+        // The reading's scope-table charges are its own, as one clause's are.
+        super::resolve::CURRENT_CLAUSE.set(&reading as *const Reading as usize);
+        let lang = reading.lang();
+        for ordinal in 0..tape.transducer_len() as u32 {
+            let node = super::node_at(&root, ordinal);
+            if !reading.has_value(&node) {
+                continue;
+            }
+            UTIL_EXCEEDED.set(None);
+            UTIL_STEPS_LEFT.set(usize::MAX);
+            let value = reading.value(&node);
+            if !value.is_known() {
+                continue;
+            }
+            let text = { let pack = language_pack::pack(lang); language_pack::value_to_str(pack, &value, &node) };
+            let own;
+            let types: &[&'static str] = match value.type_name(lang) {
+                None => &[],
+                Some("regexp") => &["regexp", "object"],
+                Some(name) => {
+                    own = [name];
+                    &own
+                }
+            };
+            each(followed, ordinal, text, types);
+        }
+    }
+    super::resolve::CURRENT_CLAUSE.set(0);
+    UTIL_EXCEEDED.set(None);
+}
 
-    #[test]
-    fn independently_constructed_readings_have_distinct_cache_keys() {
-        let first = Reading::new(GrammarDialect::TypeScript, None, None);
-        let second = Reading::new(GrammarDialect::TypeScript, None, None);
-        assert_ne!(first.cache_id, second.cache_id);
-        assert_eq!(first.cache_id, first.clone().cache_id);
+/// W's reader of values, which facts asks (`facts::core::ValueReader`).
+pub struct Values;
+
+impl crate::code_rule_dsl::facts::core::ValueReader for Values {
+    fn values(
+        &self,
+        tape: &crate::code_rule_dsl::tape::TapeDoc,
+        file: &dyn crate::code_rule_dsl::facts::core::SourceFile,
+        plain: bool,
+        follow: bool,
+        each: &mut dyn FnMut(bool, u32, Option<String>, &[&'static str]),
+    ) {
+        // A file that is no request's has no module or package: read as a request file with none.
+        let made;
+        let file = match file.as_any().downcast_ref::<crate::code_rule_dsl::model::FileInput>() {
+            Some(file) => file,
+            None => {
+                made = crate::code_rule_dsl::model::FileInput::new(String::new(), file.language().to_owned(), Arc::clone(file.source()), None, None, "values")
+                    .expect("a file with no module or package");
+                &made
+            }
+        };
+        file_values(tape, file, plain, follow, each);
     }
 }
+
+/// [`file_values`]' `each(followed, ordinal, text, types)`.
+pub(in crate::code_rule_dsl) type ValueSink<'a> = dyn FnMut(bool, u32, Option<String>, &[&'static str]) + 'a;
+
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

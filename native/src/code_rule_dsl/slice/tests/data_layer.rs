@@ -83,7 +83,7 @@ fn split(path: &Path) -> Result<((String, CompiledCodeRuleDsl), Vec<(String, Str
     // Matchers that do not lower are left out of the wave by `policies::lower`; name them here.
     for clause in &compiled.inner.clauses {
         let ClauseKind::Forbid(Query::Ast { matchers, .. }) = &clause.kind else { continue };
-        for grammar in matchers {
+        for grammar in matchers.iter() {
             let why = match gated_match_tree(grammar).map(|(tree, _)| tree) {
                 Err(error) => Some(format!("match_tree: {error:?}")),
                 Ok(tree) => LoweredMatcher::lower(&tree).err().map(|error| format!("lower: {error:?}")),
@@ -165,6 +165,14 @@ fn data_layer_bench() {
     for ((rule, code), n) in &by_code {
         eprintln!("DL   {rule} {code}: {n}");
     }
+    // `RERAIL_DL_KEYS=<dir>`: every key, as `rule code path line` lines (`slice.tsv`, and `w.tsv` with RERAIL_DL_W).
+    let write_keys = |name: &str, keys: &BTreeSet<(String, String, String, usize)>| {
+        if let Some(dir) = std::env::var_os("RERAIL_DL_KEYS") {
+            let text: String = keys.iter().map(|(rule, code, path, line)| format!("{rule}\t{code}\t{path}\t{line}\n")).collect();
+            std::fs::write(PathBuf::from(dir).join(name), text).unwrap();
+        }
+    };
+    write_keys("slice.tsv", &ours);
     crate::code_rule_dsl::prof::report("dl cold");
 
     let (cpu0, wall0) = (cpu(), std::time::Instant::now());
@@ -182,6 +190,7 @@ fn data_layer_bench() {
         let (cpu0, wall0) = (cpu(), std::time::Instant::now());
         let (ws, failed) = ws_keys(&policies, &names, &texts);
         eprintln!("DL W: {} keys, {} failures; cpu {:?}, wall {:?}", ws.len(), failed.len(), cpu() - cpu0, wall0.elapsed());
+        write_keys("w.tsv", &ws);
         let difference = Difference::of(&run, &ws, &failed);
         for ((rule, code), (only_ours, only_ws)) in &difference.clauses {
             eprintln!("DL   differs {rule} {code}: {only_ours} only ours, {only_ws} only W");

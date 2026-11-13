@@ -5,12 +5,12 @@ use super::rows::{generation, hash_params, intern_hash};
 use super::{
     CODEC_ZSTD, CachedBytes, ContentStore, DocumentPayload, HASH_SHA256, HashKey, SourceId,
     StoreError, StoreResult, StoredDocument, StoredPathObjects, StoredSourceObjects, TapeId,
-    TapePayload, compress,
+    TapePayload,
+    compression::{compress_source, compress_tape, path_tag, tape_tag},
 };
 use rusqlite::Connection;
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{OptionalExtension, params};
 use std::collections::{BTreeSet, HashMap};
-use std::io::Cursor;
 use std::sync::Arc;
 
 /// A stored tape's frames as residency admits them (PIAT §20.3): the tape's and its source's zstd
@@ -89,8 +89,23 @@ impl ContentStore {
     /// [`Self::put_source`] for a caller that already holds the source's SHA-256 (`canonical`): the bytes are not
     /// hashed again.
     pub fn put_source_hashed(&self, source: &[u8], canonical: HashKey, aliases: &[HashKey]) -> StoreResult<SourceId> {
+        self.put_source_tagged(source, canonical, aliases, None)
+    }
+
+    /// [`Self::put_source`] for a file at `path`: its frame may use its language's dictionary.
+    pub fn put_source_at(&self, source: &[u8], aliases: &[HashKey], path: &str) -> StoreResult<SourceId> {
+        self.put_source_tagged(source, HashKey::sha256(source), aliases, path_tag(path))
+    }
+
+    fn put_source_tagged(
+        &self,
+        source: &[u8],
+        canonical: HashKey,
+        aliases: &[HashKey],
+        tag: Option<u8>,
+    ) -> StoreResult<SourceId> {
         self.require_write_capacity()?;
-        let frame = compress(source, self.compression_level)?;
+        let frame = compress_source(source, self.compression_level, tag)?;
         let raw_length = i64::try_from(source.len())
             .map_err(|_| StoreError::Invalid("source length exceeds i64".to_owned()))?;
         // Retried under `retry_busy`: the push writes sources while the overlay's writer holds
@@ -139,6 +154,38 @@ impl ContentStore {
             .lock()
             .expect("content store mutex poisoned");
         source_id_by_hash(&connection, hash)
+    }
+
+    /// The tape of each of `sources` in `grammar_id` at the given versions, as its stored frame, in their order: one
+    /// read, nothing written. A run reads its files' tapes before its first wave, and decompresses each in its file's
+    /// wave (decision 0104).
+    pub fn tape_frames_for(
+        &self,
+        sources: &[SourceId],
+        grammar_id: i64,
+        grammar_version: i64,
+        tape_format_version: i64,
+    ) -> StoreResult<Vec<Option<TapeFrame>>> {
+        let mut out: Vec<Option<TapeFrame>> = vec![None; sources.len()];
+        if sources.is_empty() {
+            return Ok(out);
+        }
+        let list = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>()).expect("integers");
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "SELECT j.key, t.raw_length, t.codec_id, t.frame FROM json_each(?1) j JOIN tape_objects t \
+             ON t.source_id=j.value AND t.grammar_id=?2 AND t.grammar_version=?3 AND t.tape_format_version=?4",
+        )?;
+        let rows = statement.query_map(params![list, grammar_id, grammar_version, tape_format_version], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, i64>(2)?, row.get::<_, Vec<u8>>(3)?))
+        })?;
+        for row in rows {
+            let (at, raw_length, codec, frame) = row?;
+            if codec == CODEC_ZSTD {
+                out[at as usize] = Some(TapeFrame { raw_length, frame: Arc::new(frame) });
+            }
+        }
+        Ok(out)
     }
 
     pub fn tape_by_source(
@@ -305,6 +352,28 @@ impl ContentStore {
         Ok(digest)
     }
 
+    /// The SHA-256 of each of `sources`' contents, in their order (`None`: no such source): one read.
+    pub fn source_digests(&self, sources: &[SourceId]) -> StoreResult<Vec<Option<[u8; 32]>>> {
+        let mut out = vec![None; sources.len()];
+        if sources.is_empty() {
+            return Ok(out);
+        }
+        let ids = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>()).expect("integers");
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "SELECT j.key, h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3 FROM json_each(?1) j \
+             CROSS JOIN source_objects s ON s.source_id = j.value JOIN hashes h ON h.hash_id = s.canonical_hash_id",
+        )?;
+        let rows = statement.query_map([ids], |row| {
+            Ok((row.get::<_, i64>(0)?, HashKey { algorithm: row.get(1)?, lanes: [row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?] }))
+        })?;
+        for row in rows {
+            let (at, key) = row?;
+            out[at as usize] = key.sha256_bytes();
+        }
+        Ok(out)
+    }
+
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn source_has_hash(&self, source_id: SourceId, key: HashKey) -> StoreResult<bool> {
         let connection = self
@@ -370,7 +439,7 @@ impl ContentStore {
                 "unsupported source codec {codec}"
             )));
         }
-        let source = zstd::stream::decode_all(Cursor::new(frame))?;
+        let source = super::decompress(&frame, 0)?;
         if source.len() != usize::try_from(raw_length).unwrap_or(usize::MAX) {
             return Err(StoreError::Corrupt(
                 "source length does not match metadata".to_owned(),
@@ -483,7 +552,7 @@ impl ContentStore {
                         if codec != CODEC_ZSTD {
                             return Err(StoreError::Corrupt("unsupported source codec".into()));
                         }
-                        let bytes = zstd::stream::decode_all(Cursor::new(frame))?;
+                        let bytes = super::decompress(&frame, 0)?;
                         if bytes.len() != length || HashKey::sha256(&bytes) != hash {
                             return Err(StoreError::Corrupt(
                                 "source length or hash does not match metadata".into(),
@@ -515,7 +584,7 @@ impl ContentStore {
                 "tape identifiers must be nonnegative".to_owned(),
             ));
         }
-        let frame = compress(tape, self.compression_level)?;
+        let frame = compress_tape(tape, self.compression_level)?;
         // Retried under `retry_busy`, as `put_source` is.
         self.immediate_transaction(|transaction| {
             put_tape_tx(
@@ -553,8 +622,8 @@ impl ContentStore {
                 "tape identifiers must be nonnegative".to_owned(),
             ));
         }
-        let source_frame = compress(source, self.compression_level)?;
-        let tape_frame = compress(tape, self.compression_level)?;
+        let source_frame = compress_source(source, self.compression_level, tape_tag(tape))?;
+        let tape_frame = compress_tape(tape, self.compression_level)?;
         self.immediate_transaction(|transaction| {
             let created_generation = generation(transaction)?;
             let source_id = put_source_prepared_tx(
@@ -676,9 +745,12 @@ impl ContentStore {
                  SELECT t.tape_id,h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 \
                  FROM requested r JOIN tape_objects t ON t.tape_id=r.id \
                  JOIN hashes h ON h.hash_id=t.canonical_hash_id",
+                // A tape's identity covers its source's hash (`HashKey::tape_identity`).
                 "WITH requested AS (SELECT CAST(value AS INTEGER) id FROM json_each(?1)) \
-                 SELECT t.tape_id,t.raw_length,t.codec_id,t.frame,h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 \
-                 FROM requested r JOIN tape_objects t ON t.tape_id=r.id JOIN hashes h ON h.hash_id=t.canonical_hash_id",
+                 SELECT t.tape_id,t.raw_length,t.codec_id,t.frame,h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3,\
+                 sh.algorithm_id,sh.lane0,sh.lane1,sh.lane2,sh.lane3 \
+                 FROM requested r JOIN tape_objects t ON t.tape_id=r.id JOIN hashes h ON h.hash_id=t.canonical_hash_id \
+                 JOIN source_objects s ON s.source_id=t.source_id JOIN hashes sh ON sh.hash_id=s.canonical_hash_id",
                 "tape",
             ),
             BulkObjects::Sources => (
@@ -687,7 +759,8 @@ impl ContentStore {
                  FROM requested r JOIN source_objects s ON s.source_id=r.id \
                  JOIN hashes h ON h.hash_id=s.canonical_hash_id",
                 "WITH requested AS (SELECT CAST(value AS INTEGER) id FROM json_each(?1)) \
-                 SELECT s.source_id,s.raw_length,s.codec_id,s.frame,h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 \
+                 SELECT s.source_id,s.raw_length,s.codec_id,s.frame,h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3,\
+                 h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 \
                  FROM requested r JOIN source_objects s ON s.source_id=r.id JOIN hashes h ON h.hash_id=s.canonical_hash_id",
                 "source",
             ),
@@ -753,18 +826,25 @@ impl ContentStore {
                             algorithm: row.get(4)?,
                             lanes: [row.get(5)?, row.get(6)?, row.get(7)?, row.get(8)?],
                         },
+                        HashKey {
+                            algorithm: row.get(9)?,
+                            lanes: [row.get(10)?, row.get(11)?, row.get(12)?, row.get(13)?],
+                        },
                     ))
                 })?
                 .collect::<Result<Vec<_>, _>>()?
         };
         // Decode and validate outside the database connection and transaction.
-        for (id, length, codec, frame, hash) in rows {
+        for (id, length, codec, frame, hash, source) in rows {
             if codec != CODEC_ZSTD {
                 return Err(StoreError::Corrupt(format!("unsupported {what} codec")));
             }
-            let bytes = zstd::stream::decode_all(Cursor::new(frame))?;
-            if usize::try_from(length).ok() != Some(bytes.len()) || HashKey::sha256(&bytes) != hash
-            {
+            let bytes = super::decompress(&frame, 0)?;
+            let identity = match objects {
+                BulkObjects::Tapes => HashKey::tape_identity(source, &bytes),
+                BulkObjects::Sources => HashKey::sha256(&bytes),
+            };
+            if usize::try_from(length).ok() != Some(bytes.len()) || identity != hash {
                 return Err(StoreError::Corrupt(format!(
                     "{what} length or hash does not match metadata"
                 )));
@@ -816,9 +896,12 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let (raw_length, codec, frame, key): (i64, i64, Vec<u8>, HashKey) = connection.query_row(
-            "SELECT t.raw_length,t.codec_id,t.frame,h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 \
-             FROM tape_objects t JOIN hashes h ON h.hash_id=t.canonical_hash_id WHERE t.tape_id=?1",
+        let (raw_length, codec, frame, key, source): (i64, i64, Vec<u8>, HashKey, HashKey) = connection.query_row(
+            "SELECT t.raw_length,t.codec_id,t.frame,h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3,\
+             sh.algorithm_id,sh.lane0,sh.lane1,sh.lane2,sh.lane3 \
+             FROM tape_objects t JOIN hashes h ON h.hash_id=t.canonical_hash_id \
+             JOIN source_objects s ON s.source_id=t.source_id JOIN hashes sh ON sh.hash_id=s.canonical_hash_id \
+             WHERE t.tape_id=?1",
             [tape_id.0],
             |row| {
                 Ok((
@@ -828,6 +911,10 @@ impl ContentStore {
                     HashKey {
                         algorithm: row.get(3)?,
                         lanes: [row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?],
+                    },
+                    HashKey {
+                        algorithm: row.get(8)?,
+                        lanes: [row.get(9)?, row.get(10)?, row.get(11)?, row.get(12)?],
                     },
                 ))
             },
@@ -840,13 +927,13 @@ impl ContentStore {
         }
         let raw_length = usize::try_from(raw_length)
             .map_err(|_| StoreError::Corrupt("tape length does not fit memory".to_owned()))?;
-        let tape = zstd::stream::decode_all(Cursor::new(frame))?;
+        let tape = super::decompress(&frame, 0)?;
         if tape.len() != raw_length {
             return Err(StoreError::Corrupt(
                 "tape length does not match metadata".to_owned(),
             ));
         }
-        if key != canonical_hash || key != HashKey::sha256(&tape) {
+        if key != canonical_hash || key != HashKey::tape_identity(source, &tape) {
             return Err(StoreError::Corrupt(
                 "tape hash does not match metadata".to_owned(),
             ));
@@ -967,15 +1054,15 @@ pub(super) fn compress_documents(
         .iter()
         .map(|document| {
             Ok((
-                compress(document.source, level)?,
-                compress(document.tape, level)?,
+                compress_source(document.source, level, tape_tag(document.tape))?,
+                compress_tape(document.tape, level)?,
             ))
         })
         .collect()
 }
 
 pub(super) fn put_source_tx(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     source: &[u8],
     frame: &[u8],
     aliases: &[HashKey],
@@ -992,7 +1079,7 @@ pub(super) fn put_source_tx(
 }
 
 fn put_source_prepared_tx(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     canonical_hash: HashKey,
     source_length: usize,
     frame: &[u8],
@@ -1023,7 +1110,7 @@ fn put_source_prepared_tx(
 }
 
 fn put_source_aliases_tx(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     source_id: SourceId,
     aliases: &[HashKey],
 ) -> StoreResult<()> {
@@ -1051,18 +1138,24 @@ fn put_source_aliases_tx(
 /// Stores `tape` over `source_id`, with the documents derived from it (`file_documents`), whose
 /// source and tape frames `document_frames` holds in order.
 pub(super) fn put_tape_tx(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     source_id: SourceId,
     tape: TapePayload<'_>,
     frame: &[u8],
     document_frames: &[(Vec<u8>, Vec<u8>)],
 ) -> StoreResult<TapeId> {
     let created_generation = generation(transaction)?;
+    let source_hash: HashKey = transaction.query_row(
+        "SELECT h.algorithm_id,h.lane0,h.lane1,h.lane2,h.lane3 FROM source_objects s \
+         JOIN hashes h ON h.hash_id=s.canonical_hash_id WHERE s.source_id=?1",
+        [source_id.0],
+        |row| Ok(HashKey { algorithm: row.get(0)?, lanes: [row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?] }),
+    )?;
     let tape_id = put_tape_prepared_tx(
         transaction,
         source_id,
         tape,
-        HashKey::sha256(tape.bytes),
+        HashKey::tape_identity(source_hash, tape.bytes),
         frame,
         created_generation,
     )?;
@@ -1074,9 +1167,10 @@ pub(super) fn put_tape_tx(
     for (index, (document, (source_frame, tape_frame))) in
         tape.documents.iter().zip(document_frames).enumerate()
     {
+        let document_source_hash = HashKey::sha256(document.source);
         let document_source = put_source_prepared_tx(
             transaction,
-            HashKey::sha256(document.source),
+            document_source_hash,
             document.source.len(),
             source_frame,
             &[],
@@ -1092,7 +1186,7 @@ pub(super) fn put_tape_tx(
                 bytes: document.tape,
                 documents: &[],
             },
-            HashKey::sha256(document.tape),
+            HashKey::tape_identity(document_source_hash, document.tape),
             tape_frame,
             created_generation,
         )?;
@@ -1116,7 +1210,7 @@ pub(super) fn put_tape_tx(
 }
 
 fn put_tape_prepared_tx(
-    transaction: &Transaction<'_>,
+    transaction: &Connection,
     source_id: SourceId,
     tape: TapePayload<'_>,
     canonical_hash: HashKey,
@@ -1176,4 +1270,28 @@ pub(super) fn source_id_by_hash(connection: &Connection, key: HashKey) -> StoreR
         )
         .optional()
         .map_err(StoreError::from)
+}
+
+/// A stored tape's frame, before it is decompressed (`tape_frames_for`).
+#[derive(Clone, Debug)]
+pub struct TapeFrame {
+    raw_length: i64,
+    frame: Arc<Vec<u8>>,
+}
+
+impl TapeFrame {
+    /// The tape's bytes.
+    pub fn bytes(&self) -> StoreResult<Vec<u8>> {
+        // The frame may name a language's dictionary (RER-131's `compression`), which `decompress` reads.
+        let bytes = super::compression::decompress(&self.frame, usize::try_from(self.raw_length).unwrap_or(0))?;
+        if usize::try_from(self.raw_length).ok() != Some(bytes.len()) {
+            return Err(StoreError::Corrupt("tape length does not match metadata".to_owned()));
+        }
+        Ok(bytes)
+    }
+
+    /// The frame's size, compressed.
+    pub fn len(&self) -> usize {
+        self.frame.len()
+    }
 }

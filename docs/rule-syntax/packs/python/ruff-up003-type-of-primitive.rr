@@ -27,8 +27,19 @@ to_type(c, t) :- !str_shadowed(c, t), glued_after(c) => replace(c, cat(t, " ")).
 .decl str_shadowed(c: node, t: symbol)  // t is bound in c's scope or one around it
 str_shadowed(c, t) :- UP003(c, t), nearest(c, s0, scope), (s = s0 ; has(s, s0, scope)), bound_in(s, t).
 .decl glued_after(c: node)  // the next token starts with a letter, digit or _ and touches the call
-glued_after(c) :- UP003(c, _), token_after(c, k), match("[A-Za-z0-9_].*", k), last_token(c, z), end_line(z, l),
-    line(k, l), col(k, ck), col(z, cz), text(z, zt), ck = cz + strlen(zt).
+// The next token may be one the tape leaves out (`in`, `else`): then it is in the source after the call, before
+// its next stored sibling (`structural_after`). Where nothing lies there, the call ends its parent or touches the
+// next stored child, which then starts at its end.
+glued_after(c) :- glued_up(c, a), structural_after(a, s), match("[A-Za-z0-9_].*", s).
+glued_after(c) :- glued_up(c, a), structural_after(a, ""), glued_token(a).
+// glued_up(c, a): a is c, or an ancestor c ends with, reached through empty gaps.
+.decl glued_up(c: node, a: node)
+glued_up(c, c) :- UP003(c, _).
+glued_up(c, p) :- glued_up(c, a), structural_after(a, ""), child(p, a, _), node(_, a, _, _, e), node(_, p, _, _, e).
+// glued_token(a): the child of a's parent that starts where a ends begins with a letter, digit or `_`.
+.stored glued_token "a child starting where a ends with no source between: a token the tape leaves out fills a gap, never none"
+.decl glued_token(a: node)
+glued_token(a) :- glued_up(_, a), child(p, a, _), node(_, a, _, _, e), token(p, _, t, e, _), match("[A-Za-z0-9_].*", t).
 // primitive(e, t): literal e has builtin type t. Adjacent strings are one literal; an f-string is not one.
 .decl primitive(e: node, t: symbol)
 primitive(e, "str") :- string_form(e, "str"), !fstring(e).

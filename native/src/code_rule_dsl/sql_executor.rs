@@ -10,40 +10,45 @@ use crate::content_store::ContentStore;
 use napi::{Error, Result};
 use napi_derive::napi;
 use rusqlite::OptionalExtension;
-use rusqlite::types::{Value as SqlValue, ValueRef};
-use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+pub use rusqlite::types::{Value as SqlValue, ValueRef};
+pub use serde_json::{Value, json};
+pub use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
-use std::sync::Arc;
-mod catalog;
-mod compiler;
-mod explain;
-mod constants;
+pub use std::sync::Arc;
+pub mod catalog;
+pub mod compiler;
+pub mod explain;
+pub mod frontiers;
+pub mod constants;
 // A row of a corpus binding is `PROBE | document << 32 | row`: a 64-bit target only.
 #[cfg(target_pointer_width = "64")]
-mod corpus;
-mod documents;
-mod indexes;
-mod live;
-mod maintenance;
-mod overlay;
-mod phase;
-mod producers;
-mod profiling;
-mod recursive;
-mod reductions;
-mod scratch;
-mod temporal;
-mod updates;
-#[cfg(any(test, feature = "headless"))]
-mod verification;
-mod versions;
-mod walks;
+pub mod corpus;
+pub mod documents;
+pub mod indexes;
+pub mod live;
+pub mod maintenance;
+pub mod overlay;
+pub mod phase;
+pub mod planning;
+pub mod producers;
+pub mod profiling;
+pub mod recursive;
+pub mod reductions;
+pub mod scratch;
+pub mod temporal;
+pub mod updates;
+#[cfg(any(any(test, feature = "test-hooks"), feature = "headless"))]
+pub mod verification;
+#[cfg(any(any(test, feature = "test-hooks"), feature = "headless"))]
+pub mod component_loop;
+pub mod versions;
+pub mod walks;
 use super::logic::sql::lattices;
 use super::logic::sql::program;
-mod runtime;
-mod session;
-mod wire;
+pub mod runtime;
+pub mod work_graph;
+pub mod session;
+pub mod wire;
 
 fn error(e: impl std::fmt::Display) -> Error {
     Error::from_reason(e.to_string())
@@ -58,7 +63,7 @@ fn identifier(name: &str) -> bool {
         && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
-fn quote(name: &str) -> String {
+pub fn quote(name: &str) -> String {
     format!("\"{}\"", name.replace('"', "\"\""))
 }
 
@@ -68,26 +73,32 @@ fn quote(name: &str) -> String {
 /// the session closes. Independent results survive other input changes.
 #[napi]
 pub struct CodeRuleSqlExecutor {
-    db: Database,
-    store: ContentStore,
-    inputs: BTreeMap<String, Arc<dyn Source>>,
-    generated: Vec<(String, bool)>,
-    executions: Vec<session::Execution>,
+    #[napi(skip)] pub db: Database,
+    #[napi(skip)] pub store: ContentStore,
+    #[napi(skip)] pub inputs: BTreeMap<String, Arc<dyn Source>>,
+    #[napi(skip)] pub generated: Vec<(String, bool)>,
+    #[napi(skip)] pub executions: Vec<session::Execution>,
     limits: runtime::Limits,
     lattice_extensions: BTreeMap<String, schedule::LatticeOperations>,
     input_shapes: BTreeMap<String, (usize, Option<Vec<String>>)>,
     mutable_inputs: BTreeSet<String>,
-    live_inputs: BTreeMap<String, Arc<live::Live>>,
-    documents: Option<documents::Documents>,
-    scratch: scratch::Pool,
-    versions: versions::Store,
+    #[napi(skip)] pub live_inputs: BTreeMap<String, Arc<live::Live>>,
+    #[napi(skip)] pub documents: Option<documents::Documents>,
+    #[napi(skip)] pub scratch: scratch::Pool,
+    #[napi(skip)] pub versions: versions::Store,
     next_trace: usize,
     stats_ready: std::cell::Cell<bool>,
-    statistics: session::Statistics,
+    #[napi(skip)] pub statistics: session::Statistics,
+    last_sql_work_plan: Option<Value>,
+    planning: Option<planning::Operation>,
+    #[napi(skip)] pub last_planning: Option<super::logic::costs::sql_plans::Report>,
+    worker_profile_totals: Arc<work_graph::Accounting>,
     catalog_dirty: std::cell::Cell<bool>,
     control_ready: std::cell::Cell<bool>,
-    #[cfg(any(test, feature = "headless"))]
-    cold_oracle: bool,
+    #[cfg(any(any(test, feature = "test-hooks"), feature = "headless"))]
+    #[napi(skip)] pub cold_oracle: bool,
+    #[cfg(any(test, feature = "test-hooks"))]
+    #[napi(skip)] pub legacy_initial: bool,
 }
 
 #[napi]
@@ -95,12 +106,16 @@ impl CodeRuleSqlExecutor {
     #[napi(constructor)]
     pub fn new(store_path: String) -> Result<Self> {
         let store = ContentStore::open(Path::new(&store_path)).map_err(error)?;
-        let db = Database::open(&store).map_err(error)?;
+        let db = Database::open_admitted(&store).map_err(error)?;
         super::logic::native::register(&db).map_err(error)?;
         strings::register(&db).map_err(error)?;
         wire::register(&db)?;
         lattices::builtins(&db)?;
         reductions::register(&db)?;
+        super::logic::costs::start();
+        let worker_profile_totals = Arc::new(work_graph::Accounting::default());
+        let mut scratch = scratch::Pool::default();
+        scratch.worker_accounting = Some(worker_profile_totals.clone());
         Ok(Self {
             db,
             store,
@@ -113,15 +128,21 @@ impl CodeRuleSqlExecutor {
             mutable_inputs: BTreeSet::new(),
             live_inputs: BTreeMap::new(),
             documents: None,
-            scratch: scratch::Pool::default(),
+            scratch,
             versions: versions::Store::default(),
             next_trace: 0,
             stats_ready: std::cell::Cell::new(false),
             statistics: session::Statistics::default(),
+            last_sql_work_plan: None,
+            planning: None,
+            last_planning: None,
+            worker_profile_totals,
             catalog_dirty: std::cell::Cell::new(true),
             control_ready: std::cell::Cell::new(false),
-            #[cfg(any(test, feature = "headless"))]
+            #[cfg(any(any(test, feature = "test-hooks"), feature = "headless"))]
             cold_oracle: false,
+            #[cfg(any(test, feature = "test-hooks"))]
+            legacy_initial: false,
         })
     }
 
@@ -181,7 +202,7 @@ impl CodeRuleSqlExecutor {
                 return Err(error("stored document paths must be distinct"));
             }
             let documents =
-                super::waves::matches::documents(&this.store, &scope, &paths).map_err(error)?;
+                super::facts::families::stored_documents(&this.store, &scope, &paths).map_err(error)?;
             if documents.len() != paths.len() || documents.iter().any(|d| d.facts.syntax_errors) {
                 return Err(error(
                     "requested stored documents have missing or incomplete core facts",
@@ -338,7 +359,7 @@ impl CodeRuleSqlExecutor {
             return Err(error("bindCorpus needs a 64-bit target: its rows are document << 32 | row"));
         }
         #[cfg(target_pointer_width = "64")]
-        self.bind_corpus_64(root, relations)
+        self.profiled("bind_corpus", |this| this.bind_corpus_64(root, relations))
     }
 
     #[cfg(target_pointer_width = "64")]
@@ -357,6 +378,14 @@ impl CodeRuleSqlExecutor {
             None => recorded.keys().cloned().collect(),
         };
         let run = Arc::new(corpus::Run::open(frames)?);
+        self.db.admission().require_owner(|| {
+            let mut bindings: BTreeSet<_> = wanted.iter().cloned().collect();
+            bindings.insert("corpus_document".into());
+            let affected = self.affected(&bindings);
+            let drops = affected.iter().flat_map(|i| &self.executions[*i].objects)
+                .filter(|(n, _)| !self.versions.owns(n)).collect::<BTreeSet<_>>().len();
+            bindings.len() + drops + if affected.is_empty() { 0 } else { self.control_drop_bound() }
+        }).map_err(error)?;
         let mut bound = serde_json::Map::new();
         for rel in &wanted {
             // An export's columns, or `{"lines": columns}` for a file-local output's rendered lines.
@@ -401,10 +430,13 @@ impl CodeRuleSqlExecutor {
         })
     }
 
-    /// Limits apply independently to each subsequent run/query. An empty object removes limits.
+    /// VM and time limits apply per operation. The submission limit covers the session
+    /// from connection setup onward. An empty object removes limits without resetting usage.
     #[napi]
     pub fn set_limits(&mut self, limits_json: String) -> Result<()> {
-        self.limits = serde_json::from_str(&limits_json).map_err(error)?;
+        let limits:runtime::Limits = serde_json::from_str(&limits_json).map_err(error)?;
+        self.db.admission().configure(limits.max_submissions).map_err(error)?;
+        self.limits=limits;
         Ok(())
     }
 
@@ -438,8 +470,8 @@ impl CodeRuleSqlExecutor {
     /// Lower an inline `.rr` program to SQL without running it. Its `.input` declarations read
     /// the session's bound facts, previous outputs, or existing database tables.
     #[napi]
-    pub fn lower(&self, program: String, dialect: String) -> Result<String> {
-        self.profiled_read("lower", |this| {
+    pub fn lower(&mut self, program: String, dialect: String) -> Result<String> {
+        self.profiled("lower", |this| {
             let program = producers::prune(rr::parse(&program).map_err(error)?);
             let arities: BTreeMap<_, _> = program
                 .decls
@@ -498,12 +530,12 @@ impl CodeRuleSqlExecutor {
     /// {blob: [byte, ...]}; unsafe JavaScript integers return {integer: decimal-string}.
     #[napi]
     pub fn query(
-        &self,
+        &mut self,
         sql: String,
         parameters_json: Option<String>,
         max_rows: Option<u32>,
     ) -> Result<String> {
-        self.profiled_read("query", |this| {
+        self.profiled("query", |this| {
             this.ensure_catalog(&sql)?;
             let parameters: Vec<Value> =
                 serde_json::from_str(parameters_json.as_deref().unwrap_or("[]")).map_err(error)?;
@@ -511,47 +543,76 @@ impl CodeRuleSqlExecutor {
                 .into_iter()
                 .map(parameter)
                 .collect::<Result<Vec<_>>>()?;
-            let _budget = this.limits.enter(&this.db)?;
-            let mut statement = this.db.prepare(&sql).map_err(error)?;
-            if !statement.readonly() || statement.column_count() == 0 {
-                return Err(error(
-                    "query requires a read-only SQL statement with result columns",
-                ));
-            }
-            let columns: Vec<String> = statement
-                .column_names()
-                .into_iter()
-                .map(str::to_owned)
-                .collect();
-            let mut cursor = statement
-                .query(rusqlite::params_from_iter(parameters))
-                .map_err(error)?;
-            let limit = max_rows.unwrap_or(10_000) as usize;
-            let mut rows = Vec::new();
-            let mut truncated = false;
-            while let Some(row) = cursor.next().map_err(error)? {
-                if rows.len() == limit {
-                    truncated = true;
-                    break;
-                }
-                let mut values = Vec::new();
-                for c in 0..columns.len() {
-                    values.push(match row.get_ref(c).map_err(error)? {
-                        ValueRef::Null => Value::Null,
-                        ValueRef::Integer(n) => wire::integer(n),
-                        ValueRef::Real(n) => json!(n),
-                        ValueRef::Text(s) => {
-                            Value::String(std::str::from_utf8(s).map_err(error)?.to_owned())
+            let budget = this.limits.enter(this.db.connection_mut())?;
+            let result = super::logic::lanes::sql_executor().local(
+                rerail_accel::Lane::Sql,"SQL owner query",0.0,|| {
+                    let mut statement = this.db.prepare(&sql).map_err(error)?;
+                    if !statement.readonly() || statement.column_count() == 0 {
+                        return Err(error(
+                            "query requires a read-only SQL statement with result columns",
+                        ));
+                    }
+                    let columns: Vec<String> = statement.column_names().map(str::to_owned).collect();
+                    let mut cursor = statement
+                        .query(rusqlite::params_from_iter(parameters))
+                        .map_err(error)?;
+                    let limit = max_rows.unwrap_or(10_000) as usize;
+                    let mut rows = Vec::new();
+                    let mut truncated = false;
+                    while let Some(row) = cursor.next().map_err(error)? {
+                        if rows.len() == limit {
+                            truncated = true;
+                            break;
                         }
-                        ValueRef::Blob(b) => json!({"blob": b}),
-                    });
+                        let mut values = Vec::new();
+                        for c in 0..columns.len() {
+                            values.push(match row.get_ref(c).map_err(error)? {
+                                ValueRef::Null => Value::Null,
+                                ValueRef::Integer(n) => wire::integer(n),
+                                ValueRef::Real(n) => json!(n),
+                                ValueRef::Text(s) => {
+                                    Value::String(std::str::from_utf8(s).map_err(error)?.to_owned())
+                                }
+                                ValueRef::Blob(b) => json!({"blob": b}),
+                        });
+                    }
+                    rows.push(values);
                 }
-                rows.push(values);
-            }
-            serde_json::to_string(
-                &json!({"columns": columns, "rows": rows, "truncated": truncated}),
-            )
-            .map_err(error)
+                serde_json::to_string(
+                    &json!({"columns": columns, "rows": rows, "truncated": truncated}),
+                )
+                .map_err(error)
+            });
+            budget.leave(this.db.connection_mut());
+            result
+        })
+    }
+
+    /// Execute a read-only graph over bound facts and versioned results. Nodes declare
+    /// {name, sql, width, reads}; output columns are c0..cN and nullable integer cells.
+    /// Independent groups share the process pool and one operation's SQL/VM/time limits.
+    #[napi]
+    pub fn query_plan(&mut self, plan_json: String) -> Result<String> {
+        self.profiled("query_plan", |this| {
+            this.last_sql_work_plan = None;
+            let request: work_graph::Request=serde_json::from_str(&plan_json).map_err(error)?;
+            let names=request.nodes.iter().map(|n|n.name.as_str()).collect::<BTreeSet<_>>();
+            let inputs=request.nodes.iter().flat_map(|n|&n.reads)
+                .filter(|n|!names.contains(n.as_str())).collect::<BTreeSet<_>>();
+            // Resolve only referenced bindings. No snapshot-wide metadata query or row copy.
+            // The mutable owner stays parked until every worker has joined.
+            let sources=inputs.into_iter().map(|name| {
+                let source=super::facts::vtab::bound_source(&*this.db,name)
+                    .ok_or_else(||error(format!("SQL work input {name} needs a bound native relation")))?;
+                Ok((name.clone(),source.frozen().unwrap_or(source)))
+            }).collect::<Result<BTreeMap<_,_>>>()?;
+            let result=work_graph::execute_accounted(request,sources,&this.limits,this.db.profiler(),Some(this.worker_profile_totals.clone()))?;
+            this.last_sql_work_plan = Some(result.explain.clone());
+            let rows=result.rows.iter().map(|(name,rows)|(name,rows.rows.iter().map(|row|
+                row.iter().map(|v|v.map_or(Value::Null,wire::integer)).collect::<Vec<_>>()
+            ).collect::<Vec<_>>())).collect::<BTreeMap<_,_>>();
+            serde_json::to_string(&json!({"rows":rows,"plan":result.explain,
+                "submissions":result.submissions,"vmSteps":result.vm_steps})).map_err(error)
         })
     }
 }
@@ -593,7 +654,7 @@ impl CodeRuleSqlExecutor {
         &self.db
     }
 
-    fn replace_sources(&mut self, sources: Vec<(String, Arc<dyn Source>)>) -> Result<()> {
+    pub fn replace_sources(&mut self, sources: Vec<(String, Arc<dyn Source>)>) -> Result<()> {
         self.clear_results()?;
         self.db.remove_bindings().map_err(error)?;
         self.inputs.clear();
@@ -619,6 +680,8 @@ impl CodeRuleSqlExecutor {
         max_waves: u32,
     ) -> Result<String> {
         self.statistics.materialize(&self.db)?;
+        let planning_digest = self.planning.as_ref()
+            .map(|_| planning::digest(&program, dialect, &self.lattice_extensions));
         let outputs = program.outputs.clone();
         let declared = Arc::new(program.clone());
         let arities: BTreeMap<_, _> = program
@@ -666,11 +729,17 @@ impl CodeRuleSqlExecutor {
             .collect();
         affected.extend(self.affected(&changed));
         let limits = self.limits.clone();
+        let mut budget = None;
+        let mut evaluation = None;
         let result = (|| {
             self.remove_executions(&affected)?;
             self.clear_control()?;
             self.db.reset_execution();
-            let _budget = limits.enter(&self.db)?;
+            budget = Some(limits.enter(self.db.connection_mut())?);
+            #[cfg(any(any(test, feature = "test-hooks"), feature = "headless"))]
+            let retained = !self.cold_oracle;
+            #[cfg(not(any(any(test, feature = "test-hooks"), feature = "headless")))]
+            let retained = true;
             let needs_integers = emitted
                 .queries
                 .iter()
@@ -685,6 +754,11 @@ impl CodeRuleSqlExecutor {
                 {
                     continue;
                 }
+                if retained && setup.starts_with("CREATE TEMP TABLE rdl_int(") {
+                    // The integer domain is invariant; retain its SQL interface without DDL.
+                    constants::integer_domain(&self.db)?;
+                    continue;
+                }
                 // The split-position table is invariant across programs in this session.
                 if statement.starts_with("CREATE TEMP TABLE rdl_int")
                     && self.db.query_row("SELECT EXISTS(SELECT 1 FROM temp.sqlite_schema WHERE name = 'rdl_int')", [], |r| r.get::<_, bool>(0)).map_err(error)?
@@ -693,15 +767,27 @@ impl CodeRuleSqlExecutor {
                 }
                 self.db.execute_batch(statement).map_err(error)?;
             }
-            #[cfg(any(test, feature = "headless"))]
-            let retained = !self.cold_oracle;
-            #[cfg(not(any(test, feature = "headless")))]
-            let retained = true;
-            let minimal_setup = emitted.queries.iter().all(Option::is_some);
-            if minimal_setup { schedule::declare_outputs(&self.db, &emitted.program).map_err(error)?; }
+            #[cfg(any(test, feature = "test-hooks"))]
+            let native_frontiers = retained && !self.legacy_initial;
+            #[cfg(not(any(test, feature = "test-hooks")))]
+            let native_frontiers = retained;
+            let minimal_setup = emitted.queries.iter().zip(&emitted.program.steps).all(|(q,s)| q.is_some() || retained && (emitted.constant_rows.contains_key(&s.output) || producers.contains_key(&s.output)));
+            let producer_reads=emitted.program.steps.iter().filter(|s|producers.contains_key(&s.output))
+                .flat_map(|s|s.reads.iter().cloned()).collect::<BTreeSet<_>>();
+            let native_relations = if retained && minimal_setup && temporal::initial::eligible(&emitted,&producers) {
+                emitted.program.relations.iter().filter(|(r,_)|!outputs.contains(r) && !producer_reads.contains(r)).map(|(r,_)|r.clone()).collect::<BTreeSet<_>>()
+            } else if native_frontiers {
+                emitted.views.iter().filter(|(r,_)|r.starts_with("__sql_")).map(|(r,_)|r.clone()).collect()
+            } else { BTreeSet::new() };
+            if minimal_setup || native_frontiers {
+                let mut public=emitted.program.clone();
+                public.relations.retain(|(r,_)|!native_relations.contains(r));
+                schedule::declare_outputs(&self.db, &public).map_err(error)?;
+            }
             else { schedule::declare_sql(&self.db, &emitted.program).map_err(error)?; }
             for (table, columns) in &indexes {
-                if minimal_setup && !emitted.program.relations.iter().any(|(r, _)| r == table) { continue; }
+                if native_relations.contains(table) { continue; }
+                if (minimal_setup || native_frontiers) && !emitted.program.relations.iter().any(|(r, _)| r == table) { continue; }
                 session::index(&self.db, table, columns).map_err(error)?;
             }
             self.control_ready.set(true);
@@ -730,11 +816,14 @@ impl CodeRuleSqlExecutor {
                 }
             }
             let mut execution = session::Execution {
+                loop_analyses:Arc::new(vec![]),
+                logical_relations: Arc::new(emitted.program.relations.clone()),
                 inputs: dependencies,
                 objects: objects.clone(),
                 counts,
                 emitted: Arc::new(emitted.clone()),
                 program: declared.clone(),
+                planning_digest,
                 producers: producers.clone(),
                 outputs: outputs.clone(),
                 max_waves,
@@ -746,24 +835,47 @@ impl CodeRuleSqlExecutor {
             work.versions = Some(&self.versions);
             work.profiler = self.db.profiler();
             let materialized_views = 0;
-            let constant_tables = constants::prepare(&self.db, &mut execution)?;
-            let native_initial = if retained {
-                temporal::initial::run(&mut work, &self.versions, &mut execution, trace_namespace, &emitted.program, !minimal_setup)?
-            } else { None };
+            let constant_tables = constants::prepare(&self.db, &mut execution, retained.then_some(&self.versions))?;
+            execution.loop_analyses=temporal::loop_analyses(&execution.emitted);
+            #[cfg(any(test, feature = "test-hooks"))]
+            let retained_initial = retained && !self.legacy_initial;
+            #[cfg(not(any(test, feature = "test-hooks")))]
+            let retained_initial = retained;
+            evaluation = self.planning.as_mut().and_then(|planning| {
+                planning.evaluation(&execution, max_waves, |name| {
+                    self.inputs.get(name).map(|source| source.estimated_len() as u64)
+                        .or_else(|| self.executions.iter().rev().find_map(|run| run.counts.get(name).copied()))
+                        .unwrap_or(0)
+                }, |_| (0, 0))
+            });
             let mut initializations = Vec::new();
+            let native_initial = if retained_initial {
+                temporal::initial::run(&mut work, &self.versions, &mut execution, trace_namespace, &emitted.program, !minimal_setup, native_relations.clone(), evaluation.as_mut())?
+            } else { None };
             let waves = if let Some(waves) = native_initial {
+                for (table,columns) in &indexes {
+                    if native_relations.contains(table) { session::index(&self.db,table,columns).map_err(error)?; }
+                }
                 waves
             } else {
+                if let Some(eval) = &mut evaluation {
+                    eval.choose_cold_schedule();
+                }
                 let _scope = profiling::scope(&self.db, "cold execution");
-                if minimal_setup {
+                if native_frontiers {
+                    frontiers::declare(&work, &emitted.program)?;
+                    for (table, columns) in &indexes {
+                        session::index(&self.db, table, columns).map_err(error)?;
+                    }
+                } else if minimal_setup {
                     schedule::declare_sql(&self.db, &emitted.program).map_err(error)?;
                     for (table, columns) in &indexes {
                         session::index(&self.db, table, columns).map_err(error)?;
                     }
                 }
-                #[cfg(any(test, feature = "headless"))]
+                #[cfg(any(any(test, feature = "test-hooks"), feature = "headless"))]
                 let retain = !self.cold_oracle;
-                #[cfg(not(any(test, feature = "headless")))]
+                #[cfg(not(any(any(test, feature = "test-hooks"), feature = "headless")))]
                 let retain = true;
                 let waves = if retain {
                     let (waves, initialized) = reductions::cold::execute(&self.db, &mut work, &mut execution, max_waves)?;
@@ -787,10 +899,11 @@ impl CodeRuleSqlExecutor {
                 }
                 if retain {
                     for (name,_) in &emitted.views {
+                        if self.versions.owns(name) { continue; }
                         self.db.execute_batch(&format!("ANALYZE temp.{}",quote(name))).map_err(error)?;
                     }
                     let _support = profiling::scope(&self.db, "support preparation");
-                    let walks = walks::prepare(&mut work, &mut execution, None)?;
+                    let walks = walks::prepare(&mut work, &mut execution, Some(&self.versions))?;
                     if !walks.is_empty() { reductions::cold::after_walks(&work, &mut execution)?; }
                     initializations.extend(walks);
                     let mut potential = execution.inputs.clone();
@@ -798,7 +911,7 @@ impl CodeRuleSqlExecutor {
                         &mut work,
                         &mut execution,
                         &mut potential,
-                        None,
+                        Some(&self.versions),
                     )?);
                     initializations.sort();
                     initializations.dedup();
@@ -823,6 +936,16 @@ impl CodeRuleSqlExecutor {
                 .map_err(error)?;
             Ok((waves, execution, work.pool, preparation))
         })();
+        if let (Some(planning), Some(evaluation)) = (&mut self.planning, evaluation) {
+            let mut evaluation = evaluation;
+            if let Ok((_, run, _, _)) = &result {
+                evaluation.capture(run);
+            }
+            planning.record(evaluation);
+        }
+        if let Some(budget) = budget {
+            budget.leave(self.db.connection_mut());
+        }
         let (waves, execution, pool, preparation) = match result {
             Ok(value) => {
                 self.versions.commit();
@@ -854,6 +977,11 @@ impl CodeRuleSqlExecutor {
     }
 
     fn clear_results(&mut self) -> Result<()> {
+        self.db.admission().require_owner(|| {
+            self.control_drop_bound()
+                + self.generated.iter().filter(|(n, _)| !self.versions.owns(n)).count()
+                + self.scratch.sql_drop_bound(&self.versions)
+        }).map_err(error)?;
         self.db.profile_checkpoint();
         // Views first, then their backing tables. Input virtual tables are untouched.
         for table in [false, true] {
@@ -882,5 +1010,4 @@ impl CodeRuleSqlExecutor {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

@@ -11,13 +11,15 @@ use crate::code_rule_dsl::tape::resident::{self, DeviceCode};
 use crate::code_rule_dsl::transducer::packed::Error;
 use crate::content_store::ContentStore;
 #[allow(unused_imports)]
-pub(in crate::code_rule_dsl) use rerail_metal::slabs::*;
+pub use rerail_metal::slabs::*;
 use sha2::{Digest as _, Sha256};
+use std::collections::HashMap;
 use std::io::Read as _;
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 /// A resident document's parts that are the engine's types: its code table and its image.
-pub(in crate::code_rule_dsl) trait ResidentParts {
+pub trait ResidentParts {
     fn resident(&self) -> &Resident;
 
     /// The fixed-width code table (`DeviceCode`), as the device reads it.
@@ -73,28 +75,21 @@ impl Plan {
 }
 
 fn plan(frames: &crate::content_store::ResidentFrames) -> Result<Plan, Error> {
-    let mut header = [0u8; resident::HEADER_LEN];
-    zstd::stream::read::Decoder::new(&frames.tape_frame[..])
-        .and_then(|mut decoder| decoder.read_exact(&mut header))
+    let header = crate::content_store::decompress_head(&frames.tape_frame, resident::HEADER_LEN)
         .map_err(|error| invalid(format!("tape frame header: {error}")))?;
     let (nodes, codes) = resident::header_counts(&header).map_err(invalid)?;
-    let mut decoder = zstd::stream::read::Decoder::new(&frames.source_frame[..]).map_err(|error| invalid(format!("source frame: {error}")))?;
     let mut lines = 1usize;
-    let mut chunk = [0u8; 1 << 16];
-    loop {
-        let read = decoder.read(&mut chunk).map_err(|error| invalid(format!("source frame: {error}")))?;
-        if read == 0 {
-            break;
-        }
-        lines += chunk[..read].iter().filter(|&&byte| byte == b'\n').count();
-    }
+    crate::content_store::decompress_chunks(&frames.source_frame, |chunk| {
+        lines += chunk.iter().filter(|&&byte| byte == b'\n').count();
+    })
+    .map_err(|error| invalid(format!("source frame: {error}")))?;
     Ok(Plan { tape: frames.tape_length, source: frames.source_length, nodes, codes, lines })
 }
 
 /// The documents of the tapes `digests` (SHA-256), resident, in order: hits from the residency,
 /// misses admitted from `store` in one read. `grammar` gives each tape's grammar by
 /// `tape_objects.grammar_id`. A digest the store has no tape for is an error.
-pub(in crate::code_rule_dsl) fn admit(
+pub fn admit(
     store: &ContentStore,
     digests: &[[u8; 32]],
     grammar: &dyn Fn(i64) -> Result<Arc<Grammar>, String>,
@@ -149,6 +144,7 @@ fn insert_parts(digests: &[[u8; 32]], parts: Vec<([u8; 32], &Plan, &Grammar, Par
 /// Writes a document's parts into `slab` at `offset` (`plan.bytes()` of room), checked.
 /// Where a document's bytes come from: a store's frames, decompressed into the slab, or an image
 /// and source already in memory, copied.
+#[derive(Clone, Copy)]
 enum Parts<'a> {
     Frames(&'a crate::content_store::ResidentFrames),
     Bytes(&'a [u8], &'a [u8]),
@@ -176,34 +172,35 @@ fn place(
     let by_code_at = code_start_at + aligned(4 * (plan.codes + 1));
     let tape = region(tape_at, plan.tape);
     let source = region(source_at, plan.source);
-    match parts {
+    let source_sha256: [u8; 32] = Sha256::digest(match parts {
         // Decompressed straight into the slab, to the frames' raw lengths exactly.
         Parts::Frames(frames) => {
-            if zstd::bulk::decompress_to_buffer(&frames.tape_frame, tape).map_err(|error| invalid(format!("tape frame: {error}")))? != plan.tape {
-                return Err(invalid("tape frame length"));
-            }
-            if zstd::bulk::decompress_to_buffer(&frames.source_frame, source).map_err(|error| invalid(format!("source frame: {error}")))? != plan.source {
-                return Err(invalid("source frame length"));
-            }
-            if <[u8; 32]>::from(Sha256::digest(&*source)) != frames.source_sha256 {
-                return Err(invalid("a resident source's digest"));
-            }
+            crate::content_store::decompress_into(&frames.tape_frame, tape).map_err(|error| invalid(format!("tape frame: {error}")))?;
+            crate::content_store::decompress_into(&frames.source_frame, source).map_err(|error| invalid(format!("source frame: {error}")))?;
+            &*source
         }
         Parts::Bytes(image, text) => {
             tape.copy_from_slice(image);
             source.copy_from_slice(text);
+            &*source
         }
+    })
+    .into();
+    if let Parts::Frames(frames) = parts
+        && source_sha256 != frames.source_sha256
+    {
+        return Err(invalid("a resident source's digest"));
     }
     let tape = &*tape;
     let source = &*source;
-    if <[u8; 32]>::from(Sha256::digest(tape)) != *digest {
+    // The key is the tape's identity: its bytes and its source's (`HashKey::tape_identity`).
+    if crate::code_rule_dsl::tape::tape_identity(&source_sha256, tape) != *digest {
         return Err(invalid("a resident tape's digest"));
     }
     let layout = resident::layout(tape).map_err(invalid)?;
     if layout.source_len != source.len()
         || layout.nodes as usize != plan.nodes
         || layout.code_count != plan.codes
-        || <[u8; 32]>::from(Sha256::digest(source)) != layout.source_digest
         || std::str::from_utf8(source).is_err()
     {
         return Err(invalid("a tape and its source disagree"));
@@ -307,21 +304,23 @@ fn place(
 
 /// Releases everything resident: documents, slabs (as their last batch lets go) and compiled
 /// pipelines.
-pub(in crate::code_rule_dsl) fn drop_all() {
+pub fn drop_all() {
     clear();
     crate::code_rule_dsl::transducer::packed::metal_backend::drop_pipelines();
     rerail_metal::pool::drop_all();
     #[cfg(target_os = "macos")]
     rerail_accel::gpu::shared::drop_idle();
-    crate::code_rule_dsl::transducer::packed::drop_label_pipelines();
+    if let Some(device) = crate::code_rule_dsl::transducer::packed::device::matcher() {
+        device.drop_label_pipelines();
+    }
     crate::code_rule_dsl::prof::count("residency.dropped", 1);
 }
 
 /// A full execution ended: everything resident is dropped `DROP_AFTER` from now, unless another
 /// ends first (which moves the deadline).
-pub(in crate::code_rule_dsl) fn executed() {
+pub fn executed() {
     rerail_metal::slabs::executed(drop_all);
 }
 
-#[cfg(test)]
-mod tests;
+// Its tests run in the engine's test binary (its facade of this module mounts `slabs/tests.rs`): they read what the
+// engine registers as it loads (the languages, their `.rr` libraries).

@@ -201,7 +201,7 @@ fn file_scoped_kind_requests_do_not_walk_unrelated_postings() {
     use super::super::Condition;
     use std::sync::atomic::{AtomicUsize, Ordering};
     for structural in [false, true] {
-        let store = store::Store::temporary().unwrap();
+        let mut store = store::Store::temporary().unwrap();
         let dialect = GrammarDialect::TypeScript;
         let doc = tests::document("target(value);", dialect);
         let fid = store.put("requested.ts", &doc).unwrap();
@@ -220,6 +220,7 @@ fn file_scoped_kind_requests_do_not_walk_unrelated_postings() {
         let counter = std::sync::Arc::clone(&ticks);
         store
             .db
+            .connection_mut()
             .progress_handler(
                 100,
                 Some(move || {
@@ -428,7 +429,7 @@ fn kind_requests_preserve_mixed_coverage_error_and_missing_nodes() {
 fn file_scoped_values_do_not_scan_unrelated_files() {
     use super::super::{Condition, TextProbe};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    let store = store::Store::temporary().unwrap();
+    let mut store = store::Store::temporary().unwrap();
     let dialect = GrammarDialect::TypeScript;
     let doc = tests::document("target(value);", dialect);
     let fid = store.put("requested.ts", &doc).unwrap();
@@ -452,6 +453,7 @@ fn file_scoped_values_do_not_scan_unrelated_files() {
     let counter = std::sync::Arc::clone(&ticks);
     store
         .db
+        .connection_mut()
         .progress_handler(
             100,
             Some(move || {
@@ -486,7 +488,7 @@ fn file_scoped_values_do_not_scan_unrelated_files() {
 fn file_scoped_structural_reads_do_not_scan_retained_corpus_rows() {
     use super::super::{Condition, Direction};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    let store = store::Store::temporary().unwrap();
+    let mut store = store::Store::temporary().unwrap();
     let dialect = GrammarDialect::TypeScript;
     let doc = tests::document("target(value);", dialect);
     let fid = store.put("requested.ts", &doc).unwrap();
@@ -515,6 +517,7 @@ fn file_scoped_structural_reads_do_not_scan_retained_corpus_rows() {
     let counter = std::sync::Arc::clone(&ticks);
     store
         .db
+        .connection_mut()
         .progress_handler(
             100,
             Some(move || {

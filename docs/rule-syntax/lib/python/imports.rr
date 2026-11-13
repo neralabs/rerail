@@ -17,6 +17,7 @@
 //   `from .m import x` is relative: one dot is the current package, each extra dot goes one package up.
 //   `from m import *` binds every public name of m: those in m's `__all__`, else those not starting with "_".
 #include "python/flow.rr"     // remove_stmt, for the edits at the end of this file
+#include "python/names.rr"    // def_name, qualname, type_checking_block: the other half of the unit
 
 // `scope` (every node that opens a Python scope) comes from python/names, which includes this file.
 // Function-like scopes: an import inside one runs only when the function is called, not at module import time.

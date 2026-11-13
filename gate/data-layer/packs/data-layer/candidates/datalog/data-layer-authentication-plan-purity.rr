@@ -1,8 +1,55 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl auth_plan_def(kind: symbol)
+auth_plan_def("function_definition").
+.decl auth_plan_authenticates(x: symbol)
+.decl auth_plan_base_heads(c: node, name: symbol)
+.decl auth_plan_calls(c: node, callee: symbol)
+.decl auth_plan_class_depth(c: node, d: number, name: symbol, k: number)
+.decl auth_plan_classes(c: node, d: number, name: symbol)
+.decl auth_plan_decorator_name(n: node, s: symbol)
+.decl auth_plan_deepest(d: number, name: symbol, k: number)
+.decl auth_plan_deepest_start(d: number, name: symbol, st: number)
+.decl auth_plan_depths(n: node, k: number)
+.decl auth_plan_doc(d: number, p: symbol)
+.decl auth_plan_entry_reach(cls: node, entry: symbol, name: symbol)
+.decl auth_plan_flat(kind: symbol)
+.decl auth_plan_function_decorators(f: node, name: symbol)
+.decl auth_plan_functions(f: node, d: number, name: symbol)
+.decl auth_plan_heads(c: node, x: node)
+.decl auth_plan_last_methods(f: node, cls: node, name: symbol, class_name: symbol)
+.decl auth_plan_last_start(cls: node, name: symbol, st: number)
+.decl auth_plan_lazy_wrapper(f: node)
+.decl auth_plan_method_calls(cls: node, name: symbol, callee: symbol)
+.decl auth_plan_methods(f: node, cls: node, name: symbol, class_name: symbol)
+.decl auth_plan_parameter_types(f: node, name: symbol, annotation: symbol)
+.decl auth_plan_selected_classes(c: node, d: number, name: symbol)
+.decl auth_plan_self_stores(n: node, method: node, attr: symbol)
+.decl auth_plan_semantic_classes(d: number, name: symbol)
+.decl auth_plan_step_methods(f: node)
+.decl auth_plan_type_part(n: node, t: symbol)
+.decl child(p: node, c: node, i: number)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl field(p: node, f: symbol, c: node)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
+.decl rr_agg1(b: number, d: number, k: number, s: symbol)
+.decl rr_agg2(b: number, c: node, s: symbol)
+.decl rr_demand_agg_rr_agg1(d: number, k: number, s: symbol)
+.decl rr_demand_agg_rr_agg2(c: node, s: symbol)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, line, node_text
+.output violation
+auth_plan_flat("block").
+auth_plan_flat("decorated_definition").
+auth_plan_flat("else_clause").
+auth_plan_flat("finally_clause").
+auth_plan_flat("expression_statement").
 in_scope(d) :- doc(d, p, _), glob("impl/remote/steps.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/remote/connection.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/read_through/connection.py", p).
@@ -18,4 +65,55 @@ out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
-.output violation
+tape_syntax_error(d) :- syntax_error(d).
+auth_plan_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
+auth_plan_functions(f, d, s) :- node(d, f, "function_definition", _, _), auth_plan_doc(d, _), field(f, "name", x), text(x, s).
+auth_plan_classes(c, d, s) :- node(d, c, "class_definition", _, _), auth_plan_doc(d, _), field(c, "name", x), text(x, s).
+auth_plan_methods(f, c, s, cn) :- auth_plan_functions(f, _, s), auth_plan_classes(c, _, cn), field(c, "body", b), child(b, f, _).
+auth_plan_methods(f, c, s, cn) :- auth_plan_functions(f, _, s), auth_plan_classes(c, _, cn), field(c, "body", b), child(b, w, _), node(_, w, "decorated_definition", _, _), child(w, f, _).
+auth_plan_calls(c, s) :- node(d, c, "call", _, _), auth_plan_doc(d, _), field(c, "function", f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, s).
+auth_plan_calls(c, s) :- node(d, c, "call", _, _), auth_plan_doc(d, _), field(c, "function", f), !node(_, f, "attribute", _, _), node_text(f, s).
+auth_plan_parameter_types(f, s, t) :- auth_plan_functions(f, _, _), field(f, "parameters", ps), child(ps, p, _), node(_, p, "typed_parameter", _, _), child(p, x, 0), node(_, x, "identifier", _, _), text(x, s), field(p, "type", y), node_text(y, t).
+auth_plan_parameter_types(f, s, t) :- auth_plan_functions(f, _, _), field(f, "parameters", ps), child(ps, p, _), node(_, p, "typed_default_parameter", _, _), child(p, x, 0), node(_, x, "identifier", _, _), text(x, s), field(p, "type", y), node_text(y, t).
+auth_plan_depths(m, 0) :- node(d, m, "module", _, _), auth_plan_doc(d, _).
+auth_plan_depths(n, j) :- auth_plan_depths(p, j), child(p, n, _), node(_, n, k, _, _), auth_plan_flat(k).
+auth_plan_depths(n, i) :- auth_plan_depths(p, j), child(p, n, _), node(_, n, k, _, _), !auth_plan_flat(k), i = @add(j, 1).
+auth_plan_class_depth(c, d, s, k) :- auth_plan_classes(c, d, s), auth_plan_depths(c, k).
+auth_plan_deepest(d, s, k) :- auth_plan_class_depth(_, d, s, _), k = max j : { auth_plan_class_depth(_, d, s, j) }.
+rr_agg1(b, d, k, s) :- rr_demand_agg_rr_agg1(d, k, s), auth_plan_class_depth(c, d, s, k), node(_, c, _, b, _).
+auth_plan_deepest_start(d, s, st) :- auth_plan_deepest(d, s, k), st = max b : { rr_agg1(b, d, k, s) }.
+auth_plan_selected_classes(c, d, s) :- auth_plan_deepest_start(d, s, st), auth_plan_classes(c, d, s), node(_, c, _, st, _).
+auth_plan_heads(c, b) :- auth_plan_selected_classes(c, _, _), child(c, a, _), node(_, a, "argument_list", _, _), child(a, b, _), !node(_, b, "comment", _, _).
+auth_plan_heads(c, n) :- auth_plan_heads(c, x), node(_, x, "parenthesized_expression", _, _), child(x, n, _), !node(_, n, "comment", _, _).
+auth_plan_heads(c, n) :- auth_plan_heads(c, x), node(_, x, "call", _, _), field(x, "function", n).
+auth_plan_base_heads(c, s) :- auth_plan_heads(c, n), node(_, n, "identifier", _, _), text(n, s).
+auth_plan_base_heads(c, s) :- auth_plan_heads(c, n), node(_, n, "attribute", _, _), field(n, "attribute", a), text(a, s).
+auth_plan_semantic_classes(d, s) :- auth_plan_selected_classes(_, d, s), suffix("PlanStep", s).
+auth_plan_semantic_classes(d, s) :- auth_plan_selected_classes(c, d, s), auth_plan_base_heads(c, b), (b = "ServerPlanStep" ; b = "NonPublishingStep" ; b = "SqlProducingStep" ; b = "SqlRelationPublisherStep" ; b = "SqlScalarPublisherStep").
+auth_plan_semantic_classes(d, s) :- auth_plan_selected_classes(c, d, s), auth_plan_base_heads(c, b), auth_plan_semantic_classes(d, b).
+auth_plan_step_methods(f) :- auth_plan_methods(f, _, _, cn), node(d, f, _, _, _), auth_plan_semantic_classes(d, cn).
+auth_plan_self_stores(n, f, s) :- node(d, n, "assignment", _, _), auth_plan_doc(d, _), field(n, "left", a), node(_, a, "attribute", _, _), field(a, "object", o), text(o, "self"), field(a, "attribute", x), text(x, s), inside(n, f, auth_plan_def), auth_plan_step_methods(f).
+auth_plan_type_part(n, t) :- auth_plan_self_stores(n, _, _), field(n, "type", y), node_text(y, t).
+auth_plan_type_part(n, t) :- auth_plan_self_stores(n, f, _), field(n, "right", v), node(_, v, "identifier", _, _), text(v, s), auth_plan_parameter_types(f, s, t).
+rr_agg2(b, c, s) :- rr_demand_agg_rr_agg2(c, s), auth_plan_methods(f, c, s, _), node(_, f, _, b, _).
+auth_plan_last_start(c, s, st) :- auth_plan_methods(_, c, s, _), st = max b : { rr_agg2(b, c, s) }.
+auth_plan_last_methods(f, c, s, cn) :- auth_plan_last_start(c, s, st), auth_plan_methods(f, c, s, cn), node(_, f, _, st, _).
+auth_plan_method_calls(c, s, x) :- auth_plan_last_methods(f, c, s, _), auth_plan_calls(k, x), inside(k, f, auth_plan_def).
+auth_plan_entry_reach(c, s, s) :- auth_plan_last_methods(_, c, s, cn), contains("ReadThroughWriteTransaction", cn), (s = "__enter__" ; s = "__aenter__").
+auth_plan_entry_reach(c, e, m) :- auth_plan_entry_reach(c, e, s), auth_plan_method_calls(c, s, m), auth_plan_last_methods(_, c, m, _), m != "_establish_legacy_write_authority", m != "_establish_native_write_authority".
+auth_plan_function_decorators(f, s) :- auth_plan_functions(f, _, _), child(w, f, _), node(_, w, "decorated_definition", _, _), child(w, dc, _), node(_, dc, "decorator", _, _), child(dc, n, _), !node(_, n, "comment", _, _), auth_plan_decorator_name(n, s).
+auth_plan_decorator_name(n, s) :- node(_, dc, "decorator", _, _), child(dc, n, _), auth_plan_calls(n, s).
+auth_plan_decorator_name(n, s) :- node(_, dc, "decorator", _, _), child(dc, n, _), node(_, n, "attribute", _, _), field(n, "attribute", a), text(a, s).
+auth_plan_decorator_name(n, s) :- node(_, dc, "decorator", _, _), child(dc, n, _), !node(_, n, "call", _, _), !node(_, n, "attribute", _, _), !node(_, n, "comment", _, _), node_text(n, s).
+violation("data-layer-authentication-plan-purity", "authentication-contracts", "APP001", p, l) :- auth_plan_self_stores(n, _, s), (s = "_client" ; s = "client" ; s = "_connection" ; s = "connection" ; s = "_callback" ; s = "callback" ; s = "_registry" ; s = "registry"), node(d, n, _, _, _), auth_plan_doc(d, p), line(n, l).
+violation("data-layer-authentication-plan-purity", "authentication-contracts", "APP001", p, l) :- auth_plan_type_part(n, t), match("(?s)(?:.*[\\s\\[\\]|,])?[^\\s\\[\\]|,]*(?:Client|Connection|Transaction|Callback|Registry|Transport)(?:[\\s\\[\\]|,].*)?", t), node(d, n, _, _, _), auth_plan_doc(d, p), line(n, l).
+violation("data-layer-authentication-plan-purity", "authentication-contracts", "APP002", p, l) :- auth_plan_self_stores(n, _, s), (contains("batched_value", s) ; contains("response", s) ; contains("runtime_result", s)), node(d, n, _, _, _), auth_plan_doc(d, p), line(n, l).
+violation("data-layer-authentication-plan-purity", "authentication-contracts", "APP002", p, l) :- auth_plan_type_part(n, t), match("(?s)(?:.*[\\s\\[\\]|,])?[^\\s\\[\\]|,]*(?:Response|RuntimeResult)(?:[\\s\\[\\]|,].*)?", t), node(d, n, _, _, _), auth_plan_doc(d, p), line(n, l).
+auth_plan_authenticates(x) :- auth_plan_method_calls(_, _, x), (contains("bind_cache_to_current_authority", x) ; contains("adopt_authenticated_remote_session", x)).
+auth_plan_authenticates(x) :- auth_plan_method_calls(_, _, x), contains("resolve", x), (contains("auth", x) ; contains("credential", x) ; contains("admission", x)).
+violation("data-layer-authentication-plan-purity", "authentication-contracts", "APP003", p, l) :- auth_plan_last_methods(n, c, s, _), (s = "__enter__" ; s = "__aenter__"), auth_plan_entry_reach(c, s, r), auth_plan_method_calls(c, r, x), auth_plan_authenticates(x), node(d, n, _, _, _), auth_plan_doc(d, p), line(n, l).
+auth_plan_lazy_wrapper(f) :- auth_plan_function_decorators(f, s), (s = "legacy_sync" ; s = "legacy_async").
+auth_plan_lazy_wrapper(f) :- auth_plan_function_decorators(f, s), (s = "direct_legacy_sync" ; s = "direct_legacy_async"), auth_plan_calls(k, x), suffix("_lazy", x), inside(k, f, auth_plan_def).
+violation("data-layer-authentication-plan-purity", "authentication-contracts", "APP004", p, l) :- auth_plan_functions(n, d, s), (suffix("_sync", s) ; suffix("_async", s)), (icontains("auth", s) ; icontains("credential", s) ; icontains("admission", s)), !auth_plan_lazy_wrapper(n), auth_plan_doc(d, p), line(n, l).
+rr_demand_agg_rr_agg1(d, k, s) :- auth_plan_deepest(d, s, k).
+rr_demand_agg_rr_agg2(c, s) :- auth_plan_methods(_, c, s, _).

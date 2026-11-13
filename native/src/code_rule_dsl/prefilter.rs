@@ -23,7 +23,6 @@ mod lab;
 mod lower;
 pub(crate) mod plans;
 /// The store's crate holds it (its vocabulary uses it too).
-pub(crate) use rerail_store::probes;
 #[path = "prefilter/lower/audit.rs"]
 mod audit;
 pub(in crate::code_rule_dsl) use audit::candidate_frontier_audit;
@@ -39,27 +38,10 @@ mod values;
 
 pub(crate) use crate::code_rule_dsl::facts::core::KIND_STRIDE as LANG_STRIDE;
 
-/// A kind atom as an FTS token: `k` and base 36.
-pub(crate) fn kind_token(code: u32) -> String {
-    let mut digits = [0_u8; 7];
-    let mut at = digits.len();
-    let mut code = code;
-    loop {
-        at -= 1;
-        digits[at] = b"0123456789abcdefghijklmnopqrstuvwxyz"[(code % 36) as usize];
-        code /= 36;
-        if code == 0 {
-            break;
-        }
-    }
-    format!("k{}", std::str::from_utf8(&digits[at..]).expect("base36 ASCII"))
-}
+pub(crate) use super::search_index::kind_code;
+#[cfg(test)]
+use super::search_index::kind_token;
 
-/// The kind code of node `pre` in the prefilter's atoms. A restored tape reports ERROR as
-/// tree-sitter's symbol (u16::MAX); the atoms use its tape code, 0, which no other node has.
-pub(in crate::code_rule_dsl) fn kind_code(doc: &TapeDoc, pre: u32) -> u16 {
-    if doc.transducer_flags(pre) & 8 != 0 { 0 } else { doc.transducer_kind(pre) }
-}
 
 /// A tape's prefilter rows, from the tape alone.
 pub(in crate::code_rule_dsl) fn image(tape_id: TapeId, doc: &TapeDoc, interrupted: &impl Fn() -> bool) -> StoreResult<TapePrefilter> {

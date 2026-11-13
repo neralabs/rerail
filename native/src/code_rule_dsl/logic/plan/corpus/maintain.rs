@@ -56,7 +56,7 @@ use super::retain::{Cut, Retained};
 use super::{Error, Result, lower};
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::logic::front::{self, Atom, Literal, Rule, Term};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 /// The part as a run evaluates it, the old rows it reads, and how its strata were evaluated.
@@ -72,6 +72,44 @@ pub(in crate::code_rule_dsl) struct Maintained {
     pub(in crate::code_rule_dsl) recursive: usize,
     /// Each stratum derived again, by one of its relations, and why.
     pub(in crate::code_rule_dsl) again: Vec<(String, &'static str)>,
+    /// The relations that are views of one input (`input_views`): never kept, their old rows and deltas the input's.
+    pub(in crate::code_rule_dsl) views: BTreeSet<String>,
+}
+
+/// The derived relations that are views of one input: one rule, one positive atom of an input, every column of the
+/// input in the head (a variable the head names, or a constant), so a row of it is one row of the input. With
+/// `RERAIL_SESSION_VIEWS=on` a session keeps such a relation as a view (decision 0090): its old rows are the view
+/// over the input's old rows, its delta the view over the input's delta, and none of its rows are kept.
+///
+/// By default none is: a native run makes no views (decision 0104), so a view's stratum copied its input twice
+/// each run, as itself and as its old rows (`kind__sup0` and `kind__sup0__old` each a scan of `node`'s 243,092
+/// rows, 0.8 s of an O125 step for four such views). Kept and maintained as other relations, a view costs its
+/// delta, and its rows' memory (about 10 MB each there).
+pub(in crate::code_rule_dsl) fn input_views(prog: &front::Program) -> BTreeMap<String, Rule> {
+    if !std::env::var("RERAIL_SESSION_VIEWS").is_ok_and(|v| v == "on") {
+        return BTreeMap::new();
+    }
+    let mut by: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
+    for r in &prog.rules {
+        by.entry(r.head.rel.as_str()).or_default().push(r);
+    }
+    by.into_iter()
+        .filter_map(|(rel, rules)| {
+            let [rule] = rules.as_slice() else { return None };
+            let [Literal::Atom(a)] = rule.body.as_slice() else { return None };
+            if a.neg || a.gated || !prog.inputs.iter().any(|x| x == &a.rel) || prog.lattice.contains_key(rel) || prog.natives.contains_key(rel) || prog.facts.contains_key(rel) || prog.outputs.iter().any(|o| o == rel) {
+                return None;
+            }
+            let head: BTreeSet<&str> = rule.head.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.as_str()) } else { None }).collect();
+            let terms_ok = rule.head.args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_)));
+            let one_to_one = a.args.iter().all(|t| match t {
+                Term::Var(v) => head.contains(v.as_str()),
+                Term::Int(_) | Term::Str(_) => true,
+                _ => false,
+            });
+            (terms_ok && one_to_one).then(|| (rel.to_owned(), (*rule).clone()))
+        })
+        .collect()
 }
 
 fn named(rel: &str, suffix: &str) -> String {
@@ -84,7 +122,7 @@ fn named(rel: &str, suffix: &str) -> String {
 /// Not a survivor is not old, or deleted: two rules, each a lower stratum's read. A head with a call keeps the
 /// rule unguarded.
 fn insert(rules: &mut Vec<Rule>, h: &str, args: &[Term], body: Vec<Literal>, gone: &str) {
-    let head = Atom { rel: named(h, "ins"), args: args.to_vec(), neg: false, gated: false };
+    let head = Atom { rel: named(h, "ins").into(), args: args.to_vec(), neg: false, gated: false };
     if !args.iter().all(|t| matches!(t, Term::Var(_) | Term::Int(_) | Term::Str(_))) {
         rules.push(Rule { head, body });
         return;
@@ -104,7 +142,7 @@ pub(in crate::code_rule_dsl) fn levels_wanted() -> bool {
 }
 
 fn atom(rel: String, args: Vec<Term>, neg: bool) -> Literal {
-    Literal::Atom(Atom { rel, args, neg, gated: false })
+    Literal::Atom(Atom { rel: rel.into(), args, neg, gated: false })
 }
 
 fn row(width: usize) -> Vec<Term> {
@@ -129,7 +167,7 @@ fn unmaintainable(prog: &front::Program, scc: &BTreeSet<String>, rules: &[&Rule]
     // levels, or by delete-and-rederive (`RERAIL_COUNT_RECURSIVE=again`: derived again, as the first comparison did).
     if super::supports::counting()
         && std::env::var("RERAIL_COUNT_RECURSIVE").is_ok_and(|v| v == "again")
-        && rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| scc.contains(&a.rel))))
+        && rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| scc.contains(a.rel.as_str()))))
     {
         return Some("recursive, under counting");
     }
@@ -140,14 +178,14 @@ fn unmaintainable(prog: &front::Program, scc: &BTreeSet<String>, rules: &[&Rule]
         for l in &rule.body {
             match l {
                 Literal::Atom(a) if a.gated => return Some("a gated negation"),
-                Literal::Atom(a) if changed.contains(&a.rel) && !scc.contains(&a.rel) && !old(&a.rel) => return Some("a changed read's old rows not kept"),
+                Literal::Atom(a) if changed.contains(a.rel.as_str()) && !scc.contains(a.rel.as_str()) && !old(&a.rel) => return Some("a changed read's old rows not kept"),
                 Literal::Nearest { .. } if super::retain::TREE.iter().any(|r| changed.contains(*r)) => return Some("a nearest literal over a changed tree"),
                 Literal::Atom(_) | Literal::Cmp { .. } | Literal::Nearest { .. } => {}
                 // An aggregate over an earlier stratum's relation (never this one's: aggregation is not recursive).
                 Literal::Agg { atom: a, .. } if a.gated => return Some("a gated negation"),
-                Literal::Agg { atom: a, .. } if scc.contains(&a.rel) => return Some("an aggregate over its own stratum"),
+                Literal::Agg { atom: a, .. } if scc.contains(a.rel.as_str()) => return Some("an aggregate over its own stratum"),
                 Literal::Agg { atom: a, .. } if a.args.iter().any(|t| matches!(t, Term::Call(..))) => return Some("an aggregate over a computed term"),
-                Literal::Agg { atom: a, .. } if changed.contains(&a.rel) && !old(&a.rel) => return Some("a changed read's old rows not kept"),
+                Literal::Agg { atom: a, .. } if changed.contains(a.rel.as_str()) && !old(&a.rel) => return Some("a changed read's old rows not kept"),
                 Literal::Agg { .. } => {}
                 Literal::Ast { .. } => return Some("an ast literal"),
             }
@@ -170,22 +208,34 @@ fn named_heads(rule: &Rule) -> Rule {
 }
 
 /// `part` (the cut's program) with each changed stratum maintained where it can be, and the old rows it reads.
-/// An input's delta given whole (an earlier phase's, `phases::Versioned`): its rows new and its rows gone, bound as
-/// `r__plus` and `r__minus` in place of their diff of every old and new row.
-pub(in crate::code_rule_dsl) type Given = std::collections::HashMap<String, (Arc<dyn Source>, Arc<dyn Source>)>;
+/// `given` answers for an input whose delta it has (its rows new and gone, found by its documents), bound as
+/// `r__plus` and `r__minus` in place of their diff of every old and new row; asked only for the inputs a maintained
+/// stratum reads the delta of.
+/// One stratum's form, made when a run reaches it (decision 0117 step 3): `rewrite` over a program of that stratum
+/// alone. Its relations' deltas are always made, since the run asks whether they are empty; a delta or an old
+/// source that is a relation of the run already (an earlier stratum's form made or bound it) is read, not made again.
+pub(in crate::code_rule_dsl) struct One<'m> {
+    pub(in crate::code_rule_dsl) has_delta: &'m dyn Fn(&str) -> bool,
+    pub(in crate::code_rule_dsl) has_old: &'m dyn Fn(&str) -> bool,
+}
 
-/// `given` answers for an input whose delta it has (`Given`'s, or found by its documents), asked only for the inputs a
-/// maintained stratum reads the delta of.
-pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cross: &lower::Lowered, given: &mut dyn FnMut(&str) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>) -> Result<Maintained> {
+/// `sccs`: `cross`'s strata, computed once by the caller (as `retain::cut` was given them).
+pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cross: &lower::Lowered, sccs: &[BTreeSet<String>], given: &mut dyn FnMut(&str) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>) -> Result<Maintained> {
+    rewrite_with(cut, kept, cross, sccs, given, None)
+}
+
+pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>, cross: &lower::Lowered, sccs: &[BTreeSet<String>], given: &mut dyn FnMut(&str) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>, one: Option<&One>) -> Result<Maintained> {
     let mut part = cut.program(cross);
-    let (sccs, _) = front::strata(&cross.program).map_err(|e| Error::Plan(e.to_string()))?;
     let dirty: Vec<&BTreeSet<String>> = sccs.iter().filter(|scc| scc.iter().all(|r| !cut.clean.contains(r))).collect();
     let why = if kept.is_none() { "nothing kept" } else { "the program has gates" };
     let Some(kept) = kept.filter(|_| cross.program.gates.is_empty()) else {
         let again = dirty.iter().map(|scc| (scc.iter().next().cloned().unwrap_or_default(), why)).collect();
-        return Ok(Maintained { program: part, sources: Vec::new(), maintained: 0, derived_again: dirty.len(), recursive: 0, again });
+        let views = input_views(&cross.program).into_keys().collect();
+        return Ok(Maintained { program: part, sources: Vec::new(), maintained: 0, derived_again: dirty.len(), recursive: 0, again, views });
     };
-    let old = |rel: &str| kept.has_old(rel);
+    // The views of one input whose input's old rows are kept: what they read is the input's (`input_views`).
+    let views: BTreeMap<String, Rule> = input_views(&cross.program).into_iter().filter(|(_, r)| r.body[0].atom().is_some_and(|a| kept.has_old(&a.rel))).collect();
+    let old = |rel: &str| kept.has_old(rel) || views.contains_key(rel);
     let mut changed: BTreeSet<String> = cut.changed.iter().cloned().collect();
     let mut rules: Vec<Rule> = Vec::new();
     let mut olds: BTreeSet<String> = BTreeSet::new();
@@ -202,8 +252,27 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     // Each maintained stratum, the span of `rules` its maintained form wrote, and its rules as given: its form
     // derived again (`front::Again`).
     let mut groups: Vec<(BTreeSet<String>, usize, usize, Vec<Rule>)> = Vec::new();
+    // Each relation's rules, by position, found once: a scan of every rule per stratum (and per relation, to name one)
+    // was 5% of a one-file run of the Python pack (16 k rules, 10 k strata).
+    let mut by_head: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (i, r) in part.program.rules.iter().enumerate() {
+        by_head.entry(r.head.rel.as_str()).or_default().push(i);
+    }
+    let count_of = |rel: &str| by_head.get(rel).map_or(0, Vec::len);
     for scc in dirty {
-        let given: Vec<&Rule> = part.program.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect();
+        let mut at: Vec<usize> = scc.iter().filter_map(|r| by_head.get(r.as_str())).flatten().copied().collect();
+        at.sort_unstable();
+        let given: Vec<&Rule> = at.iter().map(|&i| &part.program.rules[i]).collect();
+        // A view of one input stays one: its rule as given, changed when its input changed.
+        if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let Some(view) = views.get(*rel)
+        {
+            rules.push(view.clone());
+            if view.body[0].atom().is_some_and(|a| changed.contains(a.rel.as_str())) {
+                changed.insert((*rel).clone());
+            }
+            continue;
+        }
         let named_rules: Vec<Rule> = given.iter().map(|r| named_heads(r)).collect();
         let mine: Vec<&Rule> = named_rules.iter().collect();
         // `RERAIL_CROSS_MAINTAIN_ONLY`: maintain only the strata holding one of these relations (comma-separated; empty:
@@ -214,7 +283,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
             eprintln!("O125_LIST {}", scc.iter().next().unwrap());
         }
         if let Some(why) = why {
-            let name = scc.iter().max_by_key(|r| part.program.rules.iter().filter(|x| &x.head.rel == *r).count()).cloned().unwrap_or_default();
+            let name = scc.iter().max_by_key(|r| count_of(r)).cloned().unwrap_or_default();
             again.push((format!("{name} ({} relations)", scc.len()), why));
             derived_again += 1;
             rules.extend(given.into_iter().cloned());
@@ -233,7 +302,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
             && mine.iter().all(|r| matches!(r.body.as_slice(), [Literal::Atom(a)] if !a.neg && super::supports::is_support(&a.rel)));
         // The rows that lost a derivation: deleted, or (a projection) checked for a support left first.
         let lost = |h: &str| if projection { named(h, "lost") } else { named(h, "del") };
-        let is_recursive = mine.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| scc.contains(&a.rel))));
+        let is_recursive = mine.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| scc.contains(a.rel.as_str()))));
         if is_recursive {
             recursive += 1;
         }
@@ -241,21 +310,43 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         // overdeleted, when its rules are joins, negations and comparisons and every kept row has its level.
         let lv = is_recursive && levels_wanted() && mine.iter().all(|r| r.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. })))
             && scc.iter().all(|r| kept.kept(r).is_some_and(|(h, _)| h.has_levels()));
+        if lv {
+            BY_LEVELS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         if is_recursive && levels_wanted() && std::env::var_os("RERAIL_LEVELS_WHY").is_some() {
             let not_join = mine.iter().filter(|r| !r.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. }))).count();
             let no_levels: Vec<(&String, (usize, usize, bool))> = scc.iter().filter_map(|r| kept.kept(r).filter(|(h, _)| !h.has_levels()).map(|(h, _)| (r, h.levels_shape()))).take(4).collect();
             let unkept: Vec<&String> = scc.iter().filter(|r| kept.kept(r).is_none()).take(4).collect();
-            eprintln!("RERAIL_LEVELS_WHY {:?}: levels {lv}; rules not joins {not_join}; without levels {no_levels:?}; not kept {unkept:?}", scc.iter().next());
+            eprintln!("RERAIL_LEVELS_WHY {:?} ({} relations): levels {lv}; rules not joins {not_join}; without levels {no_levels:?}; not kept {unkept:?}", scc.iter().next(), scc.len());
+            // The literals that are not joins, by kind, with a few of their rules.
+            let kind = |l: &Literal| match l {
+                Literal::Atom(_) | Literal::Cmp { .. } => None,
+                Literal::Agg { .. } => Some("aggregate"),
+                other => Some(match format!("{other:?}").split(['(', ' ', '{']).next() { Some("Assign") => "assignment", Some("Nearest") => "nearest", Some("Ast") => "ast", _ => "other" }),
+            };
+            let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
+            for r in &mine {
+                for l in &r.body {
+                    if let Some(k) = kind(l) {
+                        let shown = if k == "other" { format!("other: {}", format!("{l:?}").split(['(', ' ', '{']).next().unwrap_or("")) } else { k.to_owned() };
+                        *kinds.entry(shown).or_default() += 1;
+                    }
+                }
+            }
+            eprintln!("RERAIL_LEVELS_WHY   literals not joins, by kind: {kinds:?}");
+            for r in mine.iter().filter(|r| !r.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. }))).take(6) {
+                eprintln!("RERAIL_LEVELS_WHY   {r}");
+            }
         }
         let gone = if lv { "gone" } else { "del" };
         // A read that can change: an atom of this stratum, or a changed relation (positive or negated).
-        let moves = |a: &Atom| scc.contains(&a.rel) || changed.contains(&a.rel);
-        let old_of = |a: &Atom| if moves(a) { named(&a.rel, "old") } else { a.rel.clone() };
+        let moves = |a: &Atom| scc.contains(a.rel.as_str()) || changed.contains(a.rel.as_str());
+        let old_of = |a: &Atom| if moves(a) { named(&a.rel, "old") } else { a.rel.to_string() };
         // A literal over old rows: an atom, or an aggregate's atom, that moves reads `r__old`.
         let old_lit = |l: &Literal| match l {
             Literal::Atom(b) => atom(old_of(b), b.args.clone(), b.neg),
             Literal::Agg { var, op, over, atom: b } => {
-                Literal::Agg { var: var.clone(), op: op.clone(), over: over.clone(), atom: Atom { rel: old_of(b), ..b.clone() } }
+                Literal::Agg { var: var.clone(), op: op.clone(), over: over.clone(), atom: Atom { rel: old_of(b).into(), ..b.clone() } }
             }
             other => other.clone(),
         };
@@ -279,7 +370,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
                         });
                     }
                     let grp = format!("{h}__grp{r}_{k}");
-                    let cols = &part.program.decls[&at.rel];
+                    let cols = &part.program.decls[at.rel.as_str()];
                     let mut decl: Vec<(String, String)> = g
                         .iter()
                         .map(|v| {
@@ -295,12 +386,12 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
                     }
                     part.program.decls.insert(grp.clone(), decl);
                     for d in ["minus", "plus"] {
-                        rules.push(Rule { head: Atom { rel: grp.clone(), args: key.clone(), neg: false, gated: false }, body: vec![atom(named(&at.rel, d), at.args.clone(), false)] });
+                        rules.push(Rule { head: Atom { rel: grp.clone().into(), args: key.clone(), neg: false, gated: false }, body: vec![atom(named(&at.rel, d), at.args.clone(), false)] });
                     }
-                    deltas.insert(at.rel.clone());
+                    deltas.insert(at.rel.to_string());
                     let mut over_old = vec![atom(grp.clone(), key.clone(), false)];
                     over_old.extend(rule.body.iter().map(old_lit));
-                    rules.push(Rule { head: Atom { rel: named(h, "del"), args: rule.head.args.clone(), neg: false, gated: false }, body: over_old });
+                    rules.push(Rule { head: Atom { rel: named(h, "del").into(), args: rule.head.args.clone(), neg: false, gated: false }, body: over_old });
                     let mut over_new = vec![atom(grp, key, false)];
                     over_new.extend(rule.body.iter().cloned());
                     insert(&mut rules, h, &rule.head.args, over_new, "del");
@@ -310,16 +401,16 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
                 if !moves(at) {
                     continue;
                 }
-                let (lose, gain) = match (at.neg, scc.contains(&at.rel)) {
+                let (lose, gain) = match (at.neg, scc.contains(at.rel.as_str())) {
                     (false, true) => (named(&at.rel, "del"), named(&at.rel, "ins")),
                     (false, false) => (named(&at.rel, "minus"), named(&at.rel, "plus")),
                     (true, _) => (named(&at.rel, "plus"), named(&at.rel, "minus")),
                 };
-                if !scc.contains(&at.rel) {
-                    deltas.insert(at.rel.clone());
+                if !scc.contains(at.rel.as_str()) {
+                    deltas.insert(at.rel.to_string());
                 }
                 // Under levels a premise of the stratum is lost when it is gone, and the head is a candidate.
-                let lose = if lv && !at.neg && scc.contains(&at.rel) { named(&at.rel, "gone") } else { lose };
+                let lose = if lv && !at.neg && scc.contains(at.rel.as_str()) { named(&at.rel, "gone") } else { lose };
                 let over: Vec<Literal> = rule
                     .body
                     .iter()
@@ -329,7 +420,7 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
                         other => old_lit(other),
                     })
                     .collect();
-                rules.push(Rule { head: Atom { rel: if lv { named(h, "cand") } else { lost(h) }, args: rule.head.args.clone(), neg: false, gated: false }, body: over });
+                rules.push(Rule { head: Atom { rel: if lv { named(h, "cand").into() } else { lost(h).into() }, args: rule.head.args.clone(), neg: false, gated: false }, body: over });
                 // A negation's gain (`n__minus`) is a row gone, which makes `!n(..)` hold only when no other row
                 // matches: with a wildcard (`!found(c, a, _)`) another may. The negation is kept, over the new rows.
                 let ins: Vec<Literal> = rule
@@ -348,16 +439,16 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
             if lv {
                 let mut held = vec![atom(named(h, "chk"), rule.head.args.clone(), false)];
                 held.extend(rule.body.iter().map(|l| match l {
-                    Literal::Atom(b) if !b.neg && scc.contains(&b.rel) => atom(named(&b.rel, "live"), b.args.clone(), false),
+                    Literal::Atom(b) if !b.neg && scc.contains(b.rel.as_str()) => atom(named(&b.rel, "live"), b.args.clone(), false),
                     other => other.clone(),
                 }));
-                rules.push(Rule { head: Atom { rel: named(h, "held"), args: rule.head.args.clone(), neg: false, gated: false }, body: held });
+                rules.push(Rule { head: Atom { rel: named(h, "held").into(), args: rule.head.args.clone(), neg: false, gated: false }, body: held });
             }
             for b in rule.body.iter().filter_map(|l| match l {
-                Literal::Atom(b) | Literal::Agg { atom: b, .. } if moves(b) && !scc.contains(&b.rel) => Some(b),
+                Literal::Atom(b) | Literal::Agg { atom: b, .. } if moves(b) && !scc.contains(b.rel.as_str()) => Some(b),
                 _ => None,
             }) {
-                olds.insert(b.rel.clone());
+                olds.insert(b.rel.to_string());
             }
             // A support's row has one derivation (`supports`): an overdeleted row is gone, never rederived.
             if exact {
@@ -367,12 +458,12 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
             if projection {
                 let mut held = vec![atom(named(h, "lost"), rule.head.args.clone(), false)];
                 held.extend(rule.body.iter().cloned());
-                rules.push(Rule { head: Atom { rel: named(h, "held"), ..rule.head.clone() }, body: held });
+                rules.push(Rule { head: Atom { rel: named(h, "held").into(), ..rule.head.clone() }, body: held });
                 continue;
             }
             let mut red = vec![atom(named(h, gone), rule.head.args.clone(), false)];
             red.extend(rule.body.iter().cloned());
-            rules.push(Rule { head: Atom { rel: named(h, "redo"), ..rule.head.clone() }, body: red });
+            rules.push(Rule { head: Atom { rel: named(h, "redo").into(), ..rule.head.clone() }, body: red });
         }
         let exact = exact || projection;
         for rel in scc {
@@ -380,19 +471,19 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
             let v = row(width);
             olds.insert(rel.clone());
             if projection {
-                rules.push(Rule { head: Atom { rel: named(rel, "del"), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "lost"), v.clone(), false), atom(named(rel, "held"), v.clone(), true)] });
+                rules.push(Rule { head: Atom { rel: named(rel, "del").into(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "lost"), v.clone(), false), atom(named(rel, "held"), v.clone(), true)] });
                 fresh.push((rel.clone(), named(rel, "lost")));
                 fresh.push((rel.clone(), named(rel, "held")));
             }
             if exact {
                 exact_rels.insert(rel.clone());
             }
-            rules.push(Rule { head: Atom { rel: rel.clone(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "old"), v.clone(), false), atom(named(rel, gone), v.clone(), true)] });
+            rules.push(Rule { head: Atom { rel: rel.clone().into(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "old"), v.clone(), false), atom(named(rel, gone), v.clone(), true)] });
             if lv {
                 // Placed in the levels stratum only: the engine's driver writes `chk` and `gone` (`plan::levels_of`),
                 // and `live` starts as the kept rows.
-                let gated = |rel: String| Literal::Atom(Atom { rel, args: v.clone(), neg: true, gated: true });
-                let head = |s: &str| Atom { rel: named(rel, s), args: v.clone(), neg: false, gated: false };
+                let gated = |rel: String| Literal::Atom(Atom { rel: rel.into(), args: v.clone(), neg: true, gated: true });
+                let head = |s: &str| Atom { rel: named(rel, s).into(), args: v.clone(), neg: false, gated: false };
                 rules.push(Rule { head: head("chk"), body: vec![atom(named(rel, "cand"), v.clone(), false)] });
                 rules.push(Rule { head: head("gone"), body: vec![atom(named(rel, "chk"), v.clone(), false), gated(named(rel, "held"))] });
                 rules.push(Rule { head: head("live"), body: vec![atom(named(rel, "old"), v.clone(), false), gated(named(rel, "gone"))] });
@@ -401,9 +492,9 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
                 }
                 gone_of.insert(rel.clone());
             }
-            rules.push(Rule { head: Atom { rel: rel.clone(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "ins"), v.clone(), false)] });
+            rules.push(Rule { head: Atom { rel: rel.clone().into(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "ins"), v.clone(), false)] });
             if !exact {
-                rules.push(Rule { head: Atom { rel: rel.clone(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "redo"), v, false)] });
+                rules.push(Rule { head: Atom { rel: rel.clone().into(), args: v.clone(), neg: false, gated: false }, body: vec![atom(named(rel, "redo"), v, false)] });
             }
             if !lv {
                 fresh.push((rel.clone(), named(rel, "del")));
@@ -417,11 +508,44 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         changed.extend(scc.iter().cloned());
         groups.push((scc.clone(), start, rules.len(), as_given));
     }
+    // One stratum's form: its relations' deltas, each as its form makes it (maintained), or by a diff of its old rows
+    // (derived again, where they are kept).
+    if one.is_some() {
+        for rel in sccs.iter().filter(|scc| scc.iter().all(|r| !cut.clean.contains(r))).flatten() {
+            if maint.contains(rel) {
+                deltas.insert(rel.clone());
+            } else if old(rel) {
+                deltas.insert(rel.clone());
+                olds.insert(rel.clone());
+            }
+        }
+    }
     let mut sources = Vec::new();
+    // A view's delta and old rows are the view over its input's: the input's are made or bound too.
+    let input_of = |rel: &str| views.get(rel).and_then(|r| r.body[0].atom()).map(|a| a.rel.to_string());
+    let view_deltas: Vec<String> = deltas.iter().filter_map(|r| input_of(r)).collect();
+    let view_inputs: BTreeSet<String> = view_deltas.iter().cloned().collect();
+    deltas.extend(view_deltas);
+    let view_olds: Vec<String> = olds.iter().filter_map(|r| input_of(r)).collect();
+    olds.extend(view_olds);
+    let over_input = |rel: &str, suffix: &str| -> Rule {
+        let view = &views[rel];
+        let a = view.body[0].atom().expect("a view's atom");
+        Rule { head: Atom { rel: named(rel, suffix).into(), ..view.head.clone() }, body: vec![atom(named(&a.rel, suffix), a.args.clone(), false)] }
+    };
     for rel in &deltas {
         let v = row(part.program.decls[rel].len());
-        let head = |suffix: &str| Atom { rel: named(rel, suffix), args: v.clone(), neg: false, gated: false };
-        if maint.contains(rel) {
+        let head = |suffix: &str| Atom { rel: named(rel, suffix).into(), args: v.clone(), neg: false, gated: false };
+        if one.is_some_and(|o| !maint.contains(rel) && (o.has_delta)(rel)) {
+            // A relation of the run already: an earlier stratum's form made it, or it was given.
+            if !part.program.inputs.contains(&named(rel, "minus")) {
+                part.program.inputs.push(named(rel, "minus"));
+                part.program.inputs.push(named(rel, "plus"));
+            }
+        } else if views.contains_key(rel) {
+            rules.push(over_input(rel, "minus"));
+            rules.push(over_input(rel, "plus"));
+        } else if maint.contains(rel) {
             // A maintained relation's net change, from its own overdeleted, rederived and inserted rows.
             let body = if exact_rels.contains(rel) {
                 vec![atom(named(rel, "del"), v.clone(), false), atom(named(rel, "ins"), v.clone(), true)]
@@ -438,6 +562,10 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
                 part.program.inputs.push(named(rel, suffix));
             }
         } else {
+            // A view's input whose delta is not given: found from its old rows, bound below.
+            if view_inputs.contains(rel) {
+                olds.insert(rel.clone());
+            }
             rules.push(Rule { head: head("minus"), body: vec![atom(named(rel, "old"), v.clone(), false), atom(rel.clone(), v.clone(), true)] });
             rules.push(Rule { head: head("plus"), body: vec![atom(rel.clone(), v.clone(), false), atom(named(rel, "old"), v.clone(), true)] });
         }
@@ -450,36 +578,43 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     let delta_of: std::collections::HashMap<String, &str> = deltas.iter().filter(|r| maint.contains(*r)).flat_map(|r| [(named(r, "minus"), r.as_str()), (named(r, "plus"), r.as_str())]).collect();
     let mut delta_rules: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
     for (i, r) in rules.iter().enumerate() {
-        if let Some(&rel) = delta_of.get(&r.head.rel) {
+        if let Some(&rel) = delta_of.get(r.head.rel.as_str()) {
             delta_rules.entry(rel).or_default().push(i);
         }
     }
     for (scc, start, end, given) in groups {
         let mine: Vec<&Rule> = rules[start..end].iter().chain(scc.iter().filter_map(|s| delta_rules.get(s.as_str())).flatten().map(|&i| &rules[i])).collect();
-        let owned: BTreeSet<String> = mine.iter().map(|r| r.head.rel.clone()).chain(scc.iter().cloned()).collect();
+        let owned: BTreeSet<String> = mine.iter().map(|r| r.head.rel.to_string()).chain(scc.iter().cloned()).collect();
         let reads: BTreeSet<String> = mine
             .iter()
             .flat_map(|r| r.body.iter().filter_map(|l| match l {
                 Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(&a.rel),
                 _ => None,
             }))
-            .filter(|r| !owned.contains(*r) && (r.ends_with("__minus") || r.ends_with("__plus")))
-            .cloned()
+            .filter(|r| !owned.contains((*r).as_str()) && (r.ends_with("__minus") || r.ends_with("__plus")))
+            .map(|r| r.to_string())
             .collect();
         let mut again_deltas = Vec::new();
         for rel in scc.iter().filter(|r| deltas.contains(*r)) {
             let v = row(part.program.decls[rel].len());
             let a = |rel: String, neg: bool| atom(rel, v.clone(), neg);
-            again_deltas.push(Rule { head: Atom { rel: named(rel, "minus"), args: v.clone(), neg: false, gated: false }, body: vec![a(named(rel, "old"), false), a(rel.clone(), true)] });
-            again_deltas.push(Rule { head: Atom { rel: named(rel, "plus"), args: v.clone(), neg: false, gated: false }, body: vec![a(rel.clone(), false), a(named(rel, "old"), true)] });
+            again_deltas.push(Rule { head: Atom { rel: named(rel, "minus").into(), args: v.clone(), neg: false, gated: false }, body: vec![a(named(rel, "old"), false), a(rel.clone(), true)] });
+            again_deltas.push(Rule { head: Atom { rel: named(rel, "plus").into(), args: v.clone(), neg: false, gated: false }, body: vec![a(rel.clone(), false), a(named(rel, "old"), true)] });
         }
         let olds = scc.iter().map(|r| named(r, "old")).collect();
         part.program.again.push(front::Again { scc, owned, rules: given, deltas: again_deltas, reads: reads.into_iter().collect(), olds });
     }
     for rel in &olds {
-        // Named as the planner reads its statistics (`sql_col`).
-        let (source, held) = kept.old_source(rel, &named(rel, "old")).expect("a maintained read's old rows");
-        sources.push((named(rel, "old"), source, held));
+        if views.contains_key(rel) {
+            rules.push(over_input(rel, "old"));
+            fresh.push((rel.clone(), named(rel, "old")));
+            continue;
+        }
+        // Named as the planner reads its statistics (`sql_col`). One bound already (an earlier form's) is read.
+        if !one.is_some_and(|o| (o.has_old)(rel)) {
+            let (source, held) = kept.old_source(rel, &named(rel, "old")).expect("a maintained read's old rows");
+            sources.push((named(rel, "old"), source, held));
+        }
         fresh.push((rel.clone(), named(rel, "old")));
         part.program.inputs.push(named(rel, "old"));
     }
@@ -502,5 +637,174 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         }
     }
     part.program.rules = rules;
-    Ok(Maintained { program: part, sources, maintained, derived_again, recursive, again })
+    together(&mut part.program);
+    let views = views.into_keys().collect();
+    Ok(Maintained { program: part, sources, maintained, derived_again, recursive, again, views })
+}
+
+static BY_LEVELS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The recursive strata maintained by levels so far in this process (decision 0090), not by delete-and-rederive.
+pub fn strata_by_levels() -> usize {
+    BY_LEVELS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+static TOGETHER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The sets of pieces run as one component so far in this process (`together`).
+pub fn pieces_together() -> usize {
+    TOGETHER.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Decision 0101 §3: a maintained stratum's pieces (`h__del`, `h__ins`, its deltas, …) run as one component per
+/// level, not one each, so they pay one component's fixed cost (its spec, open and statistics) between them.
+///
+/// A piece is ordered after the pieces it reads as stratified sub-steps of the one fixpoint: a negation of a piece
+/// of the same component waits for a unit gate (`n__ready`, as magic's `done_` gates do) that passes once `n` and
+/// what it reads there are quiet, and reads `n` whole. A survivor (`h :- h__old, !h__del`) starts the next level:
+/// it is made in place from the kept rows less the deleted ones (`plan::survivors`), which are whole by then. A
+/// recursive stratum, or one with a relation made natively or by a lattice, keeps its pieces apart.
+///
+/// Not under a device binding: the device takes no component with gates (`plan.rs`, "a component with gates or
+/// requests"), so a set placed there would run on the host. Each piece there stays a stratum of seed joins, which
+/// the device runs. (The device's own form of this is one submission with a dispatch per level, not gates.)
+///
+/// `RERAIL_PIECES_APART` runs each piece as its own component, as before (to compare).
+fn together(prog: &mut front::Program) {
+    if std::env::var_os("RERAIL_PIECES_APART").is_some() {
+        return;
+    }
+    if crate::code_rule_dsl::logic::plan::placement::device() {
+        crate::code_rule_dsl::logic::profile::decision("pieces together (decision 0101 §3)", || "apart: the run's binding is the device, which takes no gates".to_owned());
+        return;
+    }
+    let derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
+    let mut rules_of: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (i, r) in prog.rules.iter().enumerate() {
+        rules_of.entry(r.head.rel.to_string()).or_default().push(i);
+    }
+    let reads_of = |r: &Rule| -> Vec<(String, bool)> {
+        r.body.iter().filter_map(|l| match l {
+            Literal::Atom(a) => Some((a.rel.to_string(), a.neg)),
+            Literal::Agg { atom: a, .. } => Some((a.rel.to_string(), true)),
+            _ => None,
+        }).collect()
+    };
+    // Each group's components, by level.
+    let mut sets: Vec<(usize, BTreeSet<String>)> = Vec::new();
+    'group: for (g, again) in prog.again.iter().enumerate() {
+        let members: BTreeSet<&String> = again.owned.iter().filter(|r| derived.contains(*r)).collect();
+        if members.len() < 2 || members.iter().any(|r| prog.natives.contains_key(*r) || prog.lattice.contains_key(*r) || prog.facts.get(*r).is_some_and(|f| !f.is_empty())) {
+            continue;
+        }
+        let inner: BTreeMap<&String, BTreeSet<String>> = members.iter().map(|r| {
+            let reads = rules_of[*r].iter().flat_map(|&i| reads_of(&prog.rules[i])).map(|(x, _)| x).filter(|x| members.contains(&x)).collect();
+            (*r, reads)
+        }).collect();
+        // A survivor: `h :- h__old, !h__del` (or `h__gone`) with the deleted rows a piece.
+        let survivor = |h: &str| rules_of[h].iter().any(|&i| {
+            let r = &prog.rules[i];
+            matches!(r.body.as_slice(), [Literal::Atom(a), Literal::Atom(b)] if !a.neg && b.neg && a.rel.as_str() == named(h, "old")
+                && (b.rel.as_str() == named(h, "del") || b.rel.as_str() == named(h, "gone")) && members.iter().any(|m| m.as_str() == b.rel.as_str()))
+        });
+        // Levels, reads first; a cycle (a recursive stratum) keeps the group apart.
+        let mut level: BTreeMap<&String, usize> = BTreeMap::new();
+        let mut on: BTreeSet<&String> = BTreeSet::new();
+        fn visit<'m>(r: &'m String, inner: &'m BTreeMap<&'m String, BTreeSet<String>>, survivor: &dyn Fn(&str) -> bool, level: &mut BTreeMap<&'m String, usize>, on: &mut BTreeSet<&'m String>) -> bool {
+            if level.contains_key(r) {
+                return true;
+            }
+            if !on.insert(r) {
+                return false;
+            }
+            let mut l = 0;
+            for x in &inner[r] {
+                let Some((&x, _)) = inner.get_key_value(x) else { continue };
+                if !visit(x, inner, survivor, level, on) {
+                    return false;
+                }
+                l = l.max(level[x] + usize::from(survivor(r)));
+            }
+            on.remove(r);
+            level.insert(r, l);
+            true
+        }
+        for r in &members {
+            if !visit(r, &inner, &survivor, &mut level, &mut on) {
+                continue 'group;
+            }
+        }
+        let mut by_level: BTreeMap<usize, BTreeSet<String>> = BTreeMap::new();
+        for (r, l) in level {
+            by_level.entry(l).or_default().insert(r.clone());
+        }
+        sets.extend(by_level.into_values().filter(|s| s.len() > 1).map(|s| (g, s)));
+    }
+    // Only sets that are one component each as the strata are made (none takes in a relation outside it).
+    prog.together = sets.iter().map(|(_, s)| s.clone()).collect();
+    let apart: BTreeSet<usize> = front::apart(prog).into_iter().collect();
+    let sets: Vec<(usize, BTreeSet<String>)> = sets.into_iter().enumerate().filter(|(i, _)| !apart.contains(i)).map(|(_, s)| s).collect();
+    prog.together.clear();
+    for (g, set) in sets {
+        // Each negated piece's depth in the set (its gates' order), and what it reads there.
+        let inner: BTreeMap<&String, BTreeSet<String>> = set.iter().map(|r| {
+            (r, rules_of[r].iter().flat_map(|&i| reads_of(&prog.rules[i])).map(|(x, _)| x).filter(|x| set.contains(x)).collect())
+        }).collect();
+        let negated: BTreeSet<String> = set.iter().flat_map(|r| rules_of[r].iter().flat_map(|&i| reads_of(&prog.rules[i]))).filter(|(x, neg)| *neg && set.contains(x)).map(|(x, _)| x).collect();
+        let reach = |n: &String| -> BTreeSet<String> {
+            let (mut seen, mut todo) = (BTreeSet::new(), vec![n.clone()]);
+            while let Some(v) = todo.pop() {
+                if seen.insert(v.clone()) {
+                    todo.extend(inner[&v].iter().cloned());
+                }
+            }
+            seen
+        };
+        let depth = |n: &String| -> usize {
+            fn d(v: &String, inner: &BTreeMap<&String, BTreeSet<String>>) -> usize {
+                inner[v].iter().map(|x| 1 + d(x, inner)).max().unwrap_or(0)
+            }
+            d(n, &inner)
+        };
+        let ready = |n: &str| named(n, "ready");
+        let mut members = set.clone();
+        for n in &negated {
+            let quiet = reach(n);
+            let deps: BTreeSet<String> = quiet.iter().flat_map(|h| rules_of[h].iter().flat_map(|&i| reads_of(&prog.rules[i]))).filter(|(x, neg)| *neg && negated.contains(x) && x != n).map(|(x, _)| ready(&x)).collect();
+            let level = depth(n);
+            prog.gates.push((ready(n), crate::code_rule_dsl::logic::magic::Gate { src: None, rel: n.clone(), level, quiet: quiet.into_iter().collect(), deps: deps.into_iter().collect() }));
+            prog.decls.insert(ready(n), vec![("k".to_owned(), "int".to_owned())]);
+            let wild = vec![Term::Wild; prog.decls[n].len()];
+            prog.rules.push(Rule { head: Atom { rel: ready(n).into(), args: vec![Term::Int(0)], neg: false, gated: false }, body: vec![atom(n.clone(), wild, false)] });
+            members.insert(ready(n));
+        }
+        // A negation (or an aggregate) of a piece of the set reads it once its gate passed.
+        for h in &set {
+            for &i in &rules_of[h] {
+                let body = std::mem::take(&mut prog.rules[i].body);
+                let mut out = Vec::with_capacity(body.len() + 2);
+                for l in body {
+                    let n = match &l {
+                        Literal::Atom(a) if a.neg && set.contains(a.rel.as_str()) => Some(a.rel.to_string()),
+                        Literal::Agg { atom: a, .. } if set.contains(a.rel.as_str()) => Some(a.rel.to_string()),
+                        _ => None,
+                    };
+                    let Some(n) = n else {
+                        out.push(l);
+                        continue;
+                    };
+                    out.push(Literal::Atom(Atom { rel: ready(&n).into(), args: vec![Term::Int(0)], neg: false, gated: false }));
+                    out.push(match l {
+                        Literal::Atom(a) => Literal::Atom(Atom { gated: true, ..a }),
+                        Literal::Agg { var, op, over, atom } => Literal::Agg { var, op, over, atom: Atom { gated: true, ..atom } },
+                        l => l,
+                    });
+                }
+                prog.rules[i].body = out;
+            }
+        }
+        prog.again[g].owned.extend(members.iter().cloned());
+        prog.together.push(members);
+        TOGETHER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
 }

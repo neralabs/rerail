@@ -84,6 +84,19 @@ fn tests_on_text_relations_become_relations() {
     assert_eq!(rows, [vec![1, 2], vec![2], vec![3]]);
 }
 
+/// `fstring_template`'s markers are the program's constants, each once; a marker that is not a constant is an error.
+#[test]
+fn fstring_template_markers_are_constants() {
+    let decls = ".decl fstring_template(n: node, marker: symbol, v: symbol)\n.input fstring_template\n.decl a(n: node)\n";
+    let mut prog = crate::code_rule_dsl::logic::rr::parse(&format!(
+        "{decls}a(n) :- fstring_template(n, \"{{...}}\", v), glob(\"*FROM*\", v).\na(n) :- fstring_template(n, \"{{}}\", _), !fstring_template(n, \"{{...}}\", \"x\").\n.output a\n"
+    ))
+    .unwrap();
+    assert_eq!(as_relations(&mut prog).unwrap().markers, ["{...}", "{}"]);
+    let mut prog = crate::code_rule_dsl::logic::rr::parse(&format!("{decls}.decl m(s: symbol)\n.input m\na(n) :- m(k), fstring_template(n, k, _).\n.output a\n")).unwrap();
+    assert!(as_relations(&mut prog).err().unwrap().contains("constant marker"));
+}
+
 #[test]
 fn regexes_and_their_rewrites_agree() {
     assert!(test("rx", "_branch_cache_x", r"^_\w*cache\w*$"));
@@ -115,7 +128,8 @@ fn text_functors_follow_core_rr() {
     assert_eq!(convert("max-age", "camelCase", "dash"), "maxAge");
     assert_eq!(convert("maxAge", "snakeCase", ""), "max_age");
     assert_eq!(convert("max_age", "pascalCase", "underscore"), "MaxAge");
-    assert_eq!(json_str("a\"b\u{e9}\u{1f600}"), "\"a\\\"b\\u00e9\\ud83d\\ude00\"");
+    // W's json_group_array: non-ASCII kept, controls escaped (core.rr's @json_str).
+    assert_eq!(json_str("a\"b\u{e9}\u{1f600}\u{1}\n"), "\"a\\\"b\u{e9}\u{1f600}\\u0001\\n\"");
 }
 
 /// Nested alternatives, which globset refuses, are expanded to one level (`public-api-triples.rr`'s `hint`).
@@ -176,26 +190,25 @@ finding(t) :- constant(t), prefix("invented",t).
     assert!(vocabulary.tests.is_empty(), "all writers must supply prepared vocabulary symbols");
 }
 
-/// The repository's existing public signature verifies without changing signed artifacts.
+/// An existing signature verifies without changing the signed bytes; tampering, a bad key or a cut signature do
+/// not. Ported from Data-layer-rule-expressivity (rr-migration engine, 109e4883a), checked against `@ed25519_ok`'s
+/// one implementation (`logic::crypto`, W's `verify_ed25519`): its base64 transport is the strict, padded one, so
+/// ASCII noise, padding past the end, leading padding and non-zero trailing bits are a failed check, not ignored.
 #[test]
 fn signed_allowlists_verify_existing_bytes_and_reject_tampering() {
-    let db = rusqlite::Connection::open_in_memory().unwrap();
-    functions::register(&db).unwrap();
     let key = "7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6";
     let message = r#"{"allowlist":[],"linter":"lint_admin_async_purity","version":1}"#;
     let signature = "xN3ugqWFKXrfdfYHOWH14S9NfLPHCwnni7yf1errzrn17xHvVgd6C3y/QXR7mwfGPnFwpuq/HcCWAx9C2crzDg==";
-    let verify = |k: &str, m: &str, s: &str| {
-        db.query_row("SELECT ed25519_ok(?1,?2,?3)", rusqlite::params![k, m, s], |row| row.get::<_, i64>(0)).unwrap()
-    };
+    let verify = |k: &str, m: &str, s: &str| i64::from(crate::code_rule_dsl::logic::crypto::ed25519_ok(k, m, s));
     assert_eq!(verify(key, message, signature), 1);
     assert_eq!(verify(key, &message.replace("[]", "[\"added.py\"]"), signature), 0);
     assert_eq!(verify(key, message, "not base64"), 0);
     assert_eq!(verify("wrong key", message, signature), 0);
     assert_eq!(verify(key, message, &signature[..60]), 0);
-    assert_eq!(verify(key, message, &format!("{} \n!?{}", &signature[..20], &signature[20..])), 1);
-    assert_eq!(verify(key, message, &format!("{signature}===")), 1);
-    assert_eq!(verify(key, message, &format!("=={signature}")), 1);
-    assert_eq!(verify(key, message, &format!("{}h==", &signature[..85])), 1);
+    assert_eq!(verify(key, message, &format!("{} \n!?{}", &signature[..20], &signature[20..])), 0);
+    assert_eq!(verify(key, message, &format!("{signature}===")), 0);
+    assert_eq!(verify(key, message, &format!("=={signature}")), 0);
+    assert_eq!(verify(key, message, &format!("{}h==", &signature[..85])), 0);
     assert_eq!(verify(key, message, &format!("{signature}\u{2603}")), 0);
 }
 
@@ -220,4 +233,79 @@ finding(d,l,x) :- split_line(d,l,t), surface(x), contains(x,t).
     let rendered = program.rules.iter().map(ToString::to_string).collect::<Vec<_>>().join("\n");
     assert!(rendered.contains("strtest_") && rendered.contains("@contains"), "the set first, then each value: {rendered}");
     assert_eq!(vocabulary.rows(&["an alpha".into(), "gamma".into()], &[1, 2]), [vec![1]]);
+}
+
+/// Many batches' text tests at once, as jobs of one thread pool (a corpus run's file batches): each tests its new
+/// strings on the pool while the others wait to. Holding the vocabulary's lock across that search hung the run: a
+/// pool thread that took a piece of one batch's search, waiting in it, ran another batch's job, which waited on the
+/// lock the first batch held, so neither piece finished.
+#[test]
+fn batches_test_their_strings_at_once_on_one_pool() {
+    let (done, wait) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(8).build().unwrap();
+        for round in 0..4u32 {
+            let vocabulary = Vocabulary::from_specs(&["strtest_0".to_owned()], vec![("prefix".to_owned(), vec!["item_1".to_owned()])]).unwrap();
+            let (passed, expected) = (std::sync::Mutex::new(0usize), std::sync::Mutex::new(0usize));
+            pool.scope(|s| {
+                for batch in 0..96u32 {
+                    let (vocabulary, passed, expected) = (&vocabulary, &passed, &expected);
+                    s.spawn(move |_| {
+                        // Each batch's strings are new to the vocabulary, and enough that the search splits across the pool.
+                        // Made on the pool first, as a batch's facts are: a thread waiting here takes other batches' jobs.
+                        use rayon::prelude::*;
+                        let symbols: Vec<u32> = (0..20_000).into_par_iter().map(|i| (round * 96 + batch) * 20_000 + i).collect();
+                        let strings: Vec<String> = symbols.par_iter().map(|s| format!("item_{s}")).collect();
+                        let rows = vocabulary.rows(&strings, &symbols);
+                        *passed.lock().unwrap() += rows[0].len();
+                        *expected.lock().unwrap() += strings.iter().filter(|s| s.starts_with("item_1")).count();
+                    });
+                }
+            });
+            let _ = done.send((passed.into_inner().unwrap(), expected.into_inner().unwrap()));
+        }
+    });
+    for _ in 0..4 {
+        let (passed, expected) = wait.recv_timeout(std::time::Duration::from_secs(120)).expect("the batches' text tests hung");
+        assert_eq!(passed, expected);
+    }
+}
+
+/// The data-layer programs' SQLite functions (decision 0107) give what SQLite's own give, over strings with
+/// multi-byte characters, negative and zero positions, and patterns of `%` and `_`.
+#[test]
+fn sqlite_functions_as_sqlite_has_them() {
+    use super::functions::eval;
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    let sql = |q: &str, args: &[&dyn rusqlite::ToSql]| -> rusqlite::types::Value { db.query_row(q, args, |r| r.get(0)).unwrap() };
+    let words = ["", "a", "héllo wörld", "  pad  ", "_lazy_name", "x.y.z", "'quoted'"];
+    for s in words {
+        for (y, z) in [(1, 1), (0, 3), (-3, 2), (2, -1), (5, 100), (-20, 4), (3, 0), (1, -2)] {
+            assert_eq!(eval("sql_substr", &[s], &[y, z]), sql("SELECT substr(?1, ?2, ?3)", &[&s, &y, &z]), "substr({s:?}, {y}, {z})");
+            assert_eq!(eval("sql_substr2", &[s], &[y]), sql("SELECT substr(?1, ?2)", &[&s, &y]), "substr({s:?}, {y})");
+            if s.is_ascii() {
+                let bytes = sql("SELECT CAST(substr(CAST(?1 AS BLOB), ?2, ?3) AS TEXT)", &[&s, &y, &z]);
+                assert_eq!(eval("sql_substr_bytes", &[s], &[y, z]), bytes, "substr_bytes({s:?}, {y}, {z})");
+            }
+        }
+        for sub in ["", "l", "wö", "z", "lazy"] {
+            assert_eq!(eval("sql_instr", &[s, sub], &[]), sql("SELECT instr(?1, ?2)", &[&s, &sub]), "instr({s:?}, {sub:?})");
+        }
+        for chars in [" ", "'\"", "._"] {
+            assert_eq!(eval("sql_trim2", &[s, chars], &[]), sql("SELECT trim(?1, ?2)", &[&s, &chars]));
+            assert_eq!(eval("sql_ltrim2", &[s, chars], &[]), sql("SELECT ltrim(?1, ?2)", &[&s, &chars]));
+        }
+        assert_eq!(eval("sql_trim", &[s], &[]), sql("SELECT trim(?1)", &[&s]));
+        assert_eq!(eval("sql_upper", &[s], &[]), sql("SELECT upper(?1)", &[&s]));
+        assert_eq!(eval("sql_length", &[s], &[]), sql("SELECT length(?1)", &[&s]));
+        for p in ["%", "_%", "%lazy%", "X.Y.Z", "h_llo%", ""] {
+            assert_eq!(eval("sql_like", &[s, p], &[]), sql("SELECT ?1 LIKE ?2", &[&s, &p]), "{s:?} LIKE {p:?}");
+        }
+    }
+    for s in ["12", " -7x", "+3", "abc", "", "4.5"] {
+        assert_eq!(eval("sql_cast_int", &[s], &[]), sql("SELECT CAST(?1 AS INTEGER)", &[&s]), "cast({s:?})");
+    }
+    for n in [0i64, 46, 0xe9, 0x1F600] {
+        assert_eq!(eval("sql_char", &[], &[n]), sql("SELECT char(?1)", &[&n]), "char({n})");
+    }
 }

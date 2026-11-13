@@ -2,7 +2,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct FindingKey {
+pub struct FindingKey {
     pub rule: String,
     pub code: String,
     pub doc: u32,
@@ -10,13 +10,13 @@ pub(crate) struct FindingKey {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Coverage {
+pub enum Coverage {
     Complete,
     Unknown(String),
 }
 
 #[derive(Default, Debug)]
-pub(crate) struct Findings {
+pub struct Findings {
     pub keys: BTreeSet<FindingKey>,
     pub coverage: BTreeMap<(String, u32), Coverage>,
 }
@@ -24,7 +24,7 @@ pub(crate) struct Findings {
 impl Findings {
     /// Publish a whole rule/document domain atomically. Failed domains cannot
     /// leak provisional findings, including findings from an earlier stage.
-    pub(crate) fn publish(
+    pub fn publish(
         &mut self,
         rule: &str,
         doc: u32,

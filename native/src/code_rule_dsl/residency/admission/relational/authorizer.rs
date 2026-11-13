@@ -1,6 +1,6 @@
 //! The relational query authorizer, shared by compilation and the scoped-reader contract test.
 use rusqlite::{
-    Connection, Result,
+    Result,
     hooks::{AuthAction, Authorization},
 };
 use std::{
@@ -15,7 +15,9 @@ pub(in crate::code_rule_dsl) struct Reads {
     pub fields: Arc<parking_lot::Mutex<BTreeMap<String, BTreeSet<String>>>>,
     pub source: Arc<AtomicBool>,
 }
-pub(in crate::code_rule_dsl) fn install(db: &Connection, tables: &BTreeSet<String>) -> Result<Reads> {
+pub(in crate::code_rule_dsl) fn install(db: &super::Database, tables: &BTreeSet<String>) -> Result<Reads> {
+    // Every bound table connected before the authorizer is on (`vtab::resolve_tables`).
+    crate::code_rule_dsl::facts::vtab::resolve_tables(db)?;
     let tables = tables.clone();
     let reads = Arc::new(parking_lot::Mutex::new(
         BTreeMap::<String, BTreeSet<String>>::new(),
@@ -23,7 +25,7 @@ pub(in crate::code_rule_dsl) fn install(db: &Connection, tables: &BTreeSet<Strin
     let observed = Arc::clone(&reads);
     let source_read = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let source_observed = Arc::clone(&source_read);
-    db.authorizer(Some(
+    db.hooks.authorizer(Some(
         move |context: rusqlite::hooks::AuthContext<'_>| match context.action {
             AuthAction::Select | AuthAction::Recursive => Authorization::Allow,
             AuthAction::Read {
@@ -102,6 +104,8 @@ pub(in crate::code_rule_dsl) fn install(db: &Connection, tables: &BTreeSet<Strin
                         | "typeof"
                         | "unicode"
                         | "upper"
+                        | "verify_ed25519"
+                        | "sha256"
                         | "rx_matches"
                         | "rx_extract"
                         | "rx_replace"

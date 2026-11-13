@@ -75,7 +75,7 @@ fn aot_tapes_are_the_jits() {
 /// time, instructions, cycles, and MB a second of CPU. Tier 1 and tier 2 as the JIT built them
 /// and as rustc did, each alone on batches and tapes made before; the whole parse a file at a
 /// time (`image`: the batch, both tiers, the tape's bytes); the engine's parser
-/// (`rr::tape`); the lean parser's lexer and whole.
+/// (`rr::engine_tape`); the lean parser's lexer and whole.
 #[test]
 #[ignore = "a benchmark: run by name, on an optimized build"]
 fn jit_against_aot() {
@@ -84,7 +84,7 @@ fn jit_against_aot() {
     let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(7);
     let files = corpus();
     let ours: Vec<&String> = files.iter().filter(|f| jit.parser.image(f.as_bytes()).is_ok()).collect();
-    let nodes: usize = ours.iter().map(|f| rr::tape(f).len()).sum();
+    let nodes: usize = ours.iter().map(|f| rr::engine_tape(f).len()).sum();
     let bytes: usize = ours.iter().map(|f| f.len()).sum();
     let batch = |p: &rerail_compiler::native_cpu_stream::Parser| -> Vec<_> {
         ours.iter()
@@ -98,7 +98,7 @@ fn jit_against_aot() {
     let (mut bj, mut ba) = (batch(&jit.parser), batch(&aot.parser));
     let mut tapes: Vec<_> = bj.iter().map(|b| jit.parser.tape(b)).collect();
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let names = ["tier 1 (JIT)", "tier 1 (AOT)", "tier 2 (JIT)", "tier 2 (AOT)", "whole (JIT)", "whole (AOT)", "Rust (rr::tape)", "lean: lexer", "lean: whole", "lean: the digest"];
+    let names = ["tier 1 (JIT)", "tier 1 (AOT)", "tier 2 (JIT)", "tier 2 (AOT)", "whole (JIT)", "whole (AOT)", "Rust (rr::engine_tape)", "lean: lexer", "lean: whole", "lean: the digest"];
     let mut best = vec![(std::time::Duration::MAX, u64::MAX, u64::MAX); names.len()];
     for _ in 0..rounds {
         let mut at = (thread_cpu(), retired());
@@ -134,7 +134,7 @@ fn jit_against_aot() {
         }
         lap(5, &mut best);
         for f in &ours {
-            n += rr::tape(f).len();
+            n += rr::engine_tape(f).len();
         }
         lap(6, &mut best);
         for f in &ours {

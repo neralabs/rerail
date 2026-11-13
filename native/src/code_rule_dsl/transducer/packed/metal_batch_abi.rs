@@ -1,12 +1,12 @@
 use std::mem::{align_of, size_of};
 
-pub(super) const FORMAT_VERSION: u32 = 4;
-pub(super) const ARENA_KIND_COUNT: usize = 14;
-pub(super) const NONE: u32 = u32::MAX;
+pub const FORMAT_VERSION: u32 = 4;
+pub const ARENA_KIND_COUNT: usize = 14;
+pub const NONE: u32 = u32::MAX;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct MetalBatchHeader {
+pub struct MetalBatchHeader {
     pub format_version: u32,
     pub task_count: u32,
     pub file_count: u32,
@@ -35,7 +35,7 @@ pub(super) struct MetalBatchHeader {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct MetalNode {
+pub struct MetalNode {
     pub parent: u32,
     pub next_any: u32,
     pub next_named: u32,
@@ -51,7 +51,7 @@ pub(super) struct MetalNode {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct MetalFile {
+pub struct MetalFile {
     pub node_start: u32,
     pub node_count: u32,
     pub source_start: u32,
@@ -64,7 +64,7 @@ pub(super) struct MetalFile {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct MetalProgram {
+pub struct MetalProgram {
     pub structural_start: u32,
     pub structural_count: u32,
     pub long_start: u32,
@@ -87,21 +87,21 @@ pub(super) struct MetalProgram {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct MetalString {
+pub struct MetalString {
     pub byte_start: u32,
     pub byte_length: u32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct MetalSupertype {
+pub struct MetalSupertype {
     pub node: u32,
     pub kind: u32,
 }
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct ValueRecord {
+pub struct ValueRecord {
     pub kind: u32,
     pub operand: u32,
     pub auxiliary: u32,
@@ -111,7 +111,7 @@ pub(super) struct ValueRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct NfaStateRecord {
+pub struct NfaStateRecord {
     pub kind: u32,
     pub data_start: u32,
     pub data_count: u32,
@@ -120,7 +120,7 @@ pub(super) struct NfaStateRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct NfaRangeRecord {
+pub struct NfaRangeRecord {
     pub start: u32,
     pub end: u32,
     pub target: u32,
@@ -128,7 +128,7 @@ pub(super) struct NfaRangeRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct LuaInstructionRecord {
+pub struct LuaInstructionRecord {
     pub kind: u32,
     pub first: u32,
     pub second: u32,
@@ -141,7 +141,7 @@ pub(super) struct LuaInstructionRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct LuaSetMemberRecord {
+pub struct LuaSetMemberRecord {
     pub kind: u32,
     pub first: u32,
     pub second: u32,
@@ -150,7 +150,7 @@ pub(super) struct LuaSetMemberRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct PathRecord {
+pub struct PathRecord {
     pub pc: u32,
     pub node: u32,
     pub start: u32,
@@ -166,7 +166,7 @@ pub(super) struct PathRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct LinkRecord {
+pub struct LinkRecord {
     pub previous: u32,
     pub first: u32,
     pub second: u32,
@@ -174,7 +174,7 @@ pub(super) struct LinkRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct RepeatRecord {
+pub struct RepeatRecord {
     pub previous: u32,
     pub value: u32,
     pub previous_hash: u32,
@@ -195,13 +195,13 @@ pub(super) struct QueryStateRecord {
     pub repeats: u32,
 }
 
-pub(super) const PENDING_PATH: u32 = 0;
-pub(super) const PENDING_GREEDY: u32 = 1;
-pub(super) const PENDING_FOLLOWING: u32 = 2;
+pub const PENDING_PATH: u32 = 0;
+pub const PENDING_GREEDY: u32 = 1;
+pub const PENDING_FOLLOWING: u32 = 2;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct PendingRecord {
+pub struct PendingRecord {
     pub kind: u32,
     pub greedy_slot: u32,
     pub path: PathRecord,
@@ -209,7 +209,7 @@ pub(super) struct PendingRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct QueryBucketRecord {
+pub struct QueryBucketRecord {
     pub occupied: u32,
     pub hash: u32,
     pub pc: u32,
@@ -222,7 +222,7 @@ pub(super) struct QueryBucketRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct QueryMemberRecord {
+pub struct QueryMemberRecord {
     pub next_member: u32,
     pub captures: u32,
     pub capture_count: u32,
@@ -231,7 +231,7 @@ pub(super) struct QueryMemberRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct QueuedStateRecord {
+pub struct QueuedStateRecord {
     pub occupied: u32,
     pub hash: u32,
     pub pc: u32,
@@ -244,7 +244,7 @@ pub(super) struct QueuedStateRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct GreedyEntryRecord {
+pub struct GreedyEntryRecord {
     pub occupied: u32,
     pub hash: u32,
     pub pc: u32,
@@ -257,7 +257,7 @@ pub(super) struct GreedyEntryRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct ResultRecord {
+pub struct ResultRecord {
     pub task_ordinal: u32,
     pub local_ordinal: u32,
     pub start: u32,
@@ -272,7 +272,7 @@ pub(super) struct ResultRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct FinalCaptureRecord {
+pub struct FinalCaptureRecord {
     pub label: u32,
     pub node: u32,
     pub start: u32,
@@ -286,7 +286,7 @@ pub(super) struct FinalCaptureRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct PropertyRecord {
+pub struct PropertyRecord {
     pub kind: u32,
     pub owner: u32,
     pub key: u32,
@@ -299,7 +299,7 @@ pub(super) struct PropertyRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct TaskStatus {
+pub struct TaskStatus {
     pub error: u32,
     pub result_count: u32,
     pub capture_count: u32,
@@ -312,7 +312,7 @@ pub(super) struct TaskStatus {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct SharedArenaRecord {
+pub struct SharedArenaRecord {
     pub start: u32,
     pub capacity: u32,
     pub cursor: u32,
@@ -336,7 +336,7 @@ pub(super) struct LazyArenaBlockRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct MetalEvaluation {
+pub struct MetalEvaluation {
     pub outcome: u32,
     pub generation: u32,
     pub failure_arena: u32,
@@ -368,7 +368,7 @@ pub(super) struct MetalEvaluation {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct MetalGlobalArenas {
+pub struct MetalGlobalArenas {
     pub arenas: [SharedArenaRecord; ARENA_KIND_COUNT],
     pub task_cursor: u32,
     pub reserved: [u32; 3],
@@ -376,7 +376,7 @@ pub(super) struct MetalGlobalArenas {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct MetalTask {
+pub struct MetalTask {
     pub evaluation: u32,
     pub batch_ordinal: u32,
     pub file: u32,
@@ -420,7 +420,7 @@ const _: [(); 4] = [(); align_of::<MetalTask>()];
 const _: [(); 4] = [(); align_of::<MetalEvaluation>()];
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

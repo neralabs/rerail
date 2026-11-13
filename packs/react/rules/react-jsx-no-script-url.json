@@ -1,0 +1,94 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "react-jsx-no-script-url",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid javascript: URLs in link href attributes; React blocks them as a security precaution, so use an event handler instead.",
+  "scope": {
+    "include": [
+      "**/*.ts",
+      "**/*.mts",
+      "**/*.cts",
+      "**/*.tsx",
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "upstream",
+      "forbid": {
+        "ast": {
+          "language": "typescript",
+          "rule": {
+            "kind": "jsx_attribute",
+            "all": [
+              {
+                "has": {
+                  "kind": "property_identifier",
+                  "regex": "^href$"
+                }
+              },
+              {
+                "has": {
+                  "kind": "string",
+                  "value": {
+                    "regex": "^[\\x00-\\x1F ]*[jJ][\\r\\n\\t]*[aA][\\r\\n\\t]*[vV][\\r\\n\\t]*[aA][\\r\\n\\t]*[sS][\\r\\n\\t]*[cC][\\r\\n\\t]*[rR][\\r\\n\\t]*[iI][\\r\\n\\t]*[pP][\\r\\n\\t]*[tT][\\r\\n\\t]*:"
+                  }
+                }
+              },
+              {
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "jsx_opening_element"
+                    },
+                    {
+                      "kind": "jsx_self_closing_element"
+                    }
+                  ],
+                  "has": {
+                    "field": "name",
+                    "kind": "identifier",
+                    "regex": "^a$"
+                  }
+                }
+              }
+            ]
+          },
+          "file": {
+            "jsxRuntime": [
+              "react",
+              "unknown"
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.start",
+        "code": "react/jsx-no-script-url",
+        "message": "Replace this javascript: URL with an onClick handler (and a button, or a real href); React will block javascript: URLs as a security precaution.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "react/jsx-no-script-url"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "jsx-no-script-url"
+            ]
+          },
+          "biome": {
+            "rules": [
+              "lint/security/noScriptUrl"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

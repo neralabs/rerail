@@ -15,7 +15,7 @@
 .violation RUF020(at: node, n: symbol, msg: symbol) code "RUF020" "{msg}"
     suppress ruff "RUF020"
 RUF020(m, x, cat(cat("Keep only the other members of this `|` union; `", x), "` has no values, so it adds nothing. If that leaves `None | None`, write a single `None`.")) :-
-    (kind(u, "binary_operator") ; kind(u, "union_type")), op(u, "|"), child(u, c, _), member(c, m), never(m, x).
+    (kind(u, "binary_operator"), op(u, "|") ; kind(u, "union_type")), child(u, c, _), member(c, m), never(m, x).
 RUF020(m, x, cat(cat("Keep only the other members of this `Union[...]`; `", x), "` has no values, so it adds nothing. If one member is left, use it directly without `Union`.")) :-
     union_item(c), member(c, m), never(m, x).
 

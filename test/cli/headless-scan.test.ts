@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { runAuditCommand, SCAN_VIOLATIONS_EXIT } from "../../src/cli/audit-cli.js";
 import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
 import { runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
+import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 
 const roots: string[] = [];
@@ -192,6 +193,30 @@ describe("headless rerail scan", () => {
     expect(listed.violations.map(violation => violation.path)).toEqual(["b.py"]);
   });
 
+  it.skipIf(!honoursNoLazyFetch())("lists an edited rename in a partial clone without the source's blob, and fetches nothing", async () => {
+    const origin = checkout();
+    mkdirSync(join(origin, "old"));
+    writeFileSync(join(origin, "old", "before.py"), "a = 1\nb = 2\nc = 3\nx = NEEDLE\n");
+    git(origin, "add", ".");
+    git(origin, "commit", "--quiet", "-m", "old");
+    git(origin, "config", "uploadpack.allowFilter", "true");
+    const clone = `${origin}-clone`;
+    roots.push(clone);
+    // Sparse: only the top level and the rules are checked out, so old/before.py's blob is never fetched.
+    git(origin, "clone", "--quiet", "--filter=blob:none", "--sparse", `file://${origin}`, clone);
+    git(clone, "sparse-checkout", "set", ".rerail");
+    const source = git(clone, "rev-parse", "HEAD:old/before.py");
+    git(clone, "update-index", "--force-remove", "old/before.py");
+    writeFileSync(join(clone, "after.py"), "a = 1\nb = 2\nc = 4\nx = NEEDLE\n");
+    git(clone, "add", "after.py");
+
+    const report = await scan(clone, { scope: "git-diff" });
+    expect(report.status).toBe("completed");
+    expect(report.paths).toEqual(["after.py"]);
+    expect(report.violations.map(violation => violation.path)).toEqual(["after.py"]);
+    expect(partialCloneLacks(clone, source)).toBe(true);
+  });
+
   it("uses the Rerail home's configuration when Rerail is set up and started in the checkout", async () => {
     const root = checkout();
     const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
@@ -200,6 +225,24 @@ describe("headless rerail scan", () => {
     setUpTestRepository(root, {}, databasePath);
     const report = await scan(root, { databasePath });
     expect(report.rulesSource).toEqual({ kind: "home" });
+    expect(report.violations).toHaveLength(1);
+  });
+
+  it.each([
+    ["nested in the checkout, in a folder it excludes", (root: string) => join(root, ".claude", "worktrees", "probe")],
+    ["outside the checkout", (root: string) => `${root}-probe`],
+  ])("uses the Rerail home's configuration in a linked worktree %s that no session has recorded", async (_placement, place) => {
+    const root = checkout();
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "rerail-headless-home-")));
+    roots.push(home);
+    const databasePath = join(home, "rerail.sqlite");
+    setUpTestRepository(root, {}, databasePath);
+    writeFileSync(join(root, ".git", "info", "exclude"), ".claude/worktrees/\n");
+    const worktree = place(root);
+    roots.push(worktree);
+    git(root, "worktree", "add", "--quiet", "--detach", worktree, "main");
+    const report = await scan(realpathSync(worktree), { databasePath });
+    expect({ status: report.status, rulesSource: report.rulesSource, failures: report.failures }).toEqual({ status: "completed", rulesSource: { kind: "home" }, failures: [] });
     expect(report.violations).toHaveLength(1);
   });
 

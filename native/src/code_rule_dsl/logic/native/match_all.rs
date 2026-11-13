@@ -5,7 +5,7 @@
 //! rows; the regex runs once per distinct text, as `match` runs once per distinct string.
 //!
 //! Over a `source` or `src_line` span the captures are spans, and the batch makes them (`rx_span`,
-//! `facts::vtab::syntax::core_rr`); this is the symbol form.
+//! `facts::vtab::syntax`'s `Extra`, over the spans `source` and `src_line` give); this is the symbol form.
 
 use regex::Regex;
 
@@ -45,7 +45,7 @@ pub(in crate::code_rule_dsl) fn rows<'s>(re: &Regex, groups: &[String], s: &'s s
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

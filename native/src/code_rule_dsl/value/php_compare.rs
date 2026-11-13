@@ -11,13 +11,14 @@
 //! - A reference is a variable, constant or chain of accesses (`$a->b['k']`, `C::$p`, `C::K`), the
 //!   same where PHP reaches the same storage by the same path.
 
+use crate::code_rule_dsl::tree::Tree;
 use super::php::{self, Key};
 use super::{Context, Value};
 use ast_grep_core::{Doc, Node};
 
 /// What a `use` clause imports.
 #[derive(Clone, Copy, PartialEq)]
-pub(crate) enum ImportKind {
+pub enum ImportKind {
     Class,
     Function,
     Constant,
@@ -26,7 +27,7 @@ pub(crate) enum ImportKind {
 /// What a `use` clause imports: classes, unless its own keyword or its statement's says
 /// `function` or `const`. `use function a\f, b\g;` types every clause with the first one's
 /// keyword, which the grammar gives that clause; a group statement carries its keyword itself.
-pub(crate) fn import_kind<D: Doc>(clause: &Node<'_, D>) -> ImportKind {
+pub fn import_kind<D: Doc>(clause: &Node<'_, D>) -> ImportKind {
     let keyword = clause.field("type").or_else(|| {
         let parent = clause.parent()?;
         if parent.kind() == "namespace_use_group" {
@@ -74,15 +75,7 @@ enum Keyed<'r, D: Doc> {
 /// refuses it), and `Some(None)` where the node holds no key.
 pub(crate) type KeyName = Option<Option<Vec<u16>>>;
 
-fn named_children<'r, D: Doc>(node: &Node<'r, D>) -> impl Iterator<Item = Node<'r, D>> {
-    node.children()
-        .filter(|child| child.is_named() && child.kind() != "comment")
-}
 
-fn has_token<D: Doc>(node: &Node<'_, D>, token: &str) -> bool {
-    node.children()
-        .any(|child| !child.is_named() && child.kind() == token)
-}
 
 /// The name of an access whose `name` field may be computed: `->foo`, `->$x`, `->{e}`, `::{e}`.
 fn member_key<'r, D: Doc>(
@@ -94,11 +87,11 @@ fn member_key<'r, D: Doc>(
         return Keyed::Nameless;
     };
     // `C::{e}` reads as a `name` holding the expression.
-    let inner = named_children(&name).next();
+    let inner = name.named_code().next();
     match inner {
         Some(inner) if name.kind() == "name" => Keyed::Computed(inner, role),
         // `->{FOO}` is the constant's value, not the name `FOO`.
-        _ if name.kind() == "name" && !has_token(holder, "{") => {
+        _ if name.kind() == "name" && !holder.has_token("{") => {
             Keyed::Written(name.text().as_bytes().to_vec())
         }
         _ => Keyed::Computed(name, role),
@@ -112,7 +105,7 @@ fn static_property_key<'r, D: Doc>(name: Option<Node<'r, D>>) -> Keyed<'r, D> {
     };
     match name.kind().as_ref() {
         "variable_name" => variable(&name).map_or(Keyed::Nameless, Keyed::Written),
-        "dynamic_variable_name" => match named_children(&name).next() {
+        "dynamic_variable_name" => match name.named_code().next() {
             Some(inner) => Keyed::Computed(inner, Role::String),
             None => Keyed::Nameless,
         },
@@ -122,7 +115,7 @@ fn static_property_key<'r, D: Doc>(name: Option<Node<'r, D>>) -> Keyed<'r, D> {
 
 /// A variable's name without its `$`.
 fn variable<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u8>> {
-    let name = named_children(node).find(|child| child.kind() == "name")?;
+    let name = node.named_code().find(|child| child.kind() == "name")?;
     Some(name.text().as_bytes().to_vec())
 }
 
@@ -137,14 +130,17 @@ fn keyed<'r, D: Doc>(node: &Node<'r, D>) -> Keyed<'r, D> {
         }
         "scoped_property_access_expression" => static_property_key(node.field("name")),
         "class_constant_access_expression" => {
-            member_key(node, named_children(node).nth(1), Role::StringOnly)
+            member_key(node, node.named_code().nth(1), Role::StringOnly)
         }
-        "array_element_initializer" if has_token(node, "=>") => match named_children(node).next() {
+        // `key => value`: two children (the grammar implies the `=>`, which no tape stores).
+        "array_element_initializer" if node.named_code().count() == 2 => match node.named_code().next() {
             Some(key) => Keyed::Computed(key, Role::ArrayKey),
             None => Keyed::Nameless,
         },
-        "subscript_expression" if has_token(node, "[") || has_token(node, "{") => {
-            match named_children(node).nth(1) {
+        // `x[k]`: the grammar's every subscript is `[ … ]` (no `{ … }` form), so the kind implies
+        // the `[`, which a tape does not store (RER-131): the kind is the question, not the token.
+        "subscript_expression" => {
+            match node.named_code().nth(1) {
                 Some(index) => Keyed::Computed(index, Role::ArrayKey),
                 None => Keyed::Nameless,
             }
@@ -158,14 +154,14 @@ fn keyed<'r, D: Doc>(node: &Node<'r, D>) -> Keyed<'r, D> {
                 return Keyed::Nameless;
             };
             if name.kind() == "by_ref" {
-                let inner = named_children(&name).next();
+                let inner = name.named_code().next();
                 if let Some(inner) = inner {
                     name = inner;
                 }
             }
             variable(&name).map_or(Keyed::Nameless, Keyed::Written)
         }
-        "const_element" => match named_children(node).find(|child| child.kind() == "name") {
+        "const_element" => match node.named_code().find(|child| child.kind() == "name") {
             Some(name) => Keyed::Written(name.text().as_bytes().to_vec()),
             None => Keyed::Nameless,
         },
@@ -191,13 +187,13 @@ fn key_node<'r, D: Doc>(node: &Node<'r, D>) -> Keyed<'r, D> {
             | "property_promotion_parameter" => parent
                 .field("name")
                 .is_some_and(|name| name.range() == node.range()),
-            "class_constant_access_expression" => named_children(&parent)
+            "class_constant_access_expression" => parent.named_code()
                 .nth(1)
                 .is_some_and(|name| name.range() == node.range()),
-            "array_element_initializer" if has_token(&parent, "=>") => named_children(&parent)
+            "array_element_initializer" if parent.named_code().count() == 2 => parent.named_code()
                 .next()
                 .is_some_and(|key| key.range() == node.range()),
-            "subscript_expression" => named_children(&parent)
+            "subscript_expression" => parent.named_code()
                 .nth(1)
                 .is_some_and(|index| index.range() == node.range()),
             "const_element" => node.kind() == "name",
@@ -208,7 +204,7 @@ fn key_node<'r, D: Doc>(node: &Node<'r, D>) -> Keyed<'r, D> {
         }
     }
     match node.kind().as_ref() {
-        "name" if named_children(node).next().is_none() => {
+        "name" if node.named_code().next().is_none() => {
             Keyed::Written(node.text().as_bytes().to_vec())
         }
         _ => Keyed::Computed(node.clone(), Role::String),
@@ -246,7 +242,7 @@ fn utf16(bytes: &[u8]) -> Option<Vec<u16>> {
 /// The key a node holds or is, as UTF-16 (`compare`'s `key` and `member`): `value` reads a
 /// computed key's expression. `Some(None)` where the node holds no key; `None` where the key's
 /// value is not known, PHP refuses it, or it is not UTF-8.
-pub(crate) fn key_name<'r, D: Doc>(
+pub fn key_name<'r, D: Doc>(
     node: &Node<'r, D>,
     value: &mut dyn FnMut(&Node<'r, D>) -> Value,
 ) -> KeyName {
@@ -328,7 +324,7 @@ fn case_of<D: Doc>(node: &Node<'_, D>) -> Case {
             }
         }
         "class_constant_access_expression" => {
-            if named_children(&parent)
+            if parent.named_code()
                 .next()
                 .is_some_and(|scope| scope.range() == node.range())
             {
@@ -349,7 +345,7 @@ fn case_of<D: Doc>(node: &Node<'_, D>) -> Case {
         "binary_expression" => {
             if is_field("right")
                 && parent
-                    .field("operator")
+                    .operator_token()
                     .is_some_and(|operator| operator.kind() == "instanceof")
             {
                 Case::Insensitive
@@ -392,9 +388,9 @@ fn folded(text: &str, case: Case) -> Vec<u8> {
 /// qualified or relative name or namespace name folded as its position looks it up, a variable's
 /// name without `$` (`$this` is `this`), `self`, `static` and `parent` in lower case, and a
 /// string literal's value. `None` for any other node, or a name that is not UTF-8.
-pub(crate) fn node_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
+pub fn node_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
     let bytes = match node.kind().as_ref() {
-        "name" if named_children(node).next().is_none() => {
+        "name" if node.named_code().next().is_none() => {
             // A variable's own name is as written.
             let case = match node.parent() {
                 Some(parent) if parent.kind() == "variable_name" => Case::Sensitive,
@@ -423,7 +419,7 @@ pub(crate) fn node_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
 fn unparenthesized<'r, D: Doc>(node: &Node<'r, D>) -> Node<'r, D> {
     let mut node = node.clone();
     while node.kind() == "parenthesized_expression" {
-        let children: Vec<_> = named_children(&node).collect();
+        let children: Vec<_> = node.named_code().collect();
         match children.as_slice() {
             [inner] => node = inner.clone(),
             _ => break,
@@ -450,7 +446,7 @@ fn shape<D: Doc>(node: &Node<'_, D>) -> Shape {
     match node.kind().as_ref() {
         "variable_name" => Shape::Variable,
         "dynamic_variable_name" => Shape::DynamicVariable,
-        "name" if named_children(node).next().is_none() => Shape::Constant,
+        "name" if node.named_code().next().is_none() => Shape::Constant,
         "qualified_name" | "relative_name" => Shape::Constant,
         "string" | "nowdoc" | "integer" | "float" | "boolean" | "null" => Shape::Literal,
         "encapsed_string" | "heredoc" if literal_string(node) => Shape::Literal,
@@ -468,7 +464,7 @@ fn literal_string<D: Doc>(node: &Node<'_, D>) -> bool {
         Some(body) => body,
         None => node.clone(),
     };
-    named_children(&body).all(|child| {
+    body.named_code().all(|child| {
         matches!(
             child.kind().as_ref(),
             "string_content" | "escape_sequence" | "heredoc_start" | "heredoc_end"
@@ -539,7 +535,7 @@ fn same_scope<D: Doc>(left: &Node<'_, D>, right: &Node<'_, D>, static_keys: bool
 fn scope<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
     match node.field("scope") {
         Some(scope) => Some(scope),
-        None => named_children(node).next(),
+        None => node.named_code().next(),
     }
 }
 
@@ -551,7 +547,7 @@ fn scope<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
 /// not a computed one, and literal keys compare by `===`. A variable variable is the same as
 /// another of the same reference; anything else (a call, `$a[]`, an interpolated string) is
 /// never. `None` where a literal does not decode.
-pub(crate) fn same_reference<D: Doc>(
+pub fn same_reference<D: Doc>(
     left: &Node<'_, D>,
     right: &Node<'_, D>,
     static_keys: bool,
@@ -565,7 +561,7 @@ pub(crate) fn same_reference<D: Doc>(
         Shape::Variable => Some(variable(&left)? == variable(&right)?),
         Shape::DynamicVariable => {
             let (Some(left), Some(right)) =
-                (named_children(&left).next(), named_children(&right).next())
+                (left.named_code().next(), right.named_code().next())
             else {
                 return Some(false);
             };
@@ -598,7 +594,7 @@ pub(crate) fn same_reference<D: Doc>(
         }
         Shape::Element => {
             let (Some(left_object), Some(right_object)) =
-                (named_children(&left).next(), named_children(&right).next())
+                (left.named_code().next(), right.named_code().next())
             else {
                 return Some(false);
             };
@@ -615,5 +611,4 @@ pub(crate) fn same_reference<D: Doc>(
     }
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

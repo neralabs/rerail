@@ -147,8 +147,7 @@ fn check(sources: Vec<String>) -> Run {
     // Optional export lets the production .rr compiler consume the same edge
     // fixtures and expected raw keys, rather than just a negative corpus.
     if let Ok(directory) = std::env::var("RERAIL_ASYNC_EXPORT_FIXTURES") {
-        use sha2::{Digest, Sha256};
-        let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&sources).unwrap()));
+        let digest = crate::code_rule_dsl::json::hex_digest(&serde_json::to_vec(&sources).unwrap());
         let root = std::path::Path::new(&directory).join(&digest[..12]);
         std::fs::create_dir_all(&root).unwrap();
         for (doc, source) in sources.iter().enumerate() {

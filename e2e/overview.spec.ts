@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { DAY, expect, SEED_NOW, test } from "./dashboard-test.js";
+import { DAY, expect, SEED_NOW, test, type RerailScenarios } from "./dashboard-test.js";
 
 const content = (page: Page) => page.locator("#content");
 const tileValue = (page: Page, key: string) => content(page).locator(`[data-tile="${key}"] .v`);
@@ -17,8 +17,8 @@ const MATURE = [
 
 const sinceOf = (days: number) => (days === 0 ? Date.UTC(2026, 9, 22) : days === 9999 ? 0 : SEED_NOW - days * DAY);
 
-async function api<T>(page: Page, url: string, path: string): Promise<T> {
-  const response = await page.request.get(new URL(path, url).href);
+async function api<T>(rerail: RerailScenarios, url: string, path: string): Promise<T> {
+  const response = await rerail.get(new URL(path, url).href);
   expect(response.ok()).toBe(true);
   return await response.json() as T;
 }
@@ -37,25 +37,33 @@ test.describe("mature", () => {
     await expect(content(page).locator(".welcome")).toHaveCount(0);
   });
 
-  test("tiles open History, Sessions and the rule packs", async ({ page, rerail }) => {
+  test("tiles land on the list that produced their number", async ({ page, rerail }) => {
     await page.goto(await rerail.dashboard("mature"));
     await expect(tileValue(page, "steered")).toHaveText("31 of 53");
 
+    // Violations steered: History by rule with Steered chosen, whose rules add up to the tile's figure.
     await content(page).locator('[data-tile="steered"]').click();
-    await expect(page).toHaveURL(/#history$/u);
+    await expect(page).toHaveURL(/#history\?outcome=steered$/u);
+    await expect(content(page).locator('.hchips [aria-pressed="true"]')).toHaveText("Steered");
+    await expect.poll(async () => (await content(page).locator(".hrow .c b").allTextContents()).reduce((sum, n) => sum + Number(n), 0)).toBe(31);
     await page.goto(await rerail.dashboard("mature"));
     await content(page).locator('[data-tile="sessions"]').click();
-    await expect(page).toHaveURL(/#sessions$/u);
+    await expect(page).toHaveURL(/#sessions\?filter=violations$/u);
+    await expect(content(page).locator('.sess aside .chip[aria-pressed="true"]')).toHaveText("With violations");
     await page.goto(await rerail.dashboard("mature"));
     // Two rules created by you: Rules on opens them, the first rule source in the sidebar.
     await content(page).locator('[data-tile="on"]').click();
     await expect(page).toHaveURL(/#created$/u);
+
+    // The wordmark in the top bar goes back to Overview.
+    await page.locator(".topbar h1").getByRole("button", { name: "Rerail" }).click();
+    await expect(page).toHaveURL(/#overview$/u);
   });
 
   test("Most violations logged ranks the range's rules and opens a rule's sheet", async ({ page, rerail }) => {
     const url = await rerail.dashboard("mature");
     const { manifest } = await rerail.scenario("mature");
-    const activity = await api<{ rules: Record<string, { distinctViolations: number }> }>(page, url,
+    const activity = await api<{ rules: Record<string, { distinctViolations: number }> }>(rerail, url,
       `/api/rules/activity?since=${sinceOf(7)}&repository=${encodeURIComponent(manifest.primary.repositoryKey)}`);
     const counts = Object.values(activity.rules).map(a => a.distinctViolations).filter(n => n > 0).sort((a, b) => b - a);
 
@@ -96,14 +104,15 @@ test.describe("mature", () => {
   test("Recent sessions: the range's five newest with their counts, and View all", async ({ page, rerail }) => {
     const url = await rerail.dashboard("mature");
     const { manifest } = await rerail.scenario("mature");
-    const sessions = await api<{ total: number; sessions: Array<{ sessionId: string; violationCount: number; steeredViolations: number }> }>(page, url,
+    const sessions = await api<{ total: number; sessions: Array<{ sessionId: string; violationCount: number }> }>(rerail, url,
       `/api/sessions?since=${sinceOf(7)}&limit=5&repository=${encodeURIComponent(manifest.primary.repositoryKey)}`);
 
     await page.goto(url);
     await expect(recentRows(page)).toHaveCount(5);
     expect(await recentRows(page).evaluateAll(rows => rows.map(r => r.getAttribute("data-i")))).toEqual(sessions.sessions.map(s => s.sessionId));
-    expect((await recentRows(page).locator(".n.logged b").allTextContents()).map(Number)).toEqual(sessions.sessions.map(s => s.violationCount));
-    expect((await recentRows(page).locator(".n.steered b").allTextContents()).map(Number)).toEqual(sessions.sessions.map(s => s.steeredViolations));
+    // Session · Violations, the same shape as History by session.
+    await expect(content(page).locator(".ovrecent .colhead")).toHaveText(/^Session\s*Violations$/u);
+    expect((await recentRows(page).locator(".n b").allTextContents()).map(Number)).toEqual(sessions.sessions.map(s => s.violationCount));
     // The open session's last event is two minutes old, so it reads live.
     await expect(recentRows(page).first().locator(".when")).toHaveClass(/live/u);
     await expect(content(page).locator(".ovrecent .ghead .act button")).toContainText(String(sessions.total));

@@ -3,15 +3,14 @@ use super::{Evaluation, Inputs, Job, Preparation, Session, failure, producer, sq
 use crate::code_rule_dsl::model::{CompiledCodeRule, Metrics};
 use crate::code_rule_dsl::{budget::Context, model::CompiledClause};
 use std::collections::VecDeque;
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
 const SQL_RESIDENT_BYTES: usize = 256 * 1024 * 1024;
 #[derive(Default)]
-struct Stats {
-    partitions: usize,
-    peak_sessions: usize,
-    peak_sql_bytes: usize,
+pub struct Stats {
+    pub partitions: usize,
+    pub peak_sessions: usize,
+    pub peak_sql_bytes: usize,
     skipped_empty: usize,
 }
 struct Ready<'a> {
@@ -50,7 +49,18 @@ fn advance(
         &session.clause.id,
         (session.syntax_files.len() == 1).then(|| session.syntax_files[0].0.as_str()),
     );
-    match context.run(|| session.advance()) {
+    let before = session.next;
+    let advanced = context.run(|| session.advance());
+    if std::env::var_os("RERAIL_CODE_RULE_PROFILE").is_some() {
+        for stage in &session.plan.stages[before..session.next] {
+            *result
+                .metrics
+                .relational_materializations
+                .entry(stage.name.clone())
+                .or_default() += 1;
+        }
+    }
+    match advanced {
         Ok(Some(demand)) => Some(demand),
         Ok(None) => {
             match context.run(|| session.finish()) {
@@ -88,10 +98,10 @@ pub(in crate::code_rule_dsl) fn evaluate_prepared(
     )
     .0
 }
-fn run(jobs: Vec<Job<'_>>, input_limit: usize, sql_limit: usize) -> (Vec<Evaluation>, Stats) {
+pub fn run(jobs: Vec<Job<'_>>, input_limit: usize, sql_limit: usize) -> (Vec<Evaluation>, Stats) {
     run_prepared(jobs, input_limit, sql_limit, |_, _, _, _| Ok(()))
 }
-fn run_prepared(
+pub fn run_prepared(
     jobs: Vec<Job<'_>>,
     input_limit: usize,
     sql_limit: usize,
@@ -274,6 +284,10 @@ fn run_prepared(
     }
     #[cfg(feature = "code-rule-profile")]
     trace.detail(|| serde_json::json!({"emptyAdmissions":stats.skipped_empty,"capacityPartitions":stats.partitions,"peakSuspendedSessions":stats.peak_sessions,"peakSuspendedSqlBytes":stats.peak_sql_bytes,"inputCapacityBytes":input_limit,"sqlAdmissionBytes":sql_limit}));
+    if let Some(first) = results.first_mut() {
+        first.metrics.python_ast_parses += allowance.python_ast_parses;
+        first.metrics.python_ast_module_walks += allowance.python_ast_module_walks;
+    }
     (results, stats)
 }
 fn execute(

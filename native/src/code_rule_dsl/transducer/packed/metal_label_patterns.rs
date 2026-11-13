@@ -197,13 +197,18 @@ fn emit(
                 .iter()
                 .map(|child| if child.is_trivial() { "true" } else { "false" })
                 .collect::<Vec<_>>();
+            let ends = children
+                .iter()
+                .map(|child| if child.is_children_end() { "true" } else { "false" })
+                .collect::<Vec<_>>();
             // Goal tables: an ellipsis goal's variable (0xffffffff unnamed, 0xfffffffe not an
-            // ellipsis) and whether a goal is trivial.
+            // ellipsis), whether a goal is trivial, and whether it is the end of children (RER-131).
             let _ = writeln!(
                 out,
-                "constant uint E{index}_{id}[{count}]={{{}}};constant bool T{index}_{id}[{count}]={{{}}};",
+                "constant uint E{index}_{id}[{count}]={{{}}};constant bool T{index}_{id}[{count}]={{{}}};constant bool D{index}_{id}[{count}]={{{}}};",
                 ellipsis.join(","),
-                trivial.join(",")
+                trivial.join(","),
+                ends.join(",")
             );
             let mut one = format!("static int o{index}_{id}(Ctx c,uint goal,uint node,thread B{index}& b){{switch(goal){{");
             for (goal, child) in goals.iter().enumerate() {
@@ -214,10 +219,13 @@ fn emit(
             let e = format!("E{index}_{id}");
             let t = format!("T{index}_{id}");
             let o = format!("o{index}_{id}");
+            let d = format!("D{index}_{id}");
             let _ = writeln!(
                 out,
                 r#"static bool c{index}_{id}(Ctx c,uint base,uint count,thread B{index}& b){{
-  if(count==0u)return false;const uint G={count}u;uint goal=0u,candidate=0u;Kids kids={{base,0xffffffffu,TAPE_NONE}};
+  const uint G={count}u;
+  if(count==0u){{for(uint g=0u;g<G;g++){{if({d}[g])continue;if({e}[g]==0xfffffffeu)return false;if({e}[g]!=0xffffffffu&&!bind_multi(c,b.v[{e}[g]&0xffu],2u,base,0u,0u))return false;}}return true;}}
+  uint goal=0u,candidate=0u;Kids kids={{base,0xffffffffu,TAPE_NONE}};
   while(goal<G){{
     if({e}[goal]!=0xfffffffeu){{
       uint name={e}[goal];goal++;
@@ -229,7 +237,7 @@ fn emit(
       while(true){{if(candidate>=count)return false;uint node=kid(c,kids,candidate);B{index} probe=b;if({o}(c,goal,node,probe)==0){{uint end=max(candidate>=skipped?candidate-skipped:0u,start);if(name!=0xffffffffu&&!bind_multi(c,b.v[name&0xffu],2u,base,start,end-start))return false;break;}}candidate++;}}
     }}
     while(true){{
-      if(candidate>=count){{for(uint g=goal;g<G;g++)if({e}[g]==0xfffffffeu)return false;return true;}}
+      if(candidate>=count){{for(uint g=goal;g<G;g++)if({e}[g]==0xfffffffeu&&!{d}[g])return false;return true;}}
       int verdict={o}(c,goal,kid(c,kids,candidate),b);
       if(verdict==0)break;
       if(verdict==1){{goal++;if(goal==G)return true;}}

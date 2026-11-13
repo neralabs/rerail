@@ -1,0 +1,228 @@
+{
+  "caught": [
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"npm run fixtures:push -- --pack react --tool eslint-plugin-react\"}",
+      "input": "{\"command\": \"npm run fixtures:push -- --pack react --tool eslint-plugin-react\"}"
+    },
+    {
+      "source": "tool:bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"node scripts/s3/pack-fixtures.mjs samples push --pack react --tool eslint-plugin-react-hooks\"}",
+      "input": "{\"command\": \"node scripts/s3/pack-fixtures.mjs samples push --pack react --tool eslint-plugin-react-hooks\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"node --import tsx scripts/s3/pack-fixtures.mjs pack --pack react --tool eslint-plugin-react && node scripts/s3/pack-fixtures.mjs upload --pack react --tool eslint-plugin-react\"}",
+      "input": "{\"command\": \"node --import tsx scripts/s3/pack-fixtures.mjs pack --pack react --tool eslint-plugin-react && node scripts/s3/pack-fixtures.mjs upload --pack react --tool eslint-plugin-react\"}"
+    },
+    {
+      "source": "tool:shell",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"bash -lc 'npm run fixtures:push -- --pack complexity --tool lizard'\"}",
+      "input": "{\"command\": \"bash -lc 'npm run fixtures:push -- --pack complexity --tool lizard'\"}"
+    },
+    {
+      "source": "tool:Shell",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"cd ~/rerail; npm run fixtures:stage -- --pack node --tool eslint-plugin-n; npm run fixtures:push -- --pack node --tool eslint-plugin-n\"}",
+      "input": "{\"command\": \"cd ~/rerail; npm run fixtures:stage -- --pack node --tool eslint-plugin-n; npm run fixtures:push -- --pack node --tool eslint-plugin-n\"}"
+    },
+    {
+      "source": "tool:exec_command",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"AWS_PROFILE=nera npm run fixtures:push -- --pack react --tool eslint-plugin-react-hooks 2>&1 | tail -5\"}",
+      "input": "{\"command\": \"AWS_PROFILE=nera npm run fixtures:push -- --pack react --tool eslint-plugin-react-hooks 2>&1 | tail -5\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"./scripts/s3/pack-fixtures.mjs push --pack complexity --tool lizard\"}",
+      "input": "{\"command\": \"./scripts/s3/pack-fixtures.mjs push --pack complexity --tool lizard\"}"
+    },
+    {
+      "source": "tool:bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"node scripts/s3/pack-fixtures.mjs upload --objects /tmp/objects.json --archives /tmp/publish/archives\"}",
+      "input": "{\"command\": \"node scripts/s3/pack-fixtures.mjs upload --objects /tmp/objects.json --archives /tmp/publish/archives\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"aws s3 cp /tmp/eslint-plugin-react.tar.zst s3://nera-test-fixtures/rerail/archives/react/eslint-plugin-react/8bd43f71.tar.zst --profile nera\"}",
+      "input": "{\"command\": \"aws s3 cp /tmp/eslint-plugin-react.tar.zst s3://nera-test-fixtures/rerail/archives/react/eslint-plugin-react/8bd43f71.tar.zst --profile nera\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"aws --profile nera s3api put-object --bucket nera-test-fixtures --key rerail/archives/complexity/lizard/4cef02da.tar.zst --body /tmp/lizard.tar.zst\"}",
+      "input": "{\"command\": \"aws --profile nera s3api put-object --bucket nera-test-fixtures --key rerail/archives/complexity/lizard/4cef02da.tar.zst --body /tmp/lizard.tar.zst\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"pnpm run fixtures:push --pack react\"}",
+      "input": "{\"command\": \"pnpm run fixtures:push --pack react\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"cd ~/rerail; export AWS_PROFILE=nera; node scripts/s3/pack-fixtures.mjs check 2>&1 | tail -5; npm run -s fixtures:push > /tmp/fixtures-push.log 2>&1; echo push=$?\"}",
+      "input": "{\"command\": \"cd ~/rerail; export AWS_PROFILE=nera; node scripts/s3/pack-fixtures.mjs check 2>&1 | tail -5; npm run -s fixtures:push > /tmp/fixtures-push.log 2>&1; echo push=$?\"}"
+    },
+    {
+      "source": "tool:bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"export AWS_PROFILE=nera; p=php; t=phpcs; sha=$(jq -r .sha256 packs/$p/upstream/$t/test-data.lock); aws s3api put-object --bucket nera-test-fixtures --key rerail/archives/$p/$t/$sha.tar.zst --body .rerail/pack-data/archives/$p/$t/$sha.tar.zst --if-none-match '*'\"}",
+      "input": "{\"command\": \"export AWS_PROFILE=nera; p=php; t=phpcs; sha=$(jq -r .sha256 packs/$p/upstream/$t/test-data.lock); aws s3api put-object --bucket nera-test-fixtures --key rerail/archives/$p/$t/$sha.tar.zst --body .rerail/pack-data/archives/$p/$t/$sha.tar.zst --if-none-match '*'\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"node --import tsx scripts/s3/pack-fixtures.mjs pack --from HEAD --replace --out /tmp/prep && node scripts/s3/pack-fixtures.mjs upload --pr 208 && node scripts/s3/pack-fixtures.mjs samples push --pr 208 && node scripts/s3/pack-fixtures.mjs check --pack react\"}",
+      "input": "{\"command\": \"node --import tsx scripts/s3/pack-fixtures.mjs pack --from HEAD --replace --out /tmp/prep && node scripts/s3/pack-fixtures.mjs upload --pr 208 && node scripts/s3/pack-fixtures.mjs samples push --pr 208 && node scripts/s3/pack-fixtures.mjs check --pack react\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"npm run fixtures:push -- --pack react --tool eslint-plugin-react --dry-run && npm run fixtures:push -- --pack react --tool eslint-plugin-react\"}",
+      "input": "{\"command\": \"npm run fixtures:push -- --pack react --tool eslint-plugin-react --dry-run && npm run fixtures:push -- --pack react --tool eslint-plugin-react\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"npm run fixtures:push --dry-run\"}",
+      "input": "{\"command\": \"npm run fixtures:push --dry-run\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"aws-vault exec nera -- npm run fixtures:push -- --pack complexity --tool lizard\"}",
+      "input": "{\"command\": \"aws-vault exec nera -- npm run fixtures:push -- --pack complexity --tool lizard\"}"
+    },
+    {
+      "source": "tool:bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"aws s3 cp .rerail/pack-data/archives/php/phpcs/$sha.tar.zst \\\"s3://nera-test-fixtures/rerail/archives/php/phpcs/$sha.tar.zst\\\" --profile nera 2>&1 | tail -3\"}",
+      "input": "{\"command\": \"aws s3 cp .rerail/pack-data/archives/php/phpcs/$sha.tar.zst \\\"s3://nera-test-fixtures/rerail/archives/php/phpcs/$sha.tar.zst\\\" --profile nera 2>&1 | tail -3\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"{ npm run fixtures:push -- --pack react; } 2>&1 | tail\"}",
+      "input": "{\"command\": \"{ npm run fixtures:push -- --pack react; } 2>&1 | tail\"}"
+    }
+  ],
+  "passed": [
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"npm run fixtures:pull\"}",
+      "input": "{\"command\": \"npm run fixtures:pull\"}"
+    },
+    {
+      "source": "tool:bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"npm run fixtures:stage -- --pack react --tool eslint-plugin-react --all && git add packs/react/upstream/eslint-plugin-react/publish\"}",
+      "input": "{\"command\": \"npm run fixtures:stage -- --pack react --tool eslint-plugin-react --all && git add packs/react/upstream/eslint-plugin-react/publish\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"gh workflow run pack-data-publish.yml -R neralabs/rerail -f pr=208 -f replace=true\"}",
+      "input": "{\"command\": \"gh workflow run pack-data-publish.yml -R neralabs/rerail -f pr=208 -f replace=true\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"npm run fixtures:push -- --pack react --tool eslint-plugin-react --dry-run\"}",
+      "input": "{\"command\": \"npm run fixtures:push -- --pack react --tool eslint-plugin-react --dry-run\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"git commit -m \\\"React pack: stage through publish/, not npm run fixtures:push\\\"\"}",
+      "input": "{\"command\": \"git commit -m \\\"React pack: stage through publish/, not npm run fixtures:push\\\"\"}"
+    },
+    {
+      "source": "tool:shell",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"node scripts/s3/pack-fixtures.mjs samples --pack react --tool eslint-plugin-react\"}",
+      "input": "{\"command\": \"node scripts/s3/pack-fixtures.mjs samples --pack react --tool eslint-plugin-react\"}"
+    },
+    {
+      "source": "tool:Shell",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"node scripts/s3/pack-fixtures.mjs check && npm run fixtures:pull -- --pack complexity\"}",
+      "input": "{\"command\": \"node scripts/s3/pack-fixtures.mjs check && npm run fixtures:pull -- --pack complexity\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"aws s3 cp s3://nera-test-fixtures/rerail/archives/react/eslint-plugin-react/8bd43f71.tar.zst /tmp/ --profile nera\"}",
+      "input": "{\"command\": \"aws s3 cp s3://nera-test-fixtures/rerail/archives/react/eslint-plugin-react/8bd43f71.tar.zst /tmp/ --profile nera\"}"
+    },
+    {
+      "source": "tool:bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"grep -n 'fixtures:push' CONTRIBUTING.md docs/upstream.md\"}",
+      "input": "{\"command\": \"grep -n 'fixtures:push' CONTRIBUTING.md docs/upstream.md\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"rg \\\"pack-fixtures.mjs upload|samples push\\\" .github scripts\"}",
+      "input": "{\"command\": \"rg \\\"pack-fixtures.mjs upload|samples push\\\" .github scripts\"}"
+    },
+    {
+      "source": "tool:exec_command",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"node --import tsx scripts/s3/pack-fixtures.mjs pack --pack react --tool eslint-plugin-react\"}",
+      "input": "{\"command\": \"node --import tsx scripts/s3/pack-fixtures.mjs pack --pack react --tool eslint-plugin-react\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"cd ~/benchmark-repos && aws --profile nera s3 cp --only-show-errors eslint-test-set.zip s3://nera-test-fixtures/eslint-test-set/2026-10-21/eslint-test-set.zip --metadata sha256=8f564d91\"}",
+      "input": "{\"command\": \"cd ~/benchmark-repos && aws --profile nera s3 cp --only-show-errors eslint-test-set.zip s3://nera-test-fixtures/eslint-test-set/2026-10-21/eslint-test-set.zip --metadata sha256=8f564d91\"}"
+    },
+    {
+      "source": "tool:bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"export AWS_PROFILE=nera; aws s3 ls s3://nera-test-fixtures/rerail/archives/react/ ; aws s3api get-bucket-versioning --bucket nera-test-fixtures\"}",
+      "input": "{\"command\": \"export AWS_PROFILE=nera; aws s3 ls s3://nera-test-fixtures/rerail/archives/react/ ; aws s3api get-bucket-versioning --bucket nera-test-fixtures\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"gh pr create --title \\\"React pack\\\" --body \\\"$(cat <<'EOF'\\nThe data is staged in publish/.\\nnpm run fixtures:push -- --pack react is for maintainers repairing S3.\\nEOF\\n)\\\"\"}",
+      "input": "{\"command\": \"gh pr create --title \\\"React pack\\\" --body \\\"$(cat <<'EOF'\\nThe data is staged in publish/.\\nnpm run fixtures:push -- --pack react is for maintainers repairing S3.\\nEOF\\n)\\\"\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"git commit -m \\\"docs: maintainers repair S3; npm run fixtures:push skips the licence check\\\"\"}",
+      "input": "{\"command\": \"git commit -m \\\"docs: maintainers repair S3; npm run fixtures:push skips the licence check\\\"\"}"
+    },
+    {
+      "source": "tool:bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"rg -n \\\"fixtures:stage|npm run fixtures:push\\\" CONTRIBUTING.md docs\"}",
+      "input": "{\"command\": \"rg -n \\\"fixtures:stage|npm run fixtures:push\\\" CONTRIBUTING.md docs\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"aws s3api put-object-tagging --bucket nera-test-fixtures --key rerail/archives/react/eslint-plugin-react/8bd43f71.tar.zst --tagging 'rerail%3Apr=208'\"}",
+      "input": "{\"command\": \"aws s3api put-object-tagging --bucket nera-test-fixtures --key rerail/archives/react/eslint-plugin-react/8bd43f71.tar.zst --tagging 'rerail%3Apr=208'\"}"
+    },
+    {
+      "source": "tool:Bash",
+      "boundary": "tool-call",
+      "text": "{\"command\": \"node scripts/s3/pack-fixtures.mjs push --pack complexity --tool lizard --dry-run 2>&1 | tail -5\"}",
+      "input": "{\"command\": \"node scripts/s3/pack-fixtures.mjs push --pack complexity --tool lizard --dry-run 2>&1 | tail -5\"}"
+    }
+  ]
+}

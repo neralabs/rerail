@@ -295,7 +295,7 @@ pub struct PrivateInputUpload {
 impl PrivateInputUpload {
     pub fn new(device: &Device) -> Result<Self, Error> {
         Ok(Self {
-            queue: device.new_command_queue(),
+            queue: crate::queue()?,
             staging: MappedBuffer::zeroed::<u8>(device, METAL_UPLOAD_CHUNK_BYTES)?,
             used: 0,
             copies: Vec::new(),
@@ -521,7 +521,7 @@ impl MappedBuffer {
             reservation,
             MTLResourceOptions::StorageModePrivate,
         )?;
-        let queue = device.new_command_queue();
+        let queue = crate::queue()?;
         for (chunk, input) in bytes.chunks(METAL_UPLOAD_CHUNK_BYTES).enumerate() {
             metal::objc::rc::autoreleasepool(|| -> Result<(), Error> {
                 let staging = Self::new(device, input)?;
@@ -674,12 +674,8 @@ pub fn pipeline_named(source: &str, name: &str) -> Result<ComputePipelineState, 
     pipeline_named_constant(source, name, None)
 }
 
-pub fn pipeline_named_constant(
-    source: &str,
-    name: &str,
-    constant: Option<u32>,
-) -> Result<ComputePipelineState, Error> {
-    let device = Device::system_default().ok_or(Error::UnsupportedBackend)?;
+/// The pipeline cache's key of `source`'s function `name` (with `constant`) on `device`.
+fn pipeline_key(device: &metal::Device, source: &str, name: &str, constant: Option<u32>) -> [u8; 32] {
     let mut digest = Sha256::new();
     digest.update(device.registry_id().to_le_bytes());
     digest.update(name.as_bytes());
@@ -691,7 +687,45 @@ pub fn pipeline_named_constant(
         digest.update([0]);
     }
     digest.update(source.as_bytes());
-    let key: [u8; 32] = digest.finalize().into();
+    digest.finalize().into()
+}
+
+/// The keys of pipelines a background thread is compiling (`pipeline_ready`).
+static COMPILING: LazyLock<Mutex<std::collections::HashSet<[u8; 32]>>> = LazyLock::new(Default::default);
+
+/// `source`'s pipeline `name` when it is compiled; otherwise `None` at once, its compile started on a thread of its
+/// own (once per source, however often asked), so a caller with another form of the work (a pipeline compiled
+/// before) runs that meanwhile instead of waiting on the compiler.
+pub fn pipeline_ready(source: &str, name: &str) -> Option<ComputePipelineState> {
+    let device = crate::device().ok()?;
+    let key = pipeline_key(&device, source, name, None);
+    if let Some(cached) = PIPELINES.lock().ok()?.get(&key).cloned() {
+        return Some(cached);
+    }
+    if COMPILING.lock().ok()?.insert(key) {
+        let (source, name) = (source.to_owned(), name.to_owned());
+        let spawned = std::thread::Builder::new().name("rerail-msl-compile".into()).spawn(move || {
+            let _ = pipeline_named(&source, &name);
+            if let Ok(mut compiling) = COMPILING.lock() {
+                compiling.remove(&key);
+            }
+        });
+        if spawned.is_err()
+            && let Ok(mut compiling) = COMPILING.lock()
+        {
+            compiling.remove(&key);
+        }
+    }
+    None
+}
+
+pub fn pipeline_named_constant(
+    source: &str,
+    name: &str,
+    constant: Option<u32>,
+) -> Result<ComputePipelineState, Error> {
+    let device = crate::device()?;
+    let key = pipeline_key(&device, source, name, constant);
     if let Some(cached) = PIPELINES.lock().map_err(|_| Error::BackendFailure)?.get(&key).cloned() {
         return Ok(cached);
     }
@@ -745,12 +779,26 @@ pub fn pipeline_named_constant(
         }
         pipelines.insert(key, pipeline.clone());
     }
+    #[cfg(any(test, feature = "test-hooks"))]
+    COMPILED_HERE.set(COMPILED_HERE.get() + 1);
     Ok(pipeline)
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    /// Pipelines this thread compiled (the process's cache is shared with every other test's).
+    static COMPILED_HERE: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn pipeline_cache_len() -> usize {
     PIPELINES.lock().map_or(0, |pipelines| pipelines.len())
+}
+
+/// The pipelines this thread has compiled, not found in the cache: a test's own, whatever other tests compile.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn pipelines_compiled_here() -> usize {
+    COMPILED_HERE.get()
 }
 
 #[cfg(test)]
@@ -765,7 +813,9 @@ mod execution_lock_tests {
             Err(std::sync::TryLockError::WouldBlock)
         ));
         drop(guard);
-        assert!(METAL_EXECUTION_LOCK.try_lock().is_ok());
+        // Released, it is taken again: by a blocking take, since another test may hold it by now (a `try_lock`
+        // here failed when one did).
+        drop(metal_execution_guard().unwrap());
     }
 }
 

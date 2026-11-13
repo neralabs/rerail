@@ -1,18 +1,18 @@
 //! One retained bag summary for compatible count/sum/min/max lookups.
 use super::*;
 use crate::code_rule_dsl::logic::{analysis::scalars, sql::properties};
-mod phase;
-pub(in crate::code_rule_dsl::sql_executor::reductions) mod publication;
+pub mod phase;
+pub mod publication;
 
 #[derive(Clone)]
-pub(super) struct Shared {
+pub struct Shared {
     pub owner: bool,
     pub joined: bool,
     pub layout: scalars::Layout,
     pub members: Vec<usize>,
 }
 
-pub(in crate::code_rule_dsl::sql_executor::reductions) fn plan(
+pub fn plan(
     reducers: &mut [Reducer],
     outer: &BTreeMap<(String, String), usize>,
 ) -> scalars::Analysis {
@@ -94,10 +94,13 @@ pub(in crate::code_rule_dsl::sql_executor::reductions) fn plan(
     analysis
 }
 
-pub(in crate::code_rule_dsl::sql_executor::reductions) fn storage(r: &Reducer) -> (String, String, Query, bool) {
+pub fn storage(r: &Reducer) -> (String, String, Query, bool) {
     (r.groups.clone(), r.values.clone(), r.projection.clone(), r.combined.is_some())
 }
-pub(in crate::code_rule_dsl::sql_executor::reductions) fn share(
+pub fn cursor_names(r: &mut Reducer, groups: &str, values: &str) {
+    r.groups=groups.into(); r.values=values.into();
+}
+pub fn share(
     r: &mut Reducer, groups: &str, values: &str, projection: &Query,
     layout: &scalars::Layout, members: &[usize], owner: bool, joined: bool, consumers: usize,
 ) {
@@ -106,79 +109,7 @@ pub(in crate::code_rule_dsl::sql_executor::reductions) fn share(
     r.pool_consumers = consumers;
 }
 
-pub(super) fn initialize(
-    r: &Reducer,
-    shared: &Shared,
-    db: &rusqlite::Connection,
-    objects: &mut Vec<(String, bool)>,
-    storage: Option<&versions::Store>,
-) -> Result<()> {
-    if !shared.owner || objects.iter().any(|(name, _)| name == &r.groups) {
-        return Ok(());
-    }
-    let k = r.keys();
-    let cols = names("", k);
-    let value = format!("c{k}");
-    owned(
-        db,
-        objects,
-        &r.groups,
-        &format!(
-            "{},n INTEGER NOT NULL CHECK(n>0),value INTEGER NOT NULL,high INTEGER NOT NULL,minimum INTEGER NOT NULL,maximum INTEGER NOT NULL,PRIMARY KEY({cols})",
-            schema(k)
-        ),
-        storage,
-    )?;
-    let sum = if shared.layout.sum {
-        format!("rr_sum_low({value},1,NULL),rr_sum_high({value},1,NULL)")
-    } else {
-        "0,0".into()
-    };
-    let min = if shared.layout.min {
-        format!("min({value})")
-    } else {
-        "0".into()
-    };
-    let max = if shared.layout.max {
-        format!("max({value})")
-    } else {
-        "0".into()
-    };
-    insert(
-        db,
-        &r.groups,
-        &format!(
-            "SELECT {cols},count(*),{sum},{min},{max} FROM ({}) GROUP BY {cols}",
-            r.projection.render()
-        ),
-        storage,
-    )?;
-    if shared.layout.min || shared.layout.max {
-        let fields = names("", r.width());
-        owned(
-            db,
-            objects,
-            &r.values,
-            &format!(
-                "{},n INTEGER NOT NULL CHECK(n>0),PRIMARY KEY({fields})",
-                schema(r.width())
-            ),
-            storage,
-        )?;
-        insert(
-            db,
-            &r.values,
-            &format!(
-                "SELECT {fields},count(*) FROM ({}) GROUP BY {fields}",
-                r.projection.render()
-            ),
-            storage,
-        )?;
-    }
-    Ok(())
-}
-
-pub(super) fn apply(
+pub fn apply(
     r: &Reducer,
     shared: &Shared,
     w: &mut Work<'_>,

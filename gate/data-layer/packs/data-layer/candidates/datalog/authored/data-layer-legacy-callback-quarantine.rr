@@ -1,0 +1,87 @@
+// data-layer-legacy-callback-quarantine, authored: clause `callback-call` (LCB-020). Source:
+// packs/data-layer/rules/data-layer-legacy-callback-quarantine.json. The other three clauses are the converter's.
+//
+// Option `entryPoint` (default `scan_repo`), read from `option_value`: `scan_file_content` tests the path with regex
+// `^(?:impl/|l|data_layer/|services/)` and notRegex `(?:^|/)(?:tests|conform)(?:/|$)`; any other value with notRegex
+// `(?:^|/)(?:\.git|\.mypy_cache|\.pytest_cache|\.ruff_cache|\.venv|__pycache__|tmp)(?:/|$)`.
+//
+// A call `R.M(args)` where M is a callback method (read, read_async, read_version, read_version_async, write,
+// write_async, write_version, write_version_async), R a callback receiver (utility callback-receiver), and:
+// - the arguments node has a child that is not a comment and is not `(`, `)` or `,`: W's `has` sees anonymous
+//   children too, but an argument list's only anonymous tokens are those three, so this is a named child, and
+//   comments are not in `child`;
+// - no ancestor is a decorated function whose decorator is a legacy callback decorator (utility
+//   callback-decorator-name). W's two `inside` branches (the function_definition under such a decorated_definition,
+//   or the decorated_definition itself holding a function_definition) reduce to the second: an ancestor
+//   decorated_definition with a function_definition child and such a decorator.
+
+.decl tape_syntax_error(d: number)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// utility callback-receiver: (?i)^(?:conn|connection|db_connection|session|session_handle|version|version_handle|
+// .*(?:session|connection|version))$, as the converter writes it (iglob, the text layer's case folding).
+.decl callback_call_receiver_name(n: node)
+callback_call_receiver_name(n) :- node(_, n, "identifier", _, _), text(n, s),
+    (iglob("conn", s) ; iglob("session_handle", s) ; iglob("version_handle", s) ; iglob("*session", s) ; iglob("*connection", s) ; iglob("*version", s)).
+.decl callback_call_receiver(n: node)
+callback_call_receiver(n) :- callback_call_receiver_name(n).
+callback_call_receiver(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), callback_call_receiver_name(a).
+callback_call_receiver(n) :- node(_, n, "attribute", _, _), field(n, "object", o), callback_call_receiver(o).
+callback_call_receiver(n) :- node(_, n, "call", _, _), field(n, "function", f), callback_call_receiver(f).
+callback_call_receiver(n) :- node(_, n, "subscript", _, _), field(n, "value", v), callback_call_receiver(v).
+callback_call_receiver(n) :- node(_, n, "parenthesized_expression", _, _), child(n, c, _), callback_call_receiver(c).
+
+// utility callback-decorator-name
+.decl callback_call_decorator_name(s: symbol)
+callback_call_decorator_name("direct_legacy_async").
+callback_call_decorator_name("direct_legacy_module_async").
+callback_call_decorator_name("direct_legacy_module_sync").
+callback_call_decorator_name("direct_legacy_sync").
+callback_call_decorator_name("legacy_async").
+callback_call_decorator_name("legacy_module_async").
+callback_call_decorator_name("legacy_module_sync").
+callback_call_decorator_name("legacy_sync").
+.decl callback_call_decorator(n: node)
+callback_call_decorator(n) :- node(_, n, "identifier", _, _), text(n, s), callback_call_decorator_name(s).
+callback_call_decorator(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), callback_call_decorator_name(s).
+callback_call_decorator(n) :- node(_, n, "call", _, _), field(n, "function", f), callback_call_decorator(f).
+
+.decl callback_call_method(s: symbol)
+callback_call_method("read").
+callback_call_method("read_async").
+callback_call_method("read_version").
+callback_call_method("read_version_async").
+callback_call_method("write").
+callback_call_method("write_async").
+callback_call_method("write_version").
+callback_call_method("write_version_async").
+
+.decl callback_call_quarantine_kind(kind: symbol)
+callback_call_quarantine_kind("decorated_definition").
+// A decorated function under a legacy callback decorator.
+.decl callback_call_quarantine(w: node)
+callback_call_quarantine(w) :- node(_, w, "decorated_definition", _, _), child(w, f, _), node(_, f, "function_definition", _, _),
+    child(w, k, _), node(_, k, "decorator", _, _), child(k, x, _), callback_call_decorator(x).
+
+.decl callback_call_site(c: node)
+callback_call_site(c) :- node(_, c, "call", _, _), field(c, "function", a), node(_, a, "attribute", _, _),
+    field(a, "attribute", m), node(_, m, "identifier", _, _), text(m, s), callback_call_method(s),
+    field(a, "object", o), callback_call_receiver(o),
+    field(c, "arguments", g), child(g, _, _).
+.decl callback_call_quarantined(c: node)
+callback_call_quarantined(c) :- callback_call_site(c), inside(c, w, callback_call_quarantine_kind), callback_call_quarantine(w).
+
+.decl option_value(name: symbol, v: symbol)
+.decl callback_call_file_content(x: number)
+callback_call_file_content(0) :- option_value("entryPoint", "scan_file_content").
+.decl callback_call_path_ok(p: symbol)
+callback_call_path_ok(p) :- doc(_, p, _), callback_call_file_content(0), match("(impl/|l|data_layer/|services/).*", p),
+    !match("(.*/)?(tests|conform)(/.*)?", p).
+callback_call_path_ok(p) :- doc(_, p, _), !callback_call_file_content(0),
+    !match("(.*/)?(\\.git|\\.mypy_cache|\\.pytest_cache|\\.ruff_cache|\\.venv|__pycache__|tmp)(/.*)?", p).
+
+violation("data-layer-legacy-callback-quarantine", "callback-call", "LCB-020", p, l) :- callback_call_site(c), !callback_call_quarantined(c),
+    node(d, c, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), doc(d, p, _), callback_call_path_ok(p), line(c, l).

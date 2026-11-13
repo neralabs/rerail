@@ -62,9 +62,15 @@ in_class(m) :- child(b, m, _), kind(b, "class_body").
 overload(m) :- mem(_, m, _), kind(m, "method_signature"), in_class(m).
 
 .decl scope(m: node, s: symbol)
-scope(m, "static") :- mem(_, m, _), op(m, "static").
-scope(m, "abstract") :- mem(_, m, _), !op(m, "static"), (op(m, "abstract") ; kind(m, "abstract_method_signature")).
-scope(m, "instance") :- mem(_, m, _), !op(m, "static"), !op(m, "abstract"), !kind(m, "abstract_method_signature").
+scope(m, "static") :- mem(_, m, _), mem_op(m, "static").
+scope(m, "abstract") :- mem(_, m, _), !mem_op(m, "static"), (mem_op(m, "abstract") ; kind(m, "abstract_method_signature")).
+scope(m, "instance") :- mem(_, m, _), !mem_op(m, "static"), !mem_op(m, "abstract"), !kind(m, "abstract_method_signature").
+// mem_op(m, o): member m has modifier o (`static`, `abstract` or `?`), for the member kinds that may store one. A
+// class_static_block's `static`, an abstract signature's `abstract` are its kind (the tape keeps none there).
+.decl mem_op(m: node, o: symbol)
+mem_op(m, o) :- mem(_, m, _), kind(m, k), (k = "method_definition" ; k = "public_field_definition" ;
+    k = "method_signature" ; k = "property_signature" ; k = "abstract_method_signature" ; k = "index_signature"),
+    op(m, o), (o = "static" ; o = "abstract" ; o = "?").
 .decl access(m: node, a: symbol)
 access(m, a) :- mem(_, m, _), child(m, x, _), kind(x, "accessibility_modifier"), text(x, a).
 access(m, "#private") :- mem(_, m, _), !modified(m), hash_named(m).
@@ -164,7 +170,7 @@ way(20, "decorated-"). way(21, "").
 // With optionalityOrder the members split where optional ones (`a?`) meet required ones; both halves are then
 // checked apart. Members on the wrong side of the split are reported instead, and nothing else is.
 .decl optional(m: node)
-optional(m) :- mem(_, m, _), op(m, "?").
+optional(m) :- mem(_, m, _), mem_op(m, "?").
 .decl first_switch(b: node, s: number)
 first_switch(b, s) :- mem(b, _, _), ordered_body(b, k, _), option(cat(k, "/optionalityOrder"), _),
     s = min i : { mem(b, m, i), i > 0, mem(b, o, i - 1), flips(m, o) }.

@@ -2,7 +2,7 @@
 //! where Ruff 0.16.9 reports them on its own fixtures (`fixtures/python/literal/ruff`,
 //! `fixtures/python/literal/generate_ruff.py`). Where the port differs, the test names each range and why.
 
-use crate::code_rule_dsl::oracle;
+use crate::code_rule_dsl::fixtures::oracle;
 use crate::code_rule_dsl::test_support::*;
 use serde_json::{Value, json};
 
@@ -221,7 +221,7 @@ macro_rules! fixture {
         (
             $name,
             include_str!(concat!(
-                crate::code_rule_dsl::fixtures_dir!(),
+                crate::code_rule_dsl::fixtures::fixtures_dir!(),
                 "/python/literal/ruff/",
                 $name
             )),
@@ -262,6 +262,29 @@ fn f722_forward_annotation_syntax_errors() {
     let (ours, theirs) = differences("F821", name, source, f821(), "capture.N");
     assert_eq!(ours, Vec::<String>::new(), "F821: only the port");
     assert_eq!(theirs, ["6:y", "7:y"], "F821: only Ruff");
+}
+
+/// A functional `TypedDict`'s keyword fields are types when the fields mapping is omitted or
+/// `None` and the target version is before 3.13 (Ruff's default is 3.10), so their strings are
+/// forward annotations F722 parses; `total` never is, nor a field beside a mapping.
+#[test]
+fn f722_typed_dict_keyword_fields_are_forward_annotations() {
+    let source = "\
+from typing import TypedDict
+E = TypedDict(\"E\", foo=\"a b\", total=\"c d\")
+F = TypedDict(\"F\", None, bar=\"e f\")
+G = TypedDict(\"G\", {}, baz=\"g h\")
+def f():
+    e: TypedDict(\"E\", foo=\"i j\") = 1
+";
+    let at = |text: &str| {
+        let start = source.find(text).expect(text) as u64;
+        [start, start + text.len() as u64]
+    };
+    assert_eq!(
+        ranges_in(f722(), "witness.span", None, source, "typed_dict.py", None),
+        [at("\"a b\""), at("\"e f\""), at("\"i j\"")]
+    );
 }
 
 /// The Ruff suite's F722 semantic-error check, recursive through strings nested in the string: a

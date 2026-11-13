@@ -4,7 +4,7 @@ use rusqlite::functions::FunctionFlags;
 
 const MAX_SAFE: i64 = (1_i64 << 53) - 1;
 
-pub(super) fn integer(n: i64) -> Value {
+pub fn integer(n: i64) -> Value {
     if (-MAX_SAFE..=MAX_SAFE).contains(&n) {
         json!(n)
     } else {

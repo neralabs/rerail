@@ -40,6 +40,10 @@ pub(super) struct Keeper {
     base_rels: Vec<(String, String, Vec<usize>)>,
     base: super::exports::Counted,
     own: super::Own,
+    /// Per export (by key): each value document its rows name in their location column (`doc_at`), and how many
+    /// counted files' entries hold its rows (decision 0117 step 2). A value document's rows go to every file that
+    /// asked for it; any other owner's to one file. Kept in the blob.
+    holders: BTreeMap<String, rustc_hash::FxHashMap<i64, i64>>,
 }
 
 /// What a session's keeper keeps of its files beyond their statistics (0096 step 3): the exports, and each base
@@ -62,6 +66,7 @@ impl Keeper {
         if rels.iter().any(|(rel, _)| !self.rels.contains_key(rel)) && !self.docs.is_empty() {
             self.docs.clear();
             self.rels.clear();
+            self.holders.clear();
         }
         for (rel, columns) in rels {
             self.rels.entry(rel.clone()).or_insert_with(|| RelStats::new(columns.clone()));
@@ -91,6 +96,11 @@ impl Keeper {
     /// a memo hit's export rows need not be held again.
     pub(super) fn exports_held(&self) -> bool {
         self.exports.is_some() && !self.building && self.failed.is_none()
+    }
+
+    /// Every file counted, with the content and key it was counted under.
+    pub(super) fn counted_files(&self) -> Vec<(String, memo::Content, i64)> {
+        self.docs.iter().map(|(p, (c, k))| (p.clone(), *c, *k)).collect()
     }
 
     /// The files counted that this run has not seen yet, with the content and key they were counted under.
@@ -143,12 +153,29 @@ impl Keeper {
                 }
                 return;
             }
-            Some((c, k)) => match old(c, k) {
+            Some((c, k)) => match {
+                if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+                    eprintln!("statkeep {path}: counted under {:?}, now {:?}", (c, k), now);
+                }
+                old(c, k)
+            } {
                 Some(before) => {
+                    // A relation whose rows the edit left as they were (node ids by definition keep an unchanged
+                    // definition's) is counted out and in again to no effect: left as counted. Each relation's
+                    // statistics are its own rows', so this is exact; within a relation the rows are counted out and
+                    // in whole, as its per-document statistics need.
+                    let (before, now_rows) = changed_only(&before, entry);
+                    crate::code_rule_dsl::logic::profile::decision("statistics kept by file (decision 0096 §3)", || {
+                        format!("an edited file's unchanged relations not counted again: {} of {} changed", now_rows.rows.len(), entry.rows.len())
+                    });
                     self.count(&before, -1);
                     if !self.building {
                         self.patch_exports(path, &before, -1);
                     }
+                    self.count(&now_rows, 1);
+                    self.patch_exports(path, &now_rows, 1);
+                    self.docs.insert(path.to_owned(), now);
+                    return;
                 }
                 None => return self.fail(format!("{path}: the memo no longer holds the rows counted")),
             },
@@ -184,6 +211,25 @@ impl Keeper {
     }
 
     fn count(&mut self, entry: &memo::Entry, sign: i64) {
+        let values = crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS as i64;
+        for (key, at) in &self.doc_at {
+            let (Some(at), Some((width, rows))) = (at, entry.rows.get(key)) else { continue };
+            if at >= width {
+                continue;
+            }
+            let owners: rustc_hash::FxHashSet<i64> = rows.chunks_exact(*width).map(|r| memo::document_of(r[*at])).filter(|d| *d >= values).collect();
+            if owners.is_empty() {
+                continue;
+            }
+            let held = self.holders.entry(key.clone()).or_default();
+            for o in owners {
+                let n = held.entry(o).or_default();
+                *n += sign;
+                if *n == 0 {
+                    held.remove(&o);
+                }
+            }
+        }
         for (key, stats) in &mut self.rels {
             if let Some((width, values)) = entry.rows.get(key) {
                 match self.doc_at.get(key) {
@@ -219,6 +265,7 @@ impl Keeper {
         if let Some(why) = self.failed.take() {
             self.docs.clear();
             self.rels.clear();
+            self.holders.clear();
             self.exports = None;
             return Err(why);
         }
@@ -231,16 +278,27 @@ impl Keeper {
     /// The keeper as a run of the tape cache keeps it (decision 0096 §2): one blob, the files' contents it counts
     /// and each relation's statistics. Only stored contents are kept (a session's are its memory's).
     pub(super) fn encode(&self) -> Vec<u8> {
-        let mut out = vec![2u8];
+        let mut out = vec![4u8];
         let int = |out: &mut Vec<u8>, v: i64| out.extend_from_slice(&v.to_le_bytes());
-        let mut docs: Vec<(&String, i64, i64)> = self.docs.iter().filter_map(|(p, (c, k))| match c { memo::Content::Stored(id) => Some((p, id.raw(), *k)), memo::Content::Held(_) => None }).collect();
+        // A content the store does not hold yet is kept by its digest: the next run finds its source (`resolve`).
+        let mut docs: Vec<(&String, memo::Content, i64)> = self.docs.iter().filter(|(_, (c, _))| !matches!(c, memo::Content::Held(_))).map(|(p, (c, k))| (p, *c, *k)).collect();
         // In path order: the same keeper is the same blob.
-        docs.sort();
+        docs.sort_by(|a, b| a.0.cmp(b.0));
         int(&mut out, docs.len() as i64);
-        for (p, id, k) in docs {
+        for (p, c, k) in docs {
             int(&mut out, p.len() as i64);
             out.extend_from_slice(p.as_bytes());
-            int(&mut out, id);
+            match c {
+                memo::Content::Stored(id) => {
+                    out.push(0);
+                    int(&mut out, id.raw());
+                }
+                memo::Content::Unstored(d) => {
+                    out.push(1);
+                    out.extend_from_slice(&d);
+                }
+                memo::Content::Held(_) => unreachable!("not kept"),
+            }
             int(&mut out, k);
         }
         int(&mut out, self.rels.len() as i64);
@@ -249,7 +307,39 @@ impl Keeper {
             out.extend_from_slice(rel.as_bytes());
             stats.encode(&mut out);
         }
+        int(&mut out, self.holders.len() as i64);
+        for (rel, held) in &self.holders {
+            int(&mut out, rel.len() as i64);
+            out.extend_from_slice(rel.as_bytes());
+            let mut pairs: Vec<(i64, i64)> = held.iter().map(|(o, n)| (*o, *n)).collect();
+            pairs.sort_unstable();
+            int(&mut out, pairs.len() as i64);
+            for (o, n) in pairs {
+                int(&mut out, o);
+                int(&mut out, n);
+            }
+        }
         out
+    }
+
+    /// Export `key`'s value documents and how many counted files hold each (`holders`).
+    pub(super) fn holders(&self, key: &str) -> Option<&rustc_hash::FxHashMap<i64, i64>> {
+        self.holders.get(key)
+    }
+
+    /// The contents kept by digest (a run's new sources, written after its blob was made), as the store holds them
+    /// now: `found` gives each digest's source, in one read before the run's first wave.
+    pub(super) fn resolve(&mut self, found: impl FnOnce(&[[u8; 32]]) -> Vec<Option<crate::content_store::SourceId>>) {
+        let unstored: Vec<(String, [u8; 32])> = self.docs.iter().filter_map(|(p, (c, _))| match c { memo::Content::Unstored(d) => Some((p.clone(), *d)), _ => None }).collect();
+        if unstored.is_empty() {
+            return;
+        }
+        let ids = found(&unstored.iter().map(|(_, d)| *d).collect::<Vec<_>>());
+        for ((path, _), id) in unstored.into_iter().zip(ids) {
+            if let (Some(id), Some(at)) = (id, self.docs.get_mut(&path)) {
+                at.0 = memo::Content::Stored(id);
+            }
+        }
     }
 
     /// `encode`'s keeper back, `None` if the bytes are not one.
@@ -265,34 +355,47 @@ impl Keeper {
             let n = usize::try_from(int(at)?).ok()?;
             String::from_utf8(take(at, n)?.to_vec()).ok()
         };
-        if bytes.first() != Some(&2) {
+        if bytes.first() != Some(&4) {
             return None;
         }
         let mut k = Keeper::default();
         for _ in 0..int(&mut at)? {
             let path = text(&mut at)?;
-            let id = crate::content_store::SourceId::from_raw(int(&mut at)?);
-            k.docs.insert(path, (memo::Content::Stored(id), int(&mut at)?));
+            let content = match take(&mut at, 1)?[0] {
+                0 => memo::Content::Stored(crate::content_store::SourceId::from_raw(int(&mut at)?)),
+                1 => memo::Content::Unstored(take(&mut at, 32)?.try_into().ok()?),
+                _ => return None,
+            };
+            k.docs.insert(path, (content, int(&mut at)?));
         }
         for _ in 0..int(&mut at)? {
             let rel = text(&mut at)?;
             k.rels.insert(rel, RelStats::decode(bytes, &mut at)?);
         }
+        for _ in 0..int(&mut at)? {
+            let rel = text(&mut at)?;
+            let mut held = rustc_hash::FxHashMap::default();
+            for _ in 0..int(&mut at)? {
+                let o = int(&mut at)?;
+                held.insert(o, int(&mut at)?);
+            }
+            k.holders.insert(rel, held);
+        }
         (at == bytes.len()).then_some(k)
     }
 }
 
-fn same(a: (memo::Content, i64), b: (memo::Content, i64)) -> bool {
+pub(super) fn same(a: (memo::Content, i64), b: (memo::Content, i64)) -> bool {
     a.1 == b.1
         && match (a.0, b.0) {
             (memo::Content::Stored(x), memo::Content::Stored(y)) => x == y,
-            (memo::Content::Held(x), memo::Content::Held(y)) => x == y,
+            (memo::Content::Unstored(x), memo::Content::Unstored(y)) | (memo::Content::Held(x), memo::Content::Held(y)) => x == y,
             _ => false,
         }
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{Keeper, memo};
 
     /// A keeper read back from its blob counts the same files the same way: an edit patches it as it would the one
@@ -324,4 +427,11 @@ mod tests {
         assert_eq!(after[&r].rows(), first[&r].rows());
         assert_ne!(after[&r], first[&r], "b.py's values moved");
     }
+}
+
+/// `before` and `now` without the relations whose rows are the same in both: what an edit changed, by relation.
+fn changed_only(before: &memo::Entry, now: &memo::Entry) -> (memo::Entry, memo::Entry) {
+    let same = |rel: &String| before.rows.get(rel) == now.rows.get(rel);
+    let keep = |e: &memo::Entry| memo::Entry { rows: e.rows.iter().filter(|(r, _)| !same(r)).map(|(r, v)| (r.clone(), v.clone())).collect(), key: e.key, nodes: e.nodes, lines: Default::default() };
+    (keep(before), keep(now))
 }

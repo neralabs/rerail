@@ -125,8 +125,10 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
     let mut carried;
     // Rules split once already: a variable of theirs that may be a guest's node has its clone (O110).
     let mut split: BTreeSet<usize> = BTreeSet::new();
+    let mut reaches;
     loop {
-        carried = carry(prog, &base_locations, &seeds, &view);
+        reaches = reaching(prog, &seeds);
+        carried = carry(prog, &base_locations, &seeds, &view, &reaches);
         let snapshot = prog.rules.clone();
         let mut copies: Vec<(crate::code_rule_dsl::logic::front::Rule, BTreeMap<String, Fact>)> = Vec::new();
         let mut decls: Vec<(String, Vec<(String, String)>)> = Vec::new();
@@ -136,7 +138,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             if view(&rule.head.rel) {
                 continue;
             }
-            let facts = analyse(rule, &base_locations, &carried, &seeds[i]);
+            let facts = if reaches[i] { analyse(rule, &base_locations, &carried, &seeds[i]) } else { BTreeMap::new() };
             // A variable that may be a guest's node of a known grammar, and may be a host's: the rule stays as it is
             // for the host's, and a clone with the variable seeded as the guest's reads the guest's copies. Copying
             // in place of the atom would drop the host's rows (`tv`'s nodes are both, and `tbv`'s `live_asg` read
@@ -173,7 +175,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                     Literal::Atom(a) | Literal::Agg { atom: a, .. } => a,
                     _ => continue,
                 };
-                let Some(cols) = carried.get(&a.rel) else { continue };
+                let Some(cols) = carried.get(a.rel.as_str()) else { continue };
                 let spec = a.args.iter().enumerate().find_map(|(c, t)| match t {
                     Term::Var(v) if !cols.get(c).is_some_and(|f| f.scoped) => grammar_of(v).map(|g| (c, g)),
                     _ => None,
@@ -181,13 +183,13 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                 let Some((c, g)) = spec else { continue };
                 // A copy read with another column scoped is a copy of the same relation with both seeded, not a copy
                 // of the copy: one per relation and set of seeded columns, so the copies end.
-                let (orig, mut cols) = specialized.get(&a.rel).cloned().unwrap_or_else(|| (a.rel.clone(), BTreeMap::new()));
+                let (orig, mut cols) = specialized.get(a.rel.as_str()).cloned().unwrap_or_else(|| (a.rel.to_string(), BTreeMap::new()));
                 cols.insert(c, g);
                 let name = format!("rr_in_{}{orig}", cols.iter().map(|(c, g)| format!("{}_{c}_", g.replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"))).collect::<String>());
                 if made.insert(name.clone()) {
                     for r in snapshot.iter().filter(|r| r.head.rel == orig) {
                         let mut copy = r.clone();
-                        copy.head.rel = name.clone();
+                        copy.head.rel = name.clone().into();
                         let mut seed = BTreeMap::new();
                         for (c, g) in &cols {
                             if let Some(Term::Var(v)) = copy.head.args.get(*c) {
@@ -205,7 +207,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                 // seeded column is never carried as scoped there, so the same copy is found each round (a loop
                 // that did not end on `ruff-perf401`).
                 if a.rel != name {
-                    a.rel = name;
+                    a.rel = name.into();
                     changed = true;
                 }
             }
@@ -221,8 +223,9 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         }
     }
     let bound_of = |doc_column: bool| if doc_column { i64::from(bound) } else { i64::from(bound) << 32 };
-    for (rule, seed) in prog.rules.iter_mut().zip(&seeds).filter(|(r, _)| !VIEWS.contains(&r.head.rel.as_str())) {
-        let facts = analyse(rule, &base_locations, &carried, seed);
+    let reaches = reaching(prog, &seeds);
+    for ((rule, seed), reaches) in prog.rules.iter_mut().zip(&seeds).zip(reaches).filter(|((r, _), _)| !VIEWS.contains(&r.head.rel.as_str())) {
+        let facts = if reaches { analyse(rule, &base_locations, &carried, seed) } else { BTreeMap::new() };
         // Wildcards in an unscoped base atom's location columns become variables, so they can be bounded.
         let mut fresh = 0;
         let mut bounded: BTreeMap<String, bool> = BTreeMap::new();
@@ -231,7 +234,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             if a.neg {
                 continue;
             }
-            let Some(cols) = base_locations.get(&a.rel) else { continue };
+            let Some(cols) = base_locations.get(a.rel.as_str()) else { continue };
             let doc_col = crate::code_rule_dsl::typing::file_local::document_column(&a.rel);
             let atom_scoped = cols.iter().any(|&c| matches!(a.args.get(c), Some(Term::Var(v)) if facts.get(v).is_some_and(|f| f.scoped)));
             if atom_scoped {
@@ -270,11 +273,11 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
     for rule in prog.rules.iter_mut().filter(|r| !VIEWS.contains(&r.head.rel.as_str())) {
         for l in &mut rule.body {
             let Literal::Agg { atom, .. } = l else { continue };
-            let Some(cols) = base_locations.get(&atom.rel) else { continue };
+            let Some(cols) = base_locations.get(atom.rel.as_str()) else { continue };
             if cols.is_empty() {
                 continue;
             }
-            let decl = prog.decls.get(&atom.rel).cloned().unwrap_or_default();
+            let decl = prog.decls.get(atom.rel.as_str()).cloned().unwrap_or_default();
             let doc_col = crate::code_rule_dsl::typing::file_local::document_column(&atom.rel);
             // Every wildcard becomes a column of the helper: the aggregate counts the atom's rows, not their
             // projection.
@@ -300,7 +303,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                 }
             }
             let name = format!("rr_shown_agg{}", helpers.len());
-            let head = Atom { rel: name, args: vars.iter().map(|(v, _)| Term::Var(v.clone())).collect(), neg: false, gated: false };
+            let head = Atom { rel: name.into(), args: vars.iter().map(|(v, _)| Term::Var(v.clone())).collect(), neg: false, gated: false };
             // The aggregate's own wildcards stay wildcards: its named variables are correlated.
             let args = head.args.iter().map(|t| match t {
                 Term::Var(v) if v.starts_with("rr_shown_agg_c") => Term::Wild,
@@ -311,15 +314,149 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         }
     }
     for (head, vars, body) in helpers {
-        prog.decls.insert(head.rel.clone(), vars);
+        prog.decls.insert(head.rel.to_string(), vars);
         prog.rules.push(crate::code_rule_dsl::logic::front::Rule { head, body });
     }
 }
 
+/// Folds the copies hiding made for guests in the run's own language back into their originals, once the run's
+/// language (`label`) is known (decision 0058). Such a guest's documents are shown (`GUEST_KEYS..HIDDEN_KEYS`, a
+/// guest whose grammar's label is the run's: `guests::key`) and its kinds are the run's (`python:x` resolves as `x`),
+/// so a copy specialized to it holds its original's rows: its rules differ only by the seeded column's bound, which
+/// those documents are under, and by the qualified kinds. Its readers read the original, its rules go, and a
+/// qualified kind of `label` is written plainly; a clone (O110) is then its rule again, dropped as a repeat by
+/// `merge_to_fixpoint`. With guests not shown (`bound`, `.guests off`) nothing is folded. Gives the copies folded.
+/// `RERAIL_SHOWN_COPIES=on` keeps them (to measure what they cost).
+pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
+    if bound != crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS || std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|v| v == "on") {
+        return 0;
+    }
+    let own = |g: &str| dialect_label(g) == label;
+    // `rr_in_<g>_<c>_…<orig>`, every `<g>` the run's own (as `hide` names them: `g` with non-alphanumerics as `_`).
+    let grammars: Vec<&str> = ["annotation", label].into_iter().filter(|g| own(g)).collect();
+    let own_mid = |mut mid: &str| -> bool {
+        if mid.is_empty() {
+            return false;
+        }
+        while !mid.is_empty() {
+            let Some(rest) = grammars.iter().find_map(|g| mid.strip_prefix(*g).and_then(|r| r.strip_prefix('_'))) else { return false };
+            let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+            let Some(rest) = rest[digits..].strip_prefix('_').filter(|_| digits > 0) else { return false };
+            mid = rest;
+        }
+        true
+    };
+    let mut folded: HashMap<String, String> = HashMap::default();
+    for rel in prog.decls.keys().filter(|r| r.starts_with("rr_in_")) {
+        let tail = &rel["rr_in_".len()..];
+        // The longest original that leaves an own prefix.
+        let orig = (0..tail.len()).filter(|&i| tail.is_char_boundary(i)).map(|i| (&tail[..i], &tail[i..])).find(|(mid, orig)| !orig.starts_with("rr_in_") && prog.decls.contains_key(*orig) && own_mid(mid));
+        if let Some((_, orig)) = orig {
+            folded.insert(rel.clone(), orig.to_owned());
+        }
+    }
+    let sets: HashMap<String, String> = prog
+        .kindsets
+        .keys()
+        .filter_map(|k| {
+            let tail = k.strip_prefix("rr_in_")?;
+            grammars.iter().find_map(|g| tail.strip_prefix(*g).and_then(|r| r.strip_prefix('_'))).filter(|set| prog.kindsets.contains_key(*set)).map(|set| (k.clone(), set.to_owned()))
+        })
+        .collect();
+    if folded.is_empty() && sets.is_empty() {
+        return 0;
+    }
+    prog.rules.retain(|r| !folded.contains_key(r.head.rel.as_str()));
+    let plain = format!("{label}:");
+    let unqualify = |a: &mut Atom| {
+        let col = match a.rel.as_str() {
+            "kind" | "field" => Some(1),
+            "node" => Some(2),
+            _ => None,
+        };
+        if let Some(Term::Str(s)) = col.and_then(|c| a.args.get_mut(c))
+            && let Some(name) = s.strip_prefix(plain.as_str())
+        {
+            *s = name.to_owned();
+        }
+    };
+    for rule in &mut prog.rules {
+        for l in &mut rule.body {
+            match l {
+                Literal::Atom(a) | Literal::Agg { atom: a, .. } => {
+                    if let Some(orig) = folded.get(a.rel.as_str()) {
+                        a.rel = orig.clone().into();
+                    }
+                    unqualify(a);
+                }
+                Literal::Nearest { kindset, .. } => {
+                    if let Some(set) = sets.get(kindset.as_str()) {
+                        *kindset = set.clone();
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    for rel in folded.keys() {
+        prog.decls.remove(rel);
+        prog.qualifiers.remove(rel);
+    }
+    for k in sets.keys() {
+        prog.kindsets.remove(k);
+    }
+    for list in [&mut prog.inputs, &mut prog.outputs, &mut prog.demand] {
+        for rel in list.iter_mut() {
+            if let Some(orig) = folded.get(rel.as_str()) {
+                *rel = orig.clone();
+            }
+        }
+    }
+    folded.len() + sets.len()
+}
+
+/// Which rules' analysis can find anything (O-combine-hiding-single): one with a seed, or a positive atom of a guest
+/// relation (`ENTRIES`) or of a relation such a rule makes, transitively. Any other rule reads no scoped column and
+/// enters no guest, so its analysis is empty, and is not made: in a policy most rules are such.
+fn reaching(prog: &Program, seeds: &[BTreeMap<String, Fact>]) -> Vec<bool> {
+    // A worklist over each relation's readers: a rule is looked at once, and again only when it is marked.
+    let mut readers: HashMap<&str, Vec<usize>> = HashMap::default();
+    let mut out = vec![false; prog.rules.len()];
+    let mut work = Vec::new();
+    for (i, rule) in prog.rules.iter().enumerate() {
+        let mut enters = seeds.get(i).is_some_and(|s| !s.is_empty());
+        for l in &rule.body {
+            if let Literal::Atom(a) = l
+                && !a.neg
+            {
+                enters |= ENTRIES.iter().any(|(e, ..)| *e == a.rel);
+                readers.entry(a.rel.as_str()).or_default().push(i);
+            }
+        }
+        if enters {
+            out[i] = true;
+            work.push(i);
+        }
+    }
+    let mut made: BTreeSet<&str> = BTreeSet::new();
+    while let Some(i) = work.pop() {
+        let head = prog.rules[i].head.rel.as_str();
+        if made.insert(head) {
+            for &j in readers.get(head).into_iter().flatten() {
+                if !out[j] {
+                    out[j] = true;
+                    work.push(j);
+                }
+            }
+        }
+    }
+    out
+}
+
 /// What each derived relation's columns carry, to a fixpoint over the rules.
-fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<String, Fact>], view: &dyn Fn(&str) -> bool) -> HashMap<String, Vec<Fact>> {
+fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<String, Fact>], view: &dyn Fn(&str) -> bool, reaches: &[bool]) -> HashMap<String, Vec<Fact>> {
     let mut carried: HashMap<String, Vec<Fact>> =
-        prog.rules.iter().map(|r| r.head.rel.clone()).filter(|r| !view(r)).map(|r| { let n = prog.decls.get(&r).map_or(0, Vec::len); (r, vec![Fact::default(); n]) }).collect();
+        prog.rules.iter().map(|r| r.head.rel.to_string()).filter(|r| !view(r)).map(|r| { let n = prog.decls.get(r.as_str()).map_or(0, Vec::len); (r, vec![Fact::default(); n]) }).collect();
     // A rule's analysis reads its positive atoms' carried columns: it is analysed again only when one of them changed
     // (a worklist, not every rule each round: a combined pack has tens of thousands, O111).
     let mut readers: HashMap<&str, Vec<usize>> = HashMap::default();
@@ -341,8 +478,8 @@ fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<S
         while let Some(i) = work.pop_front() {
             queued[i] = false;
             let (rule, seed) = (&prog.rules[i], &seeds[i]);
-            let facts = analyse(rule, base, carried, seed);
-            let Some(cols) = carried.get_mut(&rule.head.rel) else { continue };
+            let facts = if reaches[i] { analyse(rule, base, carried, seed) } else { BTreeMap::new() };
+            let Some(cols) = carried.get_mut(rule.head.rel.as_str()) else { continue };
             let mut changed = false;
             for (c, t) in rule.head.args.iter().enumerate() {
                 if let Some(slot) = cols.get_mut(c) {
@@ -409,7 +546,7 @@ fn analyse(rule: &crate::code_rule_dsl::logic::front::Rule, base: &HashMap<Strin
     }
     // Derived relations' carried columns.
     for a in positive() {
-        if let Some(cols) = carried.get(&a.rel) {
+        if let Some(cols) = carried.get(a.rel.as_str()) {
             for (c, f) in cols.iter().enumerate() {
                 if (f.scoped || f.grammar.is_some()) && let Some(v) = var(a.args.get(c)) {
                     facts.entry(v).or_default().join(&Fact { definite: f.definite && f.scoped, ..f.clone() });
@@ -479,13 +616,13 @@ fn qualify(a: &mut Atom, label: &str) {
 }
 
 /// `"sql:select"` as its grammar's label and the name, when the label is a registry language's.
-pub(in crate::code_rule_dsl) fn qualified(s: &str) -> Option<(&str, &str)> {
+pub fn qualified(s: &str) -> Option<(&str, &str)> {
     let (label, name) = s.split_once(':')?;
     (!label.is_empty() && !name.is_empty() && crate::code_rule_dsl::language::dialect_by_label(label).is_some()).then_some((label, name))
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// A relation read with guest variables in two columns its rules bind apart is copied once, with both seeded:
@@ -548,5 +685,34 @@ mod tests {
         let p = wait.recv_timeout(std::time::Duration::from_secs(20)).expect("hide ends");
         let out = p.rules.iter().find(|r| r.head.rel == "out").unwrap().to_string();
         assert!(out.contains("rr_in_sql_0_none("), "{out}");
+    }
+    /// A copy for a guest in the run's own language (an annotation in a Python run, its guests shown) is its
+    /// original: folded once the language is known, its reader reads the original and its clone repeats its rule.
+    /// In another language's run, or with guests hidden, the copies stay.
+    #[test]
+    fn copies_for_a_guest_in_the_runs_own_language_are_folded_into_their_originals() {
+        let text = concat!(
+            ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
+            ".decl val(n: node)\nval(n) :- e(n).\nval(r) :- parsed(_, \"annotation\", r).\n",
+            ".decl asg(n: node)\nasg(n) :- e(n), kind(n, \"identifier\").\n",
+            ".decl only(n: node)\nonly(r) :- parsed(_, \"annotation\", r).\n",
+            ".decl out(n: node)\n.output out\nout(n) :- val(n), asg(n).\nout(n) :- only(n), asg(n).\n",
+        );
+        let hidden = |label: &str, bound: u32| {
+            let mut p = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+            hide(&mut p, bound);
+            let made = p.decls.keys().filter(|r| r.starts_with("rr_in_")).count();
+            let folded = fold_own(&mut p, label, bound);
+            super::super::merge_to_fixpoint(&mut p);
+            (made, folded, p)
+        };
+        let (made, folded, p) = hidden("python", crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS);
+        assert!(made > 0, "hiding made the annotation's copies");
+        assert_eq!(folded, made);
+        assert!(p.rules.iter().all(|r| !r.to_string().contains("rr_in_") && !r.to_string().contains("python:")), "{:#?}", p.rules.iter().map(|r| r.to_string()).collect::<Vec<_>>());
+        let outs: Vec<String> = p.rules.iter().filter(|r| r.head.rel == "out").map(|r| r.to_string()).collect();
+        assert_eq!(outs.len(), 2, "each clone repeats its rule: {outs:#?}");
+        assert_eq!(hidden("rust", crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS).1, 0, "another language's run keeps them");
+        assert_eq!(hidden("python", 1 << 30).1, 0, "guests hidden keep them");
     }
 }

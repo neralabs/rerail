@@ -7,7 +7,7 @@ use crate::code_rule_dsl::typing::file_local::Binding;
 /// P2 resolves imports through re-exports, bases, inherited members and annotations, from struct's exports alone.
 #[test]
 fn types_resolves_names_bases_members_and_annotations_by_symbol() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("types-phase");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("types-phase");
     let _ = std::fs::remove_dir_all(&dir);
     let src = dir.join("src");
     std::fs::create_dir_all(src.join("pkg")).unwrap();
@@ -46,7 +46,8 @@ v(s, d) :- types__vtype(s, _, d).
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
     let report = corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::json!({})).unwrap();
     let names: Vec<&str> = report.phase_runs.iter().map(|r| r.name.as_str()).collect();
-    assert_eq!(names, ["struct", "types"]);
+    // Phase 1 (`sources`: the source files loaded, the imports resolved) runs first; every later phase reads it.
+    assert_eq!(names, ["sources", "struct", "types"]);
     let rows = |rel: &str| -> Vec<String> {
         let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
         v.sort();
@@ -89,7 +90,7 @@ v(s, d) :- types__vtype(s, _, d).
 /// keyword-only parameter), so a later phase fits a library call to its overloads by symbol.
 #[test]
 fn struct_marks_async_and_overloads_with_their_positional_shapes() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("struct-flags");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("struct-flags");
     let _ = std::fs::remove_dir_all(&dir);
     let src = dir.join("src");
     std::fs::create_dir_all(&src).unwrap();
@@ -114,7 +115,7 @@ sh(f, n, c, w) :- struct__shape(f, n, c, w).
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
     let report = corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::json!({})).unwrap();
     let names: Vec<&str> = report.phase_runs.iter().map(|r| r.name.as_str()).collect();
-    assert_eq!(names, ["struct"]);
+    assert_eq!(names, ["sources", "struct"]);
     let rows = |rel: &str| -> Vec<String> {
         let mut v: Vec<String> = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap().lines().map(str::to_owned).collect();
         v.sort();
@@ -130,7 +131,7 @@ sh(f, n, c, w) :- struct__shape(f, n, c, w).
 /// parameters stand for an ancestor's, and the returns that name a type variable or a generic of one.
 #[test]
 fn types_gives_type_parameters_their_map_through_bases_and_the_returns_naming_them() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("types-generics");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("types-generics");
     let _ = std::fs::remove_dir_all(&dir);
     let src = dir.join("src");
     std::fs::create_dir_all(&src).unwrap();
@@ -242,8 +243,8 @@ lib_attr(c, x) :- types__attr(c, x, _, _), types__owner(c, o), lib(o).
         for p in &r.phase_runs {
             let cpu: f64 = p.report.phases.iter().map(|x| x.1 + x.2).sum();
             let rss = p.report.phases.iter().map(|x| x.3).fold(0.0, f64::max);
-            let rows: Vec<String> = p.exports.iter().map(|(rel, n, _, _)| format!("{rel} {n}")).collect();
-            println!("TYPES {what}: {} {cpu:.2} s CPU, peak RSS {rss:.0} MB, how: {}; exports: {}", p.name, p.full_because.as_deref().map_or_else(|| p.report.phases.first().map_or("", |x| x.0).to_owned(), |w| format!("in full: {w}")), rows.join(", "));
+            let rows: Vec<String> = p.exports.iter().map(|(rel, n)| format!("{rel} {n}")).collect();
+            println!("TYPES {what}: {} {cpu:.2} s CPU, peak RSS {rss:.0} MB, strata {:?}; exports: {}", p.name, p.report.cross_strata, rows.join(", "));
         }
         let all: f64 = r.phases.iter().map(|x| x.1 + x.2).sum();
         println!("TYPES {what}: the reader's run, phases included: {all:.2} s");

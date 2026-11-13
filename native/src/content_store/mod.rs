@@ -10,9 +10,11 @@ mod accel_models;
 #[allow(dead_code)]
 mod bounded_insert;
 mod compression;
+pub use compression::{decompress, decompress_chunks, decompress_head, decompress_into};
 mod collection_guard;
 pub use collection_guard::CollectionLease;
 mod connection;
+pub use compression::set_language_tags;
 pub use connection::set_connection_functions;
 mod corpus_runs;
 pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex};
@@ -23,8 +25,9 @@ mod derivation;
 mod frames;
 mod facts_memo;
 mod objects;
+pub mod journal;
 pub mod observe;
-pub use objects::ResidentFrames;
+pub use objects::{ResidentFrames, TapeFrame};
 mod postings;
 /// G's positional search index (value and text streams), for G's literal anchors (O21).
 #[cfg(any(test, feature = "test-hooks"))]
@@ -37,6 +40,7 @@ pub use postings::segment_positions;
 #[allow(dead_code)]
 pub mod prefilter;
 pub use prefilter::TapePrefilter;
+mod private_files;
 mod publication;
 mod read_cache;
 mod reclamation;
@@ -60,7 +64,8 @@ pub mod write_back;
 pub mod hazards;
 
 pub use compression::compress;
-pub use frames::{Put as FramePut, Rel as FrameRel, Rows as FrameRows, Stored as FrameStored};
+pub use frames::forget_snapshot as forget_frames_snapshot;
+pub use frames::{Admitted as AdmittedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;
 pub use atoms::Sym;
@@ -85,7 +90,6 @@ use rusqlite::{Connection, OpenFlags};
 use sha2::{Digest as _, Sha256};
 use std::collections::HashMap;
 use std::fmt;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 #[cfg(any(test, feature = "test-hooks"))]
@@ -210,6 +214,24 @@ impl HashKey {
         }
         let digest: [u8; 32] = Sha256::digest(bytes).into();
         Self::from_sha256_digest(digest)
+    }
+
+    /// The identity of a tape of the source `source`: its bytes and its source's hash. A
+    /// named-only tape holds no source text, so two sources of one shape and one set of token
+    /// lengths store the same bytes; each is its own tape, as it carries its own source.
+    pub fn tape_identity(source: Self, tape: &[u8]) -> Self {
+        #[cfg(any(test, feature = "test-hooks"))]
+        if WRITE_LOCK_HELD.with(std::cell::Cell::get) {
+            HASHES_UNDER_WRITE_LOCK.with(|hashes| hashes.set(hashes.get() + 1));
+        }
+        let mut hash = Sha256::new();
+        hash.update(b"rerail.tape-of/v1\0");
+        hash.update(source.algorithm.to_le_bytes());
+        for lane in source.lanes {
+            hash.update(lane.to_le_bytes());
+        }
+        hash.update(tape);
+        Self::from_sha256_digest(hash.finalize().into())
     }
 
     pub fn from_sha256_digest(digest: [u8; 32]) -> Self {
@@ -639,25 +661,46 @@ pub struct ContentStore {
 
 impl Drop for ContentStore {
     /// Appends the atoms still pending (decision 0049 §4.3); another handle or the next open
-    /// writes them if this fails, and nothing durable names them meanwhile.
+    /// writes them if this fails, and nothing durable names them meanwhile. The store's last
+    /// handle then closes the process's connections to its file: the arena outlives it (the
+    /// planner's symbols keep it), its file stays closed until next read.
     fn drop(&mut self) {
-        // The queued writes first: they may name atoms this handle still holds.
-        self.end_writer();
-        if self.atoms.pending()
-            && let Err(error) = self.immediate_transaction(|_| Ok(()))
-        {
-            eprintln!("rerail: atoms: writing the pending atoms at close failed: {error}");
+        // With a writer, the atoms are its to write: every handle shares them, and its batch's commit appends them (a
+        // handle dropped inside a wave writes nothing). The queued writes first: they may name atoms this handle holds.
+        if self.atoms.pending() && self.write_back.is_some() {
+            self.write_back("the atoms at a handle's close", 0, Vec::new(), Box::new(|store| store.flush_atoms()));
+            self.end_writer();
+        } else {
+            self.end_writer();
+            if self.atoms.pending()
+                && let Err(error) = self.immediate_transaction(|_| Ok(()))
+            {
+                eprintln!("rerail: atoms: writing the pending atoms at close failed: {error}");
+            }
+        }
+        // Either way the handle closes: the writer's job runs on its own handle (`sibling`), which keeps the store
+        // open until the job is done. A handle left uncounted kept every connection to its store open for good.
+        if self.connection.close() {
+            self.atoms.release_reader();
         }
     }
 }
 
 impl ContentStore {
+    /// The process forgets the store at `path`, closed and about to be deleted while the process goes on (a test's
+    /// own): what it read of it to hold in memory (its frames, decision 0104) and its identity. Held past the store's
+    /// life, each is memory no run reads again.
+    pub fn forget(path: &Path) {
+        frames::forget_snapshot(&path.to_string_lossy());
+        atoms::forget_identity(&path.to_string_lossy());
+    }
+
     /// A handle of the same store for the writer's thread (`write_back`): the same atoms, caches of its own, no writer
     /// (it writes at once) and each job's holder.
     fn sibling(&self) -> ContentStore {
         ContentStore {
             database_path: self.database_path.clone(),
-            connection: ThreadConnection { database_path: self.database_path.clone() },
+            connection: ThreadConnection::new(self.database_path.clone(), self.connection.identity()),
             compression_level: self.compression_level,
             decompressed_cache: Mutex::new(DecompressedReadCache::new(DEFAULT_READ_CACHE_BYTES, DEFAULT_DECOMPRESSED_CACHE_TTL)),
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
@@ -682,15 +725,14 @@ impl ContentStore {
     }
 
     pub fn open(path: &Path) -> StoreResult<Self> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        // Created `0600` before SQLite opens it, in a `0700` folder, so the WAL SQLite creates beside it is private too.
+        private_files::prepare(path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
         let mut connection = Connection::open_with_flags(path, flags)?;
         // Only creating or migrating the schema takes the write lock (`initialize`).
-        let created = retry_busy(&mut BusyRetries::default(), || {
+        let identity = retry_busy(&mut BusyRetries::default(), || {
             Self::initialize(&mut connection)
         })?;
         drop(connection);
@@ -699,9 +741,7 @@ impl ContentStore {
         rerail_accel::ane::set_store(std::sync::Arc::new(accel_models::StoreModels::new(path)));
         Ok(Self {
             database_path: path.to_path_buf(),
-            connection: ThreadConnection {
-                database_path: path.to_path_buf(),
-            },
+            connection: ThreadConnection::new(path.to_path_buf(), identity),
             compression_level: DEFAULT_COMPRESSION_LEVEL,
             decompressed_cache: Mutex::new(DecompressedReadCache::new(
                 DEFAULT_READ_CACHE_BYTES,
@@ -709,11 +749,12 @@ impl ContentStore {
             )),
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
             facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
-            // A store just created replaces any atoms this process held for a file at its path.
-            atoms: if created { atoms::Atoms::fresh(path) } else { atoms::Atoms::for_path(path) },
+            // A store created again at its path, by this process or another, has atoms of its own.
+            atoms: atoms::Atoms::for_database(path, Some(identity)),
             working_set: working_set::WorkingSet::default(),
             holder: parking_lot::Mutex::new(None),
-            write_back: Some(write_back::register(path)),
+            // A store created again at its path has a writer of its own too.
+            write_back: Some(write_back::register_store(path, identity)),
             lease: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             git_tree_lookup_count: AtomicUsize::new(0),

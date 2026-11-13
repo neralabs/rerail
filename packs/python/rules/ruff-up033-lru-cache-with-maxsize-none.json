@@ -1,0 +1,174 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up033-lru-cache-with-maxsize-none",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use functools.cache instead of functools.lru_cache with maxsize=None; it is the same unbounded cache without the call.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "lru-cache-maxsize-none",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "when": {
+            "pythonVersion": {
+              "min": "3.9"
+            }
+          },
+          "utils": {
+            "none-literal": {
+              "any": [
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "none-literal"
+                  }
+                }
+              ]
+            },
+            "lru-maxsize-none-call": {
+              "kind": "call",
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "function",
+                    "matches": "lru-reference"
+                  }
+                },
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "arguments",
+                    "kind": "argument_list",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "keyword_argument",
+                      "all": [
+                        {
+                          "nthChild": {
+                            "position": 1,
+                            "ofRule": {
+                              "not": {
+                                "kind": "comment"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "nthChild": {
+                            "position": 1,
+                            "reverse": true,
+                            "ofRule": {
+                              "not": {
+                                "kind": "comment"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "value",
+                            "matches": "none-literal"
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "field": "name",
+                            "kind": "identifier",
+                            "regex": "^maxsize$"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "decorator-call": {
+              "any": [
+                {
+                  "matches": "lru-maxsize-none-call"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "decorator-call"
+                  }
+                }
+              ]
+            },
+            "lru-reference": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "functools.lru_cache"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "lru-reference"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "decorator",
+            "regex": "(?P<R>[\\s)\\\\]*(?:#[^\\n]*\\n[\\s)\\\\]*)*\\((?:\\s|#[^\\n]*)*maxsize\\s*=[\\s\\S]*?\\))\\s*(?:#[^\\n]*)?$",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "decorated_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "definition",
+                "kind": "function_definition"
+              }
+            },
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "decorator-call"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.R",
+        "code": "UP033",
+        "message": "Replace `lru_cache(maxsize=None)` with `functools.cache` (importing `cache` from functools if needed); it is the same unbounded cache and takes no call.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP033"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,10 +1,10 @@
-import { sensitiveByName } from "../path-boundary.js";
 import type { SteerRule } from "../adapter-contract.js";
 import type { AuditFailure, AuditMode, AuditScope } from "../audit/audit.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
+import { sensitiveByName } from "../path-boundary.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
-import { steerBlock, steerRules, steerText, type SteerFinding, type SteerTrigger } from "./rerail-steer.js";
+import { inlineCode, steerBlock, steerRules, steerText, type SteerFinding, type SteerTrigger } from "./rerail-steer.js";
 import { steerOrigin, type SteerRuleSource } from "./steer-origin.js";
 
 export type CodeRuleDslScalar = boolean | number | string | null;
@@ -99,9 +99,8 @@ export interface CodeRuleDslDefineClause {
 }
 
 export interface CodeRuleDslDefine {
-  /** Report all findings together only above this count. Failures remain visible. */
+  /** Report findings only above this count; failures remain visible. */
   report_when?: { count: { gt: number } };
-
   /** The language `utils` compile for; required with them. */
   language?: CodeRuleLanguageId;
   /**
@@ -197,26 +196,30 @@ export interface CodeRuleDslRelational {
   partitionBy?: "file" | "repository";
   syntax?: { name: string; gate: string; fields?: string[]; columns?: string[]; excludeKinds?: string[]; emptyTextKinds?: string[]; edges?: string; ownership?: string; owners?: Record<string,{kind:string;outermost?:boolean}> };
   inputs: Record<string, CodeRuleDslRelation>;
-  references?: { language: "python"; siblingLinks?: NonNullable<CodeRuleDslAstRule["calls"]>["siblingLinks"]; constructorFields?: NonNullable<CodeRuleDslAstRule["calls"]>["constructorFields"] };
+  references?: { language: "python"; siblingLinks?: { decorator: string; name: { replace: string; by: string } }[]; constructorFields?: { fieldToParameter: { replace: string; by: string } } };
   stages?: ({ name: string } & (
     | { query: string; indexes?: string[][]; deferred?: Record<string, string>; reachability?: never }
-    | { reachability: { roots: string; edges?: string; syntax?: string; batchSize?: number; graph?: "directed" | "forest" }; query?: never; indexes?: never; deferred?: never }
+    | { pythonAst: { roots: string; syntax: string; fields: ("dump" | "body_sha256" | "signature_sha256" | "identifier" | "unparse" | "literal_json" | "dump_sha256" | "column" | "repr_unparse")[] }; query?: never; indexes?: never; deferred?: never; reachability?: never }
+    | { reachability: { roots: string; edges?: string; syntax?: string; batchSize?: number; graph?: "directed" | "forest"; selection?: "memoized-first"; sinks?: string; match?: "node" | "edge" }; query?: never; indexes?: never; deferred?: never }
   ))[];
   query: string;
   key?: string[];
   code?: string;
+  /** Output column containing the exact diagnostic message. */
+  message?: string;
 }
 
 
 export type CodeRuleDslQuery =
   | CodeRuleDslRegexQuery
   | CodeRuleDslAstQuery
-  | CodeRuleDslSelectWhenQuery;
+  | CodeRuleDslSelectWhenQuery
+  | CodeRuleDslFileQuery;
 
 export interface CodeRuleDslRegexQuery {
   regex: {
     source: "file.content" | "file.path";
-    /** Named groups (`(?<NAME>…)`) become the witness's captures. */
+    /** Named groups (`(?<NAME>…)`) become the witness's captures; a `file.path` match's groups are text for the message, never an anchor. */
     pattern: string;
     /** Filters over each match's text: all include patterns hold and no exclude pattern holds. */
     include?: string[];
@@ -239,9 +242,17 @@ export interface CodeRuleDslRegexQuery {
   };
 }
 
+/**
+ * Each file in the rule's scope, whatever its type, without reading it: one witness per file, at the file's path with
+ * no line. In a `select_when.exists` it always holds.
+ */
+export interface CodeRuleDslFileQuery {
+  file: Record<string, never>;
+}
+
 export interface CodeRuleDslAstQuery {
   ast: {
-    /** Gate on whole-file syntax. Invalid permits matches inside error regions. */
+    /** Gate on whole-file syntax. */
     syntax?: "valid" | "invalid";
     language: CodeRuleLanguageId;
     rule: CodeRuleDslAstRule;
@@ -330,7 +341,8 @@ export type CodeRuleDslTransformation =
     }
   | { line: { source: string; default?: string; edge?: "start" | "end" } }
   | { lines: { source: string; default?: string } }
-  | { count: { source: string; default?: string } };
+  | { count: { source: string; default?: string } }
+  | { toPrecision: { source: string; default?: string; value?: boolean; digits: number | string } };
 
 /** A text condition: `regex` (unanchored) must match, `notRegex` must not; at least one. */
 export interface CodeRuleDslTextCondition {
@@ -375,6 +387,12 @@ export interface CodeRuleDslFileCondition {
    * `@builder.io/qwik`, `inferno`, `mithril`), `other` for the reverse, `unknown` for both, neither or no manifest.
    */
   jsxRuntime?: Array<"react" | "other" | "unknown">;
+  /**
+   * Every language: whether the file's text opens with a byte order mark (U+FEFF). Grammars read the mark as whitespace
+   * before the program, so no node's text, the program's included, holds it (eslint-plugin-n's `hashbang` reports it in
+   * a `bin` file).
+   */
+  byteOrderMark?: boolean;
 }
 
 /**
@@ -391,9 +409,9 @@ export interface CodeRuleDslPackageCondition {
   /**
    * The file's configured Node range is a subset of `subsetOf` (node-semver's `subset`). The configured range is
    * eslint-plugin-n's: `engines.node`, else the `devEngines.runtime` entry named `node`'s `version`, else `>=16.0.0`
-   * (also without a manifest); one that is no valid range falls through to the next.
+   * (also without a manifest); one that is no valid range falls through to the next. `notSubsetOf`: it is not.
    */
-  nodeVersion?: { subsetOf: string };
+  nodeVersion?: { subsetOf: string } | { notSubsetOf: string };
   /** The manifest lists one of these in `dependencies`, `devDependencies`, `peerDependencies` or `optionalDependencies`. Needs a manifest. */
   dependsOn?: string[];
   /** Over the file's path relative to the manifest's folder. Needs a manifest, `notRegex` too. */
@@ -414,6 +432,18 @@ export interface CodeRuleDslPackageCondition {
    * outside the graph; without such a manifest neither holds.
    */
   serverGraph?: boolean;
+  /** The manifest's `private` is `true`. Without a manifest neither `true` nor `false` holds. */
+  private?: boolean;
+  /**
+   * npm publishes the file, as eslint-plugin-n's `getNpmignore` reads it: a file is left out where the manifest's
+   * `files` whitelist leaves it out (each entry as `/<entry>` and `/<entry>/**` in node-ignore's gitignore semantics,
+   * `!` entries excluding at any depth, entries with braces or extglobs through globrex), or where its folder's
+   * `.npmignore` (else, without `files`, its `.gitignore`) ignores it (node-ignore, case-insensitive); never its `main`,
+   * `package.json`, or a top-level readme, licence, changelog or history file. Ignore files are regular files of at most
+   * 1 MiB (on disk never a symlink); without `files` or an ignore file, every file below the manifest is published.
+   * Without a manifest neither `true` nor `false` holds.
+   */
+  published?: boolean;
 }
 
 /** An inclusive version range; at least one bound. */
@@ -455,6 +485,14 @@ export interface CodeRuleDslLanguageOptions {
    * module (ESLint's default).
    */
   sourceType?: "script" | "module" | "commonjs";
+  /**
+   * How a file decides its module system where `sourceType` is omitted (the two cannot both be set). `file` (default):
+   * as `sourceType` describes. `package-type`: by its extension and its nearest `package.json`'s `type` alone, as
+   * eslint-plugin-n's configs give each file one: `.mjs` and `.mts` are `module`, `.cjs` and `.cts` `commonjs`, any
+   * other file `module` only where `type` is `module`, and `commonjs` where it is anything else, unset, or where there is
+   * no `package.json`; no syntax is read. The query's `when.sourceType` reads the same.
+   */
+  moduleSystem?: "file" | "package-type";
   /** Identifiers to declare global (`readonly`, `writable`) or to remove (`off`). At most 16384. */
   globals?: Record<string, CodeRuleDslGlobalSetting>;
   /**
@@ -654,7 +692,6 @@ export interface CodeRuleDslAstRule extends CodeRuleDslSemanticAstRuleFields {
   kind?: string;
   regex?: string;
   nthChild?: CodeRuleDslNthChild;
-  /** File path condition that can also scope a call-graph seed. */
   filePath?: CodeRuleDslTextCondition;
   all?: CodeRuleDslAstRule[];
   any?: CodeRuleDslAstRule[];
@@ -714,15 +751,77 @@ export interface CodeRuleDslLayoutGap {
  * is not evaluated in a file with syntax errors. A parsed tree's rule (`parse`) refuses it.
  */
 export interface CodeRuleDslLayout {
-  /** Regex on the complete first line of the node, or the preceding line. */
   line?: string;
   previousLine?: string;
-  /** Regex over a bounded window around the first line, optionally ending at the first matching line, inclusive. */
   context?: { before?: number; after?: number; through?: string; regex: string };
   span?: CodeRuleDslLineCount;
   start?: CodeRuleDslLineCount;
   before?: CodeRuleDslLayoutGap;
   after?: CodeRuleDslLayoutGap;
+}
+
+/** `importTarget`'s module types, eslint-plugin-n's `ImportTarget#moduleType`. */
+export type CodeRuleDslImportTargetModuleType = "unknown" | "relative" | "absolute" | "node" | "npm" | "http" | "data";
+
+/**
+ * The import or require target a specifier node names, as eslint-plugin-n 18.4.1's `ImportTarget` reads it at default
+ * options (JavaScript and TypeScript only; a Rerail extension). The node's value must be known without scope (as
+ * `getStringIfConstant` reads it, converted as `String()` converts it); the specifier is that value up to its first
+ * `!`. Each key listed must hold. A fact that does not apply to the target (`extensionSpelled` of a package,
+ * `published` of a module with a name, `devDependency` or `declared` of a path, any of the last three where the
+ * importing file has no `package.json`) holds for neither `true` nor `false`.
+ *
+ * Resolution is enhanced-resolve 5.26's, with the options the plugin gives it: conditions `node` and `require`, with
+ * `import` for the `import` style and `import` and `types` for the `type` style; `main` and `index` only for the
+ * `require` style or a package or built-in; the plugin's try extensions; its Node built-in table as a `false` fallback;
+ * for a TypeScript file, its nearest `tsconfig.json`'s `paths` (through `extends`) as aliases and its extension map.
+ * It reads the files the evaluation holds over the files on disk below the workspace root (`setRoot`), nothing above
+ * it; a snapshot resolves among its own files.
+ */
+export interface CodeRuleDslImportTarget {
+  /**
+   * The target's style where no ancestor decides it: `import` for an import or export source or an `import()`
+   * argument, `require` for a `require()` or `require.resolve()` argument. An ancestor call of `require` makes it
+   * `require`, an `import` declaration `import` (`type` for `import type`), an `export type … from` `type`, as the
+   * plugin's `getModuleStyle` reads them.
+   */
+  via: "import" | "require";
+  /** The specifier's module type is this one, or one listed. */
+  moduleType?: CodeRuleDslImportTargetModuleType | CodeRuleDslImportTargetModuleType[];
+  /** The specifier names a Node built-in module (`module.isBuiltin`, Node 26.5.0's names). */
+  builtin?: boolean;
+  /**
+   * The target has a file path (`filePath`): the file it resolves to, a relative or absolute path's own path where it
+   * does not resolve, or the specifier of an `import` of a `data:` or `http(s):` URL.
+   */
+  resolved?: boolean;
+  /** Resolution failed (`resolveError`); a module an alias or the built-in fallback ignores did not. */
+  failed?: boolean;
+  /**
+   * A relative or absolute specifier ends with the extension `file-extension-in-import` expects at its `always`
+   * default: the file's (a folder's `index` file's, or, where nothing is at the path, that of a file of its name with a
+   * try extension), mapped for a TypeScript file to the JavaScript extension it compiles to.
+   */
+  extensionSpelled?: boolean;
+  /**
+   * npm publishes the file a target with no module name names, as the importing file's package decides
+   * (`check-publish`'s `isPrivateFile`, negated: its `files`, `main`, `.npmignore` and `.gitignore`, read as
+   * `file.package.published` reads them); a file outside that package is not published.
+   */
+  published?: boolean;
+  /**
+   * The module is in the importing file's package's `devDependencies` and not its `dependencies`,
+   * `peerDependencies` or `optionalDependencies` (`check-publish`'s `isDevPackage`).
+   */
+  devDependency?: boolean;
+  /**
+   * The module is the importing file's package's own name or one any of its four dependency fields lists, or one the
+   * workspace root claiming the package (its `workspaces`, or `pnpm-workspace.yaml`) lists; a `type` import also
+   * counts its `@types` package (`check-extraneous`).
+   */
+  declared?: boolean;
+  /** In a TypeScript file, the specifier starts with a `paths` key of its `tsconfig.json`, wildcard trimmed (`hasTSAlias`). */
+  aliased?: boolean;
 }
 
 /**
@@ -863,7 +962,6 @@ export type CodeRuleDslParseGrammar = "percentFormat" | "braceFormat" | "annotat
  */
 export interface CodeRuleDslParse extends CodeRuleDslAstRule {
   grammar: CodeRuleDslParseGrammar;
-  /** The opaque slot text in a pythonFString projection. Defaults to "{}". */
   interpolation?: string;
 }
 
@@ -946,6 +1044,12 @@ export interface CodeRuleDslValueTest {
    * by default. Rules that follow are not evaluated in files with syntax errors (`source-incomplete`).
    */
   follow?: boolean;
+  /**
+   * `true`: `eq`, `startsWith` and `regex` test what the node names rather than its value: ESTree's name (an identifier's,
+   * `\u` escapes decoded; a private name's without `#`) or a string literal's value; PHP's symbol name. A node without a
+   * name fails. Only those three predicates stand beside it; Python and Rust refuse it.
+   */
+  name?: boolean;
 }
 
 /**
@@ -1464,6 +1568,13 @@ export interface RepositoryAuditHooks {
   finish(checkoutRoot: string, auditId: string | undefined): void;
 }
 
+/** The pattern of Git's exclude stack that ignores a path: the file it was read from (absolute; absent when it came from no file), its line there, and the pattern. */
+export interface IgnoredEditMatch {
+  source?: string | null;
+  line: number;
+  pattern: string;
+}
+
 export interface CodeRuleAuditor {
   openWorkspace(sessionId: string): Promise<void>;
   /** Refresh live rules before filtering paths for a tool's preimages; `acceptsPath` reflects them on return. */
@@ -1478,10 +1589,23 @@ export interface CodeRuleAuditor {
    */
   ignoresPath?(path: string, directory: boolean): boolean;
   /**
+   * Why an edit of the file `path` (as for `acceptsPath`) goes unchecked though the rules would read it: the pattern
+   * by which Git ignores it, while the session follows `.gitignore`, with its file (absolute) and line. Undefined for a
+   * file that is checked, and for one no rule reads anyway. Absent: no edit is left out for Git's rules.
+   */
+  ignoredEdit?(path: string): IgnoredEditMatch | undefined;
+  /**
    * The folder whose real path must contain an accepted `path`'s real path (its owning checkout); the session folder
    * when undefined or absent.
    */
   sourceRoot?(path: string): string | undefined;
+  /** The repository's other worktrees (physical) a source walk covers as well as the session folder; none when absent. */
+  worktreeRoots?(): readonly string[];
+  /**
+   * The checkouts (physical) whose Git ignore rules the session's checks follow, beside the session folder's own: a
+   * change to their exclude files changes what is checked. None beyond the session folder's when absent.
+   */
+  ignoreRuleRoots?(): readonly string[];
   auditGeneratedEdits(sessionId: string, batch: CodeRuleEditBatch): Promise<CodeRuleResponse>;
   /** Wait until every accepted generated edit has completed, without waiting for unrelated audits. */
   settleGeneratedEdits?(): Promise<void>;
@@ -1517,14 +1641,6 @@ function violationLocation(violation: CodeRuleViolation): string | undefined {
 
 /** Longest fix text rendered inline in a steer; a longer fix is cut with a note. */
 export const STEER_FIX_CHARS = 240;
-
-/** `text` as CommonMark inline code: a backtick fence longer than any backtick run in it, padded where it starts or ends with one. */
-function inlineCode(text: string): string {
-  const longest = Math.max(0, ...[...text.matchAll(/`+/gu)].map(([run]) => run.length));
-  const fence = "`".repeat(longest + 1);
-  const padding = text.startsWith("`") || text.endsWith("`") ? " " : "";
-  return `${fence}${padding}${text}${padding}${fence}`;
-}
 
 /**
  * The fix's lines under its finding: a deletion, a one-line replacement inline, or a longer one in a `~~~` fence. The

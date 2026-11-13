@@ -35,11 +35,19 @@ pub(in crate::code_rule_dsl) fn on() -> bool {
     std::env::var_os("RERAIL_SPIKE_RECURSIVE").is_some()
 }
 
+#[cfg(unix)]
 fn cpu() -> f64 {
     let mut now = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     // SAFETY: `now` is a valid timespec for the call to fill.
     unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut now) };
     now.tv_sec as f64 + now.tv_nsec as f64 * 1e-9
+}
+
+/// Elsewhere (Windows, the browser build): the thread's user and system CPU as the corpus runner reads them.
+#[cfg(not(unix))]
+fn cpu() -> f64 {
+    let (user, sys) = super::thread_usage();
+    user + sys
 }
 
 type Rows = Vec<Vec<i64>>;
@@ -59,7 +67,7 @@ fn recursive(program: &Program) -> Vec<BTreeSet<String>> {
     sccs.into_iter()
         .filter(|scc| {
             scc.len() > 1
-                || program.rules.iter().any(|r| scc.contains(&r.head.rel) && r.body.iter().any(|l| matches!(l, Literal::Atom(a) if scc.contains(&a.rel))))
+                || program.rules.iter().any(|r| scc.contains(r.head.rel.as_str()) && r.body.iter().any(|l| matches!(l, Literal::Atom(a) if scc.contains(a.rel.as_str()))))
         })
         .collect()
 }
@@ -1768,13 +1776,13 @@ pub(in crate::code_rule_dsl) fn run(
     };
     let min_rows: usize = std::env::var("RERAIL_SPIKE_RECURSIVE_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(1000);
     for scc in recursive(program) {
-        let rules: Vec<&front::Rule> = program.rules.iter().filter(|r| scc.contains(&r.head.rel)).collect();
-        let reads: BTreeSet<String> = rules.iter().flat_map(|r| &r.body).filter_map(|l| if let Literal::Atom(a) = l { Some(a.rel.clone()) } else { None }).filter(|r| !scc.contains(r)).collect();
+        let rules: Vec<&front::Rule> = program.rules.iter().filter(|r| scc.contains(r.head.rel.as_str())).collect();
+        let reads: BTreeSet<String> = rules.iter().flat_map(|r| &r.body).filter_map(|l| if let Literal::Atom(a) = l { Some(a.rel.to_string()) } else { None }).filter(|r| !scc.contains(r.as_str())).collect();
         let facts = |rel: &str| -> Option<Rows> {
             program.facts.get(rel).map(|rows| rows.iter().map(|r| r.iter().map(|v| match v { front::Value::Int(i) => *i, front::Value::Str(_) => i64::MIN }).collect()).collect())
         };
         let new_of = |rel: &str| derived.iter().find(|(r, _, _)| r == rel).map(|(_, w, h)| rel_rows(h, *w)).or_else(|| inputs.iter().find(|(r, _)| r == rel).map(|(_, s)| rows_of(s.as_ref())));
-        let old_of = |rel: &str| old.kept(rel).map(|(h, w)| rel_rows(h, w)).or_else(|| old.input_source(rel).map(|s| rows_of(s.as_ref())));
+        let old_of = |rel: &str| old.kept(rel).map(|(h, w)| rel_rows(&h, w)).or_else(|| old.input_source(rel).map(|s| rows_of(s.as_ref())));
         let old_rows: usize = scc.iter().filter_map(|r| old_of(r)).map(|r| r.len()).sum();
         // A component not maintained this run loses what it carried: its rows moved without it.
         let forget = || {

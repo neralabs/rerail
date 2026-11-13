@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promi
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  RERAIL_HOSTS,
   type RerailHost,
   defaultRerailDatabasePath,
   openRerailDatabase,
@@ -9,6 +10,8 @@ import {
   loadRuleCatalog,
   setUpRepository,
   upsertLibraryRule,
+  approve,
+  ruleSubject,
   type ConversationRule,
 } from "../../src/engine/index.js";
 import { RerailDaemon } from "../../src/daemon/index.js";
@@ -20,6 +23,7 @@ import {
   hostCli,
   hostCommand,
   readDeliveries,
+  removeHostAuth,
   requireBuilt,
   run,
   sandboxAvailable,
@@ -71,8 +75,9 @@ function seedSmokeRules(rerailHome: string, project: string, conversationRule: C
   const database = openRerailDatabase(databasePath);
   try {
     const ruleCatalog = loadRuleCatalog();
-    upsertLibraryRule(database, ruleCatalog, rule, "code");
-    upsertLibraryRule(database, ruleCatalog, conversationRule, "conversation");
+    for (const stored of [upsertLibraryRule(database, ruleCatalog, rule, "code"), upsertLibraryRule(database, ruleCatalog, conversationRule, "conversation")]) {
+      approve(database, ruleSubject(stored.document.rule.id, stored.payloadHash));
+    }
     const { repositoryKey } = recordCheckout(database, project);
     setUpRepository(database, repositoryKey, {
       packs: [],
@@ -98,7 +103,7 @@ type Evidence = {
   failure?: string;
 };
 
-const HOSTS: readonly RerailHost[] = ["omp", "pi", "claude-code", "codex", "cursor"];
+const HOSTS: readonly RerailHost[] = RERAIL_HOSTS;
 const timeoutSetting = process.env.RERAIL_SMOKE_TIMEOUT_MS ?? "180000";
 const TIMEOUT_MS = Number(timeoutSetting);
 if (!Number.isSafeInteger(TIMEOUT_MS) || TIMEOUT_MS <= 0) {
@@ -457,7 +462,14 @@ async function runHost(host: RerailHost, attempt: number): Promise<Evidence> {
     } finally {
       if (previousRerailHome === undefined) delete process.env.RERAIL_HOME;
       else process.env.RERAIL_HOME = previousRerailHome;
-      if (sandbox !== undefined) await rm(sandbox, { recursive: true, force: true });
+      if (sandbox !== undefined) {
+        // The credential copy goes first and on its own, so a recursive delete that fails partway cannot leave it behind.
+        try {
+          await removeHostAuth(sandbox);
+        } finally {
+          await rm(sandbox, { recursive: true, force: true });
+        }
+      }
     }
   }
 }

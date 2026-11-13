@@ -19,21 +19,19 @@ use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::compile::options;
 use crate::code_rule_dsl::language::{Family, SourceType};
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
-use crate::code_rule_dsl::literal::{Grammar, LiteralHost};
-use crate::code_rule_dsl::matcher::{
-    Arguments, Passed, ScopeName, SemanticText, Style, Unresolved, file_clippy,
-};
+use crate::code_rule_dsl::literal::Grammar;
+use crate::code_rule_dsl::matcher::{Arguments, Passed, ScopeName, SemanticText, Style, Unresolved, file_index};
 use crate::code_rule_dsl::model::ViolationSpec;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
-use crate::code_rule_dsl::scope::php_names::PhpNames;
 use crate::code_rule_dsl::scope::rust::{self as scope_rust, LABEL, MACRO};
 use crate::code_rule_dsl::scope::usage::{Steps, Usage};
 use crate::code_rule_dsl::scope::{
     Binding, BuildError, Builder, Directives, Form, Lookup, Reading, Reference, ScopeKind,
     ScopeTable, TYPE,
 };
-use crate::code_rule_dsl::suppress::{ClippyIndex, Suppress, root};
+use crate::code_rule_dsl::suppress::clippy::ClippyIndex;
+use crate::code_rule_dsl::suppress::{Suppress, root};
 use crate::code_rule_dsl::value::rust::{FloatTy, IntTy, RustValue, evaluate, evaluate_following};
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
 use crate::code_rule_dsl::value::{BigInt, Context, NodeRef, Value};
@@ -43,9 +41,12 @@ use std::cmp::Ordering;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::Arc;
+use crate::code_rule_dsl::calls::closure::lang_rust::RustLinks as _;
+use crate::code_rule_dsl::matcher::arguments::rust::RustArguments as _;
+use crate::code_rule_dsl::scope::usage::lang_rust::RustUsage as _;
 
 /// Rust's family.
-pub(crate) struct Rust;
+pub struct Rust;
 
 impl Adapter for Rust {
     const FAMILY: Family = Family::Rust;
@@ -55,6 +56,12 @@ impl Adapter for Rust {
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = false;
+    const STRIPS_BOM: bool = false;
+    const COMMENT_KINDS: &'static [&'static str] = &["line_comment", "block_comment"];
+    /// A `shebang` is passed over by its `#!` text, as in every grammar.
+    const PREAMBLE_KINDS: &'static [&'static str] = &[];
+    /// A `block` starts at its `{` or label, never at its first statement.
+    const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -85,8 +92,8 @@ impl Adapter for Rust {
         anchored: Range<usize>,
         _: (usize, usize),
     ) -> bool {
-        suppress.clippy.as_ref().is_some_and(|clippy| {
-            let index = file_clippy(|| ClippyIndex::read(&root(node)));
+        suppress.get::<crate::code_rule_dsl::suppress::clippy::Suppressions>().is_some_and(|clippy| {
+            let index = file_index(|| ClippyIndex::read(&root(node)));
             index.suppresses(clippy, anchored.start)
         })
     }
@@ -180,6 +187,11 @@ impl ScopeRules for Rust {
         "lifetime",
         "label",
     ];
+    const PAREN_KINDS: &'static [&'static str] = &["parenthesized_expression"];
+    const DOTTED_NAME_KINDS: &'static [&'static str] = &[];
+    const ATTRIBUTE_KINDS: &'static [&'static str] =
+        &["scoped_identifier", "scoped_type_identifier"];
+    const THIS_KINDS: &'static [&'static str] = &[];
     const PRIVATE_NAME_KINDS: &'static [&'static str] = &[];
     /// `let` and `const` bind by assignment, `static` by itself; items are definitions, `type`
     /// aliases and `use` imports; generic parameters, `Self`, parameters, `for` and `match` (and
@@ -303,7 +315,7 @@ impl ScopeRules for Rust {
         None
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn unbound_locally(_: &ScopeTable, _: &Reference, _: &str, _: bool) -> bool {
         false
     }
@@ -662,6 +674,9 @@ impl ValueRules for Rust {
 
     fn feature(feature: ValueFeature<'_>) -> Result<(), Refusal> {
         match feature {
+            ValueFeature::ToPrecision => refused(
+                "`toPrecision` lays a number out as ECMAScript's Number.prototype.toPrecision; Rust numbers have no such layout",
+            ),
             ValueFeature::Type(name) if RUST_TYPES.contains(&name) => Ok(()),
             ValueFeature::Type(name) => refused(format!(
                 "`{name}` is not a Rust type name; expected one of {}",
@@ -742,9 +757,9 @@ impl CallRules for Rust {
     fn tables(
         table: impl FnOnce() -> Option<Arc<ScopeTable>>,
         _: impl FnOnce() -> Option<Arc<ModulePath>>,
-        _: impl FnOnce() -> Option<Arc<PhpNames>>,
+        _: impl FnOnce() -> Option<crate::code_rule_dsl::scope::NameTable>,
     ) -> Option<FileTables> {
-        Some(FileTables::Rust(table()?))
+        Some(FileTables { table: table()?, module: None, names: None })
     }
 
     fn callee_at<'t, D: Doc>(
@@ -752,7 +767,7 @@ impl CallRules for Rust {
         summary: &Summary,
         tables: impl FnOnce() -> Option<FileTables>,
     ) -> Option<Option<Callee>> {
-        let Some(FileTables::Rust(table)) = tables() else {
+        let Some(FileTables { table, .. }) = tables() else {
             return None;
         };
         Some(calls::rust::callee_at(node, summary, &table))
@@ -803,6 +818,15 @@ impl FormatArgRules for Rust {
 
 /// String literals: format templates.
 impl SyntaxRules for Rust {
+    fn parse_literal<D: Doc>(
+        grammar: Grammar,
+        node: &Node<'_, D>,
+        _: &str,
+        spend: &mut dyn FnMut(usize) -> bool,
+    ) -> Option<crate::code_rule_dsl::literal::Parsed> {
+        crate::code_rule_dsl::literal::rust_format::parse_string(node, grammar, spend)
+    }
+
     const DOLLAR_NAMES: bool = false;
 
     fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
@@ -817,16 +841,14 @@ impl SyntaxRules for Rust {
             SyntaxFeature::LanguageOptions => {
                 refused("`languageOptions` is not available for rust policies")
             }
-            SyntaxFeature::Parse(grammar) => match grammar.literal_host() {
-                LiteralHost::RustString => Ok(()),
-                LiteralHost::EcmaComment | LiteralHost::PhpComment => unhosted(grammar, ""),
-                LiteralHost::PythonString | LiteralHost::PhpString => match grammar {
-                    Grammar::Brace | Grammar::Percent | Grammar::Printf => {
-                        unhosted(grammar, "; Rust's format templates are `rustFormat`")
-                    }
-                    Grammar::Scanf => unhosted(grammar, "; Rust has no scanf formats"),
-                    _ => unhosted(grammar, ""),
-                },
+            SyntaxFeature::Parse(grammar) if crate::code_rule_dsl::language::Family::of(grammar.host_language()) == crate::code_rule_dsl::language::Family::Rust => Ok(()),
+            SyntaxFeature::Parse(grammar) if grammar.reads_comments() => unhosted(grammar, ""),
+            SyntaxFeature::Parse(grammar) => match grammar.name() {
+                "braceFormat" | "percentFormat" | "printfFormat" => {
+                    unhosted(grammar, "; Rust's format templates are `rustFormat`")
+                }
+                "scanfFormat" => unhosted(grammar, "; Rust has no scanf formats"),
+                _ => unhosted(grammar, ""),
             },
         }
     }

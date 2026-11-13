@@ -4,12 +4,14 @@ use crate::code_rule_dsl::matcher::Semantic;
 pub(super) fn compile_in(semantic: &Semantic, _inlining: &mut Inlining) -> AnchorPlan {
     match semantic {
         // Lines and bytes hold on any node.
-        Semantic::Layout(_) | Semantic::FilePath(_) | Semantic::Host(_) | Semantic::Embedded(_) => {
+        Semantic::Layout(_) | Semantic::FilePath(_) | Semantic::Gap(_) | Semantic::Host(_) | Semantic::Embedded(_) => {
             AnchorPlan::unrestricted()
         }
         // Every value predicate except `constant: false` needs a known value, which only the
         // kinds the decoder reads can have. Following bindings, a name has a value too, and in
         // PHP a named or class constant.
+        // A name (`name: true`) is no value: identifiers, private names and strings have one.
+        Semantic::Value(test) if test.name => AnchorPlan::unrestricted(),
         Semantic::Value(test) if test.constant != Some(false) => {
             let kinds = super::value_kinds(&test.reading);
             AnchorPlan {
@@ -19,6 +21,12 @@ pub(super) fn compile_in(semantic: &Semantic, _inlining: &mut Inlining) -> Ancho
             }
         }
         Semantic::Value(_) => AnchorPlan::unrestricted(),
+        // A target is a node with a known string value.
+        Semantic::Term(term) => AnchorPlan {
+            root_kinds: Some(super::value_kinds(term.reading())),
+            condition: Condition::Always,
+            exact: false,
+        },
         // Only a string literal parses.
         Semantic::Parse(test) => AnchorPlan {
             root_kinds: Some(test.host_kinds.as_ref().clone()),

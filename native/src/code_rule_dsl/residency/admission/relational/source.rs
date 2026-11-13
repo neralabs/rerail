@@ -25,7 +25,7 @@ impl ToSql for Slice {
     }
 }
 
-pub(in crate::code_rule_dsl) fn charge(work: &AtomicUsize, count: usize) -> Result<()> {
+pub fn charge(work: &AtomicUsize, count: usize) -> Result<()> {
     if work
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
             left.checked_sub(count)
@@ -40,7 +40,7 @@ pub(in crate::code_rule_dsl) fn charge(work: &AtomicUsize, count: usize) -> Resu
     Ok(())
 }
 
-pub(in crate::code_rule_dsl) fn install(
+pub fn install(
     db: &Connection,
     snapshot: Option<&Snapshot>,
     work: Arc<AtomicUsize>,

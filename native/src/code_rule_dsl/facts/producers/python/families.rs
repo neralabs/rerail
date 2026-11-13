@@ -23,10 +23,9 @@ use crate::code_rule_dsl::facts::core::{Facts, NONE, kind_atom};
 use crate::code_rule_dsl::language::KindCatalog;
 
 /// The rows' version: a change to what they hold changes the families' producer (`families::py_producer`).
-pub(crate) const VERSION: u32 = 1;
+pub(crate) const VERSION: u32 = 3;
 
-/// `py_exec_context.kind`'s names, by `ContextKind` order.
-pub(crate) const CONTEXTS: [&str; 5] = ["module", "sync_function", "async_function", "class", "lambda"];
+pub use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS as CONTEXTS;
 /// `py_call_arg.spread`'s names: none, `*x`, `**x`.
 pub(crate) const SPREADS: [&str; 3] = ["none", "positional", "keywords"];
 
@@ -51,7 +50,7 @@ enum Role {
 }
 
 /// The dialect's roles and fields the producer reads.
-pub(crate) struct Grammar {
+pub struct Grammar {
     tag: u8,
     roles: Vec<Role>,
     calls: Vec<u32>,
@@ -65,7 +64,7 @@ pub(crate) struct Grammar {
 }
 
 impl Grammar {
-    pub(crate) fn new(tag: u8, catalog: &KindCatalog) -> Self {
+    pub fn new(tag: u8, catalog: &KindCatalog) -> Self {
         let roles: Vec<Role> = (0..catalog.kind_count() as u16)
             .map(|code| match (catalog.kind_name(code), catalog.kind_is_named(code)) {
                 (Some("call"), true) => Role::Call,
@@ -104,13 +103,16 @@ impl Grammar {
         self.tag
     }
     fn role(&self, f: &Facts, id: u32) -> Role {
-        self.roles.get(usize::from(crate::code_rule_dsl::facts::core::kind_code(f.kind[id as usize]))).copied().unwrap_or(Role::Other)
+        self.atom_role(f.kind[id as usize])
+    }
+    fn atom_role(&self, atom: u32) -> Role {
+        self.roles.get(usize::from(crate::code_rule_dsl::facts::core::kind_code(atom))).copied().unwrap_or(Role::Other)
     }
 }
 
 /// One document's rows, in core ids (`NONE`: none). `kind` and `spread` index [`CONTEXTS`] and [`SPREADS`].
 #[derive(Default, Debug, PartialEq, Eq)]
-pub(crate) struct Rows {
+pub struct Rows {
     pub call: Vec<[u32; 2]>,
     pub site: Vec<[u32; 3]>,
     pub context: Vec<[u32; 3]>,
@@ -152,7 +154,7 @@ fn context(g: &Grammar, f: &Facts, call: u32) -> (u32, u32) {
                     let kind = match role {
                         Role::Class => 3,
                         Role::Lambda => 4,
-                        _ if f.children(owner).iter().any(|&c| g.role(f, c) == Role::Async) => 2,
+                        _ if f.tokens(owner).iter().any(|t| g.atom_role(t.kind) == Role::Async) => 2,
                         _ => 1,
                     };
                     return (owner, kind);
@@ -165,8 +167,8 @@ fn context(g: &Grammar, f: &Facts, call: u32) -> (u32, u32) {
 }
 
 /// The rows of one document's facts, from its calls' postings.
-pub(crate) fn rows(g: &Grammar, f: &Facts) -> Rows { collect_rows(g,f,true) }
-pub(crate) fn structure(g: &Grammar, f: &Facts) -> Rows { collect_rows(g,f,false) }
+pub fn rows(g: &Grammar, f: &Facts) -> Rows { collect_rows(g,f,true) }
+pub fn structure(g: &Grammar, f: &Facts) -> Rows { collect_rows(g,f,false) }
 fn collect_rows(g: &Grammar, f: &Facts, with_arguments: bool) -> Rows {
     let mut calls: Vec<u32> = g.calls.iter().flat_map(|&atom| f.of_kind(atom).iter().copied()).collect();
     calls.sort_unstable();
@@ -207,11 +209,10 @@ pub(crate) fn digest(rows: &Rows) -> [u8; 32] {
     hash.finalize().into()
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 /// Extract only calls requested by the consumer; no all-call scan or context calculation.
-pub(crate) fn arguments(g:&Grammar,f:&Facts,calls:&[u32])->Vec<[u32;6]> {
+pub fn arguments(g:&Grammar,f:&Facts,calls:&[u32])->Vec<[u32;6]> {
     let mut out=Rows::default();
     for &call in calls { if g.role(f,call)==Role::Call { append_arguments(g,f,call,&mut out); } }
     out.arg
@@ -253,6 +254,6 @@ pub(crate) fn qualification_chain(g:&Grammar,f:&Facts,n:u32)->Option<(String,Vec
     Some((crate::code_rule_dsl::identifier::python_name(f.text(n).into()).into_owned(),tail))
 }
 
-pub(crate) mod candidates;
-#[cfg(test)]
-pub(crate) use candidates as candidate_spike;
+pub mod candidates;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use candidates as candidate_spike;

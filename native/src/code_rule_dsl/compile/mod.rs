@@ -1,29 +1,29 @@
-mod arguments;
-mod ast_rule;
-#[cfg(test)]
-mod binding_tests;
-mod binds;
-mod compare;
-pub(crate) mod config;
-pub(super) mod define;
-mod dialect;
-pub(crate) mod documents;
-pub(super) mod evidence;
-#[cfg(test)]
-mod examples_tests;
-mod format_args;
-mod layout;
-mod line_state;
-mod nth_child;
-pub(crate) mod options;
-mod order;
-#[cfg(test)]
-mod params_tests;
-mod parse;
-mod resolve;
-mod transform;
-mod utils;
-mod value;
+pub mod arguments;
+pub mod ast_rule;
+// binding_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
+pub mod binds;
+pub mod compare;
+pub mod config;
+pub mod define;
+pub mod dialect;
+pub mod documents;
+pub mod evidence;
+// examples_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
+pub mod format_args;
+// cratify: `import_target` is rerail-lang-ecma's (it mounts it)
+pub mod layout;
+pub mod line_state;
+pub mod nth_child;
+pub mod options;
+pub mod order;
+// params_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
+pub mod parse;
+pub mod resolve;
+pub mod shared;
+pub mod token_tests;
+pub mod transform;
+pub mod utils;
+pub mod value;
 
 use super::json::{
     bounded_text, invalid, json_error, non_empty_str, object, reject_unknown, required_str,
@@ -32,7 +32,7 @@ use super::language::adapter::{Refusal, gate};
 use super::language::{CodeRuleLanguage, Semantic, Support};
 use super::matcher::{
     AnchorPlan, AstMatcher, Capture, Constrained, GrammarMatcher, Reading, RequiredText,
-    UtilOrigin, UtilTable, collect_variables, reads_values,
+    UtilOrigin, UtilTable, collect_variables, reads_import_targets, reads_values,
 };
 use super::model::{
     Anchor, Capabilities, ClauseKind, CodeRuleScope, CompiledClause, Limits, Query, RegexLines,
@@ -41,7 +41,7 @@ use super::model::{
 use super::soundness::sound_under_errors;
 use super::violations;
 use crate::code_rule_dsl::language::{GrammarDialect, PatternSource, rule_pattern};
-pub(super) use ast_rule::compile_ast_rule;
+pub use ast_rule::compile_ast_rule;
 use ast_rule::validate_ast_rule;
 use compare::{binding_site_index, bound_elsewhere, compare_sites, frame_scope};
 use define::{CLAUSE_KINDS, Defines, collect_defines, is_define};
@@ -52,14 +52,16 @@ use napi::Result;
 use regex::Regex;
 use serde::de::{self, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Value, json};
+use shared::SharedTables;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
-pub(super) use utils::UtilScope;
+pub use utils::UtilScope;
 use utils::{UtilDef, UtilIds, reachable, reject_util_cycles, rule_map, util_map};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Parses a code-rule document. An object with two equal keys is an error: a plain `Value` keeps the
 /// last one, so the first term would vanish silently (ast-grep 0.45.3 rejects such a rule).
-pub(super) fn parse_document(source: &str, format: &str) -> Result<Value> {
+pub fn parse_document(source: &str, format: &str) -> Result<Value> {
     match format {
         "json" => {
             let mut deserializer = serde_json::Deserializer::from_str(source);
@@ -175,7 +177,7 @@ impl<'de> Visitor<'de> for UniqueKeys {
     }
 }
 
-pub(super) fn parse_capabilities(source: &str) -> Result<Capabilities> {
+pub fn parse_capabilities(source: &str) -> Result<Capabilities> {
     let raw: Value = serde_json::from_str(source).map_err(json_error)?;
     let limits = raw
         .get("limits")
@@ -208,7 +210,7 @@ fn limit(limits: &Map<String, Value>, name: &str) -> Result<usize> {
         })
 }
 
-pub(super) fn compile_scope(value: Option<&Value>) -> Result<CodeRuleScope> {
+pub fn compile_scope(value: Option<&Value>) -> Result<CodeRuleScope> {
     let (include, exclude) = if let Some(value) = value {
         let scope = object(value, "/scope")?;
         reject_unknown(scope, &["include", "exclude"], "/scope")?;
@@ -229,7 +231,7 @@ pub(super) fn compile_scope(value: Option<&Value>) -> Result<CodeRuleScope> {
     })
 }
 
-fn string_array(value: &Value, key: &str, path: &str) -> Result<Vec<String>> {
+pub fn string_array(value: &Value, key: &str, path: &str) -> Result<Vec<String>> {
     value
         .get(key)
         .and_then(Value::as_array)
@@ -244,7 +246,7 @@ fn string_array(value: &Value, key: &str, path: &str) -> Result<Vec<String>> {
         .collect()
 }
 
-fn compile_glob_set(patterns: &[String], path: &str) -> Result<GlobSet> {
+pub fn compile_glob_set(patterns: &[String], path: &str) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
     for (index, pattern) in patterns.iter().enumerate() {
         let glob = GlobBuilder::new(pattern)
@@ -268,12 +270,14 @@ type CompiledDocument = (
 );
 
 /// The code rule's id, scope, clauses, required capabilities, and aggregate reporting gate.
-pub(super) fn compile_document(
+pub fn compile_document(
     document: &Value,
     capabilities: &Capabilities,
 ) -> Result<CompiledDocument> {
     let (resolved, options) = config::resolve(document)?;
     let document = &resolved;
+    // A token test nothing answers on a named-only tape is refused (t31).
+    token_tests::refuse(document)?;
     let root = object(document, "/")?;
     reject_unknown(
         root,
@@ -332,9 +336,11 @@ pub(super) fn compile_document(
                 .ok_or_else(|| invalid("/report_when/count/gt must be a nonnegative integer"))
         })
         .transpose()?;
+    let shared = collect_defines(clauses, capabilities)?;
     let defines = Defines {
-        utils: collect_defines(clauses, capabilities)?,
+        utils: &shared,
         options,
+        tables: SharedTables::new(&shared),
     };
     let mut compiled = Vec::with_capacity(clauses.len());
     let mut required_ast = BTreeSet::new();
@@ -394,11 +400,7 @@ fn compile_clause(
     let clause = object(value, path)?;
     reject_unknown(
         clause,
-        if cfg!(test) {
-            &["id", "forbid", "require_each", "budget", "relational", "llm", "violation"]
-        } else {
-            &["id", "forbid", "require_each", "budget", "llm", "violation"]
-        },
+        &["id", "forbid", "require_each", "budget", "relational", "llm", "violation"],
         path,
     )?;
     let id = required_str(value, "id", path)?.to_owned();
@@ -538,7 +540,6 @@ fn compile_clause(
                 distinct,
             }
         }
-        #[cfg(test)]
         "relational" => ClauseKind::Relational(
             crate::code_rule_dsl::residency::admission::relational::compile::compile(
                 &clause["relational"],
@@ -564,7 +565,7 @@ fn compile_clause(
         &kind,
         &format!("{path}/violation"),
     )?;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let data_layer = clause.get("relational").and_then(|relational| {
         crate::code_rule_dsl::waves::relational::compile::compile(
             relational,
@@ -582,12 +583,12 @@ fn compile_clause(
         kind,
         synthetic: false,
         decision: false,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         data_layer,
     })
 }
 
-pub(in crate::code_rule_dsl) fn compile_query(
+pub fn compile_query(
     value: &Value,
     path: &str,
     capabilities: &Capabilities,
@@ -725,8 +726,8 @@ fn compile_query_as(
     seed: bool,
 ) -> Result<Query> {
     let query = object(value, path)?;
-    reject_unknown(query, &["regex", "ast", "select_when"], path)?;
-    let forms = ["regex", "ast", "select_when"]
+    reject_unknown(query, &["regex", "ast", "select_when", "file"], path)?;
+    let forms = ["regex", "ast", "select_when", "file"]
         .into_iter()
         .filter(|key| query.contains_key(*key))
         .collect::<Vec<_>>();
@@ -774,6 +775,14 @@ fn compile_query_as(
                 options: Box::new(compile_regex_options(regex, path, capabilities)?),
             })
         }
+        "file" => {
+            let file = object(
+                query.get("file").expect("form exists"),
+                &format!("{path}/file"),
+            )?;
+            reject_unknown(file, &[], &format!("{path}/file"))?;
+            Ok(Query::File)
+        }
         "ast" => {
             let ast = object(
                 query.get("ast").expect("form exists"),
@@ -819,7 +828,7 @@ fn compile_query_as(
                 .get("rule")
                 .ok_or_else(|| invalid(format!("{path}/ast/rule is required")))?;
             let (host_grammars, grammar) = language_capability(language_name, capabilities)?;
-            use super::language::adapter::{Adapter, SyntaxFeature, SyntaxRules, with_adapter};
+            use super::language::adapter::SyntaxFeature;
             // The documents a file of the language is (`embed`): its own tree, and the program it
             // embeds, if its language embeds one.
             let embedding = Embedding::of(&host_grammars);
@@ -856,34 +865,31 @@ fn compile_query_as(
                 Some(value) => {
                     gate(
                         &format!("{path}/ast/languageOptions"),
-                        with_adapter!(family, A => <A as SyntaxRules>::feature(SyntaxFeature::LanguageOptions)),
+                        { let pack = language_pack::pack(family); pack.syntax_feature(SyntaxFeature::LanguageOptions) },
                     )?;
-                    with_adapter!(family, A => <A as SyntaxRules>::compile_language_options(
+                    { let pack = language_pack::pack(family); pack.syntax_compile_language_options(
                         value,
                         &format!("{path}/ast"),
-                    ))?
+                    ) }?
                 }
             };
             let (applies, source_types) = ast
                 .get("when")
                 .map(|when| {
-                    with_adapter!(family, A => <A as SyntaxRules>::compile_when(
+                    { let pack = language_pack::pack(family); pack.syntax_compile_when(
                         when,
                         &format!("{path}/ast"),
                         options.as_deref(),
                         python.as_deref(),
                         &defines.options,
-                    ))
+                    ) }
                 })
                 .transpose()?
                 .unwrap_or((true, None));
             let file = ast
                 .get("file")
                 .map(|file| {
-                    let (packages, declarations, manifests, jsx_runtimes) = with_adapter!(
-                        family,
-                        A => (A::PACKAGES, A::DECLARATION_FILES, A::PACKAGE_MANIFESTS, A::JSX_RUNTIMES)
-                    );
+                    let (packages, declarations, manifests, jsx_runtimes) = { let pack = language_pack::pack(family); (pack.packages(), pack.declaration_files(), pack.package_manifests(), pack.jsx_runtimes()) };
                     options::compile_file_condition(
                         file,
                         &format!("{path}/ast"),
@@ -1030,17 +1036,40 @@ fn compile_query_as(
                 capabilities.limits.max_regex_pattern_bytes,
             );
             let mut bindable = BTreeSet::new();
-            let origins = util_origins(&utils, language_name)?;
+            // A query that reaches shared utilities and has no utilities of its own, no transform
+            // and no `calls` seed, in a language that embeds no program, compiles them as every
+            // such query of its `languageOptions` does: once, in the document's table (`shared`).
+            let context = (local.is_empty()
+                && !utils.is_empty()
+                && transform.is_none()
+                && embedding.is_none()
+                && !seed)
+                .then(|| shared::Context {
+                    written: ast.get("languageOptions").map(Value::to_string),
+                    options: options.clone(),
+                    python: python.clone(),
+                });
+            let mut origins = None;
             for (dialect, language) in &grammars {
                 let mut gaps = Vec::new();
+                let reach = context.as_ref().and_then(|context| {
+                    let ids = utils.keys().map(String::as_str);
+                    defines.tables.reach(language_name, *language, context, ids)
+                });
+                if reach.is_none() && origins.is_none() {
+                    origins = Some(util_origins(&utils, language_name)?);
+                }
                 let new_table = || {
                     Arc::new(UtilTable::new(
                         utils.keys().cloned().collect(),
                         utils.values().map(|util| !util.params.is_empty()).collect(),
-                        origins.iter().cloned().map(Some).collect(),
+                        origins.iter().flatten().cloned().map(Some).collect(),
                     ))
                 };
-                let table = new_table();
+                let table = match &reach {
+                    Some(reach) => Arc::clone(&reach.table),
+                    None => new_table(),
+                };
                 // The other document's tables, by dialect (`embed`): the program's of a host
                 // clause, for its `embedded` rules; the host's of a clause over the program, for
                 // its `host` rules.
@@ -1075,9 +1104,13 @@ fn compile_query_as(
                         guests,
                     }
                 });
+                let ids: &UtilIds = match &reach {
+                    Some(reach) => reach.ids,
+                    None => &util_ids,
+                };
                 let scope = UtilScope {
                     table: Arc::downgrade(&table),
-                    ids: &util_ids,
+                    ids,
                     options: options.clone(),
                     python: python.clone(),
                     transform: transform.clone(),
@@ -1085,6 +1118,7 @@ fn compile_query_as(
                     captures: Default::default(),
                     calls: Some(&calls),
                     documents: documents.as_ref(),
+                    instances: reach.as_ref().map(|reach| &reach.instances),
                     side,
                 };
                 let other_scopes = others
@@ -1125,41 +1159,49 @@ fn compile_query_as(
                         .map(|(dialect, scope)| compile_utils(scope, *dialect, &mut Vec::new()))
                         .collect::<Result<Vec<_>>>()
                 };
-                // A utility's terms are ordered by what the utilities they call bind, and its
-                // `parse` exports what they export, so utilities that met one not compiled yet are
-                // compiled again against this first compilation.
-                let mut first_gaps = Vec::new();
-                let mut compiled_utils = compile_utils(&scope, *language, &mut first_gaps)?;
-                let mut compiled_others = compile_others()?;
-                if table.was_unfilled() || others.iter().any(|(_, table)| table.was_unfilled()) {
-                    if table.draft.set(compiled_utils).is_err() {
-                        unreachable!("a fresh table is drafted once");
+                let query_utils: Arc<[usize]> = match &reach {
+                    Some(reach) => {
+                        gaps.extend(reach.gap.clone());
+                        reach.indices.as_slice().into()
                     }
-                    for ((_, table), compiled) in others.iter().zip(compiled_others) {
-                        if table.draft.set(compiled).is_err() {
-                            unreachable!("a fresh table is drafted once");
+                    None => {
+                        // A utility's terms are ordered by what the utilities they call bind, and
+                        // its `parse` exports what they export, so utilities that met one not
+                        // compiled yet are compiled again against this first compilation. Its gaps
+                        // and `all` order conflicts, met without those utilities, give way to the
+                        // second compilation's.
+                        let settled = conflicts.borrow().clone();
+                        let mut first_gaps = Vec::new();
+                        let mut compiled_utils = compile_utils(&scope, *language, &mut first_gaps)?;
+                        let mut compiled_others = compile_others()?;
+                        if table.was_unfilled()
+                            || others.iter().any(|(_, table)| table.was_unfilled())
+                        {
+                            table.draft_all(compiled_utils);
+                            for ((_, table), compiled) in others.iter().zip(compiled_others) {
+                                table.draft_all(compiled);
+                            }
+                            *conflicts.borrow_mut() = settled;
+                            compiled_utils = compile_utils(&scope, *language, &mut gaps)?;
+                            compiled_others = compile_others()?;
+                        } else {
+                            gaps.extend(first_gaps);
                         }
+                        for ((_, table), compiled) in others.iter().zip(compiled_others) {
+                            table.fill_all(compiled);
+                        }
+                        table.fill_all(compiled_utils);
+                        (0..utils.len()).collect()
                     }
-                    compiled_utils = compile_utils(&scope, *language, &mut gaps)?;
-                    compiled_others = compile_others()?;
-                } else {
-                    gaps.extend(first_gaps);
-                }
-                for ((_, table), compiled) in others.iter().zip(compiled_others) {
-                    if table.rules.set(compiled).is_err() {
-                        unreachable!("a fresh table is filled once");
-                    }
-                }
+                };
                 // A parameterized utility's captures are its frame's; its calls report what returns.
-                for (util, def) in compiled_utils.iter().zip(utils.values()) {
+                for (&index, def) in query_utils.iter().zip(utils.values()) {
+                    let util = table.rule(index).expect("a query's utilities are filled");
                     if def.params.is_empty() {
                         collect_variables(util, &mut variables);
                     } else {
                         collect_variables(util, &mut framed_variables);
                     }
-                }
-                if table.rules.set(compiled_utils).is_err() {
-                    unreachable!("a fresh table is filled once");
                 }
                 let mut matcher = compile_ast_rule(rule, *language, &rule_path, &mut gaps, &scope)?;
                 collect_variables(&matcher, &mut variables);
@@ -1190,7 +1232,7 @@ fn compile_query_as(
                 let mut names = BTreeSet::new();
                 let mut summaries = violations::CaptureSummaries::new();
                 violations::ast_captures(&matcher, &table, &mut summaries, &mut names);
-                for util in table.shared_rules() {
+                for util in table.shared_rules(&query_utils) {
                     violations::ast_captures(util, &table, &mut summaries, &mut names);
                 }
                 bindable.extend(names.into_iter().map(str::to_owned));
@@ -1199,7 +1241,7 @@ fn compile_query_as(
                     // every utility makes a linear chain quadratic during compilation.
                     let mut captures = scope.captures.borrow_mut();
                     bindable.extend(captures.binds(&matcher));
-                    for util in table.shared_rules() {
+                    for util in table.shared_rules(&query_utils) {
                         bindable.extend(captures.binds(util));
                     }
                 }
@@ -1218,14 +1260,19 @@ fn compile_query_as(
                         crosses,
                         sound_under_errors: sound_under_errors(&matcher),
                         invalid_syntax,
+                        import_target: reads_import_targets(&matcher),
                         three_valued,
                         matcher,
                         anchors,
                         text,
                         utils: table,
+                        query_utils,
                         file: file.clone(),
                         applies,
                         source_types: source_types.clone(),
+                        package_type_gate: options
+                            .as_deref()
+                            .is_some_and(|options| options.package_type_module_system),
                         transform: transform.clone(),
                         source: (source, *language),
                     });
@@ -1297,13 +1344,19 @@ fn compile_query_as(
                             "{transform_path}/{name}: `${name}` is already a capture of the query"
                         )));
                     }
+                    for (index, source) in trans.source_names().enumerate() {
+                        let known = transform.contains(source)
+                            || bindable.contains(source)
+                            || groups.contains(source);
+                        if !known {
+                            let key = if index == 0 { "source" } else { "digits" };
+                            return Err(invalid(format!(
+                                "{transform_path}/{name}/{key}: `${source}` names no capture the query can bind"
+                            )));
+                        }
+                    }
                     let source = trans.source_name();
                     let group = groups.contains(source);
-                    if !transform.contains(source) && !bindable.contains(source) && !group {
-                        return Err(invalid(format!(
-                            "{transform_path}/{name}/source: `${source}` names no capture the query can bind"
-                        )));
-                    }
                     if group && trans.reads_value() {
                         let kind = ast["transform"][name.as_str()]
                             .as_object()
@@ -1516,7 +1569,7 @@ fn compile_query_as(
             }
             required_ast.insert((language_name.to_owned(), grammar));
             Ok(Query::Ast {
-                matchers,
+                matchers: matchers.into(),
                 calls: terms,
             })
         }
@@ -1786,7 +1839,7 @@ impl Embedding {
     }
 }
 
-pub(super) fn refuse_unavailable_semantics(
+pub fn refuse_unavailable_semantics(
     value: &Value,
     path: &str,
     language: CodeRuleLanguage,
@@ -1825,7 +1878,7 @@ pub(super) fn refuse_unavailable_semantics(
 
 /// The error for `predicate` at `at` when `language`'s registry entry does not support its
 /// capability.
-fn unsupported_semantic(support: Support, at: &str, predicate: &str, language: &str) -> Result<()> {
+pub fn unsupported_semantic(support: Support, at: &str, predicate: &str, language: &str) -> Result<()> {
     gate(
         at,
         match support {
@@ -1840,177 +1893,4 @@ fn unsupported_semantic(support: Support, at: &str, predicate: &str, language: &
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::code_rule_dsl::CodeRuleDslRuntime;
-    use crate::code_rule_dsl::test_support::*;
-    use serde_json::{Value, json};
-
-    #[test]
-    fn a_planned_language_or_capability_is_language_not_supported() {
-        let capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
-        let forbid = |language: &str| json!({ "id": "c", "forbid": { "ast": { "language": language, "rule": { "kind": "identifier" } } }, "violation": violation() });
-        for language in crate::code_rule_dsl::language::PLANNED_LANGUAGES {
-            assert_eq!(
-                rejection(compile_document_with(
-                    clause_document(forbid(language)),
-                    &capabilities
-                )),
-                format!(
-                    "language-not-supported: /clauses/0/forbid/ast/language: `{language}` is not supported yet"
-                )
-            );
-        }
-        let mut defined = clause_document(forbid("python"));
-        defined["clauses"] = json!([
-            { "id": "d", "define": { "language": "exemplar", "utils": { "u": { "kind": "identifier" } } } },
-            forbid("python")
-        ]);
-        assert_eq!(
-            rejection(compile_document_with(defined, &capabilities)),
-            "language-not-supported: /clauses/0/define/language: `exemplar` is not supported yet"
-        );
-        assert_eq!(
-            super::unsupported_semantic(
-                super::Support::NotSupportedYet,
-                "/r/calls",
-                "calls",
-                "typescript"
-            )
-            .unwrap_err()
-            .reason,
-            "language-not-supported: /r/calls: `calls` is not supported yet for typescript policies"
-        );
-        assert_eq!(
-            super::unsupported_semantic(super::Support::Refused, "/r/calls", "calls", "typescript")
-                .unwrap_err()
-                .reason,
-            "/r/calls: `calls` is not available for typescript policies"
-        );
-    }
-
-    #[test]
-    fn duplicate_keys_are_rejected_in_json_and_yaml() {
-        // A JSON object keeps the last of two equal keys, so the first term vanished silently.
-        // ast-grep 0.45.3 rejects the rule ("duplicate field `not`").
-        let json_source = r#"{"format": "rerail.policy/v1", "id": "p", "revision": 1, "mode": "steer", "clauses": [{
-            "id": "c",
-            "forbid": {"ast": {"language": "python", "rule":
-                {"kind": "identifier", "not": {"regex": "^a$"}, "not": {"regex": "^b$"}}}},
-            "violation": {"anchor": "witness.span", "code": "X", "message": "x"}}]}"#;
-        let reason = rejection(CodeRuleDslRuntime::compile(
-            json_source.to_owned(),
-            "json".to_owned(),
-            CAPABILITIES.to_owned(),
-        ));
-        assert!(
-            reason.starts_with("duplicate key `not` at /clauses/0/forbid/ast/rule at line 4"),
-            "{reason}"
-        );
-        let yaml_source = "format: rerail.policy/v1\nid: p\nrevision: 1\nid: q\nclauses: []\n";
-        let reason = rejection(CodeRuleDslRuntime::compile(
-            yaml_source.to_owned(),
-            "yaml".to_owned(),
-            CAPABILITIES.to_owned(),
-        ));
-        assert!(
-            reason.starts_with("invalid YAML: duplicate key `id` at /"),
-            "{reason}"
-        );
-        // Equal keys in different objects are fine.
-        let distinct = r#"{"format": "rerail.policy/v1", "id": "p", "revision": 1, "mode": "steer", "clauses": [{
-            "id": "c",
-            "forbid": {"ast": {"language": "python", "rule":
-                {"kind": "identifier", "not": {"regex": "^a$", "not": {"regex": "^b$"}}}}},
-            "violation": {"anchor": "witness.span", "code": "X", "message": "x"}}]}"#;
-        CodeRuleDslRuntime::compile(
-            distinct.to_owned(),
-            "json".to_owned(),
-            CAPABILITIES.to_owned(),
-        )
-        .unwrap_or_else(|error| panic!("{}", error.reason));
-    }
-
-    #[test]
-    fn violation_variables_are_validated() {
-        let forbid = json!({ "regex": { "source": "file.content", "pattern": "x" } });
-        let compile = |violation: Value| {
-            compile_document_with(
-                clause_document(json!({ "id": "c", "forbid": forbid, "violation": violation })),
-                &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
-            )
-        };
-        let mut variables = violation();
-        variables["variables"] = json!({ "name": "x" });
-        assert!(rejection(compile(variables)).starts_with(
-            "/clauses/0/violation/variables: violation variables are not supported yet"
-        ));
-        let mut empty = violation();
-        empty["variables"] = json!({});
-        assert!(compile(empty).is_ok());
-    }
-
-    fn regex_document(violation: Value) -> Value {
-        clause_document(json!({
-            "id": "c",
-            "forbid": { "regex": { "source": "file.content", "pattern": "x" } },
-            "violation": violation,
-        }))
-    }
-
-    #[test]
-    fn mode_is_required_and_severity_is_unknown() {
-        let capabilities = serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities");
-        let mut missing = regex_document(violation());
-        missing.as_object_mut().expect("document").remove("mode");
-        let mut non_string = regex_document(violation());
-        non_string["mode"] = json!(1);
-        let mut severity_name = regex_document(violation());
-        severity_name["mode"] = json!("advisory");
-        for document in [missing, non_string, severity_name] {
-            assert_eq!(
-                rejection(compile_document_with(document, &capabilities)),
-                "/mode must equal log, steer, or block"
-            );
-        }
-        let mut with_severity = violation();
-        with_severity["severity"] = json!("error");
-        assert_eq!(
-            rejection(compile_document_with(
-                regex_document(with_severity),
-                &capabilities
-            )),
-            "unknown field `severity` at /clauses/0/violation"
-        );
-    }
-
-    #[test]
-    fn violations_carry_the_rule_mode() {
-        let capabilities = serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities");
-        for mode in ["log", "steer", "block"] {
-            let mut document = regex_document(violation());
-            document["mode"] = json!(mode);
-            let compiled = compile_document_with(document, &capabilities)
-                .unwrap_or_else(|error| panic!("{}", error.reason));
-            let result = evaluate_file(&compiled, "typescript", "a.ts", "x;\n");
-            assert_violations(&result, 1);
-            assert_eq!(result["violations"][0]["mode"], mode);
-            assert!(result["violations"][0].get("severity").is_none());
-        }
-    }
-
-    /// A constraint may name what a call binds through a cycle of parameterized calls, whichever
-    /// `any` branch the walk collecting the query's metavariables meets first.
-    #[test]
-    fn constraints_on_captures_bound_through_recursive_calls_do_not_depend_on_branch_order() {
-        for branches in recursive_call_branch_orders() {
-            if let Err(error) = compile_typescript_ast(json!({
-                "rule": { "kind": "expression_statement", "any": branches },
-                "constraints": { "X": { "regex": "^g" } },
-                "utils": mutually_recursive_calls(),
-            })) {
-                panic!("{branches}: {}", error.reason);
-            }
-        }
-    }
-}
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

@@ -25,7 +25,6 @@
 
 use crate::code_rule_dsl::facts::core::{self, Built};
 use crate::code_rule_dsl::facts::vtab::syntax::{self, Document, Guest, Made, Placement};
-use crate::code_rule_dsl::model::FileInput;
 use crate::content_store::ContentStore;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -197,11 +196,13 @@ fn host_text(host: &Document, ids: &[(u32, &'static str)], local: u32) -> Option
     Some((f.text(id).to_owned(), Placement::Copied { delta: i64::from(start), within: node }))
 }
 
-/// The guests' makers' state for one chunk: the run's language, the hosts' numberings, the guests made, and the keys
-/// taken.
+/// The guests' makers' state for one chunk: the run's language and shape, the hosts' numberings, the guests made, and
+/// the keys taken.
 #[derive(Default)]
 pub(super) struct Guests {
     run: &'static str,
+    /// The run's projection: its node ids are what requests name (`syntax::numbering`).
+    shape: syntax::Shape,
     numbering: HashMap<u32, syntax::Numbering>,
     made: HashSet<(i64, String)>,
     asked: HashSet<Request>,
@@ -217,9 +218,9 @@ pub(super) struct Guests {
 }
 
 impl Guests {
-    /// For a run over `run`'s files (a dialect label).
-    pub(super) fn new(run: &'static str) -> Self {
-        Self { run, ..Self::default() }
+    /// For a run over `run`'s files (a dialect label) in `shape`.
+    pub(super) fn new(run: &'static str, shape: syntax::Shape) -> Self {
+        Self { run, shape, ..Self::default() }
     }
 
     /// Each value document's files.
@@ -318,6 +319,7 @@ impl Guests {
             facts,
             guest: Some(Arc::new(Guest { host: host_key, at, grammar: grammar_name.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
             module: host.module.clone(),
+            tape: None,
         }))
     }
 
@@ -347,6 +349,7 @@ impl Guests {
             guest: Some(Arc::new(Guest { host: 0, at: 0, grammar: grammar_name.to_owned(), role: "value".to_owned(), root, place: Placement::At([0, 0]), in_file: Placement::At([0, 0]), made })),
             // A value is no module's: its text is a rule's, not a file's.
             module: None,
+            tape: None,
         }))
     }
 
@@ -382,7 +385,7 @@ impl Guests {
 
     fn numbering(&mut self, host: &Document) -> Result<&syntax::Numbering, String> {
         if !self.numbering.contains_key(&host.key) {
-            let ids = syntax::numbering(host).map_err(|e| e.to_string())?;
+            let ids = syntax::numbering(host, self.shape).map_err(|e| e.to_string())?;
             self.numbering.insert(host.key, ids);
         }
         Ok(&self.numbering[&host.key])
@@ -417,10 +420,10 @@ fn parse(path: &str, label: &str, wrap: bool, text: String, cache: Option<&Conte
         crate::code_rule_dsl::prof::count("guests.parse_kept", 1);
         return Ok(hit.clone());
     }
-    let file = FileInput::new(path.to_owned(), label.to_owned(), Arc::new(key.2.clone()), None, None, "guest").map_err(|e| format!("{path}: {e:?}"))?;
-    // The cache is shared by every run on the machine: a store that refuses a write (full, or busy past its retries)
-    // parses without it. A source collected under the run is stored again with its tape (O95).
-    let built = match cache.map(|cache| core::build_cached(&file, cache)) {
+    let file = crate::code_rule_dsl::facts::core::Source { language: label.to_owned(), source: Arc::new(key.2.clone()) };
+    // A guest is made in a wave, so no SQL is read or written for it (decision 0104): its tape is one this process
+    // queued, else it is parsed and its source and tape are the store's writer's, behind the run.
+    let built = match cache.map(|cache| core::build_in_wave(&file, cache, None, None, None)) {
         Some(Ok(built)) => Ok(built),
         Some(Err(_)) => {
             crate::code_rule_dsl::prof::count("guests.cache_failed", 1);

@@ -1,56 +1,53 @@
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
 .decl child(p: node, c: node, i: number)
-.decl strprefix(n: node, s: symbol)
-.input doc, node, child, strprefix
+.decl doc(d: number, path: symbol, module: symbol)
+.decl field(p: node, f: symbol, c: node)
+.decl fstring_template(n: node, marker: symbol, v: symbol)
 .decl in_scope(d: number)
-.decl m10(n: node)
-.decl m106(n: node)
-.decl m109(n: node)
-.decl m110(n: node)
-.decl m112(n: node)
-.decl m122(n: node)
-.decl m125(n: node)
-.decl m126(n: node)
-.decl m128(n: node)
-.decl m13(n: node)
-.decl m138(n: node)
-.decl m14(n: node)
-.decl m141(n: node)
-.decl m142(n: node)
-.decl m144(n: node)
-.decl m16(n: node)
-.decl m26(n: node)
-.decl m29(n: node)
-.decl m30(n: node)
-.decl m32(n: node)
-.decl m42(n: node)
-.decl m45(n: node)
-.decl m46(n: node)
-.decl m48(n: node)
-.decl m58(n: node)
-.decl m61(n: node)
-.decl m62(n: node)
-.decl m64(n: node)
-.decl m74(n: node)
-.decl m77(n: node)
-.decl m78(n: node)
-.decl m80(n: node)
-.decl m90(n: node)
-.decl m93(n: node)
-.decl m94(n: node)
-.decl m96(n: node)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl option_on(name: symbol)
 .decl out_scope(d: number)
-.decl u104(n: node)
-.decl u120(n: node)
-.decl u136(n: node)
-.decl u24(n: node)
-.decl u40(n: node)
-.decl u56(n: node)
-.decl u72(n: node)
-.decl u8(n: node)
-.decl u88(n: node)
+.decl rsp_call(c: node, m: symbol, a: node)
+.decl rsp_cat(k: number, v: symbol)
+.decl rsp_err(v: symbol)
+.decl rsp_fhost(x: node)
+.decl rsp_first(a: node, z: node)
+.decl rsp_found(c: node, m: symbol, k: number, p: symbol, l: number)
+.decl rsp_fp(v: symbol)
+.decl rsp_fparts(x: node)
+.decl rsp_fstr(x: node)
+.decl rsp_g2(v: symbol)
+.decl rsp_g4(v: symbol)
+.decl rsp_gate(d: number)
+.decl rsp_hit(c: node, m: symbol, k: number)
+.decl rsp_later(a: node, i: number)
+.decl rsp_part(x: node)
+.decl rsp_r10(v: symbol)
+.decl rsp_r11(v: symbol)
+.decl rsp_r12(v: symbol)
+.decl rsp_r4(v: symbol)
+.decl rsp_r5(v: symbol)
+.decl rsp_r6(v: symbol)
+.decl rsp_r7(v: symbol)
+.decl rsp_r8(v: symbol)
+.decl rsp_r9(v: symbol)
+.decl rsp_sql(v: symbol)
+.decl rsp_sqlish(v: symbol)
+.decl rsp_str(x: node, v: symbol)
+.decl rsp_tested(v: symbol)
+.decl rsp_text(x: node, v: symbol)
+.decl strprefix(n: node, p: symbol)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
+.decl value(n: node, v: symbol)
+.decl value_type_of(n: node, t: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, line, value, strprefix, value_type_of, fstring_template, node_text
+.output violation
+option_on("sourceGate").
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
@@ -62,49 +59,55 @@ out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
-m10(n) :- strprefix(n, v9), contains("f", v9).
-m13(n) :- child(n, v11, _), node(_, v11, "string", _, _), strprefix(v11, v12), contains("f", v12).
-m14(n) :- node(_, n, "string", _, _), !m10(n).
-m14(n) :- node(_, n, "concatenated_string", _, _), !m13(n).
-m16(n) :- child(v15, n, _), node(_, v15, "concatenated_string", _, _).
-m26(n) :- strprefix(n, v25), contains("f", v25).
-m29(n) :- child(n, v27, _), node(_, v27, "string", _, _), strprefix(v27, v28), contains("f", v28).
-m30(n) :- node(_, n, "string", _, _), !m26(n).
-m30(n) :- node(_, n, "concatenated_string", _, _), !m29(n).
-m32(n) :- child(v31, n, _), node(_, v31, "concatenated_string", _, _).
-m42(n) :- strprefix(n, v41), contains("f", v41).
-m45(n) :- child(n, v43, _), node(_, v43, "string", _, _), strprefix(v43, v44), contains("f", v44).
-m46(n) :- node(_, n, "string", _, _), !m42(n).
-m46(n) :- node(_, n, "concatenated_string", _, _), !m45(n).
-m48(n) :- child(v47, n, _), node(_, v47, "concatenated_string", _, _).
-m58(n) :- strprefix(n, v57), contains("f", v57).
-m61(n) :- child(n, v59, _), node(_, v59, "string", _, _), strprefix(v59, v60), contains("f", v60).
-m62(n) :- node(_, n, "string", _, _), !m58(n).
-m62(n) :- node(_, n, "concatenated_string", _, _), !m61(n).
-m64(n) :- child(v63, n, _), node(_, v63, "concatenated_string", _, _).
-m74(n) :- strprefix(n, v73), contains("f", v73).
-m77(n) :- child(n, v75, _), node(_, v75, "string", _, _), strprefix(v75, v76), contains("f", v76).
-m78(n) :- node(_, n, "string", _, _), !m74(n).
-m78(n) :- node(_, n, "concatenated_string", _, _), !m77(n).
-m80(n) :- child(v79, n, _), node(_, v79, "concatenated_string", _, _).
-m90(n) :- strprefix(n, v89), contains("f", v89).
-m93(n) :- child(n, v91, _), node(_, v91, "string", _, _), strprefix(v91, v92), contains("f", v92).
-m94(n) :- node(_, n, "string", _, _), !m90(n).
-m94(n) :- node(_, n, "concatenated_string", _, _), !m93(n).
-m96(n) :- child(v95, n, _), node(_, v95, "concatenated_string", _, _).
-m106(n) :- strprefix(n, v105), contains("f", v105).
-m109(n) :- child(n, v107, _), node(_, v107, "string", _, _), strprefix(v107, v108), contains("f", v108).
-m110(n) :- node(_, n, "string", _, _), !m106(n).
-m110(n) :- node(_, n, "concatenated_string", _, _), !m109(n).
-m112(n) :- child(v111, n, _), node(_, v111, "concatenated_string", _, _).
-m122(n) :- strprefix(n, v121), contains("f", v121).
-m125(n) :- child(n, v123, _), node(_, v123, "string", _, _), strprefix(v123, v124), contains("f", v124).
-m126(n) :- node(_, n, "string", _, _), !m122(n).
-m126(n) :- node(_, n, "concatenated_string", _, _), !m125(n).
-m128(n) :- child(v127, n, _), node(_, v127, "concatenated_string", _, _).
-m138(n) :- strprefix(n, v137), contains("f", v137).
-m141(n) :- child(n, v139, _), node(_, v139, "string", _, _), strprefix(v139, v140), contains("f", v140).
-m142(n) :- node(_, n, "string", _, _), !m138(n).
-m142(n) :- node(_, n, "concatenated_string", _, _), !m141(n).
-m144(n) :- child(v143, n, _), node(_, v143, "concatenated_string", _, _).
-.output violation
+tape_syntax_error(d) :- syntax_error(d).
+rsp_fstr(x) :- node(_, x, "string", _, _), strprefix(x, p), contains("f", p).
+rsp_part(x) :- child(c, x, _), node(_, c, "concatenated_string", _, _).
+rsp_fparts(c) :- node(_, c, "concatenated_string", _, _), child(c, s, _), rsp_fstr(s).
+rsp_text(x, v) :- node(_, x, "string", _, _), !rsp_fstr(x), !rsp_part(x), value(x, v), value_type_of(x, "str").
+rsp_text(x, v) :- node(_, x, "concatenated_string", _, _), !rsp_fparts(x), !rsp_part(x), value(x, v), value_type_of(x, "str").
+rsp_fhost(x) :- rsp_fstr(x), !rsp_part(x).
+rsp_fhost(x) :- rsp_fparts(x).
+rsp_text(x, v) :- rsp_fhost(x), fstring_template(x, "{...}", v).
+rsp_str(x, v) :- rsp_text(x, v).
+rsp_str(x, v) :- node(_, x, "parenthesized_expression", _, _), child(x, y, _), rsp_str(y, v).
+rsp_tested(v) :- rsp_str(_, v).
+rsp_fp(v) :- rsp_tested(v), match("(?s:.*)(?:(?:(?i:-----BEGIN))|(?:(?i:-----END))|(?:(?i:File\\\\s\\+\"))|(?:(?i:at\\\\s\\+line))|(?:\\^\\s*sys_)|(?:\\^\\s*\\w+_embeddings\\$)|(?:Invalid ID value)|(?:internal\\|prod\\|staging)|(?:\\\\.internal\\\\b)|(?:(?i:collection))|(?:(?i:branch\\\\s))|(?:(?i:revision\\\\s))|(?:\\\\bRow\\\\b)|(?:ns not found)|(?:field not found|unknown field)|(?:(?i:api\\[_\\-\\]\\?key))|(?:(?i:api_key))|(?:(?i:secret\\[_\\-\\]\\?key))|(?:(?i:secret_key))|(?:(?i:password|passwd|pwd))|(?:(?i:token\\[\\\\\"))|(?:(?i:bearer\\\\s))|(?:(?i:host\\|password\\|user\\|pwd\\|passwd\\|secret\\|token\\|key\\|auth))|(?:\\[SQL statement\\]|\\[table\\]|\\[column\\])|(?:table\\\\s\\+\\[)|(?:column\\\\s\\+\\[)|(?:field\\\\s\\+\\[)|(?:mode=\\[?\\^?\\&?\\]?\\*?$))(?s:.*)", v).
+rsp_err(v) :- rsp_tested(v), match("(?s:.*)(?:(?:(?i:no such table))|(?:(?i:no such column))|(?:(?i:Unknown column))|(?:(?i:Unknown table))|(?:(?i:does not exist))|(?:(?i:not found))|(?:(?i:relation.*\\\"))|(?:(?i:Table\\\\s\\+'))|(?:(?i:column\\\\s\\+\\\"))|(?:(?i:table not found)))(?s:.*)", v).
+rsp_sql(v) :- rsp_tested(v), match("(?s:.*)(?:(?:(?i:\\\\b(?:SELECT|INSERT|UPDATE|DELETE)\\\\b))|(?:(?i:\\bSELECT\\b.*\\bFROM\\b))|(?:(?i:\\b(?:SELECT|INSERT|UPDATE|DELETE)\\b))|(?:(?i:\\b(?:DROP|TRUNCATE|ALTER|CREATE)\\b.*\\bTABLE\\b))|(?:(?i:\\b(?:DROP|TRUNCATE|ALTER)\\b))|(?:(?i:\\bFROM\\\\s))|(?:(?i:\\bINTO\\\\s))|(?:(?i:\\bJOIN\\\\s))|(?:(?i:\\bWHERE\\\\s))|(?:(?i:\\bSET\\\\s))|(?:(?i:ON\\s+(?:DELETE|UPDATE)\\s+))|(?:(?i:ON DELETE))|(?:(?i:ON UPDATE))|(?:(?i:\\\\bBEFORE\\\\b))|(?:(?i:\\\\bAFTER\\\\b))|(?:(?i:INSTEAD\\\\s\\+OF))|(?:(?i:INSTEAD\\s+OF))|(?:(?i:WHEN.*BEGIN))|(?:(?i:CHECK\\\\s\\*\\\\))|(?:(?i:\\bCHECK\\s*\\())|(?:(?i:json_valid))|(?:(?i:=\\s*ANY\\s*\\\\?\\())|(?:(?i:\\bIN\\s*\\\\?\\())|(?:--\\[\\\\?\\^)|(?:/\\\\\\*)|(?:(?:^|[^%])%s)|(?:\\\\\\$\\\\d)|(?:\\\\bIN\\\\s\\*\\\\)|(?:(?i:\\\\bLIKE\\\\s))|(?:(?i:\\bLIKE\\b))|(?:(?i:\\bCONSTRAINT\\\\s))|(?:(?i:\\bUSING\\\\s))|(?:(?i:INTEGER\\\\s\\+PRIMARY))|(?:(?i:\\\\bINDEX\\\\b))|(?:(?i:nera_session))|(?:(?i:mode=\\[))|(?:(?i:\\bKEY\\b|\\bINDEX\\b|\\bFULLTEXT\\b))|(?:(?i:fts5))|(?:(?i:=\\\\s\\*NULL|!=\\\\s\\*NULL|IS NULL|IS NOT NULL))|(?:(?i:=\\s*NULL))|(?:%\\(\\\\w))(?s:.*)", v).
+rsp_r4(v) :- rsp_tested(v), match("(?s:.*)(?:--\\[?\\\\?\\^|/\\\\\\*)(?s:.*)", v).
+rsp_r5(v) :- rsp_tested(v), match("(?s:.*)(?:(?i)(?:^|[^%])%S|\\\\?\\\\\\$\\\\?\\\\?D|\\\\\\?)(?s:.*)", v).
+rsp_r6(v) :- rsp_tested(v), match("(?s:.*)(?:(?i)SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|JOIN)(?s:.*)", v).
+rsp_r7(v) :- rsp_tested(v), match("(?s:.*)(?:(?i)\\\\bIN\\\\s\\*\\\\\\(\\\\s\\*\\\\\\?|\\\\bIN\\\\s\\*\\\\\\(\\\\s\\*%s)(?s:.*)", v).
+rsp_r8(v) :- rsp_tested(v), match("(?s:.*)(?:(?i)ON\\s+DELETE|ON\\s+UPDATE|ON DELETE|ON UPDATE|CHECK|json_valid|=\\s*ANY\\s*\\()(?s:.*)", v).
+rsp_r9(v) :- rsp_tested(v), match("(?s:.*)(?:(?i)IN\\s*\\\\\\(|\\\\s\\+IN\\\\s)(?s:.*)", v).
+rsp_r10(v) :- rsp_tested(v), match("(?s:.*)(?:(?i)SELECT|INSERT|DELETE|FROM|WHERE)(?s:.*)", v).
+rsp_r11(v) :- rsp_tested(v), match("(?s:.*)(?:(?i)BEFORE|AFTER|INSTEAD|WHEN.*BEGIN)(?s:.*)", v).
+rsp_r12(v) :- rsp_tested(v), match("(?s:.*)(?:(?i)LIKE)(?s:.*)", v).
+rsp_g2(v) :- rsp_r5(v), !rsp_r6(v).
+rsp_g2(v) :- rsp_r7(v).
+rsp_g4(v) :- rsp_r9(v), !rsp_r10(v).
+rsp_sqlish(v) :- rsp_sql(v), !rsp_fp(v), !rsp_err(v).
+rsp_cat(0, v) :- rsp_err(v), !rsp_fp(v).
+rsp_cat(1, v) :- rsp_sqlish(v), rsp_r4(v).
+rsp_cat(2, v) :- rsp_sqlish(v), rsp_g2(v), !rsp_r4(v).
+rsp_cat(3, v) :- rsp_sqlish(v), rsp_r8(v), !rsp_r4(v), !rsp_g2(v).
+rsp_cat(4, v) :- rsp_sqlish(v), rsp_g4(v), !rsp_r4(v), !rsp_g2(v), !rsp_r8(v).
+rsp_cat(5, v) :- rsp_sqlish(v), rsp_r11(v), !rsp_r4(v), !rsp_g2(v), !rsp_r8(v), !rsp_g4(v).
+rsp_cat(6, v) :- rsp_sqlish(v), rsp_r12(v), !rsp_r4(v), !rsp_g2(v), !rsp_r8(v), !rsp_g4(v), !rsp_r11(v).
+rsp_cat(7, v) :- rsp_sqlish(v), !rsp_r4(v), !rsp_g2(v), !rsp_r8(v), !rsp_g4(v), !rsp_r11(v), !rsp_r12(v).
+rsp_call(c, m, a) :- node(_, c, "call", _, _), field(c, "function", f), node(_, f, "attribute", _, _), field(f, "object", o), node(_, o, "identifier", _, _), text(o, "re"), field(f, "attribute", t), node(_, t, "identifier", _, _), text(t, m), (m = "compile" ; m = "findall" ; m = "fullmatch" ; m = "match" ; m = "search" ; m = "split" ; m = "sub"), field(c, "arguments", a).
+rsp_later(a, i) :- rsp_call(_, _, a), child(a, _, i), child(a, _, j), j < i.
+rsp_first(a, z) :- rsp_call(_, _, a), child(a, z, i), !rsp_later(a, i).
+rsp_hit(c, m, k) :- rsp_call(c, m, a), rsp_first(a, z), rsp_str(z, v), rsp_cat(k, v).
+rsp_gate(d) :- node(d, _, "module", _, _), !option_on("sourceGate").
+rsp_gate(d) :- option_on("sourceGate"), node(d, m, "module", _, _), node_text(m, s), match("(?s:.*)(?:re\\.|SELECT|INSERT|UPDATE|DELETE|CHECK|ON\\ DELETE)(?s:.*)", s).
+rsp_found(c, m, k, p, l) :- rsp_hit(c, m, k), node(d, c, _, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), rsp_gate(d), doc(d, p, _), line(c, l).
+violation("data-layer-regex-sql-parsing", "category-0", "ERROR_MSG_PARSE", p, l) :- rsp_found(_, _, 0, p, l).
+violation("data-layer-regex-sql-parsing", "category-1", "SQL_COMMENT_STRIP", p, l) :- rsp_found(_, _, 1, p, l).
+violation("data-layer-regex-sql-parsing", "category-2", "SQL_PARAM_NORMALIZE", p, l) :- rsp_found(_, _, 2, p, l).
+violation("data-layer-regex-sql-parsing", "category-3", "CONSTRAINT_PARSE", p, l) :- rsp_found(_, _, 3, p, l).
+violation("data-layer-regex-sql-parsing", "category-4", "CONSTRAINT_PARSE", p, l) :- rsp_found(_, _, 4, p, l).
+violation("data-layer-regex-sql-parsing", "category-5", "TRIGGER_PARSE", p, l) :- rsp_found(_, _, 5, p, l).
+violation("data-layer-regex-sql-parsing", "category-6", "SQL_STRUCTURE_PARSE", p, l) :- rsp_found(_, _, 6, p, l).
+violation("data-layer-regex-sql-parsing", "category-7", "SQL_REWRITE", p, l) :- rsp_found(_, m, 7, p, l), m = "sub".
+violation("data-layer-regex-sql-parsing", "category-8", "SQL_STRUCTURE_PARSE", p, l) :- rsp_found(_, m, 7, p, l), m != "sub".

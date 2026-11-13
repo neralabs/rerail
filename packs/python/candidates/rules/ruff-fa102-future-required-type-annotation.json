@@ -1,0 +1,645 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-fa102-future-required-type-annotation",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Add the future annotations import to modules that use built-in generics or the union operator in annotations, so they still evaluate on older Python versions.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "shared",
+   "define": {
+    "language": "python",
+    "utils": {
+     "future-annotations": {
+      "kind": "future_import_statement",
+      "has": {
+       "stopBy": "neighbor",
+       "any": [
+        {
+         "kind": "dotted_name",
+         "regex": "^annotations$"
+        },
+        {
+         "kind": "aliased_import",
+         "has": {
+          "stopBy": "neighbor",
+          "kind": "dotted_name",
+          "regex": "^annotations$"
+         }
+        }
+       ]
+      }
+     },
+     "future-seen": {
+      "inside": {
+       "stopBy": "end",
+       "follows": {
+        "stopBy": "end",
+        "matches": "future-annotations"
+       }
+      }
+     },
+     "annotation-root": {
+      "kind": "type",
+      "any": [
+       {
+        "inside": {
+         "stopBy": "neighbor",
+         "field": "type",
+         "any": [
+          {
+           "kind": "typed_parameter"
+          },
+          {
+           "kind": "typed_default_parameter"
+          }
+         ],
+         "not": {
+          "matches": "dispatch-parameter"
+         }
+        }
+       },
+       {
+        "inside": {
+         "stopBy": "neighbor",
+         "field": "return_type",
+         "kind": "function_definition",
+         "not": {
+          "matches": "dispatch-impl"
+         }
+        }
+       },
+       {
+        "not": {
+         "matches": "dataclass-meta"
+        },
+        "inside": {
+         "stopBy": "neighbor",
+         "field": "type",
+         "kind": "assignment",
+         "not": {
+          "inside": {
+           "stopBy": {
+            "any": [
+             {
+              "kind": "function_definition"
+             },
+             {
+              "kind": "class_definition"
+             }
+            ]
+           },
+           "kind": "function_definition"
+          }
+         }
+        }
+       }
+      ]
+     },
+     "dispatch-interface": {
+      "kind": "function_definition",
+      "inside": {
+       "stopBy": "neighbor",
+       "kind": "decorated_definition",
+       "has": {
+        "stopBy": "neighbor",
+        "kind": "decorator",
+        "has": {
+         "stopBy": "neighbor",
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "import": [
+           "functools.singledispatch",
+           "functools.singledispatchmethod"
+          ]
+         }
+        }
+       }
+      }
+     },
+     "dispatch-impl": {
+      "kind": "function_definition",
+      "inside": {
+       "stopBy": "neighbor",
+       "kind": "decorated_definition",
+       "has": {
+        "stopBy": "neighbor",
+        "kind": "decorator",
+        "has": {
+         "stopBy": "neighbor",
+         "kind": "attribute",
+         "all": [
+          {
+           "has": {
+            "stopBy": "neighbor",
+            "field": "attribute",
+            "regex": "^register$"
+           }
+          },
+          {
+           "has": {
+            "stopBy": "neighbor",
+            "field": "object",
+            "kind": "identifier",
+            "resolves": {
+             "binding": {
+              "site": {
+               "matches": "dispatch-interface"
+              }
+             }
+            }
+           }
+          }
+         ]
+        }
+       }
+      }
+     },
+     "dispatch-parameter": {
+      "any": [
+       {
+        "kind": "typed_parameter",
+        "not": {
+         "has": {
+          "stopBy": "neighbor",
+          "any": [
+           {
+            "kind": "list_splat_pattern"
+           },
+           {
+            "kind": "dictionary_splat_pattern"
+           }
+          ]
+         }
+        }
+       },
+       {
+        "kind": "typed_default_parameter"
+       }
+      ],
+      "inside": {
+       "stopBy": "neighbor",
+       "kind": "parameters",
+       "inside": {
+        "stopBy": "neighbor",
+        "matches": "dispatch-impl"
+       }
+      }
+     },
+     "dataclass-decorated-class": {
+      "kind": "class_definition",
+      "inside": {
+       "stopBy": "neighbor",
+       "kind": "decorated_definition",
+       "has": {
+        "stopBy": "neighbor",
+        "kind": "decorator",
+        "has": {
+         "stopBy": "neighbor",
+         "any": [
+          {
+           "any": [
+            {
+             "kind": "identifier"
+            },
+            {
+             "kind": "attribute"
+            }
+           ],
+           "resolves": {
+            "import": [
+             "dataclasses.dataclass"
+            ]
+           }
+          },
+          {
+           "kind": "call",
+           "has": {
+            "stopBy": "neighbor",
+            "field": "function",
+            "any": [
+             {
+              "kind": "identifier"
+             },
+             {
+              "kind": "attribute"
+             }
+            ],
+            "resolves": {
+             "import": [
+              "dataclasses.dataclass"
+             ]
+            }
+           }
+          }
+         ]
+        }
+       }
+      }
+     },
+     "dataclass-meta-head": {
+      "any": [
+       {
+        "kind": "identifier"
+       },
+       {
+        "kind": "attribute"
+       }
+      ],
+      "resolves": {
+       "import": [
+        "dataclasses.InitVar",
+        "dataclasses.KW_ONLY",
+        "typing.ClassVar",
+        "typing_extensions.ClassVar",
+        "_typeshed.ClassVar"
+       ]
+      }
+     },
+     "dataclass-meta": {
+      "kind": "type",
+      "has": {
+       "stopBy": "neighbor",
+       "matches": "dataclass-meta-expr"
+      },
+      "inside": {
+       "stopBy": "neighbor",
+       "field": "type",
+       "kind": "assignment",
+       "inside": {
+        "stopBy": {
+         "any": [
+          {
+           "kind": "function_definition"
+          },
+          {
+           "kind": "class_definition"
+          }
+         ]
+        },
+        "matches": "dataclass-decorated-class"
+       }
+      }
+     },
+     "in-runtime-annotation": {
+      "inside": {
+       "stopBy": "end",
+       "matches": "annotation-root"
+      }
+     },
+     "pep585-head": {
+      "any": [
+       {
+        "any": [
+         {
+          "kind": "identifier"
+         },
+         {
+          "kind": "attribute"
+         }
+        ],
+        "resolves": {
+         "global": [
+          "dict",
+          "frozenset",
+          "list",
+          "set",
+          "tuple",
+          "type"
+         ],
+         "import": [
+          "collections.deque",
+          "collections.defaultdict",
+          "collections.ChainMap",
+          "collections.Counter",
+          "collections.OrderedDict",
+          "asyncio.Future",
+          "asyncio.Task",
+          "contextlib.AbstractAsyncContextManager",
+          "contextlib.AbstractContextManager",
+          "dataclasses.Field",
+          "functools.cached_property",
+          "functools.partialmethod",
+          "os.PathLike",
+          "queue.LifoQueue",
+          "queue.PriorityQueue",
+          "queue.Queue",
+          "queue.SimpleQueue",
+          "re.Match",
+          "re.Pattern",
+          "shelve.BsdDbShelf",
+          "shelve.DbfilenameShelf",
+          "shelve.Shelf",
+          "types.MappingProxyType",
+          "weakref.WeakKeyDictionary",
+          "weakref.WeakMethod",
+          "weakref.WeakSet",
+          "weakref.WeakValueDictionary",
+          "collections.abc.AsyncGenerator",
+          "collections.abc.AsyncIterable",
+          "collections.abc.AsyncIterator",
+          "collections.abc.Awaitable",
+          "collections.abc.ByteString",
+          "collections.abc.Callable",
+          "collections.abc.Collection",
+          "collections.abc.Container",
+          "collections.abc.Coroutine",
+          "collections.abc.Generator",
+          "collections.abc.ItemsView",
+          "collections.abc.Iterable",
+          "collections.abc.Iterator",
+          "collections.abc.KeysView",
+          "collections.abc.Mapping",
+          "collections.abc.MappingView",
+          "collections.abc.MutableMapping",
+          "collections.abc.MutableSequence",
+          "collections.abc.MutableSet",
+          "collections.abc.Reversible",
+          "collections.abc.Sequence",
+          "collections.abc.Set",
+          "collections.abc.ValuesView"
+         ]
+        }
+       },
+       {
+        "kind": "parenthesized_expression",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "pep585-head"
+        }
+       }
+      ]
+     },
+     "dataclass-meta-expr": {
+      "any": [
+       {
+        "matches": "dataclass-meta-head"
+       },
+       {
+        "kind": "generic_type",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "dataclass-meta-head"
+        }
+       },
+       {
+        "kind": "subscript",
+        "has": {
+         "stopBy": "neighbor",
+         "field": "value",
+         "matches": "dataclass-meta-head"
+        }
+       },
+       {
+        "kind": "parenthesized_expression",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "dataclass-meta-expr"
+        }
+       }
+      ]
+     },
+     "misgrouped-union": {
+      "kind": "union_type",
+      "not": {
+       "matches": "future-seen"
+      },
+      "has": {
+       "stopBy": "neighbor",
+       "kind": "type",
+       "follows": {
+        "stopBy": "end",
+        "kind": "type"
+       },
+       "has": {
+        "stopBy": "neighbor",
+        "kind": "binary_operator",
+        "has": {
+         "stopBy": "neighbor",
+         "regex": "^\\|$"
+        }
+       }
+      },
+      "all": [
+       {
+        "matches": "in-runtime-annotation"
+       }
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "future-required-pep585-generic",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "file": {
+      "path": {
+       "notRegex": "\\.pyi$"
+      }
+     },
+     "when": {
+      "pythonVersion": {
+       "max": "3.8"
+      }
+     },
+     "rule": {
+      "pattern": "$ANN",
+      "not": {
+       "matches": "future-seen"
+      },
+      "any": [
+       {
+        "kind": "generic_type",
+        "has": {
+         "stopBy": "neighbor",
+         "matches": "pep585-head"
+        }
+       },
+       {
+        "kind": "subscript",
+        "has": {
+         "stopBy": "neighbor",
+         "field": "value",
+         "matches": "pep585-head"
+        }
+       }
+      ],
+      "all": [
+       {
+        "matches": "in-runtime-annotation"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.ANN",
+    "code": "FA102",
+    "message": "Add `from __future__ import annotations`; this subscripted standard-library generic is evaluated at runtime and fails before Python 3.9. If annotations are read at runtime, use the `typing` alias.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "FA102"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "future-required-pep604-union",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "file": {
+      "path": {
+       "notRegex": "\\.pyi$"
+      }
+     },
+     "when": {
+      "pythonVersion": {
+       "max": "3.9"
+      }
+     },
+     "rule": {
+      "pattern": "$ANN",
+      "not": {
+       "matches": "future-seen"
+      },
+      "any": [
+       {
+        "kind": "union_type"
+       },
+       {
+        "kind": "binary_operator",
+        "has": {
+         "stopBy": "neighbor",
+         "regex": "^\\|$"
+        },
+        "not": {
+         "inside": {
+          "stopBy": {
+           "not": {
+            "any": [
+             {
+              "kind": "type"
+             },
+             {
+              "kind": "binary_operator"
+             },
+             {
+              "kind": "union_type"
+             }
+            ]
+           }
+          },
+          "kind": "union_type"
+         }
+        }
+       }
+      ],
+      "all": [
+       {
+        "matches": "in-runtime-annotation"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.ANN",
+    "code": "FA102",
+    "message": "Add `from __future__ import annotations` to the module; this `|` union is evaluated at runtime and fails before Python 3.10. If annotations are read at runtime, use `Optional` or `Union` instead.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "FA102"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "future-required-pep604-union-prefix-2",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "file": {
+      "path": {
+       "notRegex": "\\.pyi$"
+      }
+     },
+     "when": {
+      "pythonVersion": {
+       "max": "3.9"
+      }
+     },
+     "rule": {
+      "matches": "misgrouped-union",
+      "regex": "^(?<INNER>(?:[^\\[\\]()|\\s#\"']|\"[^\"\\n]*\"|'[^'\\n]*'|(?:\\[(?:[^\\[\\]()]|(?:\\[[^\\[\\]()]*\\]|\\([^\\[\\]()]*\\)))*\\]|\\((?:[^\\[\\]()]|(?:\\[[^\\[\\]()]*\\]|\\([^\\[\\]()]*\\)))*\\)))+(?:\\s*(?:#[^\\n]*\\s*)?\\|\\s*(?:#[^\\n]*\\s*)?(?:[^\\[\\]()|\\s#\"']|\"[^\"\\n]*\"|'[^'\\n]*'|(?:\\[(?:[^\\[\\]()]|(?:\\[[^\\[\\]()]*\\]|\\([^\\[\\]()]*\\)))*\\]|\\((?:[^\\[\\]()]|(?:\\[[^\\[\\]()]*\\]|\\([^\\[\\]()]*\\)))*\\)))+){1})\\s*(?:#[^\\n]*\\s*)?\\|\\s*(?:#[^\\n]*\\s*)?"
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.INNER",
+    "code": "FA102",
+    "message": "Add `from __future__ import annotations` to the module; this `|` union is evaluated at runtime and fails before Python 3.10. If annotations are read at runtime, use `Optional` or `Union` instead.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "FA102"
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "future-required-pep604-union-prefix-3",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "file": {
+      "path": {
+       "notRegex": "\\.pyi$"
+      }
+     },
+     "when": {
+      "pythonVersion": {
+       "max": "3.9"
+      }
+     },
+     "rule": {
+      "matches": "misgrouped-union",
+      "regex": "^(?<INNER>(?:[^\\[\\]()|\\s#\"']|\"[^\"\\n]*\"|'[^'\\n]*'|(?:\\[(?:[^\\[\\]()]|(?:\\[[^\\[\\]()]*\\]|\\([^\\[\\]()]*\\)))*\\]|\\((?:[^\\[\\]()]|(?:\\[[^\\[\\]()]*\\]|\\([^\\[\\]()]*\\)))*\\)))+(?:\\s*(?:#[^\\n]*\\s*)?\\|\\s*(?:#[^\\n]*\\s*)?(?:[^\\[\\]()|\\s#\"']|\"[^\"\\n]*\"|'[^'\\n]*'|(?:\\[(?:[^\\[\\]()]|(?:\\[[^\\[\\]()]*\\]|\\([^\\[\\]()]*\\)))*\\]|\\((?:[^\\[\\]()]|(?:\\[[^\\[\\]()]*\\]|\\([^\\[\\]()]*\\)))*\\)))+){2})\\s*(?:#[^\\n]*\\s*)?\\|\\s*(?:#[^\\n]*\\s*)?"
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.INNER",
+    "code": "FA102",
+    "message": "Add `from __future__ import annotations` to the module; this `|` union is evaluated at runtime and fails before Python 3.10. If annotations are read at runtime, use `Optional` or `Union` instead.",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "FA102"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

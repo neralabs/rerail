@@ -213,7 +213,7 @@ fn backreferences_run_once_per_string() {
 /// census by form): `--ignored --nocapture` prints the distribution.
 #[test]
 fn serverplan_quality_s_regexes_lower() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/final-shape/data-layer-serverplan-quality.json");
+    let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../gate/data-layer/final-shape/data-layer-serverplan-quality.json");
     let document: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let mut patterns = std::collections::BTreeSet::new();
     fn walk(value: &serde_json::Value, out: &mut std::collections::BTreeSet<String>) {
@@ -271,9 +271,9 @@ fn searchers_read_from_the_cache_match_as_when_built() {
     let plans = lowered.iter().map(|l| &l.plan).collect::<Vec<_>>();
     let refs = terms.iter().map(Vec::as_slice).collect::<Vec<_>>();
     let cache = Memory::default();
-    let built = vocabulary::Searchers::new(&plans, Some(&cache));
+    let built = vocabulary::Searchers::new(&plans, Some(&cache), true);
     assert_eq!(built.compiling.read, 0);
-    let read = vocabulary::Searchers::new(&plans, Some(&cache));
+    let read = vocabulary::Searchers::new(&plans, Some(&cache), true);
     assert_eq!(read.compiling.built, 0, "{:?}", read.compiling);
     assert_eq!(read.compiling.read + read.compiling.lazy, built.compiling.built + built.compiling.lazy);
     let (from_built, _) = built.evaluate(&refs);
@@ -301,7 +301,7 @@ fn determinizing_a_group_costs_more_than_reading_it() {
         }
     }
     let cpu = || {
-        let (u, s) = crate::code_rule_dsl::logic::plan::corpus::thread_usage();
+        let (u, s) = crate::code_rule_dsl::prof::thread_usage();
         u + s
     };
     let patterns = [
@@ -316,10 +316,10 @@ fn determinizing_a_group_costs_more_than_reading_it() {
     let plans = lowered.iter().map(|l| &l.plan).collect::<Vec<_>>();
     let cache = Memory::default();
     let at = cpu();
-    let built = vocabulary::Searchers::new(&plans, Some(&cache));
+    let built = vocabulary::Searchers::new(&plans, Some(&cache), true);
     let build = cpu() - at;
     let at = cpu();
-    let read = vocabulary::Searchers::new(&plans, Some(&cache));
+    let read = vocabulary::Searchers::new(&plans, Some(&cache), true);
     let reading = cpu() - at;
     let bytes: usize = cache.0.lock().unwrap().values().flatten().map(Vec::len).sum();
     println!("built {:?} in {build:.4} s CPU; read {:?} in {reading:.4} s CPU; {bytes} bytes stored", built.compiling, read.compiling);

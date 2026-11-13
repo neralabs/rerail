@@ -3,7 +3,7 @@ use super::{Connection, Result, Stage, inspect, quote, sql_error};
 use std::collections::BTreeSet;
 
 pub(in crate::code_rule_dsl) fn validate(
-    db: &Connection,
+    db: &super::Database,
     stage: &Stage,
     columns: &[super::schema::Column],
 ) -> Result<bool> {

@@ -6,5 +6,45 @@
     "line": 1,
     "kind": "upstream-wrong",
     "evidence": "Upstream reports `fs.watch('file', () => {})` and steers to `fs.promises.watch`, which is not a drop-in replacement: Node's fs/promises `watch(filename, options)` returns an AsyncIterator of `{ eventType, filename }` and takes no listener, while `fs.watch` returns an FSWatcher (an EventEmitter with close(), ref(), unref() and 'change'/'error' events) and calls the listener. Following the steer breaks every caller that keeps the watcher or passes a listener. Rerail does not report `watch`; every other fs callback method is still reported."
+  },
+  {
+    "rule": "n-prefer-promises-fs",
+    "source": "samples",
+    "path": "verdaccio-cypress.config.ts-f29c49d2925a/cypress.config.ts",
+    "line": 23,
+    "kind": "upstream-wrong",
+    "evidence": "The fs.watch divergence above, on real code: verdaccio keeps the FSWatcher fs.watch returns (watchers[filePath] = fs.watch(filePath, listener)) and later calls watchers[filePath]?.close(). Upstream steers to fs.promises.watch, which takes no listener and returns an AsyncIterator with no close(); following it breaks this code. Rerail does not report watch."
+  },
+  {
+    "rule": "n-callback-return",
+    "source": "samples",
+    "path": "nest-packages-microservices-server-server-grpc.ts-b2652fa34dc8/packages/microservices/server/server-grpc.ts",
+    "line": 146,
+    "kind": "upstream-wrong",
+    "evidence": "`callback?.();` is the last statement of `start(callback?)` (line 146), which n/callback-return exempts for a plain `callback();`: its isCallbackExpression accepts the statement only when `parentNode.expression === node`, and ESTree wraps an optional call in a ChainExpression, so the check fails for `callback?.()` alone and upstream reports a final call it accepts without `?.` (lib/rules/callback-return.js, eslint-plugin-n 18.4.1). Nothing runs after the call, so the steer to add return changes nothing. Rerail exempts the final statement either way."
+  },
+  {
+    "rule": "n-callback-return",
+    "source": "samples",
+    "path": "nest-packages-microservices-server-server-grpc.ts-16b31a197776/packages/microservices/server/server-grpc.ts",
+    "line": 153,
+    "kind": "upstream-wrong",
+    "evidence": "`callback?.();` is the last statement of `start(callback?)` (line 153), which n/callback-return exempts for a plain `callback();`: its isCallbackExpression accepts the statement only when `parentNode.expression === node`, and ESTree wraps an optional call in a ChainExpression, so the check fails for `callback?.()` alone and upstream reports a final call it accepts without `?.` (lib/rules/callback-return.js, eslint-plugin-n 18.4.1). Nothing runs after the call, so the steer to add return changes nothing. Rerail exempts the final statement either way."
+  },
+  {
+    "rule": "n-no-unsupported-features-es-syntax",
+    "source": "fixtures",
+    "path": "no-unsupported-features/es-syntax/invalid-096/case.js",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "The case is `tag`\\unicode``: a tagged template whose escape is invalid, which ES2018 allows only in a tagged template (its cooked value is undefined), and the plugin reports it as `malformed-template-literals` (and `template-literals`). tree-sitter-javascript reads an invalid escape as a syntax error in every template, so the file has no tree and Rerail reports nothing in it; the engine reports the file as read with errors."
+  },
+  {
+    "rule": "n-no-unsupported-features-es-syntax",
+    "source": "fixtures",
+    "path": "renamed/no-unsupported-features/es-syntax/invalid-096/case.js",
+    "line": 1,
+    "kind": "rerail-unknown",
+    "evidence": "The rename variant of invalid-096/case.js, the same tagged template with an invalid escape: `tag`\\unicode``: a tagged template whose escape is invalid, which ES2018 allows only in a tagged template (its cooked value is undefined), and the plugin reports it as `malformed-template-literals` (and `template-literals`). tree-sitter-javascript reads an invalid escape as a syntax error in every template, so the file has no tree and Rerail reports nothing in it; the engine reports the file as read with errors."
   }
 ]

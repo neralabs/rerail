@@ -40,6 +40,8 @@ kinds! {
     SuppressLine = "suppress_line",
     PolicyDocument = "policy_document",
     Setting = "setting",
+    TestBlock = "test_block",
+    FixturesBlock = "fixtures_block",
     Clause = "clause",
     Head = "head",
     Conjunction = "conjunction",
@@ -421,4 +423,15 @@ pub fn flatten(tree: &Tree, comments: &[(usize, usize)]) -> Vec<Node> {
     // Comments after the last statement belong to the file.
     walk.comments_before(0, usize::MAX);
     walk.out
+}
+
+/// The nodes of a `.rr` image (`image`, or the lean parser's `lean::tape`): `image`'s inverse.
+pub fn nodes(bytes: &[u8]) -> Result<Vec<Node>, String> {
+    Ok(rerail_tape_format::decode(bytes)?
+        .into_iter()
+        .map(|d| {
+            let (kind, field) = kind_field(d.key);
+            Node { kind, field, start: d.start, end: d.end, parent: d.parent, extra: d.key >> 16 & u32::from(rerail_tape_format::CODE_EXTRA) != 0 }
+        })
+        .collect())
 }

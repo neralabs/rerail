@@ -63,7 +63,7 @@
 .decl host_node(n: node, h: node)
 .input parsed, host_node
 // The run's settings (the Python version and platform a branch is decided by, python/conditions.rr). No library
-// is loaded: python/modules.rr is struct.rr's (P1).
+// is loaded: the imports are resolved, and the libraries loaded, by phase 1 (sources.rr).
 .decl env(key: symbol, value: symbol)
 .decl dir_entry(dir: symbol, name: symbol, is_dir: number)
 .decl file_line(path: symbol, i: number, text: symbol)
@@ -89,6 +89,9 @@
 .decl types__wgen(f: symbol, ka: symbol, i: number, kb: symbol, j: number)
 .decl types__pgen(f: symbol, i: number, k: symbol, j: number, y: symbol)
 .decl types__rcarg(f: symbol, k: symbol, j: number, d: symbol)
+.decl types__anc(c: symbol, a: symbol)
+.decl types__proto(c: symbol)
+.decl struct__param(f: symbol, i: number, x: symbol, a: symbol)
 // The import closure, components.rr's (the engine adds it to a program that reads it): rr_cx_reach(d, e), e is in
 // d's closure; rr_cx_sees(d, q), q is a module of d's closure.
 
@@ -116,10 +119,11 @@ rdefn(s, x, f) :- kind(f, "class_definition"), field(f, "name", nm), text(nm, x)
 .decl rasg(s: node, x: symbol, r: node, a: node)
 rasg(s, x, r, a) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "right", r), nearest(a, s, scope), !py_dead_at(a).
 // `for x in it`: x is bound to the loop target's value, `it.__iter__().__next__()` (implicit calls, `icall`); `with e
-// as x`: to the alias's, `e.__enter__()`. Not their `async` forms (`__aiter__`, `__aenter__`).
-rasg(s, x, l, a) :- kind(a, "for_statement"), !op(a, "async"), field(a, "left", l), kind(l, "identifier"), text(l, x), nearest(a, s, scope),
+// as x`: to the alias's, `e.__enter__()`. Their `async` forms await `it.__aiter__().__anext__()` and `e.__aenter__()`
+// (`iawait`).
+rasg(s, x, l, a) :- kind(a, "for_statement"), field(a, "left", l), kind(l, "identifier"), text(l, x), nearest(a, s, scope),
     !py_dead_at(a).
-rasg(s, x, t, a) :- kind(a, "with_statement"), !op(a, "async"), child(a, wc, _), child(wc, w, _), kind(w, "with_item"), field(w, "value", p),
+rasg(s, x, t, a) :- kind(a, "with_statement"), child(a, wc, _), child(wc, w, _), kind(w, "with_item"), field(w, "value", p),
     kind(p, "as_pattern"), field(p, "alias", t), child(t, i, 0), kind(i, "identifier"), text(i, x), nearest(a, s, scope), !py_dead_at(a).
 .decl param(f: node, x: symbol, i: number)
 param(f, x, i) :- field(f, "parameters", ps), child(ps, p, i), kind(p, "identifier"), text(p, x).
@@ -133,7 +137,6 @@ patkind("parenthesized_expression"). patkind("tuple"). patkind("list"). patkind(
 tgt(l) :- kind(a, "assignment"), field(a, "left", l), !kind(l, "identifier").
 tgt(l) :- kind(a, "augmented_assignment"), field(a, "left", l).
 tgt(l) :- kind(a, "for_statement"), field(a, "left", l), !kind(l, "identifier").
-tgt(l) :- kind(a, "for_statement"), op(a, "async"), field(a, "left", l).
 tgt(l) :- kind(a, "for_in_clause"), field(a, "left", l).
 tgt(l) :- kind(a, "named_expression"), field(a, "name", l).
 tgt(l) :- kind(l, "as_pattern_target").
@@ -631,9 +634,26 @@ gcall(c, o, f) :- gfn(c, f), pfn(c, o, f).
 .decl icall(c: node, o: node, a: symbol)
 icall(c, o, "__getitem__") :- vpos(c), kind(c, "subscript"), field(c, "value", o).
 // A loop's statement holds its iterator, its target the iterator's next value; a `with` alias the value entered.
-icall(a, it, "__iter__") :- rasg(_, _, l, a), kind(a, "for_statement"), field(a, "right", it).
-icall(l, a, "__next__") :- rasg(_, _, l, a), kind(a, "for_statement").
-icall(t, e, "__enter__") :- rasg(_, _, t, a), kind(a, "with_statement"), kind(t, "as_pattern_target"), field(p, "alias", t), child(p, e, 0).
+icall(a, it, "__iter__") :- rasg(_, _, l, a), kind(a, "for_statement"), !op(a, "async"), field(a, "right", it).
+icall(l, a, "__next__") :- rasg(_, _, l, a), kind(a, "for_statement"), !op(a, "async").
+icall(t, e, "__enter__") :- rasg(_, _, t, a), kind(a, "with_statement"), !op(a, "async"), kind(t, "as_pattern_target"), field(p, "alias", t),
+    child(p, e, 0).
+// `async for`: the statement holds `it.__aiter__()`, a plain call; its target the awaited `__anext__()` of that.
+icall(a, it, "__aiter__") :- rasg(_, _, l, a), kind(a, "for_statement"), op(a, "async"), field(a, "right", it).
+// iawait(c, o, a): c's value is the result of awaiting o's method a, an implicit call: an `async for` target's
+// `__anext__()`, an `async with` alias's `__aenter__()`.
+.decl iawait(c: node, o: node, a: symbol)
+iawait(l, a, "__anext__") :- rasg(_, _, l, a), kind(a, "for_statement"), op(a, "async").
+iawait(t, e, "__aenter__") :- rasg(_, _, t, a), kind(a, "with_statement"), op(a, "async"), kind(t, "as_pattern_target"), field(p, "alias", t),
+    child(p, e, 0).
+vroot(o) :- iawait(_, o, _).
+asks(c, k, a) :- iawait(c, o, a), pv(o, "inst", k).
+// iafn(c, f): the workspace `async def` an awaited implicit call runs; c holds its coroutine's result, as `await`
+// of a call does (`awaitf`).
+.decl iafn(c: node, f: node)
+iafn(c, f) :- iawait(c, o, a), pv(o, "inst", k), fv(c, k, a, "fn", f), isasync(f), !isgen(f).
+cret(c, w, k) :- iafn(c, f), aret(f, w, k).
+pv(c, k, v) :- iafn(c, f), fret(f, k, v).
 vroot(o) :- icall(_, o, _).
 asks(c, k, a) :- icall(c, o, a), pv(o, "inst", k).
 // ifn(c, f): the method an implicit call runs.
@@ -991,9 +1011,56 @@ lv(c, k, v) :- lcfn(c, e, f), lret(f, k, v).
 .decl lcfn(c: node, e: node, f: symbol)
 lcfn(c, e, f) :- callee(c, e), lv(e, "fn", f), !struct__flag(f, "overload").
 lcfn(c, e, f) :- callee(c, e), lv(e, "fn", f), struct__flag(f, "overload"), cwild(c).
-lcfn(c, e, f) :- callee(c, e), lv(e, "fn", f), struct__flag(f, "overload"), !lmethod(f), cposk(c, n, w), lfit(f, n, w), !lnone(c, f, 0).
-lcfn(c, e, f) :- callee(c, e), lv(e, "fn", f), struct__flag(f, "overload"), lmethod(f), !attr_of(e, _, _), cposk(c, n, w), lfit(f, n, w), !lnone(c, f, 0).
-lcfn(c, e, f) :- callee(c, e), lv(e, "fn", f), struct__flag(f, "overload"), lmethod(f), attr_of(e, _, _), cposk(c, m, w), pred(n, m), lfit(f, n, w), !lnone(c, f, 1).
+lcfn(c, e, f) :- callee(c, e), lv(e, "fn", f), struct__flag(f, "overload"), !lmethod(f), cposk(c, n, w), lfit(f, n, w), !lnone(c, f, 0),
+    !lkwbad(c, f), !ltybad(c, f, 0).
+lcfn(c, e, f) :- callee(c, e), lv(e, "fn", f), struct__flag(f, "overload"), lmethod(f), !attr_of(e, _, _), cposk(c, n, w), lfit(f, n, w), !lnone(c, f, 0),
+    !lkwbad(c, f), !ltybad(c, f, 0).
+lcfn(c, e, f) :- callee(c, e), lv(e, "fn", f), struct__flag(f, "overload"), lmethod(f), attr_of(e, _, _), cposk(c, m, w), pred(n, m), lfit(f, n, w), !lnone(c, f, 1),
+    !lkwbad(c, f), !ltybad(c, f, 1).
+// lkwbad(c, f): call c names a keyword that overload f has no parameter of, and f takes no `**kwargs`
+// (`os.environ.get(k, default=d)` is not `get(self, key, /)`). By the call's name, as `lnone`.
+.decl lkwbad(c: node, f: symbol)
+lkwbad(c, f) :- lovname(x, f), cnamed(c, x), ckwname(c, k), !lpname(f, k), !struct__flag(f, "kwargs").
+.decl ckwname(c: node, k: symbol)
+ckwname(c, k) :- kind(c, "call"), field(c, "arguments", as), child(as, a, _), kind(a, "keyword_argument"), field(a, "name", n), text(n, k).
+.decl lpname(f: symbol, k: symbol)
+lpname(f, k) :- struct__flag(f, "overload"), struct__param(f, _, k, _).
+// lovname(x, f): overload f's name (`os._Environ.get#1`: `get`).
+.decl lovname(x: symbol, f: symbol)
+lovname(x, f) :- struct__flag(f, "overload"), x = @replace_all(f, "^.*\\.|#[0-9]+$", "").
+// ltybad(c, f, s): call c's positional argument, a literal of class k, is no instance of what overload f's parameter
+// (s on: a method's `self`) declares: every alternative of the parameter names a class, none a protocol, and k is
+// none of them nor derives from one (`int` passes for `float` and `complex`, as PEP 484 has it). Only literals: an
+// argument's value read from this phase's values would make the fit depend on itself through a negation.
+.decl ltybad(c: node, f: symbol, s: number)
+ltybad(c, f, 0) :- lovname(x, f), cnamed(c, x), posarg(c, p, a), litcls(a, k), lsigclosed(f, p), !lsigok(f, p, k).
+ltybad(c, f, 1) :- lovname(x, f), cnamed(c, x), pred(p, q), posarg(c, q, a), litcls(a, k), lsigclosed(f, p), !lsigok(f, p, k).
+.decl litcls(a: node, k: symbol)
+litcls(a, "builtins.str") :- kind(a, "string"), !litbytes(a).
+litcls(a, "builtins.bytes") :- litbytes(a).
+.decl litbytes(a: node)
+litbytes(a) :- kind(a, "string"), text(a, t), match("^[bB].*", t).
+litcls(a, "builtins.int") :- kind(a, "integer").
+litcls(a, "builtins.float") :- kind(a, "float").
+litcls(a, "builtins.bool") :- kind(a, "true").
+litcls(a, "builtins.bool") :- kind(a, "false").
+litcls(a, "builtins.list") :- kind(a, "list").
+litcls(a, "builtins.dict") :- kind(a, "dictionary").
+litcls(a, "builtins.set") :- kind(a, "set").
+litcls(a, "builtins.tuple") :- kind(a, "tuple").
+.decl litk(k: symbol)
+litk("builtins.str"). litk("builtins.bytes"). litk("builtins.int"). litk("builtins.float"). litk("builtins.bool").
+litk("builtins.list"). litk("builtins.dict"). litk("builtins.set"). litk("builtins.tuple").
+.decl lsigclosed(f: symbol, p: number)
+lsigclosed(f, p) :- lovname(_, f), types__sig(f, p, _, a, d), a != "", d != "", !types__sig(f, p, _, a, ""), !lsigproto(f, p).
+.decl lsigproto(f: symbol, p: number)
+lsigproto(f, p) :- lovname(_, f), types__sig(f, p, _, _, d), types__proto(d).
+.decl lsigok(f: symbol, p: number, k: symbol)
+lsigok(f, p, k) :- lovname(_, f), types__sig(f, p, _, _, k), litk(k).
+lsigok(f, p, k) :- lovname(_, f), types__sig(f, p, _, _, d), litk(k), types__anc(k, d).
+lsigok(f, p, "builtins.int") :- lovname(_, f), types__sig(f, p, _, _, "builtins.float").
+lsigok(f, p, "builtins.int") :- lovname(_, f), types__sig(f, p, _, _, "builtins.complex").
+lsigok(f, p, "builtins.float") :- lovname(_, f), types__sig(f, p, _, _, "builtins.complex").
 // lnone(c, f, s): overload f declares a parameter None that call c gives a literal of another type (`setdefault(k, [])`
 // is not `setdefault(key, default: None = None)`), its arguments shifted by s (a method's `self`). By the overload's
 // name and the argument's position first: every overload with a None parameter against every literal argument is a
@@ -1002,7 +1069,7 @@ lcfn(c, e, f) :- callee(c, e), lv(e, "fn", f), struct__flag(f, "overload"), lmet
 lnone(c, f, 0) :- lnonep(x, p, f), cnamed(c, x), posarg(c, p, a), lnotnone(a).
 lnone(c, f, 1) :- lnonep(x, p, f), cnamed(c, x), pred(p, q), posarg(c, q, a), lnotnone(a).
 .decl lnonep(x: symbol, p: number, f: symbol)
-lnonep(x, p, f) :- struct__flag(f, "overload"), types__sig(f, p, _, "None", _), x = @replace_all(f, "^.*\\.", "").
+lnonep(x, p, f) :- types__sig(f, p, _, "None", _), lovname(x, f).
 .decl cnamed(c: node, x: symbol)
 cnamed(c, x) :- kind(c, "call"), field(c, "function", e), kind(e, "identifier"), text(e, x).
 cnamed(c, x) :- kind(c, "call"), field(c, "function", e), kind(e, "attribute"), field(e, "attribute", n), text(n, x).
@@ -1043,6 +1110,14 @@ lghcls(c, kb) :- lwgen(c, f, g), lwbind(f, g, kb, _, _).
 pv(c, "gen", c) :- lwgen(c, _, _).
 garg(c, j, x) :- lwgen(c, f, g), lwbind(f, g, _, j, x).
 // Implicit calls (`o[i]`, a loop, a `with`) on a library instance.
+// liawait(c, f): the library `async def` an awaited implicit call runs: c holds what f declares (a stub's
+// `async def __aenter__(self) -> Self`). A plain def that returns an awaitable (`AsyncIterator.__anext__`) is open.
+.decl liawait(c: node, f: symbol)
+liawait(c, f) :- iawait(c, o, a), lv(o, "inst", t), types__attr(t, a, f, _), f != "", struct__flag(f, "async").
+.decl laret(f: symbol)
+laret(f) :- types__rtype(f, _, t), struct__def(t, "class").
+lv(c, "inst", t) :- liawait(c, f), types__rtype(f, _, t), struct__def(t, "class").
+lv(c, "inst", t) :- liawait(c, f), lself(f), iawait(c, o, _), lv(o, "inst", t).
 .decl lical(c: node, f: symbol)
 lical(c, f) :- icall(c, o, a), lv(o, "inst", t), types__attr(t, a, f, _), f != "".
 lv(c, k, v) :- lical(c, f), lret(f, k, v).
@@ -1310,6 +1385,11 @@ vopen(c) :- vpos(c), callee(c, e), pv(e, "mod", _).
 // return is.
 vopen(c) :- vpos(c), icall(c, o, _), vopen(o).
 vopen(c) :- vpos(c), icall(c, _, _), !ifn(c, _), !lical(c, _).
+vopen(c) :- vpos(c), iawait(c, o, _), vopen(o).
+vopen(c) :- vpos(c), iawait(c, _, _), !iafn(c, _), !liawait(c, _).
+vopen(c) :- vpos(c), iafn(c, f), !aclosed(f), retval(f, r), !retparam(f, _, r), vopen(r).
+vopen(c) :- vpos(c), iafn(c, f), !aclosed(f), retparam(f, _, _).
+vopen(c) :- vpos(c), liawait(c, f), !laret(f), !lself(f).
 vopen(c) :- vpos(c), lical(c, f), !lret(f, _, _), !lself(f), !lgbound(c, _).
 vopen(c) :- vpos(c), icall(c, o, a), pv(o, "inst", k), attr_open(c, k, a).
 vopen(c) :- vpos(c), ifn(c, f), isasync(f).

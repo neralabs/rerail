@@ -1,8 +1,70 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl child(p: node, c: node, i: number)
+.decl constructors_afn(a: node, f: node, ls: number)
+.decl constructors_alias(d: number, a: symbol)
+.decl constructors_aown(a: node, f: node)
+.decl constructors_asg(d: number, a: node, s: number, e: number, t: symbol, v: node)
+.decl constructors_call(d: number, c: node, s: number, e: number, nm: symbol)
+.decl constructors_caller(c: node, e: symbol)
+.decl constructors_cand(c: node, a: node, ae: number, t: symbol, v: node)
+.decl constructors_catalog(c: node, t: symbol)
+.decl constructors_catcall(d: number, s: number)
+.decl constructors_catname(nm: symbol)
+.decl constructors_cfn(c: node, f: node, ls: number)
+.decl constructors_cframe(c: node, f: node)
+.decl constructors_cown(c: node, f: node)
+.decl constructors_ctor(d: number, c: node, s: number, e: number)
+.decl constructors_doc(d: number, p: symbol)
+.decl constructors_fanc(f: node, a: node)
+.decl constructors_fdepth(f: node, j: number)
+.decl constructors_fok(e: symbol, d: number, q: symbol)
+.decl constructors_found(e: symbol)
+.decl constructors_frame(d: number, f: node, ls: number, e: number, nm: symbol, isfn: number)
+.decl constructors_frame_kind(kind: symbol, isfn: number)
+.decl constructors_kw(c: node, i: number, v: node)
+.decl constructors_later(c: node, a: node, t: symbol)
+.decl constructors_mis(c: node, e: symbol)
+.decl constructors_nframe(c: node, k: number)
+.decl constructors_ok(c: node)
+.decl constructors_pattern_kind(kind: symbol)
+.decl constructors_proj(c: node, v: node)
+.decl constructors_reviewed(c: node)
+.decl constructors_version(c: node, t: symbol, v: node)
+.decl constructors_wrapped(f: node)
 .decl doc(d: number, path: symbol, module: symbol)
-.input doc
+.decl field(p: node, f: symbol, c: node)
+.decl file_name(d: number, s: symbol)
 .decl in_scope(d: number)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
+.decl option_item(name: symbol, i: number, v: symbol)
 .decl out_scope(d: number)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, file_name, node, field, child, line, node_text
+.output violation
+constructors_catname("_get_versioned_table_projection_info").
+constructors_catname("catalog_versioned_merged_projection").
+constructors_catname("versioned_merged_projection_from_catalog").
+constructors_frame_kind("function_definition", 1).
+constructors_frame_kind("class_definition", 0).
+constructors_pattern_kind("pattern_list").
+constructors_pattern_kind("list_pattern").
+constructors_pattern_kind("tuple_pattern").
+option_item("expectedCallers", 0, "_compile_versioned.py:_versioned_merged_source_cte").
+option_item("expectedCallers", 1, "_compile_versioned.py:compile_versioned_query").
+option_item("expectedCallers", 10, "versioned_query_steps.py:VersionedSelectManyRawStep.compile").
+option_item("expectedCallers", 11, "versioned_upsert_steps.py:VersionedUpsertReturnStep.compile").
+option_item("expectedCallers", 2, "_compile_write.py:compile_versioned_delete_tombstone").
+option_item("expectedCallers", 3, "fk_cascade_step.py:RestrictCheckStep.compile").
+option_item("expectedCallers", 4, "intent_versioning_extended.py:_build_versioned_batch_merged_cte").
+option_item("expectedCallers", 5, "intent_versioning_extended.py:_build_versioned_upsert_plan").
+option_item("expectedCallers", 6, "pending_tombstone_from_merged.py:PendingTombstoneFromMergedStep.compile").
+option_item("expectedCallers", 7, "query_paginate.py:_build_versioned_keyset_stmt").
+option_item("expectedCallers", 8, "sql_graph_query_builder.py:SqlGraphQueryBuilder._with_staged_graph_overlay").
+option_item("expectedCallers", 9, "versioned_lazy_support.py:MatchVersionedRowsByKeyToLiteralSequenceStep.compile").
 in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("impl/common/l9700_sql_graph_query/*.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
@@ -15,4 +77,42 @@ out_scope(d) :- doc(d, p, _), glob("**/.pytest_cache/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/node_modules/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/browser_build/**", p).
-.output violation
+tape_syntax_error(d) :- syntax_error(d).
+constructors_doc(d, p) :- doc(d, p, _), in_scope(d), !out_scope(d), !tape_syntax_error(d).
+constructors_frame(d, f, ws, e, nm, isfn) :- constructors_frame_kind(k, isfn), node(d, f, k, _, e), constructors_doc(d, _), field(f, "name", n), node_text(n, nm), child(w, f, _), node(d, w, "decorated_definition", ws, _).
+constructors_frame(d, f, s, e, nm, isfn) :- constructors_frame_kind(k, isfn), node(d, f, k, s, e), constructors_doc(d, _), field(f, "name", n), node_text(n, nm), !constructors_wrapped(f).
+constructors_wrapped(f) :- node(d, w, "decorated_definition", _, _), child(w, f, _), node(d, f, k, _, _), constructors_frame_kind(k, _).
+constructors_call(d, c, s, e, nm) :- node(d, c, "call", s, e), constructors_doc(d, _), field(c, "function", f), node(d, f, "identifier", _, _), node_text(f, nm).
+constructors_call(d, c, s, e, nm) :- node(d, c, "call", s, e), constructors_doc(d, _), field(c, "function", f), node(d, f, "attribute", _, _), field(f, "attribute", x), node_text(x, nm).
+constructors_kw(c, i, v) :- constructors_call(d, c, _, _, _), field(c, "arguments", al), child(al, kw, i), node(d, kw, "keyword_argument", _, _), field(kw, "name", k), node(d, k, "identifier", _, _), node_text(k, "read_projection"), field(kw, "value", v).
+constructors_proj(c, v) :- constructors_kw(c, i, v), i = min j : { constructors_kw(c, j, _) }.
+constructors_asg(d, a, s, e, t, v) :- node(d, a, "assignment", s, e), constructors_doc(d, _), field(a, "right", v), field(a, "left", l), node(d, l, "identifier", _, _), node_text(l, t).
+constructors_asg(d, a, s, e, t, v) :- node(d, a, "assignment", s, e), constructors_doc(d, _), field(a, "right", v), node(d, v, "call", _, _), field(a, "left", l), node(d, l, pk, _, _), constructors_pattern_kind(pk), child(l, x, _), node(d, x, "identifier", _, _), node_text(x, t).
+constructors_alias(d, a) :- node(d, ai, "aliased_import", _, _), constructors_doc(d, _), field(ai, "name", n), node_text(n, "SqlVersionedMergedCte"), field(ai, "alias", x), node_text(x, a), child(s, ai, _), node(d, s, "import_from_statement", _, _).
+constructors_ctor(d, c, s, e) :- constructors_call(d, c, s, e, "SqlVersionedMergedCte").
+constructors_ctor(d, c, s, e) :- constructors_call(d, c, s, e, nm), constructors_alias(d, nm).
+constructors_cframe(c, f) :- constructors_ctor(d, c, s, e), constructors_frame(d, f, ls, fe, _, _), ls < s, fe >= e.
+constructors_nframe(c, k) :- constructors_ctor(_, c, _, _), k = count : { constructors_cframe(c, _) }.
+constructors_fanc(f, a) :- constructors_frame(d, f, ls, e, _, _), constructors_frame(d, a, als, ae, _, _), als < ls, ae >= e.
+constructors_fdepth(f, j) :- constructors_frame(_, f, _, _, _, _), j = count : { constructors_fanc(f, _) }.
+constructors_cfn(c, f, ls) :- constructors_ctor(d, c, s, e), constructors_frame(d, f, ls, fe, _, 1), ls < s, fe >= e.
+constructors_cown(c, f) :- constructors_cfn(c, f, ls), ls = max x : { constructors_cfn(c, _, x) }.
+constructors_afn(a, f, ls) :- constructors_asg(d, a, s, e, _, _), constructors_frame(d, f, ls, fe, _, 1), ls < s, fe >= e.
+constructors_aown(a, f) :- constructors_afn(a, f, ls), ls = max x : { constructors_afn(a, _, x) }.
+constructors_fok(e, d, q) :- option_item("expectedCallers", _, e), constructors_doc(d, _), file_name(d, f), k = @strlen(f), n = @strlen(e), n > k, @substr(e, 0, k) = f, @substr(e, k, 1) = ":", q = @substr(e, @add(k, 1), @sub(@sub(n, k), 1)), !contains(":", q).
+constructors_mis(c, e) :- constructors_ctor(d, c, _, _), constructors_fok(e, d, q), constructors_cframe(c, f), constructors_fdepth(f, j), constructors_frame(_, f, _, _, nm, _), x = @concat("(?:[^.]*\\.){", @concat(@to_string(j), @concat("}", @concat(nm, "(?:\\.[^.]*)*")))), !match(x, q).
+constructors_caller(c, e) :- constructors_ctor(d, c, _, _), constructors_fok(e, d, ""), constructors_nframe(c, 0).
+constructors_caller(c, e) :- constructors_ctor(d, c, _, _), constructors_fok(e, d, q), constructors_nframe(c, k), k > 0, x = @concat("[^.]*(?:\\.[^.]*){", @concat(@to_string(@sub(k, 1)), "}")), match(x, q), !constructors_mis(c, e).
+constructors_reviewed(c) :- constructors_caller(c, _).
+constructors_found(e) :- constructors_caller(_, e).
+constructors_cand(c, a, ae, t, v) :- constructors_ctor(d, c, cs, _), constructors_cown(c, f), constructors_asg(d, a, _, ae, t, v), constructors_aown(a, f), ae < cs.
+constructors_later(c, a, t) :- constructors_cand(c, a, ae, t, _), constructors_cand(c, _, be, t, _), be > ae.
+constructors_version(c, t, v) :- constructors_cand(c, a, _, t, v), !constructors_later(c, a, t).
+constructors_catcall(d, s) :- constructors_call(d, _, s, _, nm), constructors_catname(nm).
+constructors_catalog(c, t) :- constructors_version(c, t, v), constructors_ctor(d, c, _, _), node(d, v, "call", vs, _), constructors_catcall(d, vs).
+constructors_catalog(c, t) :- constructors_version(c, t, v), node(_, v, "identifier", _, _), node_text(v, x), constructors_catalog(c, x).
+constructors_ok(c) :- constructors_ctor(d, c, _, _), constructors_proj(c, v), node(d, v, "call", vs, _), constructors_catcall(d, vs).
+constructors_ok(c) :- constructors_ctor(_, c, _, _), constructors_proj(c, v), node(_, v, "identifier", _, _), node_text(v, x), constructors_catalog(c, x).
+violation("data-layer-versioned-merged-identity", "constructors", "VMI002", p, l) :- constructors_ctor(d, c, _, _), !constructors_reviewed(c), constructors_doc(d, p), line(c, l).
+violation("data-layer-versioned-merged-identity", "constructors", "VMI003", p, l) :- constructors_ctor(d, c, _, _), constructors_reviewed(c), !constructors_ok(c), constructors_doc(d, p), line(c, l).
+violation("data-layer-versioned-merged-identity", "constructors", "VMI001", "impl/common/l2070_server_plan/steps", 1) :- option_item("expectedCallers", _, e), !constructors_found(e).

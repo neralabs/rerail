@@ -1,0 +1,477 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt008-pytest-patch-with-lambda",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Patch with a fixed return value rather than a lambda that ignores its arguments; it states the intent and keeps call assertions available.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "patch-with-lambda",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "obj": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "obj"
+                  }
+                },
+                {
+                  "kind": "identifier",
+                  "regex": "^(?:mocker|class_mocker|module_mocker|package_mocker|session_mocker|mock)$"
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "object",
+                    "matches": "unittest"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "attribute",
+                        "regex": "^mock$"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "unittest": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "regex": "^unittest$"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "unittest"
+                  }
+                }
+              ]
+            },
+            "patch": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "patch"
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "object",
+                    "matches": "obj"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "attribute",
+                        "regex": "^patch$"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "fn-patch": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fn-patch"
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "matches": "patch",
+                  "pattern": "$F"
+                }
+              ]
+            },
+            "fn-patch-object": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "fn-patch-object"
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "field": "object",
+                    "matches": "patch"
+                  },
+                  "all": [
+                    {
+                      "has": {
+                        "field": "attribute",
+                        "regex": "^object$"
+                      }
+                    }
+                  ],
+                  "pattern": "$F"
+                }
+              ]
+            },
+            "param-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "pattern": "$P"
+                },
+                {
+                  "kind": "default_parameter",
+                  "has": {
+                    "field": "name",
+                    "pattern": "$P"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "list_splat_pattern"
+                    },
+                    {
+                      "kind": "dictionary_splat_pattern"
+                    }
+                  ],
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "pattern": "$P"
+                  }
+                }
+              ]
+            },
+            "name-expr": {
+              "kind": "identifier",
+              "not": {
+                "any": [
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "attribute",
+                      "kind": "attribute"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "kind": "keyword_argument"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "lambda_parameters"
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "name",
+                      "kind": "default_parameter",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "lambda_parameters"
+                      }
+                    }
+                  },
+                  {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "kind": "list_splat_pattern"
+                        },
+                        {
+                          "kind": "dictionary_splat_pattern"
+                        }
+                      ],
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "lambda_parameters"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "reads-p": {
+              "kind": "identifier",
+              "matches": "name-expr",
+              "pattern": "$U",
+              "compare": {
+                "left": "U",
+                "op": "eq",
+                "right": "P"
+              }
+            },
+            "uses-args": {
+              "has": {
+                "field": "parameters",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "param-name",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "lambda_parameters",
+                    "precedes": {
+                      "stopBy": "end",
+                      "any": [
+                        {
+                          "matches": "reads-p"
+                        },
+                        {
+                          "has": {
+                            "stopBy": "end",
+                            "matches": "reads-p"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            },
+            "new-lambda": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "new-lambda"
+                  }
+                },
+                {
+                  "kind": "lambda",
+                  "not": {
+                    "matches": "uses-args"
+                  }
+                }
+              ]
+            },
+            "positional": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "keyword_argument"
+                  },
+                  {
+                    "kind": "dictionary_splat"
+                  },
+                  {
+                    "kind": "comment"
+                  },
+                  {
+                    "kind": "line_continuation"
+                  },
+                  {
+                    "regex": "^[(),]$"
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "any": [
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "fn-patch"
+                },
+                "all": [
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "kind": "argument_list",
+                      "any": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "keyword_argument",
+                            "has": {
+                              "field": "name",
+                              "regex": "^new$"
+                            },
+                            "all": [
+                              {
+                                "has": {
+                                  "field": "value",
+                                  "matches": "new-lambda"
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "keyword_argument",
+                              "has": {
+                                "field": "name",
+                                "regex": "^new$"
+                              }
+                            }
+                          },
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "positional",
+                            "nthChild": {
+                              "position": 2,
+                              "ofRule": {
+                                "matches": "positional"
+                              }
+                            },
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "list_splat"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "end",
+                                    "kind": "list_splat"
+                                  }
+                                }
+                              ]
+                            },
+                            "all": [
+                              {
+                                "matches": "new-lambda"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "field": "function",
+                  "matches": "fn-patch-object"
+                },
+                "all": [
+                  {
+                    "has": {
+                      "field": "arguments",
+                      "kind": "argument_list",
+                      "any": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "keyword_argument",
+                            "has": {
+                              "field": "name",
+                              "regex": "^new$"
+                            },
+                            "all": [
+                              {
+                                "has": {
+                                  "field": "value",
+                                  "matches": "new-lambda"
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "not": {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "kind": "keyword_argument",
+                              "has": {
+                                "field": "name",
+                                "regex": "^new$"
+                              }
+                            }
+                          },
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "positional",
+                            "nthChild": {
+                              "position": 3,
+                              "ofRule": {
+                                "matches": "positional"
+                              }
+                            },
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "list_splat"
+                                },
+                                {
+                                  "follows": {
+                                    "stopBy": "end",
+                                    "kind": "list_splat"
+                                  }
+                                }
+                              ]
+                            },
+                            "all": [
+                              {
+                                "matches": "new-lambda"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            ],
+            "not": {
+              "has": {
+                "field": "arguments",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "keyword_argument",
+                  "has": {
+                    "field": "name",
+                    "regex": "^return_value$"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "PT008",
+        "message": "Pass the lambda's result to `$F` as `return_value=` instead of a `lambda` that ignores its arguments; keep the lambda if its body must run on every call.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT008"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -326,12 +326,19 @@ impl CompiledBlock {
     }
 }
 
-/// The thread's CPU time (user + system), in seconds.
+/// The thread's CPU time (user + system), in seconds (0 where there is no thread CPU clock: Windows).
 pub fn thread_cpu() -> f64 {
-    let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    // SAFETY: `t` is a valid timespec to write.
-    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-    t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    #[cfg(unix)]
+    {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: `t` is a valid timespec to write.
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    }
+    #[cfg(not(unix))]
+    {
+        0.0
+    }
 }
 
 /// Zero bytes before the first block: `pair` and `plane_before` load each block one byte back,

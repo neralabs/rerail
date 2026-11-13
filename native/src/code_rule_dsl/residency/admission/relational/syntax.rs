@@ -5,7 +5,7 @@ use crate::code_rule_dsl::{
     violations::Span,
 };
 use ast_grep_core::source::SgNode;
-mod packed;
+pub mod packed;
 use packed::{Columns, Fields, Postings};
 use rusqlite::{Connection, types::Value, vtab::Context};
 use std::{
@@ -26,7 +26,7 @@ pub(in crate::code_rule_dsl) struct Owner {
 }
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(in crate::code_rule_dsl) struct Spec {
+pub struct Spec {
     pub name: String,
     pub gate: String,
     #[serde(default)]
@@ -45,7 +45,7 @@ pub(in crate::code_rule_dsl) struct Spec {
     pub owners: BTreeMap<String, Owner>,
 }
 
-pub(in crate::code_rule_dsl) trait Source: Send + Sync {
+pub trait Source: Send + Sync {
     fn columns(&self) -> Vec<String>;
     fn column_types(&self) -> Vec<String>;
     fn len(&self) -> usize;
@@ -53,6 +53,25 @@ pub(in crate::code_rule_dsl) trait Source: Send + Sync {
         self.len()
     }
     fn estimated_matches(&self, column: usize, batch: bool) -> usize;
+    fn scope_column(&self) -> Option<usize> {
+        None
+    }
+    fn scoped_estimate(&self, column: usize, batch: bool, scope_batch: bool) -> usize {
+        let n = self.estimated_matches(column, batch);
+        if scope_batch {
+            n.saturating_mul(256).min(self.len())
+        } else {
+            n
+        }
+    }
+    fn lookup_scoped(
+        &self,
+        column: usize,
+        values: &[Value],
+        _paths: &[Value],
+    ) -> rusqlite::Result<Option<Vec<usize>>> {
+        self.lookup(column, values)
+    }
     fn indexed(&self, column: usize) -> bool;
     fn range_upper_compatible(&self, _lower: usize, _upper: usize) -> bool {
         false
@@ -68,12 +87,21 @@ pub(in crate::code_rule_dsl) trait Source: Send + Sync {
     ) -> rusqlite::Result<Option<Vec<usize>>> {
         Ok(None)
     }
+    fn range_lookup_scoped(
+        &self,
+        column: usize,
+        lower: Option<(&Value, bool)>,
+        upper: Option<(&Value, bool)>,
+        _paths: &[Value],
+    ) -> rusqlite::Result<Option<Vec<usize>>> {
+        self.range_lookup(column, lower, upper)
+    }
     fn lookup(&self, column: usize, values: &[Value]) -> rusqlite::Result<Option<Vec<usize>>>;
     fn column(&self, row: usize, column: usize, ctx: &mut Context) -> rusqlite::Result<()>;
     fn charge(&self, count: usize) -> rusqlite::Result<()>;
 }
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Counters {
+pub struct Counters {
     pub scans: AtomicU64,
     pub batches: AtomicU64,
     pub candidates: AtomicU64,
@@ -85,7 +113,7 @@ struct OwnerIndex {
     distinct: usize,
 }
 type Selections = parking_lot::Mutex<HashMap<(Vec<String>, bool), Arc<Selection>>>;
-pub(in crate::code_rule_dsl) struct Facts {
+pub struct Facts {
     doc: TapeDoc,
     lines: Arc<LineTable>,
     rows: Vec<u32>,
@@ -98,7 +126,7 @@ pub(in crate::code_rule_dsl) struct Facts {
     selections: Selections,
 }
 impl Facts {
-    pub(in crate::code_rule_dsl) fn build(file: &FileInput) -> Result<Arc<Self>> {
+    pub fn build(file: &FileInput) -> Result<Arc<Self>> {
         #[cfg(feature = "code-rule-profile")]
         let _span = crate::code_rule_dsl::profile::trace::Span::start("syntax-prepare", "document");
         let language =
@@ -191,12 +219,19 @@ impl Facts {
     pub(in crate::code_rule_dsl) fn len(&self) -> usize {
         self.rows.len()
     }
-    pub(in crate::code_rule_dsl) fn read_ignores(&self) -> crate::code_rule_dsl::suppress::RerailIgnores {
+    pub(in crate::code_rule_dsl) fn read_ignores(
+        &self,
+    ) -> crate::code_rule_dsl::suppress::RerailIgnores {
         use ast_grep_core::Doc;
         let target = ast_grep_core::AstGrep::doc(self.doc.clone());
         crate::code_rule_dsl::suppress::RerailIgnores::read(&target.root(), self.doc.get_source())
     }
-    pub(in crate::code_rule_dsl) fn span(&self, start: usize, end: usize, excludes: &[String]) -> Option<Span> {
+    pub(in crate::code_rule_dsl) fn span(
+        &self,
+        start: usize,
+        end: usize,
+        excludes: &[String],
+    ) -> Option<Span> {
         // The preorder table is ordered by source start. Check only equal-start nodes.
         let at = self
             .rows
@@ -259,7 +294,18 @@ impl Facts {
         cache.insert(key, Arc::clone(&index));
         Ok(index)
     }
-    pub(in crate::code_rule_dsl) fn subtree_ends(&self) -> &[u32] {
+    pub fn ast_source(&self) -> String {
+        String::from_utf8(self.doc.transducer_source().to_vec()).expect("UTF-8 source")
+    }
+    /// A canonical AST root's span and kind.
+    pub fn ast_root(&self, id: u32) -> Result<(usize, usize, String)> {
+        if self.positions.get(id as usize).is_none_or(Option::is_none) {
+            return Err(invalid("invalid Python AST root"));
+        }
+        let span = self.packed.span(id);
+        Ok((span.start, span.end, self.packed.kind(id).into()))
+    }
+    pub fn subtree_ends(&self) -> &[u32] {
         &self.packed.subtree_end
     }
     fn visible(&self, excludes: &[String]) -> Result<Arc<Vec<u32>>> {
@@ -378,9 +424,9 @@ struct Selection {
     ordinal: Vec<usize>,
     visible: Arc<Vec<u32>>,
 }
-struct Meter {
-    work: Arc<AtomicUsize>,
-    steps: AtomicUsize,
+pub struct Meter {
+    pub work: Arc<AtomicUsize>,
+    pub steps: AtomicUsize,
 }
 impl Meter {
     fn charge(&self, count: usize) -> rusqlite::Result<()> {
@@ -391,7 +437,7 @@ impl Meter {
             .map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))
     }
 }
-struct Nodes {
+pub struct Nodes {
     path: String,
     facts: Arc<Facts>,
     selected: Arc<Selection>,
@@ -576,16 +622,16 @@ impl Source for Nodes {
         let span = self.facts.packed.span(id);
         match &self.columns[c].1 {
             Column::Path => ctx.set_result(&self.path),
-            Column::Id => ctx.set_result(&i64::from(id)),
+            Column::Id => ctx.set_result(i64::from(id)),
             Column::SubtreeEnd => {
-                ctx.set_result(&i64::from(self.facts.packed.subtree_end[id as usize]))
+                ctx.set_result(i64::from(self.facts.packed.subtree_end[id as usize]))
             }
-            Column::Start => ctx.set_result(&(span.start as i64)),
-            Column::End => ctx.set_result(&(span.end as i64)),
-            Column::Parent => ctx.set_result(&self.facts.packed.parent(id).map(i64::from)),
-            Column::Kind => ctx.set_result(&self.facts.packed.kind(id)),
-            Column::Line => ctx.set_result(&(self.facts.lines.line(span.start) as i64)),
-            Column::Text => ctx.set_result(&if self
+            Column::Start => ctx.set_result(span.start as i64),
+            Column::End => ctx.set_result(span.end as i64),
+            Column::Parent => ctx.set_result(self.facts.packed.parent(id).map(i64::from)),
+            Column::Kind => ctx.set_result(self.facts.packed.kind(id)),
+            Column::Line => ctx.set_result(self.facts.lines.line(span.start) as i64),
+            Column::Text => ctx.set_result(if self
                 .empty_text_kinds
                 .iter()
                 .any(|k| k == self.facts.packed.kind(id))
@@ -597,36 +643,36 @@ impl Source for Nodes {
                     .map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))?;
                 text
             }),
-            Column::Ordinal => ctx.set_result(&(ordinal as i64)),
+            Column::Ordinal => ctx.set_result(ordinal as i64),
             Column::Owner(o) => {
-                ctx.set_result(&(o.values[row] != packed::NONE).then_some(i64::from(o.values[row])))
+                ctx.set_result((o.values[row] != packed::NONE).then_some(i64::from(o.values[row])))
             }
             Column::ParentStart | Column::ParentEnd | Column::ParentKind => {
                 let parent = self.facts.packed.parent(id);
                 match self.columns[c].1 {
                     Column::ParentStart => {
-                        ctx.set_result(&parent.map(|p| self.facts.packed.span(p).start as i64))
+                        ctx.set_result(parent.map(|p| self.facts.packed.span(p).start as i64))
                     }
                     Column::ParentEnd => {
-                        ctx.set_result(&parent.map(|p| self.facts.packed.span(p).end as i64))
+                        ctx.set_result(parent.map(|p| self.facts.packed.span(p).end as i64))
                     }
-                    _ => ctx.set_result(&parent.map(|p| self.facts.packed.kind(p).to_owned())),
+                    _ => ctx.set_result(parent.map(|p| self.facts.packed.kind(p).to_owned())),
                 }
             }
             Column::Field(field, part) => {
                 let value = self.facts.fields.get(id, *field);
                 match part {
-                    0 => ctx.set_result(&value.map(i64::from)),
-                    1 => ctx.set_result(&value.map(|n| self.facts.packed.span(n).start as i64)),
-                    2 => ctx.set_result(&value.map(|n| self.facts.packed.span(n).end as i64)),
-                    3 => ctx.set_result(&value.map(|n| self.facts.packed.kind(n).to_owned())),
+                    0 => ctx.set_result(value.map(i64::from)),
+                    1 => ctx.set_result(value.map(|n| self.facts.packed.span(n).start as i64)),
+                    2 => ctx.set_result(value.map(|n| self.facts.packed.span(n).end as i64)),
+                    3 => ctx.set_result(value.map(|n| self.facts.packed.kind(n).to_owned())),
                     _ => {
                         let text = value.map(|n| doc.transducer_text_str(n));
                         if let Some(text) = text {
                             source::charge(&self.meter.work, text.len().div_ceil(256))
                                 .map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))?;
                         }
-                        ctx.set_result(&text)
+                        ctx.set_result(text)
                     }
                 }
             }
@@ -761,7 +807,7 @@ fn schema(db: &Connection, spec: &Spec) -> Result<Vec<String>> {
         })
         .collect()
 }
-fn load_one(spec: &Spec, path: &str, facts: Arc<Facts>, meter: Arc<Meter>) -> Result<Vec<Nodes>> {
+pub fn load_one(spec: &Spec, path: &str, facts: Arc<Facts>, meter: Arc<Meter>) -> Result<Vec<Nodes>> {
     let selected = facts.select(&spec.exclude_kinds, false)?;
     let mut result = Vec::new();
     let nodes = Nodes {
@@ -807,9 +853,43 @@ fn load_one(spec: &Spec, path: &str, facts: Arc<Facts>, meter: Arc<Meter>) -> Re
     Ok(result)
 }
 
-struct Union {
+pub struct Union {
     sources: Vec<Nodes>,
     offsets: Vec<usize>,
+    by_path: HashMap<String, usize>,
+    scope: Option<usize>,
+    estimates: Vec<(usize, usize)>,
+}
+impl Union {
+    pub fn new(sources: Vec<Nodes>) -> Self {
+        let mut offsets = vec![0];
+        for source in &sources {
+            offsets.push(offsets.last().unwrap() + source.len());
+        }
+        let by_path = sources
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (s.path.clone(), i))
+            .collect();
+        let scope = sources[0]
+            .columns
+            .iter()
+            .position(|(_, c)| matches!(c, Column::Path));
+        let estimates = (0..sources[0].columns.len())
+            .map(|c| {
+                let single = sources.iter().map(|s| s.estimated_matches(c, false)).sum();
+                let batch = sources.iter().map(|s| s.estimated_matches(c, true)).sum();
+                (single, batch)
+            })
+            .collect();
+        Self {
+            sources,
+            offsets,
+            by_path,
+            scope,
+            estimates,
+        }
+    }
 }
 impl Source for Union {
     fn columns(&self) -> Vec<String> {
@@ -822,13 +902,98 @@ impl Source for Union {
         *self.offsets.last().unwrap()
     }
     fn estimated_matches(&self, c: usize, b: bool) -> usize {
-        self.sources.iter().map(|s| s.estimated_matches(c, b)).sum()
+        let (single, batch) = self.estimates[c];
+        if Some(c) == self.scope {
+            let per_file = self.len().div_ceil(self.sources.len());
+            if b {
+                per_file.saturating_mul(256).min(self.len())
+            } else {
+                per_file.max(1)
+            }
+        } else {
+            if b { batch } else { single }
+        }
+    }
+    fn scope_column(&self) -> Option<usize> {
+        self.scope
+    }
+    fn scoped_estimate(&self, c: usize, batch: bool, scope_batch: bool) -> usize {
+        let n = self
+            .estimated_matches(c, batch)
+            .div_ceil(self.sources.len())
+            .max(1);
+        if scope_batch {
+            n.saturating_mul(256).min(self.len())
+        } else {
+            n
+        }
+    }
+    fn lookup_scoped(
+        &self,
+        c: usize,
+        values: &[Value],
+        paths: &[Value],
+    ) -> rusqlite::Result<Option<Vec<usize>>> {
+        if paths
+            .iter()
+            .any(|p| !matches!(p, Value::Text(_) | Value::Null))
+        {
+            return self.lookup(c, values);
+        }
+        let mut rows = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for path in paths {
+            self.charge(1)?;
+            if let Value::Text(path) = path
+                && let Some(&file) = self.by_path.get(path)
+                && seen.insert(file)
+            {
+                match self.sources[file].lookup(c, values)? {
+                    Some(found) => rows.extend(found.into_iter().map(|r| r + self.offsets[file])),
+                    None => rows.extend(self.offsets[file]..self.offsets[file + 1]),
+                }
+            }
+        }
+        rows.sort_unstable();
+        rows.dedup();
+        Ok(Some(rows))
     }
     fn range_upper_compatible(&self, lower: usize, upper: usize) -> bool {
         self.sources[0].range_upper_compatible(lower, upper)
     }
     fn range_indexed(&self, c: usize) -> bool {
         self.sources[0].range_indexed(c)
+    }
+    fn range_lookup_scoped(
+        &self,
+        c: usize,
+        lo: Option<(&Value, bool)>,
+        hi: Option<(&Value, bool)>,
+        paths: &[Value],
+    ) -> rusqlite::Result<Option<Vec<usize>>> {
+        if paths
+            .iter()
+            .any(|p| !matches!(p, Value::Text(_) | Value::Null))
+        {
+            return self.range_lookup(c, lo, hi);
+        }
+        let mut rows = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for path in paths {
+            self.charge(1)?;
+            if let Value::Text(path) = path
+                && let Some(&file) = self.by_path.get(path)
+                && seen.insert(file)
+            {
+                match self.sources[file].range_lookup(c, lo, hi)? {
+                    Some(found) => rows.extend(found.into_iter().map(|r| r + self.offsets[file])),
+                    None => return Ok(None),
+                }
+            }
+        }
+        rows.sort_unstable();
+        rows.dedup();
+        Ok(Some(rows))
     }
     fn range_lookup(
         &self,
@@ -852,6 +1017,23 @@ impl Source for Union {
         self.sources[0].charge(n)
     }
     fn lookup(&self, c: usize, v: &[Value]) -> rusqlite::Result<Option<Vec<usize>>> {
+        if Some(c) == self.scope {
+            if v.iter().any(|p| !matches!(p, Value::Text(_) | Value::Null)) {
+                return Ok(None);
+            }
+            let mut rows = Vec::new();
+            for path in v {
+                self.charge(1)?;
+                if let Value::Text(path) = path
+                    && let Some(&i) = self.by_path.get(path)
+                {
+                    rows.extend(self.offsets[i]..self.offsets[i + 1]);
+                }
+            }
+            rows.sort_unstable();
+            rows.dedup();
+            return Ok(Some(rows));
+        }
         let mut result = Vec::new();
         for (i, s) in self.sources.iter().enumerate() {
             match s.lookup(c, v)? {
@@ -895,17 +1077,15 @@ pub(in crate::code_rule_dsl) fn load(
         }
     }
     for (name, sources) in names.iter().zip(families) {
-        let mut offsets = vec![0];
-        for s in &sources {
-            offsets.push(offsets.last().unwrap() + s.len())
-        }
-        super::table::register(db, name, Arc::new(Union { sources, offsets }))
-            .map_err(sql_error)?;
+        super::table::register(db, name, Arc::new(Union::new(sources))).map_err(sql_error)?;
     }
     Ok(names)
 }
 
-pub(in crate::code_rule_dsl) fn prepare_trees(syntax: &Spec, files: &Files) -> Result<Vec<super::producer::Tree>> {
+pub(in crate::code_rule_dsl) fn prepare_trees(
+    syntax: &Spec,
+    files: &Files,
+) -> Result<Vec<super::producer::Tree>> {
     files
         .iter()
         .map(|(_, facts)| {
@@ -972,5 +1152,8 @@ pub(in crate::code_rule_dsl) fn demand(
         trees,
         paths,
         work,
+        python_ast: None,
     })
 }
+
+// scoped_index_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

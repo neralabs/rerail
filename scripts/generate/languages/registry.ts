@@ -18,7 +18,7 @@ export const TEST_LANGUAGES_DIRECTORY = resolve(ROOT, "native", "test-languages"
 
 export const LANGUAGE_REGISTRY_FORMAT = "rerail.language/v1";
 /** The parser implementations a dialect may name: tree-sitter, Forte (Rerail's port, native/src/code_rule_dsl/blade/forte/), or the rule engine's own `.rr` parser (native/src/code_rule_dsl/logic/rr/syntax.rs). */
-export const LANGUAGE_PARSERS = ["tree-sitter", "forte", "rr"] as const;
+export const LANGUAGE_PARSERS = ["tree-sitter", "forte", "rr", "bitlex"] as const;
 
 const name = z.string().regex(/^[a-z][a-z0-9-]*$/u, "Must be lowercase letters, digits and dashes, starting with a letter.");
 const support = z.enum(["supported", "refused", "not-supported-yet"]);
@@ -66,11 +66,60 @@ export const languageEntrySchema = z
 
 export type LanguageEntry = z.infer<typeof languageEntrySchema>;
 
+/** One language file of the registry: its name, and the entry it holds. */
+export type RegistryEntry = { file: string; entry: LanguageEntry };
+
+/** Claims of a key by one file: the second claim of a kind and key is a problem. */
+type ClaimKey = (kind: string, key: string, file: string) => void;
+
+function claimDialects({ file, entry }: RegistryEntry, claim: ClaimKey): void {
+  for (const dialect of entry.dialects) {
+    claim("dialect label", dialect.label, file);
+    for (const suffix of dialect.suffixes) claim("suffix", suffix, file);
+    if (dialect.tapeTag !== undefined) claim("tape tag", String(dialect.tapeTag), file);
+  }
+}
+
+function embedProblems({ file, entry }: RegistryEntry, entries: readonly RegistryEntry[], ids: ReadonlySet<string>): string[] {
+  const embeds = entry.embeds ?? [];
+  const problems = embeds.filter(embed => !ids.has(embed.language)).map(embed => `${file}: embeds unknown language ${embed.language}`);
+  if (entry.status !== "supported") return problems;
+  for (const embed of embeds) {
+    const embedded = entries.find(({ entry: candidate }) => candidate.id === embed.language)?.entry;
+    if (embedded && embedded.status !== "supported") {
+      problems.push(
+        `${file}: embeds planned language ${embed.language}; a supported language embeds only supported ones`,
+      );
+    }
+  }
+  return problems;
+}
+
+/** A supported language's `runsOn`: it starts with its first dialect, names its own, and each is a supported dialect of its family. */
+function runsOnProblems({ file, entry }: RegistryEntry, dialects: ReadonlyMap<string, LanguageEntry>): string[] {
+  const problems: string[] = [];
+  const own = entry.dialects.map(dialect => dialect.label);
+  const runsOn = entry.runsOn ?? own;
+  if (runsOn[0] !== own[0]) problems.push(`${file}: runsOn starts with the language's first dialect, ${own[0]}`);
+  if (new Set(runsOn).size !== runsOn.length) problems.push(`${file}: runsOn repeats a dialect`);
+  for (const label of own) if (!runsOn.includes(label)) problems.push(`${file}: runsOn omits its own dialect ${label}`);
+  return [...problems, ...runsOn.filter(label => !isFamilyDialect(dialects.get(label), entry.family)).map(label => `${file}: runsOn dialect ${label} is not a supported dialect of family ${entry.family}`)];
+}
+
+const isFamilyDialect = (owner: LanguageEntry | undefined, family: LanguageEntry["family"]): boolean => owner?.status === "supported" && owner.family === family;
+
+function familySuppressionProblems({ file, entry }: RegistryEntry, entries: readonly RegistryEntry[]): string[] {
+  const suppressions = JSON.stringify(entry.suppressions);
+  return entries
+    .filter(({ entry: sibling }) => isFamilyDialect(sibling, entry.family) && JSON.stringify(sibling.suppressions) !== suppressions)
+    .map(({ file: other }) => `${file} and ${other} share family ${entry.family} but not its suppressions`);
+}
+
 /** Cross-entry rules: unique ids, labels, suffixes and tape tags; one capability vocabulary; runsOn and embeds resolve; a family's languages share its suppressions. */
-export function languageRegistryProblems(entries: readonly { file: string; entry: LanguageEntry }[]): string[] {
+export function languageRegistryProblems(entries: readonly RegistryEntry[]): string[] {
   const problems: string[] = [];
   const owners = new Map<string, string>();
-  const claim = (kind: string, key: string, file: string) => {
+  const claim: ClaimKey = (kind, key, file) => {
     const other = owners.get(`${kind}:${key}`);
     if (other === undefined) owners.set(`${kind}:${key}`, file);
     else problems.push(`${file}: ${kind} ${key} is also ${other}'s`);
@@ -78,41 +127,14 @@ export function languageRegistryProblems(entries: readonly { file: string; entry
   const ids = new Set(entries.map(({ entry }) => entry.id));
   const capabilities = JSON.stringify(Object.keys(entries[0]?.entry.capabilities ?? {}).toSorted());
   const dialects = new Map(entries.flatMap(({ entry }) => entry.dialects.map(dialect => [dialect.label, entry] as const)));
-  for (const { file, entry } of entries) {
+  for (const item of entries) {
+    const { file, entry } = item;
     if (`${entry.id}.json` !== basename(file)) problems.push(`${file}: id ${entry.id} must equal the file name`);
     claim("id", entry.id, file);
     if (JSON.stringify(Object.keys(entry.capabilities).toSorted()) !== capabilities) problems.push(`${file}: capabilities must name the same capabilities as ${entries[0]!.file}`);
-    for (const dialect of entry.dialects) {
-      claim("dialect label", dialect.label, file);
-      for (const suffix of dialect.suffixes) claim("suffix", suffix, file);
-      if (dialect.tapeTag !== undefined) claim("tape tag", String(dialect.tapeTag), file);
-    }
-    for (const embed of entry.embeds ?? []) if (!ids.has(embed.language)) problems.push(`${file}: embeds unknown language ${embed.language}`);
-    if (entry.status === "supported") {
-      for (const embed of entry.embeds ?? []) {
-        const embedded = entries.find(({ entry: candidate }) => candidate.id === embed.language)?.entry;
-        if (embedded && embedded.status !== "supported") {
-          problems.push(
-            `${file}: embeds planned language ${embed.language}; a supported language embeds only supported ones`,
-          );
-        }
-      }
-    }
-    if (entry.status !== "supported") continue;
-    const own = entry.dialects.map(dialect => dialect.label);
-    const runsOn = entry.runsOn ?? own;
-    if (runsOn[0] !== own[0]) problems.push(`${file}: runsOn starts with the language's first dialect, ${own[0]}`);
-    if (new Set(runsOn).size !== runsOn.length) problems.push(`${file}: runsOn repeats a dialect`);
-    for (const label of own) if (!runsOn.includes(label)) problems.push(`${file}: runsOn omits its own dialect ${label}`);
-    for (const label of runsOn) {
-      const owner = dialects.get(label);
-      if (owner?.status !== "supported" || owner.family !== entry.family) problems.push(`${file}: runsOn dialect ${label} is not a supported dialect of family ${entry.family}`);
-    }
-    for (const { file: other, entry: sibling } of entries) {
-      if (sibling.status === "supported" && sibling.family === entry.family && JSON.stringify(sibling.suppressions) !== JSON.stringify(entry.suppressions)) {
-        problems.push(`${file} and ${other} share family ${entry.family} but not its suppressions`);
-      }
-    }
+    claimDialects(item, claim);
+    problems.push(...embedProblems(item, entries, ids));
+    if (entry.status === "supported") problems.push(...runsOnProblems(item, dialects), ...familySuppressionProblems(item, entries));
   }
   return problems;
 }
@@ -124,8 +146,8 @@ function compareEntries(left: LanguageEntry, right: LanguageEntry): number {
 }
 
 /** Every `.json` file of `directory` parsed against the schema, reported as `label/<file>`; schema problems go to `problems`. */
-function readEntries(directory: string, label: string, problems: string[]): { file: string; entry: LanguageEntry }[] {
-  const entries: { file: string; entry: LanguageEntry }[] = [];
+function readEntries(directory: string, label: string, problems: string[]): RegistryEntry[] {
+  const entries: RegistryEntry[] = [];
   for (const file of readdirSync(directory).filter(file => file.endsWith(".json")).toSorted()) {
     const parsed = languageEntrySchema.safeParse(JSON.parse(readFileSync(resolve(directory, file), "utf8")));
     if (parsed.success) entries.push({ file: `${label}/${file}`, entry: parsed.data });

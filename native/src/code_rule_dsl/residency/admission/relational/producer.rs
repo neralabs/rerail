@@ -5,8 +5,8 @@ use std::{
     cell::Cell,
     sync::{Arc, atomic::AtomicUsize},
 };
-mod completed;
-pub(in crate::code_rule_dsl) mod layout;
+pub mod completed;
+pub mod layout;
 const MAX_STAGES: usize = 100;
 const MAX_OUTPUT_BYTES: usize = 256 * 1024 * 1024;
 thread_local! { static READERS: Cell<usize> = const { Cell::new(0) }; }
@@ -23,9 +23,11 @@ impl Drop for ReadOnly {
     }
 }
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Allowance {
+pub struct Allowance {
     used: usize,
     resident: Resident,
+    pub python_ast_parses: usize,
+    pub python_ast_module_walks: usize,
 }
 impl Allowance {
     pub(in crate::code_rule_dsl) fn clear_resident(&mut self) {
@@ -37,7 +39,7 @@ impl Allowance {
             self.clear_resident();
         }
     }
-    fn reserve(&mut self, n: usize) -> Result<()> {
+    pub fn reserve(&mut self, n: usize) -> Result<()> {
         if READERS.get() != 0 {
             return Err(invalid("producer execution inside SQL callback"));
         }
@@ -54,21 +56,22 @@ impl Allowance {
 /// All offsets are checked scalar indices. No source, path, or host pointer is a request field.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub(in crate::code_rule_dsl) struct Root {
+pub struct Root {
     pub file: u32,
     pub node: u32,
     pub expand: u32,
 }
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Tree {
+pub struct Tree {
     pub facts: Arc<super::syntax::Facts>,
     pub visible: Arc<Vec<u32>>,
 }
-pub(in crate::code_rule_dsl) struct Demand {
+pub struct Demand {
     pub roots: Vec<Root>,
     pub trees: Vec<Tree>,
     pub paths: Vec<String>,
     pub work: Arc<AtomicUsize>,
+    pub python_ast: Option<Vec<String>>,
 }
 struct Output {
     roots: Vec<u32>,
@@ -76,20 +79,35 @@ struct Output {
     files: Vec<u32>,
 }
 /// Constructed only after all passes succeed for this relation.
-pub(in crate::code_rule_dsl) struct Completed {
+pub struct Completed {
     output: Output,
     paths: Vec<String>,
+    python_ast: Option<Box<dyn super::ast_stage::PublishedAst>>,
 }
 impl Completed {
+    pub fn python(output: Box<dyn super::ast_stage::PublishedAst>, paths: Vec<String>) -> Self {
+        Self {
+            output: Output {
+                roots: Vec::new(),
+                nodes: Vec::new(),
+                files: Vec::new(),
+            },
+            paths,
+            python_ast: Some(output),
+        }
+    }
     pub fn publish(self, db: &Connection, name: &str, work: &Arc<AtomicUsize>) -> Result<()> {
         #[cfg(feature = "code-rule-profile")]
         let _span = crate::code_rule_dsl::profile::trace::Span::start("producer-publish", name);
+        if let Some(output) = self.python_ast {
+            return output.publish(self.paths, db, name, Arc::clone(work));
+        }
         completed::publish(self, db, name, Arc::clone(work))
     }
 }
 /// Checked, flat request columns. Relation boundaries are numeric CSR offsets.
 #[derive(Default)]
-struct Resident {
+pub struct Resident {
     ends: Vec<u32>,
     visible: Vec<u32>,
     files: Vec<[u32; 4]>,
@@ -100,7 +118,7 @@ struct Resident {
     retained: Vec<Tree>,
     resident_bytes: usize,
 }
-pub(in crate::code_rule_dsl) const MAX_RESIDENT_BYTES: usize = 64 * 1024 * 1024;
+pub const MAX_RESIDENT_BYTES: usize = 64 * 1024 * 1024;
 fn capacity(bytes: Option<usize>, limit: usize) -> Result<usize> {
     bytes
         .filter(|&n| n <= limit)
@@ -213,6 +231,51 @@ pub(in crate::code_rule_dsl) fn execute(
     contexts: &mut [crate::code_rule_dsl::budget::Context],
     allowance: &mut Allowance,
 ) -> Vec<Result<Completed>> {
+    if pending.iter().all(|(_, d)| d.python_ast.is_none()) {
+        return execute_subtrees(pending, contexts, allowance);
+    }
+    let n = pending.len();
+    let mut slots: Vec<Option<Result<Completed>>> = (0..n).map(|_| None).collect();
+    let mut trees = Vec::new();
+    let mut tree_slots = Vec::new();
+    let mut ast = Vec::new();
+    let mut ast_slots = Vec::new();
+    for (slot, item) in pending.into_iter().enumerate() {
+        if item.1.python_ast.is_some() {
+            ast_slots.push(slot);
+            ast.push(item);
+        } else {
+            tree_slots.push(slot);
+            trees.push(item);
+        }
+    }
+    if !trees.is_empty() {
+        for (slot, result) in tree_slots
+            .into_iter()
+            .zip(execute_subtrees(trees, contexts, allowance))
+        {
+            slots[slot] = Some(result);
+        }
+    }
+    for (slot, result) in ast_slots
+        .into_iter()
+        .zip(match super::ast_stage::producer() {
+            Some(producer) => producer.execute(ast, contexts, allowance),
+            None => ast.iter().map(|_| Err(invalid("no canonical AST producer"))).collect(),
+        })
+    {
+        slots[slot] = Some(result);
+    }
+    slots
+        .into_iter()
+        .map(|r| r.expect("every producer output is assigned"))
+        .collect()
+}
+fn execute_subtrees(
+    pending: Vec<(usize, Demand)>,
+    contexts: &mut [crate::code_rule_dsl::budget::Context],
+    allowance: &mut Allowance,
+) -> Vec<Result<Completed>> {
     #[cfg(feature = "code-rule-profile")]
     let mut wave = crate::code_rule_dsl::profile::trace::Span::start("producer-wave", "subtrees");
     let (indices, demands): (Vec<_>, Vec<_>) = pending.into_iter().unzip();
@@ -311,6 +374,7 @@ pub(in crate::code_rule_dsl) fn execute(
             outputs.push(result.map(|()| Completed {
                 output,
                 paths: demand.paths,
+                python_ast: None,
             }));
         }
     }
@@ -319,7 +383,7 @@ pub(in crate::code_rule_dsl) fn execute(
     outputs
 }
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn callback_cannot_reserve_producer_work() {

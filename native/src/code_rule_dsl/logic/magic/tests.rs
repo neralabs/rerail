@@ -3,7 +3,7 @@ use crate::code_rule_dsl::logic::front::prune;
 use crate::code_rule_dsl::logic::rr::parse;
 
 fn root() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
+    std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/logic")
 }
 
 fn strings(items: &[String]) -> String {
@@ -55,6 +55,9 @@ fn golden_text(p: &Program) -> String {
 /// rule for rule: the goldens are `rdl.py`'s output, printed by T's repr.
 #[test]
 fn t_programs_transform_like_t() {
+    // T's goldens order nodes by their ids, as preorder ids did; by definition the front end compares them by
+    // `node_order` (decision 0094 §2a), a rewrite of its own that T never made.
+    crate::code_rule_dsl::logic::front::KEEP_NODE_COMPARISONS.set(true);
     let mut failures = Vec::new();
     let renamed = regex::Regex::new(r"(^|[^A-Za-z0-9])glob(_[bf]+\b|\b)").unwrap();
     for name in ["calls", "calls_rust", "workload", "workload_demand", "workload_perdoc"] {

@@ -311,7 +311,7 @@ tree rr {
                                                  | wrap named_argument name as identifier ':' value: term]
                         | 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list]
                         | aggregate_word as variable [word_agg | empty_parens wrap call function as identifier arguments: argument_list
-                          | (wrap call function as identifier arguments: agg_argument_list) [wrap aggregate _ reread aggregate_value ':' '{' body: body '}']]
+                          | (wrap call function as identifier arguments: agg_argument_list) [wrap aggregate _ reread aggregate_value agg_body]]
                         | parenthesized_expression
   node lattice_functor  = retag functor_call '@' function: identifier [arguments: argument_list]
   # The setting's `.` and name, one `.policy` leaf; the node a policy document.
@@ -428,7 +428,7 @@ tree rr {
                                                  | unless no_named (wrap named_argument name as identifier ':' value: term)]
                         | 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list]
                         | aggregate_word as variable [word_agg | empty_parens wrap call function as identifier arguments: argument_list
-                          | (wrap call function as identifier arguments: agg_argument_list) [wrap aggregate _ reread aggregate_value ':' '{' body: body '}']]
+                          | (wrap call function as identifier arguments: agg_argument_list) [wrap aggregate _ reread aggregate_value agg_body]]
                         | parenthesized_expression
   # `-` and a number: one number leaf (a float, with a fraction). Else `-` and its operand,
   # a primary that is no number.
@@ -438,7 +438,7 @@ tree rr {
   # An aggregate's word at a literal's start: the aggregate, then the rest of a term and a
   # comparison or a pattern; else the word as any other.
   choice aggregate_literal = 'count' as variable (count_agg more [literal_tail] | relabel literal (wrap atom relation as identifier arguments: argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail)] | more [literal_tail])
-                           | aggregate_word as variable (word_agg more [literal_tail] | relabel literal (wrap atom relation as identifier arguments: agg_argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail) | relabel bare (wrap aggregate _ reread aggregate_value ':' '{' body: body '}') more [literal_tail]] | more [literal_tail])
+                           | aggregate_word as variable (word_agg more [literal_tail] | relabel literal (wrap atom relation as identifier arguments: agg_argument_list) [relabel bare as call inner function (more1 [literal_tail] | literal_tail) | relabel bare (wrap aggregate _ reread aggregate_value agg_body) more [literal_tail]] | more [literal_tail])
   choice aggregate_negated = 'count' as variable (count_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
                            | aggregate_word as variable (word_agg more pattern_tail | (wrap atom relation as identifier arguments: argument_list) [relabel _ as call inner function more pattern_tail] | more pattern_tail)
   # The aggregates' words but `count`: each the word of its level, which a wrap or a reading
@@ -447,10 +447,16 @@ tree rr {
   choice aggregate_word = 'min' | 'max' | 'sum' | 'mean' | 'join'
   # The aggregate around its word, which takes its own kind back.
   # `count` with a body alone: implied, so dropped once the aggregate holds it.
-  choice count_agg      = wrap aggregate _ drop ':' '{' body: body '}'
+  choice count_agg      = wrap aggregate _ drop agg_body
   choice word_agg      = wrap aggregate operator as aggregate_word aggregated
   # What a value's aggregate holds after its word.
-  choice aggregated     = value: with no_named agg_value ['by' ('(' key: without no_named term (',' key: without no_named term)* ')' | key: with no_named agg_value)] ['sep' separator: string] ':' '{' body: body '}'
+  choice aggregated     = value: with no_named agg_value ('by' ('(' key: without no_named term (',' key: without no_named term)* ')' keyed_body | key: with no_named agg_value agg_tail) | agg_tail)
+  # An aggregate's `:` is stored: `by (k) : {` holds it beside the stored `)`, a gap stored whole,
+  # so under an aggregate a `:` is stored everywhere. Its `{` is implied but in that gap (a key
+  # list's `)` with no `sep` after it).
+  choice agg_tail       = ['sep' separator: string] agg_body
+  choice keyed_body     = 'sep' separator: string agg_body | ':' '{' body: body '}'
+  choice agg_body       = ':' '{' body: body '}'
   # An aggregate's value or single key: a term with no named argument in it (`no_named`, down
   # through the calls in it), starting with no `-` or `(` (after the word those make it a
   # variable's or a call's). A word of an aggregate here starts its own aggregate, a call or a
@@ -466,7 +472,7 @@ tree rr {
   choice count_value nested = 'count' as variable [count_agg | wrap call function as identifier arguments: argument_list] more
   # An aggregate's word in a value, read as in any other term.
   choice word_in_value nested = aggregate_word as variable [word_agg | empty_parens wrap call function as identifier arguments: argument_list
-                             | (wrap call function as identifier arguments: agg_argument_list) [wrap aggregate _ reread aggregate_value ':' '{' body: body '}']] more
+                             | (wrap call function as identifier arguments: agg_argument_list) [wrap aggregate _ reread aggregate_value agg_body]] more
   choice punctuation    = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '{' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include'
   # A setting's: every punctuation but `{`, which opens a JSON object.
   choice setting_punctuation = '(' | ')' | ',' | '.' | ';' | ':' | '=' | '<' | '>' | '!' | '|' | '@' | '*' | '[' | ']' | '-' | '+' | '/' | '%' | '~' | '^' | '&' | '}' | ':-' | '=>' | '!=' | '<=' | '>=' | '<:' | '->' | '#include'
@@ -485,7 +491,7 @@ tree rr {
   implied pragma_tail 'pragma'
   implied lattice_tail 'lattice' '<' '>' '{' ',' '}'
   implied lattice_operation '->'
-  implied lattice_unsigned ':' '{' '}'
+  implied lattice_unsigned ':'
   implied lattice_functor '@'
   implied declaration_tail 'decl'
   implied violation_tail 'violation' 'options'
@@ -504,13 +510,12 @@ tree rr {
   implied group '(' ')'
   implied negation '!'
   implied pattern_tail '~'
-  implied unsigned ':' '{' '}'
+  implied unsigned ':'
   implied parenthesized_expression '(' ')'
   implied functor_call '@'
-  implied aggregate_literal ':' '{' '}'
-  implied count_agg ':' '{' '}'
-  implied aggregated ':' '{' '}' ','
-  implied word_in_value ':' '{' '}'
+  implied aggregated ','
+  implied agg_body '{' '}'
+  implied keyed_body '}'
   hidden line newline policy_on json_bad fix_on suppress_on options_on over_on one_name empty_parens
   extra comment
 }
