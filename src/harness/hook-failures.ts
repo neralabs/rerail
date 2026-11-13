@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, fstatSync, linkSync, openSync, readdirSync, readFileSync, readSync, statSync, unlinkSync, type BigIntStats } from "node:fs";
+import { appendFileSync, closeSync, fstatSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, statSync, unlinkSync, type BigIntStats } from "node:fs";
 import { dirname, join } from "node:path";
 import { renameWithRetrySync } from "../engine/file-replace.js";
+import { LOCKS_DIR } from "../engine/native/file-lock.js";
+import { loadNativeBinding, type NativeExclusiveFileLock } from "../engine/native/native.js";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { processState } from "../engine/process-liveness.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -165,6 +167,7 @@ function copyBack(taken: string, path: string): void {
   } catch {
     return;
   }
+  const lock = copyLock(dirname(path));
   try {
     copyLines(descriptor, taken, path);
   } catch {
@@ -173,15 +176,50 @@ function copyBack(taken: string, path: string): void {
     // removes the file. An append that fails after the removal loses the lines, as the same failure loses this hook's
     // own line.
   } finally {
+    if (lock !== null) lock.release();
     closeSync(descriptor);
   }
 }
 
 /**
- * {@link copyBack}, through `descriptor`, the log taken as `taken` opened for reading. One window is left: a hook that
- * writes into the log after the second read below loses its line. No two hooks copy one file: a hook holds a log under
- * its own name only by taking the live name, and a hook whose give-back put the file back there copies nothing, so of
- * the hooks that take one file in turn, only the last can copy it.
+ * The lock a give-back by copy holds from the removal of its own name to the end of the copy: the OS lock on
+ * `locks/hook-failures.lock` in the Rerail home, which the system frees when its holder ends, however it ends. On
+ * Windows a rename opens the file by name and then renames what it opened, so two hooks can hold one log under their
+ * own names at once. Each removes its name and copies only when no other name holds the file; without the lock both
+ * can remove theirs before either looks, and both copy. Null when the engine that takes the lock does not load, or
+ * another hook holds it past `COPY_LOCK_WAIT_MS`: the copy then goes ahead without it.
+ */
+function copyLock(home: string): NativeExclusiveFileLock | null {
+  try {
+    const path = join(home, LOCKS_DIR, COPY_LOCK_FILE);
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    const engine = loadNativeBinding();
+    return firstOf(() => engine.tryLockExclusive(path), Date.now() + COPY_LOCK_WAIT_MS);
+  } catch {
+    // No engine, or no lock file: as when the wait runs out.
+    return null;
+  }
+}
+
+const COPY_LOCK_FILE = "hook-failures.lock";
+
+/** A copy holds its lock for one read and one append; a hook that waits past this copies without it. */
+const COPY_LOCK_WAIT_MS = 1_000;
+
+const PAUSE = new Int32Array(new SharedArrayBuffer(4));
+
+/** What `take` gives, tried every 5 ms until it gives one or the clock passes `deadline` (epoch ms); null then. */
+function firstOf<T>(take: () => T | null, deadline: number): T | null {
+  for (;;) {
+    const taken = take();
+    if (taken !== null || Date.now() >= deadline) return taken;
+    Atomics.wait(PAUSE, 0, 0, 5);
+  }
+}
+
+/**
+ * {@link copyBack}, through `descriptor`, the log taken as `taken` opened for reading, under {@link copyLock}. One
+ * window is left: a hook that writes into the log after the second read below loses its line.
  */
 function copyLines(descriptor: number, taken: string, path: string): void {
   // Gone from its name before the lines go back, so a hook that moves it on finds nothing to give back twice.

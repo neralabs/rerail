@@ -376,6 +376,31 @@ describe("the hook failure log", () => {
     expect(statusCount(rerailHome)).toBe(full + 3);
   });
 
+  // On Windows a rename opens the file by name and renames what it opened, so a hook can move a log on from the name a
+  // give-back left it under while another hook takes the live name the give-back made: two hooks then hold one log under
+  // their own names. Here each hook takes the same part, waits until the other has it too, finds the full live log
+  // another hook began, and gives the part back by copy at the same moment as the other.
+  it("copies a log two hooks hold under their own names back once when both give it back at the same moment", async () => {
+    const rerailHome = await home();
+    writeFullLog(rerailHome);
+    const part = join(await home(), "part");
+    writeFileSync(part, `${JSON.stringify(failure(3))}\n${JSON.stringify(failure(4))}\n`);
+    const meet = await home();
+    // Marks `step` for this process, then waits up to `ms` for the other process to mark it too.
+    const both = (step: string, ms: number): string => `fs.writeFileSync(${JSON.stringify(meet)} + "/${step}-" + process.pid, "");
+      for (const until = Date.now() + ${ms}; fs.readdirSync(${JSON.stringify(meet)}).filter(name => name.startsWith("${step}-")).length < 2 && Date.now() < until;) {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+      }`;
+    const wraps = {
+      renameSync: `rename => (from, to) => { if (!to.endsWith(".old")) return rename(from, to); fs.linkSync(${JSON.stringify(part)}, to); ${both("took", 20_000)} }`,
+      unlinkSync: `unlink => path => { unlink(path); if (path.endsWith(".old")) { ${both("gave", 300)} } }`,
+    };
+    await Promise.all([recordWithWrapped(rerailHome, 5, wraps), recordWithWrapped(rerailHome, 6, wraps)]);
+    expect(readdirSync(meet).filter(name => name.startsWith("took-"))).toHaveLength(2);
+    // The full log, the part's two failures once, and each hook's own.
+    expect(statusCount(rerailHome)).toBe(full + 4);
+  });
+
   // `rerail status` can read the log while a hook moves it aside. The log holds the full log's failures until the hook
   // writes its own, then one more, so every read must count one of those two.
   it("counts every failure once when status reads the log while a hook moves it aside", async () => {
