@@ -691,6 +691,11 @@ export interface CodeRuleDslAstRule extends CodeRuleDslSemanticAstRuleFields {
   pattern?: CodeRuleDslAstPattern;
   kind?: string;
   regex?: string;
+  /**
+   * Why the token `regex` tests is stored where the rule looks: an optional or alternative token the tape keeps. A
+   * kindless token test the tape may leave out, and that neither the named structure nor a gap answers, does not compile.
+   */
+  stored?: string;
   nthChild?: CodeRuleDslNthChild;
   filePath?: CodeRuleDslTextCondition;
   all?: CodeRuleDslAstRule[];
