@@ -123,6 +123,11 @@ impl World {
         entries
     }
 
+    /// Fixed-width type columns share the directory's observed names.
+    pub(super) fn dir_types(&mut self, _asked: &str) -> (crate::content_store::observe::Listing, crate::content_store::observe::EntryTypes) {
+        Default::default()
+    }
+
     /// A file's lines (none when it is refused or missing).
     pub(super) fn file(&mut self, asked: &str) -> Vec<String> {
         if let Some(lines) = self.files.get(asked) {
@@ -345,4 +350,46 @@ fn listing_digest(entries: &[(String, bool)]) -> String {
 /// A file's bytes' digest ("" when it cannot be read), from phase 0's observer: read only when its stat changed.
 pub(in crate::code_rule_dsl::logic::plan) fn bytes_digest(path: &Path) -> String {
     super::observe(|o| o.digest(path)).map(|d| hex(&d)).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod directory_metadata_tests {
+    use super::*;
+    #[test]
+    fn directory_metadata_world_shares_preparation_between_views() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("root");std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("a.py"), "").unwrap();
+        std::fs::create_dir(root.join("inner")).unwrap();
+        let mut world = World::new(&root, &front::Program::default());
+        let before = super::super::observe(|o| o.counts.listed);
+        let basic = world.dir(".");
+        let (names, types) = world.dir_types(".");
+        assert_eq!(names.as_ref(), &basic.iter().cloned().collect::<Vec<_>>());
+        assert_eq!(types.len(), 2);
+        assert!(types[0].is_file);assert!(!types[1].is_file);
+        assert!(std::sync::Arc::ptr_eq(&names, &world.dir_types(".").0));
+        assert_eq!(super::super::observe(|o| o.counts.listed) - before, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_metadata_world_consults_types_even_when_directory_flags_are_unchanged() {
+        use std::os::unix::fs::symlink;
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("root");std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("a.py"), "original").unwrap();
+        std::fs::write(root.join("target"), "").unwrap();
+        let prog = front::Program::default();
+        let mut world = World::new(&root, &prog);
+        let (_, types) = world.dir_types(".");assert_eq!(types.len(), 2);
+        let consulted = world.consulted();
+        assert!(consulted.iter().any(|(kind,_,_)| kind == "dir-metadata"));
+        std::fs::write(root.join("a.py"), "changed bytes, same type").unwrap();
+        assert!(World::new(&root, &prog).still(&consulted), "metadata has no dependency on contents");
+        std::fs::remove_file(root.join("a.py")).unwrap();
+        symlink("target", root.join("a.py")).unwrap();
+        assert!(!World::new(&root, &prog).still(&consulted), "file and symlink-to-file have equal dir_entry rows");
+        assert!(World::new(&root, &prog).dir_types(base.path().to_str().unwrap()).0.is_empty(), "outside roots denied");
+    }
 }
