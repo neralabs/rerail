@@ -352,3 +352,140 @@ pub fn decode_span(files: &[Vec<Vec<u8>>], dict: &[u8]) -> Result<GpuRun, String
     let got = unsafe { std::slice::from_raw_parts(bo.contents().cast::<u8>(), expected.len()) };
     Ok(GpuRun { threads: tasks.len(), bytes_out: expected.len(), gpu_seconds: secs, correct: got == &expected[..] })
 }
+
+const HUFF_SOURCE: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+
+// One thread per checkpoint segment: decode its sequence bytes and its literal bytes from their bit offsets.
+struct HTask { uint seq_out; uint seq_n; uint seq_bit; uint lit_out; uint lit_n; uint lit_bit; };
+
+static inline void run(device const uchar* bits, uint bit, uint n, device const ushort* lut, device uchar* out) {
+    for (uint i = 0; i < n; i++) {
+        uint b = bit >> 3;
+        uint w = uint(bits[b]) | uint(bits[b + 1]) << 8 | uint(bits[b + 2]) << 16;
+        ushort e = lut[(w >> (bit & 7)) & 4095];
+        out[i] = uchar(e & 255);
+        bit += e >> 8;
+    }
+}
+
+kernel void huff(device const HTask* tasks [[buffer(0)]],
+                 device const uchar* seq_bits [[buffer(1)]],
+                 device const uchar* lit_bits [[buffer(2)]],
+                 device const ushort* seq_lut [[buffer(3)]],
+                 device const ushort* lit_lut [[buffer(4)]],
+                 device uchar* seqs [[buffer(5)]],
+                 device uchar* lits [[buffer(6)]],
+                 constant uint& ntasks [[buffer(7)]],
+                 uint id [[thread_position_in_grid]]) {
+    if (id >= ntasks) return;
+    HTask t = tasks[id];
+    run(seq_bits, t.seq_bit, t.seq_n, seq_lut, seqs + t.seq_out);
+    run(lit_bits, t.lit_bit, t.lit_n, lit_lut, lits + t.lit_out);
+}
+"#;
+
+pub struct HuffRun {
+    pub threads: usize,
+    pub bytes_out: usize,
+    /// The Huffman pass and the span pass, warm.
+    pub huff_seconds: f64,
+    pub lz_seconds: f64,
+    pub correct: bool,
+}
+
+/// Span LZ with the entropy stage on the GPU: a Huffman pass (one thread per checkpoint segment) into the
+/// plain sequences and literals, then the span pass over them. `files` are each file's entropy-coded blocks.
+pub fn decode_span_huff(files: &[Vec<Vec<u8>>], dict: &[u8], seq_t: &crate::huff::Table, lit_t: &crate::huff::Table) -> Result<HuffRun, String> {
+    use crate::huff;
+    let device = Device::system_default().ok_or("no Metal device")?;
+    let pipe = |src: &str, name: &str| -> Result<metal::ComputePipelineState, String> {
+        let lib = device.new_library_with_source(src, &metal::CompileOptions::new()).map_err(|e| e.to_string())?;
+        let f = lib.get_function(name, None).map_err(|e| e.to_string())?;
+        device.new_compute_pipeline_state_with_function(&f).map_err(|e| e.to_string())
+    };
+    let (hp, sp) = (pipe(HUFF_SOURCE, "huff")?, pipe(SPAN_SOURCE, "decode_span")?);
+    let pool = lp::Dict::new(dict.to_vec());
+    let (mut sbits, mut lbits) = (Vec::new(), Vec::new());
+    let (mut htasks, mut tasks, mut table) = (Vec::<[u32; 6]>::new(), Vec::<[u32; 5]>::new(), Vec::<[u32; 2]>::new());
+    let (mut nseq, mut nlit) = (0usize, 0usize);
+    let mut expected = Vec::new();
+    for file in files {
+        let plain: Vec<Vec<u8>> = file.iter().map(|c| huff::decode_block(c, seq_t, lit_t)).collect();
+        for (b, c) in file.iter().enumerate() {
+            let p = huff::coded(c);
+            let g = table.len() as u32;
+            table.push([nseq as u32, nlit as u32]);
+            let (sb, lb) = (sbits.len() as u64 * 8, lbits.len() as u64 * 8);
+            sbits.extend_from_slice(p.seq_bits);
+            lbits.extend_from_slice(p.lit_bits);
+            let ob = expected.len() as u32;
+            for (i, ck) in p.checks.iter().enumerate() {
+                let next = p.checks.get(i + 1);
+                let s_end = next.map_or(p.nseq_bytes, |n| n[2] as usize) as u32;
+                let l_end = next.map_or(p.nlit, |n| n[1] as usize) as u32;
+                htasks.push([nseq as u32 + ck[2], s_end - ck[2], (sb + u64::from(ck[3])) as u32, nlit as u32 + ck[1], l_end - ck[1], (lb + u64::from(ck[4])) as u32]);
+                let n = (p.nseq - i * p.k).min(p.k) as u32;
+                tasks.push([ob + ck[0], g, ck[2], ck[1], n]);
+            }
+            nseq += p.nseq_bytes;
+            nlit += p.nlit;
+            expected.extend(crate::span::decompress(&plain, b, &pool));
+        }
+    }
+    if tasks.is_empty() {
+        return Ok(HuffRun { threads: 0, bytes_out: 0, huff_seconds: 0.0, lz_seconds: 0.0, correct: true });
+    }
+    sbits.extend_from_slice(&[0; 4]);
+    lbits.extend_from_slice(&[0; 4]);
+    let lut = |t: &huff::Table| -> Vec<u8> { t.lut.iter().flat_map(|&(s, l)| (u16::from(s) | u16::from(l) << 8).to_le_bytes()).collect() };
+    let opts = MTLResourceOptions::StorageModeShared;
+    let buf = |b: &[u8]| {
+        let b = if b.is_empty() { &[0u8][..] } else { b };
+        device.new_buffer_with_data(b.as_ptr().cast(), b.len() as u64, opts)
+    };
+    // SAFETY: arrays of u32s as bytes.
+    let as_bytes = |v: &[u32]| unsafe { std::slice::from_raw_parts(v.as_ptr().cast::<u8>(), v.len() * 4) };
+    let (bh, bsb, blb, bsl, bll) = (buf(as_bytes(htasks.as_flattened())), buf(&sbits), buf(&lbits), buf(&lut(seq_t)), buf(&lut(lit_t)));
+    let (bseq, blit) = (device.new_buffer(nseq.max(1) as u64 + 8, opts), device.new_buffer(nlit.max(1) as u64 + 8, opts));
+    let (bt, bd, bb) = (buf(as_bytes(tasks.as_flattened())), buf(dict), buf(as_bytes(table.as_flattened())));
+    let bo = device.new_buffer(expected.len().max(1) as u64, opts);
+    let queue = device.new_command_queue();
+    let (n, dl) = (tasks.len() as u32, dict.len() as u32);
+    let (mut hs, mut ls) = (0.0, 0.0);
+    for _ in 0..2 {
+        // Two command buffers, so each pass has its own GPU time.
+        let cmd = queue.new_command_buffer();
+        let enc = cmd.new_compute_command_encoder();
+        enc.set_compute_pipeline_state(&hp);
+        for (i, b) in [&bh, &bsb, &blb, &bsl, &bll, &bseq, &blit].iter().enumerate() {
+            enc.set_buffer(i as u64, Some(b), 0);
+        }
+        enc.set_bytes(7, 4, (&n as *const u32).cast());
+        let w = hp.thread_execution_width().min(64);
+        enc.dispatch_threads(MTLSize::new(u64::from(n), 1, 1), MTLSize::new(w, 1, 1));
+        enc.end_encoding();
+        cmd.commit();
+        cmd.wait_until_completed();
+        hs = gpu_seconds(cmd);
+        let cmd = queue.new_command_buffer();
+        let enc = cmd.new_compute_command_encoder();
+        enc.set_compute_pipeline_state(&sp);
+        for (i, b) in [&bt, &bseq, &blit, &bd, &bo].iter().enumerate() {
+            enc.set_buffer(i as u64, Some(b), 0);
+        }
+        enc.set_bytes(5, 4, (&n as *const u32).cast());
+        enc.set_bytes(6, 4, (&dl as *const u32).cast());
+        enc.set_buffer(7, Some(&bb), 0);
+        let w = sp.thread_execution_width().min(64);
+        enc.dispatch_threads(MTLSize::new(u64::from(n), 1, 1), MTLSize::new(w, 1, 1));
+        enc.end_encoding();
+        cmd.commit();
+        cmd.wait_until_completed();
+        ls = gpu_seconds(cmd);
+    }
+    // SAFETY: shared storage of `expected.len()` bytes; the GPU is done with it.
+    let got = unsafe { std::slice::from_raw_parts(bo.contents().cast::<u8>(), expected.len()) };
+    Ok(HuffRun { threads: tasks.len(), bytes_out: expected.len(), huff_seconds: hs, lz_seconds: ls, correct: got == &expected[..] })
+}

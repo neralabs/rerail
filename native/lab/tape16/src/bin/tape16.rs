@@ -327,12 +327,32 @@ fn cmd_gpu(path: &str, dict_kb: usize, k: usize, cut: Cut) {
                     }
                 }
             });
-            let run = match c {
+            drop(files);
+            // Each run in its own pool: Metal's command buffers are autoreleased, and hold their buffers.
+            let run = metal::objc::rc::autoreleasepool(|| match c {
                 Codec::LpSpan { .. } => rerail_tape_lab::gpu::decode_span(&comp, &dict.bytes),
                 Codec::LpLz => rerail_tape_lab::gpu::decode(&comp.concat(), &dict.bytes, Refs::Literals),
                 Codec::LpReplay => rerail_tape_lab::gpu::decode(&comp.concat(), &dict.bytes, Refs::Replay),
                 _ => rerail_tape_lab::gpu::decode(&comp.concat(), &dict.bytes, Refs::Output),
-            };
+            });
+            if let Codec::LpSpan { .. } = c {
+                let t = dicts.tables(&corpus, tag, &Solution { entropy: true, ..s });
+                let coded: Vec<Vec<Vec<u8>>> = comp.iter().map(|f| f.iter().map(|b| rerail_tape_lab::huff::encode(b, &t.0, &t.1)).collect()).collect();
+                match metal::objc::rc::autoreleasepool(|| rerail_tape_lab::gpu::decode_span_huff(&coded, &dict.bytes, &t.0, &t.1)) {
+                    Ok(g) => println!(
+                        "| {} | {}+huff | {} | {:.2} | {:.0} + {:.0} | {:.2} | | {} |",
+                        capture::language(tag),
+                        c.name(),
+                        g.threads,
+                        g.bytes_out as f64 / 1e6,
+                        g.huff_seconds * 1e6,
+                        g.lz_seconds * 1e6,
+                        g.bytes_out as f64 / (g.huff_seconds + g.lz_seconds).max(1e-9) / 1e9,
+                        g.correct
+                    ),
+                    Err(e) => println!("| {} | {}+huff | error: {e} |", capture::language(tag), c.name()),
+                }
+            }
             match run {
                 Ok(g) => println!(
                     "| {} | {} | {} | {:.2} | {:.0} | {:.2} | {:.0} | {} |",
