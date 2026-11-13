@@ -21,3 +21,10 @@ grammar implies (`native/src/code_rule_dsl/tape/tokens.rs`). Every change is mar
 - **A node with no children** (all its tokens implied) matches goals that are ellipses, bound to
   nothing, and the end of children (`match_nodes_impl_recursive`). Upstream refuses a candidate
   with no children.
+- **`Doc::implied_after`**: whether the tokens a document leaves out right after a parent's child
+  begin with given texts; `None` (cannot say) by default, so upstream's documents are unchanged.
+  Where the end of children meets a named candidate (`match_nodes_impl_recursive`), the left-out
+  tokens after the last matched child that begin with the goal's word are the goal's, and the rest
+  trails under the strictness (`should_skip_trailing`), as after upstream's last token goal:
+  `case $V:` matches `case 2: break;`. Otherwise it refuses as before: `f($A)` refuses `f(a, b)`,
+  whose gap after `a` is `,`.

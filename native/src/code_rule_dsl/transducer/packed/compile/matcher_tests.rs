@@ -710,3 +710,34 @@ fn ast_pattern_verdicts_reuse_their_bindings() {
     }
 }
 
+/// The end of children meets a named candidate (RER-131): where the tokens the tape leaves out after
+/// the last matched child begin with the goal's, the rest trails, in the packed matcher as in
+/// ast-grep-core's. `case $V:` matches `case 1: f(); break;` (ast-grep 0.51.0 does); `f($A)` still
+/// refuses `f(a, b)`, whose gap after `a` is `,`.
+#[test]
+fn ast_pattern_end_of_children_meets_implied_tokens() {
+    use ast_grep_core::matcher::MatcherExt as _;
+    let source = Arc::new("switch (x) { case 1: f(); break; }\nf(a);\nf(a, b);\n".to_owned());
+    let grammar = Grammar::new(GrammarDialect::TypeScript).expect("TypeScript grammar");
+    let image = TapeImage::parse(&grammar, &source, &|| false).expect("parser completed").expect("tape image");
+    let tape = TapeDoc::restore(source, grammar, &image, &|| false).expect("restored tape");
+    let root = Root::doc(tape.clone());
+    for (pattern, want) in [
+        (Pattern::contextual("switch ($X) { case $V: }", "switch_case", GrammarDialect::TypeScript).unwrap(), ["case 1: f(); break;"]),
+        (Pattern::try_new("f($A)", GrammarDialect::TypeScript).unwrap(), ["f(a)"]),
+    ] {
+        let program = Program::compile_ast_grep_pattern(&pattern).unwrap();
+        let (mut packed, mut core) = (Vec::new(), Vec::new());
+        for node in root.root().dfs() {
+            if program.execute_ast_pattern(&tape, node.node_id() as u32).unwrap().is_some() {
+                packed.push(node.text().into_owned());
+            }
+            if pattern.match_node(node.clone()).is_some() {
+                core.push(node.text().into_owned());
+            }
+        }
+        assert_eq!(packed, want, "packed");
+        assert_eq!(core, want, "ast-grep-core");
+    }
+}
+
