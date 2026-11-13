@@ -16,7 +16,7 @@ def install(backend,module,detectors=False):
         values.sort(key=lambda p:(p['file_path'],p['line_number'],p['source_code'],p['ordinal']))
         return [module.Violation(code=p['source_code'],file_path=p['file_path'],line_number=p['line_number'],message=p['source_message'],severity=p['severity'])for p in values]
     def scan_repo(root):
-        return violations(root,'_pse_repository',dict(env=['pse.api=repository']))
+        return violations(root,'_pse_repository',dict(env=['pse.api=repository',f'pse.ownerRoot={root.as_posix()}']))
     def explicit(root,files):
         # Caller-selected resources authorize their parent directories. Native
         # relations decide suffixes, file kinds, aliases, errors and findings.

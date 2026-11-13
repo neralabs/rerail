@@ -5,7 +5,13 @@
 pse_walk(".") :- env("pse.api","repository").
 pse_walk(cat(p,"/",name)) :- pse_walk(p),dir_entry(p,name,1),dir_metadata(p,name,_,0,_),!pse_constant("SKIP_DIRS",name).
 .decl pse_disk_file(path:symbol)
-pse_disk_file(@replace_all(cat(p,"/",name),"\\A\\./","")) :- pse_walk(p),dir_entry(p,name,0),dir_metadata(p,name,1,_,_),suffix(".py",name),name!=".py".
+.decl pse_repo_candidate(path:symbol)
+pse_repo_candidate(@replace_all(cat(p,"/",name),"\\A\\./","")) :- pse_walk(p),dir_entry(p,name,_),suffix(".py",name),name!=".py".
+.decl pse_repo_file(path:symbol)
+// rglob returns caller-root paths. FactEngine joins relative explicit paths to that root again.
+// Test the file kind after that composition, including candidates that originally name directories.
+pse_repo_file(p) :- pse_repo_candidate(p),env("pse.ownerRoot",r),(prefix("/",r);r=".").
+pse_repo_file(cat(r,"/",p)) :- pse_repo_candidate(p),env("pse.ownerRoot",r),!prefix("/",r),r!=".".
 // Explicit scopes bypass repository skip directories, as FileScopeSpec does.
 // The request cone reads run constants (env), before post-load policy option tables.
 .decl pse_requested(i:number,path:symbol)
@@ -14,12 +20,15 @@ pyp_join(2*i,root,p) :- env("pse.api","files"),env("pse.physicalRoot",root),pse_
 pyp_join(2*i+1,root,p) :- env("pse.api","files"),env("pse.ownerRoot",root),pse_requested(i,p).
 .decl pse_explicit(physical:symbol,logical:symbol)
 pse_explicit(p,l) :- env("pse.api","files"),pse_requested(i,_),pyp_path(2*i,p),pyp_path(2*i+1,l).
-.decl pse_explicit_parent(path:symbol,parent:symbol,name:symbol)
-pse_explicit_parent(p,@dir(p),@replace_all(p,"(?s).*/","")) :- pse_explicit(p,_).
+.decl pse_selected(path:symbol)
+pse_selected(p) :- pse_explicit(p,_).
+pse_selected(p) :- pse_repo_file(p).
+.decl pse_file_parent(path:symbol,parent:symbol,name:symbol)
+pse_file_parent(p,@dir(p),@replace_all(p,"(?s).*/","")) :- pse_selected(p).
 // Request keys must have an anchor independent of the listing's output name.
-.decl pse_explicit_dir(parent:symbol)
-pse_explicit_dir(parent) :- pse_explicit_parent(_,parent,_).
-pse_disk_file(p) :- pse_explicit_dir(parent),dir_metadata(parent,name,1,_,_),pse_explicit_parent(p,parent,name),suffix(".py",name),name!=".py".
+.decl pse_file_directory(parent:symbol)
+pse_file_directory(parent) :- pse_file_parent(_,parent,_).
+pse_disk_file(p) :- pse_file_directory(parent),dir_metadata(parent,name,1,_,_),pse_file_parent(p,parent,name),suffix(".py",name),name!=".py".
 .decl pse_relative(path:symbol,relative:symbol)
 pse_relative(p,".") :- pse_explicit(_,p),env("pse.ownerRoot",p).
 pse_relative(p,@slice(p,strlen(r)+1,strlen(p))) :- pse_explicit(_,p),env("pse.ownerRoot",r),r!="/",r!="//",r!=".",prefix(cat(r,"/"),p).
