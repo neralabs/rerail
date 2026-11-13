@@ -1,0 +1,1 @@
+Sessions starting the daemon at once no longer launch two daemons for one Rerail home, and two set-ups, or a set-up and `rerail packs add`, no longer change the rule packs together, even just after a process holding the lock was killed: the system now lets go of Rerail's locks when their process ends.

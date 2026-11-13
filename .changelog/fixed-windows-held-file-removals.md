@@ -1,0 +1,1 @@
+On Windows, set-up, `rerail update` and `rerail install --remove` no longer wait minutes or longer when another program holds open a file in a folder they remove. They retry for about 6 s, then leave a temporary folder for the system to clear, or fail naming the file the other program held open.

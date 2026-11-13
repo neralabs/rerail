@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -10,6 +10,7 @@ import { createRerailMcpHandler } from "../../src/api/mcp.js";
 import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores } from "../../src/api/stores.js";
 import { CALLER_CWD_HEADER, recordCheckout, setUpRepository } from "../../src/engine/index.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 describe("a repository's Follow .gitignore setting", () => {
   let root: string;
@@ -38,7 +39,7 @@ describe("a repository's Follow .gitignore setting", () => {
 
   afterEach(async () => {
     stores.close();
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root);
   });
 
   const context = async (): Promise<{ repository: { followGitignore: boolean } }> =>

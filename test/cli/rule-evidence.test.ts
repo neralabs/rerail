@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -14,11 +14,12 @@ import {
   runRuleEvidenceCommand,
   type RuleEvidence,
 } from "../../src/cli/rule-evidence.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const directories: string[] = [];
 
 afterEach(async () => {
-  await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(directory => removeFolder(directory)));
 });
 
 async function temporary(prefix: string): Promise<string> {
@@ -106,6 +107,18 @@ describe("risky commands", () => {
     ignored("recursive delete", [
       "rm -r build", "rm -f a.txt", "rm -r build && ls -f", "echo rm -rf", "git rm -rf x", "echo 'rm -rf x'",
       "sudo -E foo rm -rf x", "nice -n 10 echo rm -rf x",
+    ]);
+  });
+
+  it("counts PowerShell's and cmd's recursive deletes, which Codex and Cursor run on Windows, in any case", () => {
+    counted("recursive delete", [
+      "Remove-Item -Recurse -Force build", "remove-item build -recurse -force", "Remove-Item -Path build -Recurse:$true -Force",
+      "rm -r -fo build", "rm -Recurse -Force build", "ri -Recurse -Force build", "del -Recurse -Force build", "erase -rec -for build",
+      "rd /s /q build", "RD /S /Q build", "rmdir /s build", "cd x; Remove-Item -Recurse -Force y",
+    ]);
+    ignored("recursive delete", [
+      "Remove-Item build", "Remove-Item -Recurse build", "Remove-Item -Force a.txt", "rd build", "rmdir /q build",
+      "echo Remove-Item -Recurse -Force x", "Get-ChildItem -Recurse -Force", "del /q a.txt",
     ]);
   });
 

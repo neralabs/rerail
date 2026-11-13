@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -10,13 +10,15 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runSetup, runSetupStep, setupPacks, startRerailStep, type SetupRequest } from "../../src/cli/repository-setup.js";
 import { workspaceStartState, type RepositorySetupIo } from "../../src/runtime/index.js";
 import { runSetupCommand, runSetupStepArgs, type SetupIo } from "../../src/cli/setup-cli.js";
-import { CONFIRM_PACKS_ANSWERS, NO_REPO_ANSWERS, READ_REPO_ANSWERS, shellQuote } from "../../src/harness/index.js";
+import { commandLine } from "../../src/engine/index.js";
+import { CONFIRM_PACKS_ANSWERS, NO_REPO_ANSWERS, READ_REPO_ANSWERS } from "../../src/harness/index.js";
 import type { SetupQuestion, SetupStep } from "../../src/harness/index.js";
 import { ManagedUpdater, type PackStore } from "../../src/setup/index.js";
 import { directoryPackStore, repositoryPackVersions } from "../support/directory-pack-store.js";
 import { removeInstalledPacks } from "../support/installed-packs.js";
 import { fakeSetupEnvironment, type FakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { attachedPacks } from "../support/attached-packs.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const SETUP_TIMEOUT_MS = 30_000;
 /** The pack set-up offers the TypeScript fixture, at the version its "Yes" answer carries (`--packs`). */
@@ -26,7 +28,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   removeInstalledPacks();
   vi.unstubAllEnvs();
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 interface Fixture {
@@ -91,7 +93,7 @@ function expectParity(question: SetupQuestion, agent: string, keys: readonly str
   expect(question.options.map((option, index) => `${index + 1}. ${option.label}${option.detail === null ? "" : `  ${option.detail}`}`))
     .toEqual(answers.map(answer => answer.replace(/ {2,}/gu, "  ")));
   question.options.forEach((option, index) => {
-    const command = ["rerail setup", ...option.next.args.slice(2).map(arg => shellQuote(arg))].join(" ");
+    const command = commandLine("posix", ["rerail", "setup", ...option.next.args.slice(2)]);
     expect(commands[index]).toContain(command);
     if (option.input !== null) expect(commands[index]).toContain(`${command} ${option.input.flag} <`);
   });
@@ -152,6 +154,18 @@ describe("rerail setup --json", { timeout: SETUP_TIMEOUT_MS }, () => {
     expect(workspaceStartState(setup.repo, setup.databasePath)).toBe("started");
     expect(attachedPacks(setup.repo, setup.databasePath)).toEqual(["typescript"]);
     expect(environment.connections).toEqual([{ agents: ["claude-code", "cursor"], repoRoot: setup.repo }]);
+  });
+
+  it("never opens a browser, since a coding agent runs it, and ends on the dashboard's link instead", async () => {
+    const setup = await fixture();
+    const environment = fakeSetupEnvironment();
+    const packs = await runSetupStep(request(setup, environment, { answer: "yes", repo: setup.repo }));
+    const start = packs.question!.options.find(option => option.answer === "start")!;
+    const done = await runSetupStep(requestFrom(start.next.args, setup, environment));
+    expect(done).toMatchObject({ step: "done", question: null });
+    expect(environment.pages).toEqual([expect.objectContaining({ page: "rules", open: false })]);
+    expect(done.screen).toContain("http://127.0.0.1:4737/#rules");
+    expect(done.screen).not.toContain("Opening in your browser.");
   });
 
   it("installs, connects and turns on nothing when the person answers not now", async () => {

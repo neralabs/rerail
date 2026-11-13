@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -9,6 +9,7 @@ import { type RuleCatalog, PACKAGE_ROOT, readRuleCatalog, recordCheckout, ruleSe
 import { toStoredRules } from "../../ui/poll.js";
 import { isRunning } from "../../ui/derive.js";
 import { data, matches, runningCount, ui } from "../../ui/state.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const RULE = "typescript-eslint-consistent-type-definitions";
 const typescriptPack = readRuleCatalog([join(PACKAGE_ROOT, "packs", "typescript")]);
@@ -54,7 +55,7 @@ describe("a rule whose stored options no longer apply, on the page", () => {
     ui.filter = "all";
     data.rules = new Map();
     stores.close();
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root);
   });
 
   it("keeps the API's reason, and counts the rule switched on but not running as off", () => {

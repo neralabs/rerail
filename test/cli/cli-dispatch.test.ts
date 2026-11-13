@@ -1,10 +1,11 @@
 /** Which command answers each word of `rerail`, told apart by everything it writes when it refuses a bad argument. */
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PACKAGE_ROOT } from "../../src/engine/index.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 const REMOTE_USAGE = "Usage: rerail remote add <url> [--name <name>] [--label <machine label>] (--token-stdin | --token-file <file>) [--no-content] | list | remove <name|url> | status | push | exclude [--repo <dir>] | include [--repo <dir>]";
 const SESSION_USAGE = "Usage: rerail session [<host> [<session-id>]] [--open]; inside Codex, rerail session uses CODEX_THREAD_ID";
@@ -34,7 +35,7 @@ describe("rerail's command dispatch", () => {
   }, 60_000);
 
   afterAll(() => {
-    for (const directory of [home, checkout, folder]) rmSync(directory, { recursive: true, force: true });
+    for (const directory of [home, checkout, folder]) removeFolderSync(directory);
   });
 
   /** Refused with `message` and nothing else, or with the whole usage after it. */

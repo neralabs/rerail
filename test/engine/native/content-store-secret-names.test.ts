@@ -1,11 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { loadNativeBinding } from "../../../src/engine/native/native.js";
 import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engine/path-boundary.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const capabilities = JSON.stringify({
   format: "rerail.policy-capabilities/v1",
@@ -57,7 +58,7 @@ describe("content store admission", () => {
       }
     } finally {
       workspace.close();
-      rmSync(root, { force: true, recursive: true });
+      removeFolderSync(root);
     }
   });
 });

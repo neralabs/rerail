@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -10,6 +10,7 @@ import { codeRuleSchema } from "../../../../src/engine/code-rule/code-rule-schem
 import { loadPackRuleDocuments } from "../../../../src/engine/catalog/rule-documents.js";
 import { repositoryPath } from "../../../support/oracles.js";
 import { testCodeRuleCatalog } from "../../../support/repository-rules.js";
+import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 // The Node pack's ports of eslint-plugin-n rules that read CommonJS's wrapper bindings (require, module, exports,
 // __dirname, __filename) pin no sourceType, so each file keeps its own module system (packs/node/README.md), as the
@@ -17,7 +18,7 @@ import { testCodeRuleCatalog } from "../../../support/repository-rules.js";
 // flat/recommended-module, which turns those names off.
 
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => removeFolder(root))); });
 
 async function directory(prefix: string): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), prefix)));

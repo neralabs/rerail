@@ -2,11 +2,12 @@
  * `rerail remote`'s dispatch, messages and exit codes, with a fake outbox where the outcome is what the outbox reports.
  */
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runRemoteCommand, type RemoteCliOptions } from "../../src/cli/remote-cli.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 let home: string;
 let output: string;
@@ -18,7 +19,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  rmSync(home, { recursive: true, force: true });
+  removeFolderSync(home);
 });
 
 type Outbox = NonNullable<RemoteCliOptions["outbox"]>;

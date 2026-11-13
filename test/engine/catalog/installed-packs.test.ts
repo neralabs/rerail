@@ -9,6 +9,7 @@ import {
 } from "../../../src/engine/catalog/rule-configuration.js";
 import type { RuleCatalog } from "../../../src/engine/catalog/repository-model.js";
 import { exportRulesDump, importRulesDump } from "../../../src/engine/catalog/rule-bootstrap.js";
+import { PACK_COMPILE_CHECKS_FILE } from "../../../src/engine/catalog/pack-compile-checks.js";
 import { activeCoreVersion, installedPackDirectories, installedPacksPrefix, loadRuleCatalog, readRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
 import { copyRerailRuleToLibrary, getLibraryRule } from "../../../src/engine/catalog/rule-library.js";
 import { approve, ruleSubject } from "../../../src/engine/catalog/rule-approval.js";
@@ -26,6 +27,7 @@ import {
   temporaryDatabase,
   temporaryDirectory,
 } from "../../support/rule-configuration-builders.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 // The exemplar is a language only tests plan: the registry module lists it for this file, and the engine refuses it as a
 // planned language (test/engine/support/exemplar-registry.ts, exemplar-engine.ts). Every other rule compiles in the
@@ -343,6 +345,34 @@ describe("the installed-pack catalog", () => {
     expect([...loadRuleCatalog().packs.keys()]).toEqual(["valid"]);
   });
 
+  // Checking a pack compiles each of its rules: 14 s of CPU and 1.7 GB for the five packs a TypeScript repository adds,
+  // in every command that reads the catalog and at every daemon start.
+  it("keeps the engine's verdict on each pack in the home, so another process compiles only a pack whose content changed", async () => {
+    type Kept = Array<{ build: string; verdicts: Record<string, string | null> }>;
+    const readKept = (home: string): Kept => JSON.parse(readFileSync(join(home, PACK_COMPILE_CHECKS_FILE), "utf8")) as Kept;
+    installPackDirectory(COMPLEXITY, "complexity");
+    loadRuleCatalog();
+    const [kept] = readKept(process.env.RERAIL_HOME!);
+    expect(Object.values(kept!.verdicts)).toEqual([null]);
+
+    // Another process, as the daemon after a restart, finds the same pack and the kept verdicts. A kept verdict is taken
+    // as it is, so one that says the pack fails proves its rules were not compiled again. Another engine build's
+    // verdicts, a Git checkout's beside the managed installation, stay.
+    const other = await temporaryDirectory();
+    const copy = await copyPack(COMPLEXITY);
+    installPackDirectory(copy, "complexity", other);
+    const failing = Object.fromEntries(Object.keys(kept!.verdicts).map(key => [key, "the kept verdict"]));
+    const otherBuild = { build: "another build", verdicts: { "0.0.1 sha256:0": null } };
+    writeJson(join(other, PACK_COMPILE_CHECKS_FILE), [{ build: kept!.build, verdicts: failing }, otherBuild]);
+    expect(summary(loadRuleCatalog(other)).skipped.map(({ reason }) => reason)).toEqual(["the kept verdict"]);
+
+    // Once the pack's content changes the engine is asked again, and the verdict it gives replaces the kept one.
+    editJson(copy, "pack.json", pack => ({ ...pack, covers: `${String(pack.covers)} Edited.` }));
+    expect(summary(loadRuleCatalog(other))).toEqual({ packs: ["complexity"], skipped: [] });
+    const [current, kept2] = readKept(other);
+    expect([Object.values(current!.verdicts), kept2]).toEqual([[null], otherBuild]);
+  });
+
   it("reads the packs again when the active core changes, checking their range against the new one", () => {
     installPackDirectory(VALID, "valid");
     expect([...loadRuleCatalog().packs.keys()]).toEqual(["valid"]);
@@ -355,7 +385,7 @@ describe("the installed-pack catalog", () => {
       expect(catalog.packs.size).toBe(0);
       expect(catalog.skipped.map(skipped => skipped.packageName)).toEqual(["@neralabs/rerail-pack-valid"]);
     } finally {
-      rmSync(current, { recursive: true, force: true });
+      removeFolderSync(current);
     }
   });
 

@@ -4,7 +4,7 @@
 // every registered checkout's dev daemon (their state stays, so `just rerail-dev` brings them back).
 import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, win32 } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 
@@ -67,23 +67,60 @@ export function configBackupName(path, home) {
 /**
  * A predicate for "this string points into the Rerail home": the resolved path, its realpath, and the `~`/`$HOME`
  * spellings when the home sits under HOME. Covers `<home>/current/...` (the npm install and the dev bridge alike).
+ *
+ * On Windows (`platform`) one path has several spellings in the configs Rerail writes: backslashes in an exec-form or
+ * PowerShell hook, each backslash written twice in the status line's POSIX-quoted word for Git Bash, and `/` from
+ * other tools, in any case. There the text and the home are compared with every run of slashes and backslashes as
+ * one `/`, in lower case. A quote in the home's path is written as each command line quotes it (`quotedSpellings`).
  */
-export function rerailHomeMatcher(rerailHome, home) {
-  const roots = new Set([resolve(rerailHome)]);
+export function rerailHomeMatcher(rerailHome, home, platform = process.platform) {
+  const { paths, spelled } = pathRules(platform);
+  const roots = homeRoots(paths, rerailHome);
+  const needles = [...roots].flatMap(root => {
+    const inside = underHome(paths, home, root);
+    const fromHome = inside === undefined ? [] : ["~", "$HOME", "${HOME}"].map(prefix => `${prefix}/${inside}/`);
+    return [...quotedSpellings(root).map(spelling => `${spelling}${paths.sep}`), ...fromHome].map(spelled);
+  });
+  const spelledRoots = new Set([...roots].map(spelled));
+  return text => {
+    if (typeof text !== "string") return false;
+    const value = spelled(text);
+    return spelledRoots.has(value) || needles.some(needle => value.includes(needle));
+  };
+}
+
+/**
+ * `root` as it is, and as the command lines Rerail writes on Windows quote it: in a PowerShell literal each `'`, `‘`,
+ * `’`, `‚` and `‛` written twice (Codex's and Cursor's), and in Git Bash's single quotes each `'` written `'\''` (Claude
+ * Code's). The same rules as `powershellLiteral` and `shellWord("posix", …)` in src/engine/command-line.ts, which
+ * test/scripts/rerail-nuke.test.mjs holds this to.
+ */
+function quotedSpellings(root) {
+  return [root, root.replaceAll(/['\u2018-\u201B]/gu, "$&$&"), root.replaceAll("'", String.raw`'\''`)];
+}
+
+/** `platform`'s path functions, and `spelled`, which gives every spelling of one path the same text. */
+function pathRules(platform) {
+  if (platform !== "win32") return { paths: posix, spelled: text => text };
+  return { paths: win32, spelled: text => text.replaceAll(/[\\/]+/gu, "/").toLowerCase() };
+}
+
+/** The Rerail home's resolved path and, when it exists, its realpath. */
+function homeRoots(paths, rerailHome) {
+  const roots = new Set([paths.resolve(rerailHome)]);
   try {
     roots.add(realpathSync(rerailHome));
   } catch {
     // A missing home has no other spelling.
   }
-  const needles = [];
-  for (const root of roots) {
-    needles.push(`${root}${sep}`);
-    const inside = relative(home, root);
-    if (inside !== "" && !inside.startsWith("..") && !isAbsolute(inside)) {
-      for (const prefix of ["~", "$HOME", "${HOME}"]) needles.push(`${prefix}/${inside.split(sep).join("/")}/`);
-    }
-  }
-  return text => typeof text === "string" && ([...roots].includes(text) || needles.some(needle => text.includes(needle)));
+  return roots;
+}
+
+/** `root` relative to `home`, with `/` between its parts, when it lies under `home`. */
+function underHome(paths, home, root) {
+  const inside = paths.relative(home, root);
+  if (inside === "" || inside.startsWith("..") || paths.isAbsolute(inside)) return undefined;
+  return inside.split(paths.sep).join("/");
 }
 
 function referencesDeep(value, matches) {

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 const routing = vi.hoisted(() => ({
   isMainRerailBuild: vi.fn<() => boolean>(),
-  daemonEngineEndpoint: vi.fn<(replaceOtherPackage: boolean) => Promise<{ socketPath: string; accessToken?: string }>>(),
+  daemonEngineEndpoint: vi.fn<(replaceOtherPackage: boolean, deadline?: number) => Promise<{ socketPath: string; accessToken?: string }>>(),
 }));
 vi.mock("../../src/engine/native/rerail-build.js", async () => ({
   ...await vi.importActual<Record<string, unknown>>("../../src/engine/native/rerail-build.js"),
@@ -11,7 +11,7 @@ vi.mock("../../src/runtime/daemon-control.js", async () => ({
   ...await vi.importActual<Record<string, unknown>>("../../src/runtime/daemon-control.js"),
   daemonEngineEndpoint: routing.daemonEngineEndpoint,
 }));
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,7 +20,9 @@ import type { AdapterDelivery, AdapterEvent, RerailEventLoop } from "../../src/e
 import { editSteer } from "../support/steers.js";
 import { encodeRerailEventResult, InactiveSessionError, RERAIL_EVENT_PROTOCOL_PREFACE } from "../../src/runtime/index.js";
 import { runRerailEventStream, serveRerailEventStream } from "../../src/harness/event-stream.js";
+import { testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { startTestRepository } from "../support/started-repository.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -102,11 +104,11 @@ describe("Rerail event stream", () => {
 
   it("links a steer's rules to the session checkout's dashboard, recorded in the Rerail home's daemon.json", async () => {
     const home = await mkdtemp(join(tmpdir(), "rerail-event-stream-home-"));
-    cleanups.push(() => rm(home, { recursive: true, force: true }));
+    cleanups.push(() => removeFolder(home));
     const checkout = join(home, "checkout");
     await mkdir(checkout);
     await writeFile(join(home, "daemon.json"), JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 4791, url: "http://127.0.0.1:4791/",
-      version: "test", databasePath: join(home, "rerail.sqlite"), kernelSocketPath: join(home, "kernel.sock"), ui: "bundled", startedAt: 1, packageRoot: home }));
+      version: "test", databasePath: join(home, "rerail.sqlite"), kernelSocketPath: testEngineEndpoint(home), ui: "bundled", startedAt: 1, packageRoot: home }));
     vi.stubEnv("RERAIL_HOME", home);
     cleanups.push(async () => { vi.unstubAllEnvs(); });
     const steer: AdapterDelivery = { sessionId: "s1", requested: "steer", mechanism: "additional-context", content: editSteer("acme:no-print", "Remove print."), ruleIds: ["acme:no-print"], rules: [{ id: "acme:no-print", state: "steered" }] };
@@ -156,8 +158,8 @@ async function fakeEngineService(socketPath: string): Promise<EngineRequestBody[
 describe("rerail events in a main build", () => {
   it("sends every event to the daemon engine service instead of evaluating in-process", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-events-main-"));
-    cleanups.push(async () => await rm(root, { recursive: true, force: true }));
-    const socketPath = join(root, "engine.sock");
+    cleanups.push(async () => await removeFolder(root));
+    const socketPath = testEngineEndpoint(root);
     const received = await fakeEngineService(socketPath);
     routing.isMainRerailBuild.mockReturnValue(true);
     routing.daemonEngineEndpoint.mockResolvedValue({ socketPath, accessToken: "daemon-capability" });
@@ -167,6 +169,7 @@ describe("rerail events in a main build", () => {
     output.setEncoding("utf8").on("data", (chunk: string) => { written += chunk; });
     const session = { host: "claude-code", sessionId: "s", cwd: root };
 
+    const before = Date.now();
     await runRerailEventStream({
       workspaceRoot: root,
       storageRoot: join(root, "sessions"),
@@ -178,6 +181,7 @@ describe("rerail events in a main build", () => {
       ]),
       output,
     });
+    const after = Date.now();
 
     const results = written.trim().split("\n").map(line => JSON.parse(line) as { eventId: string; deliveries: Array<{ content: string }> });
     expect(results.map(result => [result.eventId, result.deliveries.map(delivery => delivery.content)])).toEqual([
@@ -193,12 +197,18 @@ describe("rerail events in a main build", () => {
     }));
     // Only the first event may replace a daemon from another package; a stream that outlives an update must
     // keep using the newer daemon rather than bring its own version back.
-    expect(routing.daemonEngineEndpoint.mock.calls).toEqual([[true], [false]]);
+    expect(routing.daemonEngineEndpoint.mock.calls.map(([replaceOtherPackage]) => replaceOtherPackage)).toEqual([true, false]);
+    // Each event waits for a busy daemon until 12 s after it arrived, the start check's read of the daemon included, as
+    // a hook does; without a deadline it waited 2 s for the start check, then 2 s and 10 s for the endpoint.
+    for (const [, deadline] of routing.daemonEngineEndpoint.mock.calls) {
+      expect(deadline).toBeGreaterThanOrEqual(before + 12_000);
+      expect(deadline).toBeLessThanOrEqual(after + 12_000);
+    }
   });
 
   it("never asks for the daemon, which would autostart it, while Rerail is off in the checkout", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-events-off-"));
-    cleanups.push(async () => await rm(root, { recursive: true, force: true }));
+    cleanups.push(async () => await removeFolder(root));
     routing.isMainRerailBuild.mockReturnValue(true);
     const output = new PassThrough();
     let written = "";

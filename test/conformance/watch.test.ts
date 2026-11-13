@@ -3,17 +3,18 @@
  * (conformance/languages/watch.ts), on a scratch checkout.
  */
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "vitest";
 
 import { parseGatesManifest, type GatesManifest } from "../../conformance/languages/manifest.js";
 import { expandWatch, watchMatcher } from "../../conformance/languages/watch.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeFolderSync(root);
 });
 
 const gates = (watch: string) => parseGatesManifest(`adapter: bandit

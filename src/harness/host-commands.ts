@@ -1,9 +1,10 @@
-import { spawn } from "node:child_process";
 import { join } from "node:path";
+import { spawn } from "../engine/child-process.js";
+import { commandLine } from "../engine/command-line.js";
 import { ENTRY_POINTS } from "../engine/package-root.js";
 import { readPresentation, readRulesDashboard, readSummaryState } from "../presentation/session-presentation.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
-import { nodeExecutable, openDashboard, type PageOpening } from "../runtime/daemon-control.js";
+import { BROWSER_OFF_NOTE, nodeExecutable, openDashboard, type PageOpening } from "../runtime/daemon-control.js";
 import { bugReportInstructions, createRuleInstructions, RERAIL_COMMANDS, showMeInstructions, type RerailCommandName } from "./rerail-commands.js";
 import { renderRerailSummary } from "./rerail-summary.js";
 import { repositoryName } from "../engine/catalog/repository-identity.js";
@@ -96,8 +97,12 @@ function notifyResult(ctx: HostCommandContext, name: string, result: LauncherRes
   ctx.ui.notify((result.stdout + result.stderr).trim() || `/${name} exited with code ${result.code}.`, result.code === 0 ? "info" : "error");
 }
 
-/** The notice for a page that was just opened; an Orca tab says so, the desktop browser needs no qualifier. */
+/**
+ * The notice for a page that was just opened; an Orca tab says so, the desktop browser needs no qualifier, and under
+ * `BROWSER=none` the notice gives the link to open by hand.
+ */
 function openingNotice(url: string, opening: PageOpening): string {
+  if (opening === "not-opened") return `${BROWSER_OFF_NOTE} Open ${url}`;
   return opening === "orca-tab" ? `Opening ${url} in the Orca window` : `Opening ${url}`;
 }
 
@@ -146,9 +151,6 @@ async function stopFromCommand(options: HostCommandOptions, ctx: HostCommandCont
   if (result.code === 0) await options.reattach?.();
   notifyResult(ctx, "rerail-stop", result);
 }
-
-/** A POSIX single-quoted shell word, for the launcher command the coding agent runs from `/rerail-create`. */
-const shellWord = (value: string): string => "'" + value.replaceAll("'", String.raw`'\''`) + "'";
 
 const REMOVE = "Yes, remove Rerail";
 const STOP_HERE = "Only stop it in this repo";
@@ -204,8 +206,9 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
     ctx.ui.notify(openingNotice(page.url, await openDashboard(page.url)), "info");
   });
 
-  // The launcher, as the coding agent runs it from `/rerail-create`, `/rerail-show-me` and `/rerail-bug-report`.
-  const cli = `${shellWord(nodeExecutable())} ${shellWord(join(options.packageRoot, ENTRY_POINTS.cli))}`;
+  // The launcher, as the coding agent runs it from `/rerail-create`, `/rerail-show-me` and `/rerail-bug-report`, in a
+  // POSIX shell: OMP and Pi run Git Bash on Windows (`windowsCommandShell`).
+  const cli = commandLine("posix", [nodeExecutable(), join(options.packageRoot, ENTRY_POINTS.cli)]);
 
   register("rerail-create", async (_ctx, request) => {
     pi.sendUserMessage(createRuleInstructions({ cli, packageRoot: options.packageRoot, request: request === "" ? "(none given)" : `"${request}"` }));
