@@ -2354,6 +2354,17 @@ fn run_observed(
     let cross_mode = cross_memo::mode();
     // With requests answered inside the fixpoint too: the cone runs first, so every loaded document's exports, the
     // component rules' only reads, are in before the components are (decision 0065 §2a).
+    // The copies hiding made for guests in the run's own language, now that it is known (decision 0058).
+    if prog.decls.keys().any(|r| r.starts_with("rr_in_")) {
+        let _fold = crate::code_rule_dsl::logic::profile::span(|| "fold the copies of guests in the run's language".into());
+        let bound = hiding::bound(&prog);
+        let folded = hiding::fold_own(&mut prog, label, bound);
+        if folded > 0 {
+            let rules = prog.rules.len();
+            let (merged, _, repeated) = merge_to_fixpoint(&mut prog);
+            crate::code_rule_dsl::logic::profile::decision("copies of guests in the run's language folded (decision 0058)", || format!("{folded} copies and kind sets of {label} guests; then {repeated} repeated rules dropped and {merged} relations merged, {rules} -> {} rules", prog.rules.len()));
+        }
+    }
     let loading_run = world::wanted(&prog);
     let cross_declared = cross_memo::declared(&prog).filter(|_| cross_mode != cross_memo::Mode::Off && label == "python");
     // A program that reads the components' relations itself (`rr_cx_reach`: a closure-local lookup) has them with or

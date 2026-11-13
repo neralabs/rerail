@@ -270,8 +270,27 @@ switch off it finds 39 classes.
 | Instructions, whole replay (cold run at 06 included) | 695.1 G | 621.9 G (first version) |
 | Peak memory | 1,152 MB | 1,049 MB |
 
-**Not merged: the copies that equal their originals only on this corpus.** `fret` reads `retval` and its copy,
-while `rr_in_annotation_0_fret` reads the copy only. The two hold the same rows because no hidden guest's rows
-reach them here, not because their rules agree. Removing them needs the copy to be a filtered view of its original,
-or the program specialised by a phase fact saying the run has no hidden guest documents. Both are open.
+**Then: the copies for guests in the run's own language, folded (2026-11-12).** The copies left held their
+originals' rows exactly (76 of them, 329 k rows), though their rules differ. That is not a coincidence of the
+corpus. A copy exists for a guest grammar, here `annotation`, whose label is `python`:
 
+- A guest whose grammar's label is the run's language is keyed in the shown range, `GUEST_KEYS..HIDDEN_KEYS`
+  (`guests::key`). So the bound that a copy drops on its seeded column holds there anyway.
+- Its qualified kinds resolve through its label's kind table (`plan::lower`): in a Python run, `python:x` is `x`.
+- What else a copy reads is other copies, equal to theirs in the same way.
+
+So in a Python run, with guests shown, every copy specialised only to Python's own guests is its original. Hiding
+runs when the programs are combined, before the run knows its language (it comes from the files found). So the run
+folds them once it does, before the prepared program's key, which already holds the language
+(`hiding::fold_own`). Readers read the original, the copies' rules and kind sets go, and a `python:` kind is written
+plainly. An O110 clone is then its rule again, and `merge_to_fixpoint` drops it. Copies for another grammar's guests
+(an SQL string in Python) and every copy in a run with guests hidden are kept. `RERAIL_SHOWN_COPIES=on` keeps them
+all. Test: `copies_for_a_guest_in_the_runs_own_language_are_folded_into_their_originals`.
+
+| O125 step 07, outputs equal to a full run's | Copies kept | Folded |
+|---|---:|---:|
+| Copies (`RERAIL_COPIES`) | 269 (503 k rows) | 0 |
+| Strata (run / all) | 596 / 645 | 310 / 338 |
+| Join work, session | 3.54 M | 1.75 M |
+| Instructions, whole replay without the full run | 551.3 G | 389.1 G |
+| Peak memory, the same | 1,064 MB | 815 MB |
