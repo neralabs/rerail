@@ -242,7 +242,8 @@ are not waited for further: that edit is checked by the first pass once they ope
   session's records: a steer goes out with its next event, and a finding held for the missed-steer digest goes into the
   next digest. One whose file has changed since the session last saw it is dropped, as an edit of that file would drop
   it.
-- A session running a scan, or with one waiting to start, keeps its memory until the scan has run.
+- A session running a scan, or with one waiting to start, keeps its memory until the scan has run, for up to a day.
+- A scan asked for a quiet session that cannot be opened again (its folder gone, say) fails at once, saying why.
 - Stopping the daemon ends the session, as it ends every open one.
 
 </details>
