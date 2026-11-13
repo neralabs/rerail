@@ -1,0 +1,525 @@
+// data-layer-serverplan-dispatch-architecture: the clauses the converter does not convert, authored from
+// candidates/rules-ast/data-layer-serverplan-dispatch-architecture.json: here backend-identity, step-isinstance,
+// step-type-compare, step-name-compare, dialect-compare, dialect-truth and executor-provenance; backend-family and
+// step-class-match stay converted. The relational clause follows the SQL stages as
+// native/src/code_rule_dsl/logic/programs/data_layer/serverplan_dispatch_architecture.rr reads them, rewritten over
+// the base relations (no shards, no SQL builtins).
+//
+// Options: every forbid clause opens with `{"$option": "entryPoint", cases: {all, scan_source: any file}, default:
+// no file}`: `backend_identity_entry` (the run's entryPoint "all" or "scan_source") is in every authored forbid
+// clause's body; the converted ones (backend-family, step-class-match) carry the same `$option`, resolved by the
+// converter. executor-provenance reads no option, nor does any clause read oracleAnalyzer.
+//
+// `regex` over a node is W's regex over its full source text (`node_text`); an identifier's text is `text`.
+// `match(re, s)` is Soufflé's, a match of the whole of s: W's (and SQLite rx_matches') unanchored search R is
+// written with `(?s:.*)` where R leaves an end open.
+
+.decl tape_syntax_error(d: number)
+.decl option_value(name: symbol, v: symbol)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.output violation
+
+// Every forbid clause: not in the backend profile and trait modules (`not filePath`).
+.decl backend_identity_boundary(d: number)
+backend_identity_boundary(d) :- doc(d, "impl/common/l2070_server_plan/backend_profiles.py", _).
+backend_identity_boundary(d) :- doc(d, "impl/common/l2070_server_plan/backend_traits.py", _).
+
+// The `$option` gate: entryPoint "all" or "scan_source" lets every file through, any other value none.
+.decl backend_identity_entry(v: symbol)
+backend_identity_entry(v) :- option_value("entryPoint", v), (v = "all" ; v = "scan_source").
+
+// A call's function child named m: `m(…)` or `x.m(…)` (`has` field function, then identifier m or an attribute
+// whose attribute field is identifier m).
+.decl backend_identity_callee(f: node, m: symbol)
+backend_identity_callee(f, m) :- node(_, f, "identifier", _, _), text(f, m).
+backend_identity_callee(f, m) :- node(_, f, "attribute", _, _), field(f, "attribute", a), node(_, a, "identifier", _, _), text(a, m).
+
+// ---- the util `step-type` ----
+// An identifier (or an attribute whose attribute field is one) naming a concrete step type, not one of the three
+// contracts; a tuple with such a child; a binary_operator whose text holds `|` with such a left or right field.
+.decl step_type(n: node)
+step_type(n) :-
+    node(_, n, "identifier", _, _), text(n, s),
+    match("^(?:ConditionalStep|PhysicalStatementGroup|[A-Za-z_]\w*(?:Intent|Step|Strategy))$", s),
+    s != "CompiledStep", s != "IntentStep", s != "ServerPlanStep".
+step_type(n) :-
+    node(_, n, "attribute", _, _), field(n, "attribute", a), text(a, s),
+    match("^(?:ConditionalStep|PhysicalStatementGroup|[A-Za-z_]\w*(?:Intent|Step|Strategy))$", s),
+    s != "CompiledStep", s != "IntentStep", s != "ServerPlanStep".
+step_type(n) :- node(_, n, "tuple", _, _), child(n, c, _), step_type(c).
+step_type(n) :- node(_, n, "binary_operator", _, _), node_text(n, t), contains("|", t), field(n, "left", c), step_type(c).
+step_type(n) :- node(_, n, "binary_operator", _, _), node_text(n, t), contains("|", t), field(n, "right", c), step_type(c).
+
+// ---- step-isinstance (SPD002) ----
+// `isinstance(x, T)`: T the arguments' second named child other than a comment (`nthChild` 2, ofRule not comment:
+// `child`'s index leaves comments out, so index 1 is exactly that).
+violation("data-layer-serverplan-dispatch-architecture", "step-isinstance", "SPD002", p, l) :-
+    node(d, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, "isinstance"),
+    field(n, "arguments", g), child(g, c, 1), step_type(c),
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+
+// ---- step-type-compare (SPD002) ----
+// A comparison with a child `type(…)` and a child step type.
+violation("data-layer-serverplan-dispatch-architecture", "step-type-compare", "SPD002", p, l) :-
+    node(d, n, "comparison_operator", _, _),
+    child(n, c, _), node(_, c, "call", _, _), field(c, "function", f), backend_identity_callee(f, "type"),
+    child(n, x, _), step_type(x),
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+
+.decl backend_identity_cmp(kind: symbol)
+backend_identity_cmp("comparison_operator").
+
+// ---- backend-identity (SPD001) ----
+// A comparison with a backend source below it (`has` stopBy end) and, below it too, a BackendType member or a
+// backend-name string. The clause's first alternatives (the comparison itself an identifier, attribute or call)
+// cannot hold of a comparison_operator. The inline source rule equals the util `backend-source`.
+.decl backend_identity_source(n: node)
+backend_identity_source(n) :- node(_, n, "identifier", _, _), text(n, "backend_type").
+backend_identity_source(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "backend_type").
+backend_identity_source(n) :- node(_, n, "attribute", _, _), field(n, "object", o), backend_identity_source(o).
+backend_identity_source(n) :-
+    node(_, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, m),
+    (m = "backend_type_for" ; m = "get_backend_type" ; m = "get_backend_type_async").
+// A string or concatenated_string (kinds are tested as `node` constants: a kind is not a symbol to compare).
+.decl backend_identity_strnode(n: node)
+backend_identity_strnode(n) :- node(_, n, "string", _, _).
+backend_identity_strnode(n) :- node(_, n, "concatenated_string", _, _).
+// W's `value: {regex: R}` reads str values only: `value(n, v), value_type_of(n, "str")`; R is anchored at both
+// ends, so the whole-string `match` is its search.
+.decl backend_identity_literal(n: node)
+backend_identity_literal(n) :- node(_, n, "attribute", _, _), field(n, "object", o), node(_, o, "identifier", _, _), text(o, "BackendType").
+backend_identity_literal(n) :-
+    backend_identity_strnode(n), value(n, v), value_type_of(n, "str"),
+    match("(?i)^(?:doltdb|mariadb|mongodb|mysql|neo4j|postgres|postgresql|sqlite)$", v).
+violation("data-layer-serverplan-dispatch-architecture", "backend-identity", "SPD001", p, l) :-
+    node(d, n, "comparison_operator", _, _),
+    backend_identity_source(x), inside(x, n, backend_identity_cmp),
+    backend_identity_literal(y), inside(y, n, backend_identity_cmp),
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+
+// ---- step-name-compare (SPD003) ----
+// A comparison with a child `type(x).__name__` or `x.__class__.__name__`, and below it a string whose value names a
+// step type.
+.decl step_name_compare_type(o: node)
+step_name_compare_type(o) :- node(_, o, "call", _, _), field(o, "function", f), backend_identity_callee(f, "type").
+step_name_compare_type(o) :- node(_, o, "attribute", _, _), field(o, "attribute", a), node(_, a, "identifier", _, _), text(a, "__class__").
+.decl step_name_compare_name(n: node)
+step_name_compare_name(n) :-
+    node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "__name__"),
+    field(n, "object", o), step_name_compare_type(o).
+.decl step_name_compare_literal(n: node)
+step_name_compare_literal(n) :-
+    backend_identity_strnode(n), value(n, v), value_type_of(n, "str"),
+    match("^(?:ConditionalStep|PhysicalStatementGroup|[A-Za-z_]\w*(?:Intent|Step|Strategy))$", v).
+violation("data-layer-serverplan-dispatch-architecture", "step-name-compare", "SPD003", p, l) :-
+    node(d, n, "comparison_operator", _, _),
+    child(n, x, _), step_name_compare_name(x),
+    step_name_compare_literal(y), inside(y, n, backend_identity_cmp),
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+
+// ---- the dialect reference: `dialect`, `x.dialect`, `getattr(x, "dialect"…)` ----
+// getattr's string the arguments' second named non-comment child (nthChild 2 ofRule not comment: `child`'s index
+// leaves comments out), its value "dialect".
+.decl dialect_truth_ref(n: node)
+dialect_truth_ref(n) :- node(_, n, "identifier", _, _), text(n, "dialect").
+dialect_truth_ref(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, "dialect").
+dialect_truth_ref(n) :-
+    node(_, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, "getattr"),
+    field(n, "arguments", g), child(g, s, 1), node(_, s, "string", _, _), value(s, "dialect"), value_type_of(s, "str").
+
+// ---- dialect-compare (SPD004) ----
+// A comparison with a dialect reference child and a `None` child.
+violation("data-layer-serverplan-dispatch-architecture", "dialect-compare", "SPD004", p, l) :-
+    node(d, n, "comparison_operator", _, _),
+    child(n, x, _), dialect_truth_ref(x), child(n, z, _), node(_, z, "none", _, _),
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+
+// ---- the util `dialect-truth`, and dialect-truth (SPD004) ----
+// A dialect reference; `not` with one as a child; `bool(ref)` with exactly one named non-comment argument; a boolean
+// operator with a dialect-truth child. Found as the condition of an if/elif/while/conditional expression (field
+// condition of the parent; tree-sitter-python's conditional_expression has no such field, so that kind never holds),
+// or as a direct child of an assert or a comprehension's if clause.
+.decl dialect_truth(n: node)
+dialect_truth(n) :- dialect_truth_ref(n).
+dialect_truth(n) :- node(_, n, "not_operator", _, _), child(n, c, _), dialect_truth_ref(c).
+dialect_truth(n) :-
+    node(_, n, "call", _, _), field(n, "function", f), backend_identity_callee(f, "bool"),
+    field(n, "arguments", g), child(g, c, 0), dialect_truth_ref(c), !child(g, _, 1).
+dialect_truth(n) :- node(_, n, "boolean_operator", _, _), child(n, c, _), dialect_truth(c).
+.decl dialect_truth_at(n: node)
+dialect_truth_at(n) :- field(q, "condition", n), node(_, q, "if_statement", _, _).
+dialect_truth_at(n) :- field(q, "condition", n), node(_, q, "elif_clause", _, _).
+dialect_truth_at(n) :- field(q, "condition", n), node(_, q, "conditional_expression", _, _).
+dialect_truth_at(n) :- field(q, "condition", n), node(_, q, "while_statement", _, _).
+dialect_truth_at(n) :- child(q, n, _), node(_, q, "assert_statement", _, _).
+dialect_truth_at(n) :- child(q, n, _), node(_, q, "if_clause", _, _).
+violation("data-layer-serverplan-dispatch-architecture", "dialect-truth", "SPD004", p, l) :-
+    dialect_truth(n), dialect_truth_at(n), node(d, n, _, _, _),
+    in_scope(d), !tape_syntax_error(d), !out_scope(d), !backend_identity_boundary(d), backend_identity_entry(_), doc(d, p, _), line(n, l).
+
+// ======== executor-provenance (relational, partitionBy file) ========
+// The stages, by name, over base_server_plan.py. Its syntax inputs are every named node of the module but comments
+// and string parts (string_start, string_content, string_end, escape_sequence, line_continuation), below a module
+// whose text matches `class BaseServerPlan\b`, in a file without a syntax error; `dispatch_gate` (the module) is that
+// file. A row's `id` (`kind:start:end`) is its node (`executor_row`); `parent` the node's parent (`child`), a row or
+// not; `edges` the row-to-row parent links; a field column (`X_kind/start/end`) the field's first child (W's `has`
+// field F, stopBy neighbor); `text` `node_text`; `ordinal` the row's index among its parent's rows (by start).
+// A kind test is a `node` constant (or a helper of them), never a comparison of a kind variable.
+// UNION ALL's duplicate rows are one finding per (issue, node), as the findings key (issue, identity) has them.
+
+.decl executor_doc(d: number)
+executor_doc(d) :-
+    doc(d, "impl/common/l2070_server_plan/base_server_plan.py", _), !tape_syntax_error(d),
+    node(d, r, "module", _, _), node_text(r, t), match("(?s:.*)class BaseServerPlan\b(?s:.*)", t).
+
+// nodes: the rows, their parents, row edges and ordinals.
+.decl executor_part(n: node)
+executor_part(n) :- node(_, n, "string_start", _, _).
+executor_part(n) :- node(_, n, "string_content", _, _).
+executor_part(n) :- node(_, n, "string_end", _, _).
+executor_part(n) :- node(_, n, "escape_sequence", _, _).
+executor_part(n) :- node(_, n, "line_continuation", _, _).
+.decl executor_row(d: number, n: node)
+executor_row(d, n) :- executor_doc(d), node(d, n, _, _, _), child(_, n, _), !executor_part(n).
+.decl executor_parent(n: node, p: node)
+executor_parent(n, p) :- executor_row(_, n), child(p, n, _).
+.decl executor_edge(p: node, c: node)
+executor_edge(p, c) :- executor_parent(c, p), executor_row(_, p).
+.decl executor_skipped(p: node, i: number)
+executor_skipped(p, i) :- executor_doc(d), node(d, c, _, _, _), child(p, c, i), executor_part(c).
+// ordinal: the child index less the string parts before it (aggregates read one helper atom, no outer comparison).
+.decl executor_skip_before(p: node, i: number, j: number)
+executor_skip_before(p, i, j) :- executor_parent(n, p), child(p, n, i), executor_skipped(p, j), j < i.
+.decl executor_has_skip(p: node, i: number)
+executor_has_skip(p, i) :- executor_skip_before(p, i, _).
+.decl executor_ord(n: node, o: number)
+executor_ord(n, i) :- executor_parent(n, p), child(p, n, i), !executor_has_skip(p, i).
+executor_ord(n, o) :- executor_parent(n, p), child(p, n, i), executor_has_skip(p, i), k = count : { executor_skip_before(p, i, _) }, o = i - k.
+
+.decl executor_role(r: symbol)
+executor_role("name").
+executor_role("left").
+executor_role("right").
+executor_role("value").
+executor_role("type").
+executor_role("function").
+executor_role("arguments").
+executor_role("object").
+executor_role("attribute").
+executor_role("return_type").
+executor_role("subject").
+.decl executor_field_later(n: node, r: symbol, c: node)
+executor_field_later(n, r, c) :-
+    executor_row(_, n), executor_role(r), field(n, r, c), node(_, c, _, s, _), field(n, r, c2), node(_, c2, _, s2, _), s2 < s.
+.decl executor_field(n: node, r: symbol, c: node)
+executor_field(n, r, c) :- executor_row(_, n), executor_role(r), field(n, r, c), !executor_field_later(n, r, c).
+
+// functions; ownership's fn (the nearest function_definition, the row itself included; cls and top_fn are read by
+// no later stage).
+.decl executor_fndef(kind: symbol)
+executor_fndef("function_definition").
+.decl executor_func(f: node, name: symbol)
+executor_func(f, nm) :- executor_row(_, f), node(_, f, "function_definition", _, _), executor_field(f, "name", c), node_text(c, nm).
+.decl executor_fn(n: node, f: node)
+executor_fn(n, n) :- executor_row(_, n), node(_, n, "function_definition", _, _).
+executor_fn(n, f) :- executor_row(_, n), !node(_, n, "function_definition", _, _), nearest(n, f, executor_fndef).
+.decl executor_in_factory(n: node)
+executor_in_factory(n) :- executor_fn(n, f), executor_func(f, "_create_backend_executor").
+
+// attributes, calls, arguments.
+.decl executor_attr(n: node, attr: symbol, o: node)
+executor_attr(n, at, o) :-
+    executor_row(_, n), node(_, n, "attribute", _, _),
+    executor_field(n, "attribute", a), executor_row(_, a), node_text(a, at),
+    executor_field(n, "object", o), executor_row(_, o).
+.decl executor_attr_node(n: node)
+executor_attr_node(n) :- executor_attr(n, _, _).
+.decl executor_attr_self(n: node)
+executor_attr_self(n) :- executor_attr(n, _, o), node_text(o, "self").
+executor_attr_self(n) :- executor_attr(n, _, o), node_text(o, "cls").
+// callee = coalesce(a.attr, f.text); `plain`: callee_kind (f.kind) is not attribute; receiver = a.object.
+.decl executor_call(n: node, callee: symbol)
+executor_call(n, at) :- executor_row(_, n), node(_, n, "call", _, _), executor_field(n, "function", f), executor_row(_, f), executor_attr(f, at, _).
+executor_call(n, t) :-
+    executor_row(_, n), node(_, n, "call", _, _), executor_field(n, "function", f), executor_row(_, f),
+    !executor_attr_node(f), node_text(f, t).
+.decl executor_call_plain(n: node)
+executor_call_plain(n) :- executor_call(n, _), executor_field(n, "function", f), !node(_, f, "attribute", _, _).
+.decl executor_receiver(n: node, o: node)
+executor_receiver(n, o) :- executor_call(n, _), executor_field(n, "function", f), executor_attr(f, _, o).
+.decl executor_argx(n: node)
+executor_argx(n) :- node(_, n, "keyword_argument", _, _).
+executor_argx(n) :- node(_, n, "list_splat", _, _).
+executor_argx(n) :- node(_, n, "dictionary_splat", _, _).
+.decl executor_argc(c: node, n: node, s: number)
+executor_argc(c, n, s) :-
+    executor_call(c, _), executor_field(c, "arguments", g), executor_parent(n, g), !executor_argx(n), node(_, n, _, s, _).
+.decl executor_arg_before(c: node, s: number, s2: number)
+executor_arg_before(c, s, s2) :- executor_argc(c, _, s), executor_argc(c, _, s2), s2 < s.
+.decl executor_arg_has_before(c: node, s: number)
+executor_arg_has_before(c, s) :- executor_arg_before(c, s, _).
+.decl executor_arg(n: node, c: node, pos: number)
+executor_arg(n, c, 0) :- executor_argc(c, n, s), !executor_arg_has_before(c, s).
+executor_arg(n, c, pos) :- executor_argc(c, n, s), executor_arg_has_before(c, s), pos = count : { executor_arg_before(c, s, _) }.
+
+// executor_types: BackendExecutor; names imported as one (`… as X`: X; a dotted name: its last part); names assigned
+// from one; classes whose header names one.
+.decl executor_types(d: number, name: symbol)
+executor_types(d, "BackendExecutor") :- executor_doc(d).
+executor_types(d, x) :-
+    executor_row(d, n), node(_, n, "aliased_import", _, _), node_text(n, t),
+    match("(?s:.*)(?:^|\b)[A-Za-z_]*BackendExecutor(?:\s+as\s+[A-Za-z_]\w*)?", t),
+    field(n, "alias", a), node_text(a, x), match("[A-Za-z_]\w*", x).
+.decl executor_part_after(n: node, i: number)
+executor_part_after(n, i) :- child(n, _, i), child(n, _, j), j > i.
+executor_types(d, x) :-
+    executor_row(d, n), node(_, n, "dotted_name", _, _), node_text(n, t),
+    match("(?s:.*)(?:^|\b)[A-Za-z_]*BackendExecutor(?:\s+as\s+[A-Za-z_]\w*)?", t),
+    child(n, c, i), !executor_part_after(n, i), node_text(c, x), match("[A-Za-z_]\w*", x).
+executor_types(d, x) :-
+    executor_row(d, n), node(_, n, "assignment", _, _),
+    executor_field(n, "left", lv), executor_row(d, lv), node(_, lv, "identifier", _, _),
+    executor_field(n, "right", rv), executor_row(d, rv), node(_, rv, "identifier", _, _),
+    text(rv, y), executor_types(d, y), text(lv, x).
+// The class-header arm, `rx_matches(text, '^class\s+\w+\([^\n:]*\b' || t.name || '\b')`, the name extracted with
+// `^class\s+([A-Za-z_]\w*)`: the pattern computed per row from the recursive name (every name of executor_types is
+// an identifier, `[A-Za-z_]\w*` or BackendExecutor, so it holds no regex metacharacter); `^` anchors the search, so
+// the whole-string `match` with `(?s:.*)` after it is rx_matches' search. The extracted name is the class's name
+// field (the pattern holds only where `class\s+` is followed by the name and `(`).
+executor_types(d, x) :-
+    executor_row(d, n), node(_, n, "class_definition", _, _), node_text(n, t), executor_types(d, w),
+    re = cat(cat("class\s+\w+\([^\n:]*\b", w), "\b(?s:.*)"), match(re, t),
+    field(n, "name", nm), node_text(nm, x), match("[A-Za-z_]\w*", x).
+
+// annotation_edges and annotations.
+.decl executor_ann_edge(src: node, dst: node)
+executor_ann_edge(c, q) :- executor_row(_, q), node(_, q, "type", _, _), executor_edge(q, c).
+executor_ann_edge(c, q) :- executor_row(_, q), node(_, q, "parenthesized_expression", _, _), executor_edge(q, c).
+executor_ann_edge(c, q) :- executor_row(_, q), node(_, q, "union_type", _, _), executor_edge(q, c).
+executor_ann_edge(c, q) :-
+    executor_row(_, q), node(_, q, "binary_operator", _, _), node_text(q, t), contains("|", t), executor_edge(q, c).
+.decl executor_generic_head(g: node)
+executor_generic_head(g) :-
+    executor_edge(g, h), executor_ord(h, 0), node_text(h, t), match("(?:(?s:.*)\.)?(?:Annotated|Awaitable|Coroutine|Optional)", t).
+executor_ann_edge(a, g) :-
+    executor_row(_, g), node(_, g, "subscript", _, _), executor_generic_head(g), executor_edge(g, a), executor_ord(a, o), o > 0.
+.decl executor_params_many(q: node)
+executor_params_many(q) :- executor_edge(q, a), executor_edge(q, b), a != b.
+executor_ann_edge(c, g) :-
+    executor_row(_, g), node(_, g, "generic_type", _, _), executor_generic_head(g),
+    executor_edge(g, q), node(_, q, "type_parameter", _, _), !executor_params_many(q), executor_edge(q, c).
+// LIKE '%BackendExecutor' (ASCII case-insensitive in SQLite): isuffix.
+.decl executor_ann(n: node)
+executor_ann(n) :- executor_row(d, n), node(_, n, "identifier", _, _), text(n, t), executor_types(d, t).
+executor_ann(n) :- executor_row(_, n), node(_, n, "identifier", _, _), text(n, t), isuffix("BackendExecutor", t).
+executor_ann(n) :-
+    executor_row(d, n), node(_, n, "attribute", _, _), executor_field(n, "attribute", a), node_text(a, t), executor_types(d, t).
+executor_ann(n) :-
+    executor_row(_, n), node(_, n, "attribute", _, _), executor_field(n, "attribute", a), node_text(a, t),
+    isuffix("BackendExecutor", t).
+executor_ann(n) :-
+    executor_row(_, n), node(_, n, "string", _, _), node_text(n, t),
+    match("(?s:.*)(?:^|[\x22\x27| ])(?:[A-Za-z_]\w*\.)*(?:[A-Za-z_]\w*BackendExecutor|BackendExecutor)(?:[\x22\x27| ]|$)(?s:.*)", t).
+executor_ann(q) :- executor_ann(c), executor_ann_edge(c, q).
+
+// factories.
+.decl executor_factory(d: number, name: symbol)
+executor_factory(d, nm) :- executor_func(f, nm), executor_row(d, f), executor_field(f, "return_type", r), executor_ann(r).
+executor_factory(d, "_create_backend_executor") :- executor_doc(d).
+
+// bindings: (binding node, its start, target, value); their functions.
+.decl executor_binder(b: node)
+executor_binder(b) :- node(_, b, "assignment", _, _).
+executor_binder(b) :- node(_, b, "for_statement", _, _).
+executor_binder(b) :- node(_, b, "for_in_clause", _, _).
+.decl executor_bind(b: node, s: number, t: node, v: node)
+executor_bind(b, s, lv, rv) :-
+    executor_row(_, b), executor_binder(b),
+    executor_field(b, "left", lv), executor_row(_, lv), executor_field(b, "right", rv), executor_row(_, rv), node(_, b, _, s, _).
+executor_bind(b, s, lv, rv) :-
+    executor_row(_, b), node(_, b, "named_expression", _, _),
+    executor_field(b, "name", lv), executor_row(_, lv), executor_field(b, "value", rv), executor_row(_, rv), node(_, b, _, s, _).
+// The bindings in function f whose target's text is t.
+.decl executor_fn_bind(f: node, t: symbol, b: node, s: number, lv: node)
+executor_fn_bind(f, t, b, s, lv) :- executor_bind(b, s, lv, _), executor_fn(b, f), node_text(lv, t).
+.decl executor_fn_bound(f: node, t: symbol)
+executor_fn_bound(f, t) :- executor_fn_bind(f, t, _, _, _).
+
+// name_sites: identifiers in a function; is_store; binding_count 0 (`zero`) or above 1 (`many`); latest_target.
+.decl executor_site(n: node, t: symbol, s: number, f: node)
+executor_site(n, t, s, f) :-
+    executor_row(_, n), node(_, n, "identifier", _, _), executor_fn(n, f), executor_func(f, _), text(n, t), node(_, n, _, s, _).
+.decl executor_site_store(n: node)
+executor_site_store(n) :- executor_site(n, _, _, _), executor_bind(_, _, n, _).
+.decl executor_site_zero(n: node)
+executor_site_zero(n) :- executor_site(n, t, _, f), !executor_fn_bound(f, t).
+.decl executor_site_many(n: node)
+executor_site_many(n) :- executor_site(n, t, _, f), executor_fn_bind(f, t, b1, _, _), executor_fn_bind(f, t, b2, _, _), b1 != b2.
+.decl executor_site_latest_at(n: node, m: number)
+.decl executor_site_before(n: node, s: number)
+executor_site_before(n, s) :- executor_site(n, t, s0, f), executor_fn_bind(f, t, _, s, _), s < s0.
+executor_site_latest_at(n, m) :- executor_site_before(n, _), m = max s : { executor_site_before(n, s) }.
+.decl executor_site_latest(n: node, lv: node)
+executor_site_latest(n, lv) :- executor_site_latest_at(n, m), executor_site(n, t, _, f), executor_fn_bind(f, t, _, m, lv).
+
+// propagation.
+.decl executor_wrap(n: node)
+executor_wrap(n) :- node(_, n, "parenthesized_expression", _, _).
+executor_wrap(n) :- node(_, n, "type", _, _).
+executor_wrap(n) :- node(_, n, "await", _, _).
+executor_wrap(n) :- node(_, n, "unary_operator", _, _).
+executor_wrap(n) :- node(_, n, "list", _, _).
+executor_wrap(n) :- node(_, n, "tuple", _, _).
+executor_wrap(n) :- node(_, n, "set", _, _).
+executor_wrap(n) :- node(_, n, "list_splat", _, _).
+executor_wrap(n) :- node(_, n, "expression_list", _, _).
+executor_wrap(n) :- node(_, n, "pattern_list", _, _).
+.decl executor_pattern(n: node)
+executor_pattern(n) :- node(_, n, "pattern_list", _, _).
+executor_pattern(n) :- node(_, n, "tuple_pattern", _, _).
+executor_pattern(n) :- node(_, n, "list_pattern", _, _).
+.decl executor_seq(n: node)
+executor_seq(n) :- node(_, n, "expression_list", _, _).
+executor_seq(n) :- node(_, n, "tuple", _, _).
+executor_seq(n) :- node(_, n, "list", _, _).
+.decl executor_prop(src: node, dst: node)
+executor_prop(o, n) :- executor_attr(n, _, o).
+executor_prop(c, n) :- executor_row(_, n), executor_wrap(n), executor_edge(n, c).
+executor_prop(c, n) :- executor_row(_, n), node(_, n, "boolean_operator", _, _), executor_edge(n, c).
+executor_prop(c, n) :-
+    executor_row(_, n), node(_, n, "conditional_expression", _, _), executor_edge(n, c), executor_ord(c, o), (o = 0 ; o = 2).
+executor_prop(c, n) :- executor_row(_, n), node(_, n, "pair", _, _), executor_field(n, "value", c), executor_row(_, c).
+executor_prop(c, n) :- executor_row(_, n), node(_, n, "named_expression", _, _), executor_field(n, "value", c), executor_row(_, c).
+executor_prop(c, n) :- executor_row(_, n), node(_, n, "dictionary", _, _), executor_edge(n, c).
+executor_prop(o, c) :-
+    executor_receiver(c, o), executor_call(c, ce),
+    ce != "async_pipeline_execution_scope", ce != "get_lowering_context", ce != "native_pipeline_execution_receipt",
+    ce != "pipeline_execution_scope".
+executor_prop(a, c) :- executor_call(c, "getattr"), executor_arg(a, c, 0).
+executor_prop(rv, lv) :- executor_bind(_, _, lv, rv), !executor_pattern(lv).
+executor_prop(e, x) :-
+    executor_bind(_, _, lv, rv), executor_pattern(lv), executor_seq(rv),
+    executor_edge(lv, x), executor_edge(rv, e), executor_ord(x, o), executor_ord(e, o).
+executor_prop(rv, x) :- executor_bind(_, _, lv, rv), executor_pattern(lv), !executor_seq(rv), executor_edge(lv, x).
+// Name sites: p → n of the same text, n not a store, p's function enclosing n's (by span), and
+// (same function or n's binding_count 0) and (binding_count <= 1 or p is n's latest target).
+.decl executor_site_reach(p: node, n: node, same: number)
+executor_site_reach(p, n, 1) :- executor_site(p, t, _, f), executor_site(n, t, _, f), !executor_site_store(n).
+executor_site_reach(p, n, 0) :-
+    executor_site(p, t, _, pf), executor_site(n, t, _, nf), pf != nf, !executor_site_store(n),
+    node(_, pf, _, ps, pe), node(_, nf, _, ns, ne), ps <= ns, pe >= ne.
+executor_prop(p, n) :- executor_site_reach(p, n, 1), !executor_site_many(n).
+executor_prop(p, n) :- executor_site_reach(p, n, 1), executor_site_latest(n, p).
+executor_prop(p, n) :- executor_site_reach(p, n, _), executor_site_zero(n).
+// match statements: the subject → capture names (under an as/splat pattern, or a bare class-less case name).
+.decl executor_matchk(kind: symbol)
+executor_matchk("match_statement").
+.decl executor_capture(n: node)
+executor_capture(n) :- executor_parent(n, q), executor_row(_, q), node(_, q, "as_pattern", _, _).
+executor_capture(n) :- executor_parent(n, q), executor_row(_, q), node(_, q, "splat_pattern", _, _).
+executor_capture(n) :-
+    executor_parent(n, q), executor_row(_, q), node(_, q, "dotted_name", _, _),
+    executor_parent(q, cp), executor_row(_, cp), node(_, cp, "case_pattern", _, _), node_text(cp, t), match("[A-Za-z_]\w*", t).
+executor_prop(sb, n) :-
+    executor_row(_, m), node(_, m, "match_statement", _, _), executor_field(m, "subject", sb),
+    executor_row(_, n), node(_, n, "identifier", _, _), inside(n, m, executor_matchk), executor_capture(n).
+executor_prop(p, n) :- executor_attr(p, a, _), executor_attr_self(p), executor_attr(n, a, _), executor_attr_self(n).
+
+// subscripts and carrier_edges: the container, its ordinal-0 child.
+.decl executor_sub(s: node, c: node)
+executor_sub(s, c) :- executor_row(_, s), node(_, s, "subscript", _, _), executor_edge(s, c), executor_ord(c, 0).
+// CAST(indexer.text AS INTEGER) for an `integer` indexer: SQLite reads the text's leading decimal digits (`1_0` is 1,
+// `0x10`/`0o7`/`0b1` are 0, `10j` is 10), as the decimal text `s` of that number (leading zeros off), compared with
+// the ordinal's `to_string`. (A text past i64 saturates in SQLite; no ordinal reaches it, and none equals its digits.)
+.decl executor_cast_int(n: node, s: symbol)
+executor_cast_int(n, s) :- node(_, n, "integer", _, _), node_text(n, t), s = @rx_replace(t, "(?s)^0*([0-9]+).*$", "${1}").
+.decl executor_carry(src: node, dst: node)
+executor_carry(c, s) :-
+    executor_sub(s, c), !node(_, c, "list", _, _), !node(_, c, "tuple", _, _), !node(_, c, "dictionary", _, _).
+executor_carry(e, s) :-
+    executor_sub(s, c), executor_seq(c), !node(_, c, "expression_list", _, _),
+    executor_edge(s, ix), executor_ord(ix, 1), executor_cast_int(ix, x), executor_edge(c, e), executor_ord(e, v),
+    to_string(v) = x.
+executor_carry(v, s) :-
+    executor_sub(s, c), node(_, c, "dictionary", _, _), executor_edge(s, ix), executor_ord(ix, 1), node_text(ix, t),
+    executor_edge(c, pr), executor_edge(pr, k), executor_ord(k, 0), node_text(k, t), executor_edge(pr, v), executor_ord(v, 1).
+
+// owner_seeds and owners.
+.decl executor_bsp(d: number, s: number, e: number)
+executor_bsp(d, s, e) :-
+    executor_row(d, c), node(d, c, "class_definition", s, e), node_text(c, t), match("class BaseServerPlan\b(?s:.*)", t).
+.decl executor_typed_param(q: node)
+executor_typed_param(q) :- node(_, q, "typed_parameter", _, _).
+executor_typed_param(q) :- node(_, q, "typed_default_parameter", _, _).
+.decl executor_owner(n: node)
+executor_owner(n) :-
+    executor_row(_, n), node(_, n, "identifier", _, _), executor_parent(n, q), executor_row(_, q), node(_, q, "parameters", _, _),
+    text(n, t), (t = "backend" ; t = "executor").
+executor_owner(n) :-
+    executor_row(_, n), node(_, n, "identifier", _, _), executor_parent(n, q), executor_row(_, q), executor_typed_param(q),
+    executor_ord(n, 0), executor_field(q, "type", ty), executor_ann(ty).
+executor_owner(c) :- executor_call(c, ce), executor_row(d, c), executor_factory(d, ce).
+executor_owner(c) :- executor_call(c, ce), executor_row(d, c), executor_types(d, ce).
+executor_owner(c) :- executor_call(c, ce), icontains("backend_executor", ce).
+executor_owner(c) :- executor_call(c, "cast"), executor_arg(a, c, 0), executor_ann(a).
+executor_owner(lv) :-
+    executor_row(_, n), node(_, n, "assignment", _, _), executor_field(n, "left", lv), executor_row(_, lv),
+    executor_field(n, "type", ty), executor_ann(ty).
+executor_owner(a) :-
+    executor_attr(a, at, _), executor_attr_self(a),
+    executor_row(d, n), node(d, n, "assignment", ns, ne), executor_field(n, "left", lv), executor_row(d, lv),
+    node(_, lv, "identifier", _, _), text(lv, at), executor_field(n, "type", ty), executor_ann(ty),
+    executor_bsp(d, cs, ce), cs < ns, ce > ne.
+executor_owner(x) :- executor_owner(s), executor_prop(s, x).
+executor_owner(x) :- executor_owner(s), executor_carry(s, x).
+
+// The findings.
+.decl executor_finding(n: node, code: symbol)
+// family: a backend-family attribute.
+executor_finding(n, "SPD001") :-
+    executor_attr(n, at, _), (at = "is_document_backend" ; at = "is_graph_backend" ; at = "is_mysql_family" ; at = "is_sql_backend").
+// attribute: a connection or pipeline attribute, or any attribute of an owner but the scope helpers.
+executor_finding(n, "SPD005") :-
+    executor_attr(n, at, _), (at = "_async_conn" ; at = "_conn" ; at = "native_pipeline" ; at = "native_pipeline_async").
+executor_finding(n, "SPD005") :-
+    executor_attr(n, at, o), executor_owner(o),
+    at != "async_pipeline_execution_scope", at != "get_lowering_context", at != "native_pipeline_execution_receipt",
+    at != "pipeline_execution_scope".
+// subscript: an owner subscript.
+executor_finding(n, "SPD005") :- executor_sub(n, _), executor_owner(n).
+// escape: a return or yield of an owner name, outside _create_backend_executor.
+.decl executor_escape(n: node)
+executor_escape(n) :- node(_, n, "return_statement", _, _).
+executor_escape(n) :- node(_, n, "yield", _, _).
+executor_finding(n, "SPD005") :-
+    executor_row(_, n), executor_escape(n), !executor_in_factory(n),
+    executor_edge(n, x), node(_, x, "identifier", _, _), executor_owner(x).
+// store: an owner stored into an attribute or subscript.
+.decl executor_store_target(n: node)
+executor_store_target(n) :- node(_, n, "attribute", _, _).
+executor_store_target(n) :- node(_, n, "subscript", _, _).
+executor_finding(n, "SPD005") :-
+    executor_row(_, n), node(_, n, "assignment", _, _), executor_field(n, "left", lv), executor_store_target(lv),
+    executor_field(n, "right", rv), executor_owner(rv).
+// compare: a comparison with an owner child, outside _create_backend_executor.
+executor_finding(n, "SPD005") :-
+    executor_row(_, n), node(_, n, "comparison_operator", _, _), !executor_in_factory(n), executor_edge(n, x), executor_owner(x).
+// call: reflection on an owner (but a scope helper's name, quotes trimmed), or an owner passed to a plain function.
+.decl executor_scope_arg(c: node)
+executor_scope_arg(c) :-
+    executor_arg(a, c, 1), node_text(a, t),
+    match("['\"]*(?:async_pipeline_execution_scope|get_lowering_context|native_pipeline_execution_receipt|pipeline_execution_scope)['\"]*", t).
+executor_finding(n, "SPD005") :-
+    executor_call(n, ce),
+    (ce = "delattr" ; ce = "getattr" ; ce = "getattr_static" ; ce = "hasattr" ; ce = "setattr" ; ce = "vars" ; ce = "__getattribute__"),
+    executor_arg(a, n, 0), executor_owner(a), !executor_scope_arg(n).
+executor_finding(n, "SPD005") :-
+    executor_call(n, ce), executor_call_plain(n),
+    ce != "PlanExecutor", ce != "attrgetter", ce != "cast", ce != "delattr", ce != "getattr", ce != "getattr_static",
+    ce != "hasattr", ce != "run_executable_pipeline", ce != "run_executable_pipeline_async", ce != "setattr", ce != "vars",
+    executor_arg(a, n, _), executor_owner(a).
+
+violation("data-layer-serverplan-dispatch-architecture", "executor-provenance", code, p, l) :-
+    executor_finding(n, code), node(d, n, _, _, _), in_scope(d), !tape_syntax_error(d), !out_scope(d), doc(d, p, _), line(n, l).

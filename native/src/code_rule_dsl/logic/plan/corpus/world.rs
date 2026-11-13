@@ -4,6 +4,7 @@
 //! A program may read, as relations:
 //! - `dir_entry(dir, name, is_dir)`: the entries of a directory;
 //! - `file_line(path, i, text)`: the lines of a file, from 1;
+//! - `file_digest(path, c)`: the SHA-256 of a file's bytes, hex (what a cache key names a file's content by);
 //!
 //! and ask for documents with `load(path, module, grammar)`: the file at `path`, parsed in `grammar`, as module
 //! `module` (its resolution's answer, which names the document as a file of the corpus is named by its path). A
@@ -30,36 +31,22 @@ const BUDGET: usize = 4000;
 /// The request of a load, and the relation of what was loaded.
 pub(super) const LOAD: &str = "load";
 pub(super) const LOADED: &str = "loaded";
-pub(super) const LOADED_DOC: &str = "loaded_doc";
 
 /// Whether the program reads the file system or loads documents.
 pub(super) fn wanted(prog: &front::Program) -> bool {
     prog.rules.iter().any(|r| r.head.rel == LOAD || WORLD.iter().any(|(_, d)| *d == r.head.rel))
-        || prog.facts.iter().any(|(rel, rows)| !rows.is_empty() && (rel == LOAD || WORLD.iter().any(|(_, d)| *d == rel)))
 }
 
 /// The requests a program makes, each with what answers it, before a load's per-file rows are added
 /// (`corpus::loading`): a directory's entries, a file's lines and a load's `loaded` row.
 pub(super) fn answers(prog: &front::Program) -> BTreeMap<String, Vec<String>> {
-    let mut out: BTreeMap<_,_> = WORLD
+    WORLD
         .iter()
         .map(|(rel, req)| (*req, *rel))
         .chain([(LOAD, LOADED)])
-        .filter(|(req, _)| prog.rules.iter().any(|x| x.head.rel == *req)
-            || prog.facts.get(*req).is_some_and(|rows| !rows.is_empty()))
+        .filter(|(req, _)| prog.rules.iter().any(|x| x.head.rel == *req))
         .map(|(req, rel)| (req.to_owned(), vec![rel.to_owned()]))
-        .collect();
-    // Publish identity rows only when a consumer reads them. The canonical
-    // `loaded` contract remains unchanged for existing programs.
-    let identities=prog.outputs.iter().any(|r|r==LOADED_DOC) || prog.rules.iter()
-        .flat_map(|r|&r.body).filter_map(|l|l.atom()).any(|a|a.rel==LOADED_DOC);
-    if identities && let Some(rows)=out.get_mut(LOAD) { rows.push(LOADED_DOC.to_owned()); }
-    out
-}
-
-pub(super) struct CorpusPaths {
-    pub(super) known: BTreeSet<String>,
-    pub(super) documents: BTreeMap<String, Vec<i64>>,
+        .collect()
 }
 
 /// A loaded document: its path as the rule gave it, and the module it is.
@@ -70,35 +57,14 @@ pub(super) struct Loaded {
     pub(super) grammar: String,
 }
 
-/// Each accepted logical request has an answer. Only a fresh physical document needs parsing.
-pub(super) struct LoadAnswer {
-    pub(super) document: Loaded,
-    pub(super) fresh: bool,
-}
-
-#[derive(Clone, Debug)]
-struct DirectoryEntry {
-    name: String,
-    is_file: bool,
-    is_symlink: bool,
-    bytes: i64,
-}
-
 #[derive(Default)]
 pub(super) struct World {
     roots: Vec<PathBuf>,
     root: PathBuf,
     dirs: BTreeMap<String, Vec<(String, bool)>>,
-    metadata: BTreeMap<String, Vec<DirectoryEntry>>,
-    snapshot_metadata: bool,
-    dir_requests: BTreeSet<String>,
-    metadata_requests: BTreeSet<String>,
     files: BTreeMap<String, Vec<String>>,
-    file_errors: BTreeMap<String, super::inputs::Failure>,
-    read_errors: bool,
-    host: BTreeMap<String, Option<String>>,
+    digests: BTreeMap<String, String>,
     loads: BTreeMap<String, Loaded>,
-    load_targets: BTreeMap<String, String>,
     refused: BTreeSet<String>,
     budget: usize,
     /// The documents loaded from beyond the corpus root (the libraries'), which the budget bounds. A source file of
@@ -106,22 +72,14 @@ pub(super) struct World {
     beyond: usize,
     /// Loads past the budget, or in another grammar than the run's, not taken.
     pub(super) dropped: usize,
+    /// Of those, the loads past the budget: where it binds, what is loaded depends on the order loads are taken in.
+    pub(super) over_budget: usize,
+    /// Documents loaded this run and taken back since (`unload`): out of the budget, their rows still held where
+    /// they were made, so a load asked again takes them back in place (`reload`).
+    taken: BTreeMap<String, Loaded>,
 }
 
 impl World {
-    /// A demanded host value, cached for this execution, including absent values.
-    /// Host values are world inputs. Dependency snapshots retain only their digests.
-    pub(super) fn host(&mut self, key: &str) -> Option<String> {
-        self.host_with(key, |key| match key {
-            "cpu_count" => cpu_count().map(|n| n.to_string()),
-            _ => key.strip_prefix("env:").and_then(|name| std::env::var(name).ok()),
-        })
-    }
-
-    fn host_with(&mut self, key: &str, lookup: impl FnOnce(&str) -> Option<String>) -> Option<String> {
-        self.host.entry(key.to_owned()).or_insert_with(|| lookup(key)).clone()
-    }
-
     /// The roots a request may read: the corpus root, and each setting's value that is a directory.
     pub(super) fn new(root: &Path, prog: &front::Program) -> World {
         let canonical = |p: &Path| std::fs::canonicalize(p).ok();
@@ -140,10 +98,7 @@ impl World {
         // What the requests may read is watched (decision 0105): a directory listed or a file read that the
         // journal says is unchanged is not statted.
         super::observe(|o| o.watch(&roots));
-        let snapshot_metadata = prog.rules.iter().any(|r| r.head.rel == "rr_dir_metadata_req")
-            || prog.facts.get("rr_dir_metadata_req").is_some_and(|rows| !rows.is_empty());
-        let read_errors = prog.rules.iter().any(|r| r.head.rel == "rr_file_error_req") || prog.facts.contains_key("rr_file_error_req");
-        World { roots, root: root.to_path_buf(), budget, snapshot_metadata, read_errors, ..World::default() }
+        World { roots, root: root.to_path_buf(), budget, ..World::default() }
     }
 
     /// The file `asked` names, when it lies under a root: relative to the corpus root, or absolute.
@@ -153,50 +108,19 @@ impl World {
         self.roots.iter().any(|r| path.starts_with(r)).then_some(path)
     }
 
-    /// Read each requested directory once. Both public projections share these
-    /// rows; metadata is not a filesystem callback for each rule or node.
-    fn read_directory(&mut self, asked: &str) {
-        if self.dirs.contains_key(asked) || self.refused.contains(asked) { return; }
-        let Some(path) = self.allowed(asked) else {
-            self.refused.insert(asked.to_owned());
-            return;
-        };
-        // Adopt Final's phase-0 observer for the common names/type projection.
-        let entries = super::observe(|o| o.listing(&path)).map(|l| l.as_ref().clone()).unwrap_or_default();
-        self.dirs.insert(asked.to_owned(), entries);
-        // Programs consuming both projections observe one snapshot. Directory-only
-        // programs retain the observer's cheap names/type listing.
-        if self.snapshot_metadata { self.read_metadata(asked); }
-    }
-
     /// A directory's entries, sorted (none when it is refused or missing).
     pub(super) fn dir(&mut self, asked: &str) -> Vec<(String, bool)> {
-        self.dir_requests.insert(asked.to_owned());
-        self.read_directory(asked);
-        self.dirs.get(asked).cloned().unwrap_or_default()
-    }
-
-    /// File type, link flag, and followed-target size from that same listing.
-    pub(super) fn metadata(&mut self, asked: &str) -> Vec<(String, bool, bool, i64)> {
-        self.metadata_requests.insert(asked.to_owned());
-        self.read_metadata(asked);
-        self.metadata.get(asked).into_iter().flatten().map(|e| (e.name.clone(), e.is_file, e.is_symlink, e.bytes)).collect()
-    }
-
-    /// Child size/type can change without changing the parent directory stat.
-    /// Refresh one metadata batch per requested directory, only when demanded.
-    fn read_metadata(&mut self, asked: &str) {
-        if self.metadata.contains_key(asked) { return; }
-        self.read_directory(asked);
-        if self.metadata.contains_key(asked) { return; }
-        let Some(path) = self.allowed(asked) else { return; };
-        let names = self.dirs.get(asked).cloned().unwrap_or_default();
-        let paths: Vec<_> = names.iter().map(|(name, _)| path.join(name)).collect();
-        let stats = super::observe(|o| o.metadata_batch(&paths));
-        let entries = names.into_iter().zip(stats).map(|((name, _),(kind,stat,is_symlink))| DirectoryEntry {
-            name, is_file: kind == crate::content_store::observe::Kind::File, is_symlink, bytes: stat.size,
-        }).collect();
-        self.metadata.insert(asked.to_owned(), entries);
+        if let Some(entries) = self.dirs.get(asked) {
+            return entries.clone();
+        }
+        let Some(path) = self.allowed(asked) else {
+            self.refused.insert(asked.to_owned());
+            return Vec::new();
+        };
+        // Phase 0's observer: listed again only when the directory's stat changed.
+        let entries: Vec<(String, bool)> = super::observe(|o| o.listing(&path)).map(|l| l.as_ref().clone()).unwrap_or_default();
+        self.dirs.insert(asked.to_owned(), entries.clone());
+        entries
     }
 
     /// A file's lines (none when it is refused or missing).
@@ -204,25 +128,9 @@ impl World {
         if let Some(lines) = self.files.get(asked) {
             return lines.clone();
         }
-        let Some(path) = self.allowed(asked) else {
+        let Some(text) = self.allowed(asked).and_then(|p| super::observe(|o| o.read(&p))).and_then(|(bytes, _)| String::from_utf8(bytes).ok()) else {
             self.refused.insert(asked.to_owned());
-            self.files.insert(asked.to_owned(), Vec::new());
             return Vec::new();
-        };
-        // Retain phase-0's shared bytes. Only a failed observer read needs an OS
-        // read to recover its error code; successful files are not read twice.
-        let result = match super::observe(|o| o.read(&path)) {
-            Some((bytes, _)) => super::inputs::decode_repository_bytes(bytes, self.read_errors),
-            None => super::inputs::read_repository_file(&self.root, path.to_str().unwrap_or(asked), self.read_errors),
-        };
-        let text = match result {
-            Ok(text) => text,
-            Err(error) => {
-                self.file_errors.insert(asked.to_owned(), error);
-                self.files.insert(asked.to_owned(), Vec::new());
-                self.refused.insert(asked.to_owned());
-                return Vec::new();
-            }
         };
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
         let lines: Vec<String> = text.split_terminator('\n').map(str::to_owned).collect();
@@ -230,10 +138,18 @@ impl World {
         lines
     }
 
-    /// Typed failures share the requested file's read and dependency snapshot.
-    pub(super) fn file_error(&mut self, asked: &str) -> Option<Vec<front::Value>> {
-        self.file(asked);
-        self.file_errors.get(asked).and_then(|error| super::inputs::read_error_row(asked, error))
+    /// A file's content digest (none when it is refused or missing): the observer's, read only where it cannot vouch
+    /// for the file.
+    pub(super) fn digest(&mut self, asked: &str) -> Option<String> {
+        if let Some(d) = self.digests.get(asked) {
+            return Some(d.clone());
+        }
+        let Some(d) = self.allowed(asked).filter(|p| p.is_file()).map(|p| bytes_digest(&p)).filter(|d| !d.is_empty()) else {
+            self.refused.insert(asked.to_owned());
+            return None;
+        };
+        self.digests.insert(asked.to_owned(), d.clone());
+        Some(d)
     }
 
     /// A load's document: the file's canonical path, when it is new, allowed, in the run's grammar and within the
@@ -241,21 +157,25 @@ impl World {
     /// its canonical path: the same file is one document, and its key and memo entries are the same in every
     /// workspace.
     /// The corpus's documents as canonical paths, as `load` compares them, with their given names too.
-    pub(super) fn canonical_corpus<'a>(&self, paths: impl IntoIterator<Item = (i64,&'a String)>, identities: bool) -> CorpusPaths {
-        let mut out = CorpusPaths {known:BTreeSet::new(),documents:BTreeMap::new()};
-        for (d,p) in paths {
+    pub(super) fn canonical_corpus<'a>(&self, paths: impl IntoIterator<Item = &'a String>) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        for p in paths {
             if let Some(c) = super::observe(|o| o.canonical(&self.root.join(p))) {
-                let canonical=c.to_string_lossy().into_owned();
-                if identities { out.documents.entry(canonical.clone()).or_default().push(d); }
-                out.known.insert(canonical);
+                out.insert(c.to_string_lossy().into_owned());
             }
-            out.known.insert(p.clone());
+            out.insert(p.clone());
         }
         out
     }
 
-    pub(super) fn load(&mut self, asked: &str, module: &str, grammar: &str, run_grammar: &str, corpus: &BTreeSet<String>) -> Option<LoadAnswer> {
-        if self.refused.contains(asked) {
+    /// The document a load of `asked` gave earlier in this run, if any: a load asked again is answered alike.
+    pub(super) fn loaded_as(&self, asked: &str) -> Option<Loaded> {
+        let path = self.allowed(asked)?;
+        self.loads.get(path.to_string_lossy().as_ref()).cloned()
+    }
+
+    pub(super) fn load(&mut self, asked: &str, module: &str, grammar: &str, run_grammar: &str, corpus: &BTreeSet<String>) -> Option<Loaded> {
+        if corpus.contains(asked) || self.refused.contains(asked) {
             return None;
         }
         let Some(path) = self.allowed(asked).filter(|p| p.is_file()).map(|p| p.to_string_lossy().into_owned()) else {
@@ -263,22 +183,80 @@ impl World {
             self.refused.insert(asked.to_owned());
             return None;
         };
-        // Share physical preparation while answering each logical module/path request.
-        // Final shape bounds only fresh library loads beyond the run's own tree.
-        let fresh = !corpus.contains(asked) && !corpus.contains(&path) && !self.loads.contains_key(&path);
-        let own = self.roots.first().is_some_and(|r| Path::new(&path).starts_with(r));
-        if grammar != run_grammar || (fresh && !own && self.beyond >= self.budget) {
+        // `corpus` is canonical (`canonical_corpus`): a workspace file reached through an import is not loaded again.
+        if corpus.contains(&path) || self.loads.contains_key(&path) {
+            return None;
+        }
+        let own = self.own(&path);
+        if grammar != run_grammar {
             self.dropped += 1;
             self.refused.insert(asked.to_owned());
             return None;
         }
-        let loaded = Loaded { path: path.clone(), module: module.to_owned(), grammar: grammar.to_owned() };
-        self.load_targets.insert(asked.to_owned(), path.clone());
-        if fresh {
-            self.beyond += usize::from(!own);
-            self.loads.insert(path, loaded.clone());
+        // Past the budget is not refused for good: a load taken back frees its place, and a load asked again then
+        // is weighed again.
+        if !own && self.beyond >= self.budget {
+            self.dropped += 1;
+            self.over_budget += 1;
+            return None;
         }
-        Some(LoadAnswer { document: loaded, fresh })
+        let loaded = Loaded { path: path.clone(), module: module.to_owned(), grammar: grammar.to_owned() };
+        self.beyond += usize::from(!own);
+        self.loads.insert(path, loaded.clone());
+        Some(loaded)
+    }
+
+    /// Whether `path` is under the corpus root: a file of the run's own tree, which the budget does not bound.
+    fn own(&self, path: &str) -> bool {
+        self.roots.first().is_some_and(|r| Path::new(path).starts_with(r))
+    }
+
+    /// The documents taken back this run and not loaded again: not the run's documents.
+    pub(super) fn taken_paths(&self) -> impl Iterator<Item = &String> {
+        self.taken.keys()
+    }
+
+    /// Whether a load of `asked` is one the budget bounds: a file beyond the corpus root, not loaded yet this run.
+    pub(super) fn bounded(&self, asked: &str) -> bool {
+        self.allowed(asked).is_some_and(|p| {
+            let p = p.to_string_lossy();
+            !self.own(&p) && !self.loads.contains_key(p.as_ref())
+        })
+    }
+
+    /// Takes back every document loaded from beyond the corpus root this run: a cone that starts again in levels
+    /// (decision 0108) asks them again, level by level. How many.
+    pub(super) fn take_back_libraries(&mut self) -> usize {
+        let paths: Vec<String> = self.loads.keys().filter(|p| !self.own(p)).cloned().collect();
+        paths.iter().filter(|p| self.unload(p)).count()
+    }
+
+    /// Takes back the document loaded from `path` this run (decision 0108, a load taken back): its place in the
+    /// budget is free again. Whether it was loaded.
+    pub(super) fn unload(&mut self, path: &str) -> bool {
+        let Some(loaded) = self.loads.remove(path) else { return false };
+        self.beyond -= usize::from(!self.own(path));
+        self.taken.insert(path.to_owned(), loaded);
+        true
+    }
+
+    /// The document of `asked` taken back this run, loaded again when the budget allows: it is the same document,
+    /// with the rows it was given (`unload`).
+    pub(super) fn reload(&mut self, asked: &str) -> Option<Loaded> {
+        let path = self.allowed(asked)?.to_string_lossy().into_owned();
+        if !self.taken.contains_key(&path) {
+            return None;
+        }
+        let own = self.own(&path);
+        if !own && self.beyond >= self.budget {
+            self.dropped += 1;
+            self.over_budget += 1;
+            return None;
+        }
+        let loaded = self.taken.remove(&path)?;
+        self.beyond += usize::from(!own);
+        self.loads.insert(path, loaded.clone());
+        Some(loaded)
     }
 
     /// What the run's requests consulted, each as (what, path, digest): a directory's entries, a file's lines, a
@@ -286,27 +264,17 @@ impl World {
     /// consulted things are all as they were would ask, load and derive the same (`still`).
     pub(super) fn consulted(&self) -> Vec<(String, String, String)> {
         let mut out = Vec::new();
-        for asked in &self.dir_requests {
-            if let Some(entries) = self.dirs.get(asked) {
-                out.push(("dir".to_owned(), asked.clone(), listing_digest(entries)));
-            }
-        }
-        for asked in &self.metadata_requests {
-            if let Some(entries) = self.metadata.get(asked) {
-                out.push(("metadata".to_owned(), asked.clone(), metadata_digest(entries)));
-            }
-        }
-        for (key,value) in &self.host {
-            out.push(("host".to_owned(),key.clone(),host_digest(value.as_deref())));
+        for (asked, entries) in &self.dirs {
+            out.push(("dir".to_owned(), asked.clone(), listing_digest(entries)));
         }
         for asked in self.files.keys() {
             out.push(("file".to_owned(), asked.clone(), self.allowed(asked).map(|p| bytes_digest(&p)).unwrap_or_default()));
         }
+        for (asked, d) in &self.digests {
+            out.push(("digest".to_owned(), asked.clone(), d.clone()));
+        }
         for path in self.loads.keys() {
             out.push(("load".to_owned(), path.clone(), bytes_digest(Path::new(path))));
-        }
-        for (asked,path) in &self.load_targets {
-            out.push(("load_target".to_owned(), asked.clone(), load_target_digest(Path::new(path))));
         }
         for asked in &self.refused {
             out.push(("refused".to_owned(), asked.clone(), self.probe(asked)));
@@ -320,14 +288,8 @@ impl World {
         consulted.iter().all(|(what, path, digest)| {
             let now = match what.as_str() {
                 "dir" => listing_digest(&self.dir(path)),
-                "metadata" => {
-                    self.read_metadata(path);
-                    metadata_digest(self.metadata.get(path).map_or(&[][..],Vec::as_slice))
-                },
-                "host" => host_digest(self.host(path).as_deref()),
-                "file" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
+                "file" | "digest" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
                 "load" => bytes_digest(Path::new(path)),
-                "load_target" => self.allowed(path).map(|p| load_target_digest(&p)).unwrap_or_default(),
                 "refused" => self.probe(path),
                 _ => return false,
             };
@@ -361,18 +323,6 @@ impl World {
     }
 }
 
-/// Match the OS online-processor count, rather than the process's affinity limit.
-fn cpu_count() -> Option<usize> {
-    #[cfg(unix)]
-    {
-        // SAFETY: sysconf has no pointer arguments and only reads host metadata.
-        let count = unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) };
-        (count > 0).then_some(count as usize)
-    }
-    #[cfg(not(unix))]
-    { std::thread::available_parallelism().ok().map(usize::from) }
-}
-
 /// A document's path as the content store keys it: a loaded document's canonical path without its root.
 pub(super) fn store_path(path: &str) -> &str {
     path.strip_prefix('/').unwrap_or(path)
@@ -382,209 +332,17 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn listing_digest(entries: &[(String,bool)]) -> String {
+fn listing_digest(entries: &[(String, bool)]) -> String {
     use sha2::Digest;
     let mut h = sha2::Sha256::new();
-    for (name,is_dir) in entries {
+    for (name, is_dir) in entries {
         h.update(name.as_bytes());
         h.update([0, u8::from(*is_dir)]);
     }
     hex(&h.finalize())
 }
 
-fn metadata_digest(entries: &[DirectoryEntry]) -> String {
-    use sha2::Digest;
-    let mut h = sha2::Sha256::new();
-    for entry in entries {
-        h.update(entry.name.as_bytes());
-        h.update([0,u8::from(entry.is_file),u8::from(entry.is_symlink)]);
-        h.update(entry.bytes.to_le_bytes());
-    }
-    hex(&h.finalize())
-}
-
-fn host_digest(value: Option<&str>) -> String {
-    use sha2::Digest;
-    let mut h = sha2::Sha256::new();
-    h.update([u8::from(value.is_some())]);
-    if let Some(value) = value { h.update(value.as_bytes()); }
-    hex(&h.finalize())
-}
-
-fn load_target_digest(path: &Path) -> String {
-    use sha2::Digest;
-    let mut h = sha2::Sha256::new();
-    h.update(path.as_os_str().as_encoded_bytes());
-    h.update([0]);
-    h.update(bytes_digest(path).as_bytes());
-    hex(&h.finalize())
-}
-
-/// A file's bytes' digest ("" when it cannot be read).
-pub(super) fn bytes_digest(path: &Path) -> String {
+/// A file's bytes' digest ("" when it cannot be read), from phase 0's observer: read only when its stat changed.
+pub(in crate::code_rule_dsl::logic::plan) fn bytes_digest(path: &Path) -> String {
     super::observe(|o| o.digest(path)).map(|d| hex(&d)).unwrap_or_default()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn file_error_and_file_lines_share_one_snapshot_and_keep_error_bytes() {
-        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world-file-error");
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("bad.txt"), [b'a',0xff]).unwrap();
-        let program=front::parse(".decl rr_file_error_req(p: symbol)\nrr_file_error_req(\"bad.txt\").").unwrap();
-        let mut world=World::new(&root,&program);
-        assert!(world.file("bad.txt").is_empty());
-        std::fs::write(root.join("bad.txt"),"changed\n").unwrap();
-        let row=world.file_error("bad.txt").unwrap();
-        assert_eq!((&row[1],&row[4],&row[5],&row[6]),(&front::Value::Str("InvalidUtf8".into()),&front::Value::Str("61ff".into()),&front::Value::Int(1),&front::Value::Int(2)));
-        assert!(world.file("bad.txt").is_empty());
-        assert!(world.file_error("missing").is_none());
-        std::fs::create_dir(root.join("folder")).unwrap();
-        let error=world.file_error("folder").unwrap();
-        assert!(matches!(error[2],front::Value::Int(n) if n>0));
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn every_logical_load_answers_while_one_physical_document_is_admitted() {
-        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world-load-alias");
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("a.py"), "value = 1\n").unwrap();
-        let mut world = World::new(&root, &front::parse("").unwrap());
-        let first = world.load("a.py","first","python","python",&BTreeSet::new()).unwrap();
-        assert!(first.fresh);
-        let second = world.load("a.py","second","python","python",&BTreeSet::new()).unwrap();
-        assert!(!second.fresh);
-        assert_eq!(first.document.path, second.document.path);
-        assert_eq!(second.document.module, "second");
-        assert_eq!(world.loads.len(), 1);
-        let mut existing = World::new(&root, &front::parse("").unwrap());
-        let corpus = existing.canonical_corpus([(7,&"a.py".to_owned())],true);
-        assert!(!existing.load("a.py","corpus-alias","python","python",&corpus.known).unwrap().fresh);
-        assert_eq!(corpus.documents[&first.document.path],vec![7]);
-        assert!(existing.loads.is_empty());
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn own_files_and_repeated_aliases_do_not_spend_the_library_budget() {
-        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world-load-budget");
-        let library = root.with_extension("world-load-library");
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::create_dir_all(&library).unwrap();
-        for directory in [&root, &library] {
-            for name in ["a.py", "b.py"] {
-                std::fs::write(directory.join(name), "value = 1\n").unwrap();
-            }
-        }
-        let program = front::parse(&format!("env(\"load.budget\", \"1\").\nenv(\"library\", {:?}).", library.to_string_lossy())).unwrap();
-        let mut world = World::new(&root, &program);
-        let corpus = BTreeSet::new();
-        for name in ["a.py", "b.py"] {
-            assert!(world.load(name, name, "python", "python", &corpus).unwrap().fresh);
-        }
-        assert_eq!(world.beyond, 0);
-        let first = library.join("a.py").to_string_lossy().into_owned();
-        assert!(world.load(&first, "first", "python", "python", &corpus).unwrap().fresh);
-        assert!(!world.load(&first, "alias", "python", "python", &corpus).unwrap().fresh);
-        assert_eq!(world.beyond, 1);
-        let second = library.join("b.py").to_string_lossy().into_owned();
-        assert!(world.load(&second, "past-budget", "python", "python", &corpus).is_none());
-        assert_eq!(world.loads.len(), 3);
-        std::fs::remove_dir_all(root).unwrap();
-        std::fs::remove_dir_all(library).unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn consulted_load_targets_reject_retargeted_links_with_identical_bytes() {
-        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world-load-target");
-        std::fs::create_dir_all(&root).unwrap();
-        for name in ["a.py","b.py"] { std::fs::write(root.join(name), "value = 1\n").unwrap(); }
-        std::os::unix::fs::symlink("a.py",root.join("alias.py")).unwrap();
-        let program = front::parse("").unwrap();
-        let mut before = World::new(&root,&program);
-        assert!(before.load("alias.py","module","python","python",&BTreeSet::new()).is_some());
-        let consulted = before.consulted();
-        assert!(World::new(&root,&program).still(&consulted));
-        std::fs::remove_file(root.join("alias.py")).unwrap();
-        std::os::unix::fs::symlink("b.py",root.join("alias.py")).unwrap();
-        assert!(!World::new(&root,&program).still(&consulted));
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn consulted_metadata_rejects_a_changed_file_size() {
-        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world-metadata-dependency");
-        std::fs::create_dir_all(root.join("pkg")).unwrap();
-        std::fs::write(root.join("pkg/a.py"), "abc").unwrap();
-        let program = front::parse("").unwrap();
-        let mut before = World::new(&root,&program);
-        assert_eq!(before.metadata("pkg")[0].3,3);
-        let consulted = before.consulted();
-        assert!(World::new(&root,&program).still(&consulted));
-        std::fs::write(root.join("pkg/a.py"), "changed size").unwrap();
-        let changed = World::new(&root,&program).still(&consulted);
-        std::fs::remove_dir_all(root).unwrap();
-        assert!(!changed,"a metadata consumer must not retain stale byte weights");
-    }
-
-    #[test]
-    fn consulted_host_inputs_reject_changed_values_and_absence() {
-        for (old,new) in [(Some("first"),Some("second")),(None,Some(""))] {
-            let key = "env:RERAIL_TEST_CONSULTED_HOST";
-            let mut before = World::default();
-            before.host_with(key, |_| old.map(str::to_owned));
-            let consulted = before.consulted();
-            let mut equal = World::default();
-            equal.host_with(key, |_| old.map(str::to_owned));
-            assert!(equal.still(&consulted));
-            let mut changed = World::default();
-            changed.host_with(key, |_| new.map(str::to_owned));
-            assert!(!changed.still(&consulted),"a demanded host answer changed");
-        }
-    }
-
-    #[test]
-    fn host_values_and_absence_are_read_once_per_execution() {
-        let mut world = World::default();
-        assert_eq!(world.host_with("env:present", |_| Some("first".into())), Some("first".into()));
-        assert_eq!(world.host_with("env:present", |_| panic!("read twice")), Some("first".into()));
-        assert_eq!(world.host_with("env:missing", |_| None), None);
-        assert_eq!(world.host_with("env:missing", |_| panic!("absence read twice")), None);
-        let mut next = World::default();
-        assert_eq!(next.host_with("env:present", |_| Some("changed".into())), Some("changed".into()));
-    }
-
-    #[test]
-    fn directory_only_requests_do_not_stat_each_child() {
-        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world-listing-only");
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("a.py"), "abc").unwrap();
-        let program = front::parse(".decl rr_dir_req(path: symbol)\n.decl ask(path: symbol)\nask(\".\").\nrr_dir_req($P) :- ask($P).").unwrap();
-        let mut world = World::new(&root, &program);
-        assert_eq!(world.dir("."), vec![("a.py".to_owned(), false)]);
-        assert!(world.metadata.is_empty(), "a names/type consumer must not construct metadata rows");
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn directory_projections_share_one_listing_but_new_runs_refresh_it() {
-        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("world-directory-cache");
-        std::fs::create_dir_all(root.join("pkg")).unwrap();
-        std::fs::write(root.join("pkg/a.py"), "abc").unwrap();
-        let program = front::parse(".decl rr_dir_metadata_req(path: symbol)\n.decl ask(path: symbol)\nask(\"pkg\").\nrr_dir_metadata_req($P) :- ask($P).").unwrap();
-        let mut world = World::new(&root, &program);
-        assert_eq!(world.dir("pkg"), vec![("a.py".to_owned(), false)]);
-        std::fs::write(root.join("pkg/a.py"), "changed").unwrap();
-        std::fs::write(root.join("pkg/b.py"), "new").unwrap();
-        assert_eq!(world.metadata("pkg"), vec![("a.py".to_owned(), true, false, 3)]);
-        let mut refreshed = World::new(&root, &program);
-        assert_eq!(refreshed.metadata("pkg"), vec![("a.py".to_owned(), true, false, 7), ("b.py".to_owned(), true, false, 3)]);
-        assert_eq!(refreshed.dir("pkg"), vec![("a.py".to_owned(), false), ("b.py".to_owned(), false)]);
-        std::fs::remove_dir_all(root).unwrap();
-    }
 }

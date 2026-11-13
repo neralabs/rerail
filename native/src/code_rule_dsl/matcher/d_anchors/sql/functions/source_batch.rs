@@ -194,9 +194,9 @@ unsafe impl VTabCursor for Cursor {
     }
     fn column(&self, ctx: &mut Context, col: c_int) -> Result<()> {
         if col == 3 {
-            ctx.set_result(&1_i64)
+            ctx.set_result(1_i64)
         } else {
-            ctx.set_result(&self.rows[self.at][col as usize])
+            ctx.set_result(self.rows[self.at][col as usize])
         }
     }
     fn rowid(&self) -> Result<i64> {

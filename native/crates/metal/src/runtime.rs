@@ -141,10 +141,10 @@ struct BufferReservation {
 
 impl BufferReservation {
     fn acquire(bytes: usize, ledger: &'static AtomicUsize, limit: usize) -> Result<Self, Error> {
-        let previous = ledger
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
-                used.checked_add(bytes).filter(|next| *next <= limit)
-            })
+        let take = || ledger.fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| used.checked_add(bytes).filter(|next| *next <= limit));
+        // The idle blocks of the device's pool give way to a reservation the budget refuses.
+        let previous = take()
+            .or_else(|used| if std::ptr::eq(ledger, pool()) && crate::pool::give_way(bytes, limit) { take() } else { Err(used) })
             .map_err(|used| {
                 if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
                     eprintln!(
@@ -295,7 +295,7 @@ pub struct PrivateInputUpload {
 impl PrivateInputUpload {
     pub fn new(device: &Device) -> Result<Self, Error> {
         Ok(Self {
-            queue: device.new_command_queue(),
+            queue: crate::queue()?,
             staging: MappedBuffer::zeroed::<u8>(device, METAL_UPLOAD_CHUNK_BYTES)?,
             used: 0,
             copies: Vec::new(),
@@ -521,7 +521,7 @@ impl MappedBuffer {
             reservation,
             MTLResourceOptions::StorageModePrivate,
         )?;
-        let queue = device.new_command_queue();
+        let queue = crate::queue()?;
         for (chunk, input) in bytes.chunks(METAL_UPLOAD_CHUNK_BYTES).enumerate() {
             metal::objc::rc::autoreleasepool(|| -> Result<(), Error> {
                 let staging = Self::new(device, input)?;
@@ -665,18 +665,17 @@ pub fn drop_pipelines() {
     if let Ok(mut libraries) = LIBRARIES.lock() {
         libraries.clear();
     }
+    if let Ok(mut kernels) = crate::block_program::serial::KERNELS.lock() {
+        kernels.clear();
+    }
 }
 
 pub fn pipeline_named(source: &str, name: &str) -> Result<ComputePipelineState, Error> {
     pipeline_named_constant(source, name, None)
 }
 
-pub fn pipeline_named_constant(
-    source: &str,
-    name: &str,
-    constant: Option<u32>,
-) -> Result<ComputePipelineState, Error> {
-    let device = Device::system_default().ok_or(Error::UnsupportedBackend)?;
+/// The pipeline cache's key of `source`'s function `name` (with `constant`) on `device`.
+fn pipeline_key(device: &metal::Device, source: &str, name: &str, constant: Option<u32>) -> [u8; 32] {
     let mut digest = Sha256::new();
     digest.update(device.registry_id().to_le_bytes());
     digest.update(name.as_bytes());
@@ -688,7 +687,45 @@ pub fn pipeline_named_constant(
         digest.update([0]);
     }
     digest.update(source.as_bytes());
-    let key: [u8; 32] = digest.finalize().into();
+    digest.finalize().into()
+}
+
+/// The keys of pipelines a background thread is compiling (`pipeline_ready`).
+static COMPILING: LazyLock<Mutex<std::collections::HashSet<[u8; 32]>>> = LazyLock::new(Default::default);
+
+/// `source`'s pipeline `name` when it is compiled; otherwise `None` at once, its compile started on a thread of its
+/// own (once per source, however often asked), so a caller with another form of the work (a pipeline compiled
+/// before) runs that meanwhile instead of waiting on the compiler.
+pub fn pipeline_ready(source: &str, name: &str) -> Option<ComputePipelineState> {
+    let device = crate::device().ok()?;
+    let key = pipeline_key(&device, source, name, None);
+    if let Some(cached) = PIPELINES.lock().ok()?.get(&key).cloned() {
+        return Some(cached);
+    }
+    if COMPILING.lock().ok()?.insert(key) {
+        let (source, name) = (source.to_owned(), name.to_owned());
+        let spawned = std::thread::Builder::new().name("rerail-msl-compile".into()).spawn(move || {
+            let _ = pipeline_named(&source, &name);
+            if let Ok(mut compiling) = COMPILING.lock() {
+                compiling.remove(&key);
+            }
+        });
+        if spawned.is_err()
+            && let Ok(mut compiling) = COMPILING.lock()
+        {
+            compiling.remove(&key);
+        }
+    }
+    None
+}
+
+pub fn pipeline_named_constant(
+    source: &str,
+    name: &str,
+    constant: Option<u32>,
+) -> Result<ComputePipelineState, Error> {
+    let device = crate::device()?;
+    let key = pipeline_key(&device, source, name, constant);
     if let Some(cached) = PIPELINES.lock().map_err(|_| Error::BackendFailure)?.get(&key).cloned() {
         return Ok(cached);
     }
@@ -776,7 +813,9 @@ mod execution_lock_tests {
             Err(std::sync::TryLockError::WouldBlock)
         ));
         drop(guard);
-        assert!(METAL_EXECUTION_LOCK.try_lock().is_ok());
+        // Released, it is taken again: by a blocking take, since another test may hold it by now (a `try_lock`
+        // here failed when one did).
+        drop(metal_execution_guard().unwrap());
     }
 }
 

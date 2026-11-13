@@ -18,11 +18,23 @@ use std::rc::Rc;
 
 /// `phpcs`: PHP_CodeSniffer's `phpcs:` annotations.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Phpcs {
+pub struct Phpcs {
     /// The sniff or message codes the violation reports as.
     pub(crate) codes: Vec<String>,
     /// `version`: the PHP_CodeSniffer major whose reading applies (4 unless 3).
     pub(crate) version: PhpcsVersion,
+}
+
+/// PHP_CodeSniffer's `phpcs:` annotations.
+pub struct Suppressions;
+
+impl super::SuppressionKind for Suppressions {
+    const KEY: &'static str = "phpcs";
+    const DETAIL: &'static str = "phpcs: phpcs: annotations are PHP_CodeSniffer's";
+    type Spec = Phpcs;
+    fn spec(value: &serde_json::Value, at: &str) -> napi::Result<Phpcs> {
+        spec(value, at)
+    }
 }
 
 /// `suppress.phpcs`.
@@ -170,7 +182,7 @@ impl PhpcsIndex {
     }
 
     /// Whether the file holds no annotation either version would apply.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn is_empty(&self) -> bool {
         !self.four.file
             && !self.three.file
@@ -894,11 +906,11 @@ fn doc_pieces<'s>(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{PhpcsIndex, PhpcsVersion, before_on_line};
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::lines::{LineTable, Terminators};
-    use crate::code_rule_dsl::oracle;
+    use crate::code_rule_dsl::fixtures::oracle;
     use ast_grep_core::tree_sitter::LanguageExt;
     use serde_json::Value;
 

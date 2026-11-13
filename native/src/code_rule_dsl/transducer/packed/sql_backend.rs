@@ -173,7 +173,7 @@ impl MatchBatch {
 }
 
 #[derive(Default)]
-pub(super) struct MatchRegistry {
+pub struct MatchRegistry {
     next: AtomicI64,
     batches: Mutex<HashMap<i64, Arc<MatchBatch>>>,
 }
@@ -191,7 +191,7 @@ impl MatchRegistry {
     /// Resolve the universal FTS index in one bulk SQL lookup, widen unknown pairs to a full tape
     /// scan, and register one terminal batch. This is the bridge from persisted SQL selection to
     /// SQL-owned relational composition through `tempo_matches(batch)`.
-    pub(super) fn register_indexed_batch(
+    pub fn register_indexed_batch(
         &self,
         store: &crate::content_store::ContentStore,
         tape_ids: &[crate::content_store::TapeId],
@@ -210,7 +210,7 @@ impl MatchRegistry {
     }
 
     #[cfg(target_os = "macos")]
-    pub(super) fn register_metal_batch(
+    pub fn register_metal_batch(
         &self,
         programs: &[Program],
         files: &[TapeDoc],
@@ -248,12 +248,12 @@ impl MatchRegistry {
         Ok(token)
     }
 
-    pub(super) fn execution_count(&self, token: i64) -> Option<usize> {
+    pub fn execution_count(&self, token: i64) -> Option<usize> {
         self.batch(token)
             .map(|batch| batch.executions.load(Ordering::Relaxed))
     }
 
-    pub(super) fn remove_batch(&self, token: i64) {
+    pub fn remove_batch(&self, token: i64) {
         self.batches
             .lock()
             .expect("match registry mutex poisoned")
@@ -269,7 +269,7 @@ impl MatchRegistry {
     }
 }
 
-pub(super) fn register_module(
+pub fn register_module(
     connection: &Connection,
     registry: Arc<MatchRegistry>,
 ) -> SqlResult<()> {
@@ -386,19 +386,19 @@ unsafe impl VTabCursor for MatchCursor<'_> {
     fn column(&self, context: &mut Context, column: c_int) -> SqlResult<()> {
         let row = &self.rows[self.position];
         match column {
-            0 => context.set_result(&row.batch),
-            1 => context.set_result(&row.file),
-            2 => context.set_result(&row.program),
-            3 => context.set_result(&row.match_index),
-            4 => context.set_result(&row.start_ordinal),
-            5 => context.set_result(&row.output_label),
-            6 => context.set_result(&row.capture_index),
-            7 => context.set_result(&row.capture_label),
-            8 => context.set_result(&row.capture_node),
-            9 => context.set_result(&row.start_byte),
-            10 => context.set_result(&row.end_byte),
-            11 => context.set_result(&row.complete),
-            12 => context.set_result(&row.error_code.as_deref()),
+            0 => context.set_result(row.batch),
+            1 => context.set_result(row.file),
+            2 => context.set_result(row.program),
+            3 => context.set_result(row.match_index),
+            4 => context.set_result(row.start_ordinal),
+            5 => context.set_result(row.output_label),
+            6 => context.set_result(row.capture_index),
+            7 => context.set_result(row.capture_label),
+            8 => context.set_result(row.capture_node),
+            9 => context.set_result(row.start_byte),
+            10 => context.set_result(row.end_byte),
+            11 => context.set_result(row.complete),
+            12 => context.set_result(row.error_code.as_deref()),
             _ => Err(rusqlite::Error::InvalidColumnIndex(column as usize)),
         }
     }

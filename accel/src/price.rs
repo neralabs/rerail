@@ -60,7 +60,7 @@ use crate::kernel::{Form, Kernel};
 use crate::lanes::Lane;
 
 /// Watts per lane while busy (see the module's comment for the sources).
-pub const WATTS: [f64; 4] = [6.0, 12.0, 45.0, 3.0];
+pub const WATTS: [f64; Lane::COUNT] = [6.0, 12.0, 45.0, 3.0, 6.0];
 
 /// A lane's fixed costs, in seconds: per submission (shared by a batch's launches on the lane) and per launch.
 #[derive(Clone, Copy, Debug)]
@@ -73,21 +73,21 @@ pub struct Fixed {
 #[derive(Clone, Debug)]
 pub struct Prices {
     /// Seconds per unit, by form then lane; `None` where the lane has no kernel for the form.
-    per_unit: [[Option<f64>; 4]; FORMS],
+    per_unit: [[Option<f64>; Lane::COUNT]; FORMS],
     /// Per lane; for the CPU lane, wall seconds (the cores' time is `per_unit` divided by `cores`).
-    pub fixed: [Fixed; 4],
+    pub fixed: [Fixed; Lane::COUNT],
     /// The cores the CPU lane spreads a launch over: the executor's pool (`RERAIL_THREADS`).
     pub cores: f64,
     /// The parity band: lanes finishing within `band` × the fastest are candidates.
     pub band: f64,
     /// Host CPU seconds per unit, by form then lane: what a launch costs the host's cores on that lane (the cores'
     /// own work; SME's stream on a core; a device lane's uploads and grouping).
-    host_per_unit: [[Option<f64>; 4]; FORMS],
+    host_per_unit: [[Option<f64>; Lane::COUNT]; FORMS],
     /// Host CPU per job (a batch's share of the lane: its submission) and per launch in it.
-    pub host: [Fixed; 4],
+    pub host: [Fixed; Lane::COUNT],
     /// Seconds from a job's submission to its outputs beyond its work (the GPU's commit, scheduling and wake): the
     /// start; the scoreboard's measurements replace it as the run goes.
-    pub latency: [f64; 4],
+    pub latency: [f64; Lane::COUNT],
 }
 
 /// What placement weighs a launch by on one lane ([`Prices::choose_host`]).
@@ -105,15 +105,15 @@ pub struct Cost {
 /// already pays a job on, how loaded the cores are, and how long the caller works before it waits.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Load {
-    pub queued: [f64; 4],
-    pub latency: [f64; 4],
-    pub open: [bool; 4],
+    pub queued: [f64; Lane::COUNT],
+    pub latency: [f64; Lane::COUNT],
+    pub open: [bool; Lane::COUNT],
     /// The cores' slowdown: the machine's load over its cores, at least 1.
     pub cores: f64,
     /// Seconds the caller works before it waits for the batch (measured per kind of batch).
     pub slack: f64,
     /// Per lane, the measured host CPU over the price's estimate (1 until measured).
-    pub host_scale: [f64; 4],
+    pub host_scale: [f64; Lane::COUNT],
 }
 
 fn form_index(f: Form) -> usize {
@@ -125,7 +125,7 @@ const FORMS: usize = Form::ALL.len() + 1;
 
 impl Default for Prices {
     fn default() -> Self {
-        let mut per_unit = [[None; 4]; FORMS];
+        let mut per_unit = [[None; Lane::COUNT]; FORMS];
         let mut set = |f: Form, l: Lane, s: f64| per_unit[form_index(f)][l.index()] = Some(s);
         // Release builds, per unit at the largest workload of each form (see the module's comment).
         set(Form::BitProduct, Lane::Cpu, 4.1e-12);
@@ -153,7 +153,7 @@ impl Default for Prices {
         // column into a shared buffer (about 1 ns a row; a staged column is not copied), a tile side's grouping
         // (5 ns a row, measured with the join prices). The Neural Engine: its host expansion and sums are most of
         // its submission (the price's own comment), so its time counts as host time.
-        let mut host_per_unit = [[None; 4]; FORMS];
+        let mut host_per_unit = [[None; Lane::COUNT]; FORMS];
         for f in Form::ALL {
             let i = form_index(f);
             host_per_unit[i][Lane::Cpu.index()] = per_unit[i][Lane::Cpu.index()];
@@ -174,8 +174,9 @@ impl Default for Prices {
                 Fixed { submission: 1e-6, launch: 3e-6 },
                 Fixed { submission: 40e-6, launch: 10e-6 },
                 Fixed { submission: 0.1e-3, launch: 0.25e-3 },
+                Fixed { submission: 0.0, launch: 2e-6 },
             ],
-            latency: [0.0, 0.0, 0.2e-3, 0.1e-3],
+            latency: [0.0, 0.0, 0.2e-3, 0.1e-3, 0.0],
             per_unit,
             fixed: [
                 // A launch's task on the rayon pool.
@@ -186,6 +187,7 @@ impl Default for Prices {
                 Fixed { submission: 0.2e-3, launch: 22e-6 },
                 // The surfaces and the grouping, and a tile's prediction call.
                 Fixed { submission: 0.1e-3, launch: 0.25e-3 },
+                Fixed { submission: 0.0, launch: 2e-6 },
             ],
             cores: crate::exec::threads() as f64,
             band: 3.0,
@@ -244,6 +246,21 @@ pub fn learned_rates() -> Vec<Learned> {
 /// sample's wall is not one unit's cost; it keeps its prior. Each rate is the median of its warm, successful samples
 /// of one kernel name alone, with at least [`MIN_SAMPLES`] of them.
 pub fn learn_from(samples: &[crate::score::Sample]) -> Vec<Learned> {
+    let fitted = fit_rates(samples);
+    if let Ok(mut l) = LEARNED.write() {
+        for f in &fitted {
+            l.retain(|x| !(x.name == f.name && x.lane == f.lane));
+            l.push(f.clone());
+        }
+        if !fitted.is_empty() {
+            LEARNED_VERSION.fetch_add(1, std::sync::atomic::Ordering::Release);
+        }
+    }
+    fitted
+}
+
+/// [`learn_from`]'s rates, not put in place.
+pub fn fit_rates(samples: &[crate::score::Sample]) -> Vec<Learned> {
     let p = Prices::default();
     let mut by: std::collections::BTreeMap<(String, usize), Vec<f64>> = Default::default();
     for s in samples {
@@ -271,15 +288,6 @@ pub fn learn_from(samples: &[crate::score::Sample]) -> Vec<Learned> {
             Learned { name, lane: Lane::ALL[lane], per_unit: v[v.len() / 2], samples: v.len() }
         })
         .collect();
-    if let Ok(mut l) = LEARNED.write() {
-        for f in &fitted {
-            l.retain(|x| !(x.name == f.name && x.lane == f.lane));
-            l.push(f.clone());
-        }
-        if !fitted.is_empty() {
-            LEARNED_VERSION.fetch_add(1, std::sync::atomic::Ordering::Release);
-        }
-    }
     fitted
 }
 
@@ -315,7 +323,7 @@ impl Prices {
 
     /// Chooses a lane for `k` among `able` lanes, given each lane's `queued` seconds: the least energy among the
     /// lanes that finish within the band of the first to finish. A lane with nothing queued yet pays its submission.
-    pub fn choose(&self, k: &Kernel, able: &[Lane], queued: &[f64; 4]) -> Option<(Lane, f64)> {
+    pub fn choose(&self, k: &Kernel, able: &[Lane], queued: &[f64; Lane::COUNT]) -> Option<(Lane, f64)> {
         self.choose_open(k, able, queued, &std::array::from_fn(|i| queued[i] > 0.0))
     }
 
@@ -329,12 +337,33 @@ impl Prices {
         Some(per * k.units() + fixed.launch + if open { 0.0 } else { fixed.submission })
     }
 
+    /// `k`'s cost on `lane` under `load`: the learned model's when it predicted one ([`crate::cost_model`]), else
+    /// the rates'. The model predicts a one-launch job under this load: its wall less the lane's submission is the
+    /// work (at least a launch's), and its CPU is the host's, less the job's share when the lane is open.
+    pub fn cost_predicted(&self, k: &Kernel, lane: Lane, load: &Load, predicted: Option<crate::cost_model::Predicted>) -> Option<Cost> {
+        let Some(p) = predicted else { return self.cost(k, lane, load) };
+        // The lane must have a kernel for it, as the rates say.
+        self.wall(k, lane)?;
+        let i = lane.index();
+        let wall = (p.wall - self.fixed[i].submission).max(self.fixed[i].launch);
+        let host = if load.open[i] { (p.cpu - self.host[i].submission).max(self.host[i].launch) } else { p.cpu };
+        let finish = load.queued[i] + if load.open[i] { 0.0 } else { load.latency[i] } + wall;
+        Some(Cost { finish, wall, host })
+    }
+
+    /// [`Prices::choose_host`], each lane's cost the model's where it predicted one (`predicted`, by lane).
+    pub fn choose_host_predicted(&self, k: &Kernel, able: &[Lane], load: &Load, predicted: &[Option<crate::cost_model::Predicted>; Lane::COUNT]) -> Option<(Lane, Cost, Cost)> {
+        let costs: Vec<(Lane, Cost)> = able.iter().filter_map(|&l| Some((l, self.cost_predicted(k, l, load, predicted[l.index()])?))).collect();
+        self.choose_among(&costs, load)
+    }
+
     /// `k`'s cost on `lane` under `load`.
     pub fn cost(&self, k: &Kernel, lane: Lane, load: &Load) -> Option<Cost> {
         let i = lane.index();
-        let slow = if matches!(lane, Lane::Cpu | Lane::Sme) { load.cores.max(1.0) } else { 1.0 };
+        let slow = if matches!(lane, Lane::Cpu | Lane::Sme | Lane::Sql) { load.cores.max(1.0) } else { 1.0 };
         let wall = self.wall(k, lane)? * slow;
-        let finish = load.queued[i] + if load.open[i] { 0.0 } else { load.latency[i] } + wall;
+        let queued = if lane.is_pool() { load.queued[Lane::Cpu.index()] + load.queued[Lane::Sql.index()] } else { load.queued[i] };
+        let finish = queued + if load.open[i] { 0.0 } else { load.latency[i] } + wall;
         let scale = if load.host_scale[i] > 0.0 { load.host_scale[i] } else { 1.0 };
         Some(Cost { finish, wall, host: self.host(k, lane, load.open[i])? * scale })
     }
@@ -345,6 +374,11 @@ impl Prices {
     /// least energy. The chosen lane's cost, and the fastest's.
     pub fn choose_host(&self, k: &Kernel, able: &[Lane], load: &Load) -> Option<(Lane, Cost, Cost)> {
         let costs: Vec<(Lane, Cost)> = able.iter().filter_map(|&l| Some((l, self.cost(k, l, load)?))).collect();
+        self.choose_among(&costs, load)
+    }
+
+    /// The choice among lanes' costs ([`Prices::choose_host`]).
+    fn choose_among(&self, costs: &[(Lane, Cost)], load: &Load) -> Option<(Lane, Cost, Cost)> {
         let fastest = costs.iter().min_by(|a, b| a.1.finish.total_cmp(&b.1.finish))?.1;
         let deadline = (fastest.finish * self.band).max(load.slack);
         let (lane, cost) = costs
@@ -357,7 +391,7 @@ impl Prices {
 
     /// [`Prices::choose`], where `open` says which lanes this batch already pays a submission on: a lane not open
     /// pays its submission, whatever other batches have queued on it.
-    pub fn choose_open(&self, k: &Kernel, able: &[Lane], queued: &[f64; 4], open: &[bool; 4]) -> Option<(Lane, f64)> {
+    pub fn choose_open(&self, k: &Kernel, able: &[Lane], queued: &[f64; Lane::COUNT], open: &[bool; Lane::COUNT]) -> Option<(Lane, f64)> {
         let finish = |l: Lane| -> Option<f64> {
             let sub = if open[l.index()] { 0.0 } else { self.fixed[l.index()].submission };
             Some(queued[l.index()] + sub + self.wall(k, l)?)
@@ -396,9 +430,9 @@ mod host_tests {
         let p = Prices::default();
         let k = join(100_000);
         let able = [Lane::Cpu, Lane::Gpu];
-        let (cpu, gpu) = (p.cost(&k, Lane::Cpu, &Load::default()).unwrap(), p.cost(&k, Lane::Gpu, &Load { latency: [0.0, 0.0, 2e-3, 0.0], ..Load::default() }).unwrap());
+        let (cpu, gpu) = (p.cost(&k, Lane::Cpu, &Load::default()).unwrap(), p.cost(&k, Lane::Gpu, &Load { latency: [0.0, 0.0, 2e-3, 0.0, 0.0], ..Load::default() }).unwrap());
         assert!(gpu.host < cpu.host, "the gpu costs the host less: {gpu:?} {cpu:?}");
-        let mut load = Load { latency: [0.0, 0.0, 2e-3, 0.0], cores: 1.0, ..Load::default() };
+        let mut load = Load { latency: [0.0, 0.0, 2e-3, 0.0, 0.0], cores: 1.0, ..Load::default() };
         load.slack = 1.0;
         assert_eq!(p.choose_host(&k, &able, &load).unwrap().0, Lane::Gpu);
         // No slack, and the gpu's latency far past the cores' time: the cores.

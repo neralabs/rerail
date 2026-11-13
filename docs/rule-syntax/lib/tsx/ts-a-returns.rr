@@ -130,7 +130,7 @@ climb_stop(n) :- kind(n, "variable_declarator") ; property_def(n) ; kind(n, "exp
 return_head(f, f) :- kind(f, "method_definition").
 return_head(f, p) :- fn_value(f), estree_parent(f, p), kind(p, "pair").
 return_head(f, t) :- fn_value(f), estree_parent(f, p), property_def(p), member_head(p, t).
-return_head(f, t) :- kind(f, "arrow_function"), !member_value(f), field(f, "body", b), token_before(b, t).
+return_head(f, t) :- kind(f, "arrow_function"), !member_value(f), arrow_op(f, t).
 return_head(f, f) :- function_node(f), !kind(f, "method_definition"), !kind(f, "arrow_function"), !member_value(f).
 .decl member_value(f: node)
 member_value(f) :- fn_value(f), estree_parent(f, p), (kind(p, "pair") ; property_def(p)).

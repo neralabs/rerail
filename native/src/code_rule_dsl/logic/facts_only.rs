@@ -23,6 +23,8 @@ use std::path::{Path, PathBuf};
 const FACT_STORE: &[&str] = &[
     "atoms",
     "atom_segment",
+    "atom_key",
+    "atom_key_end",
     "strings",
     "hashes",
     "paths",
@@ -32,6 +34,8 @@ const FACT_STORE: &[&str] = &[
     "file_documents",
     "object_pins",
     "store_state",
+    // The store's identity (RER-131): its atoms and connections belong to this store only.
+    "store_identity",
     "push_pending",
     "rows",
     "git_alias",
@@ -46,8 +50,14 @@ const FACT_STORE: &[&str] = &[
     "node_type",
     "frames",
     "frame_spaces",
+    // The frames' own bookkeeping (decision 0117): those found unchanged under new reads, kept as the frames are.
+    "frame_confirmed",
+    // And each run's use of a space (decision 0117 step 5): one row a run, which the frames' sweep reads.
+    "frame_used",
     // The executor's measured jobs (decision 0100 §14), the cost model's data: kept as the measurements they are.
     "samples",
+    // The SQL executor's planning observations (`costs::sql_plans`), its plan model's data: measurements, as `samples`.
+    "sql_plan_observations",
     "{p}_out in code_rule_dsl/logic/native.rs",
     "{p}_out in code_rule_dsl/logic/native/extension.rs",
     "{} in code_rule_dsl/logic/plan.rs",
@@ -59,10 +69,6 @@ const FACT_STORE: &[&str] = &[
 /// Tables made and dropped inside one statement, one lab or one older pipeline's query.
 const SCRATCH: &[&str] = &[
     "x",
-    "a",
-    "b",
-    "c",
-    "h0",
     "t",
     "input",
     "value",
@@ -82,12 +88,14 @@ const SCRATCH: &[&str] = &[
     "stat_val",
     "stat_docrange",
     "{table} in code_rule_dsl/logic/native/setfix/lab.rs",
-    "{t} in code_rule_dsl/logic/native/setfix/lab.rs",
     "{} in code_rule_dsl/slice.rs",
+    // A test's in-memory input (`plan/acyclic/queries.rs`).
+    "facts",
 ];
 /// Caches between runs not yet facts: (table, the 0104 step that moves it).
 const NOT_YET_TABLES: &[(&str, &str)] = &[
-    ("constant_rows", "1"),
+    // The cost model fitted from `samples`, per machine (planning's placement).
+    ("models", "6"),
     ("run_record", "1"),
     ("observed", "1"),
     ("observer_meta", "1"),
@@ -149,16 +157,62 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("local_check_results", "8"),
     ("context_check_results", "8"),
 ];
-/// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised.
+/// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised. Raised once, 61 to 62, by the merge of
+/// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take. Lowered to 61 by the
+/// merge of the planning trees (2026-11-12).
 const NOT_YET_TABLES_PIN: usize = 61;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
 const STATE: &[(&str, &str)] = &[
+    // A job's own plans (decision 0113): read before the run's `PLANS` and taken into them as the job ends.
+    ("code_rule_dsl/logic/plan.rs", "OWN_PLANS"),
+    // The profile's account of the planning budget's misses (decision 0122): where a plan is made, and what was.
+    ("code_rule_dsl/logic/plan.rs", "PLAN_SITE"),
+    ("code_rule_dsl/logic/plan.rs", "PLANNED_NOW"),
+    // A switch read once (the greedy probe's), and that probe's measurement of bulk planning's sharing.
+    ("code_rule_dsl/logic/plan.rs", "PROBE"),
+    ("code_rule_dsl/logic/plan.rs", "SEEN"),
+    ("code_rule_dsl/logic/plan.rs", "SUMS"),
+    // A job's own observations (decision 0113): added to the run's `OBSERVED_AT` once, as the job ends.
+    ("code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED"),
+    // What a crate above registers at load, as the crate split made them (a function or a device, set once).
+    ("code_rule_dsl/logic/device.rs", "SOLVER"),
+    ("code_rule_dsl/logic/plan/corpus.rs", "CROSS_FILE"),
+    ("code_rule_dsl/logic/strings.rs", "FUNCTORS"),
+    ("code_rule_dsl/logic/strings/functions.rs", "PY_REPR"),
+    ("code_rule_dsl/logic/strings/functions.rs", "TO_PRECISION"),
+    // The rule being compiled: the step that first bound each slot, for a refusal's message.
+    ("code_rule_dsl/logic/native/setfix/device.rs", "BINDER"),
+    // This thread's run's binding (CPU or Metal).
+    ("code_rule_dsl/logic/plan/placement.rs", "DEVICE"),
+    // Profiling: the placements a recording run made, and the writer's jobs by kind.
+    ("code_rule_dsl/logic/plan/placement.rs", "RECORDED"),
+    ("content_store/write_back.rs", "BY_KIND"),
+    // The coverage check's census of the shipped rule files, read once by a test process.
+    ("code_rule_dsl/logic/plan/coverage.rs", "CENSUS"),
+    // The process's interned relation names (`front::Name`): one allocation per distinct name, not a result kept.
+    ("code_rule_dsl/logic/front/name.rs", "TABLE"),
     ("code_rule_dsl/logic/costs.rs", "FITTED"),
     ("code_rule_dsl/logic/costs.rs", "WRITER"),
+    ("code_rule_dsl/logic/costs.rs", "MODEL_STATE"),
+    // The SQL executor's plan model, fitted from `sql_plan_observations`, and the observations queued for writing.
+    ("code_rule_dsl/logic/costs/sql_plans.rs", "MODEL"),
+    ("code_rule_dsl/logic/costs/sql_plans.rs", "QUEUE"),
+    // The SQL lane's executor, and the work a thread's device wave runs when flushed (`lanes::wave`).
+    ("code_rule_dsl/logic/lanes.rs", "SQL"),
+    ("code_rule_dsl/logic/lanes.rs", "DEFERRED"),
+    // The device's wave on this thread (decision 0113 §3): its open command buffer, the waves flushed, the strata
+    // waiting for theirs; and the rule being compiled's arena-text slots. State of the run, not a result kept.
+    ("code_rule_dsl/logic/native/setfix/device.rs", "WAVE"),
+    ("code_rule_dsl/logic/native/setfix/device.rs", "FLUSHED"),
+    ("code_rule_dsl/logic/native/setfix/device.rs", "SUSPENDED"),
+    ("code_rule_dsl/logic/native/setfix/device.rs", "ARENA"),
     // Which connections hold tables or views a run left in SQL: state of the connections, not a result kept.
     ("code_rule_dsl/logic/plan.rs", "TEMP_LEFT"),
+    // Each live connection's path and symbols, by its scope; dropped when it closes (`setfix::forget_scope`).
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     ("code_rule_dsl/logic/lanes.rs", "ALL"),
     ("code_rule_dsl/logic/lanes.rs", "CPU"),
     ("code_rule_dsl/logic/lanes.rs", "BATCHES"),
@@ -183,32 +237,56 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/setfix.rs", "LOADS"),
     ("code_rule_dsl/logic/native/setfix.rs", "STORED"),
     ("code_rule_dsl/logic/native/setfix.rs", "SYMS"),
+    // Each live connection's path and symbols, dropped at its close (`forget_scope`): state of the connections.
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "GROWTH"),
     ("code_rule_dsl/logic/native/setfix.rs", "PROBES"),
+    // A live connection's file and symbol table, by its handle (dropped as it closes, `forget_scope`): state of the
+    // connections, not a result kept.
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_PATHS"),
+    ("code_rule_dsl/logic/native/setfix.rs", "SCOPE_SYMS"),
     // The mixed index spike's per-thread counters (the shape grown wave by wave): a measurement, not a result kept.
+    // Atoms reserved by components not yet retired, and this thread's reservation (decision 0114 §4): which
+    // pending atoms no committed row may hold yet, not a result kept.
+    ("content_store/atoms.rs", "RESERVED"),
+    ("content_store/atoms.rs", "RESERVING"),
     ("code_rule_dsl/logic/native/setfix.rs", "GROWN"),
     ("code_rule_dsl/logic/native/setfix.rs", "VARIANTS"),
     // A test process's own tape cache path (`corpus::test_tape_cache`): where the store is, not a result kept.
     ("code_rule_dsl/logic/plan/corpus.rs", "PATH"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
+    // The device copies of `replace_all`'s regex automata, per thread: resident buffers, as `RESIDENT`.
+    ("code_rule_dsl/logic/native/setfix/device.rs", "UPLOADED"),
     ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
     ("code_rule_dsl/logic/native/setfix/table.rs", "BUILT"),
     ("code_rule_dsl/logic/plan.rs", "LOG"),
     ("code_rule_dsl/logic/plan.rs", "PATH"),
     ("code_rule_dsl/logic/plan.rs", "SETTING"),
+    // core.rr's declarations (RER-131), read once from the engine's own library text: not a result kept.
+    ("code_rule_dsl/logic/rr/lower/core.rs", "DECLS"),
+    // This thread's zstd contexts by dictionary (RER-131): open things, not results.
+    ("content_store/compression.rs", "DECODERS"),
+    ("content_store/compression.rs", "DICT_ENCODERS"),
+    // The language tags the store's dictionaries are chosen by (RER-131): set once as the library loads.
+    ("content_store/compression.rs", "LANGUAGE_TAGS"),
+    // The store handles open in this process, by path (RER-131): a registry of open things.
+    ("content_store/connection.rs", "HANDLES"),
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
-    // The build's Python grammar, and what follows from it and a matcher's text alone (its single-field answers, its
-    // lowered code): the process's code, as a compiled rule's, not a run's result.
-    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "GRAMMAR"),
-    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "KEPT"),
-    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "LOWERED"),
+    // A test's own store, the template's path and the threads said to ask off a test's (`test_store`): which files
+    // the tests' stores are, not results.
+    ("code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN"),
+    ("code_rule_dsl/logic/plan/corpus/test_store.rs", "PATH"),
+    ("code_rule_dsl/logic/plan/corpus/test_store.rs", "SAID"),
     // Profiling totals, consumed and cleared by each report; no reusable results.
     ("code_rule_dsl/logic/plan/corpus/memo.rs", "SIZES"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "FACTS_DIR"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HANDED_DOWN"),
+    // Phase 1's exports while the run that ran it is under way: the run's own facts, gone when it ends.
+    ("code_rule_dsl/logic/plan/corpus/phases.rs", "PHASE_ONE"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "RUNNING"),
     ("code_rule_dsl/logic/plan/sketch.rs", "FILE"),
     ("code_rule_dsl/logic/profile.rs", "DIR"),
@@ -221,8 +299,9 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/profile/roofline.rs", "ROOFS"),
     ("code_rule_dsl/logic/rr.rs", "CORE"),
     ("code_rule_dsl/logic/rr.rs", "READS"),
-    ("code_rule_dsl/logic/derived.rs", "KEYS"),
     ("content_store/atoms.rs", "CANONICAL"),
+    // Each database file's identity, read once a file: a registry, as CANONICAL is.
+    ("content_store/atoms.rs", "IDENTITIES"),
     ("content_store/atoms.rs", "MEMORY"),
     ("content_store/atoms.rs", "REGISTRY"),
     ("content_store/compression.rs", "ENCODER"),
@@ -239,6 +318,18 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/hazards.rs", "HAZARDS"),
     // The run each frame space last counted in this process, so a run's programs count it once.
     ("content_store/frames.rs", "COUNTED"),
+    // The store's frames as this process holds them, ahead of SQLite (decision 0104): the facts themselves, read
+    // once before a run's first wave, not a cache of anything else.
+    ("content_store/frames.rs", "SNAPSHOTS"),
+    // With them, as the frames are: each space's confirmations (`frame_confirmed`, decision 0117 step 5), and the memo
+    // entries each space has admitted this process (read once a space, decision 0104).
+    ("content_store/frames.rs", "CONFIRMS"),
+    ("content_store/frames.rs", "ADMITTED"),
+    // Registries: which stores have a table made when first needed, the journal's open streams, and each device's
+    // volume, asked of the system once.
+    ("content_store/frames.rs", "KNOWN"),
+    ("content_store/journal.rs", "LIVE"),
+    ("content_store/journal.rs", "BY_DEV"),
     ("content_store/observe.rs", "OBSERVERS"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
@@ -264,10 +355,12 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "KEPT", "6"),
     ("code_rule_dsl/logic/derived.rs", "MEMO", "6"),
     ("code_rule_dsl/logic/derived.rs", "SESSION_MEMO", "6"),
-    ("code_rule_dsl/logic/plan/keeps.rs", "OBSERVED", "6"),
+    // The observed keeps, a handle a strand enters (decision 0113 §4).
+    ("code_rule_dsl/logic/plan/keeps.rs", "OBSERVED_AT", "6"),
     ("code_rule_dsl/logic/native/setfix/table.rs", "PAID", "6"),
     ("code_rule_dsl/logic/strings.rs", "MATCHERS", "7"),
-    ("code_rule_dsl/logic/strings.rs", "GROUPS", "7"),
+    // RER-131's compiled group patterns, where `GROUPS` was.
+    ("code_rule_dsl/logic/strings.rs", "GROUP_REGEXES", "7"),
     ("code_rule_dsl/logic/strings/functions.rs", "CACHE", "7"),
     ("code_rule_dsl/text.rs", "LOWERED", "7"),
     ("code_rule_dsl/text.rs", "NAMES", "7"),
@@ -276,7 +369,7 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
 const NOT_YET_MAPS_PIN: usize = 24;
 
 fn src() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")
 }
 
 /// The crate's source files, tests left out: a test may make what it likes.

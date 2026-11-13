@@ -15,7 +15,7 @@ fn identifier(name: &str) -> bool {
 }
 use rusqlite::functions::FunctionFlags;
 
-pub(in crate::code_rule_dsl) fn builtins(db: &rusqlite::Connection) -> Result<()> {
+pub fn builtins(db: &rusqlite::Connection) -> Result<()> {
     let det = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
     let top = crate::code_rule_dsl::logic::native::TOP;
     db.create_scalar_function(c"rr_sql_min_widen", 2, det, move |ctx| {
@@ -31,7 +31,7 @@ pub(in crate::code_rule_dsl) fn builtins(db: &rusqlite::Connection) -> Result<()
     Ok(())
 }
 
-pub(in crate::code_rule_dsl) fn specification(name: &str) -> Option<LatticeOperations> {
+pub fn specification(name: &str) -> Option<LatticeOperations> {
     let top = crate::code_rule_dsl::logic::native::TOP;
     match name {
         "min" | "max" => Some(LatticeOperations {
@@ -52,7 +52,7 @@ pub(in crate::code_rule_dsl) fn specification(name: &str) -> Option<LatticeOpera
 
 /// Expose a registered native lattice's algebra as SQL aggregate/merge/widen functions.
 /// Both SQL entry points use these operations; only their connection setup differs.
-pub(in crate::code_rule_dsl) fn registered(
+pub fn registered(
     db: &rusqlite::Connection,
     name: &str,
 ) -> Result<LatticeOperations> {
@@ -123,11 +123,11 @@ pub(in crate::code_rule_dsl) fn registered(
 }
 
 /// Non-null flat values agree exactly when their extrema agree. Empty groups stay absent.
-pub(in crate::code_rule_dsl) fn flat_aggregate(value: &str, top: i64) -> String {
+pub fn flat_aggregate(value: &str, top: i64) -> String {
     format!("CASE WHEN min({value})<>max({value}) THEN {top} ELSE min({value}) END")
 }
 
-pub(in crate::code_rule_dsl) fn validate(
+pub fn validate(
     db: &rusqlite::Connection,
     ops: &LatticeOperations,
 ) -> Result<()> {
@@ -153,7 +153,7 @@ pub(in crate::code_rule_dsl) fn validate(
 }
 
 /// Arithmetic over a lattice's top stays top, including min's negative sentinel.
-pub(in crate::code_rule_dsl) fn transfers(
+pub fn transfers(
     emitted: &mut plan::emit::Emitted,
     lattices: &BTreeMap<String, (usize, i64)>,
 ) {

@@ -2,7 +2,7 @@
 use super::*;
 use crate::code_rule_dsl::logic::analysis::Decision;
 
-pub(super) fn eligibility(
+pub fn eligibility(
     run: &session::Execution,
     output: &str,
     rules: &[Rule],
@@ -52,7 +52,7 @@ pub(super) fn eligibility(
     )
 }
 
-pub(in crate::code_rule_dsl::sql_executor) fn execute(
+pub fn execute(
     db: &Database,
     w: &mut Work<'_>,
     run: &mut session::Execution,
@@ -64,32 +64,38 @@ pub(in crate::code_rule_dsl::sql_executor) fn execute(
     let mut initialized = vec![];
     let mut emitted = BTreeSet::new();
     let program = Arc::clone(&run.emitted);
-    let waves = schedule::execute_declared_with(db, &program.program, max_waves, |id| {
+    let mut before = |w: &mut Work<'_>, id: usize| -> Result<Option<String>> {
         let output = &program.program.steps[id].output;
         let Some(state) = run.reductions.as_mut().unwrap().get_mut(output).filter(|s| s.cold_reuse.proven) else {
             return Ok(None);
         };
         if !state.ready {
             let _context = w.profile_scope(|| json!({"stage":"cold retained scalar initialization","relation":output,"logicalAnalysis":state.explain()}));
-            state.initialize(w, &mut run.objects, None)
-                .map_err(|e| crate::content_store::StoreError::Invalid(e.reason))?;
+            state.initialize(w, &mut run.objects, w.versions)?;
             state.ready = true;
             state.cold_initialized = true;
             initialized.push(output.clone());
         }
-        // All producers are already in the retained support. Publish once; later
-        // frontier visits still run SQL and preserve the scheduler's accounting.
-        let query = if emitted.insert(output.clone()) { state.initial_result() } else {
+        Ok(Some(if emitted.insert(output.clone()) { state.initial_result() } else {
             format!("SELECT {} WHERE 0", vec!["NULL";state.width].join(","))
-        };
-        Ok(Some(format!("INSERT OR IGNORE INTO {} {query}", quote(&format!("new_{output}")))))
-    }).map_err(error)?;
+        }))
+    };
+    let native = w.versions.is_some_and(|store| program.program.relations.iter()
+        .all(|(r,_)| store.contains(&format!("new_{r}"))));
+    let waves = if native {
+        super::super::frontiers::execute(w, &program.program, max_waves, before)?
+    } else {
+        schedule::execute_declared_with(db, &program.program, max_waves, |id| {
+            before(w,id).map(|q|q.map(|q|format!("INSERT OR IGNORE INTO {} {q}",quote(&format!("new_{}",program.program.steps[id].output)))))
+                .map_err(|e|crate::content_store::StoreError::Invalid(e.reason))
+        }).map_err(error)?
+    };
     Ok((waves, initialized))
 }
 
 /// Walk lowering adds rules after cold execution. Keep initialized summaries while
 /// planning the newly exposed rules against their final checked queries.
-pub(in crate::code_rule_dsl::sql_executor) fn after_walks(
+pub fn after_walks(
     w: &Work<'_>,
     run: &mut session::Execution,
 ) -> Result<()> {

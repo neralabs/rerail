@@ -28,38 +28,39 @@
 //! A lowering records which rewrites applied and which production fired (`Lowered`), for
 //! diagnostics and counters (`text.production.<name>`).
 
-mod canon;
-mod plan;
-mod productions;
-pub(in crate::code_rule_dsl) mod scan;
-mod source;
-pub(in crate::code_rule_dsl) mod vocabulary;
+pub mod canon;
+pub mod plan;
+pub mod productions;
+pub mod scan;
+pub mod source;
+pub mod table;
+pub mod vocabulary;
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
-pub(in crate::code_rule_dsl) use canon::{Domain, Pattern};
+pub use canon::{Domain, Pattern};
 #[allow(unused_imports)]
-pub(in crate::code_rule_dsl) use plan::{Anchor, Compiled, Key, Plan};
+pub use plan::{Anchor, Compiled, Key, Plan};
 #[allow(unused_imports)]
-pub(in crate::code_rule_dsl) use source::{Source, Spelling};
+pub use source::{Source, Spelling};
 
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 
 /// Installs the text layer's SQL functions on a store connection: `str_test(op, s, pattern)`, the
 /// rules' text tests (`logic::strings`), so every statement a store runs (a wave's included) has them.
-pub(crate) fn install(db: &rusqlite::Connection) -> rusqlite::Result<()> {
+pub fn install(db: &rusqlite::Connection) -> rusqlite::Result<()> {
     crate::code_rule_dsl::logic::strings::register(db)
 }
 
 /// Why a test could not be lowered: its spelling does not parse.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct Error(pub(in crate::code_rule_dsl) String);
+pub struct Error(pub(in crate::code_rule_dsl) String);
 
 /// A test lowered: its plan and key, and how it got there.
-pub(in crate::code_rule_dsl) struct Lowered {
+pub struct Lowered {
     pub(in crate::code_rule_dsl) plan: Plan,
-    pub(in crate::code_rule_dsl) key: Key,
+    pub key: Key,
     /// The production that made the plan (`Production::name`).
     pub(in crate::code_rule_dsl) production: &'static str,
     /// The rewrites that changed the pattern, in the order they applied.
@@ -76,7 +77,7 @@ impl std::fmt::Debug for Lowered {
 
 impl Lowered {
     /// The plan as a test of one string (a vocabulary term, a node's text, a Datalog value).
-    pub(in crate::code_rule_dsl) fn compiled(&self) -> Arc<Compiled> {
+    pub fn compiled(&self) -> Arc<Compiled> {
         Arc::clone(self.compiled.get_or_init(|| Arc::new(Compiled::of(&self.plan))))
     }
 
@@ -92,7 +93,7 @@ impl Lowered {
 }
 
 /// `source` over text of `domain`, lowered once per process and shared.
-pub(in crate::code_rule_dsl) fn lower(source: &Source, domain: Domain) -> Result<Arc<Lowered>, Error> {
+pub fn lower(source: &Source, domain: Domain) -> Result<Arc<Lowered>, Error> {
     static LOWERED: LazyLock<Mutex<HashMap<(Source, Domain), Result<Arc<Lowered>, Error>>>> = LazyLock::new(Default::default);
     if let Some(found) = LOWERED.lock().expect("text lowerings").get(&(source.clone(), domain)) {
         return found.clone();

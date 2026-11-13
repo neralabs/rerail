@@ -16,7 +16,7 @@ const WORK_LIMIT: i64 = 3;
 const CAPACITY: i64 = 4;
 
 #[derive(Clone, Copy)]
-pub(super) struct RegexHelpers {
+pub struct RegexHelpers {
     closure: FuncId,
     pub(super) find: FuncId,
 }
@@ -320,7 +320,7 @@ fn define_utf8_scalar(
         function.finalize();
     }
     super::native_cpu_codegen::define_function(module, id, &mut context).inspect_err(|_| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         eprintln!("utf8 scalar:\n{}", context.func.display());
     })?;
     module.clear_context(&mut context);
@@ -433,7 +433,7 @@ fn define_unicode_word_side(
     Ok(id)
 }
 
-pub(super) fn define_helpers(
+pub fn define_helpers(
     module: &mut JITModule,
 ) -> Result<RegexHelpers, Box<cranelift_module::ModuleError>> {
     let unicode_word = define_unicode_word(module)?;

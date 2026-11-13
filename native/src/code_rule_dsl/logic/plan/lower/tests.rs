@@ -48,3 +48,32 @@ fn a_variable_in_two_symbol_domains_is_refused() {
     let e = domains(&p).err().expect("a domain conflict").to_string();
     assert!(e.contains("$k is a Kind and a Name") || e.contains("$k is a Name and a Kind"), "{e}");
 }
+
+/// A disjunction over a kind variable, `(k = "call" ; k = "attribute")`, a membership test, compares kinds: a rule
+/// per kind, each `$k` equal to its kind atom; negated, `$k` differs from each (it was "$k is a Kind and a Name").
+#[test]
+fn a_kind_membership_compares_kind_atoms() {
+    let p = parse(&format!(
+        "{BASE}.decl r(n: node)\n.decl s(n: node)\n.output r, s\n\
+         r(n) :- node(_, n, k, _, _), (k = \"call\" ; k = \"attribute\").\n\
+         s(n) :- node(_, n, k, _, _), !(k = \"call\" ; k = \"attribute\").\n"
+    ))
+    .unwrap();
+    let python = dialect_by_label("python").unwrap();
+    let mut next = 100;
+    let l = lower(&p, python, &mut |s| {
+        Ok(s.iter()
+            .map(|_| {
+                next += 1;
+                next
+            })
+            .collect())
+    })
+    .unwrap();
+    let tag = tape_tag(python).unwrap();
+    let atom = |k: &str| Term::Int(i64::from(kind_atom(tag, python.kinds().kind_id(k))));
+    let cmp = |op, k: &str| Literal::Cmp { l: Term::Var("k".to_owned()), op, r: atom(k) };
+    let bodies = |rel: &str| l.program.rules.iter().filter(|r| r.head.rel == rel).map(|r| r.body[1..].to_vec()).collect::<Vec<_>>();
+    assert_eq!(bodies("r"), [vec![cmp("=", "call")], vec![cmp("=", "attribute")]]);
+    assert_eq!(bodies("s"), [vec![cmp("!=", "call"), cmp("!=", "attribute")]]);
+}

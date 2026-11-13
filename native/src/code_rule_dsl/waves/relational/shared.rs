@@ -7,15 +7,15 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
 #[cfg(feature = "code-rule-profile")]
-mod capture;
+pub mod capture;
 #[cfg(feature = "code-rule-profile")]
-pub(super) use capture::save as capture;
+pub use capture::save as capture;
 
 type EvidenceVersion = (String, String, [u8; 32], Option<String>, Option<[u8; 32]>);
 
 /// Authoritative producer context is independent of whether source strings are resident.
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Versions(Arc<VersionSet>);
+pub struct Versions(Arc<VersionSet>);
 #[derive(Eq, PartialEq)]
 struct VersionSet {
     files: Box<[EvidenceVersion]>,
@@ -86,12 +86,12 @@ impl Versions {
 }
 
 #[derive(Clone)]
-struct Schema {
+pub struct Schema {
     declaration: Arc<str>,
     start: usize,
 }
 impl Schema {
-    fn new(declaration: &Arc<str>) -> Self {
+    pub fn new(declaration: &Arc<str>) -> Self {
         Self {
             declaration: declaration.clone(),
             start: declaration.find('(').expect("generated declaration") + 1,
@@ -109,7 +109,7 @@ impl PartialEq for Schema {
 }
 impl Eq for Schema {}
 #[derive(Clone, Eq, PartialEq)]
-enum Key {
+pub enum Key {
     Layout(String),
     Syntax {
         family: u8,
@@ -185,7 +185,7 @@ impl Hash for Key {
 }
 type Fingerprints = HashMap<(usize, usize), (Arc<str>, Arc<str>, u64)>;
 #[derive(Default)]
-pub(super) struct Bindings {
+pub struct Bindings {
     templates: Option<Box<Bindings>>,
     fingerprints: Fingerprints,
     definitions: HashMap<Key, usize>,
@@ -218,7 +218,7 @@ impl Bindings {
             0
         }
     }
-    fn intern(&mut self, key: Key) -> usize {
+    pub fn intern(&mut self, key: Key) -> usize {
         if let Some(id) = self.definitions.get(&key) {
             return *id;
         }
@@ -519,6 +519,4 @@ pub(super) fn stage(stage: &Stage, name: &str, aliases: &BTreeMap<String, String
     out
 }
 
-#[cfg(test)]
-#[path = "shared/identity_tests.rs"]
-mod identity_tests;
+// identity_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

@@ -8,7 +8,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 
-pub(crate) type Key = u32;
+pub type Key = u32;
 
 struct Link {
     decorator: Regex,
@@ -16,7 +16,7 @@ struct Link {
     by: String,
 }
 
-pub(crate) struct Contracts {
+pub struct Contracts {
     pub(crate) canonical: Arc<str>,
     links: Vec<Link>,
     constructor: Option<(Regex, String)>,
@@ -38,11 +38,11 @@ static REGISTRY: LazyLock<parking_lot::Mutex<Registry>> = LazyLock::new(|| {
     })
 });
 
-pub(crate) fn get(key: Key) -> Arc<Contracts> {
+pub fn get(key: Key) -> Arc<Contracts> {
     Arc::clone(&REGISTRY.lock().values[key as usize])
 }
 
-pub(crate) fn compile(
+pub fn compile(
     value: Option<&Value>,
     constructor: Option<&Value>,
     path: &str,
@@ -106,10 +106,10 @@ pub(crate) fn compile(
     Ok(key)
 }
 
-pub(crate) const UNANNOTATED: &str = "<unannotated>";
-pub(crate) const UNRESOLVED_TYPE: &str = "<unresolved-type>";
+pub const UNANNOTATED: &str = "<unannotated>";
+pub const UNRESOLVED_TYPE: &str = "<unresolved-type>";
 
-pub(crate) fn parameter_key(class: &str, parameter: &str) -> String {
+pub fn parameter_key(class: &str, parameter: &str) -> String {
     format!("{class}.<init-parameter>.{parameter}")
 }
 
@@ -141,7 +141,7 @@ fn replacement(value: Option<&Value>, path: &str, max: usize) -> Result<(Regex, 
 }
 
 impl Contracts {
-    pub(crate) fn constructor_names(&self, field: &str) -> Option<Vec<String>> {
+    pub fn constructor_names(&self, field: &str) -> Option<Vec<String>> {
         let (pattern, by) = self.constructor.as_ref()?;
         let mapped = pattern.replace(field, by.as_str());
         let mut names = vec![field.to_owned()];

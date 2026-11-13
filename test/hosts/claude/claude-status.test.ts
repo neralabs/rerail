@@ -81,6 +81,12 @@ describe("composed Claude status", () => {
     expect(await render(input)).toEqual(input);
   });
 
+  it("writes no Rerail line where the presentation has nothing to draw (Rerail is not on here, #298)", async () => {
+    mocks.command.mockReturnValue(nodePredecessor("process.stdout.write('existing status')"));
+    mocks.presentation.mockResolvedValue({ presence: "compact", status: "not-on-here", text: "" });
+    expect((await render()).toString()).toBe("existing status");
+  });
+
   it("identifies the session by the launch root when Claude has moved below it", async () => {
     await render(Buffer.from('{"session_id":"claude-1","cwd":"/workspace/src","workspace":{"project_dir":"/workspace"}}'));
     await render(Buffer.from('{"session_id":"claude-1","cwd":"/workspace/src","workspace":{"project_dir":"relative"}}'));

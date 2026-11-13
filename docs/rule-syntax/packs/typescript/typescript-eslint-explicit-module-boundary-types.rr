@@ -31,7 +31,8 @@ explicit_module_boundary_types(p, "Give this exported function's parameter an ex
 // checked(x): checkNode reached x.
 .decl checked(x: node)
 checked(d) :- kind(e, "export_statement"), !field(e, "source", _), (field(e, "declaration", d) ; field(e, "value", v), deparen(v, d)).
-checked(d) :- kind(e, "export_statement"), op(e, "="), child(e, v, _), !kind(v, "comment"), deparen(v, d).
+// `export = v` (modules.rr's export_assign).
+checked(d) :- export_assign(e), child(e, v, _), !kind(v, "comment"), deparen(v, d).
 checked(d) :- kind(e, "export_statement"), !field(e, "source", _), child(e, c, _), kind(c, "export_clause"),
     child(c, s, _), field(s, "name", n), text(n, x), followed(x, d).
 checked(d) :- checked(i), (kind(i, "identifier") ; kind(i, "shorthand_property_identifier")), !in_function(i),

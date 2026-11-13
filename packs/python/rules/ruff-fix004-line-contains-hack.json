@@ -1,0 +1,39 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-fix004-line-contains-hack",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Replace the workaround a HACK comment marks with a proper solution before shipping, then remove the comment.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "line-contains-hack",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comment",
+            "regex": "^(?:#[#\\s]*(?:(?:[[\\p{Alphabetic}\\p{N}]--[FHTXfhtx]][\\p{Alphabetic}\\p{N}]*|[tT](?:[[\\p{Alphabetic}\\p{N}]--[oO]][\\p{Alphabetic}\\p{N}]*|[oO](?:[[\\p{Alphabetic}\\p{N}]--[dD]][\\p{Alphabetic}\\p{N}]*|[dD](?:[[\\p{Alphabetic}\\p{N}]--[oO]][\\p{Alphabetic}\\p{N}]*|[oO][\\p{Alphabetic}\\p{N}]+)?)?)?|[fF](?:[[\\p{Alphabetic}\\p{N}]--[iI]][\\p{Alphabetic}\\p{N}]*|[iI](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX](?:[[\\p{Alphabetic}\\p{N}]--[mM]][\\p{Alphabetic}\\p{N}]*|[mM](?:[[\\p{Alphabetic}\\p{N}]--[eE]][\\p{Alphabetic}\\p{N}]*|[eE][\\p{Alphabetic}\\p{N}]+)?)?)?)?|[hH](?:[[\\p{Alphabetic}\\p{N}]--[aA]][\\p{Alphabetic}\\p{N}]*|[aA](?:[[\\p{Alphabetic}\\p{N}]--[cC]][\\p{Alphabetic}\\p{N}]*|[cC](?:[[\\p{Alphabetic}\\p{N}]--[kK]][\\p{Alphabetic}\\p{N}]*|[kK][\\p{Alphabetic}\\p{N}]+)?)?)?|[xX](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX][\\p{Alphabetic}\\p{N}]+)?)?)(?:[^\\p{Alphabetic}\\p{N}#][^#]*)?|[^\\p{Alphabetic}\\p{N}#\\s][^#]*))*#[#\\s]*(?<D>[hH][aA][cC][kK])(?:[^\\p{Alphabetic}\\p{N}]|$)"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.D",
+        "code": "FIX004",
+        "message": "Replace the workaround this `$D` comment describes with a proper solution, then remove the `$D` note; if no better solution exists yet, leave it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "FIX004"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

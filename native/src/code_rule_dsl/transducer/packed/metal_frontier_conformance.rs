@@ -881,4 +881,4 @@ fn unsupported_greedy_reconvergence_is_rejected_before_backend_selection() {
 }
 
 #[path = "metal_production_dynamic_tests.rs"]
-mod production;
+pub mod production;

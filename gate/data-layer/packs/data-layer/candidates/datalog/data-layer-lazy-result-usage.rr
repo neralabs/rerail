@@ -1,81 +1,63 @@
-.decl doc(d: number, path: symbol, module: symbol)
-.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.decl lazy_result_class_kind(kind: symbol)
+lazy_result_class_kind("class_definition").
+.decl lazy_result_def_kind(kind: symbol)
+lazy_result_def_kind("function_definition").
 .decl child(p: node, c: node, i: number)
+.decl doc(d: number, path: symbol, module: symbol)
 .decl field(p: node, f: symbol, c: node)
-.decl text(n: node, s: symbol)
-.decl name(n: node, s: symbol)
-.input doc, node, child, field, text, name
-.decl k0(kind: symbol)
-k0("class_definition").
 .decl in_scope(d: number)
-.decl m10(n: node)
-.decl m105(n: node)
-.decl m106(n: node)
-.decl m109(n: node)
-.decl m113(n: node)
-.decl m121(n: node)
-.decl m124(n: node)
-.decl m131(n: node)
-.decl m132(n: node)
-.decl m134(n: node)
-.decl m135(n: node)
-.decl m143(n: node)
-.decl m144(n: node)
-.decl m147(n: node)
-.decl m151(n: node)
-.decl m159(n: node)
-.decl m162(n: node)
-.decl m169(n: node)
-.decl m17(n: node)
-.decl m170(n: node)
-.decl m172(n: node)
-.decl m173(n: node)
-.decl m18(n: node)
-.decl m181(n: node)
-.decl m182(n: node)
-.decl m185(n: node)
-.decl m189(n: node)
-.decl m197(n: node)
-.decl m20(n: node)
-.decl m200(n: node)
-.decl m207(n: node)
-.decl m208(n: node)
-.decl m21(n: node)
-.decl m210(n: node)
-.decl m211(n: node)
-.decl m219(n: node)
-.decl m220(n: node)
-.decl m223(n: node)
-.decl m227(n: node)
-.decl m29(n: node)
-.decl m30(n: node)
-.decl m33(n: node)
-.decl m37(n: node)
-.decl m45(n: node)
-.decl m48(n: node)
-.decl m55(n: node)
-.decl m56(n: node)
-.decl m58(n: node)
-.decl m59(n: node)
-.decl m67(n: node)
-.decl m68(n: node)
-.decl m7(n: node)
-.decl m71(n: node)
-.decl m75(n: node)
-.decl m83(n: node)
-.decl m86(n: node)
-.decl m93(n: node)
-.decl m94(n: node)
-.decl m96(n: node)
-.decl m97(n: node)
+.decl lazy_result_base(n: node)
+.decl lazy_result_class(c: node)
+.decl lazy_result_deco(s: symbol)
+.decl lazy_result_deco_name(x: node)
+.decl lazy_result_deco_ref(x: node)
+.decl lazy_result_def(f: node, m: symbol)
+.decl lazy_result_exempt(s: symbol)
+.decl lazy_result_exempt_decorator(f: node)
+.decl lazy_result_has_lazy(c: node, m: symbol)
+.decl lazy_result_hit(d: number, f: node, m: symbol)
+.decl lazy_result_lazy(m: symbol, z: symbol)
+.decl lazy_result_lazy_bases(c: node)
+.decl lazy_result_lazy_def(x: node, m: symbol)
+.decl lazy_result_lazy_return(f: node)
+.decl lazy_result_skip(p: symbol)
+.decl lazy_result_stub(f: node)
+.decl lazy_result_stub_statement(s: node)
+.decl lazy_result_uses_lazy(f: node, m: symbol)
+.decl line(n: node, l: number)
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl node_text(n: node, s: symbol)
 .decl out_scope(d: number)
-.decl u127(n: node)
-.decl u13(n: node)
-.decl u165(n: node)
-.decl u203(n: node)
-.decl u51(n: node)
-.decl u89(n: node)
+.decl syntax_error(d: number)
+.decl tape_syntax_error(d: number)
+.decl text(n: node, s: symbol)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, syntax_error, node, field, child, text, line, node_text
+.output violation
+lazy_result_deco("abstractmethod").
+lazy_result_deco("legacy_async").
+lazy_result_deco("legacy_sync").
+lazy_result_exempt("AsyncConnectionWrapper").
+lazy_result_exempt("AsyncCursor").
+lazy_result_exempt("BaseDeferredQuery").
+lazy_result_exempt("Connection").
+lazy_result_exempt("Cursor").
+lazy_result_exempt("DeferredInsertFromQueryBuilder").
+lazy_result_exempt("InProcessExecutor").
+lazy_result_exempt("JobExecutor").
+lazy_result_exempt("MigrationExecutorProtocol").
+lazy_result_exempt("SyncExecutor").
+lazy_result_lazy("execute", "execute_lazy").
+lazy_result_lazy("first", "execute_lazy").
+lazy_result_lazy("first", "first_lazy").
+lazy_result_lazy("one", "execute_lazy").
+lazy_result_lazy("one", "one_lazy").
+lazy_result_lazy("one_or_none", "execute_lazy").
+lazy_result_lazy("one_or_none", "one_or_none_lazy").
+lazy_result_lazy("select_one", "execute_lazy").
+lazy_result_lazy("select_one", "select_one_lazy").
+lazy_result_lazy("select_one_or_raise", "select_one_or_raise_lazy").
 in_scope(d) :- doc(d, p, _), glob("impl/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("data_layer/**/*.py", p).
 in_scope(d) :- doc(d, p, _), glob("_internal/**/*.py", p).
@@ -88,100 +70,32 @@ out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/test_*.py", p).
-m7(n) :- node(_, n, "identifier", _, _), text(n, v6), (v6 = "AsyncConnectionWrapper" ; v6 = "AsyncCursor" ; v6 = "BaseDeferredQuery" ; v6 = "Connection" ; v6 = "Cursor" ; v6 = "DeferredInsertFromQueryBuilder" ; v6 = "InProcessExecutor" ; v6 = "JobExecutor" ; v6 = "MigrationExecutorProtocol" ; v6 = "SyncExecutor").
-m10(n) :- name(n, v9), (glob("Async*", v9) ; glob("Lazy*", v9) ; glob("_Async*", v9) ; glob("_Lazy*", v9) ; glob("__Async*", v9) ; glob("__Lazy*", v9) ; glob("___Async*", v9) ; glob("___Lazy*", v9)).
-m17(n) :- node(_, n, "identifier", _, _), text(n, v14), (v14 = "ABC" ; v14 = "Protocol").
-m17(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v15), node(_, v15, "identifier", _, _), text(v15, v16), (v16 = "ABC" ; v16 = "Protocol").
-m18(n) :- node(_, n, "subscript", _, _).
-m18(n) :- node(_, n, "generic_type", _, _).
-m20(n) :- m17(n).
-m20(n) :- m18(n), child(n, v19, _), u13(v19).
-u13(n) :- m20(n).
-m21(n) :- field(n, "superclasses", v11), child(v11, v12, _), u13(v12).
-m29(n) :- node(_, n, "function_definition", _, _), field(n, "name", v24), node(_, v24, "identifier", _, _), text(v24, v25), v25 = "execute_lazy".
-m29(n) :- node(_, n, "decorated_definition", _, _), child(n, v26, _), node(_, v26, "function_definition", _, _), field(v26, "name", v27), node(_, v27, "identifier", _, _), text(v27, v28), v28 = "execute_lazy".
-m30(n) :- field(n, "body", v22), child(v22, v23, _), m29(v23).
-m33(n) :- field(n, "return_type", v31), name(v31, v32), (contains("DeferredFuture", v32) ; contains("LazyResult", v32) ; contains("LazySeq", v32)).
-m37(n) :- node(_, n, "pass_statement", _, _).
-m37(n) :- node(_, n, "expression_statement", _, _), child(n, v36, _), node(_, v36, "ellipsis", _, _).
-m45(n) :- node(_, n, "identifier", _, _), text(n, v44), (v44 = "AsyncConnectionWrapper" ; v44 = "AsyncCursor" ; v44 = "BaseDeferredQuery" ; v44 = "Connection" ; v44 = "Cursor" ; v44 = "DeferredInsertFromQueryBuilder" ; v44 = "InProcessExecutor" ; v44 = "JobExecutor" ; v44 = "MigrationExecutorProtocol" ; v44 = "SyncExecutor").
-m48(n) :- name(n, v47), (glob("Async*", v47) ; glob("Lazy*", v47) ; glob("_Async*", v47) ; glob("_Lazy*", v47) ; glob("__Async*", v47) ; glob("__Lazy*", v47) ; glob("___Async*", v47) ; glob("___Lazy*", v47)).
-m55(n) :- node(_, n, "identifier", _, _), text(n, v52), (v52 = "ABC" ; v52 = "Protocol").
-m55(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v53), node(_, v53, "identifier", _, _), text(v53, v54), (v54 = "ABC" ; v54 = "Protocol").
-m56(n) :- node(_, n, "subscript", _, _).
-m56(n) :- node(_, n, "generic_type", _, _).
-m58(n) :- m55(n).
-m58(n) :- m56(n), child(n, v57, _), u51(v57).
-u51(n) :- m58(n).
-m59(n) :- field(n, "superclasses", v49), child(v49, v50, _), u51(v50).
-m67(n) :- node(_, n, "function_definition", _, _), field(n, "name", v62), node(_, v62, "identifier", _, _), text(v62, v63), (v63 = "execute_lazy" ; v63 = "first_lazy").
-m67(n) :- node(_, n, "decorated_definition", _, _), child(n, v64, _), node(_, v64, "function_definition", _, _), field(v64, "name", v65), node(_, v65, "identifier", _, _), text(v65, v66), (v66 = "execute_lazy" ; v66 = "first_lazy").
-m68(n) :- field(n, "body", v60), child(v60, v61, _), m67(v61).
-m71(n) :- field(n, "return_type", v69), name(v69, v70), (contains("DeferredFuture", v70) ; contains("LazyResult", v70) ; contains("LazySeq", v70)).
-m75(n) :- node(_, n, "pass_statement", _, _).
-m75(n) :- node(_, n, "expression_statement", _, _), child(n, v74, _), node(_, v74, "ellipsis", _, _).
-m83(n) :- node(_, n, "identifier", _, _), text(n, v82), (v82 = "AsyncConnectionWrapper" ; v82 = "AsyncCursor" ; v82 = "BaseDeferredQuery" ; v82 = "Connection" ; v82 = "Cursor" ; v82 = "DeferredInsertFromQueryBuilder" ; v82 = "InProcessExecutor" ; v82 = "JobExecutor" ; v82 = "MigrationExecutorProtocol" ; v82 = "SyncExecutor").
-m86(n) :- name(n, v85), (glob("Async*", v85) ; glob("Lazy*", v85) ; glob("_Async*", v85) ; glob("_Lazy*", v85) ; glob("__Async*", v85) ; glob("__Lazy*", v85) ; glob("___Async*", v85) ; glob("___Lazy*", v85)).
-m93(n) :- node(_, n, "identifier", _, _), text(n, v90), (v90 = "ABC" ; v90 = "Protocol").
-m93(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v91), node(_, v91, "identifier", _, _), text(v91, v92), (v92 = "ABC" ; v92 = "Protocol").
-m94(n) :- node(_, n, "subscript", _, _).
-m94(n) :- node(_, n, "generic_type", _, _).
-m96(n) :- m93(n).
-m96(n) :- m94(n), child(n, v95, _), u89(v95).
-u89(n) :- m96(n).
-m97(n) :- field(n, "superclasses", v87), child(v87, v88, _), u89(v88).
-m105(n) :- node(_, n, "function_definition", _, _), field(n, "name", v100), node(_, v100, "identifier", _, _), text(v100, v101), (v101 = "execute_lazy" ; v101 = "one_lazy").
-m105(n) :- node(_, n, "decorated_definition", _, _), child(n, v102, _), node(_, v102, "function_definition", _, _), field(v102, "name", v103), node(_, v103, "identifier", _, _), text(v103, v104), (v104 = "execute_lazy" ; v104 = "one_lazy").
-m106(n) :- field(n, "body", v98), child(v98, v99, _), m105(v99).
-m109(n) :- field(n, "return_type", v107), name(v107, v108), (contains("DeferredFuture", v108) ; contains("LazyResult", v108) ; contains("LazySeq", v108)).
-m113(n) :- node(_, n, "pass_statement", _, _).
-m113(n) :- node(_, n, "expression_statement", _, _), child(n, v112, _), node(_, v112, "ellipsis", _, _).
-m121(n) :- node(_, n, "identifier", _, _), text(n, v120), (v120 = "AsyncConnectionWrapper" ; v120 = "AsyncCursor" ; v120 = "BaseDeferredQuery" ; v120 = "Connection" ; v120 = "Cursor" ; v120 = "DeferredInsertFromQueryBuilder" ; v120 = "InProcessExecutor" ; v120 = "JobExecutor" ; v120 = "MigrationExecutorProtocol" ; v120 = "SyncExecutor").
-m124(n) :- name(n, v123), (glob("Async*", v123) ; glob("Lazy*", v123) ; glob("_Async*", v123) ; glob("_Lazy*", v123) ; glob("__Async*", v123) ; glob("__Lazy*", v123) ; glob("___Async*", v123) ; glob("___Lazy*", v123)).
-m131(n) :- node(_, n, "identifier", _, _), text(n, v128), (v128 = "ABC" ; v128 = "Protocol").
-m131(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v129), node(_, v129, "identifier", _, _), text(v129, v130), (v130 = "ABC" ; v130 = "Protocol").
-m132(n) :- node(_, n, "subscript", _, _).
-m132(n) :- node(_, n, "generic_type", _, _).
-m134(n) :- m131(n).
-m134(n) :- m132(n), child(n, v133, _), u127(v133).
-u127(n) :- m134(n).
-m135(n) :- field(n, "superclasses", v125), child(v125, v126, _), u127(v126).
-m143(n) :- node(_, n, "function_definition", _, _), field(n, "name", v138), node(_, v138, "identifier", _, _), text(v138, v139), (v139 = "execute_lazy" ; v139 = "one_or_none_lazy").
-m143(n) :- node(_, n, "decorated_definition", _, _), child(n, v140, _), node(_, v140, "function_definition", _, _), field(v140, "name", v141), node(_, v141, "identifier", _, _), text(v141, v142), (v142 = "execute_lazy" ; v142 = "one_or_none_lazy").
-m144(n) :- field(n, "body", v136), child(v136, v137, _), m143(v137).
-m147(n) :- field(n, "return_type", v145), name(v145, v146), (contains("DeferredFuture", v146) ; contains("LazyResult", v146) ; contains("LazySeq", v146)).
-m151(n) :- node(_, n, "pass_statement", _, _).
-m151(n) :- node(_, n, "expression_statement", _, _), child(n, v150, _), node(_, v150, "ellipsis", _, _).
-m159(n) :- node(_, n, "identifier", _, _), text(n, v158), (v158 = "AsyncConnectionWrapper" ; v158 = "AsyncCursor" ; v158 = "BaseDeferredQuery" ; v158 = "Connection" ; v158 = "Cursor" ; v158 = "DeferredInsertFromQueryBuilder" ; v158 = "InProcessExecutor" ; v158 = "JobExecutor" ; v158 = "MigrationExecutorProtocol" ; v158 = "SyncExecutor").
-m162(n) :- name(n, v161), (glob("Async*", v161) ; glob("Lazy*", v161) ; glob("_Async*", v161) ; glob("_Lazy*", v161) ; glob("__Async*", v161) ; glob("__Lazy*", v161) ; glob("___Async*", v161) ; glob("___Lazy*", v161)).
-m169(n) :- node(_, n, "identifier", _, _), text(n, v166), (v166 = "ABC" ; v166 = "Protocol").
-m169(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v167), node(_, v167, "identifier", _, _), text(v167, v168), (v168 = "ABC" ; v168 = "Protocol").
-m170(n) :- node(_, n, "subscript", _, _).
-m170(n) :- node(_, n, "generic_type", _, _).
-m172(n) :- m169(n).
-m172(n) :- m170(n), child(n, v171, _), u165(v171).
-u165(n) :- m172(n).
-m173(n) :- field(n, "superclasses", v163), child(v163, v164, _), u165(v164).
-m181(n) :- node(_, n, "function_definition", _, _), field(n, "name", v176), node(_, v176, "identifier", _, _), text(v176, v177), (v177 = "execute_lazy" ; v177 = "select_one_lazy").
-m181(n) :- node(_, n, "decorated_definition", _, _), child(n, v178, _), node(_, v178, "function_definition", _, _), field(v178, "name", v179), node(_, v179, "identifier", _, _), text(v179, v180), (v180 = "execute_lazy" ; v180 = "select_one_lazy").
-m182(n) :- field(n, "body", v174), child(v174, v175, _), m181(v175).
-m185(n) :- field(n, "return_type", v183), name(v183, v184), (contains("DeferredFuture", v184) ; contains("LazyResult", v184) ; contains("LazySeq", v184)).
-m189(n) :- node(_, n, "pass_statement", _, _).
-m189(n) :- node(_, n, "expression_statement", _, _), child(n, v188, _), node(_, v188, "ellipsis", _, _).
-m197(n) :- node(_, n, "identifier", _, _), text(n, v196), (v196 = "AsyncConnectionWrapper" ; v196 = "AsyncCursor" ; v196 = "BaseDeferredQuery" ; v196 = "Connection" ; v196 = "Cursor" ; v196 = "DeferredInsertFromQueryBuilder" ; v196 = "InProcessExecutor" ; v196 = "JobExecutor" ; v196 = "MigrationExecutorProtocol" ; v196 = "SyncExecutor").
-m200(n) :- name(n, v199), (glob("Async*", v199) ; glob("Lazy*", v199) ; glob("_Async*", v199) ; glob("_Lazy*", v199) ; glob("__Async*", v199) ; glob("__Lazy*", v199) ; glob("___Async*", v199) ; glob("___Lazy*", v199)).
-m207(n) :- node(_, n, "identifier", _, _), text(n, v204), (v204 = "ABC" ; v204 = "Protocol").
-m207(n) :- node(_, n, "attribute", _, _), field(n, "attribute", v205), node(_, v205, "identifier", _, _), text(v205, v206), (v206 = "ABC" ; v206 = "Protocol").
-m208(n) :- node(_, n, "subscript", _, _).
-m208(n) :- node(_, n, "generic_type", _, _).
-m210(n) :- m207(n).
-m210(n) :- m208(n), child(n, v209, _), u203(v209).
-u203(n) :- m210(n).
-m211(n) :- field(n, "superclasses", v201), child(v201, v202, _), u203(v202).
-m219(n) :- node(_, n, "function_definition", _, _), field(n, "name", v214), node(_, v214, "identifier", _, _), text(v214, v215), v215 = "select_one_or_raise_lazy".
-m219(n) :- node(_, n, "decorated_definition", _, _), child(n, v216, _), node(_, v216, "function_definition", _, _), field(v216, "name", v217), node(_, v217, "identifier", _, _), text(v217, v218), v218 = "select_one_or_raise_lazy".
-m220(n) :- field(n, "body", v212), child(v212, v213, _), m219(v213).
-m223(n) :- field(n, "return_type", v221), name(v221, v222), (contains("DeferredFuture", v222) ; contains("LazyResult", v222) ; contains("LazySeq", v222)).
-m227(n) :- node(_, n, "pass_statement", _, _).
-m227(n) :- node(_, n, "expression_statement", _, _), child(n, v226, _), node(_, v226, "ellipsis", _, _).
-.output violation
+tape_syntax_error(d) :- syntax_error(d).
+lazy_result_base(n) :- node(_, n, "identifier", _, _), text(n, s), (s = "ABC" ; s = "Protocol").
+lazy_result_base(n) :- node(_, n, "attribute", _, _), field(n, "attribute", a), node(_, a, "identifier", _, _), text(a, s), (s = "ABC" ; s = "Protocol").
+lazy_result_base(n) :- node(_, n, "subscript", _, _), child(n, c, _), lazy_result_base(c).
+lazy_result_base(n) :- node(_, n, "generic_type", _, _), child(n, c, _), lazy_result_base(c).
+lazy_result_lazy_bases(c) :- node(_, c, "class_definition", _, _), field(c, "superclasses", a), child(a, b, _), lazy_result_base(b).
+lazy_result_class(c) :- node(_, c, "class_definition", _, _), field(c, "name", i), text(i, s), (contains("Query", s) ; contains("Table", s) ; contains("Transaction", s)), !lazy_result_exempt(s), !match("_*(Async|Lazy).*", s), !lazy_result_lazy_bases(c).
+lazy_result_lazy_def(x, m) :- node(_, x, "function_definition", _, _), field(x, "name", i), node(_, i, "identifier", _, _), text(i, z), lazy_result_lazy(m, z).
+lazy_result_lazy_def(x, m) :- node(_, x, "decorated_definition", _, _), child(x, y, _), node(_, y, "function_definition", _, _), field(y, "name", i), node(_, i, "identifier", _, _), text(i, z), lazy_result_lazy(m, z).
+lazy_result_has_lazy(c, m) :- lazy_result_class(c), field(c, "body", b), child(b, x, _), lazy_result_lazy_def(x, m).
+lazy_result_def(f, m) :- node(_, f, "function_definition", _, _), field(f, "name", i), node(_, i, "identifier", _, _), text(i, m), lazy_result_lazy(m, _), nearest(f, c, lazy_result_class_kind), lazy_result_class(c), !lazy_result_has_lazy(c, m).
+lazy_result_lazy_return(f) :- lazy_result_def(f, _), field(f, "return_type", r), node_text(r, s), (contains("LazyResult", s) ; contains("LazySeq", s) ; contains("DeferredFuture", s)).
+lazy_result_stub_statement(s) :- node(_, s, "pass_statement", _, _).
+lazy_result_stub_statement(s) :- node(_, s, "expression_statement", _, _), child(s, e, _), node(_, e, "ellipsis", _, _).
+lazy_result_stub(f) :- lazy_result_def(f, _), field(f, "body", b), node(_, b, "block", _, _), child(b, s, _), lazy_result_stub_statement(s), !child(b, _, 1).
+lazy_result_deco_ref(x) :- node(_, x, "identifier", _, _), text(x, s), lazy_result_deco(s).
+lazy_result_deco_ref(x) :- node(_, x, "attribute", _, _), field(x, "attribute", a), node(_, a, "identifier", _, _), text(a, s), lazy_result_deco(s).
+lazy_result_deco_name(x) :- lazy_result_deco_ref(x).
+lazy_result_deco_name(x) :- node(_, x, "call", _, _), field(x, "function", g), lazy_result_deco_ref(g).
+lazy_result_exempt_decorator(f) :- lazy_result_def(f, _), child(w, f, _), node(_, w, "decorated_definition", _, _), child(w, k, _), node(_, k, "decorator", _, _), child(k, x, _), lazy_result_deco_name(x).
+lazy_result_uses_lazy(f, m) :- lazy_result_def(f, m), inside(i, f, lazy_result_def_kind), node(_, i, "identifier", _, _), text(i, z), lazy_result_lazy(m, z).
+lazy_result_skip(p) :- doc(_, p, _), (contains("tests/", p) ; contains("test_", p) ; contains("__pycache__", p) ; contains("l2055_lazy_result/", p) ; contains("l2070_batching/", p)).
+lazy_result_hit(d, f, m) :- lazy_result_def(f, m), !lazy_result_lazy_return(f), !lazy_result_stub(f), !lazy_result_exempt_decorator(f), !lazy_result_uses_lazy(f, m), node(d, f, _, _, _), doc(d, p, _), !lazy_result_skip(p), !tape_syntax_error(d).
+violation("data-layer-lazy-result-usage", "execute", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "execute"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-lazy-result-usage", "first", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "first"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-lazy-result-usage", "one", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "one"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-lazy-result-usage", "one_or_none", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "one_or_none"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-lazy-result-usage", "select_one", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "select_one"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).
+violation("data-layer-lazy-result-usage", "select_one_or_raise", "lazy_result_usage", p, l) :- lazy_result_hit(d, f, "select_one_or_raise"), in_scope(d), !out_scope(d), doc(d, p, _), line(f, l).

@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// How deep utilities may nest when inlined; deeper (or recursive) ones are refused.
 const MAX_INLINED_UTIL_DEPTH: usize = 32;
 
-pub(in crate::code_rule_dsl) enum MatchTree {
+pub enum MatchTree {
     Kind(u16),
     /// A grammar supertype's members, as the tape records them (`SUPERTYPE`), with the concrete
     /// kinds they can have.
@@ -58,18 +58,18 @@ pub(in crate::code_rule_dsl) enum MatchTree {
 /// replaced by a capture of the node it would be tested on (`FACT_SLOT{i}`): it reads the file's scopes
 /// and values and never runs a user rule. A node holds where the producer matches it and each slot's
 /// target is in the label of `slots[i]`.
-pub(in crate::code_rule_dsl) struct Fact {
+pub struct Fact {
     producer: AstMatcher,
     /// The sub-rules, by slot.
-    pub(in crate::code_rule_dsl) slots: Vec<MatchTree>,
+    pub slots: Vec<MatchTree>,
     /// The predicate's name (`resolves`, `resolves.binding`, …), for listings.
-    pub(in crate::code_rule_dsl) name: &'static str,
+    pub name: &'static str,
     /// Its identity in a plan: the query's content digest, its dialect and the leaf's place in the
     /// lowering. Equal keys are equal producers, however often the query is compiled.
-    pub(in crate::code_rule_dsl) key: String,
+    pub key: String,
     /// The kinds a node it reports can have, where the predicate names them: its producer starts
     /// only there (`None`: any node).
-    pub(in crate::code_rule_dsl) kinds: Option<BTreeSet<u16>>,
+    pub kinds: Option<BTreeSet<u16>>,
 }
 
 /// One node a fact's producer reports: the node, and each slot's target.
@@ -78,14 +78,14 @@ pub(in crate::code_rule_dsl) type FactRow = (u32, Vec<u32>);
 /// A fact's findings on one file: rows with their slots' targets, or (a fact with no slot) its
 /// nodes as bits.
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) enum FactFound {
+pub enum FactFound {
     Rows(Vec<FactRow>),
     Nodes(Vec<u64>),
 }
 
 impl FactFound {
     /// Each row: a node and its slots' targets.
-    pub(in crate::code_rule_dsl) fn rows(&self) -> Box<dyn Iterator<Item = (u32, &[u32])> + '_> {
+    pub fn rows(&self) -> Box<dyn Iterator<Item = (u32, &[u32])> + '_> {
         match self {
             Self::Rows(rows) => Box::new(rows.iter().map(|(node, targets)| (*node, targets.as_slice()))),
             Self::Nodes(bits) => Box::new(bits.iter().enumerate().flat_map(|(word, &bits)| {
@@ -109,13 +109,13 @@ impl Fact {
 
     /// Whether its findings on a file are a node set (`nth_bits`): a position among siblings
     /// (`nthChild`) with no slot, or the file's path (`filePath`).
-    pub(in crate::code_rule_dsl) fn is_node_set(&self) -> bool {
+    pub fn is_node_set(&self) -> bool {
         matches!(&self.producer, AstMatcher::NthChild(_) | AstMatcher::Semantic(super::Semantic::FilePath(_))) && self.slots.is_empty()
     }
 
     /// Its nodes on `tape` where they are a node set (`is_node_set`), from the tape's sibling
     /// positions; asked once per tape where another fact asks the same (`question`).
-    pub(in crate::code_rule_dsl) fn nth_bits(&self, tape: &crate::code_rule_dsl::tape::TapeDoc, siblings: &super::nth_child::SiblingPositions) -> Option<Arc<Vec<u64>>> {
+    pub fn nth_bits(&self, tape: &crate::code_rule_dsl::tape::TapeDoc, siblings: &super::nth_child::SiblingPositions) -> Option<Arc<Vec<u64>>> {
         // A `filePath` test is the document's: every node where its path passes, none where it fails or the run gave
         // the tape no path (W's `file_path()` with none).
         if let AstMatcher::Semantic(super::Semantic::FilePath(condition)) = &self.producer {
@@ -158,7 +158,7 @@ impl Fact {
     }
 
     /// The findings of `file` (`rows`), as bits where they are a node set (`nth_bits`).
-    pub(in crate::code_rule_dsl) fn found(
+    pub fn found(
         &self,
         file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
         starts: impl Iterator<Item = u32>,
@@ -212,14 +212,14 @@ fn slot_name(i: usize) -> String {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum Axis {
+pub enum Axis {
     Inside,
     Has,
     Precedes,
     Follows,
 }
 
-pub(in crate::code_rule_dsl) enum Stop {
+pub enum Stop {
     Neighbor,
     End,
     /// Inclusive: the stop node is still tested; matched in a fresh environment.
@@ -228,7 +228,7 @@ pub(in crate::code_rule_dsl) enum Stop {
 
 impl MatchTree {
     /// Whether testing this tree moves off the node (a relation anywhere in it).
-    pub(in crate::code_rule_dsl) fn walks(&self) -> bool {
+    pub fn walks(&self) -> bool {
         match self {
             Self::Kind(_)
             | Self::Supertype(..)
@@ -250,7 +250,7 @@ impl MatchTree {
 impl MatchTree {
     /// The kinds a node must have for the tree to match it, where they are known: the anchor a
     /// label pass starts from.
-    pub(in crate::code_rule_dsl) fn kinds(&self) -> Option<BTreeSet<u16>> {
+    pub fn kinds(&self) -> Option<BTreeSet<u16>> {
         match self {
             Self::Kind(kind) => Some(BTreeSet::from([*kind])),
             Self::Supertype(_, kinds) => Some(kinds.as_ref().clone()),
@@ -277,10 +277,10 @@ impl MatchTree {
 
 /// An operator the lowering does not express, named for the coverage count.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) struct Unsupported(pub(in crate::code_rule_dsl) &'static str);
+pub struct Unsupported(pub &'static str);
 
 /// The match tree of a clause's matcher.
-pub(in crate::code_rule_dsl) fn match_tree(grammar: &GrammarMatcher) -> Result<MatchTree, Unsupported> {
+pub fn match_tree(grammar: &GrammarMatcher) -> Result<MatchTree, Unsupported> {
     tree_of(grammar, &grammar.matcher)
 }
 
@@ -288,7 +288,7 @@ pub(in crate::code_rule_dsl) fn match_tree(grammar: &GrammarMatcher) -> Result<M
 /// document, not per node. The wave tests it before its batch and runs the clause only on the
 /// documents where every one holds (03 §6, a file pre-filter).
 #[derive(Clone, Debug)]
-pub(in crate::code_rule_dsl) enum DocumentGate {
+pub enum DocumentGate {
     /// `filePath: {regex, notRegex}`: the document's path relative to its root.
     Path(Arc<crate::code_rule_dsl::language::TextCondition>),
     /// `inside: {all: [{kind: module}, {regex: R}], stopBy: end}`: the file's text matches `R` (the
@@ -298,7 +298,7 @@ pub(in crate::code_rule_dsl) enum DocumentGate {
 }
 
 impl DocumentGate {
-    pub(in crate::code_rule_dsl) fn holds(&self, path: &str, text: &str) -> bool {
+    pub fn holds(&self, path: &str, text: &str) -> bool {
         match self {
             Self::Path(condition) => condition.holds(path),
             Self::Text(regex) => regex.is_match(text),
@@ -310,7 +310,7 @@ impl DocumentGate {
 /// rest. A `filePath` anywhere else is still refused. A module text test holds for every node but
 /// the module, so it is a gate only where the rest cannot match the module itself: the conjuncts
 /// include a `kind` other than `module`.
-pub(in crate::code_rule_dsl) fn gated_match_tree(grammar: &GrammarMatcher) -> Result<(MatchTree, Vec<DocumentGate>), Unsupported> {
+pub fn gated_match_tree(grammar: &GrammarMatcher) -> Result<(MatchTree, Vec<DocumentGate>), Unsupported> {
     use super::Semantic;
     let AstMatcher::All(_) = &grammar.matcher else { return Ok((match_tree(grammar)?, Vec::new())) };
     // The root's conjuncts, nested `all`s flattened (an option's case is often an `all` of path tests).
@@ -514,7 +514,7 @@ impl Lowering {
             AstMatcher::Count(count) => self.count(count, shares)?,
             AstMatcher::Semantic(semantic) => return self.fact(semantic, shares),
             AstMatcher::Never => MatchTree::Never,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             AstMatcher::TestUnknown(_) => return Err(Unsupported("three-valued")),
         })
     }
@@ -550,7 +550,12 @@ impl Lowering {
                 self.facts += 1;
                 return Ok(MatchTree::Fact(Arc::new(Fact { producer: AstMatcher::Semantic(producer), slots: Vec::new(), name, key, kinds: None })));
             }
+            // A gap to a capture (`to: capture.L`) reads a binding another leaf makes: the fact's
+            // producer runs with no captures, so the gap would never hold.
+            Semantic::Layout(layout) if layout.reads().next().is_some() => return Err(Unsupported("layout reads a capture")),
             Semantic::Value(_) | Semantic::Layout(_) | Semantic::Arguments(_) => false,
+            // A token the grammar implies is in a gap or not: never unknown (t31).
+            Semantic::Gap(_) => true,
             Semantic::Binding(test) => {
                 if test.occurrence.is_some() {
                     return Err(Unsupported("resolves.binding occurrence"));
@@ -615,8 +620,10 @@ fn semantic_name(semantic: &super::Semantic) -> &'static str {
         Semantic::Capture(_) => "capture",
         Semantic::FormatArgs(_) => "formatArgs",
         Semantic::Layout(_) => "layout",
+        Semantic::Gap(_) => "gap",
         Semantic::FilePath(_) => "file path",
         Semantic::Calls(_) => "calls",
+        Semantic::Term(term) => term.key(),
     }
 }
 

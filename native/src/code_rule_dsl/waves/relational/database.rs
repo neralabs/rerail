@@ -4,10 +4,12 @@ use std::ops::Deref;
 
 type ProgramCache =
     std::collections::BTreeMap<Vec<(String, String)>, std::sync::Arc<Vec<super::Stage>>>;
-pub(in crate::code_rule_dsl) struct Database {
+pub struct Database {
     #[cfg(feature = "code-rule-profile")]
     profiler: Option<Box<crate::code_rule_dsl::profile::sql::Profiler>>,
     connection: Connection,
+    /// The progress handler and authorizer a pool connection's holders set (`register_hooks`).
+    pub(in crate::code_rule_dsl) hooks: crate::code_rule_dsl::hooks::Hooks,
     pub(super) regex_binding: super::functions::SharedBinding,
     pub(super) source_binding: super::source::SharedBinding,
     pub(super) regex_installed: std::cell::Cell<bool>,
@@ -15,13 +17,13 @@ pub(in crate::code_rule_dsl) struct Database {
     pub(super) healthy: std::cell::Cell<bool>,
     pub(super) active: std::cell::Cell<usize>,
     pub(super) plan_signature: std::cell::Cell<u64>,
-    pub(super) storage: std::cell::RefCell<super::storage::Storage>,
+    pub storage: std::cell::RefCell<super::storage::Storage>,
     pub(super) bindings: std::cell::RefCell<super::shared::Bindings>,
     pub(super) program_bytes: std::cell::Cell<usize>,
     pub(super) descriptor_bytes: std::cell::Cell<usize>,
     pub(super) programs: std::cell::RefCell<ProgramCache>,
     pub(super) record_relations: bool,
-    pub(super) modules:
+    pub modules:
         std::cell::RefCell<std::collections::BTreeMap<String, super::table::Binding>>,
 }
 
@@ -109,7 +111,7 @@ impl Database {
         Self::from_connection(Connection::open_in_memory()?)
     }
 
-    pub(in crate::code_rule_dsl) fn from_connection(
+    pub fn from_connection(
         connection: Connection,
     ) -> rusqlite::Result<Self> {
         #[cfg(feature = "code-rule-profile")]
@@ -120,6 +122,7 @@ impl Database {
             #[cfg(feature = "code-rule-profile")]
             profiler,
             connection,
+            hooks: Default::default(),
             regex_binding: super::functions::binding(),
             source_binding: super::source::binding(),
             regex_installed: std::cell::Cell::new(false),
@@ -176,6 +179,19 @@ impl Database {
             profiler.checkpoint(&self.connection)?;
         }
         Ok(())
+    }
+}
+
+impl Database {
+    /// Registers the hook dispatchers (`hooks`) while the connection is still owned.
+    pub(in crate::code_rule_dsl) fn register_hooks(&mut self) -> rusqlite::Result<()> {
+        self.hooks = crate::code_rule_dsl::hooks::Hooks::register(&mut self.connection)?;
+        Ok(())
+    }
+
+    /// The owned connection, to set a hook of its own (an anchor store's budget, a test's step counter).
+    pub fn connection_mut(&mut self) -> &mut Connection {
+        &mut self.connection
     }
 }
 

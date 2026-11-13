@@ -15,7 +15,7 @@ PIN = '2b1504adc4291daaf080b2e932962b134da1a69a'
 MANIFEST = Path('gate/data-layer/packs/data-layer/candidates/rr/migration.json')
 DESTINATION = Path('gate/data-layer/packs/data-layer/candidates/rr')
 LIBRARY = Path('docs/rule-syntax/lib')
-ENGINE_SOURCE_TREES = ('native', 'accel', 'tools/bitlex', 'Cargo.toml', 'Cargo.lock')
+ENGINE_SOURCE_TREES = ('native', 'accel', 'forest', 'tools/bitlex', 'Cargo.toml', 'Cargo.lock')
 _ARTIFACT_DIGESTS = {}
 _SOURCE_COHORTS = set()
 # Generic compatibility extensions only. Runtime architecture comes from Final shape.

@@ -6,16 +6,31 @@ pub const REFUSE: u16 = u16::MAX;
 
 /// `SWITCH`'s table: a target per value of the token's byte at `offset`, and one for the end
 /// of the stream. `REFUSE` refuses.
+///
+/// On the first byte with records, also a target per word (`words`, by the word's index in the
+/// program's strings, in order): a token that is the word goes there, as a parser's switch on
+/// its token's kind takes a keyword. A word the switch does not name goes by its kind.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ByteSwitch {
     pub offset: u8,
     pub targets: Vec<u16>,
     pub end: u16,
+    pub words: Vec<(u16, u16)>,
 }
 
 impl ByteSwitch {
     pub fn refusing(offset: u8) -> Self {
-        Self { offset, targets: vec![REFUSE; 256], end: REFUSE }
+        Self { offset, targets: vec![REFUSE; 256], end: REFUSE, words: Vec::new() }
+    }
+
+    /// Where a token that is word `w` goes, when the switch names it.
+    pub fn word(&self, w: u16) -> Option<u16> {
+        self.words.binary_search_by_key(&w, |&(x, _)| x).ok().map(|i| self.words[i].1)
+    }
+
+    /// Every place the switch goes: its bytes', its end, its words'.
+    pub fn all_targets(&self) -> impl Iterator<Item = u16> + '_ {
+        self.targets.iter().copied().chain([self.end]).chain(self.words.iter().map(|&(_, t)| t))
     }
 }
 
@@ -30,6 +45,10 @@ pub const GONE: u16 = u16::MAX - 1;
 /// remembered last (`REMEMBER`), as a wrap's or a relabel's moved node's (`RETAG m=1, 2`) or a
 /// reading's way (`K as C`).
 pub const REMEMBERED: u16 = u16::MAX - 2;
+/// A kind that names the token's word's (`LEAF`): the kind of the keyword the token's record
+/// names (`Words::word_kinds`), as the lean parser's leaf takes its kind from its token. So the
+/// arms of a switch's keywords that differ only in it are one arm.
+pub const WORD_KIND: u16 = u16::MAX - 4;
 
 /// A reading (`reading R = …`, `reread R`): what `RETAG m=3` does with the node made last at a
 /// level and each node inside it, by kind; a kind not listed refuses. A node read but the first

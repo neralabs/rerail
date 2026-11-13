@@ -1,6 +1,9 @@
 //! Semantic facts consume an immutable demand frame, once per SQL cursor.
 //! Targets are a scalar JSON array from the query's target relation, not row callbacks.
 use super::*;
+use crate::code_rule_dsl::facts::vtab::syntax::{candidates::PythonCandidates as _, python_demand::PythonProject as _};
+#[cfg(any(test, feature = "test-hooks"))]
+use crate::code_rule_dsl::facts::vtab::syntax::candidate_spike::CandidateSpike as _;
 
 #[derive(Clone)]
 struct Producer {
@@ -9,7 +12,7 @@ struct Producer {
     width: usize,
 }
 
-pub(super) fn register(db: &Connection, binding: &Binding) -> Result<()> {
+pub fn register(db: &Connection, binding: &Binding) -> Result<()> {
     const MODULE: Module<ProducerTable> = Module::eponymous_only_module();
     for (kind, width) in [
         ("qualified", 2),
@@ -17,7 +20,7 @@ pub(super) fn register(db: &Connection, binding: &Binding) -> Result<()> {
         ("assigned", 2),
         ("arguments", 5),
         ("candidates", 4),
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         ("candidate_spike", 5),
     ] {
         let name = CString::new(format!("rr_batch_python_{kind}")).unwrap();
@@ -142,7 +145,7 @@ unsafe impl VTabCursor for ProducerCursor {
     fn filter(&mut self, index: c_int, _: Option<&str>, args: &Filters<'_>) -> Result<()> {
         self.rows.clear();
         self.at = 0;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         if self.producer.kind == "candidate_spike" {
             let targets = serde_json::from_str(&args.get::<String>(1)?).map_err(|e| failure(&e.to_string()))?;
             self.rows = self.producer.binding.current().python_batch().ok_or_else(|| failure("missing candidate batch"))?

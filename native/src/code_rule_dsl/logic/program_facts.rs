@@ -16,7 +16,7 @@
 //! - **Facts:** `fact_row(p, rel, row, width)` and `fact(p, rel, row, i, kind, n, s)`.
 //! - **What preparing made:** `demand`, `demand_dropped`, `magic_extras`, `magic_report` (with `report_list`),
 //!   `gate` (with `gate_src`, `gate_quiet`, `gate_dep`), `native_dfs` (with `native_roots`), `native_match` (with
-//!   `native_group`), `native_components`, `rx_span`, `ast_pattern`, `policy` and `setting`.
+//!   `native_group`), `native_components`, `native_reach`, `native_reach_through`, `rx_span`, `policy` and `setting`.
 //!
 //! Each list is indexed (`k`, `i`, `row`), so a row's place is in the row itself: the rows are a set, and any order
 //! of them reads back as the same program. Ids (`r`, `l`, `a`, `t`) are numbered per program.
@@ -26,10 +26,10 @@ use super::magic::{Gate, Report};
 use std::collections::BTreeMap;
 
 /// Rows by relation, as a program's `facts` holds them.
-pub(in crate::code_rule_dsl) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
+pub type Facts = BTreeMap<String, Vec<Vec<Value>>>;
 
 /// Each relation of the schema and its columns (`int` or `sym`).
-pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String)>> {
+pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
     const SCHEMA: &[(&str, &[&str])] = &[
         ("program", &["p:sym"]),
         ("rule", &["p:sym", "r:int", "head:int"]),
@@ -72,15 +72,13 @@ pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String
         ("gate_dep", &["p:sym", "k:int", "i:int", "rel:sym"]),
         ("native_dfs", &["p:sym", "rel:sym", "edge:sym", "target:sym"]),
         ("native_roots", &["p:sym", "rel:sym", "roots:sym"]),
-        ("native_bfs", &["p:sym", "rel:sym", "edge:sym", "roots:sym"]),
-        ("native_ordered_rows", &["p:sym", "rel:sym", "input:sym"]),
-        ("native_python_set_rows", &["p:sym", "rel:sym", "input:sym"]),
-        ("native_balanced_rows", &["p:sym", "rel:sym", "input:sym", "limits:sym"]),
         ("native_match", &["p:sym", "rel:sym", "input:sym", "pattern:sym", "positions:int"]),
         ("native_group", &["p:sym", "rel:sym", "i:int", "group:sym"]),
         ("native_python_candidates", &["p:sym", "rel:sym", "input:sym", "targets:sym", "context:sym", "member:sym"]),
         ("native_python", &["p:sym", "rel:sym", "kind:sym", "input:sym", "targets:sym"]),
         ("native_components", &["p:sym", "rel:sym", "edge:sym", "own:sym"]),
+        ("native_reach", &["p:sym", "rel:sym", "seed:sym", "edge:sym"]),
+        ("native_reach_through", &["p:sym", "rel:sym", "reach:sym", "map:sym"]),
         ("rx_span", &["p:sym", "span:sym", "s:sym"]),
         // `ast_patterns`: the AST patterns the program matches (`n ~ `…``), each by its text.
         ("ast_pattern", &["p:sym", "s:sym"]),
@@ -129,9 +127,17 @@ struct Writer<'a> {
 }
 
 impl Writer<'_> {
-    fn row(&mut self, rel: &str, mut values: Vec<Value>) {
-        values.insert(0, s(&self.p));
-        self.facts.entry(rel.to_owned()).or_default().push(values);
+    fn row(&mut self, rel: &str, values: Vec<Value>) {
+        // Made at its length: an `insert(0, …)` doubled each full row's capacity (0.2 GB of the Python pack's program).
+        let mut row = Vec::with_capacity(values.len() + 1);
+        row.push(s(&self.p));
+        row.extend(values);
+        match self.facts.get_mut(rel) {
+            Some(rows) => rows.push(row),
+            None => {
+                self.facts.insert(rel.to_owned(), vec![row]);
+            }
+        }
     }
 
     fn term(&mut self, term: &Term) -> i64 {
@@ -310,10 +316,6 @@ impl Writer<'_> {
         }
         for (rel, native) in &prog.natives {
             match native {
-                Native::BalancedRows { input, limits } => self.row("native_balanced_rows",vec![s(rel),s(input),s(limits)]),
-                Native::PythonSetRows { input } => self.row("native_python_set_rows", vec![s(rel), s(input)]),
-                Native::OrderedRows { input } => self.row("native_ordered_rows", vec![s(rel), s(input)]),
-                Native::BfsWalk { edge, roots } => self.row("native_bfs", vec![s(rel), s(edge), s(roots)]),
                 Native::DfsFirst { edge, target, roots } => {
                     self.row("native_dfs", vec![s(rel), s(edge), s(target)]);
                     if let Some(roots) = roots {
@@ -329,6 +331,8 @@ impl Writer<'_> {
                 Native::PythonCandidates {input,targets,context,member} => self.row("native_python_candidates",vec![s(rel),s(input),s(targets),s(context),s(member)]),
                 Native::Python {kind,input,targets} => self.row("native_python",vec![s(rel),s(kind),s(input),s(targets.as_deref().unwrap_or(""))]),
                 Native::Components { edge, own } => self.row("native_components", vec![s(rel), s(edge), s(own)]),
+                Native::Reach { seed, edge } => self.row("native_reach", vec![s(rel), s(seed), s(edge)]),
+                Native::ReachThrough { reach, map } => self.row("native_reach_through", vec![s(rel), s(reach), s(map)]),
             }
         }
         if let Some(scopes) = &prog.doc_scopes {
@@ -371,7 +375,7 @@ impl Writer<'_> {
 }
 
 /// `prog` as facts of program `p`, added to `facts`.
-pub(in crate::code_rule_dsl) fn write(facts: &mut Facts, p: &str, prog: &Program) {
+pub fn write(facts: &mut Facts, p: &str, prog: &Program) {
     Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0 }.program(prog);
 }
 
@@ -383,16 +387,62 @@ fn bad(what: impl std::fmt::Display) -> String {
 /// One program's rows of the schema, by relation, and the ids they index.
 struct Reader<'a> {
     rows: BTreeMap<&'a str, Vec<&'a [Value]>>,
-    terms: BTreeMap<i64, &'a [Value]>,
-    call_args: BTreeMap<i64, BTreeMap<i64, i64>>,
-    atoms: BTreeMap<i64, &'a [Value]>,
-    args: BTreeMap<i64, BTreeMap<i64, i64>>,
+    terms: rustc_hash::FxHashMap<i64, &'a [Value]>,
+    call_args: rustc_hash::FxHashMap<i64, BTreeMap<i64, i64>>,
+    atoms: rustc_hash::FxHashMap<i64, &'a [Value]>,
+    args: rustc_hash::FxHashMap<i64, BTreeMap<i64, i64>>,
+}
+
+/// Each program's rows in `facts`, by program and relation, found in one pass: a reader per program scanned every
+/// row for its own (the prepared program's four programs were four scans of all of them, decision 0116 step 4).
+pub(in crate::code_rule_dsl) struct Grouped<'a>(BTreeMap<&'a str, BTreeMap<&'a str, Vec<&'a [Value]>>>);
+
+impl<'a> Grouped<'a> {
+    pub(in crate::code_rule_dsl) fn of(facts: &'a Facts) -> Self {
+        let mut by: BTreeMap<&str, BTreeMap<&str, Vec<&[Value]>>> = BTreeMap::new();
+        for (rel, all) in facts {
+            // Rows of one program come together in a relation's rows as written: each run of them is added at once,
+            // the map looked up when the program changes, not per row.
+            let mut run: Option<(&str, Vec<&[Value]>)> = None;
+            let flush = |run: Option<(&'a str, Vec<&'a [Value]>)>, by: &mut BTreeMap<&'a str, BTreeMap<&'a str, Vec<&'a [Value]>>>| {
+                if let Some((p, rows)) = run {
+                    by.entry(p).or_default().entry(rel.as_str()).or_default().extend(rows);
+                }
+            };
+            for row in all {
+                let Some(Value::Str(q)) = row.first() else { continue };
+                match &mut run {
+                    Some((p, rows)) if *p == q.as_str() => rows.push(&row[1..]),
+                    _ => {
+                        flush(run.take(), &mut by);
+                        run = Some((q.as_str(), vec![&row[1..]]));
+                    }
+                }
+            }
+            flush(run, &mut by);
+        }
+        Grouped(by)
+    }
+
+    /// Program `p`, as it was written.
+    pub(in crate::code_rule_dsl) fn program(&self, p: &str) -> Result<Program, String> {
+        let rows = self.0.get(p).cloned().unwrap_or_default();
+        Reader::from_rows(rows, p)?.program()
+    }
 }
 
 fn int(v: &Value) -> Result<i64, String> {
     match v {
         Value::Int(i) => Ok(*i),
         Value::Str(x) => Err(bad(format!("{x:?} where a number goes"))),
+    }
+}
+
+/// A string value, borrowed: for a kind matched on, not kept.
+fn str_of(v: &Value) -> Result<&str, String> {
+    match v {
+        Value::Str(x) => Ok(x),
+        Value::Int(i) => Err(bad(format!("{i} where a string goes"))),
     }
 }
 
@@ -419,32 +469,36 @@ impl<'a> Reader<'a> {
                 }
             }
         }
+        Self::from_rows(rows, p)
+    }
+
+    fn from_rows(rows: BTreeMap<&'a str, Vec<&'a [Value]>>, p: &str) -> Result<Self, String> {
         if !rows.contains_key("program") {
             return Err(bad(format!("no program {p:?}")));
         }
-        let mut reader = Reader { rows, terms: BTreeMap::new(), call_args: BTreeMap::new(), atoms: BTreeMap::new(), args: BTreeMap::new() };
-        for row in reader.get("term") {
-            reader.terms.insert(int(&row[0])?, row);
+        let (mut terms, mut call_args, mut atoms, mut args) = (rustc_hash::FxHashMap::default(), rustc_hash::FxHashMap::<i64, BTreeMap<i64, i64>>::default(), rustc_hash::FxHashMap::default(), rustc_hash::FxHashMap::<i64, BTreeMap<i64, i64>>::default());
+        for &row in rows.get("term").map_or(&[][..], Vec::as_slice) {
+            terms.insert(int(&row[0])?, row);
         }
-        for row in reader.get("call_arg") {
-            reader.call_args.entry(int(&row[0])?).or_default().insert(int(&row[1])?, int(&row[2])?);
+        for &row in rows.get("call_arg").map_or(&[][..], Vec::as_slice) {
+            call_args.entry(int(&row[0])?).or_default().insert(int(&row[1])?, int(&row[2])?);
         }
-        for row in reader.get("atom") {
-            reader.atoms.insert(int(&row[0])?, row);
+        for &row in rows.get("atom").map_or(&[][..], Vec::as_slice) {
+            atoms.insert(int(&row[0])?, row);
         }
-        for row in reader.get("arg") {
-            reader.args.entry(int(&row[0])?).or_default().insert(int(&row[1])?, int(&row[2])?);
+        for &row in rows.get("arg").map_or(&[][..], Vec::as_slice) {
+            args.entry(int(&row[0])?).or_default().insert(int(&row[1])?, int(&row[2])?);
         }
-        Ok(reader)
+        Ok(Reader { rows, terms, call_args, atoms, args })
     }
 
-    fn get(&self, rel: &str) -> Vec<&'a [Value]> {
-        self.rows.get(rel).cloned().unwrap_or_default()
+    fn get(&self, rel: &str) -> &[&'a [Value]] {
+        self.rows.get(rel).map_or(&[], Vec::as_slice)
     }
 
     fn term(&self, t: i64) -> Result<Term, String> {
         let row = self.terms.get(&t).ok_or_else(|| bad(format!("no term {t}")))?;
-        Ok(match text(&row[1])?.as_str() {
+        Ok(match str_of(&row[1])? {
             "var" => Term::Var(text(&row[3])?),
             "wild" => Term::Wild,
             "int" => Term::Int(int(&row[2])?),
@@ -461,7 +515,7 @@ impl<'a> Reader<'a> {
     fn atom(&self, a: i64) -> Result<Atom, String> {
         let row = self.atoms.get(&a).ok_or_else(|| bad(format!("no atom {a}")))?;
         let args = self.args.get(&a).map(|args| args.values().map(|t| self.term(*t)).collect::<Result<Vec<_>, _>>()).transpose()?.unwrap_or_default();
-        Ok(Atom { rel: text(&row[1])?, args, neg: int(&row[2])? != 0, gated: int(&row[3])? != 0 })
+        Ok(Atom { rel: text(&row[1])?.into(), args, neg: int(&row[2])? != 0, gated: int(&row[3])? != 0 })
     }
 
     /// Rows of `rel` keyed by their first column (an id), each row less that column.
@@ -473,8 +527,8 @@ impl<'a> Reader<'a> {
         Ok(out)
     }
 
-    fn literals(&self) -> Result<BTreeMap<i64, Literal>, String> {
-        let mut out = BTreeMap::new();
+    fn literals(&self) -> Result<rustc_hash::FxHashMap<i64, Literal>, String> {
+        let mut out = rustc_hash::FxHashMap::default();
         for row in self.get("lit_atom") {
             out.insert(int(&row[0])?, Literal::Atom(self.atom(int(&row[1])?)?));
         }
@@ -488,7 +542,7 @@ impl<'a> Reader<'a> {
         let by = self.by_id("agg_by")?;
         for row in self.get("lit_agg") {
             let l = int(&row[0])?;
-            let op = match text(&row[2])?.as_str() {
+            let op = match str_of(&row[2])? {
                 "count" => AggOp::Count,
                 "min" => AggOp::Min,
                 "max" => AggOp::Max,
@@ -553,13 +607,14 @@ impl<'a> Reader<'a> {
             let widen = widens.get(&rel).and_then(|r| r.first()).map(|r| int(&r[0]).map(|k| k as u32)).transpose()?;
             prog.lattice.insert(rel, LatticeDecl { keys: int(&row[1])? as usize, ty: text(&row[2])?, merge, widen });
         }
-        let mut values: BTreeMap<(String, i64), Vec<(i64, Value)>> = BTreeMap::new();
+        // Keyed by the relation's name as the rows hold it, borrowed.
+        let mut values: rustc_hash::FxHashMap<(&str, i64), Vec<(i64, Value)>> = Default::default();
         for row in self.get("fact") {
-            let v = match text(&row[3])?.as_str() {
+            let v = match str_of(&row[3])? {
                 "int" => Value::Int(int(&row[4])?),
                 _ => Value::Str(text(&row[5])?),
             };
-            values.entry((text(&row[0])?, int(&row[1])?)).or_default().push((int(&row[2])?, v));
+            values.entry((str_of(&row[0])?, int(&row[1])?)).or_default().push((int(&row[2])?, v));
         }
         let mut facts: BTreeMap<String, Vec<(i64, Vec<Value>)>> = BTreeMap::new();
         for row in self.get("fact_rel") {
@@ -567,7 +622,7 @@ impl<'a> Reader<'a> {
         }
         for row in self.get("fact_row") {
             let (rel, k) = (text(&row[0])?, int(&row[1])?);
-            let row_values = ordered(values.remove(&(rel.clone(), k)).unwrap_or_default());
+            let row_values = ordered(values.remove(&(str_of(&row[0])?, k)).unwrap_or_default());
             if row_values.len() as i64 != int(&row[2])? {
                 return Err(bad(format!("{rel} row {k} has {} of its {} values", row_values.len(), int(&row[2])?)));
             }
@@ -626,18 +681,6 @@ impl<'a> Reader<'a> {
             let groups = ordered(groups.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
             prog.natives.insert(rel, Native::MatchAll { input: text(&row[1])?, pattern: text(&row[2])?, groups, positions: int(&row[3])? != 0 });
         }
-        for row in self.get("native_balanced_rows") {
-            prog.natives.insert(text(&row[0])?,Native::BalancedRows { input:text(&row[1])?,limits:text(&row[2])? });
-        }
-        for row in self.get("native_python_set_rows") {
-            prog.natives.insert(text(&row[0])?, Native::PythonSetRows { input: text(&row[1])? });
-        }
-        for row in self.get("native_ordered_rows") {
-            prog.natives.insert(text(&row[0])?, Native::OrderedRows { input: text(&row[1])? });
-        }
-        for row in self.get("native_bfs") {
-            prog.natives.insert(text(&row[0])?, Native::BfsWalk { edge: text(&row[1])?, roots: text(&row[2])? });
-        }
         for row in self.get("native_python_candidates") {
             prog.natives.insert(text(&row[0])?,Native::PythonCandidates{input:text(&row[1])?,targets:text(&row[2])?,context:text(&row[3])?,member:text(&row[4])?});
         }
@@ -647,6 +690,12 @@ impl<'a> Reader<'a> {
         }
         for row in self.get("native_components") {
             prog.natives.insert(text(&row[0])?, Native::Components { edge: text(&row[1])?, own: text(&row[2])? });
+        }
+        for row in self.get("native_reach") {
+            prog.natives.insert(text(&row[0])?, Native::Reach { seed: text(&row[1])?, edge: text(&row[2])? });
+        }
+        for row in self.get("native_reach_through") {
+            prog.natives.insert(text(&row[0])?, Native::ReachThrough { reach: text(&row[1])?, map: text(&row[2])? });
         }
         for row in self.get("rx_span") {
             // `kind:K`, and `capture:G:P` (a group is a name, so the pattern is what follows its colon).
@@ -683,21 +732,7 @@ impl<'a> Reader<'a> {
         let mut text_globs = self.get("text_glob").iter().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?;
         text_globs.sort();
         prog.text_globs = text_globs.into_iter().map(|(_, g)| g).collect();
-        for row in self.get("ast_pattern") {
-            prog.ast_patterns.insert(text(&row[0])?);
-        }
-        // Earlier stored programs omitted this projection demand. Recover the
-        // same constant requests the frontend collects from their stored rules.
-        // Otherwise a warm run silently produces no ast_match facts.
-        if prog.ast_patterns.is_empty() {
-            for rule in &prog.rules {
-                for atom in rule.body.iter().filter_map(Literal::atom).filter(|a| a.rel == "ast_match") {
-                    if let Some(Term::Str(pattern)) = atom.args.first() {
-                        prog.ast_patterns.insert(pattern.clone());
-                    }
-                }
-            }
-        }
+        prog.ast_patterns = self.get("ast_pattern").iter().map(|r| text(&r[0])).collect::<Result<_, _>>()?;
         let mut answers: BTreeMap<String, Vec<(i64, String)>> = BTreeMap::new();
         for row in self.get("answer") {
             answers.entry(text(&row[0])?).or_default().push((int(&row[1])?, text(&row[2])?));
@@ -717,13 +752,13 @@ impl<'a> Reader<'a> {
 }
 
 /// Program `p` of `facts`, as it was written.
-pub(in crate::code_rule_dsl) fn program(facts: &Facts, p: &str) -> Result<Program, String> {
+pub fn program(facts: &Facts, p: &str) -> Result<Program, String> {
     Reader::of(facts, p)?.program()
 }
 
 /// `facts` as a `.rr` document: the schema's declarations and every row as a fact. `rr::parse` reads it back as the
 /// same rows (`document_facts`).
-pub(in crate::code_rule_dsl) fn document(facts: &Facts, extra: &BTreeMap<String, Vec<(String, String)>>) -> Result<String, String> {
+pub fn document(facts: &Facts, extra: &BTreeMap<String, Vec<(String, String)>>) -> Result<String, String> {
     let mut decls = schema();
     decls.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
     let prog = Program { decls, facts: facts.clone(), ..Program::default() };
@@ -731,13 +766,13 @@ pub(in crate::code_rule_dsl) fn document(facts: &Facts, extra: &BTreeMap<String,
 }
 
 /// A document's rows, as `rr::parse` reads them.
-pub(in crate::code_rule_dsl) fn document_facts(text: &str) -> Result<Facts, String> {
+pub fn document_facts(text: &str) -> Result<Facts, String> {
     let prog = super::rr::parse(text).map_err(|e| bad(format!("{e:?}")))?;
     Ok(prog.facts)
 }
 
 /// `facts` as bytes: a compact encoding for the facts memo (strings in a table, each value a tag and a number).
-pub(in crate::code_rule_dsl) fn encode(facts: &Facts) -> Vec<u8> {
+pub fn encode(facts: &Facts) -> Vec<u8> {
     // One pass: each string's id by first use (relation, then its rows' values, in order), the rows written as they
     // are met; the table, which comes first, written after.
     let mut strings: rustc_hash::FxHashMap<&str, u32> = Default::default();
@@ -785,7 +820,7 @@ pub(in crate::code_rule_dsl) fn encode(facts: &Facts) -> Vec<u8> {
 }
 
 /// Bytes `encode` made, as facts.
-pub(in crate::code_rule_dsl) fn decode(bytes: &[u8]) -> Result<Facts, String> {
+pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
     struct At<'a>(&'a [u8], usize);
     impl At<'_> {
         fn take(&mut self, n: usize) -> Result<&[u8], String> {
@@ -834,48 +869,7 @@ pub(in crate::code_rule_dsl) fn decode(bytes: &[u8]) -> Result<Facts, String> {
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn empty_fact_tables_and_nullary_rows_survive_program_roundtrips() {
-        let mut program = crate::code_rule_dsl::logic::rr::parse(".decl data(x: number)\n.decl flag()\n.output data, flag\n").unwrap();
-        program.facts.insert("data".into(), Vec::new());
-        program.facts.insert("flag".into(), vec![Vec::new()]);
-        let mut facts = super::Facts::new();
-        super::write(&mut facts,"p",&program);
-        let restored = super::decode(&super::encode(&facts)).unwrap();
-        assert_eq!(super::program(&restored,"p").unwrap().facts,program.facts);
-        let document = super::document(&facts,&Default::default()).unwrap();
-        assert_eq!(super::program(&super::document_facts(&document).unwrap(),"p").unwrap().facts,program.facts);
-        // Legacy programs have no marker. Their nonempty and nullary facts
-        // still read back with the same rows.
-        facts.remove("fact_rel");
-        program.facts.remove("data");
-        assert_eq!(super::program(&facts,"p").unwrap().facts,program.facts);
-    }
-
-    #[test]
-    fn ast_pattern_requests_survive_stored_programs_and_legacy_rows() {
-        let source = r#"
-.decl ast_match(pattern: symbol, n: node, group: symbol, capture: node)
-.input ast_match
-.decl picked(n: node)
-picked(n) :- ast_match("$O[:-$K]", n, "", _).
-.output picked
-"#;
-        let program = crate::code_rule_dsl::logic::rr::parse(source).unwrap();
-        assert_eq!(program.ast_patterns.iter().map(String::as_str).collect::<Vec<_>>(), vec!["$O[:-$K]"]);
-        let mut facts = super::Facts::new();
-        super::write(&mut facts, "p", &program);
-        let restored = super::decode(&super::encode(&facts)).unwrap();
-        let back = super::program(&restored, "p").unwrap();
-        assert_eq!(back.ast_patterns, program.ast_patterns);
-        assert_eq!(facts["ast_pattern"].len(), 1);
-        // Old stored programs have their ast_match rule but no request metadata.
-        facts.remove("ast_pattern");
-        let legacy = super::program(&facts, "p").unwrap();
-        assert_eq!(legacy.ast_patterns, program.ast_patterns);
-    }
-
+pub mod tests {
     /// The encoding names each string by its first use and puts the table first: the bytes the two-pass writer made
     /// (strings counted, then the rows written), and they decode to the facts.
     #[test]
@@ -972,4 +966,20 @@ picked(n) :- ast_match("$O[:-$K]", n, "", _).
         super::write(&mut facts, "p", &prog);
         assert_eq!(super::program(&facts, "p").unwrap().ast_patterns, prog.ast_patterns);
     }
+}
+
+/// A digest of `value`'s `Debug` text, made as it is written: two programs compared by it without either's text in
+/// memory (a 16 k-rule program's is tens of megabytes).
+pub(in crate::code_rule_dsl) fn debug_digest(value: &impl std::fmt::Debug) -> [u8; 32] {
+    use sha2::Digest as _;
+    struct Hashing(sha2::Sha256);
+    impl std::fmt::Write for Hashing {
+        fn write_str(&mut self, s: &str) -> std::fmt::Result {
+            self.0.update(s.as_bytes());
+            Ok(())
+        }
+    }
+    let mut out = Hashing(sha2::Sha256::new());
+    let _ = std::fmt::write(&mut out, format_args!("{value:?}"));
+    out.0.finalize().into()
 }

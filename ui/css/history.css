@@ -45,6 +45,8 @@ body[data-panel="open"] .hist > aside{display:none}
 .hsearch input{flex:1;min-width:0;border:0;background:transparent;font:inherit;font-size:13px;color:var(--foreground);outline:none}
 .hsearch input::placeholder{color:var(--muted-foreground)}
 .hsearch:focus-within{outline:2px solid var(--ring);outline-offset:1px}
+/* All · Steered · Logged: which violations the list counts. */
+.hchips{margin:0 0 10px}
 .hlhead{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
 .hrow{display:grid;grid-template-columns:minmax(0,1fr) minmax(36px,max-content);column-gap:14px;align-items:center;padding:10px 12px;border-top:1px solid var(--border);text-align:left;width:100%}
 .hrow:hover{background:var(--subtle)}
@@ -61,7 +63,7 @@ body[data-panel="open"] .hist > aside{display:none}
 /* The chosen rule's heading: its title, or with the list hidden a picker sized to the title. */
 .hdetail{position:sticky;top:0;z-index:2;background:var(--card);padding:16px 18px 8px}
 .hdetail .l1{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 16px}
-.hdetail .l1 h2{margin:0;font-size:16px;line-height:1.35;font-weight:600;min-width:0;color:var(--header-primary)}
+.hdetail .l1 h2{margin:0;font-size:16px;line-height:1.35;font-weight:600;min-width:0;color:var(--header)}
 .hdetail .l1 h2[hidden]{display:none}
 .hdetail .l3{display:flex;flex-wrap:wrap;align-items:center;gap:4px 0;margin-top:8px;font-size:12.5px;color:var(--muted-foreground)}
 .hdetail .l3 > span + span::before{content:"·";margin:0 8px;opacity:.6}
@@ -71,11 +73,11 @@ body[data-panel="open"] .hist > aside{display:none}
 .hdetail .hpick .sel{position:relative;display:inline-grid;grid-template-columns:minmax(0,auto);min-width:0;max-width:100%;margin:-3px 0 -3px -9px;border-radius:999px}
 .hdetail .hpick .sel:hover,.hdetail .hpick .sel:focus-within{background:var(--subtle)}
 .hdetail .hpick .m{grid-area:1/1;visibility:hidden;white-space:nowrap;overflow:hidden;min-width:0;padding:3px 34px 3px 9px;font:inherit}
-.hdetail .hpick select{grid-area:1/1;width:100%;min-width:0;appearance:none;-webkit-appearance:none;border:0;background:transparent;font:inherit;color:var(--header-primary);padding:3px 34px 3px 9px;border-radius:999px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hdetail .hpick select{grid-area:1/1;width:100%;min-width:0;appearance:none;-webkit-appearance:none;border:0;background:transparent;font:inherit;color:var(--header);padding:3px 34px 3px 9px;border-radius:999px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hdetail .hpick select:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
 .hdetail .hpick .sel svg{position:absolute;right:11px;top:50%;margin-top:-6px;opacity:.7;pointer-events:none}
 /* Under the meta line: the mode, and what the coding agent is told in a quoted box (two lines at most). */
-.hkv{display:grid;grid-template-columns:104px minmax(0,1fr);gap:8px 14px;margin:10px 0 0;font-size:13px;align-items:center}
+.hkv{display:grid;grid-template-columns:136px minmax(0,1fr);gap:8px 14px;margin:10px 0 0;font-size:13px;align-items:center}
 .hkv[hidden]{display:none}
 .hkv dt,.hkv dd{min-height:28px;display:flex;align-items:center}
 .hkv dt{color:var(--muted-foreground);font-size:12.5px}

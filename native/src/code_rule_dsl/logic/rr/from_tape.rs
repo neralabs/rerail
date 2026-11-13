@@ -7,7 +7,7 @@
 //! does (`super::string_value`), a backtick literal loses its fences (`super::code_body`).
 
 use super::Error;
-use super::syntax::{Code, Head, Item, Lines, Lit, Statement, Suppress, Term};
+use super::syntax::{Code, Fix, Head, Item, Lines, Lit, Statement, Suppress, Term};
 use super::tape::{ERROR, Field, Kind, Node};
 
 /// The tape of `src` as a tree: each node's children in order, extras (comments) left out.
@@ -99,11 +99,11 @@ impl<'a> Tree<'a> {
 
     fn ty(&self, n: u32) -> Result<String, Error> {
         let name = self.name(n, Field::Name)?;
-        if !self.has_token(n, "<") {
-            return Ok(name);
+        // `T<a>`: the argument says it (its `<` and `>` are implied); `T<>` stores them.
+        if let Some(a) = self.get(n, Field::Argument) {
+            return Ok(format!("{name}<{}>", self.text(a)));
         }
-        let inner = self.get(n, Field::Argument).map_or("", |a| self.text(a));
-        Ok(format!("{name}<{inner}>"))
+        Ok(if self.has_token(n, "<") { format!("{name}<>") } else { name })
     }
 
     fn statement(&self, s: u32) -> Result<Item, Error> {
@@ -135,12 +135,15 @@ impl<'a> Tree<'a> {
                 let (mut names, mut params) = (Vec::new(), Vec::new());
                 for r in self.all(s, Field::Relation) {
                     let name = self.name(r, Field::Name)?;
-                    let tokens = &self.children[r as usize];
-                    let open = tokens.iter().copied().find(|&c| self.text(c) == "(" && self.kind(c) >= super::tape::FIRST_ANONYMOUS);
-                    let close = tokens.iter().copied().rev().find(|&c| self.text(c) == ")" && self.kind(c) >= super::tape::FIRST_ANONYMOUS);
-                    if let (Some(open), Some(close)) = (open, close) {
-                        let (from, to) = (self.nodes[open as usize].end as usize, self.nodes[close as usize].start as usize);
+                    // `r(…)`: the parameters' text, from the byte after the name's `(` to its `)`. The parentheses
+                    // around parameters are implied; `r()` stores them.
+                    let open = self.nodes[self.one(r, Field::Name)? as usize].end as usize;
+                    if let Some(p) = self.get(r, Field::Parameters) {
+                        let from = self.src[open..].find('(').map_or(open, |k| open + k + 1);
+                        let to = self.src[..self.nodes[r as usize].end as usize].rfind(')').unwrap_or(self.nodes[p as usize].end as usize);
                         params.push((name.clone(), self.src[from..to].to_owned()));
+                    } else if self.has_token(r, "(") {
+                        params.push((name.clone(), String::new()));
                     }
                     names.push(name);
                 }
@@ -175,7 +178,16 @@ impl<'a> Tree<'a> {
                 if let Some(t) = self.all(s, Field::Tag).last() {
                     tag = Some(self.brace_column(self.one(t, Field::Column)?));
                 }
-                let fixes = self.all(s, Field::Fix).map(|f| self.name(f, Field::Relation)).collect::<Result<_, _>>()?;
+                let fixes = self
+                    .all(s, Field::Fix)
+                    .map(|f| {
+                        Ok(Fix {
+                            name: self.name(f, Field::Relation)?,
+                            safe: self.has_token(f, "safe"),
+                            title: self.string(self.one(f, Field::Description)?)?,
+                        })
+                    })
+                    .collect::<Result<_, Error>>()?;
                 let suppress = self
                     .all(s, Field::Suppress)
                     .map(|l| {
@@ -201,6 +213,16 @@ impl<'a> Tree<'a> {
                 let text = self.text(self.one(s, Field::Document)?);
                 Item::Policy(serde_json::from_str(text).map_err(|e| Error::Syntax(format!("line {}: bad .policy document: {e}", self.line(s))))?)
             }
+            k if k == Kind::TestBlock as u16 => Item::Test {
+                name: self.name(s, Field::Name)?,
+                exactly: self.get(s, Field::Modifier).is_some(),
+                uses: self.all(s, Field::Argument).map(|c| self.text(c).to_owned()).collect(),
+                items: self.all(s, Field::Body).map(|c| Ok((self.statement(c)?, self.line(c)))).collect::<Result<_, Error>>()?,
+            },
+            k if k == Kind::FixturesBlock as u16 => Item::Fixtures {
+                name: self.name(s, Field::Name)?,
+                items: self.all(s, Field::Body).map(|c| Ok((self.statement(c)?, self.line(c)))).collect::<Result<_, Error>>()?,
+            },
             k if k == Kind::Setting as u16 => {
                 let name = self.one(s, Field::Name)?;
                 let first = self.children[s as usize].iter().copied().skip_while(|&c| c != name).nth(1);
@@ -295,7 +317,8 @@ impl<'a> Tree<'a> {
             k if k == Kind::UnaryExpression as u16 => Term::Bin { op: "-", l: Box::new(Term::Num(0)), r: Box::new(self.term(self.one(t, Field::Operand)?)?) },
             k if k == Kind::ParenthesizedExpression as u16 => self.term(self.one(t, Field::Expression)?)?,
             k if k == Kind::Aggregate as u16 => Term::Agg {
-                op: self.text(self.one(t, Field::Operator)?).to_owned(),
+                // `count` is implied: the aggregate with a body alone.
+                op: self.get(t, Field::Operator).map_or("count", |o| self.text(o)).to_owned(),
                 over: self.get(t, Field::Value).map(|v| self.term(v).map(Box::new)).transpose()?,
                 by: self.all(t, Field::Key).map(|k| self.term(k)).collect::<Result<_, _>>()?,
                 sep: self.get(t, Field::Separator).map(|s| self.string(s)).transpose()?,
@@ -309,7 +332,7 @@ impl<'a> Tree<'a> {
 
 /// The statements of `src` from its tape `nodes` (`super::tape`, or a stored tape's facts: `nodes_of_facts`). A tape
 /// with an ERROR gives the error running the file gives (`super::syntax_error`).
-pub(super) fn statements(src: &str, nodes: &[Node]) -> Result<Vec<Statement>, Error> {
+pub fn statements(src: &str, nodes: &[Node]) -> Result<Vec<Statement>, Error> {
     if nodes.iter().any(Node::is_error) {
         let (_, message) = super::syntax_error(src).unwrap_or((0, "a statement that does not parse".to_owned()));
         return Err(Error::Syntax(message));

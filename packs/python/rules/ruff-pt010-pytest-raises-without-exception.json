@@ -1,0 +1,130 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pt010-pytest-raises-without-exception",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Name the expected exception when using pytest.raises; a call with no exception, match or check fails at runtime.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "raises-without-exception",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "raises": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "raises"
+                  }
+                },
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "pattern": "$F",
+                  "resolves": {
+                    "import": [
+                      "pytest.raises"
+                    ]
+                  }
+                }
+              ]
+            },
+            "positional": {
+              "not": {
+                "any": [
+                  {
+                    "kind": "keyword_argument"
+                  },
+                  {
+                    "kind": "dictionary_splat"
+                  },
+                  {
+                    "kind": "comment"
+                  },
+                  {
+                    "kind": "line_continuation"
+                  },
+                  {
+                    "regex": "^[(),]$"
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "has": {
+              "field": "function",
+              "matches": "raises"
+            },
+            "all": [
+              {
+                "has": {
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "any": [
+                        {
+                          "matches": "positional",
+                          "not": {
+                            "any": [
+                              {
+                                "kind": "list_splat"
+                              },
+                              {
+                                "follows": {
+                                  "stopBy": "end",
+                                  "matches": "positional"
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "kind": "keyword_argument",
+                          "has": {
+                            "field": "name",
+                            "regex": "^(?:expected_exception|match|check)$"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.F",
+        "code": "PT010",
+        "message": "Pass the exception class this block should raise as the first argument to `$F`; with no exception class, `match=` or `check=` the call fails when run.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PT010"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

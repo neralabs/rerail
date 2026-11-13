@@ -30,17 +30,17 @@ const DFA_LIMIT: usize = 4 << 20;
 
 /// Compiled groups of automata, kept between processes (decision 0075): `get` gives a group's DFA as `to_bytes` made
 /// it, `Some(None)` for a group known not to determinize within `DFA_LIMIT`, and `None` for one never compiled.
-pub(in crate::code_rule_dsl) trait DfaCache {
+pub trait DfaCache {
     fn get(&self, key: &str) -> Option<Option<Vec<u8>>>;
     fn put(&self, key: &str, dfa: Option<&[u8]>);
 }
 
 /// What compiling the searchers did, for the run's report: groups read from the cache, determinized, and run lazily.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct Compiling {
-    pub(in crate::code_rule_dsl) read: usize,
-    pub(in crate::code_rule_dsl) built: usize,
-    pub(in crate::code_rule_dsl) lazy: usize,
+pub struct Compiling {
+    pub read: usize,
+    pub built: usize,
+    pub lazy: usize,
 }
 
 type Dfa = regex_automata::dfa::dense::DFA<Vec<u32>>;
@@ -85,7 +85,7 @@ fn group_key(hirs: &[regex_syntax::hir::Hir]) -> String {
         hash.update(hir.to_string().as_bytes());
         hash.update(b"\0");
     }
-    format!("dfa1:{:x}", hash.finalize())
+    format!("dfa1:{}", crate::code_rule_dsl::prof::lower_hex(&hash.finalize()))
 }
 
 /// `hirs` determinized into one DFA over all of them, if it fits in `DFA_LIMIT`.
@@ -320,7 +320,7 @@ pub(in crate::code_rule_dsl) fn evaluate(plans: &[&Plan], terms: &[&[u8]]) -> (V
 /// seen for the first time is evaluated over the whole vocabulary, and a known key over the terms
 /// added since it last read the log (`text_pending`). Exact sets are looked up by value, never
 /// evaluated or kept.
-pub(in crate::code_rule_dsl) fn fill(store: &ContentStore, lang: u32, lowered: &[Arc<Lowered>]) -> StoreResult<HashMap<Key, Vec<i64>>> {
+pub fn fill(store: &ContentStore, lang: u32, lowered: &[Arc<Lowered>]) -> StoreResult<HashMap<Key, Vec<i64>>> {
     let lang = i64::from(lang);
     store.candidate_transaction(true, |db| {
         let _stage = crate::code_rule_dsl::prof::Stage::start("text.vocabulary");

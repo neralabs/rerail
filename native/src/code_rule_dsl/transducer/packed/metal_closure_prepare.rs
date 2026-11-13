@@ -9,7 +9,7 @@ use metal::{CommandBufferRef, Device};
 /// The scheduler supplies a complete fresh header batch, before any header in
 /// that scope expands. Array order is logical entry priority, with gaps retained
 /// in each state's ordinal. Partially expanded GREEDY scopes are not this input.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) struct ClosureInput<'a> {
     pub resident: &'a ResidentInput,
     pub programs: &'a [Program],
@@ -156,7 +156,7 @@ pub(super) struct RangeInput<'a> {
     pub values: &'a StateValues,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn encode(
     device: &Device,
     command: &CommandBufferRef,

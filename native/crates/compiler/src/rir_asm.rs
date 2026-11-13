@@ -59,6 +59,7 @@ pub const OPCODES: &[(u8, &str)] = &[
     (WRAP, "WRAP"),
     (REMEMBER, "REMEMBER"),
     (FLAG, "FLAG"),
+    (COUNT, "COUNT"),
 ];
 
 /// How an opcode's operand prints.
@@ -373,6 +374,17 @@ fn switch_row(parts: &mut Words, line: &mut Line<'_>) -> Result<(), String> {
     if at + 1 != parts.switches.len() {
         return Err(format!("switch {at}'s bytes before its header"));
     }
+    if line.peek_word().as_deref() == Some("word") {
+        line.next()?;
+        let w: u16 = line.number("s")?;
+        let t = target(line)?;
+        let words = &mut parts.switches[at].words;
+        if words.last().is_some_and(|&(x, _)| x >= w) {
+            return Err(format!("switch {at}'s words out of order at s{w}"));
+        }
+        words.push((w, t));
+        return Ok(());
+    }
     let range = line.word()?;
     let (lo, hi) = range.split_once('-').ok_or_else(|| format!("a byte range is `0xLO-0xHI`, not `{range}`"))?;
     let byte = |x: &str| x.strip_prefix("0x").and_then(|h| u8::from_str_radix(h, 16).ok()).ok_or_else(|| format!("a bad byte `{x}`"));
@@ -403,6 +415,66 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
         }
         "switch" => switch_row(parts, line)?,
         "reading" => reading_row(parts, line)?,
+        "rule" => {
+            index(line, parts.rules.len(), "rule")?;
+            parts.rules.push(line.number("@")?);
+        }
+        "markword" => {
+            let k: u8 = line.number("")?;
+            let s: u16 = line.number("s")?;
+            if parts.mark_words.last().is_some_and(|&(x, _)| x >= k) {
+                return Err(format!("markword {k} out of order"));
+            }
+            parts.mark_words.push((k, s));
+        }
+        "wordkind" => {
+            let s: u16 = line.number("s")?;
+            let k = line.kind()?;
+            if parts.word_kinds.last().is_some_and(|&(x, _)| x >= s) {
+                return Err(format!("wordkind s{s} out of order"));
+            }
+            parts.word_kinds.push((s, k));
+        }
+        "tokencount" => {
+            let at: usize = line.number("")?;
+            if at != parts.counts.len() {
+                return Err(format!("tokencount {at} out of order"));
+            }
+            if line.word()? != "max" {
+                return Err("tokencount N max M".into());
+            }
+            parts.counts.push(line.number("")?);
+        }
+        "tokenmark" => {
+            let order: u8 = line.number("")?;
+            if parts.token_marks.last().is_some_and(|m| m.order >= order) {
+                return Err(format!("tokenmark {order} out of order"));
+            }
+            let mut elems: Vec<crate::program::TokenElem> = Vec::new();
+            while let Some(w) = line.peek_word() {
+                line.word()?;
+                if let Some(o) = w.strip_prefix('o') {
+                    let offset = o.parse().map_err(|_| format!("a bad offset `{w}`"))?;
+                    let k = line.word()?;
+                    let kinds = k.strip_prefix('k').and_then(|h| u64::from_str_radix(h, 16).ok()).ok_or_else(|| format!("a bad kind set `{k}`"))?;
+                    elems.push(crate::program::TokenElem { offset, kinds, words: Vec::new() });
+                } else if let Some(s) = w.strip_prefix('s') {
+                    let s: u16 = s.parse().map_err(|_| format!("a bad word `{w}`"))?;
+                    elems.last_mut().ok_or("a word before its element")?.words.push(s);
+                } else {
+                    return Err(format!("a bad token mark's part `{w}`"));
+                }
+            }
+            parts.token_marks.push(crate::program::TokenMark { order, elems });
+        }
+        "tokenextra" => {
+            let b: u8 = line.number("b")?;
+            let k = line.kind()?;
+            if parts.extras.last().is_some_and(|&(x, _)| x >= b) {
+                return Err(format!("tokenextra b{b} out of order"));
+            }
+            parts.extras.push((b, k));
+        }
         "provisional" => {
             let f: u16 = line.number("#")?;
             parts.readings.provisional.push(f);
@@ -480,6 +552,19 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 program.totals.push(line.number("%")?);
             } else if first == "mask" {
                 program.masks.push(line.number("%")?);
+            } else if first == "records" {
+                let (starts, lasts): (u16, u16) = (line.number("")?, line.number("")?);
+                let kinds = line.word()?;
+                let hex = kinds.strip_prefix("kinds=").ok_or("`records S L kinds=…`")?;
+                let kinds: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().map_err(|_| "a bad kind")?;
+                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new() });
+            } else if first == "word" {
+                let r = program.records.as_mut().ok_or(format!("block {at} word before its records"))?;
+                r.words.push(line.quoted()?);
+            } else if first == "recmark" {
+                let r = program.records.as_mut().ok_or(format!("block {at} recmark before its records"))?;
+                let (o, w): (u16, u16) = (line.number("")?, line.number("")?);
+                r.marks.push((o, w));
             } else if first == "table" {
                 let t: usize = line.number("")?;
                 if t != program.tables.len() || !program.ops.is_empty() {
@@ -620,6 +705,12 @@ pub fn head_rows(out: &mut String, program: &Words) {
         switch_rows(out, at, s);
     }
     reading_rows(out, &program.readings);
+    crate::rir_text::mark_word_rows(out, &program.mark_words);
+    crate::rir_text::word_kind_rows(out, &program.word_kinds);
+    crate::rir_text::extra_rows(out, &program.extras);
+    crate::rir_text::token_mark_rows(out, &program.token_marks);
+    crate::rir_text::count_rows(out, &program.counts);
+    crate::rir_text::rule_rows(out, &program.rules);
 }
 
 /// Each block program's rows (`block::block_rows`).

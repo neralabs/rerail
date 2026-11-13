@@ -9,32 +9,34 @@ use crate::code_rule_dsl::violations::{Captures, Witness};
 use napi::Result;
 use rusqlite::Connection;
 use rusqlite::hooks::Authorization;
-mod authorizer;
-pub(in crate::code_rule_dsl) mod compile;
-pub(in crate::code_rule_dsl) mod execution;
-pub(in crate::code_rule_dsl) mod pipeline;
-pub(in crate::code_rule_dsl) mod pool;
-mod shared;
-pub(in crate::code_rule_dsl) use shared::Versions;
-mod storage;
+pub mod authorizer;
+pub mod compile;
+// cratify: `execution` is rerail-engine's (it mounts it)
+pub mod pipeline;
+pub mod pool;
+pub mod shared;
+pub use shared::Versions;
+pub mod storage;
 
-mod admission;
-mod anchors;
-mod batch;
-pub(in crate::code_rule_dsl) mod database;
+pub mod admission;
+pub mod anchors;
+pub mod batch;
+pub mod database;
 use database::Database;
-pub(in crate::code_rule_dsl) mod deferred;
-mod forest;
-mod functions;
-mod inputs;
-mod insert;
-mod producer;
-mod reachability;
-pub(in crate::code_rule_dsl) mod schema;
-mod source;
-pub(in crate::code_rule_dsl) mod syntax;
-mod table;
-pub(in crate::code_rule_dsl) use reachability::Reachability;
+pub mod deferred;
+pub mod forest;
+pub mod functions;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use functions::install_unbounded as install_regex_functions;
+pub mod inputs;
+pub mod insert;
+pub mod producer;
+pub mod reachability;
+pub mod schema;
+pub mod source;
+pub mod syntax;
+pub mod table;
+pub use reachability::Reachability;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{
@@ -43,7 +45,7 @@ use std::sync::{
 };
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Stage {
+pub struct Stage {
     pub(in crate::code_rule_dsl) name: String,
     pub(in crate::code_rule_dsl) inputs: BTreeSet<String>,
     pub(in crate::code_rule_dsl) reads_source: bool,
@@ -72,13 +74,13 @@ pub(in crate::code_rule_dsl) const REFERENCE_FIELDS: &[&str] = &[
 ];
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Plan {
+pub struct Plan {
     pub(in crate::code_rule_dsl) require_nonempty: Option<usize>,
     pub(in crate::code_rule_dsl) syntax: Option<Arc<syntax::Spec>>,
     pub(in crate::code_rule_dsl) per_file: bool,
     pub(in crate::code_rule_dsl) references: Option<References>,
     pub(in crate::code_rule_dsl) locations: BTreeSet<String>,
-    pub(in crate::code_rule_dsl) inputs: Vec<(String, FactQuery)>,
+    pub inputs: Vec<(String, FactQuery)>,
     pub(in crate::code_rule_dsl) stages: Vec<Stage>,
     pub(in crate::code_rule_dsl) cuts: Vec<pipeline::Cut>,
     pub(in crate::code_rule_dsl) query: String,
@@ -101,11 +103,11 @@ pub(in crate::code_rule_dsl) fn identifier(value: &str) -> bool {
 fn quote(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
 }
-pub(in crate::code_rule_dsl) fn sql_error(error: rusqlite::Error) -> napi::Error {
+pub fn sql_error(error: rusqlite::Error) -> napi::Error {
     invalid(format!("relational query: {error}"))
 }
 
-pub(in crate::code_rule_dsl) fn connection(
+pub fn connection(
     max_pattern: usize,
     work: Arc<AtomicUsize>,
 ) -> Result<Database> {
@@ -123,13 +125,13 @@ pub(in crate::code_rule_dsl) fn validation_connection(
 ) -> Result<Database> {
     configure(Database::open().map_err(sql_error)?, max_pattern, work)
 }
-fn configure(db: Database, max_pattern: usize, work: Arc<AtomicUsize>) -> Result<Database> {
+fn configure(mut db: Database, max_pattern: usize, work: Arc<AtomicUsize>) -> Result<Database> {
+    db.register_hooks().map_err(sql_error)?;
     configure_in_place(&db, max_pattern, work)?;
     Ok(db)
 }
-fn configure_in_place(db: &Database, max_pattern: usize, work: Arc<AtomicUsize>) -> Result<()> {
-    db.progress_handler(0, None::<fn() -> bool>)
-        .map_err(sql_error)?;
+pub fn configure_in_place(db: &Database, max_pattern: usize, work: Arc<AtomicUsize>) -> Result<()> {
+    db.hooks.progress(None::<fn() -> bool>).map_err(sql_error)?;
     db.set_limit(
         rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH,
         16 * 1024 * 1024,
@@ -154,7 +156,7 @@ fn configure_in_place(db: &Database, max_pattern: usize, work: Arc<AtomicUsize>)
 /// functions are available to a policy. CTEs and JSON table functions can join
 /// only the finite relations supplied here.
 pub(in crate::code_rule_dsl) fn inspect(
-    db: &Connection,
+    db: &Database,
     query: &str,
     tables: &BTreeSet<String>,
 ) -> Result<(Vec<String>, BTreeSet<String>, bool)> {
@@ -163,7 +165,7 @@ pub(in crate::code_rule_dsl) fn inspect(
 }
 pub(in crate::code_rule_dsl) type FieldReads = BTreeMap<String, BTreeSet<String>>;
 pub(in crate::code_rule_dsl) fn inspect_fields(
-    db: &Connection,
+    db: &Database,
     query: &str,
     tables: &BTreeSet<String>,
 ) -> Result<(Vec<String>, FieldReads, bool)> {
@@ -171,7 +173,7 @@ pub(in crate::code_rule_dsl) fn inspect_fields(
         .map(|(cols, fields, source, _)| (cols, fields, source))
 }
 pub(in crate::code_rule_dsl) fn inspect_fields_recursive(
-    db: &Connection,
+    db: &Database,
     query: &str,
     tables: &BTreeSet<String>,
 ) -> Result<(Vec<String>, FieldReads, bool, bool)> {
@@ -185,8 +187,7 @@ pub(in crate::code_rule_dsl) fn inspect_fields_recursive(
         }
         let columns = statement
             .column_names()
-            .iter()
-            .map(|name| (*name).to_owned())
+            .map(str::to_owned)
             .collect::<Vec<_>>();
         let distinct = columns
             .iter()
@@ -202,12 +203,13 @@ pub(in crate::code_rule_dsl) fn inspect_fields_recursive(
             observed.recursive.load(Ordering::Relaxed),
         ))
     })();
-    db.authorizer(None::<fn(rusqlite::hooks::AuthContext<'_>) -> Authorization>)
+    db.hooks
+        .authorizer(None::<fn(rusqlite::hooks::AuthContext<'_>) -> Authorization>)
         .map_err(sql_error)?;
     result
 }
 
-pub(in crate::code_rule_dsl) fn create_input(
+pub fn create_input(
     db: &Database,
     name: &str,
     fields: &[String],
@@ -336,7 +338,7 @@ pub(in crate::code_rule_dsl) fn create_stage(
                 .prepare(&format!("SELECT * FROM {} LIMIT 0", quote(&stage.name)))
                 .map_err(sql_error)?
                 .column_names()
-                .contains(&column.as_str());
+                .any(|name| name == column);
             if !exists {
                 db.execute_batch(&format!(
                     "ALTER TABLE {} ADD COLUMN {}",
@@ -404,19 +406,19 @@ fn read_value(value: rusqlite::types::ValueRef<'_>) -> Result<Value> {
     })
 }
 
-pub(in crate::code_rule_dsl) struct Job<'a> {
+pub struct Job<'a> {
     pub code_rule: &'a CompiledCodeRule,
     pub clause: &'a CompiledClause,
     pub inputs: Inputs,
     pub budget: crate::code_rule_dsl::budget::Context,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum Preparation {
+pub enum Preparation {
     Gate,
     Body,
 }
 
-pub(in crate::code_rule_dsl) struct Inputs {
+pub struct Inputs {
     pub versions: Option<Versions>,
     pub gate: Option<Rows>,
     pub rows: Option<Vec<Rows>>,
@@ -424,16 +426,16 @@ pub(in crate::code_rule_dsl) struct Inputs {
     pub snapshot: Snapshot,
     pub file_local: bool,
 }
-enum Step {
+pub enum Step {
     Sql,
     Native(producer::Demand),
     Done,
 }
-struct Session<'a> {
+pub struct Session<'a> {
     code_rule: &'a CompiledCodeRule,
     clause: &'a CompiledClause,
     plan: &'a Plan,
-    db: pool::Lease,
+    pub db: pool::Lease,
     finished: std::cell::Cell<bool>,
     descriptor_bytes: usize,
     syntax_files: syntax::Files,
@@ -442,8 +444,8 @@ struct Session<'a> {
     work: Arc<AtomicUsize>,
     tables: BTreeSet<String>,
     next: usize,
-    aliases: BTreeMap<String, String>,
-    physical_stages: Arc<Vec<Stage>>,
+    pub aliases: BTreeMap<String, String>,
+    pub physical_stages: Arc<Vec<Stage>>,
     needed: BTreeSet<String>,
     visible: Snapshot,
     scope_bindings: BTreeMap<String, usize>,
@@ -451,7 +453,7 @@ struct Session<'a> {
     plan_signature: u64,
 }
 impl<'a> Session<'a> {
-    fn new(
+    pub fn new(
         code_rule: &'a CompiledCodeRule,
         clause: &'a CompiledClause,
         mut inputs: Inputs,
@@ -738,8 +740,9 @@ impl<'a> Session<'a> {
                 fields.len() + 3,
                 rows.witnesses.iter().map(|witness| {
                     use rusqlite::types::ValueRef;
-                    let location =
-                        crate::code_rule_dsl::violations::anchored_span(&input.anchor, witness).0;
+                    let location = crate::code_rule_dsl::violations::anchored_span(&input.anchor, witness)
+                .0
+                .expect("a relation's AST witness has a span");
                     let projected = witness.captures.projection();
                     let layout = projected.map(|p| &layouts[&p.schema_identity()]);
                     [
@@ -945,7 +948,7 @@ impl<'a> Session<'a> {
             native_sources,
         })
     }
-    fn activate(&self) -> Result<()> {
+    pub fn activate(&self) -> Result<()> {
         let changed = self.db.active.get() != self.db.id;
         self.db.activate(
             self.code_rule.capabilities.limits.max_regex_pattern_bytes,
@@ -969,8 +972,7 @@ impl<'a> Session<'a> {
         self.db.context(json!({"scope":"relational","ruleId":self.code_rule.id,"clauseId":self.clause.id,"path":(self.visible.files.len()==1).then(||self.visible.files[0].path.as_str())}));
         let guard = Arc::clone(&self.work);
         self.db
-            .progress_handler(
-                64,
+            .hooks.progress(
                 Some(move || {
                     #[cfg(feature = "code-rule-profile")]
                     if crate::code_rule_dsl::profile::sql::explaining() {
@@ -1019,7 +1021,7 @@ impl<'a> Session<'a> {
             {
                 // Physical cleanup is owner maintenance, outside the statement's VM budget.
                 self.db
-                    .progress_handler(0, None::<fn() -> bool>)
+                    .hooks.progress(None::<fn() -> bool>)
                     .map_err(sql_error)?;
                 self.db
                     .storage
@@ -1037,7 +1039,7 @@ impl<'a> Session<'a> {
         self.next += 1;
         Ok(())
     }
-    fn advance(&mut self) -> Result<Step> {
+    pub fn advance(&mut self) -> Result<Step> {
         self.activate()?;
         let _reader = producer::ReadOnly::enter();
         if let Some(logical) = self.plan.stages.get(self.next) {
@@ -1156,7 +1158,6 @@ impl<'a> Session<'a> {
         let mut statement = db.prepare_execution(&query).map_err(sql_error)?;
         let names = statement
             .column_names()
-            .into_iter()
             .map(str::to_owned)
             .collect::<Vec<_>>();
         let mut query = statement.query([]).map_err(sql_error)?;
@@ -1245,7 +1246,7 @@ impl<'a> Session<'a> {
                 .collect::<Result<Vec<_>>>()?;
             let witness = Witness {
                 path: path.to_owned(),
-                span,
+                span: Some(span),
                 captures: Captures::default(),
                 message: plan
                     .message
@@ -1302,7 +1303,7 @@ impl Drop for Session<'_> {
         if !self.finished.get() {
             self.db.healthy.set(false);
         }
-        let _ = self.db.progress_handler(0, None::<fn() -> bool>);
+        let _ = self.db.hooks.progress(None::<fn() -> bool>);
         for stage in &self.physical_stages[..self.next] {
             if stage
                 .reachability

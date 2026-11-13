@@ -4,10 +4,19 @@
 > In [internal testing](internal-testing.md): in the code but not ready for public use, and may change or go without
 > notice.
 
-`rerail scan` without `--session` scans a checkout in its own process, with no daemon, no session and nothing set up
-first, so it runs in CI. It prints one JSON document with `--json` (the `rerail.scan/1` shape below), or one line per
-violation and a summary without it. The scan adds nothing to the Rerail database's session history. With a
-[remote](remote-sink.md) added, a completed scan is queued for it (`--no-send` keeps it local).
+`rerail scan` without `--session` scans a checkout in its own process, so it runs in CI.
+
+- **Output:** `--json` prints one `rerail.scan/1` document (below); otherwise one line per violation and a summary.
+- **Remotes:** a completed scan is queued for each [remote](remote-sink.md), unless `--no-send`.
+
+<details>
+<summary>What it does not need or touch</summary>
+
+No daemon, no session and nothing set up first. It adds nothing to the Rerail database's session history. Its one write
+outside its temporary folder: a checkout new to Rerail gets a clone id in Git's metadata folder
+(`<git common dir>/rerail-repository-id`), as `rerail start` would.
+
+</details>
 
 ```sh
 rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules-ref <ref>] [--pack <id>]...
@@ -16,39 +25,68 @@ rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--rules
 
 | Option | Does |
 | --- | --- |
-| `--repo <dir>` | The checkout to scan (any folder in it); the current folder by default. It must be a Git checkout. |
-| `--scope repository` | Every file the rules read (the default). With `--path` or `--paths-from`, only those files (relative to the checkout; those that do not exist are left out). |
-| `--scope git-diff` | The changed, staged and untracked files: against `HEAD`, or with `--base <ref>` against the merge base of `<ref>` and `HEAD` (a pull request's changes). Deleted files are not scanned. No changed files is a completed scan with nothing in it. |
-| `--rules-ref <ref>` | Run the rules in `.rerail/rules/` **at that Git ref** instead of the working tree's. For reviewing a change: the change cannot edit the rules it is judged by. They follow the approval policy below. |
-| `--pack <id>` | Also run that rule pack, as installed in the Rerail home (`rerail packs add <id>` first), by its id (`complexity`) or package name (`@neralabs/rerail-pack-complexity`). Repeatable. A pack that is not installed is an error. |
+| `--repo <dir>` | Git checkout to scan (any folder in it). Default: the current folder. |
+| `--scope repository` | Default. Every file the rules read, or only the `--path`/`--paths-from` files. |
+| `--scope git-diff` | Changed, staged and untracked files against `HEAD`, or against the merge base with `--base <ref>`. |
+| `--rules-ref <ref>` | Run `.rerail/rules/` **at that Git ref**, so a change cannot edit the rules judging it. |
+| `--pack <id>` | Also run an installed pack. Repeatable. |
 | `--json` | Print the report. |
-| `--fail-on-violations` | Exit 3 when the scan completed with violations. |
+| `--fail-on-violations` | Exit 3 on violations. |
 | `--no-send` | Do not queue the report for this machine's [remotes](remote-sink.md). |
 
-Exit codes: `0` the scan completed (violations alone do not fail it), `1` it failed (an execution failure, or bad
-input such as an unknown ref), `3` violations with `--fail-on-violations`.
+<details>
+<summary>Option details</summary>
+
+- `--scope repository` with `--path`/`--paths-from`: paths are relative to the checkout; missing ones are skipped.
+- `--scope git-diff`: the merge base is of `<ref>` and `HEAD`, so `--base` gives a pull request's changes. Deleted
+  files are not scanned. No changed files is a completed scan with nothing in it.
+- `--rules-ref`: replaces the working tree's rules. Those rules run in Log until approved (see
+  [Which rules run](#which-rules-run)).
+- `--pack`: the pack must be installed in the Rerail home first (`rerail packs add <id>`). It takes an id
+  (`complexity`) or package name (`@neralabs/rerail-pack-complexity`). A pack that is not installed is an error.
+- `--fail-on-violations`: exits 3 only when the scan completed with violations.
+
+</details>
+
+Exit codes:
+
+- `0`: completed. Violations alone do not fail it.
+- `1`: failed: an execution failure, or bad input such as an unknown ref.
+- `3`: violations, with `--fail-on-violations`.
 
 ## Which rules run
 
-- **The Rerail home's configuration**, when Rerail is started and set up in this checkout on this machine and neither
-  `--pack` nor `--rules-ref` is given: the packs and rules added to the repository, its settings and your approvals, as
-  a session there would run them. The report's `rulesSource` is `{"kind":"home"}`.
-- **Otherwise** a throwaway configuration: the checkout's own `.rerail/rules/` (`{"kind":"worktree"}`), or the rules at
-  `--rules-ref` (`{"kind":"ref","ref":…}`), plus every `--pack`.
+The scan uses your Rerail home's configuration when it can, otherwise a throwaway one.
 
-Either way the approval policy is a session's ([rule approvals](writing-rules.md)): a worktree's rule, a rule read from
-`--rules-ref`, and every rule of a pack Rerail did not publish from npm (a third party's, or one installed from a folder
-or tarball) run in **Log** until a person approved that exact content in the Rerail home with `rerail rules approve`.
-Approval is of content, by its digest: approving a rule in a checkout of the base branch approves the same content read
-with `--rules-ref`, and nothing else. Rerail's own packs from npm need no approval.
+- **Home**: the repository's packs, rules, settings and approvals. Used when Rerail is set up here and no `--pack` or
+  `--rules-ref` is given.
+- **Throwaway**: the checkout's `.rerail/rules/` or the rules at `--rules-ref`, plus every `--pack`.
 
-The scan writes one thing outside its temporary folder: a checkout Rerail has never seen gets its clone id in Git's
-metadata folder (`<git common dir>/rerail-repository-id`), as `rerail start` would give it.
+Worktree, `--rules-ref` and non-npm pack rules run in **Log** until approved with `rerail rules approve`.
+
+<details>
+<summary>Exact conditions and approval policy</summary>
+
+Home applies when Rerail is started and set up in this checkout on this machine. It runs the rules as a session there
+would. `rulesSource` is `{"kind":"home"}`; a throwaway configuration gives `{"kind":"worktree"}`, or
+`{"kind":"ref","ref":…}` with `--rules-ref`.
+
+Session [rule approvals](writing-rules.md) apply. These run in **Log** until a person approves that exact content in
+the Rerail home with `rerail rules approve`:
+
+- worktree rules;
+- rules read from `--rules-ref`;
+- rules of packs Rerail did not publish from npm (third-party, or installed from a folder or tarball).
+
+Approval binds to the content digest. Approving a rule in a base-branch checkout also covers the same content read with
+`--rules-ref`, and nothing else. Rerail's own npm packs need no approval.
+
+</details>
 
 ### In CI
 
-A CI runner starts with an empty Rerail home. Install the packs, approve what needs approving **from the base
-branch's content** (never from the change under review), then scan the change:
+A CI runner starts with an empty Rerail home. Install packs, approve **from the base branch's content** (never the
+change under review), then scan the change:
 
 ```sh
 # Rerail's own packs from npm: no approval needed.
@@ -63,16 +101,17 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
   --pack typescript --pack complexity --pack acme --json > rerail-scan.json
 ```
 
-Here `./base` is a checkout of the base branch and `./head` the change. Anything left unapproved still runs, in Log:
-its findings are reported with `"mode": "log"`.
+`./base` is a base-branch checkout; `./head` is the change. Unapproved rules still run, reported with `"mode": "log"`.
 
 ## The report: `rerail.scan/1`
+
+`--json` prints one document in this shape; fields may be added, but removing or changing one makes a new schema.
 
 ```jsonc
 {
   "schema": "rerail.scan/1",
   "scanId": "6f0c…",                     // a new UUID per scan
-  "tool": { "name": "rerail", "version": "0.1.0" },
+  "tool": { "name": "rerail", "version": "<version>" },
   "startedAt": 1793732129819, "finishedAt": 1793732131165,   // milliseconds since the epoch
   "repository": { "key": "remote:github.com/org/repo", "displayName": "repo" },   // or "clone:<id>" without a remote
   "checkout": { "path": "/abs/checkout", "head": "<sha>|null", "ref": "refs/heads/main|null" },
@@ -95,16 +134,21 @@ its findings are reported with `"mode": "log"`.
 }
 ```
 
-- **Positions**: lines and columns are **1-based**; `start` is the first character of the match and `end` the
-  position **just past** its last (exclusive). `start` and `end` are null for a violation without a source span.
-- **`mode`**: the rule's effective mode where the violation is. A scan itself never steers.
-- **`payloadHash`**: the digest of the rule's content (`sha256:` of its canonical JSON), the same one approvals and
-  audits name, so a finding joins to the exact rule text it came from.
-- **`fingerprint`**: 32 hex characters, `sha256(ruleId \0 path \0 matched text)` with the text's whitespace runs
-  collapsed to one space. It stays the same while the rule, the path and the matched text do, wherever the text moves
-  in the file, so two scans tell new findings from existing ones. When one rule matches the same text more than once
-  in a file, the second and later matches hash in their ordinal too, so fingerprints are unique within a scan. The text
-  is never in the report.
+- **Positions**: 1-based lines and columns; `end` is exclusive.
+- **`mode`**: the rule's effective mode where the violation is. A scan never steers.
+- **`payloadHash`**: digest of the exact rule text that produced the finding.
+- **`fingerprint`**: stable across scans, so you can tell new findings from existing ones.
 - **`failures`**: execution failures and coverage gaps, as an audit records them ([reference](reference.md#scan-and-settings-controls)).
 
-Fields may be added within `rerail.scan/1`; a change that removes or changes one is a new schema.
+<details>
+<summary>Exact field semantics</summary>
+
+- **Positions**: `start` is the match's first character; `end` is **just past** its last. Both are null for a
+  violation without a source span.
+- **`payloadHash`**: `sha256:` of the rule's canonical JSON, the same digest approvals and audits use.
+- **`fingerprint`**: 32 hex characters, `sha256(ruleId \0 path \0 matched text)`, whitespace runs collapsed to one
+  space. It is stable while the rule, path and text are, even if the text moves in the file. When one rule matches the
+  same text more than once in a file, the second and later matches also hash their ordinal, so fingerprints are unique
+  within a scan. The text is never in the report.
+
+</details>

@@ -1,108 +1,93 @@
 # Rerail rule pack: Rust
 
-Ports of 34 Clippy 0.1.99 lints. Eighteen pass the [port readiness gates](../../docs/port-readiness.md) and ship in `rules/` and `pack.json`: `clippy-builtin-type-shadow`, `clippy-inconsistent-digit-grouping`, `clippy-int-plus-one`, `clippy-large-digit-groups`, `clippy-many-single-char-names`, `clippy-mixed-case-hex-literals`, `clippy-needless-arbitrary-self-type`, `clippy-needless-else`, `clippy-needless-raw-string-hashes`, `clippy-octal-escapes`, `clippy-partial-pub-fields`, `clippy-precedence`, `clippy-precedence-bits`, `clippy-redundant-at-rest-pattern`, `clippy-single-component-path-imports`, `clippy-unneeded-wildcard-pattern`, `clippy-unusual-byte-groupings` and `clippy-zero-prefixed-literal`. Clippy's default lint levels leave `large_digit_groups`, `many_single_char_names` and `needless_raw_string_hashes` (pedantic) and `partial_pub_fields` and `precedence_bits` (restriction) off, so they ship off (`"on": false`). The other 16 are candidates in `candidates/rules/`, judged by the same gates without blocking; the four that port a non-default `clippy.toml` (`-threshold`, `-no-fractions`, `-one-allowed`) stay candidates whatever they score, since the gates judge them against Clippy's defaults. Each port is scored against Clippy's recorded findings on its UI tests and on pinned ripgrep and tokio checkouts, through the engine's production workspace path, with its disagreements declared in `divergences.json` (214 entries, each with its evidence); the candidate `clippy-option-env-unwrap`'s two on `tests/ui/option_env_unwrap.rs` (an `external!` proc macro that rewrites its tokens' spans, which syntax alone cannot tell from a span-keeping macro) are the only ones left undeclared.
+33 Clippy 0.1.99 lints ported to Rerail, each passing the [conformance check](../../conformance/README.md#the-gate), in `rules/` and `pack.json`: `clippy-allow-attributes`, `clippy-allow-attributes-without-reason`, `clippy-builtin-type-shadow`, `clippy-decimal-literal-representation`, `clippy-decimal-literal-representation-threshold`, `clippy-double-parens`, `clippy-else-if-without-else`, `clippy-inconsistent-digit-grouping`, `clippy-inconsistent-digit-grouping-no-fractions`, `clippy-int-plus-one`, `clippy-large-digit-groups`, `clippy-many-single-char-names`, `clippy-mixed-case-hex-literals`, `clippy-needless-arbitrary-self-type`, `clippy-needless-else`, `clippy-needless-raw-string-hashes`, `clippy-needless-raw-string-hashes-one-allowed`, `clippy-needless-raw-strings`, `clippy-octal-escapes`, `clippy-partial-pub-fields`, `clippy-precedence`, `clippy-precedence-bits`, `clippy-redundant-at-rest-pattern`, `clippy-redundant-field-names`, `clippy-redundant-static-lifetimes`, `clippy-single-char-lifetime-names`, `clippy-single-component-path-imports`, `clippy-unneeded-wildcard-pattern`, `clippy-unnested-or-patterns`, `clippy-unreadable-literal`, `clippy-unreadable-literal-no-fractions`, `clippy-unusual-byte-groupings` and `clippy-zero-prefixed-literal`. Clippy's default lint levels leave `large_digit_groups`, `many_single_char_names`, `needless_raw_string_hashes`, `unnested_or_patterns` and `unreadable_literal` (pedantic) and `allow_attributes`, `allow_attributes_without_reason`, `decimal_literal_representation`, `else_if_without_else`, `needless_raw_strings`, `partial_pub_fields`, `precedence_bits` and `single_char_lifetime_names` (restriction) off, so their ports ship off (`"on": false`). 1 more port is a candidate in `candidates/rules/`, judged by the same checks without blocking ([candidates/README.md](candidates/README.md)). Each port is scored against Clippy's own findings on its UI tests, and against the labelled lines of Clippy's real-code samples ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace path. The shipped rules agree with Clippy on every fixture finding but 7 explained misses; `divergences.json` declares every disagreement, the 7 on the fixtures and 106 on the samples, each with its evidence.
 
 This pack follows the [pack structure and validation contract](../../docs/pack-format.md) and is checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 
 | Path | What |
 |---|---|
 | `pack.json` | The pack (`rerail.rule-pack/v1`): its match definition, and each shipped rule's document, title, group and whether it is on |
-| `rules/` | The code-rule documents (`rerail.policy/v1`) of the ports that pass the port readiness gates |
+| `rules/` | The code-rule documents (`rerail.policy/v1`) of the ports that pass the conformance check |
 | `candidates/rules/` | The code-rule documents of the other ports, scored and judged but never shipped |
-| `conformance.json` | Each ported lint's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned Clippy tool and corpora |
+| `candidates/README.md` | What each candidate is waiting on and its rule details; not published |
+| `conformance.json` | Each ported lint's upstream tool and rule, how findings compare, and the capabilities it exercises; the pinned Clippy tool |
 | `divergences.json` | Declared disagreements with Clippy |
-| `upstream/clippy/` | Clippy's copied UI tests, the probes Rerail wrote (`fixtures/rerail/`, listed in `UPSTREAM.md`), recordings and recorder (`generate.py`, sharing `upstream/common.py`); the port readiness gates' `gates.yaml`, `recording.lock` and `goldens.tsv` |
-| `licenses/clippy/` | Clippy's licence and `UPSTREAM.md`, listing every copied file |
+| `upstream/clippy/` | Clippy's copied UI tests, the probes Rerail wrote (`fixtures/rerail/`, listed in `UPSTREAM.md`), the expected findings and their generator (`generate.py`, sharing `upstream/common.py`); the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`); the upstream manifest `gates.yaml` (its pins, approved configurations, the file types it lints and the facts of every lint the pack ports) |
+| `licenses/clippy/` | Clippy's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
 
 ## Scores
 
-Every port, shipped or candidate, is scored here. Scored with `node --import tsx conformance/languages/cli.ts --pack rust` (Clippy 0.1.99, Rust 1.99.0; fixtures and both
-corpora). FP and FN count unexplained points only; an explained point is one a divergence names, and recall counts
-an explained FN against the pack.
+Every port is scored against Clippy's findings on the fixtures, and against the labelled lines of Clippy's real-code
+samples ([docs/upstream.md](../../docs/upstream.md#samples)). The 33 shipped rules' fixture scores below come from
+`node --import tsx conformance/languages/cli.ts --pack rust --fixtures` (Clippy 0.1.99, Rust 1.99.0); the totals sum
+the per-rule rows. FP and FN count unexplained points only; an explained point is one a divergence names, and recall
+counts an explained FN against the pack. The 7 explained FN are `rerail-unknown` divergences (`divergences.json`): code
+tree-sitter-rust holds as macro token trees or `macro_rules!` bodies, which Clippy lints after expansion; `box` patterns
+tree-sitter-rust does not parse; an attribute on a tuple element expression; a decimal literal at or above 2^53, which a
+rule's JSON-number bounds cannot name. The candidate's scores, and the
+totals over every port, are in [candidates/README.md](candidates/README.md). Rust has no rename variants
+(`holds-under-rename` covers the ECMAScript packs), so the real-code samples are the pack's only evidence that a port is
+not fitted to Clippy's UI tests.
 
 | Source | Rules | TP | FP | FN | Explained FP | Explained FN |
 |---|---|---|---|---|---|---|
-| fixtures (Clippy's UI tests and Rerail's probes) | 34 | 397 | 2 | 2 | 0 | 7 |
-| ripgrep corpus | 34 | 614 | 0 | 0 | 11 | 6 |
-| tokio corpus | 34 | 555 | 0 | 0 | 98 | 95 |
+| fixtures (Clippy's UI tests and Rerail's probes) | 33 | 392 | 0 | 0 | 0 | 7 |
 
-Divergences by kind (`divergences.json`):
+Per rule on the fixtures (TP / FP / FN, explained points in parentheses):
 
-| Kind | fixtures | ripgrep | tokio | Total | What |
-|---|---|---|---|---|---|
-| `rerail-unknown` | 7 | 2 | 90 | 99 | Code tree-sitter-rust holds as macro token trees or `macro_rules!` bodies, which Clippy lints after expansion; `box` patterns tree-sitter-rust does not parse; an attribute on a tuple element expression; a decimal literal at or above 2^53, which a rule's JSON-number bounds cannot name |
-| `not-comparable` | 0 | 15 | 100 | 115 | Items and files a `cfg` leaves out of the recording's build (macOS, `--all-features`, no `tokio_unstable`, `loom`, `docsrs` or `miri`), `cfg_attr` levels whose predicate is false there, `#[tokio::test]`'s expansion, grep-index's crate-root `#![allow(warnings)]` (read per file), and the ui-toml variants on corpora recorded with Clippy's defaults |
-| `upstream-wrong` | 0 | 0 | 0 | 0 | |
+| Rule | fixtures |
+|---|---|
+| `clippy-precedence` | 30 / 0 / 0 |
+| `clippy-precedence-bits` | 26 / 0 / 0 |
+| `clippy-int-plus-one` | 14 / 0 / 0 |
+| `clippy-needless-arbitrary-self-type` | 9 / 0 / 0 |
+| `clippy-partial-pub-fields` | 4 / 0 / 0 |
+| `clippy-unneeded-wildcard-pattern` | 18 / 0 / 0 |
+| `clippy-redundant-at-rest-pattern` | 6 / 0 / 0 |
+| `clippy-needless-else` | 1 / 0 / 0 |
+| `clippy-inconsistent-digit-grouping` | 9 / 0 / 0 |
+| `clippy-large-digit-groups` | 4 / 0 / 0 |
+| `clippy-unusual-byte-groupings` | 2 / 0 / 0 |
+| `clippy-mixed-case-hex-literals` | 4 / 0 / 0 |
+| `clippy-zero-prefixed-literal` | 5 / 0 / 0 |
+| `clippy-octal-escapes` | 11 / 0 / 0 |
+| `clippy-needless-raw-string-hashes` | 15 / 0 / 0 |
+| `clippy-builtin-type-shadow` | 1 / 0 / 0 |
+| `clippy-single-component-path-imports` | 5 / 0 / 0 |
+| `clippy-many-single-char-names` | 3 / 0 / 0 |
+| `clippy-allow-attributes-without-reason` | 47 / 0 / 0 (1) |
+| `clippy-allow-attributes` | 25 / 0 / 0 (1) |
+| `clippy-decimal-literal-representation-threshold` | 1 / 0 / 0 |
+| `clippy-decimal-literal-representation` | 8 / 0 / 0 |
+| `clippy-double-parens` | 24 / 0 / 0 (1) |
+| `clippy-else-if-without-else` | 4 / 0 / 0 |
+| `clippy-inconsistent-digit-grouping-no-fractions` | 1 / 0 / 0 |
+| `clippy-needless-raw-string-hashes-one-allowed` | 3 / 0 / 0 |
+| `clippy-needless-raw-strings` | 15 / 0 / 0 |
+| `clippy-redundant-field-names` | 8 / 0 / 0 (1) |
+| `clippy-redundant-static-lifetimes` | 31 / 0 / 0 |
+| `clippy-single-char-lifetime-names` | 9 / 0 / 0 |
+| `clippy-unnested-or-patterns` | 32 / 0 / 0 (3) |
+| `clippy-unreadable-literal-no-fractions` | 1 / 0 / 0 |
+| `clippy-unreadable-literal` | 16 / 0 / 0 |
 
-Per rule (TP / FP / FN, explained points in parentheses):
+## Deriving and scoring
 
-| Rule | fixtures | ripgrep | tokio |
-|---|---|---|---|
-| `clippy-precedence` | 30 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-precedence-bits` | 26 / 0 / 0 | 0 / 0 / 0 | 4 / 0 / 0 |
-| `clippy-double-parens` | 24 / 0 / 0 (1) | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-int-plus-one` | 14 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-redundant-static-lifetimes` | 31 / 0 / 0 | 32 / 0 / 0 (2) | 0 / 0 / 0 |
-| `clippy-needless-arbitrary-self-type` | 9 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-else-if-without-else` | 4 / 0 / 0 | 23 / 0 / 0 (2) | 14 / 0 / 0 |
-| `clippy-partial-pub-fields` | 4 / 0 / 0 | 0 / 0 / 0 | 4 / 0 / 0 |
-| `clippy-unneeded-wildcard-pattern` | 18 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-redundant-at-rest-pattern` | 6 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-needless-else` | 1 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-unnested-or-patterns` | 32 / 0 / 0 (3) | 4 / 0 / 0 | 1 / 0 / 0 |
-| `clippy-option-env-unwrap` | 5 / 2 / 2 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-unreadable-literal` | 16 / 0 / 0 | 5 / 0 / 0 (1) | 0 / 0 / 0 (1) |
-| `clippy-unreadable-literal-no-fractions` | 1 / 0 / 0 | 5 / 0 / 0 (1) | 0 / 0 / 0 (1) |
-| `clippy-inconsistent-digit-grouping` | 9 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-inconsistent-digit-grouping-no-fractions` | 1 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-large-digit-groups` | 4 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-unusual-byte-groupings` | 2 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-decimal-literal-representation` | 8 / 0 / 0 | 0 / 0 / 0 | 2 / 0 / 0 (2) |
-| `clippy-decimal-literal-representation-threshold` | 1 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 (3) |
-| `clippy-mixed-case-hex-literals` | 4 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-zero-prefixed-literal` | 5 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-octal-escapes` | 11 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-needless-raw-strings` | 15 / 0 / 0 | 382 / 0 / 0 (1) | 1 / 0 / 0 |
-| `clippy-needless-raw-string-hashes` | 15 / 0 / 0 | 4 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-needless-raw-string-hashes-one-allowed` | 3 / 0 / 0 | 0 / 0 / 0 (4) | 0 / 0 / 0 |
-| `clippy-builtin-type-shadow` | 1 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-redundant-field-names` | 8 / 0 / 0 (1) | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-single-char-lifetime-names` | 9 / 0 / 0 | 129 / 0 / 0 (4) | 213 / 0 / 0 (61) |
-| `clippy-single-component-path-imports` | 5 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-many-single-char-names` | 3 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-| `clippy-allow-attributes` | 25 / 0 / 0 (1) | 14 / 0 / 0 (1) | 140 / 0 / 0 (48) |
-| `clippy-allow-attributes-without-reason` | 47 / 0 / 0 (1) | 16 / 0 / 0 (1) | 176 / 0 / 0 (77) |
-
-## Recording and scoring
-
-Re-recording is a maintainer deriving the pack's test data from its pins and archiving it
-([CONTRIBUTING.md](../../CONTRIBUTING.md#pack-test-data)); it is never committed. The recipe
-(`scripts/pack-data/recipes/rust.ts`) runs `upstream/clippy/generate.py` against Clippy 0.1.99 and Rust 1.99.0
-(installed with `rustup`), in `fixtures` mode and then `corpus` mode over ripgrep and tokio. Derive it on Linux, as the
-bump workflow does: tokio has `#[cfg(target_os = "linux")]` code, so `corpus-tokio.expected.json` derived on macOS
-differs. The same holds for the port readiness recordings; a pull request's CI legs record them on Linux and upload
-them as the artifact `recordings-rust--clippy` ([CONTRIBUTING.md](../../CONTRIBUTING.md#merging-maintainers)).
-The probes Rerail wrote (`fixtures/rerail/`) are authored: a change to them goes in your pull request with
-`git add -f`.
+Taking a new snapshot is a maintainer deriving the pack's test data from its pins and publishing it
+([docs/upstream.md](../../docs/upstream.md#take-a-new-snapshot)); a pull request carries it only as a publish request
+under `upstream/clippy/publish/`. The recipe (`scripts/pack-data/recipes/rust.ts`) runs `upstream/clippy/generate.py`
+against Clippy 0.1.99 and Rust 1.99.0 (installed with `rustup`) over the fixtures. The probes Rerail wrote
+(`fixtures/rerail/`) are authored: a change to them is staged into `publish/` with the derived data.
 
 ```sh
 npm run fixtures:derive -- --pack rust
-npm run fixtures:push -- --pack rust     # on your own branch: archive it and rewrite its test-data.lock
+npm run fixtures:stage -- --pack rust    # copy what changed into upstream/clippy/publish/
 ```
 
 Scoring one rule with every false positive and false negative printed:
 
 ```sh
 node --import tsx conformance/languages/cli.ts --pack rust --rule clippy-precedence --fixtures
-```
-
-The port readiness gates judge every port against their own recording of Clippy (`upstream/clippy/recording.lock`;
-the recorder runs the rustup toolchain `conformance/recorders/port-readiness/runtimes/clippy-1.99.0/` pins, on the
-same UI tests and corpora, as `generate.py` does):
-
-```sh
-npm run port-readiness:record -- --pack rust --tool clippy   # needs rustup, git and the network
-npm run port-readiness -- --pack rust --tool clippy
 ```
 
 ## Rule details
@@ -167,11 +152,11 @@ Port of Clippy 0.1.99's needless_else lint: reports an empty else block after an
 
 ### `clippy-needless-raw-string-hashes`
 
-Port of Clippy 0.1.99's needless_raw_string_hashes: reports a raw string, byte string or C string literal (up to ten hashes) holding a `\\` or a `"`, whose hashes exceed what its contents require: one more than the most hashes after a quote that starts a run (a quote right after a run's hashes ends it instead). A raw literal holding neither is needless_raw_strings', which the recording enables and which then takes it.
+Port of Clippy 0.1.99's needless_raw_string_hashes: reports a raw string, byte string or C string literal (up to ten hashes) holding a `\\` or a `"`, whose hashes exceed what its contents require: one more than the most hashes after a quote that starts a run (a quote right after a run's hashes ends it instead). A raw literal holding neither is needless_raw_strings', which the expected findings enable and which then takes it.
 
 ### `clippy-needless-raw-string-hashes-one-allowed`
 
-Port of Clippy 0.1.99's needless_raw_string_hashes under allow-one-hash-in-raw-strings = true (its ui-toml test): reports a raw string, byte string or C string literal (up to ten hashes) holding a `\\` or a `"`, whose hashes exceed what its contents require: one more than the most hashes after a quote that starts a run (a quote right after a run's hashes ends it instead). One hash is always allowed. A raw literal holding neither is needless_raw_strings', which the recording enables and which then takes it.
+Port of Clippy 0.1.99's needless_raw_string_hashes under allow-one-hash-in-raw-strings = true (its ui-toml test): reports a raw string, byte string or C string literal (up to ten hashes) holding a `\\` or a `"`, whose hashes exceed what its contents require: one more than the most hashes after a quote that starts a run (a quote right after a run's hashes ends it instead). One hash is always allowed. A raw literal holding neither is needless_raw_strings', which the expected findings enable and which then takes it.
 
 ### `clippy-needless-raw-strings`
 
@@ -180,10 +165,6 @@ Port of Clippy 0.1.99's needless_raw_strings: reports raw literals whose content
 ### `clippy-octal-escapes`
 
 Port of Clippy 0.1.99's octal_escapes: reports each \0 followed by one or two octal digits in string, byte-string, or C-string literals; format-string preprocessing and external macros are not modelled.
-
-### `clippy-option-env-unwrap`
-
-Port of Clippy 0.1.99's option_env_unwrap: reports an unwrap or expect call on option_env!, spanning the whole call; inside a token tree (a macro invocation's input or a macro_rules! body) it reports the call where its tokens are written, as Clippy does for macros that keep their input's spans (macro_rules!, format macros) and for a macro_rules! body that is expanded; a proc macro that respans its input, which Clippy reports at the invocation, is not modelled.
 
 ### `clippy-partial-pub-fields`
 

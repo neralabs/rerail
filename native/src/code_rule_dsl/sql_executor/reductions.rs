@@ -6,37 +6,38 @@ use super::super::logic::sql::{
 };
 use super::maintenance::{Delta, Work};
 use super::*;
-mod compose;
-pub(super) mod pool;
-pub(super) mod cold;
-mod fused;
-mod join_tree;
-mod lattice;
-mod maintain;
-mod plan;
-mod reducer;
-mod sums;
-mod scalar_phase;
-mod properties;
+pub mod compose;
+pub mod pool;
+pub mod cold;
+pub mod fused;
+pub mod join_tree;
+pub mod lattice;
+pub mod maintain;
+pub mod native_maintain;
+pub mod plan;
+pub mod reducer;
+pub mod sums;
+pub mod scalar_phase;
+pub mod properties;
 use plan::{Rule, column, integer, names, plain, source};
 use reducer::Reducer;
-pub(super) use reducer::transition::{Transition,Initial};
+pub use reducer::transition::{Transition,Initial};
 
 #[derive(Clone)]
-pub(super) struct Retained {
+pub struct Retained {
     output: String,
     heads: String,
     width: usize,
     rules: Arc<Vec<Rule>>,
     lattice: Option<lattice::Lattice>,
-    pub(super) ready: bool,
+    pub ready: bool,
     cold_reuse: crate::code_rule_dsl::logic::analysis::Decision,
     cold_initialized: bool,
     support_uniqueness: crate::code_rule_dsl::logic::analysis::Decision,
 }
 
 impl Retained {
-    pub(super) fn initial_result(&self) -> String {
+    pub fn initial_result(&self) -> String {
         self.initial_result_from(&quote(&self.heads), "n")
     }
     fn initial_result_from(&self, heads: &str, count: &str) -> String {
@@ -56,7 +57,7 @@ impl Retained {
             }
         }
     }
-    pub(super) fn reducer_inputs(&self) -> impl Iterator<Item = &str> {
+    pub fn reducer_inputs(&self) -> impl Iterator<Item = &str> {
         self.rules
             .iter()
             .flat_map(|r| &r.reducers)
@@ -64,7 +65,7 @@ impl Retained {
     }
 
     /// Drop support for an empty positive body, retaining global scalar input indexes.
-    pub(super) fn clear_contexts(&self, store: &versions::Store) -> Result<()> {
+    pub fn clear_contexts(&self, store: &versions::Store) -> Result<()> {
         let mut objects = vec![self.heads.clone()];
         for rule in self.rules.iter() {
             objects.push(rule.contexts.clone());
@@ -85,7 +86,7 @@ impl Retained {
 }
 
 /// Sum signed deltas with a wider intermediate; fail atomically instead of storing SQLite REALs.
-pub(super) fn register(db: &rusqlite::Connection) -> Result<()> {
+pub fn register(db: &rusqlite::Connection) -> Result<()> {
     use rusqlite::functions::{Aggregate, Context, FunctionFlags};
     struct SignedSum;
     impl Aggregate<i128, i64> for SignedSum {
@@ -205,7 +206,7 @@ fn temporary(w: &mut Work<'_>, width: usize, extra: &str, keys: Option<usize>) -
 }
 
 /// Bootstrap once against the old facts, before any source in the atomic batch changes.
-pub(super) fn prepare(
+pub fn prepare(
     w: &mut Work<'_>,
     run: &mut session::Execution,
     potential: &mut BTreeSet<String>,
@@ -255,7 +256,7 @@ pub(super) fn prepare(
     }
     Ok(initialized)
 }
-pub(super) fn planned(db: &rusqlite::Connection, run: &session::Execution, native: bool) -> Result<pool::Plans> {
+pub fn planned(db: &rusqlite::Connection, run: &session::Execution, native: bool) -> Result<pool::Plans> {
     let mut plans = pool::Plans { states: plan_local(db,run,native)?, storage: vec![] };
     pool::combine(&mut plans, &run.emitted.queries);
     Ok(plans)
@@ -367,7 +368,7 @@ fn plan_local(
 }
 
 /// Rebuild checked descriptors after a copy-on-write fork. The support rows are already shared.
-pub(super) fn fork_plan(db: &rusqlite::Connection, run: &mut session::Execution) -> Result<()> {
+pub fn fork_plan(db: &rusqlite::Connection, run: &mut session::Execution) -> Result<()> {
     let mut states = planned(db, run, true)?;
     for state in states.values_mut() {
         state.ready = true;
@@ -377,7 +378,7 @@ pub(super) fn fork_plan(db: &rusqlite::Connection, run: &mut session::Execution)
 }
 
 impl Retained {
-    pub(super) fn rebuildable(&self) -> bool {
+    pub fn rebuildable(&self) -> bool {
         self.rules.iter().all(|r| r.reducers.is_empty())
             && self.lattice.as_ref().is_none_or(|l| l.tree.is_none())
     }
@@ -388,7 +389,7 @@ impl Retained {
         storage: Option<&versions::Store>,
     ) -> Result<()> {
         let db=w.db;
-        let fused = self.can_fuse() && storage.is_some_and(|s| s.contains(&self.output));
+        let fused = w.versions.is_some() && storage.is_some();
         owned_phase(
             db,
             objects,
@@ -539,11 +540,13 @@ impl Retained {
             )?;
         }
         if let Some(tree) = self.lattice.as_ref().and_then(|l| l.tree.as_ref()) {
-            tree.initialize(db, &self.heads, objects, storage)?;
+            let operation=w.profiler.map(|p|p.operation("registered lattice support index",("sql-extension",0),0,vec![]));
+            tree.initialize(db, &self.heads, objects, storage, w.versions.is_some())?;
+            if let Some(operation)=operation {operation.finish_unobserved();}
         }
         Ok(())
     }
-    pub(super) fn apply(
+    pub fn apply(
         &self,
         w: &mut Work<'_>,
         changes: &BTreeMap<String, Delta>,
@@ -551,14 +554,18 @@ impl Retained {
         if self.scalar_phase_eligible() && w.versions.is_some() {
             return scalar_phase::apply(self,w,changes);
         }
-        if self.can_fuse()
+        if (self.can_fuse() || self.isolated_phase().proven)
             && w.versions.is_some_and(|s| {
                 s.available(&self.output).is_some() && s.available(&self.heads).is_some()
             })
         {
             fused::apply(self, w, changes)
         } else {
-            maintain::apply(self, w, changes)
+            if w.versions.is_some_and(|s|s.available(&self.heads).is_some()) {
+                native_maintain::apply(self,w,changes)
+            } else {
+                maintain::apply(self, w, changes)
+            }
         }
     }
 }

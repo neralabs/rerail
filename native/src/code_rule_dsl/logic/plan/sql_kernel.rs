@@ -5,7 +5,7 @@ use crate::code_rule_dsl::{
     waves::schedule,
 };
 
-pub(super) fn normalize(prog: &Program) -> Result<(Program, BTreeSet<String>)> {
+pub fn normalize(prog: &Program) -> Result<(Program, BTreeSet<String>)> {
     let mut out = prog.clone();
     let mut sentinels: BTreeSet<String> = prog
         .decls
@@ -38,7 +38,7 @@ fn program_for(run: &Run<'_, '_>, rels: &BTreeSet<String>) -> Result<schedule::P
                 TOP
             } else {
                 let mut ops =
-                    lattices::registered(run.db, l.lattice()).map_err(|e| Error::Plan(e.reason))?;
+                    lattices::registered(&run.db, l.lattice()).map_err(|e| Error::Plan(e.reason))?;
                 ops.after = l.widen;
                 let top = ops.top;
                 operations.insert(rel.clone(), ops);
@@ -79,7 +79,7 @@ fn program_for(run: &Run<'_, '_>, rels: &BTreeSet<String>) -> Result<schedule::P
     })
 }
 
-pub(super) fn merge(run: &Run<'_, '_>, rel: &str, select: &str) -> Result<usize> {
+pub fn merge(run: &Run<'_, '_>, rel: &str, select: &str) -> Result<usize> {
     let mut p = program_for(run, &BTreeSet::from([rel.into()]))?;
     p.steps.push(schedule::Step {
         output: rel.into(),
@@ -87,7 +87,7 @@ pub(super) fn merge(run: &Run<'_, '_>, rel: &str, select: &str) -> Result<usize>
         reads: vec![],
         sql: format!("INSERT OR IGNORE INTO new_{rel} {select}"),
     });
-    schedule::execute_existing(run.db, &p, 1024).map_err(|e| Error::Plan(e.to_string()))?;
+    schedule::execute_existing(&run.db, &p, 1024).map_err(|e| Error::Plan(e.to_string()))?;
     Ok(run.db.query_row(
         "SELECT coalesce(sum(rows),0) FROM wave_delta WHERE rel=?1",
         [rel],
@@ -95,7 +95,7 @@ pub(super) fn merge(run: &Run<'_, '_>, rel: &str, select: &str) -> Result<usize>
     )? as usize)
 }
 
-pub(super) fn component(
+pub fn component(
     run: &mut Run<'_, '_>,
     scc: &BTreeSet<String>,
     rules: &[&Rule],
@@ -107,7 +107,7 @@ pub(super) fn component(
     for (head, order) in planned {
         let q = run.model.checked_query(run.prog, head, order, None, None)?;
         p.steps.push(schedule::Step {
-            output: head.rel.clone(),
+            output: head.rel.to_string(),
             stratum: 0,
             reads: vec![],
             sql: String::new(),
@@ -120,7 +120,7 @@ pub(super) fn component(
             for (i, l) in rule.body.iter().enumerate() {
                 if let Literal::Atom(a) = l
                     && !a.neg
-                    && scc.contains(&a.rel)
+                    && scc.contains(a.rel.as_str())
                 {
                     let (order, _, _) =
                         run.model
@@ -130,9 +130,9 @@ pub(super) fn component(
                         run.model
                             .checked_query(run.prog, &rule.head, &order, Some(at), None)?;
                     p.steps.push(schedule::Step {
-                        output: rule.head.rel.clone(),
+                        output: rule.head.rel.to_string(),
                         stratum: 0,
-                        reads: vec![a.rel.clone()],
+                        reads: vec![a.rel.to_string()],
                         sql: String::new(),
                     });
                     queries.push(Some(q));
@@ -150,6 +150,7 @@ pub(super) fn component(
         })
         .collect::<rusqlite::Result<BTreeMap<_, _>>>()?;
     let mut emitted = emit::Emitted {
+        constant_rows: Default::default(),
         value_types: std::sync::Arc::new(run.prog.decls.iter().map(|(r,c)|(r.clone(),c.iter().map(|(_,t)|t.clone()).collect())).collect()),
         analysis: run.model.analysis(run.prog),
         program: p,
@@ -176,6 +177,6 @@ pub(super) fn component(
         }
         step.sql = format!("INSERT OR IGNORE INTO new_{} {}", step.output, q.render());
     }
-    schedule::execute_existing(run.db, &emitted.program, 1024)
+    schedule::execute_existing(&run.db, &emitted.program, 1024)
         .map_err(|e| Error::Plan(e.to_string()))
 }

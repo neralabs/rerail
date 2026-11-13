@@ -513,7 +513,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112",
+      "sha256": "7a15cdc0f4ca2f24a63bcca972b42794a046d544f0c3c74bed0fd9db4e960069",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -682,6 +682,11 @@
           "before": "24acea2b32811cf40cf244eb29d25abfabb7349bb21091518eeba726fde10609",
           "after": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112",
           "reason": "Expose the existing Python decimal decoder as an exact text functor"
+        },
+        {
+          "before": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112",
+          "after": "7a15cdc0f4ca2f24a63bcca972b42794a046d544f0c3c74bed0fd9db4e960069",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
         }
       ],
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
@@ -753,8 +758,15 @@
     },
     {
       "destination": "docs/rule-syntax/lib/php/arrays.rr",
-      "sha256": "2cfb920594f093b4981066d62503df0cae37aabc209da97d01c607d1eead52c5",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "6221475a310a896bb7662650a12ec1245e7db1a0a806a531d2fdcd887e2f7e60",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "2cfb920594f093b4981066d62503df0cae37aabc209da97d01c607d1eead52c5",
+          "after": "6221475a310a896bb7662650a12ec1245e7db1a0a806a531d2fdcd887e2f7e60",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/php/format.rr",
@@ -763,8 +775,15 @@
     },
     {
       "destination": "docs/rule-syntax/lib/php/names.rr",
-      "sha256": "9b4a74418c81a849a7acf249d5378f0dc4c6ba946fce02c95b25b466d1d03709",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "2027623b65a6bae47b2220e72a33108a323cc972d3c883f1cdae026351f9867f",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "9b4a74418c81a849a7acf249d5378f0dc4c6ba946fce02c95b25b466d1d03709",
+          "after": "2027623b65a6bae47b2220e72a33108a323cc972d3c883f1cdae026351f9867f",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/php/phpdoc.rr",
@@ -773,25 +792,37 @@
     },
     {
       "destination": "docs/rule-syntax/lib/php/values.rr",
-      "sha256": "a681fe7dabbb2f749ad227e5ce6f0d689f67536aca153f09895d579216eb6fe7",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "7224fc05b03a48d462ae7cbafd08f1b530e86456c6cc9a5ebcff0a5c61c63b8a",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "a681fe7dabbb2f749ad227e5ce6f0d689f67536aca153f09895d579216eb6fe7",
+          "after": "7224fc05b03a48d462ae7cbafd08f1b530e86456c6cc9a5ebcff0a5c61c63b8a",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/python/annotations.rr",
-      "sha256": "49aef096e5217ac34f56b90d7261503cf08b0f1ce1590bb2d2c7e0ed1bdef8e5",
+      "sha256": "17438420481fe7df53e884d8d199ed789a65690521b6f0bf3dfe53645c67f718",
       "upstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
       "repairs": [
         {
           "before": "cb15fe34ea8758ce4b3b4bb7297cb01f7a1531535149eb54b58a091189ddb305",
           "after": "49aef096e5217ac34f56b90d7261503cf08b0f1ce1590bb2d2c7e0ed1bdef8e5",
           "reason": "Adopt the exact engine-owned standard library from Final ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0"
+        },
+        {
+          "before": "49aef096e5217ac34f56b90d7261503cf08b0f1ce1590bb2d2c7e0ed1bdef8e5",
+          "after": "17438420481fe7df53e884d8d199ed789a65690521b6f0bf3dfe53645c67f718",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
         }
       ],
       "upstreamSha256": "49aef096e5217ac34f56b90d7261503cf08b0f1ce1590bb2d2c7e0ed1bdef8e5"
     },
     {
       "destination": "docs/rule-syntax/lib/python/ast.rr",
-      "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a",
+      "sha256": "5581d166335f5a7cd907b951b627375766a88550c97435842fda45822d77900f",
       "upstreamSha256": "5f72729eba6db24aed31dde22e5b6a2c7c35b77f8e0d1be0179e055ddece88f4",
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
       "repairs": [
@@ -799,6 +830,11 @@
           "before": "5f72729eba6db24aed31dde22e5b6a2c7c35b77f8e0d1be0179e055ddece88f4",
           "after": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a",
           "reason": "Preserve Unicode word-query semantics for Python Constant values and identify docstrings from syntax, including lone surrogates"
+        },
+        {
+          "before": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a",
+          "after": "5581d166335f5a7cd907b951b627375766a88550c97435842fda45822d77900f",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
         }
       ]
     },
@@ -857,8 +893,15 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/flow-return.rr",
-      "sha256": "4539cffb384e9c066f900206b04897bd621c3c9297b87b7a59dd39b395f5e50d",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "493ad22f08aa0dcc07c7ddcb61eac517df8e98ea0ff0b901fb59b7a2afe07814",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "4539cffb384e9c066f900206b04897bd621c3c9297b87b7a59dd39b395f5e50d",
+          "after": "493ad22f08aa0dcc07c7ddcb61eac517df8e98ea0ff0b901fb59b7a2afe07814",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/python/flow.rr",
@@ -867,8 +910,15 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/imports.rr",
-      "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "184c87137ce6d7c21c8a43f9feb0228259509661793b7773f3c56778707f5fd5",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d",
+          "after": "184c87137ce6d7c21c8a43f9feb0228259509661793b7773f3c56778707f5fd5",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/python/logging.rr",
@@ -892,8 +942,15 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc-seen.rr",
-      "sha256": "23d5e7ca82cb073f9a5fedc45d1407ea3ce06e8bc74f2ea79c271aafb1ec5457",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "b9a58cbe9b297a59ac1ddf34033fd0f7bb1ebb2ab7ae7960f989416f44bf1365",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "23d5e7ca82cb073f9a5fedc45d1407ea3ce06e8bc74f2ea79c271aafb1ec5457",
+          "after": "b9a58cbe9b297a59ac1ddf34033fd0f7bb1ebb2ab7ae7960f989416f44bf1365",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-args.rr",
@@ -932,8 +989,15 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-perf.rr",
-      "sha256": "8696db58923ff7d488d18a9d7f93b8a386c0051fa52bb20e32a7ad261349a565",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "d2d981e62064f189bb92c38ed63b6b9041f835c27ff9fe270a5675502edf244e",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "8696db58923ff7d488d18a9d7f93b8a386c0051fa52bb20e32a7ad261349a565",
+          "after": "d2d981e62064f189bb92c38ed63b6b9041f835c27ff9fe270a5675502edf244e",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-self.rr",
@@ -942,8 +1006,15 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-slots.rr",
-      "sha256": "113d03bf4e29a9b672fc899ca83ae55ff9499802bae6703ddba34bc5e6c84460",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "28eca38c4d0abd9dd7d99c7d33a15b3928f1491bb4d303da3620ade292fba91d",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "113d03bf4e29a9b672fc899ca83ae55ff9499802bae6703ddba34bc5e6c84460",
+          "after": "28eca38c4d0abd9dd7d99c7d33a15b3928f1491bb4d303da3620ade292fba91d",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-todo-span.rr",
@@ -957,8 +1028,15 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-typecheck.rr",
-      "sha256": "ab680bfd8d8b5dde949a164eb02007c19b5206c0d0a585c57376e0149a9af455",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "7de075743e305dd19fb9fdb343f918a211fc1064c766d01b376c8fa05be9a01e",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "ab680bfd8d8b5dde949a164eb02007c19b5206c0d0a585c57376e0149a9af455",
+          "after": "7de075743e305dd19fb9fdb343f918a211fc1064c766d01b376c8fa05be9a01e",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/python/misc2-version.rr",
@@ -967,13 +1045,18 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/names.rr",
-      "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62",
+      "sha256": "99449ec36c707c2c1ca7dbd04bc616f37386bcce16b9c330a20b956dee02f5c9",
       "upstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
       "repairs": [
         {
           "before": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53",
           "after": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62",
           "reason": "Adopt the exact engine-owned standard library from Final ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0"
+        },
+        {
+          "before": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62",
+          "after": "99449ec36c707c2c1ca7dbd04bc616f37386bcce16b9c330a20b956dee02f5c9",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
         }
       ],
       "upstreamSha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
@@ -995,13 +1078,18 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/pyflakes.rr",
-      "sha256": "df979b0c0e6b7ae5d7db6b07be3d077cb5d894a18470b00a544b725206b8163a",
+      "sha256": "9928b3472d990eb77f69f169447ee962b45e87538152fbe537f5963c75faccec",
       "upstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
       "repairs": [
         {
           "before": "c5dc1a2d35d4a703a2fd2c58559ab64d7c15f5e5c90deddeb6f6c28d06a7dd41",
           "after": "df979b0c0e6b7ae5d7db6b07be3d077cb5d894a18470b00a544b725206b8163a",
           "reason": "Adopt the exact engine-owned standard library from Final ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0"
+        },
+        {
+          "before": "df979b0c0e6b7ae5d7db6b07be3d077cb5d894a18470b00a544b725206b8163a",
+          "after": "9928b3472d990eb77f69f169447ee962b45e87538152fbe537f5963c75faccec",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
         }
       ],
       "upstreamSha256": "df979b0c0e6b7ae5d7db6b07be3d077cb5d894a18470b00a544b725206b8163a"
@@ -1013,13 +1101,18 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/ruff-classes.rr",
-      "sha256": "03eb4e5745314b4248046783211a9166fdfc46740690db08c6a265060d16c6f0",
+      "sha256": "36cabaa2dbbf2e41dd27b45e57e5e39c335989e3dd6de0fa96720901c3bfb91d",
       "upstreamCommit": "ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0",
       "repairs": [
         {
           "before": "14e0ed7c1b253e10f27604592c96fb0866ed79fc10713f881738699481013656",
           "after": "03eb4e5745314b4248046783211a9166fdfc46740690db08c6a265060d16c6f0",
           "reason": "Adopt the exact engine-owned standard library from Final ca24b294a5fce0fa1d0c6c9f259facdfcf5856d0"
+        },
+        {
+          "before": "03eb4e5745314b4248046783211a9166fdfc46740690db08c6a265060d16c6f0",
+          "after": "36cabaa2dbbf2e41dd27b45e57e5e39c335989e3dd6de0fa96720901c3bfb91d",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
         }
       ],
       "upstreamSha256": "03eb4e5745314b4248046783211a9166fdfc46740690db08c6a265060d16c6f0"
@@ -1031,8 +1124,15 @@
     },
     {
       "destination": "docs/rule-syntax/lib/python/ruff.rr",
-      "sha256": "49bcb306de32f4115f2c534221aca9d431b2fc468d65747eb7cc1f276787c758",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "1ba7bee4cd10433e0ef4a09c754d66ad4574d549c73d3ecceb7583f460b3c3a2",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "49bcb306de32f4115f2c534221aca9d431b2fc468d65747eb7cc1f276787c758",
+          "after": "1ba7bee4cd10433e0ef4a09c754d66ad4574d549c73d3ecceb7583f460b3c3a2",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/python/security-blacklist.rr",
@@ -1123,53 +1223,123 @@
     },
     {
       "destination": "docs/rule-syntax/lib/rust/syntax-attrs.rr",
-      "sha256": "b023724ddb183b5cc07deccd4757f19afc20be4556d550e465d0b2b2df46e3f1",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "a79d392ca45be8291c5af13a32292f04d04e37e66f7169d431759b6eec40f31b",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "b023724ddb183b5cc07deccd4757f19afc20be4556d550e465d0b2b2df46e3f1",
+          "after": "a79d392ca45be8291c5af13a32292f04d04e37e66f7169d431759b6eec40f31b",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/rust/syntax-literals.rr",
-      "sha256": "6b7b67216af5f4bedf9216537f6d198df1a31b8b5fd9e5316dd297a0ff63292a",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "c755a949694211b517ff3c3a8b0aacb9b74a33ac3490a3ee3888997576ebc94e",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "6b7b67216af5f4bedf9216537f6d198df1a31b8b5fd9e5316dd297a0ff63292a",
+          "after": "c755a949694211b517ff3c3a8b0aacb9b74a33ac3490a3ee3888997576ebc94e",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/rust/syntax-patterns.rr",
-      "sha256": "4bbf73d66a9064009f4117f11f397c9d77a19d5e045cbebac334d3240af70569",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "94c100814e3b2de6b8648822d8a3830df76e29876b6d0e8f138ad6b31ea2af51",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "4bbf73d66a9064009f4117f11f397c9d77a19d5e045cbebac334d3240af70569",
+          "after": "94c100814e3b2de6b8648822d8a3830df76e29876b6d0e8f138ad6b31ea2af51",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/rust/syntax.rr",
-      "sha256": "670a2e969f29939d5c37718e61fd88c3e57e9b61d63fb674390be8c1b686fbae",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "d383b022cf01e34320ac0db1d266a32a9da8e2a2e99276e9bc52ab1dc9f3fb46",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "670a2e969f29939d5c37718e61fd88c3e57e9b61d63fb674390be8c1b686fbae",
+          "after": "d383b022cf01e34320ac0db1d266a32a9da8e2a2e99276e9bc52ab1dc9f3fb46",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/sql/syntax.rr",
-      "sha256": "e644a35bdf6438686677238360bece57fdaa3d1910af46b949400363c0dc0a45",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "dfdb6695af021701f6da6a4f6db660f87cfb76612eb19a758d347a4be9d0cc99",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "e644a35bdf6438686677238360bece57fdaa3d1910af46b949400363c0dc0a45",
+          "after": "dfdb6695af021701f6da6a4f6db660f87cfb76612eb19a758d347a4be9d0cc99",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-a-common.rr",
-      "sha256": "391f05e8ebd97493c51f6007118ee2582e89ae73fc3e2d5e47ad7f0875be0ef8",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "144668f12515804239c924e0a0fe5edb43dc33cdbe46e958b67032217ba0d544",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "391f05e8ebd97493c51f6007118ee2582e89ae73fc3e2d5e47ad7f0875be0ef8",
+          "after": "144668f12515804239c924e0a0fe5edb43dc33cdbe46e958b67032217ba0d544",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-a-control.rr",
-      "sha256": "9c66ab1c2106707f48dc9de58756fa2c215209998261cb5bf61bfbb517fc47c2",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "da5b72bd1b6e60ef0dc413a7e2b97ff3be7fff04ece594168b9299ab1d642c30",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "9c66ab1c2106707f48dc9de58756fa2c215209998261cb5bf61bfbb517fc47c2",
+          "after": "da5b72bd1b6e60ef0dc413a7e2b97ff3be7fff04ece594168b9299ab1d642c30",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-a-expressions.rr",
-      "sha256": "12b39fa956c17bd81bf2f7596f1c86b0a452b51315cb731850509e59c771e046",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "2885e5bbe0504184dc4cecfe7f000a053f28756b7007ed59dbe165decd40a532",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "12b39fa956c17bd81bf2f7596f1c86b0a452b51315cb731850509e59c771e046",
+          "after": "2885e5bbe0504184dc4cecfe7f000a053f28756b7007ed59dbe165decd40a532",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-a-functions.rr",
-      "sha256": "9bda03916c1b1b773ea9d59d0eed4b55db9084b95fe8d6989e2187eb638335dc",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "90fe2a453d5d914cc30a5005fa3bca8056d0f44bd15fe38b823f66b5632bebc6",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "9bda03916c1b1b773ea9d59d0eed4b55db9084b95fe8d6989e2187eb638335dc",
+          "after": "90fe2a453d5d914cc30a5005fa3bca8056d0f44bd15fe38b823f66b5632bebc6",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-a-globals.rr",
-      "sha256": "7e04004e6a114b0c85764ff2ba711acc8487349fa0b301a2d4756e276e7ecfc1",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "17f062ad10aa70f299e3e47e10d900b29f0c0822c325ce8eeb87da8cfabf904b",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "7e04004e6a114b0c85764ff2ba711acc8487349fa0b301a2d4756e276e7ecfc1",
+          "after": "17f062ad10aa70f299e3e47e10d900b29f0c0822c325ce8eeb87da8cfabf904b",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-a-text.rr",
@@ -1178,8 +1348,15 @@
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-b-control.rr",
-      "sha256": "54c20e7422edf681f68f4daf39ca1fe0946b265083a01c64e14ee1c82eaa926c",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "55bd2463e8fbc551e2cd2f81f0bed927b3ee7315baa8bfa0aa74caaed294cb5d",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "54c20e7422edf681f68f4daf39ca1fe0946b265083a01c64e14ee1c82eaa926c",
+          "after": "55bd2463e8fbc551e2cd2f81f0bed927b3ee7315baa8bfa0aa74caaed294cb5d",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-b-literals.rr",
@@ -1188,8 +1365,15 @@
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-b-objects.rr",
-      "sha256": "65678ee9adbfed4c0fda3fbf7bd8a4e870d643798e54c9ba2451ff70fb095384",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "ebb83e2599e58aae6182ad8bda9c190ff0e5081fd08de7ed161307d9d4631e26",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "65678ee9adbfed4c0fda3fbf7bd8a4e870d643798e54c9ba2451ff70fb095384",
+          "after": "ebb83e2599e58aae6182ad8bda9c190ff0e5081fd08de7ed161307d9d4631e26",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/eslint-b-scope.rr",
@@ -1203,13 +1387,27 @@
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/modules.rr",
-      "sha256": "305ade4633dd650b1d777f1b50f84540166aa6e7b027afb139072484e501571f",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "e953c07da8e5128159304c86a253f9ce35684dc5232e61d942d552dca0fface7",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "305ade4633dd650b1d777f1b50f84540166aa6e7b027afb139072484e501571f",
+          "after": "e953c07da8e5128159304c86a253f9ce35684dc5232e61d942d552dca0fface7",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/names.rr",
-      "sha256": "5eba9aa507bcf66977546b9c52eb6f200df16d50c14e74dd439404c2e02ff9a9",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "f486def4a7d5be1b2a467edf7d7f64d10dadb231b5fb4c6e9157dbff466e0fa4",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "5eba9aa507bcf66977546b9c52eb6f200df16d50c14e74dd439404c2e02ff9a9",
+          "after": "f486def4a7d5be1b2a467edf7d7f64d10dadb231b5fb4c6e9157dbff466e0fa4",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/next.rr",
@@ -1218,8 +1416,15 @@
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/node-package.rr",
-      "sha256": "afcde1aefbff397c033aa5a4a8f97ab4f421374164ab3259b35b1086d092bee5",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "8adb769bf6971c6d608dd21129f8f1ae84e70e247cf6bc7b1601457314532314",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "afcde1aefbff397c033aa5a4a8f97ab4f421374164ab3259b35b1086d092bee5",
+          "after": "8adb769bf6971c6d608dd21129f8f1ae84e70e247cf6bc7b1601457314532314",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/node-resolve.rr",
@@ -1238,8 +1443,15 @@
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/react-class.rr",
-      "sha256": "f1460a643769d9af2d4420746dc60de3896d8b19e1c8470f0dc1a75b07a91f8f",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "1036edf5f97f0d87c785e0a5373adb8badcb01c957dd93b54711ed124d4389f2",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "f1460a643769d9af2d4420746dc60de3896d8b19e1c8470f0dc1a75b07a91f8f",
+          "after": "1036edf5f97f0d87c785e0a5373adb8badcb01c957dd93b54711ed124d4389f2",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/react-compiler.rr",
@@ -1248,8 +1460,15 @@
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/react-hooks.rr",
-      "sha256": "76fa3d175858eeb062789056aac4322cda1de6c2245e8cd558dca410b95d1086",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "9fa48c5708e0cab42e4c4205060d29c78679c0cb9a17dda51aec5d234c993b9d",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "76fa3d175858eeb062789056aac4322cda1de6c2245e8cd558dca410b95d1086",
+          "after": "9fa48c5708e0cab42e4c4205060d29c78679c0cb9a17dda51aec5d234c993b9d",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/react.rr",
@@ -1258,18 +1477,39 @@
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/statements.rr",
-      "sha256": "567b392deb1cbb678f227a52a73e4f2df0dddc57600cdffd451b3c1f59e76f2d",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "496517dde60fcd330f8f444504326466fa211780215c3ae5b06c6488ac629f4e",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "567b392deb1cbb678f227a52a73e4f2df0dddc57600cdffd451b3c1f59e76f2d",
+          "after": "496517dde60fcd330f8f444504326466fa211780215c3ae5b06c6488ac629f4e",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/ts-a-returns.rr",
-      "sha256": "23307e41c5e3f6310cb6d2d5856c940afd91b07a873e3c0551af2b74555c835e",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "7a3c90c4c89c30a8afc73c6a78c44e0f96e46a6ef2d64fc0cf2a8b6ad96c26b7",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "23307e41c5e3f6310cb6d2d5856c940afd91b07a873e3c0551af2b74555c835e",
+          "after": "7a3c90c4c89c30a8afc73c6a78c44e0f96e46a6ef2d64fc0cf2a8b6ad96c26b7",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/ts-a.rr",
-      "sha256": "3ab6507eacfd5d8767031085906b42031c7448c7a010c719f4f737c093c64c60",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "fcd393ea9908f2c55eea75deea202feaeeb3b1fd62f8a5dc7de8e89699f9a48c",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "3ab6507eacfd5d8767031085906b42031c7448c7a010c719f4f737c093c64c60",
+          "after": "fcd393ea9908f2c55eea75deea202feaeeb3b1fd62f8a5dc7de8e89699f9a48c",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/ts-b-scope.rr",
@@ -1283,8 +1523,15 @@
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/ts-b.rr",
-      "sha256": "1041397d2b59ecbcb2e3087ff6d769be8f8b4e29c5c9c9afbec2468e97a5ac22",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "4ef481f04cbd6fd93c8a41610b8a7d8ddcc54bc327a6ec52a56c5cba2d09f643",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "1041397d2b59ecbcb2e3087ff6d769be8f8b4e29c5c9c9afbec2468e97a5ac22",
+          "after": "4ef481f04cbd6fd93c8a41610b8a7d8ddcc54bc327a6ec52a56c5cba2d09f643",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/tsx/values.rr",
@@ -1331,8 +1578,15 @@
     },
     {
       "destination": "docs/rule-syntax/lib/vue/template.rr",
-      "sha256": "40b7ab398c6b0bcf8d6a48d119fb28b259c4cc30ab5eae552de5912636921c42",
-      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
+      "sha256": "3a526ed4c439d9f49644be1ec915e85e19979056746975a5c17c52877bd4744c",
+      "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104",
+      "repairs": [
+        {
+          "before": "40b7ab398c6b0bcf8d6a48d119fb28b259c4cc30ab5eae552de5912636921c42",
+          "after": "3a526ed4c439d9f49644be1ec915e85e19979056746975a5c17c52877bd4744c",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/eager-resolve.rr",
@@ -1344,9 +1598,16 @@
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/pure-lazy-runtime-purity.rr",
       "importedSha256": "94011e711c29b05777f7fa50469341ea064f2ee19b8d8157eecf17bf73ace96b",
-      "sha256": "9664b4812f0d82dc522d2674cf5593c1046ebbf457531f5767dbeb941f47474e",
+      "sha256": "1c4c8fae5c8e9f50678657e33f00908d9084788c301c0291212bc0248bf20229",
       "upstreamSha256": "340ad5eee1c5bf7ea073c08a0e879840250df97b5f4a0d68e166bbdd2fb682a1",
-      "upstreamCommit": "fa50cd94c1bb2621647cc73c31e119f1db9f3be2"
+      "upstreamCommit": "fa50cd94c1bb2621647cc73c31e119f1db9f3be2",
+      "repairs": [
+        {
+          "before": "9664b4812f0d82dc522d2674cf5593c1046ebbf457531f5767dbeb941f47474e",
+          "after": "1c4c8fae5c8e9f50678657e33f00908d9084788c301c0291212bc0248bf20229",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/pure-lazy-runtime-purity.tables.rr",
@@ -2408,7 +2669,14 @@
       "destination": "docs/rule-syntax/lib/bootstrap.rr",
       "origin": "Final shape",
       "upstreamCommit": "7d1e4007317d1ced555df6d8850d752289984b61",
-      "sha256": "50260741a4735993fc5fe7e7000cc51d4c3e5e47197a01c717e1fd4e4b9b7fed"
+      "sha256": "004e6012ed5328fa9d8dea1a515494810abd3cc08fbcd7b97057fd326a98335b",
+      "repairs": [
+        {
+          "before": "50260741a4735993fc5fe7e7000cc51d4c3e5e47197a01c717e1fd4e4b9b7fed",
+          "after": "004e6012ed5328fa9d8dea1a515494810abd3cc08fbcd7b97057fd326a98335b",
+          "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        }
+      ]
     },
     {
       "destination": "docs/rule-syntax/lib/tests/directory-reader.rr",
@@ -5704,7 +5972,7 @@
       "legacySha256": "be297814ee19579d51c19690c05196511deef47126642134ac3bf08feb9acc29",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/pure-lazy-runtime-purity.rr",
-      "ruleSha256": "9664b4812f0d82dc522d2674cf5593c1046ebbf457531f5767dbeb941f47474e"
+      "ruleSha256": "1c4c8fae5c8e9f50678657e33f00908d9084788c301c0291212bc0248bf20229"
     },
     {
       "check": "cached_pure_lazy_allowlist",
@@ -6131,379 +6399,12 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "fcce32b26cf5e561ded72575ed6d327394f822fe",
-    "status": "Merged Final fcce with reviewed generic compatibility extensions",
-    "retiredCheckout": ".rerail/rr-migration-20261106/engine",
-    "localRepairCommit": "25b580262",
-    "localRepairPaths": [
-      "native/src/code_rule_dsl/logic/plan.rs",
-      "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax.rs",
-      "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/diagnostic.rs",
-      "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs"
-    ],
-    "localCapabilityCommits": [
-      "e6968ad82"
-    ],
-    "localCapabilityPaths": [
-      "native/src/code_rule_dsl/facts/vtab/syntax/python_print.rs",
-      "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
-      "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-      "native/src/code_rule_dsl/logic/sql/select.rs",
-      "native/src/code_rule_dsl/logic/strings.rs"
-    ],
-    "rootMetadataCommit": "7b44f4813",
-    "canonicalCallTextCommit": "eea5ed2da",
-    "nativeExtensions": [
-      {
-        "path": "Cargo.lock",
-        "sha256": "898115da4c35a63bd71e613d41ae410230611a4cfadfb0a1d12277474640909f"
-      },
-      {
-        "path": "native/Cargo.toml",
-        "sha256": "e76700c02857d63d8b66047779c965fb6883223f7bece20f947ef91930d7e335"
-      },
-      {
-        "path": "native/src/code_rule_dsl/facts/core.rs",
-        "sha256": "6c2ddf5bcc8dd22877888ef1c976e8b6d4e25060643f95c939f4580fc7c4f890"
-      },
-      {
-        "path": "native/src/code_rule_dsl/facts/repository.rs",
-        "sha256": "7ff68b070b737fb38b27f4736c687cba260151ec5c4ff8dff08f75d5ccd991b0"
-      },
-      {
-        "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
-        "sha256": "f4a2740af5074026008a7cd17af5cade4bcee4fad8373aa7393cdd001c8c069e"
-      },
-      {
-        "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
-        "sha256": "e7c4c4cd56040aad54d0d185a31fec399b33acded09190fdb42fe6b633f27751"
-      },
-      {
-        "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
-        "sha256": "13b82d0ba854fee9ad053f2609cbabb693be06f34f7a5c06417f2034c2ba4bf3"
-      },
-      {
-        "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print.rs",
-        "sha256": "670cc09461d50ae90b01f77fee285066c71cb49933a72cf0d803df0bdede2b79"
-      },
-      {
-        "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/calls.json",
-        "sha256": "214157a6cb66b177fe258f94e75f035130c43100ba19991a9189b441b79c2039"
-      },
-      {
-        "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/expressions.json",
-        "sha256": "5a6eee8ac5ddbc31b67faab5bc57af09be30c54be73d4aa27d8af050fd180bf9"
-      },
-      {
-        "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/printable.generated.rs",
-        "sha256": "a3e99353157742c99f47adcef0d88237c5606a6b9b1dbebe754f75ed4434537b"
-      },
-      {
-        "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax.rs",
-        "sha256": "25b649736836d4c4800347d565284b4ee3e0ae46977e16a77494ed78fc61c408"
-      },
-      {
-        "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/diagnostic.rs",
-        "sha256": "8c91d767c6693aa8a07c8dc351b8a25712c62ca4bddc1b7353c0c8d01c4de075"
-      },
-      {
-        "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/python-errors.json",
-        "sha256": "7b85e2616f4f630a121112cac556c1874cafff8bbf9ce85a51d1aca6056bef15"
-      },
-      {
-        "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/python-exceptions.json",
-        "sha256": "8d83797508b026f9c60c88adcc3bfe6812bb83d99631a4623f78a9365d721786"
-      },
-      {
-        "path": "native/src/code_rule_dsl/facts/vtab/syntax/tests.rs",
-        "sha256": "e0b3f2d53c7d8d08e061e41cd48fb496612d9dfe9728214bed8593fd7d9b4759"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/front.rs",
-        "sha256": "a51e0c8c1ab9a0cdb2bac9fb6a3a1b7cda31604b0216a252d700ed5ce326071d"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/native.rs",
-        "sha256": "ba18ecba95332b98574fd5c5dfb2dab168051fe7cad92da2734fe1e38bcf1907"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/native/balanced_rows.rs",
-        "sha256": "0c935fe75ae2831dfe9db9da2859627a2b5c734d3b593e413d8e812835c32870"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/native/bfs_walk.rs",
-        "sha256": "a0d972d6f3e877b0ab6bf2bd222958542660dd9963f9085f0b5375e3c8806f4c"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/native/python_set_rows.rs",
-        "sha256": "86ad7b22fb4b6e632229c36ea24d5f760d583f50ada005723cd843eabcd37e46"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/native/setfix.rs",
-        "sha256": "b8c35e84ab2d5902c51cf5d0097e07b61d219f0d6c17d3357c42a2c59c18b423"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/plan.rs",
-        "sha256": "aea4e631d5996ff529f0888d2529d1cf2ee1d28972912b02dadb5689adfea3b6"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
-        "sha256": "9774c2acc660312f8b912c378da0900811ce262674bd01ae8f321dce1253baeb"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/plan/corpus/constants.rs",
-        "sha256": "d6f8406d0eebb3825a99885ce43a09a9c157037bdcbae6aaa95db950149ca902"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
-        "sha256": "7598b776d2af34060675be67c7e5a353985c4cb0081387aac6bb3f6caa9bacc4"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
-        "sha256": "913d20a9f6e4a3f1612329b1a21fe2e86d898c9ee1a6056531e6db663a10e640"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/plan/corpus/world.rs",
-        "sha256": "2f799956312dc92a4a5c26b260ac621fcd101fd8bb2e4a0acb6aca57efe33159"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/plan/demand.rs",
-        "sha256": "8d5a7b075bc5db3f9a0319a8f5599c702be2fdfbee673f253441d592ce1c6ee8"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/program_facts.rs",
-        "sha256": "c7be2db7db1207540d1f00ed56d141caefeaa108050e0fb9f2b533343a9163bf"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
-        "sha256": "39bdcece7f399c24b0bdbb4cd786c3e2fc4a4370e3deb0c58fe0c6df157c35a6"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/rr/print.rs",
-        "sha256": "fb8e2f13facab8dabb441bf7e33ea5ce5a7aef45fa6935d5991efe66796d4082"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
-        "sha256": "29db7480d41290a4163fd3ab5b96114ec6555e83c8e07f5b78c571a2e0b6accc"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/sql/select.rs",
-        "sha256": "4b127ab05e95cf5ea65541327c5a843104fa31e75e1c2f6687b7eb451697d213"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/strings.rs",
-        "sha256": "41e84aadab8298fec47987a984df43c3ad4708aa20ef89febacf2cb92d22bd33"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
-        "sha256": "56a930de8ca6f6c43ec38d98297528d49dc2541facd8d9d58460f7cb0e6b87b2"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/strings/python_integer.rs",
-        "sha256": "8c36fbff3984103f442aa58f1076e9be829396eac3dc0dcc7cae931c6847ea5a"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/strings/python_json.rs",
-        "sha256": "2c8e036c556c1b1f44d0f81e7a0b9512e70fefbd4ba35b62fa2677fba3f76dd3"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/strings/signature-errors.json",
-        "sha256": "d0b1c63f0ece1e791339013ff176d1506e6ae2e2ace4ecaa32d1475aa94bd44c"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/strings/signatures.rs",
-        "sha256": "b56ff78ff1c7b2e4f3c77554fed1659f0918f186f19b085fe2520e7099e65a69"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/strings/tests.rs",
-        "sha256": "ef29c78214acac2d0dbe8a1d1b6b7f7f4391df01384c6adbe207e0ff2b77769a"
-      },
-      {
-        "path": "native/src/code_rule_dsl/sql_executor/documents/shards.rs",
-        "sha256": "ad552b71db6aff0f39bc3d0345ee84373481cc7292192b6f3220044e883ac679"
-      },
-      {
-        "path": "native/src/code_rule_dsl/tools.rs",
-        "sha256": "c2d6f79afc85f9ae7b486860351d1af380159a90b74294c96751d3499e903f6b"
-      },
-      {
-        "path": "native/src/code_rule_dsl/tools/signing.rs",
-        "sha256": "501ae4d5d86a3053b489522bcf123acc70a71017cc583dece8e69741a014333b"
-      },
-      {
-        "path": "native/src/code_rule_dsl/typing/file_local.rs",
-        "sha256": "8c716ef97adcebe8f452bbcf5d1586d85811bd185946ac13992f73dce55e8d79"
-      },
-      {
-        "path": "native/src/code_rule_dsl/value/python.rs",
-        "sha256": "5831c3aab8a17ac8019e6ed247583d88bef73278cda3dba27e6e197df3e17042"
-      },
-      {
-        "path": "native/src/content_store/observe.rs",
-        "sha256": "79d5df3cbf5bd4517252c18e48010f2f63f29cfafd851ff9e5f05b21f810423a"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/simplify.rs",
-        "sha256": "ecf5e8a73a0c124ae5ee06a33c534905bd9e02b1b4ff88821b8f2e3e4a741619"
-      },
-      {
-        "path": "native/src/code_rule_dsl/logic/answers.rs",
-        "sha256": "4dc625021caded351710ba5047d071bac8d53351797fa9d1236bed7c5d3ab2a7"
-      }
-    ],
-    "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
-    "upstreamMerge": "89a58ec57f917b6d251bcd9dde240297be962f3a",
-    "previousUpstreamCommit": "7330552f8b3aa8769ca3e10a2587c13df5f4068b",
-    "artifactHistory": [
-      {
-        "engineCommit": "1954d7c425c81efe98232d0ef6ff1a5c270e2c1a",
-        "upstreamCommit": "93cadec3793c11867cc45314ec566084f77afd03",
-        "sourceTrees": {
-          "native": "befc09347e7cbcebc05531d5634a78bfbdf3975f",
-          "accel": "d0b0c598284934387695bc982782421be44292a2",
-          "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
-          "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
-          "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
-        },
-        "path": ".rerail/modern-engine-alignment/cli-724324ca07950331",
-        "sha256": "724324ca0795033175aecf0105845818f1b0481fc150377083322e7bc84ca790",
-        "command": [
-          "cargo",
-          "build",
-          "-p",
-          "rerail-engine",
-          "--features",
-          "headless",
-          "--bin",
-          "rerail-engine",
-          "--profile",
-          "profiling"
-        ],
-        "seconds": 95.52
-      },
-      {
-        "engineCommit": "ba106b5311f06fb8f77abec8c4009780d37ffbd9",
-        "upstreamCommit": "fc6c1e0d9444156917642fd1046b532ca1064e1a",
-        "sourceTrees": {
-          "native": "6f49bc7e10d0657c2d8223c9dea11c3432597a61",
-          "accel": "dad65ba08ae01650b6f1453779f66a9da67f98b6",
-          "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
-          "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
-          "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
-        },
-        "path": ".rerail/modern-engine-alignment/cli-63278a96b660a897",
-        "sha256": "63278a96b660a897b54396e66b40ba3fff50035da44f9250b1907d307a50e66f",
-        "command": [
-          "cargo",
-          "build",
-          "-p",
-          "rerail-engine",
-          "--features",
-          "headless",
-          "--bin",
-          "rerail-engine",
-          "--profile",
-          "profiling"
-        ],
-        "seconds": 130.726
-      },
-      {
-        "engineCommit": "ebbf1e38a6552ff786ad68d38545ea4a69bb3cd4",
-        "upstreamCommit": "9e5fa489e0a28d514282ff31652ad05da33bad32",
-        "sourceTrees": {
-          "native": "8ecb7697775e02279086ac1f2eb862fd66d02262",
-          "accel": "dad65ba08ae01650b6f1453779f66a9da67f98b6",
-          "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
-          "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
-          "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
-        },
-        "path": ".rerail/modern-engine-alignment/cli-ef1a5c7432a728b3",
-        "sha256": "ef1a5c7432a728b38f2f25dfcd186129748a0dd33356c4482f5c5a730f93e812",
-        "command": [
-          "rustup",
-          "run",
-          "1.95.0",
-          "cargo",
-          "build",
-          "-p",
-          "rerail-engine",
-          "--features",
-          "headless",
-          "--bin",
-          "rerail-engine",
-          "--profile",
-          "profiling"
-        ],
-        "seconds": 412.02,
-        "cpuSeconds": 1115.06
-      },
-      {
-        "format": "rerail.root-engine-build/v1",
-        "engineCommit": "8d57a19870ece2f9223eb6ea63376d49cee6bae5",
-        "upstreamCommit": "41962153f967d8c0d8fe3154698818a1bcf06869",
-        "sourceTrees": {
-          "native": "0b90b44c32f4ff8065b1a7d4eda6e6bbbd6bd69b",
-          "accel": "81d49bce9e756ba3c44b85d319be41cf37779a53",
-          "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
-          "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
-          "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
-        },
-        "path": ".rerail/modern-engine-alignment/cli-e41d01a2eef49dac",
-        "sha256": "e41d01a2eef49dace2d13e6e1537a74272a3cbdfcb6350ae0187fd8634af35f2",
-        "command": "nice -n 19 rustup run 1.95.0 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling",
-        "wallSeconds": 223.4,
-        "userCpuSeconds": 885.99,
-        "systemCpuSeconds": 20.2
-      },
-      {
-        "format": "rerail.root-engine-build/v1",
-        "engineCommit": "2a09faba87bac060fc2795608094289fad9dddf5",
-        "upstreamCommit": "7330552f8b3aa8769ca3e10a2587c13df5f4068b",
-        "sourceTrees": {
-          "native": "de907b372b7ab640af4ddc32718968873618160e",
-          "accel": "81d49bce9e756ba3c44b85d319be41cf37779a53",
-          "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
-          "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
-          "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
-        },
-        "path": ".rerail/modern-engine-alignment/cli-b5fc6feb1a934585",
-        "sha256": "b5fc6feb1a9345854ff46b33699f1059f37e9c06000185ceac8893cad121e47d",
-        "command": "nice -n 19 rustup run 1.95.0 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling",
-        "wallSeconds": 223.44,
-        "userCpuSeconds": 672.5,
-        "systemCpuSeconds": 24.49
-      }
-    ],
-    "cliArtifact": {
-      "format": "rerail.root-engine-build/v1",
-      "engineCommit": "4e07746800e7fb958a57c5208c1ea956bc8f7412",
-      "upstreamCommit": "fcce32b26cf5e561ded72575ed6d327394f822fe",
-      "sourceTrees": {
-        "native": "8865070494bfd31d16ddf67d87560fa0f705e53e",
-        "accel": "c0a9697122e57c9e213919c4e9b9686dd17a1b07",
-        "tools/bitlex": "3699290356d32d790f91b76c5df41186268ada69",
-        "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
-        "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
-      },
-      "path": ".rerail/modern-engine-alignment/cli-f4db14313662e14c",
-      "sha256": "f4db14313662e14ca1e1924296c91acb48107035461e85db4a2977d61b6ce6e2",
-      "command": "nice -n 19 rustup run 1.95.0 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling",
-      "wallSeconds": 62.4,
-      "userCpuSeconds": 429.57,
-      "systemCpuSeconds": 7.74
-    },
-    "adoptionAudit": {
-      "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "fcce32b26cf5e561ded72575ed6d327394f822fe",
-      "engineCommit": "4e07746800e7fb958a57c5208c1ea956bc8f7412",
-      "sourceTrees": {
-        "native": "8865070494bfd31d16ddf67d87560fa0f705e53e",
-        "accel": "c0a9697122e57c9e213919c4e9b9686dd17a1b07",
-        "tools/bitlex": "3699290356d32d790f91b76c5df41186268ada69",
-        "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
-        "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
-      }
-    }
+    "upstreamCommit": "1ee25bdf678c8fef902f66c2f3bebe4f5fb172f9",
+    "upstreamBranch": "refs/heads/jeremybarnes/final-shape-serverplan-quality",
+    "status": "Serverplan-quality integration hub adopted exactly; root build and compatibility acceptance pending",
+    "nativeExtensions": [],
+    "previousUpstreamCommit": "fcce32b26cf5e561ded72575ed6d327394f822fe",
+    "retiredCheckout": ".rerail/rr-migration-20261106/engine"
   },
   "engineSourceSnapshots": [
     {
@@ -12193,6 +12094,382 @@
         "wallSeconds": 168.74,
         "userCpuSeconds": 868.8,
         "systemCpuSeconds": 21.31
+      }
+    },
+    {
+      "checkout": ".",
+      "upstreamCommit": "fcce32b26cf5e561ded72575ed6d327394f822fe",
+      "status": "Merged Final fcce with reviewed generic compatibility extensions",
+      "retiredCheckout": ".rerail/rr-migration-20261106/engine",
+      "localRepairCommit": "25b580262",
+      "localRepairPaths": [
+        "native/src/code_rule_dsl/logic/plan.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/diagnostic.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs"
+      ],
+      "localCapabilityCommits": [
+        "e6968ad82"
+      ],
+      "localCapabilityPaths": [
+        "native/src/code_rule_dsl/facts/vtab/syntax/python_print.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
+        "native/src/code_rule_dsl/facts/vtab/syntax.rs",
+        "native/src/code_rule_dsl/logic/sql/select.rs",
+        "native/src/code_rule_dsl/logic/strings.rs"
+      ],
+      "rootMetadataCommit": "7b44f4813",
+      "canonicalCallTextCommit": "eea5ed2da",
+      "nativeExtensions": [
+        {
+          "path": "Cargo.lock",
+          "sha256": "898115da4c35a63bd71e613d41ae410230611a4cfadfb0a1d12277474640909f"
+        },
+        {
+          "path": "native/Cargo.toml",
+          "sha256": "e76700c02857d63d8b66047779c965fb6883223f7bece20f947ef91930d7e335"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/core.rs",
+          "sha256": "6c2ddf5bcc8dd22877888ef1c976e8b6d4e25060643f95c939f4580fc7c4f890"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/repository.rs",
+          "sha256": "7ff68b070b737fb38b27f4736c687cba260151ec5c4ff8dff08f75d5ccd991b0"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax.rs",
+          "sha256": "f4a2740af5074026008a7cd17af5cade4bcee4fad8373aa7393cdd001c8c069e"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/core_rr.rs",
+          "sha256": "e7c4c4cd56040aad54d0d185a31fec399b33acded09190fdb42fe6b633f27751"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_order.rs",
+          "sha256": "13b82d0ba854fee9ad053f2609cbabb693be06f34f7a5c06417f2034c2ba4bf3"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print.rs",
+          "sha256": "670cc09461d50ae90b01f77fee285066c71cb49933a72cf0d803df0bdede2b79"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/calls.json",
+          "sha256": "214157a6cb66b177fe258f94e75f035130c43100ba19991a9189b441b79c2039"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/expressions.json",
+          "sha256": "5a6eee8ac5ddbc31b67faab5bc57af09be30c54be73d4aa27d8af050fd180bf9"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_print/printable.generated.rs",
+          "sha256": "a3e99353157742c99f47adcef0d88237c5606a6b9b1dbebe754f75ed4434537b"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax.rs",
+          "sha256": "25b649736836d4c4800347d565284b4ee3e0ae46977e16a77494ed78fc61c408"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/diagnostic.rs",
+          "sha256": "8c91d767c6693aa8a07c8dc351b8a25712c62ca4bddc1b7353c0c8d01c4de075"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/python-errors.json",
+          "sha256": "7b85e2616f4f630a121112cac556c1874cafff8bbf9ce85a51d1aca6056bef15"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/python_syntax/python-exceptions.json",
+          "sha256": "8d83797508b026f9c60c88adcc3bfe6812bb83d99631a4623f78a9365d721786"
+        },
+        {
+          "path": "native/src/code_rule_dsl/facts/vtab/syntax/tests.rs",
+          "sha256": "e0b3f2d53c7d8d08e061e41cd48fb496612d9dfe9728214bed8593fd7d9b4759"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/front.rs",
+          "sha256": "a51e0c8c1ab9a0cdb2bac9fb6a3a1b7cda31604b0216a252d700ed5ce326071d"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/native.rs",
+          "sha256": "ba18ecba95332b98574fd5c5dfb2dab168051fe7cad92da2734fe1e38bcf1907"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/native/balanced_rows.rs",
+          "sha256": "0c935fe75ae2831dfe9db9da2859627a2b5c734d3b593e413d8e812835c32870"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/native/bfs_walk.rs",
+          "sha256": "a0d972d6f3e877b0ab6bf2bd222958542660dd9963f9085f0b5375e3c8806f4c"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/native/python_set_rows.rs",
+          "sha256": "86ad7b22fb4b6e632229c36ea24d5f760d583f50ada005723cd843eabcd37e46"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/native/setfix.rs",
+          "sha256": "b8c35e84ab2d5902c51cf5d0097e07b61d219f0d6c17d3357c42a2c59c18b423"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan.rs",
+          "sha256": "aea4e631d5996ff529f0888d2529d1cf2ee1d28972912b02dadb5689adfea3b6"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
+          "sha256": "9774c2acc660312f8b912c378da0900811ce262674bd01ae8f321dce1253baeb"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/corpus/constants.rs",
+          "sha256": "d6f8406d0eebb3825a99885ce43a09a9c157037bdcbae6aaa95db950149ca902"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
+          "sha256": "7598b776d2af34060675be67c7e5a353985c4cb0081387aac6bb3f6caa9bacc4"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/corpus/inputs.rs",
+          "sha256": "913d20a9f6e4a3f1612329b1a21fe2e86d898c9ee1a6056531e6db663a10e640"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/corpus/world.rs",
+          "sha256": "2f799956312dc92a4a5c26b260ac621fcd101fd8bb2e4a0acb6aca57efe33159"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/plan/demand.rs",
+          "sha256": "8d5a7b075bc5db3f9a0319a8f5599c702be2fdfbee673f253441d592ce1c6ee8"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/program_facts.rs",
+          "sha256": "c7be2db7db1207540d1f00ed56d141caefeaa108050e0fb9f2b533343a9163bf"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
+          "sha256": "39bdcece7f399c24b0bdbb4cd786c3e2fc4a4370e3deb0c58fe0c6df157c35a6"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/rr/print.rs",
+          "sha256": "fb8e2f13facab8dabb441bf7e33ea5ce5a7aef45fa6935d5991efe66796d4082"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/rr/tests.rs",
+          "sha256": "29db7480d41290a4163fd3ab5b96114ec6555e83c8e07f5b78c571a2e0b6accc"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/sql/select.rs",
+          "sha256": "4b127ab05e95cf5ea65541327c5a843104fa31e75e1c2f6687b7eb451697d213"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings.rs",
+          "sha256": "41e84aadab8298fec47987a984df43c3ad4708aa20ef89febacf2cb92d22bd33"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
+          "sha256": "56a930de8ca6f6c43ec38d98297528d49dc2541facd8d9d58460f7cb0e6b87b2"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings/python_integer.rs",
+          "sha256": "8c36fbff3984103f442aa58f1076e9be829396eac3dc0dcc7cae931c6847ea5a"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings/python_json.rs",
+          "sha256": "2c8e036c556c1b1f44d0f81e7a0b9512e70fefbd4ba35b62fa2677fba3f76dd3"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings/signature-errors.json",
+          "sha256": "d0b1c63f0ece1e791339013ff176d1506e6ae2e2ace4ecaa32d1475aa94bd44c"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings/signatures.rs",
+          "sha256": "b56ff78ff1c7b2e4f3c77554fed1659f0918f186f19b085fe2520e7099e65a69"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/strings/tests.rs",
+          "sha256": "ef29c78214acac2d0dbe8a1d1b6b7f7f4391df01384c6adbe207e0ff2b77769a"
+        },
+        {
+          "path": "native/src/code_rule_dsl/sql_executor/documents/shards.rs",
+          "sha256": "ad552b71db6aff0f39bc3d0345ee84373481cc7292192b6f3220044e883ac679"
+        },
+        {
+          "path": "native/src/code_rule_dsl/tools.rs",
+          "sha256": "c2d6f79afc85f9ae7b486860351d1af380159a90b74294c96751d3499e903f6b"
+        },
+        {
+          "path": "native/src/code_rule_dsl/tools/signing.rs",
+          "sha256": "501ae4d5d86a3053b489522bcf123acc70a71017cc583dece8e69741a014333b"
+        },
+        {
+          "path": "native/src/code_rule_dsl/typing/file_local.rs",
+          "sha256": "8c716ef97adcebe8f452bbcf5d1586d85811bd185946ac13992f73dce55e8d79"
+        },
+        {
+          "path": "native/src/code_rule_dsl/value/python.rs",
+          "sha256": "5831c3aab8a17ac8019e6ed247583d88bef73278cda3dba27e6e197df3e17042"
+        },
+        {
+          "path": "native/src/content_store/observe.rs",
+          "sha256": "79d5df3cbf5bd4517252c18e48010f2f63f29cfafd851ff9e5f05b21f810423a"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/simplify.rs",
+          "sha256": "ecf5e8a73a0c124ae5ee06a33c534905bd9e02b1b4ff88821b8f2e3e4a741619"
+        },
+        {
+          "path": "native/src/code_rule_dsl/logic/answers.rs",
+          "sha256": "4dc625021caded351710ba5047d071bac8d53351797fa9d1236bed7c5d3ab2a7"
+        }
+      ],
+      "upstreamBranch": "refs/heads/jeremybarnes/final-rerail-shape",
+      "upstreamMerge": "89a58ec57f917b6d251bcd9dde240297be962f3a",
+      "previousUpstreamCommit": "7330552f8b3aa8769ca3e10a2587c13df5f4068b",
+      "artifactHistory": [
+        {
+          "engineCommit": "1954d7c425c81efe98232d0ef6ff1a5c270e2c1a",
+          "upstreamCommit": "93cadec3793c11867cc45314ec566084f77afd03",
+          "sourceTrees": {
+            "native": "befc09347e7cbcebc05531d5634a78bfbdf3975f",
+            "accel": "d0b0c598284934387695bc982782421be44292a2",
+            "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
+            "Cargo.toml": "0ddcd2aac74a093d91239d9fb7ad2b9d37bb3650",
+            "Cargo.lock": "0f601fd6052ffc140243ed0a5800f745cba919c7"
+          },
+          "path": ".rerail/modern-engine-alignment/cli-724324ca07950331",
+          "sha256": "724324ca0795033175aecf0105845818f1b0481fc150377083322e7bc84ca790",
+          "command": [
+            "cargo",
+            "build",
+            "-p",
+            "rerail-engine",
+            "--features",
+            "headless",
+            "--bin",
+            "rerail-engine",
+            "--profile",
+            "profiling"
+          ],
+          "seconds": 95.52
+        },
+        {
+          "engineCommit": "ba106b5311f06fb8f77abec8c4009780d37ffbd9",
+          "upstreamCommit": "fc6c1e0d9444156917642fd1046b532ca1064e1a",
+          "sourceTrees": {
+            "native": "6f49bc7e10d0657c2d8223c9dea11c3432597a61",
+            "accel": "dad65ba08ae01650b6f1453779f66a9da67f98b6",
+            "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
+            "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
+            "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
+          },
+          "path": ".rerail/modern-engine-alignment/cli-63278a96b660a897",
+          "sha256": "63278a96b660a897b54396e66b40ba3fff50035da44f9250b1907d307a50e66f",
+          "command": [
+            "cargo",
+            "build",
+            "-p",
+            "rerail-engine",
+            "--features",
+            "headless",
+            "--bin",
+            "rerail-engine",
+            "--profile",
+            "profiling"
+          ],
+          "seconds": 130.726
+        },
+        {
+          "engineCommit": "ebbf1e38a6552ff786ad68d38545ea4a69bb3cd4",
+          "upstreamCommit": "9e5fa489e0a28d514282ff31652ad05da33bad32",
+          "sourceTrees": {
+            "native": "8ecb7697775e02279086ac1f2eb862fd66d02262",
+            "accel": "dad65ba08ae01650b6f1453779f66a9da67f98b6",
+            "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
+            "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
+            "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
+          },
+          "path": ".rerail/modern-engine-alignment/cli-ef1a5c7432a728b3",
+          "sha256": "ef1a5c7432a728b38f2f25dfcd186129748a0dd33356c4482f5c5a730f93e812",
+          "command": [
+            "rustup",
+            "run",
+            "1.95.0",
+            "cargo",
+            "build",
+            "-p",
+            "rerail-engine",
+            "--features",
+            "headless",
+            "--bin",
+            "rerail-engine",
+            "--profile",
+            "profiling"
+          ],
+          "seconds": 412.02,
+          "cpuSeconds": 1115.06
+        },
+        {
+          "format": "rerail.root-engine-build/v1",
+          "engineCommit": "8d57a19870ece2f9223eb6ea63376d49cee6bae5",
+          "upstreamCommit": "41962153f967d8c0d8fe3154698818a1bcf06869",
+          "sourceTrees": {
+            "native": "0b90b44c32f4ff8065b1a7d4eda6e6bbbd6bd69b",
+            "accel": "81d49bce9e756ba3c44b85d319be41cf37779a53",
+            "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
+            "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
+            "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
+          },
+          "path": ".rerail/modern-engine-alignment/cli-e41d01a2eef49dac",
+          "sha256": "e41d01a2eef49dace2d13e6e1537a74272a3cbdfcb6350ae0187fd8634af35f2",
+          "command": "nice -n 19 rustup run 1.95.0 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling",
+          "wallSeconds": 223.4,
+          "userCpuSeconds": 885.99,
+          "systemCpuSeconds": 20.2
+        },
+        {
+          "format": "rerail.root-engine-build/v1",
+          "engineCommit": "2a09faba87bac060fc2795608094289fad9dddf5",
+          "upstreamCommit": "7330552f8b3aa8769ca3e10a2587c13df5f4068b",
+          "sourceTrees": {
+            "native": "de907b372b7ab640af4ddc32718968873618160e",
+            "accel": "81d49bce9e756ba3c44b85d319be41cf37779a53",
+            "tools/bitlex": "0f96b4c9bdfe27064033a8e0ba7d5a7213d803cc",
+            "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
+            "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
+          },
+          "path": ".rerail/modern-engine-alignment/cli-b5fc6feb1a934585",
+          "sha256": "b5fc6feb1a9345854ff46b33699f1059f37e9c06000185ceac8893cad121e47d",
+          "command": "nice -n 19 rustup run 1.95.0 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling",
+          "wallSeconds": 223.44,
+          "userCpuSeconds": 672.5,
+          "systemCpuSeconds": 24.49
+        }
+      ],
+      "cliArtifact": {
+        "format": "rerail.root-engine-build/v1",
+        "engineCommit": "4e07746800e7fb958a57c5208c1ea956bc8f7412",
+        "upstreamCommit": "fcce32b26cf5e561ded72575ed6d327394f822fe",
+        "sourceTrees": {
+          "native": "8865070494bfd31d16ddf67d87560fa0f705e53e",
+          "accel": "c0a9697122e57c9e213919c4e9b9686dd17a1b07",
+          "tools/bitlex": "3699290356d32d790f91b76c5df41186268ada69",
+          "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
+          "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
+        },
+        "path": ".rerail/modern-engine-alignment/cli-f4db14313662e14c",
+        "sha256": "f4db14313662e14ca1e1924296c91acb48107035461e85db4a2977d61b6ce6e2",
+        "command": "nice -n 19 rustup run 1.95.0 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling",
+        "wallSeconds": 62.4,
+        "userCpuSeconds": 429.57,
+        "systemCpuSeconds": 7.74
+      },
+      "adoptionAudit": {
+        "format": "rerail.engine-cohort-adoption/v1",
+        "upstreamCommit": "fcce32b26cf5e561ded72575ed6d327394f822fe",
+        "engineCommit": "4e07746800e7fb958a57c5208c1ea956bc8f7412",
+        "sourceTrees": {
+          "native": "8865070494bfd31d16ddf67d87560fa0f705e53e",
+          "accel": "c0a9697122e57c9e213919c4e9b9686dd17a1b07",
+          "tools/bitlex": "3699290356d32d790f91b76c5df41186268ada69",
+          "Cargo.toml": "c219f15063df7a2e2daecd3d4def463a06b2f2dd",
+          "Cargo.lock": "e154295414e3ffddeceb363d03f30e0c3d10cdb3"
+        }
       }
     }
   ]

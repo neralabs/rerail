@@ -3,7 +3,6 @@
 // the tools of ../../../../fixtures/vue/tools.mjs installed in `<checkout>/.rerail/tools/vue`:
 //
 //   node generate.mjs fixtures <eslint-plugin-vue checkout at tag v10.11.1 (ec9c53a6fbed637d7b0fbcd6893b0206ae32839f)>
-//   node generate.mjs corpus [<name>...]            # corpora of ../../../../fixtures/vue/corpora.json, under .rerail/corpora/vue
 //
 // Pins (refused when different): eslint 10.11.0, eslint-plugin-vue 10.11.1, vue-eslint-parser 10.4.1,
 // @typescript-eslint/parser 8.70.1, typescript 6.0.3.
@@ -25,19 +24,20 @@
 // `authored.mjs` holds Rerail's own cases, inputs a port once misread; each is written as
 // `fixtures/<rule>/rerail-<name>.vue` and listed in `UPSTREAM.md` beside this file. Then every fixture is linted by every
 // rule, and `fixtures.expected.json` records all findings (a fixture of one rule may also be reported by another).
-//
-// `corpus` lints every `.vue` file of each corpus (the files T1 enumerates) and writes `corpus-<name>.expected.json`;
-// a file ESLint cannot parse (a fatal message) is `skipped`.
+// Its `source.units` names each upstream case's origin: the rule whose RuleTester cases it came from (Rerail's own
+// cases have none). Last, upstream's LICENSE is copied to ../../licenses/eslint-plugin-vue/, and provenance.json and
+// LICENSES.md record each kept case's upstream test file and case.
 //
 // Findings are `{ rule, path, line, column }`: ESLint's line, and its 1-based column converted from UTF-16 code
 // units to code points, as the conformance standard counts them.
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { packFixturesWritten, recordingWritten } from "../../../../scripts/s3/pack-fixtures.mjs";
-import { corporaDirectory, load, toolsDirectory, TOOLS } from "../../../../fixtures/vue/tools.mjs";
+import { writeProvenance } from "../../../../scripts/pack-data/provenance.mjs";
+import { packFixturesWritten, expectedFindingsWritten } from "../../../../scripts/s3/pack-fixtures.mjs";
+import { load, toolsDirectory, TOOLS } from "../../../../fixtures/vue/tools.mjs";
 import { AUTHORED } from "./authored.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -107,7 +107,7 @@ const strip = ({ utf16Column, ...finding }) => finding;
 const byPosition = (a, b) => a.path.localeCompare(b.path) || a.line - b.line || a.column - b.column || a.rule.localeCompare(b.rule);
 
 // The parser stack's pins (eslint, vue-eslint-parser, @typescript-eslint/parser, typescript) are the pack's
-// `conformance.json` `tools`; a recording names its tool alone, as `recordingSchema` requires.
+// `conformance.json` `tools`; an expected-findings file names its tool alone, as `expectedFindingsSchema` requires.
 function write(file, source, findings) {
   const out = {
     tool: "eslint-plugin-vue",
@@ -117,7 +117,7 @@ function write(file, source, findings) {
   };
   writeFileSync(join(HERE, file), `${JSON.stringify(out, null, 1)}\n`);
   console.log(`wrote ${file}: ${out.findings.length} findings`);
-  console.log(recordingWritten(join(HERE, file), source.kind));
+  console.log(expectedFindingsWritten(join(HERE, file), source.kind));
 }
 
 // --- fixtures ----------------------------------------------------------------------------------------------------
@@ -174,6 +174,7 @@ function fixtures(checkout) {
   rmSync(root, { recursive: true, force: true });
   const cases = [];
   const files = [];
+  const units = {};
   for (const rule of RULES) {
     const { upstream } = rule;
     const name = upstream.rule.replace(/^vue\//, "");
@@ -213,6 +214,7 @@ function fixtures(checkout) {
           mkdirSync(join(root, name), { recursive: true });
           writeFileSync(join(root, path), outcome.code);
           files.push(path);
+          units[path] = { rules: [upstream.rule] };
           cases.push({ ...entry, kept: true, file: `fixtures/${path}`,
             copy: outcome.lang === undefined ? "verbatim" : `derived: wrapped in <script${outcome.lang === "ts" ? ' lang="ts"' : ""}>` });
         });
@@ -234,13 +236,14 @@ function fixtures(checkout) {
   writeAuthoredRecord(authored);
   writeFileSync(join(HERE, "cases.json"), `${JSON.stringify({ origin: ORIGIN, cases }, null, 1)}\n`);
   console.log(packFixturesWritten([join(HERE, "cases.json")]));
-  writeLicense(checkout, cases.filter(c => c.kept));
-  write("fixtures.expected.json", { kind: "fixtures", origin: ORIGIN, rules: ruleIds, files }, findings);
+  const sortedUnits = Object.fromEntries(Object.entries(units).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  write("fixtures.expected.json", { kind: "fixtures", origin: ORIGIN, rules: ruleIds, files, units: sortedUnits }, findings);
+  writeLicenseAndProvenance(checkout, cases.filter(c => c.kept));
   const kept = cases.filter(c => c.kept).length;
   console.log(`cases: ${kept} kept of ${cases.length}`);
 }
 
-/** UPSTREAM.md beside this recorder: the fixtures Rerail wrote, which are Rerail's, not eslint-plugin-vue's. */
+/** UPSTREAM.md beside this generator: the fixtures Rerail wrote, which are Rerail's, not eslint-plugin-vue's. */
 function writeAuthoredRecord(authored) {
   const rows = authored.map(path => `| \`upstream/eslint-plugin-vue/fixtures/${path}\` | written by Rerail |`);
   writeFileSync(join(HERE, "UPSTREAM.md"), `# eslint-plugin-vue ${TOOLS["eslint-plugin-vue"]}: cases Rerail wrote
@@ -253,69 +256,26 @@ ${rows.join("\n")}
 `);
 }
 
-/** `packs/vue/licenses/eslint-plugin-vue/`: the upstream LICENSE, verbatim, and a manifest of every copy. */
-function writeLicense(checkout, kept) {
+/**
+ * `packs/vue/licenses/eslint-plugin-vue/LICENSE` (upstream's, verbatim) and the tool's provenance.json and
+ * LICENSES.md: every kept case (a `cases.json` entry) with its upstream test file and case, copied verbatim or wrapped.
+ */
+function writeLicenseAndProvenance(checkout, kept) {
   const dir = join(HERE, "../../licenses/eslint-plugin-vue");
   mkdirSync(dir, { recursive: true });
   copyFileSync(join(checkout, "LICENSE"), join(dir, "LICENSE"));
-  const rows = kept.map(c => `| \`upstream/eslint-plugin-vue/${c.file}\` | \`${c.upstream}\` case \`${c.case}\` | ${c.copy} |`);
-  writeFileSync(join(dir, "UPSTREAM.md"), `# eslint-plugin-vue ${TOOLS["eslint-plugin-vue"]}
-
-Upstream: [vuejs/eslint-plugin-vue](https://github.com/vuejs/eslint-plugin-vue/tree/${UPSTREAM_COMMIT}) at tag \`${UPSTREAM_TAG}\` (commit \`${UPSTREAM_COMMIT}\`). License: MIT (Copyright (c) 2017 Toru Nagashima); [\`LICENSE\`](LICENSE) is the upstream license file, copied verbatim at that tag.
-
-The files listed below are the code of RuleTester cases of the rules the Vue pack ports (\`../../conformance.json\`), and remain under eslint-plugin-vue's license. Each is one case's \`code\`, copied verbatim, or wrapped in a \`<script>\` element when the case is a script (a non-\`.vue\` filename, a parser other than vue-eslint-parser, or code with no SFC block and no filename), so that it is a \`.vue\` file. The rule documents in \`rules/\` and \`candidates/rules/\` are Rerail's re-implementations of eslint-plugin-vue's rules, published under the pack's licence expression, \`Apache-2.0 AND MIT\`, as \`REUSE.toml\` annotates them. Every other file under \`upstream/\` is Rerail's, under the Apache License 2.0 (this repository's \`LICENSE\`): \`read_tests.mjs\`, \`generate.mjs\`, \`authored.mjs\`, \`cases.json\`, the fixtures \`rerail-*.vue\` (written by Rerail; \`upstream/eslint-plugin-vue/UPSTREAM.md\` lists them) and the recordings they write by running ESLint ${TOOLS.eslint} with eslint-plugin-vue ${TOOLS["eslint-plugin-vue"]}.
-
-This file is written by \`upstream/eslint-plugin-vue/generate.mjs fixtures\`. Paths are relative to the pack directory (\`packs/vue/\`).
-
-| File | Upstream case | Copy |
-|---|---|---|
-${rows.join("\n")}
-`);
+  const source = "eslint-plugin-vue";
+  const entries = new Map(
+    kept.map(c => [
+      c.file,
+      c.copy === "verbatim"
+        ? { source, from: c.upstream, how: "verbatim", detail: `case \`${c.case}\`` }
+        : { source, from: c.upstream, how: "adapted", detail: `case \`${c.case}\`; ${c.copy}` },
+    ]),
+  );
+  writeProvenance({ pack: "vue", tool: source, entries, commits: { [source]: UPSTREAM_COMMIT } });
 }
 
-// --- corpora -----------------------------------------------------------------------------------------------------
-
-function vueFiles(root, paths) {
-  const out = [];
-  const walk = dir => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name === "node_modules" || entry.name === "dist" || entry.name === ".git") continue;
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) walk(path);
-      else if (entry.isFile() && entry.name.endsWith(".vue")) out.push(relative(root, path));
-    }
-  };
-  for (const path of paths) {
-    const full = join(root, path);
-    if (statSync(full, { throwIfNoEntry: false })?.isDirectory()) walk(full);
-  }
-  return out.sort();
-}
-
-function corpus(names) {
-  const corpora = JSON.parse(readFileSync(join(HERE, "../../../../fixtures/vue/corpora.json"), "utf8"));
-  const base = corporaDirectory(HERE);
-  for (const corpus of corpora) {
-    if (names.length > 0 && !names.includes(corpus.name)) continue;
-    const root = join(base, corpus.name);
-    const head = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-    if (head !== corpus.commit) throw new Error(`${root} is at ${head}; corpora.json pins ${corpus.commit}`);
-    const files = vueFiles(root, corpus.paths);
-    const findings = [];
-    const skipped = [];
-    for (const path of files) {
-      const result = lint(readFileSync(join(root, path), "utf8"), path);
-      if (result.fatal !== undefined) skipped.push(path);
-      else findings.push(...result.findings);
-    }
-    write(`corpus-${corpus.name}.expected.json`, {
-      kind: "corpus", name: corpus.name, repository: corpus.repository, commit: corpus.commit, rules: ruleIds, skipped,
-    }, findings);
-  }
-}
-
-const [mode, ...rest] = process.argv.slice(2).filter((arg, index, all) => arg !== "--tools" && all[index - 1] !== "--tools"
-  && arg !== "--corpora" && all[index - 1] !== "--corpora");
+const [mode, ...rest] = process.argv.slice(2).filter((arg, index, all) => arg !== "--tools" && all[index - 1] !== "--tools");
 if (mode === "fixtures") fixtures(resolve(rest[0]));
-else if (mode === "corpus") corpus(rest);
-else throw new Error("usage: node generate.mjs fixtures <eslint-plugin-vue checkout> | corpus [<name>...]");
+else throw new Error("usage: node generate.mjs fixtures <eslint-plugin-vue checkout>");

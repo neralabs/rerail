@@ -190,6 +190,13 @@ pub fn run_split(
     }
 }
 
+/// Whether generated MSL's pipeline for `programs` at `width` (classes by lookups) is compiled; when it is not, its
+/// compile starts on a thread of its own and this is false at once: the caller runs the batch on the interpreter's
+/// pipeline (compiled once for every program) meanwhile, never waiting on the compiler (`runtime::pipeline_ready`).
+pub fn generated_ready(programs: &[&BlockNative], width: LaneWidth) -> bool {
+    crate::runtime::pipeline_ready(&generate_forms(programs, width), "tempo_batch").is_some()
+}
+
 /// The bindings of a batch's slabs (`MAX_SLABS`): 0, then past the interpreter's 12–15.
 const SLAB_BUFFERS: [u64; crate::slabs::MAX_SLABS] = [0, 16, 17, 18];
 
@@ -402,7 +409,8 @@ pub fn run_batch(
             .collect();
         let totals = if n.totals.is_empty() { Vec::new() } else { vec![u64::from(count(n.extracts.len()) != 0)] };
         let _ = groups;
-        results.push(BlockRun { outputs, positions, totals });
+        // This executor has no record pass: a program with records runs on the serial one.
+        results.push(BlockRun { outputs, positions, totals, codes: Vec::new() });
     }
     Ok(BatchRun { files: results, launches, seconds })
 }
@@ -1540,7 +1548,8 @@ fn encode_passes(passes: &[Pass<'_>]) -> Result<f64, Error> {
     command.set_label("Rerail block program");
     for pass in passes {
         let encoder = command.new_compute_command_encoder();
-        encoder.set_label("block_program");
+        // The kernel's name, for a trace's encoders (Instruments' Metal System Trace).
+        encoder.set_label(pass.pipeline.label());
         encoder.set_compute_pipeline_state(pass.pipeline);
         for &(index, buffer, offset) in &pass.buffers {
             encoder.set_buffer(index, Some(buffer), offset);

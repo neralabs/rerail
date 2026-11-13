@@ -5,7 +5,7 @@ use crate::code_rule_dsl::{
     violations::Span,
 };
 use ast_grep_core::source::SgNode;
-mod packed;
+pub mod packed;
 use packed::{Columns, Fields, Postings};
 use rusqlite::{Connection, types::Value, vtab::Context};
 use std::{
@@ -26,7 +26,7 @@ pub(in crate::code_rule_dsl) struct Owner {
 }
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(in crate::code_rule_dsl) struct Spec {
+pub struct Spec {
     pub name: String,
     pub gate: String,
     #[serde(default)]
@@ -45,7 +45,7 @@ pub(in crate::code_rule_dsl) struct Spec {
     pub owners: BTreeMap<String, Owner>,
 }
 
-pub(in crate::code_rule_dsl) trait Source: Send + Sync {
+pub trait Source: Send + Sync {
     fn columns(&self) -> Vec<String>;
     fn column_types(&self) -> Vec<String>;
     fn len(&self) -> usize;
@@ -101,7 +101,7 @@ pub(in crate::code_rule_dsl) trait Source: Send + Sync {
     fn charge(&self, count: usize) -> rusqlite::Result<()>;
 }
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Counters {
+pub struct Counters {
     pub scans: AtomicU64,
     pub batches: AtomicU64,
     pub candidates: AtomicU64,
@@ -113,7 +113,7 @@ struct OwnerIndex {
     distinct: usize,
 }
 type Selections = parking_lot::Mutex<HashMap<(Vec<String>, bool), Arc<Selection>>>;
-pub(in crate::code_rule_dsl) struct Facts {
+pub struct Facts {
     doc: TapeDoc,
     lines: Arc<LineTable>,
     rows: Vec<u32>,
@@ -126,7 +126,7 @@ pub(in crate::code_rule_dsl) struct Facts {
     selections: Selections,
 }
 impl Facts {
-    pub(in crate::code_rule_dsl) fn build(file: &FileInput) -> Result<Arc<Self>> {
+    pub fn build(file: &FileInput) -> Result<Arc<Self>> {
         #[cfg(feature = "code-rule-profile")]
         let _span = crate::code_rule_dsl::profile::trace::Span::start("syntax-prepare", "document");
         let language =
@@ -294,26 +294,18 @@ impl Facts {
         cache.insert(key, Arc::clone(&index));
         Ok(index)
     }
-    pub(super) fn python_ast_source(&self) -> String {
+    pub fn ast_source(&self) -> String {
         String::from_utf8(self.doc.transducer_source().to_vec()).expect("UTF-8 source")
     }
-    pub(super) fn python_ast_request(
-        &self,
-        id: u32,
-        fields: Vec<String>,
-    ) -> Result<crate::code_rule_dsl::value::python_ast::Request> {
+    /// A canonical AST root's span and kind.
+    pub fn ast_root(&self, id: u32) -> Result<(usize, usize, String)> {
         if self.positions.get(id as usize).is_none_or(Option::is_none) {
             return Err(invalid("invalid Python AST root"));
         }
         let span = self.packed.span(id);
-        Ok(crate::code_rule_dsl::value::python_ast::Request {
-            start: span.start,
-            end: span.end,
-            kind: self.packed.kind(id).into(),
-            fields,
-        })
+        Ok((span.start, span.end, self.packed.kind(id).into()))
     }
-    pub(in crate::code_rule_dsl) fn subtree_ends(&self) -> &[u32] {
+    pub fn subtree_ends(&self) -> &[u32] {
         &self.packed.subtree_end
     }
     fn visible(&self, excludes: &[String]) -> Result<Arc<Vec<u32>>> {
@@ -432,9 +424,9 @@ struct Selection {
     ordinal: Vec<usize>,
     visible: Arc<Vec<u32>>,
 }
-struct Meter {
-    work: Arc<AtomicUsize>,
-    steps: AtomicUsize,
+pub struct Meter {
+    pub work: Arc<AtomicUsize>,
+    pub steps: AtomicUsize,
 }
 impl Meter {
     fn charge(&self, count: usize) -> rusqlite::Result<()> {
@@ -445,7 +437,7 @@ impl Meter {
             .map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))
     }
 }
-struct Nodes {
+pub struct Nodes {
     path: String,
     facts: Arc<Facts>,
     selected: Arc<Selection>,
@@ -630,16 +622,16 @@ impl Source for Nodes {
         let span = self.facts.packed.span(id);
         match &self.columns[c].1 {
             Column::Path => ctx.set_result(&self.path),
-            Column::Id => ctx.set_result(&i64::from(id)),
+            Column::Id => ctx.set_result(i64::from(id)),
             Column::SubtreeEnd => {
-                ctx.set_result(&i64::from(self.facts.packed.subtree_end[id as usize]))
+                ctx.set_result(i64::from(self.facts.packed.subtree_end[id as usize]))
             }
-            Column::Start => ctx.set_result(&(span.start as i64)),
-            Column::End => ctx.set_result(&(span.end as i64)),
-            Column::Parent => ctx.set_result(&self.facts.packed.parent(id).map(i64::from)),
-            Column::Kind => ctx.set_result(&self.facts.packed.kind(id)),
-            Column::Line => ctx.set_result(&(self.facts.lines.line(span.start) as i64)),
-            Column::Text => ctx.set_result(&if self
+            Column::Start => ctx.set_result(span.start as i64),
+            Column::End => ctx.set_result(span.end as i64),
+            Column::Parent => ctx.set_result(self.facts.packed.parent(id).map(i64::from)),
+            Column::Kind => ctx.set_result(self.facts.packed.kind(id)),
+            Column::Line => ctx.set_result(self.facts.lines.line(span.start) as i64),
+            Column::Text => ctx.set_result(if self
                 .empty_text_kinds
                 .iter()
                 .any(|k| k == self.facts.packed.kind(id))
@@ -651,36 +643,36 @@ impl Source for Nodes {
                     .map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))?;
                 text
             }),
-            Column::Ordinal => ctx.set_result(&(ordinal as i64)),
+            Column::Ordinal => ctx.set_result(ordinal as i64),
             Column::Owner(o) => {
-                ctx.set_result(&(o.values[row] != packed::NONE).then_some(i64::from(o.values[row])))
+                ctx.set_result((o.values[row] != packed::NONE).then_some(i64::from(o.values[row])))
             }
             Column::ParentStart | Column::ParentEnd | Column::ParentKind => {
                 let parent = self.facts.packed.parent(id);
                 match self.columns[c].1 {
                     Column::ParentStart => {
-                        ctx.set_result(&parent.map(|p| self.facts.packed.span(p).start as i64))
+                        ctx.set_result(parent.map(|p| self.facts.packed.span(p).start as i64))
                     }
                     Column::ParentEnd => {
-                        ctx.set_result(&parent.map(|p| self.facts.packed.span(p).end as i64))
+                        ctx.set_result(parent.map(|p| self.facts.packed.span(p).end as i64))
                     }
-                    _ => ctx.set_result(&parent.map(|p| self.facts.packed.kind(p).to_owned())),
+                    _ => ctx.set_result(parent.map(|p| self.facts.packed.kind(p).to_owned())),
                 }
             }
             Column::Field(field, part) => {
                 let value = self.facts.fields.get(id, *field);
                 match part {
-                    0 => ctx.set_result(&value.map(i64::from)),
-                    1 => ctx.set_result(&value.map(|n| self.facts.packed.span(n).start as i64)),
-                    2 => ctx.set_result(&value.map(|n| self.facts.packed.span(n).end as i64)),
-                    3 => ctx.set_result(&value.map(|n| self.facts.packed.kind(n).to_owned())),
+                    0 => ctx.set_result(value.map(i64::from)),
+                    1 => ctx.set_result(value.map(|n| self.facts.packed.span(n).start as i64)),
+                    2 => ctx.set_result(value.map(|n| self.facts.packed.span(n).end as i64)),
+                    3 => ctx.set_result(value.map(|n| self.facts.packed.kind(n).to_owned())),
                     _ => {
                         let text = value.map(|n| doc.transducer_text_str(n));
                         if let Some(text) = text {
                             source::charge(&self.meter.work, text.len().div_ceil(256))
                                 .map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))?;
                         }
-                        ctx.set_result(&text)
+                        ctx.set_result(text)
                     }
                 }
             }
@@ -815,7 +807,7 @@ fn schema(db: &Connection, spec: &Spec) -> Result<Vec<String>> {
         })
         .collect()
 }
-fn load_one(spec: &Spec, path: &str, facts: Arc<Facts>, meter: Arc<Meter>) -> Result<Vec<Nodes>> {
+pub fn load_one(spec: &Spec, path: &str, facts: Arc<Facts>, meter: Arc<Meter>) -> Result<Vec<Nodes>> {
     let selected = facts.select(&spec.exclude_kinds, false)?;
     let mut result = Vec::new();
     let nodes = Nodes {
@@ -861,7 +853,7 @@ fn load_one(spec: &Spec, path: &str, facts: Arc<Facts>, meter: Arc<Meter>) -> Re
     Ok(result)
 }
 
-struct Union {
+pub struct Union {
     sources: Vec<Nodes>,
     offsets: Vec<usize>,
     by_path: HashMap<String, usize>,
@@ -869,7 +861,7 @@ struct Union {
     estimates: Vec<(usize, usize)>,
 }
 impl Union {
-    fn new(sources: Vec<Nodes>) -> Self {
+    pub fn new(sources: Vec<Nodes>) -> Self {
         let mut offsets = vec![0];
         for source in &sources {
             offsets.push(offsets.last().unwrap() + source.len());
@@ -1164,119 +1156,4 @@ pub(in crate::code_rule_dsl) fn demand(
     })
 }
 
-#[cfg(test)]
-mod scoped_index_tests {
-    use super::*;
-    use std::sync::atomic::Ordering;
-    #[test]
-    fn path_and_node_lookups_do_not_enumerate_other_files() {
-        let file = FileInput::new(
-            "seed.py".into(),
-            "python".into(),
-            Arc::new("value = 1\n".into()),
-            None,
-            None,
-            "test",
-        )
-        .unwrap();
-        let facts = Facts::build(&file).unwrap();
-        let spec:Spec=serde_json::from_value(serde_json::json!({"name":"nodes","gate":"gate","columns":["__path","id","parent","kind"]})).unwrap();
-        let meter = Arc::new(Meter {
-            work: Arc::new(AtomicUsize::new(1_000_000)),
-            steps: AtomicUsize::new(0),
-        });
-        let sources = (0..128)
-            .map(|i| {
-                load_one(
-                    &spec,
-                    &format!("f{i:03}.py"),
-                    Arc::clone(&facts),
-                    Arc::clone(&meter),
-                )
-                .unwrap()
-                .remove(0)
-            })
-            .collect::<Vec<_>>();
-        let db = Connection::open_in_memory().unwrap();
-        let stats =
-            super::super::table::register(&db, "nodes", Arc::new(Union::new(sources))).unwrap();
-        let count:i64=db.query_row("SELECT count(*) FROM nodes child CROSS JOIN nodes parent ON parent.__path=child.__path AND parent.id=child.parent WHERE child.kind='identifier'",[],|r|r.get(0)).unwrap();
-        assert_eq!(count, 128);
-        assert!(
-            stats.candidates.load(Ordering::Relaxed) < 128 * 8,
-            "scoped node joins enumerated {} candidates",
-            stats.candidates.load(Ordering::Relaxed)
-        );
-        let ids = db
-            .prepare("SELECT id FROM nodes WHERE __path='f000.py' ORDER BY id LIMIT 2")
-            .unwrap()
-            .query_map([], |r| r.get::<_, i64>(0))
-            .unwrap()
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .unwrap();
-        let actual=db.prepare("SELECT __path,id FROM nodes WHERE __path IN ('f001.py','f002.py') AND id IN (?1,?2) ORDER BY __path,id").unwrap().query_map([ids[0],ids[1]],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?))).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
-        assert_eq!(
-            actual,
-            vec![
-                ("f001.py".into(), ids[0]),
-                ("f001.py".into(), ids[1]),
-                ("f002.py".into(), ids[0]),
-                ("f002.py".into(), ids[1])
-            ]
-        );
-        assert!(stats.batches.load(Ordering::Relaxed) > 0);
-    }
-    #[test]
-    fn path_and_span_lookups_do_not_enumerate_other_files() {
-        let file = FileInput::new(
-            "seed.py".into(),
-            "python".into(),
-            Arc::new("value = 1\n".repeat(64)),
-            None,
-            None,
-            "test",
-        )
-        .unwrap();
-        let facts = Facts::build(&file).unwrap();
-        let spec: Spec = serde_json::from_value(serde_json::json!({
-            "name":"nodes","gate":"gate","columns":["__path","__start","__end","id"]
-        }))
-        .unwrap();
-        let meter = Arc::new(Meter {
-            work: Arc::new(AtomicUsize::new(5_000_000)),
-            steps: AtomicUsize::new(0),
-        });
-        let sources = (0..32)
-            .map(|i| {
-                load_one(
-                    &spec,
-                    &format!("f{i:03}.py"),
-                    Arc::clone(&facts),
-                    Arc::clone(&meter),
-                )
-                .unwrap()
-                .remove(0)
-            })
-            .collect::<Vec<_>>();
-        let db = Connection::open_in_memory().unwrap();
-        let stats =
-            super::super::table::register(&db, "nodes", Arc::new(Union::new(sources))).unwrap();
-        let demand = (0..32)
-            .map(|i| format!("('f{i:03}.py',0,5)"))
-            .collect::<Vec<_>>()
-            .join(",");
-        let query = format!(
-            "WITH demand(path,lo,hi) AS MATERIALIZED (VALUES {demand}) SELECT count(*) FROM demand d CROSS JOIN nodes n ON n.__path=d.path AND n.__start>=d.lo AND n.__end<=d.hi"
-        );
-        let count: i64 = db.query_row(&query, [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 32);
-        assert!(
-            stats.candidates.load(Ordering::Relaxed) < 32 * 8,
-            "scoped ranges enumerated {} candidates",
-            stats.candidates.load(Ordering::Relaxed)
-        );
-        let count: i64 = db.query_row("SELECT count(*) FROM nodes WHERE __path IN ('f000.py','f001.py') AND __start>=0 AND __end<=5", [], |r| r.get(0)).unwrap();
-        assert_eq!(count, 2);
-        assert!(stats.batches.load(Ordering::Relaxed) > 0);
-    }
-}
+// scoped_index_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

@@ -1,10 +1,22 @@
 //! Candidate demands carry document identity before any scalar AST relation is materialized.
 use super::*;
+use crate::code_rule_dsl::facts::producers::python::families as py;
 use crate::code_rule_dsl::facts::producers::python::{
-    families::candidates, import_screen::Imports, python_facts::Fact,
+    families::candidates, python_facts::Fact,
 };
-impl Batch {
-    pub(crate) fn python_candidates(
+/// Python's call candidates over a batch (`SemanticProducer::candidates`).
+pub trait PythonCandidates {
+    fn python_candidates(
+        &self,
+        scope: &[i64],
+        targets: &BTreeSet<String>,
+        context: &str,
+        member: &str,
+    ) -> Result<Vec<Vec<rusqlite::types::Value>>, String>;
+}
+
+impl PythonCandidates for Batch {
+    fn python_candidates(
         &self,
         scope: &[i64],
         targets: &BTreeSet<String>,
@@ -18,7 +30,7 @@ impl Batch {
             .iter()
             .position(|&v| v == context)
             .ok_or_else(|| format!("unknown Python context {context}"))? as u32;
-        let Some(py) = &self.py else {
+        let Some(py) = self.bound::<super::py_families::Py>() else {
             return Ok(Vec::new());
         };
         let scope: BTreeSet<_> = scope.iter().copied().collect();
@@ -41,15 +53,8 @@ impl Batch {
         {
             let (rows, work) = candidates::collect(&py.grammar, &p.facts, kind, &members, |n| {
                 match candidates::eligibility(&py.grammar, &p.facts, n) {
-                    Fact::Known(chain) => p
-                        .python_imports
-                        .get_or_init(|| {
-                            Imports::from_core(
-                                &p.facts,
-                                &self.dialects[&p.tag].catalog,
-                                p.module.as_ref(),
-                            )
-                        })
+                    Fact::Known(chain) => py
+                        .imports(self, p)
                         .may_qualify_parts(
                             chain.head,
                             chain.attributes,

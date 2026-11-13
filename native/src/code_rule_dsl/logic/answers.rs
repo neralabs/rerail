@@ -17,8 +17,12 @@ use super::magic::Gate;
 use std::collections::{BTreeMap, BTreeSet};
 
 fn atom(rel: String, args: Vec<Term>) -> Atom {
-    Atom { rel, args, neg: false, gated: false }
+    Atom { rel: rel.into(), args, neg: false, gated: false }
 }
+
+/// An answer's rows under `HELD_BACK` + a request's name are request rows the answerer holds back: asked again once
+/// the stratum is otherwise quiet (`setfix::defer`; the load budget's levels, decision 0108).
+pub(in crate::code_rule_dsl) const HELD_BACK: &str = "rr_held_back:";
 
 /// Whether `rel` is a gate's `done` relation (`gate`): a test of keys its rule's literals bind, which the planner
 /// joins only once they are bound.
@@ -38,13 +42,13 @@ pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
         return Ok(());
     }
     let produced: BTreeMap<String, String> = produced(prog).into_iter().map(|(p, r)| (p.to_owned(), r.to_owned())).collect();
-    let mut nodes: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
+    let mut nodes: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
     nodes.extend(produced.keys().cloned());
     let mut edges: BTreeMap<String, BTreeSet<(String, bool)>> = BTreeMap::new();
     for r in &prog.rules {
         for l in &r.body {
-            if let Some(a) = l.atom().filter(|a| nodes.contains(&a.rel)) {
-                edges.entry(r.head.rel.clone()).or_default().insert((a.rel.clone(), (a.neg || matches!(l, Literal::Agg { .. })) && !a.gated));
+            if let Some(a) = l.atom().filter(|a| nodes.contains(a.rel.as_str())) {
+                edges.entry(r.head.rel.to_string()).or_default().insert((a.rel.to_string(), (a.neg || matches!(l, Literal::Agg { .. })) && !a.gated));
             }
         }
     }
@@ -72,7 +76,7 @@ pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
                 return Err(Error::NotStratifiable {
                     message: format!("{} aggregates {} inside a component that loads (decision 0065 §2a): not supported", r.head.rel, l.atom().map_or("?", |a| a.rel.as_str())),
                     component: sccs[c].clone(),
-                    negated: l.atom().map_or_else(String::new, |a| a.rel.clone()),
+                    negated: l.atom().map_or_else(String::new, |a| a.rel.to_string()),
                 });
             }
             let Some(a) = l.atom().filter(|a| inside && a.neg && !a.gated) else {
@@ -83,14 +87,14 @@ pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
             let at: Vec<usize> = (0..a.args.len()).filter(|&k| !matches!(a.args[k], Term::Wild)).collect();
             let ad: String = (0..a.args.len()).map(|k| if at.contains(&k) { 'b' } else { 'f' }).collect();
             let key: Vec<Term> = at.iter().map(|&k| a.args[k].clone()).collect();
-            let cols: Vec<(String, String)> = at.iter().map(|&k| (format!("c{k}"), prog.decls.get(&a.rel).and_then(|d| d.get(k)).map_or("int".to_owned(), |(_, t)| t.clone()))).collect();
+            let cols: Vec<(String, String)> = at.iter().map(|&k| (format!("c{k}"), prog.decls.get(a.rel.as_str()).and_then(|d| d.get(k)).map_or("int".to_owned(), |(_, t)| t.clone()))).collect();
             // Keyed when the literals before the negation read the component, so its keys grow with it; otherwise the
             // keys are fixed before it runs, and the whole relation's gate holds them all (as demand's does).
             let asks_inside = r.body[..i].iter().filter_map(Literal::atom).any(|b| comp.get(b.rel.as_str()) == Some(&c));
             if at.is_empty() || !asks_inside {
                 let done = format!("done_{}", a.rel);
                 if !made.iter().any(|(d, ..)| *d == done) {
-                    made.push((done.clone(), None, a.rel.clone(), vec![("k".to_owned(), "int".to_owned())]));
+                    made.push((done.clone(), None, a.rel.to_string(), vec![("k".to_owned(), "int".to_owned())]));
                 }
                 body.push(Literal::Atom(atom(done, vec![Term::Int(0)])));
             } else {
@@ -98,7 +102,7 @@ pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
                 // The keys asked about: the rule's literals before the negation.
                 rules.push(Rule { head: atom(ask.clone(), key.clone()), body: r.body[..i].to_vec() });
                 if !made.iter().any(|(d, ..)| *d == done) {
-                    made.push((done.clone(), Some(ask), a.rel.clone(), cols));
+                    made.push((done.clone(), Some(ask), a.rel.to_string(), cols));
                 }
                 body.push(Literal::Atom(atom(done, key)));
             }
@@ -128,8 +132,8 @@ pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
     let mut reads: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for r in &rules {
         for l in &r.body {
-            if let Some(a) = l.atom().filter(|a| !(a.neg && a.gated) && !names.contains(&a.rel)) {
-                reads.entry(r.head.rel.clone()).or_default().insert(a.rel.clone());
+            if let Some(a) = l.atom().filter(|a| !(a.neg && a.gated) && !names.contains(a.rel.as_str())) {
+                reads.entry(r.head.rel.to_string()).or_default().insert(a.rel.to_string());
             }
         }
     }
@@ -149,10 +153,10 @@ pub(in crate::code_rule_dsl) fn gate(prog: &mut Program) -> Result<(), Error> {
         }
         let deps: Vec<String> = rules
             .iter()
-            .filter(|r| reach.contains(&r.head.rel))
+            .filter(|r| reach.contains(r.head.rel.as_str()))
             .flat_map(|r| &r.body)
-            .filter_map(|l| l.atom().map(|a| a.rel.clone()))
-            .filter(|g| names.contains(g) && g != done)
+            .filter_map(|l| l.atom().map(|a| a.rel.to_string()))
+            .filter(|g| names.contains(g.as_str()) && g != done)
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
@@ -185,20 +189,12 @@ pub(in crate::code_rule_dsl) fn split(prog: &Program) -> Option<Loading> {
     }
     let derived: BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
     let mut cone: BTreeSet<String> = prog.answers.keys().filter(|r| derived.contains(r.as_str())).cloned().collect();
-    // A request stated as facts has no rule to seed the cone. Its answers still
-    // belong to the cone and must be handed to their consumers in the rest.
-    for (request, answers) in &prog.answers {
-        if !derived.contains(request.as_str()) && prog.facts.get(request).is_some_and(|rows| !rows.is_empty()) {
-            cone.insert(request.clone());
-            cone.extend(answers.iter().cloned());
-        }
-    }
     let mut work: Vec<String> = cone.iter().cloned().collect();
     while let Some(rel) = work.pop() {
         for r in prog.rules.iter().filter(|r| r.head.rel == rel) {
             for a in r.body.iter().filter_map(Literal::atom) {
-                if derived.contains(a.rel.as_str()) && cone.insert(a.rel.clone()) {
-                    work.push(a.rel.clone());
+                if derived.contains(a.rel.as_str()) && cone.insert(a.rel.to_string()) {
+                    work.push(a.rel.to_string());
                 }
             }
         }
@@ -206,15 +202,15 @@ pub(in crate::code_rule_dsl) fn split(prog: &Program) -> Option<Loading> {
     let reads: BTreeSet<String> = prog
         .rules
         .iter()
-        .filter(|r| !cone.contains(&r.head.rel))
+        .filter(|r| !cone.contains(r.head.rel.as_str()))
         .flat_map(|r| r.body.iter().filter_map(Literal::atom))
-        .filter(|a| cone.contains(&a.rel))
-        .map(|a| a.rel.clone())
+        .filter(|a| cone.contains(a.rel.as_str()))
+        .map(|a| a.rel.to_string())
         // An output made in the cone is handed on too, and written by the rest as its other outputs are.
         .chain(prog.outputs.iter().filter(|o| cone.contains(*o)).cloned())
         .collect();
     let mut load = prog.clone();
-    load.rules.retain(|r| cone.contains(&r.head.rel));
+    load.rules.retain(|r| cone.contains(r.head.rel.as_str()));
     load.outputs.retain(|o| cone.contains(o) || reads.contains(o));
     for r in &reads {
         if !load.outputs.contains(r) {
@@ -224,7 +220,7 @@ pub(in crate::code_rule_dsl) fn split(prog: &Program) -> Option<Loading> {
     load.lattice.retain(|rel, _| cone.contains(rel));
     load.gates.retain(|(g, _)| cone.contains(g));
     let mut rest = prog.clone();
-    rest.rules.retain(|r| !cone.contains(&r.head.rel));
+    rest.rules.retain(|r| !cone.contains(r.head.rel.as_str()));
     rest.outputs.retain(|o| !cone.contains(o) || reads.contains(o));
     rest.lattice.retain(|rel, _| !cone.contains(rel));
     rest.gates.retain(|(g, _)| !cone.contains(g));
@@ -238,7 +234,7 @@ pub(in crate::code_rule_dsl) fn split(prog: &Program) -> Option<Loading> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// `!seen(x)` inside a component that loads waits for its key's gate; the rule asking about it is its prefix.

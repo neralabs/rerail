@@ -5,11 +5,11 @@ use super::super::logic::sql::{
 };
 use super::maintenance::{Delta, Work};
 use super::*;
-mod proof;
-mod seeds;
+pub mod proof;
+pub mod seeds;
 
 #[derive(Clone)]
-pub(super) struct Partitioned {
+pub struct Partitioned {
     columns: BTreeMap<String, usize>,
     rules: Vec<(schedule::Step, Query)>,
     steps: Vec<(schedule::Step, Query)>,
@@ -51,8 +51,7 @@ fn fields(db: &rusqlite::Connection, r: &Rel) -> Result<Vec<String>> {
         .prepare(&format!("SELECT * FROM {} LIMIT 0", r.render()))
         .map_err(error)?
         .column_names()
-        .iter()
-        .map(|c| c.to_string())
+        .map(str::to_owned)
         .collect())
 }
 fn source(table: &str, columns: &[String]) -> Rel {
@@ -71,7 +70,7 @@ fn source(table: &str, columns: &[String]) -> Rel {
     }
 }
 
-pub(super) fn prepare(db: &rusqlite::Connection, run: &mut session::Execution) -> Result<()> {
+pub fn prepare(db: &rusqlite::Connection, run: &mut session::Execution) -> Result<()> {
     let e = &run.emitted;
     let widths = e
         .program
@@ -200,7 +199,7 @@ impl Partitioned {
         changes: &BTreeMap<String, Delta>,
         limit: u32,
     ) -> Result<(BTreeMap<String, Delta>, u64, u64)> {
-        let parts = w.table(1)?;
+        let parts = w.set_table(1)?;
         self.seed(w, changes, &parts, false)?;
         self.seed(w, changes, &parts, true)?;
         let partitions =
@@ -217,8 +216,8 @@ impl Partitioned {
             .collect::<BTreeMap<_, _>>();
         let mut old = BTreeMap::new();
         for (r, &col) in &self.columns {
-            let table = w.table(widths[r])?;
-            w.db.execute(&format!("INSERT INTO {table} SELECT {} FROM {parts} p CROSS JOIN {} r WHERE r.c{col}=p.c0",names("r",widths[r]),quote(r)),[]).map_err(error)?;
+            let table = w.set_table(widths[r])?;
+            w.insert(&table,&format!("SELECT {} FROM {parts} p CROSS JOIN {} r WHERE r.c{col}=p.c0",names("r",widths[r]),quote(r)),false)?;
             w.db.execute(
                 &format!(
                     "DELETE FROM {} WHERE c{col} IN(SELECT c0 FROM {parts})",
@@ -234,13 +233,11 @@ impl Partitioned {
                 .get(r)
                 .is_some_and(|o| o.after.is_some())
             {
-                w.db.execute(
-                    &format!(
-                        "DELETE FROM __sql_changes_{r} WHERE c{col} IN(SELECT c0 FROM {parts})"
-                    ),
-                    [],
-                )
-                .map_err(error)?;
+                let name=format!("__sql_changes_{r}");
+                let keys=self.keys[r];
+                let selected=w.set_table(keys)?;
+                w.insert(&selected,&format!("SELECT {} FROM {} WHERE c{col} IN(SELECT c0 FROM {parts})",names("",keys),quote(&name)),false)?;
+                w.remove_keys(&name,&selected,keys)?;
             }
             old.insert(r.clone(), table);
         }
@@ -280,14 +277,14 @@ impl Partitioned {
             p.steps.push(step);
         }
         let waves = if partitions > 0 {
-            schedule::execute_existing(w.db, &p, limit).map_err(error)?
+            super::frontiers::execute_existing(w, &p, limit)?
         } else {
             0
         };
         let mut result = BTreeMap::new();
         for (r, &col) in &self.columns {
-            let now = w.table(widths[r])?;
-            w.db.execute(&format!("INSERT INTO {now} SELECT {} FROM {parts} p CROSS JOIN {} r WHERE r.c{col}=p.c0",names("r",widths[r]),quote(r)),[]).map_err(error)?;
+            let now = w.set_table(widths[r])?;
+            w.insert(&now,&format!("SELECT {} FROM {parts} p CROSS JOIN {} r WHERE r.c{col}=p.c0",names("r",widths[r]),quote(r)),false)?;
             result.insert(r.clone(), w.difference(&now, &old[r], widths[r])?);
         }
         Ok((result, partitions, u64::from(waves)))

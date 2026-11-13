@@ -30,6 +30,7 @@ visited(t) :- visited(a), kind(a, "reference_type"), field(a, "type", t).
 visited(t) :- visited(a), kind(a, "tuple_type"), !paren_type(a), child(a, t, _).
 // `(T)` is a tuple_type here and TyKind::Paren in rustc, which Clippy neither reports nor reads into.
 .decl paren_type(t: node)
+.stored paren_type "a tuple_type of one child has a comma only as its trailing comma, which the tape stores"
 paren_type(t) :- kind(t, "tuple_type"), child(t, _, 0), !child(t, _, 1), !op(t, ",").
 .decl associated(i: node)  // in an impl or trait block, and not in a fn body there
 associated(i) :- nearest(i, b, item_scope), (kind(b, "impl_item") ; kind(b, "trait_item")).

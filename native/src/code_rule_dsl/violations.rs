@@ -21,14 +21,13 @@ use super::matcher::{
 use super::model::{
     Anchor, ClauseKind, FIX_TEXT_PREFIX, FixPlan, Query, RegexSource, Template, ViolationSpec,
 };
-#[cfg(test)]
-use super::test_support::{Walk, record_walk};
+#[cfg(any(test, feature = "test-hooks"))]
+use crate::code_rule_dsl::walks::{Walk, record_walk};
 /// P's column batches for projected facts: P's typed evidence projections (its `violations` delta).
-pub(crate) mod projection;
-mod semantic;
-mod suppression;
-pub(crate) use super::lines::Span;
-use crate::code_rule_dsl::language::adapter::{Adapter, with_adapter};
+pub mod projection;
+pub mod semantic;
+pub mod suppression;
+pub use super::lines::Span;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::origin::InFile;
 use ast_grep_core::matcher::NodeMatch;
@@ -40,34 +39,35 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::borrow::Cow;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::sync::Arc;
-pub(super) use suppression::{names_rerail_ignore, rerail_ignores, suppresses};
+pub use suppression::{names_rerail_ignore, rerail_ignores, suppresses};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static NODE_GROUP_ENUMERATIONS: Cell<usize> = const { Cell::new(0) };
 }
 
-#[cfg(test)]
-pub(super) fn reset_node_group_enumerations() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn reset_node_group_enumerations() {
     NODE_GROUP_ENUMERATIONS.with(|count| count.set(0));
 }
 
-#[cfg(test)]
-pub(super) fn node_group_enumerations() -> usize {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn node_group_enumerations() -> usize {
     NODE_GROUP_ENUMERATIONS.with(Cell::get)
 }
 
 /// Longest capture text a message interpolates before it is cut with an ellipsis.
-pub(super) const MESSAGE_CAPTURE_CHARS: usize = 80;
+pub const MESSAGE_CAPTURE_CHARS: usize = 80;
 
 /// A capture's text as a message shows it: the first line, at most `MESSAGE_CAPTURE_CHARS`
 /// characters, with `…` marking anything cut.
-pub(super) fn message_capture(text: &str) -> Cow<'_, str> {
+pub fn message_capture(text: &str) -> Cow<'_, str> {
     let first = text.split('\n').next().unwrap_or("");
     let cut_line = first.len() < text.len();
     if !cut_line && first.chars().count() <= MESSAGE_CAPTURE_CHARS {
@@ -99,7 +99,7 @@ fn emitting(query: &Query) -> &Query {
 /// bind; upstream's `defined_vars` lists them for `inside`/`precedes`/`follows` anyway, and a
 /// message there renders them empty. Each utility is summarized once per `summaries` (recursive
 /// ones together with the utilities they reach); walks sharing `summaries` reuse each other's.
-pub(super) fn ast_captures<'a>(
+pub fn ast_captures<'a>(
     matcher: &'a AstMatcher,
     utils: &'a UtilTable,
     summaries: &mut CaptureSummaries<'a>,
@@ -114,7 +114,7 @@ pub(super) fn ast_captures<'a>(
         | AstMatcher::Compare(_)
         | AstMatcher::Count(_)
         | AstMatcher::Never => {}
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
         AstMatcher::All(items) | AstMatcher::Any(items) => {
             for item in items {
@@ -155,11 +155,11 @@ fn utility_captures<'a>(
     utils: &'a UtilTable,
     summaries: &mut CaptureSummaries<'a>,
 ) -> BTreeSet<&'a str> {
-    let Some(rule) = utils.rules.get().and_then(|rules| rules.get(index)) else {
+    let Some(rule) = utils.rule(index) else {
         return BTreeSet::new();
     };
     summaries.summarize(index, BTreeSet::new(), |summaries| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         record_walk(Walk::AstCaptures);
         let mut summary = BTreeSet::new();
         ast_captures(rule, utils, summaries, &mut summary);
@@ -245,7 +245,7 @@ fn utility_exports<'a>(
     utils: &'a UtilTable,
     summaries: &mut ExportSummaries<'_, 'a>,
 ) -> Exports<'a> {
-    let Some(rule) = utils.rules.get().and_then(|rules| rules.get(index)) else {
+    let Some(rule) = utils.rule(index) else {
         return Exports::default();
     };
     let ExportSummaries {
@@ -264,7 +264,7 @@ fn utility_exports<'a>(
 }
 
 /// The named groups of the regexes that test the witness node itself (`node_regexes`).
-pub(super) fn witness_groups(matcher: &AstMatcher, utils: &UtilTable) -> Vec<String> {
+pub fn witness_groups(matcher: &AstMatcher, utils: &UtilTable) -> Vec<String> {
     let mut regexes = Vec::new();
     node_regexes(matcher, utils, &mut regexes);
     regexes
@@ -274,7 +274,7 @@ pub(super) fn witness_groups(matcher: &AstMatcher, utils: &UtilTable) -> Vec<Str
 }
 
 /// The same-node regexes a matcher contributes to a violation or evidence projection.
-pub(super) fn witness_regexes(matcher: &AstMatcher, utils: &UtilTable) -> Vec<Regex> {
+pub fn witness_regexes(matcher: &AstMatcher, utils: &UtilTable) -> Vec<Regex> {
     let mut regexes = Vec::new();
     node_regexes(matcher, utils, &mut regexes);
     regexes.into_iter().cloned().collect()
@@ -341,7 +341,7 @@ fn node_regexes_in<'a>(
         AstMatcher::Semantic(semantic) => {
             semantic::node_regexes(semantic, utils, summaries, regexes)
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         AstMatcher::TestUnknown(_) => {}
     }
 }
@@ -354,11 +354,11 @@ fn node_regexes_utility<'a>(
     summaries: &mut UtilitySummary<usize, UtilityRegexes<'a>>,
     regexes: &mut Vec<&'a Regex>,
 ) {
-    let Some(rule) = utils.rules.get().and_then(|rules| rules.get(index)) else {
+    let Some(rule) = utils.rule(index) else {
         return;
     };
     let summary = summaries.summarize(index, UtilityRegexes::default(), |summaries| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         record_walk(Walk::NodeRegexes);
         let mut summary = Vec::new();
         node_regexes_in(rule, utils, summaries, &mut summary);
@@ -402,7 +402,7 @@ pub(super) fn bind(
     match query {
         Some(Query::Ast { matchers, .. }) => {
             let mut analysis = CaptureAnalysis::default();
-            for grammar in matchers {
+            for grammar in matchers.iter() {
                 counted.extend(analysis.counts(&grammar.matcher));
                 ast_captures(
                     &grammar.matcher,
@@ -411,7 +411,7 @@ pub(super) fn bind(
                     &mut names,
                 );
             }
-            for grammar in matchers {
+            for grammar in matchers.iter() {
                 let mut regexes = Vec::new();
                 node_regexes(&grammar.matcher, &grammar.utils, &mut regexes);
                 for regex in &regexes {
@@ -436,10 +436,11 @@ pub(super) fn bind(
                 .first()
                 .and_then(|grammar| grammar.transform.as_ref())
                 .filter(|transform| {
-                    transform
-                        .steps
-                        .iter()
-                        .any(|(_, trans)| node_groups.contains(trans.source_name()))
+                    transform.steps.iter().any(|(_, trans)| {
+                        trans
+                            .source_names()
+                            .any(|source| node_groups.contains(source))
+                    })
                 })
                 .cloned();
             names.extend(node_groups.iter().copied());
@@ -448,7 +449,7 @@ pub(super) fn bind(
             regex_group = true;
             names.extend(regex.capture_names().flatten());
         }
-        Some(Query::SelectWhen { .. }) | None => {}
+        Some(Query::SelectWhen { .. } | Query::File) | None => {}
     }
     if let Some(suppress) = &violation.suppress {
         let Some(Query::Ast { matchers, .. }) = query else {
@@ -463,7 +464,7 @@ pub(super) fn bind(
             Some(via) => via.host_family(),
             None => Family::of(grammar.language),
         });
-        let language = family.map_or("empty", |family| with_adapter!(family, A => A::LABEL));
+        let language = family.map_or("empty", |family| { let pack = language_pack::pack(family); pack.label() });
         for linter in suppress.requested() {
             if !family.is_some_and(|family| family.honours(linter)) {
                 return Err(invalid(format!(
@@ -482,6 +483,20 @@ pub(super) fn bind(
         return Err(invalid(format!(
             "{path}/anchor: require_each, budget, and llm violations support only \"witness.span\"; \
              fact violations carry no source span to anchor within"
+        )));
+    }
+    // A witness standing for the whole file has no source text a capture could lie in.
+    let spanless = match query {
+        Some(Query::Regex {
+            source: RegexSource::Path,
+            ..
+        }) => Some("a file.path regex match"),
+        Some(Query::File) => Some("a file query's witness"),
+        _ => None,
+    };
+    if let (Some(witness), Anchor::Capture(name)) = (spanless, &violation.anchor) {
+        return Err(invalid(format!(
+            "{path}/anchor: `capture.{name}`: {witness} is the whole file, with no source location to anchor within"
         )));
     }
     if let Anchor::Capture(name) = &violation.anchor
@@ -633,6 +648,11 @@ pub(super) fn bind(
                 "{path}/fix: a file.path regex match is not source text a fix can replace"
             )));
         }
+        Some(Query::File) => {
+            return Err(invalid(format!(
+                "{path}/fix: a file query's witness is the whole file, not source text a fix can replace"
+            )));
+        }
         _ => {
             return Err(invalid(format!(
                 "{path}/fix: only forbid clauses over an ast or file.content regex query can suggest a fix"
@@ -673,7 +693,7 @@ fn check_each(
     let mut variables = BTreeMap::new();
     for grammar in matchers {
         collect_variables(&grammar.matcher, &mut variables);
-        for util in grammar.utils.shared_rules() {
+        for util in grammar.utils.shared_rules(&grammar.query_utils) {
             collect_variables(util, &mut variables);
         }
     }
@@ -710,7 +730,7 @@ fn ast_capture_text<'e, D: Doc>(
 }
 
 /// A sub-node regex group of the witness: its name, text, and absolute byte range.
-pub(super) type NodeGroup = (String, std::sync::Arc<str>, Range<usize>);
+pub type NodeGroup = (String, std::sync::Arc<str>, Range<usize>);
 
 /// Named groups of the same-node regexes that match the witness text, each name once, first
 /// regex first.
@@ -755,7 +775,7 @@ pub(super) fn node_groups<D: Doc>(
 /// yet is one set: that match's groups, then the other regexes' as `node_groups` reads them. A
 /// witness where no match binds it has none: it reports nothing, as the linter reports nothing
 /// where no run is found. `cancelled` is polled before each match; once it holds, the walk ends.
-pub(super) fn each_node_group_set<D: Doc>(
+pub fn each_node_group_set<D: Doc>(
     violation: &ViolationSpec,
     language: GrammarDialect,
     matched: &NodeMatch<'_, D>,
@@ -794,7 +814,7 @@ pub(super) fn each_node_group_set<D: Doc>(
             if cancelled() {
                 return;
             }
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             NODE_GROUP_ENUMERATIONS.with(|count| count.set(count.get() + 1));
             let Some(group) = found.name(each) else {
                 continue;
@@ -926,25 +946,27 @@ fn fix_target<'t, D: Doc>(
 }
 
 #[derive(Clone, PartialEq)]
-pub(crate) struct Witness {
-    pub(crate) path: String,
-    pub(crate) span: Span,
-    pub(crate) captures: Captures,
+pub struct Witness {
+    pub path: String,
+    /// Where in the file's content the witness lies; `None` for one that stands for the whole
+    /// file (a `file` query, a `file.path` regex match), which has no source location.
+    pub span: Option<Span>,
+    pub captures: Captures,
     /// The violation message with captures interpolated, when it references any.
-    pub(crate) message: Option<String>,
+    pub message: Option<String>,
     /// The suggested fix: `{ span, text }` replacing the witness span.
-    pub(crate) fix: Option<Value>,
+    pub fix: Option<Value>,
     /// A `rerail-ignore` naming the code rule covers it, where its violation marks such witnesses
     /// instead of dropping them (`ViolationSpec::ignore_marks`: a `budget`'s rows).
-    pub(crate) ignored: bool,
+    pub ignored: bool,
     /// A complete violation projected by SQL. Publication returns it without host reconstruction.
-    pub(crate) sql_violation: Option<Value>,
+    pub sql_violation: Option<Value>,
 }
 
 /// The key under which a witness of an evidence producer carries its projected row.
 const PROJECTION: &str = "$project";
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[test]
 fn cloned_evidence_shares_its_projection_until_replaced() {
     let mut original = Captures::default();
@@ -961,7 +983,7 @@ fn cloned_evidence_shares_its_projection_until_replaced() {
 /// projects one. It serializes as the JSON object of each name's span list and the projection
 /// under `PROJECTION`, in key order.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct Captures {
+pub struct Captures {
     /// Each name's spans, in name order.
     spans: Vec<(Box<str>, Vec<Span>)>,
     projection: Option<projection::Row>,
@@ -977,7 +999,7 @@ impl Captures {
                 .sum::<usize>()
     }
 
-    pub(crate) fn from_spans(spans: BTreeMap<String, Vec<Span>>) -> Self {
+    pub fn from_spans(spans: BTreeMap<String, Vec<Span>>) -> Self {
         Self {
             spans: spans
                 .into_iter()
@@ -988,28 +1010,28 @@ impl Captures {
     }
 
     /// The spans `name` captured, if it is bound.
-    pub(crate) fn get(&self, name: &str) -> Option<&[Span]> {
+    pub fn get(&self, name: &str) -> Option<&[Span]> {
         self.spans
             .binary_search_by(|(known, _)| known.as_ref().cmp(name))
             .ok()
             .map(|index| self.spans[index].1.as_slice())
     }
 
-    pub(crate) fn projection(&self) -> Option<&projection::Row> {
+    pub fn projection(&self) -> Option<&projection::Row> {
         self.projection.as_ref()
     }
 
-    pub(crate) fn set_projection(&mut self, projection: Option<Value>) {
+    pub fn set_projection(&mut self, projection: Option<Value>) {
         self.projection = projection.map(projection::Row::from_json);
     }
 
     // Read by P's relational inputs (test-only, open item O18).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     pub(crate) fn take_projection(&mut self) -> Option<projection::Row> {
         self.projection.take()
     }
 
-    pub(crate) fn set_typed_projection(&mut self, row: projection::Row) {
+    pub fn set_typed_projection(&mut self, row: projection::Row) {
         self.projection = Some(row);
     }
 
@@ -1057,19 +1079,22 @@ impl Serialize for Captures {
 }
 
 /// A regex witness: named groups that matched become captures; the message and fix
-/// substitute their text.
+/// substitute their text. `span` locates a match in the file's content; it gives `None` for a
+/// match in no source text (a `file.path` regex), whose witness then has no span or captures.
 pub(super) fn regex_witness(
     path: &str,
     regex: &Regex,
     found: &regex::Captures<'_>,
     violation: Option<&ViolationSpec>,
-    span: impl Fn(usize, usize) -> Span,
+    span: impl Fn(usize, usize) -> Option<Span>,
 ) -> Witness {
     let whole = found.get(0).expect("group 0 always matches");
     let mut captures = BTreeMap::new();
     for name in regex.capture_names().flatten() {
-        if let Some(group) = found.name(name) {
-            captures.insert(name.to_owned(), vec![span(group.start(), group.end())]);
+        if let Some(group) = found.name(name)
+            && let Some(span) = span(group.start(), group.end())
+        {
+            captures.insert(name.to_owned(), vec![span]);
         }
     }
     let lookup =
@@ -1081,17 +1106,20 @@ pub(super) fn regex_witness(
                 lookup(name, multi).map(|text| Cow::Owned(message_capture(&text).into_owned()))
             })
         });
+    let span = span(whole.start(), whole.end());
     let fix = match violation.and_then(|violation| violation.fix.as_deref()) {
-        Some(FixPlan::Regex(template)) => Some(json!({
-            "span": span(whole.start(), whole.end()),
-            "text": template.render(lookup),
-        })),
+        Some(FixPlan::Regex(template)) => span.map(|span| {
+            json!({
+                "span": span,
+                "text": template.render(lookup),
+            })
+        }),
         _ => None,
     };
     Witness {
         sql_violation: None,
         path: path.to_owned(),
-        span: span(whole.start(), whole.end()),
+        span,
         captures: Captures::from_spans(captures),
         message,
         fix,
@@ -1099,903 +1127,46 @@ pub(super) fn regex_witness(
     }
 }
 
-/// The span a violation reports and whether a capture anchor fell back to the witness span.
-pub(super) fn anchored_span(anchor: &Anchor, witness: &Witness) -> (Span, bool) {
-    let span = witness.span;
+/// The span a violation reports, and whether a capture anchor fell back to the witness span. A
+/// witness without a span reports none, except at `file.start`.
+pub fn anchored_span(anchor: &Anchor, witness: &Witness) -> (Option<Span>, bool) {
     match anchor {
-        Anchor::Span => (span, false),
+        Anchor::Span => (witness.span, false),
         Anchor::Start => (
-            Span {
+            witness.span.map(|span| Span {
                 end_byte: span.start_byte,
                 end_column: span.start_column,
                 end_line: span.start_line,
                 ..span
-            },
+            }),
             false,
         ),
         Anchor::End => (
-            Span {
+            witness.span.map(|span| Span {
                 start_byte: span.end_byte,
                 start_column: span.end_column,
                 start_line: span.end_line,
                 ..span
-            },
+            }),
             false,
         ),
-        Anchor::FileStart => (Span::default(), false),
+        Anchor::FileStart => (Some(Span::default()), false),
         Anchor::Capture(name) => match witness.captures.get(name) {
             Some([first, .., last]) => (
-                Span {
+                Some(Span {
                     end_byte: last.end_byte,
                     end_column: last.end_column,
                     end_line: last.end_line,
                     ..*first
-                },
+                }),
                 false,
             ),
-            Some([only]) => (*only, false),
-            _ => (span, true),
+            Some([only]) => (Some(*only), false),
+            _ => (witness.span, true),
         },
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::super::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
-    use super::*;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
-    const CAPABILITIES: &str = include_str!("capabilities.json");
-
-    fn compile(forbid: Value, violation: Value) -> Result<CompiledCodeRuleDsl> {
-        compile_clause(json!({ "id": "c", "forbid": forbid, "violation": violation }))
-    }
-
-    fn compile_clause(clause: Value) -> Result<CompiledCodeRuleDsl> {
-        let mut capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
-        capabilities["factRelations"] = json!({ "symbols": {} });
-        let document = json!({ "format": "rerail.policy/v1", "id": "p", "revision": 1, "mode": "block", "clauses": [clause] });
-        CodeRuleDslRuntime::compile(
-            document.to_string(),
-            "json".to_owned(),
-            capabilities.to_string(),
-        )
-    }
-
-    fn ast(rule: Value) -> Value {
-        json!({ "ast": { "language": "typescript", "rule": rule } })
-    }
-
-    fn violation(anchor: &str, message: &str) -> Value {
-        json!({ "anchor": anchor, "code": "X", "message": message })
-    }
-
-    fn with_fix(anchor: &str, fix: &str) -> Value {
-        json!({ "anchor": anchor, "code": "X", "message": "m", "fix": fix })
-    }
-
-    fn violations_for(compiled: &CompiledCodeRuleDsl, language: &str, source: &str) -> Vec<Value> {
-        let snapshot = json!({
-            "facts": [],
-            "files": [{ "language": language, "path": "a.ts", "source": source }],
-            "format": "rerail.repository-snapshot/v1",
-            "revision": 0,
-        });
-        let output = compiled
-            .evaluate(snapshot.to_string(), "report".to_owned())
-            .expect("evaluation succeeds");
-        let result: Value = serde_json::from_str(&output).expect("JSON");
-        assert_eq!(result["failures"], json!([]), "{result}");
-        result["violations"].as_array().expect("findings").clone()
-    }
-
-    fn only(compiled: &CompiledCodeRuleDsl, source: &str) -> Value {
-        let found = violations_for(compiled, "typescript", source);
-        assert_eq!(found.len(), 1, "{found:?}");
-        found[0].clone()
-    }
-
-    fn point(span: &Value) -> (u64, u64, u64, u64) {
-        let field = |name: &str| span[name].as_u64().expect(name);
-        (
-            field("startLine"),
-            field("startColumn"),
-            field("endLine"),
-            field("endColumn"),
-        )
-    }
-
-    fn rejection(result: Result<CompiledCodeRuleDsl>) -> String {
-        result.err().expect("compile is rejected").reason
-    }
-
-    #[test]
-    fn messages_keep_escaped_and_digit_dollar_names_literal() {
-        // Review finding 5 on #2561: a message had no way to say `$HOME` or `$100`. `\$NAME` is
-        // literal text, and a name starting with a digit, which nothing can bind, stays text too
-        // (ast-grep renders both empty). Fix templates keep ast-grep's reading.
-        let compiled = compile(
-            ast(json!({ "pattern": "foo($A)" })),
-            violation("witness.span", r"set \$HOME to $A, pay $100, keep \x"),
-        )
-        .unwrap_or_else(|error| panic!("{}", error.reason));
-        assert_eq!(
-            only(&compiled, "foo(bar);\n")["message"],
-            r"set $HOME to bar, pay $100, keep \x"
-        );
-        let literal = compile(
-            json!({ "regex": { "source": "file.content", "pattern": "foo" } }),
-            violation("witness.span", r"costs $5, see \$DOC"),
-        )
-        .unwrap_or_else(|error| panic!("{}", error.reason));
-        assert_eq!(only(&literal, "foo\n")["message"], "costs $5, see $DOC");
-        assert_eq!(
-            rejection(compile(
-                ast(json!({ "pattern": "foo($A)" })),
-                with_fix("witness.span", "bar($5)")
-            )),
-            "/clauses/0/violation/fix: `$5` names no capture; the query can bind: A"
-        );
-    }
-
-    #[test]
-    fn a_regex_without_named_groups_carries_its_literal_fix() {
-        // Review finding 4 on #2561: the group-less fast path built witnesses without a fix.
-        for pattern in ["debugger;", "(?<D>debugger;)"] {
-            let compiled = compile(
-                json!({ "regex": { "source": "file.content", "pattern": pattern } }),
-                with_fix("witness.span", ""),
-            )
-            .unwrap_or_else(|error| panic!("{}", error.reason));
-            let found = only(&compiled, "debugger;\n");
-            assert_eq!(found["fix"]["text"], "", "{pattern}: {found}");
-            assert_eq!(point(&found["fix"]["span"]), (0, 0, 0, 9), "{pattern}");
-        }
-    }
-
-    #[test]
-    fn templates_split_metavariables_like_ast_grep() {
-        let names = |text: &str| {
-            Template::parse(text)
-                .vars()
-                .map(|(name, multi)| format!("{}{name}", if multi { "$$$" } else { "$" }))
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(names("Found $A in $$$ARGS."), ["$A", "$$$ARGS"]);
-        assert_eq!(names("$$A"), ["$A"]);
-        assert_eq!(names("costs $ 5, $lower, $$$$A"), ["$$$A"]);
-        assert_eq!(names("$A1_B-c"), ["$A1_B"]);
-        let rendered = Template::parse("<$A|$B>")
-            .render(|name, _| (name == "A").then_some(Cow::Borrowed("x")));
-        assert_eq!(rendered, "<x|>");
-        assert!(Template::parse("plain $ text").is_literal());
-    }
-
-    /// `${NAME}` (a Rerail extension; ast-grep 0.45.3 renders it literally) names a variable next
-    /// to text that would continue its name, in messages and fixes alike; `\${NAME}` is a
-    /// backslash before the variable, where `\$NAME` stays the escape.
-    #[test]
-    fn braced_variables_sit_next_to_name_characters() {
-        let names = |text: &str| {
-            Template::parse(text)
-                .vars()
-                .map(|(name, multi)| format!("{}{name}", if multi { "$$$" } else { "$" }))
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(
-            names("${A}B $$${ARGS}_1 ${a} ${A $${B}"),
-            ["$A", "$$$ARGS", "$B"]
-        );
-        let compiled = compile(
-            ast(json!({ "pattern": "f($A, $$$R)" })),
-            violation("witness.span", r"${A}_X [$$${R}] \${A} \$A ${a}"),
-        )
-        .unwrap_or_else(|error| panic!("{}", error.reason));
-        assert_eq!(
-            only(&compiled, "f(b, c, d);\n")["message"],
-            r"b_X [c, d] \b $A ${a}"
-        );
-        let fixed = |fix: &str, source: &str| {
-            let compiled = compile(
-                ast(json!({ "pattern": "f($A, $$$R)" })),
-                with_fix("witness.span", fix),
-            )
-            .unwrap_or_else(|error| panic!("{}", error.reason));
-            only(&compiled, source)["fix"]["text"].clone()
-        };
-        assert_eq!(
-            fixed("g_${A}_SUFFIX(${A}X, $$${R}) $${A}$", "f(b, c, d);\n"),
-            "g_b_SUFFIX(bX, c, d) $b$"
-        );
-        // Re-indented as the unbraced template is.
-        let source = "function k() {\n  f(a, {\n    b,\n  });\n}\n";
-        assert_eq!(
-            fixed("if (x) {\n  ${A}Z($$$R);\n}", source),
-            json!(
-                fixed("if (x) {\n  $A($$$R);\n}", source)
-                    .as_str()
-                    .expect("text")
-                    .replacen("a(", "aZ(", 1)
-            )
-        );
-        let regex = compile(
-            json!({ "regex": { "source": "file.content", "pattern": "(?<N>[0-9]+)" } }),
-            with_fix("witness.span", "${N}0"),
-        )
-        .unwrap_or_else(|error| panic!("{}", error.reason));
-        assert_eq!(only(&regex, "7\n")["fix"]["text"], "70");
-        assert_eq!(
-            rejection(compile(
-                ast(json!({ "pattern": "f($A)" })),
-                violation("witness.span", "${NOPE}")
-            )),
-            r"/clauses/0/violation/message: `$NOPE` names no capture; the query can bind: A; write `\$NOPE` for literal text"
-        );
-    }
-
-    #[test]
-    fn long_or_multi_line_captures_are_cut_in_messages() {
-        assert_eq!(message_capture("short"), "short");
-        assert_eq!(message_capture("f(\n  a,\n)"), "f(…");
-        let long = "x".repeat(MESSAGE_CAPTURE_CHARS + 5);
-        let cut = message_capture(&long);
-        assert_eq!(cut.chars().count(), MESSAGE_CAPTURE_CHARS);
-        assert!(cut.ends_with('…'));
-        let exact = "y".repeat(MESSAGE_CAPTURE_CHARS);
-        assert_eq!(message_capture(&exact), exact);
-    }
-
-    #[test]
-    fn witness_start_and_end_are_zero_width_points() {
-        let source = "let a = 1;\nconsole.log(a,\n  b);\n";
-        let rule = json!({ "pattern": "console.log($$$ARGS)" });
-        let span = only(
-            &compile(ast(rule.clone()), violation("witness.span", "m")).unwrap(),
-            source,
-        );
-        assert_eq!(point(&span["span"]), (1, 0, 2, 4));
-        let start = only(
-            &compile(ast(rule.clone()), violation("witness.start", "m")).unwrap(),
-            source,
-        );
-        assert_eq!(point(&start["span"]), (1, 0, 1, 0));
-        assert_eq!(start["span"]["startByte"], start["span"]["endByte"]);
-        let end = only(
-            &compile(ast(rule), violation("witness.end", "m")).unwrap(),
-            source,
-        );
-        assert_eq!(point(&end["span"]), (2, 4, 2, 4));
-        // Anchors never change violation identity: the id stays the witness's.
-        assert_eq!(start["id"], span["id"]);
-        assert_eq!(end["id"], span["id"]);
-    }
-
-    #[test]
-    fn capture_anchors_point_at_the_capture() {
-        let source = "foo(first, second, third);\n";
-        let rule = || ast(json!({ "pattern": "foo($A, $$$REST)" }));
-        let single = compile(rule(), violation("capture.A", "m")).unwrap();
-        assert_eq!(point(&only(&single, source)["span"]), (0, 4, 0, 9));
-        let multi = compile(rule(), violation("capture.REST", "m")).unwrap();
-        assert_eq!(point(&only(&multi, source)["span"]), (0, 11, 0, 24));
-        // A capture bound through a relation anchors on the related node's capture.
-        let related = compile(
-            ast(json!({
-                "kind": "identifier",
-                "regex": "^second$",
-                "inside": { "pattern": "foo($$$ARGS)", "stopBy": "end" },
-            })),
-            violation("capture.ARGS", "m"),
-        )
-        .unwrap();
-        assert_eq!(point(&only(&related, source)["span"]), (0, 4, 0, 24));
-    }
-
-    #[test]
-    fn a_capture_absent_at_runtime_falls_back_to_the_witness_span() {
-        let compiled = compile(
-            ast(json!({ "any": [{ "pattern": "foo($A)" }, { "pattern": "bar()" }] })),
-            violation("capture.A", "call of $A"),
-        )
-        .unwrap();
-        let found = violations_for(&compiled, "typescript", "foo(x);\nbar();\n");
-        assert_eq!(found.len(), 2);
-        assert_eq!(point(&found[0]["span"]), (0, 4, 0, 5));
-        assert_eq!(found[0]["variables"], json!({}));
-        assert_eq!(found[0]["message"], "call of x");
-        assert_eq!(point(&found[1]["span"]), (1, 0, 1, 5));
-        assert_eq!(found[1]["variables"], json!({ "anchorFallback": true }));
-        assert_eq!(found[1]["message"], "call of ");
-    }
-
-    #[test]
-    fn messages_interpolate_single_multi_and_long_captures() {
-        let compiled = compile(
-            ast(json!({ "pattern": "$F($A, $$$REST)" })),
-            violation("witness.span", "Call $F($A) with [$$$REST]"),
-        )
-        .unwrap();
-        let found = only(&compiled, "run(first, a + b, c);\n");
-        assert_eq!(found["message"], "Call run(first) with [a + b, c]");
-        let found = only(&compiled, &format!("run({}, x);\n", "v".repeat(100)));
-        let cut = "v".repeat(MESSAGE_CAPTURE_CHARS - 1);
-        assert_eq!(found["message"], format!("Call run({cut}…) with [x]"));
-        let bare = compile(
-            ast(json!({ "pattern": "$F($$$ARGS)" })),
-            violation("witness.span", "$F takes [$$$ARGS]"),
-        )
-        .unwrap();
-        assert_eq!(only(&bare, "run();\n")["message"], "run takes []");
-    }
-
-    #[test]
-    fn ast_fixes_substitute_captures_and_reindent() {
-        let compiled = compile(
-            ast(json!({ "pattern": "console.log($$$ARGS)" })),
-            with_fix("witness.span", "logger.info($$$ARGS)"),
-        )
-        .unwrap();
-        let found = only(
-            &compiled,
-            "function f() {\n  console.log(a, {\n    b,\n  });\n}\n",
-        );
-        assert_eq!(found["fix"]["text"], "logger.info(a, {\n    b,\n  })");
-        assert_eq!(point(&found["fix"]["span"]), (1, 2, 3, 4));
-        assert_eq!(found["fix"]["span"]["startByte"], 17);
-        let block = compile(
-            ast(json!({ "pattern": "console.log($A)" })),
-            with_fix("witness.end", "if (debug) {\n  console.log($A);\n}"),
-        )
-        .unwrap();
-        let found = only(&block, "function f() {\n  console.log(a);\n}\n");
-        assert_eq!(
-            found["fix"]["text"],
-            "if (debug) {\n    console.log(a);\n  }"
-        );
-        assert_eq!(point(&found["span"]), (1, 16, 1, 16));
-
-        // Each dialect compiles its own template: the same rule fixes JSX in a .tsx file.
-        let jsx = compile(
-            ast(json!({ "pattern": "<button $$$ATTRS>$$$BODY</button>" })),
-            with_fix("witness.span", "<Button $$$ATTRS>$$$BODY</Button>"),
-        )
-        .unwrap();
-        let found = violations_for(
-            &jsx,
-            "tsx",
-            "const v = <button type=\"button\">Go</button>;\n",
-        );
-        assert_eq!(found.len(), 1);
-        assert_eq!(
-            found[0]["fix"]["text"],
-            "<Button type=\"button\">Go</Button>"
-        );
-        assert!(violations_for(&jsx, "typescript", "const v = 1;\n").is_empty());
-    }
-
-    #[test]
-    fn captures_bound_in_utilities_and_constraints_reach_violations() {
-        // A `matches` target shares the caller's environment, so its captures anchor, interpolate,
-        // and fix; a recursive utility is walked once.
-        let util = || {
-            json!({ "ast": {
-                "language": "typescript",
-                "rule": { "kind": "return_statement", "has": { "matches": "tail" } },
-                "utils": { "tail": { "any": [
-                    { "pattern": "await $E" },
-                    { "kind": "parenthesized_expression", "has": { "matches": "tail" } },
-                ] } },
-            } })
-        };
-        let compiled = compile(
-            util(),
-            json!({ "anchor": "capture.E", "code": "X", "message": "awaits $E", "fix": "return $E;" }),
-        )
-        .unwrap();
-        let found = only(
-            &compiled,
-            "async function f() {\n  return ((await g()));\n}\n",
-        );
-        assert_eq!(found["message"], "awaits g()");
-        assert_eq!(point(&found["span"]), (1, 17, 1, 20));
-        assert_eq!(found["fix"]["text"], "return g();");
-        assert_eq!(point(&found["fix"]["span"]), (1, 2, 1, 23));
-
-        // A constraint runs on the captured node with the same environment; what it binds counts.
-        let constrained = || {
-            json!({ "ast": {
-                "language": "typescript",
-                "rule": { "pattern": "$F($A)" },
-                "constraints": { "A": { "pattern": "$L + $R" } },
-            } })
-        };
-        let compiled = compile(
-            constrained(),
-            json!({ "anchor": "capture.R", "code": "X", "message": "$F adds $L and $R", "fix": "$F(`${$L}${$R}`)" }),
-        )
-        .unwrap();
-        let found = only(&compiled, "log(a + b);\nlog(c);\n");
-        assert_eq!(found["message"], "log adds a and b");
-        assert_eq!(point(&found["span"]), (0, 8, 0, 9));
-        assert_eq!(found["fix"]["text"], "log(`${a}${b}`)");
-
-        // Names bound only under `not`, in a utility or a constraint, never exist.
-        for (forbid, name, bindable) in [
-            (
-                json!({ "ast": {
-                    "language": "typescript",
-                    "rule": { "matches": "call" },
-                    "utils": { "call": { "kind": "call_expression", "not": { "pattern": "bar($N)" } } },
-                } }),
-                "N",
-                "the query binds no captures",
-            ),
-            (
-                json!({ "ast": {
-                    "language": "typescript",
-                    "rule": { "pattern": "$F($A)" },
-                    "constraints": { "A": { "kind": "identifier", "not": { "pattern": "$M.x" } } },
-                } }),
-                "M",
-                "the query can bind: A, F",
-            ),
-        ] {
-            assert_eq!(
-                rejection(compile(forbid, violation(&format!("capture.{name}"), "m"))),
-                format!(
-                    "/clauses/0/violation/anchor: `capture.{name}` names no capture; {bindable}"
-                )
-            );
-        }
-    }
-
-    #[test]
-    fn regex_named_groups_are_captures() {
-        let pattern = "(?<KEY>[a-z]+)=(?<VALUE>\\d+)(?<unit>ms)?";
-        let regex = || json!({ "regex": { "source": "file.content", "pattern": pattern } });
-        let compiled = compile(
-            regex(),
-            json!({ "anchor": "capture.VALUE", "code": "X", "message": "set $KEY to $VALUE", "fix": "$KEY: $VALUE" }),
-        )
-        .unwrap();
-        let found = only(&compiled, "  width=10\n");
-        assert_eq!(point(&found["span"]), (0, 8, 0, 10));
-        assert_eq!(found["message"], "set width to 10");
-        assert_eq!(found["fix"]["text"], "width: 10");
-        assert_eq!(point(&found["fix"]["span"]), (0, 2, 0, 10));
-        let captures = found["captures"].as_object().expect("captures");
-        assert_eq!(captures.keys().collect::<Vec<_>>(), ["KEY", "VALUE"]);
-        let unit = compile(regex(), violation("capture.unit", "m")).unwrap();
-        let found = violations_for(&unit, "typescript", "a=1ms b=2\n");
-        assert_eq!(point(&found[0]["span"]), (0, 3, 0, 5));
-        assert_eq!(found[1]["variables"], json!({ "anchorFallback": true }));
-    }
-
-    #[test]
-    fn named_groups_in_a_same_node_regex_capture_sub_spans() {
-        let comment = compile(
-            ast(json!({ "kind": "comment", "any": [
-                { "regex": "^//+(?<BODY>[^\\s/].*)$" },
-                { "regex": "^/\\*\\*?\\s*(?<BODY>.*?)\\s*\\*/$" },
-            ] })),
-            violation("capture.BODY", "comment `$BODY`"),
-        )
-        .unwrap();
-        let found = violations_for(&comment, "typescript", "x(); ////Tight\n/** doc */\n");
-        assert_eq!(found.len(), 2, "{found:?}");
-        assert_eq!(point(&found[0]["span"]), (0, 9, 0, 14));
-        assert_eq!(found[0]["message"], "comment `Tight`");
-        assert_eq!(point(&found[1]["span"]), (1, 4, 1, 7));
-        assert_eq!(found[1]["captures"]["BODY"][0]["startByte"], 19);
-        // A metavariable of the same name wins over the group.
-        let shadowed = compile(
-            ast(json!({ "pattern": "foo($A)", "regex": "^(?<A>f)oo" })),
-            violation("capture.A", "$A"),
-        )
-        .unwrap();
-        let found = only(&shadowed, "foo(bar);\n");
-        assert_eq!(point(&found["span"]), (0, 4, 0, 7));
-        assert_eq!(found["message"], "bar");
-        // Groups of a regex that tests another node (a relation or `not`) are not captures.
-        for rule in [
-            json!({ "kind": "identifier", "inside": { "kind": "call_expression", "regex": "^(?<G>f)" } }),
-            json!({ "kind": "identifier", "not": { "regex": "^(?<G>f)" } }),
-        ] {
-            let reason = rejection(compile(ast(rule), violation("capture.G", "m")));
-            assert_eq!(
-                reason,
-                "/clauses/0/violation/anchor: `capture.G` names no capture; the query binds no captures"
-            );
-        }
-        let reason = rejection(compile(
-            ast(json!({ "kind": "comment", "regex": "^//(?<B>.*)" })),
-            with_fix("witness.span", "// $B"),
-        ));
-        assert_eq!(
-            reason,
-            "/clauses/0/violation/fix: `$B` is a regex group inside an ast node; an ast fix can use only metavariables"
-        );
-    }
-
-    #[test]
-    fn select_when_reports_the_select_side_captures() {
-        let compiled = compile(
-            json!({ "select_when": {
-                "select": ast(json!({ "pattern": "foo($A)" })),
-                "exists": { "regex": { "source": "file.content", "pattern": "(?<MARK>@legacy)" } },
-            } }),
-            violation("capture.A", "foo of $A"),
-        )
-        .unwrap();
-        let found = only(&compiled, "// @legacy\nfoo(bar);\n");
-        assert_eq!(found["message"], "foo of bar");
-        assert_eq!(point(&found["span"]), (1, 4, 1, 7));
-    }
-
-    #[test]
-    fn anchors_messages_and_fixes_are_checked_against_the_query() {
-        let pattern = || ast(json!({ "pattern": "foo($A)", "not": { "pattern": "foo($B)" } }));
-        for (forbid, violation, expected) in [
-            (
-                pattern(),
-                violation("subject.span", "m"),
-                "/clauses/0/violation/anchor: unknown anchor `subject.span`; expected witness.span, witness.start, witness.end, file.start, or capture.<NAME>",
-            ),
-            (
-                pattern(),
-                violation("capture.B", "m"),
-                "/clauses/0/violation/anchor: `capture.B` names no capture; the query can bind: A",
-            ),
-            (
-                pattern(),
-                violation("witness.span", "bad $NAME"),
-                "/clauses/0/violation/message: `$NAME` names no capture; the query can bind: A; write `\\$NAME` for literal text",
-            ),
-            (
-                json!({ "regex": { "source": "file.content", "pattern": "x" } }),
-                violation("capture.X", "m"),
-                "/clauses/0/violation/anchor: `capture.X` names no capture; the query binds no captures",
-            ),
-            (
-                json!({ "regex": { "source": "file.content", "pattern": "(?<X>x)" } }),
-                violation("witness.span", "$$$X"),
-                "/clauses/0/violation/message: `$$$X`: regex groups are single captures; use `$X`",
-            ),
-            (
-                json!({ "regex": { "source": "file.path", "pattern": "(?<X>x)" } }),
-                with_fix("capture.X", "y"),
-                "/clauses/0/violation/fix: a file.path regex match is not source text a fix can replace",
-            ),
-            (
-                pattern(),
-                json!({ "anchor": "witness.span", "code": "X", "message": "m", "fix": ["x"] }),
-                "/clauses/0/violation/fix must be an ast-grep fix template string or { template, range }",
-            ),
-            (
-                pattern(),
-                with_fix("witness.span", "bar($B)"),
-                "/clauses/0/violation/fix: `$B` names no capture; the query can bind: A",
-            ),
-        ] {
-            assert_eq!(rejection(compile(forbid, violation)), expected);
-        }
-        for removed in [
-            json!({ "regex": { "source": "file.content", "pattern": "(x)", "captures": ["x"] } }),
-            json!({ "ast": { "language": "typescript", "rule": { "pattern": "f($A)" }, "capture": "A" } }),
-        ] {
-            let reason = rejection(compile(removed, violation("witness.span", "m")));
-            assert!(reason.starts_with("unknown field `capture"), "{reason}");
-        }
-    }
-
-    fn ranged(fix: Value) -> Value {
-        json!({ "anchor": "witness.span", "code": "X", "message": "m", "fix": fix })
-    }
-
-    #[test]
-    fn a_fix_range_replaces_a_capture_inside_the_witness() {
-        // no-div-regex: ESLint replaces the `=` after the opening slash with `[=]`.
-        let compiled = compile(
-            ast(json!({ "kind": "regex", "regex": "^/(?<EQ>=)" })),
-            ranged(json!({ "template": "[=]", "range": "capture.EQ" })),
-        )
-        .unwrap_or_else(|error| panic!("{}", error.reason));
-        let source = "const r = /=foo/;\n";
-        let fix = &only(&compiled, source)["fix"];
-        assert_eq!(fix["text"], "[=]");
-        assert_eq!(
-            (
-                fix["span"]["startByte"].as_u64(),
-                fix["span"]["endByte"].as_u64()
-            ),
-            (Some(11), Some(12))
-        );
-        // A metavariable and a transform of it; `witness.span` is the whole witness.
-        let compiled = compile(
-            json!({ "ast": {
-                "language": "typescript",
-                "rule": { "pattern": "f($A, $B)" },
-                "transform": { "U": { "convert": { "source": "$A", "toCase": "upperCase" } } },
-            } }),
-            ranged(json!({ "template": "$U", "range": "capture.A" })),
-        )
-        .unwrap_or_else(|error| panic!("{}", error.reason));
-        let fix = &only(&compiled, "f(abc, d);\n")["fix"];
-        assert_eq!(fix["text"], "ABC");
-        assert_eq!(fix["span"]["startByte"], 2);
-        let compiled = compile(
-            ast(json!({ "pattern": "f($$$A)" })),
-            ranged(json!({ "template": "[$$$A]", "range": "capture.A" })),
-        )
-        .unwrap_or_else(|error| panic!("{}", error.reason));
-        let fix = &only(&compiled, "f(a, b);\n")["fix"];
-        assert_eq!(
-            (
-                fix["text"].as_str(),
-                fix["span"]["startByte"].as_u64(),
-                fix["span"]["endByte"].as_u64()
-            ),
-            (Some("[a, b]"), Some(2), Some(6))
-        );
-        // A capture outside the witness gets no fix; the violation stays.
-        let compiled = compile(
-            ast(json!({ "kind": "identifier", "regex": "^a$", "inside": { "stopBy": "end", "pattern": "$P", "kind": "call_expression" } })),
-            ranged(json!({ "template": "x", "range": "capture.P" })),
-        )
-        .unwrap_or_else(|error| panic!("{}", error.reason));
-        assert_eq!(only(&compiled, "f(a);\n").get("fix"), None);
-        for (fix, expected) in [
-            (
-                json!({ "template": "x", "range": "capture.Z" }),
-                "/clauses/0/violation/fix/range: `capture.Z` names no capture; the query can bind: A",
-            ),
-            (
-                json!({ "template": "x", "range": "witness.start" }),
-                "/clauses/0/violation/fix/range: unknown range `witness.start`; expected witness.span or capture.<NAME>",
-            ),
-            (
-                json!({ "template": "x" }),
-                "/clauses/0/violation/fix/range is required: witness.span or capture.<NAME>",
-            ),
-            (
-                json!({ "template": 1, "range": "capture.A" }),
-                "/clauses/0/violation/fix/template must be an ast-grep fix template string",
-            ),
-            (
-                json!({ "template": "x", "range": "capture.A", "at": 1 }),
-                "unknown field `at` at /clauses/0/violation/fix",
-            ),
-        ] {
-            assert_eq!(
-                rejection(compile(ast(json!({ "pattern": "f($A)" })), ranged(fix))),
-                expected
-            );
-        }
-        let regex = json!({ "regex": { "source": "file.content", "pattern": "(?<X>a)" } });
-        assert_eq!(
-            rejection(compile(
-                regex,
-                ranged(json!({ "template": "b", "range": "capture.X" }))
-            )),
-            "/clauses/0/violation/fix/range: a fix range names a capture of an ast query"
-        );
-    }
-
-    /// Capture names and witness regexes summarize each utility once and map the summary at each
-    /// call, so a diamond chain costs each utility a constant number of expansions.
-    #[test]
-    fn parameterized_utility_diamonds_summarize_violations_in_linear_visits() {
-        use crate::code_rule_dsl::test_support::{
-            DIAMOND_DEPTH, Walk, compiled_parameterized_utility_diamonds, grammar_matchers,
-            linear_walk, reset_walks, walks,
-        };
-        let compiled = compiled_parameterized_utility_diamonds(DIAMOND_DEPTH);
-        let grammar = &grammar_matchers(&compiled)[0];
-        let bound = linear_walk(DIAMOND_DEPTH);
-        reset_walks();
-        let mut names = BTreeSet::new();
-        ast_captures(
-            &grammar.matcher,
-            &grammar.utils,
-            &mut UtilitySummary::new(),
-            &mut names,
-        );
-        assert!(names.contains("X"), "{names:?}");
-        assert!(
-            walks(Walk::AstCaptures) <= bound,
-            "capture names expanded {} utilities (bound {bound})",
-            walks(Walk::AstCaptures)
-        );
-        witness_groups(&grammar.matcher, &grammar.utils);
-        assert!(
-            walks(Walk::NodeRegexes) <= bound,
-            "witness regexes expanded {} utilities (bound {bound})",
-            walks(Walk::NodeRegexes)
-        );
-    }
-
-    /// A utility reached along many paths tests the witness once: its regex describes it once.
-    #[test]
-    fn utility_diamonds_contribute_each_witness_regex_once() {
-        use crate::code_rule_dsl::test_support::{compiled, grammar_matchers, utility_diamonds};
-        let mut utils = utility_diamonds(12);
-        utils["u0"] = json!({ "kind": "identifier", "regex": "^(?<N>x)$" });
-        let compiled = compiled(json!({ "rule": { "matches": "u12" }, "utils": utils }));
-        let grammar = &grammar_matchers(&compiled)[0];
-        assert_eq!(witness_regexes(&grammar.matcher, &grammar.utils).len(), 1);
-        assert_eq!(witness_groups(&grammar.matcher, &grammar.utils), ["N"]);
-    }
-
-    /// Compiling a query collects capture names from its rule and every shared utility with one
-    /// summary per utility, so doubling a utility chain at most doubles that work.
-    #[test]
-    fn capture_names_of_a_compiled_utility_chain_grow_linearly() {
-        use crate::code_rule_dsl::test_support::{
-            Walk, compiled_utility_diamonds, reset_walks, walks,
-        };
-        let expansions = |depth| {
-            reset_walks();
-            compiled_utility_diamonds(depth);
-            walks(Walk::AstCaptures)
-        };
-        let (half, full) = (expansions(6), expansions(12));
-        assert!(
-            full <= 2 * half,
-            "capture names expanded {half} utilities at depth 6, {full} at depth 12"
-        );
-    }
-
-    /// `W` binds its parameter through `V`, which binds its own through `W` or an outward relation:
-    /// the violation may anchor on what `W` binds whichever `any` branch the walk meets first.
-    #[test]
-    fn captures_bound_through_recursive_calls_do_not_depend_on_branch_order() {
-        use crate::code_rule_dsl::test_support::{
-            mutually_recursive_calls, recursive_call_branch_orders,
-        };
-        for branches in recursive_call_branch_orders() {
-            let forbid = json!({ "ast": { "language": "typescript",
-                "rule": { "kind": "expression_statement", "any": branches },
-                "utils": mutually_recursive_calls() } });
-            if let Err(error) = compile(forbid, violation("capture.X", "x")) {
-                panic!("{branches}: {}", error.reason);
-            }
-        }
-    }
-}
-
-#[cfg(test)]
-mod each_limit_tests {
-    use super::*;
-    use crate::code_rule_dsl::CodeRuleDslRuntime;
-
-    /// Evaluates `source` as `a.ts` under the one clause `clause` of a code rule `bounded-each`,
-    /// with a one-witness allowance.
-    fn evaluate_bounded(clause: Value, source: &str) -> Value {
-        let mut capabilities: Value =
-            serde_json::from_str(include_str!("capabilities.json")).expect("capabilities");
-        capabilities["limits"]["maxWitnesses"] = json!(1);
-        let compiled = CodeRuleDslRuntime::compile(
-            json!({
-                "format": "rerail.policy/v1",
-                "id": "bounded-each",
-                "revision": 1,
-                "mode": "steer",
-                "clauses": [clause]
-            })
-            .to_string(),
-            "json".to_owned(),
-            capabilities.to_string(),
-        )
-        .expect("policy compiles");
-        let output = compiled
-            .evaluate(
-                json!({
-                    "format": "rerail.repository-snapshot/v1",
-                    "revision": 1,
-                    "facts": [],
-                    "files": [{
-                        "path": "a.ts",
-                        "language": "typescript",
-                        "source": source,
-                    }]
-                })
-                .to_string(),
-                "report".to_owned(),
-            )
-            .expect("evaluation succeeds");
-        serde_json::from_str(&output).expect("evaluation JSON")
-    }
-
-    /// One witness per `a` of a comment, with `suppress` where given.
-    fn comment_characters(suppress: Option<Value>) -> Value {
-        let mut violation = json!({
-            "anchor": "capture.X",
-            "code": "E",
-            "message": "$X",
-            "each": "X"
-        });
-        if let Some(suppress) = suppress {
-            violation["suppress"] = suppress;
-        }
-        json!({
-            "id": "comment-characters",
-            "forbid": { "ast": { "language": "typescript", "rule": {
-                "kind": "comment",
-                "regex": "(?<X>a)"
-            } } },
-            "violation": violation
-        })
-    }
-
-    #[test]
-    fn same_node_regex_each_stops_after_the_witness_overflow_sentinel() {
-        let source = format!("//{}\n", "a".repeat(50_000));
-        reset_node_group_enumerations();
-        let result = evaluate_bounded(comment_characters(None), &source);
-        assert_eq!(node_group_enumerations(), 2, "{result}");
-        assert_eq!(result["metrics"]["witnesses"], 2, "{result}");
-        assert_eq!(result["violations"], json!([]), "{result}");
-        assert_eq!(result["failures"][0]["code"], "witness-limit", "{result}");
-    }
-
-    /// A violation whose `suppress` a comment may answer reads past suppressed witnesses, yet
-    /// still stops once the unsuppressed ones overflow the allowance: none of these 50,000 groups
-    /// is suppressed, so the second ends the enumeration.
-    #[test]
-    fn suppressible_same_node_regex_each_stops_after_the_witness_overflow_sentinel() {
-        let source = format!("//{}\n", "a".repeat(50_000));
-        let suppress = json!({ "eslint": { "rules": ["no-warning-comments"] } });
-        reset_node_group_enumerations();
-        let result = evaluate_bounded(comment_characters(Some(suppress)), &source);
-        assert_eq!(node_group_enumerations(), 2, "{result}");
-        assert_eq!(result["metrics"]["witnesses"], 2, "{result}");
-        assert_eq!(result["violations"], json!([]), "{result}");
-        assert_eq!(result["failures"][0]["code"], "witness-limit", "{result}");
-    }
-
-    /// A binding a comment suppresses spends none of the one-witness allowance: the enumeration
-    /// reads past two suppressed bindings to the third, which is reported, whether a
-    /// `rerail-ignore` or a linter directive the violation opts into silences them.
-    #[test]
-    fn each_reads_past_suppressed_bindings_under_a_one_witness_allowance() {
-        for (directive, suppress) in [
-            ("// rerail-ignore bounded-each", None),
-            (
-                "// eslint-disable-line no-console",
-                Some(json!({ "eslint": { "rules": ["no-console"] } })),
-            ),
-        ] {
-            let mut violation = json!({
-                "anchor": "capture.X",
-                "code": "E",
-                "message": "statement",
-                "each": "X"
-            });
-            if let Some(suppress) = suppress {
-                violation["suppress"] = suppress;
-            }
-            // Statements only: `$X` alone also binds the comments, which no directive covers.
-            let clause = json!({
-                "id": "statement",
-                "forbid": { "ast": { "language": "typescript", "rule": {
-                    "kind": "program",
-                    "has": { "kind": "expression_statement", "pattern": "$X" }
-                } } },
-                "violation": violation
-            });
-            let source = format!("first; {directive}\nsecond; {directive}\nthird;\n");
-            let result = evaluate_bounded(clause, &source);
-            assert_eq!(result["failures"], json!([]), "{directive}: {result}");
-            let reported = result["violations"]
-                .as_array()
-                .expect("violations")
-                .iter()
-                .map(|violation| {
-                    let start = violation["span"]["startByte"].as_u64().expect("start");
-                    let end = violation["span"]["endByte"].as_u64().expect("end");
-                    &source[start as usize..end as usize]
-                })
-                .collect::<Vec<_>>();
-            assert_eq!(reported, ["third;"], "{directive}: {result}");
-        }
-    }
-}
+// each_limit_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

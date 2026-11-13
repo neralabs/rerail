@@ -1,5 +1,6 @@
 use super::regex_matches;
 use crate::code_rule_dsl::budget::{MatchBudget, set_shortcuts_off};
+use crate::code_rule_dsl::model::RegexSource;
 use crate::code_rule_dsl::test_support::{CAPABILITIES, evaluate_file, pack_test_data};
 use crate::code_rule_dsl::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
 use regex::Regex;
@@ -12,10 +13,21 @@ use std::sync::atomic::AtomicBool;
 #[test]
 fn regex_matches_keep_byte_ranges_and_stop_past_the_limit() {
     let regex = Regex::new("é").unwrap();
-    let (first, finished) = regex_matches(&regex, "éxé.ts", 1);
+    let (first, finished) = regex_matches(&regex, &RegexSource::Content, "éxé.ts", 1);
     assert_eq!((first.len(), first[0].clone(), finished), (1, 0..2, false));
-    let all = regex_matches(&regex, "éxé.ts", 2);
+    let all = regex_matches(&regex, &RegexSource::Content, "éxé.ts", 2);
     assert_eq!((all.0.as_slice(), all.1), (&[0..2, 3..5][..], true));
+}
+
+/// A path matches once: its first match, a finished scan, whatever the limit.
+#[test]
+fn a_path_regex_keeps_its_first_match() {
+    let regex = Regex::new("é").unwrap();
+    let (matches, finished) = regex_matches(&regex, &RegexSource::Path, "éxé.ts", 10);
+    assert_eq!(
+        (matches.len(), matches[0].clone(), finished),
+        (1, 0..2, true)
+    );
 }
 
 /// An exhausted match deadline leaves the scan unfinished before it keeps any match.
@@ -23,7 +35,10 @@ fn regex_matches_keep_byte_ranges_and_stop_past_the_limit() {
 fn regex_matches_stop_at_the_deadline() {
     let _budget = crate::code_rule_dsl::budget::MatchBudget::expired_for_test();
     let regex = Regex::new("needle").unwrap();
-    assert_eq!(regex_matches(&regex, "needle\n", 2), (Vec::new(), false));
+    assert_eq!(
+        regex_matches(&regex, &RegexSource::Content, "needle\n", 2),
+        (Vec::new(), false)
+    );
 }
 
 /// A Python pack code rule (a path under `packs/python/`: `rules/` or `candidates/rules/`), as
@@ -40,13 +55,19 @@ fn python_pack_code_rule(rule: &str) -> CompiledCodeRuleDsl {
     .unwrap_or_else(|error| panic!("{}: {}", path.display(), error.reason))
 }
 
-/// A code rule's result on one file, compiled and evaluated with the work-skipping shortcuts on and
-/// off (`set_shortcuts_off`): they must agree, violations and failures alike.
-fn agreeing(compile: &dyn Fn() -> CompiledCodeRuleDsl, path: &str, source: &str) -> Value {
+/// A code rule's result on one file, evaluated with the work-skipping shortcuts on (`with`) and off
+/// (`without`, `set_shortcuts_off`): they must agree, violations and failures alike. Each mode has
+/// its own compiled copy of the rule, as a workspace keeps one compiled rule for every file.
+fn agreeing(
+    with: &CompiledCodeRuleDsl,
+    without: &CompiledCodeRuleDsl,
+    path: &str,
+    source: &str,
+) -> Value {
     set_shortcuts_off(true);
-    let without = evaluate_file(&compile(), "python", path, source);
+    let without = evaluate_file(without, "python", path, source);
     set_shortcuts_off(false);
-    let with = evaluate_file(&compile(), "python", path, source);
+    let with = evaluate_file(with, "python", path, source);
     assert_eq!(with, without, "{path}: the shortcuts changed the result");
     with
 }
@@ -100,7 +121,7 @@ class C:
     import sys
     z = sys
 ";
-    let compile = || python_pack_code_rule(rule);
+    let (with, without) = (python_pack_code_rule(rule), python_pack_code_rule(rule));
     for file in &files {
         let source = std::fs::read_to_string(file).expect("fixture");
         let path = if file.extension().is_some_and(|extension| extension == "pyi") {
@@ -108,9 +129,9 @@ class C:
         } else {
             "fixture.py"
         };
-        agreeing(&compile, path, &source);
+        agreeing(&with, &without, path, &source);
     }
-    let result = agreeing(&compile, "mixed.py", mixed);
+    let result = agreeing(&with, &without, "mixed.py", mixed);
     assert_eq!(result["failures"], json!([]), "{rule}: {result}");
 }
 
@@ -164,4 +185,38 @@ fn f841_work_grows_linearly_with_assignments() {
             "units {units:?}: doubling the assignments more than doubled the work"
         );
     }
+}
+
+/// ESLint's `SourceCode` strips a leading byte order mark before any rule reads the text: a
+/// `file.content` regex reads an ECMAScript or Vue file from past it, its spans still over the
+/// file's bytes. Other families' files keep it.
+#[test]
+fn content_regexes_skip_a_leading_byte_order_mark_where_eslint_strips_it() {
+    use crate::code_rule_dsl::test_support::{clause_document, compile_document_with, violation};
+    let run = |pattern: &str, language: &str, path: &str| {
+        let document = clause_document(json!({
+            "id": "bom",
+            "forbid": { "regex": { "source": "file.content", "pattern": pattern } },
+            "violation": violation(),
+        }));
+        let compiled = compile_document_with(
+            document,
+            &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
+        )
+        .unwrap_or_else(|error| panic!("{}", error.reason));
+        let result = evaluate_file(&compiled, language, path, "\u{feff}x = 1\n");
+        result["violations"]
+            .as_array()
+            .expect("violations")
+            .iter()
+            .map(|found| found["span"]["startByte"].as_u64().expect("start"))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(run("\\x{FEFF}", "javascript", "a.js"), Vec::<u64>::new());
+    assert_eq!(run("\\x{FEFF}", "typescript", "a.ts"), Vec::<u64>::new());
+    assert_eq!(run("\\Ax", "javascript", "a.js"), [3]);
+    assert_eq!(run("\\x{FEFF}", "vue", "a.vue"), Vec::<u64>::new());
+    assert_eq!(run("\\Ax", "vue", "a.vue"), [3]);
+    assert_eq!(run("\\x{FEFF}", "python", "a.py"), [0]);
+    assert_eq!(run("\\Ax", "python", "a.py"), Vec::<u64>::new());
 }

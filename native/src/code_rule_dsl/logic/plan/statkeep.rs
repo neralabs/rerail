@@ -97,6 +97,12 @@ impl RelStats {
         &self.columns
     }
 
+    /// The same statistics, of columns named `columns` (as many).
+    pub(in crate::code_rule_dsl) fn renamed(&self, columns: Vec<String>) -> Self {
+        debug_assert_eq!(columns.len(), self.columns.len());
+        RelStats { columns, ..self.clone() }
+    }
+
     pub(in crate::code_rule_dsl) fn rows(&self) -> i64 {
         self.rows
     }
@@ -261,24 +267,30 @@ impl RelStats {
         }
         self.partial = true;
         // Out before in: a value whose rows are replaced never counts past them, so an exact map is not given up on
-        // the way.
+        // the way. Each row goes into the sketches as it comes (they are linear: the same counters as its value's
+        // count added once), not through a map of the batch's values: two map entries a row a column were most of a
+        // kept relation's count (O125's cold run: 13% of its CPU). Only an exact map is a map.
         for (flat, sign) in [(minus, -1i64), (plus, 1)] {
             self.rows += sign * (flat.len() / width) as i64;
-            let mut values: FxHashMap<i64, i64> = FxHashMap::default();
-            let mut pairs: FxHashMap<(i64, i64), i64> = FxHashMap::default();
             for (c, col) in self.cols.iter_mut().enumerate().take(width) {
-                values.clear();
                 for row in flat.chunks_exact(width) {
-                    *values.entry(row[c]).or_default() += 1;
-                }
-                Self::values(col, &values, sign);
-                if let Some(p) = &mut col.pairs {
-                    pairs.clear();
-                    for row in flat.chunks_exact(width) {
-                        *pairs.entry((group(row[0]), row[c])).or_default() += 1;
+                    col.sketch.add(row[c], sign);
+                    if let Some(p) = &mut col.pairs {
+                        p.add(pair(group(row[0]), row[c]), sign);
                     }
-                    for (&(d, v), &k) in &pairs {
-                        p.add(pair(d, v), sign * k);
+                }
+                if let Some(exact) = &mut col.exact {
+                    for row in flat.chunks_exact(width) {
+                        let e = exact.entry(row[c]).or_default();
+                        *e += sign;
+                        if *e == 0 {
+                            exact.remove(&row[c]);
+                        } else if exact.len() > EXACT {
+                            break;
+                        }
+                    }
+                    if exact.len() > EXACT {
+                        col.exact = None;
                     }
                 }
             }
@@ -433,7 +445,7 @@ impl RelStats {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::RelStats;
     use crate::code_rule_dsl::facts::vtab::syntax;
     use crate::code_rule_dsl::logic::native::component::columns_source;

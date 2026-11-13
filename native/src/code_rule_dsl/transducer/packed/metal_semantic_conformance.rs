@@ -15,10 +15,10 @@ fn tape(source: &str) -> TapeDoc {
 
 #[cfg(test)]
 #[path = "metal_phase_four_tests.rs"]
-mod phase_four;
+pub mod phase_four;
 
 #[path = "metal_phase_three_mixed_inputs.rs"]
-mod phase_three_mixed_inputs;
+pub mod phase_three_mixed_inputs;
 
 #[test]
 #[ignore = "pinned corpus differential subset against the independent CPU interpreter"]
@@ -509,7 +509,7 @@ fn retained_repeat_errors_preserve_exact_public_operand_pcs() {
     }
 }
 
-mod retained_grid_runtime {
+pub mod retained_grid_runtime {
     use super::*;
     #[test]
     fn inputs_bounded_page_plan_continues_after_its_descriptor_ring_is_full() {
@@ -3008,7 +3008,7 @@ mod retained_grid_runtime {
     }
 }
 
-mod retained_grid_frontier_runtime {
+pub mod retained_grid_frontier_runtime {
     use super::*;
     fn program(words: Vec<u32>) -> Program {
         Program::new(
@@ -3468,7 +3468,7 @@ mod retained_grid_frontier_runtime {
     }
 }
 
-mod retained_program_backend {
+pub mod retained_program_backend {
     use super::*;
     #[test]
     fn inputs_metal_workspace_reuse_preserves_quantified_results() {
@@ -3724,7 +3724,7 @@ mod retained_program_backend {
     }
 }
 
-mod retained_grid_history_runtime {
+pub mod retained_grid_history_runtime {
     use super::*;
     #[test]
     fn inputs_lua_priority_barrier_suspends_before_charging_the_exact_first_prefix() {

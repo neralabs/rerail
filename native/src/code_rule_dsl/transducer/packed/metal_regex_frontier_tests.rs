@@ -845,4 +845,4 @@ fn short_regex_predicates_preserve_complete_values_without_per_request_device_st
 }
 
 #[path = "metal_regex_storage_tests.rs"]
-mod storage;
+pub mod storage;

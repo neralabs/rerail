@@ -2,6 +2,7 @@
 //! backlog) and a workspace's storage context.
 
 use super::persisted::{grammar_set, grammar_version, tape_dialect};
+use super::secret_names::SecretNames;
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::tape;
@@ -16,15 +17,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Arc as StdArc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
-pub(super) struct StoreRegistryEntry {
+pub struct StoreRegistryEntry {
     store: std::sync::Weak<ContentStore>,
     maintenance: std::sync::Weak<StorageMaintenance>,
 }
 
-pub(super) static CONTENT_STORES: LazyLock<Mutex<HashMap<std::path::PathBuf, StoreRegistryEntry>>> =
+pub static CONTENT_STORES: LazyLock<Mutex<HashMap<std::path::PathBuf, StoreRegistryEntry>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-pub(super) fn shared_content_store(
+pub fn shared_content_store(
     path: std::path::PathBuf,
 ) -> StoreResult<(StdArc<ContentStore>, StdArc<StorageMaintenance>)> {
     let mut stores = CONTENT_STORES
@@ -57,7 +58,7 @@ pub(super) fn shared_content_store(
     Ok((store, maintenance))
 }
 
-pub(super) struct StorageMaintenance {
+pub struct StorageMaintenance {
     stop: StdArc<AtomicBool>,
     workspaces: StdArc<Mutex<HashMap<WorkspaceId, (String, usize)>>>,
     thread: Option<std::thread::JoinHandle<()>>,
@@ -69,9 +70,7 @@ impl StorageMaintenance {
         let workspaces = StdArc::new(Mutex::new(HashMap::<WorkspaceId, (String, usize)>::new()));
         let thread_stop = StdArc::clone(&stop);
         let thread_workspaces = StdArc::clone(&workspaces);
-        let thread = std::thread::Builder::new()
-            .name("rerail-store-maintenance".to_owned())
-            .spawn(move || {
+        let thread = rerail_accel::exec::service("rerail-store-maintenance", None, move || {
                 let mut search_index_cursor = None;
                 loop {
                     std::thread::park_timeout(Duration::from_secs(30));
@@ -149,7 +148,7 @@ impl StorageMaintenance {
 /// The keyset cursor only moves forward until the backlog after it is empty, so a batch this build
 /// cannot index never pins it; then it starts over and picks up tapes stored below it meanwhile.
 /// A tape this build can never decode leaves the backlog with an incomplete index set.
-pub(super) fn index_stored_tapes(
+pub fn index_stored_tapes(
     store: &ContentStore,
     stop: &AtomicBool,
     cursor: &mut Option<crate::content_store::TapeId>,
@@ -191,14 +190,14 @@ pub(super) fn index_stored_tapes(
             && store
                 .put_unavailable_search_indexes(
                     &undecodable,
-                    crate::code_rule_dsl::transducer::POSITIONAL_INDEX_VERSION,
+                    crate::code_rule_dsl::search_index::POSITIONAL_INDEX_VERSION,
                 )
                 .is_err()
         {
             return;
         }
         if !tapes.is_empty()
-            && crate::code_rule_dsl::transducer::persist_search_index_batch(
+            && crate::code_rule_dsl::search_index::persist_search_index_batch(
                 store, &tapes, &documents,
             )
             .is_err()
@@ -249,7 +248,7 @@ impl Drop for StorageMaintenance {
     }
 }
 
-pub(super) struct StorageRegistration {
+pub struct StorageRegistration {
     maintenance: StdArc<StorageMaintenance>,
     workspace_id: WorkspaceId,
 }
@@ -261,31 +260,42 @@ impl Drop for StorageRegistration {
 }
 
 #[derive(Clone)]
-pub(super) struct StorageContext {
-    pub(super) store: StdArc<ContentStore>,
-    pub(super) repository: Option<StdArc<git_workspace::GitWorkspace>>,
+pub struct StorageContext {
+    pub store: StdArc<ContentStore>,
+    pub repository: Option<StdArc<git_workspace::GitWorkspace>>,
     /// The workspace root relative to the repository worktree (`""`, or `dir/` with a trailing
     /// slash). Workspace paths are root-relative; `repository_prefix + path` is the repository path.
-    pub(super) repository_prefix: String,
-    pub(super) workspace_id: WorkspaceId,
-    pub(super) snapshot_id: SnapshotId,
-    pub(super) owner: String,
-    pub(super) _maintenance: Option<StdArc<StorageRegistration>>,
+    pub repository_prefix: String,
+    pub workspace_id: WorkspaceId,
+    pub snapshot_id: SnapshotId,
+    pub owner: String,
+    /// The names the host judges secret-like: a file so named is never written to the store.
+    pub secret_names: StdArc<SecretNames>,
+    pub _maintenance: Option<StdArc<StorageRegistration>>,
+}
+
+impl StorageContext {
+    /// Whether `path` (workspace-relative) is named like one holding secrets, judged by its path in
+    /// the repository: the store keeps no copy of such a file, not its source, tapes or results.
+    pub(super) fn withholds(&self, path: &str) -> bool {
+        self.secret_names.matches(&self.repository_prefix, path)
+    }
 }
 
 pub(super) fn unix_seconds() -> Result<i64> {
     crate::content_store::unix_seconds().map_err(|error| invalid(error.to_string()))
 }
 
-/// A workspace's storage context over an explicit store file, discovering its Git worktree.
-#[cfg(test)]
-pub(super) fn storage_context_in(
+/// A workspace's storage context over an explicit store file, discovering its Git worktree, with
+/// no secret-like names.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn storage_context_in(
     root: &str,
     store_path: std::path::PathBuf,
 ) -> Result<StorageContext> {
     let discovered = git_workspace::discover(std::path::Path::new(root))
         .map_err(|error| invalid(error.to_string()))?;
-    match attach_storage(root, discovered, store_path)? {
+    match attach_storage(root, discovered, store_path, StdArc::default())? {
         Attached::Storage(context) => Ok(context),
         Attached::Busy(reason) => Err(invalid(reason)),
     }
@@ -300,11 +310,13 @@ pub(super) enum Attached {
 }
 
 /// The storage context of the workspace at `root` in the `discovered` Git worktree, over an
-/// explicit store file; `Attached::Busy` when the store stays busy.
+/// explicit store file, never holding files `secret_names` names; `Attached::Busy` when the store
+/// stays busy.
 pub(super) fn attach_storage(
     root: &str,
     discovered: git_workspace::GitWorkspace,
     store_path: std::path::PathBuf,
+    secret_names: StdArc<SecretNames>,
 ) -> Result<Attached> {
     let busy = |during: &str| {
         Attached::Busy(format!(
@@ -359,6 +371,7 @@ pub(super) fn attach_storage(
         workspace_id,
         snapshot_id: snapshot,
         owner,
+        secret_names,
         _maintenance: Some(registration),
     }))
 }

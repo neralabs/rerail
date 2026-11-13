@@ -6,6 +6,7 @@ import {
   readRepoQuestion,
   renderCannotInstall,
   renderBanner,
+  renderGitMissing,
   renderInstalled,
   renderOnPath,
   renderAnswerHint,
@@ -25,7 +26,10 @@ import {
   renderSkipped,
   renderSummary,
   renderTips,
+  renderUnsupportedPlatform,
+  renderWslNote,
   shellQuote,
+  type AgentsConnection,
   type CodingAgent,
   type DashboardLink,
   type RecommendedPacksInput,
@@ -36,8 +40,11 @@ import {
 const ANSI = /\u001b\[/;
 const stripAnsi = (text: string): string => text.replace(/\u001b\[[0-9;]*m/g, "");
 
-const CLAUDE: CodingAgent = { id: "claude", name: "Claude Code" };
+const CLAUDE: CodingAgent = { id: "claude-code", name: "Claude Code" };
 const CURSOR: CodingAgent = { id: "cursor", name: "Cursor" };
+const CODEX: CodingAgent = { id: "codex", name: "Codex" };
+const WORKS_WITH: readonly CodingAgent[] = [{ id: "omp", name: "OMP" }, { id: "pi", name: "Pi" }, CLAUDE, CODEX, CURSOR];
+const CONNECTED: AgentsConnection = { connected: [CLAUDE, CURSOR], anyFound: true, worksWith: WORKS_WITH };
 const OPENED: DashboardLink = { url: "http://127.0.0.1:7777/#rules", browserOpened: true };
 const NOT_OPENED: DashboardLink = { url: "http://127.0.0.1:7777/#rules", browserOpened: false, noBrowserReason: "this looks like a remote session" };
 
@@ -49,9 +56,9 @@ const PACKS: RecommendedPacksInput = {
     { id: "acme-api", name: "acme-api", ruleCount: 92, reason: "matches the acme_api package", packageName: "@neralabs/rerail-pack-acme-api", version: "1.2.0", installed: "1.2.0" },
   ],
   available: [
-    { id: "typescript", version: "0.1.1", name: "TypeScript", reason: "matches the typescript dependency in package.json and *.ts files" },
-    { id: "acme-api", version: "1.2.0", name: "acme-api", reason: "matches the acme_api package" },
-    { id: "python", version: "0.1.2", name: "Python" },
+    { id: "typescript", packageName: "@neralabs/rerail-pack-typescript", version: "0.1.1", name: "TypeScript", reason: "matches the typescript dependency in package.json and *.ts files" },
+    { id: "acme-api", packageName: "@neralabs/rerail-pack-acme-api", version: "1.2.0", name: "acme-api", reason: "matches the acme_api package" },
+    { id: "python", packageName: "@neralabs/rerail-pack-python", version: "0.1.2", name: "Python" },
   ],
   agentsFound: [CLAUDE, CURSOR],
 };
@@ -61,6 +68,7 @@ const SUMMARY: SummaryInput = {
   packNames: ["TypeScript", "acme-api"],
   ruleCount: 166,
   dashboard: OPENED,
+  agents: CONNECTED,
 };
 
 const LANES: readonly SetupLane[] = ["terminal", "agent"];
@@ -74,14 +82,17 @@ function everyScreen(lane: SetupLane): Record<string, string> {
     T2x: renderSessionsDeclined(lane),
     T3: renderReadRepoQuestion({ repoName: "acme-web", repoPath: "/Users/me/code/acme-web" }, lane),
     T4: renderRecommendedPacks(PACKS, lane),
-    T5: renderNotNow(lane),
+    T5: renderNotNow([CLAUDE, CURSOR], lane),
     T6: renderSummary(SUMMARY, lane),
     C6b: renderTips(lane),
     E1: renderCannotInstall({ installCommand: "npx rerail" }, lane),
     E2: renderNodeTooOld({ found: "20.11.1", requiredMajor: 24 }, lane),
     E3: renderNoRepoQuestion({}, lane),
-    E5: renderSkipped(lane),
+    E5: renderSkipped(CONNECTED, lane),
     E6: renderSummary({ ...SUMMARY, dashboard: NOT_OPENED }, lane),
+    E7: renderUnsupportedPlatform({ problem: { kind: "musl" }, minGlibc: "2.39" }, lane),
+    E8: renderGitMissing({ looked: ["/usr/bin/git"], installCommand: "sudo apt-get install git" }, lane),
+    T2w: renderWslNote({ folder: "/mnt/c/code/acme-web" }, lane),
   };
 }
 
@@ -155,9 +166,19 @@ describe("T2b may Rerail read sessions", () => {
     expect(text).toContain("  ✓ Stays on this computer. Nothing is sent anywhere.");
     expect(text).toContain("  ✓ You’re asked once, for every repo you start Rerail in.");
     expect(text).toContain("1. Yes, allow\n");
-    expect(text).toMatch(/2\. No, cancel set-up +nothing changes/);
+    expect(text).toMatch(/2\. No, cancel set-up +nothing is connected or started/);
     expect(text).toContain("1. rerail setup --answer allow --repo /Users/me/code/acme-web");
     expect(text).toContain("2. rerail setup --answer decline");
+  });
+
+  // Set-up installed Rerail before asking, so "No" does not leave the machine as it was: the screen says so.
+  it("after no, says Rerail stays installed and off, and how to remove it", () => {
+    expect(renderSessionsDeclined("agent")).toBe([
+      "● Set-up stopped. Nothing new was connected or started.",
+      "  Rerail needs your sessions to check rules. Run set-up again whenever you want to allow it.",
+      "  Rerail stays installed, and off; rerail install --remove takes it off this computer.",
+      "",
+    ].join("\n"));
   });
 });
 
@@ -287,6 +308,15 @@ describe("T4 / C4 recommended rule packs", () => {
     expect(text).toContain("  △ @neralabs/rerail-pack-acme-api@1.2.0 replaces 1.1.0, which every repo on this computer uses.");
   });
 
+  it("names a third party's pack with its publisher, and says before a yes that Rerail has not reviewed it", () => {
+    const acme = { ...PACKS.packs[0]!, id: "@acme/rerail-pack-sql", name: "Acme SQL", packageName: "@acme/rerail-pack-sql", thirdParty: "@acme" };
+    const text = stripAnsi(renderRecommendedPacks({ ...PACKS, packs: [acme, PACKS.packs[1]!] }, "terminal"));
+
+    expect(text).toMatch(/^ {2}Acme SQL \(by @acme\)\s+\d+/mu);
+    expect(text).toContain("  △ @acme/rerail-pack-sql is by @acme, not Rerail. Rerail has not reviewed it: its rules run in Log until you approve them (rerail rules approve @acme/rerail-pack-sql), then their steer text reaches the coding agent.");
+    expect(text.match(/not Rerail/gu)).toHaveLength(1);
+  });
+
   it("aligns the table columns for long rule pack names", () => {
     const text = renderRecommendedPacks({ ...PACKS, packs: [{ ...PACKS.packs[0]!, name: "A very long rule pack name", ruleCount: 12, reason: "the reason" }] }, "agent");
     const header = text.split("\n").find(line => line.includes("Rule pack")) ?? "";
@@ -325,18 +355,121 @@ describe("T4 / C4 recommended rule packs", () => {
   it("says plainly when no rule pack fits, and when no coding agent was found", () => {
     const text = renderRecommendedPacks({ ...PACKS, packs: [], agentsFound: [] }, "agent");
     expect(text).toContain("Scanned acme-web. None of Rerail’s rule packs fit it.");
+    expect(text).not.toContain("Packs look for");
     expect(text).not.toContain("Rule pack ");
     expect(text).toContain("Start Rerail in acme-web with no rule packs on?");
     expect(text).toContain("  Will connect to: no coding agents found");
     expect(text).not.toContain("Adds /rerail commands");
   });
+
+  type NoFitExplanation = NonNullable<RecommendedPacksInput["nothingFits"]>;
+  const NO_FIT: NoFitExplanation = {
+    fileCount: 13,
+    endings: [{ ending: ".py", fileCount: 9 }, { ending: ".md", fileCount: 4 }],
+    notScanned: [{ folder: "fixtures", fileCount: 2 }],
+    git: true,
+    stoppedEarly: false,
+    nearMisses: [{ name: "Python", fileCount: 9, excludedBy: [{ glob: "tests/", fileCount: 6 }, { glob: "scripts/", fileCount: 3 }] }],
+    packs: [
+      { id: "python", name: "Python", files: ["*.py", "*.pyi"], dependencies: [] },
+      { id: "typescript", name: "TypeScript", files: ["*.ts", "*.mts", "*.cts", "*.tsx"], dependencies: ["typescript"] },
+      { id: "node", name: "Node.js", files: ["*.cjs"], dependencies: ["express", "koa", "fastify"] },
+    ],
+  };
+  const noFit = (nothingFits: Partial<NoFitExplanation>): string =>
+    renderRecommendedPacks({ ...PACKS, packs: [], nothingFits: { ...NO_FIT, ...nothingFits } }, "agent");
+
+  it("says why no rule pack fits: what the scan found and skipped, the pack that came closest, and what each pack looks for", () => {
+    const block = [
+      "Scanned acme-web. None of Rerail’s rule packs fit it.",
+      "",
+      "  Found           .py 9 · .md 4",
+      "                  from Git’s list of files, which leaves out what Git ignores",
+      "  Not scanned     fixtures/ (2)",
+      "  Closest         Python excludes the 9 files it looks for: tests/ (6),",
+      "                  scripts/ (3)",
+      "  Packs look for  Python      *.py, *.pyi",
+      "                  TypeScript  *.ts, *.mts, *.cts, +1 more,",
+      "                              dependency: typescript",
+      "                  Node.js     *.cjs, dependencies: express, koa, +1 more",
+    ].join("\n");
+    expect(stripAnsi(renderRecommendedPacks({ ...PACKS, packs: [], nothingFits: NO_FIT }, "terminal"))).toContain(`● ${block}`);
+    expect(noFit({})).toContain(block);
+  });
+
+  it("lists every file ending, so a lone source file among many others is not hidden", () => {
+    const endings = [[".md", 40], [".json", 12], [".yaml", 6], [".toml", 2], [".go", 1]] as const;
+    expect(noFit({ endings: endings.map(([ending, fileCount]) => ({ ending, fileCount })) })).toContain("  Found           .md 40 · .json 12 · .yaml 6 · .toml 2 · .go 1\n");
+  });
+
+  it("counts the files it found when none has an ending, and says no files only when there were none", () => {
+    expect(noFit({ fileCount: 4, endings: [], git: false })).toContain("  Found           4 files, none with an ending\n");
+    expect(noFit({ fileCount: 0, endings: [], git: false })).toContain("  Found           no files\n");
+  });
+
+  it("says how the scan read the repository: Git's list, or a walk that stopped early", () => {
+    expect(noFit({ git: false })).not.toContain("Git’s list");
+    expect(noFit({ git: false, stoppedEarly: true, fileCount: 200_000 })).toContain("                  the scan stopped early, after 200,000 files\n");
+  });
+
+  it("names the folders it did not scan, and leaves the row out when it skipped none", () => {
+    expect(noFit({ notScanned: [{ folder: "node_modules" }, { folder: "fixtures" }], git: false })).toContain("  Not scanned     node_modules/, fixtures/\n");
+    expect(noFit({ notScanned: [] })).not.toContain("Not scanned");
+  });
+
+  it("names at most two closest packs and three excludes each, counting the other excludes, and leaves the row out when none came close", () => {
+    const excludedBy = ["tests/", "scripts/", "docs/", "tools/", "ci/"].map((glob, index) => ({ glob, fileCount: 5 - index }));
+    const text = noFit({ nearMisses: [
+      { name: "Python", fileCount: 15, excludedBy },
+      { name: "Complexity", fileCount: 4, excludedBy: [{ glob: "tests/", fileCount: 4 }] },
+      { name: "PHP", fileCount: 1, excludedBy: [{ glob: "tests/", fileCount: 1 }] },
+    ] });
+    expect(text).toContain("                  scripts/ (4), docs/ (3), +2 more\n");
+    expect(text).toContain("Complexity excludes the 4 files it looks for");
+    expect(text).not.toContain("PHP excludes");
+    expect(noFit({ nearMisses: [] })).not.toContain("Closest");
+  });
+
+  it("wraps a long dependency list within the column", () => {
+    const packs = [{ id: "web", name: "Third Party Web Framework", files: [], dependencies: ["@nestjs/core", "@feathersjs/feathers", "a", "b"] }];
+    const rows = noFit({ packs }).split("\n").filter(row => row.startsWith(" ".repeat(18)) && /@|\+2 more/u.test(row));
+    expect(rows.every(row => row.length <= 80)).toBe(true);
+    expect(rows.join(" ").replace(/\s+/gu, " ")).toContain("dependencies: @nestjs/core, @feathersjs/feathers, +2 more");
+  });
+
+  it("caps the pack name column, giving a name too long for it a row of its own", () => {
+    const packs = [{ id: "long", name: "An Exceedingly Long Third Party Pack", files: ["*.x"], dependencies: [] }, NO_FIT.packs[0]!];
+    // The column is 24 characters and the gap after it: 26.
+    expect(noFit({ packs })).toContain([
+      "  Packs look for  An Exceedingly Long Third Party Pack",
+      `${" ".repeat(18 + 26)}*.x`,
+      `${" ".repeat(18)}${"Python".padEnd(26)}*.py, *.pyi`,
+    ].join("\n"));
+  });
+
+  it("explains nothing when a pack fits", () => {
+    const text = renderRecommendedPacks({ ...PACKS, nothingFits: NO_FIT }, "agent");
+    expect(text).not.toContain("Found ");
+    expect(text).not.toContain("Packs look for");
+  });
 });
 
 describe("T5 not now", () => {
   it.each(LANES)("says nothing was installed or turned on, and how to start later (%s)", lane => {
-    const text = stripAnsi(renderNotNow(lane));
+    const text = stripAnsi(renderNotNow([CLAUDE, CURSOR], lane));
     expect(text).toContain("● Set-up stopped. No rule packs were installed and nothing was turned on.");
     expect(text).toContain(`Start Rerail in this repo whenever you’re ready with ${lane === "terminal" ? "rerail start" : "/rerail-start"}.`);
+  });
+
+  it("writes the start command as Codex types it when Codex is the only coding agent", () => {
+    const text = renderNotNow([CODEX], "agent");
+    expect(text).toContain("Start Rerail in this repo whenever you’re ready with $rerail-start.");
+    expect(text).not.toContain("/rerail-start");
+  });
+
+  it("gives Codex's form too when Codex is one of several coding agents", () => {
+    const text = renderNotNow([CLAUDE, CODEX], "agent");
+    expect(text).toContain("whenever you’re ready with /rerail-start.\n  In Codex, type $rerail-start.");
   });
 });
 
@@ -395,6 +528,57 @@ describe("T6 / C6 summary", () => {
     const text = renderSummary({ ...SUMMARY, dashboard: { url: "http://x/#rules", browserOpened: false, linkOnly: true } }, "agent");
     expect(text).toContain("  Manage    http://x/#rules\n\n");
     expect(text).not.toMatch(/browser/);
+  });
+
+  it.each(LANES)("writes the commands as Codex takes them, and says to trust its hooks, where Codex is the only agent (%s)", lane => {
+    const text = stripAnsi(renderSummary({ ...SUMMARY, agents: { ...CONNECTED, connected: [CODEX], codexTrust: true } }, lane));
+    expect(text).toContain("  Codex     Open Codex and run /hooks once to trust Rerail’s hooks.\n            Codex runs none of them until you do.\n");
+    expect(text).toContain("  Try it    Open a new agent session and type $rerail-show-me\n");
+    expect(text).toContain("To add another repo, type $rerail-start there.");
+    expect(text).toContain("  Type $rerail in any session for help and every command.");
+    expect(text).toContain("  $rerail-create   write your own rule, in plain words");
+    expect(text).not.toMatch(/ \/rerail/u);
+  });
+
+  it("says how to remove OMP's plugin install of Rerail when OMP loads it beside the one set-up connected", () => {
+    const text = stripAnsi(renderSummary({ ...SUMMARY, agents: { ...CONNECTED, ompPlugin: true } }, "terminal"));
+    expect(text).toContain("  OMP       OMP also loads Rerail from its plugin install, so two copies run.\n            Run omp plugin uninstall @neralabs/rerail, then restart OMP.\n");
+    expect(stripAnsi(renderSummary(SUMMARY, "terminal"))).not.toContain("omp plugin uninstall");
+  });
+
+  it("names Codex's form of the commands beside the others' where Codex is one of several agents", () => {
+    const text = renderSummary({ ...SUMMARY, agents: { ...CONNECTED, connected: [CLAUDE, CODEX] } }, "agent");
+    expect(text).toContain("type /rerail-show-me\n            to watch Rerail catch and fix a broken rule.\n            In Codex, type $rerail-show-me.\n");
+    expect(text).toContain("  In Codex, type $rerail-create.");
+    expect(text).not.toContain("/hooks");
+  });
+
+  it.each(LANES)("names a coding agent it could not connect, with the file, why, and what to do (%s)", lane => {
+    const failed = [{ agent: CLAUDE, message: "Expected property name or '}' in JSON at position 4", file: "/Users/me/.claude/settings.json" }];
+    const text = stripAnsi(renderSummary({ ...SUMMARY, agents: { ...CONNECTED, connected: [CURSOR], failed } }, lane));
+    expect(text).toContain([
+      "  △ Couldn’t connect Claude Code: /Users/me/.claude/settings.json is not plain JSON",
+      "    (Expected property name or '}' in JSON at position 4). Rerail left the file as it is.",
+      "    Take out its comments and trailing commas, then run rerail setup again to connect Claude Code.",
+    ].join("\n"));
+    expect(text).toContain("type /rerail-show-me");
+  });
+
+  it.each(LANES)("says no coding agent was found, which ones Rerail works with, and how to connect one, instead of how to try it (%s)", lane => {
+    const text = stripAnsi(renderSummary({ ...SUMMARY, agents: { connected: [], anyFound: false, worksWith: WORKS_WITH } }, lane));
+    expect(text).toContain([
+      "  Agents    No coding agent found on this computer.",
+      "            Rerail works with OMP, Pi, Claude Code, Codex and Cursor.",
+      "            Install one, then run rerail setup again to connect it.",
+    ].join("\n"));
+    expect(text).toContain("To add another repo, run rerail start there.");
+    expect(text).not.toContain("rerail-show-me");
+    expect(text).not.toContain("in any session");
+  });
+
+  it("names the coding agents set-up run again connected", () => {
+    expect(renderSummary({ ...SUMMARY, agents: { ...CONNECTED, added: [CURSOR] } }, "agent"))
+      .toContain("● Rerail is on in acme-web · 2 rule packs, 166 rules\n  Now also connected: Cursor.\n");
   });
 });
 
@@ -469,7 +653,7 @@ describe("E4 skip, I’ll pick packs", () => {
 
 describe("E5 skip for now", () => {
   it.each(LANES)("says Rerail is on in no repo and how to start it later, as the summary is laid out (%s)", lane => {
-    const text = stripAnsi(renderSkipped(lane));
+    const text = stripAnsi(renderSkipped(CONNECTED, lane));
     expect(text).toContain("● Rerail is installed · not on in any repo yet\n\n");
     expect(text).toContain("  Start     Open a session in one of your repos and type /rerail-start.\n            Rerail asks, suggests rule packs that fit, and starts there.");
     expect(text).toContain("  Type /rerail in any session for help and every command.");
@@ -477,7 +661,14 @@ describe("E5 skip for now", () => {
   });
 
   it("is handed to the person as the summary is, by a coding agent", () => {
-    expect(renderSkipped("agent")).toMatch(/^Rerail set-up is done\. Show the person this summary, as written:\n\n● Rerail is installed/u);
+    expect(renderSkipped(CONNECTED, "agent")).toMatch(/^Rerail set-up is done\. Show the person this summary, as written:\n\n● Rerail is installed/u);
+  });
+
+  it("says how to connect a coding agent where none was found", () => {
+    const text = renderSkipped({ connected: [], anyFound: false, worksWith: WORKS_WITH }, "agent");
+    expect(text).toContain("  Agents    No coding agent found on this computer.\n");
+    expect(text).toContain("  Start     Run rerail start in one of your repos.\n");
+    expect(text).not.toContain("/rerail");
   });
 });
 

@@ -350,12 +350,18 @@ pub const SOURCE_MARGIN: usize = 64;
 /// every source asked for are kept while the misses are placed.
 pub fn admit_sources(files: &[&[u8]]) -> Result<Vec<Arc<ResidentSource>>, Error> {
     let digests: Vec<[u8; 32]> = files.iter().map(|bytes| Sha256::digest(bytes).into()).collect();
+    admit_sources_digested(files, &digests)
+}
+
+/// `admit_sources` with each file's SHA-256 given: the caller's, as a document's tape digest is
+/// (decision 0032 §4), so no file's bytes are hashed here. A digest must be its file's.
+pub fn admit_sources_digested(files: &[&[u8]], digests: &[[u8; 32]]) -> Result<Vec<Arc<ResidentSource>>, Error> {
     let _admit = rerail_prof::Stage::start("residency.sources");
     let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
     state.clock += 1;
     let clock = state.clock;
     let mut keep = Vec::new();
-    for digest in &digests {
+    for digest in digests {
         if let Some(id) = state.sources.get(digest).map(|source| source.slab.id) {
             keep.push(id);
             if let Some(entry) = state.slabs.iter_mut().find(|entry| entry.slab.id == id) {
@@ -461,9 +467,7 @@ pub fn executed(drop_all: fn()) {
     }
     wake.notify_all();
     DROPPER.call_once(|| {
-        std::thread::Builder::new()
-            .name("rerail-residency-drop".into())
-            .spawn(move || {
+        rerail_accel::exec::service("rerail-residency-drop", None, move || {
                 let (lock, wake) = &*STATE;
                 let Ok(mut state) = lock.lock() else { return };
                 loop {

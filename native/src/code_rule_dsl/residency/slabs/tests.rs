@@ -1,7 +1,12 @@
 use super::*;
 use crate::code_rule_dsl::language::{self, GrammarDialect};
-use crate::code_rule_dsl::prefilter::tests::{document, temp};
+use crate::code_rule_dsl::fixtures::{document, temp};
 use crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION;
+// What the slabs module reads through its own imports, which its facade in the engine does not re-export.
+use crate::code_rule_dsl::tape::{Grammar, resident};
+use crate::content_store::ContentStore;
+use sha2::{Digest as _, Sha256};
+use std::sync::Arc;
 
 const SOURCES: [(&str, GrammarDialect); 3] = [
     ("value = left + right\nclass A:\n    def f(self, x=[]):\n        return (yield x)\n", GrammarDialect::Python),
@@ -36,10 +41,13 @@ fn stored_tapes_are_admitted_into_slabs_and_read_in_place() {
     let mut digests = Vec::new();
     let mut tapes = Vec::new();
     for (source, lang) in SOURCES {
-        let (tape, bytes) = document(source, lang);
+        // The device reads the stored image in place.
+        let (tape, stored) = document(source, lang);
+        assert!(resident::layout(&stored).is_ok(), "a stored image is read in place");
+        let bytes = tape.resident_parts().unwrap().0;
         let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
         store.put_tape(source_id, i64::from(language::tape_tag(lang).unwrap()), 1, i64::from(TAPE_FORMAT_VERSION), &bytes).unwrap();
-        digests.push(<[u8; 32]>::from(Sha256::digest(&bytes)));
+        digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
         tapes.push((tape, bytes, source));
     }
     let documents = admit(&store, &digests, &grammar).unwrap();

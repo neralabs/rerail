@@ -398,7 +398,7 @@ head_of(e, s) :- kind(e, "type"), child(e, x, 0), head_of(x, s).
 head_of(e, s) :- dotted_expr(e, s).
 head_of(e, s) :- kind(e, "subscript"), field(e, "value", v), head_of(v, s).
 head_of(e, s) :- kind(e, "generic_type"), child(e, v, 0), head_of(v, s).
-head_of(e, s) :- (kind(e, "binary_operator") ; kind(e, "union_type")), op(e, "|"), child(e, x, _), head_of(x, s).
+head_of(e, s) :- (kind(e, "binary_operator"), op(e, "|") ; kind(e, "union_type")), child(e, x, _), head_of(x, s).
 
 // ---- 8. order ----------------------------------------------------------------------------------------------------
 // latest_assign(n, x, a): a is the last plain assignment `x = …` in n's scope that comes before the read n, in

@@ -4,14 +4,25 @@
  *
  * The public surface of this layer: what code outside `src/` imports from it (`scripts/check/check-boundaries.mjs`).
  */
-export { type ClaudeStatusLine } from "./claude-status-store.js";
-export { ManagedUpdater, type UpdateResult, type UpdateStatus } from "./updater.js";
-export { codingAgentHome, codingAgentStates, registrationRoot } from "./coding-agents.js";
+export { CLAUDE_STATUS_DATABASE_FILE, type ClaudeStatusLine } from "./claude-status-store.js";
+export {
+  CURRENT_LINK,
+  LAUNCHER_DIR,
+  ManagedUpdater,
+  UPDATE_LOCK_DIR,
+  UPDATE_STATE_FILE,
+  type UpdateResult,
+  type UpdateStatus,
+  VERSIONS_DIR,
+} from "./updater.js";
+export { codingAgentHome, codingAgentStates, registrationRoot, SEEN_AGENTS_FILE } from "./coding-agents.js";
 export { registerHarnesses } from "./harness-registration.js";
+export { LAUNCHER_PATH_FILE, launcherPathMarker } from "./shell-path.js";
 export { type Harness } from "./harness-registration.js";
 export {
   addPackSpecs,
   discoverPacks,
+  installedPackagesOf,
   installedPackVersion,
   installPackVersions,
   npmPackStore,

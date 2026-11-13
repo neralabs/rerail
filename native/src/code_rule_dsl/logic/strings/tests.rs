@@ -1,63 +1,6 @@
 use super::*;
 
 #[test]
-fn python_bytes_keys_decode_escapes_raw_prefixes_and_large_literals() {
-    use rusqlite::types::Value;
-    let key=|source: &str|functions::eval("python_bytes_key",&[source],&[]);
-    for (literal,hex) in [("b'k'","6b"),("B'\\x6b'","6b"),("b'\\153'","6b"),
-        ("br'\\x6b'","5c783662"),("b''",""),("b'''a\r\nb'''","610a62"),
-        ("b'\\xff\\0'","ff00"),("b'\\z'","5c7a")] {
-        assert_eq!(key(literal),Value::Text(hex.into()),"{literal}");
-    }
-    let large="k".repeat(70_000);
-    let literal=format!("b'{large}'");
-    assert_eq!(key(&literal),Value::Text("6b".repeat(70_000)));
-    for invalid in ["'k'","b'\u{e9}'","f'k'","b'\\xzz'","b'",""] {
-        assert_eq!(key(invalid),Value::Null,"{invalid}");
-    }
-}
-
-#[test]
-fn python_numeric_keys_preserve_constant_equality_without_float_rounding() {
-    use rusqlite::types::Value;
-    let key = |source| functions::eval("python_number_key", &[source], &[]);
-    assert!(functions::signature("python_number_key").is_some());
-    for (left,right,equal) in [
-        ("True","1",true),("False","0.0",true),("0j","False",true),
-        ("0xff","255.0",true),("0b1_000","8",true),("0o10","8.",true),
-        ("1e0","1",true),("1j","1.0j",true),("1j","1",false),
-        ("1e309","2e309",true),("1e309","1e308",false),
-        ("9007199254740992","9007199254740992.0",true),
-        ("9007199254740993","9007199254740992.0",false),
-        ("1.5","1.500_0",true),("1.5","1",false),
-        ("-0.0","0",true),("-0j","0",true),
-    ] {
-        let (a,b)=(key(left),key(right));
-        assert_ne!(a,Value::Null,"{left}");assert_ne!(b,Value::Null,"{right}");
-        assert_eq!(a==b,equal,"{left} == {right}");
-    }
-    let huge_decimal=(num_bigint::BigUint::from(1u8)<<5000usize).to_string();
-    let huge_hex=format!("0x1{}","0".repeat(1250));
-    assert_ne!(key(&huge_decimal),Value::Null);
-    assert_eq!(key(&huge_decimal),key(&huge_hex));
-    for invalid in ["","nan","None","thing","1+2j","1.0+2.0","--1"] {
-        assert_eq!(key(invalid),Value::Null,"{invalid}");
-    }
-}
-
-#[test]
-fn byte_ranges_preserve_exact_unicode_source_segments() {
-    let source="é😀ctx.backend_type == 'sqlite'";
-    assert_eq!(functions::byte_slice(source,6,source.len() as i64).as_deref(),Some("ctx.backend_type == 'sqlite'"));
-    assert_eq!(functions::byte_slice(source,0,2).as_deref(),Some("é"));
-    assert_eq!(functions::byte_slice(source,2,6).as_deref(),Some("😀"));
-    assert_eq!(functions::byte_slice(source,6,6).as_deref(),Some(""));
-    for (a,b) in [(-1,2),(1,2),(2,5),(6,2),(0,999)] {
-        assert_eq!(functions::byte_slice(source,a,b),None,"invalid byte range {a}..{b}");
-    }
-}
-
-#[test]
 fn literal_tests() {
     assert!(test("prefix", "_private", "_"));
     assert!(!test("prefix", "public", "_"));
@@ -141,6 +84,19 @@ fn tests_on_text_relations_become_relations() {
     assert_eq!(rows, [vec![1, 2], vec![2], vec![3]]);
 }
 
+/// `fstring_template`'s markers are the program's constants, each once; a marker that is not a constant is an error.
+#[test]
+fn fstring_template_markers_are_constants() {
+    let decls = ".decl fstring_template(n: node, marker: symbol, v: symbol)\n.input fstring_template\n.decl a(n: node)\n";
+    let mut prog = crate::code_rule_dsl::logic::rr::parse(&format!(
+        "{decls}a(n) :- fstring_template(n, \"{{...}}\", v), glob(\"*FROM*\", v).\na(n) :- fstring_template(n, \"{{}}\", _), !fstring_template(n, \"{{...}}\", \"x\").\n.output a\n"
+    ))
+    .unwrap();
+    assert_eq!(as_relations(&mut prog).unwrap().markers, ["{...}", "{}"]);
+    let mut prog = crate::code_rule_dsl::logic::rr::parse(&format!("{decls}.decl m(s: symbol)\n.input m\na(n) :- m(k), fstring_template(n, k, _).\n.output a\n")).unwrap();
+    assert!(as_relations(&mut prog).err().unwrap().contains("constant marker"));
+}
+
 #[test]
 fn regexes_and_their_rewrites_agree() {
     assert!(test("rx", "_branch_cache_x", r"^_\w*cache\w*$"));
@@ -172,7 +128,8 @@ fn text_functors_follow_core_rr() {
     assert_eq!(convert("max-age", "camelCase", "dash"), "maxAge");
     assert_eq!(convert("maxAge", "snakeCase", ""), "max_age");
     assert_eq!(convert("max_age", "pascalCase", "underscore"), "MaxAge");
-    assert_eq!(json_str("a\"b\u{e9}\u{1f600}"), "\"a\\\"b\\u00e9\\ud83d\\ude00\"");
+    // W's json_group_array: non-ASCII kept, controls escaped (core.rr's @json_str).
+    assert_eq!(json_str("a\"b\u{e9}\u{1f600}\u{1}\n"), "\"a\\\"b\u{e9}\u{1f600}\\u0001\\n\"");
 }
 
 /// Nested alternatives, which globset refuses, are expanded to one level (`public-api-triples.rr`'s `hint`).
@@ -233,52 +190,26 @@ finding(t) :- constant(t), prefix("invented",t).
     assert!(vocabulary.tests.is_empty(), "all writers must supply prepared vocabulary symbols");
 }
 
-/// The repository's existing public signature verifies without changing signed artifacts.
+/// An existing signature verifies without changing the signed bytes; tampering, a bad key or a cut signature do
+/// not. Ported from Data-layer-rule-expressivity (rr-migration engine, 109e4883a), checked against `@ed25519_ok`'s
+/// one implementation (`logic::crypto`, W's `verify_ed25519`): its base64 transport is the strict, padded one, so
+/// ASCII noise, padding past the end, leading padding and non-zero trailing bits are a failed check, not ignored.
 #[test]
 fn signed_allowlists_verify_existing_bytes_and_reject_tampering() {
-    let db = rusqlite::Connection::open_in_memory().unwrap();
-    functions::register(&db).unwrap();
     let key = "7e9776d87292ab633115bd6c07892a4bf56450fffb2dfcf13b3eba1866b9fbb6";
     let message = r#"{"allowlist":[],"linter":"lint_admin_async_purity","version":1}"#;
     let signature = "xN3ugqWFKXrfdfYHOWH14S9NfLPHCwnni7yf1errzrn17xHvVgd6C3y/QXR7mwfGPnFwpuq/HcCWAx9C2crzDg==";
-    let verify = |k: &str, m: &str, s: &str| {
-        db.query_row("SELECT ed25519_ok(?1,?2,?3)", rusqlite::params![k, m, s], |row| row.get::<_, i64>(0)).unwrap()
-    };
+    let verify = |k: &str, m: &str, s: &str| i64::from(crate::code_rule_dsl::logic::crypto::ed25519_ok(k, m, s));
     assert_eq!(verify(key, message, signature), 1);
     assert_eq!(verify(key, &message.replace("[]", "[\"added.py\"]"), signature), 0);
     assert_eq!(verify(key, message, "not base64"), 0);
     assert_eq!(verify("wrong key", message, signature), 0);
     assert_eq!(verify(key, message, &signature[..60]), 0);
-    assert_eq!(verify(key, message, &format!("{} \n!?{}", &signature[..20], &signature[20..])), 1);
-    assert_eq!(verify(key, message, &format!("{signature}===")), 1);
-    assert_eq!(verify(key, message, &format!("=={signature}")), 1);
-    assert_eq!(verify(key, message, &format!("{}h==", &signature[..85])), 1);
+    assert_eq!(verify(key, message, &format!("{} \n!?{}", &signature[..20], &signature[20..])), 0);
+    assert_eq!(verify(key, message, &format!("{signature}===")), 0);
+    assert_eq!(verify(key, message, &format!("=={signature}")), 0);
+    assert_eq!(verify(key, message, &format!("{}h==", &signature[..85])), 0);
     assert_eq!(verify(key, message, &format!("{signature}\u{2603}")), 0);
-}
-
-/// Exact public verification failures, recorded with Python's base64 transport and PyNaCl.
-/// One batch covers padding, ignored ASCII noise, signatures, and malformed inputs.
-#[test]
-fn signature_verification_errors_match_recorded_transport() {
-    let recording = include_str!("signature-errors.json");
-    let expected: serde_json::Value = serde_json::from_str(recording).unwrap();
-    let db = rusqlite::Connection::open_in_memory().unwrap();
-    functions::register(&db).unwrap();
-    let mut query = db.prepare("SELECT CAST(key AS INTEGER),
-        ed25519_ok(?1,json_extract(value,'$.message'),json_extract(value,'$.signature')),
-        ed25519_error(?1,json_extract(value,'$.message'),json_extract(value,'$.signature'))
-        FROM json_each(?2,'$.cases')").unwrap();
-    let rows = query.query_map(rusqlite::params![expected["key"].as_str().unwrap(), recording], |r|
-        Ok((r.get::<_,i64>(0)?, r.get::<_,i64>(1)?, r.get::<_,String>(2)?))).unwrap();
-    let mut count = 0;
-    for row in rows {
-        let (i, valid, error) = row.unwrap();
-        let case = &expected["cases"][usize::try_from(i).unwrap()];
-        assert_eq!(valid, case["valid"].as_i64().unwrap(), "{:?}", case["signature"]);
-        assert_eq!(error, case["error"].as_str().unwrap(), "{:?}", case["signature"]);
-        count += 1;
-    }
-    assert_eq!(count, expected["cases"].as_array().unwrap().len());
 }
 
 /// A test of each of a constant table's values (`contains(x, t)` for each surface x) gains the test of the whole

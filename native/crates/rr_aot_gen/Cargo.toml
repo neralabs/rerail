@@ -1,0 +1,10 @@
+[package]
+name = "rerail-rr-aot-gen"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Writes tier 2's code for .rr as Rust (`clif_rust`), for the ahead-of-time build in rerail-rr-aot."
+
+[dependencies]
+rerail-compiler = { path = "../compiler" }
+rerail-rr-parser = { path = "../rr_parser" }

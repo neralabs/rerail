@@ -123,13 +123,13 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
         .rules
         .iter()
         .filter(|r| r.head.rel.starts_with("rr_agg"))
-        .map(|r| r.head.rel.clone())
+        .map(|r| r.head.rel.to_string())
         .collect();
     p.outputs.extend(helpers.iter().cloned());
-    let file = crate::code_rule_dsl::prefilter::tests::temp();
+    let file = crate::code_rule_dsl::fixtures::temp();
     let dump = zstd::decode_all(
         std::fs::File::open(
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
                 .join("src/code_rule_dsl/logic/plan/golden/facts.sql.zst"),
         )
         .unwrap(),
@@ -151,7 +151,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     assert_eq!(result.outputs["absent"], ["3\t1\t1"]);
     for h in &helpers {
         assert_eq!(
-            result.outputs[h].len(),
+            result.outputs[h.as_str()].len(),
             3,
             "unrequested groups published in {h}"
         );
@@ -176,7 +176,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     assert_eq!(native.outputs, result.outputs);
     // Measure the production atom-backed engine, not the frozen legacy extension above.
     crate::code_rule_dsl::logic::profile::reset();
-    let path = crate::code_rule_dsl::prefilter::tests::temp();
+    let path = crate::code_rule_dsl::fixtures::temp();
     let store = crate::content_store::ContentStore::open(&path).unwrap();
     let db = rusqlite::Connection::open(&path).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
@@ -187,13 +187,16 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     assert_eq!(native.outputs, result.outputs);
     assert!(native.native.contains("sums"), "production sum must use the native reduction");
     let dir = file.with_extension("profile");
-    crate::code_rule_dsl::logic::profile::write(&dir, "Demanded aggregate growth gate").unwrap();
+    crate::code_rule_dsl::logic::profile::report::write(&dir, "Demanded aggregate growth gate").unwrap();
     crate::code_rule_dsl::logic::profile::set(was_on);
     let trace = std::fs::read_to_string(dir.join("native.tsv")).unwrap();
     let mut measured = 0;
     for line in trace.lines().skip(1) {
         let cols: Vec<_> = line.split('\t').collect();
-        if !cols[3].contains("seed rr_agg") {
+        // The profile is the process's, and a test beside this one records its own program's steps into it, helpers
+        // of the same names among them (a sibling's `seed rr_agg2($f, $x)` once read as this run's growth). This
+        // program's helper seeds read their own demand: `rr_demand_agg_<helper>($s, $w, $x)`.
+        if !helpers.iter().any(|h| cols[3].starts_with(&format!("seed {h}(")) && cols[3].contains(&format!("rr_demand_agg_{h}($s, $w, $x)"))) {
             continue;
         }
         measured += 1;
@@ -207,7 +210,8 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     }
     assert!(
         measured >= helpers.len(),
-        "missing native helper measurements: {trace}"
+        "missing native helper measurements: {trace}\nplacements:\n{}",
+        std::fs::read_to_string(dir.join("placement.tsv")).unwrap_or_default()
     );
     std::fs::remove_dir_all(dir).unwrap();
     std::fs::remove_file(file).unwrap();
@@ -248,7 +252,7 @@ fn multiple_consumers_union_their_safe_demands() {
         .rel
         .clone();
     p.rules.retain(|r| r.head.rel != demand);
-    p.decls.remove(&demand);
+    p.decls.remove(demand.as_str());
     for r in &mut p.rules {
         r.body.retain(|l| l.atom().is_none_or(|a| a.rel != demand));
     }
@@ -331,7 +335,7 @@ ref(10,1,"a"). ref(11,1,"b"). ref(20,2,"a").
 hit(f) :- fn(f), count : { ident(x), count : { ref(n,f,x) } = 0 } > 0.
 "#).unwrap();
     for modes in ["", "program"] {
-        let path = crate::code_rule_dsl::prefilter::tests::temp();
+        let path = crate::code_rule_dsl::fixtures::temp();
         let store = crate::content_store::ContentStore::open(&path).unwrap();
         let db = rusqlite::Connection::open(&path).unwrap();
         native::register(&db).unwrap();

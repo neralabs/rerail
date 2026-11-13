@@ -39,6 +39,16 @@ describe("OMP native code rule contract", () => {
         }),
       ]));
       expect(evidence.branch.filter(entry => entry.type === "custom_message")).not.toContainEqual(expect.objectContaining({ customType: "rerail.rule" }));
+      // The person sees its line right under the write, and the model never reads that line: the steer once, in the result.
+      const resultAt = evidence.branch.findIndex(entry => entry.type === "message" && "message" in entry && entry.message.role === "toolResult");
+      expect(evidence.branch[resultAt + 1]).toEqual(expect.objectContaining({
+        type: "custom_message",
+        customType: "rerail.steer-line",
+        display: true,
+        details: { rules: [expect.objectContaining({ id: CONTRACT_CURSOR_EXECUTE_RULE_ID, state: "steered" })] },
+      }));
+      expect(JSON.stringify(firstPostToolCall?.context.messages).split(CONTRACT_CURSOR_EXECUTE_MESSAGE)).toHaveLength(2);
+      expect(JSON.stringify(firstPostToolCall?.context.messages)).not.toContain("rerail.steer-line");
       expect(host.frames.filter(frame => frame.type === "extension_error")).toEqual([]);
     } finally {
       try { await host?.close(); } finally { await rm(cwd, { recursive: true, force: true }); }

@@ -10,6 +10,18 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 The current inventory has twenty-two admitted rules, seventy-seven drafts, and one absent translation.
 Draft policies do not count as completed migrations.
 
+## 2026-11-12 — Serverplan-quality hub integration
+
+Checkpoint `6ec21001c` preserves the unfinished side-effects port and its exact progress receipts.
+The integration adopts hub `1ee25bdf6` from `jeremybarnes/final-shape-serverplan-quality`.
+All engine source trees and `core.rr` match that hub exactly. No older engine extension survives this merge.
+The merge resolves 26 conflicted paths. Fifty engine and core paths take the hub's complete bytes or deletions.
+
+The root engine now includes the hub's compiler crates, native Python layer, planner, storage, and device execution changes.
+The source cohort also covers the new `forest` crate.
+Earlier admissions and receipts retain their historical engines. They do not prove acceptance on the new hub.
+The new cohort requires a recorded root build, rule compatibility checks, and focused positive-case replays before further admission.
+
 ## Plan-scope side-effects: kernel checkpoint before hub integration
 
 The draft no longer resolves import aliases or removes eager-read names after rebinding.

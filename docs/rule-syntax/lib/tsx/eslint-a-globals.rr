@@ -169,7 +169,7 @@ this_tag(f) :- kind(f, k), function_kind(k), comment(c, v), next_sibling(c, x), 
     match("(?:[\\s\\S]*\\n)?[\\s*]*@this[\\s\\S]*", v).
 .decl jsdoc_target(f: node, x: node)  // a comment before x documents f
 jsdoc_target(f, f) :- kind(f, k), function_kind(k).
-jsdoc_target(f, x) :- kind(f, k), function_kind(k), first_token(f, t), first_token(x, t), within(f, x).
+jsdoc_target(f, x) :- kind(f, k), function_kind(k), within(f, x), node(_, f, _, s, _), node(_, x, _, s, _).
 jsdoc_target(f, x) :- kind(f, k), function_kind(k), kind(v, "variable_declarator"), field(v, "value", w),
     deparen(w, f), child(x, v, _).
 

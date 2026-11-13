@@ -20,31 +20,23 @@
         "ast": {
           "language": "typescript",
           "rule": {
-            "all": [
-              {
-                "regex": "^module$",
-                "precedes": {
-                  "any": [
-                    {
-                      "kind": "identifier"
-                    },
-                    {
-                      "kind": "nested_identifier"
-                    }
-                  ]
+            "kind": "module",
+            "pattern": "$M",
+            "inside": {
+              "kind": "ambient_declaration",
+              "pattern": "$D"
+            },
+            "has": {
+              "field": "name",
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "nested_identifier"
                 }
-              },
-              {
-                "inside": {
-                  "kind": "module",
-                  "pattern": "$M",
-                  "inside": {
-                    "kind": "ambient_declaration",
-                    "pattern": "$D"
-                  }
-                }
-              }
-            ]
+              ]
+            }
           }
         }
       },
@@ -78,32 +70,24 @@
         "ast": {
           "language": "typescript",
           "rule": {
-            "all": [
-              {
-                "regex": "^module$",
-                "precedes": {
-                  "any": [
-                    {
-                      "kind": "identifier"
-                    },
-                    {
-                      "kind": "nested_identifier"
-                    }
-                  ]
-                }
-              },
-              {
-                "inside": {
-                  "kind": "module",
-                  "pattern": "$M",
-                  "not": {
-                    "inside": {
-                      "kind": "ambient_declaration"
-                    }
-                  }
-                }
+            "kind": "module",
+            "pattern": "$M",
+            "not": {
+              "inside": {
+                "kind": "ambient_declaration"
               }
-            ]
+            },
+            "has": {
+              "field": "name",
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "nested_identifier"
+                }
+              ]
+            }
           }
         }
       },

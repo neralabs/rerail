@@ -85,8 +85,21 @@
 .decl static_value(n: node, v: symbol)                   // value after following file-local constant bindings
 // value_type("12", "int") for Python, "number" for TypeScript: the type of a value produced by `value`.
 .decl value_type(v: symbol, t: symbol)                   // "str", "int", "string", "number", …
+// value_type_of(n, "str") for the literal "12", value_type_of(n, "int") for 12, value_type_of(n, "list") for [1]:
+// the type of n's own value. value_type cannot say it: its key is the value's text, which "12" and 12 share, and a
+// container or bytes has no text in `value`.
+.decl value_type_of(n: node, t: symbol)                  // the type of n's value, containers and bytes included
+// fstring_piece(n, i, kind, v): the pieces of f-string n (a Python string, concatenated_string or format_specifier
+// whose value is a JoinedStr), in order from 0: in f'a{x!r:>10}b{y=}', (0, "literal", "a"), (1, "interpolation",
+// "x"), (1, "format_spec", ">10"), (2, "literal", "by="), (3, "interpolation", "y"), (3, "debug", "y="). A literal
+// piece is decoded and holds a debug field's `y=` text, as CPython's Constant does; debug and format_spec rows share
+// their interpolation's i. No row for a plain string, bytes, or a literal whose value is not known.
+.decl fstring_piece(n: node, i: number, kind: symbol, v: symbol)
+// fstring_template(n, "{...}", "SELECT {...} FROM t") for f'SELECT {x} FROM t': n's decoded text with each
+// interpolation replaced by the marker, a constant; a debug field's `x = ` stays literal text. The same hosts.
+.decl fstring_template(n: node, marker: symbol, v: symbol)
 .input doc, pkg, path_part, file_name, node, kind, field, child, text, op, docof, line, unset, list_len
-.input value, str, strprefix, name, comment, static_value, value_type
+.input value, str, strprefix, name, comment, static_value, value_type, value_type_of, fstring_piece, fstring_template
 
 // ---- text tests (built-in constraints) -----------------------------------------------------------------------
 // Most tests on text are not regexes: exact names, sets of names, prefixes, suffixes, path shapes. They are
@@ -111,14 +124,20 @@
 // ---- source text (every document, parsed or not) ------------------------------------------------------------
 // Checks that count lines, scan comments or read files with no grammar (Markdown, Rust read as text) need the
 // raw bytes, comments and blank lines included. A document in `.scope text "**/*.md"` has doc, path_part and these
-// relations, and no tree.
-// source(d, sp): the whole file as one span. match / match_all over it give spans with lines.
+// relations, and no tree; its lines (tape_line, a match's) end at \r\n, \r, \n, U+2028 and U+2029, as the linter's
+// do in a file of no language.
+// source(d, sp): the whole file as one span. match_all over it gives spans with lines.
 .decl source(d: number, sp: span)
-// src_line(d, 12, sp): physical line 12, without its terminator. Lines end at \n, \r\n or a lone \r: the
-// terminators CPython's tokenizer, Ruff and ESLint count, so src_line numbers agree with line(n). A form feed is
-// whitespace inside a line (str.splitlines() would split there, and disagree with every tool).
+// src_line(d, 12, sp): physical line 12, without its terminator. Python and text-only documents split as
+// str.splitlines() does (\r, \v, \f, \x1c-\x1e, \x85 and the Unicode separators also end a line), as the linter's
+// `lines` regexes do; others split at \n only.
 // A Datalog version over match_all would be exact for \n only, so it is native.
 .decl src_line(d: number, l: number, sp: span)
+// src_line_lf(d, 12, sp): line 12 split at \n only, a \r kept (a regex rule's `terminators: "lf"`).
+.decl src_line_lf(d: number, l: number, sp: span)
+// tape_line(d, 12, sp): line 12 as line(n, l) numbers lines (\r\n, \r and \n for Python, the linter's), the empty
+// line after a final terminator included: the lines a `layout` rule reads.
+.decl tape_line(d: number, l: number, sp: span)
 // split_line follows Python str.splitlines(), for text scanners: CRLF is one boundary;
 // LF, CR, VT, FF, FS, GS, RS, NEL, U+2028 and U+2029 also split. Empty input has no rows.
 // A terminal boundary adds no extra row. Text is complete, including lines longer than 256 bytes.
@@ -128,22 +147,40 @@
 // Empty input and a terminal LF each retain an empty line. Made only when demanded.
 .decl lf_line(d: number, l: number, t: symbol)
 .decl line_count(d: number, k: number)                   // number of physical lines, as src_line counts them
-.decl end_line(n: loc, l: number)                        // 1-based line of the last character
-.decl col(n: loc, c: number)                             // 0-based column of the start, for keys that need one
+// end_line(n, l): the line holding n's end offset, as `layout` counts: its last character's, except that a node
+// ending with a line terminator (a module) ends on the line after it.
+.decl end_line(n: loc, l: number)
+.decl col(n: loc, c: number)                             // 0-based byte column of the start, for keys that need one
+// node_text(n, "f(x,\n  y)"): n's source text exactly, comments and strings in it included: what a `regex` on a
+// node reads. text(n, s) on a node is the interned token text of names (above).
+.decl node_text(n: node, s: symbol)
 // op_at(n, i, s): n's operator tokens in order, from 0: in `a < b <= c`, op_at(cmp, 0, "<"), op_at(cmp, 1, "<=").
 // A two-word operator is one token: "not in", "is not". The tokens are n's anonymous children other than
 // brackets, quotes, `,`, `;`, `:` and `.`, whatever field holds them: in a Rust
 // `let` chain, op_at(chain, 0, "&&"); in `not x`, op_at(n, 0, "not"). `op` (above) is the unordered view, with
 // punctuation; chained comparisons need the order.
 .decl op_at(n: node, i: number, s: symbol)
+// prev_token(b, ","): in `import a, b`, the token right before b among its parent's children, anonymous tokens and
+// comments included: its text (an anonymous token's is its kind). What a JSON `follows` reads at a neighbour.
+.decl prev_token(n: node, s: symbol)
+// token(p, i, s, start, end): p's children in order, from 0, anonymous tokens and comments included, each its text
+// and byte range. In `f(a, b)` the argument list's are "(", "a", ",", "b", ")". What a JSON `precedes` or
+// `follows` reads at a neighbour, from either side.
+.decl token(p: node, i: number, s: symbol, start: number, end: number)
 // syntax_error(d, 3, "invalid syntax"): the file does not parse. One row per document, at the first error.
-// For Python the verdict and line come from a native parser that follows CPython's grammar (Ruff's parser):
-// tree-sitter recovers from errors, so its tree cannot say whether CPython accepts the file. The message is that
-// parser's; messages are not part of a finding's key. No CPython runs, in any form. Other languages use
-// tree-sitter's ERROR and MISSING nodes. The document is withheld from the policy and its outcome is Unknown(parse); a policy can also report it
+// For Python the verdict, line and message are CPython 3.13's `ast.parse`, computed natively (no Python runs: Ruff's
+// parser reads CPython's grammar, the engine's `cpython::syntax`): an empty block, an invalid target, a bracket never
+// closed are errors; what only compile rejects (`return` outside a function, a repeated keyword) is not. The
+// message is CPython's where CPython names the error (indentation, brackets, strings, targets), else "invalid
+// syntax"; a null byte's line, which CPython does not give, is 1. The corpus binds it as cpython_syntax_error(d, l,
+// msg); the converter's programs declare syntax_error(d: number) and read the tape's verdict (tree-sitter's ERROR
+// and MISSING nodes) under that name instead (a file cannot: decision 0047; an authored overlay reads it as
+// tape_syntax_error(d)). Other languages use tree-sitter's ERROR and MISSING
+// nodes. The document is withheld from the policy and its outcome is Unknown(parse); a policy can also report it
 // (`.on syntax_error`, at the end).
 .decl syntax_error(d: number, l: number, msg: symbol)
-.input source, src_line, split_line, lf_line, line_count, end_line, col, op_at, syntax_error
+.input source, src_line, src_line_lf, tape_line, split_line, lf_line, line_count, end_line, col, node_text, op_at, prev_token, token
+.input syntax_error
 // Tokens: the leaves of the parse tree, named or anonymous, in source order. Comments are not tokens, as in
 // ESLint's token store (getTokenBefore, getFirstToken, …), so rules that reason about tokens port directly.
 // A token is a span, as a regex capture is: text, line, end_line and col apply to it, a finding can sit on it,
@@ -154,6 +191,28 @@
 .decl token_before(x: loc, t: span)                     // the token just before node or token x
 .decl token_after(x: loc, t: span)                      // the token just after node or token x
 .input first_token, last_token, token_before, token_after
+// The source around a node, for layout questions (a line break, a `;`, spacing): structural_before(n, s) holds
+// the source between n's start and the end of the node just before it among its parent's stored children (or
+// the parent's start, for a first child); structural_after(n, s) the source between n's end and the start of
+// the next stored child (or the parent's end, for a last child). A root's run to the source's edges. Comments
+// are nodes, so a gap stops at one. In `f(a, b)` (tokens the tape leaves out are no children):
+// structural_before(a, "("), structural_after(a, ", "), structural_after(b, ")"). It is the source, not tokens:
+// a rule that asks which token stands there asks the kind, the children or the fields instead.
+.decl structural_before(n: node, s: symbol)
+.decl structural_after(n: node, s: symbol)
+.input structural_before, structural_after
+
+// ---- the Python reference graph (across files) --------------------------------------------------------------
+// Which definition refers to which, over the policy's files, as the linker resolves names: through imports,
+// re-exports and packages, self/cls through the bases breadth first, declared parameter types, constructor
+// fields, and the policy's sibling links (`.references`, at the end). What dead-code and caller checks walk.
+// reference_edge(f, g, "self"): f's body refers to g, here as `self.g`. f and g are function_definition or
+// class_definition nodes; via is how: name, bare, unqualified, self, super, field, param_type, late or sibling.
+.decl reference_edge(src: node, dst: node, via: symbol)
+// reference_open(f): f refers to something no static name denotes, or f's file does not parse: what f reaches
+// is not all known.
+.decl reference_open(n: node)
+.input reference_edge, reference_open
 
 // ---- tree structure (tape arithmetic, never Datalog recursion) -------------------------------------------------
 // These answer ancestor and sibling questions from node offsets. A recursive `ancestor` relation in Datalog
@@ -200,6 +259,7 @@
 .decl doc_role(d: number, role: symbol)                  // "primary" (a file), "fragment", or an embed's role
 .decl doc_root(d: number, n: node)                       // the root of document d's tree
 .decl tape_of(d: number, t: tape)                        // document d places tape t; equal texts share a tape
+.decl guest_policy(k: symbol, v: symbol)                 // the program's `.guests` and `.on guest_error` settings
 .decl host_node(n: node, h: node)                        // h is the innermost host node over guest node n
 .input sub_tape, guest, doc_role, doc_root, tape_of, host_node
 // What a rule sees (decision 0058): files, and guests in the run's language unless `.guests off`. A rule that
@@ -221,23 +281,15 @@
 .decl embed_value(d: number, at: node, grammar: symbol, role: symbol, text: symbol)
 // ---- the environment and the files beyond the corpus (t21) ----
 // env(k, v): the run's settings (`rerail.env` at the corpus root, `--env k=v`). dir_entry(dir, name, is_dir) and
-// file_line(path, i, text) (from 1): the entries of a directory and the lines of a file, read only for a dir or path
-// a rule binds, under the corpus root or a directory a setting names. load(path, module, grammar): a rule asks for
+// file_line(path, i, text) (from 1): the entries of a directory and the lines of a file, and file_digest(path, c):
+// its content's SHA-256 (hex), read only for a dir or path a rule binds, under the corpus root or a directory a
+// setting names. load(path, module, grammar): a rule asks for
 // the file as a document, named as `module` (its resolution's answer); loaded(path, module, grammar): the documents
 // loaded, by canonical path. A loaded document is evaluated like any other; its rows are not the run's findings.
 .decl env(key: symbol, value: symbol)
-// Demanded host inputs, read once per run. "cpu_count" is the online CPU count;
-// "env:NAME" reads that process environment variable. Missing or unknown keys have no row.
-.decl host_info(key: symbol, value: symbol)
 .decl dir_entry(dir: symbol, name: symbol, is_dir: number)
-// Metadata shares dir_entry's cached listing. is_file and bytes follow a link;
-// is_symlink describes the entry itself. Missing link targets have zero bytes.
-.decl dir_metadata(dir: symbol, name: symbol, is_file: number, is_symlink: number, bytes: number)
 .decl file_line(path: symbol, i: number, text: symbol)
-// A demanded file's read failure; shares file_line's cached read. Missing or
-// refused paths have no row. UTF-8 offsets count bytes; bytes_hex retains the
-// complete failed input only when a rule consumes this relation.
-.decl file_error(path: symbol, io_kind: symbol, errno: number, detail: symbol, bytes_hex: symbol, start: number, end: number, reason: symbol)
+.decl file_digest(path: symbol, c: symbol)
 .decl load(path: symbol, module: symbol, grammar: symbol)
 .decl loaded(path: symbol, module: symbol, grammar: symbol)
 // spread(n) for `*args` in `f(*args)` and `...xs` in `[...xs]`: positions after a spread are not fixed, so
@@ -277,31 +329,6 @@
 // only where a finding must match a script that does this; it reports fewer findings on cycles.
 // Cost: as dfs_first, plus a search in root order for each root whose chain enters a cycle.
 .decl dfs_first_memo(r: node, hit: node, first: number, edge: relation, target: relation, roots: relation)
-
-// bfs_walk(r, hit, ordinal, edge, roots): breadth-first reachable vertices for
-// every root in unary roots(r), using edge(src, dst, order). Neighbours follow
-// (order, destination id); ordinal starts at zero for each root. A root is not
-// pre-visited, so a cycle can reach it. Repeated arrivals produce one row.
-// The whole root demand and adjacency are batches, not per-node SQL callbacks.
-// IDs retain the edge relation's types, including numbers and symbols.
-.decl bfs_walk(r: node, hit: node, ordinal: number, edge: relation, roots: relation)
-// ordered_rows(a, b, ordinal, rows): rows has two scalar columns. Distinct rows
-// sort by their typed values (symbols as text), with one zero-based global rank.
-// One SQL window sorts the whole batch. Empty input produces no rows.
-.decl ordered_rows(a: node, b: node, ordinal: number, rows: relation)
-// python_set_rows(task, value, ordinal, rows): rows(task, string, insertion).
-// Reproduce monotone CPython 3.13 set.add iteration on 64-bit little-endian
-// Unicode strings with PYTHONHASHSEED=0. Duplicate strings keep their first
-// insertion. Equal insertion ordinals sort by string text. No deletion or set
-// update/literal preallocation is implied. One read and bulk write for all tasks.
-.decl python_set_rows(task: node, value: symbol, ordinal: number, rows: relation)
-// balanced_rows(task, row, bin, ordinal, rows, limits): rows(task, occurrence,
-// key, weight), limits(task, bins). Per task, sort by decreasing nonnegative
-// weight then key text then occurrence. Assign to the least-loaded bin, ties
-// by bin index. Emit in bin and append order, with zero-based task ordinals.
-// Occurrences are unique per task; equal keys remain separate occurrences.
-// All requested tasks are one batch; tasks absent from limits produce no rows.
-.decl balanced_rows(task: node, row: number, bin: number, ordinal: number, rows: relation, limits: relation)
 // components(d, c, k, edge, own): document d's strongly connected component of the graph edge(d, e) (d depends on
 // e), named by its smallest document c, and the component's key k: the SHA-256 of its documents' digests own(d, h),
 // sorted, then the keys of the components it depends on, sorted. Equal keys mean equal digests over the whole import
@@ -390,6 +417,14 @@
 //                   A group that takes no part in the match (an unmatched `(?<X>…)?`) gives no row.
 //                   Inside `!` or `count : { … }`, groups bind only there, like any variable.
 //                 e.g. match("use_(?<x>.*)", "use_foo") binds x = "foo".
+// match_all("re", sp, m)  one row per match m of re in span sp's text, leftmost-first and non-overlapping (Rust's
+//                 find_iter: "aa" in "aaaaa" at 0 and 2), as the linter's `regex` finds them. m is a span: its text
+//                 is what matched; its line, end_line and col are the linter's finding's (in source, the lines and
+//                 byte column of the file; in a line span, that line and the column in it). re is a constant;
+//                 its named groups bind as match's do. !match_all("re", sp, _): re does not occur in sp.
+// match_group("re", sp, m, g, gsp)  the groups of match_all's matches, as spans: gsp is the span of named group g
+//                 in match m, one row per group that takes part, placed as the linter places a finding at that
+//                 capture. match_group("(?P<module>[\w.]+)\.py", sp, m, "module", gsp) is the module's span.
 // match_all("re", s)  one row per non-overlapping match of re anywhere in s, with that match's groups bound.
 // match_all("re", s, ordinal, start, end) over a symbol also binds zero-based occurrence and character offsets.
 //                 start is inclusive and end exclusive. Equal captures retain separate occurrences.
@@ -417,6 +452,9 @@
 // Transforms: today's JSON `transform` computes a metavariable from another one's text. Each kind is one functor.
 // @replace_all("a  b", "\\s+", " ") = "a b": every match of re becomes by; ${1} in by is group 1.
 .functor replace_all(s: symbol, re: symbol, by: symbol): symbol
+// @rx_replace("a  b", "\\s+", " ") = "a b": W's SQL rx_replace, the regex crate's replace_all ($1, $name, ${name},
+// $$ as it reads them: `$1x` is a group named 1x). Same argument order as replace_all.
+.functor rx_replace(s: symbol, re: symbol, by: symbol): symbol
 // @convert("max-age", "camelCase", "dash") = "maxAge". Cases: lowerCase, upperCase, capitalize, camelCase,
 // snakeCase, kebabCase, pascalCase. seps lists separators ("dash,underscore"); "" splits on all of them.
 .functor convert(s: symbol, to: symbol, seps: symbol): symbol
@@ -442,42 +480,36 @@
 // Text for keys and signatures.
 .functor count_matches(re: symbol, s: symbol): number    // non-overlapping matches of re anywhere in s
 .functor sha256(s: symbol): symbol                       // hex digest of s's UTF-8 bytes
-// @json_str(s): s as a JSON string literal, quotes included, escaped as Python's json.dumps does by default
-// (non-ASCII as \uXXXX, surrogate pairs above U+FFFF), so rebuilt messages match the bytes that were signed.
+// @json_str(s): s as a JSON string literal, quotes included, as W's signed-list stages write an element
+// (json_group_array: `"`, `\` and controls escaped, non-ASCII kept), so rebuilt messages match the bytes W checks.
+// Python's json.dumps (ensure_ascii) escapes non-ASCII too: a repository that signs non-ASCII entries needs that.
 .functor json_str(s: symbol): symbol
-// Python 3.13 repr of scalar Unicode text: quote choice and printable/control character escapes.
-.functor python_repr(s: symbol): symbol
-// Python 3.13 JSON syntax diagnostic, with character positions. Empty for valid syntax.
-// This does not decode files or construct JSON facts; input readers share that work.
-.functor python_json_error(s: symbol): symbol
 .functor nfkc(s: symbol): symbol                         // Unicode NFKC, as Python normalises identifiers
-// Python 3.13 decimal int syntax (Unicode 15.1), clamped to inclusive i64 bounds.
-// Accepts surrounding Python integer whitespace, signs, and digit-separated underscores.
-// max_digits counts digits, excluding separators; zero disables the limit.
-// Invalid text, bounds, or a negative limit gives no value. Huge integers need no allocation.
-.functor python_int_clamped(s: symbol, lower: number, upper: number, max_digits: number): number
-// The same decimal syntax, as canonical unbounded decimal text. Invalid input or
-// more than Python's default 4300 digits gives no value. Reuses the JSON integer decoder.
-.functor python_int_text(s: symbol): symbol
-// Exact signed ASCII decimal arithmetic. Invalid text gives no value; results are canonical decimal text.
-.functor decimal_cmp(a: symbol, b: symbol): number       // -1, 0, or 1
-.functor decimal_sub(a: symbol, b: symbol): symbol
-.functor decimal_sum(lines: symbol): symbol             // newline-separated decimals; empty text sums to "0"
 // @ed25519_ok(key_hex, message, sig_b64) = 1 when sig (base64) is key's Ed25519 signature of message's UTF-8
 // bytes, else 0. With join and @json_str a rule rebuilds the canonical message a repository signs, whatever its
 // layout, and verifies it: lib/data-layer/signing.rr does this for the data layer's two layouts.
 .functor ed25519_ok(key: symbol, message: symbol, sig: symbol): number
-// The same verifier's failure reason; empty on success. Base64 transport and signature
-// failures use Python base64/PyNaCl spelling. An invalid key gives "invalid Ed25519 public key".
-// No signing operation or private key access occurs. Payload storage is bounded to 64 decoded bytes.
-.functor ed25519_error(key: symbol, message: symbol, sig: symbol): symbol
 // @tree_digest(n): a structural tree digest. It does not reproduce CPython AST identity or dump bytes.
 .functor tree_digest(n: node): symbol
 // Existing hashes of CPython ast.dump text require exact native serialization and field defaults.
 // A structural digest is a different input contract. Do not re-sign repository inputs to replace those hashes.
 // @unparse(n): n printed canonically by a native printer (comments dropped, quotes and spacing normalised), for
 // message previews such as "{@unparse(call)}". Keys and signatures must use their specified canonical format.
+// Of a tape (decision 0058), `x = @unparse(t)` is its text (`unparse_of(t, x)`).
 .functor unparse(n: node): symbol
+// @py_unparse(n): CPython 3.13's ast.unparse of the `ast` node at n's span that n's kind is read as (W's pythonAst
+// worker's KINDS: an `identifier` a Name, a `call` a Call, a `type` any expression, …): `(a or b) and not c` is
+// "(a or b) and (not c)", `f"{x=}"` is "f'x={x!r}'", `1e400` is "1e309". An expression, a keyword argument, a
+// parameter or an import alias; no value for a statement, or where CPython raises (an int of more than 4300 digits).
+// Byte-exact, so it may be a key: `@py_repr(@py_unparse(n))` is W's `repr_unparse`.
+.functor py_unparse(n: node): symbol
+// @ast_dump(n): CPython 3.13's ast.dump(node, include_attributes=False) of the `ast` node at n's span that n's kind is
+// read as (any node, statements too): `Call(func=Name(id='f', ctx=Load()))`. @sha256(@ast_dump(n)) is W's
+// dump_sha256, which dump_sha256(n, h) gives without the text. Cost: the text of n's whole subtree.
+.functor ast_dump(n: node): symbol
+// @py_repr(s): CPython's repr of the str s: 'it' for it, "it's" for it's, a non-printable character escaped.
+.functor py_repr(s: symbol): symbol
+
 
 // ---- repository inputs (native readers, one derivation per file) ---------------------------------------------
 // Facts from the repository that are not source code. Each reader parses one kind of file (JSON configs,
@@ -502,8 +534,9 @@
 // rows: `"engines": { "node": 18 }` gives none, as the engine ignores a non-string there.
 .decl package_for(path: symbol, dir: symbol)
 .decl package_field(dir: symbol, key: symbol, v: symbol)
-// Python: in `cast("Foo", x)` or `TypeVar("T", bound="Foo")`, the string is a type. Native because the list of
-// positions follows Ruff's own table, not anything visible in the tree.
+// Python: in `x: "Foo"`, `cast("Foo", x)` or `TypeVar("T", bound="Foo")`, the string is a type. Native because the
+// list of positions follows Ruff's own table (its semantic model's string type definitions, nested ones included),
+// not anything visible in the tree. A `Literal` argument or `Annotated` metadata is none.
 .decl string_annotation(s: node)                         // a string Ruff reads as a type definition
 // option("max_depth", "3"): a policy's tunable, so one rule text serves repositories with different settings.
 .decl option(name: symbol, v: symbol)  // a rule option's configured value (rerail.policy/v1 `options`)
@@ -534,17 +567,30 @@
 // at is the source piece it starts in. Bytes literals give no row. Decoded natively, by the language reference's
 // literal rules (escapes, raw prefixes, `{{`/`}}`), checked once against CPython's own decoder offline.
 .decl str_part(lit: node, i: number, v: symbol, at: node, spec: number)
+// literal_json(n, "{\"a\":[1,2.5]}") for `{'a': [1, 2.5]}`: CPython 3.13's json.dumps(ast.literal_eval(node),
+// sort_keys=True, separators=(",", ":")) of the `ast` node at n's span (W's pythonAst `literal_json`): a constant, a
+// tuple, list or dict of them, or `-n`. No row where literal_eval raises (a name, a call, an f-string, an unhashable
+// key) or json.dumps does (bytes, a set, a complex number, `...`, keys of different kinds, more than 4300 digits).
+// Native over Ruff's tree of the file; no Python runs. Cost: one parse per file and a pass over its expressions.
+.decl literal_json(n: node, v: symbol)
+// W's pythonAst hashes of CPython 3.13's ast.dump(…, include_attributes=False) text (sha256 of its UTF-8, lowercase
+// hex), the node found as @ast_dump finds it: dump_sha256(n, h), of n's dump (@sha256(@ast_dump(n)) without the
+// text); body_sha256(f, h), of def f's ast.Module(body=f.body, type_ignores=[]); signature_sha256(f, h), of
+// `dump(f.args) + "|" + (dump(f.returns) or "None") + "|" + dump(ast.Tuple(elts=f.type_params))`. Native; no Python
+// runs. Cost: one parse per file, its tree's dump written once, a digest per node.
+.decl dump_sha256(n: node, h: symbol)
+.decl body_sha256(f: node, h: symbol)
+.decl signature_sha256(f: node, h: symbol)
 // Exact start of each Constant: physical line from 1, UTF-8 byte column from 0.
 // Keep `at` above for owner traversal; it is not the fragment's exact coordinate.
 // Maximal decoded Python Unicode 15.1 word runs (isalnum or underscore), per Constant.
 // Surrogates delimit runs. This projection does not replace full decoded string values.
 .decl str_part_word(lit: node, i: number, w: symbol, at: node, spec: number)
 .decl str_part_start(lit: node, i: number, l: number, c: number)
-// Absolute UTF-8 byte start of the same piece. Joins directly to node byte ranges, including format specifications.
-.decl str_part_offset(lit: node, i: number, offset: number)
 .input file, tsconfig, tsconfig_for, tsconfig_path, package, package_export, package_for, package_field
 .input string_annotation, option, option_item
-.input signed_list, git_rev, str_part, str_part_word, str_part_start, str_part_offset
+.input signed_list, git_rev, str_part, str_part_word, str_part_start, literal_json
+.input dump_sha256, body_sha256, signature_sha256
 //
 // Policy files. `.input r(IO=…, filename="…", …)` reads a repository file the policy names. One reader per
 // format; r's columns are filled by name or position. A file that is missing, unreadable or malformed gives no
@@ -556,17 +602,6 @@
 //                list of objects one row, a column per key
 //                A `*` step in path matches every element or member: path="/groups/*/operations/*" gives one
 //                row per operation of every group, and each `*` it crossed is a leading column (its index or key).
-//                `*#` adds the zero-based member position before its key or index. Object positions follow
-//                insertion order, including empty members; a repeated key keeps its first position and last value.
-//                projection="type" returns one type-name column for each selected value; projection="json"
-//                returns one serialized JSON column for complete DTO transport. Wildcard captures stay in front.
-//                Both use the same decoded document as the typed rows. JSON numbers retain their full precision.
-//                projection="python-int" returns (decimal text, error type, error detail), all symbols.
-//                It uses Python 3.13 int conversion (including binary float truncation and Unicode digits).
-//                Successful values have empty error columns. Failed values retain an empty decimal column.
-//                Wildcard captures precede these columns. No selector reparses the shared document.
-//                projection="python-str" returns one symbol: Python 3.13 str of the selected JSON value.
-//                Nested lists and objects retain insertion order and use Python repr for their members.
 //   IO=jsonl     one JSON value per line (JSON Lines); each line is read as IO=json reads a file, with the line
 //                number as a leading column
 //   IO=yaml      the same shapes as json
@@ -586,11 +621,6 @@
 // (data-layer/FINDINGS-LAYER.md, section 2). The format and the CI steps: data-layer/RUN-FACTS.md.
 .decl input_error(path: symbol, kind: symbol, detail: symbol)  // missing, unreadable, malformed, signature, stale, failed
 .input input_error
-// Typed OS and UTF-8 failures for repository .input readers. OS kinds use Rust's
-// ErrorKind names. InvalidUtf8 reasons are invalid-start, invalid-continuation,
-// or unexpected-end. Successful reads leave this relation known and empty.
-.decl input_read_error(path: symbol, io_kind: symbol, errno: number, detail: symbol, bytes_hex: symbol, start: number, end: number, reason: symbol)
-.input input_read_error
 
 // ---- embedded languages (proposed) ------------------------------------------------------------------------------
 // Code inside code (SQL in a Python string, a template's expressions, a string annotation) is to be a guest
@@ -687,6 +717,9 @@
 //                                              ends unknown on any file. Members run as usual.
 // .scope tests false                          drops documents with a `test` or `tests` path part. Walks always
 //                                              skip .git, .venv, venv, __pycache__ and tmp.
+// .references {"siblingLinks": […], "constructorFields": {…}, "scope": {…}}
+//                                              the reference graph's links, as the policy's `references` gives
+//                                              them, over the files of `scope` (default: every file).
 
 // Batched Python facts. Requests is a unary node relation; targets is a unary symbol relation.
 // These operators do not evaluate rules. Unknown semantic facts produce no known result.

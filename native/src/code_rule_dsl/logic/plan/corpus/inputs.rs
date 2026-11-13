@@ -6,39 +6,15 @@ use serde_json::Value as Json;
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
-#[derive(Clone, Debug, Default)]
-pub(super) struct Failure {
+#[derive(Clone, Debug)]
+struct Failure {
     kind: &'static str,
     detail: String,
-    read: Option<std::sync::Arc<ReadError>>,
-}
-#[derive(Debug)]
-struct ReadError {
-    kind: String,
-    errno: i64,
-    bytes: Vec<u8>,
-    start: i64,
-    end: i64,
-    reason: &'static str,
 }
 type ReadResult<T> = std::result::Result<T, Failure>;
-fn malformed(detail: impl Into<String>) -> Failure { Failure { kind: "malformed", detail: detail.into(), ..Default::default() } }
+fn malformed(detail: impl Into<String>) -> Failure { Failure { kind: "malformed", detail: detail.into() } }
 
-fn read_errors_wanted(program: &front::Program) -> bool {
-    program.outputs.iter().any(|r| r == "input_read_error") || program.rules.iter()
-        .flat_map(|r| &r.body).filter_map(front::Literal::atom).any(|a| a.rel == "input_read_error")
-}
-
-pub(super) fn read_error_row(path: &str, failure: &Failure) -> Option<Vec<Value>> {
-    use std::fmt::Write;
-    let error = failure.read.as_ref()?;
-    let mut bytes = String::with_capacity(error.bytes.len() * 2);
-    for byte in &error.bytes { write!(&mut bytes, "{byte:02x}").unwrap(); }
-    Some(vec![Value::Str(path.into()), Value::Str(error.kind.clone()), Value::Int(error.errno),
-        Value::Str(failure.detail.clone()), Value::Str(bytes), Value::Int(error.start), Value::Int(error.end), Value::Str(error.reason.into())])
-}
-
-pub(in crate::code_rule_dsl) fn parameters(text: &str) -> Result<BTreeMap<String, String>> {
+pub fn parameters(text: &str) -> Result<BTreeMap<String, String>> {
     let mut parts = Vec::new();
     let (mut start, mut quoted, mut escaped) = (0, false, false);
     for (i, c) in text.char_indices() {
@@ -55,7 +31,7 @@ pub(in crate::code_rule_dsl) fn parameters(text: &str) -> Result<BTreeMap<String
     for part in parts {
         let Some((key, value)) = part.split_once('=') else { return Err(Error::Plan(format!("invalid input parameter: {part}"))); };
         let (key, value) = (key.trim(), value.trim());
-        if !["IO", "filename", "dir", "path", "records", "projection", "at", "artifact", "query"].contains(&key) {
+        if !["IO", "filename", "dir", "path", "records", "at", "artifact", "query"].contains(&key) {
             return Err(Error::Plan(format!("unsupported input parameter: {key}")));
         }
         let value = if value.starts_with('"') {
@@ -66,19 +42,17 @@ pub(in crate::code_rule_dsl) fn parameters(text: &str) -> Result<BTreeMap<String
     Ok(out)
 }
 
-/// `*` retains its key or index; `*#` also retains the member's zero-based position before it.
+/// JSON pointer selectors retain the key or index of each wildcard as a leading column.
 fn select<'a>(value: &'a Json, steps: &[&str], prefix: Vec<Json>, out: &mut Vec<(Vec<Json>, &'a Json)>) {
     let Some((step, rest)) = steps.split_first() else { out.push((prefix, value)); return; };
-    if matches!(*step, "*" | "*#") {
+    if *step == "*" {
         let members: Vec<(Json, &Json)> = match value {
             Json::Object(map) => map.iter().map(|(k, v)| (Json::String(k.clone()), v)).collect(),
             Json::Array(items) => items.iter().enumerate().map(|(i, v)| (Json::from(i), v)).collect(),
             _ => Vec::new(),
         };
-        for (ordinal, (key, child)) in members.into_iter().enumerate() {
-            let mut next = prefix.clone();
-            if *step == "*#" { next.push(Json::from(ordinal)); }
-            next.push(key);
+        for (key, child) in members {
+            let mut next = prefix.clone(); next.push(key);
             select(child, rest, next, out);
         }
     } else {
@@ -106,144 +80,14 @@ fn typed(row: Vec<Json>, columns: &[(String, String)], text: bool) -> ReadResult
     row.iter().zip(columns).map(|(v, (_, ty))| scalar(v, ty, text)).collect()
 }
 
-/// Integer conversion is data: one failed member must not discard its siblings.
-type PythonIntResult = std::result::Result<String, (&'static str, String)>;
-
-fn float_int(value: f64) -> PythonIntResult {
-    use num_traits::FromPrimitive;
-    if value.is_nan() { Err(("ValueError", "cannot convert float NaN to integer".into())) }
-    else { num_bigint::BigInt::from_f64(value.trunc()).map(|v| v.to_string()).ok_or(("OverflowError", "cannot convert float infinity to integer".into())) }
-}
-
-fn int_type_error(name: &str) -> PythonIntResult {
-    Err(("TypeError",format!("int() argument must be a string, a bytes-like object or a real number, not '{name}'")))
-}
-
-fn int_row(converted: PythonIntResult) -> Vec<Json> {
-    let (value, kind, detail) = match converted { Ok(v) => (v, "", String::new()), Err((k,e)) => (String::new(),k,e) };
-    [value,kind.to_owned(),detail].into_iter().map(Json::String).collect()
-}
-
-fn python_int(value: &Json) -> Vec<Json> {
-    int_row(match value {
-        Json::Bool(b) => Ok(i32::from(*b).to_string()),
-        Json::Number(n) => {
-            let text = n.to_string();
-            if !text.contains(['.', 'e', 'E']) {
-                crate::code_rule_dsl::logic::strings::python_integer_text(&text).map_err(|e| ("ValueError", e))
-            } else { float_int(text.parse::<f64>().unwrap_or(f64::NAN)) }
-        }
-        Json::String(s) => crate::code_rule_dsl::logic::strings::python_integer_text(s).map_err(|e| ("ValueError",e)),
-        other => int_type_error(match other { Json::Null => "NoneType", Json::Array(_) => "list", _ => "dict" }),
-    })
-}
-
-fn python_repr(value: &Json) -> String {
-    use crate::code_rule_dsl::facts::vtab::syntax::python_print::string_repr;
-    match value {
-        Json::Null => "None".into(),
-        Json::Bool(b) => if *b { "True" } else { "False" }.into(),
-        Json::String(s) => string_repr(s),
-        Json::Number(n) => {
-            let raw = n.to_string();
-            if raw.contains(['.', 'e', 'E']) {
-                crate::code_rule_dsl::value::python::float_repr(raw.parse().expect("a JSON number"))
-            } else { raw.parse::<num_bigint::BigInt>().expect("a JSON integer").to_string() }
-        }
-        Json::Array(items) => format!("[{}]",items.iter().map(python_repr).collect::<Vec<_>>().join(", ")),
-        Json::Object(items) => format!("{{{}}}",items.iter().map(|(k,v)| format!("{}: {}",string_repr(k),python_repr(v))).collect::<Vec<_>>().join(", ")),
-    }
-}
-
-/// Typed values remain distinct from JSON numbers: JSON has no NaN or infinity.
-/// Primitive payloads borrow the shared input document; containers retain order.
-enum PythonValue<'a> {
-    Json(&'a Json),
-    Integer(String),
-    Float(f64),
-    List(Vec<PythonValue<'a>>),
-    Dict(Vec<(&'a str,PythonValue<'a>)>),
-}
-
-impl PythonValue<'_> {
-    fn repr(&self) -> String {
-        use crate::code_rule_dsl::facts::vtab::syntax::python_print::string_repr;
-        match self {
-            Self::Json(v)=>python_repr(v),
-            Self::Integer(v)=>v.clone(),
-            Self::Float(v)=>crate::code_rule_dsl::value::python::float_repr(*v),
-            Self::List(v)=>format!("[{}]",v.iter().map(Self::repr).collect::<Vec<_>>().join(", ")),
-            Self::Dict(v)=>format!("{{{}}}",v.iter().map(|(k,v)|format!("{}: {}",string_repr(k),v.repr())).collect::<Vec<_>>().join(", ")),
-        }
-    }
-    fn text(&self) -> String {
-        match self { Self::Json(Json::String(s))=>s.clone(), _=>self.repr() }
-    }
-    fn integer(&self) -> Vec<Json> {
-        match self {
-            Self::Json(v)=>python_int(v), Self::Integer(v)=>int_row(Ok(v.clone())),
-            Self::Float(v)=>int_row(float_int(*v)),
-            Self::List(_)=>int_row(int_type_error("list")), Self::Dict(_)=>int_row(int_type_error("dict")),
-        }
-    }
-}
-
-fn python_value(value: &Json) -> ReadResult<PythonValue<'_>> {
-    let parts=value.as_array().filter(|p|p.len()==2).ok_or_else(||malformed("Python value must be a [kind, payload] pair"))?;
-    let bad=||malformed("invalid Python value payload");
-    Ok(match parts[0].as_str().ok_or_else(bad)? {
-        "null" if parts[1].is_null()=>PythonValue::Json(&parts[1]),
-        "bool" if parts[1].is_boolean()=>PythonValue::Json(&parts[1]),
-        "str" if parts[1].is_string()=>PythonValue::Json(&parts[1]),
-        "int"=>{
-            let raw=parts[1].as_str().ok_or_else(bad)?;
-            PythonValue::Integer(raw.parse::<num_bigint::BigInt>().map_err(|_|bad())?.to_string())
-        },
-        "float"=>{
-            let raw=parts[1].as_str().filter(|s|s.len()==16).ok_or_else(bad)?;
-            PythonValue::Float(f64::from_bits(u64::from_str_radix(raw,16).map_err(|_|bad())?))
-        },
-        "list"=>PythonValue::List(parts[1].as_array().ok_or_else(bad)?.iter().map(python_value).collect::<ReadResult<_>>()?),
-        "dict"=>{
-            let mut items=Vec::new();
-            let mut positions=BTreeMap::new();
-            for row in parts[1].as_array().ok_or_else(bad)? {
-                let pair=row.as_array().filter(|r|r.len()==2).ok_or_else(bad)?;
-                let key=pair[0].as_str().ok_or_else(bad)?;
-                let value=python_value(&pair[1])?;
-                if let Some(&at)=positions.get(key) { items[at]=(key,value); }
-                else { positions.insert(key,items.len());items.push((key,value)); }
-            }
-            PythonValue::Dict(items)
-        },
-        _=>return Err(bad()),
-    })
-}
-
-fn json_rows(value: &Json, pointer: &str, records: bool, projection: &str, prefix: Vec<Json>, columns: &[(String, String)]) -> ReadResult<Vec<Vec<Value>>> {
+fn json_rows(value: &Json, pointer: &str, records: bool, prefix: Vec<Json>, columns: &[(String, String)]) -> ReadResult<Vec<Vec<Value>>> {
     if !pointer.is_empty() && !pointer.starts_with('/') { return Err(malformed("path must be a JSON pointer")); }
     let steps: Vec<_> = if pointer.is_empty() { Vec::new() } else { pointer[1..].split('/').collect() };
     let mut selected = Vec::new();
     select(value, &steps, prefix, &mut selected);
     let mut out = Vec::new();
     for (prefix, value) in selected {
-        let rows: Vec<Vec<Json>> = if projection == "python-value-str" {
-            vec![vec![Json::String(python_value(value)?.text())]]
-        } else if projection == "python-value-int" {
-            vec![python_value(value)?.integer()]
-        } else if projection == "type" {
-            let kind = match value {
-                Json::Null => "null", Json::Bool(_) => "boolean", Json::Number(_) => "number",
-                Json::String(_) => "string", Json::Array(_) => "array", Json::Object(_) => "object",
-            };
-            vec![vec![Json::String(kind.to_owned())]]
-        } else if projection == "python-int" {
-            vec![python_int(value)]
-        } else if projection == "python-str" {
-            vec![vec![Json::String(match value { Json::String(s) => s.clone(), _ => python_repr(value) })]]
-        } else if projection == "json" {
-            vec![vec![Json::String(value.to_string())]]
-        } else if records {
+        let rows: Vec<Vec<Json>> = if records {
             let Json::Array(items) = value else { return Err(malformed("records=true requires a list of objects")); };
             items.iter().map(|item| {
                 let Json::Object(map) = item else { return Err(malformed("record is not an object")); };
@@ -269,7 +113,7 @@ impl Readers {
     fn read<'a>(&'a mut self, path: &str, read: &mut impl FnMut(&str) -> ReadResult<String>) -> ReadResult<&'a str> {
         self.bytes.entry(path.to_owned()).or_insert_with(|| read(path)).as_ref().map(String::as_str).map_err(Clone::clone)
     }
-    fn rows(&mut self, path: &str, io: &str, pointer: &str, records: bool, projection: &str, prefix: Vec<Json>, columns: &[(String, String)], read: &mut impl FnMut(&str) -> ReadResult<String>) -> ReadResult<Vec<Vec<Value>>> {
+    fn rows(&mut self, path: &str, io: &str, pointer: &str, records: bool, prefix: Vec<Json>, columns: &[(String, String)], read: &mut impl FnMut(&str) -> ReadResult<String>) -> ReadResult<Vec<Vec<Value>>> {
         if matches!(io, "json" | "yaml") {
             let key = (path.to_owned(), io.to_owned());
             if !self.documents.contains_key(&key) {
@@ -279,7 +123,7 @@ impl Readers {
                 self.documents.insert(key.clone(), decoded);
             }
             let document = self.documents[&key].as_ref().map_err(Clone::clone)?;
-            return json_rows(document, pointer, records, projection, prefix, columns);
+            return json_rows(document, pointer, records, prefix, columns);
         }
         let source = self.read(path, read)?;
         // Repository text readers use universal newlines. No line is manufactured after a final separator.
@@ -290,7 +134,7 @@ impl Readers {
             if matches!(io, "lines" | "jsonl") { row.push(Json::from(i + 1)); }
             if io == "jsonl" {
                 let value = serde_json::from_str(line).map_err(|e| malformed(format!("line {}: {e}", i + 1)))?;
-                out.extend(json_rows(&value, pointer, records, projection, row, columns)?);
+                out.extend(json_rows(&value, pointer, records, row, columns)?);
             } else {
                 row.extend(if io == "lines" { vec![Json::String(line.to_owned())] }
                            else { line.split('\t').map(|s| Json::String(s.to_owned())).collect() });
@@ -306,7 +150,7 @@ impl Readers {
 static FACTS_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
 /// `logic --facts DIR`: the run's facts directory, for the process.
-pub(in crate::code_rule_dsl) fn set_facts_dir(dir: PathBuf) -> std::result::Result<(), String> {
+pub fn set_facts_dir(dir: PathBuf) -> std::result::Result<(), String> {
     FACTS_DIR.set(dir).map_err(|_| "the facts directory is already set".to_owned())
 }
 
@@ -318,7 +162,7 @@ fn facts_dir(root: &Path) -> PathBuf {
 /// stale or malformed fails the run, and so does a failed one unless the policy reports it.
 static REQUIRE_FACTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-pub(in crate::code_rule_dsl) fn require_facts() {
+pub fn require_facts() {
     REQUIRE_FACTS.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
@@ -326,11 +170,11 @@ pub(in crate::code_rule_dsl) fn require_facts() {
 /// `git_rev("base", …)`, which `at="base"` inputs are read at, is the merge base of HEAD and it.
 static BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
-pub(in crate::code_rule_dsl) fn set_base(rev: String) -> std::result::Result<(), String> {
+pub fn set_base(rev: String) -> std::result::Result<(), String> {
     BASE.set(rev).map_err(|_| "the base revision is already set".to_owned())
 }
 
-fn unreadable(detail: impl std::fmt::Display) -> Failure { Failure { kind: "unreadable", detail: detail.to_string(), ..Default::default() } }
+fn unreadable(detail: impl std::fmt::Display) -> Failure { Failure { kind: "unreadable", detail: detail.to_string() } }
 
 /// The tree of `rev` in the repository that holds `root`, and `root`'s path inside it.
 fn base_tree(root: &Path, rev: &str) -> ReadResult<(gix::Repository, gix::ObjectId, PathBuf)> {
@@ -354,10 +198,10 @@ fn base_tree(root: &Path, rev: &str) -> ReadResult<(gix::Repository, gix::Object
 fn base_reader<'a>(root: &'a Path, rev: Option<&'a str>) -> impl FnMut(&str) -> ReadResult<String> + 'a {
     let mut tree: Option<ReadResult<(gix::Repository, gix::ObjectId, PathBuf)>> = None;
     move |path| {
-        let rev = rev.ok_or_else(|| Failure { kind: "missing", detail: "no base revision: run with --base REV".into(), ..Default::default() })?;
+        let rev = rev.ok_or_else(|| Failure { kind: "missing", detail: "no base revision: run with --base REV".into() })?;
         let (repo, id, prefix) = tree.get_or_insert_with(|| base_tree(root, rev)).as_ref().map_err(Clone::clone)?;
         let entry = repo.find_tree(*id).map_err(unreadable)?.lookup_entry_by_path(prefix.join(path)).map_err(unreadable)?
-            .ok_or_else(|| Failure { kind: "missing", detail: format!("{path} is not in {rev}"), ..Default::default() })?;
+            .ok_or_else(|| Failure { kind: "missing", detail: format!("{path} is not in {rev}") })?;
         let blob = entry.object().map_err(unreadable)?;
         String::from_utf8(blob.data.clone()).map_err(|e| malformed(format!("{path} at {rev}: {e}")))
     }
@@ -405,7 +249,7 @@ fn quoted(text: &str) -> Option<(String, &str)> {
 }
 
 /// Every artifact the program declares. Two declarations of one name must agree (RUN-FACTS.md section 2).
-pub(in crate::code_rule_dsl) fn artifacts(settings: &[(String, String)]) -> Result<BTreeMap<String, Vec<String>>> {
+pub fn artifacts(settings: &[(String, String)]) -> Result<BTreeMap<String, Vec<String>>> {
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (_, text) in settings.iter().filter(|(k, _)| k == "artifact") {
         let (name, globs) = artifact_declaration(text)?;
@@ -486,11 +330,11 @@ fn artifact_data(name: &str, text: &str, digest: &str) -> ReadResult<Json> {
     }
     let Some(stamped) = field("inputs") else { return Err(malformed("no inputs digest")) };
     if stamped != digest {
-        return Err(Failure { kind: "stale", detail: format!("its inputs changed since it was stamped ({stamped}, now {digest})"), ..Default::default() });
+        return Err(Failure { kind: "stale", detail: format!("its inputs changed since it was stamped ({stamped}, now {digest})") });
     }
     match field("status") {
         Some("ok") => envelope.get("data").cloned().ok_or_else(|| malformed("status ok with no data")),
-        Some("failed") => Err(Failure { kind: "failed", detail: field("error").unwrap_or("the producer failed").to_owned(), ..Default::default() }),
+        Some("failed") => Err(Failure { kind: "failed", detail: field("error").unwrap_or("the producer failed").to_owned() }),
         other => Err(malformed(format!("status {other:?}"))),
     }
 }
@@ -499,7 +343,7 @@ fn artifact_data(name: &str, text: &str, digest: &str) -> ReadResult<Json> {
 /// wrapped with the digest of the inputs `declared` names for it, as `DIR/NAME.json`. A `NAME.status` (the
 /// producer's exit status) makes the artifact failed, with the first 4 KB of `NAME.err`; so does output that is not
 /// JSON. A raw file no policy declares is an error. Returns one line per artifact.
-pub(in crate::code_rule_dsl) fn stamp(raw: &Path, out: &Path, root: &Path, declared: &BTreeMap<String, Vec<String>>) -> std::result::Result<String, String> {
+pub fn stamp(raw: &Path, out: &Path, root: &Path, declared: &BTreeMap<String, Vec<String>>) -> std::result::Result<String, String> {
     let mut names: Vec<String> = std::fs::read_dir(raw)
         .map_err(|e| format!("{}: {e}", raw.display()))?
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -557,35 +401,12 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 fn of_result(result: &ReadResult<String>) -> String {
-    match result {
-        Ok(text) => sha256_hex(text.as_bytes()),
-        Err(f) => match &f.read {
-            Some(e) => format!("{}:{}:{}:{}:{}", f.kind, e.kind, e.errno, sha256_hex(f.detail.as_bytes()), sha256_hex(&e.bytes)),
-            None => f.kind.to_owned(),
-        },
-    }
+    match result { Ok(text) => sha256_hex(text.as_bytes()), Err(f) => format!("{}", f.kind) }
 }
 
-pub(super) fn read_repository_file(root: &Path, name: &str, detailed: bool) -> ReadResult<String> {
-    let bytes = std::fs::read(root.join(name)).map_err(|e| Failure {
+fn read_repository_file(root: &Path, name: &str) -> ReadResult<String> {
+    std::fs::read_to_string(root.join(name)).map_err(|e| Failure {
         kind: if e.kind() == std::io::ErrorKind::NotFound { "missing" } else { "unreadable" }, detail: e.to_string(),
-        read: detailed.then(|| std::sync::Arc::new(ReadError { kind: format!("{:?}", e.kind()), errno: e.raw_os_error().unwrap_or(0).into(), bytes: Vec::new(), start: 0, end: 0, reason: "" })),
-    })?;
-    decode_repository_bytes(bytes, detailed)
-}
-
-pub(super) fn decode_repository_bytes(bytes: Vec<u8>, detailed: bool) -> ReadResult<String> {
-    String::from_utf8(bytes).map_err(|e| {
-        let read = detailed.then(|| {
-            let error = e.utf8_error();
-            let bytes = e.into_bytes();
-            let start = error.valid_up_to();
-            let end = error.error_len().map_or(bytes.len(), |len| start + len);
-            let reason = if error.error_len().is_none() { "unexpected-end" }
-                else if matches!(bytes[start], 0xc2..=0xf4) { "invalid-continuation" } else { "invalid-start" };
-            std::sync::Arc::new(ReadError { kind: "InvalidUtf8".into(), errno: 0, bytes, start: start as i64, end: end as i64, reason })
-        });
-        Failure { kind: "unreadable", detail: "stream did not contain valid UTF-8".into(), read }
     })
 }
 
@@ -594,10 +415,9 @@ fn read_artifact(root: &Path, declared: &BTreeMap<String, Vec<String>>, name: &s
     let text = std::fs::read_to_string(facts_dir(root).join(format!("{name}.json"))).map_err(|e| Failure {
         kind: if e.kind() == std::io::ErrorKind::NotFound { "missing" } else { "malformed" },
         detail: format!("{}: {e}", facts_dir(root).join(format!("{name}.json")).display()),
-        ..Default::default()
     });
-    let digest = declared.get(name).ok_or_else(|| Failure { kind: "malformed", detail: format!("no .artifact {name:?} declares its inputs"), ..Default::default() })
-        .and_then(|globs| inputs_digest(root, globs).map_err(|detail| Failure { kind: "malformed", detail, ..Default::default() }));
+    let digest = declared.get(name).ok_or_else(|| Failure { kind: "malformed", detail: format!("no .artifact {name:?} declares its inputs") })
+        .and_then(|globs| inputs_digest(root, globs).map_err(|detail| Failure { kind: "malformed", detail }));
     (text, digest)
 }
 
@@ -606,7 +426,6 @@ fn artifact_entry(text: &ReadResult<String>, digest: &ReadResult<String>) -> Str
 }
 
 pub(super) fn populate(program: &mut front::Program, root: &Path) -> Result<()> {
-    let detailed = read_errors_wanted(program);
     let declared = artifacts(&program.settings)?;
     let base = BASE.get().map(String::as_str);
     let mut consulted = Vec::new();
@@ -616,7 +435,7 @@ pub(super) fn populate(program: &mut front::Program, root: &Path) -> Result<()> 
         program,
         root,
         &mut |name| {
-            let result = read_repository_file(root, name, detailed);
+            let result = read_repository_file(root, name);
             seen.borrow_mut().push(("input".to_owned(), name.to_owned(), of_result(&result)));
             result
         },
@@ -681,7 +500,7 @@ pub(super) fn still(program: &front::Program, root: &Path, consulted: &[(String,
     let Ok(declared) = artifacts(&program.settings) else { return false };
     consulted.iter().all(|(what, path, digest)| {
         let now = match what.as_str() {
-            "input" => of_result(&read_repository_file(root, path, read_errors_wanted(program))),
+            "input" => of_result(&read_repository_file(root, path)),
             "input_dir" => listing(root, path),
             "artifact" => {
                 let (text, inputs) = read_artifact(root, &declared, path);
@@ -733,8 +552,6 @@ fn populate_with(
     let mut base_readers = Readers::default();
     let mut artifacts: BTreeMap<String, ReadResult<Json>> = BTreeMap::new();
     let mut errors: Vec<Vec<Value>> = Vec::new();
-    let detailed = read_errors_wanted(program);
-    let mut read_errors: Vec<Vec<Value>> = Vec::new();
     // Relations an artifact left without rows, and why (FINDINGS-LAYER.md section 2).
     let mut incomplete: BTreeMap<String, String> = BTreeMap::new();
     for setting in settings {
@@ -757,12 +574,6 @@ fn populate_with(
             None | Some("false") => false, Some("true") => true,
             _ => return Err(Error::Plan(format!("{rel}: records must be true or false"))),
         };
-        let projection = params.get("projection").map_or("rows", String::as_str);
-        if !["rows", "type", "json", "python-int", "python-str", "python-value-str", "python-value-int"].contains(&projection) || records && projection != "rows"
-            || projection != "rows" && !matches!(io, "json" | "yaml" | "jsonl")
-        {
-            return Err(Error::Plan(format!("{rel}: invalid input projection {projection}")));
-        }
         let pointer = params.get("path").map_or("", String::as_str);
         let columns = program.decls.get(rel).ok_or_else(|| Error::Plan(format!("{rel}: input has no declaration")))?;
         // `artifact="name"`: a stamped file of the facts directory, read as IO=json reads its `data`.
@@ -774,7 +585,7 @@ fn populate_with(
                 return Err(Error::Plan(format!("{rel}: an artifact is read with IO=json")));
             }
             let data = artifacts.entry(name.clone()).or_insert_with(|| artifact(name));
-            let result = data.as_ref().map_err(Clone::clone).and_then(|data| json_rows(data, pointer, records, projection, Vec::new(), columns));
+            let result = data.as_ref().map_err(Clone::clone).and_then(|data| json_rows(data, pointer, records, Vec::new(), columns));
             program.inputs.retain(|n| n != rel);
             match result {
                 Ok(rows) => program.facts.entry(rel.to_owned()).or_default().extend(rows),
@@ -799,7 +610,7 @@ fn populate_with(
             if io != "lines" { return Err(Error::Plan(format!("{rel}: dir is supported only by IO=lines"))); }
             consulted.push(("input_dir".to_owned(), path.clone(), listing(root, path)));
             match std::fs::read_dir(root.join(path)) {
-                Err(e) => Err(Failure { kind: if e.kind() == std::io::ErrorKind::NotFound { "missing" } else { "unreadable" }, detail: e.to_string(), ..Default::default() }),
+                Err(e) => Err(Failure { kind: if e.kind() == std::io::ErrorKind::NotFound { "missing" } else { "unreadable" }, detail: e.to_string() }),
                 Ok(entries) => {
                     let mut paths = entries.map(|entry| entry.map(|e| e.path())).collect::<std::io::Result<Vec<_>>>()
                         .map_err(|e| Error::Plan(format!("{rel}: listing {path}: {e}")))?;
@@ -809,7 +620,7 @@ fn populate_with(
                     for file in paths {
                         if !file.is_file() { continue; }
                         let name = file.strip_prefix(root).unwrap().to_string_lossy().into_owned();
-                        match readers.rows(&name, io, pointer, records, projection, vec![Json::String(name.clone())], columns, read) {
+                        match readers.rows(&name, io, pointer, records, vec![Json::String(name.clone())], columns, read) {
                             Ok(part) => rows.extend(part), Err(e) => { failure = Some(e); break; }
                         }
                     }
@@ -817,8 +628,8 @@ fn populate_with(
                 }
             }
         } else if at_base {
-            base_readers.rows(path, io, pointer, records, projection, Vec::new(), columns, base)
-        } else { readers.rows(path, io, pointer, records, projection, Vec::new(), columns, read) };
+            base_readers.rows(path, io, pointer, records, Vec::new(), columns, base)
+        } else { readers.rows(path, io, pointer, records, Vec::new(), columns, read) };
         program.inputs.retain(|name| name != rel);
         match result {
             Ok(rows) => program.facts.entry(rel.to_owned()).or_default().extend(rows),
@@ -829,21 +640,12 @@ fn populate_with(
                 }
                 incomplete.insert(rel.to_owned(), format!("{path}@base {}", error.kind));
             }
-            Err(error) => {
-                if detailed && let Some(row) = read_error_row(path, &error) && !read_errors.contains(&row) { read_errors.push(row); }
-                errors.push(vec![Value::Str(path.clone()), Value::Str(error.kind.to_owned()), Value::Str(error.detail)]);
-            },
+            Err(error) => errors.push(vec![Value::Str(path.clone()), Value::Str(error.kind.to_owned()), Value::Str(error.detail)]),
         }
     }
-    // This reader owns the declared error relation even after successful reads. Leaving it as an
-    // unbound tape input makes a rule's `!input_error` ask the syntax provider for nonexistent columns.
-    if program.decls.contains_key("input_error") || !errors.is_empty() {
+    if !errors.is_empty() {
         program.inputs.retain(|name| name != "input_error");
         program.facts.entry("input_error".to_owned()).or_default().extend(errors);
-    }
-    if program.decls.contains_key("input_read_error") {
-        program.inputs.retain(|name| name != "input_read_error");
-        program.facts.entry("input_read_error".to_owned()).or_default().extend(read_errors);
     }
     if !incomplete.is_empty() {
         let withheld = withhold(program, &incomplete);
@@ -876,20 +678,20 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
     loop {
         let mut grew = false;
         for rule in &program.rules {
-            if why.contains_key(&rule.head.rel) {
+            if why.contains_key(rule.head.rel.as_str()) {
                 continue;
             }
-            if let Some(w) = rule.body.iter().filter_map(Literal::atom).find_map(|a| why.get(&a.rel)) {
+            if let Some(w) = rule.body.iter().filter_map(Literal::atom).find_map(|a| why.get(a.rel.as_str())) {
                 let w = w.clone();
-                why.insert(rule.head.rel.clone(), w);
+                why.insert(rule.head.rel.to_string(), w);
                 grew = true;
             }
         }
         let mut dropped = Vec::new();
         program.rules.retain(|rule| {
             let reason = rule.body.iter().find_map(|l| match l {
-                Literal::Atom(a) if a.neg => why.get(&a.rel),
-                Literal::Agg { atom, .. } => why.get(&atom.rel),
+                Literal::Atom(a) if a.neg => why.get(a.rel.as_str()),
+                Literal::Agg { atom, .. } => why.get(atom.rel.as_str()),
                 _ => None,
             });
             match reason {
@@ -901,9 +703,9 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
             }
         });
         for (head, w) in dropped {
-            let entry = removed.entry(head.clone()).or_insert((0, w.clone()));
+            let entry = removed.entry(head.to_string()).or_insert((0, w.clone()));
             entry.0 += 1;
-            why.entry(head).or_insert(w);
+            why.entry(head.to_string()).or_insert(w);
             grew = true;
         }
         if !grew {
@@ -914,7 +716,7 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
     // incomplete one is named with how many of its rules read an incomplete relation (the granularity is the rule).
     let mut reported: Vec<String> = program.outputs.clone();
     for rule in program.rules.iter().filter(|r| r.head.rel == "rr_diagnostic") {
-        reported.extend(rule.body.iter().filter_map(Literal::atom).filter(|a| !a.neg).map(|a| a.rel.clone()));
+        reported.extend(rule.body.iter().filter_map(Literal::atom).filter(|a| !a.neg).map(|a| a.rel.to_string()));
     }
     let mut seen = std::collections::BTreeSet::new();
     reported.retain(|r| seen.insert(r.clone()));
@@ -923,7 +725,7 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
         .filter_map(|rel| {
             let w = why.get(&rel)?;
             let rules: Vec<&front::Rule> = program.rules.iter().filter(|r| r.head.rel == rel).collect();
-            let reading = rules.iter().filter(|r| r.body.iter().filter_map(Literal::atom).any(|a| why.contains_key(&a.rel))).count();
+            let reading = rules.iter().filter(|r| r.body.iter().filter_map(Literal::atom).any(|a| why.contains_key(a.rel.as_str()))).count();
             let gone = removed.get(&rel).map_or(0, |(n, _)| *n);
             Some((rel, format!("{w}; {} of its {} rules", reading + gone, rules.len() + gone)))
         })
@@ -932,199 +734,11 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
 }
 
 #[cfg(test)]
-mod tests {
-    #[test]
-    fn typed_read_errors_share_one_read_and_preserve_utf8_bytes_and_offsets() {
-        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("typed-read-error");
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("bad.txt"), [0xc3,0xa9,b'a',0xe2,0x82]).unwrap();
-        let mut program = crate::code_rule_dsl::logic::rr::parse(r#"
-.decl lines(i: number, t: symbol)
-.input lines(IO=lines, filename="bad.txt")
-.decl json(t: symbol)
-.input json(IO=json, filename="bad.txt")
-.decl input_read_error(p: symbol,k: symbol,n: number,d: symbol,b: symbol,s: number,e: number,r: symbol)
-.input input_read_error
-.decl error_bytes(b: symbol)
-error_bytes(b) :- input_read_error(_,_,_,_,b,_,_,_).
-"#).unwrap();
-        let mut reads = 0;
-        populate_with(&mut program, &root, &mut |p| { reads += 1; read_repository_file(&root,p,true) }, &mut |_| panic!("artifact"), &mut |_| panic!("base"), &mut Vec::new()).unwrap();
-        assert_eq!(reads,1);
-        assert!(program.facts.get("lines").is_none_or(Vec::is_empty));
-        assert_eq!(program.facts["input_read_error"], vec![vec![Value::Str("bad.txt".into()),Value::Str("InvalidUtf8".into()),Value::Int(0),
-            Value::Str("stream did not contain valid UTF-8".into()),Value::Str("c3a961e282".into()),Value::Int(3),Value::Int(5),Value::Str("unexpected-end".into())]]);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn changed_invalid_bytes_invalidate_typed_read_errors_without_changing_the_error_kind() {
-        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("read-error-digest");
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join("bad"), [0xff]).unwrap();
-        let first = of_result(&read_repository_file(&root,"bad",true));
-        std::fs::write(root.join("bad"), [0xfe]).unwrap();
-        assert_ne!(first,of_result(&read_repository_file(&root,"bad",true)));
-        assert!(read_repository_file(&root,"bad",false).unwrap_err().read.is_none());
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn utf8_error_categories_and_lengths_cover_invalid_prefixes_and_continuations() {
-        for (bytes,start,end,reason) in [
-            (vec![b'a',0xff],1,2,"invalid-start"),
-            (vec![0xc0,0x80],0,1,"invalid-start"),
-            (vec![0xe2,0x28,0xa1],0,1,"invalid-continuation"),
-            (vec![0xe2,0x82,b'x'],0,2,"invalid-continuation"),
-            (vec![0xed,0xa0,0x80],0,1,"invalid-continuation"),
-            (vec![0xf4,0x90,0x80,0x80],0,1,"invalid-continuation"),
-            (vec![0xf0,0x9f,0x92],0,3,"unexpected-end"),
-        ] {
-            let failure=decode_repository_bytes(bytes,true).unwrap_err();
-            let row=read_error_row("file",&failure).unwrap();
-            assert_eq!((&row[5],&row[6],&row[7]),(&Value::Int(start),&Value::Int(end),&Value::Str(reason.into())));
-        }
-    }
-
-    #[test]
-    fn python_string_projection_preserves_nested_values_float_repr_and_one_read() {
-        let mut program = crate::code_rule_dsl::logic::rr::parse(r#"
-.decl rendered(k: symbol, value: symbol)
-.input rendered(IO=json, filename="baseline.json", path="/*", projection="python-str")
-.decl kinds(k: symbol, value: symbol)
-.input kinds(IO=json, filename="baseline.json", path="/*", projection="type")
-"#).unwrap();
-        let source = r#"{"null":null,"bool":true,"int":1208925819614629174706176,"float":1.0e0,"infinity":1e999,"text":"☃\n","array":["x",null,false,1.5],"object":{"z":"a'b","a":-0.0}}"#;
-        let mut reads = 0;
-        populate_with(&mut program, Path::new("."), &mut |_| { reads += 1; Ok(source.into()) }, &mut |_| panic!("artifact"), &mut |_| panic!("base"), &mut Vec::new()).unwrap();
-        assert_eq!(reads,1);
-        let expected = [
-            ("null","None"),("bool","True"),("int","1208925819614629174706176"),("float","1.0"),("infinity","inf"),
-            ("text","☃\n"),("array","['x', None, False, 1.5]"),("object","{'z': \"a'b\", 'a': -0.0}"),
-        ].into_iter().map(|(k,v)| vec![Value::Str(k.into()),Value::Str(v.into())]).collect::<Vec<_>>();
-        assert_eq!(program.facts["rendered"],expected);
-        assert_eq!(program.facts["kinds"].len(),8);
-    }
-
-    #[test]
-    fn typed_python_values_preserve_nonfinite_numbers_and_nested_repr_in_one_read() {
-        let mut program = crate::code_rule_dsl::logic::rr::parse(r#"
-.decl rendered(key: symbol, value: symbol)
-.input rendered(IO=json, filename="values.json", path="/*", projection="python-value-str")
-.decl converted(key: symbol, value: symbol, error_type: symbol, detail: symbol)
-.input converted(IO=json, filename="values.json", path="/*", projection="python-value-int")
-"#).unwrap();
-        let source = r#"{"nan":["float","7ff8000000000000"],"inf":["float","7ff0000000000000"],"negative_zero":["float","8000000000000000"],"nested":["dict",[["x",["list",[["float","fff0000000000000"],["str","NaN"]]]]]],"integer":["int","1208925819614629174706176"]}"#;
-        let mut reads = 0;
-        populate_with(&mut program, Path::new("."), &mut |_| { reads += 1; Ok(source.to_owned()) }, &mut |_| panic!("artifact"), &mut |_| panic!("base"), &mut Vec::new()).unwrap();
-        assert_eq!(reads,1);
-        let rendered = [["nan","nan"],["inf","inf"],["negative_zero","-0.0"],
-            ["nested","{'x': [-inf, 'NaN']}"],["integer","1208925819614629174706176"]]
-            .into_iter().map(|r|r.into_iter().map(|s|Value::Str(s.into())).collect::<Vec<_>>()).collect::<Vec<_>>();
-        assert_eq!(program.facts["rendered"],rendered);
-        let rows=&program.facts["converted"];
-        assert_eq!(rows[0],vec![Value::Str("nan".into()),Value::Str("".into()),Value::Str("ValueError".into()),Value::Str("cannot convert float NaN to integer".into())]);
-        assert_eq!(rows[1][2],Value::Str("OverflowError".into()));
-        assert_eq!(rows[2][1],Value::Str("0".into()));
-        assert_eq!(rows[3][2],Value::Str("TypeError".into()));
-        assert_eq!(rows[4][1],Value::Str("1208925819614629174706176".into()));
-    }
-
-    #[test]
-    fn integer_errors_limit_the_representation_by_characters_without_changing_values() {
-        for (text, expected) in [
-            ("x".repeat(198), format!("invalid literal for int() with base 10: '{}'", "x".repeat(198))),
-            ("x".repeat(199), format!("invalid literal for int() with base 10: '{}", "x".repeat(199))),
-            ("😀".repeat(300), format!("invalid literal for int() with base 10: '{}", "😀".repeat(199))),
-            ("\n".repeat(300), format!("invalid literal for int() with base 10: '{}\\", "\\n".repeat(99))),
-        ] {
-            let packed=serde_json::json!(["str",text]);
-            let value=python_value(&packed).unwrap();
-            assert_eq!(value.text(),text,"the string projection must retain the complete value");
-            assert_eq!(value.integer(),vec![Json::String(String::new()),Json::String("ValueError".into()),Json::String(expected)]);
-        }
-    }
-
-    #[test]
-    fn malformed_typed_python_values_publish_no_selector_prefix() {
-        for bad in [r#"["float","bad"]"#,r#"["dict",[[3,["str","x"]]]]"#,r#"["unknown",0]"#] {
-            let value:Json=serde_json::from_str(&format!(r#"[["str","valid"],{bad}]"#)).unwrap();
-            assert!(json_rows(&value,"/*",false,"python-value-str",Vec::new(),&[("k".into(),"sym".into()),("v".into(),"sym".into())]).is_err());
-        }
-    }
-
-    #[test]
-    fn python_integer_projection_preserves_coercions_errors_and_shared_decode() {
-        let mut program = crate::code_rule_dsl::logic::rr::parse(r#"
-.decl converted(key: symbol, value: symbol, error_type: symbol, detail: symbol)
-.input converted(IO=json, filename="baseline.json", path="/counts/*", projection="python-int")
-.decl kinds(key: symbol, kind: symbol)
-.input kinds(IO=json, filename="baseline.json", path="/counts/*", projection="type")
-"#).unwrap();
-        let source = r#"{"counts":{"float":1.9,"string":" +٢_٠ ","boolean":true,"large":900719925474099300000,"binary_float":9007199254740993.0,"bad":"2x","null":null,"huge":1e999}}"#;
-        let mut reads = 0;
-        populate_with(&mut program, Path::new("."), &mut |_| { reads += 1; Ok(source.to_owned()) }, &mut |_| panic!("artifact"), &mut |_| panic!("base"), &mut Vec::new()).unwrap();
-        assert_eq!(reads, 1);
-        let expected = [
-            ["float","1","",""], ["string","20","",""], ["boolean","1","",""],
-            ["large","900719925474099300000","",""], ["binary_float","9007199254740992","",""],
-            ["bad","","ValueError","invalid literal for int() with base 10: '2x'"],
-            ["null","","TypeError","int() argument must be a string, a bytes-like object or a real number, not 'NoneType'"],
-            ["huge","","OverflowError","cannot convert float infinity to integer"],
-        ].into_iter().map(|row| row.into_iter().map(|s| Value::Str(s.into())).collect::<Vec<_>>()).collect::<Vec<_>>();
-        assert_eq!(program.facts["converted"],expected);
-        assert_eq!(program.facts["kinds"].len(),8);
-    }
-
-    #[test]
-    fn json_type_and_transport_projections_share_one_read_and_keep_large_numbers() {
-        let mut program = crate::code_rule_dsl::logic::rr::parse(r#"
-.decl kind(value: symbol)
-.input kind(IO=json, filename="baseline.json", projection="type")
-.decl category_kind(value: symbol)
-.input category_kind(IO=json, filename="baseline.json", path="/categories", projection="type")
-.decl raw(value: symbol)
-.input raw(IO=json, filename="baseline.json", projection="json")
-"#).unwrap();
-        let source = r#"{"categories":{"Z":["f"],"A":[]},"number":18446744073709551617}"#;
-        let mut reads = 0;
-        populate_with(&mut program, Path::new("."), &mut |_| { reads += 1; Ok(source.to_owned()) }, &mut |_| panic!("unexpected artifact read"), &mut |_| panic!("unexpected base read"), &mut Vec::new()).unwrap();
-        assert_eq!(reads, 1);
-        assert_eq!(program.facts["kind"], vec![vec![Value::Str("object".into())]]);
-        assert_eq!(program.facts["category_kind"], vec![vec![Value::Str("object".into())]]);
-        assert_eq!(program.facts["raw"], vec![vec![Value::Str(source.into())]]);
-    }
-
-    #[test]
-    fn successful_file_reads_publish_a_known_empty_error_relation() {
-        let mut program = crate::code_rule_dsl::logic::rr::parse(r#"
-.decl sample(n: number)
-.input sample(IO=json, filename="shared.json", path="/n")
-.decl input_error(path: symbol, kind: symbol, detail: symbol)
-.input input_error
-"#).unwrap();
-        populate_with(&mut program, Path::new("."), &mut |_| Ok(r#"{"n":7}"#.to_owned()), &mut |_| panic!("unexpected artifact read"), &mut |_| panic!("unexpected base read"), &mut Vec::new()).unwrap();
-        assert!(!program.inputs.iter().any(|name| name == "input_error"));
-        assert_eq!(program.facts.get("input_error"), Some(&Vec::new()));
-    }
-
-    #[test]
-    fn ordered_object_wildcards_keep_first_key_order_and_last_value_with_array_duplicates() {
-        let source = r#"{"categories":{"Z":["old"],"NEEDS_REVIEW":["foo","foo"],"Z":["last"],"EMPTY":[],"A":["tail"]}}"#;
-        let actual = rows("json", source, "/categories/*#/*", false,
-            &[("priority", "int"), ("category", "sym"), ("index", "int"), ("name", "sym")]).unwrap();
-        assert_eq!(actual, vec![
-            vec![Value::Int(0), Value::Str("Z".into()), Value::Int(0), Value::Str("last".into())],
-            vec![Value::Int(1), Value::Str("NEEDS_REVIEW".into()), Value::Int(0), Value::Str("foo".into())],
-            vec![Value::Int(1), Value::Str("NEEDS_REVIEW".into()), Value::Int(1), Value::Str("foo".into())],
-            vec![Value::Int(3), Value::Str("A".into()), Value::Int(0), Value::Str("tail".into())],
-        ]);
-    }
-
+pub mod tests {
     use super::*;
     fn rows(io: &str, source: &str, pointer: &str, records: bool, columns: &[(&str, &str)]) -> ReadResult<Vec<Vec<Value>>> {
         let cols = columns.iter().map(|(name, ty)| ((*name).to_owned(), (*ty).to_owned())).collect::<Vec<_>>();
-        Readers::default().rows("fixture", io, pointer, records, "rows", Vec::new(), &cols, &mut |_| Ok(source.to_owned()))
+        Readers::default().rows("fixture", io, pointer, records, Vec::new(), &cols, &mut |_| Ok(source.to_owned()))
     }
 
     #[test]
@@ -1193,7 +807,7 @@ grew(e) :- now_entry(e), !was(_, e).
     /// Without a base, the comparison is withheld rather than reporting every entry as new.
     #[test]
     fn an_unreadable_base_gives_an_input_error_and_withholds_the_comparison() {
-        let program = burn_down(&mut |_| Err(Failure { kind: "missing", detail: "no base revision".into(), ..Default::default() }));
+        let program = burn_down(&mut |_| Err(Failure { kind: "missing", detail: "no base revision".into() }));
         assert_eq!(error_kinds(&program), [r#"Str("allow.txt@base") Str("missing")"#]);
         assert!(!program.rules.iter().any(|r| r.head.rel == "grew"), "a rule reading the base through ! is withheld");
         assert!(program.rules.iter().any(|r| r.head.rel == "now_entry"));
@@ -1307,7 +921,7 @@ quiet() :- ceiling(_), !over(_).
         populate_with(&mut program, Path::new("."), &mut |_| panic!("no repository file is read"), &mut |name| {
             assert_eq!(name, "collection");
             match &text {
-                None => Err(Failure { kind: "missing", detail: "collection.json".into(), ..Default::default() }),
+                None => Err(Failure { kind: "missing", detail: "collection.json".into() }),
                 Some(t) => artifact_data(name, t, "sha256:now"),
             }
         }, &mut no_base, &mut Vec::new())

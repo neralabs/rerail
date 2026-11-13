@@ -25,8 +25,15 @@ export function violationKeySql(value: string): string {
 }
 
 /**
+ * Whether the coding agent was not told of a violation: the audit ran in Log mode, where it tells the agent nothing
+ * whatever its rules' modes, or a copy's rule was in Log mode. The audit's `mode` never changes after its insert.
+ */
+const LOGGED = "NEW.mode = 'log' OR max(coalesce(json_extract(violation.value, '$.mode') = 'log', 0)) OVER copies";
+
+/**
  * The `audit_violations` rows of the audit a trigger holds as `NEW`, from its entries at ordinal `from` on: repeats
- * of a (rule, key) among them collapse onto the first copy, `logged` when any copy was in Log mode.
+ * of a (rule, key) among them collapse onto the first copy, `logged` (`LOGGED`) when the audit or any copy was in Log
+ * mode.
  */
 const violationRows = (from: string): string => {
   const key = violationKeySql("violation.value");
@@ -37,11 +44,11 @@ const violationRows = (from: string): string => {
         json_extract(violation.value, '$.ruleId') AS rule_id,
         ${key} AS violation_key,
         row_number() OVER copies AS copy,
-        max(coalesce(json_extract(violation.value, '$.mode') = 'log', 0)) OVER copies AS logged
+        ${LOGGED} AS logged
       FROM json_each(NEW.violations_json) violation
       WHERE violation.key >= ${from}
       -- The whole partition: with ORDER BY alone the frame would end at the current row, and the first copy, the one
-      -- kept, would see only its own mode.
+      -- kept, would see only its own rule's mode.
       WINDOW copies AS (PARTITION BY json_extract(violation.value, '$.ruleId'), ${key}
         ORDER BY violation.key ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
     ) entry

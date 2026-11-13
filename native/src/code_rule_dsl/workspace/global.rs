@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) type QueryPlan = query::select_when::Plan<ClauseId>;
 
-/// A global `forbid` query's plan; each regex or AST leaf becomes a synthetic clause whose
+/// A global `forbid` query's plan; each regex, AST or file leaf becomes a synthetic clause whose
 /// witnesses are recorded as evidence. A leaf under an `exists` side only answers whether it has a
 /// witness: reporting configuration is dropped from it, and its evaluation in a file stops at the
 /// first witness.
@@ -186,7 +186,7 @@ fn relation_rows(state: &WorkspaceState, id: ClauseId, relation: &FactQuery) -> 
 }
 
 // `snapshot` is read by P's relational clauses only (test-only, open item O18).
-#[cfg_attr(not(test), allow(unused_variables))]
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(unused_variables))]
 fn evaluate_relations(
     state: &WorkspaceState,
     code_rule: &CompiledCodeRule,
@@ -361,7 +361,7 @@ pub(super) fn evaluate_global(
     snapshot: &Snapshot,
     mut batched: BTreeMap<String, Evaluation>,
 ) -> Result<Evaluation> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::install(std::sync::Arc::clone(
         &state.anchor_corpus,
     ));

@@ -2,11 +2,13 @@
 use rusqlite::Connection;
 use std::ops::Deref;
 
-pub(in crate::code_rule_dsl) struct Database {
+pub struct Database {
     #[cfg(feature = "code-rule-profile")]
     profiler: Option<Box<crate::code_rule_dsl::profile::sql::Profiler>>,
     connection: Connection,
-    pub(in crate::code_rule_dsl) storage: std::cell::RefCell<super::storage::Storage>,
+    /// The progress handler and authorizer a pool connection's holders set (`register_hooks`).
+    pub(in crate::code_rule_dsl) hooks: crate::code_rule_dsl::hooks::Hooks,
+    pub storage: std::cell::RefCell<super::storage::Storage>,
 }
 
 impl Database {
@@ -43,7 +45,7 @@ impl Database {
         Self::from_connection(Connection::open_in_memory()?)
     }
 
-    pub(in crate::code_rule_dsl) fn from_connection(
+    pub fn from_connection(
         connection: Connection,
     ) -> rusqlite::Result<Self> {
         #[cfg(feature = "code-rule-profile")]
@@ -54,6 +56,7 @@ impl Database {
             #[cfg(feature = "code-rule-profile")]
             profiler,
             connection,
+            hooks: Default::default(),
             storage: Default::default(),
         })
     }
@@ -96,6 +99,19 @@ impl Database {
             profiler.checkpoint(&self.connection)?;
         }
         Ok(())
+    }
+}
+
+impl Database {
+    /// Registers the hook dispatchers (`hooks`) while the connection is still owned.
+    pub(in crate::code_rule_dsl) fn register_hooks(&mut self) -> rusqlite::Result<()> {
+        self.hooks = crate::code_rule_dsl::hooks::Hooks::register(&mut self.connection)?;
+        Ok(())
+    }
+
+    /// The owned connection, to set a hook of its own (an anchor store's budget, a test's step counter).
+    pub fn connection_mut(&mut self) -> &mut Connection {
+        &mut self.connection
     }
 }
 

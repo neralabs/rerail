@@ -18,6 +18,8 @@
 //! expression), as the global name where PHP 8.5.11 defines it (`data/php_builtins.generated.json`), and as
 //! unknown otherwise: another file may declare it.
 
+use std::sync::Arc;
+use crate::code_rule_dsl::tree::Tree;
 use super::{BuildError, NodeRef};
 use crate::code_rule_dsl::value::php_compare::{ImportKind, import_kind};
 use crate::code_rule_dsl::value::{Context, Value, php as php_value};
@@ -44,7 +46,7 @@ const BUILTIN_TYPES: &[&str] = &[
 
 /// What a reference names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum NameKind {
+pub enum NameKind {
     Class,
     Function,
     Constant,
@@ -52,7 +54,7 @@ pub(crate) enum NameKind {
 
 /// What a reference resolves to.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Resolved {
+pub enum Resolved {
     /// A fully qualified name, without the leading backslash, spelled as the source and the `use`
     /// statement that aliased it spell it.
     Name(Box<str>),
@@ -70,15 +72,15 @@ pub(crate) enum Resolved {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Reference {
+pub struct Reference {
     /// `None` for a name whose position an error region hides.
-    pub(crate) kind: Option<NameKind>,
-    pub(crate) resolved: Resolved,
+    pub kind: Option<NameKind>,
+    pub resolved: Resolved,
 }
 
 /// The name references of one PHP file, by byte range, and the constants and classes it declares.
 #[derive(Debug, Default)]
-pub(crate) struct PhpNames {
+pub struct PhpNames {
     references: HashMap<(usize, usize), Reference>,
     /// The names `use` statements import, by the byte range of the name a clause writes (its
     /// alias aside): what each imports, fully qualified without the leading backslash.
@@ -91,16 +93,31 @@ pub(crate) struct PhpNames {
     /// one declared more than once.
     classes: Declared,
     /// Nodes visited to build it, charged to a clause's `maxVisitedNodes`.
-    pub(crate) cost: usize,
+    pub cost: usize,
 }
 
 /// Declarations by name: the node of the one declaration, or `None` for a name declared more than
 /// once.
 type Declared = HashMap<String, Option<NodeRef>>;
 
+/// PHP's names, as the shared code carries them (`scope::FileNames`).
+impl super::FileNames for PhpNames {
+    fn cost(&self) -> usize {
+        self.cost
+    }
+    fn into_any(self: Arc<Self>) -> Arc<dyn std::any::Any + Send + Sync> {
+        self
+    }
+}
+
 impl PhpNames {
+    /// `names` as PHP's own, where they are.
+    pub(crate) fn of(names: &super::NameTable) -> Option<Arc<Self>> {
+        Arc::clone(names).into_any().downcast().ok()
+    }
+
     /// Reads the references of `root`'s file, visiting at most `cap` nodes.
-    pub(crate) fn build<D: Doc>(
+    pub fn build<D: Doc>(
         root: Node<'_, D>,
         cap: usize,
         deadline: &dyn Fn() -> bool,
@@ -119,7 +136,7 @@ impl PhpNames {
             let descend = builder.visit(&node);
             if descend {
                 let start = stack.len();
-                stack.extend(node.children().filter(|child| child.is_named()));
+                stack.extend(node.named());
                 stack[start..].reverse();
             }
         }
@@ -135,19 +152,19 @@ impl PhpNames {
     }
 
     /// The reference at `range`, if a name there is one.
-    pub(crate) fn reference(&self, range: &Range<usize>) -> Option<&Reference> {
+    pub fn reference(&self, range: &Range<usize>) -> Option<&Reference> {
         self.references.get(&(range.start, range.end))
     }
 
     /// What the `use` clause name at `range` imports, if a name there is one.
-    pub(crate) fn import(&self, range: &Range<usize>) -> Option<(NameKind, &str)> {
+    pub fn import(&self, range: &Range<usize>) -> Option<(NameKind, &str)> {
         self.imports
             .get(&(range.start, range.end))
             .map(|(kind, name)| (*kind, &**name))
     }
 
-    #[cfg(test)]
-    pub(crate) fn imports(&self) -> impl Iterator<Item = (Range<usize>, NameKind, &str)> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn imports(&self) -> impl Iterator<Item = (Range<usize>, NameKind, &str)> {
         self.imports
             .iter()
             .map(|(&(start, end), (kind, name))| (start..end, *kind, &**name))
@@ -175,8 +192,7 @@ impl PhpNames {
 
     fn class_constant<D: Doc>(&self, access: &Node<'_, D>) -> Option<NodeRef> {
         let mut parts = access
-            .children()
-            .filter(|child| child.is_named() && !child.kind().ends_with("comment"));
+            .named_code();
         let (Some(scope), Some(name), None) = (parts.next(), parts.next(), parts.next()) else {
             return None;
         };
@@ -249,7 +265,7 @@ impl PhpNames {
         let base = class
             .children()
             .find(|child| child.kind() == "base_clause")?;
-        self.class_named(&first_named(&base)?)
+        self.class_named(&base.first_code()?)
     }
 
     /// The constant `name` of `class`: its own declaration, else the one the traits it uses, its
@@ -269,7 +285,7 @@ impl PhpNames {
                         .children()
                         .filter(|child| child.kind() == "const_element")
                     {
-                        if first_named(&element).is_none_or(|own| own.text() != name) {
+                        if element.first_code().is_none_or(|own| own.text() != name) {
                             continue;
                         }
                         let Some(value) = const_value(&element) else {
@@ -340,8 +356,8 @@ impl PhpNames {
         found
     }
 
-    #[cfg(test)]
-    pub(crate) fn references(&self) -> impl Iterator<Item = (Range<usize>, &Reference)> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn references(&self) -> impl Iterator<Item = (Range<usize>, &Reference)> {
         self.references
             .iter()
             .map(|(&(start, end), reference)| (start..end, reference))
@@ -507,7 +523,7 @@ impl<'r, D: Doc> Builder<'r, D> {
                     .children()
                     .filter(|child| child.kind() == "const_element")
                 {
-                    if let Some(name) = first_named(&element) {
+                    if let Some(name) = element.first_code() {
                         let key = constant_key(&qualify(&self.namespace, &name.text()));
                         self.declared_constants.insert(key.clone());
                         if let Some(value) = const_value(&element) {
@@ -763,8 +779,7 @@ fn argument_for<'r, D: Doc>(
             Some(label) => label.text() == name,
         })?;
     let expression = argument
-        .children()
-        .filter(|child| child.is_named() && !child.kind().ends_with("comment"))
+        .named_code()
         .last()?;
     if expression.kind() == "variadic_unpacking"
         || argument
@@ -796,8 +811,7 @@ fn is_top_level_statement<D: Doc>(call: &Node<'_, D>) -> bool {
 /// The value a `const_element` gives its name.
 fn const_value<'r, D: Doc>(element: &Node<'r, D>) -> Option<Node<'r, D>> {
     let mut named = element
-        .children()
-        .filter(|child| child.is_named() && !child.kind().ends_with("comment"));
+        .named_code();
     let _name = named.next()?;
     let value = named.next()?;
     named.next().is_none().then_some(value)
@@ -846,7 +860,7 @@ fn position<D: Doc>(node: &Node<'_, D>) -> Option<Option<NameKind>> {
         "named_type" if is_builtin_type(node) => return None,
         "named_type" => NameKind::Class,
         "class_constant_access_expression" => {
-            if !first_named(&parent).is_some_and(|first| first.range() == range) {
+            if !parent.first_code().is_some_and(|first| first.range() == range) {
                 return None;
             }
             NameKind::Class
@@ -860,7 +874,7 @@ fn position<D: Doc>(node: &Node<'_, D>) -> Option<Option<NameKind>> {
         "binary_expression"
             if is("right")
                 && parent
-                    .field("operator")
+                    .operator_token()
                     .is_some_and(|operator| operator.kind().eq_ignore_ascii_case("instanceof")) =>
         {
             NameKind::Class
@@ -886,7 +900,7 @@ fn position<D: Doc>(node: &Node<'_, D>) -> Option<Option<NameKind>> {
         {
             return None;
         }
-        "const_element" if first_named(&parent).is_some_and(|first| first.range() == range) => {
+        "const_element" if parent.first_code().is_some_and(|first| first.range() == range) => {
             return None;
         }
         "subscript_expression" if is_string_part(&parent) && !follows_brace(&parent) => {
@@ -916,7 +930,7 @@ fn is_string_part<D: Doc>(part: &Node<'_, D>) -> bool {
 /// Whether an interpolation is the complex (`{$a[KEY]}`) form, whose key is an expression; in
 /// the simple form (`$a[KEY]`) a bare key is a string.
 fn follows_brace<D: Doc>(part: &Node<'_, D>) -> bool {
-    part.prev().is_some_and(|previous| previous.kind() == "{")
+    part.token_before().is_some_and(|previous| previous.kind() == "{")
 }
 
 fn is_construct<D: Doc>(node: &Node<'_, D>) -> bool {
@@ -954,10 +968,6 @@ fn is_name_kind(kind: &str) -> bool {
     REFERENCE_KINDS.contains(&kind)
 }
 
-fn first_named<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
-    node.children()
-        .find(|child| child.is_named() && !child.kind().ends_with("comment"))
-}
 
 /// A name's form and segments; `None` for a name PHP would not read as one token.
 fn parse<D: Doc>(node: &Node<'_, D>) -> Option<(Form, Vec<String>)> {
@@ -983,14 +993,8 @@ fn parse<D: Doc>(node: &Node<'_, D>) -> Option<(Form, Vec<String>)> {
         .then_some((form, parts))
 }
 
-/// A PHP label: a letter, `_` or a byte from 0x80, then those or digits.
-pub(crate) fn is_label(text: &str) -> bool {
-    let mut chars = text.chars();
-    chars
-        .next()
-        .is_some_and(|first| first.is_ascii_alphabetic() || first == '_' || !first.is_ascii())
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || !c.is_ascii())
-}
+/// A PHP label (`identifier::php_label`).
+pub use crate::code_rule_dsl::identifier::php_label as is_label;
 
 /// A namespace name's segments joined by `\`, without whitespace or comments between them.
 fn segments_text<D: Doc>(node: &Node<'_, D>) -> String {
@@ -1088,5 +1092,4 @@ fn builtin_constant(name: &str) -> bool {
     is_special_constant(name) || BUILTINS.constants.contains(name)
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

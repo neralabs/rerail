@@ -44,7 +44,7 @@ fn target_at<'t>(
     None
 }
 
-pub(crate) fn value_origins<'t>(
+pub fn value_origins<'t>(
     owner: Node<'t, TapeDoc>,
     binding: Option<&python_facts::BindingProjection>,
     root: &Node<'t, TapeDoc>,

@@ -1,6 +1,6 @@
 # 0108: The cone of requests is magic sets, maintained by delta
 
-Status: proposed (2026-11-10). The join half is built (below); the delta half is not.
+Status: built (2026-11-10). The join half and the delta half (rounds) are both built (below).
 
 ## Intro
 
@@ -135,24 +135,260 @@ The outputs are identical when computed fresh with the rewrites on and off
 (`RERAIL_JOIN_KEYS=off`, with an `--env` setting changed so that the program is prepared again:
 the kept prepared program is keyed by the program's text, not by this switch).
 
-## Steps for the delta half
+## Built: the delta half, as rounds
 
-1. `fs_dir` and `fs_line` as relations of the cone's fact space (t33's K2): the native step
-   writes rows there, not into `World`'s maps.
-2. The cone's relations kept with counts in frames (as K4 keeps the cross part), not as
-   whole-stratum digests (`kept_strata`).
-3. `maintain::rewrite` accepts gates by the wave order above, instead of refusing them.
-4. The inputs' delta: `Δrequests` from the per-file facts' delta, `Δfs` from the journal.
-5. Remove the cone's whole-run cutoff (`World::still`). The budget falls back as described.
+**What makes it ordinary.** Take the answers (`dir_entry`, `file_line`, `loaded` and a loaded
+document's per-file rows) and the gates (`done_*`) as inputs. The cone's rules then stratify.
+On the workload every relation is a stratum of its own: 12, 37 and 28 strata in the three
+cones, the largest of one relation. All of the cone's recursion goes through the answers.
 
-Test: random edit sequences (add or remove an import, a typeshed stub, a workspace package)
-give the same rows maintained as computed fresh.
+So the cone runs as *rounds* of one stratified program, the *round program*. Each round is an
+ordinary maintained run (`corpus::maintained`, the cross part's `cut`, `rewrite` and `after`
+core). The requests are answered between rounds:
+
+```text
+round     inputs (per-file rows, answers, open gate keys)
+            -> the round program, maintained from the last round
+            -> requests, asks
+between   new dir and file requests asked     -> answer them, next round
+          else new loads asked                -> answer them, next round
+          else (quiet) done_N := ask_N        -> if any gate key opened, next round
+          else                                -> the cone is done
+```
+
+This is the gated fixpoint's own order: answers as they are asked, gates opened only when
+nothing is unanswered. No new evaluator is involved. A gated negation is a plain negation
+guarded by `done_N`, which is an input of the round.
+
+**Across runs.** The last run's final round is kept in the store (`kept_strata`, in frames
+under the round program's key). A run starts from it:
+
+- The kept answers, loaded documents' rows and open gate keys stand in for this run's. They
+  are *provisional*.
+- Once the run is quiet, every key still asked is answered for real: directories and files
+  first, then loads. Then the provisional rows are dropped, and the rounds go on until quiet.
+- A load the last run made that this run no longer asks is never asked of the main thread. Its
+  rows go with the provisional ones.
+
+**A run with nothing kept** runs the gated fixpoint and records its answers. It then runs one
+*closing round* over them with every gate open. That round must ask nothing new, or it is not
+kept. The kept round is what the next run starts from.
+
+**Fallback.** The rounds give up past 64 rounds, or when the kept state is not a final round of
+this program (it must hold every request and every input). The gated fixpoint then runs.
+`RERAIL_CONE_ROUNDS=off` runs the fixpoint alone.
+
+**Inputs by delta.** A round rebuilds and binds again only the inputs whose rows changed: an
+answer's relation, the provisional rows when they are dropped, a gate when it opens. The
+statistics of a bound source are made when a stratum first plans with it (decision 0101 §4).
+
+Workload, import edit (`import csv` added to one file, then removed), CPU = user + sys, load
+50–75:
+
+| run | before (fixpoint) | rounds |
+|---|---|---|
+| whole run | 2.4 s | 1.4–1.5 s user |
+| the cone's job | 0.78 s | 0.28 s (4 rounds; 22 of 33 strata run, all maintained) |
+
+The outputs equal a fresh run's (`--env cmp.k=…` with `RERAIL_CONE_ROUNDS=off`), for the
+edit and for its revert.
+
+Test (`the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads`): a new import, a
+library's own import, an import taken away, and a library file removed. Each time the kept run
+runs rounds and loads what a run with nothing kept loads.
+
+## Built: kept as frames, the journal, loads taken back
+
+**Kept like any fact.** The rounds keep nothing in memory between runs. Their state is frames
+in a fact space of its own, one per phase and program (t33 K4), the same as the cross part's:
+
+- At the start, only digests are read (`Retained::from_frames`).
+- Each round's cut reads back only the rows its running strata read (`load`). The driver reads
+  the requests, the gates and the loaded documents' granules when it needs them.
+- At the end, only what changed is written back, behind the run (`write_frames`).
+
+So a session and a new process start the same way. The round program has no outputs: its rows
+are handed on, so each relation is stored with its rows. A relation of no columns is stored as
+its count. A view of one input records its input's digest.
+
+**Unchanged directories are not asked (decision 0105).** With its frames, the rounds record the
+journal's cursors for the roots they read, and the digest of the file-system answers kept. The
+next run asks the journal what changed since. A carried directory, file or digest request keeps
+its kept answer and is not asked, when the journal names none of these paths:
+
+- the request's own path;
+- a directory above it;
+- for a directory, an entry of it.
+
+The cursors are trusted only over the answers they were recorded with. A root not read this
+run keeps its old cursor.
+
+```text
+workload, an import added and reverted   before      now
+main thread's directory answers           2011 keys   0
+whole run (user CPU)                      2.5 s       1.3-1.7 s
+the cone (each phase)                     0.3-0.9 s   0.25-0.3 s
+```
+
+**A load the run's own rows do not ask for is taken back.** A run starts from the last run's
+gates. So a negation can read a relation that is not yet complete this run.
+
+Take a module that became the workspace's own (`csv.py` added). Its gate was open from the
+last run, so `py_workspace(csv)` was read before `csv.py`'s own load was answered. The library
+`csv.pyi` was loaded, and then `_csv`, which it imports.
+
+At the quiet, once the gates are the run's own, a load answered this run that nothing asks for
+now is taken back:
+
+- its `loaded` rows;
+- each row its answer gave that names its file or a node of its document.
+
+The rounds then run on to quiet, so what only it asked for goes in turn. The main thread drops
+those documents from the run's documents and from the exports.
+
+Holding every load back until the last run's rows are gone was measured and rejected: correct,
+but the cone took 2.2 s instead of 0.25 s, re-loading level by level.
+
+Test: `the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads`, case "a library shadowed
+by the workspace's module".
+
+**Switches.** `RERAIL_CONE_ROUNDS=off` turns the rounds off; `RERAIL_CONE_ROUNDS=off-<phase>`
+turns them off in one phase. `RERAIL_CONE_STILL=off` turns off the journal's kept answers.
+
+## Built: loads taken back by their documents, the file system as relations (2026-11-11)
+
+**A load is taken back by the document its answer recorded.** The thread that answers loads
+records each loaded file's document in a ledger it shares with the rounds
+(`cone_rounds::LoadLedger`). Taking a load back removes two kinds of row: the `loaded` rows of
+its module and grammar, and the per-file rows located at its document. Nothing is matched by
+value. Before this, a row was taken if any column held the file's symbol, so a `file_digest`
+answer for the same path went too. Its key stayed asked, and the digest was never asked again.
+A file still loaded under a module that is still asked keeps its document.
+
+**A load taken back frees its place in the budget.** The rounds hand the files they took back
+to the answering thread, which unloads them before its next load (`World::unload`). A load
+past the budget is no longer refused for good, and one taken back and asked again is loaded
+again in place, with the rows it was given (`World::reload`).
+
+**The file system's answers are joins.** In the round program, `dir_entry`, `file_line` and
+`file_digest` are derived, not inputs:
+
+```text
+dir_entry(d, n, k) :- rr_dir_req(d), rr_fs_dir_entry(d, n, k).
+```
+
+`rr_fs_*` holds the file system's rows where they were asked. It is the input the answers
+add to, and it is kept in the frames like any input. A request no longer asked takes its
+answer with it. The journal's kept answers and the world digest are over `rr_fs_*`.
+
+Checked on the workload (237 files, 208 loads): an edit, a workspace `csv.py` shadowing the
+stdlib's `csv` (two loads taken back), its removal (loaded again) and the revert each write
+what a fresh cone writes.
+
+## Built: the load budget admits by level (2026-11-11)
+
+Where the budget binds, what is loaded must not depend on the order the loads were asked in. Otherwise a run that
+reused work (the rounds, or the fixpoint's kept strata) loads a different set from a fresh one.
+
+**A fresh cone takes loads level by level.** A load the budget bounds (a file beyond the corpus root, not loaded
+yet) is held back until the cone is otherwise quiet (`setfix::defer`). At that point the loads held back are taken
+together, in the requests' own order (a top-level module first, then by module and path), up to the budget.
+
+- **Why this is the nearest set.** The loads taken at the k-th quiet point are exactly those k loads from the
+  corpus: the corpus's imports at the first, their documents' imports at the second, and so on. So where the
+  budget binds, the documents loaded are the nearest ones: breadth first, by depth.
+- **No depth facts are needed.** An earlier try, `load_depth(module, n: min<>)` with each batch sorted by depth,
+  could not close the gap: a fresh cone asks loads as its waves reach them, not level by level.
+- **Gates.** A request held back keeps no gate shut: it is as a load not yet asked, which the gates' condition
+  (0065 §2a.3) already allows.
+- **Cost.** On the workload's cold cone it cost nothing measurable: 5 levels, the cone's job 5.7 s with levels and
+  without (load 75–92).
+- **Switch.** `RERAIL_LOAD_LEVELS=off` answers every load at once.
+
+**Work carried from the last run gives up where the budget binds:**
+
+- the rounds, at the first load past the budget;
+- the gated fixpoint with strata kept from the last run, which runs again with none kept.
+
+The documents they loaded are taken back (`World::take_back_libraries`) and asked again, in levels. A document
+taken back and not loaded again is withdrawn from the run's documents and its exports.
+
+**Fixed on the way.** A fresh cone after the rounds gave up was not fresh, for any reason they gave up:
+
+- it read the inputs the rounds had bound on the cone's connection;
+- it read the relations the rounds held there;
+- the main thread kept the answers it had given the rounds.
+
+Now all three are reset: the inputs are bound again, the held relations are forgotten, and the answers are
+cleared.
+
+**Checked** with `load.budget=100` on the workload (208 loads wanted). Unchanged, an import edit, a `csv.py`
+shadowing the stdlib's and its removal each load the 100 that a fresh cone loads (`RERAIL_CONE_ROUNDS=off`, with
+keys of its own). With the default budget the outputs are as before.
+
+## Open
+
+- **A segfault in phase 1, once.** After the hub merge (`03125d2d1`), one unchanged run of the
+  workload crashed: SIGSEGV, 1.1 s user, after phase 0's profile was written. Phase 1 holds the
+  cone. It left no crash report. 39 runs since have not crashed, 30 of them under `lldb` with
+  an edit made and taken back every third run. Ruled out: a late FSEvents callback. A test that
+  counted callbacks after `FSEventStreamInvalidate` returned found none in 300 replays under a
+  flood of writes. The stream now holds its own reference to what its callback fills anyway.
+- **The cone's test** (`the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads`) is in
+  `rerail-logic` since the crate split, whose tests do not compile yet. Cratification moves
+  the tests that read what only the engine sees back into the engine (`461227c8b`).
 
 ## Building on it
 
 The same shape holds for any relation read with a bound key that is answered by a native step
 or a search, such as decision 0083 §4's memoised searches, including misses. Declare the
 relation's adornment, write its answer as `r :- m_r, source`, and the rewrite, the gates and
-maintenance apply unchanged. Two parts are not built yet: adornments over several columns (the
-demand key is only the first column today, which 00-review measured as 13× slower for a
-one-file query), and a load budget that is a function of the requests (a rank, not wave order).
+maintenance apply unchanged.
+
+### Built: a program's demand, by every bound column
+
+A program can list the relations it wants computed only on demand:
+
+```
+// calls.rr: found(c, a, at) is read with c and a bound, so only those pairs are looked up.
+.pragma "magic-transform" "found"
+// Or every derived relation, wherever a reader binds one of its columns:
+.pragma "magic-transform" "*"
+```
+
+The corpus path used to ignore this pragma. Now it rewrites the program by magic sets with
+adornments over every column a reader binds (`found` read with `c` and `a` bound becomes
+`found_bbf`), not the first column alone. Relations not listed are computed in full.
+`RERAIL_DEMAND=off` turns it off, and `RERAIL_DEMAND_DUMP=<file>` writes the rewritten rules.
+
+Building it surfaced an engine bug. In a recursive stratum's first wave, two rules with the same
+body and different heads shared one whole plan, so one head lost its first-wave rows. Demand
+writes such pairs (`magic_vopen_b(o) :- magic_vopen_b(n), …` and `magic_pv_bff(o) :-` the same
+body), so the bug showed up as 10 open calls instead of 27. The plans are now kept apart by head.
+
+Measured on a one-file query (the open calls and targets of one 16 k-line file, over the 77
+files of the O125 replay's first step; machine load 25–40). Answers are equal in every run.
+
+| Run | Demand | Cross-file part | File-local part |
+|---|---|---|---|
+| Cold | off | 0.47 s | 2.32 s |
+| Cold | 5 listed relations | 0.44 s | 2.51 s |
+| Cold | `*` | 0.27 s | 2.01 s |
+| After an edit to the file | off | 2.77 s | 0.09 s |
+| After an edit to the file | `*` | 2.72 s | 0.07 s |
+
+Listing a few relations barely helps. Relations computed in full still read the demanded ones
+with keys from every file, and those reads seed demand corpus-wide (`magic_pv_bff(e) :-
+callee(_, e)`). With `*` the cold cross-file part falls by 43%. A cold run also pays 0.43 s once
+to prepare the rewrite, which a session keeps.
+
+After an edit, demand is not the lever. Maintaining the 165-relation component costs 1.2 s, and
+patching its statistics costs 0.38 s, of which 0.32 s is a full count of `kind` and `docof`:
+reads of unchanged data.
+
+Open:
+
+- With `*`, a few seeds are still corpus-wide (`magic_bv_bbff(s, x) :- look(n, x, s)`, and
+  `magic_qv_bff`, `magic_fv_bbff`, `magic_retval_bf`, `magic_posarg_bbf`). Each comes from a reader
+  that demand leaves in full.
+- Statistics patching after an edit counts `kind` and `docof` again.

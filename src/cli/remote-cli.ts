@@ -61,78 +61,106 @@ function repositoryKeyAt(home: string, dir: string): string {
   return repositoryKeyOf(remote, cloneId ?? "");
 }
 
-export async function runRemoteCommand(args: readonly string[], options: RemoteCliOptions): Promise<number> {
-  const out = options.stdout ?? process.stdout;
-  const [action, ...rest] = args;
-  const outbox = options.outbox ?? new RemoteOutbox({ home: options.home });
-  const unknown = (argument: string): string => `Unknown option: ${argument}\nUsage: ${USAGE}`;
+const unknownOption = (argument: string): string => `Unknown option: ${argument}\nUsage: ${USAGE}`;
 
-  if (action === "add") {
-    const [url, ...flagArgs] = rest;
-    if (url === undefined || url.startsWith("--")) throw new Error(`rerail remote add needs a URL\nUsage: ${USAGE}`);
-    const parsed = parseArguments(flagArgs, { flags: ["--token-stdin", "--no-content"], options: ["--name", "--token-file", "--label"] }, unknown);
-    const tokenFile = parsed.options.get("--token-file");
-    if ((tokenFile === undefined) === !parsed.flags.has("--token-stdin")) throw new Error("Give the token with exactly one of --token-stdin or --token-file <file>");
-    const token = tokenFile !== undefined ? readFileSync(resolve(tokenFile), "utf8") : await (options.readStdin ?? (() => readAll(process.stdin)))();
-    const name = parsed.options.get("--name");
-    const label = parsed.options.get("--label");
-    const entry = addRemote({
-      url, token, content: !parsed.flags.has("--no-content"), ...(name === undefined ? {} : { name }), ...(label === undefined ? {} : { label }),
-    }, options.home);
-    out.write(`Added remote ${entry.name} (${entry.url})${entry.content ? "" : ", without event content"}. Rerail sends this machine's sessions, events, audits and scans to it from now on, starting with what it already holds.\n`);
+/** One `rerail remote` subcommand's arguments and what it reports through. */
+interface RemoteSubcommand {
+  readonly rest: readonly string[];
+  readonly options: RemoteCliOptions;
+  readonly out: Pick<NodeJS.WriteStream, "write">;
+  readonly outbox: RemoteOutbox;
+}
+
+async function readRemoteToken(parsed: ReturnType<typeof parseArguments>, options: RemoteCliOptions): Promise<string> {
+  const tokenFile = parsed.options.get("--token-file");
+  if ((tokenFile === undefined) === !parsed.flags.has("--token-stdin")) throw new Error("Give the token with exactly one of --token-stdin or --token-file <file>");
+  return tokenFile !== undefined ? readFileSync(resolve(tokenFile), "utf8") : await (options.readStdin ?? (() => readAll(process.stdin)))();
+}
+
+async function addRemoteCommand({ rest, options, out }: RemoteSubcommand): Promise<number> {
+  const [url, ...flagArgs] = rest;
+  if (url === undefined || url.startsWith("--")) throw new Error(`rerail remote add needs a URL\nUsage: ${USAGE}`);
+  const parsed = parseArguments(flagArgs, { flags: ["--token-stdin", "--no-content"], options: ["--name", "--token-file", "--label"] }, unknownOption);
+  const token = await readRemoteToken(parsed, options);
+  const name = parsed.options.get("--name");
+  const label = parsed.options.get("--label");
+  const entry = addRemote({
+    url, token, content: !parsed.flags.has("--no-content"), ...(name === undefined ? {} : { name }), ...(label === undefined ? {} : { label }),
+  }, options.home);
+  out.write(`Added remote ${entry.name} (${entry.url})${entry.content ? "" : ", without event content"}. Rerail sends this machine's sessions, events, audits and scans to it from now on, starting with what it already holds.\n`);
+  return 0;
+}
+
+function listRemotesCommand({ rest, options, out }: RemoteSubcommand): number {
+  const parsed = parseArguments(rest, { flags: ["--json"], options: [] }, unknownOption);
+  const config = readRemoteConfig(options.home);
+  if (parsed.flags.has("--json")) {
+    out.write(`${JSON.stringify(config)}\n`);
     return 0;
   }
-  if (action === "list") {
-    const parsed = parseArguments(rest, { flags: ["--json"], options: [] }, unknown);
-    const config = readRemoteConfig(options.home);
-    if (parsed.flags.has("--json")) {
-      out.write(`${JSON.stringify(config)}\n`);
-      return 0;
-    }
-    if (config.remotes.length === 0) out.write("No remotes: nothing leaves this machine.\n");
-    for (const remote of config.remotes) out.write(`${remote.name}\t${remote.url}${remote.content ? "" : "\t(no content)"}\n`);
-    for (const key of config.excludedRepositories) out.write(`excluded\t${key}\n`);
-    return 0;
+  if (config.remotes.length === 0) out.write("No remotes: nothing leaves this machine.\n");
+  for (const remote of config.remotes) out.write(`${remote.name}\t${remote.url}${remote.content ? "" : "\t(no content)"}\n`);
+  for (const key of config.excludedRepositories) out.write(`excluded\t${key}\n`);
+  return 0;
+}
+
+function removeRemoteCommand({ rest, options, out, outbox }: RemoteSubcommand): number {
+  const [target, ...extra] = rest;
+  if (target === undefined || extra.length > 0) throw new Error(`rerail remote remove takes one name or URL\nUsage: ${USAGE}`);
+  const removed = removeRemote(target, options.home);
+  if (removed === undefined) throw new Error(`No remote named ${target}`);
+  outbox.forget(remoteStateKey(removed));
+  out.write(`Removed remote ${removed.name}; its token is deleted.\n`);
+  return 0;
+}
+
+function remoteStatusCommand({ rest, out, outbox }: RemoteSubcommand): number {
+  const parsed = parseArguments(rest, { flags: ["--json"], options: [] }, unknownOption);
+  const statuses = outbox.status();
+  if (parsed.flags.has("--json")) out.write(`${JSON.stringify({ remotes: statuses })}\n`);
+  else if (statuses.length === 0) out.write("No remotes: nothing leaves this machine.\n");
+  else for (const status of statuses) out.write(`${describeRemoteStatus(status)}\n`);
+  return statuses.some(status => status.lastError !== null && status.consecutiveFailures > 0) ? 1 : 0;
+}
+
+/** What `rerail remote push` says of one remote. */
+function pushOutcome(result: Awaited<ReturnType<RemoteOutbox["sync"]>>[number]): string {
+  return result.skipped === "locked" ? "skipped: another Rerail process is sending to it"
+    : result.skipped === "no-token" ? "skipped: its token file is missing; remove and add it again"
+      : result.skipped === "removed" ? "stopped: it was removed while sending"
+      : `${result.batches} batches, ${result.records} records sent${result.error === undefined ? "" : `; failed: ${result.error}`}`;
+}
+
+async function pushRemotesCommand({ rest, out, outbox }: RemoteSubcommand): Promise<number> {
+  const parsed = parseArguments(rest, { flags: ["--json"], options: [] }, unknownOption);
+  const results = await outbox.sync({ force: true, maxBatches: Number.MAX_SAFE_INTEGER });
+  if (parsed.flags.has("--json")) out.write(`${JSON.stringify({ results })}\n`);
+  else if (results.length === 0) out.write("No remotes: nothing leaves this machine.\n");
+  else for (const result of results) out.write(`Remote ${result.remote}: ${pushOutcome(result)}\n`);
+  return results.some(result => result.error !== undefined || result.skipped === "no-token") ? 1 : 0;
+}
+
+function setExcludedCommand({ rest, options, out }: RemoteSubcommand, excluded: boolean): number {
+  const parsed = parseArguments(rest, { flags: [], options: ["--repo"] }, unknownOption);
+  const key = repositoryKeyAt(options.home, resolve(parsed.options.get("--repo") ?? process.cwd()));
+  setRepositoryExcluded(key, excluded, options.home);
+  out.write(excluded
+    ? `No remote receives anything of ${key} from now on; what was sent already stays sent.\n`
+    : `Remotes receive ${key} again from now on; events recorded while it was excluded are not sent.\n`);
+  return 0;
+}
+
+export async function runRemoteCommand(args: readonly string[], options: RemoteCliOptions): Promise<number> {
+  const [action, ...rest] = args;
+  const subcommand: RemoteSubcommand = { rest, options, out: options.stdout ?? process.stdout, outbox: options.outbox ?? new RemoteOutbox({ home: options.home }) };
+  switch (action) {
+    case "add": return addRemoteCommand(subcommand);
+    case "list": return listRemotesCommand(subcommand);
+    case "remove": return removeRemoteCommand(subcommand);
+    case "status": return remoteStatusCommand(subcommand);
+    case "push": return pushRemotesCommand(subcommand);
+    case "exclude": return setExcludedCommand(subcommand, true);
+    case "include": return setExcludedCommand(subcommand, false);
+    default: throw new Error(`Usage: ${USAGE}`);
   }
-  if (action === "remove") {
-    const [target, ...extra] = rest;
-    if (target === undefined || extra.length > 0) throw new Error(`rerail remote remove takes one name or URL\nUsage: ${USAGE}`);
-    const removed = removeRemote(target, options.home);
-    if (removed === undefined) throw new Error(`No remote named ${target}`);
-    outbox.forget(remoteStateKey(removed));
-    out.write(`Removed remote ${removed.name}; its token is deleted.\n`);
-    return 0;
-  }
-  if (action === "status") {
-    const parsed = parseArguments(rest, { flags: ["--json"], options: [] }, unknown);
-    const statuses = outbox.status();
-    if (parsed.flags.has("--json")) out.write(`${JSON.stringify({ remotes: statuses })}\n`);
-    else if (statuses.length === 0) out.write("No remotes: nothing leaves this machine.\n");
-    else for (const status of statuses) out.write(`${describeRemoteStatus(status)}\n`);
-    return statuses.some(status => status.lastError !== null && status.consecutiveFailures > 0) ? 1 : 0;
-  }
-  if (action === "push") {
-    const parsed = parseArguments(rest, { flags: ["--json"], options: [] }, unknown);
-    const results = await outbox.sync({ force: true, maxBatches: Number.MAX_SAFE_INTEGER });
-    if (parsed.flags.has("--json")) out.write(`${JSON.stringify({ results })}\n`);
-    else if (results.length === 0) out.write("No remotes: nothing leaves this machine.\n");
-    else for (const result of results) {
-      const outcome = result.skipped === "locked" ? "skipped: another Rerail process is sending to it"
-        : result.skipped === "no-token" ? "skipped: its token file is missing; remove and add it again"
-          : result.skipped === "removed" ? "stopped: it was removed while sending"
-          : `${result.batches} batches, ${result.records} records sent${result.error === undefined ? "" : `; failed: ${result.error}`}`;
-      out.write(`Remote ${result.remote}: ${outcome}\n`);
-    }
-    return results.some(result => result.error !== undefined || result.skipped === "no-token") ? 1 : 0;
-  }
-  if (action === "exclude" || action === "include") {
-    const parsed = parseArguments(rest, { flags: [], options: ["--repo"] }, unknown);
-    const key = repositoryKeyAt(options.home, resolve(parsed.options.get("--repo") ?? process.cwd()));
-    setRepositoryExcluded(key, action === "exclude", options.home);
-    out.write(action === "exclude"
-      ? `No remote receives anything of ${key} from now on; what was sent already stays sent.\n`
-      : `Remotes receive ${key} again from now on; events recorded while it was excluded are not sent.\n`);
-    return 0;
-  }
-  throw new Error(`Usage: ${USAGE}`);
 }

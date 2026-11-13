@@ -41,7 +41,7 @@ pub(super) fn by_kind(kinds: &[u32]) -> (Vec<u32>, Vec<u32>, Vec<u32>) {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn counting_postings_preserve_order_empty_sparse_and_extreme_keys() {

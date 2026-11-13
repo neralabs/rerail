@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "next-no-assign-module-variable",
-  "revision": 2,
+  "revision": 3,
   "mode": "steer",
   "description": "Don't declare a variable named module in Next.js code; it shadows the module object Node.js and the bundler rely on.",
   "scope": {
@@ -26,20 +26,36 @@
           "rule": {
             "any": [
               {
-                "kind": "lexical_declaration"
+                "any": [
+                  {
+                    "kind": "lexical_declaration"
+                  },
+                  {
+                    "kind": "variable_declaration"
+                  }
+                ],
+                "has": {
+                  "kind": "variable_declarator",
+                  "has": {
+                    "field": "name",
+                    "kind": "identifier",
+                    "regex": "^module$"
+                  }
+                }
               },
               {
-                "kind": "variable_declaration"
+                "regex": "^(?:const|let|var)$",
+                "inside": {
+                  "kind": "for_in_statement",
+                  "field": "kind",
+                  "has": {
+                    "field": "left",
+                    "kind": "identifier",
+                    "regex": "^module$"
+                  }
+                }
               }
-            ],
-            "has": {
-              "kind": "variable_declarator",
-              "has": {
-                "field": "name",
-                "kind": "identifier",
-                "regex": "^module$"
-              }
-            }
+            ]
           }
         }
       },

@@ -27,25 +27,25 @@
 use super::Error;
 use super::block::{BlockOp, BlockProgram, CmpOp, Rhs};
 use super::metal_sort::Held;
-pub(in crate::code_rule_dsl) use rerail_accel::gpu::tile::{Form, Resident};
-#[cfg(test)]
-pub(in crate::code_rule_dsl) use rerail_accel::gpu::tile::{Joined, tile_join};
+pub use rerail_accel::gpu::tile::{Form, Resident};
+#[cfg(any(test, feature = "test-hooks"))]
+pub use rerail_accel::gpu::tile::{Joined, tile_join};
 use super::metal_backend::launch::{commit_checked, gpu_seconds};
 use super::metal_parallel::encode;
 use std::fmt::Write as _;
 
 /// A row program's input column: a gathered column, or the document of one (`x >> 32`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum Input {
+pub enum Input {
     Col(usize),
     Doc(usize),
 }
 
 
 /// A scan's result: the host rows that pass, in order, and the command buffer's GPU time.
-pub(in crate::code_rule_dsl) struct Scanned {
-    pub(in crate::code_rule_dsl) rows: Vec<u32>,
-    pub(in crate::code_rule_dsl) gpu_seconds: f64,
+pub struct Scanned {
+    pub rows: Vec<u32>,
+    pub gpu_seconds: f64,
 }
 
 /// The MSL of a row program's predicate over `inputs` (program column `k` is `inputs[k]`), for
@@ -196,7 +196,7 @@ kernel void rows_scatter(device const Tile* tiles [[buffer(0)]], device const lo
 /// Runs a row program over a resident relation: count, scan and scatter in one command buffer.
 /// `params` are the program's parameters; each goes to the device as itself, its chunk and its
 /// low bits.
-pub(in crate::code_rule_dsl) fn scan(program: &BlockProgram, inputs: &[Input], resident: &Resident, params: &[i64]) -> Result<Scanned, Error> {
+pub fn scan(program: &BlockProgram, inputs: &[Input], resident: &Resident, params: &[i64]) -> Result<Scanned, Error> {
     super::metal_program_backend::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     // The launch budget every submission is checked against.
     let _scope = super::metal_backend::launch::LaunchScope::enter();

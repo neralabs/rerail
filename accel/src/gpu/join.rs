@@ -132,6 +132,7 @@ pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> R
             device.new_compute_pipeline_state_with_function(&f).map_err(|e| format!("{name}: {e}"))
         })
     })
+    .inspect_err(|e| eprintln!("rerail: the Metal pipeline {variant} {name} is not made: {e}"))
 }
 
 /// The library of a variant's source, compiled the first time (a thread that asks meanwhile waits for it).
@@ -144,7 +145,10 @@ fn library(variant: &str, source: impl FnOnce() -> String) -> Result<metal::Libr
         return Ok(l.clone());
     }
     let device = device()?;
-    let l = objc::rc::autoreleasepool(|| device.new_library_with_source(&source(), &metal::CompileOptions::new()).map_err(|e| format!("compiling {variant}: {e}")))?;
+    // A shipped kernel that does not compile is a bug: its message is said here, where callers that keep only an
+    // error's kind (`rerail_compiler::Error::BackendFailure`) would lose it.
+    let l = objc::rc::autoreleasepool(|| device.new_library_with_source(&source(), &metal::CompileOptions::new()).map_err(|e| format!("compiling {variant}: {e}")))
+        .inspect_err(|e| eprintln!("rerail: a Metal library does not compile: {e}"))?;
     *s = Some(l.clone());
     Ok(l)
 }
@@ -380,6 +384,28 @@ impl<'a> Pass<'a> {
         self.dispatches.set(self.dispatches.get() + 1);
     }
 
+    /// `run_bytes`, its threadgroups the three words at `offset` of `grid` (written by the device before it).
+    pub fn run_bytes_indirect(&self, pipeline: &ComputePipelineState, buffers: &[&BufferRef], bytes: &[u8], grid: &BufferRef, offset: u64) {
+        self.encoder.set_compute_pipeline_state(pipeline);
+        for (i, b) in buffers.iter().enumerate() {
+            self.encoder.set_buffer(i as u64, Some(b), 0);
+        }
+        self.encoder.set_bytes(buffers.len() as u64, bytes.len().max(4) as u64, if bytes.is_empty() { [0u32].as_ptr().cast() } else { bytes.as_ptr().cast() });
+        self.encoder.dispatch_thread_groups_indirect(grid, offset, MTLSize::new(256, 1, 1));
+        self.dispatches.set(self.dispatches.get() + 1);
+    }
+
+    /// `run` of `params`, its threadgroups the three words at `offset` of `grid`.
+    pub fn run_indirect(&self, pipeline: &ComputePipelineState, buffers: &[&BufferRef], params: &[u32], grid: &BufferRef, offset: u64) {
+        self.encoder.set_compute_pipeline_state(pipeline);
+        for (i, b) in buffers.iter().enumerate() {
+            self.encoder.set_buffer(i as u64, Some(b), 0);
+        }
+        self.encoder.set_bytes(buffers.len() as u64, std::mem::size_of_val(params).max(4) as u64, if params.is_empty() { [0u32].as_ptr().cast() } else { params.as_ptr().cast() });
+        self.encoder.dispatch_thread_groups_indirect(grid, offset, MTLSize::new(256, 1, 1));
+        self.dispatches.set(self.dispatches.get() + 1);
+    }
+
     /// `groups` threadgroups of 256 threads over `buffers`, then `params` as `constant uint*` and `longs` as
     /// `constant long*` after them.
     pub fn run(&self, pipeline: &ComputePipelineState, buffers: &[&BufferRef], params: &[u32], longs: &[i64], groups: usize) {
@@ -479,6 +505,48 @@ kernel void scan_block(device uint* data [[buffer(0)]], device uint* sums [[buff
     if (t == 255) sums[tg] = off + inc;
 }
 
+// The grids of a scan sized on the device (`Scan::size`): of min(totals[p[0]], p[1]) + 1 values, and of a pass of
+// 256 threads a group over them. Per level k: its count at a[k], its threadgroups at a[8 + 3k]; the pass's at a[32].
+kernel void scan_size(device const uint* totals [[buffer(0)]], device uint* a [[buffer(1)]], constant uint* p [[buffer(2)]],
+                      uint t [[thread_position_in_grid]]) {
+    if (t != 0) return;
+    uint n = min(totals[p[0]], p[1]) + 1;
+    a[32] = (n + 255) / 256; a[33] = 1; a[34] = 1;
+    for (uint k = 0; k < p[2] && k < 8; k++) {
+        uint g = max((n + 1023) / 1024, 1u);
+        a[k] = n; a[8 + 3 * k] = g; a[9 + 3 * k] = 1; a[10 + 3 * k] = 1;
+        n = g;
+    }
+}
+
+// scan_block and scan_add, their count a[p[0]] (`scan_size`'s).
+kernel void scan_block_sized(device uint* data [[buffer(0)]], device uint* sums [[buffer(1)]], device const uint* a [[buffer(2)]],
+                             constant uint* p [[buffer(3)]], uint tg [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]],
+                             uint lane [[thread_index_in_simdgroup]], uint sg [[simdgroup_index_in_threadgroup]]) {
+    uint n = a[p[0]];
+    uint at = tg * 1024 + t * 4;
+    uint v[4];
+    uint mine = 0;
+    for (uint i = 0; i < 4; i++) { v[i] = at + i < n ? data[at + i] : 0; mine += v[i]; }
+    uint inc = simd_prefix_inclusive_sum(mine);
+    threadgroup uint part[8];
+    if (lane == 31) part[sg] = inc;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    uint off = 0;
+    for (uint k = 0; k < sg; k++) off += part[k];
+    uint run = off + inc - mine;
+    for (uint i = 0; i < 4; i++) { if (at + i < n) data[at + i] = run; run += v[i]; }
+    if (t == 255) sums[tg] = off + inc;
+}
+
+kernel void scan_add_sized(device uint* data [[buffer(0)]], device const uint* sums [[buffer(1)]], device const uint* a [[buffer(2)]],
+                           constant uint* p [[buffer(3)]], uint tg [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]]) {
+    uint n = a[p[0]];
+    uint at = tg * 1024 + t * 4;
+    uint s = sums[tg];
+    for (uint i = 0; i < 4; i++) { if (at + i < n) data[at + i] += s; }
+}
+
 // Each value of a block plus its block's prefix.
 kernel void scan_add(device uint* data [[buffer(0)]], device const uint* sums [[buffer(1)]], constant uint* p [[buffer(2)]],
                      uint tg [[threadgroup_position_in_grid]], uint t [[thread_index_in_threadgroup]]) {
@@ -539,6 +607,34 @@ impl Scan {
         for k in (0..self.levels.len().saturating_sub(1)).rev() {
             let (buffer, n) = inputs[k];
             pass.run(&add, &[buffer, &self.levels[k].1], &[n as u32], &[], self.levels[k].0);
+        }
+        Ok(())
+    }
+
+    /// Encodes the grids of a scan sized on the device: of `min(totals[slot], cap) + 1` values (a stage's rows and
+    /// one), from the binding table's count the work before wrote, not the host's guess of its space. The scan's
+    /// levels are those of `count` values (its most). Returns the grids' words, for `encode_sized` and
+    /// `Pass::run_bytes_sized`.
+    pub fn size(&self, pass: &Pass<'_>, totals: &BufferRef, slot: usize, cap: usize) -> Result<Held, String> {
+        assert!(self.levels.len() <= 8 && cap < self.count);
+        let size = pipeline("scan", "scan_size", || SCAN_SOURCE.to_owned())?;
+        let a = Held::new(4 * 40)?;
+        pass.run(&size, &[totals, &a.buffer], &[slot as u32, cap as u32, self.levels.len() as u32], &[], 1);
+        Ok(a)
+    }
+
+    /// `encode`, each level's grid `size`'s.
+    pub fn encode_sized(&self, pass: &Pass<'_>, data: &BufferRef, sizes: &Held) -> Result<(), String> {
+        let block = pipeline("scan", "scan_block_sized", || SCAN_SOURCE.to_owned())?;
+        let add = pipeline("scan", "scan_add_sized", || SCAN_SOURCE.to_owned())?;
+        let a: &BufferRef = &sizes.buffer;
+        let mut inputs: Vec<&BufferRef> = vec![data];
+        for (k, (_, sums)) in self.levels.iter().enumerate() {
+            pass.run_indirect(&block, &[inputs[k], sums, a], &[k as u32], a, 4 * (8 + 3 * k as u64));
+            inputs.push(sums);
+        }
+        for k in (0..self.levels.len().saturating_sub(1)).rev() {
+            pass.run_indirect(&add, &[inputs[k], &self.levels[k].1, a], &[k as u32], a, 4 * (8 + 3 * k as u64));
         }
         Ok(())
     }

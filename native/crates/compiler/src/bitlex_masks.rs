@@ -72,7 +72,7 @@
 
 use crate::block::{BlockOp, BlockProgram, ClassTable};
 use crate::{bitlex_prove, bitlex_tier2, grammar};
-use ::bitlex::syntax::{Arg, Expr, NExpr, Stmt};
+use ::bitlex::syntax::{Arg, Expr, NExpr, Stmt, TokenElem};
 use std::collections::HashMap;
 
 /// A number's planes: a byte's value mod 2^32, exact for a place in a file or a distance.
@@ -165,6 +165,8 @@ pub type ByteSet = [u64; 4];
 pub const MAX_DELAY: u8 = 63;
 
 pub struct Lowering {
+    /// Tier 2's shape.
+    pub shape: Shape,
     pub program: BlockProgram,
     /// Each operation's value, so an operation is emitted once.
     pub seen: HashMap<BlockOp, u16>,
@@ -176,6 +178,10 @@ pub struct Lowering {
     /// The masks any of whose bits sends the file to tree-sitter: errors and escapes.
     pub fallbacks: Vec<Val>,
     pub counts: HashMap<String, Count>,
+    /// The counts no value has read yet (`C.frame` lowers one when it reads it): a tree's whose
+    /// ups and downs are tokens' starts are tier 2's (`COUNT`, `tree_section`), the rest lowered
+    /// after it. Each its name, up, down and most.
+    pub pending_counts: Vec<(String, Val, Val, u32)>,
     /// Each number's planes, bit 0 first (`NUMBER_BITS`).
     pub numbers: HashMap<String, Vec<Val>>,
     pub tokens: Vec<(String, Val, Option<TokenEnd>)>,
@@ -189,6 +195,11 @@ pub struct Lowering {
     /// Each `mark`, in order: its kind, its bits and whether the file's end has it; and the
     /// hidden ones' kinds.
     pub marks: Vec<(String, Val, bool)>,
+    /// Each `mark`'s expression, as written (`tree_section` finds a word in it).
+    pub mark_exprs: Vec<Expr>,
+    /// The token marks (`mark K = tokens …`, decision 0129), by their index in `marks`: the token
+    /// before, then the run. Tier 1 makes no mask for them.
+    pub token_marks: HashMap<usize, (Vec<TokenElem>, Vec<Vec<TokenElem>>)>,
     pub hidden: Vec<String>,
     /// Each `check`: a token kind and its grammar over the token's bytes.
     pub checks: Vec<(String, ::bitlex::syntax::Gram)>,
@@ -221,7 +232,7 @@ pub struct Count {
 
 /// What tier 2 makes of a tree section: the grammar's state machine as text, tier 2's words,
 /// whether each token row takes its last byte, and each mark's mask.
-pub type Tier2 = (String, String, Vec<bool>, Vec<Val>);
+pub type Tier2 = (String, String, Vec<bool>, Vec<Val>, crate::records::Records);
 
 /// The grammar's ids for the tree section's rows.
 pub struct Symbols<'a> {
@@ -234,7 +245,29 @@ pub struct Symbols<'a> {
 /// outputs, then the token rows' masks. `symbols` names the grammar's ids; a program
 /// with a tree section needs it.
 pub fn compile(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols<'_>>) -> Result<Compiled, String> {
+    compile_shaped(stmts, outputs, symbols, Shape::Auto)
+}
+
+/// Tier 2's shape (docs/parser-generators/33-compiled-against-lean-shape.md).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Shape {
+    /// One state machine, its states merged wherever they act alike: simdjson's stage 2, the
+    /// smallest code for a small grammar.
+    Machine,
+    /// A function a grammar rule (`grammar::build_shaped`): a call of the grammar is a native
+    /// call, as a recursive-descent parser's (`Words::rules`).
+    Rules,
+    /// The machine while it has at most `MACHINE_STATES` states; else a function a rule.
+    Auto,
+}
+
+/// The most states `Shape::Auto` keeps as one machine: JSON's size, about simdjson's.
+pub const MACHINE_STATES: usize = 64;
+
+/// `compile`, with tier 2 in `shape`.
+pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols<'_>>, shape: Shape) -> Result<Compiled, String> {
     let mut low = Lowering {
+        shape,
         program: BlockProgram::default(),
         seen: HashMap::new(),
         products: HashMap::new(),
@@ -242,6 +275,7 @@ pub fn compile(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols<'_>>) 
         names: HashMap::new(),
         fallbacks: Vec::new(),
         counts: HashMap::new(),
+        pending_counts: Vec::new(),
         numbers: HashMap::new(),
         tokens: Vec::new(),
         keywords: Vec::new(),
@@ -249,6 +283,8 @@ pub fn compile(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols<'_>>) 
         tree: Vec::new(),
         extra: Vec::new(),
         marks: Vec::new(),
+        mark_exprs: Vec::new(),
+        token_marks: HashMap::new(),
         hidden: Vec::new(),
         checks: Vec::new(),
         toggles: Vec::new(),
@@ -277,6 +313,11 @@ pub fn compile(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols<'_>>) 
         let symbols = symbols.ok_or("a tree section needs the grammar's ids")?;
         tier2 = Some(tree_section(symbols, &mut low, &token_rows)?);
     }
+    // The counts left: tier 1's, as bit-planes.
+    for (name, up, down, max) in std::mem::take(&mut low.pending_counts) {
+        let count = low.count(up, down, max)?;
+        low.counts.insert(name, count);
+    }
     let mut vals: Vec<(String, Val)> = Vec::new();
     // The words read the fallback's totals (`EMPTY`), so a tree's program always has them.
     if has_tree && !outputs.contains(&FALLBACK) {
@@ -294,26 +335,18 @@ pub fn compile(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols<'_>>) 
             vals.push(((*name).to_owned(), x));
         }
     }
-    // The stream tier 2 reads: every token's first byte, an extract, as simdjson's structural
-    // indexes; and the last byte of each token whose end is not its row's to know (`SPAN`), a
-    // mask tier 2 reads a word at a time.
+    // The records tier 2 reads (`records`): every token's first byte and every token's last
+    // byte, two extracts zipped by index, as simdjson's structural indexes.
     let mut stream = None;
-    if let Some((_, _, takes_last, mark_masks)) = &tier2 {
+    if let Some((_, _, _, mark_masks, _)) = &tier2 {
         let mut starts = token_rows[0].1;
         for (_, s, _) in &token_rows[1..] {
             starts = low.or(starts, *s)?;
         }
-        let mut lasts: Option<Val> = None;
-        for ((_, _, l), _) in token_rows.iter().zip(takes_last).filter(|(_, t)| **t) {
-            lasts = Some(match lasts {
-                Some(x) => low.or(x, *l)?,
-                None => *l,
-            });
+        let mut lasts = token_rows[0].2;
+        for (_, _, l) in &token_rows[1..] {
+            lasts = low.or(lasts, *l)?;
         }
-        let lasts = match lasts {
-            Some(x) => x,
-            None => low.leaf(BlockOp::Const(0), false),
-        };
         vals.push((STREAM_START.to_owned(), starts));
         vals.push((STREAM_LAST.to_owned(), lasts));
         stream = Some((vals.len() - 2, vals.len() - 1));
@@ -348,12 +381,19 @@ pub fn compile(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols<'_>>) 
     }
     let mut words = "  0000 STOP 0\n".to_owned();
     let mut machine = String::new();
-    if let Some((text, lowered, _, mark_masks)) = tier2 {
+    if let Some((text, lowered, _, mark_masks, records)) = tier2 {
         let (s, l) = stream.expect("a tree section's stream");
-        low.program.extracts = vec![at[s]];
-        // The last bytes, then each mark's: `MARK`'s operand.
-        low.program.masks = vec![at[l]];
-        low.program.masks.extend((0..mark_masks.len()).map(|k| at[l + 1 + k]));
+        low.program.extracts = vec![at[s], at[l]];
+        low.program.records = Some(records);
+        // Each mark's mask: `MARK`'s operand.
+        low.program.masks = (0..mark_masks.len()).map(|k| at[l + 1 + k]).collect();
+        if let Some(r) = &mut low.program.records {
+            // Its output (`Records::marks`): where the mask's value is among the outputs.
+            for m in &mut r.marks {
+                let v = low.program.masks[usize::from(m.0)];
+                m.0 = low.program.outputs.iter().position(|&o| o == v).ok_or("a mark's mask not an output")? as u16;
+            }
+        }
         // The fallback's outputs, one per delay, are the totals: one flag, which `EMPTY 0` reads.
         low.program.totals = vals.iter().zip(&at).filter(|((label, _), _)| label == FALLBACK).map(|(_, &v)| v).collect();
         words = lowered;
@@ -450,8 +490,7 @@ impl Lowering {
                         return Err(format!("count {name}: `reset` is not compiled yet"));
                     }
                     let (up, down) = (self.expr(up)?, self.expr(down)?);
-                    let count = self.count(up, down, *max)?;
-                    self.counts.insert(name.clone(), count);
+                    self.pending_counts.push((name.clone(), up, down, *max));
                 }
                 Stmt::Token { kind, start, through, last } => {
                     let start = self.expr(start)?;
@@ -480,12 +519,21 @@ impl Lowering {
                 Stmt::Tree { body, .. } => self.stmts(body)?,
                 // The grammar's rules: the state machine is built once the token rows are known.
                 Stmt::Node { .. } | Stmt::Choice { .. } | Stmt::Refuse { .. } | Stmt::Reading { .. } | Stmt::Provisional(_) | Stmt::Remember(_) | Stmt::Flags(_) => self.tree.push(stmt.clone()),
+                // Applied by the parser: each token it names marked `A as IMPLIED` in its rule.
+                Stmt::Implied { .. } => {}
                 Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
                 Stmt::Extra(kinds) => self.extra.extend(kinds.iter().cloned()),
                 Stmt::Hidden(kinds) => self.hidden.extend(kinds.iter().cloned()),
                 Stmt::Mark { kind, at, end } => {
                     let x = self.expr(at)?;
                     self.marks.push((kind.clone(), x, *end));
+                    self.mark_exprs.push(at.clone());
+                }
+                Stmt::TokenMark { kind, before, seq } => {
+                    self.token_marks.insert(self.marks.len(), (before.clone(), seq.clone()));
+                    let none = self.leaf(BlockOp::Const(0), false);
+                    self.marks.push((kind.clone(), none, false));
+                    self.mark_exprs.push(Expr::Empty);
                 }
                 Stmt::Rounds { n: None, body, .. } => {
                     ::bitlex::syntax::strictly_causal(body)?;
@@ -869,6 +917,11 @@ impl Lowering {
             }
             Expr::Call(f, args) => self.call(f, args),
             Expr::Test { target, method, arg: Some(arg), .. } if method == "frame" => {
+                if let Some(i) = self.pending_counts.iter().position(|c| &c.0 == target) {
+                    let (name, up, down, max) = self.pending_counts.remove(i);
+                    let count = self.count(up, down, max)?;
+                    self.counts.insert(name, count);
+                }
                 let count = self.counts.get(target).cloned().ok_or_else(|| format!("{target}.frame: `{target}` is not a count"))?;
                 let a = self.expr(arg)?;
                 self.frame(&count, a)
@@ -1471,6 +1524,7 @@ pub fn live_of(program: &BlockProgram, keep: &[bool]) -> BlockProgram {
     out.totals = program.totals.iter().map(|&v| n(v)).collect();
     out.masks = program.masks.iter().map(|&v| n(v)).collect();
     out.rounds = program.rounds.iter().filter(|g| keep[usize::from(g[0].0)]).map(|g| g.iter().map(|&(c, x)| (n(c), n(x))).collect()).collect();
+    out.records = program.records.clone();
     out
 }
 
@@ -1485,7 +1539,7 @@ pub fn cost_name(stmt: &Stmt) -> String {
     let name = match stmt {
         Stmt::Mask(n, _) | Stmt::Number(n, _) | Stmt::Error(n, _) | Stmt::Escape(n, _) => n.clone(),
         Stmt::Count { name, .. } => name.clone(),
-        Stmt::Token { kind, .. } | Stmt::Mark { kind, .. } => kind.clone(),
+        Stmt::Token { kind, .. } | Stmt::Mark { kind, .. } | Stmt::TokenMark { kind, .. } => kind.clone(),
         _ => String::new(),
     };
     format!("{} {name}", statement(stmt).to_lowercase())
@@ -1573,7 +1627,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             _ => {}
         }
     }
-    let (states, mut arms, whole) = {
+    let (states, mut arms, whole, by_rules) = {
         let is_token = |name: &str| {
             token_rows.iter().any(|t| t.0 == name && !required.contains(&t.0))
                 || is_keyword_kind(&low.keywords, name)
@@ -1593,9 +1647,17 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }
         tokens.retain(|t| !low.marks.iter().any(|m| &m.0 == t) && !low.extra.contains(t));
         let reading = |name: &str| reading_names.iter().position(|r| r == name).map(|r| r as u16).ok_or_else(|| format!("reread {name}: no reading of that name"));
-        let ids = grammar::Ids { kind: &kind, field: &field_id, is_token: &is_token, tokens: &tokens, reading: &reading };
-        grammar::build(&low.tree, &ids)?
+        let ids = grammar::Ids { kind: &kind, field: &field_id, is_token: &is_token, tokens: &tokens, reading: &reading, marks: &mark_kinds };
+        let machine = grammar::build_shaped(&low.tree, &ids, false)?;
+        let rules = match low.shape {
+            Shape::Machine => false,
+            Shape::Rules => true,
+            Shape::Auto => machine.0.len() > MACHINE_STATES,
+        };
+        let (st, ar, wh) = if rules { grammar::build_shaped(&low.tree, &ids, true)? } else { machine };
+        (st, ar, wh, rules)
     };
+    low.shape = if by_rules { Shape::Rules } else { Shape::Machine };
     grammar::without_mark_leaves(&mut arms, &mark_kinds)?;
     // A node a reading drops has no supertype: tier 2 places the supertypes by their nodes.
     let gone: Vec<u16> = readings.maps.iter().flat_map(|r| r.kinds.iter().filter(|x| x.1 == crate::stream_ir::GONE).map(|x| x.0)).collect();
@@ -1665,17 +1727,19 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             }
         }
     }
-    // The extras' arms (grammar::with_extras), in every state: tier 2 tells an extra from a
-    // token beginning with the same byte by their rows' start masks (`ROW`), and a mark has
-    // no bytes at all.
+    // The extras (grammar::with_extras): taken in the token step (`TOKEN_EXTRAS`), as the lean
+    // parser places comments, where they are of one kind and the records' codes have a mark's
+    // bit for them (fewer marks than `records::MARKS`); else an arm in every state, which tells
+    // an extra from a token beginning with the same byte by their rows' start masks (`ROW`).
+    let token_extras = matches!(low.extra.as_slice(), [_]) && mark_kinds.len() < crate::records::MARKS;
     let (states, arms) = {
         let extras = low.extra.iter().map(|k| id(k)).collect::<Result<Vec<u16>, String>>()?;
         let apart = |_: u16, _: u16| true;
-        grammar::with_extras(states, arms, &extras, &apart, whole, &mark_kinds)?
+        grammar::with_extras(states, arms, &extras, &apart, whole, &mark_kinds, token_extras)?
     };
     // Each mark's bits at the grammar's token starts (not the extras'): a token that starts
     // with a bit since the start before it, `starts & (m | prev(fill(m & ~starts, starts)))`.
-    // Its mask is the program's `1 + k` (the 0th is the last bytes, `SPAN m=1`).
+    // Its mask is the program's `k`.
     let mut grammar_starts: Option<Val> = None;
     for (kind, start, _) in token_rows {
         let is_extra = low.extra.contains(kind);
@@ -1686,35 +1750,313 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             });
         }
     }
+    // A mark of one word: a term of its `&`s that holds, at the grammar's token starts, exactly
+    // where the token's text is one of the rows' words, and nowhere else (both proved,
+    // `never`). That term is the token's record's word, which tier 2 compares (the lean
+    // parser's `is_id(W)`), and leaves tier 1: its letters' masks go where nothing else reads
+    // them. The words: every row's keywords and soft keywords.
+    let mut candidates: Vec<Vec<u8>> = rows.iter().flat_map(|r| r.keywords.iter().map(|k| k.0.clone()).chain(r.soft.iter().map(|k| k.0.clone()))).collect();
+    candidates.sort();
+    candidates.dedup();
+    fn terms<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
+        match e {
+            Expr::And(a, b) => {
+                terms(a, out);
+                terms(b, out);
+            }
+            e => out.push(e),
+        }
+    }
     let mut mark_masks = Vec::new();
     let mut marks = Vec::new();
+    // With the fixed points' equations and the lemmas proved on the way, kept for every mark.
+    let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
     for (k, (kind, m, end)) in low.marks.clone().into_iter().enumerate() {
         let gs = grammar_starts.ok_or("marks with no grammar token")?;
+        // A token mark: its bit at every grammar token (its first element's word's, where it is
+        // one word), the rest tier 2's; its bytes, its first element's.
+        if let Some((before, seq)) = low.token_marks.get(&k).cloned() {
+            mark_masks.push(gs);
+            let mut first: ByteSet = [0; 4];
+            for c in &seq[0] {
+                match c {
+                    TokenElem::Word(w) => first[usize::from(w[0]) / 64] |= 1 << (w[0] % 64),
+                    TokenElem::Kind(name) => {
+                        for r in (0..rows.len()).filter(|&r| &token_rows[r].0 == name) {
+                            for i in 0..4 {
+                                first[i] |= rows[r].first[i];
+                            }
+                        }
+                    }
+                }
+            }
+            let word = match seq[0].as_slice() {
+                [TokenElem::Word(w)] => Some(w.clone()),
+                _ => None,
+            };
+            marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: Some((before, seq)) });
+            continue;
+        }
+        let expr = low.mark_exprs[k].clone();
+        let mut parts = Vec::new();
+        terms(&expr, &mut parts);
+        let mut m = m;
+        let mut word = None;
+        'find: for (i, term) in parts.iter().enumerate() {
+            let t = low.expr(term)?;
+            // Only at the grammar's token starts.
+            let elsewhere = low.andnot(t, gs)?;
+            if !settled.never(&low.program.ops, &low.program.tables, elsewhere.v, elsewhere.d) {
+                continue;
+            }
+            // The words whose first byte the term may be at.
+            let firsts = settled.first_bytes(&low.program.ops, &low.program.tables, t.v, t.d);
+            for w in candidates.iter().filter(|w| firsts[usize::from(w[0]) / 64] >> (w[0] % 64) & 1 == 1) {
+                // A token's record pairs its start with its row's last: one row starts at a
+                // byte (two that can go to the fallback), and the record pass checks the
+                // streams agree. So its word is `w` where a row that can begin with `w`'s
+                // first byte starts and its tokens' text is `w`.
+                let mut e: Option<Val> = None;
+                // The grammar's rows only: an extra's token starts no grammar token. The term holds
+                // only at the grammar's starts, and so does each of these rows' start: they agree
+                // everywhere, `gs` need not be read.
+                let these: Vec<usize> = (0..rows.len()).filter(|&r| rows[r].first[usize::from(w[0]) / 64] >> (w[0] % 64) & 1 == 1 && !low.extra.contains(&token_rows[r].0)).collect();
+                for r in these {
+                    let x = low.keyword(token_rows[r].1, token_rows[r].2, w)?;
+                    e = Some(match e {
+                        Some(y) => low.or(y, x)?,
+                        None => x,
+                    });
+                }
+                let Some(e) = e else { continue };
+                let differs = low.xor(t, e)?;
+                let ok = settled.never(&low.program.ops, &low.program.tables, differs.v, differs.d);
+                if ok {
+                    let mut rest = gs;
+                    for (_, other) in parts.iter().enumerate().filter(|&(j, _)| j != i) {
+                        let x = low.expr(other)?;
+                        rest = low.and(rest, x)?;
+                    }
+                    m = rest;
+                    word = Some(w.clone());
+                    break 'find;
+                }
+            }
+        }
         let before = low.andnot(m, gs)?;
         let since = low.fill(before, gs)?;
         let since = low.prev(since, 1)?;
         let any = low.or(m, since)?;
-        mark_masks.push(low.and(gs, any)?);
-        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: 1 + k as u16, hidden: low.hidden.contains(&kind), end });
+        let at = low.and(gs, any)?;
+        mark_masks.push(at);
+        // The bytes its token can begin with: the first bytes of each row whose starts it may
+        // meet (it holds only at the grammar's starts, so within those rows' starts; a row left
+        // out is proved apart, `never`). A state that refuses it tests it only on those bytes.
+        // Proved on `m`, the mark's own: where it holds only at the grammar's starts
+        // (`m & ~starts` never), the lift to the next start adds nothing.
+        let on_starts = bitlex_prove::never(&low.program.ops, &low.program.tables, before.v, before.d);
+        let mut first: ByteSet = [u64::MAX; 4];
+        if on_starts {
+            first = [0; 4];
+            for r in 0..rows.len() {
+                if low.extra.contains(&token_rows[r].0) {
+                    continue;
+                }
+                let both = low.and(m, token_rows[r].1)?;
+                if !bitlex_prove::never(&low.program.ops, &low.program.tables, both.v, both.d) {
+                    for i in 0..4 {
+                        first[i] |= rows[r].first[i];
+                    }
+                }
+            }
+            // A row of many bytes (the operators'): each byte the mark is proved apart from left
+            // out.
+            for b in 0..=255u8 {
+                if first[usize::from(b) / 64] >> (b % 64) & 1 == 0 {
+                    continue;
+                }
+                let mut one: ByteSet = [0; 4];
+                one[usize::from(b) / 64] |= 1 << (b % 64);
+                let class = low.class_set(one);
+                let both = low.and(m, class)?;
+                if bitlex_prove::never(&low.program.ops, &low.program.tables, both.v, both.d) {
+                    first[usize::from(b) / 64] &= !(1 << (b % 64));
+                }
+            }
+        }
+        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: None });
     }
+    // Any mark at a token: the marks' masks joined, after them. Marks hold at few tokens (0.8%
+    // of the tests of `.rr`'s corpus), so `TOKEN` reads this once and the marks are live only
+    // where it holds (`TOKEN m=1+k`).
+    let any_mark = match mark_masks.split_first() {
+        Some((&first, rest)) => {
+            let mut any = first;
+            for &m in rest {
+                any = low.or(any, m)?;
+            }
+            mark_masks.push(any);
+            Some(marks.len() as u16)
+        }
+        None => None,
+    };
+    let row_masks = mark_masks.len() as u16;
     // The rows each state can meet, by the modes its tokens are read in (`row_modes`): tier 2
     // tells apart by their start masks (`ROW`) only the rows a state can meet that begin
     // with one byte. A first lowering finds them; their masks follow the marks'.
     let meets = row_modes(low, &token_rows, &rows, &states, &arms, &mark_kinds)?;
     // The totals are one flag (`BlockRun::totals`), tested once: `EMPTY 0`.
     let empties = 1;
-    let tested = bitlex_tier2::lower(&states, &arms, &rows, &marks, &meets, empties, whole, true)?.tested;
+    // The counts no value reads whose ups and downs are tokens' starts, each of tokens whose text
+    // is one of a few words (each proved, `never`): tier 2 counts them at the arms that take the
+    // tokens (`COUNT`), as the lean parser counts its depth as it parses. Tier 1 makes no planes.
+    let mut counts: Vec<(Vec<u16>, Vec<u16>)> = Vec::new();
+    let mut count_most: Vec<u16> = Vec::new();
+    {
+        let words: Vec<(usize, Vec<u8>)> = (0..rows.len())
+            .filter(|&r| !low.extra.contains(&token_rows[r].0))
+            .flat_map(|r| rows[r].keywords.iter().map(move |(w, _)| (r, w.clone())))
+            .collect();
+        let pending = std::mem::take(&mut low.pending_counts);
+        for (name, up, down, max) in pending {
+            let kinds_of = |x: Val, low: &mut Lowering| -> Result<Option<Vec<u16>>, String> {
+                let (mut kinds, mut all): (Vec<u16>, Option<Val>) = (Vec::new(), None);
+                for (r, w) in &words {
+                    let k = low.keyword(token_rows[*r].1, token_rows[*r].2, w)?;
+                    let both = low.and(x, k)?;
+                    if bitlex_prove::never(&low.program.ops, &low.program.tables, both.v, both.d) {
+                        continue;
+                    }
+                    kinds.push(id(&String::from_utf8_lossy(w))?);
+                    all = Some(match all {
+                        Some(a) => low.or(a, k)?,
+                        None => k,
+                    });
+                }
+                let Some(all) = all else { return Ok(None) };
+                let differs = low.xor(x, all)?;
+                Ok(bitlex_prove::never(&low.program.ops, &low.program.tables, differs.v, differs.d).then_some(kinds))
+            };
+            let (u, d) = (kinds_of(up, low)?, kinds_of(down, low)?);
+            match (u, d, u16::try_from(max)) {
+                (Some(u), Some(d), Ok(m)) => {
+                    counts.push((u, d));
+                    count_most.push(m);
+                }
+                _ => low.pending_counts.push((name, up, down, max)),
+            }
+        }
+    }
+    let tested = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, whole, true, by_rules, token_extras, &counts)?.tested;
     for (j, &r) in tested.iter().enumerate() {
-        rows[r].mask = Some(1 + marks.len() as u16 + j as u16);
+        rows[r].mask = Some(row_masks + j as u16);
         mark_masks.push(token_rows[r].1);
     }
     // The words, once the fallback's totals are known: each must be zero.
-    let mut lowered = bitlex_tier2::lower(&states, &arms, &rows, &marks, &meets, empties, whole, false)?;
+    let mut lowered = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, whole, false, by_rules, token_extras, &counts)?;
+    crate::rir_text::count_rows(&mut lowered.text, &count_most);
     // The extras' kinds: the node table flags their nodes (comments).
     readings.extras = low.extra.iter().map(|k| id(k)).collect::<Result<_, _>>()?;
     crate::rir_text::reading_rows(&mut lowered.text, &readings);
     let takes_last: Vec<bool> = rows.iter().map(bitlex_tier2::Row::takes_last).collect();
-    Ok((grammar::text(&states, &arms), lowered.text, takes_last, mark_masks))
+    // The records: a byte's kind, the class of first bytes no switch on the first byte tells
+    // apart; the words, the strings. (A switch on a later byte, a keyword's, reads its byte.)
+    let mut kinds = vec![0u8; 256];
+    let mut classes: HashMap<Vec<u16>, u8> = HashMap::new();
+    let mut sigs: Vec<Vec<u16>> = Vec::new();
+    // A token mark's kinds (decision 0129): a column each, so a kind of the records is one
+    // kind's tokens or none of them; a byte that starts that kind's tokens and another's can not
+    // tell them apart, and the mark is not compiled.
+    let mut mark_kind_names: Vec<String> = lowered.token_marks.iter().flat_map(|(_, es)| es.iter().flat_map(|e| e.1.iter().cloned())).collect();
+    mark_kind_names.sort();
+    mark_kind_names.dedup();
+    let starts_kind = |name: &str, b: usize| (0..rows.len()).any(|r| token_rows[r].0 == name && rows[r].first[b / 64] >> (b % 64) & 1 == 1);
+    for name in &mark_kind_names {
+        for b in 0..256 {
+            if starts_kind(name, b) && (0..rows.len()).any(|r| token_rows[r].0 != *name && !low.extra.contains(&token_rows[r].0) && rows[r].first[b / 64] >> (b % 64) & 1 == 1) {
+                return Err(format!("a token mark's kind `{name}` shares byte {b:#04x} with another token"));
+            }
+        }
+    }
+    for b in 0..256 {
+        let mut sig: Vec<u16> = lowered.switches.iter().filter(|s| s.offset == 0).map(|s| s.targets[b]).collect();
+        sig.extend(mark_kind_names.iter().map(|n| u16::from(starts_kind(n, b))));
+        let n = classes.len();
+        let k = *classes.entry(sig.clone()).or_insert(n as u8);
+        if usize::from(k) == sigs.len() {
+            sigs.push(sig);
+        }
+        if classes.len() > 256 {
+            return Err("more than 256 kinds of first byte".into());
+        }
+        kinds[b] = k;
+    }
+    // Numbered so a switch on the kind has few ranges of one target (its compare tree is
+    // shallow, as a jump table on the lean lexer's kinds is small): from byte 0's class, each
+    // next the class that the fewest switches tell apart from the one before (ties by least
+    // byte).
+    let differ = |a: &[u16], b: &[u16]| a.iter().zip(b).filter(|(x, y)| x != y).count();
+    let mut order: Vec<usize> = vec![0];
+    let mut left: Vec<usize> = (1..sigs.len()).collect();
+    while !left.is_empty() {
+        let last = *order.last().expect("one");
+        let (i, _) = left.iter().enumerate().min_by_key(|&(_, &c)| (differ(&sigs[last], &sigs[c]), c)).expect("left");
+        order.push(left.remove(i));
+    }
+    let mut renumber = vec![0u8; sigs.len()];
+    for (new, &old) in order.iter().enumerate() {
+        renumber[old] = new as u8;
+    }
+    for k in &mut kinds {
+        *k = renumber[usize::from(*k)];
+    }
+    // The marks in the code, by order (the first `MARKS`): each its mask (an index into the
+    // program's masks here, its output once they are placed) and its word's code.
+    let mut in_code: Vec<(u16, u16)> = marks.iter().take(crate::records::MARKS).enumerate().map(|(k, m)| (m.mask, lowered.mark_words.iter().find(|&&(x, _)| usize::from(x) == k).map_or(0, |&(_, s)| s + 1))).collect();
+    // The extra's bit, after the marks': its rows' starts (`TOKEN_EXTRAS`, `Words::extras`).
+    if token_extras {
+        let mut starts: Option<Val> = None;
+        let extra_starts: Vec<Val> = token_rows.iter().filter(|(k, _, _)| low.extra.contains(k)).map(|r| r.1).collect();
+        for start in &extra_starts {
+            starts = Some(match starts {
+                Some(s) => low.or(s, *start)?,
+                None => *start,
+            });
+        }
+        let starts = starts.ok_or("an extra with no rows")?;
+        mark_masks.push(starts);
+        in_code.push((mark_masks.len() as u16 - 1, 0));
+        let bit = (in_code.len() - 1) as u8;
+        crate::rir_text::extra_rows(&mut lowered.text, &[(bit, id(&low.extra[0])?)]);
+    }
+    // The token marks, their kinds the records' (`Words::token_marks`).
+    if !lowered.token_marks.is_empty() {
+        if !token_extras {
+            return Err("token marks with extras not taken in the token step".into());
+        }
+        let mut tms = Vec::new();
+        for (order, elems) in &lowered.token_marks {
+            let mut out = Vec::new();
+            for (offset, names, words) in elems {
+                let mut set = 0u64;
+                for name in names {
+                    for b in (0..256).filter(|&b| starts_kind(name, b)) {
+                        let k = kinds[b];
+                        if k >= 64 {
+                            return Err(format!("a token mark's kind `{name}` is kind {k} of the records, past 64"));
+                        }
+                        set |= 1 << k;
+                    }
+                }
+                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone() });
+            }
+            tms.push(crate::program::TokenMark { order: *order, elems: out });
+        }
+        crate::rir_text::token_mark_rows(&mut lowered.text, &tms);
+    }
+    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code };
+    crate::records::WordTable::new(&records.words)?;
+    Ok((grammar::text(&states, &arms), lowered.text, takes_last, mark_masks, records))
 }
 
 /// The rows each state of tier 2 can meet: `meets[s][r]`, whether a token of row `r` can be
@@ -1832,7 +2174,8 @@ fn row_modes(
             }
         }
         for a in arms.iter().filter(|a| a.from == s) {
-            let next: Vec<u8> = if marks.contains(&a.token) {
+            // A mark takes no bytes, nor does a call (it switches on the token in the callee).
+            let next: Vec<u8> = if marks.contains(&a.token) || a.call {
                 vec![m]
             } else {
                 rows_of(a.token).into_iter().filter(|&r| fits(r, m)).flat_map(|r| after(r, m)).collect()

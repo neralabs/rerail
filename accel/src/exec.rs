@@ -408,10 +408,10 @@ pub struct Done {
 #[derive(Clone, Debug, Default)]
 pub struct Report {
     /// Per lane: launches, and the wall seconds from its first job's start to its last job's end.
-    pub launches: [usize; 4],
-    pub wall: [f64; 4],
+    pub launches: [usize; Lane::COUNT],
+    pub wall: [f64; Lane::COUNT],
     /// Estimated joules per lane: the price's power times the seconds its jobs ran.
-    pub joules: [f64; 4],
+    pub joules: [f64; Lane::COUNT],
     /// Estimated seconds the off-CPU lanes took from the CPU lane: what the CPU would have spent on their launches.
     pub cpu_freed: f64,
     /// Estimated seconds lost against the fastest lane, summed over launches placed elsewhere.
@@ -424,8 +424,8 @@ pub struct Report {
     pub place: f64,
     /// Per lane: CPU seconds of the lane's worker thread over its submission (`CLOCK_THREAD_CPUTIME_ID`), and what
     /// the backend says of its phases.
-    pub lane_cpu: [f64; 4],
-    pub phases: [Phases; 4],
+    pub lane_cpu: [f64; Lane::COUNT],
+    pub phases: [Phases; Lane::COUNT],
 }
 
 impl Report {
@@ -486,6 +486,52 @@ impl Flight<'_> {
     }
 }
 
+/// A thread of the process's own that is no job: a service that waits (a writer on its queue, a sampler on its
+/// clock, a watcher on a signal, a device lane's worker on its batches), so it may not hold one of the pool's threads
+/// (decision 0100 §12: nothing that waits for another long job may itself be a job). Every thread the process makes
+/// outside the one pool is made here, named, and listed while it lives ([`services`]); the engine's source guard
+/// (`executors_are_shared`) refuses a thread made anywhere else. `stack`: its stack's bytes, else the default.
+pub fn service<T: Send + 'static>(name: &str, stack: Option<usize>, f: impl FnOnce() -> T + Send + 'static) -> std::io::Result<std::thread::JoinHandle<T>> {
+    let mut b = std::thread::Builder::new().name(name.to_owned());
+    if let Some(s) = stack {
+        b = b.stack_size(s);
+    }
+    let named = name.to_owned();
+    b.spawn(move || {
+        struct Listed(String);
+        impl Drop for Listed {
+            fn drop(&mut self) {
+                let mut l = SERVICES.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(i) = l.iter().position(|n| *n == self.0) {
+                    l.swap_remove(i);
+                }
+            }
+        }
+        SERVICES.lock().unwrap_or_else(|e| e.into_inner()).push(named.clone());
+        let _listed = Listed(named);
+        f()
+    })
+}
+
+/// Runs `f` on scoped threads of the caller's (`std::thread::scope`), each one a [`service`]'s kind: a device's
+/// worker per unit (SME's, the Neural Engine's predictor) that waits on its device, not a job of the pool's.
+pub fn scoped<'env, T>(f: impl for<'scope> FnOnce(&'scope std::thread::Scope<'scope, 'env>) -> T) -> T {
+    std::thread::scope(f)
+}
+
+static SERVICES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// The names of the [`service`] threads alive now.
+pub fn services() -> Vec<String> {
+    SERVICES.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Drops `x` beside the caller, as a job on the pool: freeing what it holds is no step's work, and a drop waits for
+/// nothing.
+pub fn drop_beside<T: Send + 'static>(x: T) {
+    rayon::spawn(move || drop(x));
+}
+
 /// The worker of a device lane, until the executor drops: two submissions deep (decision 0100 §11).
 ///
 /// It keeps every batch it is sent while that batch has a launch it may yet take. Its next submission is the
@@ -496,9 +542,7 @@ impl Flight<'_> {
 fn worker(backend: Arc<dyn Backend>, board: Arc<Scoreboard>) -> std::sync::mpsc::Sender<Task> {
     use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
     let (send, take) = std::sync::mpsc::channel::<Task>();
-    std::thread::Builder::new()
-        .name(format!("rerail-accel {}", backend.lane().name()))
-        .spawn(move || {
+    service(&format!("rerail-accel {}", backend.lane().name()), None, move || {
             let lane = backend.lane();
             let mut open: std::collections::VecDeque<Arc<Claims>> = Default::default();
             let mut flight: Option<Flight<'_>> = None;
@@ -583,15 +627,15 @@ pub struct Claims {
     plan: Vec<Lane>,
     pinned: Vec<bool>,
     /// Per launch and lane: its cost there; `None` where the lane cannot run it.
-    costs: Vec<[Option<Cost>; 4]>,
+    costs: Vec<[Option<Cost>; Lane::COUNT]>,
     /// Per launch: the fastest lane's cost.
     fastest: Vec<Cost>,
     /// Per lane: the launches planned on it, in its order.
-    order: [Vec<usize>; 4],
+    order: [Vec<usize>; Lane::COUNT],
     /// Per launch: seconds after `begun` by which its planned lane should have started it.
     due: Vec<f64>,
     /// Per device lane: its worker started this batch, and claimed its own launches.
-    started: [std::sync::atomic::AtomicBool; 4],
+    started: [std::sync::atomic::AtomicBool; Lane::COUNT],
     begun: Instant,
     send: std::sync::Mutex<std::sync::mpsc::Sender<Got>>,
     board: Arc<Scoreboard>,
@@ -623,7 +667,7 @@ impl Claims {
     /// the batch claimed its launches, so a free one is never its.
     fn late(&self, i: usize) -> f64 {
         let p = self.plan[i];
-        if p != Lane::Cpu && self.started[p.index()].load(std::sync::atomic::Ordering::Acquire) {
+        if !p.is_pool() && self.started[p.index()].load(std::sync::atomic::Ordering::Acquire) {
             return f64::NEG_INFINITY;
         }
         self.begun.elapsed().as_secs_f64() - self.due[i]
@@ -642,7 +686,7 @@ impl Claims {
             return None;
         }
         let c = self.costs[i][lane.index()]?;
-        let own = c.wall + if lane == Lane::Cpu { 0.0 } else { c.finish - c.wall - self.due_on(lane) };
+        let own = c.wall + if lane.is_pool() { 0.0 } else { c.finish - c.wall - self.due_on(lane) };
         Some(own.max(LATE_MIN))
     }
 
@@ -680,11 +724,11 @@ impl Claims {
     }
 
     /// The next launch for a pool thread: the cores' own, in their order, else one taken from a lane behind its plan.
-    fn next_cpu(&self) -> Option<usize> {
-        if let Some(i) = self.order[Lane::Cpu.index()].iter().copied().find(|&i| self.free(i) && self.claim(i, Lane::Cpu)) {
+    fn next_host(&self, lane: Lane) -> Option<usize> {
+        if let Some(i) = self.order[lane.index()].iter().copied().find(|&i| self.free(i) && self.claim(i, lane)) {
             return Some(i);
         }
-        self.take_late(Lane::Cpu)
+        self.take_late(lane)
     }
 
     /// A launch `lane` takes from a lane behind its plan, from the end of that lane's order (what it reaches last).
@@ -702,16 +746,17 @@ impl Claims {
     }
 
     /// Runs launch `i` on the cores, on this thread, as a job of its own.
-    fn run_cpu(&self, backend: &dyn Backend, i: usize) {
-        let ticket = self.board.claimed(Lane::Cpu, vec![self.item(i, Lane::Cpu)], self.begun);
+    fn run_host(&self, backend: &dyn Backend, i: usize) {
+        let lane = backend.lane();
+        let ticket = self.board.claimed(lane, vec![self.item(i, lane)], self.begun);
         let r = run_job(backend, &self.board, &[&self.kernels[i]], ticket);
-        self.reply((Lane::Cpu, vec![i], r));
+        self.reply((lane, vec![i], r));
     }
 
     /// A pool thread's share: launches until none is left for it.
-    fn serve_cpu(&self, backend: &dyn Backend) {
-        while let Some(i) = self.next_cpu() {
-            self.run_cpu(backend, i);
+    fn serve_host(&self, backend: &dyn Backend) {
+        while let Some(i) = self.next_host(backend.lane()) {
+            self.run_host(backend, i);
         }
     }
 }
@@ -721,10 +766,12 @@ pub struct Running {
     claims: Arc<Claims>,
     take: Receiver<Got>,
     /// The cores' backend, when the executor has the cores: the caller runs free launches on it while it waits.
-    cpu: Option<Arc<dyn Backend>>,
+    hosts: Vec<Arc<dyn Backend>>,
     tag: &'static str,
     report: Report,
     cpu0: f64,
+    /// Replies polled by a dependency scheduler before it joins this batch.
+    replies: Vec<Got>,
 }
 
 
@@ -774,11 +821,16 @@ impl<R> Job<R> {
 }
 
 impl Executor {
+    /// The executor's scoreboard, shared: a host stream ([`crate::stream`]) scores its jobs on it.
+    pub fn board(&self) -> Arc<Scoreboard> {
+        Arc::clone(&self.board)
+    }
+
     /// Every lane this machine has, with the default prices.
     pub fn new() -> Self {
         configure(false);
         let present = lanes::present();
-        let mut backends: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default())];
+        let mut backends: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(crate::sql::SqlBackend)];
         #[cfg(all(feature = "sme", target_os = "macos", target_arch = "aarch64"))]
         if present[Lane::Sme.index()] {
             backends.extend(crate::sme::backend());
@@ -795,15 +847,38 @@ impl Executor {
         Executor::with(backends)
     }
 
+    /// SQL mode has only a SQL executor. Work without a SQL form is refused.
+    pub fn sql_only() -> Self {
+        Self::with(vec![Arc::new(crate::sql::SqlBackend)])
+    }
+
+    /// Score connection-bound work on its owning thread. It cannot enter a pool
+    /// job; the caller preserves the dependency and publication boundary.
+    pub fn local<R, E>(&self, lane: Lane, name: &'static str, estimate: f64, f: impl FnOnce() -> Result<R, E>) -> Result<R, E> {
+        assert!(self.backends.iter().any(|backend| backend.lane() == lane), "local work requires a present executor");
+        struct Finish<'a> { board: &'a Scoreboard, ticket: Option<Ticket> }
+        impl Drop for Finish<'_> {
+            fn drop(&mut self) {
+                if let Some(ticket) = self.ticket.take() { self.board.finish(ticket, false); }
+            }
+        }
+        let mut ticket = self.board.queue(lane, vec![Item { form: name, units: 0.0, estimate, host: estimate }]);
+        self.board.start(&mut ticket);
+        let mut finish = Finish { board: &self.board, ticket: Some(ticket) };
+        let result = as_job(name, f);
+        self.board.finish(finish.ticket.take().unwrap(), result.is_ok());
+        result
+    }
+
     /// Only the given lanes' backends (tests; a binding that allows only some lanes).
     pub fn with(backends: Vec<Arc<dyn Backend>>) -> Self {
         configure(false);
-        let mut slots = [0; 4];
+        let mut slots = [0; Lane::COUNT];
         for b in &backends {
-            slots[b.lane().index()] = if b.lane() == Lane::Cpu { threads() } else { 1 };
+            slots[b.lane().index()] = if b.lane().is_pool() { threads() } else { 1 };
         }
         let board = Arc::new(Scoreboard::new(slots));
-        let workers = backends.iter().map(|b| (b.lane() != Lane::Cpu).then(|| worker(Arc::clone(b), Arc::clone(&board)))).collect();
+        let workers = backends.iter().map(|b| (!b.lane().is_pool()).then(|| worker(Arc::clone(b), Arc::clone(&board)))).collect();
         Executor { backends, workers, board, prices: Prices::default() }
     }
 
@@ -814,6 +889,18 @@ impl Executor {
     /// The scoreboard now: every job this executor ran or runs, by lane and by form.
     pub fn score(&self) -> Score {
         self.board.score()
+    }
+
+    /// Runs `f` on the caller's thread as one job of `lane`, under `form`: queued, started and finished on the
+    /// scoreboard as a worker's job is, its thread CPU and phases ([`crate::score::add`]) its own. For work a caller
+    /// encodes and submits itself to the lane's one queue (a device stratum's command buffers), so the lane's
+    /// scoreboard holds every job it ran (decision 0100: no executor beside it).
+    pub fn inline<R, E>(&self, lane: Lane, form: &'static str, units: f64, f: impl FnOnce() -> Result<R, E>) -> Result<R, E> {
+        let mut ticket = self.board.queue(lane, vec![Item { form, units, estimate: 0.0, host: 0.0 }]);
+        self.board.start(&mut ticket);
+        let r = f();
+        self.board.finish(ticket, r.is_ok());
+        r
     }
 
     /// Appends the scoreboard to the trace (`RERAIL_SCOREBOARD`) under `title`.
@@ -837,8 +924,8 @@ impl Executor {
     }
 
     /// What each lane keeps, by lane.
-    pub fn space(&self) -> [SpaceCounts; 4] {
-        let mut out = [SpaceCounts::default(); 4];
+    pub fn space(&self) -> [SpaceCounts; Lane::COUNT] {
+        let mut out = [SpaceCounts::default(); Lane::COUNT];
         for b in &self.backends {
             out[b.lane().index()] = b.space();
         }
@@ -850,7 +937,7 @@ impl Executor {
     pub fn load(&self, tag: &'static str) -> Load {
         let measured = self.board.measured();
         let mut latency = self.prices.latency;
-        let mut host_scale = [1.0; 4];
+        let mut host_scale = [1.0; Lane::COUNT];
         for ((l, h), (lat, _, ratio)) in latency.iter_mut().zip(host_scale.iter_mut()).zip(measured) {
             if let Some(v) = lat {
                 *l = v;
@@ -859,7 +946,7 @@ impl Executor {
                 *h = r;
             }
         }
-        Load { queued: self.board.outstanding(), latency, open: [false; 4], cores: cores_slowdown(), slack: self.board.slack(tag), host_scale }
+        Load { queued: self.board.outstanding(), latency, open: [false; Lane::COUNT], cores: cores_slowdown(), slack: self.board.slack(tag), host_scale }
     }
 
     /// The prices with what the scoreboard measured: a device job's host CPU.
@@ -877,6 +964,19 @@ impl Executor {
     /// Places each launch of a batch of kind `tag`, largest first, by host CPU (`Prices::choose_host`): per launch,
     /// in the batch's order, its lane, its cost there and the fastest lane's; and the load it was weighed against.
     pub fn place(&self, tag: &'static str, batch: &Batch) -> Result<(Vec<(Lane, Cost, Cost)>, Load), String> {
+        let predicted = self.predict(batch, &self.load(tag));
+        self.place_predicted(tag, batch, &predicted)
+    }
+
+    /// The learned model's cost of every launch of `batch` on every lane that can run it ([`crate::cost_model`]),
+    /// one call for the batch under `load`.
+    pub fn predict(&self, batch: &Batch, load: &Load) -> Vec<[Option<crate::cost_model::Predicted>; Lane::COUNT]> {
+        let kernels: Vec<(&Kernel, Vec<Lane>)> = batch.0.iter().map(|l| (&l.kernel, self.backends.iter().filter(|b| b.can(&l.kernel)).map(|b| b.lane()).collect())).collect();
+        crate::cost_model::predict_batch(&kernels, load.cores)
+    }
+
+    /// [`Executor::place`] with the model's costs (`predicted`, per launch by lane).
+    pub fn place_predicted(&self, tag: &'static str, batch: &Batch, predicted: &[[Option<crate::cost_model::Predicted>; Lane::COUNT]]) -> Result<(Vec<(Lane, Cost, Cost)>, Load), String> {
         let mut order: Vec<usize> = (0..batch.0.len()).collect();
         order.sort_by(|&a, &b| batch.0[b].kernel.units().total_cmp(&batch.0[a].kernel.units()));
         let prices = self.measured_prices();
@@ -888,7 +988,7 @@ impl Executor {
             // A launch the caller did not pin goes to the measurement's lane when that lane can run it.
             let pin = l.pin.or_else(|| measured_lane().filter(|&m| self.backends.iter().any(|b| b.lane() == m && b.can(&l.kernel))));
             let able: Vec<Lane> = self.backends.iter().filter(|b| pin.is_none_or(|p| p == b.lane()) && b.can(&l.kernel)).map(|b| b.lane()).collect();
-            let (lane, cost, fastest) = prices.choose_host(&l.kernel, &able, &load).ok_or_else(|| {
+            let (lane, cost, fastest) = prices.choose_host_predicted(&l.kernel, &able, &load, &predicted[i]).ok_or_else(|| {
                 format!("no lane can run launch {i} ({}, {:.3e} units){}", l.kernel.form().name(), l.kernel.units(), l.pin.map_or(String::new(), |p| format!(" on {}", p.name())))
             })?;
             let at = lane.index();
@@ -932,28 +1032,29 @@ impl Executor {
     pub fn begin_as(&self, tag: &'static str, batch: Batch) -> Result<Running, String> {
         let cpu0 = process_cpu();
         let begun = Instant::now();
-        let (costs, load) = self.place(tag, &batch)?;
+        let predicted = self.predict(&batch, &self.load(tag));
+        let (costs, load) = self.place_predicted(tag, &batch, &predicted)?;
         let place = begun.elapsed().as_secs_f64();
         self.board.placed(tag, &costs, load.slack);
         let prices = self.measured_prices();
         let n = batch.0.len();
         // Every lane's cost of every launch, for the claims; the plan's lane, and when it should start each.
-        let mut all: Vec<[Option<Cost>; 4]> = vec![[None; 4]; n];
+        let mut all: Vec<[Option<Cost>; Lane::COUNT]> = vec![[None; Lane::COUNT]; n];
         let mut pinned = vec![false; n];
-        let mut order: [Vec<usize>; 4] = Default::default();
+        let mut order: [Vec<usize>; Lane::COUNT] = Default::default();
         let mut due = vec![0.0; n];
-        let mut per_lane = [0usize; 4];
+        let mut per_lane = [0usize; Lane::COUNT];
         for (i, l) in batch.0.iter().enumerate() {
             let measured = measured_lane().filter(|&m| self.backends.iter().any(|b| b.lane() == m && b.can(&l.kernel)));
             pinned[i] = l.pin.is_some() || measured.is_some();
             for b in &self.backends {
                 if b.can(&l.kernel) {
-                    all[i][b.lane().index()] = prices.cost(&l.kernel, b.lane(), &load);
+                    all[i][b.lane().index()] = prices.cost_predicted(&l.kernel, b.lane(), &load, predicted[i][b.lane().index()]);
                 }
             }
             let (lane, c, _) = costs[i];
             all[i][lane.index()] = Some(c);
-            if lane != Lane::Cpu {
+            if !lane.is_pool() {
                 due[i] = load.queued[lane.index()];
             }
             per_lane[lane.index()] += 1;
@@ -965,8 +1066,9 @@ impl Executor {
         }
         // The cores' launches start as the pool's threads free up: the work outstanding on the cores spread over the
         // threads, then each launch, largest first, on the thread free soonest (the cores' slowdown is in its wall).
-        let mut free_at = vec![load.queued[Lane::Cpu.index()] / threads() as f64; threads()];
-        for &i in &order[Lane::Cpu.index()] {
+        let host_queued = load.queued[Lane::Cpu.index()] + load.queued[Lane::Sql.index()];
+        let mut free_at = vec![host_queued / threads() as f64; threads()];
+        for &i in by_size.iter().filter(|&&i| costs[i].0.is_pool()) {
             let t = free_at.iter_mut().min_by(|a, b| a.total_cmp(b)).expect("a thread");
             due[i] = *t;
             *t += costs[i].1.wall;
@@ -995,17 +1097,17 @@ impl Executor {
             send: std::sync::Mutex::new(send),
             board: Arc::clone(&self.board),
         });
-        let mut cpu = None;
+        let mut hosts = Vec::new();
         for (at, b) in self.backends.iter().enumerate() {
             let lane = b.lane();
             match &self.workers[at] {
                 // The cores: as many pool jobs as their planned launches (at most the pool's threads), each taking
                 // launches until none is left for it.
                 None => {
-                    cpu = Some(Arc::clone(b));
+                    hosts.push(Arc::clone(b));
                     for _ in 0..per_lane[lane.index()].min(threads()) {
                         let (claims, backend) = (Arc::clone(&claims), Arc::clone(b));
-                        rayon::spawn_fifo(move || as_job("the cores' launches", || claims.serve_cpu(&*backend)));
+                        rayon::spawn_fifo(move || as_job(if lane == Lane::Sql { "SQL launches" } else { "the cores' launches" }, || claims.serve_host(&*backend)));
                     }
                 }
                 // A device lane: its worker claims its share when it reaches the batch, and a device with nothing
@@ -1017,7 +1119,7 @@ impl Executor {
                 }
             }
         }
-        Ok(Running { claims, take, cpu, tag, report: Report { place, ..Report::default() }, cpu0 })
+        Ok(Running { claims, take, hosts, tag, report: Report { place, ..Report::default() }, cpu0, replies: vec![] })
     }
 
 
@@ -1038,18 +1140,25 @@ impl Executor {
 }
 
 impl Running {
+    /// Whether every launch replied, without blocking or consuming its result.
+    /// Dependency schedulers can release successors before an unrelated batch finishes.
+    pub fn ready(&mut self) -> bool {
+        while let Ok(reply) = self.take.try_recv() { self.replies.push(reply); }
+        self.replies.iter().map(|(_, ids, _)| ids.len()).sum::<usize>() == self.claims.kernels.len()
+    }
     /// Waits for every launch: each one's output, in the batch's order, and the batch's report. Meanwhile the
     /// caller runs free launches itself: the cores' that the pool has not reached, and those of a lane behind its
     /// plan (decision 0100 §11).
     pub fn wait(self) -> Result<(Vec<Done>, Report), String> {
-        let Running { claims, take, cpu, tag, mut report, cpu0 } = self;
+        let Running { claims, take, hosts, tag, mut report, cpu0, replies } = self;
+        let mut replies = replies.into_iter();
         let asked = Instant::now();
         let on_pool = on_pool();
         let n = claims.kernels.len();
         let mut outs: Vec<Option<(Lane, Output)>> = vec![None; n];
         let mut failed: Option<String> = None;
-        let mut span: [Option<(Instant, Instant)>; 4] = [None; 4];
-        let mut ran = [0.0f64; 4];
+        let mut span: [Option<(Instant, Instant)>; Lane::COUNT] = [None; Lane::COUNT];
+        let mut ran = [0.0f64; Lane::COUNT];
         let mut got = 0usize;
         let mut helped = 0u64;
         let mut wait = Waiting::new("a batch's launches");
@@ -1073,7 +1182,7 @@ impl Running {
             }
         };
         while got < n {
-            match take.try_recv() {
+            match replies.next().map(Ok).unwrap_or_else(|| take.try_recv()) {
                 Ok(g) => {
                     store(g, &mut got);
                     // More to wait for: the job last run did not hold up the batch's end.
@@ -1086,14 +1195,18 @@ impl Running {
                 Err(std::sync::mpsc::TryRecvError::Empty) => wait.polled(),
             }
             // Free launches the caller can run: the cores' own, or one a lane behind its plan has not reached.
-            let mine = cpu.as_ref().and_then(|cpu| {
-                let i = claims.order[Lane::Cpu.index()].iter().rev().copied().find(|&i| claims.free(i) && claims.claim(i, Lane::Cpu)).or_else(|| claims.take_late(Lane::Cpu))?;
-                Some((cpu, i))
+            let mine = hosts.iter().find_map(|host| {
+                let lane = host.lane();
+                // SQL connections belong to pool jobs. A caller outside the pool
+                // must not add another SQL worker beyond RERAIL_THREADS.
+                if lane == Lane::Sql && !on_pool { return None; }
+                let i = claims.order[lane.index()].iter().rev().copied().find(|&i| claims.free(i) && claims.claim(i, lane)).or_else(|| claims.take_late(lane))?;
+                Some((host, i, lane))
             });
-            if let Some((cpu, i)) = mine {
-                let ticket = claims.board.claimed(Lane::Cpu, vec![claims.item(i, Lane::Cpu)], claims.begun);
-                let r = run_job(&**cpu, &claims.board, &[&claims.kernels[i]], ticket);
-                store((Lane::Cpu, vec![i], r), &mut got);
+            if let Some((host, i, lane)) = mine {
+                let ticket = claims.board.claimed(lane, vec![claims.item(i, lane)], claims.begun);
+                let r = run_job(&**host, &claims.board, &[&claims.kernels[i]], ticket);
+                store((lane, vec![i], r), &mut got);
                 helped += 1;
                 continue;
             }
@@ -1122,7 +1235,7 @@ impl Running {
             report.joules[lane.index()] = WATTS[lane.index()] * ran[lane.index()];
         }
         report.cpu = process_cpu() - cpu0;
-        let mut on = [0u64; 4];
+        let mut on = [0u64; Lane::COUNT];
         let mut moved = 0u64;
         let mut done = Vec::with_capacity(n);
         for (i, o) in outs.into_iter().enumerate() {
@@ -1133,7 +1246,7 @@ impl Running {
             moved += u64::from(lane != claims.plan[i]);
             report.launches[lane.index()] += 1;
             report.lost += (c.wall - fastest.wall).max(0.0);
-            if lane != Lane::Cpu {
+            if !lane.is_pool() {
                 if let Some(cc) = claims.costs[i][Lane::Cpu.index()] {
                     report.cpu_freed += cc.wall;
                 }
@@ -1146,6 +1259,97 @@ impl Running {
     }
 }
 
+
+/// A batch whose launches are taken one by one as each ends ([`Running::each`]): one submission to the lanes, and
+/// a consumer of launch `i` waits for `i` alone, not for the batch's slowest (decision 0114 §2).
+pub struct Each {
+    claims: Arc<Claims>,
+    cpu: Option<Arc<dyn Backend>>,
+    state: std::sync::Mutex<EachState>,
+    tag: &'static str,
+}
+
+struct EachState {
+    take: Receiver<Got>,
+    outs: Vec<Option<Result<Output, String>>>,
+    ended: bool,
+}
+
+impl Running {
+    /// The batch, its launches taken one at a time ([`Each::take`]).
+    pub fn each(self) -> Each {
+        let Running { claims, take, hosts, tag, replies, .. } = self;
+        let n = claims.kernels.len();
+        // The caller runs its own launches on the cores' backend; replies a scheduler polled already are kept.
+        let cpu = hosts.into_iter().find(|b| b.lane() == Lane::Cpu);
+        let mut state = EachState { take, outs: (0..n).map(|_| None).collect(), ended: false };
+        for g in replies {
+            state.store(g);
+        }
+        Each { claims, cpu, state: std::sync::Mutex::new(state), tag }
+    }
+}
+
+impl EachState {
+    fn store(&mut self, (lane, ids, (r, _, _)): Got) {
+        match r {
+            Ok(r) if r.len() == ids.len() => {
+                for (&i, o) in ids.iter().zip(r) {
+                    self.outs[i] = Some(Ok(o));
+                }
+            }
+            Ok(r) => {
+                let e = format!("{} lane: {} outputs for {} launches", lane.name(), r.len(), ids.len());
+                ids.iter().for_each(|&i| self.outs[i] = Some(Err(e.clone())));
+            }
+            Err(e) => ids.iter().for_each(|&i| self.outs[i] = Some(Err(format!("{} lane: {e}", lane.name())))),
+        }
+    }
+}
+
+impl Each {
+    /// Launch `i`'s output, once it ended: run here if no lane claimed it yet; meanwhile the outputs that come in
+    /// are kept for their takers, and the pool's jobs are helped.
+    pub fn take(&self, i: usize) -> Result<Output, String> {
+        let mut wait = Waiting::new("a launch of a batch");
+        loop {
+            {
+                let mut st = self.state.lock().unwrap_or_else(|p| p.into_inner());
+                if let Some(o) = st.outs[i].take() {
+                    return o;
+                }
+                while !st.ended {
+                    match st.take.try_recv() {
+                        Ok(g) => st.store(g),
+                        Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => st.ended = true,
+                    }
+                }
+                if let Some(o) = st.outs[i].take() {
+                    return o;
+                }
+                if st.ended {
+                    return Err(format!("{}: launch {i} was never run: a lane's worker ended", self.tag));
+                }
+            }
+            // Its own launch, if no lane has it: the caller runs it on the cores.
+            if let Some(cpu) = &self.cpu
+                && self.claims.free(i)
+                && self.claims.claim(i, Lane::Cpu)
+            {
+                let ticket = self.claims.board.claimed(Lane::Cpu, vec![self.claims.item(i, Lane::Cpu)], self.claims.begun);
+                let r = run_job(&**cpu, &self.claims.board, &[&self.claims.kernels[i]], ticket);
+                self.state.lock().unwrap_or_else(|p| p.into_inner()).store((Lane::Cpu, vec![i], r));
+                continue;
+            }
+            if on_pool() && wait.help() {
+                continue;
+            }
+            wait.polled();
+            std::thread::sleep(std::time::Duration::from_micros(50));
+        }
+    }
+}
 
 impl Default for Executor {
     fn default() -> Self {

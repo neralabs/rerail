@@ -1,4 +1,4 @@
-# Data-layer candidate rules
+# Rerail rule pack: Data-layer architecture rules
 
 This private pack contains sixty authored candidates from the pinned data-layer revision.
 All six batches pass their recorded source-detection gates; retained integration contracts remain documented.

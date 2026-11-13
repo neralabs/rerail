@@ -35,6 +35,7 @@
 // Builds on tsx/eslint-a-common (deparen, estree_parent, static_string, key_static, static_prop; also used by the
 // rules) and core (kind, field, child, op, text, value, tokens, the tree axes, @to_precision).
 #include "tsx/eslint-a-common.rr"
+#include "layout.rr"
 
 // ---- literals ----------------------------------------------------------------------------------------------------
 // tree-sitter writes every numeric literal as `number`; a BigInt is the one that ends in `n` (no Number literal
@@ -92,7 +93,15 @@ norm(t, 1, g, strlen(g) - strlen(u)) :- split_e(s, t, _), sci_in(s, 1), u = @rep
     match("\\.(?<B>[0-9]*)", u), g = @replace_all(B, "^0+", "").
 // stored(n, p): the literal's value printed with as many significant digits as the literal has.
 .decl stored(n: node, p: symbol)
-stored(n, @to_precision(r, strlen(c))) :- decimal(n), raw_number(n, r), sci(r, _, c, _), strlen(c) <= 100.
+stored(n, @to_precision(r, strlen(c))) :- decimal(n), raw_number(n, r), raw_digits(r, c), strlen(c) <= 100.
+// raw_digits(r, c): sci's c for a literal's own text, by string operations: the mantissa without its point and
+// leading zeros, an integer's without its trailing zeros too. Not read off sci, which reads stored's output:
+// a relation cycle that makes values ("1.50" → toPrecision → sci_in) the engine refuses as unbounded.
+.decl raw_digits(r: symbol, c: symbol)
+raw_digits(r, @replace_all(@replace_all(@replace_all(r, "e.*$", ""), "^0+", ""), "0+$", "")) :- decimal(n), raw_number(n, r),
+    !contains(".", r).
+raw_digits(r, @replace_all(@replace_all(@replace_all(r, "e.*$", ""), "\\.", ""), "^0+", "")) :- decimal(n), raw_number(n, r),
+    contains(".", r).
 // significant_bits(n, k): in base 2^b each digit is b bits; the first digit may use fewer, and the last
 // non-zero digit may end in zero bits. 0x1F is 5 bits; 0x20000000000001 is 54.
 .decl significant_bits(n: node, k: number)
@@ -121,6 +130,7 @@ binop(n, o, l, r) :- kind(n, "binary_expression"), op(n, o), field(n, "left", a)
     field(n, "right", b), deparen(b, r).
 // op_token(n, t): the token after the left field. That field keeps its parentheses, so in `(a) == b` the
 // token after it is `==`, not `)`.
+.stored op_token "a binary operator is a choice, so the tape keeps the token after the left operand"
 .decl op_token(n: node, t: span)
 op_token(n, t) :- kind(n, "binary_expression"), field(n, "left", a), token_after(a, t).
 .decl equality(o: symbol, strict: symbol)
@@ -150,40 +160,40 @@ object_prop(o, p, k, x, key) :- kind(o, "object"), child(o, p, _), kind(p, "meth
 // A fix that rewrites `Array(a, b)` as `[a, b]` at the start of a statement changes what the statement continues:
 //   foo()                         foo()
 //   Array(a, b).forEach(f)   →    [a, b].forEach(f)       reads as foo()[a, b].forEach(f)
-// so ESLint writes `;[a, b]` when the token before is one a `[` or `(` would continue. stmt_start(x): x begins
-// at the same offset as an expression statement that holds it.
-.decl stmt_start(x: node)
-stmt_start(x) :- node(_, x, _, b, _), kind(s, "expression_statement"), node(_, s, _, b, _), within(x, s).
-// semi_needed(x): the token before x does not end its statement for sure. ESLint's needsPrecedingSemicolon,
-// case by case on that token (comments are not tokens). It leaves out the TypeScript type contexts, where
-// ESLint also says no.
+// so ESLint writes `;[a, b]` when the token before is one a `[` or `(` would continue. stmt_start(x, s): x begins
+// at the same offset as the expression statement s that holds it.
+.decl stmt_start(x: node, s: node)
+stmt_start(x, s) :- node(_, x, _, b, _), kind(s, "expression_statement"), node(_, s, _, b, _), within(x, s).
+// semi_needed(x): the code before x's statement does not end it for sure. ESLint's needsPrecedingSemicolon, case
+// by case on the token before (comments are not tokens), read from the source before the statement and the
+// node it ends (layout.rr): the tape keeps no `)` or `}` its grammar implies. It leaves out the TypeScript
+// type contexts, where ESLint also says no.
 .decl semi_needed(x: node)
-semi_needed(x) :- stmt_start(x), token_before(x, t), !asi_safe(t).
-.decl asi_safe(t: span)
+semi_needed(x) :- stmt_start(x, s), prev_code(s, t), !asi_safe(s, t).
+layout_at(s) :- stmt_start(_, s).
+.decl asi_safe(s: node, t: symbol)
 // `;` `:` `{` `=>`, and postfix `++` / `--`, which always end the statement before a new line.
-asi_safe(t) :- token_before(_, t), (text(t, ";") ; text(t, ":") ; text(t, "{") ; text(t, "=>") ; text(t, "++") ;
-    text(t, "--")).
-// `)` closing the head of if, while, with or for: `if (a)⏎ [b]` is the if's body.
-// for's own `)` ends no node (a token is its own last token, so that row does not count).
-asi_safe(t) :- token_before(_, t), text(t, ")"), count : { last_token(m, t), m != t } = 0.
-asi_safe(t) :- last_token(p, t), text(t, ")"), kind(p, "parenthesized_expression"), field(s, _, p),
-    (kind(s, "if_statement") ; kind(s, "while_statement") ; kind(s, "with_statement") ; kind(s, "do_statement")).
+asi_safe(s, t) :- prev_code(s, t), match("(?s).*(;|:|\\{|=>|\\+\\+|--)\\s*", t).
+// The body of if, while, with, for or do, or of else: what comes before is its head, `else` or `do`.
+asi_safe(s, t) :- prev_code(s, t), field(i, f, s), (f = "consequence" ; f = "body"), kind(i, k), (k = "if_statement" ;
+    k = "while_statement" ; k = "with_statement" ; k = "for_statement" ; k = "for_in_statement" ; k = "do_statement").
+asi_safe(s, t) :- prev_code(s, t), child(e, s, _), kind(e, "else_clause").
 // `}` ends a statement, except after a function expression, a class expression or an object literal.
-asi_safe(t) :- token_before(_, t), text(t, "}"), !open_brace(t).
+asi_safe(s, t) :- prev_code(s, t), match("(?s).*\\}\\s*", t), prev_node(s, p), !open_brace(p).
 // A word: a declarator without `=` (`var a⏎ [b]`), break / continue (with or without a label), and the
-// keywords that end their statement: a bare `return`, `debugger`, `yield`, and `else` / `do` before a body.
-asi_safe(t) :- last_token(v, t), kind(v, "variable_declarator"), !field(v, "value", _).
-asi_safe(t) :- last_token(s, t), (kind(s, "break_statement") ; kind(s, "continue_statement") ;
-    kind(s, "return_statement") ; kind(s, "debugger_statement") ; kind(s, "yield_expression")).
-asi_safe(t) :- first_token(s, t), (kind(s, "else_clause") ; kind(s, "do_statement")).
+// keywords that end their statement: a bare `return`, `debugger`, `yield`.
+asi_safe(s, t) :- prev_code(s, t), prev_node(s, p), ends(p, v), kind(v, "variable_declarator"), !field(v, "value", _).
+asi_safe(s, t) :- prev_code(s, t), prev_node(s, p), ends(p, k), (kind(k, "break_statement") ; kind(k, "continue_statement") ;
+    kind(k, "return_statement") ; kind(k, "debugger_statement") ; kind(k, "yield_expression")).
 // The string of an import or export: `import "m"⏎ [a]`.
-asi_safe(t) :- last_token(sn, t), kind(sn, "string"), field(i, "source", sn),
+asi_safe(s, t) :- prev_code(s, t), prev_node(s, p), ends(p, sn), kind(sn, "string"), field(i, "source", sn),
     (kind(i, "import_statement") ; kind(i, "export_statement")).
-.decl open_brace(t: span)
-open_brace(t) :- last_token(b, t), kind(b, "statement_block"), field(f, "body", b),
+// open_brace(p): p ends with the `}` of a function expression, a class expression or an object literal.
+.decl open_brace(p: node)
+open_brace(p) :- ends(p, b), kind(b, "statement_block"), field(f, "body", b),
     (kind(f, "function_expression") ; kind(f, "generator_function")).
-open_brace(t) :- last_token(b, t), kind(b, "class_body"), field(c, "body", b), kind(c, "class").
-open_brace(t) :- last_token(o, t), kind(o, "object").
+open_brace(p) :- ends(p, b), kind(b, "class_body"), field(c, "body", b), kind(c, "class").
+open_brace(p) :- ends(p, o), kind(o, "object").
 
 // as_array(n, lead): the Array call n becomes an array literal of its arguments, as written (comments kept),
 // after lead ("" or ";", by semi_needed).   new Array(a, /* b */ c)  →  [a, /* b */ c];   new Array  →  []

@@ -21,6 +21,9 @@ const testsForPsAddon = [
   // and 1; batch 04: 6 and 2), so it is P's open parity, not this engine's (O84).
   "test/conformance/data-layer/ports.test.ts",
 ];
+// `npm test` runs `vitest run --dir test`, which matches exclusions against paths relative to test/: each is excluded
+// as `**/<path under test/>`, so it holds with and without `--dir`.
+const psAddonExclusions = testsForPsAddon.map((file) => `**/${file.replace(/^test\//, "")}`);
 
 export default defineConfig({
   test: {
@@ -33,19 +36,22 @@ export default defineConfig({
     // workers prevent that environment from racing with concurrently executing test files.
     pool: "forks",
     setupFiles: ["./test/support/setup-rerail-home.ts"],
-    // Upstream tools' copied tests are fixture data for conformance recordings.
-    // SQLite setup and SQL profiling tests use `node --test` in their dedicated npm scripts.
+    // Not vitest suites: upstream tools' copied tests are fixture data for the expected findings, real-code samples
+    // extracted under .rerail/ include upstream projects' test files, and ensure-sqlite's and the SQL profiling tests run
+    // under `node --test` (`npm run test:scripts`, `npm run test:profiling`).
     exclude: [
       "**/node_modules/**",
       "**/dist/**",
       ".rerail/**",
       "fixtures/**",
+      ".rerail/**",
       "packs/*/upstream/**",
       "packs/*/candidates/**",
       "**/scripts/ensure-sqlite.test.mjs",
       "**/scripts/sql-profile.test.mjs",
+      "**/scripts/sql-profile/**",
       "**/scripts/sql-execution-budget.test.mjs",
-      ...(process.env.RERAIL_RELATIONAL_TESTS === "1" ? [] : testsForPsAddon),
+      ...(process.env.RERAIL_RELATIONAL_TESTS === "1" ? [] : psAddonExclusions),
     ],
   },
 });

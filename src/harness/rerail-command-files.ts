@@ -1,10 +1,10 @@
+import { ADAPTER_CAPABILITIES } from "../engine/adapter-contract.js";
 import {
   bugReportInstructions,
   createRuleInstructions,
   uninstallInstructions,
   showMeInstructions,
   RERAIL_COMMANDS,
-  type CommandSigil,
   type RerailCommand,
   type RerailCommandName,
 } from "./rerail-commands.js";
@@ -141,19 +141,17 @@ function dashboardBody(agent: CommandFileAgent, cli: string): CommandBody {
 
 type BodyBuilder = (agent: CommandFileAgent, context: CommandFileContext) => CommandBody;
 
-const sigilFor = (agent: CommandFileAgent): CommandSigil => agent === "codex" ? "$" : "/";
-
 /** How a command's instructions name the words typed after it: Claude Code substitutes them, the others read them. */
 const typedWords = (agent: CommandFileAgent, name: RerailCommandName): string => agent === "claude-code" ? "\"$ARGUMENTS\""
-  : `the words the person typed after ${sigilFor(agent)}${name}`;
+  : `the words the person typed after ${ADAPTER_CAPABILITIES[agent].commandSigil}${name}`;
 
 function createBody(agent: CommandFileAgent, { cli, packageRoot }: CommandFileContext): CommandBody {
   return {
     text: createRuleInstructions({ cli, packageRoot, request: typedWords(agent, "rerail-create") }),
     // `rules export --output` writes any path, so Claude Code asks before it runs; the others only read or propose a
-    // rule. `rules approve` and `rules import` (whose `--approve` approves a whole dump) are never pre-approved: the host
-    // asks the person, whose approval it is, before it runs.
-    allowed: [`${cli} rules evidence *`, `${cli} rules test *`, `${cli} rules add *`],
+    // rule (`rules show` prints one). `rules approve` and `rules import` (whose `--approve` approves a whole dump) are
+    // never pre-approved: the host asks the person, whose approval it is, before it runs.
+    allowed: [`${cli} rules evidence *`, `${cli} rules show *`, `${cli} rules test *`, `${cli} rules add *`],
   };
 }
 
@@ -171,12 +169,12 @@ const COMMAND_BODIES: Record<RerailCommandName, BodyBuilder> = {
   }),
   // The removal itself is left out of `allowed`, so Claude Code asks the person once more before running it.
   "rerail-uninstall": (agent, { cli }) => ({
-    text: uninstallInstructions(cli, sigilFor(agent)),
+    text: uninstallInstructions(cli, ADAPTER_CAPABILITIES[agent].commandSigil),
     allowed: [`${cli} install --remove --dry-run`, `${cli} stop`],
   }),
   // The demo file's write and fix still go through the coding agent's own edit permission.
   "rerail-show-me": (agent, { cli }) => ({
-    text: showMeInstructions({ cli, sigil: sigilFor(agent), write: agent === "codex" ? "shell" : "edit-tool" }),
+    text: showMeInstructions({ cli, sigil: ADAPTER_CAPABILITIES[agent].commandSigil, write: ADAPTER_CAPABILITIES[agent].observedFileWrite }),
     allowed: [`${cli} show-me --json`, `${cli} show-me --cleanup`],
   }),
   // `--output` writes any path and `rules add` changes a rule, so both are left out; reading and editing the bundle, and

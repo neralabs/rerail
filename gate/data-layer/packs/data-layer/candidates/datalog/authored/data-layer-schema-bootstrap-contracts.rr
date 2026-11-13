@@ -1,0 +1,275 @@
+// data-layer-schema-bootstrap-contracts: the relational clause bootstrap-contracts, by hand.
+//
+// Its SQL runs over CPython `ast` rows (`pythonAst`); the script it ports is nera-data-layer
+// scripts/lint_schema_bootstrap_contracts.py. Here the same questions are asked of tree-sitter's tree read the
+// way `ast` reads it (parentheses transparent, a def's decorators its own). The gate is every module of the
+// policy's scope (no text test) that is valid twice: W's `syntax: valid` (tree-sitter's verdict, `tape_syntax_error(d)`)
+// and CPython's `ast.parse`, which the `pythonAst` stages run (a file it rejects fails them;
+// `cpython_syntax_error`). Options: the defaults; the query has no entryPoint cases. The code is the row's `issue`
+// column. Every name compared (ast_name: Name id, arg, Attribute attr, def name) is the identifier's `ast` name,
+// `@nfkc` of its text (PEP 3131).
+//
+// Annotation names (W's pythonAst `annotation_names`, `expand: annotations`, value/python_ast/metadata.py): for a
+// str Constant (W's `value` of a string or an adjacent-string run with no b or f part), the names of
+// `ast.parse(value, mode="eval").body`, recursively (a body that is itself a str Constant is parsed again), or
+// `[value]` when it does not parse; for anything else, the Name ids and Attribute attrs below it (nested strings
+// not parsed): tree-sitter's identifiers less keyword-argument and lambda-parameter names. The parse is decision
+// 0055's guest, `string_annotation(s), parsed(s, "annotation", root)`: the string's value parsed as `( … )`, root the
+// expression inside; `string_annotation(s)` with no `parsed` row is a string whose guest does not parse.
+// GAP: the guest is judged by CPython's grammar as a module, `(value)`, where W asks `ast.parse(value,
+// mode="eval")`: a value only the module form accepts (`yield x`, which ast.parse only rejects when compiled) has
+// names here and its value in W. W asks this of each annotation
+// root (fields annotation/returns) and of each Subscript value/slice below one; the clause reads the roots and,
+// for SBC002's read-only test, the slice of a root `Sequence[…]`.
+// Gaps (none in the scoped files today): a str Constant W parses where the engine has no `string_annotation` row
+// (Ruff reads every annotation root and a nested string at a body as a type definition) has no names here; a
+// body that is an adjacent-string run inside a string annotation (`"'A' 'B'"`) has no names here.
+.decl tape_syntax_error(d: number)
+.decl cpython_syntax_error(d: number, l: number, msg: symbol)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+
+.decl bootstrap_doc(d: number)
+bootstrap_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), !cpython_syntax_error(d, _, _).
+.decl bootstrap_fdef(kind: symbol)
+bootstrap_fdef("function_definition").
+.decl bootstrap_type(kind: symbol)
+bootstrap_type("type").
+.decl bootstrap_stmt(kind: symbol)
+bootstrap_stmt("expression_statement").
+.decl bootstrap_fn(f: node, x: symbol)
+bootstrap_fn(f, x) :- node(d, f, "function_definition", _, _), bootstrap_doc(d), field(f, "name", nm), text(nm, t),
+    x = @nfkc(t).
+
+// ---- names ----------------------------------------------------------------------------------------------------
+// The names the clause asks about.
+.decl bootstrap_broad(x: symbol)
+bootstrap_broad("Any"). bootstrap_broad("Collection"). bootstrap_broad("Iterable"). bootstrap_broad("Mapping").
+bootstrap_broad("MutableMapping"). bootstrap_broad("MutableSequence"). bootstrap_broad("Sequence").
+.decl bootstrap_scalar(x: symbol)
+bootstrap_scalar("Any"). bootstrap_scalar("bytes"). bootstrap_scalar("bytearray"). bootstrap_scalar("float").
+bootstrap_scalar("int"). bootstrap_scalar("object"). bootstrap_scalar("str").
+.decl bootstrap_lazy_forbidden(x: symbol)
+bootstrap_lazy_forbidden("AsyncDatabaseConnection"). bootstrap_lazy_forbidden("AsyncReadTransaction").
+bootstrap_lazy_forbidden("AsyncSchemaTransaction"). bootstrap_lazy_forbidden("AsyncVersionedDatabaseConnection").
+bootstrap_lazy_forbidden("AsyncWriteTransaction"). bootstrap_lazy_forbidden("SyncDatabaseConnection").
+bootstrap_lazy_forbidden("SyncReadTransaction"). bootstrap_lazy_forbidden("SyncSchemaTransaction").
+bootstrap_lazy_forbidden("SyncVersionedDatabaseConnection"). bootstrap_lazy_forbidden("SyncWriteTransaction").
+.decl bootstrap_conn_type(x: symbol)
+bootstrap_conn_type("AsyncDatabaseConnection"). bootstrap_conn_type("AsyncVersionedDatabaseConnection").
+bootstrap_conn_type("SyncDatabaseConnection"). bootstrap_conn_type("SyncVersionedDatabaseConnection").
+bootstrap_conn_type("_DatabaseConnectionCore"). bootstrap_conn_type("_SqlConnectionCore").
+.decl bootstrap_txn_type(x: symbol)
+bootstrap_txn_type("AsyncReadTransaction"). bootstrap_txn_type("AsyncSchemaTransaction").
+bootstrap_txn_type("AsyncWriteTransaction"). bootstrap_txn_type("LazySchemaTransaction").
+bootstrap_txn_type("ReadTransaction"). bootstrap_txn_type("SyncReadTransaction").
+bootstrap_txn_type("SyncSchemaTransaction"). bootstrap_txn_type("SyncWriteTransaction").
+bootstrap_txn_type("WriteTransaction").
+.decl bootstrap_conn_name(x: symbol)
+bootstrap_conn_name("async_conn"). bootstrap_conn_name("conn"). bootstrap_conn_name("connection").
+bootstrap_conn_name("db_connection"). bootstrap_conn_name("sql_conn"). bootstrap_conn_name("sync_conn").
+.decl bootstrap_txn_name(x: symbol)
+bootstrap_txn_name("current_schema_txn"). bootstrap_txn_name("read_txn"). bootstrap_txn_name("schema_transaction").
+bootstrap_txn_name("schema_txn"). bootstrap_txn_name("transaction"). bootstrap_txn_name("txn").
+bootstrap_txn_name("write_txn").
+.decl bootstrap_schema_txn_name(x: symbol)
+bootstrap_schema_txn_name("current_schema_txn"). bootstrap_schema_txn_name("schema_transaction").
+bootstrap_schema_txn_name("schema_txn").
+
+.decl bootstrap_kwname(i: node)
+bootstrap_kwname(i) :- node(_, k, "keyword_argument", _, _), field(k, "name", i).
+bootstrap_kwname(i) :- node(_, lp, "lambda_parameters", _, _), child(lp, i, _), node(_, i, "identifier", _, _).
+bootstrap_kwname(i) :- node(_, lp, "lambda_parameters", _, _), child(lp, q, _), field(q, "name", i).
+bootstrap_kwname(i) :- node(_, lp, "lambda_parameters", _, _), child(lp, q, _), node(_, q, "list_splat_pattern", _, _),
+    child(q, i, 0), node(_, i, "identifier", _, _).
+bootstrap_kwname(i) :- node(_, lp, "lambda_parameters", _, _), child(lp, q, _),
+    node(_, q, "dictionary_splat_pattern", _, _), child(q, i, 0), node(_, i, "identifier", _, _).
+// bootstrap_plain_string(s, c): a str Constant (a literal not in an adjacent-string run, or a run; no b or f
+// prefix in it) with value c.
+.decl bootstrap_fpart(s: node)
+bootstrap_fpart(s) :- node(_, s, "string", _, _), strprefix(s, p), match("(?s:.*)[fF](?s:.*)", p).
+.decl bootstrap_in_run(s: node)
+bootstrap_in_run(s) :- node(_, c, "concatenated_string", _, _), child(c, s, _).
+.decl bootstrap_plain_string(s: node, c: symbol)
+bootstrap_plain_string(s, c) :- node(_, s, "string", _, _), !bootstrap_in_run(s), !bootstrap_fpart(s),
+    value_type_of(s, "str"), value(s, c).
+bootstrap_plain_string(r, c) :- node(_, r, "concatenated_string", _, _), !bootstrap_frun(r), value_type_of(r, "str"),
+    value(r, c).
+.decl bootstrap_frun(r: node)
+bootstrap_frun(r) :- node(_, r, "concatenated_string", _, _), child(r, s, _), bootstrap_fpart(s).
+// bootstrap_ann_expr(t, e): annotation t's expression, parentheses taken off.
+.decl bootstrap_ann_expr(t: node, e: node)
+bootstrap_ann_expr(t, e) :- node(_, t, "type", _, _), child(t, e, 0), !child(t, _, 1).
+bootstrap_ann_expr(t, i) :- bootstrap_ann_expr(t, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
+// bootstrap_ann(t, x): x is in annotation_names(t) for annotation t (a `type` node): its Name ids and Attribute
+// attrs when its expression is no str Constant, else the string's names.
+.decl bootstrap_ann(t: node, x: symbol)
+bootstrap_ann(t, x) :- node(d, i, "identifier", _, _), bootstrap_doc(d), inside(i, t, bootstrap_type), text(i, u),
+    !bootstrap_kwname(i), !bootstrap_string_ann(t), x = @nfkc(u).
+bootstrap_ann(t, x) :- bootstrap_ann_expr(t, s), bootstrap_plain_string(s, _), bootstrap_str_names(s, x).
+.decl bootstrap_string_ann(t: node)
+bootstrap_string_ann(t) :- bootstrap_ann_expr(t, s), bootstrap_plain_string(s, _).
+
+// bootstrap_str_names(s, x): x is in annotation_names(s) for str Constant s: the names of the tree its value
+// parses to (a body that is a str Constant parsed again), or the value itself when it does not parse.
+// bootstrap_body(r, e): the expression a parsed tree r holds (r itself, the guest's root), parentheses taken off;
+// bootstrap_body_str(r, e): that expression is a str Constant (a string with no b, f or t prefix; `str` its decoded
+// value). bootstrap_in_tree(r, i): i is r or a node below it.
+.decl bootstrap_body(r: node, e: node)
+bootstrap_body(r, r) :- string_annotation(s), parsed(s, "annotation", r).
+bootstrap_body(r, i) :- bootstrap_body(r, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
+.decl bootstrap_in_tree(r: node, i: node)
+bootstrap_in_tree(r, r) :- string_annotation(s), parsed(s, "annotation", r).
+bootstrap_in_tree(r, i) :- string_annotation(s), parsed(s, "annotation", r), within(i, r).
+.decl bootstrap_nonstr_prefix(e: node)
+bootstrap_nonstr_prefix(e) :- bootstrap_body(_, e), strprefix(e, p), match("(?s:.*)[bBfFtT](?s:.*)", p).
+.decl bootstrap_body_str(r: node, e: node)
+bootstrap_body_str(r, e) :- bootstrap_body(r, e), node(_, e, "string", _, _), !bootstrap_nonstr_prefix(e).
+.decl bootstrap_str_value(s: node, v: symbol)
+bootstrap_str_value(s, v) :- bootstrap_plain_string(s, v).
+bootstrap_str_value(e, v) :- bootstrap_body_str(_, e), str(e, v).
+.decl bootstrap_str_names(s: node, x: symbol)
+bootstrap_str_names(s, x) :- string_annotation(s), parsed(s, "annotation", r), !bootstrap_body_str(r, _), bootstrap_in_tree(r, i),
+    node(_, i, "identifier", _, _), text(i, u), !bootstrap_kwname(i), x = @nfkc(u).
+bootstrap_str_names(s, x) :- string_annotation(s), parsed(s, "annotation", r), bootstrap_body_str(r, e), bootstrap_str_names(e, x).
+bootstrap_str_names(s, x) :- string_annotation(s), !parsed(s, "annotation", _), bootstrap_str_value(s, x).
+
+// ---- parameters -----------------------------------------------------------------------------------------------
+// (mirrors python/ast.rr sig_param / param_parts.)
+// bootstrap_param(f, nm, x, t): every `arg` of def f (posonly, args, vararg, kwonly, kwarg), named by identifier
+// nm with text x, annotated t; bootstrap_bare(f, nm, x): one without annotation.
+.decl bootstrap_param(f: node, nm: node, x: symbol, t: node)
+bootstrap_param(f, nm, x, t) :- bootstrap_fn(f, _), field(f, "parameters", ps), child(ps, p, _),
+    node(_, p, "typed_parameter", _, _), child(p, nm, 0), node(_, nm, "identifier", _, _), text(nm, u), x = @nfkc(u),
+    field(p, "type", t).
+bootstrap_param(f, nm, x, t) :- bootstrap_fn(f, _), field(f, "parameters", ps), child(ps, p, _),
+    node(_, p, "typed_parameter", _, _), child(p, s, 0), node(_, s, "list_splat_pattern", _, _), child(s, nm, 0),
+    text(nm, u), x = @nfkc(u), field(p, "type", t).
+bootstrap_param(f, nm, x, t) :- bootstrap_fn(f, _), field(f, "parameters", ps), child(ps, p, _),
+    node(_, p, "typed_parameter", _, _), child(p, s, 0), node(_, s, "dictionary_splat_pattern", _, _),
+    child(s, nm, 0), text(nm, u), x = @nfkc(u), field(p, "type", t).
+bootstrap_param(f, nm, x, t) :- bootstrap_fn(f, _), field(f, "parameters", ps), child(ps, p, _),
+    node(_, p, "typed_default_parameter", _, _), field(p, "name", nm), text(nm, u), x = @nfkc(u), field(p, "type", t).
+.decl bootstrap_bare(f: node, nm: node, x: symbol)
+bootstrap_bare(f, p, x) :- bootstrap_fn(f, _), field(f, "parameters", ps), child(ps, p, _),
+    node(_, p, "identifier", _, _), text(p, u), x = @nfkc(u).
+bootstrap_bare(f, nm, x) :- bootstrap_fn(f, _), field(f, "parameters", ps), child(ps, p, _),
+    node(_, p, "default_parameter", _, _), field(p, "name", nm), text(nm, u), x = @nfkc(u).
+bootstrap_bare(f, nm, x) :- bootstrap_fn(f, _), field(f, "parameters", ps), child(ps, p, _),
+    node(_, p, "list_splat_pattern", _, _), child(p, nm, 0), text(nm, u), x = @nfkc(u).
+bootstrap_bare(f, nm, x) :- bootstrap_fn(f, _), field(f, "parameters", ps), child(ps, p, _),
+    node(_, p, "dictionary_splat_pattern", _, _), child(p, nm, 0), text(nm, u), x = @nfkc(u).
+
+// bootstrap_readonly(t): readonly_params' annotation half: t is a Subscript `Sequence[E]` whose value's names
+// are exactly {Sequence}, annotation_names(E) not empty and with none of the scalar names. (The function half, a
+// public def, is in the SBC002 rule.) Tree-sitter writes a subscript in a type as a generic_type (E its
+// type_parameter) or as a subscript (E its `subscript` fields, several for a tuple).
+.decl bootstrap_seq_elem(t: node, e: node)
+bootstrap_seq_elem(t, e) :- bootstrap_ann_expr(t, g), node(_, g, "generic_type", _, _), child(g, v, 0),
+    node(_, v, "identifier", _, _), text(v, u), q = @nfkc(u), q = "Sequence", child(g, e, 1),
+    node(_, e, "type_parameter", _, _).
+bootstrap_seq_elem(t, e) :- bootstrap_ann_expr(t, sb), node(_, sb, "subscript", _, _), field(sb, "value", v),
+    node(_, v, "identifier", _, _), text(v, u), q = @nfkc(u), q = "Sequence", field(sb, "subscript", e).
+// bootstrap_elem_one(t, e): E is one expression e (no comma: `Sequence["A",]` is a tuple), parentheses taken off;
+// bootstrap_elem_str(t, s): that expression is a str Constant s.
+.decl bootstrap_elem_one(t: node, e: node)
+bootstrap_elem_one(t, e) :- bootstrap_seq_elem(t, tp), node(_, tp, "type_parameter", _, _), child(tp, c, 0),
+    !child(tp, _, 1), !token(tp, _, ",", _, _), child(c, e, 0), !child(c, _, 1).
+// One subscript and no trailing comma: the tape stores a trailing comma, not one between subscripts (RER-131).
+bootstrap_elem_one(t, e) :- bootstrap_seq_elem(t, e), field(sb, "subscript", e), !token(sb, _, ",", _, _), !bootstrap_subscripts(sb).
+.decl bootstrap_subscripts(sb: node)
+bootstrap_subscripts(sb) :- field(sb, "subscript", a), field(sb, "subscript", b), a != b.
+bootstrap_elem_one(t, i) :- bootstrap_elem_one(t, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
+.decl bootstrap_elem_str(t: node, s: node)
+bootstrap_elem_str(t, s) :- bootstrap_elem_one(t, s), bootstrap_plain_string(s, _).
+.decl bootstrap_has_elem_str(t: node)
+bootstrap_has_elem_str(t) :- bootstrap_elem_str(t, _).
+.decl bootstrap_elem_name(t: node, x: symbol)
+bootstrap_elem_name(t, x) :- bootstrap_seq_elem(t, e), !bootstrap_has_elem_str(t), node(d, e, _, s0, e0),
+    node(d, i, "identifier", s1, e1), s0 <= s1, e1 <= e0, text(i, u), !bootstrap_kwname(i), x = @nfkc(u).
+bootstrap_elem_name(t, x) :- bootstrap_elem_str(t, s), bootstrap_str_names(s, x).
+.decl bootstrap_elem_any(t: node)
+bootstrap_elem_any(t) :- bootstrap_elem_name(t, _).
+.decl bootstrap_readonly(t: node)
+bootstrap_readonly(t) :- bootstrap_elem_any(t), !bootstrap_elem_scalar(t).
+.decl bootstrap_elem_scalar(t: node)
+bootstrap_elem_scalar(t) :- bootstrap_elem_name(t, x), bootstrap_scalar(x).
+
+// bootstrap_broad_other(t): a broad name other than Sequence is in t's names.
+.decl bootstrap_broad_other(t: node)
+bootstrap_broad_other(t) :- bootstrap_ann(t, x), bootstrap_broad(x), x != "Sequence".
+
+.decl bootstrap_at(n: node, p: symbol, l: number)
+bootstrap_at(n, p, l) :- node(d, n, _, _, _), doc(d, p, _), line(n, l).
+
+// SBC001: a def named …_lazy with no decorator named pure_lazy (`@pure_lazy`, `@x.pure_lazy`, `@pure_lazy(…)`).
+.decl bootstrap_deco_expr(f: node, e: node)
+bootstrap_deco_expr(f, e) :- bootstrap_fn(f, _), field(dd, "definition", f), child(dd, dc, _),
+    node(_, dc, "decorator", _, _), child(dc, e, 0).
+bootstrap_deco_expr(f, i) :- bootstrap_deco_expr(f, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
+bootstrap_deco_expr(f, g) :- bootstrap_deco_expr(f, e), node(_, e, "call", _, _), field(e, "function", g).
+.decl bootstrap_pure_lazy(f: node)
+bootstrap_pure_lazy(f) :- bootstrap_deco_expr(f, e), node(_, e, "identifier", _, _), text(e, u), q = @nfkc(u),
+    q = "pure_lazy".
+bootstrap_pure_lazy(f) :- bootstrap_deco_expr(f, e), node(_, e, "attribute", _, _), field(e, "attribute", a),
+    text(a, u), q = @nfkc(u), q = "pure_lazy".
+violation("data-layer-schema-bootstrap-contracts", "bootstrap-contracts", "SBC001", p, l) :-
+    bootstrap_fn(f, x), suffix("_lazy", x), !bootstrap_pure_lazy(f), bootstrap_at(f, p, l).
+
+// SBC006: in a def named …_lazy, an annotation (a parameter's, the return's, or any AnnAssign's in the def)
+// naming a sync/async type, at the annotation.
+.decl bootstrap_fn_ann(f: node, t: node)
+bootstrap_fn_ann(f, t) :- bootstrap_param(f, _, _, t).
+bootstrap_fn_ann(f, t) :- bootstrap_fn(f, _), field(f, "return_type", t).
+bootstrap_fn_ann(f, t) :- bootstrap_fn(f, _), node(_, a, "assignment", _, _), inside(a, f, bootstrap_fdef),
+    field(a, "type", t).
+violation("data-layer-schema-bootstrap-contracts", "bootstrap-contracts", "SBC006", p, l) :-
+    bootstrap_fn(f, x), suffix("_lazy", x), bootstrap_fn_ann(f, t), bootstrap_ann(t, y), bootstrap_lazy_forbidden(y),
+    bootstrap_at(t, p, l).
+
+// SBC002: a parameter other than self/cls without an annotation; or with a broad name in its annotation,
+// unless the only broad name is Sequence and the def is public and the annotation a read-only domain sequence.
+violation("data-layer-schema-bootstrap-contracts", "bootstrap-contracts", "SBC002", p, l) :-
+    bootstrap_bare(_, nm, x), x != "self", x != "cls", bootstrap_at(nm, p, l).
+violation("data-layer-schema-bootstrap-contracts", "bootstrap-contracts", "SBC002", p, l) :-
+    bootstrap_param(_, nm, x, t), x != "self", x != "cls", bootstrap_broad_other(t), bootstrap_at(nm, p, l).
+violation("data-layer-schema-bootstrap-contracts", "bootstrap-contracts", "SBC002", p, l) :-
+    bootstrap_param(f, nm, x, t), x != "self", x != "cls", bootstrap_ann(t, "Sequence"), !bootstrap_broad_other(t),
+    !bootstrap_public_readonly(f, t), bootstrap_at(nm, p, l).
+.decl bootstrap_public_readonly(f: node, t: node)
+bootstrap_public_readonly(f, t) :- bootstrap_param(f, _, _, t), bootstrap_fn(f, y), !prefix("_", y),
+    bootstrap_readonly(t).
+
+// SBC006: a schema-transaction parameter (current_schema_txn, schema_transaction, schema_txn) typed Sync- or
+// AsyncSchemaTransaction, in a def not named …_lazy.
+violation("data-layer-schema-bootstrap-contracts", "bootstrap-contracts", "SBC006", p, l) :-
+    bootstrap_param(f, nm, x, t), bootstrap_schema_txn_name(x), bootstrap_fn(f, y), !suffix("_lazy", y),
+    bootstrap_ann(t, z), (z = "AsyncSchemaTransaction" ; z = "SyncSchemaTransaction"), bootstrap_at(nm, p, l).
+
+// SBC004: a def with an annotated connection-like parameter and an annotated transaction-like one (self and
+// cls not counted), at the def.
+.decl bootstrap_conn_param(f: node)
+bootstrap_conn_param(f) :- bootstrap_param(f, _, x, _), x != "self", x != "cls", bootstrap_conn_name(x).
+bootstrap_conn_param(f) :- bootstrap_param(f, _, x, t), x != "self", x != "cls", bootstrap_ann(t, y),
+    bootstrap_conn_type(y).
+.decl bootstrap_txn_param(f: node)
+bootstrap_txn_param(f) :- bootstrap_param(f, _, x, _), x != "self", x != "cls", bootstrap_txn_name(x).
+bootstrap_txn_param(f) :- bootstrap_param(f, _, x, t), x != "self", x != "cls", bootstrap_ann(t, y),
+    bootstrap_txn_type(y).
+violation("data-layer-schema-bootstrap-contracts", "bootstrap-contracts", "SBC004", p, l) :-
+    bootstrap_conn_param(f), bootstrap_txn_param(f), bootstrap_at(f, p, l).
+
+// SBC003 / SBC005: any call (module level too) of getattr/hasattr/setattr/delattr, or isinstance/issubclass, by
+// Name or Attribute, the callee's parentheses taken off.
+.decl bootstrap_peel(c: node, e: node)
+bootstrap_peel(c, g) :- node(d, c, "call", _, _), bootstrap_doc(d), field(c, "function", g).
+bootstrap_peel(c, i) :- bootstrap_peel(c, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
+.decl bootstrap_callee(c: node, x: symbol)
+bootstrap_callee(c, x) :- bootstrap_peel(c, u), node(_, u, "identifier", _, _), text(u, t), x = @nfkc(t).
+bootstrap_callee(c, x) :- bootstrap_peel(c, u), node(_, u, "attribute", _, _), field(u, "attribute", a), text(a, t),
+    x = @nfkc(t).
+violation("data-layer-schema-bootstrap-contracts", "bootstrap-contracts", "SBC003", p, l) :-
+    bootstrap_callee(c, x), (x = "delattr" ; x = "getattr" ; x = "hasattr" ; x = "setattr"), bootstrap_at(c, p, l).
+violation("data-layer-schema-bootstrap-contracts", "bootstrap-contracts", "SBC005", p, l) :-
+    bootstrap_callee(c, x), (x = "isinstance" ; x = "issubclass"), bootstrap_at(c, p, l).

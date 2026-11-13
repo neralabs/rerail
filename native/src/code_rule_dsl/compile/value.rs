@@ -1,10 +1,10 @@
 use crate::code_rule_dsl::json::{bounded_text, invalid, object, reject_unknown};
 use crate::code_rule_dsl::language::adapter::{
-    Adapter, ValueFeature, ValueRules, gate, with_adapter,
+    ValueFeature, gate,
 };
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
-use crate::code_rule_dsl::matcher::Semantic;
 use crate::code_rule_dsl::matcher::{AstMatcher, Bound, Reading, ValueTest};
+use crate::code_rule_dsl::matcher::{Semantic, SemanticText};
 use crate::code_rule_dsl::model::Limits;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
 use crate::code_rule_dsl::value::Value;
@@ -12,6 +12,7 @@ use crate::code_rule_dsl::value::text_regex::TextRegex;
 use napi::Result;
 use serde_json::Value as Json;
 use std::sync::Arc;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 const VALUE_KEYS: &[&str] = &[
     "eq",
@@ -26,7 +27,11 @@ const VALUE_KEYS: &[&str] = &[
     "le",
     "truthy",
     "follow",
+    "name",
 ];
+
+/// The keys beside `name: true`: the predicates a name, a string, takes.
+const NAME_KEYS: &[&str] = &["eq", "startsWith", "regex", "name"];
 
 /// Prefixes one `startsWith` may list.
 const MAX_PREFIXES: usize = 1024;
@@ -61,7 +66,7 @@ fn strings<'a>(value: &'a Json, path: &str) -> Result<Vec<&'a str>> {
 }
 
 /// The grammar-independent checks of a `value` object.
-pub(super) fn validate_value(value: &Json, path: &str, limits: &Limits) -> Result<()> {
+pub fn validate_value(value: &Json, path: &str, limits: &Limits) -> Result<()> {
     let test = object(value, path)?;
     reject_unknown(test, VALUE_KEYS, path)?;
     if let Some(follow) = test.get("follow")
@@ -69,7 +74,19 @@ pub(super) fn validate_value(value: &Json, path: &str, limits: &Limits) -> Resul
     {
         return Err(invalid(format!("{path}/follow must be true or false")));
     }
-    if test.keys().all(|key| key == "follow") {
+    if let Some(name) = test.get("name") {
+        if !name.is_boolean() {
+            return Err(invalid(format!("{path}/name must be true or false")));
+        }
+        if name == &Json::Bool(true)
+            && let Some(key) = test.keys().find(|key| !NAME_KEYS.contains(&key.as_str()))
+        {
+            return Err(invalid(format!(
+                "{path}/{key}: `name: true` reads a name, a string, which only eq, startsWith and regex test"
+            )));
+        }
+    }
+    if test.keys().all(|key| key == "follow" || key == "name") {
         return Err(invalid(format!(
             "{path} must hold a predicate: eq, type, constant, startsWith, regex, bitsAny, gt, ge, lt, le or truthy"
         )));
@@ -133,12 +150,12 @@ pub(super) fn validate_value(value: &Json, path: &str, limits: &Limits) -> Resul
 }
 
 /// A JSON scalar as a value of `A`'s language (`ValueRules::string`, `ValueRules::number`).
-fn literal<A: Adapter>(value: &Json) -> Value {
+fn literal(pack: &dyn language_pack::LanguagePack, value: &Json) -> Value {
     match value {
-        Json::String(text) => <A::Value as ValueRules>::string(text),
+        Json::String(text) => pack.value_string(text),
         Json::Bool(flag) => Value::Bool(*flag),
         Json::Null => Value::None,
-        Json::Number(number) => <A::Value as ValueRules>::number(number),
+        Json::Number(number) => pack.value_number(number),
         _ => Value::Unknown,
     }
 }
@@ -159,17 +176,24 @@ pub(super) fn compile_value(
 }
 
 /// Compiles a validated `value` whose nodes are read as `reading` reads them.
-pub(super) fn compile_value_with(
+pub fn compile_value_with(
     value: &Json,
     language: GrammarDialect,
     path: &str,
     reading: Reading,
 ) -> Result<AstMatcher> {
-    with_adapter!(Family::of(language), A => compile_value_in::<A>(value, path, reading))
+    { let pack = language_pack::pack(Family::of(language)); compile_value_in(pack, value, path, reading) }
 }
 
 /// `compile_value_with` for a grammar whose family's adapter is `A`.
-fn compile_value_in<A: Adapter>(value: &Json, path: &str, reading: Reading) -> Result<AstMatcher> {
+fn compile_value_in(pack: &dyn language_pack::LanguagePack, value: &Json, path: &str, reading: Reading) -> Result<AstMatcher> {
+    let name = value.get("name").and_then(Json::as_bool) == Some(true);
+    if name {
+        gate(
+            &format!("{path}/name"),
+            pack.value_feature(ValueFeature::Compare(SemanticText::Name, "name")),
+        )?;
+    }
     let types = value
         .get("type")
         .map(|types| strings(types, &format!("{path}/type")))
@@ -178,7 +202,7 @@ fn compile_value_in<A: Adapter>(value: &Json, path: &str, reading: Reading) -> R
     for (index, name) in types.iter().enumerate() {
         gate(
             &format!("{path}/type/{index}"),
-            <A::Value as ValueRules>::feature(ValueFeature::Type(name)),
+            pack.value_feature(ValueFeature::Type(name)),
         )?;
     }
     let starts_with = value
@@ -187,7 +211,7 @@ fn compile_value_in<A: Adapter>(value: &Json, path: &str, reading: Reading) -> R
         .transpose()?
         .unwrap_or_default()
         .into_iter()
-        .map(|prefix| literal::<A>(&Json::String(prefix.to_owned())))
+        .map(|prefix| literal(pack, &Json::String(prefix.to_owned())))
         .collect();
     let regex = value
         .get("regex")
@@ -204,11 +228,11 @@ fn compile_value_in<A: Adapter>(value: &Json, path: &str, reading: Reading) -> R
         ("le", Bound::Le),
     ]
     .into_iter()
-    .filter_map(|(key, bound)| value.get(key).map(|limit| (bound, literal::<A>(limit))))
+    .filter_map(|(key, bound)| value.get(key).map(|limit| (bound, literal(pack, limit))))
     .collect();
     Ok(AstMatcher::Semantic(Semantic::Value(Box::new(ValueTest {
         reading,
-        eq: value.get("eq").map(literal::<A>),
+        eq: value.get("eq").map(|limit| literal(pack, limit)),
         types: types.into_iter().map(str::to_owned).collect(),
         constant: value.get("constant").and_then(Json::as_bool),
         starts_with,
@@ -216,8 +240,8 @@ fn compile_value_in<A: Adapter>(value: &Json, path: &str, reading: Reading) -> R
         bits_any: value.get("bitsAny").and_then(Json::as_u64),
         bounds,
         truthy: value.get("truthy").and_then(Json::as_bool),
+        name,
     }))))
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

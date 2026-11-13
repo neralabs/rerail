@@ -1,29 +1,22 @@
-# Writing Command-Line Rules
+# Writing command-line rules
 
-> A practical guide to catching the commands an agent should never run — `git push --force`,
-> `rm -rf`, `--no-verify` — with structural tool-call rules. Every example below was run through the
-> engine; **FLAG** means the rule fired, **PASS** means it stayed quiet.
+> Structural tool-call rules catch commands an agent should never run: `git push --force`, `rm -rf`,
+> `--no-verify`. Every example ran through the engine. **FLAG**: the rule fired. **PASS**: it stayed quiet.
 
-Internal testing: tool-call rules are not part of Rerail 0.1.0, which releases code rules only. See the README's
-[Internal testing](../README.md#internal-testing) section.
-
-- [Why a regex and not similarity](#why-a-regex-and-not-similarity)
-- [Anatomy of a rule](#anatomy-of-a-rule)
-- [The regex dialect](#the-regex-dialect)
-- [Seven steps to a good command regex](#seven-steps-to-a-good-command-regex)
-- [When not to use a regex](#when-not-to-use-a-regex)
-- [Beyond the command line](#beyond-the-command-line)
-- [Test it, then install it](#test-it-then-install-it)
-- [Errors you will meet](#errors-you-will-meet)
-- [Checklist](#checklist)
+Internal testing: Rerail's latest release ships code rules only, not tool-call rules. See
+[Internal testing](../README.md#internal-testing).
 
 ---
 
 ## Why a regex and not similarity
 
-"Never run `git push --force`" is an exact rule. A similarity rule expresses it as a similarity threshold,
-which is too loose (it fires on neighbouring phrasings) and too tight (it misses the one spelling that
-matters) at the same time. A structural rule states the command itself.
+A structural rule states the exact command; a similarity threshold cannot.
+
+<details>
+<summary>Similarity and structural rules compared</summary>
+
+As a similarity threshold, "never run `git push --force`" fires on neighbouring phrasings and misses the
+one spelling that matters.
 
 |                      | Similarity rule             | Structural rule                         |
 | -------------------- | --------------------------- | --------------------------------------- |
@@ -32,7 +25,11 @@ matters) at the same time. A structural rule states the command itself.
 | Cost per sample      | tokenize + embed (~80 µs)   | no model at all (~5 µs for 32 rules)    |
 | Sees tool arguments  | as one flattened JSON string | field by field, e.g. `input.command`   |
 
+</details>
+
 ## Anatomy of a rule
+
+A rule pairs a match condition with the tool calls it reads and what to tell the agent.
 
 ```json
 {
@@ -45,16 +42,30 @@ matters) at the same time. A structural rule states the command itself.
 }
 ```
 
+- **`match`**: the test, and the field it reads.
+- **`sample`**: which tool calls the rule reads.
+- **`mode`**, **`action`**, **`repeat`**: what happens, and how often, when it fires.
+
+<details>
+<summary>What each part does</summary>
+
 | Part | What it does |
 | --- | --- |
-| `mode` | `log` only records a match; `steer` tells the agent; `block` is stored as the intent to stop the call and, until block enforcement lands, is delivered exactly like `steer`. |
-| `match` | A condition: one `field` plus exactly one of `regex`, `eq`, `contains` — or `all` / `any` / `not` over conditions. |
+| `mode` | `log` records a match; `steer` tells the agent; `block` is stored as the intent to stop the call and, until block enforcement lands, is delivered exactly like `steer`. |
+| `match` | One `field` plus exactly one of `regex`, `eq`, `contains` — or `all` / `any` / `not` over conditions. |
 | `sample.source` | Which tool's calls to read: `tool:Bash` for one tool, `tool:*` for every tool. |
 | `sample.boundary` | Always `tool-call` for a rule that reads `tool.name` or `input`. |
 | `action` | What the agent is told when the rule fires. |
-| `repeat` | `always` suits command rules: every bad call deserves a steer. The default is `once`. |
+| `repeat` | `always` suits command rules: every bad call deserves a steer. Default: `once`. |
+
+</details>
 
 ### Fields
+
+Command rules usually read `input.command`, one string argument. A missing or non-string argument never matches.
+
+<details>
+<summary>All fields</summary>
 
 | Field | Reads | Example value |
 | --- | --- | --- |
@@ -64,15 +75,26 @@ matters) at the same time. A structural rule states the command itself.
 | `tool.name` | the tool's name | `Bash`, `shell`, `run_terminal_cmd` |
 | `text` | the sample text, for any source | an assistant sentence |
 
-A missing argument, or one that is not a string, never matches. A rule that reads `tool.name` or
-`input` only ever sees **tool calls** — never tool results — so output that merely *mentions*
-`git push --force` cannot trip it.
+Rules on `tool.name` or `input` see only **tool calls**, never tool results, so output that merely *mentions*
+`git push --force` cannot trip them.
+
+</details>
 
 ## The regex dialect
 
-Patterns use the **Rust `regex` crate** — the same dialect, and the same 16,384-byte
-`maxRegexPatternBytes` limit, as the [code-rule DSL](../native/src/code_rule_dsl/capabilities.json).
-It runs in linear time, so no command an agent writes can make a rule hang.
+Patterns use the Rust `regex` crate, which runs in linear time: no command can make a rule hang.
+
+- **Unanchored.** `git push` matches anywhere in the argument. Add `^` / `$` deliberately.
+- **`.` stops at a newline.** Without `(?s)`, `.*` and `[^\n]*` behave the same.
+- **No look-around or backreferences.** Use a `not` condition instead (step 6).
+
+In JSON, double every backslash: the regex `\bgit\s+push\b` is written `"\\bgit\\s+push\\b"`.
+
+<details>
+<summary>Allowed syntax and limits</summary>
+
+Dialect and 16,384-byte `maxRegexPatternBytes` limit match the
+[code-rule DSL](../native/src/code_rule_dsl/capabilities.json).
 
 | You may use | You may not use |
 | --- | --- |
@@ -80,24 +102,24 @@ It runs in linear time, so no command an agent writes can make a rule hang.
 | inline flags: `(?i)` ignore case, `(?m)` line anchors, `(?s)` dot matches newline | backreferences: `\1` |
 | named groups `(?<NAME>…)` | |
 
-Two defaults matter for command lines:
-
-- **Unanchored.** `git push` matches anywhere in the argument. Add `^` / `$` deliberately.
-- **`.` stops at a newline.** Without `(?s)`, `.*` and `[^\n]*` behave the same.
-
-In JSON every backslash is doubled: the regex `\bgit\s+push\b` is written `"\\bgit\\s+push\\b"`.
+</details>
 
 ---
 
 ## Seven steps to a good command regex
 
-We build the force-push rule up from the obvious first attempt, one failure at a time.
+Build the force-push rule from a naive first attempt, fixing one failure at a time.
 
 ### 1. Start from the naive literal, and watch it fail
+
+The literal misses extra spaces, later flags and `-f`, and fires on `legit`.
 
 ```json
 { "field": "input.command", "regex": "git push --force" }
 ```
+
+<details>
+<summary>Results</summary>
 
 | Command | Result | |
 | --- | --- | --- |
@@ -107,14 +129,19 @@ We build the force-push rule up from the obvious first attempt, one failure at a
 | `git push -f` | PASS | missed: short flag |
 | `echo 'legit push --force'` | FLAG | false positive: `legit` |
 
+</details>
+
 ### 2. Bound the words and allow anything in between
 
-`\b` stops `legit` matching `git`; `\s+` absorbs any run of spaces; `[^\n]*` lets arguments sit
-between the subcommand and the flag, but only on the same line.
+`\b` stops `legit` matching `git`. `\s+` absorbs any run of spaces. `[^\n]*` lets arguments sit between subcommand
+and flag, on the same line only.
 
 ```json
 { "field": "input.command", "regex": "\\bgit\\s+push\\b[^\\n]*--force\\b" }
 ```
+
+<details>
+<summary>Results</summary>
 
 | Command | Result | |
 | --- | --- | --- |
@@ -124,15 +151,20 @@ between the subcommand and the flag, but only on the same line.
 | `git push --forced` | PASS | `\b` after `--force` |
 | `git push --force-with-lease` | **FLAG** | surprise — see step 3 |
 
+</details>
+
 ### 3. End a flag with a delimiter, not `\b`
 
-`\b` sits between a word character and a non-word one — and `-` is not a word character, so
-`--force\b` also matches the start of `--force-with-lease`. End a flag with what may actually follow
-it: whitespace, `=`, or the end of the command. Require whitespace before it, too.
+`--force\b` also matches `--force-with-lease`. End a flag with whitespace, `=` or end of command, and require whitespace before it.
 
 ```json
 { "field": "input.command", "regex": "\\bgit\\s+push\\b[^\\n]*\\s--force(?:\\s|=|$)" }
 ```
+
+<details>
+<summary>Results and why</summary>
+
+`-` is not a word character, so `\b` matches between `--force` and `-with-lease`.
 
 | Command | Result |
 | --- | --- |
@@ -141,16 +173,23 @@ it: whitespace, `=`, or the end of the command. Require whitespace before it, to
 | `git push --force=true` | FLAG |
 | `git push --force-with-lease` | PASS |
 
-Whether `--force-with-lease` *should* pass is a policy question. The corpus rule lists it
-explicitly: `(?:--force\b|\s-f\b|--force-with-lease\b)`. Decide, then make the regex say so.
+Whether `--force-with-lease` *should* pass is policy; the corpus rule flags it:
+`(?:--force\b|\s-f\b|--force-with-lease\b)`. Decide, then make the regex say so.
+
+</details>
 
 ### 4. Cover short and bundled flags
 
-`-f` can arrive alone or bundled: `-uf`, `-fu`. Match a single-dash cluster that contains the letter.
+Match any single-dash cluster containing the letter, so `-f`, `-uf` and `-fu` all count.
 
 ```json
 { "field": "input.command", "regex": "\\bgit\\s+push\\b[^\\n]*\\s-[A-Za-z]*f[A-Za-z]*\\b" }
 ```
+
+Flags are case-sensitive: leave `(?i)` off unless the tool ignores case.
+
+<details>
+<summary>Results</summary>
 
 | Command | Result | |
 | --- | --- | --- |
@@ -159,29 +198,34 @@ explicitly: `(?:--force\b|\s-f\b|--force-with-lease\b)`. Decide, then make the r
 | `git push --follow-tags` | PASS | `\s-` needs exactly one dash before the letters |
 | `git push origin feature-fix` | PASS | `\s-` needs whitespace before the dash |
 
-Case matters for flags: `git branch -D` force-deletes, `git branch -d` does not. Leave `(?i)` off
-unless the tool itself ignores case.
+`git branch -D` force-deletes, `git branch -d` does not:
 
 | Regex `\bgit\s+branch\b[^\n]*\s-D\b` | Result |
 | --- | --- |
 | `git branch -D old` | FLAG |
 | `git branch -d old` | PASS |
 
+</details>
+
 ### 5. Think about chained and multi-line commands
 
-Agents chain commands with `&&`, `;`, and `|`, and sometimes send several lines. `^` anchors to the
-start of the **whole argument**, so it misses everything after the first command.
+Agents chain commands with `&&`, `;` and `|`. `^` anchors to the start of the **whole argument**, so anchor on a separator instead:
+
+```json
+{ "field": "input.command", "regex": "(?:^|[;&|]\\s*)rm\\s+-[A-Za-z]*r" }
+```
+
+<details>
+<summary>Results, and multi-line commands</summary>
+
+A bare `^` misses every command after the first:
 
 | Regex | Command | Result |
 | --- | --- | --- |
 | `^rm\s` | `rm -rf build` | FLAG |
 | `^rm\s` | `cd x && rm -rf build` | **PASS** — missed |
 
-To mean "at the start of any command in the chain", anchor on a separator instead:
-
-```json
-{ "field": "input.command", "regex": "(?:^|[;&|]\\s*)rm\\s+-[A-Za-z]*r" }
-```
+Anchored on a separator:
 
 | Command | Result |
 | --- | --- |
@@ -190,18 +234,20 @@ To mean "at the start of any command in the chain", anchor on a separator instea
 | `ls \| rm -r y` | FLAG |
 | `echo rm -rf build` | PASS |
 
-`[^\n]*` keeps the match on one line, so a flag on a *different* line does not count:
+`[^\n]*` keeps the match on one line; a flag on a *different* line does not count:
 
 | Regex `\bgit\s+push\b.*--force\b` | Result |
 | --- | --- |
 | `git push origin main` ⏎ `echo --force` | PASS |
 | `git status` ⏎ `git push --force` | FLAG |
 
-Use `(?m)` when `^` and `$` should mean start and end of each line.
+Use `(?m)` to make `^` and `$` match at each line.
+
+</details>
 
 ### 6. Use `not` where you would reach for look-around
 
-There is no `(?!…)`. Express exceptions as a second condition instead — it reads better anyway.
+There is no `(?!…)`. Write the exception as a second, `not` condition.
 
 ```json
 {
@@ -212,6 +258,9 @@ There is no `(?!…)`. Express exceptions as a second condition instead — it r
 }
 ```
 
+<details>
+<summary>Results</summary>
+
 | Command | Result | |
 | --- | --- | --- |
 | `rm -rf src` | FLAG | |
@@ -219,23 +268,29 @@ There is no `(?!…)`. Express exceptions as a second condition instead — it r
 | `rm -rf tmp/cache` | PASS | scratch directory |
 | `rm -fr ./build` | PASS | either flag order, optional `./` |
 
+</details>
+
 ### 7. Know the limit: a regex does not parse shell
 
-A regex sees characters, not shell syntax. It cannot tell a flag from the same text inside a quoted
-string:
+A regex sees characters, not shell syntax, so it cannot tell a flag from the same text in a quoted string:
 
 | Regex `\bgit\s+push\b[^\n]*--force\b` | Result |
 | --- | --- |
 | `git commit -m 'never git push --force'` | FLAG — false positive |
 
-This is rare in practice, and the cost is one unnecessary steer. If a rule keeps tripping on it,
-tighten the prefix (step 5) rather than trying to model quoting.
+This is rare and costs one unneeded steer. If it recurs, tighten the prefix (step 5); don't model quoting.
 
 ---
 
 ## When not to use a regex
 
-Reach for the simplest test that states the rule.
+Use the simplest test that states the rule; often that is `contains` or `eq`.
+
+- **`contains`**: one literal is the whole signal, such as `--no-verify`.
+- **`eq`**: exactly one full command is forbidden. It compares byte for byte, so prefer it for tool names and paths.
+
+<details>
+<summary>Examples</summary>
 
 | Test | Use it when | Example | Result |
 | --- | --- | --- | --- |
@@ -244,10 +299,13 @@ Reach for the simplest test that states the rule.
 | | | `"eq": "npm publish"` on `npm publish --dry-run` | PASS |
 | | | `"eq": "npm publish"` on ` npm publish` (leading space) | PASS |
 
-`eq` compares the whole value byte for byte, so it is brittle for commands agents compose freely.
-Prefer it for tool names and paths.
+`eq` is brittle on free-form commands: an extra flag or a leading space makes it pass.
+
+</details>
 
 ## Beyond the command line
+
+Match shells across hosts, paths under any argument name, and secrets in any argument.
 
 **Every host names its shell differently.** Bind the rule to `tool:*` and name the shells:
 
@@ -261,11 +319,6 @@ Prefer it for tool names and paths.
 }
 ```
 
-| Tool | Command | Result |
-| --- | --- | --- |
-| `Bash` / `shell` / `run_terminal_cmd` | `git push --force` | FLAG |
-| `Write` | (an argument named `command`) | PASS |
-
 **Paths, whatever the argument is called.** Write tools use `file_path` or `path`; cover both with `any`:
 
 ```json
@@ -275,6 +328,25 @@ Prefer it for tool names and paths.
 ] }
 ```
 
+**Secrets in any argument.** `input` is all arguments as one JSON string, so one rule covers commands, file
+contents, and URLs:
+
+```json
+{ "field": "input", "regex": "ghp_[A-Za-z0-9]{36}" }
+```
+
+<details>
+<summary>Results and JSON escaping</summary>
+
+Shell names:
+
+| Tool | Command | Result |
+| --- | --- | --- |
+| `Bash` / `shell` / `run_terminal_cmd` | `git push --force` | FLAG |
+| `Write` | (an argument named `command`) | PASS |
+
+Paths:
+
 | Path | Result | |
 | --- | --- | --- |
 | `.git/hooks/pre-commit` | FLAG | |
@@ -282,60 +354,99 @@ Prefer it for tool names and paths.
 | `.github/workflows/ci.yml` | PASS | |
 | `my.git/x` | PASS | `(?:^\|/)` requires a path boundary |
 
-**Secrets in any argument.** `input` is every argument as one JSON string, so a single rule covers
-commands, file contents, and URLs alike:
+`input` is JSON-escaped (`\"`, and `\n` as two characters): keep its patterns free of quotes and line
+anchors. For commands, read `input.command`.
 
-```json
-{ "field": "input", "regex": "ghp_[A-Za-z0-9]{36}" }
-```
-
-Matching `input` sees JSON escaping (`\"`, `\n` as two characters), so keep patterns on it free of
-quotes and line anchors. For anything command-shaped, read `input.command`.
+</details>
 
 ---
 
 ## Test it, then install it
 
-**1. Write the cases first.** A rule is only as good as the commands it has been tried against.
-For each rule, list at least one command it must flag, one near-miss it must pass, and — if it reads
-the command line — a tool *result* that echoes the command and must pass.
+Test each rule against real cases, measure its noise, then install it.
 
-**2. Run them through the engine.** Add the rule to `fixtures/host/tool-call-rules/rules.json` and its
-cases to `test/engine/catalog/tool-call-rules.test.ts`, or try it ad hoc:
+**1. Write the cases first.** For each rule, list at least:
 
-```ts
-import { resolve } from "node:path";
-import { ConversationRuleRegistry, stableJsonText } from "./src/engine/index.js";
+- one command it must flag;
+- one near-miss it must pass;
+- if it reads the command line, a tool *result* that echoes the command and must pass.
 
-const registry = new ConversationRuleRegistry({ modelPath: resolve("model") });
-registry.replace([rule]);
+**2. Run them through the engine.** Put the rule and its cases in one `conversation` draft file, then test it:
 
-const input = stableJsonText({ command: "git push --force origin main" })!;
-registry.match({ source: "tool:Bash", boundary: "tool-call", text: input, input }, { respectRepeat: false });
-// → [{ ruleId: "oss:no-force-push", kind: "structural", action: { … } }]
+```json
+{
+  "kind": "conversation",
+  "rule": {
+    "id": "oss:no-force-push",
+    "mode": "steer",
+    "match": { "field": "input.command", "regex": "\\bgit\\s+push\\b[^\\n]*\\s--force(?:\\s|=|$)" },
+    "sample": { "source": "tool:Bash", "boundary": "tool-call" },
+    "action": { "content": "Do not force-push: it rewrites published history. Ask the user first." },
+    "repeat": { "mode": "always" }
+  },
+  "cases": {
+    "caught": [
+      { "source": "tool:Bash", "boundary": "tool-call", "text": "{\"command\":\"git push --force origin main\"}", "input": "{\"command\":\"git push --force origin main\"}" }
+    ],
+    "passed": [
+      { "source": "tool:Bash", "boundary": "tool-call", "text": "{\"command\":\"git push --force-with-lease origin main\"}", "input": "{\"command\":\"git push --force-with-lease origin main\"}" },
+      { "source": "tool:Bash", "boundary": "tool-call", "text": "hint: use 'git push --force' to overwrite" }
+    ]
+  }
+}
 ```
 
 ```sh
-npx vitest run test/engine/catalog/tool-call-rules.test.ts
+rerail rules test no-force-push.draft.json
 ```
 
-**3. Measure noise before blocking.** `candidate-rules/oss-tool-rules/` checks each pattern against
-the commands your own repository already sanctions (scripts, CI, docs). A rule that matches
-sanctioned commands — `rm -rf` in a cleanup script — should use `mode: "steer"`, not `"block"`, until it is narrowed.
+It exits non-zero when a case fails.
 
-**4. Install it** with the daemon running (`rerail daemon start`): store it in your library and add it to
-the repository it should run in.
+<details>
+<summary>Draft format and drafting help</summary>
+
+A tool-call case carries its arguments as stable JSON in both `text` and `input`; a tool-result case has
+`text` only. `rerail rules test` validates the rule, regex included, and runs every case without storing
+anything. `rerail rules test --help` prints the draft format. `/rerail-create` has your coding agent draft
+the rule and its cases.
+
+</details>
+
+**3. Measure noise before blocking.** Search your sanctioned commands (scripts, CI, docs) with the same
+pattern. `rg` uses the same Rust dialect, with single backslashes:
 
 ```sh
-curl -X PUT http://127.0.0.1:4737/api/library-rules/oss:no-force-push \
-  -H 'content-type: application/json' \
-  -d "{\"kind\": \"conversation\", \"rule\": $(cat no-force-push.json), \"checkout\": \"$PWD\", \"attach\": true}"
+rg '\bgit\s+push\b[^\n]*\s--force(?:\s|=|$)' scripts .github docs
 ```
 
-The body is validated before it is stored, regex included; an invalid rule is rejected with
-`400 invalid-request`. The checkout must be one Rerail has recorded (run `rerail start` there first). (Structural rules are stored under the `conversation` kind for now.)
+Keep `mode: "steer"`, not `"block"`, while it still matches sanctioned commands, such as `rm -rf` in a cleanup
+script.
+
+**4. Install it.** `rerail rules add` stores the rule in your library and adds it to the current checkout's
+repository:
+
+```sh
+rerail rules add no-force-push.draft.json
+```
+
+It runs in Log until a person approves it: `rerail rules approve oss:no-force-push` or the dashboard
+([approval](rule-scoping.md#approval)).
+
+<details>
+<summary>Install options and Rerail's own rules</summary>
+
+`--repo <dir>` adds the rule to another repository. It applies at the draft's `folder`, or repository-wide
+without one. To change the tool-call rules in Rerail's own tests (`fixtures/host/tool-call-rules/`), follow
+[CONTRIBUTING.md](../CONTRIBUTING.md).
+
+</details>
 
 ## Errors you will meet
+
+Each validation error names the part of the rule at fault; the table gives the fix.
+
+<details>
+<summary>Error messages and fixes</summary>
 
 | Message (shortened) | Cause and fix |
 | --- | --- |
@@ -346,10 +457,14 @@ The body is validated before it is stored, regex included; an invalid rule is re
 | `rule.match.field must be text, tool.name, input, or input.<path>` | A typo such as `input..command` or `command`. |
 | `rule.sample.source must be tool:<name> or tool:* when the match reads tool.name or input` | The rule reads tool fields but samples a conversation source. |
 | `rule.sample.boundary must be tool-call when the match reads tool.name or input` | Set `"boundary": "tool-call"`. |
-| `rule.reference must be omitted: a structural match computes no similarity` | Delete `reference`; it only belongs on similarity rules. |
+| `rule.reference must be omitted: a structural match computes no similarity` | Delete `reference`; it belongs only on similarity rules. |
 | `rule.sample.minimumTokens must be omitted: a structural match does not tokenize` | Delete `minimumTokens`. |
 
+</details>
+
 ## Checklist
+
+Check every rule against this list before installing it.
 
 - [ ] The field is as narrow as possible: `input.command`, not `input`.
 - [ ] Commands and subcommands are wrapped in `\b…\b`; separators are `\s+`, not a single space.

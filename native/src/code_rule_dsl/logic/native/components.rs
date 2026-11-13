@@ -125,7 +125,7 @@ fn tarjan(out: &[Vec<usize>]) -> Vec<Vec<usize>> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     fn run(edges: &[(i64, i64)], own: &[(i64, &str)]) -> BTreeMap<i64, (i64, String)> {

@@ -117,11 +117,10 @@ fn domains(name: &str) -> (&'static [usize], &'static [usize]) {
         "host_node" => (&[1], &[]),
         "str_part" | "str_part_word" => (&[0, 3], &[]),
         "doc" | "pkg" | "path_part" | "file_name" | "source" | "src_line" | "split_line"
-        | "lf_line" | "line_count" | "syntax_error" | "syntax_exception" | "doc_role" | "tape_of" => (&[], &[0]),
+        | "lf_line" | "line_count" | "syntax_error" | "doc_role" | "tape_of" => (&[], &[0]),
         "name" | "text" | "str" | "strprefix" | "comment" | "value" | "static_value" | "intval"
         | "op" | "op_t" | "op_at" | "line" | "end_line" | "col" | "visit_index" | "ast_depth" | "node_order"
-        | "tree_digest" | "def_digest" | "annotation_constant_repr" | "decorator_text" | "class_base_text"
-        | "spread" | "str_part_start" | "str_part_offset" => (&[0], &[]),
+        | "tree_digest" | "def_digest" | "spread" | "str_part_start" | "structural_before" | "structural_after" => (&[0], &[]),
         "first_token" | "last_token" | "token_before" | "token_after" => (&[0, 1], &[]),
         _ => (&[], &[]),
     }
@@ -432,7 +431,7 @@ impl Source for Family {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 

@@ -21,7 +21,7 @@
 //! changed constant (another Python version) misses the memo, as it must. What the constants' run read is part of
 //! the run's consulted record (`Report::consulted`).
 //!
-//! The constants' rows are kept in the phase store (`constant_rows`), under the programs, the relations, the run's
+//! The constants' rows are kept among phase 0's run records (`constants:<key>`), under the programs, the relations, the run's
 //! options (but which documents it runs over: the constants read none), the root and the engine, with what their run
 //! consulted. A later run whose consulted things are as they were (`World::still`) takes them as they are: an edit to
 //! a workspace file derives no constant again.
@@ -52,7 +52,7 @@ pub(super) fn foldable(prog: &Program) -> BTreeSet<String> {
             .filter(|rel| {
                 prog.rules.iter().filter(|r| &r.head.rel == *rel).all(|r| {
                     r.body.iter().all(|l| match l {
-                        Literal::Atom(a) | Literal::Agg { atom: a, .. } => fold.contains(&a.rel) || given(&a.rel),
+                        Literal::Atom(a) | Literal::Agg { atom: a, .. } => fold.contains(a.rel.as_str()) || given(&a.rel),
                         Literal::Cmp { .. } => true,
                         _ => false,
                     })
@@ -72,7 +72,7 @@ pub(super) fn foldable(prog: &Program) -> BTreeSet<String> {
     let read_outside: BTreeSet<&str> = prog
         .rules
         .iter()
-        .filter(|r| !fold.contains(&r.head.rel))
+        .filter(|r| !fold.contains(r.head.rel.as_str()))
         .flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str()))
         .chain(prog.outputs.iter().map(String::as_str))
         .collect();
@@ -84,20 +84,6 @@ fn copy(rel: &str) -> String {
     format!("rr_const_{rel}")
 }
 
-// The internal output boundary is tab/line delimited. Quote symbols before
-// writing them, including the escape marker itself; decode only after splitting.
-// This boundary must not change a directory name or any other symbolic value.
-const ESCAPES: &[(&str, &str)] = &[("%", "%25"), ("\t", "%09"), ("\n", "%0A"), ("\r", "%0D"), ("\0", "%00")];
-
-fn quoted(term: crate::code_rule_dsl::logic::front::Term) -> crate::code_rule_dsl::logic::front::Term {
-    use crate::code_rule_dsl::logic::front::Term;
-    ESCAPES.iter().fold(term, |term, (raw, code)| Term::Call("replace_all".into(), vec![term, Term::Str((*raw).into()), Term::Str((*code).into())]))
-}
-
-fn unquoted(text: &str) -> String {
-    ESCAPES.iter().rev().fold(text.to_owned(), |value, (raw, code)| value.replace(code, raw))
-}
-
 /// The constants' run's program: its outputs are a copy of each wanted relation, made by a rule of its own. The copy
 /// reads the relation as any rule outside the requests' cone does, so the cone hands it on wherever it is made.
 pub(super) fn as_outputs(prog: &mut Program, wanted: &[String]) {
@@ -106,10 +92,9 @@ pub(super) fn as_outputs(prog: &mut Program, wanted: &[String]) {
     for rel in wanted {
         let Some(cols) = prog.decls.get(rel).cloned() else { continue };
         let args: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("c{i}"))).collect();
-        let atom = |r: String| Atom { rel: r, args: args.clone(), neg: false, gated: false };
-        let head_args = args.iter().zip(&cols).map(|(arg, (_, ty))| if ty == "symbol" || ty == "sym" { quoted(arg.clone()) } else { arg.clone() }).collect();
+        let atom = |r: String| Atom { rel: r.into(), args: args.clone(), neg: false, gated: false };
         prog.decls.insert(copy(rel), cols);
-        prog.rules.push(Rule { head: Atom { rel: copy(rel), args: head_args, neg: false, gated: false }, body: vec![Literal::Atom(atom(rel.clone()))] });
+        prog.rules.push(Rule { head: atom(copy(rel)), body: vec![Literal::Atom(atom(rel.clone()))] });
         prog.outputs.push(copy(rel));
     }
 }
@@ -156,11 +141,11 @@ pub(super) fn fold(
             if vals.len() != types.len() {
                 return Err(super::super::Error::Plan(format!("the run's constant {rel}: a row of {} values, not {}: {line:?}", vals.len(), types.len())));
             }
-            rows.push(vals.iter().zip(&types).map(|(v, t)| if t == "number" || t == "int" { v.parse::<i64>().map_or_else(|_| Value::Str((*v).to_owned()), Value::Int) } else { Value::Str(unquoted(v)) }).collect());
+            rows.push(vals.iter().zip(&types).map(|(v, t)| if t == "number" || t == "int" { v.parse::<i64>().map_or_else(|_| Value::Str((*v).to_owned()), Value::Int) } else { Value::Str((*v).to_owned()) }).collect());
         }
         prog.facts.insert(rel.clone(), rows);
     }
-    prog.rules.retain(|r| !wanted.contains(&r.head.rel));
+    prog.rules.retain(|r| !wanted.contains(r.head.rel.as_str()));
     crate::code_rule_dsl::logic::profile::decision("the run's constants (decision 0094 §6)", || {
         format!("{} relations made from no document, {} and given as facts: {}", wanted.len(), if reused { "kept from an earlier run (what they read is as it was)" } else { "derived first" }, wanted.iter().cloned().collect::<Vec<_>>().join(", "))
     });
@@ -215,85 +200,30 @@ fn key(programs: &[&str], root: &Path, options: &serde_json::Value, wanted: &BTr
     h.update(options.to_string().as_bytes());
     h.update([0]);
     h.update(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
-    h.update(env!("RERAIL_ENGINE_BUILD_ID").as_bytes());
+    h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The file the constants are kept in, beside the content store: `<content store>.phases`, where the phase store
-/// was (its tables are gone; t33 step 1 moves these rows to the facts).
-fn store_path() -> Option<std::path::PathBuf> {
-    super::tape_cache_path().map(|p| std::path::PathBuf::from(format!("{}.phases", p.display())))
-}
-
-fn table(db: &rusqlite::Connection) -> Result<()> {
-    db.execute_batch("CREATE TABLE IF NOT EXISTS constant_rows(key TEXT PRIMARY KEY, rows TEXT, consulted TEXT) WITHOUT ROWID;")?;
-    Ok(())
+/// The record the constants of `key` are kept under, among phase 0's run records (`content_store::observe`): read
+/// with the observer's other records before the run, written behind it by the observer's writer (decision 0104).
+fn record_key(key: &str) -> String {
+    format!("constants:{key}")
 }
 
 /// The constants kept under `key`, when what their run consulted is as it was.
 fn kept(key: &str, root: &Path, prog: &Program) -> Result<Option<Derived>> {
-    let Some(path) = store_path().filter(|p| p.exists()) else { return Ok(None) };
-    let db = rusqlite::Connection::open(&path)?;
-    table(&db)?;
-    let Some((rows, consulted)): Option<(String, String)> = db.query_row("SELECT rows, consulted FROM constant_rows WHERE key=?1", [key], |r| Ok((r.get(0)?, r.get(1)?))).ok() else { return Ok(None) };
-    let consulted: Vec<(String, String, String)> = serde_json::from_str(&consulted).map_err(|e| super::super::Error::Plan(e.to_string()))?;
+    let Some((consulted, rows)) = super::observe(|o| o.run_record(&record_key(key))) else { return Ok(None) };
+    let consulted = super::reuse::decode_consulted(&consulted);
     if !super::world::World::new(root, prog).still(&consulted) {
         return Ok(None);
     }
-    let rows = serde_json::from_str(&rows).map_err(|e| super::super::Error::Plan(e.to_string()))?;
+    let rows = serde_json::from_slice(&rows).map_err(|e| super::super::Error::Plan(e.to_string()))?;
     Ok(Some((rows, consulted)))
 }
 
 fn keep(key: &str, rows: &std::collections::BTreeMap<String, String>, consulted: &[(String, String, String)]) -> Result<()> {
-    let Some(path) = store_path() else { return Ok(()) };
-    let db = rusqlite::Connection::open(&path)?;
-    table(&db)?;
-    db.execute("INSERT OR REPLACE INTO constant_rows VALUES (?1, ?2, ?3)", rusqlite::params![key, serde_json::to_string(rows).unwrap_or_default(), serde_json::to_string(consulted).unwrap_or_default()])?;
+    let rows = serde_json::to_vec(rows).unwrap_or_default();
+    let consulted = super::reuse::encode_consulted(consulted);
+    super::observe(|o| o.put_run_record(&record_key(key), &consulted, &rows));
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn folded_filesystem_symbols_keep_delimiters_and_literal_escape_sequences() {
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("constant-delimiters");
-        std::fs::create_dir_all(&dir).unwrap();
-        let _serial = super::super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
-        super::super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
-        std::fs::write(dir.join("primary.py"),"pass\n").unwrap();
-        let name="a\n\t\r%0A%25é.py";
-        std::fs::write(dir.join(name),"pass\n").unwrap();
-        let text=format!(r#".language python
-.scope include "primary.py"
-#include "core.rr"
-.decl asked(path: symbol)
-asked(".").
-.decl seen(value: symbol)
-seen(value) :- asked(path),dir_entry(path,value,0).
-.decl answer(value: number)
-answer(1) :- doc(_,"primary.py",_),seen({}).
-.output answer
-"#,serde_json::to_string(name).unwrap());
-        let out=dir.join("out");
-        for _ in 0..2 {
-            super::super::run_all(&[&text],&dir,&out,"program",crate::code_rule_dsl::typing::file_local::Binding::Cpu,1<<18).unwrap();
-            assert_eq!(std::fs::read_to_string(out.join("answer.csv")).unwrap(),"1\n");
-        }
-        std::fs::remove_file(dir.join(name)).unwrap();
-        super::super::run_all(&[&text],&dir,&out,"program",crate::code_rule_dsl::typing::file_local::Binding::Cpu,1<<18).unwrap();
-        assert_eq!(std::fs::read_to_string(out.join("answer.csv")).unwrap(),"");
-        super::super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn symbol_transport_quotes_the_escape_marker_before_delimiters() {
-        for value in ["", "%", "%0A", "%2509", "\t\n\r\0", "é😀\n%25"] {
-            let encoded=ESCAPES.iter().fold(value.to_owned(),|v,(raw,code)|v.replace(raw,code));
-            assert!(!encoded.contains(['\t','\n','\r','\0']));
-            assert_eq!(unquoted(&encoded),value);
-        }
-    }
 }

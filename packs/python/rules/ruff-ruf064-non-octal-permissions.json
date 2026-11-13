@@ -1,0 +1,540 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-ruf064-non-octal-permissions",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Write file permission modes passed to os, dbm and pathlib functions as octal literals with a 0o prefix; a plain integer such as 644 is decimal and sets different permissions.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "bad-mode": {
+            "any": [
+              {
+                "kind": "integer",
+                "pattern": "$LIT",
+                "regex": "^(?:0[xXbB][0-9a-fA-F_]+|[0-9][0-9_]*)$",
+                "not": {
+                  "regex": "^0$"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bad-mode"
+                }
+              }
+            ]
+          },
+          "path-class": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "pathlib.Path",
+                "pathlib.PosixPath",
+                "pathlib.WindowsPath"
+              ]
+            }
+          },
+          "path-call": {
+            "kind": "call",
+            "has": {
+              "stopBy": {
+                "not": {
+                  "kind": "parenthesized_expression"
+                }
+              },
+              "matches": "path-class"
+            }
+          },
+          "path-value": {
+            "any": [
+              {
+                "matches": "path-call"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "matches": "path-call"
+                }
+              }
+            ]
+          },
+          "plain-target": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "plain-target"
+                }
+              }
+            ]
+          },
+          "path-object": {
+            "any": [
+              {
+                "matches": "path-call"
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "value": {
+                      "matches": "path-value"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "resolves": {
+                  "binding": {
+                    "site": {
+                      "kind": "as_pattern",
+                      "inside": {
+                        "stopBy": "neighbor",
+                        "kind": "with_item"
+                      },
+                      "all": [
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "matches": "path-value",
+                            "precedes": {
+                              "stopBy": "end",
+                              "regex": "^as$"
+                            }
+                          }
+                        },
+                        {
+                          "has": {
+                            "stopBy": "neighbor",
+                            "kind": "as_pattern_target",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "matches": "plain-target"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "path-object"
+                }
+              }
+            ]
+          },
+          "path-method": {
+            "kind": "attribute",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "object",
+              "matches": "path-object"
+            }
+          },
+          "umask-fn": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "os.umask"
+              ]
+            }
+          },
+          "second-slot-fn": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "os.chmod",
+                "os.fchmod",
+                "os.lchmod",
+                "os.mkdir",
+                "os.makedirs",
+                "os.mkfifo",
+                "os.mknod"
+              ]
+            }
+          },
+          "third-slot-fn": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "os.open",
+                "dbm.open",
+                "dbm.gnu.open",
+                "dbm.ndbm.open"
+              ]
+            }
+          },
+          "makedirs-fn": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "resolves": {
+              "import": [
+                "os.makedirs"
+              ]
+            }
+          },
+          "kw-mode": {
+            "kind": "keyword_argument",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "name",
+              "regex": "^mode$"
+            }
+          },
+          "kw-parent-mode": {
+            "kind": "argument_list",
+            "has": {
+              "stopBy": "neighbor",
+              "kind": "keyword_argument",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "name",
+                "regex": "^parent_mode$"
+              },
+              "all": [
+                {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "bad-mode"
+                  }
+                }
+              ]
+            }
+          },
+          "arg": {
+            "not": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                }
+              ]
+            }
+          },
+          "kw-bad": {
+            "has": {
+              "stopBy": "neighbor",
+              "matches": "kw-mode",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "value",
+                "matches": "bad-mode"
+              }
+            }
+          },
+          "no-kw": {
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "kw-mode"
+              }
+            }
+          },
+          "mode-at-0": {
+            "kind": "argument_list",
+            "any": [
+              {
+                "matches": "kw-bad"
+              },
+              {
+                "matches": "no-kw",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bad-mode",
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "matches": "arg"
+                    }
+                  },
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "kind": "list_splat"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "mode-at-1": {
+            "kind": "argument_list",
+            "any": [
+              {
+                "matches": "kw-bad"
+              },
+              {
+                "matches": "no-kw",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bad-mode",
+                  "nthChild": {
+                    "position": 2,
+                    "ofRule": {
+                      "matches": "arg"
+                    }
+                  },
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "kind": "list_splat"
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "mode-at-2": {
+            "kind": "argument_list",
+            "any": [
+              {
+                "matches": "kw-bad"
+              },
+              {
+                "matches": "no-kw",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "bad-mode",
+                  "nthChild": {
+                    "position": 3,
+                    "ofRule": {
+                      "matches": "arg"
+                    }
+                  },
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "kind": "list_splat"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "non-octal-mode",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "any": [
+              {
+                "has": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "matches": "umask-fn"
+                },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "mode-at-0"
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "matches": "path-method",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "attribute",
+                    "regex": "^(?:chmod|lchmod|mkdir|touch)$"
+                  }
+                },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "mode-at-0"
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "matches": "second-slot-fn"
+                },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "mode-at-1"
+                    }
+                  }
+                ]
+              },
+              {
+                "has": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "matches": "third-slot-fn"
+                },
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "mode-at-2"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.LIT",
+        "code": "RUF064",
+        "message": "Write `$LIT` as an octal literal: if its digits read as a mode (644, 755), add the `0o` prefix; otherwise write the same value in octal (decimal 420 is `0o644`, `0x1ff` is `0o777`).",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF064"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "non-octal-parent-mode",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "any": [
+              {
+                "has": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "matches": "makedirs-fn"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": {
+                    "not": {
+                      "kind": "parenthesized_expression"
+                    }
+                  },
+                  "matches": "path-method",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "attribute",
+                    "regex": "^mkdir$"
+                  }
+                }
+              }
+            ],
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "kw-parent-mode"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.LIT",
+        "code": "RUF064",
+        "message": "Write `$LIT` as an octal literal: if its digits read as a mode (644, 755), add the `0o` prefix; otherwise write the same value in octal (decimal 420 is `0o644`, `0x1ff` is `0o777`).",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "RUF064"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

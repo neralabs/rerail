@@ -22,7 +22,7 @@ use serde_json::Value as Json;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-const ORACLES: &str = crate::code_rule_dsl::fixtures_dir!();
+const ORACLES: &str = crate::code_rule_dsl::fixtures::fixtures_dir!();
 
 pub(super) fn read_oracle(path: &str) -> Json {
     read_json(&format!("{ORACLES}/blade/blade/forte/{path}"))

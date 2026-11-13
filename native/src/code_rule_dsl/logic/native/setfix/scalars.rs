@@ -283,7 +283,7 @@ pub(super) fn plan(steps: &mut [Step]) -> bags::Analysis {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn string_join_observes_deferred_sum_lookup_keys() {
@@ -424,8 +424,8 @@ mod tests {
     }
 
     fn connection() -> Connection {
-        let path = crate::code_rule_dsl::prefilter::tests::temp();
-        drop(crate::code_rule_dsl::prefilter::tests::open(&path));
+        let path = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&path).unwrap());
         Connection::open(path).unwrap()
     }
     fn hex(s: &str) -> String {

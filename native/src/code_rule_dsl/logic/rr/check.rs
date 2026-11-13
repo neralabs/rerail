@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::lower::{RELATION_ARG, TESTS};
-use super::syntax::{Head, Item, Lit, Statement, Term};
+use rerail_rr_syntax::syntax::{Head, Item, Lit, Statement, Term};
 
 fn vars_of(t: &Term) -> BTreeSet<String> {
     let mut out = Vec::new();
@@ -30,12 +30,6 @@ fn term_needs(t: &Term, bound: &BTreeSet<String>) -> BTreeSet<String> {
         Term::Var(v) if v == "top" && !bound.contains(v) => BTreeSet::new(),
         t => vars_of(t),
     }
-}
-
-fn lit_vars(l: &Lit) -> BTreeSet<String> {
-    let mut out = Vec::new();
-    l.vars(&mut out);
-    out.into_iter().collect()
 }
 
 fn is_text_test(rel: &str) -> bool {
@@ -83,8 +77,9 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
             let ready = force || needs.is_subset(bound);
             (none(), needs, ready)
         }
-        Lit::Pattern { neg: true, .. } => {
-            let vs = lit_vars(l);
+        // A negated pattern reads its subject; its captures are its own.
+        Lit::Pattern { subject, neg: true, .. } => {
+            let vs = vars_of(subject);
             let ready = force || vs.is_subset(bound);
             (none(), vs, ready)
         }
@@ -104,11 +99,11 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
         }
         Lit::Pattern { subject, pattern, neg: false } => {
             let mut b = vars_of(subject);
-            b.extend(super::syntax::tick_vars(pattern));
+            b.extend(rerail_rr_syntax::syntax::tick_vars(pattern));
             (b, none(), true)
         }
         Lit::Atom { rel, args, neg: true } => {
-            let vs = if matches!(rel.as_str(), "match" | "match_all") { args.iter().skip(1).flat_map(vars_of).collect() } else { atom_vars(rel, args) };
+            let vs = if matches!(rel.as_str(), "match" | "match_all" | "match_group") { args.iter().skip(1).flat_map(vars_of).collect() } else { atom_vars(rel, args) };
             let ready = force || vs.is_subset(bound);
             (none(), vs, ready)
         }
@@ -117,18 +112,23 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
             let ready = force || vs.is_subset(bound);
             (none(), vs, ready)
         }
-        Lit::Atom { rel, args, neg: false } if matches!(rel.as_str(), "match" | "match_all") => {
+        Lit::Atom { rel, args, neg: false } if matches!(rel.as_str(), "match" | "match_all" | "match_group") => {
             let mut g = match args.first() {
-                Some(Term::Str(re)) => groups(re),
+                Some(Term::Str(re)) if rel != "match_group" => groups(re),
                 _ => none(),
             };
-            // `match_all(re, s, i, a, b)` binds each match's ordinal and offsets too: only the subject is read.
-            let subject: BTreeSet<String> = if rel == "match_all" {
-                g.extend(args.iter().skip(2).flat_map(vars_of));
-                args.iter().skip(1).take(1).flat_map(vars_of).collect()
-            } else {
-                args.iter().skip(1).flat_map(vars_of).collect()
+            // `match_all("re", sp, m)`, `match_group("re", sp, m, g, gsp)`: the match, the group and its span are
+            // bound by it, the span `sp` needed.
+            let (subject, binds) = match args.as_slice() {
+                [_, sp, m] if rel == "match_all" => (std::slice::from_ref(sp), std::slice::from_ref(m)),
+                // `match_all(re, s, i, a, b)` over a symbol binds each match's ordinal and offsets too.
+                [_, s, rest @ ..] if rel == "match_all" && rest.len() == 3 => (std::slice::from_ref(s), rest),
+                [_, sp, rest @ ..] if rel == "match_group" => (std::slice::from_ref(sp), rest),
+                [_, rest @ ..] => (rest, &[][..]),
+                [] => (&[][..], &[][..]),
             };
+            g.extend(binds.iter().flat_map(vars_of));
+            let subject: BTreeSet<String> = subject.iter().flat_map(vars_of).collect();
             let ready = force || subject.is_subset(bound);
             (g, subject, ready)
         }
@@ -162,11 +162,11 @@ fn literal(l: &Lit, bound: &BTreeSet<String>, force: bool) -> (BTreeSet<String>,
             {
                 return (BTreeSet::from([x.clone()]), lv, true);
             }
-            // `m = @dot(q, x)` with `m` bound splits it at each dot (`split_dot`, the engine's `@cat` split: T's
-            // `cmp_binds`), binding `q` and `x`.
+            // `m = @dot(q, x)` with `m` bound splits it at each dot (`split_dot`), and `m = @cat(q, x)` at each
+            // position (the engine's `@cat` split, which `@dot` lowers to: T's `cmp_binds`), binding `q` and `x`.
             for (whole, parts) in [(l, r), (r, l)] {
                 if let (Term::Var(m), Term::Call { name, args, .. }) = (whole, parts)
-                    && name == "dot"
+                    && (name == "dot" || name == "cat")
                     && args.iter().all(|a| matches!(a, Term::Var(_)))
                 {
                     let ready = force || bound.contains(m);
@@ -219,7 +219,9 @@ fn inner_needs(lits: &[Lit], bound: &BTreeSet<String>) -> BTreeSet<String> {
 /// outside (fix relations and edits).
 pub(super) fn unbound(heads: &[Head], body: &[Lit], edits: &[Term], given: &BTreeSet<String>) -> Vec<String> {
     let head_vars: BTreeSet<String> = heads.iter().flat_map(|h| h.args.iter().flat_map(vars_of)).collect();
-    let mut bound = BTreeSet::new();
+    // `top` no literal binds is the lattice's top, not a variable (`lower`'s `top_is_var`): bound from the start, so
+    // `a = top` binds `a`.
+    let mut bound = BTreeSet::from(["top".to_owned()]);
     if heads.first().is_some_and(|h| given.contains(&h.rel)) {
         bound.extend(head_vars.iter().cloned());
     }
@@ -246,17 +248,15 @@ pub(super) fn unbound(heads: &[Head], body: &[Lit], edits: &[Term], given: &BTre
     }
     need.extend(heads.iter().flat_map(|h| h.args.iter().flat_map(|a| term_needs(a, &bound))));
     need.extend(edits.iter().flat_map(vars_of));
-    // `top` no literal binds is the lattice's top, not a variable (`lower`'s `top_is_var`).
-    need.remove("top");
     need.difference(&bound).cloned().collect()
 }
 
 /// The relations a file's `fix` lines and `.edit` declarations name.
-pub(super) fn fix_relations(statements: &[Statement]) -> BTreeSet<String> {
+pub fn fix_relations(statements: &[Statement]) -> BTreeSet<String> {
     statements
         .iter()
         .flat_map(|(item, _)| match item {
-            Item::Violation { fixes, .. } => fixes.clone(),
+            Item::Violation { fixes, .. } => fixes.iter().map(|f| f.name.clone()).collect(),
             Item::Edit { name } => vec![name.clone()],
             _ => Vec::new(),
         })
@@ -264,7 +264,7 @@ pub(super) fn fix_relations(statements: &[Statement]) -> BTreeSet<String> {
 }
 
 /// Ungrounded rules of one file: (line, unbound variables).
-pub(super) fn grounded(statements: &[Statement], given: &BTreeSet<String>) -> Vec<(usize, Vec<String>)> {
+pub fn grounded(statements: &[Statement], given: &BTreeSet<String>) -> Vec<(usize, Vec<String>)> {
     let mut given = given.clone();
     given.extend(fix_relations(statements));
     statements
@@ -280,7 +280,7 @@ pub(super) fn grounded(statements: &[Statement], given: &BTreeSet<String>) -> Ve
 }
 
 /// Declarations made more than once in a program, or of a built-in constraint: (relation, files) per problem.
-pub(super) fn declarations(files: &[(String, Vec<Statement>)]) -> Vec<String> {
+pub fn declarations(files: &[(String, Vec<Statement>)]) -> Vec<String> {
     let mut decls = BTreeMap::<String, Vec<String>>::new();
     for (file, statements) in files {
         for (item, _) in statements {
@@ -291,7 +291,7 @@ pub(super) fn declarations(files: &[(String, Vec<Statement>)]) -> Vec<String> {
     }
     let mut out = Vec::new();
     for (name, files) in decls {
-        if TESTS.iter().any(|(rr, _)| *rr == name) || name == "match_all" {
+        if TESTS.iter().any(|(rr, _)| *rr == name) || name == "match_all" || name == "match_group" {
             out.push(format!("{name} is a built-in constraint and cannot be declared ({})", files.join(", ")));
         }
         if files.len() > 1 {
@@ -399,8 +399,64 @@ fn tarjan(nodes: &BTreeSet<String>, graph: &BTreeMap<String, BTreeSet<String>>) 
     out
 }
 
+/// Relations a program's rules read that none of its files declares, nor the lowering makes (its built-ins): the
+/// syntax-level form of `front::declared`, which a run and check-rr apply to the lowered program.
+pub fn undeclared(statements: &[&Statement]) -> Vec<String> {
+    fn reads(lits: &[Lit], out: &mut Vec<String>) {
+        fn term(t: &Term, out: &mut Vec<String>) {
+            match t {
+                Term::Agg { body, .. } => reads(body, out),
+                Term::Bin { l, r, .. } => {
+                    term(l, out);
+                    term(r, out);
+                }
+                Term::Call { args, .. } => args.iter().for_each(|a| term(a, out)),
+                _ => {}
+            }
+        }
+        for l in lits {
+            match l {
+                Lit::Group { alts, .. } => alts.iter().for_each(|a| reads(a, out)),
+                Lit::Atom { rel, args, .. } => {
+                    out.push(rel.clone());
+                    args.iter().for_each(|a| term(a, out));
+                }
+                Lit::Cmp { l, r, .. } => {
+                    term(l, out);
+                    term(r, out);
+                }
+                Lit::Pattern { .. } => {}
+            }
+        }
+    }
+    let mut declared = BTreeSet::new();
+    for (item, _) in statements {
+        match item {
+            Item::Decl { name, .. } | Item::Edit { name } => {
+                declared.insert(name.clone());
+            }
+            Item::Violation { name, .. } => {
+                declared.insert(name.clone());
+            }
+            _ => {}
+        }
+    }
+    let built_in = |rel: &str| TESTS.iter().any(|(t, _)| *t == rel) || RELATION_ARG.iter().any(|(r, _)| *r == rel) || super::lower::BUILT_INS.contains(&rel);
+    let mut out = BTreeSet::new();
+    for (item, line) in statements {
+        if let Item::Clause { heads, body, .. } = item {
+            let mut read = Vec::new();
+            reads(body, &mut read);
+            for rel in read.into_iter().filter(|r| !declared.contains(r) && !built_in(r)) {
+                out.insert(format!("line {line}: relation {rel} is read by the rule for {} and not declared", heads[0].rel));
+            }
+        }
+    }
+    out.into_iter().collect()
+}
+
 /// Stratification problems of one program (every statement of its files): "h depends on d" per problem.
-pub(super) fn strata(statements: &[&Statement]) -> Vec<String> {
+pub fn strata(statements: &[&Statement]) -> Vec<String> {
     let mut ordered = BTreeMap::new();
     let mut rules = Vec::new();
     for (item, line) in statements {

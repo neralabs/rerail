@@ -275,6 +275,15 @@ const CASES: &[(&str, &str)] = &[
     (".policy {\"a\": \"\\u{41}\"}", "never"),
     // The same bytes outside JSON: no refusal.
     ("r(x) :- x = a -b, s(\"a\\qb\", \"two\nlines\", 007) // c\n.", "06"),
+    // A rule file's tests (decision 0130): a fixture set, a test that uses it, with `exactly`, its
+    // statements a file's; `.end` past a comment; `exactly` and `uses` as names.
+    (".fixtures app\n  .fixture \"a.py\" ```\n    x = 1\n    ```\n.end\n.test t exactly uses app, b\n  #include \"c.rr\"\n  seen(1).\n  r(x) :- seen(x).\n  .expect B101 at \"a.py\":1\n.end\nr(x) :- s(x).", "22"),
+    (".test exactly\n.end\n.test uses uses a\n. // c\n end\n.fixtures f exactly(1).\n.end", "22"),
+    // Blocks do not nest; a `.end` outside a block; a block with no `.end`.
+    (".test a\n.test b\n.end\n.end", "never"),
+    (".fixtures a\n.fixtures b\n.end\n.end", "never"),
+    ("r(x).\n.end", "never"),
+    (".test a\nr(x).", "never"),
 ];
 
 /// A node by names: kind, field ("" for none), start, end, size.
@@ -313,13 +322,53 @@ fn named(c: &Compiled, nodes: &[IdNode]) -> Vec<Named> {
         .collect()
 }
 
+/// The first step whose tape is named-only, as the engine's is: it leaves out the tokens the
+/// grammar implies (`implied`, `drop`; docs/parser-generators/32-named-only-rr-tapes.md).
+const NAMED_ONLY: &str = "21";
+
+/// `nodes` without their anonymous tokens (an ERROR aside) and comments, each node's size less
+/// those in it: a tree's named structure, which the steps before `NAMED_ONLY` share with the
+/// engine's. Comments go too: in those steps one between a directive's `.` and its word is the
+/// `.decl` leaf's text, where the engine's tape, with no such leaf, holds it.
+fn without_tokens(nodes: Vec<Named>) -> Vec<Named> {
+    let anonymous = |k: &str| k == "comment" || rr::tape::KIND_NAMES[usize::from(rr::tape::FIRST_ANONYMOUS)..].contains(&k);
+    let mut before = vec![0usize; nodes.len() + 1];
+    for (i, n) in nodes.iter().enumerate() {
+        before[i + 1] = before[i] + usize::from(anonymous(&n.0));
+    }
+    nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| !anonymous(&n.0))
+        .map(|(i, n)| (n.0.clone(), n.1.clone(), n.2, n.3, n.4 - (before[(i + n.4).min(nodes.len())] - before[i])))
+        .collect()
+}
+
 /// The engine's tree against the step's, for a document the step parses.
-fn against_the_engine(c: &Compiled, bytes: &[u8], want: &Option<Vec<IdNode>>) -> Option<String> {
+/// The step that reads a rule file's tests (decision 0130).
+const TEST_BLOCKS: &str = "22";
+
+/// Whether a line of `src` starts with `.test`, `.fixtures` or `.end`, the lines of a test block.
+fn has_block_lines(src: &str) -> bool {
+    src.lines().any(|l| {
+        let l = l.trim_start();
+        [".test", ".fixtures", ".end"].iter().any(|w| l.strip_prefix(w).is_some_and(|rest| !rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')))
+    })
+}
+
+fn against_the_engine(step: &str, c: &Compiled, bytes: &[u8], want: &Option<Vec<IdNode>>) -> Option<String> {
     let nodes = want.as_ref()?;
     // A `.rr` file is text: the engine reads only UTF-8.
     let src = std::str::from_utf8(bytes).ok()?;
+    // A step before the test blocks reads a block's lines as settings, as the engine did then: a document with
+    // them is the engine's from that step on.
+    if step < TEST_BLOCKS && has_block_lines(src) {
+        return None;
+    }
     let (theirs, error) = engine(src);
     let ours = named(c, nodes);
+    // A step before the named-only one writes every token: its named structure is the engine's.
+    let (ours, theirs) = if step < NAMED_ONLY { (without_tokens(ours), without_tokens(theirs)) } else { (ours, theirs) };
     if error {
         return Some(format!("the step parses what the engine does not:\n  engine {theirs:?}\n  step {ours:?}"));
     }
@@ -341,7 +390,7 @@ fn rr_steps_parse_as_the_reference_and_the_engine() {
     let steps = steps_in(DIR);
     assert!(!steps.is_empty(), "no steps in {DIR}");
     let fixed: Vec<&str> = CASES.iter().map(|c| c.0).collect();
-    let differ = check_ladder(&steps, ALPHABET, SAMPLES, &fixed, &|_, c, bytes, want| against_the_engine(c, bytes, want));
+    let differ = check_ladder(&steps, ALPHABET, SAMPLES, &fixed, &|step, c, bytes, want| against_the_engine(step, c, bytes, want));
     assert!(differ.is_empty(), "{} steps differ:\n{}", differ.len(), differ.join("\n"));
 }
 

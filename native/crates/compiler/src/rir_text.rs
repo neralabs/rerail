@@ -42,6 +42,60 @@ pub fn switch_rows(out: &mut String, at: usize, s: &crate::stream_ir::ByteSwitch
         }
         b = e + 1;
     }
+    for &(w, t) in &s.words {
+        let _ = writeln!(out, "  switch {at} word s{w} {}", switch_target(t));
+    }
+}
+
+/// Tier 2's rules (`Words::rules`): `rule N @P`, each rule's first place.
+/// The marks' words: `markword K sW` (`Words::mark_words`).
+pub fn mark_word_rows(out: &mut String, mark_words: &[(u8, u16)]) {
+    use std::fmt::Write as _;
+    for &(k, s) in mark_words {
+        let _ = writeln!(out, "  markword {k} s{s}");
+    }
+}
+
+pub fn word_kind_rows(out: &mut String, word_kinds: &[(u16, u16)]) {
+    use std::fmt::Write as _;
+    for &(s, k) in word_kinds {
+        let _ = writeln!(out, "  wordkind s{s} #{k}");
+    }
+}
+
+pub fn extra_rows(out: &mut String, extras: &[(u8, u16)]) {
+    use std::fmt::Write as _;
+    for &(b, k) in extras {
+        let _ = writeln!(out, "  tokenextra b{b} #{k}");
+    }
+}
+
+pub fn token_mark_rows(out: &mut String, marks: &[crate::program::TokenMark]) {
+    use std::fmt::Write as _;
+    for m in marks {
+        let _ = write!(out, "  tokenmark {}", m.order);
+        for e in &m.elems {
+            let _ = write!(out, " o{} k{:x}", e.offset, e.kinds);
+            for s in &e.words {
+                let _ = write!(out, " s{s}");
+            }
+        }
+        out.push('\n');
+    }
+}
+
+pub fn count_rows(out: &mut String, counts: &[u16]) {
+    use std::fmt::Write as _;
+    for (at, m) in counts.iter().enumerate() {
+        let _ = writeln!(out, "  tokencount {at} max {m}");
+    }
+}
+
+pub fn rule_rows(out: &mut String, rules: &[u16]) {
+    use std::fmt::Write as _;
+    for (at, p) in rules.iter().enumerate() {
+        let _ = writeln!(out, "  rule {at} @{p:04}");
+    }
 }
 
 /// A reading's rows: `reading N #K as #M`, `reading N #K gone`, `reading N #K keep`,

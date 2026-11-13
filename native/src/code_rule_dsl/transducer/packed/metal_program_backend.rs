@@ -11,46 +11,45 @@ use super::packed_workspace::WorkspaceTotals;
 use super::*;
 use crate::code_rule_dsl::tape::TapeDoc;
 use metal::{ComputePipelineState, Device, MTLSize};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, LazyLock, Mutex};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static INVOCATIONS: Cell<usize> = const { Cell::new(0) };
     static HOST_EVENTS: Cell<usize> = const { Cell::new(0) };
 }
 
-#[cfg(test)]
-pub(super) fn reset_metrics() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub(in crate::code_rule_dsl) fn reset_metrics() {
     INVOCATIONS.set(0);
     HOST_EVENTS.set(0);
 }
 
-#[cfg(test)]
-pub(super) fn metrics() -> (usize, usize) {
+#[cfg(any(test, feature = "test-hooks"))]
+pub(in crate::code_rule_dsl) fn metrics() -> (usize, usize) {
     (INVOCATIONS.get(), HOST_EVENTS.get())
 }
 
 #[path = "metal_label_passes.rs"]
-pub(super) mod label_passes;
-#[cfg(test)]
-#[path = "metal_tape_tests.rs"]
-mod tape_tests;
+pub mod label_passes;
+// Its tests run in the engine's test binary (its facade of this module mounts `metal_tape_tests.rs` as `tape_tests`): they read what the
+// engine registers as it loads (the languages, their `.rr` libraries).
 #[path = "metal_set_steps.rs"]
-pub(in crate::code_rule_dsl) mod set_steps;
+pub mod set_steps;
 // Block programs on Metal: the Metal crate's.
-pub(in crate::code_rule_dsl) use rerail_metal::block_program;
+pub use rerail_metal::block_program;
 #[path = "metal_work_queue.rs"]
-pub(in crate::code_rule_dsl) mod work_queue;
+pub mod work_queue;
 #[path = "metal_lattice.rs"]
-pub(in crate::code_rule_dsl) mod lattice;
+pub mod lattice;
 #[path = "metal_nearest.rs"]
-pub(in crate::code_rule_dsl) mod nearest;
+pub mod nearest;
 // Pre-pinned blocks: the Metal crate's.
-pub(in crate::code_rule_dsl) use rerail_metal::pool as blocks;
+pub use rerail_metal::pool as blocks;
 
 const METAL_JIT_CACHE_LIMIT: usize = 32;
 pub(super) const EXECUTION_LANES: usize = 64;
@@ -66,7 +65,7 @@ pub(super) fn release_workspaces() -> bool {
     let released = METAL_WORKSPACE_POOL.lock().map(|mut pool| std::mem::take(&mut *pool)).unwrap_or_default();
     !released.is_empty()
 }
-pub(in crate::code_rule_dsl) use rerail_metal::METAL_DEVICE;
+pub use rerail_metal::METAL_DEVICE;
 
 struct MetalWorkspace {
     totals: WorkspaceTotals,
@@ -347,7 +346,7 @@ pub(super) struct CachedProgramBuffers {
 pub(super) type ProgramBufferCache = Arc<Mutex<Option<CachedProgramBuffers>>>;
 
 #[derive(Clone)]
-pub(super) enum Engine {
+pub enum Engine {
     Interpreter {
         pipeline: ComputePipelineState,
         buffers: ProgramBufferCache,
@@ -600,7 +599,7 @@ pub(super) fn compile_resident_interpreter_cached() -> Result<Engine, Error> {
     Ok(engine)
 }
 
-pub(super) fn compile_interpreter() -> Result<Engine, Error> {
+pub fn compile_interpreter() -> Result<Engine, Error> {
     Ok(Engine::Interpreter {
         pipeline: pipeline_named(
             &kernel_source(
@@ -619,7 +618,7 @@ pub(super) fn compile_interpreter() -> Result<Engine, Error> {
 /// The interpreter with a recursive group's sweep kernel (`label_passes`, `label_sweep`), compiled
 /// once per process. A program whose flags carry a route (bit 31; bit 30 captured nodes, bits 8..30
 /// the label) marks its label as each result is published; other programs run as in `run_batch`.
-pub(super) fn compile_sweep_cached() -> Result<ComputePipelineState, Error> {
+pub(in crate::code_rule_dsl) fn compile_sweep_cached() -> Result<ComputePipelineState, Error> {
     static SWEEP: Mutex<Option<ComputePipelineState>> = Mutex::new(None);
     let mut cached = SWEEP.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(pipeline) = &*cached {
@@ -635,8 +634,8 @@ pub(super) fn compile_sweep_cached() -> Result<ComputePipelineState, Error> {
     // (A program's route marks its labels as it publishes: `label_mark` in `run_task_in`.)
     let source = edit(
         source,
-        "device const uint* bits=(device const uint*)(values+1);return ((bits[(kind-61440u)*words+node/32u]>>(node%32u))&1u)!=0u;",
-        "device atomic_uint* bits=(device atomic_uint*)(values+1);return ((atomic_load_explicit(&bits[(kind-61440u)*words+node/32u],memory_order_relaxed)>>(node%32u))&1u)!=0u;",
+        "device const uint* bits=(device const uint*)(values+1);return ((bits[(kind-16384u)*words+node/32u]>>(node%32u))&1u)!=0u;",
+        "device atomic_uint* bits=(device atomic_uint*)(values+1);return ((atomic_load_explicit(&bits[(kind-16384u)*words+node/32u],memory_order_relaxed)>>(node%32u))&1u)!=0u;",
     );
     let begin = source.find("kernel void run_batch(").expect("the runtime has run_batch") + "kernel void run_batch(".len();
     let end = begin + source[begin..].find("uint tid [[thread_position_in_grid]]){").expect("run_batch's thread position");
@@ -671,7 +670,7 @@ pub(super) fn program_buffer_key(programs: &[Program]) -> Result<ProgramBufferKe
 }
 
 /// The interpreter, compiled once per process: a lowered matcher dispatches it once per pass.
-pub(super) fn compile_interpreter_cached() -> Result<Engine, Error> {
+pub(in crate::code_rule_dsl) fn compile_interpreter_cached() -> Result<Engine, Error> {
     static INTERPRETER: Mutex<Option<Engine>> = Mutex::new(None);
     let mut cached = INTERPRETER.lock().map_err(|_| Error::BackendFailure)?;
     if let Some(engine) = &*cached {
@@ -683,12 +682,12 @@ pub(super) fn compile_interpreter_cached() -> Result<Engine, Error> {
 }
 
 /// Whether `programs`' kernel is compiled (`compile_jit_cached`), without compiling it.
-pub(super) fn jit_ready(programs: &[Program]) -> Result<bool, Error> {
+pub(in crate::code_rule_dsl) fn jit_ready(programs: &[Program]) -> Result<bool, Error> {
     let key = jit_cache_key(programs)?;
     Ok(JIT_CACHE.lock().map_err(|_| Error::BackendFailure)?.contains_key(&key))
 }
 
-pub(super) fn compile_jit_cached(programs: &[Program]) -> Result<Engine, Error> {
+pub(in crate::code_rule_dsl) fn compile_jit_cached(programs: &[Program]) -> Result<Engine, Error> {
     let key = jit_cache_key(programs)?;
     if let Some(engine) = JIT_CACHE
         .lock()
@@ -721,7 +720,7 @@ pub(super) fn execute(
     execute_outcomes(engine, programs, files, anchors)?.into_result()
 }
 
-pub(super) fn execute_outcomes(
+pub(in crate::code_rule_dsl) fn execute_outcomes(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],
@@ -739,7 +738,7 @@ pub(super) fn execute_packed(
     execute_packed_with_result_limits(engine, programs, files, anchors, None)
 }
 
-pub(super) fn execute_packed_with_result_limits(
+pub fn execute_packed_with_result_limits(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],
@@ -777,8 +776,7 @@ pub(super) fn execute_packed_with_result_limits(
     }
     let allocation_started = std::time::Instant::now();
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-    let queue = device.new_command_queue();
-    queue.set_label("Tempo packed transducer queue");
+    let queue = rerail_metal::queue()?;
     let workspace = MetalWorkspaceLease::acquire(
         device,
         totals,
@@ -909,7 +907,7 @@ pub(super) fn execute_packed_with_result_limits(
     if command.status() == metal::MTLCommandBufferStatus::Error {
         return Err(Error::BackendFailure);
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     INVOCATIONS.set(INVOCATIONS.get() + 1);
     batch.global_arenas = unsafe {
         scheduler_buffer

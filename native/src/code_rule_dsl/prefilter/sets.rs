@@ -283,6 +283,8 @@ impl Program {
                     Lowered { exact: false, ..scope }
                 }
             }
+            // A root gate (main's `Condition::RootGate`): the whole scope, inexact.
+            Condition::RootGate { .. } => Lowered { exact: false, ..scope },
         };
         selected.exact &= plan.exact;
         selected

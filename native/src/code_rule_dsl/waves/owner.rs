@@ -7,10 +7,10 @@
 //! `compiled_plans` and `atoms` are `main`, and a lease binds the base-relation vtabs instead
 //! (`facts::vtab::syntax`). `statistics_boundary` returns the counts the compiled plans' validity
 //! reads (`stats::plans`), and `trim` evicts completed relations to a byte capacity.
-mod database;
-pub(in crate::code_rule_dsl::waves) mod sql;
+pub mod database;
+pub mod sql;
 
-pub(in crate::code_rule_dsl) use database::Database;
+pub use database::Database;
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::content_store::{ContentStore, StoreResult};
 use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
@@ -27,20 +27,20 @@ const RETAINED_BYTES: usize = 4 * 1024 * 1024;
 
 /// The owner kept between executions.
 #[derive(Default, Clone)]
-pub(in crate::code_rule_dsl) struct Backing(Arc<Mutex<Option<Database>>>);
+pub struct Backing(Arc<Mutex<Option<Database>>>);
 struct Inner<'s> {
     store: &'s ContentStore,
     db: OnceCell<Database>,
 }
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Pool<'s>(Rc<Inner<'s>>);
+pub struct Pool<'s>(Rc<Inner<'s>>);
 /// One execution's hold on the backing: the owner returns to it on drop, if clean.
-pub(in crate::code_rule_dsl) struct Scope<'s> {
+pub struct Scope<'s> {
     pool: Option<Pool<'s>>,
     backing: ArcMutexGuard<RawMutex, Option<Database>>,
 }
 impl Backing {
-    pub(in crate::code_rule_dsl) fn enter<'s>(&self, store: &'s ContentStore) -> Scope<'s> {
+    pub fn enter<'s>(&self, store: &'s ContentStore) -> Scope<'s> {
         let mut backing = self.0.lock_arc();
         let pool = Pool(Rc::new(Inner { store, db: OnceCell::new() }));
         if let Some(db) = backing.take()
@@ -52,7 +52,7 @@ impl Backing {
     }
 }
 impl<'s> Scope<'s> {
-    pub(in crate::code_rule_dsl) fn pool(&self) -> Pool<'s> {
+    pub fn pool(&self) -> Pool<'s> {
         self.pool.as_ref().unwrap().clone()
     }
 }
@@ -70,7 +70,7 @@ impl Drop for Scope<'_> {
         }
     }
 }
-pub(in crate::code_rule_dsl) struct Lease<'s> {
+pub struct Lease<'s> {
     pool: Pool<'s>,
     pub id: usize,
     pins: RefCell<Vec<String>>,
@@ -79,14 +79,14 @@ impl<'s> Pool<'s> {
     pub(in crate::code_rule_dsl) fn store(&self) -> &'s ContentStore {
         self.0.store
     }
-    pub(in crate::code_rule_dsl) fn invalidate(&self) {
+    pub fn invalidate(&self) {
         if let Some(db) = self.0.db.get() {
             db.healthy.set(false);
         }
     }
     /// Writes the counts of the relations changed since the last boundary to `temp.wave_stats`
     /// and returns every relation's `rows.<name>`.
-    pub(in crate::code_rule_dsl) fn statistics_boundary(&self) -> rusqlite::Result<BTreeMap<String, u64>> {
+    pub fn statistics_boundary(&self) -> rusqlite::Result<BTreeMap<String, u64>> {
         match self.0.db.get() {
             Some(db) => db.storage.borrow_mut().statistics_boundary(db),
             None => Ok(BTreeMap::new()),
@@ -100,7 +100,7 @@ impl<'s> Pool<'s> {
             db.healthy.set(false);
         }
     }
-    pub(in crate::code_rule_dsl) fn take(&self) -> StoreResult<Lease<'s>> {
+    pub fn take(&self) -> StoreResult<Lease<'s>> {
         if self.0.db.get().is_none() {
             let _ = self.0.db.set(Database::open(self.0.store)?);
         }
@@ -115,11 +115,11 @@ impl<'s> Pool<'s> {
     }
 }
 impl Lease<'_> {
-    pub(in crate::code_rule_dsl) fn private(&self, name: &str) -> String {
+    pub fn private(&self, name: &str) -> String {
         format!("__private_{}_{}", self.id, name)
     }
     /// Binds `source` to the vtab `name` for this lease.
-    pub(in crate::code_rule_dsl) fn bind(&self, name: &str, source: Arc<dyn Source>) -> rusqlite::Result<()> {
+    pub fn bind(&self, name: &str, source: Arc<dyn Source>) -> rusqlite::Result<()> {
         self.activate()?;
         self.deref().bind(name, source)
     }
@@ -137,7 +137,7 @@ impl Lease<'_> {
         self.storage.borrow_mut().owner = Some(self.id);
         Ok(())
     }
-    pub(in crate::code_rule_dsl) fn resident_bytes(&self) -> rusqlite::Result<usize> {
+    pub fn resident_bytes(&self) -> rusqlite::Result<usize> {
         Ok(self.deref().resident_bytes()?.saturating_add(self.storage.borrow().bytes()))
     }
 }
@@ -163,5 +163,5 @@ impl Drop for Lease<'_> {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// Its tests run in the engine's test binary (its facade of this module mounts `owner/tests.rs`): they read what the
+// engine registers as it loads (the languages, their `.rr` libraries).

@@ -296,15 +296,15 @@ fn encode(
     encoder.end_encoding();
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static PAYLOAD_READS: std::cell::Cell<[usize;4]> = const { std::cell::Cell::new([0;4]) };
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn take_payload_reads() -> [usize; 4] {
     PAYLOAD_READS.with(|counts| counts.replace([0; 4]))
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn observe_payload_read<T>(count: usize) {
     let name = std::any::type_name::<T>();
     let index = [
@@ -331,7 +331,7 @@ pub(super) fn read<T: Copy>(buffer: &MappedBuffer, count: usize) -> Result<Vec<T
     if length as u64 > buffer.buffer.length() {
         return Err(Error::BackendFailure);
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     observe_payload_read::<T>(count);
     Ok(unsafe { std::slice::from_raw_parts(buffer.buffer.contents().cast::<T>(), count).to_vec() })
 }
@@ -348,7 +348,7 @@ pub(super) fn execute(
     if grid.blocks.is_empty() {
         return super::metal_output_pages::SavedOutput::empty(resident);
     }
-    let device = Device::system_default().ok_or(Error::UnsupportedBackend)?;
+    let device = rerail_metal::device()?;
     let code = metal_register_codegen::compile(resident)?;
     let constant = super::metal_constant_output::ConstantOutput::new(resident, &code)?;
     let pipelines = Pipelines::new(&code.source)?;
@@ -356,7 +356,7 @@ pub(super) fn execute(
     let roots = MappedBuffer::zeroed::<u32>(&device, grid.roots.len())?;
     let progress = MappedBuffer::zeroed::<u32>(&device, grid.evaluation_spans.len())?;
     let partitions = partitions(resident, &code, span_limit, constant.as_ref())?;
-    let queue = device.new_command_queue();
+    let queue = rerail_metal::queue()?;
     let predicate_programs =
         super::metal_capture_predicates::PredicatePrograms::new(&device, &queue, resident, &input)?;
     let separate_completed = metal_initial_range_codegen::mixed_classes(resident, plan)?;
@@ -752,7 +752,7 @@ pub(super) fn execute(
 
 /// Assemble already ordered, disjoint evaluation outputs. No semantic comparison,
 /// candidate filtering, or frontier materialization occurs at this public boundary.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn assemble_evaluations(
     resident: &ResidentInput,
     registers: (Vec<ResultRecord>, Vec<FinalCaptureRecord>),
@@ -762,7 +762,7 @@ fn assemble_evaluations(
     assemble_evaluation_streams(resident, &streams)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn assemble_evaluation_streams(
     resident: &ResidentInput,
     streams: &[(Vec<ResultRecord>, Vec<FinalCaptureRecord>)],

@@ -6,26 +6,19 @@
 //     `license` describes exactly what it ships;
 //   - under `packs/<id>/candidates/` (scored, never shipped): the resolved licence names only terms the
 //     pack declares; Rerail's own probe rules legitimately resolve to Apache-2.0 alone.
-// And for every file a `packs/<id>/licenses/<project>/UPSTREAM.md` table lists (copied from that upstream), the
-// resolved licence names the one that UPSTREAM.md records (`License: <SPDX id>`; `MIT OR Apache-2.0` names MIT), and the resolved copyright
-// names a holder besides Rerail: a copied file left to the catch-all annotation reads as Rerail's own work.
+// Copied pack test data is not in git (each S3 archive carries its licence texts and provenance), so no tracked copy
+// is left to annotate; pack validation's check 6 reads the per-repo licenses/<project>/UPSTREAM.md instead.
 // Resolution follows REUSE 3.x for REUSE.toml: of the `[[annotations]]` whose `path` glob
 // matches, the last one in the file applies; with `precedence = "override"` it wins outright, otherwise an
 // in-file `SPDX-License-Identifier` (or a `<file>.license` sidecar) wins when present, and `aggregate`
-// combines both; `SPDX-FileCopyrightText` resolves the same way. A pack without a `license` fails every one of
-// its files.
+// combines both. A pack without a `license` fails every one of its files.
 // REUSE.toml is read with a TOML subset parser: `[[annotations]]` tables of string or string-array keys.
 
 import { finding, globToRegExp, isRuleDoc, readJson, sortFindings } from "../lib.mjs";
 
 export const id = 7;
-export const title = "Pack rules and copied files carry their licences (REUSE)";
+export const title = "Pack rules carry their licences (REUSE)";
 
-/** Rerail's copyright holder, the catch-all annotation's. */
-const RERAIL_HOLDER = "Nera Software Inc.";
-/** The licence an UPSTREAM.md records, and its table rows' files and upstream paths; as conformance/pack-validation.ts reads them. */
-const UPSTREAM_LICENSE = /\bLicense: ([A-Za-z0-9][A-Za-z0-9.+-]*)/u;
-const UPSTREAM_ROW = /^\|\s*`([^`]+)`\s*\|\s*([^|]*?)\s*\|/u;
 export const target = "100%";
 
 function parseValue(raw) {
@@ -100,32 +93,14 @@ export function licenceTerms(expression) {
   ].sort();
 }
 
-/** The SPDX ids an expression names, whatever joins them (`AND`, `OR`, `WITH`): `MIT OR Apache-2.0` names MIT. */
-function licenceIds(expression) {
-  return String(expression)
-    .split(/\s+(?:AND|OR|WITH)\s+|[()]/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
-// Assembled so that REUSE does not read this source's own patterns as licence and copyright tags.
+// Assembled so that REUSE does not read this source's own pattern as a licence tag.
 const IN_FILE_TAG = new RegExp(`${["SPDX", "License", "Identifier"].join("-")}:\\s*([^\\n*]+?)\\s*(?:\\*\\/|-->)?\\s*$`, "m");
-const IN_FILE_COPYRIGHT = new RegExp(`${["SPDX", "FileCopyrightText"].join("-")}:\\s*([^\\n*]+?)\\s*(?:\\*\\/|-->)?\\s*$`, "gm");
 
 function inFileLicence(repo, path) {
   for (const source of [`${path}.license`, path]) {
     const text = repo.has(source) && !repo.isBinary(source) ? repo.text(source) : null;
     const match = text && IN_FILE_TAG.exec(text);
     if (match) return match[1];
-  }
-  return null;
-}
-
-function inFileCopyright(repo, path) {
-  for (const source of [`${path}.license`, path]) {
-    const text = repo.has(source) && !repo.isBinary(source) ? repo.text(source) : null;
-    const holders = text ? [...text.matchAll(IN_FILE_COPYRIGHT)].map((match) => match[1]) : [];
-    if (holders.length > 0) return holders;
   }
   return null;
 }
@@ -146,35 +121,6 @@ export function effectiveLicence(repo, annotations, path) {
   if (last.precedence === "override") return last.license;
   if (last.precedence === "aggregate" && inFile) return `${last.license} AND ${inFile}`;
   return inFile ?? last.license;
-}
-
-/** The copyright holders REUSE resolves for `path`, as written; empty when nothing covers it. */
-export function effectiveCopyright(repo, annotations, path) {
-  const last = lastAnnotation(annotations, path);
-  const inFile = inFileCopyright(repo, path);
-  if (!last || last.copyright === null) return inFile ?? [];
-  if (last.precedence === "override") return last.copyright;
-  if (last.precedence === "aggregate" && inFile) return [...last.copyright, ...inFile];
-  return inFile ?? last.copyright;
-}
-
-/**
- * Each file a `packs/<id>/licenses/<project>/UPSTREAM.md` lists as copied, repository-relative, with the licence it
- * records. A row whose upstream path is `none` is a Rerail file listed among the copies and says so; it is skipped.
- */
-function copiedFiles(repo) {
-  const copied = [];
-  for (const record of repo.files) {
-    const match = /^packs\/([^/]+)\/licenses\/[^/]+\/UPSTREAM\.md$/.exec(record);
-    if (!match) continue;
-    const text = repo.text(record);
-    const licence = UPSTREAM_LICENSE.exec(text)?.[1] ?? null;
-    for (const line of text.split("\n")) {
-      const row = UPSTREAM_ROW.exec(line);
-      if (row && row[2] !== "none") copied.push({ path: `packs/${match[1]}/${row[1]}`, record, licence });
-    }
-  }
-  return copied;
 }
 
 export function check(repo) {
@@ -200,23 +146,6 @@ export function check(repo) {
     if (!ok) {
       const relation = match[2] === "rules" ? "the pack declares" : "outside the pack's";
       findings.push(finding(path, `REUSE resolves ${resolved ?? "no licence"}; ${relation} ${declared}`));
-    }
-  }
-  for (const { path, record, licence } of copiedFiles(repo)) {
-    // A listed file that does not exist is pack validation's finding (check 6), not this metric's.
-    if (!repo.has(path)) continue;
-    total += 1;
-    if (licence === null) {
-      findings.push(finding(path, `${record} records no "License: <SPDX id>"`));
-      continue;
-    }
-    const resolved = effectiveLicence(repo, annotations, path);
-    const holders = effectiveCopyright(repo, annotations, path);
-    if (resolved === null || !licenceIds(resolved).includes(licence)) {
-      findings.push(finding(path, `REUSE resolves ${resolved ?? "no licence"}; ${record} lists it as copied under ${licence}`));
-    } else if (!holders.some((holder) => !holder.includes(RERAIL_HOLDER))) {
-      const named = holders.length === 0 ? "no copyright holder" : `only ${RERAIL_HOLDER} as its copyright holder`;
-      findings.push(finding(path, `REUSE names ${named}; ${record} lists it as copied`));
     }
   }
   const covered = total - findings.length;

@@ -7,8 +7,8 @@ use super::{
 use crate::code_rule_dsl::profile::trace::Span;
 use rusqlite::{Result, params_from_iter};
 
-#[cfg(test)]
-pub(super) fn rows(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn rows(
     store: &Store,
     statement: &Statement,
     mut emit: impl FnMut(usize, i64, usize),
@@ -24,7 +24,7 @@ pub(super) fn request(store: &Store, files: &[i64]) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn prepare_structural(store: &Store, files: &[i64]) -> Result<()> {
+pub fn prepare_structural(store: &Store, files: &[i64]) -> Result<()> {
     #[cfg(feature = "code-rule-profile")]
     store.db.context(serde_json::json!({"component":"ast-index", "stage":"candidate-preparation", "producer":"decoded-structure", "fileDomain":files}));
     #[cfg(feature = "code-rule-profile")]
@@ -78,7 +78,7 @@ fn compile<T>(prepare: impl FnOnce() -> T) -> T {
     phase_clock::timed(&phase_clock::ANCHOR_COMPILE, prepare)
 }
 
-pub(super) fn rows_for(
+pub fn rows_for(
     store: &Store,
     statement: &Statement,
     files: &[i64],

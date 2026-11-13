@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants, existsSync } from "node:fs";
 import {
@@ -20,7 +19,6 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
-import { promisify } from "node:util";
 import {
   isClaudeStatusLine,
   readClaudeStatusRegistration,
@@ -35,12 +33,17 @@ import { RERAIL_COMMANDS, type RerailCommandName } from "../harness/rerail-comma
 import { andList, shellQuote } from "../harness/setup-screens.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
-import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { RERAIL_HOSTS, type RerailHost } from "../engine/adapter-contract.js";
+import { CURRENT_LINK, defaultRerailHome, VERSIONS_DIR } from "../engine/storage/rerail-home.js";
+import { runGit } from "../engine/git.js";
 import { pinnedNodePath } from "./node-path.js";
+import { DAEMON_ACCESS_TOKEN_FILE } from "../runtime/daemon-control.js";
+import { ACTIVE_PROFILE_FILE, PROFILES_DIR } from "../activation/customer-profile.js";
+import { DEVICE_SECRETS_DIR } from "../activation/device-keystore.js";
 
-export type Harness = "omp" | "pi" | "claude-code" | "codex" | "cursor";
+export type Harness = RerailHost;
 
-export const HARNESSES: readonly Harness[] = ["omp", "pi", "claude-code", "codex", "cursor"];
+export const HARNESSES: readonly Harness[] = RERAIL_HOSTS;
 
 export interface RegistrationOptions {
   /** Installed package root containing package.json, dist/ and hooks/. */
@@ -207,7 +210,7 @@ function registeredRoot(script: string, executable: string): string | undefined 
 }
 
 async function isRerailPackageRoot(context: Context, root: string): Promise<boolean> {
-  if (root === context.root || root === join(context.home, ".rerail", "current")) return true;
+  if (root === context.root || root === join(context.home, ".rerail", CURRENT_LINK)) return true;
   let verified = context.packageRoots.get(root);
   if (verified === undefined) {
     verified = readFile(join(root, "package.json"), "utf8").then(text => {
@@ -684,51 +687,78 @@ function replaceAddedEntries(
   wanted: Readonly<Record<string, readonly string[]>>, path: string,
 ): AddedSettingsEntries | undefined {
   if (context.mode === "unregister" && previous !== undefined && previous.root !== context.root) return previous;
-  const lastKey = (key: string): [JsonObject | undefined, string] => {
-    const keys = key.split(".");
-    return [objectAt(value, keys.slice(0, -1)), keys.at(-1)!];
-  };
+  removeAddedLists(value, previous);
+  removeCreatedContainers(value, previous);
+  const added: AddedSettingsEntries = { root: context.root, entries: {}, created: [] };
+  for (const [key, entries] of Object.entries(wanted)) addWantedEntries(value, key, entries, { previous, added, path });
+  return isNothingAdded(added) ? undefined : added;
+}
+
+const isNothingAdded = (added: AddedSettingsEntries): boolean => Object.keys(added.entries).length === 0 && added.created.length === 0;
+
+/** The object that holds a dotted key's last name, and that name. */
+function lastKeyOf(value: JsonObject, key: string): [JsonObject | undefined, string] {
+  const keys = key.split(".");
+  return [objectAt(value, keys.slice(0, -1)), keys.at(-1)!];
+}
+
+const isEmptyContainer = (held: unknown): boolean => (Array.isArray(held) && held.length === 0) || (isObject(held) && Object.keys(held).length === 0);
+
+/** Takes out the entries `previous` added. */
+function removeAddedLists(value: JsonObject, previous: AddedSettingsEntries | undefined): void {
   for (const [key, entries] of Object.entries(previous?.entries ?? {})) {
-    const [parent, name] = lastKey(key);
+    const [parent, name] = lastKeyOf(value, key);
     const list = parent?.[name];
     if (parent !== undefined && Array.isArray(list)) parent[name] = list.filter(entry => typeof entry !== "string" || !entries.includes(entry));
   }
+}
+
+/** Takes out what `previous` created that its entries' removal left empty. */
+function removeCreatedContainers(value: JsonObject, previous: AddedSettingsEntries | undefined): void {
   // Deepest first, so an object left empty by removing a list registration created goes too.
   for (const key of [...previous?.created ?? []].sort((a, b) => b.split(".").length - a.split(".").length)) {
-    const [parent, name] = lastKey(key);
-    const held = parent?.[name];
-    if (parent !== undefined && ((Array.isArray(held) && held.length === 0) || (isObject(held) && Object.keys(held).length === 0))) {
-      delete parent[name];
-    }
+    const [parent, name] = lastKeyOf(value, key);
+    if (parent !== undefined && isEmptyContainer(parent[name])) delete parent[name];
   }
-  const added: AddedSettingsEntries = { root: context.root, entries: {}, created: [] };
-  // The value at `dotted`, created empty when missing; one an earlier registration created stays Rerail's even once
-  // the person has added to it.
-  const claim = (container: JsonObject, name: string, dotted: string, empty: unknown[] | JsonObject): unknown => {
-    if (container[name] === undefined || previous?.created.includes(dotted)) {
-      container[name] ??= empty;
-      if (!added.created.includes(dotted)) added.created.push(dotted);
-    }
-    return container[name];
-  };
-  const misshapen = (dotted: string, shape: string): Error =>
-    new Error(`Cannot keep Rerail's data from the coding agent: "${dotted}" in ${path} is not ${shape}`);
-  for (const [key, entries] of Object.entries(wanted)) {
-    const keys = key.split(".");
-    let container = value;
-    for (const [depth, name] of keys.slice(0, -1).entries()) {
-      const dotted = keys.slice(0, depth + 1).join(".");
-      const held = claim(container, name, dotted, {});
-      if (!isObject(held)) throw misshapen(dotted, "an object");
-      container = held;
-    }
-    const list = claim(container, keys.at(-1)!, key, []);
-    if (!Array.isArray(list)) throw misshapen(key, "an array");
-    const missing = [...new Set(entries)].filter(entry => !list.includes(entry));
-    list.push(...missing);
-    if (missing.length > 0) added.entries[key] = missing;
+}
+
+/**
+ * The value at `dotted`, created empty when missing; one an earlier registration created stays Rerail's even once the
+ * person has added to it.
+ */
+function claimSetting(
+  container: JsonObject, name: string, dotted: string, empty: unknown[] | JsonObject,
+  { previous, added }: { previous: AddedSettingsEntries | undefined; added: AddedSettingsEntries },
+): unknown {
+  if (container[name] === undefined || previous?.created.includes(dotted)) {
+    container[name] ??= empty;
+    if (!added.created.includes(dotted)) added.created.push(dotted);
   }
-  return Object.keys(added.entries).length === 0 && added.created.length === 0 ? undefined : added;
+  return container[name];
+}
+
+function misshapenSetting(path: string, dotted: string, shape: string): Error {
+  return new Error(`Cannot keep Rerail's data from the coding agent: "${dotted}" in ${path} is not ${shape}`);
+}
+
+/** Adds the `entries` the list at `key` lacks, creating the objects and the list that hold them. */
+function addWantedEntries(
+  value: JsonObject, key: string, entries: readonly string[],
+  run: { previous: AddedSettingsEntries | undefined; added: AddedSettingsEntries; path: string },
+): void {
+  const keys = key.split(".");
+  let container = value;
+  for (const [depth, name] of keys.slice(0, -1).entries()) {
+    const dotted = keys.slice(0, depth + 1).join(".");
+    const held = claimSetting(container, name, dotted, {}, run);
+    if (!isObject(held)) throw misshapenSetting(run.path, dotted, "an object");
+    container = held;
+  }
+  const list = claimSetting(container, keys.at(-1)!, key, [], run);
+  if (!Array.isArray(list)) throw misshapenSetting(run.path, key, "an array");
+  const missing = [...new Set(entries)].filter(entry => !list.includes(entry));
+  list.push(...missing);
+  if (missing.length > 0) run.added.entries[key] = missing;
 }
 
 /**
@@ -738,7 +768,9 @@ function replaceAddedEntries(
  * package. A new data file or folder in the Rerail home must be added here, or the agent's file tools can read it.
  */
 const RERAIL_HOME_DATA_ENTRIES: readonly string[] = [
-  "*.json*", "*.sqlite*", "*.log*", "*.lock", "access-token*", "active-profile*", "device-secrets/**", "profiles/**",
+  "*.json*", "*.sqlite*", "*.log*", "*.lock",
+  ...[DAEMON_ACCESS_TOKEN_FILE, ACTIVE_PROFILE_FILE].map(file => `${file}*`),
+  ...[DEVICE_SECRETS_DIR, PROFILES_DIR].map(folder => `${folder}/**`),
 ];
 
 /** `path` as the absolute path of a Read or Edit rule (`//path`), its gitignore pattern characters escaped. */
@@ -781,7 +813,7 @@ async function claudeIsolationEntries(context: Context): Promise<Record<string, 
   ];
   // Native Windows runs commands unsandboxed: only the file tools' rules apply there.
   if (context.platform === "win32") return { "permissions.deny": deny };
-  const packageCode = [join(rerailHome, "current"), join(rerailHome, "versions"), context.root, await realpath(context.root).catch(() => context.root)];
+  const packageCode = [join(rerailHome, CURRENT_LINK), join(rerailHome, VERSIONS_DIR), context.root, await realpath(context.root).catch(() => context.root)];
   return {
     "permissions.deny": deny,
     "sandbox.filesystem.denyRead": protectedDirectories,
@@ -903,17 +935,16 @@ async function isPackageClaudeStatus(context: Context, statusLine: ClaudeStatusL
   return script !== undefined && isAbsolute(script) && await isReplaceableScript(context, script, ENTRY_POINTS.claudeStatus);
 }
 
-const execGit = promisify(execFile);
-
 /** Claude uses the safe main-checkout root for local settings, but shared settings stay at cwd. */
 async function claudeLocalDirectory(workspaceDir: string, context: Context): Promise<string> {
   if (context.platform === "win32" || process.getuid === undefined) return workspaceDir;
   let root: string;
   try {
     // rev-parse rejects non-repositories/bare repositories; Git also enforces safe.directory.
-    await execGit("git", ["rev-parse", "--show-toplevel"], { cwd: workspaceDir });
-    const { stdout } = await execGit("git", ["worktree", "list", "--porcelain", "-z"], { cwd: workspaceDir });
-    const first = stdout.split("\0", 1)[0];
+    if (runGit(workspaceDir, ["rev-parse", "--show-toplevel"]).status !== 0) return workspaceDir;
+    const worktrees = runGit(workspaceDir, ["worktree", "list", "--porcelain", "-z"]);
+    if (worktrees.status !== 0) return workspaceDir;
+    const first = worktrees.stdout.split("\0", 1)[0];
     if (first === undefined || !first.startsWith("worktree ")) return workspaceDir;
     root = await realpath(first.slice("worktree ".length));
   } catch {
@@ -1357,7 +1388,7 @@ function newContext(options: RegistrationOptions, mode: Mode): Context {
   return {
     mode,
     root,
-    managed: options.managed ?? root === join(defaultRerailHome(), "current"),
+    managed: options.managed ?? root === join(defaultRerailHome(), CURRENT_LINK),
     packageRoots: new Map(),
     home: resolve(options.home ?? homedir()),
     nodePath: options.nodePath ?? pinnedNodePath(),
@@ -1371,6 +1402,77 @@ export function loadsOmpPluginCopy(root: string, home: string): Promise<boolean>
   return hasOmpPluginCopy(newContext({ root, home }, "register"));
 }
 
+/** The plan for a harness that was not selected. */
+function skippedPlan(harness: Harness, home: string, options: RegistrationOptions): Plan {
+  return {
+    change: {
+      harness,
+      path: join(home, CONFIG_DIRS[harness]),
+      action: "skipped",
+      detail: options.harnesses === undefined ? "config directory not found" : "not selected",
+    },
+  };
+}
+
+/** Whether the status line at `path` is Rerail's to rewrite: removal takes out what a registration added, and a registration only follows itself. */
+async function statusLineFollowsRegistration(home: string, path: string, mode: Mode): Promise<boolean> {
+  const registration = readClaudeStatusRegistration(home, path);
+  const statusLine = (await readJsonFile(path)).value.statusLine;
+  return mode === "unregister" || (isClaudeStatusLine(statusLine) && statusLine.command === registration?.installedCommand);
+}
+
+async function addClaudeSettingsPlans(context: Context, workspaceDir: string | undefined, plans: Plan[]): Promise<void> {
+  if (workspaceDir !== undefined) plans.push(...await planClaudeProjectSettings(workspaceDir, context));
+  for (const path of readClaudeStatusSettingsPaths(context.home)) {
+    if (plans.some(plan => plan.change.path === path)) continue;
+    if (await statusLineFollowsRegistration(context.home, path, context.mode)) plans.push(await planClaudeSettings(context, path));
+  }
+}
+
+/** Every plan for a selected harness, added to `plans`: the plans so far say which Claude settings files are already handled. */
+async function addHarnessPlans(harness: Harness, context: Context, workspaceDir: string | undefined, plans: Plan[]): Promise<void> {
+  plans.push(await planHarness(harness, context));
+  switch (harness) {
+    case "omp":
+      plans.push(await planOmpMcp(context), ...await planOmpPackageDuplicates(context));
+      break;
+    case "claude-code":
+      await addClaudeSettingsPlans(context, workspaceDir, plans);
+      plans.push(...await planAgentCommands(context, harness));
+      break;
+    case "cursor":
+      plans.push(...await planCursorCli(context));
+      plans.push(...await planAgentCommands(context, harness));
+      break;
+    case "codex":
+      plans.push(...await planAgentCommands(context, harness));
+      break;
+    default:
+      break;
+  }
+}
+
+/** What a registration has to tell the person. */
+async function registrationNotes(changes: readonly RegistrationChange[], context: Context, selected: ReadonlySet<Harness>): Promise<string[]> {
+  const notes: string[] = [];
+  const wrote = (change: RegistrationChange): boolean => change.action === "created" || change.action === "updated";
+  if (changes.some(wrote)) {
+    notes.push("Harness sessions pick up registration changes when they next start.");
+  }
+  // Codex asks to trust a hook again only when its command changes.
+  const codexHooks = join(context.home, ".codex", "hooks.json");
+  if (context.mode === "register" && changes.some(change => change.path === codexHooks && wrote(change))) {
+    notes.push(CODEX_TRUST_NOTE);
+  }
+  if (await ompPluginCopyMatters(context, selected)) notes.push(OMP_PLUGIN_NOTE);
+  return notes;
+}
+
+/** A dry run's caller (a status check) reads no note, so it skips looking in OMP's plugin folder. */
+async function ompPluginCopyMatters(context: Context, selected: ReadonlySet<Harness>): Promise<boolean> {
+  return context.mode === "register" && !context.dryRun && selected.has("omp") && await hasOmpPluginCopy(context);
+}
+
 async function run(options: RegistrationOptions, mode: Mode): Promise<RegistrationReport> {
   const context = newContext(options, mode);
   const { home } = context;
@@ -1379,50 +1481,12 @@ async function run(options: RegistrationOptions, mode: Mode): Promise<Registrati
 
   // Plan every harness before touching anything so a malformed config aborts with nothing written.
   for (const harness of HARNESSES) {
-    if (!selected.has(harness)) {
-      plans.push({
-        change: {
-          harness,
-          path: join(home, CONFIG_DIRS[harness]),
-          action: "skipped",
-          detail: options.harnesses === undefined ? "config directory not found" : "not selected",
-        },
-      });
-      continue;
-    }
-    plans.push(await planHarness(harness, context));
-    if (harness === "omp") plans.push(await planOmpMcp(context), ...await planOmpPackageDuplicates(context));
-    if (harness === "claude-code" && options.workspaceDir !== undefined) {
-      plans.push(...await planClaudeProjectSettings(options.workspaceDir, context));
-    }
-    if (harness === "claude-code") {
-      for (const path of readClaudeStatusSettingsPaths(home)) {
-        if (plans.some(plan => plan.change.path === path)) continue;
-        const registration = readClaudeStatusRegistration(home, path);
-        const statusLine = (await readJsonFile(path)).value.statusLine;
-        if (mode === "unregister" || (isClaudeStatusLine(statusLine) && statusLine.command === registration?.installedCommand)) {
-          plans.push(await planClaudeSettings(context, path));
-        }
-      }
-    }
-    if (harness === "cursor") plans.push(...await planCursorCli(context));
-    if (harness === "codex" || harness === "claude-code" || harness === "cursor") plans.push(...await planAgentCommands(context, harness));
+    if (selected.has(harness)) await addHarnessPlans(harness, context, options.workspaceDir, plans);
+    else plans.push(skippedPlan(harness, home, options));
   }
   for (const plan of plans) await plan.apply?.();
   const changes = plans.map((plan) => plan.change);
-
-  const notes: string[] = [];
-  if (changes.some((change) => change.action === "created" || change.action === "updated")) {
-    notes.push("Harness sessions pick up registration changes when they next start.");
-  }
-  // Codex asks to trust a hook again only when its command changes.
-  const codexHooks = join(home, ".codex", "hooks.json");
-  if (mode === "register" && changes.some(change => change.path === codexHooks && (change.action === "created" || change.action === "updated"))) {
-    notes.push(CODEX_TRUST_NOTE);
-  }
-  // A dry run's caller (a status check) reads no note, so it skips looking in OMP's plugin folder.
-  if (mode === "register" && !context.dryRun && selected.has("omp") && await hasOmpPluginCopy(context)) notes.push(OMP_PLUGIN_NOTE);
-  return { changes, notes };
+  return { changes, notes: await registrationNotes(changes, context, selected) };
 }
 
 /** The note a registration that wrote Codex's hooks carries: Codex runs no hook the person has not trusted. */

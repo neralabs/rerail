@@ -4,7 +4,6 @@
 //! calls `xFilter` with the batch token. The first call executes the packed backend and stores its
 //! normalized relation. No host callback or semantic matcher can be registered here.
 
-use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules, with_adapter};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::matcher::{Reading, ValueTest};
 use crate::code_rule_dsl::transducer::packed::{
@@ -32,6 +31,7 @@ use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 #[cfg(test)]
 const MODULE_NAME: &CStr = c"rerail_matches";
@@ -1157,7 +1157,7 @@ impl PackedDemand {
                                             let _ = environment.insert(label, found);
                                         }
                                     }
-                                    let mut facts = crate::code_rule_dsl::matcher::producer_facts(
+                                    let mut facts = producer_facts(
                                         &descriptor.source,
                                         node.clone(),
                                         &environment,
@@ -1171,15 +1171,12 @@ impl PackedDemand {
                                     {
                                         use crate::code_rule_dsl::calls::summary::Callee;
                                         use crate::code_rule_dsl::language::Family;
-                                        use crate::code_rule_dsl::language::adapter::{
-                                            Adapter, CallRules, with_adapter,
-                                        };
                                         facts.rows.clear();
-                                        let callee = with_adapter!(Family::of(test.language), A => <<A as Adapter>::Calls as CallRules>::callee_at(
+                                        let callee = { let pack = language_pack::pack(Family::of(test.language)); language_pack::calls_callee_at(pack, 
                                             &node,
                                             summary,
                                             || crate::code_rule_dsl::matcher::calls_tables(&node, test.language),
-                                        ));
+                                        ) };
                                         match callee {
                                             Some(Some(Callee::Name(name))) => {
                                                 let mut pending = summary
@@ -1511,14 +1508,11 @@ impl PackedDemand {
                                                     if family == Family::Ecma {
                                                         return None;
                                                     }
-                                                    let tokens = with_adapter!(
-                                                        family,
-                                                        A => <<A as Adapter>::Value as ValueRules>::structure(
+                                                    let tokens = { let pack = language_pack::pack(family); language_pack::value_structure(pack, 
                                                             &node,
                                                             Equality::Plain,
                                                             &mut context,
-                                                        )
-                                                    );
+                                                        ) };
                                                     (!context.exhausted())
                                                         .then_some(tokens)
                                                         .flatten()
@@ -1733,14 +1727,11 @@ impl PackedDemand {
                                         if family == Family::Ecma {
                                             return None;
                                         }
-                                        let tokens = with_adapter!(
-                                            family,
-                                            A => <<A as Adapter>::Value as ValueRules>::structure(
+                                        let tokens = { let pack = language_pack::pack(family); language_pack::value_structure(pack, 
                                                 &node,
                                                 Equality::Plain,
                                                 &mut context,
-                                            )
-                                        );
+                                            ) };
                                         (!context.exhausted())
                                             .then_some(tokens)
                                             .flatten()
@@ -2948,41 +2939,41 @@ unsafe impl VTabCursor for MatchCursor<'_> {
                 ))
             })?;
         match column {
-            0 => context.set_result(&row.batch),
-            1 => context.set_result(&(row.row_kind as i64)),
-            2 => context.set_result(&row.producer_id),
-            3 => context.set_result(&row.file_index),
-            4 => context.set_result(&row.task_index),
-            5 => context.set_result(&row.match_index),
-            6 => context.set_result(&row.capture_index),
-            7 => context.set_result(&row.capture_occurrence),
-            8 => context.set_result(&row.capture_sequence_start),
-            9 => context.set_result(&row.capture_sequence_count),
-            10 => context.set_result(&row.node),
-            11 => context.set_result(&row.related_node),
-            12 => context.set_result(&row.axis_kind),
-            13 => context.set_result(&row.axis_order),
-            14 => context.set_result(&row.fact_kind),
-            15 => context.set_result(&row.document_id),
-            16 => context.set_result(&row.mapped_document_id),
-            17 => context.set_result(&row.start_ordinal),
-            18 => context.set_result(&row.output_label.as_deref()),
-            19 => context.set_result(&row.capture_label.as_deref()),
-            20 => context.set_result(&row.text_value.as_deref()),
-            21 => context.set_result(&row.start_byte),
-            22 => context.set_result(&row.end_byte),
-            23 => context.set_result(&row.verdict),
-            24 => context.set_result(&row.complete),
-            25 => context.set_result(&row.work_used),
-            26 => context.set_result(&row.error_code.as_deref()),
-            27 => context.set_result(&row.field_id),
-            28 => context.set_result(&row.related_named),
-            29 => context.set_result(&row.source_text.as_deref()),
-            30 => context.set_result(&row.structural_key.as_deref()),
-            31 => context.set_result(&row.named_leaf),
-            32 => context.set_result(&row.capture_kind),
-            33 => context.set_result(&row.capture_named),
-            34 => context.set_result(&row.equality_occurrence),
+            0 => context.set_result(row.batch),
+            1 => context.set_result(row.row_kind as i64),
+            2 => context.set_result(row.producer_id),
+            3 => context.set_result(row.file_index),
+            4 => context.set_result(row.task_index),
+            5 => context.set_result(row.match_index),
+            6 => context.set_result(row.capture_index),
+            7 => context.set_result(row.capture_occurrence),
+            8 => context.set_result(row.capture_sequence_start),
+            9 => context.set_result(row.capture_sequence_count),
+            10 => context.set_result(row.node),
+            11 => context.set_result(row.related_node),
+            12 => context.set_result(row.axis_kind),
+            13 => context.set_result(row.axis_order),
+            14 => context.set_result(row.fact_kind),
+            15 => context.set_result(row.document_id),
+            16 => context.set_result(row.mapped_document_id),
+            17 => context.set_result(row.start_ordinal),
+            18 => context.set_result(row.output_label.as_deref()),
+            19 => context.set_result(row.capture_label.as_deref()),
+            20 => context.set_result(row.text_value.as_deref()),
+            21 => context.set_result(row.start_byte),
+            22 => context.set_result(row.end_byte),
+            23 => context.set_result(row.verdict),
+            24 => context.set_result(row.complete),
+            25 => context.set_result(row.work_used),
+            26 => context.set_result(row.error_code.as_deref()),
+            27 => context.set_result(row.field_id),
+            28 => context.set_result(row.related_named),
+            29 => context.set_result(row.source_text.as_deref()),
+            30 => context.set_result(row.structural_key.as_deref()),
+            31 => context.set_result(row.named_leaf),
+            32 => context.set_result(row.capture_kind),
+            33 => context.set_result(row.capture_named),
+            34 => context.set_result(row.equality_occurrence),
             _ => Err(rusqlite::Error::InvalidColumnIndex(column as usize)),
         }
     }
@@ -3325,4 +3316,59 @@ mod tests {
         assert_eq!(repeated, 1);
         assert_eq!(registry.query_execution_counters(token), Some((1, 2)));
     }
+}
+
+/// Emit predicate-local rows without executing a nested user rule. For N's catalog backend
+/// (`demand::driver::catalog::sql_backend`), which only tests run.
+#[cfg(test)]
+fn producer_facts<'tree, D: ast_grep_core::Doc>(
+    source: &crate::code_rule_dsl::demand::driver::catalog::sql_backend::SemanticFactSource,
+    node: ast_grep_core::Node<'tree, D>,
+    env: &ast_grep_core::meta_var::MetaVarEnv<'tree, D>,
+) -> crate::code_rule_dsl::transducer::semantic_facts::Facts<'tree, D> {
+    use crate::code_rule_dsl::transducer::semantic_facts::{Facts, Target, slot};
+    use crate::code_rule_dsl::demand::driver::catalog::sql_backend::SemanticFactSource;
+    let mut facts = Facts::new();
+    match source {
+        SemanticFactSource::Binding { test, request } => {
+            test.facts(node, env, &mut facts, *request)
+        }
+        SemanticFactSource::Binds { test, request } => test.facts(node, env, &mut facts, *request),
+        SemanticFactSource::FormatArgs(test) => test.facts(env, &mut facts),
+        SemanticFactSource::Arguments(arguments) => {
+            let mut trial = std::borrow::Cow::Borrowed(env);
+            crate::code_rule_dsl::matcher::util::UNKNOWN.set(false);
+            if arguments.match_node(node, &mut trial).is_some() {
+                facts.gate(1, Target::None);
+                for (position, (name, _)) in arguments.bind.iter().enumerate() {
+                    if let Some(target) = trial.get_match(name) {
+                        facts.push(
+                            slot::ARGUMENT,
+                            position as i64,
+                            1,
+                            Target::Node(target.clone()),
+                        );
+                    }
+                }
+            } else if crate::code_rule_dsl::matcher::util::UNKNOWN.replace(false) {
+                facts.gate(-1, Target::None);
+            }
+        }
+        SemanticFactSource::Resolves(resolves) => {
+            if resolves.holds(&node) {
+                facts.gate(1, Target::None);
+            }
+        }
+        SemanticFactSource::Layout(layout) => {
+            let mut trial = std::borrow::Cow::Borrowed(env);
+            crate::code_rule_dsl::matcher::util::UNKNOWN.set(false);
+            if layout.match_node(node, &mut trial).is_some() {
+                facts.gate(1, Target::None);
+            } else if crate::code_rule_dsl::matcher::util::UNKNOWN.replace(false) {
+                facts.gate(-1, Target::None);
+            }
+        }
+        SemanticFactSource::Calls(_) => {}
+    }
+    facts
 }

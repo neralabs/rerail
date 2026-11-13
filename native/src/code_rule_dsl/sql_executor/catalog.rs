@@ -159,7 +159,7 @@ impl CodeRuleSqlExecutor {
                 }
             }
             for (ord, r) in program.rules.iter().enumerate() {
-                rule.execute(rusqlite::params![rule_id, e as i64, ord as i64, r.head.rel, r.to_string()]).map_err(error)?;
+                rule.execute(rusqlite::params![rule_id, e as i64, ord as i64, r.head.rel.as_str(), r.to_string()]).map_err(error)?;
                 for (i, l) in r.body.iter().enumerate() {
                     let (kind, rel, negated, aggregate) = literal(l);
                     atom.execute(rusqlite::params![rule_id, i as i64, kind, rel, negated, aggregate, l.to_string()])

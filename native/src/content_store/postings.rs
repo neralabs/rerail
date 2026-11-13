@@ -128,7 +128,7 @@ unsafe impl VTabCursor for Cursor {
     }
     fn column(&self, ctx: &mut Context, col: c_int) -> Result<()> {
         match col {
-            0 => ctx.set_result(&self.pre),
+            0 => ctx.set_result(self.pre),
             _ => ctx.set_result(&self.bytes),
         }
     }
@@ -252,7 +252,7 @@ unsafe impl VTabCursor for EdgeCursor {
     }
     fn column(&self, ctx: &mut Context, col: c_int) -> Result<()> {
         match col {
-            0..=3 => ctx.set_result(&self.edge[col as usize]),
+            0..=3 => ctx.set_result(self.edge[col as usize]),
             _ => ctx.set_result(&self.bytes),
         }
     }
@@ -377,8 +377,8 @@ unsafe impl VTabCursor for SegmentCursor {
     }
     fn column(&self, ctx: &mut Context, col: c_int) -> Result<()> {
         match col {
-            0 => ctx.set_result(&self.positions[self.at]),
-            _ => ctx.set_result(&rusqlite::types::Null),
+            0 => ctx.set_result(self.positions[self.at]),
+            _ => ctx.set_result(rusqlite::types::Null),
         }
     }
     fn rowid(&self) -> Result<i64> {

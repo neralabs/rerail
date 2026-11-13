@@ -207,7 +207,7 @@ impl<K: Ord + Clone, V: Measure<K>> Node<K, V> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[derive(Clone)]
     struct Number(i64);

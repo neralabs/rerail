@@ -42,17 +42,9 @@ pub(crate) const K: usize = 4;
 /// that read `unconverged(1)` make unknown what a missing row would otherwise decide.
 pub(crate) const UNCONVERGED: &str = "unconverged";
 
-/// The pragma by which a program asks for bounded rounds (decision 0056): `.pragma "cross-rounds" "4"`. A typing
-/// program declares it: its cross-file recursion is over interface summaries, cut at `k` file crossings, with the
-/// pending round when it also declares `unconverged`. A program that does not declare it (a rule) has its
-/// cross-file part run as one fixpoint, which no chain length cuts.
-pub(crate) const PRAGMA: &str = "cross-rounds";
+pub use crate::code_rule_dsl::logic::front::PRAGMA;
 
 /// The rounds `prog` declares (`PRAGMA`), if it declares them.
-/// The program setting `.pragma "cross-rounds" "k"` lowers to (from `.rr`, or the `.rdl` copies' same line).
-pub(crate) fn setting(k: &str) -> (String, String) {
-    ("pragma".to_owned(), format!("\"{PRAGMA}\" \"{k}\""))
-}
 
 pub(crate) fn declared(prog: &Program) -> Option<usize> {
     prog.settings.iter().filter(|(key, _)| key == "pragma").find_map(|(_, text)| {
@@ -67,20 +59,20 @@ pub(crate) fn declared(prog: &Program) -> Option<usize> {
 /// The rounds bound of a program that declares `declared` rounds: that, or `RERAIL_CROSS_ROUNDS` (a diagnostic: how
 /// many rounds a corpus needs), or a test's `with_k` on this thread.
 pub(crate) fn k(declared: usize) -> usize {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if let Some(k) = TEST_K.with(std::cell::Cell::get) {
         return k;
     }
     std::env::var("RERAIL_CROSS_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(declared)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static TEST_K: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
 }
 
 /// Runs `f` with the rounds bound `k` on this thread (tests: the environment variable would reach every test).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn with_k<T>(k: usize, f: impl FnOnce() -> T) -> T {
     TEST_K.with(|c| c.set(Some(k)));
     let out = f();
@@ -105,7 +97,7 @@ pub(crate) struct Bounded {
 }
 
 fn first_node_var(prog: &Program, a: &Atom) -> Option<String> {
-    let cols = prog.decls.get(&a.rel)?;
+    let cols = prog.decls.get(a.rel.as_str())?;
     a.args.iter().zip(cols).find_map(|(t, (_, ty))| match t {
         Term::Var(v) if ty == "node" => Some(v.clone()),
         _ => None,
@@ -126,7 +118,7 @@ pub(crate) fn same_document(body: &[Literal], same_doc: &BTreeMap<String, Vec<us
             _ => None,
         })
         .filter_map(|a| {
-            let cols = same_doc.get(&a.rel)?;
+            let cols = same_doc.get(a.rel.as_str())?;
             Some(cols.iter().filter_map(|&c| if let Some(Term::Var(x)) = a.args.get(c) { Some(x.as_str()) } else { None }).collect())
         })
         .collect();
@@ -168,13 +160,13 @@ pub(crate) fn bound(prog: &Program, same_doc: &BTreeMap<String, Vec<usize>>) -> 
                 (Some(h), Some(v)) if *h == v || local_to_head.contains(&v) => {}
                 (Some(h), Some(v)) if matches!(rule.body[i], Literal::Atom(_)) => found.push((i, h.clone(), v)),
                 _ => {
-                    unbounded.insert(rule.head.rel.clone());
+                    unbounded.insert(rule.head.rel.to_string());
                 }
             }
         }
         if found.is_empty() || found.len() > MAX_HOPS {
             if !found.is_empty() {
-                unbounded.insert(rule.head.rel.clone());
+                unbounded.insert(rule.head.rel.to_string());
             }
             out.rules.push(rule.clone());
             continue;
@@ -186,8 +178,8 @@ pub(crate) fn bound(prog: &Program, same_doc: &BTreeMap<String, Vec<usize>>) -> 
                 let across = choice & (1 << bit) != 0;
                 if across {
                     let Literal::Atom(a) = &mut body[*i] else { unreachable!() };
-                    hops.insert(a.rel.clone());
-                    a.rel = format!("{}{PREV}", a.rel);
+                    hops.insert(a.rel.to_string());
+                    a.rel = format!("{}{PREV}", a.rel).into();
                 }
                 body.push(Literal::Cmp { l: doc(v), op: if across { "!=" } else { "=" }, r: doc(h) });
             }
@@ -196,8 +188,8 @@ pub(crate) fn bound(prog: &Program, same_doc: &BTreeMap<String, Vec<usize>>) -> 
     }
     for rel in &hops {
         let prev = format!("{rel}{PREV}");
-        out.decls.insert(prev.clone(), prog.decls[rel].clone());
-        if let Some(l) = prog.lattice.get(rel) {
+        out.decls.insert(prev.clone(), prog.decls[rel.as_str()].clone());
+        if let Some(l) = prog.lattice.get(rel.as_str()) {
             out.lattice.insert(prev.clone(), l.clone());
         }
         out.inputs.push(prev);
@@ -241,7 +233,7 @@ pub(crate) fn cone_split(prog: &Program, hops: &BTreeSet<String>) -> Option<Spli
         .filter(|r| !in_cone(&r.head.rel))
         .flat_map(|r| r.body.iter().filter_map(Literal::atom))
         .filter(|a| in_cone(&a.rel))
-        .map(|a| a.rel.clone())
+        .map(|a| a.rel.to_string())
         .collect();
     // A lattice relation's rows are its cells, not a set: the rest does not read one as an input.
     if reads.iter().any(|r| prog.lattice.contains_key(r)) {
@@ -257,9 +249,9 @@ pub(crate) fn cone_split(prog: &Program, hops: &BTreeSet<String>) -> Option<Spli
     for r in &mut rest.rules {
         for l in &mut r.body {
             if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
-                && reads.contains(&a.rel)
+                && reads.contains(a.rel.as_str())
             {
-                a.rel = format!("{}{DONE}", a.rel);
+                a.rel = format!("{}{DONE}", a.rel).into();
             }
         }
     }
@@ -313,7 +305,7 @@ pub(crate) fn pre_split(cone: &Program) -> Option<PreSplit> {
         .filter(|r| !in_pre(&r.head.rel))
         .flat_map(|r| r.body.iter().filter_map(Literal::atom))
         .filter(|a| in_pre(&a.rel) && cone.rules.iter().any(|r| r.head.rel == a.rel))
-        .map(|a| a.rel.clone())
+        .map(|a| a.rel.to_string())
         .collect();
     if reads.iter().any(|r| cone.lattice.contains_key(r)) {
         return None;
@@ -327,9 +319,9 @@ pub(crate) fn pre_split(cone: &Program) -> Option<PreSplit> {
     for r in &mut rounds.rules {
         for l in &mut r.body {
             if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
-                && reads.contains(&a.rel)
+                && reads.contains(a.rel.as_str())
             {
-                a.rel = format!("{}{PRE}", a.rel);
+                a.rel = format!("{}{PRE}", a.rel).into();
             }
         }
     }
@@ -365,16 +357,16 @@ pub(crate) fn digest_sorted(rows: &BTreeMap<String, Vec<Vec<i64>>>) -> u64 {
 
 /// What the rounds did.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct Rounds {
+pub struct Rounds {
     /// Rounds run, round 0 included.
-    pub(crate) run: usize,
+    pub run: usize,
     /// The hop relations' rows stopped changing within `K` rounds: the result is the fixpoint.
-    pub(crate) converged: bool,
+    pub converged: bool,
     /// Each round's hop rows, summed over the hop relations.
-    pub(crate) rows: Vec<usize>,
+    pub rows: Vec<usize>,
     /// The rounds did not converge, and the pending round ran (`UNCONVERGED`).
-    pub(crate) pending: bool,
+    pub pending: bool,
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

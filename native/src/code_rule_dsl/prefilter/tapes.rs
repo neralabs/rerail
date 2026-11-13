@@ -69,7 +69,7 @@ impl StoreTapes {
         if codec != CODEC_ZSTD {
             return Err(invalid(format!("unsupported tape codec {codec}")));
         }
-        let bytes = zstd::stream::decode_all(&frame[..]).map_err(|error| invalid(format!("tape frame: {error}")))?;
+        let bytes = crate::content_store::decompress(&frame, 0).map_err(|error| invalid(format!("tape frame: {error}")))?;
         let grammar = match self.grammars.get(&grammar_id) {
             Some(grammar) => Arc::clone(grammar),
             None => {
@@ -79,6 +79,7 @@ impl StoreTapes {
                 grammar
             }
         };
+        // Its records' preorder is the node ids rows hold.
         let image = TapeImage::from_bytes(&bytes, &grammar).map_err(invalid)?;
         let parents = std::env::var_os("RERAIL_TREE_DESCENT").is_none().then(|| parents(&image));
         let image = Arc::new(Held { image, parents });

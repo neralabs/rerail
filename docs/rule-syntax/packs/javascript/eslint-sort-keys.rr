@@ -33,7 +33,8 @@ pname(p, x, at) :- entry(o, p, _), object_prop(o, p, _, y, k), key_at(k, at), (i
 pname(p, x, at) :- entry(o, p, _), !object_prop(o, p, _, _, _), field(p, _, k), kind(k, "computed_property_name"),
     key_at(k, at), kind(at, "identifier"), id_value(at, x).
 .decl key_at(k: node, at: node)
-key_at(k, k) :- entry(_, p, _), (field(p, "key", k) ; field(p, "name", k) ; p = k), !kind(k, "computed_property_name").
+key_at(k, k) :- entry(_, p, _), (field(p, "key", k) ; field(p, "name", k)), !kind(k, "computed_property_name").
+key_at(p, p) :- entry(_, p, _), !kind(p, "computed_property_name").   // a shorthand property is its own key
 key_at(k, x) :- entry(_, p, _), (field(p, "key", k) ; field(p, "name", k)), kind(k, "computed_property_name"),
     child(k, e, _), !kind(e, "comment"), deparen(e, x).
 // reset(p): a spread, or a computed key under ignoreComputedKeys; ESLint forgets the previous name there.

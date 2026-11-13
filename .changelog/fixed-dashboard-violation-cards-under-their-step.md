@@ -1,0 +1,1 @@
+In History by session, a violation's card now sits under the tool call its audit followed, and the findings of one audit sit together under that call, instead of under the first call that mentioned the file or in a block at the end of the timeline.

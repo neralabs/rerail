@@ -2,7 +2,7 @@ use super::*;
 use crate::code_rule_dsl::{
     language::{self, GrammarDialect},
     matcher::AstMatcher,
-    prefilter::tests::{matcher, open, put, temp},
+    fixtures::{open, temp}, prefilter::tests::{matcher, put},
     tape::TapeDoc,
 };
 use crate::content_store::{ContentStore, StoreResult};

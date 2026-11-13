@@ -12,7 +12,7 @@ use std::ops::Range;
 
 /// A count's bounds, inclusive; `eq` is `min == max`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct LineCount {
+pub struct LineCount {
     pub(crate) min: u64,
     pub(crate) max: Option<u64>,
 }
@@ -25,8 +25,9 @@ impl LineCount {
 
 /// The node a gap runs to.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Neighbour {
-    /// The nearest token (a leaf of the tree, anonymous ones included).
+pub enum Neighbour {
+    /// The nearest token: a leaf of the tree, anonymous ones included, or a token the grammar
+    /// implies, which a tape does not store (see [`token`]).
     Token,
     /// The nearest named sibling.
     Sibling,
@@ -36,7 +37,7 @@ pub(crate) enum Neighbour {
 
 /// `before` or `after`: the lines between the node and its neighbour on that side.
 #[derive(Clone, Debug)]
-pub(crate) struct Gap {
+pub struct Gap {
     pub(crate) to: Neighbour,
     /// Whether a comment counts as the neighbouring token or sibling (else it is passed over).
     pub(crate) comments: bool,
@@ -49,7 +50,7 @@ pub(crate) struct Gap {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct Layout {
+pub struct Layout {
     /// Line breaks inside the node.
     pub(crate) span: Option<LineCount>,
     /// The node's first byte.
@@ -62,7 +63,7 @@ pub(crate) struct Layout {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct LineContext {
+pub struct LineContext {
     pub(crate) before: usize,
     pub(crate) after: usize,
     pub(crate) through: Option<regex::Regex>,
@@ -71,7 +72,7 @@ pub(crate) struct LineContext {
 
 impl Layout {
     /// The captures the gaps read.
-    pub(crate) fn reads(&self) -> impl Iterator<Item = &str> {
+    pub fn reads(&self) -> impl Iterator<Item = &str> {
         [&self.before, &self.after]
             .into_iter()
             .flatten()
@@ -90,7 +91,7 @@ impl Layout {
             || self.context.is_some()
     }
 
-    pub(super) fn match_node<'t, D: Doc>(
+    pub fn match_node<'t, D: Doc>(
         &self,
         node: Node<'t, D>,
         env: &mut Cow<MetaVarEnv<'t, D>>,
@@ -184,7 +185,7 @@ impl Gap {
         let lines = file.lines();
         let range = file.node(node);
         let neighbour = match &self.to {
-            Neighbour::Token => token(node, side, self.comments)?.map(|token| file.node(&token)),
+            Neighbour::Token => token(node, side, self.comments, file)?,
             Neighbour::Sibling => {
                 sibling(node, side, self.comments).map(|sibling| file.node(&sibling))
             }
@@ -230,7 +231,9 @@ impl Gap {
 }
 
 /// The lines strictly between `gap`'s first and last lines that no token or comment inside the
-/// gap touches, walking from the node toward its neighbour; `None` when the budget ran out.
+/// gap touches, walking from the node toward its neighbour; `None` when the budget ran out. A line
+/// between two stored leaves is blank when its text is all space: an implied token there is the
+/// only text a tape does not store (see [`token`]).
 fn blank_lines<D: Doc>(
     node: &Node<'_, D>,
     side: Side,
@@ -238,12 +241,18 @@ fn blank_lines<D: Doc>(
     file: &InFile<'_>,
 ) -> Option<usize> {
     let lines = file.lines();
-    let (first, last) = (lines.line(gap.start), lines.line(gap.end));
+    let source = file.source();
+    // The lines strictly inside `stretch` (between two leaves) whose text is all space.
+    let blank_in = |stretch: Range<usize>| {
+        let (first, last) = (lines.line(stretch.start), lines.line(stretch.end));
+        (first + 1..last).filter(|&line| source.get(lines.start(line)..lines.end(line)).is_some_and(|text| text.chars().all(is_space))).count()
+    };
     let mut blank = 0;
-    // The line the walk last left: the node's first (before) or last (after).
+    // Where the walk last left: the node's start (before) or end (after), then each leaf's far
+    // edge.
     let mut at = match side {
-        Side::Before => last,
-        Side::After => first,
+        Side::Before => gap.end,
+        Side::After => gap.start,
     };
     let mut current = node.clone();
     loop {
@@ -261,19 +270,44 @@ fn blank_lines<D: Doc>(
         if !inside {
             break;
         }
-        let (near, far) = match side {
-            Side::Before => (lines.line(token.end), lines.line(token.start)),
-            Side::After => (lines.line(token.start), lines.line(token.end)),
+        blank += blank_in(match side {
+            Side::Before => token.end..at,
+            Side::After => at..token.start,
+        });
+        at = match side {
+            Side::Before => token.start,
+            Side::After => token.end,
         };
-        blank += near.abs_diff(at).saturating_sub(1);
-        at = far;
         current = next;
     }
-    let end = match side {
-        Side::Before => first,
-        Side::After => last,
-    };
-    Some(blank + end.abs_diff(at).saturating_sub(1))
+    Some(blank + blank_in(match side {
+        Side::Before => gap.start..at,
+        Side::After => at..gap.end,
+    }))
+}
+
+/// Space between tokens: what the grammars' extras pass over (Unicode white space, and the
+/// byte-order mark and zero-width characters tree-sitter-python's extras name).
+fn is_space(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '\u{feff}' | '\u{2060}' | '\u{200b}')
+}
+
+/// The token in `stretch` nearest the node: `stretch` runs between the node and the next stored
+/// leaf on `side`, so any text in it that is not space is a token the grammar implies and the tape
+/// leaves out (comments and extras are stored). Its first byte (after) or its last (before):
+/// what the gap's lines are counted to. The read is that bounded window, nothing more (t31).
+fn implied_in(source: &str, stretch: Range<usize>, side: Side) -> Option<Range<usize>> {
+    let text = source.get(stretch.clone())?;
+    match side {
+        Side::After => {
+            let at = stretch.start + (text.len() - text.trim_start_matches(is_space).len());
+            (at < stretch.end).then(|| at..at + 1)
+        }
+        Side::Before => {
+            let at = stretch.start + text.trim_end_matches(is_space).len();
+            (at > stretch.start).then(|| at - 1..at)
+        }
+    }
 }
 
 /// Whether a node is a comment, which a token or sibling walk passes over unless asked not to.
@@ -281,24 +315,44 @@ fn is_comment<D: Doc>(node: &Node<'_, D>) -> bool {
     super::util::is_comment_kind(&node.kind())
 }
 
-/// The nearest token on `side` of the node that has a width, comments included or passed over;
-/// `None` when the budget ran out.
+/// The span of the nearest token on `side` of the node that has a width, comments included or
+/// passed over; `None` when the budget ran out. Between the node and each stored leaf the walk
+/// meets, a token the grammar implies may sit ([`implied_in`]); the nearest of those, or of the
+/// leaves, is the neighbour. Past the document's last leaf, its root's edge bounds the window.
 fn token<'t, D: Doc>(
     node: &Node<'t, D>,
     side: Side,
     comments: bool,
-) -> Option<Option<Node<'t, D>>> {
+    file: &InFile<'_>,
+) -> Option<Option<Range<usize>>> {
+    let source = file.source();
     let mut current = node.clone();
+    let mut near = file.node(node);
     loop {
         if !spend_util_step() {
             return None;
         }
-        let Some(next) = leaf(&current, side) else {
+        let next = leaf(&current, side);
+        let far = match &next {
+            Some(leaf) => file.node(leaf),
+            None => file.node(&node.ancestors().last().unwrap_or_else(|| node.clone())),
+        };
+        let stretch = match (side, next.is_some()) {
+            (Side::After, true) => near.end..far.start,
+            (Side::After, false) => near.end..far.end,
+            (Side::Before, true) => far.end..near.start,
+            (Side::Before, false) => far.start..near.start,
+        };
+        if let Some(implied) = implied_in(source, stretch, side) {
+            return Some(Some(implied));
+        }
+        let Some(next) = next else {
             return Some(None);
         };
         if comments || !is_comment(&next) {
-            return Some(Some(next));
+            return Some(Some(far));
         }
+        near = far;
         current = next;
     }
 }
@@ -344,162 +398,4 @@ fn sibling<'t, D: Doc>(node: &Node<'t, D>, side: Side, comments: bool) -> Option
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::code_rule_dsl::test_support::*;
-    use serde_json::{Value, json};
-
-    fn python(rule: Value) -> crate::code_rule_dsl::CompiledCodeRuleDsl {
-        compile_document_with(
-            clause_document(json!({ "id": "c", "violation": violation(),
-                "forbid": { "ast": { "language": "python", "rule": rule } } })),
-            &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
-        )
-        .unwrap_or_else(|error| panic!("{}", error.reason))
-    }
-
-    #[test]
-    fn span_counts_the_line_breaks_inside_the_node() {
-        let one_line = compiled(
-            json!({ "rule": { "kind": "if_statement", "layout": { "span": { "eq": 0 } } } }),
-        );
-        let source = "if (a) b();\nif (c)\n  d();\nif (e) {\n}\n";
-        assert_eq!(
-            matched_texts(
-                &evaluate_file(&one_line, "typescript", "a.ts", source),
-                source
-            ),
-            ["if (a) b();"]
-        );
-        let two = compiled(
-            json!({ "rule": { "kind": "if_statement", "layout": { "span": { "min": 1, "max": 1 } } } }),
-        );
-        assert_eq!(
-            matched_texts(&evaluate_file(&two, "typescript", "a.ts", source), source),
-            ["if (c)\n  d();", "if (e) {\n}"]
-        );
-        // ESLint breaks lines at CR, CRLF, U+2028 and U+2029 too; Ruff not at the last two.
-        let string =
-            compiled(json!({ "rule": { "kind": "string", "layout": { "span": { "eq": 1 } } } }));
-        let source = "x = 'a\u{2028}b';\ny = `c\r\nd`;\n";
-        assert_eq!(
-            matched_texts(
-                &evaluate_file(&string, "typescript", "a.ts", source),
-                source
-            ),
-            ["'a\u{2028}b'"]
-        );
-        let string = python(json!({ "kind": "string", "layout": { "span": { "min": 1 } } }));
-        let source = "x = 'a\u{2028}b'\ny = '''c\rd'''\n";
-        assert_eq!(
-            matched_texts(&evaluate_file(&string, "python", "a.py", source), source),
-            ["'''c\rd'''"]
-        );
-    }
-
-    #[test]
-    fn start_reads_the_node_s_first_byte() {
-        // Ruff's file-level diagnostics sit at byte 0, a shebang's too.
-        let first = python(json!({ "kind": "comment", "layout": { "start": { "eq": 0 } } }));
-        let source = "#!/usr/bin/env python\nimport os  # a comment\n";
-        assert_eq!(
-            matched_texts(&evaluate_file(&first, "python", "a.py", source), source),
-            ["#!/usr/bin/env python"]
-        );
-        let later = python(
-            json!({ "kind": "identifier", "layout": { "start": { "min": 30, "max": 40 } } }),
-        );
-        assert_eq!(
-            matched_texts(&evaluate_file(&later, "python", "a.py", source), source),
-            Vec::<String>::new()
-        );
-        let source = "import os\n";
-        assert_eq!(
-            matched_texts(&evaluate_file(&first, "python", "a.py", source), source),
-            Vec::<String>::new()
-        );
-        let statement =
-            python(json!({ "kind": "import_statement", "layout": { "start": { "eq": 0 } } }));
-        assert_eq!(
-            matched_texts(&evaluate_file(&statement, "python", "a.py", source), source),
-            ["import os"]
-        );
-    }
-
-    #[test]
-    fn a_missing_neighbour_fails_the_gap_unless_the_file_s_edge_stands_in() {
-        let gap = |side: &str, edge: bool, breaks: u64| {
-            compiled(json!({ "rule": { "kind": "comment", "layout": {
-                side: { "to": "token", "edge": edge, "breaks": { "eq": breaks } } } } }))
-        };
-        let source = "\n// head\nf(); // tail\n";
-        let texts = |compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl| {
-            matched_texts(
-                &evaluate_file(compiled, "typescript", "a.ts", source),
-                source,
-            )
-        };
-        assert_eq!(texts(&gap("before", false, 1)), Vec::<String>::new());
-        assert_eq!(texts(&gap("before", true, 1)), ["// head"]);
-        assert_eq!(texts(&gap("after", false, 1)), ["// head"]);
-        assert_eq!(texts(&gap("after", true, 1)), ["// head", "// tail"]);
-        // The file's start stands in as a token on the first line.
-        let blank = compiled(json!({ "rule": { "kind": "comment", "layout": {
-            "before": { "to": "token", "edge": true, "blank": { "eq": 0 } } } } }));
-        assert_eq!(texts(&blank), ["// head", "// tail"]);
-    }
-
-    #[test]
-    fn comments_count_as_neighbours_only_when_asked() {
-        let sibling = |comments: bool| {
-            compiled(json!({ "rule": { "kind": "identifier", "regex": "^b$",
-                "layout": { "before": { "to": "sibling", "comments": comments, "breaks": { "eq": 1 } } } } }))
-        };
-        let source = "f(a,\n  /* c */ b);\ng(a, /* c */\n  b);\n";
-        let texts = |compiled: &crate::code_rule_dsl::CompiledCodeRuleDsl| {
-            matched_texts(
-                &evaluate_file(compiled, "typescript", "a.ts", source),
-                source,
-            )
-        };
-        assert_eq!(texts(&sibling(false)), ["b", "b"]);
-        assert_eq!(texts(&sibling(true)), ["b"]);
-        // A capture must lie wholly on its side of the node.
-        let capture = compiled(json!({ "rule": { "kind": "identifier", "regex": "^a$",
-            "inside": { "kind": "call_expression", "pattern": "$C" },
-            "layout": { "before": { "to": "capture.C", "breaks": { "min": 0 } } } } }));
-        assert_eq!(texts(&capture), Vec::<String>::new());
-    }
-
-    #[test]
-    fn a_negated_gap_is_unsound_under_syntax_errors() {
-        let source = "f(a, b\nlet = ;\n";
-        let failures = |rule: Value| {
-            let result = evaluate_file(
-                &compiled(json!({ "rule": rule })),
-                "typescript",
-                "a.ts",
-                source,
-            );
-            result["failures"]
-                .as_array()
-                .expect("failures")
-                .iter()
-                .map(|failure| failure["code"].as_str().expect("code").to_owned())
-                .collect::<Vec<_>>()
-        };
-        let gap = json!({ "before": { "to": "token", "breaks": { "eq": 0 } } });
-        assert_eq!(
-            failures(json!({ "kind": "identifier", "layout": gap })),
-            ["source-partial"]
-        );
-        assert_eq!(
-            failures(json!({ "kind": "identifier", "not": { "layout": gap } })),
-            ["source-incomplete"]
-        );
-        assert_eq!(
-            failures(json!({ "kind": "identifier", "not": { "layout": { "span": { "eq": 0 } } } })),
-            ["source-partial"]
-        );
-    }
-}
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

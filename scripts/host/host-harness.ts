@@ -8,6 +8,7 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { RerailHost } from "../../src/engine/index.js";
+import { removeAccessOnlyAuth } from "./host-auth.js";
 
 export type CommandResult = { exitCode: number; stdout: string; stderr: string };
 
@@ -284,6 +285,11 @@ async function importAccessOnlyAuth(
     throw new Error(
       `FAILED prerequisite: access-only ${kind} credential import failed: ${bounded(result.stderr || result.stdout)}`,
     );
+}
+
+/** Deletes every access-only credential copy `configureHostAuth` may have imported into `sandbox`, even a partial one. */
+export async function removeHostAuth(sandbox: string): Promise<void> {
+  await Promise.all((["omp", "pi", "codex"] as const).map((kind) => removeAccessOnlyAuth(authDestination(kind, sandbox))));
 }
 
 /** The harness's print-mode invocation with the prompt as its last argument. */

@@ -9,7 +9,7 @@
 //!   node, or the text of a regex group or a transform); a match that leaves one unbound gives no row;
 //! - JSON strings, and `.policy { … }` for lint-rule documents (`yaml`, the second syntax of B12);
 //! - named errors for aggregation in recursion (unless the head is a monotone lattice) and unbounded lattices;
-//! - unbounded value cycles (`cycles`, O11 option b): a recursion that creates values must move along the tree.
+//! - unbounded value cycles (`cycles`, O11 option b): a recursion that creates values must be bounded by the data.
 //!
 //! §12's other named errors are not here: a non-interned cross-document join needs column types, and the cost gate
 //! is the planner's (row 5).
@@ -19,8 +19,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-pub(in crate::code_rule_dsl) mod caches;
-pub(in crate::code_rule_dsl) mod cycles;
+pub mod caches;
+pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
+pub use name::Name;
+pub mod cycles;
+pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
+pub use ast::{AXIS, Again, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
 
 /// A token and the byte offset where it starts.
 #[derive(Clone, Debug, PartialEq)]
@@ -94,7 +98,7 @@ fn tokens(src: &str) -> Result<Vec<(Tok, usize)>, Error> {
 }
 
 /// The parser's own spelling of the operator `op`, if it is one (a comparison read back from facts or the store).
-pub(in crate::code_rule_dsl) fn operator(op: &str) -> Option<&'static str> {
+pub fn operator(op: &str) -> Option<&'static str> {
     PUNCT.iter().copied().find(|p| *p == op)
 }
 
@@ -103,334 +107,11 @@ fn near(src: &str, pos: usize) -> &str {
     &src[pos..end]
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub(in crate::code_rule_dsl) enum Term {
-    Var(String),
-    Wild,
-    Int(i64),
-    Str(String),
-    Top,
-    Call(String, Vec<Term>),
-}
-
-impl Term {
-    pub(in crate::code_rule_dsl) fn vars(&self, out: &mut BTreeSet<String>) {
-        match self {
-            Term::Var(v) => {
-                out.insert(v.clone());
-            }
-            Term::Call(_, args) => args.iter().for_each(|a| a.vars(out)),
-            _ => {}
-        }
-    }
-
-    /// `@cat` over variables only: the one builtin that can run backwards, splitting a bound result.
-    pub(in crate::code_rule_dsl) fn is_cat(&self) -> bool {
-        matches!(self, Term::Call(f, args) if f == "cat" && args.iter().all(|a| matches!(a, Term::Var(_))))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(in crate::code_rule_dsl) struct Atom {
-    pub(in crate::code_rule_dsl) rel: String,
-    pub(in crate::code_rule_dsl) args: Vec<Term>,
-    pub(in crate::code_rule_dsl) neg: bool,
-    /// A negation held until its relation's `done_` gate passes (magic sets, row 4): not a negative edge.
-    pub(in crate::code_rule_dsl) gated: bool,
-}
-
-impl Atom {
-    pub(in crate::code_rule_dsl) fn vars(&self) -> BTreeSet<String> {
-        // A head's `@dot(p, s)` names p and s too.
-        let mut out = BTreeSet::new();
-        for a in &self.args {
-            a.vars(&mut out);
-        }
-        out
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum AggOp {
-    Count,
-    Min,
-    Max,
-    /// Soufflé's `sum`: 0 over no rows.
-    Sum,
-    /// `product x : {…}`: the product of `x` over the rows, 1 over no rows, saturating at i64's range (a count of
-    /// combinations, as pytest's stacked parametrize marks multiply).
-    Product,
-    /// `core.rr`'s `join x by k sep ","`: the `over` values ordered by the `by` columns' values (ties by the value),
-    /// joined by `sep`; "" over no rows.
-    Join { by: Vec<String>, sep: String },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(in crate::code_rule_dsl) enum Literal {
-    Atom(Atom),
-    Cmp { l: Term, op: &'static str, r: Term },
-    /// `$var = count { atom }`, or `$var = min $over : { atom }` (`max` likewise).
-    Agg { var: String, op: AggOp, over: Option<String>, atom: Atom },
-    /// `nearest($n, $a, kindset)`: `$a` is `$n`'s nearest strict ancestor of a kind in the set.
-    Nearest { n: String, a: String, kindset: String },
-    /// `ast($document, $node, { matcher }, NAME: $v, …)`: the matcher's text, lowered to a transducer program (§3),
-    /// and the metavariables it exports, each `(NAME, v)` binding `$v` to what `$NAME` captured.
-    Ast { document: String, node: String, matcher: String, captures: Vec<(String, String)> },
-}
-
-impl Literal {
-    pub(in crate::code_rule_dsl) fn vars(&self) -> BTreeSet<String> {
-        let mut out = BTreeSet::new();
-        match self {
-            Literal::Atom(a) => out = a.vars(),
-            Literal::Cmp { l, r, .. } => {
-                l.vars(&mut out);
-                r.vars(&mut out);
-            }
-            Literal::Agg { var, over, atom, .. } => {
-                out = atom.vars();
-                out.insert(var.clone());
-                out.extend(over.clone());
-            }
-            Literal::Nearest { n, a, .. } => out.extend([n.clone(), a.clone()]),
-            Literal::Ast { document, node, captures, .. } => {
-                out.extend([document.clone(), node.clone()]);
-                out.extend(captures.iter().map(|(_, v)| v.clone()));
-            }
-        }
-        out
-    }
-
-    /// The atom a literal reads a relation through: itself, or an aggregate's.
-    pub(in crate::code_rule_dsl) fn atom(&self) -> Option<&Atom> {
-        match self {
-            Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a),
-            _ => None,
-        }
-    }
-}
-
-/// A comparison's variables once it runs, or `None` if it cannot run yet: `$x = e` assigns an unbound `$x` once
-/// `e`'s variables are bound; `$m = @cat($q, $x)` with `$m` bound splits it, binding `$q` and `$x` where unbound;
-/// otherwise every variable must be bound. T's `cmp_binds`.
-pub(in crate::code_rule_dsl) fn cmp_binds(l: &Term, op: &str, r: &Term, bound: &BTreeSet<String>) -> Option<BTreeSet<String>> {
-    let mut rv = BTreeSet::new();
-    r.vars(&mut rv);
-    if op == "=" && let Term::Var(x) = l && !bound.contains(x) {
-        return rv.is_subset(bound).then(|| BTreeSet::from([x.clone()]));
-    }
-    let mut all = rv.clone();
-    l.vars(&mut all);
-    if all.is_subset(bound) {
-        return Some(BTreeSet::new());
-    }
-    if op == "=" && matches!(l, Term::Var(_)) && r.is_cat() {
-        return Some(rv.difference(bound).cloned().collect());
-    }
-    None
-}
-
 // T's `repr`s, which its transformed programs are compared in.
-impl fmt::Display for Term {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Term::Var(v) => write!(f, "${v}"),
-            Term::Wild => f.write_str("_"),
-            Term::Int(n) => write!(f, "{n}"),
-            Term::Str(s) => f.write_str(&serde_json::to_string(s).expect("a string serializes")),
-            Term::Top => f.write_str("top"),
-            Term::Call(name, args) => write!(f, "@{name}({})", join(args)),
-        }
-    }
-}
-
-impl fmt::Display for Atom {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}{}({})", if self.neg { "!" } else { "" }, self.rel, join(&self.args))
-    }
-}
-
-impl fmt::Display for Literal {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Literal::Atom(a) => write!(f, "{a}"),
-            Literal::Cmp { l, op, r } => write!(f, "{l} {op} {r}"),
-            Literal::Agg { var, op: AggOp::Count, atom, .. } => write!(f, "${var} = count {{ {atom} }}"),
-            Literal::Agg { var, op: AggOp::Join { by, sep }, over, atom } => {
-                let by: Vec<String> = by.iter().map(|b| format!("${b}")).collect();
-                let sep = serde_json::to_string(sep).expect("a string serializes");
-                write!(f, "${var} = join ${} by ({}) sep {sep} : {{ {atom} }}", over.as_deref().unwrap_or_default(), by.join(", "))
-            }
-            Literal::Agg { var, op, over, atom } => {
-                let op = match op {
-                    AggOp::Min => "min",
-                    AggOp::Sum => "sum",
-                    AggOp::Product => "product",
-                    _ => "max",
-                };
-                write!(f, "${var} = {op} ${} : {{ {atom} }}", over.as_deref().unwrap_or_default())
-            }
-            Literal::Nearest { n, a, kindset } => write!(f, "nearest(${n}, ${a}, {kindset})"),
-            Literal::Ast { document, node, matcher, captures } => {
-                write!(f, "ast(${document}, ${node}, {matcher}")?;
-                captures.iter().try_for_each(|(name, v)| write!(f, ", {name}: ${v}"))?;
-                f.write_str(")")
-            }
-        }
-    }
-}
-
-impl fmt::Display for Rule {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} :- {}", self.head, join(&self.body))
-    }
-}
-
-pub(in crate::code_rule_dsl) fn join<T: fmt::Display>(items: &[T]) -> String {
-    items.iter().map(T::to_string).collect::<Vec<_>>().join(", ")
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(in crate::code_rule_dsl) struct Rule {
-    pub(in crate::code_rule_dsl) head: Atom,
-    pub(in crate::code_rule_dsl) body: Vec<Literal>,
-}
-
-/// A relation's lattice column: the last, after `keys` key columns.
-#[derive(Clone, Debug, PartialEq)]
-pub(in crate::code_rule_dsl) struct LatticeDecl {
-    pub(in crate::code_rule_dsl) keys: usize,
-    /// The value column's type, which names the lattice (`flat`, `min`, `max`) unless `merge` does.
-    pub(in crate::code_rule_dsl) ty: String,
-    pub(in crate::code_rule_dsl) merge: Option<String>,
-    pub(in crate::code_rule_dsl) widen: Option<u32>,
-}
-
-impl LatticeDecl {
-    /// The lattice's name for `logic::native` (`declare`d when `merge` names a native join).
-    pub(in crate::code_rule_dsl) fn lattice(&self) -> &str {
-        self.merge.as_deref().unwrap_or(&self.ty)
-    }
-
-    pub(in crate::code_rule_dsl) fn bounded(&self) -> bool {
-        self.widen.is_some() || (self.merge.is_none() && self.ty == "flat")
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(in crate::code_rule_dsl) enum Value {
-    Int(i64),
-    Str(String),
-}
-
-#[derive(Clone, Debug, Default)]
-pub(in crate::code_rule_dsl) struct Program {
-    /// Each relation's columns: (name, type).
-    pub(in crate::code_rule_dsl) decls: BTreeMap<String, Vec<(String, String)>>,
-    /// Logically nullary relations encoded with one physical unit column.
-    pub(in crate::code_rule_dsl) nullary: BTreeSet<String>,
-    pub(in crate::code_rule_dsl) lattice: BTreeMap<String, LatticeDecl>,
-    pub(in crate::code_rule_dsl) facts: BTreeMap<String, Vec<Vec<Value>>>,
-    pub(in crate::code_rule_dsl) rules: Vec<Rule>,
-    pub(in crate::code_rule_dsl) inputs: Vec<String>,
-    pub(in crate::code_rule_dsl) outputs: Vec<String>,
-    pub(in crate::code_rule_dsl) kindsets: BTreeMap<String, Vec<String>>,
-    /// `.demand` relations, or `*` for every derived one.
-    pub(in crate::code_rule_dsl) demand: Vec<String>,
-    /// Set by `magic`: demanded relations computed in full, and why.
-    pub(in crate::code_rule_dsl) demand_dropped: Vec<(String, String)>,
-    /// Set by `magic`: the extras its magic rules kept.
-    pub(in crate::code_rule_dsl) magic_extras: Option<usize>,
-    pub(in crate::code_rule_dsl) magic_report: Option<crate::code_rule_dsl::logic::magic::Report>,
-    /// Gated negations (`magic::gate_negations`), by their `done_` relation, in the order they were made.
-    pub(in crate::code_rule_dsl) gates: Vec<(String, crate::code_rule_dsl::logic::magic::Gate)>,
-    /// `.policy { … }`: lint-rule documents, each without its matchers, which are the rules' `ast` atoms (`yaml`).
-    pub(in crate::code_rule_dsl) policies: Vec<serde_json::Value>,
-    /// `.rr` setting directives (`.mode block`, `.scope include "…"`, …), by name, as written (`logic::rr`).
-    pub(in crate::code_rule_dsl) settings: Vec<(String, String)>,
-    /// Relations the evaluator makes from their inputs' rows rather than from rules (`dfs_first`), by name. Each
-    /// has one rule over its inputs, which orders it after them; its rows are the native operator's.
-    pub(in crate::code_rule_dsl) natives: BTreeMap<String, Native>,
-    /// The regexes `match_all` and `match` run over `source` or `src_line` spans (`core.rr`: their captures are
-    /// spans), and over which: the batch makes `rx_span(p, c, j, g, m)` for them, each match's groups as spans.
-    pub(in crate::code_rule_dsl) rx_spans: std::collections::BTreeSet<(SpanIn, String)>,
-    pub(in crate::code_rule_dsl) ast_patterns: std::collections::BTreeSet<String>,
-    pub(in crate::code_rule_dsl) doc_scopes: Option<Vec<(Vec<String>, Vec<String>)>>,
-    pub(in crate::code_rule_dsl) answers: BTreeMap<String, Vec<String>>,
-    /// `.scope text`'s globs: a document matching one that has no grammar of the run (`.md`, `.rst`) is read as text
-    /// only, its `doc`, `source` and `src_line` and no tree, when a scope selects it. Every program's, in a combined
-    /// one.
-    pub(in crate::code_rule_dsl) text_globs: Vec<String>,
-    /// `.decl r(…) inline`, `no_inline`, `magic`, `no_magic` (Soufflé's qualifiers, decision 0099): the program's own
-    /// choice of what a relation keeps, by relation, overriding the planner's (`plan::keeps`).
-    pub(in crate::code_rule_dsl) qualifiers: BTreeMap<String, BTreeSet<String>>,
-    /// The columns declared `tape` (decision 0103 §3), by relation: stored as `sym`, checked before lowering
-    /// (`rr::tape_type`) and printed back as `tape`.
-    pub(in crate::code_rule_dsl) tapes: BTreeMap<String, BTreeSet<usize>>,
-    /// A session's maintained strata, each with the rules that derive it again instead (decision 0090 §4,
-    /// `maintain::rewrite`): the run chooses per stratum, once its input deltas are known (`plan::run`).
-    pub(in crate::code_rule_dsl) again: Vec<Again>,
-}
-
-/// A maintained stratum's other form (decision 0090 §4). Both make its relations and their deltas (`r__minus`,
-/// `r__plus`), which are all that other strata read of it, so each stratum chooses alone.
-#[derive(Clone, Debug, Default)]
-pub(in crate::code_rule_dsl) struct Again {
-    /// The stratum's own relations (one fixpoint when derived again).
-    pub(in crate::code_rule_dsl) scc: BTreeSet<String>,
-    /// Every relation the maintained form makes for it: its relations, their pieces (`__del`, `__ins`, …) and deltas.
-    pub(in crate::code_rule_dsl) owned: BTreeSet<String>,
-    /// Its rules over the current inputs, then its deltas against its old rows.
-    pub(in crate::code_rule_dsl) rules: Vec<Rule>,
-    pub(in crate::code_rule_dsl) deltas: Vec<Rule>,
-    /// The input deltas its maintained form reads, and its relations' old rows: the sizes that choose.
-    pub(in crate::code_rule_dsl) reads: Vec<String>,
-    pub(in crate::code_rule_dsl) olds: Vec<String>,
-}
-
-/// The `.decl` qualifiers that choose what a relation keeps (decision 0099), as Soufflé spells them.
-pub(in crate::code_rule_dsl) const QUALIFIERS: &[&str] = &["inline", "no_inline", "magic", "no_magic"];
-
-impl Program {
-    /// Whether `.decl rel(…)` carries the qualifier `word` (one of `QUALIFIERS`).
-    pub(in crate::code_rule_dsl) fn qualified(&self, rel: &str, word: &str) -> bool {
-        self.qualifiers.get(rel).is_some_and(|q| q.contains(word))
-    }
-}
-
-/// A `.scope` entry taken from a policy option (`.scope dirs option("applicationRoots")`), as `doc_scopes` holds it
-/// until the run's options are known: `rr-option:<form>:<name>`, `form` one of `dirs`, `include`, `exclude`. As a glob
-/// it holds no path; `resolve_scopes` adds the option's values beside it.
-pub(in crate::code_rule_dsl) const OPTION_GLOB: &str = "rr-option:";
-
-/// `.global r, …`: relations of a policy that a combined run shares, as it shares a library's, when every policy that
-/// has one defines it alike (decision 0091). `.global library r, …` names an included file's relations (`rr::read_file`
-/// writes it): shared where alike, else each policy's own.
-pub(in crate::code_rule_dsl) const GLOBAL: &str = "global";
-/// `.global`'s first word for an included file's relations.
-pub(in crate::code_rule_dsl) const LIBRARY: &str = "library";
-
-/// A program's `.global` relations: (named by the policy, an included file's).
-pub(in crate::code_rule_dsl) fn globals(settings: &[(String, String)]) -> (BTreeSet<String>, BTreeSet<String>) {
-    let (mut named, mut library) = (BTreeSet::new(), BTreeSet::new());
-    for (_, text) in settings.iter().filter(|(k, _)| k == GLOBAL) {
-        let (to, rest) = match text.trim().strip_prefix(LIBRARY).filter(|r| r.starts_with(char::is_whitespace)) {
-            Some(rest) => (&mut library, rest),
-            None => (&mut named, text.as_str()),
-        };
-        to.extend(rest.split(|c: char| c == ',' || c.is_whitespace()).filter(|w| !w.is_empty()).map(str::to_owned));
-    }
-    (named, library)
-}
-
-/// The documents out of a policy's scope (`.scope`'s `dirs`, `include`, `exclude`), as lowering derives them:
-/// `rr_scope_not(d)`. In a combined run, the guards on the policy's reads negate it (decision 0091).
-pub(in crate::code_rule_dsl) const SCOPE_NOT: &str = "rr_scope_not";
-
 /// `scopes` with each option entry's values (`OPTION_GLOB`) added beside it, from the run's `options` as
 /// `option`/`option_item` read them: a directory under `dirs`, a glob under `include` or `exclude`. An option the run
 /// does not set adds nothing, and its entry still holds no path (an entry whose only globs are such reads none).
-pub(in crate::code_rule_dsl) fn resolve_scopes(scopes: &Option<Vec<(Vec<String>, Vec<String>)>>, options: &serde_json::Value) -> Option<Vec<(Vec<String>, Vec<String>)>> {
+pub fn resolve_scopes(scopes: &Option<Vec<(Vec<String>, Vec<String>)>>, options: &serde_json::Value) -> Option<Vec<(Vec<String>, Vec<String>)>> {
     let mut rows = crate::code_rule_dsl::facts::repository::Rows::default();
     crate::code_rule_dsl::facts::repository::options(options, &mut rows);
     let values = |name: &str| -> Vec<String> {
@@ -450,87 +131,13 @@ pub(in crate::code_rule_dsl) fn resolve_scopes(scopes: &Option<Vec<(Vec<String>,
     scopes.as_ref().map(|entries| entries.iter().map(|(within, out)| (resolve(within), resolve(out))).collect())
 }
 
-pub(in crate::code_rule_dsl) fn in_doc_scopes(scopes: &Option<Vec<(Vec<String>, Vec<String>)>>, path: &str) -> bool {
+pub fn in_doc_scopes(scopes: &Option<Vec<(Vec<String>, Vec<String>)>>, path: &str) -> bool {
     let glob = |g: &String| crate::code_rule_dsl::logic::strings::test("glob", path, g);
     scopes.as_ref().is_none_or(|entries| entries.iter().any(|(within, out)| (within.is_empty() || within.iter().any(glob)) && !out.iter().any(glob)))
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(in crate::code_rule_dsl) enum SpanIn {
-    Source,
-    Line,
-    Comment,
-    /// Nodes of this kind.
-    Kind(String),
-    /// The spans group `.1` of pattern `.0` captured.
-    Capture(String, String),
-}
-
-/// A relation made natively from relations of the program (`Program::natives`).
 #[derive(Clone, Debug, PartialEq)]
-pub(in crate::code_rule_dsl) enum Native {
-    /// `dfs_first(r, hit, first, edge, target)`; with `roots`, `dfs_first_memo` (roots in the order of their
-    /// second column, one memo shared).
-    DfsFirst { edge: String, target: String, roots: Option<String> },
-    /// `bfs_walk(r, hit, ordinal, edge, roots)`: ordered reachable vertices, seeded
-    /// from each demanded root's edges; roots themselves may be reached by cycles.
-    BfsWalk { edge: String, roots: String },
-    /// Two typed scalar columns in increasing value order, with a zero-based
-    /// global ordinal. The SQL window sorts the whole input batch once.
-    OrderedRows { input: String },
-    /// Monotone string-set insertion order under CPython 3.13, hash seed zero.
-    PythonSetRows { input: String },
-    /// Per-task weighted partitions, with stable occurrence IDs and bin limits.
-    BalancedRows { input: String, limits: String },
-    /// `match_all(re, s)` over symbols: `(s, g…)`, a row per non-overlapping match of `pattern` in each `s` of
-    /// `input`'s one column whose `groups` all take part, each group's text (`logic::native::match_all`).
-    MatchAll { input: String, pattern: String, groups: Vec<String>, positions: bool },
-    /// `components(d, c, key, edge, own)`: each document's strongly connected component of `edge(d, e)` (its
-    /// smallest document) and the component's Merkle key over `own(d, digest)` (`logic::native::components`).
-    Components { edge: String, own: String },
-    Python { kind: String, input: String, targets: Option<String> },
-    /// Conservative call candidates over demanded documents; exact semantic operators remain separate.
-    PythonCandidates { input: String, targets: String, context: String, member: String },
-}
-
-impl Native {
-    /// Rewrite producer inputs with the same relation mapping as the rest of its program.
-    pub(in crate::code_rule_dsl) fn rename_reads(&mut self, rename: impl Fn(&str) -> String) {
-        match self {
-            Native::BalancedRows { input, limits } => { *input = rename(input); *limits = rename(limits); }
-            Native::OrderedRows { input } | Native::PythonSetRows { input } => *input = rename(input),
-            Native::BfsWalk { edge, roots } => { *edge = rename(edge); *roots = rename(roots); }
-            Native::DfsFirst { edge, target, roots } => {
-                *edge = rename(edge);
-                *target = rename(target);
-                if let Some(roots) = roots { *roots = rename(roots); }
-            }
-            Native::MatchAll { input, .. } => *input = rename(input),
-            Native::PythonCandidates {input,targets,..} => { *input=rename(input); *targets=rename(targets); },
-            Native::Python {input,targets,..} => { *input=rename(input); if let Some(t)=targets {*t=rename(t);} },
-            Native::Components { edge, own } => {
-                *edge = rename(edge);
-                *own = rename(own);
-            }
-        }
-    }
-    /// The relations it reads.
-    pub(in crate::code_rule_dsl) fn reads(&self) -> Vec<&str> {
-        match self {
-            Native::BalancedRows { input, limits } => vec![input.as_str(), limits.as_str()],
-            Native::OrderedRows { input } | Native::PythonSetRows { input } => vec![input.as_str()],
-            Native::BfsWalk { edge, roots } => vec![edge.as_str(), roots.as_str()],
-            Native::DfsFirst { edge, target, roots } => [Some(edge.as_str()), Some(target.as_str()), roots.as_deref()].into_iter().flatten().collect(),
-            Native::MatchAll { input, .. } => vec![input.as_str()],
-            Native::PythonCandidates {input,targets,..} => vec![input.as_str(),targets.as_str()],
-            Native::Python {input,targets,..} => std::iter::once(input.as_str()).chain(targets.as_deref()).collect(),
-            Native::Components { edge, own } => vec![edge.as_str(), own.as_str()],
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub(in crate::code_rule_dsl) enum Error {
+pub enum Error {
     Syntax(String),
     /// A relation depends negatively on another in its own component.
     NotStratifiable { message: String, component: BTreeSet<String>, negated: String },
@@ -540,9 +147,11 @@ pub(in crate::code_rule_dsl) enum Error {
     UnboundedLattice { relation: String },
     /// A demanded relation is used with its key unbound: its demand would be everything (magic sets).
     UnboundDemand { message: String, relation: String },
-    /// A component creates values (`@cat`, …) without moving along the tree (`cycles`): `rule` is one it
-    /// could not bound.
+    /// A component creates values (`@cat`, …) the data does not bound (`cycles`): `rule` is one it could not
+    /// bound.
     UnboundedValueCycle { component: BTreeSet<String>, rule: String },
+    /// `.input r` where no `.decl` gives `r`'s columns (nor core.rr's, for `.rr`).
+    UndeclaredInput { relation: String },
 }
 
 /// The `.rr` parser's error (`rerail_rr_syntax`) is a syntax error.
@@ -580,8 +189,9 @@ impl fmt::Display for Error {
             }
             Error::UnboundedValueCycle { component, rule } => {
                 let component = component.iter().cloned().collect::<Vec<_>>().join(", ");
-                write!(f, "unbounded value cycle: {{{component}}} creates values without moving along the tree ({rule})")
+                write!(f, "unbounded value cycle: {{{component}}} creates values the data does not bound ({rule})")
             }
+            Error::UndeclaredInput { relation } => write!(f, ".input {relation}: no .decl declares {relation}'s columns"),
         }
     }
 }
@@ -694,11 +304,11 @@ impl Parser<'_> {
             let set = self.id()?;
             self.p(")")?;
             let (axis, args) = if rel == "inside" { (AXIS, vec![x, y]) } else { (DESCENDANTS, vec![y, x]) };
-            return Ok(Atom { rel: format!("{axis}{set}"), args, neg, gated: false });
+            return Ok(Atom { rel: format!("{axis}{set}").into(), args, neg, gated: false });
         }
         let args = self.list(Self::term)?;
         self.p(")")?;
-        Ok(Atom { rel, args, neg, gated: false })
+        Ok(Atom { rel: rel.into(), args, neg, gated: false })
     }
 
     /// The source text of a balanced `{ … }`, braces included.
@@ -781,6 +391,7 @@ impl Parser<'_> {
                 Tok::Id(s) if s == "count" => Some(AggOp::Count),
                 Tok::Id(s) if s == "min" => Some(AggOp::Min),
                 Tok::Id(s) if s == "max" => Some(AggOp::Max),
+                Tok::Id(s) if s == "sum" => Some(AggOp::Sum),
                 _ => None,
             };
             if let Some(op) = agg.filter(|_| matches!(self.peek_at(1), Tok::P("{") | Tok::Var(_) | Tok::P(":"))) {
@@ -862,11 +473,11 @@ impl Parser<'_> {
                     return self.fail("a pragma's two strings");
                 };
                 self.i += 2;
-                if key != crate::code_rule_dsl::typing::cross_rounds::PRAGMA || k.parse::<usize>().is_err() {
+                if key != PRAGMA || k.parse::<usize>().is_err() {
                     self.i -= 2;
                     return self.fail("`.pragma \"cross-rounds\" \"k\"`");
                 } else {
-                    prog.settings.push(crate::code_rule_dsl::typing::cross_rounds::setting(&k));
+                    prog.settings.push(setting(&k));
                 }
             }
             "kindset" => {
@@ -897,7 +508,7 @@ impl Parser<'_> {
     }
 }
 
-pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
+pub fn parse(src: &str) -> Result<Program, Error> {
     let mut p = Parser { src, toks: tokens(src)?, i: 0 };
     let mut prog = Program::default();
     while *p.peek() != Tok::Eof {
@@ -918,7 +529,7 @@ pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
                     other => Err(Error::Syntax(format!("fact {} has a non-constant {other:?}", head.rel))),
                 })
                 .collect::<Result<_, _>>()?;
-            prog.facts.entry(head.rel).or_default().push(row);
+            prog.facts.entry(head.rel.to_string()).or_default().push(row);
             continue;
         }
         p.p(":-")?;
@@ -931,8 +542,8 @@ pub(in crate::code_rule_dsl) fn parse(src: &str) -> Result<Program, Error> {
 
 // A test of a transform written for preorder ids (T's goldens) parses programs with their node comparisons as written,
 // on its own thread.
-#[cfg(test)]
-thread_local! {pub(in crate::code_rule_dsl) static KEEP_NODE_COMPARISONS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };}
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {pub static KEEP_NODE_COMPARISONS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };}
 
 /// The relation of each node's preorder key (`syntax`'s `node_order(n, k)`).
 const NODE_ORDER: &str = "node_order";
@@ -949,13 +560,19 @@ fn order_nodes(prog: &mut Program) {
     if !crate::code_rule_dsl::facts::vtab::syntax::definition_ids() {
         return;
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if KEEP_NODE_COMPARISONS.get() {
+        return;
+    }
+    // A measurement, never a mode to run in: comparisons of the node ids themselves, which an edit leaves alone outside
+    // the granules it touches but which are not in preorder. What a stable order key could save at most.
+    if std::env::var_os("RERAIL_ORDER_RAW").is_some() {
+        crate::code_rule_dsl::logic::profile::decision("node comparisons (RERAIL_ORDER_RAW)", || "node ids compared as they are, not by node_order: a measurement only".into());
         return;
     }
     let decls = prog.decls.clone();
     let typed = |a: &Atom, nodes: &mut BTreeSet<String>| {
-        for (t, (_, ty)) in a.args.iter().zip(decls.get(&a.rel).map_or(&[][..], Vec::as_slice)) {
+        for (t, (_, ty)) in a.args.iter().zip(decls.get(a.rel.as_str()).map_or(&[][..], Vec::as_slice)) {
             if let Term::Var(v) = t
                 && ty == "node"
             {
@@ -963,7 +580,7 @@ fn order_nodes(prog: &mut Program) {
             }
         }
     };
-    let order = |n: &str, k: &str| Literal::Atom(Atom { rel: NODE_ORDER.to_owned(), args: vec![Term::Var(n.to_owned()), Term::Var(k.to_owned())], neg: false, gated: false });
+    let order = |n: &str, k: &str| Literal::Atom(Atom { rel: NODE_ORDER.to_owned().into(), args: vec![Term::Var(n.to_owned()), Term::Var(k.to_owned())], neg: false, gated: false });
     let mut used = false;
     let mut helpers: Vec<(Rule, Vec<(String, String)>)> = Vec::new();
     let mut fresh = 0usize;
@@ -1010,7 +627,7 @@ fn order_nodes(prog: &mut Program) {
                 } =>
                 {
                     // The rows aggregated, each with its node's key.
-                    let cols = decls.get(&atom.rel).cloned().unwrap_or_default();
+                    let cols = decls.get(atom.rel.as_str()).cloned().unwrap_or_default();
                     let mut head_args: Vec<Term> = Vec::new();
                     let mut head_cols: Vec<(String, String)> = Vec::new();
                     let mut agg_args: Vec<Term> = Vec::new();
@@ -1032,8 +649,8 @@ fn order_nodes(prog: &mut Program) {
                     head_args.push(Term::Var(k.clone()));
                     agg_args.push(Term::Var(k.clone()));
                     head_cols.push(("k".to_owned(), "int".to_owned()));
-                    helpers.push((Rule { head: Atom { rel: name.clone(), args: head_args, neg: false, gated: false }, body: vec![Literal::Atom(atom), order(&o, &k)] }, head_cols));
-                    body.push(Literal::Agg { var: kv.clone(), op, over: Some(k), atom: Atom { rel: name, args: agg_args, neg: false, gated: false } });
+                    helpers.push((Rule { head: Atom { rel: name.clone().into(), args: head_args, neg: false, gated: false }, body: vec![Literal::Atom(atom), order(&o, &k)] }, head_cols));
+                    body.push(Literal::Agg { var: kv.clone(), op, over: Some(k), atom: Atom { rel: name.into(), args: agg_args, neg: false, gated: false } });
                     body.push(order(&var, &kv));
                     used = true;
                 }
@@ -1043,7 +660,7 @@ fn order_nodes(prog: &mut Program) {
         r.body = body;
     }
     for (rule, cols) in helpers {
-        prog.decls.insert(rule.head.rel.clone(), cols);
+        prog.decls.insert(rule.head.rel.to_string(), cols);
         prog.rules.push(rule);
     }
     if used {
@@ -1075,12 +692,16 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
         }
     }
     // The tree axes' relations are inputs, made by the transducer.
-    let axes: Vec<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.clone()).filter(|r| is_axis(r)).collect();
+    let axes: Vec<String> = prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.to_string()).filter(|r| is_axis(r)).collect();
     for rel in axes {
         if !prog.decls.contains_key(&rel) {
             prog.decls.insert(rel.clone(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
             prog.inputs.push(rel);
         }
+    }
+    // An input's columns are its declaration's: the planner reads them.
+    if let Some(relation) = prog.inputs.iter().find(|rel| !prog.decls.contains_key(*rel)) {
+        return Err(Error::UndeclaredInput { relation: relation.clone() });
     }
     cycles::check(&prog)?;
     // A cache is two rules (decision 0103): a broken form refuses the program.
@@ -1089,8 +710,9 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
 }
 
 /// A program to run reads only relations it declares or the transducer makes: else an error, as in Soufflé, not a
-/// plan's panic. (Parsing alone does not ask it: a parse's tests read relations they never declare.)
-pub(in crate::code_rule_dsl) fn declared(prog: &Program) -> Result<(), Error> {
+/// plan's panic. (Parsing alone does not ask it: a parse's tests read relations they never declare.) `match_all` and
+/// `match_group` over a span are built-ins: the text columns make each regex's relation (`strings`).
+pub fn declared(prog: &Program) -> Result<(), Error> {
     for rule in &prog.rules {
         let mut read = rule.body.iter().filter_map(|l| match l {
             Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a),
@@ -1098,45 +720,35 @@ pub(in crate::code_rule_dsl) fn declared(prog: &Program) -> Result<(), Error> {
         });
         // The import components' relations (`rr_cx_reach`, decision 0076) are added by the run to a program that reads
         // them: declared there.
-        if let Some(a) = read.find(|a| !prog.decls.contains_key(&a.rel) && !is_transduced(&a.rel) && !a.rel.starts_with("rr_cx_")) {
+        if let Some(a) = read.find(|a| {
+            !prog.decls.contains_key(a.rel.as_str()) && !is_transduced(&a.rel) && !a.rel.starts_with("rr_cx_") && !matches!(a.rel.as_str(), "match_all" | "match_group")
+        }) {
             return Err(Error::Syntax(format!("relation {} is read by the rule for {} and not declared: declare it with `.decl`", a.rel, rule.head.rel)));
         }
     }
     Ok(())
 }
 
-/// The prefix of the relations the engine names itself (helpers, axes, places): a rule file may not declare one
-/// (`rr::parse_file`), so a rule's relation never collides with them.
-pub(in crate::code_rule_dsl) const RESERVED: &str = "rr_";
-
-/// The prefix of a tree axis's relation: `rr_inside_<set>(n, a)`, a an ancestor of n whose kind is in the set
-/// (decision 0036).
-pub(in crate::code_rule_dsl) const AXIS: &str = "rr_inside_";
-
-/// The prefix of the descendant axis's relation: `rr_has_<set>(n, a)`, n of a kind in the set and a any strict
-/// ancestor of n (`core.rr`'s `has(a, n, set)`: the set tests the descendant).
-pub(in crate::code_rule_dsl) const DESCENDANTS: &str = "rr_has_";
-
-/// The prefix of a `nearest(n, a, set)` literal's relation: `rr_nearest_<set>(n, a)` (`plan::lower`).
-pub(in crate::code_rule_dsl) const NEAREST: &str = "rr_nearest_";
-
-/// Whether `rel` is a tree axis's relation, which the transducer makes: `(n, a)` rows.
-pub(in crate::code_rule_dsl) fn is_axis(rel: &str) -> bool {
-    rel.starts_with(AXIS) || rel.starts_with(DESCENDANTS)
-}
-
-/// Whether the transducer makes `rel`: a tree axis's relation or a `nearest` one, `(n, a)` rows.
-pub(in crate::code_rule_dsl) fn is_transduced(rel: &str) -> bool {
-    is_axis(rel) || rel.starts_with(NEAREST)
-}
-
 /// Dependency edges: head → {(dependency, negative)}; an aggregate's is negative, a gated negation's is not.
-pub(in crate::code_rule_dsl) type Edges = BTreeMap<String, BTreeSet<(String, bool)>>;
+pub type Edges = BTreeMap<String, BTreeSet<(String, bool)>>;
 
 /// The program's components, dependencies first, and its dependency edges. T's `strata`, with aggregation in
 /// recursion named apart from negation, and allowed into a lattice head it is monotone in (`count`/`max` into a
 /// `max` lattice, `min` into a `min` lattice).
-pub(in crate::code_rule_dsl) fn strata(prog: &Program) -> Result<(Vec<BTreeSet<String>>, Edges), Error> {
+/// Each stratum's rules (`sccs` from `strata`), in program order, found in one pass over the rules: a filter of every
+/// rule per stratum costs the rules times the strata (16 k by 10 k on the Python pack, seconds of a one-file run).
+pub fn rules_by_stratum<'a>(prog: &'a Program, sccs: &[BTreeSet<String>]) -> Vec<Vec<&'a Rule>> {
+    let at: std::collections::HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.as_str(), i))).collect();
+    let mut out: Vec<Vec<&Rule>> = vec![Vec::new(); sccs.len()];
+    for r in &prog.rules {
+        if let Some(&i) = at.get(r.head.rel.as_str()) {
+            out[i].push(r);
+        }
+    }
+    out
+}
+
+pub fn strata(prog: &Program) -> Result<(Vec<BTreeSet<String>>, Edges), Error> {
     let (sccs, edges, aggs) = components(prog);
     match first_unstratified(&sccs, &edges, &aggs, true).into_iter().next() {
         Some(e) => Err(e),
@@ -1146,7 +758,7 @@ pub(in crate::code_rule_dsl) fn strata(prog: &Program) -> Result<(Vec<BTreeSet<S
 
 /// Every component that a negation or a non-monotone aggregate closes a cycle in, one error each (`strata` stops at
 /// the first): a caller that drops what made each cycle (demand's split, decision 0048) drops them all in one round.
-pub(in crate::code_rule_dsl) fn unstratified(prog: &Program) -> Vec<Error> {
+pub fn unstratified(prog: &Program) -> Vec<Error> {
     let (sccs, edges, aggs) = components(prog);
     first_unstratified(&sccs, &edges, &aggs, false)
 }
@@ -1181,7 +793,7 @@ fn first_unstratified(sccs: &[BTreeSet<String>], edges: &Edges, aggs: &BTreeSet<
 
 /// The program's components (dependencies first), its dependency edges, and its non-monotone aggregation edges.
 fn components(prog: &Program) -> (Vec<BTreeSet<String>>, Edges, BTreeSet<(String, String)>) {
-    let mut derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.clone()).collect();
+    let mut derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
     let mut edges = Edges::new();
     // An answer is an edge: each produced relation reads its request (decision 0065 §2a).
     for (request, produced) in &prog.answers {
@@ -1200,28 +812,61 @@ fn components(prog: &Program) -> (Vec<BTreeSet<String>>, Edges, BTreeSet<(String
     for r in &prog.rules {
         for l in &r.body {
             let Some(a) = l.atom() else { continue };
-            if !derived.contains(&a.rel) {
+            if !derived.contains(a.rel.as_str()) {
                 continue;
             }
             let agg = match l {
-                Literal::Agg { op, .. } => !prog.lattice.get(&r.head.rel).is_some_and(|d| {
+                Literal::Agg { op, .. } => !prog.lattice.get(r.head.rel.as_str()).is_some_and(|d| {
                     matches!((op, d.lattice()), (AggOp::Count | AggOp::Max, "max") | (AggOp::Min, "min"))
                 }),
                 _ => false,
             };
             if agg && !a.gated {
-                aggs.insert((r.head.rel.clone(), a.rel.clone()));
+                aggs.insert((r.head.rel.to_string(), a.rel.to_string()));
             }
-            edges.entry(r.head.rel.clone()).or_default().insert((a.rel.clone(), (a.neg || agg) && !a.gated));
+            edges.entry(r.head.rel.to_string()).or_default().insert((a.rel.to_string(), (a.neg || agg) && !a.gated));
         }
     }
-    let sccs = tarjan(&derived, &edges);
+    let sccs = together(&derived, &edges, &prog.together);
     (sccs, edges, aggs)
+}
+
+/// The sets of `prog.together` that are not each one component as `strata` makes them (`together`, below).
+pub fn apart(prog: &Program) -> Vec<usize> {
+    let (sccs, _, _) = components(prog);
+    (0..prog.together.len()).filter(|&i| {
+        let t = &prog.together[i];
+        !sccs.iter().any(|s| s == t)
+    }).collect()
+}
+
+/// The components, each set of `together` one of them (decision 0101 §3): its relations joined in a ring for the
+/// search only, so the edges stay the rules' own. A set that would take in a relation outside it (one read by a
+/// member and reading another) is left apart.
+fn together(derived: &BTreeSet<String>, edges: &Edges, sets: &[BTreeSet<String>]) -> Vec<BTreeSet<String>> {
+    let mut sets: Vec<Vec<&String>> = sets.iter().map(|t| t.iter().filter(|r| derived.contains(*r)).collect::<Vec<_>>()).filter(|t| t.len() > 1).collect();
+    loop {
+        if sets.is_empty() {
+            return tarjan(derived, edges);
+        }
+        let mut ring = edges.clone();
+        for t in &sets {
+            for (i, r) in t.iter().enumerate() {
+                ring.entry((*r).clone()).or_default().insert((t[(i + 1) % t.len()].clone(), false));
+            }
+        }
+        let sccs = tarjan(derived, &ring);
+        let n = sets.len();
+        sets.retain(|t| sccs.iter().find(|s| s.contains(t[0])).is_some_and(|s| s.len() == t.len()));
+        if sets.len() == n {
+            return sccs;
+        }
+    }
 }
 
 /// Strongly connected components of `nodes` under `edges`, dependencies first, in the same order every run.
 /// Iterative, where T's recursed (with a raised recursion limit).
-pub(in crate::code_rule_dsl) fn tarjan(nodes: &BTreeSet<String>, edges: &Edges) -> Vec<BTreeSet<String>> {
+pub fn tarjan(nodes: &BTreeSet<String>, edges: &Edges) -> Vec<BTreeSet<String>> {
     let empty = BTreeSet::new();
     let succ = |v: &str| -> Vec<&String> {
         edges.get(v).unwrap_or(&empty).iter().map(|(w, _)| w).filter(|w| nodes.contains(*w)).collect()
@@ -1281,7 +926,7 @@ pub(in crate::code_rule_dsl) fn tarjan(nodes: &BTreeSet<String>, edges: &Edges) 
 }
 
 /// The relations `roots` read, directly or through other rules, the roots included (`prune`'s, from the outputs).
-pub(in crate::code_rule_dsl) fn needed(prog: &Program, roots: Vec<String>) -> BTreeSet<String> {
+pub fn needed(prog: &Program, roots: Vec<String>) -> BTreeSet<String> {
     let mut body_of: BTreeMap<&str, Vec<&Vec<Literal>>> = BTreeMap::new();
     for r in &prog.rules {
         body_of.entry(&r.head.rel).or_default().push(&r.body);
@@ -1295,14 +940,14 @@ pub(in crate::code_rule_dsl) fn needed(prog: &Program, roots: Vec<String>) -> BT
             todo.extend(native.reads().into_iter().map(str::to_owned));
         }
         for body in body_of.get(r.as_str()).into_iter().flatten() {
-            todo.extend(body.iter().filter_map(Literal::atom).map(|a| a.rel.clone()));
+            todo.extend(body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()));
         }
     }
     need
 }
 
 /// Drops the rules of relations no output reads, directly or through other rules. T's `prune`.
-pub(in crate::code_rule_dsl) fn prune(mut prog: Program) -> Program {
+pub fn prune(mut prog: Program) -> Program {
     let mut body_of: BTreeMap<&str, Vec<&Vec<Literal>>> = BTreeMap::new();
     for r in &prog.rules {
         body_of.entry(&r.head.rel).or_default().push(&r.body);
@@ -1316,20 +961,43 @@ pub(in crate::code_rule_dsl) fn prune(mut prog: Program) -> Program {
             todo.extend(native.reads().into_iter().map(str::to_owned));
         }
         for body in body_of.get(r.as_str()).into_iter().flatten() {
-            todo.extend(body.iter().filter_map(Literal::atom).map(|a| a.rel.clone()));
+            todo.extend(body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()));
         }
     }
-    prog.rules.retain(|r| need.contains(&r.head.rel));
+    prog.rules.retain(|r| need.contains(r.head.rel.as_str()));
     // Native metadata owns real dependency edges. A dead producer must not keep its demands
     // alive in the file-local split or cause them to be exported across every chunk.
     prog.natives.retain(|rel, _| need.contains(rel));
     prog
 }
 
+// cratify: `tests` is rerail-logic's (it mounts it)
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
-mod data_layer_census_tests;
-#[cfg(test)]
-mod data_layer_tests;
-pub(in crate::code_rule_dsl) mod yaml;
+pub mod data_layer_census_tests;
+// cratify: `data_layer_tests` is rerail-logic's (it mounts it)
+pub mod yaml;
+
+/// The pragma by which a program asks for bounded rounds (decision 0056): `.pragma "cross-rounds" "4"`. A typing
+/// program declares it: its cross-file recursion is over interface summaries, cut at `k` file crossings, with the
+/// pending round when it also declares `unconverged`. A program that does not declare it (a rule) has its
+/// cross-file part run as one fixpoint, which no chain length cuts.
+pub const PRAGMA: &str = "cross-rounds";
+
+/// The program setting `.pragma "cross-rounds" "k"` lowers to (from `.rr`, or the `.rdl` copies' same line).
+pub(crate) fn setting(k: &str) -> (String, String) {
+    ("pragma".to_owned(), format!("\"{PRAGMA}\" \"{k}\""))
+}
+
+/// A base relation's document column, including raw text views.
+pub fn document_column(relation: &str) -> Option<usize> {
+    match relation {
+        "node" | "doc" | "pkg" | "path_part" | "file_name" | "syntax_error" | "cpython_syntax_error" |
+        "source" | "src_line" | "src_line_lf" | "tape_line" | "split_line" | "lf_line" | "line_count" | "parsed"
+        // Decision 0055's: a guest and its host are one file (`corpus::guests` attributes its rows to the host).
+        | "doc_role" | "doc_root" | "tape_of" | "guest" | "host_node" => Some(0),
+        "docof" => Some(1),
+        _ => None,
+    }
+}
+
+pub use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;

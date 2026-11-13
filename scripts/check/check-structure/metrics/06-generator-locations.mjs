@@ -6,7 +6,7 @@
 // .cjs .js .ts .mts .py .php; not `generated*`).
 // Predicate: every generator lives under `scripts/generate/` (generated engine, host and pack data), never
 // beside its output in the engine or host sources (`native/src/`, `src/`).
-// Exemption `data-roots`: recorders sit beside the recordings they write, under `fixtures/` or
+// Exemption `data-roots`: pack generators sit beside the expected findings they write, under `fixtures/` or
 // `packs/<id>/upstream/` (the fixtures convention, fixtures/README.md); generated files there are not
 // scanned for headers.
 
@@ -18,7 +18,7 @@ export const title = "Generators follow one known pattern";
 export const target = "0 misplaced";
 
 const GENERATOR = /^generate(?:[-_][^/]*)?\.(mjs|cjs|js|ts|mts|py|php)$/;
-const WHERE = "outside scripts/generate/ (engine/host/pack data) or fixtures/, packs/<id>/upstream/ (recordings)";
+const WHERE = "outside scripts/generate/ (engine/host/pack data) or fixtures/, packs/<id>/upstream/ (expected findings)";
 
 export function check(repo) {
   const findings = [];

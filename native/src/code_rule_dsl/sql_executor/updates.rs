@@ -11,7 +11,7 @@ struct Patch {
     #[serde(default)]
     delete: Vec<Vec<Value>>,
 }
-pub(super) struct Prepared {
+pub struct Prepared {
     pub name: String,
     pub source: Arc<dyn Source>,
     pub live: Option<Arc<live::Live>>,
@@ -20,7 +20,7 @@ pub(super) struct Prepared {
     pub migrated: bool,
 }
 
-pub(super) fn contains(source: &dyn Source, row: &[i64]) -> bool {
+pub fn contains(source: &dyn Source, row: &[i64]) -> bool {
     let col = (0..row.len())
         .min_by_key(|c| source.estimated_matches(*c, false))
         .unwrap();
@@ -35,7 +35,7 @@ pub(super) fn contains(source: &dyn Source, row: &[i64]) -> bool {
 }
 
 impl CodeRuleSqlExecutor {
-    pub(super) fn change_facts(&mut self, json: String, max_waves: Option<u32>) -> Result<String> {
+    pub fn change_facts(&mut self, json: String, max_waves: Option<u32>) -> Result<String> {
         self.db.ensure_idle().map_err(error)?;
         if !self.db.is_autocommit() {
             return Err(error("fact changes require an autocommit session"));
@@ -110,7 +110,7 @@ impl CodeRuleSqlExecutor {
         self.apply_prepared(prepared, max_waves)
     }
 
-    pub(super) fn apply_prepared(
+    pub fn apply_prepared(
         &mut self,
         prepared: Vec<Prepared>,
         max_waves: Option<u32>,
@@ -129,12 +129,8 @@ impl CodeRuleSqlExecutor {
         let previous_counts = prepared.iter().map(|p| (p.name.clone(),self.inputs[&p.name].estimated_len())).collect::<BTreeMap<_,_>>();
         let affected = self.affected(&changed);
         let mut executions = self.executions.clone();
-        let mut work = Work::new(&self.db, &self.scratch);
-        work.versions = Some(&self.versions);
-        work.profiler = self.db.profiler();
         let mut touched = Vec::new();
         let previous_statistics=self.statistics.snapshot();
-        let limits = self.limits.clone();
         self.db
             .execute_batch("SAVEPOINT sql_fact_changes")
             .map_err(error)?;
@@ -142,8 +138,14 @@ impl CodeRuleSqlExecutor {
             let _ = self.db.execute_batch("RELEASE sql_fact_changes");
             return Err(e);
         }
-        let result = (|| -> Result<Value> {
-            let _budget = limits.enter(&self.db)?;
+        let (budget, entered) = match self.limits.enter(self.db.connection_mut()) {
+            Ok(budget) => (Some(budget), Ok(())),
+            Err(e) => (None, Err(e)),
+        };
+        let mut work = Work::new(&self.db, &self.scratch);
+        work.versions = Some(&self.versions);
+        work.profiler = self.db.profiler();
+        let result = entered.and_then(|()| -> Result<Value> {
             let mut deltas = BTreeMap::new();
             for p in &prepared {
                 touched.push(p);
@@ -172,7 +174,8 @@ impl CodeRuleSqlExecutor {
             super::super::logic::native::forget_inputs(&self.db);
             let mut reports = Vec::new();
             for i in affected {
-                let run = &mut executions[i];
+                let (upstream, remaining) = executions.split_at_mut(i);
+                let run = &mut remaining[0];
                 if !run
                     .inputs
                     .iter()
@@ -181,7 +184,31 @@ impl CodeRuleSqlExecutor {
                     continue;
                 }
                 let limit = max_waves.unwrap_or(run.max_waves);
-                let mut report = maintenance::maintain(&mut work, run, &mut deltas, limit)?;
+                let mut evaluation = self.planning.as_mut().and_then(|planning| {
+                    planning.evaluation(run, limit, |name| {
+                        prepared.iter().find(|p| p.name == name).map(|p| &p.source)
+                            .or_else(|| self.inputs.get(name))
+                            .map(|source| source.estimated_len() as u64)
+                            .or_else(|| upstream.iter().rev().find_map(|run| run.counts.get(name).copied()))
+                            .unwrap_or(0)
+                    }, |name| deltas.get(name).map_or((0, 0), |d| (d.inserted, d.deleted)))
+                });
+                if let Some(eval) = &mut evaluation {
+                    let strategy = run.temporal.get(&0).map_or(
+                        planning::Strategy::GroupedMaintenance,
+                        temporal::Trace::planning_strategy,
+                    );
+                    eval.choose(strategy, run.emitted.program.steps.len() > 32);
+                }
+                let result = maintenance::maintain(&mut work, run, &mut deltas, limit);
+                if let (Some(planning), Some(evaluation)) = (&mut self.planning, evaluation) {
+                    let mut evaluation = evaluation;
+                    if result.is_ok() {
+                        evaluation.capture(run);
+                    }
+                    planning.record(evaluation);
+                }
+                let mut report = result?;
                 report["program"] = json!(i);
                 report["migrated_views"] = json!(0);
                 reports.push(report);
@@ -226,13 +253,17 @@ impl CodeRuleSqlExecutor {
             Ok(
                 json!({"inserted_facts":prepared.iter().map(|p|p.plus.len()).sum::<usize>(),"deleted_facts":prepared.iter().map(|p|p.minus.len()).sum::<usize>(),"programs":reports,"initializations":[],"scratch_tables_created":work.created,"version_nodes":work.version_nodes,"summary_transition_reuses":work.summary_reuses,"migrated_inputs":prepared.iter().filter(|p|p.migrated).map(|p|p.name.clone()).collect::<Vec<_>>()}),
             )
-        })();
+        });
+        let pool = work.pool;
+        if let Some(budget) = budget {
+            budget.leave(self.db.connection_mut());
+        }
         match result {
             Ok(report) => {
                 self.stats_ready.set(true);
                 self.control_ready.set(true);
                 self.versions.commit();
-                self.scratch = work.pool;
+                self.scratch = pool;
                 for p in prepared {
                     self.inputs.insert(p.name.clone(), p.source.clone());
                     if let Some(live) = p.live {

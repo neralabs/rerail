@@ -1,6 +1,5 @@
 //! `core.rr`'s repository inputs (decision 0046): facts about the repository that are not source code, one reader
 //! per kind of file, made once a run (not per batch) and bound beside the batches' relations.
-//! - `workspace_root(path)`: the caller's root spelling, without canonicalisation or a directory scan.
 //!
 //! - `option(name, v)` and `option_item(name, i, v)`: the policy's `options` (`rerail.policy/v1`), as rrlab reads
 //!   them: a list gives one `option` row per element and `option_item` rows with positions; booleans are `"true"` and
@@ -27,14 +26,13 @@ const MAX_FILES: usize = 200_000;
 
 /// The rows, as strings, before they are interned.
 #[derive(Default, Debug, PartialEq)]
-pub(crate) struct Rows {
-    pub(crate) option: Vec<(String, String)>,
-    pub(crate) option_item: Vec<(String, i64, String)>,
+pub struct Rows {
+    pub option: Vec<(String, String)>,
+    pub option_item: Vec<(String, i64, String)>,
     pub(crate) file: Vec<String>,
     pub(crate) package: Vec<(String, String)>,
     pub(crate) package_field: Vec<(String, String, String)>,
     pub(crate) package_for: Vec<(String, String)>,
-    pub(crate) workspace_root: Vec<String>,
 }
 
 fn scalar(v: &Value) -> String {
@@ -47,7 +45,7 @@ fn scalar(v: &Value) -> String {
 }
 
 /// `option` and `option_item` of a policy's `options`.
-pub(crate) fn options(opts: &Value, rows: &mut Rows) {
+pub fn options(opts: &Value, rows: &mut Rows) {
     let merged;
     let opts = match opts {
         Value::Array(list) => {
@@ -158,11 +156,8 @@ pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) {
 }
 
 /// The repository inputs a program reads (`reads`), interned in `store`, by relation.
-pub(crate) fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Value, reads: &dyn Fn(&str) -> bool) -> StoreResult<Vec<(&'static str, Relation)>> {
+pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Value, reads: &dyn Fn(&str) -> bool) -> StoreResult<Vec<(&'static str, Relation)>> {
     let mut rows = Rows::default();
-    if reads("workspace_root") {
-        rows.workspace_root.push(root.to_string_lossy().into_owned());
-    }
     if reads("option") || reads("option_item") {
         options(opts, &mut rows);
     }
@@ -176,7 +171,6 @@ pub(crate) fn relations(store: &ContentStore, root: &Path, docs: &[String], opts
     rows.package.iter().for_each(|(a, b)| texts.extend([a.as_str(), b.as_str()]));
     rows.package_field.iter().for_each(|(a, b, c)| texts.extend([a.as_str(), b.as_str(), c.as_str()]));
     rows.package_for.iter().for_each(|(a, b)| texts.extend([a.as_str(), b.as_str()]));
-    texts.extend(rows.workspace_root.iter().map(String::as_str));
     let atoms = store.intern_atoms(&texts)?;
     let mut next = atoms.iter().map(|&a| i64::from(a));
     let mut sym = || next.next().expect("an atom per string");
@@ -202,13 +196,11 @@ pub(crate) fn relations(store: &ContentStore, root: &Path, docs: &[String], opts
     make("package_field", &["dir", "key", "v"], field);
     let pfor: Vec<Vec<i64>> = rows.package_for.iter().map(|_| vec![sym(), sym()]).collect();
     make("package_for", &["path", "dir"], pfor);
-    let root: Vec<Vec<i64>> = rows.workspace_root.iter().map(|_| vec![sym()]).collect();
-    make("workspace_root", &["path"], root);
     Ok(out)
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

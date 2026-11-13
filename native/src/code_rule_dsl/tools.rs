@@ -1,11 +1,12 @@
 //! The engine's text tools without Node (list step 18; P `spec-tooling.md` §2.2.1–2.2.2): the
 //! `rerail-engine` binary (`src/bin/rerail-engine.rs`) and the napi wrappers both call these.
 
-pub use super::logic::profile::watch;
+pub use super::logic::profile::watch::watch;
 pub use super::sql_executor::CodeRuleSqlExecutor;
+pub use super::logic::settings::{program_text, program_texts, settings, with_settings};
+pub use super::logic::settings::process_counters;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::transducer::packed::rir;
-mod signing;
 
 /// The package CLI's SQL tool, sharing the standalone command's request and execution path.
 #[napi_derive::napi(catch_unwind)]
@@ -24,7 +25,7 @@ pub fn sql(store: &std::path::Path, request: &str) -> Result<String, String> {
     drop(span);
     if profiling {
         if let Some(directory) = super::logic::profile::directory() {
-            super::logic::profile::write(&directory,"SQL extension request").map_err(|e|e.to_string())?;
+            super::logic::profile::report::write(&directory,"SQL extension request").map_err(|e|e.to_string())?;
         }
     }
     result
@@ -60,6 +61,8 @@ fn sql_request(store: &std::path::Path, request: &str) -> Result<String, String>
         indexes: Vec<Index>,
         #[serde(default)]
         queries: Vec<Query>,
+        #[serde(default)]
+        query_plans: Vec<serde_json::Value>,
         #[serde(default)]
         changes: Vec<Vec<serde_json::Value>>,
         #[serde(default)]
@@ -160,7 +163,14 @@ fn sql_request(store: &std::path::Path, request: &str) -> Result<String, String>
             .map(|s| serde_json::from_str::<serde_json::Value>(&s))
             .transpose()
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        Ok(serde_json::json!({"execution": execution, "updates":updates, "queries": queries}))
+        let query_plans=request.query_plans.into_iter().map(|plan| {
+            let result=session.query_plan(plan.to_string())?;
+            serde_json::from_str::<serde_json::Value>(&result)
+                .map_err(|e|napi::Error::from_reason(e.to_string()))
+        }).collect::<napi::Result<Vec<_>>>()?;
+        let mut result=serde_json::json!({"execution": execution, "updates":updates, "queries": queries});
+        if !query_plans.is_empty() {result["query_plans"]=serde_json::json!(query_plans);}
+        Ok(result)
     })()
     .map_err(|e| e.to_string())?;
     serde_json::to_string_pretty(&result)
@@ -179,9 +189,39 @@ pub fn read_rr(path: &std::path::Path) -> Result<String, String> {
 }
 
 /// Convert whole AST policies for review. Unsupported clauses refuse the entire candidate.
+/// Each rule (a rule document, or a draft `{ kind, rule, cases }`) converted to `.rr`. A draft's cases, or the cases
+/// file `--cases` names for the rule after it, become the converted file's tests (decision 0130): `tests` in the
+/// report, and after the program in `program`. They are printed even when the rule needs a hand-written port.
 pub fn convert_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
-    serde_json::Value::Array(paths.iter().map(|path| {
-        match std::fs::read_to_string(path).map_err(|e| e.to_string()).and_then(|source| super::logic::convert::policy(&source)) {
+    convert_rr_with(&paths.iter().map(|p| (p.clone(), None)).collect::<Vec<_>>())
+}
+
+/// `convert_rr`, each rule with the cases file given for it.
+pub fn convert_rr_with(rules: &[(std::path::PathBuf, Option<std::path::PathBuf>)]) -> serde_json::Value {
+    let one = |path: &std::path::Path, cases: Option<&std::path::Path>| -> Result<serde_json::Value, String> {
+        let source = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let document: serde_json::Value = serde_json::from_str(&source).map_err(|e| e.to_string())?;
+        let (rule, mut cases_value) = if document.get("rule").is_some() && document.get("cases").is_some() {
+            (document["rule"].to_string(), Some(document["cases"].clone()))
+        } else {
+            (source, None)
+        };
+        if let Some(file) = cases {
+            let text = std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+            cases_value = Some(serde_json::from_str(&text).map_err(|e| format!("{}: {e}", file.display()))?);
+        }
+        let mut report = super::logic::convert::policy(&rule)?;
+        if let Some(cases) = cases_value {
+            let tests = super::logic::rr::testing::tests_of_cases(&cases)?;
+            if let Some(program) = report["program"].as_str().filter(|p| !p.is_empty()) {
+                report["program"] = serde_json::json!(format!("{}\n\n{tests}", program.trim_end()));
+            }
+            report["tests"] = serde_json::json!(tests);
+        }
+        Ok(report)
+    };
+    serde_json::Value::Array(rules.iter().map(|(path, cases)| {
+        match one(path, cases.as_deref()) {
             Ok(mut report) => { report["path"] = serde_json::json!(path); report },
             Err(error) => serde_json::json!({"path": path, "status": "conversion-failed", "error": error})
         }
@@ -228,39 +268,88 @@ pub fn run_rr(
         typing::file_local::Binding,
     };
     let (program, files) = rr::read_file(path).map_err(|e| e.to_string())?;
-    let metadata = rr::metadata(&program).map_err(|e| e.to_string())?;
     if !program.outputs.iter().any(|name| name == "rr_diagnostic") {
         return Err(format!("{}: no .violation declarations", path.display()));
     }
-    let source = rr::print(&program).map_err(|e| e.to_string())?;
-    let report = corpus::run_with_options(
-        &[source.as_str()],
-        root,
-        None,
-        out,
-        "program",
-        Binding::Cpu,
-        1 << 18,
-        &Default::default(),
-        &with_reuse(options),
-    )
-    .map_err(|e| e.to_string())?;
-    let rows = match std::fs::read_to_string(out.join("rr_diagnostic.csv")) {
-        Ok(text) => text
-            .lines()
-            .map(|line| serde_json::from_str::<serde_json::Value>(line).map_err(|e| e.to_string()))
-            .collect::<Result<Vec<_>, _>>()?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(e) => return Err(e.to_string()),
+    run_program(path, program, &files, root, out, options)
+}
+
+/// `run_rr` of a program already read: `path`'s, or a test's (decision 0130, `rr::testing`).
+pub fn run_program(
+    path: &std::path::Path,
+    program: super::logic::front::Program,
+    files: &[super::logic::rr::LibraryFile],
+    root: &std::path::Path,
+    out: &std::path::Path,
+    options: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    use super::{
+        logic::{plan::corpus, rr},
+        typing::file_local::Binding,
     };
+    let metadata = rr::metadata(&program).map_err(|e| e.to_string())?;
+    let source = rr::print(&program).map_err(|e| e.to_string())?;
+    // The run reads the program from its text: the one just lowered, not the text lowered again.
+    rr::remember_lowered(&source, &program);
+    // A language of several dialects (`.language typescript` over `.ts`, `.tsx` and `.js` files) is a run per dialect
+    // with files in scope: the first into `out`, each other into `out/<dialect>`, their findings together. A language
+    // of one dialect, or none with files, runs as written.
+    let dialects = corpus::run_dialects(root, &source, &with_reuse(options)).map_err(|e| e.to_string())?;
+    // One dialect with files may be another than the one named: a `.js`-scoped TypeScript pack reads JavaScript.
+    let runs: Vec<(String, std::path::PathBuf)> = if dialects.is_empty() {
+        vec![(source, out.to_path_buf())]
+    } else {
+        dialects
+            .iter()
+            .enumerate()
+            .map(|(i, label)| {
+                let mut each = program.clone();
+                for (key, value) in &mut each.settings {
+                    if key == "language" {
+                        *value = (*label).to_owned();
+                    }
+                }
+                let dir = if i == 0 { out.to_path_buf() } else { out.join(label) };
+                rr::print(&each).map(|text| (text, dir)).map_err(|e| e.to_string())
+            })
+            .collect::<Result<_, _>>()?
+    };
+    let (mut rows, mut files_read, mut nodes, mut phases) = (Vec::new(), 0, 0, Vec::new());
+    for (text, dir) in &runs {
+        let report = corpus::run_with_options(
+            &[text.as_str()],
+            root,
+            None,
+            dir,
+            "program",
+            // The device as `logic --metal` places it: `RERAIL_DEVICE=metal` (by price) or `always` (wherever it can).
+            if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu },
+            1 << 18,
+            &Default::default(),
+            &with_reuse(options),
+        )
+        .map_err(|e| e.to_string())?;
+        match std::fs::read_to_string(dir.join("rr_diagnostic.csv")) {
+            Ok(text) => {
+                for line in text.lines() {
+                    rows.push(serde_json::from_str::<serde_json::Value>(line).map_err(|e| e.to_string())?);
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.to_string()),
+        }
+        files_read += report.files;
+        nodes += report.nodes;
+        phases.extend(report.phases);
+    }
     Ok(
-        serde_json::json!({"diagnostics": rows, "files": report.files, "nodes": report.nodes,
+        serde_json::json!({"diagnostics": rows, "files": files_read, "nodes": nodes,
                          "metadata": metadata,
                          "programInputs": files.iter().map(|file| serde_json::json!({
                              "path": file.path,
                              "sha256": file.sha256.map(|hash| hash.iter().map(|b| format!("{b:02x}")).collect::<String>())
                          })).collect::<Vec<_>>(),
-                         "phases": report.phases.iter().map(|(phase,user,system,rss,statements)| serde_json::json!({
+                         "phases": phases.iter().map(|(phase,user,system,rss,statements)| serde_json::json!({
                              "phase": phase, "userCpuSeconds": user, "systemCpuSeconds": system,
                              "peakRssMB": rss, "submittedStatements": statements
                          })).collect::<Vec<_>>()}),
@@ -278,6 +367,13 @@ pub fn run_policies(
     options: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     let (mut diagnostics, mut runs) = (Vec::new(), Vec::new());
+    // Every policy's includes resolved by one run of phase 0 (`bootstrap.rr`) over all of them, each graph kept for
+    // the policy's own read: not one run a policy. A path phase 0 cannot read is the policy's own error, below.
+    let seeds: Vec<super::logic::plan::corpus::phase0::Seed> =
+        paths.iter().filter_map(|p| p.canonicalize().ok()).map(super::logic::plan::corpus::phase0::Seed::File).collect();
+    if seeds.len() > 1 && !super::logic::plan::corpus::phase0::active() {
+        let _ = super::logic::plan::corpus::phase0::graphs(&seeds);
+    }
     for (k, path) in paths.iter().enumerate() {
         let report = run_rr(path, root, &out.join(k.to_string()), options).map_err(|e| format!("{}: {e}", path.display()))?;
         diagnostics.extend(report["diagnostics"].as_array().cloned().unwrap_or_default());
@@ -316,121 +412,10 @@ pub fn assemble(text: &str) -> Result<String, String> {
         .collect())
 }
 
-/// A program file's `.rr` text, with what it `#include`s from the library (`docs/rule-syntax/lib`) read in.
-pub fn program_text(path: &std::path::Path) -> Result<String, String> {
-    program_texts(&[path]).map(|mut texts| texts.remove(0))
-}
 
-/// [`program_text`] for each of `paths`: phase 0 resolves all their `#include`s in one run of `bootstrap.rr`
-/// (`plan::corpus::phase0`), not one run each.
-pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> {
-    use super::logic::plan::corpus::{observe, phase0};
-    let read = |path: &std::path::Path| -> Result<String, String> {
-        let (bytes, _) = observe(|o| o.read(path)).ok_or_else(|| format!("{}: cannot read the file", path.display()))?;
-        String::from_utf8(bytes).map_err(|error| format!("{}: {error}", path.display()))
-    };
-    let texts: Vec<String> = paths.iter().map(|p| read(p)).collect::<Result<_, _>>()?;
-    // A policy (`.policy`, `.language`) is read as `run-rr` reads it: its language's base relations are declared by
-    // reading the file (O111), which a policy's text does not do itself.
-    let policy = |text: &str| text.lines().map(str::trim_start).any(|l| l.starts_with(".policy") || l.starts_with(".language"));
-    let includes = |text: &str| text.lines().any(|l| l.trim_start().starts_with("#include"));
-    let mut seeds = Vec::new();
-    for (path, text) in paths.iter().zip(&texts) {
-        if includes(text) {
-            seeds.push(phase0::Seed::File(path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?));
-        }
-    }
-    let graphs = phase0::graphs(&seeds).map_err(|e| e.to_string())?;
-    let mut graphs = graphs.into_iter();
-    let mut out = Vec::with_capacity(texts.len());
-    for (path, text) in paths.iter().zip(texts) {
-        if !includes(&text) {
-            out.push(if policy(&text) { format!("#include \"core.rr\"\n{text}") } else { text });
-            continue;
-        }
-        let graph = graphs.next().expect("a graph per seed");
-        // The program as modules (decision 0089): the library files it includes stay `#include`s, read once by a
-        // run however many of its programs include them; a file beside it is written in. A policy reads `core.rr`.
-        let canonical = path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?;
-        let own = module_text(&canonical, &text, &graph, &mut Vec::new(), &read)?;
-        let own = if policy(&text) && !includes(&own) { format!("#include \"core.rr\"\n{own}") } else { own };
-        // The text's own graph is the file's, cut to what the text includes: kept, so no second run derives it.
-        if let Ok(Some(seed)) = super::logic::rr::text_seed(&own) {
-            phase0::keep_text(&seed, &graph);
-        }
-        out.push(own);
-    }
-    Ok(out)
-}
 
-/// `text` (the file `path`'s) with each `#include` phase 0 resolved to a file outside the library written in, each
-/// once.
-fn module_text(
-    path: &std::path::Path,
-    text: &str,
-    graph: &super::logic::plan::corpus::phase0::Graph,
-    seen: &mut Vec<std::path::PathBuf>,
-    read: &dyn Fn(&std::path::Path) -> Result<String, String>,
-) -> Result<String, String> {
-    let library = super::logic::rr::library().canonicalize().map_err(|e| e.to_string())?;
-    let from = path.to_string_lossy().into_owned();
-    let mut out = String::with_capacity(text.len());
-    for line in text.lines() {
-        let name = line.trim_start().strip_prefix("#include").and_then(|rest| rest.split('"').nth(1));
-        match name {
-            Some(name) => {
-                let found = graph.includes.get(&from).into_iter().flatten().find(|(_, n, _)| n == name).map(|(_, _, p)| p.clone());
-                let Some(found) = found else {
-                    return Err(format!("{}: #include {name:?}: no such file", path.display()));
-                };
-                if found.starts_with(&library) {
-                    out.push_str(line);
-                } else if !seen.contains(&found) {
-                    seen.push(found.clone());
-                    let inner = read(&found)?;
-                    out.push_str(&module_text(&found, &inner, graph, seen, read)?);
-                }
-            }
-            None => out.push_str(line),
-        }
-        out.push('\n');
-    }
-    Ok(out)
-}
 
-/// The run's settings (t21 E4): `key=value` lines of `<root>/rerail.env` (blank lines and `#` comments
-/// skipped), then each `--env key=value`, a later value for a key replacing an earlier one.
-pub fn settings(root: &std::path::Path, flags: &[String]) -> Result<Vec<(String, String)>, String> {
-    let file = root.join("rerail.env");
-    let text = if file.exists() { std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))? } else { String::new() };
-    let lines = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(|l| (l, file.display().to_string()));
-    let mut settings: Vec<(String, String)> = Vec::new();
-    for (line, from) in lines.chain(flags.iter().map(|f| (f.as_str(), "--env".to_owned()))) {
-        let (key, value) = line.split_once('=').ok_or_else(|| format!("{from}: `{line}` is not key=value"))?;
-        let (key, value) = (key.trim().to_owned(), value.trim().to_owned());
-        settings.retain(|(k, _)| *k != key);
-        settings.push((key, value));
-    }
-    Ok(settings)
-}
 
-/// `program` with the run's settings as `env(key, value)` facts, for a program that declares `env`; any other
-/// program is returned as it is. The facts are part of the program's text, so the plan, and every memo keyed by
-/// it, is per setting.
-pub fn with_settings(program: &str, settings: &[(String, String)]) -> String {
-    let declares = program.lines().any(|l| {
-        let l = l.trim_start();
-        l.strip_prefix(".decl").is_some_and(|r| r.trim_start().strip_prefix("env").is_some_and(|r| r.trim_start().starts_with('(')))
-    });
-    // A text in module form (decision 0089) reads `core.rr`, which declares `env`.
-    let declares = declares || program.lines().any(|l| l.trim_start().starts_with("#include"));
-    if !declares || settings.is_empty() {
-        return program.to_owned();
-    }
-    let quote = super::logic::rr::quote;
-    let facts: String = settings.iter().map(|(k, v)| format!("env({}, {}).\n", quote(k), quote(v))).collect();
-    format!("{program}\n// The run's settings (--env, rerail.env).\n{facts}")
-}
 
 /// The command line's runs keep their outputs for phase 0's cutoff (`corpus::reuse`), unless the caller said.
 fn with_reuse(options: &serde_json::Value) -> serde_json::Value {
@@ -443,6 +428,7 @@ fn with_reuse(options: &serde_json::Value) -> serde_json::Value {
 
 /// [`program_text`] under the name the wasm build's callers use: a rule as written in the library, its includes
 /// and `core.rr` resolved, as one program's text.
+/// The file's text is kept as written (`program_text`), so its tests and fixture sets (decision 0130) go with it.
 pub fn flatten(path: &std::path::Path) -> Result<String, String> {
     program_text(path)
 }
@@ -503,18 +489,6 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
     Ok(text)
 }
 
-/// The process's retired instructions and cycles so far (macOS `proc_pid_rusage`).
-pub(crate) fn process_counters() -> Option<(u64, u64)> {
-    #[cfg(target_os = "macos")]
-    {
-        // SAFETY: a zeroed `rusage_info_v4` is a valid out-value, and the flavour matches it.
-        let mut info = unsafe { std::mem::zeroed::<libc::rusage_info_v4>() };
-        if unsafe { libc::proc_pid_rusage(std::process::id() as i32, libc::RUSAGE_INFO_V4, (&raw mut info).cast()) } == 0 {
-            return Some((info.ri_instructions, info.ri_cycles));
-        }
-    }
-    None
-}
 
 #[cfg(test)]
 mod settings_tests {
@@ -545,9 +519,10 @@ mod settings_tests {
 //   rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]
 //   rerail-engine run-policies <corpus root> <out dir> <policy.rr>...
 //   rerail-engine check-rr <rule>... | convert-rr <rule>...
+//   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine sign-ed25519 <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr <rule>...";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -565,10 +540,6 @@ pub fn cli(args: &[String]) -> Result<String, String> {
         crate::code_rule_dsl::logic::plan::corpus::session::start(std::path::Path::new(&dir))?;
     }
     match args.first().map(String::as_str) {
-        Some("sign-ed25519") => match &args[1..] {
-            [request] => signing::run(&read(request)?),
-            _ => Err("usage: rerail-engine sign-ed25519 <request.json>".into()),
-        },
         #[cfg(feature = "dump-cli")]
         Some("dump") => dump_command(&args[1..]),
         Some("asm") => match &args[1..] {
@@ -604,9 +575,20 @@ pub fn cli(args: &[String]) -> Result<String, String> {
                 Err(format!("{failures} rules failed the .rr reader"))
             } else { Ok(text) }
         }
+        // Each test the files carry (decision 0130).
+        Some("test-rr") => crate::code_rule_dsl::logic::rr::testing::command(&args[1..]),
+        // `--cases <file>` gives the next rule its cases (decision 0130).
         Some("convert-rr") if args.len() > 1 => {
-            let paths = args[1..].iter().map(std::path::PathBuf::from).collect::<Vec<_>>();
-            serde_json::to_string_pretty(&crate::tools::convert_rr(&paths)).map_err(|e| e.to_string())
+            let (mut rules, mut cases) = (Vec::new(), None);
+            let mut rest = args[1..].iter();
+            while let Some(a) = rest.next() {
+                if a == "--cases" {
+                    cases = Some(std::path::PathBuf::from(rest.next().ok_or("--cases <cases.json> <rule>")?));
+                } else {
+                    rules.push((std::path::PathBuf::from(a), cases.take()));
+                }
+            }
+            serde_json::to_string_pretty(&crate::tools::convert_rr_with(&rules)).map_err(|e| e.to_string())
         }
         // The program `logic` runs for a file: `core.rr` and its includes resolved, lowered and printed as `.rr`.
         Some("flatten") => match &args[1..] {

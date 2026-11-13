@@ -1,0 +1,297 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "unicorn-no-null",
+  "revision": 2,
+  "mode": "log",
+  "description": "Use undefined instead of null in JavaScript, except in Object.create(null), useRef(null) and strict equality checks.",
+  "scope": {
+    "include": [
+      "**/*.js",
+      "**/*.jsx",
+      "**/*.mjs",
+      "**/*.cjs"
+    ],
+    "exclude": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/build/**",
+      "**/out/**",
+      "**/.next/**",
+      "**/coverage/**",
+      "**/vendor/**",
+      "**/.venv/**",
+      "**/.yarn/**",
+      "**/generated/**",
+      "**/__generated__/**",
+      "**/*.generated.*",
+      "**/*.gen.*",
+      "**/*.min.js",
+      "**/*.config.js",
+      "**/*.config.mjs",
+      "**/*.config.cjs",
+      "**/.*rc.js",
+      "**/.*rc.cjs"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "null",
+      "forbid": {
+        "ast": {
+          "language": "javascript",
+          "rule": {
+            "kind": "null",
+            "not": {
+              "any": [
+                {
+                  "all": [
+                    {
+                      "nthChild": {
+                        "position": 1,
+                        "ofRule": {
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "arguments",
+                        "stopBy": "neighbor",
+                        "not": {
+                          "any": [
+                            {
+                              "has": {
+                                "nthChild": {
+                                  "position": 3,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "has": {
+                                "kind": "spread_element"
+                              }
+                            }
+                          ]
+                        },
+                        "inside": {
+                          "kind": "call_expression",
+                          "stopBy": "neighbor",
+                          "has": {
+                            "field": "function",
+                            "regex": "^Object\\.create$"
+                          },
+                          "not": {
+                            "has": {
+                              "kind": "optional_chain",
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "nthChild": {
+                        "position": 1,
+                        "ofRule": {
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "arguments",
+                        "stopBy": "neighbor",
+                        "not": {
+                          "any": [
+                            {
+                              "has": {
+                                "nthChild": {
+                                  "position": 2,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "has": {
+                                "kind": "spread_element"
+                              }
+                            }
+                          ]
+                        },
+                        "inside": {
+                          "kind": "call_expression",
+                          "stopBy": "neighbor",
+                          "has": {
+                            "field": "function",
+                            "regex": "^useRef$"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "nthChild": {
+                        "position": 1,
+                        "ofRule": {
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "arguments",
+                        "stopBy": "neighbor",
+                        "not": {
+                          "any": [
+                            {
+                              "has": {
+                                "nthChild": {
+                                  "position": 2,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "has": {
+                                "kind": "spread_element"
+                              }
+                            }
+                          ]
+                        },
+                        "inside": {
+                          "kind": "call_expression",
+                          "stopBy": "neighbor",
+                          "has": {
+                            "field": "function",
+                            "regex": "^React\\.useRef$"
+                          },
+                          "not": {
+                            "has": {
+                              "kind": "optional_chain",
+                              "stopBy": "neighbor"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "all": [
+                    {
+                      "nthChild": {
+                        "position": 2,
+                        "ofRule": {
+                          "not": {
+                            "kind": "comment"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "inside": {
+                        "kind": "arguments",
+                        "stopBy": "neighbor",
+                        "not": {
+                          "any": [
+                            {
+                              "has": {
+                                "nthChild": {
+                                  "position": 3,
+                                  "ofRule": {
+                                    "not": {
+                                      "kind": "comment"
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            {
+                              "has": {
+                                "kind": "spread_element"
+                              }
+                            }
+                          ]
+                        },
+                        "inside": {
+                          "kind": "call_expression",
+                          "stopBy": "neighbor",
+                          "not": {
+                            "has": {
+                              "kind": "optional_chain",
+                              "stopBy": "neighbor"
+                            }
+                          },
+                          "has": {
+                            "field": "function",
+                            "kind": "member_expression",
+                            "has": {
+                              "field": "property",
+                              "regex": "^insertBefore$"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "inside": {
+                    "kind": "binary_expression",
+                    "stopBy": "neighbor",
+                    "has": {
+                      "regex": "^(?:===|!==)$"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "unicorn/no-null",
+        "message": "Use undefined instead of null.",
+        "suppress": {
+          "eslint": {
+            "rules": [
+              "unicorn/no-null"
+            ]
+          },
+          "oxlint": {
+            "rules": [
+              "no-null"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

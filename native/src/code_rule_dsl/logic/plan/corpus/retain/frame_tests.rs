@@ -19,7 +19,7 @@ fn fixture(store: &ContentStore, count: usize) -> (front::Program, HashMap<Strin
         let result = format!("result{i}");
         let rows: Vec<i64> = (1..=3).map(|d| (d << 32) | i as i64).collect();
         let source = component::columns_source(vec!["c0".into()], vec![Some(rows.clone())]);
-        let docs = docs_of(source.as_ref());
+        let docs = docs_of(source.as_ref(), 0);
         let d = digest(source.as_ref());
         assert_eq!(digest_of_docs(&docs), d);
         now.insert(input.clone(), d);
@@ -53,7 +53,7 @@ fn k4_admission_batches_input_digests_derived_rows_and_mixed_granules() {
     let span = profile::span(|| "bulk K4 admission".into());
     let mut kept = Retained::from_frames(&store, SPACE, KEY, &prog, &HashMap::new()).unwrap();
     let cut = cut(Some(&kept), KEY, &prog, &changed).unwrap();
-    kept.load(&store, &cut, &prog).unwrap();
+    kept.load(&store,&cut,&prog,false).unwrap();
     assert_eq!(kept.input_srcs.len(), 131);
     assert_eq!(kept.rels.len(), 130);
     for i in 0..131 {
@@ -70,6 +70,57 @@ fn k4_admission_batches_input_digests_derived_rows_and_mixed_granules() {
 }
 
 #[test]
+fn k4_clean_outputs_are_admitted_together_without_rerunning_their_producers() {
+    let _run=profile::one_run();
+    profile::set(true);
+    let dir=tempfile::tempdir().unwrap();
+    let store=ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
+    let (mut prog,_,_)=fixture(&store,130);
+    prog.outputs=(0..130).map(|i|format!("result{i}")).collect();
+    profile::reset(); profile::set(true);
+    let wave=profile::waves();
+    let span=profile::span(||"bulk output admission".into());
+    let mut kept=Retained::from_frames(&store,SPACE,KEY,&prog,&HashMap::new()).unwrap();
+    assert!(prog.outputs.iter().all(|r|kept.holds(r,&prog)),"raw output facts are sufficient to keep a derivation");
+    let cut=Cut{clean:prog.outputs.iter().cloned().collect(),strata:(0,130),changed:vec![]};
+    assert_eq!(kept.load(&store,&cut,&prog,false).unwrap(),Some((130,390)));
+    for i in 0..130 {
+        let rel=&kept.rels[&format!("result{i}")];
+        let source=rel.source(&format!("result{i}"));
+        assert_eq!((0..source.len()).map(|r|source.value(r,0)).collect::<Vec<_>>(),(1..=3).map(|d|(d<<32)|i as i64).collect::<Vec<_>>());
+        assert!(rel.output.is_none(),"decoding belongs at the output boundary");
+    }
+    drop(span); drop(wave);
+    let statements:u64=profile::sql_waits().iter().filter(|(p,s,_,_)|p.starts_with("bulk output admission")&&s.starts_with("store:")).map(|x|x.2).sum();
+    profile::set(false);
+    assert!(statements>0 && statements<=16,"130 outputs must be admitted in bounded batches: {statements}");
+}
+
+#[test]
+fn k4_retains_consumers_of_literal_facts_and_invalidates_them_when_the_literal_changes() {
+    let dir=tempfile::tempdir().unwrap();
+    let store=ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
+    let text=".decl literal(x:number)\nliteral(1).\n.decl result(x:number)\nresult(x) :- literal(x), x > 0.\n.output result\n";
+    let prog=rr::parse(text).unwrap();
+    let empty=Retained::from_frames(&store,SPACE,KEY,&prog,&HashMap::new()).unwrap();
+    let initial=cut(Some(&empty),KEY,&prog,&HashMap::new()).unwrap();
+    let computed=Retained{key:KEY,rels:HashMap::from([("result".into(),Kept{
+        rel:InRel::flat(&[vec![1]],vec![b'i']),width:1,output:None,
+    })]),..Default::default()};
+    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&prog,&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new()).unwrap(),1);
+    let restored=Retained::from_frames(&store,SPACE,KEY,&prog,&HashMap::new()).unwrap();
+    assert_eq!(cut(Some(&restored),KEY,&prog,&HashMap::new()).unwrap().strata,(0,1));
+    let changed=rr::parse(&text.replace("literal(1).","literal(2).")).unwrap();
+    let restored=Retained::from_frames(&store,SPACE,KEY,&changed,&HashMap::new()).unwrap();
+    assert_eq!(cut(Some(&restored),KEY,&changed,&HashMap::new()).unwrap().strata,(1,1),"literal rows participate in the relation's identity");
+    let external=rr::parse(&format!("{text}\n.input literal\n")).unwrap();
+    let empty=Retained::from_frames(&store,[52;32],KEY,&external,&HashMap::new()).unwrap();
+    let initial=cut(Some(&empty),KEY,&external,&HashMap::new()).unwrap();
+    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&external,&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new()).unwrap(),0,
+        "a relation with literal rows AND external inputs still needs a runtime dependency digest");
+}
+
+#[test]
 fn k4_rejects_a_derived_frame_replaced_after_metadata_admission() {
     let dir=tempfile::tempdir().unwrap();
     let store=ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
@@ -79,7 +130,7 @@ fn k4_rejects_a_derived_frame_replaced_after_metadata_admission() {
     let cut=cut(Some(&kept),KEY,&prog,&changed).unwrap();
     store.keep_frames(&SPACE,&[FramePut{rel:frames.names["result0"].clone(),part:0,digest:99,reads:vec![],
         rows:FrameRows{types:vec![b'i'],n:1,rows:vec![999]}}],&[],None).unwrap();
-    assert!(kept.load(&store,&cut,&prog).unwrap().is_none());
+    assert!(kept.load(&store,&cut,&prog,false).unwrap().is_none());
     assert!(kept.rels.is_empty(),"old dependency metadata must not certify replacement payloads");
     assert!(kept.frames().unwrap().derived.is_empty(),"a failed admission must invalidate the cut");
 }
@@ -95,7 +146,7 @@ fn k4_rejects_an_input_granule_replaced_after_its_digest_was_admitted() {
     // Granule headers have no content digest. Validate the rows against the admitted per-document digests.
     store.keep_frames(&SPACE,&[FramePut{rel:frames.names["input0"].clone(),part:granule(1),digest:0,reads:vec![],
         rows:FrameRows{types:vec![b'i'],n:1,rows:vec![(1<<32)|999]}}],&[],None).unwrap();
-    assert!(kept.load(&store,&cut,&prog).unwrap().is_none());
+    assert!(kept.load(&store,&cut,&prog,false).unwrap().is_none());
     assert!(kept.input_srcs.is_empty(),"replacement rows must not become the old side of maintenance");
     assert!(kept.frames().unwrap().inputs.is_empty(),"a failed admission must invalidate the cut");
 }
@@ -133,7 +184,7 @@ fn failed_k4_admission_makes_a_clean_consumer_run_again() {
     let demanded = Cut { clean: BTreeSet::from(["result0".into()]), strata: initial.strata, changed: vec![] };
     let result = kept.frames().unwrap().names["result0"].clone();
     store.keep_frames(&SPACE, &[], &[(result, DOCS_PART)], None).unwrap();
-    assert!(kept.load(&store, &demanded, &prog).unwrap().is_none());
+    assert!(kept.load(&store, &demanded, &prog, false).unwrap().is_none());
     let rerun = cut(None, KEY, &prog, &now).unwrap();
     assert!(rerun.clean.is_empty());
     assert_eq!(rerun.strata.0, rerun.strata.1);

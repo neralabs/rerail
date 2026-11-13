@@ -34,7 +34,7 @@ use rerail_accel::{Bits, Kernel, Output};
 use rustc_hash::FxHashMap as HashMap;
 
 /// The most nodes of one launch's bit rows: 16,384² bits are 32 MB.
-pub(in crate::code_rule_dsl::logic) const MAX_DENSE: usize = 16_384;
+pub const MAX_DENSE: usize = 16_384;
 /// Components are packed into pieces of about this many nodes (a larger component is a piece alone).
 const PACK: usize = 1_024;
 /// The most bits a closure's launches hold at once (128 MB): past it, the largest pieces are walked on the host.
@@ -102,8 +102,8 @@ thread_local! {
 }
 
 /// Tests: components opened on this thread run semi-naive (`on`) or may take the form.
-#[cfg(test)]
-pub(in crate::code_rule_dsl::logic) fn semi_naive_here(on: bool) {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn semi_naive_here(on: bool) {
     SEMI_NAIVE_HERE.set(on);
 }
 
@@ -177,6 +177,7 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
         fused: (0..rest.len()).map(|_| None).collect(),
         forms: (0..rest.len()).map(|_| Default::default()).collect(),
         spec: 0,
+        passed_over: Default::default(),
     };
     Some(Closure { col, rest, y })
 }

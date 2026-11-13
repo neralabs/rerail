@@ -39,7 +39,7 @@ pub(crate) const KINDS: &[&str] = &[
     "error",
 ];
 
-const G: Grammar = Grammar::Brace;
+const G: Grammar = GRAMMAR;
 
 /// Ruff's `FormatParseError`.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -514,4 +514,31 @@ fn mini_language(base: &str, spec: &str) -> Vec<PNode> {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
+
+/// The `braceFormat` grammar (`literal::LiteralGrammar`).
+pub(crate) struct BraceGrammar;
+
+/// Its handle, which the engine registers (`literal::install`).
+pub const GRAMMAR: super::Grammar = super::Grammar::new(&BraceGrammar);
+
+impl super::LiteralGrammar for BraceGrammar {
+    fn name(&self) -> &'static str {
+        "braceFormat"
+    }
+    fn kinds(&self) -> &'static [&'static str] {
+        KINDS
+    }
+    fn host_language(&self) -> crate::code_rule_dsl::language::GrammarDialect {
+        crate::code_rule_dsl::language::GrammarDialect::Python
+    }
+    fn host(&self) -> &'static str {
+        "Python literals"
+    }
+    fn host_kinds(&self) -> &'static [&'static str] {
+        &["string", "concatenated_string"]
+    }
+    fn parse(&self, _: super::Grammar, text: &str) -> super::PNode {
+        parse(text)
+    }
+}

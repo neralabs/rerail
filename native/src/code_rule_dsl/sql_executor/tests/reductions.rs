@@ -33,7 +33,7 @@ fn string_group_edits_skip_unrelated_groups() {
     eprintln!("string group: {work:?}");
     e.set_limits("{}".into()).unwrap();
     assert_eq!(
-        rows(&e, "SELECT sym_text(c1) FROM joined WHERE c0=17"),
+        rows(&mut e, "SELECT sym_text(c1) FROM joined WHERE c0=17"),
         json!([["17|30"]])
     );
 }
@@ -88,7 +88,7 @@ fn dependent_aggregate_keys_follow_old_and_new_dependencies_without_scanning_con
         );
         e.set_limits("{}".into()).unwrap();
         compare(
-            &e,
+            &mut e,
             p,
             &[
                 ("event", &["g", "v"]),
@@ -99,7 +99,7 @@ fn dependent_aggregate_keys_follow_old_and_new_dependencies_without_scanning_con
         );
     }
     e.connection().execute_batch("CREATE TEMP TRIGGER stop_dependent BEFORE INSERT ON result BEGIN SELECT RAISE(ABORT,'stop dependent'); END").unwrap();
-    let before = ordered(&e, "result");
+    let before = ordered(&mut e, "result");
     let patch = json!([{"name":"event","insert":[[1,17]]}]);
     assert!(
         e.apply_changes(patch.to_string(), None)
@@ -107,13 +107,13 @@ fn dependent_aggregate_keys_follow_old_and_new_dependencies_without_scanning_con
             .reason
             .contains("stop dependent")
     );
-    assert_eq!(ordered(&e, "result"), before);
+    assert_eq!(ordered(&mut e, "result"), before);
     e.connection()
         .execute_batch("DROP TRIGGER stop_dependent")
         .unwrap();
     change(&mut e, patch);
     compare(
-        &e,
+        &mut e,
         p,
         &[
             ("event", &["g", "v"]),
@@ -135,13 +135,13 @@ fn bind(e: &mut CodeRuleSqlExecutor, name: &str, columns: &[&str], values: Value
     e.bind_relation(json!({"name":name,"columns":columns,"rows":values}).to_string())
         .unwrap();
 }
-fn all(e: &CodeRuleSqlExecutor, sql: &str) -> Value {
+fn all(e: &mut CodeRuleSqlExecutor, sql: &str) -> Value {
     let result: Value =
         serde_json::from_str(&e.query(sql.into(), None, Some(300000)).unwrap()).unwrap();
     assert_eq!(result["truncated"], false);
     result["rows"].clone()
 }
-fn ordered(e: &CodeRuleSqlExecutor, table: &str) -> Value {
+fn ordered(e: &mut CodeRuleSqlExecutor, table: &str) -> Value {
     let width = e
         .connection()
         .prepare(&format!("SELECT * FROM {table} LIMIT 0"))
@@ -158,7 +158,7 @@ fn ordered(e: &CodeRuleSqlExecutor, table: &str) -> Value {
         ),
     )
 }
-fn compare(e: &CodeRuleSqlExecutor, program: &str, inputs: &[(&str, &[&str])], outputs: &[&str]) {
+fn compare(e: &mut CodeRuleSqlExecutor, program: &str, inputs: &[(&str, &[&str])], outputs: &[&str]) {
     let (_d, mut fresh) = executor();
     for (name, columns) in inputs {
         bind(
@@ -170,7 +170,7 @@ fn compare(e: &CodeRuleSqlExecutor, program: &str, inputs: &[(&str, &[&str])], o
     }
     fresh.run(program.into(), "python".into(), None).unwrap();
     for out in outputs {
-        assert_eq!(ordered(e, out), ordered(&fresh, out), "{out}");
+        assert_eq!(ordered(e, out), ordered(&mut fresh, out), "{out}");
     }
 }
 const AGG: &str = ".decl event(id:number,g:number,v:number)\n.decl owner(g:number)\n.input event,owner\n.decl totals(g:number,n:number,s:number,lo:number,hi:number)\ntotals(g,n,s,lo,hi) :- owner(g), n = count : {event(_,g,_)}, s = sum v : {event(_,g,v)}, lo = min v : {event(_,g,v)}, hi = max v : {event(_,g,v)}.\n.decl global(n:number,s:number)\nglobal(n,s) :- n = count : {event(_,_,_)}, s = sum v : {event(_,_,v)}.\n.decl empty()\nempty() :- !event(_,_,_).\n.output totals,global,empty\n";
@@ -193,8 +193,8 @@ fn ordered_string_groups_preserve_text_order_duplicates_defaults_and_rollback() 
     bind(&mut e, "owner", &["g"], json!([[1], [2], [3]]));
     e.run(p.into(), "python".into(), None).unwrap();
     let decoded =
-        |e: &CodeRuleSqlExecutor| all(e, "SELECT c0,sym_text(c1) FROM joined ORDER BY c0");
-    assert_eq!(decoded(&e), json!([[1, "a|b"], [2, "é"], [3, ""]]));
+        |e: &mut CodeRuleSqlExecutor| all(e, "SELECT c0,sym_text(c1) FROM joined ORDER BY c0");
+    assert_eq!(decoded(&mut e), json!([[1, "a|b"], [2, "é"], [3, ""]]));
     for patch in [
         json!([{"name":"part","delete":[[1,1,"2","b"]]}]),
         json!([{"name":"part","delete":[[3,1,"2","b"]],"insert":[[5,1,"10","c"],[6,2,"a","z"]]}]),
@@ -213,13 +213,13 @@ fn ordered_string_groups_preserve_text_order_duplicates_defaults_and_rollback() 
             &mut fresh,
             "part",
             &["id", "g", "k", "v"],
-            all(&e, "SELECT id,g,sym_text(k),sym_text(v) FROM part"),
+            all(&mut e, "SELECT id,g,sym_text(k),sym_text(v) FROM part"),
         );
-        bind(&mut fresh, "owner", &["g"], all(&e, "SELECT * FROM owner"));
+        bind(&mut fresh, "owner", &["g"], all(&mut e, "SELECT * FROM owner"));
         fresh.run(p.into(), "python".into(), None).unwrap();
-        assert_eq!(decoded(&e), decoded(&fresh));
+        assert_eq!(decoded(&mut e), decoded(&mut fresh));
     }
-    let before = decoded(&e);
+    let before = decoded(&mut e);
     e.connection().execute_batch("CREATE TEMP TRIGGER stop_string BEFORE INSERT ON joined BEGIN SELECT RAISE(ABORT,'stop string'); END").unwrap();
     let patch = json!([{"name":"part","insert":[[8,3,"a","first"]]}]);
     assert!(
@@ -228,12 +228,12 @@ fn ordered_string_groups_preserve_text_order_duplicates_defaults_and_rollback() 
             .reason
             .contains("stop string")
     );
-    assert_eq!(decoded(&e), before);
+    assert_eq!(decoded(&mut e), before);
     e.connection()
         .execute_batch("DROP TRIGGER stop_string")
         .unwrap();
     change(&mut e, patch);
-    assert_eq!(decoded(&e), json!([[1, ""], [2, ""], [3, "first|new"]]));
+    assert_eq!(decoded(&mut e), json!([[1, ""], [2, ""], [3, "first|new"]]));
 }
 
 #[test]
@@ -263,7 +263,7 @@ fn count_sum_and_extrema_keep_multiplicities_empty_groups_and_global_defaults() 
             "{report}"
         );
         compare(
-            &e,
+            &mut e,
             AGG,
             &[("event", &["id", "g", "v"]), ("owner", &["g"])],
             &["totals", "global", "empty"],
@@ -301,7 +301,7 @@ fn negation_changes_only_at_zero_crossings_and_preserves_alternate_rule_support(
             "{report}"
         );
         compare(
-            &e,
+            &mut e,
             p,
             &[
                 ("candidate", &["id", "g"]),
@@ -345,7 +345,7 @@ fn joined_contexts_handle_simultaneous_inserts_deletes_and_reducer_filters() {
             "{r}"
         );
         compare(
-            &e,
+            &mut e,
             p,
             &[
                 ("lefts", &["a", "b"]),
@@ -392,7 +392,7 @@ fn small_warm_updates_do_not_scan_large_groups_or_all_outer_candidates() {
     }
     e.set_limits("{}".into()).unwrap();
     compare(
-        &e,
+        &mut e,
         &p,
         &[("event", &["id", "g", "v"]), ("owner", &["g"])],
         &["totals", "global", "empty", "vacant"],
@@ -420,13 +420,13 @@ fn unused_sum_groups_keep_wide_support_and_fail_only_when_read() {
             .reason
             .contains("integer overflow")
     );
-    assert_eq!(rows(&e, "SELECT * FROM owner"), json!([[1]]));
+    assert_eq!(rows(&mut e, "SELECT * FROM owner"), json!([[1]]));
     change(
         &mut e,
         json!([{"name":"event","delete":[[2,2,max]]},{"name":"owner","insert":[[2]]}]),
     );
     compare(
-        &e,
+        &mut e,
         p,
         &[("event", &["id", "g", "v"]), ("owner", &["g"])],
         &["total"],
@@ -441,14 +441,14 @@ fn unused_sum_groups_keep_wide_support_and_fail_only_when_read() {
             .reason
             .contains("integer overflow")
     );
-    assert_eq!(rows(&e, "SELECT * FROM total"), json!([[1, 2]]));
+    assert_eq!(rows(&mut e, "SELECT * FROM total"), json!([[1, 2]]));
     change(
         &mut e,
         json!([{"name":"event","delete":[[6,2,-1]]},{"name":"owner","insert":[[2]]}]),
     );
-    assert_eq!(rows(&e, "SELECT c1 FROM total WHERE c0=2"), json!([[min]]));
+    assert_eq!(rows(&mut e, "SELECT c1 FROM total WHERE c0=2"), json!([[min]]));
     compare(
-        &e,
+        &mut e,
         p,
         &[("event", &["id", "g", "v"]), ("owner", &["g"])],
         &["total"],
@@ -477,8 +477,8 @@ fn overflow_and_budget_failures_restore_reducer_state_and_allow_retry() {
         )
         .is_err()
     );
-    assert_eq!(rows(&e, "SELECT * FROM global"), json!([[1, large]]));
-    assert_eq!(rows(&e, "SELECT count(*) FROM event"), json!([[1]]));
+    assert_eq!(rows(&mut e, "SELECT * FROM global"), json!([[1, large]]));
+    assert_eq!(rows(&mut e, "SELECT count(*) FROM event"), json!([[1]]));
     e.set_limits(json!({"max_steps":1}).to_string()).unwrap();
     let interrupted = e
         .apply_changes(
@@ -489,7 +489,7 @@ fn overflow_and_budget_failures_restore_reducer_state_and_allow_retry() {
     assert!(interrupted.reason.contains("interrupt"), "{interrupted}");
     e.set_limits("{}".into()).unwrap();
     compare(
-        &e,
+        &mut e,
         AGG,
         &[("event", &["id", "g", "v"]), ("owner", &["g"])],
         &["totals", "global", "empty"],
@@ -500,7 +500,7 @@ fn overflow_and_budget_failures_restore_reducer_state_and_allow_retry() {
         json!([{"name":"event","delete":[[1,1,large]],"insert":[[1,1,wire::integer(i64::MAX-1)]]}]),
     );
     compare(
-        &e,
+        &mut e,
         AGG,
         &[("event", &["id", "g", "v"]), ("owner", &["g"])],
         &["totals", "global", "empty"],
@@ -538,7 +538,7 @@ fn deterministic_mixed_edits_match_fresh_execution_with_composite_keys_and_filte
                 delete.push(row)
             }
         }
-        let current = all(&e, "SELECT * FROM event");
+        let current = all(&mut e, "SELECT * FROM event");
         if step % 3 == 0
             && let Some(row) = current.as_array().unwrap().first()
         {
@@ -553,7 +553,7 @@ fn deterministic_mixed_edits_match_fresh_execution_with_composite_keys_and_filte
             );
         }
         compare(
-            &e,
+            &mut e,
             &p,
             &[("event", &["id", "g", "v"]), ("owner", &["g"])],
             &[
@@ -583,7 +583,7 @@ fn dependent_aggregate_correlations_are_retained_without_refresh() {
     let report = change(&mut e, json!([{"name":"event","delete":[[1,1,5]]}]));
     assert_eq!(report["programs"][0]["refreshed_strata"], json!([]));
     compare(
-        &e,
+        &mut e,
         p,
         &[("event", &["id", "g", "v"]), ("owner", &["g"])],
         &["nested"],
@@ -597,11 +597,14 @@ fn retained_support_is_owned_by_the_program_and_recreated_after_reset() {
     bind(&mut e, "owner", &["g"], json!([[1]]));
     e.run(AGG.into(), "python".into(), None).unwrap();
     change(&mut e, json!([{"name":"event","insert":[[2,1,8]]}]));
-    assert!(rows(&e,"SELECT count(*) FROM temp.sqlite_schema WHERE type='table' AND name LIKE '__sql_state_%'")[0][0].as_u64().unwrap()>0);
+    let supports = e.executions[0].objects.iter().filter(|(name,_)|name.starts_with("__sql_state_")).map(|(name,_)|name.clone()).collect::<Vec<_>>();
+    assert!(!supports.is_empty());
+    assert!(supports.iter().all(|name|e.versions.owns(name)));
     e.reset().unwrap();
+    assert!(supports.iter().all(|name|!e.versions.owns(name)));
     assert_eq!(
         rows(
-            &e,
+            &mut e,
             "SELECT count(*) FROM temp.sqlite_schema WHERE name LIKE '__sql_state_%'"
         ),
         json!([[0]])
@@ -609,7 +612,7 @@ fn retained_support_is_owned_by_the_program_and_recreated_after_reset() {
     e.run(AGG.into(), "python".into(), None).unwrap();
     change(&mut e, json!([{"name":"event","delete":[[1,1,5]]}]));
     compare(
-        &e,
+        &mut e,
         AGG,
         &[("event", &["id", "g", "v"]), ("owner", &["g"])],
         &["totals", "global", "empty"],
@@ -617,7 +620,7 @@ fn retained_support_is_owned_by_the_program_and_recreated_after_reset() {
     bind(&mut e, "event", &["id", "g", "v"], json!([[3, 1, 9]]));
     assert_eq!(
         rows(
-            &e,
+            &mut e,
             "SELECT count(*) FROM temp.sqlite_schema WHERE name LIKE '__sql_state_%'"
         ),
         json!([[0]])
@@ -625,7 +628,7 @@ fn retained_support_is_owned_by_the_program_and_recreated_after_reset() {
     e.run(AGG.into(), "python".into(), None).unwrap();
     change(&mut e, json!([{"name":"event","insert":[[4,1,4]]}]));
     compare(
-        &e,
+        &mut e,
         AGG,
         &[("event", &["id", "g", "v"]), ("owner", &["g"])],
         &["totals", "global", "empty"],
@@ -646,9 +649,11 @@ fn initial_execution_prepares_reducers_and_edits_skip_unrelated_state() {
     let initial: Value =
         serde_json::from_str(&e.run(p.into(), "python".into(), None).unwrap()).unwrap();
     assert_eq!(
-        initial["preparation"]["initializations"],
-        json!(["count_large", "count_small"])
+        initial["preparation"]["initial_execution"],
+        json!("retained")
     );
+    assert_eq!(rows(&mut e,"SELECT * FROM count_small"), json!([[1]]));
+    assert_eq!(rows(&mut e,"SELECT * FROM count_large"), json!([[20000]]));
     e.set_limits(json!({"max_steps":10000}).to_string())
         .unwrap();
     let report = change(&mut e, json!([{"name":"small","insert":[[2]]}]));
@@ -657,7 +662,7 @@ fn initial_execution_prepares_reducers_and_edits_skip_unrelated_state() {
         json!(["count_small"])
     );
     assert_eq!(report["initializations"], json!([]));
-    assert_eq!(rows(&e, "SELECT * FROM count_large"), json!([[20000]]));
+    assert_eq!(rows(&mut e, "SELECT * FROM count_large"), json!([[20000]]));
     e.set_limits("{}".into()).unwrap();
     change(&mut e, json!([{"name":"large","insert":[[20000]]}]));
     e.set_limits(json!({"max_steps":10000}).to_string())
@@ -666,7 +671,7 @@ fn initial_execution_prepares_reducers_and_edits_skip_unrelated_state() {
     assert_eq!(warm["initializations"], json!([]));
     e.set_limits("{}".into()).unwrap();
     compare(
-        &e,
+        &mut e,
         p,
         &[("small", &["id"]), ("large", &["id"])],
         &["count_small", "count_large"],
@@ -703,7 +708,7 @@ fn recursive_producers_feed_actual_tuple_deltas_into_dependent_reducers() {
             "{report}"
         );
         compare(
-            &e,
+            &mut e,
             consumer,
             &[("reach", &["c0", "c1"]), ("candidate", &["n"])],
             &["total", "no_incoming"],

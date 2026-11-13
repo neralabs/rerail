@@ -28,7 +28,7 @@ does("break", "leaves the nearest enclosing loop or switch"). does("continue", "
 extra(j, w, x) :- jump(j, w), jump_label(j, x, l), nearest(j, s, breakable_kind), field(l, "body", s).
 
 // `break a;` becomes `break;`, `continue a` (no `;`, ASI) becomes `continue`.
-drop_label(n, w, _, _) :- field(j, "label", n), !has(j, _, comment_kind), last_token(j, t), text(t, ";")
+drop_label(n, w, _, _) :- field(j, "label", n), !has(j, _, comment_kind), text(j, t), match("(?s).*;", t)
     => replace(j, `$w;`).
-drop_label(n, w, _, _) :- field(j, "label", n), !has(j, _, comment_kind), last_token(j, t), !text(t, ";")
+drop_label(n, w, _, _) :- field(j, "label", n), !has(j, _, comment_kind), text(j, t), !match("(?s).*;", t)
     => replace(j, `$w`).

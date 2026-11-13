@@ -40,9 +40,9 @@ php_use_fn(d, @lower(a), @lower(q)) :- php_fn_clause(u), docof(u, d), php_use_pa
 .decl php_fn_clause(u: node)
 php_fn_clause(u) :- kind(u, "namespace_use_clause"), op(u, "function").
 php_fn_clause(u) :- kind(u, "namespace_use_clause"), child(dc, u, _), kind(dc, "namespace_use_declaration"),
-    child(dc, u0, 0), op(u0, "function").
+    child(dc, u0, 0), kind(u0, "namespace_use_clause"), op(u0, "function").
 php_fn_clause(u) :- kind(u, "namespace_use_clause"), child(g, u, _), kind(g, "namespace_use_group"), child(dc, g, _),
-    op(dc, "function").
+    kind(dc, "namespace_use_declaration"), op(dc, "function").
 .decl php_use_path(u: node, t: symbol)  // the name clause u imports, a group's prefix joined on
 php_use_path(u, t) :- php_fn_clause(u), child(u, n, 0), text(n, t), child(p, u, _), kind(p, "namespace_use_declaration").
 php_use_path(u, cat(pt, "\\", t)) :- php_fn_clause(u), child(u, n, 0), text(n, t), child(g, u, _),

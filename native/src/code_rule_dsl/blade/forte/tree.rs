@@ -100,14 +100,14 @@ macro_rules! kinds {
         /// A node kind; its id is its discriminant.
         #[repr(u16)]
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(crate) enum Kind {
+        pub enum Kind {
             _Unknown = 0,
             $($kind,)*
         }
 
         /// Kind names, by id (0: no kind). A Blade tape numbers Blade's kinds by these ids
         /// (`language::KindCatalog`).
-        pub(crate) const KIND_NAMES: &[&str] = &["", $($name,)*];
+        pub const KIND_NAMES: &[&str] = &["", $($name,)*];
     };
 }
 
@@ -192,10 +192,10 @@ kinds! {
 }
 
 /// Kinds from this id on are anonymous (punctuation and delimiters).
-pub(crate) const FIRST_ANONYMOUS: u16 = Kind::LessThan as u16;
+pub const FIRST_ANONYMOUS: u16 = Kind::LessThan as u16;
 
 /// Field names, by id (0: no field).
-pub(crate) const FIELD_NAMES: &[&str] = &[
+pub const FIELD_NAMES: &[&str] = &[
     "",
     "name",
     "closing_name",
@@ -221,28 +221,28 @@ enum Field {
     End,
 }
 
-const NONE: u32 = u32::MAX;
+pub const NONE: u32 = u32::MAX;
 
 /// Node ids of a tree are its base plus a preorder index below `SLOT` per tree slot it took
 /// from `NEXT_TREE` (the counter `literal`'s sub-trees draw from).
 const SLOT_BITS: u32 = 24;
 
 #[derive(Clone, Debug)]
-struct Rec {
-    kind: u16,
+pub struct Rec {
+    pub kind: u16,
     field: u16,
-    parent: u32,
-    first: u32,
-    next: u32,
-    prev: u32,
-    children: u32,
-    start: u32,
-    end: u32,
+    pub parent: u32,
+    pub first: u32,
+    pub next: u32,
+    pub prev: u32,
+    pub children: u32,
+    pub start: u32,
+    pub end: u32,
 }
 
 /// A template's text and line starts.
 #[derive(Clone)]
-pub(crate) struct BladeSource {
+pub struct BladeSource {
     bytes: Vec<u8>,
     lines: Vec<u32>,
 }
@@ -304,11 +304,11 @@ impl Content for BladeSource {
 }
 
 /// A parsed template as a tree.
-pub(crate) struct BladeTree {
+pub struct BladeTree {
     source: BladeSource,
-    nodes: Vec<Rec>,
+    pub nodes: Vec<Rec>,
     /// The flat node each node stands for (`NONE` for leaves).
-    forte: Vec<u32>,
+    pub forte: Vec<u32>,
     errors: Vec<Range<usize>>,
     base: usize,
 }
@@ -511,7 +511,7 @@ fn unclaimed(next: &mut [u32], mut at: usize) -> usize {
 
 impl BladeTree {
     /// The tree of a parse of `source`.
-    pub(crate) fn new(source: Vec<u8>, parsed: Parsed) -> Self {
+    pub fn new(source: Vec<u8>, parsed: Parsed) -> Self {
         Self::build(
             source,
             &parsed.tokens,
@@ -804,26 +804,26 @@ impl BladeTree {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn index_of(&self, node_id: usize) -> Option<usize> {
         let index = node_id.checked_sub(self.base)?;
         (index < self.nodes.len()).then_some(index)
     }
 
     /// Nodes in the tree.
-    #[cfg(test)]
-    pub(crate) fn len(&self) -> usize {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn len(&self) -> usize {
         self.nodes.len()
     }
 
     /// The template's bytes.
-    #[cfg(test)]
-    pub(crate) fn source(&self) -> &[u8] {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn source(&self) -> &[u8] {
         &self.source.bytes
     }
 
     /// The `document` node.
-    pub(crate) fn root(&self) -> BladeNode<'_> {
+    pub fn root(&self) -> BladeNode<'_> {
         BladeNode {
             tree: self,
             index: 0,
@@ -831,13 +831,13 @@ impl BladeTree {
     }
 
     /// Where the template has lexer errors (zero-wide, at the error's offset).
-    pub(crate) fn error_ranges(&self) -> &[Range<usize>] {
+    pub fn error_ranges(&self) -> &[Range<usize>] {
         &self.errors
     }
 
     /// The flat node (index into Forte's array) the node with this id stands for.
-    #[cfg(test)]
-    pub(crate) fn forte_index(&self, node_id: usize) -> Option<usize> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn forte_index(&self, node_id: usize) -> Option<usize> {
         let forte = *self.forte.get(self.index_of(node_id)?)?;
         (forte != NONE).then_some(forte as usize)
     }
@@ -851,7 +851,7 @@ impl BladeTree {
 ///
 /// `Err` where Forte stopped at a limit (its nesting depth, or Rerail's step budget): that says
 /// nothing about the template, which then has no tree, not a tree of one syntax error.
-pub(crate) fn parse_tree(source: &[u8]) -> Result<BladeTree, ParseError> {
+pub fn parse_tree(source: &[u8]) -> Result<BladeTree, ParseError> {
     let mut budget = Budget::for_template(source.len());
     let mut directives = Directives::with_defaults();
     directives.set_accept_all(true);
@@ -863,11 +863,11 @@ pub(crate) fn parse_tree(source: &[u8]) -> Result<BladeTree, ParseError> {
 /// written `$X` and read as `µX` (its expando character), so a pattern's PHP variables (`$x`) stay
 /// PHP: Forte reads `µX` in an echo or in arguments as opaque PHP bytes, the leaf's whole text.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct BladeLang;
+pub struct BladeLang;
 
 impl BladeLang {
     /// A document over a template, parsed as patterns are; `Err` where Forte stopped at a limit.
-    pub(crate) fn doc(self, source: &[u8]) -> Result<BladeDoc, ParseError> {
+    pub fn doc(self, source: &[u8]) -> Result<BladeDoc, ParseError> {
         Ok(BladeDoc {
             tree: Arc::new(parse_tree(source)?),
             lang: self,
@@ -892,29 +892,10 @@ impl Language for BladeLang {
     fn expando_char(&self) -> char {
         'µ'
     }
-    /// `$X`, `$_`, `$$X` and `$$$X` become `µX`, `µ_`, `µµX` and `µµµX`; a `$` before anything
-    /// else (`$x`, `$$x`) is PHP's.
+    /// The core's metavariables for a dialect Rerail parses itself (`language::own_metavariables`): `$X` is
+    /// `µX`, a `$` before anything else (`$x`, `$$x`) PHP's.
     fn pre_process_pattern<'q>(&self, query: &'q str) -> Cow<'q, str> {
-        let mut processed = String::with_capacity(query.len());
-        let mut dollars = 0;
-        for character in query.chars() {
-            if character == '$' {
-                dollars += 1;
-                continue;
-            }
-            let expando = matches!(character, 'A'..='Z' | '_') || dollars == 3;
-            processed.extend(std::iter::repeat_n(
-                if expando { 'µ' } else { '$' },
-                dollars,
-            ));
-            dollars = 0;
-            processed.push(character);
-        }
-        processed.extend(std::iter::repeat_n(
-            if dollars == 3 { 'µ' } else { '$' },
-            dollars,
-        ));
-        Cow::Owned(processed)
+        crate::code_rule_dsl::language::own_metavariables(query)
     }
     fn build_pattern(&self, builder: &PatternBuilder) -> Result<Pattern, PatternError> {
         builder.build(|src| {
@@ -926,14 +907,14 @@ impl Language for BladeLang {
 
 /// A Blade tree as an ast-grep document.
 #[derive(Clone)]
-pub(crate) struct BladeDoc {
-    pub(crate) tree: Arc<BladeTree>,
+pub struct BladeDoc {
+    pub tree: Arc<BladeTree>,
     lang: BladeLang,
 }
 
 impl BladeDoc {
-    #[cfg(test)]
-    pub(crate) fn new(tree: BladeTree, lang: BladeLang) -> Self {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn new(tree: BladeTree, lang: BladeLang) -> Self {
         Self {
             tree: Arc::new(tree),
             lang,
@@ -971,7 +952,7 @@ impl Doc for BladeDoc {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct BladeNode<'r> {
+pub struct BladeNode<'r> {
     tree: &'r BladeTree,
     index: u32,
 }
@@ -991,7 +972,7 @@ impl<'r> BladeNode<'r> {
         }
     }
     /// The id of the field this node is its parent's (`FIELD_NAMES`), 0 for none.
-    pub(crate) fn field_id(&self) -> u16 {
+    pub fn field_id(&self) -> u16 {
         self.rec().field
     }
     /// The template's bytes this node spans.
@@ -1111,5 +1092,4 @@ impl<'r> SgNode<'r> for BladeNode<'r> {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

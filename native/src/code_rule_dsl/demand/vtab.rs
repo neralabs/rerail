@@ -4,7 +4,6 @@
 //! calls `xFilter` with the batch token. The first call executes the packed backend and stores its
 //! normalized relation. No host callback or semantic matcher can be registered here.
 
-use super::super::language::adapter::{Adapter, ValueRules, with_adapter};
 use super::super::language::Family;
 use super::super::transducer::packed::{
     Error as PackedError, ExecutionBackend, PlanId, Program, execute_planned,
@@ -29,8 +28,9 @@ use std::ops::Range;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const MODULE_NAME: &CStr = c"rerail_matches";
 const BATCH_COLUMN: c_int = 0;
 const USE_BATCH: c_int = 1;
@@ -66,28 +66,28 @@ pub(in crate::code_rule_dsl) struct DocumentMapSpan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct HardPartition {
-    pub(in crate::code_rule_dsl) cause: &'static str,
-    pub(in crate::code_rule_dsl) limit: usize,
-    pub(in crate::code_rule_dsl) task_range: Range<usize>,
+pub struct HardPartition {
+    pub cause: &'static str,
+    pub limit: usize,
+    pub task_range: Range<usize>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct PackedExecutionCounters {
-    pub(in crate::code_rule_dsl) registrations: usize,
-    pub(in crate::code_rule_dsl) virtual_table_scans: usize,
-    pub(in crate::code_rule_dsl) filters: usize,
-    pub(in crate::code_rule_dsl) demand_executions: usize,
-    pub(in crate::code_rule_dsl) backend_invocations: usize,
-    pub(in crate::code_rule_dsl) hard_partitions: usize,
-    pub(in crate::code_rule_dsl) partitions: Vec<HardPartition>,
-    pub(in crate::code_rule_dsl) demanded_producers: usize,
-    pub(in crate::code_rule_dsl) terminal_tasks: usize,
-    pub(in crate::code_rule_dsl) command_buffers: usize,
-    pub(in crate::code_rule_dsl) packed_dispatches: usize,
-    pub(in crate::code_rule_dsl) anchor_dispatches: usize,
-    pub(in crate::code_rule_dsl) matcher_calls: usize,
-    pub(in crate::code_rule_dsl) host_callbacks: usize,
+pub struct PackedExecutionCounters {
+    pub registrations: usize,
+    pub virtual_table_scans: usize,
+    pub filters: usize,
+    pub demand_executions: usize,
+    pub backend_invocations: usize,
+    pub hard_partitions: usize,
+    pub partitions: Vec<HardPartition>,
+    pub demanded_producers: usize,
+    pub terminal_tasks: usize,
+    pub command_buffers: usize,
+    pub packed_dispatches: usize,
+    pub anchor_dispatches: usize,
+    pub matcher_calls: usize,
+    pub host_callbacks: usize,
 }
 
 struct MaterializedDemand {
@@ -148,10 +148,7 @@ fn terminal_structure_key(tape: &TapeDoc, node: u32) -> String {
         if family == Family::Ecma {
             return None;
         }
-        let tokens = with_adapter!(
-            family,
-            A => <<A as Adapter>::Value as ValueRules>::structure(&node, Equality::Plain, &mut context)
-        );
+        let tokens = { let pack = language_pack::pack(family); language_pack::value_structure(pack, &node, Equality::Plain, &mut context) };
         (!context.exhausted()).then_some(tokens).flatten().map(|tokens| structure_digest(&format!("{tokens:?}")))
     })();
     serde_json::json!({
@@ -161,7 +158,7 @@ fn terminal_structure_key(tape: &TapeDoc, node: u32) -> String {
     .to_string()
 }
 
-pub(in crate::code_rule_dsl) struct PackedDemand {
+pub struct PackedDemand {
     backend: ExecutionBackend,
     programs: Vec<Program>,
     producer_kinds: Vec<ProducerKind>,
@@ -273,7 +270,7 @@ impl RootsExecution {
 const RANGE_BYTES: u64 = 64 << 20;
 
 /// `0..file_count` as the ranges that fit, in order: a range that does not fit is halved.
-fn stable_partition_ranges(file_count: usize, fits: impl Fn(&Range<usize>) -> bool) -> Vec<Range<usize>> {
+pub fn stable_partition_ranges(file_count: usize, fits: impl Fn(&Range<usize>) -> bool) -> Vec<Range<usize>> {
     fn split(range: Range<usize>, fits: &impl Fn(&Range<usize>) -> bool) -> Vec<Range<usize>> {
         if range.len() <= 1 || fits(&range) {
             return vec![range];
@@ -288,7 +285,7 @@ fn stable_partition_ranges(file_count: usize, fits: impl Fn(&Range<usize>) -> bo
 }
 
 impl PackedDemand {
-    pub(in crate::code_rule_dsl) fn new(
+    pub fn new(
         backend: ExecutionBackend,
         programs: Vec<Program>,
         files: Vec<TapeDoc>,
@@ -640,7 +637,7 @@ impl PackedDemand {
 
     /// The roots' match records walked elsewhere (per program, per file, `None` where not).
     /// The demand as plan `plan`'s (the wave's identity, `LoweredWave::identity`).
-    pub(in crate::code_rule_dsl) fn with_plan(mut self, plan: PlanId) -> Self {
+    pub fn with_plan(mut self, plan: PlanId) -> Self {
         self.plan = Some(plan);
         self
     }
@@ -653,7 +650,7 @@ impl PackedDemand {
         }
     }
 
-    pub(in crate::code_rule_dsl) fn with_records(
+    pub fn with_records(
         mut self,
         records: Vec<Option<Vec<Vec<(u32, super::super::transducer::packed::RootRecord)>>>>,
     ) -> Result<Self, PackedError> {
@@ -664,8 +661,8 @@ impl PackedDemand {
         Ok(self)
     }
 
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn with_failure_injection(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn with_failure_injection(
         mut self,
         producer: usize,
         code: String,
@@ -678,7 +675,7 @@ impl PackedDemand {
         Ok(self)
     }
 
-    fn partition_records(&self, ranges: &[Range<usize>]) -> Vec<HardPartition> {
+    pub fn partition_records(&self, ranges: &[Range<usize>]) -> Vec<HardPartition> {
         if ranges.len() <= 1 {
             return Vec::new();
         }
@@ -1138,14 +1135,11 @@ impl PackedDemand {
                                                         if family == Family::Ecma {
                                                             return None;
                                                         }
-                                                        let tokens = with_adapter!(
-                                                            family,
-                                                            A => <<A as Adapter>::Value as ValueRules>::structure(
+                                                        let tokens = { let pack = language_pack::pack(family); language_pack::value_structure(pack, 
                                                                 &node,
                                                                 Equality::Plain,
                                                                 &mut context,
-                                                            )
-                                                        );
+                                                            ) };
                                                         (!context.exhausted())
                                                             .then_some(tokens)
                                                             .flatten()
@@ -1389,7 +1383,7 @@ impl PackedDemand {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(i64)]
-pub(in crate::code_rule_dsl) enum RowKind {
+pub enum RowKind {
     BatchStatus = 1,
     ProducerStatus = 2,
     TerminalMatch = 3,
@@ -1439,15 +1433,15 @@ struct CaptureData {
     end_byte: usize,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct TestProducerStatusRow {
+pub struct TestProducerStatusRow {
     pub(in crate::code_rule_dsl) producer: i64,
     pub(in crate::code_rule_dsl) file: i64,
-    pub(in crate::code_rule_dsl) complete: i64,
+    pub complete: i64,
     pub(in crate::code_rule_dsl) verdict: Option<i64>,
     pub(in crate::code_rule_dsl) work_used: Option<i64>,
-    pub(in crate::code_rule_dsl) error: Option<String>,
+    pub error: Option<String>,
 }
 
 /// A structure key's part as a digest: the keys are compared only for equality (`relational_ir`'s
@@ -1460,7 +1454,7 @@ fn structure_digest(key: &str) -> String {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct PackedRow {
+pub struct PackedRow {
     batch: i64,
     row_kind: RowKind,
     producer_id: Option<i64>,
@@ -1630,18 +1624,18 @@ impl PackedRow {
         row
     }
 
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) const fn row_kind(&self) -> RowKind {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub const fn row_kind(&self) -> RowKind {
         self.row_kind
     }
 
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn is_complete(&self) -> bool {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn is_complete(&self) -> bool {
         self.complete != 0
     }
 
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn error_code(&self) -> Option<&str> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn error_code(&self) -> Option<&str> {
         self.error_code.as_deref()
     }
 
@@ -1753,13 +1747,13 @@ impl MatchBatch {
 }
 
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct MatchRegistry {
+pub struct MatchRegistry {
     next: AtomicI64,
     batches: Mutex<HashMap<i64, Arc<MatchBatch>>>,
 }
 
 impl MatchRegistry {
-    pub(in crate::code_rule_dsl) fn register(&self, demand: PackedDemand) -> i64 {
+    pub fn register(&self, demand: PackedDemand) -> i64 {
         let token = self.next.fetch_add(1, Ordering::Relaxed) + 1;
         self.batches
             .lock()
@@ -1777,8 +1771,8 @@ impl MatchRegistry {
         token
     }
 
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn query_producer_status_rows(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn query_producer_status_rows(
         &self,
         token: i64,
     ) -> Vec<TestProducerStatusRow> {
@@ -1803,8 +1797,8 @@ impl MatchRegistry {
             .collect()
     }
 
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn query_execution_counters(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn query_execution_counters(
         &self,
         token: i64,
     ) -> Option<(usize, usize)> {
@@ -1816,7 +1810,7 @@ impl MatchRegistry {
         })
     }
 
-    pub(in crate::code_rule_dsl) fn query_execution_report(
+    pub fn query_execution_report(
         &self,
         token: i64,
     ) -> Option<PackedExecutionCounters> {
@@ -1853,7 +1847,7 @@ impl MatchRegistry {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const ALL_COLUMNS: [c_int; 35] = [
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
     26, 27, 28, 29, 30, 31, 32, 33, 34,
@@ -1883,7 +1877,7 @@ struct RelationModule {
     ordering: &'static [c_int],
 }
 
-pub(in crate::code_rule_dsl) fn register_module(
+pub fn register_module(
     connection: &Connection,
     registry: Arc<MatchRegistry>,
 ) -> SqlResult<()> {
@@ -1898,7 +1892,7 @@ pub(in crate::code_rule_dsl) fn register_module(
     let register = |name, module: RelationModule| {
         connection.create_module(name, &MODULE, Some(Arc::new(module)))
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     register(
         MODULE_NAME,
         RelationModule {
@@ -2239,50 +2233,50 @@ unsafe impl VTabCursor for MatchCursor<'_> {
                 ))
             })?;
         match column {
-            0 => context.set_result(&row.batch),
-            1 => context.set_result(&(row.row_kind as i64)),
-            2 => context.set_result(&row.producer_id),
-            3 => context.set_result(&row.file_index),
-            4 => context.set_result(&row.task_index),
-            5 => context.set_result(&row.match_index),
-            6 => context.set_result(&row.capture_index),
-            7 => context.set_result(&row.capture_occurrence),
-            8 => context.set_result(&row.capture_sequence_start),
-            9 => context.set_result(&row.capture_sequence_count),
-            10 => context.set_result(&row.node),
-            11 => context.set_result(&row.related_node),
-            12 => context.set_result(&row.axis_kind),
-            13 => context.set_result(&row.axis_order),
-            14 => context.set_result(&row.fact_kind),
-            15 => context.set_result(&row.document_id),
-            16 => context.set_result(&row.mapped_document_id),
-            17 => context.set_result(&row.start_ordinal),
-            18 => context.set_result(&row.output_label.as_deref()),
+            0 => context.set_result(row.batch),
+            1 => context.set_result(row.row_kind as i64),
+            2 => context.set_result(row.producer_id),
+            3 => context.set_result(row.file_index),
+            4 => context.set_result(row.task_index),
+            5 => context.set_result(row.match_index),
+            6 => context.set_result(row.capture_index),
+            7 => context.set_result(row.capture_occurrence),
+            8 => context.set_result(row.capture_sequence_start),
+            9 => context.set_result(row.capture_sequence_count),
+            10 => context.set_result(row.node),
+            11 => context.set_result(row.related_node),
+            12 => context.set_result(row.axis_kind),
+            13 => context.set_result(row.axis_order),
+            14 => context.set_result(row.fact_kind),
+            15 => context.set_result(row.document_id),
+            16 => context.set_result(row.mapped_document_id),
+            17 => context.set_result(row.start_ordinal),
+            18 => context.set_result(row.output_label.as_deref()),
             19 => match (row.derived, &self.derive) {
-                (Some(label), Some(derive)) => context.set_result(&derive.label(row, label)),
-                _ => context.set_result(&row.capture_label.as_deref()),
+                (Some(label), Some(derive)) => context.set_result(derive.label(row, label)),
+                _ => context.set_result(row.capture_label.as_deref()),
             },
-            20 => context.set_result(&row.text_value.as_deref()),
-            21 => context.set_result(&row.start_byte),
-            22 => context.set_result(&row.end_byte),
-            23 => context.set_result(&row.verdict),
-            24 => context.set_result(&row.complete),
-            25 => context.set_result(&row.work_used),
-            26 => context.set_result(&row.error_code.as_deref()),
-            27 => context.set_result(&row.field_id),
-            28 => context.set_result(&row.related_named),
+            20 => context.set_result(row.text_value.as_deref()),
+            21 => context.set_result(row.start_byte),
+            22 => context.set_result(row.end_byte),
+            23 => context.set_result(row.verdict),
+            24 => context.set_result(row.complete),
+            25 => context.set_result(row.work_used),
+            26 => context.set_result(row.error_code.as_deref()),
+            27 => context.set_result(row.field_id),
+            28 => context.set_result(row.related_named),
             29 => match (row.derived, &self.derive) {
-                (Some(_), Some(derive)) => context.set_result(&derive.text(row)),
-                _ => context.set_result(&row.source_text.as_deref()),
+                (Some(_), Some(derive)) => context.set_result(derive.text(row)),
+                _ => context.set_result(row.source_text.as_deref()),
             },
             30 => match (row.derived, &self.derive) {
-                (Some(_), Some(derive)) => context.set_result(&derive.key(row).as_deref()),
-                _ => context.set_result(&row.structural_key.as_deref()),
+                (Some(_), Some(derive)) => context.set_result(derive.key(row).as_deref()),
+                _ => context.set_result(row.structural_key.as_deref()),
             },
-            31 => context.set_result(&row.named_leaf),
-            32 => context.set_result(&row.capture_kind),
-            33 => context.set_result(&row.capture_named),
-            34 => context.set_result(&row.equality_occurrence),
+            31 => context.set_result(row.named_leaf),
+            32 => context.set_result(row.capture_kind),
+            33 => context.set_result(row.capture_named),
+            34 => context.set_result(row.equality_occurrence),
             _ => Err(rusqlite::Error::InvalidColumnIndex(column as usize)),
         }
     }
@@ -2292,310 +2286,39 @@ unsafe impl VTabCursor for MatchCursor<'_> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{
-        HardPartition, MatchRegistry, PackedDemand, register_module,
-        stable_partition_ranges,
-    };
-    use crate::code_rule_dsl::language::GrammarDialect;
-    use crate::code_rule_dsl::transducer::packed::{ExecutionBackend, Program};
-    use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
-    use rusqlite::Connection;
-    use std::sync::Arc;
-
-    fn empty_demand() -> PackedDemand {
-        PackedDemand::new(
-            ExecutionBackend::CpuJit,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        )
-        .expect("valid empty demand")
-    }
-
-    fn python_tape(source: &str) -> TapeDoc {
-        let source = Arc::new(source.to_owned());
-        let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
-        let image = TapeImage::parse(&grammar, &source, &|| false)
-            .expect("parser completed")
-            .expect("tape image");
-        TapeDoc::restore(source, grammar, &image, &|| false).expect("restored tape")
-    }
-
-    fn multi_file_program_demand(backend: ExecutionBackend) -> PackedDemand {
-        PackedDemand::new(
-            backend,
-            vec![
-                Program::compile_universe().expect("first verified universe"),
-                Program::compile_universe().expect("second verified universe"),
-                Program::compile_universe().expect("failed verified universe"),
-            ],
-            vec![python_tape("one\n"), python_tape("two\n")],
-            vec![
-                vec![vec![0], vec![0], vec![0]],
-                vec![vec![0], Vec::new(), Vec::new()],
-            ],
-            vec![vec![true, true, true], vec![true, true, false]],
-            vec![u32::MAX, u32::MAX, u32::MAX],
-        )
-        .and_then(|demand| demand.with_failure_injection(2, "capacity-failure".to_owned()))
-        .expect("valid multi-file, multi-program demand")
-    }
-
-    #[test]
-    fn hard_capacity_partitions_have_stable_task_ranges_and_cause() {
-        let demand = multi_file_program_demand(ExecutionBackend::CpuJit);
-        let ranges = stable_partition_ranges(2, |range| range.len() <= 1);
-        assert_eq!(ranges, [0..1, 1..2]);
-        assert_eq!(
-            demand.partition_records(&ranges),
-            [
-                HardPartition {
-                    cause: "packed-workspace-capacity",
-                    limit: u32::MAX as usize,
-                    task_range: 0..3,
-                },
-                HardPartition {
-                    cause: "packed-workspace-capacity",
-                    limit: u32::MAX as usize,
-                    task_range: 3..5,
-                },
-            ]
-        );
-    }
-
-    #[test]
-    fn sparse_task_grid_rejects_roots_for_an_excluded_file_producer_pair() {
-        let source = Arc::new("value\n".to_owned());
-        let grammar = Grammar::new(GrammarDialect::Python).expect("Python grammar");
-        let image = TapeImage::parse(&grammar, &source, &|| false)
-            .expect("parser completed")
-            .expect("tape image");
-        let tape = TapeDoc::restore(Arc::clone(&source), grammar, &image, &|| false)
-            .expect("restored tape");
-        let result = PackedDemand::new(
-            ExecutionBackend::CpuJit,
-            vec![Program::compile_universe().expect("verified universe")],
-            vec![tape],
-            vec![vec![vec![0]]],
-            vec![vec![false]],
-            vec![u32::MAX],
-        );
-        assert!(matches!(
-            result,
-            Err(crate::code_rule_dsl::transducer::packed::Error::InvalidAnchor)
-        ));
-    }
-
-    /// A connection to a new content store: the relations run where their statistics live.
-    fn store_connection() -> Connection {
-        let path = crate::code_rule_dsl::prefilter::tests::temp();
-        drop(crate::code_rule_dsl::prefilter::tests::open(&path));
-        Connection::open(path).expect("content store connection")
-    }
-
-    #[test]
-    fn one_filter_executes_one_immutable_multi_file_program_batch() {
-        let connection = store_connection();
-        let registry = Arc::new(MatchRegistry::default());
-        register_module(&connection, Arc::clone(&registry)).expect("virtual table module");
-        let token = registry.register(multi_file_program_demand(ExecutionBackend::CpuJit));
-        assert_eq!(
-            registry.query_execution_report(token),
-            Some(super::PackedExecutionCounters {
-                registrations: 1,
-                ..super::PackedExecutionCounters::default()
-            })
-        );
-        assert!(registry.query_producer_status_rows(token).is_empty());
-
-        let row_count = connection
-            .query_row(
-                "SELECT count(*) FROM rerail_matches WHERE batch = ?1",
-                [token],
-                |row| row.get::<_, i64>(0),
-            )
-            .expect("first relation scan");
-        assert!(row_count > 5);
-        let statuses = registry.query_producer_status_rows(token);
-        assert_eq!(statuses.len(), 5, "every demanded producer has one status");
-        assert_eq!(
-            statuses
-                .iter()
-                .filter(|status| status.complete == 1)
-                .count(),
-            4
-        );
-        assert!(statuses.iter().any(|status| {
-            status.complete == 0 && status.error.as_deref() == Some("capacity-failure")
-        }));
-        assert_eq!(
-            registry.query_execution_report(token),
-            Some(super::PackedExecutionCounters {
-                registrations: 1,
-                virtual_table_scans: 1,
-                filters: 1,
-                demand_executions: 1,
-                backend_invocations: 1,
-                hard_partitions: 0,
-                partitions: Vec::new(),
-                demanded_producers: 5,
-                terminal_tasks: 5,
-                command_buffers: 0,
-                packed_dispatches: 0,
-                anchor_dispatches: 0,
-                matcher_calls: 0,
-                host_callbacks: 0,
-            })
-        );
-
-        let repeated = connection
-            .query_row(
-                "SELECT count(*) FROM rerail_matches WHERE batch = ?1",
-                [token],
-                |row| row.get::<_, i64>(0),
-            )
-            .expect("second cursor reads stored rows");
-        assert_eq!(repeated, row_count);
-        let report = registry
-            .query_execution_report(token)
-            .expect("registered execution report");
-        assert_eq!(report.virtual_table_scans, 2);
-        assert_eq!(report.filters, 2);
-        assert_eq!(report.demand_executions, 1);
-        assert_eq!(report.backend_invocations, 1);
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn metal_uses_one_command_buffer_and_one_packed_dispatch() {
-        use crate::code_rule_dsl::transducer::packed::{
-            metal_execution_metrics, reset_metal_execution_metrics,
-        };
-
-        reset_metal_execution_metrics();
-        let connection = store_connection();
-        let registry = Arc::new(MatchRegistry::default());
-        register_module(&connection, Arc::clone(&registry)).expect("virtual table module");
-        let token = registry.register(multi_file_program_demand(ExecutionBackend::MetalJit));
-        connection
-            .query_row(
-                "SELECT count(*) FROM rerail_matches WHERE batch = ?1",
-                [token],
-                |row| row.get::<_, i64>(0),
-            )
-            .expect("Metal relation scan");
-
-        let report = registry
-            .query_execution_report(token)
-            .expect("registered execution report");
-        assert_eq!(report.backend_invocations, 1);
-        assert_eq!(report.command_buffers, 1);
-        assert_eq!(report.packed_dispatches, 1);
-        assert_eq!(report.anchor_dispatches, 0);
-        assert_eq!(metal_execution_metrics(), (1, 0));
-    }
-
-    #[test]
-    fn expanded_relation_has_one_typed_schema() {
-        let connection = store_connection();
-        register_module(&connection, Arc::new(MatchRegistry::default()))
-            .expect("virtual table module");
-        let columns = connection
-            .prepare("SELECT name FROM pragma_table_xinfo('rerail_matches') ORDER BY cid")
-            .expect("schema query")
-            .query_map([], |row| row.get::<_, String>(0))
-            .expect("schema rows")
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .expect("schema values");
-        assert_eq!(
-            columns,
-            [
-                "batch",
-                "row_kind",
-                "producer_id",
-                "file_index",
-                "task_index",
-                "match_index",
-                "capture_index",
-                "capture_occurrence",
-                "capture_sequence_start",
-                "capture_sequence_count",
-                "node",
-                "related_node",
-                "axis_kind",
-                "axis_order",
-                "fact_kind",
-                "document_id",
-                "mapped_document_id",
-                "start_ordinal",
-                "output_label",
-                "capture_label",
-                "text_value",
-                "start_byte",
-                "end_byte",
-                "verdict",
-                "complete",
-                "work_used",
-                "error_code",
-                "field_id",
-                "related_named",
-                "source_text",
-                "structural_key",
-                "named_leaf",
-                "capture_kind",
-                "capture_named",
-                "equality_occurrence",
-            ]
-        );
-    }
-
-    #[test]
-    fn empty_batch_is_inert_until_sql_demands_one_explicit_batch_status() {
-        let connection = store_connection();
-        let registry = Arc::new(MatchRegistry::default());
-        register_module(&connection, Arc::clone(&registry)).expect("virtual table module");
-        let token = registry.register(empty_demand());
-        assert_eq!(registry.query_execution_counters(token), Some((0, 0)));
-
-        let rows = connection
-            .prepare(
-                "SELECT row_kind, producer_id, file_index, complete, error_code \
-                 FROM rerail_matches WHERE batch = ?1 ORDER BY rowid",
-            )
-            .expect("expanded relation query")
-            .query_map([token], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, Option<i64>>(1)?,
-                    row.get::<_, Option<i64>>(2)?,
-                    row.get::<_, i64>(3)?,
-                    row.get::<_, Option<String>>(4)?,
-                ))
-            })
-            .expect("batch rows")
-            .collect::<rusqlite::Result<Vec<_>>>()
-            .expect("batch relation");
-
-        assert_eq!(rows, vec![(1, None, None, 1, None)]);
-        let repeated = connection
-            .query_row(
-                "SELECT count(*) FROM rerail_matches WHERE batch = ?1",
-                [token],
-                |row| row.get::<_, i64>(0),
-            )
-            .expect("second cursor reads the materialized relation");
-        assert_eq!(repeated, 1);
-        assert_eq!(registry.query_execution_counters(token), Some((1, 2)));
-    }
-}
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 /// Root programs fused into one walk (`PackedDemand::packs`).
 struct RootPack {
     members: Vec<usize>,
     fused: super::super::transducer::packed::fusion::Fused,
     walk: super::super::transducer::packed::Micro,
+}
+
+/// An owned connection's demand module and its match registry (`waves::owner::database::ConnectionSetup`).
+struct ConnectionRegistry(Arc<MatchRegistry>);
+
+impl crate::code_rule_dsl::facts::connection::ConnectionSetup for ConnectionRegistry {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
+/// Sets up an owned connection's demand module (`waves::owner::database::install_connection_setup`).
+pub fn set_up_connection(
+    connection: &Connection,
+) -> crate::content_store::StoreResult<Box<dyn crate::code_rule_dsl::facts::connection::ConnectionSetup>> {
+    let registry = Arc::new(MatchRegistry::default());
+    register_module(connection, Arc::clone(&registry))?;
+    Ok(Box::new(ConnectionRegistry(registry)))
+}
+
+/// The match registry of an owned connection set up by `set_up_connection`.
+pub fn registry_of(
+    attached: Option<&dyn crate::code_rule_dsl::facts::connection::ConnectionSetup>,
+) -> crate::content_store::StoreResult<&Arc<MatchRegistry>> {
+    attached
+        .and_then(|setup| setup.as_any().downcast_ref::<ConnectionRegistry>())
+        .map(|setup| &setup.0)
+        .ok_or_else(|| crate::content_store::StoreError::Invalid("the connection has no demand module".to_owned()))
 }
