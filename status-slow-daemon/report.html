@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request 650 report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request #650</div>
+  <h1>Status: a daemon that runs but answers late reads as not answering</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>Does every case that said not running before, other than a daemon that is alive but slow, still say it?</p>
+  <ol><li><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>A running daemon that answers late reads <code>● not answering</code>; <code>/rerail</code> stops advising a start.</li></ol></div>
+  <p class="rec"><b>We recommend:</b> merge it once its full description is posted: a maintainer approved 6b4eb3c6d on 13 November 2026, CI passes there, and the automated reviewer found 0 blockers, 0 follow-ups and 0 nits.</p>
+  <div class="big">
+    <div><b class="w">404 lines</b><span>in 10 files. 163 ship, 241 are tests and text.</span></div><div><b class="w">Fast lane</b><span>Medium risk, no high-risk path: a maintainer approved it.</span></div><div><b class="w">Waits on nothing</b><span>CI passed at 6b4eb3c6d; approved 22:24 UTC, 13 November.</span></div><div><b class="w">4 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/650">GitHub</a> on 13 November 2026, at head 6b4eb3c6d.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr><td class="k"><b>Footer and <code>/rerail</code></b></td><td class="in" data-l="Intended">The code comment says not running means &quot;no live daemon&quot;. The docs&#x27; footer table says &quot;No daemon answers&quot;, which a late daemon also fits. <span class="tagx">code comment, docs</span></td><td class="fo" data-l="Found">A live daemon slower than 2 s read as not running: 8 runs of <code>rerail session</code> advised a start, which the running daemon refuses. <span class="tagx">one busy hour, #583</span></td><td class="now" data-l="Now"><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Closes the gap, changes answer 1.</b> A read whose own time limit ran out, or on Windows a silent engine proof, reads <code>● not answering</code>. Every other failure keeps <code>main</code>&#x27;s words, and hooks decide as before.</td></tr></tbody></table>
+<figcaption>Reported in #583 on 12 November 2026, from a Windows 11 laptop under load.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">Footer and <code>/rerail</code></td><td data-l="Where main states the intent"><code>src/presentation/session-presentation.ts</code> line 26, the comment above <code>PresentationStatus</code>: &quot;not running (no live daemon)&quot;. <code>docs/in-session-surfaces.md</code> line 100, under &quot;No daemon&quot;: &quot;says `✕ Rerail is not running.` and how to start it.&quot; Line 291 of that page gives the footer row a wider meaning, &quot;No daemon answers&quot;, which a late daemon also fits. This pull request rewrites that row.</td><td data-l="The cause, and what was measured">Line 143 gives each read a 2 s limit. When it runs out the read throws, and the catch at line 488 hands it to <code>withoutDaemon</code>, the branch a missing daemon takes. <code>readRepositoryState</code> (line 375) returns null on any failure. On Windows since #503, a busy engine is silent to the capability proof, and <code>recordedDaemonAlive</code> (<code>src/runtime/daemon-control.ts</code> line 613) reads silent as not alive before any read. In #583&#x27;s hour the 7 timed runs took 2.7 to 7.0 s.</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>session-presentation.ts</code>: <code>get</code>, <code>readableDaemon</code>, <code>daemonRepositoryState</code>, <code>readSummaryState</code>, <code>readPresentation</code></b><span class="min">8 min</span><span class="x">Apart from the read&#x27;s own limit and a silent Windows proof, does any failure now read as not answering?</span></div></li><li><div><b><code>daemon-control.ts</code>: <code>recordedDaemonStatus</code>. <code>rerail-summary.ts</code>: <code>repositoryHeadline</code>, <code>startedLines</code> and the two new lines. <code>host-commands.ts</code>: the skipped read</b><span class="min">4 min</span><span class="x">Does <code>recordedDaemonAlive</code> answer as before?</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">3 min</span><span class="x">No assertion of <code>main</code> is removed. <code>host-commands.test.ts</code> now mocks <code>readSummaryState</code>, with the real function as its default. The docs narrow the footer&#x27;s not running row.</span></div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 159" role="img" aria-label="The changes by risk, high on top, against six checks. Late daemon, medium risk: independent review holds with a limit, users lose nothing holds with a limit. CI at this head holds for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="50" rx="8" class="bx zone"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk med"/><text x="28" y="34" class="t s b">Medium risk</text><text x="12" y="56" class="t b">Late daemon</text><g><title>Late daemon, fails without the fix: Over `main`&#x27;s source on Linux x64: the three changed unit test files at 6b4eb3c6d, 5 tests fail and 58 pass; the integration file at da71fac2e, 2 fail and 5 pass, and the built status line prints `R E R A I L ✕ not running`. On Windows 11 three not-answering cases fail before the two Windows commits and pass at da71fac2e.</title><circle cx="150" cy="52" r="8" class="mh"/><path d="M146 52l3 3l5 -6" class="mt"/></g><g><title>Late daemon, independent review: A review of the first eight commits found one behaviour defect: `rerail session --open` opened nothing after a read with no answer. e6b989fd2 restores `main`&#x27;s second read, with a test. At da71fac2e, 12 of 13 fix lines changed in turn fail a test. The limit: only the automated reviewer and the approving maintainer reviewed 80c7dae00 and da71fac2e.</title><circle cx="184" cy="52" r="7.4" class="ml"/><path d="M184 44.6A7.4 7.4 0 0 0 184 59.4Z" class="mlf"/></g><g><title>Late daemon, users lose nothing: A real daemon on Linux x64 and Windows 11: a wrong capability, a live pid with nothing listening, a killed daemon whose state file stayed and no daemon give `main`&#x27;s text at da71fac2e. `rerail status` is unchanged. The limit: one case is read, not run, a stale state file whose port another program holds (part 8).</title><circle cx="218" cy="52" r="7.4" class="ml"/><path d="M218 44.6A7.4 7.4 0 0 0 218 59.4Z" class="mlf"/></g><g><title>Late daemon, rules scan: nothing new: The scan the automated reviewer runs, with rules from `main`, at 6b4eb3c6d against 383fc99aa: 0 new findings. Its 3 existing findings are in `onPresentation`, `healthItems` and `verifyDaemon`, which this does not edit. Every function added or edited counts 6 or under.</title><circle cx="252" cy="52" r="8" class="mh"/><path d="M248 52l3 3l5 -6" class="mt"/></g><g><title>Late daemon, Windows 11: no new failure: The 23 unit files and the integration file on Windows 11 at 6b4eb3c6d: 365 passed, 11 skipped, 0 failed. One `claude-status.test.ts` test is flaky there at `main` too: in 40 runs it failed 4 times at `main` and 9 at 6b4eb3c6d, with the same message (part 8). CI&#x27;s two Windows unit jobs passed.</title><circle cx="286" cy="52" r="8" class="mh"/><path d="M282 52l3 3l5 -6" class="mt"/></g><g><title>Late daemon, CI at this head: Run 43515417412 at 6b4eb3c6d, read on 13 November 2026: 21 jobs, 18 pass, 3 are skipped (`Rust engine (${{ matrix.name }})`, `Conformance (${{ matrix.shard }}/${{ strategy.job-total }})` and `Conformance comment`), none fails. `Unit tests (1/2)`, `Unit tests (2/2)`, `Unit tests (Windows, 1/2)`, `Unit tests (Windows, 2/2)` and `Integration tests` are among the 18.</title><circle cx="320" cy="52" r="8" class="mh"/><path d="M316 52l3 3l5 -6" class="mt"/></g><text x="8" y="89" class="t s">1  fails without the fix</text><text x="168" y="89" class="t s">2  independent review</text><text x="8" y="105" class="t s">3  users lose nothing</text><text x="168" y="105" class="t s">4  rules scan: nothing new</text><text x="8" y="121" class="t s">5  Windows 11: no new failure</text><text x="168" y="121" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="145" r="8" class="mh"/><path d="M10 145l3 3l5 -6" class="mt"/></g><text x="28" y="149" class="t s">holds</text><g><title>holds with a limit</title><circle cx="92" cy="145" r="7.4" class="ml"/><path d="M92 137.6A7.4 7.4 0 0 0 92 152.4Z" class="mlf"/></g><text x="106" y="149" class="t s">holds with a limit</text></svg>
+<figcaption>Two half marks: the two Windows commits were reviewed by the automated reviewer and a maintainer only, and one case is read and not run.</figcaption></figure>
+<details class="ev"><summary>Each half mark's limit</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>It holds with this limit</th></tr></thead><tbody><tr><td class="k">Late daemon</td><td data-l="Check">independent review</td><td data-l="It holds with this limit">A review of the first eight commits found one behaviour defect: <code>rerail session --open</code> opened nothing after a read with no answer. e6b989fd2 restores <code>main</code>&#x27;s second read, with a test. At da71fac2e, 12 of 13 fix lines changed in turn fail a test. The limit: only the automated reviewer and the approving maintainer reviewed 80c7dae00 and da71fac2e.</td></tr><tr><td class="k">Late daemon</td><td data-l="Check">users lose nothing</td><td data-l="It holds with this limit">A real daemon on Linux x64 and Windows 11: a wrong capability, a live pid with nothing listening, a killed daemon whose state file stayed and no daemon give <code>main</code>&#x27;s text at da71fac2e. <code>rerail status</code> is unchanged. The limit: one case is read, not run, a stale state file whose port another program holds (part 8).</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<ul class="lines"><li><span class="chip medium"><i></i>Medium risk</span> <b>Late daemon reads not answering</b>: Status line, daemon paused, Linux x64: <code>✕ not running</code> at <code>main</code>, <code>● not answering</code> here, each after 2.1 s.</li></ul>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>What should the footer say of a daemon that runs but answers late?</h3>
+<p><b>We chose</b> a new state under the running mark: the daemon runs.</p>
+<p><b>Would change our mind:</b> a maintainer who wants no new state, or another mark.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">A new state, <code>● not answering</code>, with the running mark <span class='tag new'>chosen</span></td><td data-l="What a user gets">The footer says the daemon runs and is late. <code>/rerail</code> says &quot;● Rerail is running, but its daemon did not answer in time.&quot; and to ask again, or to run <code>rerail status</code> if it keeps happening.</td><td data-l="Cost">One more state in the footer&#x27;s set, one row in the docs&#x27; footer table and two new <code>/rerail</code> lines.</td><td data-l="What it breaks">A script that matches the footer or the <code>/rerail</code> lines meets one new state.</td></tr><tr><td class="k">Reuse <code>● session unavailable</code> for a late answer</td><td data-l="What a user gets">No new state.</td><td data-l="Cost">Nothing to add.</td><td data-l="What it breaks">It hides that the daemon is busy and gives the person no next step.</td></tr><tr><td class="k">A longer limit for the footer&#x27;s read</td><td data-l="What a user gets">Fewer late answers read as stopped.</td><td data-l="Cost">The status line refreshes often, and each refresh then holds longer against a busy daemon.</td><td data-l="What it breaks">A daemon that never answers still reads as stopped.</td></tr><tr><td class="k">The new state under a mark of its own</td><td data-l="What a user gets">A late daemon looks different from a running one in the footer.</td><td data-l="Cost">A new mark to choose and document.</td><td data-l="What it breaks">Nothing known. Not built.</td></tr></tbody></table></div><p><b>Evidence.</b> <code>rerail status</code> at <code>main</code> already tells the two apart: for a paused daemon it says the pid is alive but not answering and exits 4. The footer and <code>/rerail</code> did not: the unit test&#x27;s listener never answers under a live pid, and <code>main</code> returns <code>R E R A I L ✕ not running</code>. #583 lists options two and three under &quot;Alternatives&quot; and asks a maintainer about the state and its mark. Nobody answered there; a maintainer approved 6b4eb3c6d, which carries it.</p></details></div>
+<div class="dblock"><h3>Which failed read means not answering, and which still means not running?</h3>
+<p><b>We chose</b> the read&#x27;s own time limit running out, or a silent Windows engine proof. Nothing else.</p>
+<p><b>Would change our mind:</b> a gone daemon that uses up the limit. Our four cases fail in 0.1 to 0.2 s.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">The read&#x27;s own limit, and a silent proof on Windows <span class='tag new'>chosen</span></td><td data-l="What a user gets">A busy daemon reads not answering. A refused read, a dead process, a missing state file and a live process with nothing listening read not running.</td><td data-l="Cost">No extra read or process.</td><td data-l="What it breaks">Nothing in the cases we ran. One case is read from the code and not run: <a href="#gaps">part 8</a>.</td></tr><tr><td class="k">Decide by the error&#x27;s name (<code>TimeoutError</code>, <code>AbortError</code>)</td><td data-l="What a user gets">The same, while every transport throws those names.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks">A transport that wraps the abort in another error reads not running again. Not tried.</td></tr><tr><td class="k">Probe the process and the port apart</td><td data-l="What a user gets">Finer states.</td><td data-l="Cost">A second probe on each status line refresh.</td><td data-l="What it breaks">A slower footer.</td></tr></tbody></table></div><div class="pns c2"><div class="pn before"><div class="pt">main: a footer or /rerail read in a started checkout</div><svg viewBox="0 0 340 171" role="img" aria-label="At main, a read in a started checkout says not running when daemon.json names no live process, when the Windows engine proof is refused or silent, and when the read fails for any reason, its time limit included." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">daemon.json names a live process? No: not running</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="38" rx="8" class="bx "/><text x="170" y="63.5" text-anchor="middle" class="t s">on Windows, the engine proof. Refused or silent:</text><text x="170" y="76.5" text-anchor="middle" class="t s">not running</text><line x1="170" y1="86" x2="170" y2="95" class="ar " marker-end="url(#ah)"/><rect x="20" y="96" width="300" height="28" rx="8" class="bx "/><text x="170" y="114" text-anchor="middle" class="t s">the read, with its time limit</text><line x1="170" y1="125" x2="170" y2="134" class="ar " marker-end="url(#ah)"/><rect x="20" y="135" width="300" height="28" rx="8" class="bx "/><text x="170" y="153" text-anchor="middle" class="t s">any failure, the limit included: ✕ not running</text></svg></div><div class="pn after"><div class="pt">this change</div><svg viewBox="0 0 340 219" role="img" aria-label="With this change, a silent Windows engine proof reads not answering and a refused one not running. A read that failed reads not answering only when its own time limit ran out. A refused read, or an answer that is not Rerail&#x27;s, still reads not running." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">daemon.json names a live process? No: not running</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="38" rx="8" class="bx acc"/><text x="170" y="63.5" text-anchor="middle" class="t s">on Windows, the engine proof. Refused: not</text><text x="170" y="76.5" text-anchor="middle" class="t s">running. Silent: not answering</text><line x1="170" y1="86" x2="170" y2="95" class="ar " marker-end="url(#ah)"/><rect x="20" y="96" width="300" height="28" rx="8" class="bx "/><text x="170" y="114" text-anchor="middle" class="t s">the read, with its time limit</text><line x1="170" y1="125" x2="170" y2="134" class="ar " marker-end="url(#ah)"/><rect x="20" y="135" width="300" height="28" rx="8" class="bx acc"/><text x="170" y="153" text-anchor="middle" class="t s">the read failed: did its own limit run out?</text><line x1="95" y1="164" x2="95" y2="180" class="ar " marker-end="url(#ah)"/><line x1="245" y1="164" x2="245" y2="180" class="ar " marker-end="url(#ah)"/><text x="101" y="176" class="t s">yes: a busy daemon</text><text x="251" y="176" class="t s">no: refused</text><rect x="20" y="181" width="146" height="30" rx="8" class="bx good"/><text x="93" y="200" text-anchor="middle" class="t s">● not answering</text><rect x="174" y="181" width="146" height="30" rx="8" class="bx "/><text x="247" y="200" text-anchor="middle" class="t s">✕ not running</text></svg></div></div><p><b>Evidence.</b> The unit listener takes every request and never answers, under a live pid recorded in <code>daemon.json</code>: <code>main</code> returns <code>R E R A I L ✕ not running</code>, this branch <code>● not answering</code>. With the catch widened so that every failure reads as not answering, the case &quot;still says not running where the recorded pid is alive but nothing listens&quot; fails. With a real daemon on both platforms, the four cases of part 10 give <code>main</code>&#x27;s text at da71fac2e.</p></details></div>
+<div class="dblock"><h3>After a read with no answer, who still asks for the dashboard link?</h3>
+<p><b>We chose</b> <code>rerail session</code> only: <code>--open</code> needs the link.</p>
+<p><b>Would change our mind:</b> one function owning both <code>/rerail</code> reads: <code>rerail session</code> without <code>--open</code> then skips too.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Skip in OMP and Pi only <span class='tag new'>chosen</span></td><td data-l="What a user gets">OMP and Pi <code>/rerail</code> answer in 2.15 s on Linux x64 and 2.22 s on Windows 11. <code>rerail session --open</code> opens the page when the daemon answers the second read.</td><td data-l="Cost"><code>rerail session</code> still takes 4.15 s on Linux x64 and 4.2 s on Windows 11 for a daemon that never answers, as at <code>main</code>.</td><td data-l="What it breaks">Nothing found.</td></tr><tr><td class="k">Skip in both</td><td data-l="What a user gets">Every surface answers after one wait.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks"><code>rerail session --open</code> opened nothing and exited 3, where <code>main</code> opened the page. #583&#x27;s &quot;Approach&quot; describes this earlier skip.</td></tr><tr><td class="k">Skip in <code>rerail session</code> only without <code>--open</code></td><td data-l="What a user gets">Both fast, <code>--open</code> kept.</td><td data-l="Cost">An edit to <code>runSessionCommand</code> in <code>src/cli/cli.ts</code>, which the rules scan counted 16 at 9a741683, over the ceiling of 6.</td><td data-l="What it breaks">Nothing.</td></tr><tr><td class="k">Keep both reads, as <code>main</code> does</td><td data-l="What a user gets">As before.</td><td data-l="Cost">4.16 s in OMP and Pi on Linux x64.</td><td data-l="What it breaks">Nothing.</td></tr></tbody></table></div><div class="pns c2"><div class="pn before"><div class="pt">main: OMP and Pi /rerail, a daemon that never answers</div><svg viewBox="0 0 340 122" role="img" aria-label="At main, /rerail in OMP and Pi waits out the session read&#x27;s time limit, then the dashboard link read&#x27;s, and prints its lines with no link after 4.16 s on Linux x64." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">the session read waits out its time limit</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx "/><text x="170" y="65" text-anchor="middle" class="t s">the dashboard link read waits out its own</text><line x1="170" y1="76" x2="170" y2="85" class="ar " marker-end="url(#ah)"/><rect x="20" y="86" width="300" height="28" rx="8" class="bx "/><text x="170" y="104" text-anchor="middle" class="t s">the lines print, with no link: 4.16 s</text></svg></div><div class="pn after"><div class="pt">this change</div><svg viewBox="0 0 340 122" role="img" aria-label="With this change, /rerail in OMP and Pi waits out the session read&#x27;s time limit, skips the dashboard link read, and prints its lines with no link after 2.15 s on Linux x64." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">the session read waits out its time limit</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx acc"/><text x="170" y="65" text-anchor="middle" class="t s">no answer in time: the link read is skipped</text><line x1="170" y1="76" x2="170" y2="85" class="ar " marker-end="url(#ah)"/><rect x="20" y="86" width="300" height="28" rx="8" class="bx "/><text x="170" y="104" text-anchor="middle" class="t s">the lines print, with no link: 2.15 s</text></svg></div></div><p><b>Evidence.</b> A real daemon, paused and then resumed 2.9 to 3.2 s into <code>rerail session cursor --open</code> on Linux x64: the page opens with exit 0 at <code>main</code> and at da71fac2e. The integration case &quot;rerail session --open asks the daemon again for the dashboard link after a read that did not answer&quot; fails when the CLI drops its second read. The OMP case fails when OMP asks for the link again.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<p>Nothing has to merge first: it stands on <code>main</code> alone, and nothing waits on it.</p>
+<p>Eleven open pull requests share five of its files. In trial merges only the draft #676 conflicts, in two lines.</p>
+<details class="ev"><summary>Related work and shared files</summary><p>#503, merged, brought the daemon lookup and its verdicts <code>alive</code>, <code>gone</code> and <code>silent</code>; this keeps them, with <code>rerail status</code>. <code>main</code> has since moved five commits, two changing six of this branch&#x27;s files: GitHub reports it mergeable at c438bc813, and the changed tests pass merged with <code>main</code> at f277c6e29. Sharing <code>daemon-control.ts</code>: #657, #667, #672, #673, #678. <code>session-presentation.ts</code>: #526, #674, #676. Its test: #526, #674. The docs page: #526, #665, #680. <code>host-commands.ts</code>: #562. A trial merge of 6b4eb3c6d with each head is clean but for #676: both edit one call in <code>daemonRepositoryState</code>.</p></details>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>Windows, from the fifth lookup of a stalled daemon:</b> its engine pipe has no free instance. <code>rerail session</code> takes 32.2 s, <code>rerail status</code> says not running after 30.2 s, as at <code>main</code> (#663).</li>
+<li><b>A stale state file with a silent port holder</b> is read, not run (<a href="#evidence">part 10</a>): it would say not answering here, not running at <code>main</code>.</li>
+<li><b>One line has no test:</b> the fallback in <code>readSummaryState</code>&#x27;s catch. With it changed at da71fac2e, the three changed unit files still pass.</li>
+<li><b>macOS</b> never ran.</li>
+</ul>
+<details class="ev"><summary>Six smaller gaps, six limits that stay</summary><ul class="facts">
+<li><b>The Windows stall&#x27;s cause.</b> <code>src/runtime/engine-proof.ts</code>, unchanged here, arms its limit once the pipe has connected, and a connect to a pipe with no free instance (4 here) waits about 30 s. That proof also decides for hooks, starts, stops and updates. #663 reports it; the draft #677 fixes it.</li>
+<li><b>Stalls like #583&#x27;s.</b> #583&#x27;s own runs took 2.7 to 7.0 s each. For stalls like those, with a free pipe instance, the head says not answering on Windows 11. <code>rerail session</code> makes two lookups, the status line one.</li>
+<li><b><code>rerail session</code> on a daemon that never answers.</b> Still 4.15 s on Linux x64 and 4.2 s on Windows 11, as at <code>main</code>. Decision 3 says what would remove the second wait.</li>
+<li><b>The flaky Windows test.</b> <code>claude-status.test.ts</code>, &quot;ends the prior command, not just its shell&quot;: on Windows 11 it failed 4 of 40 runs at <code>main</code> and 9 of 40 at 6b4eb3c6d, same message, each beside another run. Its file mocks <code>session-presentation.js</code> whole and reaches no changed source file.</li>
+<li><b>A daemon that answers after 3 s, Linux x64.</b> <code>main</code> says not running on every surface, da71fac2e not answering. <code>rerail session</code> takes 3.03 s and <code>--open</code> gives the page, at both. With an answer after 6 s, or never, <code>--open</code> exits 3 at both.</li>
+<li><b>The automated reviewer&#x27;s two nits, both fixed.</b> 135ddbe1c: a test daemon whose listen fails rejects at once and releases the engine endpoint. 6b4eb3c6d: <code>repositoryHeadline</code> is a switch the compiler checks, and a new test pins each state&#x27;s no-session lines. Its review of 6b4eb3c6d found 0 nits.</li>
+</ul>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li>The hook start check, <code>readRepositoryState</code>, still reads a daemon that does not answer as none, so hooks decide as before.</li>
+<li><code>rerail status</code>, the daemon lookup, the engine proof and <code>src/cli/cli.ts</code> stay as <code>main</code> has them.</li>
+<li><code>rerail manage</code> still says &quot;Rerail is not running for this checkout&quot; when its dashboard link read gets no answer in time: <code>readRulesDashboard</code> is unchanged.</li>
+<li>Once the daemon has answered, a failure later in the same read, such as a session folder that is gone, still says not running, as at <code>main</code>.</li>
+<li>A stopped or not set up checkout still follows its local start state.</li>
+<li>A script that reads the footer or the <code>/rerail</code> lines meets one new state. No rule file, API, stored data or hook protocol changes.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<p>We ask no ruling.</p>
+<p><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>Answer 1 asks no ruling. A maintainer approved 6b4eb3c6d, which carries this state; #583&#x27;s question has no reply.</p>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The description on GitHub is the record. &quot;How you tested it&quot; holds the failing runs, the reviewer&#x27;s question by run and the timings.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">CI on GitHub</td><td data-l="What ran">Run 43515417412 at 6b4eb3c6d, read on 13 November 2026</td><td data-l="Result">21 jobs: 18 passed, 3 skipped (<code>Rust engine (${{ matrix.name }})</code>, <code>Conformance (${{ matrix.shard }}/${{ strategy.job-total }})</code> and <code>Conformance comment</code>), none failed. <code>Unit tests (1/2)</code>, <code>Unit tests (2/2)</code>, <code>Unit tests (Windows, 1/2)</code>, <code>Unit tests (Windows, 2/2)</code>, <code>Integration tests</code>, <code>OMP and Pi real-session runtime paths</code> and <code>CI result</code> are among the 18. The pull request&#x27;s 3 other checks: 1 passed, 2 skipped.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The three changed unit test files at 6b4eb3c6d over <code>main</code>&#x27;s source. The integration file at da71fac2e over <code>main</code>&#x27;s source</td><td data-l="Result">5 unit tests failed and 58 passed. 2 integration tests failed and 5 passed, and the built status line printed <code>R E R A I L ✕ not running</code>.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran">The not-answering cases before the two Windows commits, then at da71fac2e</td><td data-l="Result">Before: 3 failed, 2 passed. At da71fac2e: 0 failed, 5 passed.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">23 unit files at 6b4eb3c6d: the changed files, every file that imports a changed module and the host tests beside them. Then <code>integration/rerail-without-daemon.test.ts</code></td><td data-l="Result">367 passed, 2 skipped, 0 failed. The integration file: 7 of 7 passed. A second run on a machine under load: 365 passed, 2 failed, two <code>claude-hook</code> tests that timed out; run again at <code>main</code> and at 6b4eb3c6d, 0 of 16 failed.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran">The same 23 unit files and the integration file at 6b4eb3c6d</td><td data-l="Result">24 files: 365 passed, 11 skipped, 0 failed. A second run on a virtual machine: 363 passed, 2 failed, the flaky test of part 8 and an OMP extension test that failed 1 time in 20 at <code>main</code> and 1 in 20 at 6b4eb3c6d.</td></tr><tr><td class="k">Linux x64 and Windows 11</td><td data-l="What ran">A real daemon at <code>main</code> and at da71fac2e, four cases: a wrong capability in <code>daemon.json</code>, a live pid with nothing listening on the recorded port, a killed daemon with <code>daemon.json</code> left behind, and no daemon</td><td data-l="Result">Each case gives <code>main</code>&#x27;s text at <code>main</code> and at da71fac2e, in 0.1 to 0.2 s. <code>rerail status</code> is unchanged in every case.</td></tr><tr><td class="k">Linux x64 and Windows 11</td><td data-l="What ran">13 fix lines at da71fac2e, each removed or changed in turn</td><td data-l="Result">12 fail at least one test. The thirteenth, the fallback in <code>readSummaryState</code>&#x27;s catch, fails none. Removing the silent-proof line fails only on Windows, the one platform that runs the proof.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">A trial merge with <code>main</code> at f277c6e29: five unit files and the integration file. The rules scan as the automated reviewer runs it, at 6b4eb3c6d against 383fc99aa</td><td data-l="Result">97 unit tests and 7 integration tests passed. The scan: 0 new findings, 3 existing ones in functions this does not edit.</td></tr></tbody></table></div></details>
+<details class="ev"><summary>What this report adds</summary><ul class="facts">
+<li><b>A stale state file with a silent port holder.</b> The description names this case in one sentence, under decision 1. A read of the diff finds it, not run: the daemon was killed and its state file stayed, another live process of this user took its pid, and another program holds its port and takes a request without answering. <code>main</code> says not running, the head not answering.</li>
+<li><b>The docs at <code>main</code> call not running &quot;No daemon answers&quot;.</b> The description quotes no intent. At <code>main</code> the code comment says not running means &quot;no live daemon&quot;, and the docs&#x27; footer table says &quot;No daemon answers&quot;, which a late daemon also fits. The pull request rewrites that row, so it narrows a meaning the docs state. Part 2 gives both quotes, and its fold their lines.</li>
+<li><b><code>rerail manage</code> still says not running for a late daemon.</b> The description lists what is left alone and does not name it. By a read of the code, not run: <code>rerail manage</code> prints &quot;Rerail is not running for this checkout&quot; whenever <code>readRulesDashboard</code> gives no link, and that read still treats no answer in time as no daemon.</li>
+<li><b>Our answer to the read-first question.</b> A read of the diff: <code>get</code> makes a not-answering error only when its own signal has fired, and <code>readableDaemon</code> only for the verdict <code>silent</code>. Only an <code>alive</code> daemon gets the capability. <code>liveHealth</code> still catches every error, so the dashboard link read answers as at <code>main</code>. <code>daemonRepositoryState</code> catches not answering, and <code>readRepositoryState</code> turns it into null. <code>recordedDaemonAlive</code> compares the same verdict with <code>alive</code>. One case differs: the first item here.</li>
+</ul></details>
+<details class="ev"><summary>Sources</summary><p>Pull request #650, its diff, CI and reviews, read on 13 November 2026. Rerail at <code>main</code> (8a999b339) for each quoted intent and its line; the same text at its base, 383fc99aa. Issues #583 and #663 for how the gaps were found. The description for the runs and the timings. Each open pull request&#x27;s files and head for the shared files and trial merges. The earlier review&#x27;s record for its defect.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
