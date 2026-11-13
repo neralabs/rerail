@@ -1142,4 +1142,53 @@ describe("audit rule provenance", () => {
       reader.close();
     }
   });
+
+  it("keeps a stored provenance while another repository's audit names it, and drops it with the last one", async () => {
+    const path = await temporaryDatabase();
+    // A session of another repository that audits an edit in this checkout records the same provenance.
+    const shared = provenanceOf("/checkouts/shared", 50);
+    const store = new SqliteAuditStore(path);
+    const database = openRerailDatabase(path);
+    const kept: string[] = [];
+    try {
+      const insertSession = database.$client.prepare(
+        "INSERT INTO sessions (session_id, host, cwd, repository_id, started_at, ended_at) VALUES (?, 'codex', '/w', ?, 1, 2)",
+      );
+      insertSession.run("session-reset", "remote:example/reset");
+      insertSession.run("session-kept", "remote:example/kept");
+      store.finish(store.start(auditInput("/checkouts/shared", shared, "session-reset")), { status: "completed" });
+      for (let index = 0; index < 2; index += 1) {
+        const auditId = store.start(auditInput("/checkouts/shared", shared, "session-kept"));
+        store.finish(auditId, { status: "completed" });
+        kept.push(auditId);
+      }
+    } finally {
+      store.close();
+      database.$client.close();
+    }
+    const storedCopies = (): number => {
+      const reader = new Database(path, { readonly: true });
+      try {
+        return reader.prepare("SELECT count(*) FROM audit_rule_provenances").pluck().get() as number;
+      } finally {
+        reader.close();
+      }
+    };
+    expect(storedCopies()).toBe(1);
+
+    resetRepositoryHistory(path, "remote:example/reset");
+
+    // The reset repository's audit named the copy too; the other repository's audits still name it.
+    expect(storedCopies()).toBe(1);
+    const reader = new SqliteAuditStore(path);
+    try {
+      for (const auditId of kept) expect(reader.get(auditId)?.ruleProvenance, auditId).toEqual(shared);
+      expect(reader.list().audits.map(audit => audit.ruleProvenance)).toEqual([shared, shared]);
+    } finally {
+      reader.close();
+    }
+
+    resetRepositoryHistory(path, "remote:example/kept");
+    expect(storedCopies()).toBe(0);
+  });
 });
