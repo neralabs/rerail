@@ -19,7 +19,11 @@ class SideEffectsProductionCheckpointTests(unittest.TestCase):
         return next(row for report in value['native'][mode]for row in report['cases']if row['input']['id']==name)
 
     def test_complete_production_parity_passes_both_apis(self):
-        self.assertEqual(validate(self.receipt),dict(productionCasesPerAPI=25,discoveryCasesPerAPI=15,positiveFileBatch=64,fullMigrationAcceptance=False))
+        self.assertEqual(validate(self.receipt),dict(productionCasesPerAPI=25,discoveryCasesPerAPI=15,tapeCasesPerAPI=142,positiveFileBatch=64,fullMigrationAcceptance=False))
+
+    def test_missing_native_parser_case_is_rejected(self):
+        value=copy.deepcopy(self.receipt);value['tape']['native']['workspace'][0]['cases'].pop()
+        with self.assertRaisesRegex(ValueError,'Production case omitted'):validate(value)
 
     def test_an_omitted_case_is_rejected(self):
         value=copy.deepcopy(self.receipt);value['native']['workspace'][0]['cases'].pop()

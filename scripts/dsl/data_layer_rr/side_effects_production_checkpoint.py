@@ -15,6 +15,8 @@ def reports(value):
     for mode in MODES:
         yield from value['native'][mode];yield from value['before']['native'][mode]
     yield value['discovery']['source'];yield from value['discovery']['native'].values()
+    yield value['tape']['source']
+    for mode in MODES:yield from value['tape']['native'][mode]
 
 
 def compare_corpus(source,replays,engine,mode,count):
@@ -46,7 +48,8 @@ def validate(value):
         repeated=next(row for row in rows if row['input']['id']=='same_line')
         require(len(repeated['actual']['findings'])==2 and len(repeated['native'][1]['diagnostics'])==2,'Same-line multiplicity omitted')
         compare_corpus(value['discovery']['source'],[value['discovery']['native'][mode]],value['build']['sha256'],mode,15)
-        for report in [*value['native'][mode],value['discovery']['native'][mode]]:
+        compare_corpus(value['tape']['source'],value['tape']['native'][mode],value['build']['sha256'],mode,142)
+        for report in [*value['native'][mode],value['discovery']['native'][mode],*value['tape']['native'][mode]]:
             for call in calls(report):
                 for item in call['programInputs']:require(programs.setdefault(item['path'],item['sha256'])==item['sha256'],'Final production program revisions differ')
     before=value['before'];red=before['prePort']
@@ -68,7 +71,9 @@ def validate(value):
         for name,digest in report['harnessFiles'].items():require((name,digest)in retained,'Consumed production bytes omitted')
         for call in calls(report):
             for item in call['programInputs']:require((item['path'],item['sha256'])in retained,'Consumed production bytes omitted')
-    return dict(productionCasesPerAPI=25,discoveryCasesPerAPI=15,positiveFileBatch=64,fullMigrationAcceptance=False)
+    for failure in value['startupFailures']:
+        require(failure['engineSha256']==value['build']['sha256']and failure['occurredBeforeCases']and failure['frames'],'Unbound startup failure')
+    return dict(productionCasesPerAPI=25,discoveryCasesPerAPI=15,tapeCasesPerAPI=142,positiveFileBatch=64,fullMigrationAcceptance=False)
 
 
 def pack(work):
@@ -76,6 +81,8 @@ def pack(work):
         source=read_json(work/'source-final.json'),native={mode:[read_json(path)for path in sorted(work.glob(f'final-{mode}-[0-9]*.json'))]for mode in MODES},
         before=dict(source=read_json(work/'source-before-batch.json'),prePort=read_json(work/'red.json'),native={mode:[read_json(path)for path in sorted(work.glob(f'initial-{mode}-[0-9]*.json'))]for mode in MODES}),
         discovery=dict(source=read_json(ROOT/'.rerail/hub-directory-metadata/discovery-source-final.json'),native={mode:read_json(work/f'final-discovery-{mode}.json')for mode in MODES}),
+        tape=dict(source=read_json(ROOT/'.rerail/side-effects-events-hubaab/tape-source.json'),native={mode:[read_json(path)for path in sorted(work.glob(f'tape-{mode}-[0-9]*.json'))]for mode in MODES}),
+        startupFailures=[read_json(path)for path in sorted(work.glob('*-startup-crash.json'))],
         readerTests={stage:(work/f'world-{stage}-test.log').read_text()for stage in ['red','green']},
         build=read_json(work/'root-build.json'),engineSource=read_json(ROOT/MANIFEST)['engineSource'],
         remaining=['Historical inputs','Retained updates','Effective removal controls','Strict admission'])
