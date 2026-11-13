@@ -21,7 +21,8 @@ import {
   type FileDigests, type OwedEntry, type OwedSteer,
 } from "./owed-ledger.js";
 import {
-  CodeRuleBridge, generatedEditPaths, ledgerPreimage, type Preimage, type RewoundEdit, type SessionWalkResume, type SourceObservationCache,
+  CodeRuleBridge, generatedEditPaths, ledgerPreimage, type HeldCall, type Preimage, type RewoundEdit, type SessionWalkResume,
+  type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import {
@@ -717,6 +718,15 @@ function walkResumeOption(suspension: SessionSuspension | undefined): { resume?:
 }
 
 /**
+ * The calls the session's ledger holds open as it opens, with what each captured: the evaluator's first walk leaves
+ * their files to each call's own check (`CodeRuleBridge`'s `heldCalls`), begun once the evaluator is open, or at the
+ * call's result, or by `#checkWhenOpen` for a result that came while it opened.
+ */
+function heldCallsOf(restored: ReadonlyMap<string, RestoredCall>): HeldCall[] {
+  return [...restored.values()].map(call => ({ toolCallId: call.toolCallId, paths: call.paths, preimages: call.preimages ?? {} }));
+}
+
+/**
  * Ends suspended sessions no runtime opened again, as `closeSession` ends an open one when its daemon stops: their queued
  * scans are interrupted, their owner released and their record ended now.
  */
@@ -1285,8 +1295,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * against what the call captured before the session closed, once the evaluator is open: as `finishUnanswered` checks
    * a call whose result will not come. The session reopened for that result (its agent was left at a permission prompt
    * past the day the engine service holds such a session open, or the daemon restarted meanwhile), so the boundary
-   * itself went on without code rules, and the edit, made before the evaluator's first walk, would never be checked. Its
-   * steer goes out with a later answer, or with the digest, as a check that outlasted its boundary does.
+   * itself went on without code rules, and the edit, made before the evaluator's first walk, would never be checked. The
+   * evaluator held the call's files from that walk (`heldCallsOf`), so the edit is read once, here, as the call's, not
+   * first as another writer's change. Its steer goes out with a later answer, or with the digest, as a check that
+   * outlasted its boundary does.
    */
   #checkWhenOpen(state: RuntimeSessionState, call: RestoredCall, failed: boolean): void {
     state.restoredCalls.delete(call.toolCallId);
@@ -1797,6 +1809,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       bridge = new CodeRuleBridge(checkout.cwd, auditor, {
         observations: this.#sourceObservations,
         ...walkResumeOption(suspension),
+        heldCalls: heldCallsOf(opened.restoredCalls),
         ...(this.#discoveryWaitMs === undefined ? {} : { discoveryWaitMs: this.#discoveryWaitMs }),
         // A boundary that answered before its shell-write check finished leaves its session's history marked partial.
         onDiscoveryPending: boundary => this.#recordSessionFact(

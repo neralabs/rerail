@@ -154,6 +154,13 @@ interface PendingEdit {
   readonly paths: readonly string[];
   readonly preimages: ReadonlyMap<string, Preimage>;
 }
+
+/** A tool call the session's ledger holds open as the session opens, with what it captured as it began. */
+export interface HeldCall {
+  readonly toolCallId: string;
+  readonly paths: readonly string[];
+  readonly preimages: Readonly<Record<string, Preimage>>;
+}
 /** A finished edit `rewind` may still roll back: the revision its finish audited, and each path's digest after it (none when absent). */
 interface RewindableEdit {
   readonly revision: number;
@@ -893,6 +900,8 @@ export class CodeRuleBridge {
   readonly #resumedHeld = new Set<string>();
   /** Where the first `openWorkspace` goes on from, for a session its runtime suspended; taken once. */
   #resume: SessionWalkResume | undefined;
+  /** The calls the session's ledger held open as it opened, which the first `openWorkspace` claims (`#claimHeldCalls`). */
+  #heldCalls: readonly HeldCall[];
   /** Settles once the first `openWorkspace` has read back the held sources' text (`#restoreHeldTexts`), or found none to. */
   readonly #heldTexts = Promise.withResolvers<void>();
   /** The calls the runtime answered while the evaluator opened (`unwatchedCall`), until the workspace opens and takes them. */
@@ -938,6 +947,11 @@ export class CodeRuleBridge {
       firstSightTextBytes?: number;
       /** Where the session's walks stood when its runtime suspended it: its first walk goes on from there, not from a baseline. */
       resume?: SessionWalkResume;
+      /**
+       * The calls the session's ledger holds open as it opens: the first walk leaves their files to each call's own check,
+       * as it leaves a begun call's, so an edit one made while the session was closed is not read as another writer's.
+       */
+      heldCalls?: readonly HeldCall[];
     } = {},
   ) {
     this.#cwd = resolve(cwd);
@@ -945,6 +959,7 @@ export class CodeRuleBridge {
     this.#onRevision = options.onRevision;
     this.#observations = options.observations;
     this.#resume = options.resume;
+    this.#heldCalls = options.heldCalls ?? [];
     // A session opened fresh has no text to read back before its first event is answered.
     if (options.resume === undefined) this.#heldTexts.resolve();
     this.#discoveryWaitMs = options.discoveryWaitMs ?? BOUNDARY_DISCOVERY_WAIT_MS;
@@ -992,6 +1007,8 @@ export class CodeRuleBridge {
         readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
       };
       this.#unwatched = new ToolCallWindows();
+      // Before the first walk can start, which would otherwise read a held call's edit as another writer's change.
+      this.#claimHeldCalls();
       this.#discovery = discovery;
       // The lowest priority: whichever boundary first waits on the baseline labels what it finds.
       void this.#requestDiscovery(discovery, "edit");
@@ -1014,6 +1031,19 @@ export class CodeRuleBridge {
       return { since: Math.min(now, resume.since), gitSeen: resume.gitSeen };
     } finally {
       this.#heldTexts.resolve();
+    }
+  }
+
+  /**
+   * Holds the files each call the ledger held open captured as pending (`heldCalls`), as `begin` does, so walks leave
+   * them to the call's check: `begin` again with these preimages, then `finish`, which reads the edit once, as the
+   * call's. Taken once, by the first `openWorkspace`.
+   */
+  #claimHeldCalls(): void {
+    const calls = this.#heldCalls;
+    this.#heldCalls = [];
+    for (const call of calls) {
+      this.#pending.set(call.toolCallId, { paths: [...call.paths], preimages: new Map(Object.entries(call.preimages)) });
     }
   }
 

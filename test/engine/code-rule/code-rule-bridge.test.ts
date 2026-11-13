@@ -1084,6 +1084,40 @@ describe("CodeRuleBridge", () => {
 
     expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([]);
   });
+
+  // A session suspended while a tool call waited is opened again by that call's result, and the call is begun again
+  // once the evaluator is open. The reopened session's first walk could read the call's edit before that, as another
+  // writer's change (Log mode), so the edit was read twice and the call's steer could miss the next answer.
+  it("leaves the files of a call the ledger held open out of the reopened session's first walk, for the call's own check", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "before\n");
+    const first = createBridge(root, auditor(async (_sessionId, batch) => response(batch)));
+    await first.openWorkspace("session-1");
+    await first.checkpoint("turn");
+    // The session's own edit, so the suspension holds the file as the session's, then a call that waits on a person.
+    await first.begin("edit-0", "write", { path: "src/a.py" });
+    await writeFile(path, "mine\n");
+    await first.finish("edit-0");
+    const preimages = await first.begin("edit-1", "write", { path: "src/a.py" });
+    const resume = await first.walkResume();
+    await first.close();
+    // The call's write lands while the session is closed.
+    await writeFile(path, "mine\nlater\n");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const second = createBridge(root, auditor(auditGeneratedEdits), {
+      ...(resume === undefined ? {} : { resume }),
+      heldCalls: [{ toolCallId: "edit-1", paths: ["src/a.py"], preimages }],
+    });
+    await second.openWorkspace("session-1");
+    await second.checkpoint("turn");
+    await second.begin("edit-1", "write", { paths: ["src/a.py"] }, preimages);
+    await second.finish("edit-1");
+
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => ({ mode: batch.mode ?? "session", edits: batch.edits }))).toEqual([
+      { mode: "session", edits: [{ path: "src/a.py", language: "python", previousText: "mine\n", generatedText: "mine\nlater\n" }] },
+    ]);
+  });
 });
 
 describe("ledgerPreimage", () => {
