@@ -27,7 +27,6 @@ def main():
 #include "data-layer/side-effects-detect.rr"
 #include "data-layer/side-effects-api.rr"
 #include "data-layer/side-effects-helpers.rr"
-#include "data-layer/side-effects-events.rr"
 '''.lstrip()
  path=DESTINATION/'plan-scope-side-effects.rr';(ROOT/path).write_text(text)
  config=Path('docs/rule-syntax/lib/data-layer/side-effects-configuration.rr');(ROOT/config).write_text(prefix+configuration)
@@ -42,12 +41,23 @@ def main():
 #include "data-layer/side-effects-detect.rr"
 #include "data-layer/side-effects-files.rr"
 ''')
+ events=DESTINATION/'plan-scope-side-effects-events.rr'
+ (ROOT/events).write_text(prefix+'''.policy "data-layer:plan-scope-side-effects-events" revision 1
+.description "Batched callback observations and ordered collector state operations."
+.language python
+.mode block
+.scope dirs "__no_primary__"
+#include "core.rr"
+#include "data-layer/side-effects-configuration.rr"
+#include "data-layer/side-effects-detect.rr"
+#include "data-layer/side-effects-events.rr"
+''')
  manifest=read_json(ROOT/MANIFEST)
  for item in manifest['rules']:
   if item['check']=='plan_scope_side_effects':item['ruleSha256']=sha(text.encode())
  for item in manifest['files']:
   if item['destination']==str(path):item.update(sha256=sha(text.encode()),origin='authored',sourceCommit=PIN,upstreamPath='scripts/lint_plan_scope_side_effects.py')
- for target in [config,repository,Path('docs/rule-syntax/lib/data-layer/side-effects-events.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-detect.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-helpers.rr')]:
+ for target in [config,repository,events,Path('docs/rule-syntax/lib/data-layer/side-effects-events.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-detect.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-helpers.rr')]:
   content=(ROOT/target).read_bytes();row=dict(destination=str(target),sha256=sha(content),origin='authored',sourceCommit=PIN,upstreamPath='scripts/lint_plan_scope_side_effects.py')
   old=next((r for r in manifest['files']if r['destination']==str(target)),None)
   if old is None:manifest['files'].append(row)
