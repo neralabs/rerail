@@ -32,6 +32,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <vector>
 #if SIMDJSON_IMPLEMENTATION_ARM64
 #include <arm_neon.h>
 #if defined(__linux__)
@@ -87,15 +88,15 @@ struct rerail_v9np_sink {
   void* ctx;
   void (*grow)(rerail_v9np_sink* sink, const size_t* need);
   // The kind of each slot (document, pair, string_content, escape_sequence, object, array, string,
-  // number, true, false, null), and the `key` and `value` fields.
-  uint16_t kind[11];
+  // number, true, false, null, comment), and the `key` and `value` fields.
+  uint16_t kind[12];
   uint16_t key_field;
   uint16_t value_field;
   // The tape's codes, in first-use order: kind, field, and whether in a value's place.
   uint32_t codes;
-  uint16_t code_kind[33];
-  uint16_t code_field[33];
-  uint8_t code_value[33];
+  uint16_t code_kind[36];
+  uint16_t code_field[36];
+  uint8_t code_value[36];
   // The source's SHA-256.
   uint8_t digest[32];
 };
@@ -346,6 +347,7 @@ struct Kernel {
   const char* implementation;
   bool sha;
   int (*tape)(const char*, size_t, rerail_v9np_sink*);
+  int (*tape_jsonc)(const char*, size_t, rerail_v9np_sink*);
   int64_t (*stage1)(const char*, size_t, int);
   void (*release_above)(size_t);
   uint64_t (*rewalks)();
@@ -353,7 +355,7 @@ struct Kernel {
 constexpr uint32_t KERNELS = 8;
 
 #define RERAIL_KERNEL(ns, H, with_sha) \
-  Kernel { #ns, with_sha, &simdjson::ns::rerail_v9np::tape<H>, &simdjson::ns::rerail_v9np::stage1_only<H>, &simdjson::ns::rerail_v9np::release_above, &simdjson::ns::rerail_v9np::walked_again }
+  Kernel { #ns, with_sha, &simdjson::ns::rerail_v9np::tape<H, false>, &simdjson::ns::rerail_v9np::tape<H, true>, &simdjson::ns::rerail_v9np::stage1_only<H>, &simdjson::ns::rerail_v9np::release_above, &simdjson::ns::rerail_v9np::walked_again }
 const Kernel* kernel(uint32_t k) {
   static const Kernel table[KERNELS] = {
 #if SIMDJSON_IMPLEMENTATION_ARM64
@@ -422,6 +424,14 @@ int rerail_simdjson_kernel_runs(uint32_t k) { return runs(k) ? 1 : 0; }
 int rerail_simdjson_v9np(uint32_t k, const char* src, size_t len, rerail_v9np_sink* sink) {
   if (!runs(k) || len >= 0xffffffffu / 2) { return -1; }
   return kernel(k)->tape(src, len, sink);
+}
+
+// As `rerail_simdjson_v9np`, the source read as JSONC: its comments blanked for stage 1 and written to
+// the tape where tree-sitter-json places them, a trailing comma passed over. For a file the strict read
+// refused.
+int rerail_simdjson_v9np_jsonc(uint32_t k, const char* src, size_t len, rerail_v9np_sink* sink) {
+  if (!runs(k) || len >= 0xffffffffu / 2) { return -1; }
+  return kernel(k)->tape_jsonc(src, len, sink);
 }
 
 // Kernel `k`'s walks made again at other widths, on this thread.

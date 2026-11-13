@@ -27,7 +27,7 @@ pub const TAPE_FORMAT_VERSION: u32 = rerail_tape_format::FORMAT_VERSION;
 /// The format's constants are `rerail_tape_format`'s: the parsers write tapes with its writer
 /// (decision 0140), and an image is one byte string however it was made.
 pub use rerail_tape_format::{CODE_ERROR, CODE_MISSING, COLUMN_ALIGN, ERROR_CODE, FIELD_LIMIT, HEADER_BYTES, KIND_LIMIT, MAGIC as TAPE_MAGIC, SENTINEL, TAIL_FROM_START, header, padded};
-use rerail_tape_format::CODE_EXTRA;
+pub use rerail_tape_format::CODE_EXTRA;
 /// The language tag (`language::tape_tag`) a stored tape image names in its header, if `bytes`
 /// starts like one (any format version): the store picks a frame's dictionary by it.
 pub fn stored_tape_tag(bytes: &[u8]) -> Option<u8> {

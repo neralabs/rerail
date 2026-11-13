@@ -4362,7 +4362,7 @@ records, with the sizes the passes before it found; no `Pending`, no `finish`. T
 byte for byte (`json_tapes_from_the_bitlex_parser_are_tree_sitters`), and the tape's cost in `json_parse_costs` is
 the parse's plus the writing of its bytes, as simdjson's writer now does (`rerail_simdjson::tape`, 0134).
 
-## O-jsonc-simdjson. JSON with comments goes to tree-sitter-json
+## O-jsonc-simdjson. JSON with comments goes to tree-sitter-json (closed)
 
 **Seen (2026-11-12, 0134).** simdjson reads strict JSON. A file with `//` or `/* */` comments (`tsconfig.json`,
 editor settings) or a trailing comma is refused, and read with tree-sitter-json (31 times simdjson's cost to parse).
@@ -4371,6 +4371,16 @@ In this repository 1 of 2,201 files is refused; JavaScript repositories have mor
 **Closure:** comments read without tree-sitter: blanked for simdjson (string-aware, by the same block masks as
 its stage 1) and placed as extras by tree-sitter's rule (the lowest node holding the tokens on either side), with
 the oracle extended to JSONC files; or the Bitlex parser, once it is ready for the product.
+
+**Comments closed (2026-11-13, 0158):** a file the strict read refuses that has `//` or `/*` is read again as
+JSONC, its comments blanked by stage 1 (simdjson's string scanner, a block at a time) and written by stage 2
+where tree-sitter-json places them; byte for byte tree-sitter-json's tapes (13 JSONC files of 2,099 in two
+`node_modules`, 0 differ), 523 instructions a node against tree-sitter-json's 18,000.
+
+**Trailing commas closed (2026-11-13, 0158 amended):** the JSONC read passes a trailing comma over, as TypeScript
+reads it (the user: permissive, as rerail reads source while it is written). The 2,099 files: 2,035 strict, 64
+JSONC (51 with trailing commas), 0 refused, 0 differ from tree-sitter-json's tape of the comma-blanked text; 578
+instructions a node.
 
 ## O-texts-digest-twice. A run's texts were digested twice (closed)
 
