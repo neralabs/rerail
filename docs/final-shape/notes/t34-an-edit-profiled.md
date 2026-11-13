@@ -92,6 +92,11 @@ The cost store gets about 6,000 samples a run: training is due again every 10 mi
   it and its nested runs used (`Report::plans`, phase 0's on its graph), so the outermost run's record names them
   without `NESTED_PLANS`; the journal's volume per root is the observer's (`Observer::volumes`), not a process-wide
   table. (07f7ff7f7)
+- Item 8, first part: the cross part's strata computed once and passed to each pass over it (the kept part's load,
+  `cut`, the frames read and written, the derived relations, `maintain::rewrite`), not by each; `bridge::wanted`
+  no longer scans every rule per relation read, and skips a program declaring no bridged relation. An edit:
+  114.6–115.0 G, 7.7–8.0 s CPU (was 117–124 G). The prepared programs' decode (0.26 s) reads four programs, all used
+  in an edit: left. (see git log)
 
 ## To do, in order
 

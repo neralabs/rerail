@@ -255,19 +255,20 @@ fn cones(prog: &crate::code_rule_dsl::logic::front::Program, sccs: &[std::collec
 }
 
 /// What the store keeps of program `prog` (of `key`, `retain::key`) at `root`, as a `Retained`; `inputs` the run's,
-/// whose columns an input's kept rows are read under.
+/// whose columns an input's kept rows are read under; `sccs` its strata, computed once by the caller.
+#[allow(clippy::too_many_arguments)]
 pub(in crate::code_rule_dsl) fn load(
     store: &ContentStore,
     root: &Path,
     key: [u8; 32],
     prog: &crate::code_rule_dsl::logic::front::Program,
+    sccs: &[std::collections::BTreeSet<String>],
     inputs: &[(String, Arc<dyn Source>)],
     now: &HashMap<String, u64>,
 ) -> super::Result<(Option<super::retain::Retained>, Part)> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "the cross-file part kept, from the store".into());
     // The fact space of the corpus at `root` that a maintained cross-file part is kept in.
     let space = part_space(root, "cross-maintained");
-    let (sccs, _) = crate::code_rule_dsl::logic::front::strata(prog).map_err(|e| super::Error::Plan(e.to_string()))?;
     let by_stratum: Vec<Vec<&crate::code_rule_dsl::logic::front::Rule>> = crate::code_rule_dsl::logic::front::rules_by_stratum(prog, &sccs);
     let input_names: std::collections::HashSet<&str> = inputs.iter().map(|(r, _)| r.as_str()).collect();
     let cones = cones(prog, &sccs, &input_names);

@@ -1,6 +1,7 @@
     use super::*;
     use crate::code_rule_dsl::logic::{native, plan, rr};
     use crate::code_rule_dsl::logic::plan::lower;
+    fn st(p: &crate::code_rule_dsl::logic::front::Program) -> Vec<std::collections::BTreeSet<String>> { crate::code_rule_dsl::logic::front::strata(p).unwrap().0 }
 
     #[test]
     fn cross_process_admission_batches_inputs_and_eligible_derived_frames() {
@@ -17,7 +18,7 @@
         }
         let prog = rr::parse(&text).unwrap();
         let now: HashMap<_, _> = inputs.iter().map(|(r, s)| (r.clone(), super::super::retain::digest(s.as_ref()))).collect();
-        let (_, part) = load(&store, dir.path(), [7;32], &prog, &inputs, &now).unwrap();
+        let (_, part) = load(&store, dir.path(), [7;32], &prog, &st(&prog), &inputs, &now).unwrap();
         let puts: Vec<_> = part.frames.iter().map(|(name, (rel, _))| {
             let i: usize = name.trim_start_matches("input").trim_start_matches("result").parse().unwrap();
             FramePut { rel: rel.clone(), part: 0, digest: now[&format!("input{i}")],
@@ -34,7 +35,7 @@
         profile::set(true);
         let wave = profile::waves();
         let span = profile::span(|| "bulk retained admission".into());
-        let (kept, _) = load(&store, dir.path(), [7;32], &prog, &inputs, &now).unwrap();
+        let (kept, _) = load(&store, dir.path(), [7;32], &prog, &st(&prog), &inputs, &now).unwrap();
         let kept = kept.unwrap();
         let (read_inputs, rels) = kept.parts();
         assert_eq!(read_inputs.len(), 257);
@@ -63,14 +64,14 @@
                 let prog = rr::parse(".decl input(x:number)\n.input input\n.decl result(x:number)\nresult(x) :- input(x).\n.output result\n").unwrap();
                 let inputs = vec![("input".to_owned(), native::component::columns_source(vec!["c0".into()], vec![Some(vec![42])]))];
                 let now = HashMap::from([("input".to_owned(), super::super::retain::digest(inputs[0].1.as_ref()))]);
-                let (_, part) = load(&store, dir.path(), [7; 32], &prog, &inputs, &now).unwrap();
+                let (_, part) = load(&store, dir.path(), [7; 32], &prog, &st(&prog), &inputs, &now).unwrap();
                 let puts: Vec<_> = part.frames.iter().map(|(name,(rel,_))| FramePut {
                     rel:rel.clone(),part:0,digest:now["input"],
                     reads:if name=="result" {vec![("input".into(),now["input"])]} else {vec![]},
                     rows:FrameRows {types:vec![b'i'],n:1,rows:vec![42]}
                 }).collect();
                 store.keep_frames(&part.space, &puts, &[], None).unwrap();
-                let (kept, snapshot) = load(&store, dir.path(), [7; 32], &prog, &inputs, &now).unwrap();
+                let (kept, snapshot) = load(&store, dir.path(), [7; 32], &prog, &st(&prog), &inputs, &now).unwrap();
                 assert!(kept.is_some());
                 let rel = snapshot.frames[changed].0.clone();
                 if deleted {

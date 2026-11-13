@@ -289,8 +289,8 @@ impl<'a> Reads<'a> {
 }
 
 /// The strata of `prog` that `kept` (of program `key`) lets a run skip, given its inputs' digests.
-pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog: &front::Program, inputs: &HashMap<String, u64>) -> Result<Cut> {
-    let (sccs, _) = front::strata(prog).map_err(|e| Error::Plan(e.to_string()))?;
+/// `sccs`: `prog`'s strata (`front::strata`), computed once by the caller for every pass over the program.
+pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog: &front::Program, sccs: &[BTreeSet<String>], inputs: &HashMap<String, u64>) -> Result<Cut> {
     let kept = kept.filter(|k| k.key == key);
     let mut changed: Vec<String> = inputs.iter().filter(|(rel, d)| kept.and_then(|k| k.inputs.get(*rel)) != Some(*d)).map(|(rel, _)| rel.clone()).collect();
     changed.sort();
@@ -303,7 +303,7 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
     let whole = kept.is_none() || (!prog.gates.is_empty() && (!changed.is_empty() || !complete));
     let mut ran = 0;
     let reads = Reads::of(prog);
-    for scc in &sccs {
+    for scc in sccs {
         let stale = whole || reads.of_scc(scc).iter().any(|r| dirty.contains(r));
         if stale {
             ran += 1;
@@ -364,9 +364,9 @@ impl Cut {
     }
 
     /// The relations this run derives, in stratum order: kept for the next run, as far as the budget goes.
-    pub(in crate::code_rule_dsl) fn derived(&self, prog: &front::Program) -> Result<Vec<String>> {
-        let (sccs, _) = front::strata(prog).map_err(|e| Error::Plan(e.to_string()))?;
-        Ok(sccs.into_iter().flatten().filter(|r| !self.clean.contains(r)).collect())
+    /// `sccs`: the program's strata, as `cut` was given them.
+    pub(in crate::code_rule_dsl) fn derived(&self, sccs: &[BTreeSet<String>]) -> Result<Vec<String>> {
+        Ok(sccs.iter().flatten().filter(|r| !self.clean.contains(*r)).cloned().collect())
     }
 }
 
@@ -986,6 +986,7 @@ impl Source for Layered {
 
 #[cfg(test)]
 pub mod tests {
+    fn st(p: &front::Program) -> Vec<BTreeSet<String>> { front::strata(p).unwrap().0 }
     use super::*;
 
     /// A kept input with its delta reads as its rows now: the changed owners' kept rows gone, their new rows after
@@ -1044,7 +1045,7 @@ pub mod tests {
             (name.clone(),Kept { rel:InRel::flat(&[],vec![b'i';width]),width,output:None })
         }).collect();
         let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),input_docs:Default::default(),docs:Default::default(),patched:Default::default(),frames:None,admitted:Default::default(),late:Default::default()};
-        let result=cut(Some(&kept),key,&p,&inputs).unwrap();
+        let result=cut(Some(&kept),key,&p,&st(&p),&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
         let lowered=lower::Lowered {program:p.clone(),domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
         let reused=result.program(&lowered);
@@ -1052,11 +1053,11 @@ pub mod tests {
         let mut changed=inputs.clone();
         *changed.values_mut().next().unwrap()=8;
         for (candidate,rows) in [(key,changed),([2;32],inputs.clone())] {
-            assert_eq!(cut(Some(&kept),candidate,&p,&rows).unwrap().strata,(strata.len(),strata.len()));
+            assert_eq!(cut(Some(&kept),candidate,&p,&st(&p),&rows).unwrap().strata,(strata.len(),strata.len()));
         }
         let missing=kept.rels.keys().next().unwrap().clone();
         kept.rels.remove(&missing);
-        assert_eq!(cut(Some(&kept),key,&p,&inputs).unwrap().strata,(strata.len(),strata.len()));
+        assert_eq!(cut(Some(&kept),key,&p,&st(&p),&inputs).unwrap().strata,(strata.len(),strata.len()));
     }
 }
 
@@ -1317,8 +1318,8 @@ impl Retained {
     /// keeps in memory, kept across processes. A derived relation is taken when its frame is current: each relation
     /// it read has the digest it had then, and a derived read is taken too. So the relations taken are the rows one
     /// run left, whichever programs ran in between. Their rows are read when the run needs them (`load`).
-    pub(in crate::code_rule_dsl) fn from_frames(store: &ContentStore, space: [u8; 32], key: [u8; 32], prog: &front::Program, bound: &HashMap<String, u64>) -> Result<Retained> {
-        let (sccs, _) = front::strata(prog).map_err(|e| Error::Plan(e.to_string()))?;
+    /// `sccs`: `prog`'s strata, computed once by the caller.
+    pub(in crate::code_rule_dsl) fn from_frames(store: &ContentStore, space: [u8; 32], key: [u8; 32], prog: &front::Program, sccs: &[BTreeSet<String>], bound: &HashMap<String, u64>) -> Result<Retained> {
         let by_stratum: Vec<Vec<&front::Rule>> = front::rules_by_stratum(prog, &sccs);
         let idents = crate::code_rule_dsl::logic::plan::identities(prog, &sccs, &by_stratum);
         let derived: BTreeSet<&String> = sccs.iter().flatten().collect();
@@ -1640,9 +1641,10 @@ impl Retained {
     /// Writes to the frames what this run changed of the part (t33 K4), behind the run (the store's writer): each
     /// relation it derived whose rows or reads differ from its frame, and each input's granules whose documents'
     /// rows changed, with the input's digests by document. The relations kept as they were stay as stored.
-    pub(in crate::code_rule_dsl) fn write_frames(&self, store: &ContentStore, was: &InFrames, prog: &front::Program, cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, (Vec<i64>, Vec<i64>)>) -> Result<usize> {
+    /// `sccs`: `prog`'s strata, computed once by the caller.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::code_rule_dsl) fn write_frames(&self, store: &ContentStore, was: &InFrames, prog: &front::Program, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, (Vec<i64>, Vec<i64>)>) -> Result<usize> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept part's changes, to the frames".into());
-        let (sccs, _) = front::strata(prog).map_err(|e| Error::Plan(e.to_string()))?;
         // Literal-only leaves are part of the derived relation's identity (leaf_identity), not runtime
         // inputs requiring a frame digest. Without this, a read of gproto("Generic") or an env fact makes
         // publication skip its consumer and forces that consumer to run in every new process.
@@ -1736,7 +1738,7 @@ impl Retained {
         let mut retags: Vec<crate::content_store::FrameRetag> = Vec::new();
         let mut delta_out: Vec<crate::content_store::FrameDelta> = Vec::new();
         let mut delta_rows = 0usize;
-        for scc in &sccs {
+        for scc in sccs {
             let reads: Vec<String> = all_reads.of_scc(scc).into_iter().filter(|r| !scc.contains(r) && !literals.contains(r.as_str())).collect();
             for rel in scc {
                 let Some(name) = was.names.get(rel) else { continue };
