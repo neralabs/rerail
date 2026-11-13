@@ -22,8 +22,37 @@ use std::time::{Duration, Instant};
 /// A test's limit when it asks for none.
 const DEFAULT: Duration = Duration::from_secs(600);
 
-/// The limits tests asked for (`allow`), by thread name as the watchdog reads it (`MAX_NAME` bytes at most).
-static ALLOWED: Mutex<Option<HashMap<String, Duration>>> = Mutex::new(None);
+/// The limits tests asked for (`allow`), by the thread's `Key`.
+static ALLOWED: Mutex<Option<HashMap<Key, Duration>>> = Mutex::new(None);
+
+/// How an allowance knows its test's thread. Linux cuts a thread's name to 15 bytes, `code_rule_dsl::` for nearly
+/// every test, so a name there would grant one test's allowance to every test: the key is the thread's system id. On
+/// macOS the name (63 bytes) is the test's path.
+#[cfg(target_os = "linux")]
+type Key = u64;
+#[cfg(not(target_os = "linux"))]
+type Key = String;
+
+/// The calling thread's key.
+#[cfg(target_os = "linux")]
+fn mine() -> Option<Key> {
+    // SAFETY: no arguments, no failure.
+    Some(unsafe { libc::gettid() } as u64)
+}
+#[cfg(not(target_os = "linux"))]
+fn mine() -> Option<Key> {
+    std::thread::current().name().map(short)
+}
+
+/// A listed thread's key (`threads`: its system id and its name).
+#[cfg(target_os = "linux")]
+fn key(thread: &(u64, String)) -> &Key {
+    &thread.0
+}
+#[cfg(not(target_os = "linux"))]
+fn key(thread: &(u64, String)) -> &Key {
+    &thread.1
+}
 
 /// The longest thread name the system reports (macOS: 64 bytes with its NUL; Linux: 16).
 #[cfg(target_os = "macos")]
@@ -33,8 +62,8 @@ const MAX_NAME: usize = 15;
 
 /// Lets the calling test run for up to `limit` (capped by `RERAIL_TEST_TIMEOUT` when it is set).
 pub(crate) fn allow(limit: Duration) {
-    let Some(name) = std::thread::current().name().map(short) else { return };
-    ALLOWED.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(name, limit);
+    let Some(me) = mine() else { return };
+    ALLOWED.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(me, limit);
 }
 
 fn short(name: &str) -> String {
@@ -80,7 +109,15 @@ fn watch() {
         std::thread::sleep(Duration::from_secs(1));
         let now = Instant::now();
         let threads = threads();
+        // A thread's id may be reused once it ends: its allowance ends with it. (Only threads seen before: one that
+        // started since this listing may already have asked.)
+        let ended: Vec<Key> = seen.keys().filter(|k| !threads.contains(k)).map(|k| key(k).to_owned()).collect();
         seen.retain(|k, _| threads.contains(k));
+        if let Some(allowed) = ALLOWED.lock().unwrap_or_else(|e| e.into_inner()).as_mut() {
+            for k in &ended {
+                allowed.remove(k);
+            }
+        }
         faults::running(threads.iter().map(|(_, n)| n.as_str()).filter(|n| n.contains("::")));
         for k in threads {
             // A test's thread is named by its path; the engine's own threads (`rerail-cpu 3`) are not.
@@ -88,7 +125,7 @@ fn watch() {
                 continue;
             }
             let since = *seen.entry(k.clone()).or_insert(now);
-            let asked = ALLOWED.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(&k.1).copied());
+            let asked = ALLOWED.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(|m| m.get(key(&k)).copied());
             let limit = match (asked, env) {
                 (Some(a), Some(e)) => a.min(e),
                 (Some(a), None) => a,
@@ -170,6 +207,26 @@ mod tests {
     fn the_watchdog_sees_the_running_test() {
         let me = short(std::thread::current().name().unwrap());
         assert!(threads().iter().any(|(_, n)| *n == me), "{me} not among {:?}", threads());
+    }
+
+    /// An allowance is the asking test's alone, also where another test's thread has the same name as the system
+    /// reports it (Linux: `test_watchdog::` for both).
+    #[test]
+    fn an_allowance_is_the_asking_tests_alone() {
+        allow(Duration::from_secs(1200));
+        let other = std::thread::Builder::new()
+            .name("test_watchdog::tests::another_test".into())
+            .spawn(|| (mine(), threads()))
+            .unwrap()
+            .join()
+            .unwrap();
+        let (other, listed) = (other.0.unwrap(), other.1);
+        let shown = short("test_watchdog::tests::another_test");
+        assert!(listed.iter().any(|t| *key(t) == other && t.1 == shown), "{other:?} as {shown} not among {listed:?}");
+        let allowed = ALLOWED.lock().unwrap_or_else(|e| e.into_inner());
+        let allowed = allowed.as_ref().unwrap();
+        assert_eq!(allowed.get(&mine().unwrap()), Some(&Duration::from_secs(1200)));
+        assert_eq!(allowed.get(&other), None);
     }
 
     /// A test past its limit ends the process with status 124 (run as a child: the binary, this test alone).
