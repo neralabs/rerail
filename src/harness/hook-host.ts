@@ -113,7 +113,7 @@ function unreachable(error: unknown): unknown {
  * so it is not a failure; `rerail status` says the daemon is not running and why (`daemonNotRunningMessage`), and so
  * does the session's start (`answerAutostartOff`).
  */
-export function autostartTurnedOff(error: unknown): boolean {
+function autostartTurnedOff(error: unknown): boolean {
   return error instanceof DaemonUnreachableError && error.cause instanceof AutostartOffError;
 }
 
