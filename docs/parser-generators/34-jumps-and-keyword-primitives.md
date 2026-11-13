@@ -1315,6 +1315,63 @@ The backward pass left is `tt_later`'s: whether a two-backtick literal has its c
 the file (3.7M cycles). Tier 1 now costs pass 2 (259.7M instructions), the record pass (234.4M)
 and pass 0 (137.5M).
 
+## Built: tier 1's checks made at the token
+
+Some of tier 1's checks can only fail at a few tokens. The lean parser makes them there:
+it counts its depth as it opens a brace,
+and checks a string's `\u` escapes when its lexer noted one in the string.
+Tier 1 paid for them over every word of every file.
+
+The compiler now proves which checks belong to a token,
+and gives them to tier 2's arms (decision 0133):
+
+```
+# Its ups and downs are the starts of `{` `[` and `}` `]` tokens:
+# tier 2 counts at the arms that take them (`COUNT`).
+scan depth = count(code & (lbrace | lbracket), code & (rbrace | rbracket)) max 127
+# `uesc` lies inside a string's `fill`, and `~u_ok` is byte tests alone:
+# tier 1 makes `uesc`, a mask; tier 2 tests the bytes after each of its bits (`CHECK`).
+escape "a \\u escape the engine checks" when uesc & ~u_ok
+```
+
+At a string, `CHECK` loads the mask's word at the token's start. Most strings have no bit,
+and that one load is the check. A string with a bit calls the check's function.
+It walks the bits in the string's bytes, and runs the digit tests at each one
+as straight-line byte loads.
+`json_bad`'s `\u` part is split off the same way, checked only in a JSON document's levels.
+Its leading zero and its `-` read carried values, so they stay in the mark.
+
+The record pass also got cheaper. A token mark's bit in the record is its first word's
+(`word == W`), since its mask holds at every grammar token: one compare, not a mask word's
+load, shift and test, for each of the eight token marks at every token.
+
+Then the record pass was merged into pass 2: each file's records are made at its end in the
+same pass, while its positions and mask words are still in the cache (`record_file`).
+It gains nothing. A file is 6.5 KB on average, so the separate pass already found them there:
+
+| | Pass 2 and the records, apart | Merged |
+|---|---|---|
+| JIT | 399.7M instructions, 71.5M cycles | 403.2M, 70.6M |
+| Ahead of time | 287.2M, 48.1M | 298.7M, 47.5M |
+
+What the records cost is the work a token: about 150 instructions, against the lean
+lexer's 114 for the whole token.
+
+| | Before | After |
+|---|---|---|
+| Tier 1's operations | 606 | 452 |
+| Tier 1, instructions (cycles), JIT | 634.5M (116.3M) | 525.8M (93.4M) |
+| the record pass | 234.4M | 173.6M (33.6M) |
+| pass 2 | 259.7M | 226.1M (37.9M) |
+| pass 0 | 137.5M | 123.1M (22.4M) |
+| Tier 2, instructions (cycles), JIT | 321.5M (56.1M) | 328.7M (57.2M) |
+| The whole parse, JIT | 45.32 ms, 194 MB/s | 37.04 ms, 238 MB/s |
+| The whole parse, ahead of time | 40.83 ms, 216 MB/s | 32.62 ms, 270 MB/s |
+| The lean parser | | 15.81 ms, 557 MB/s |
+
+Taken at a load average of 15, so the cycles and times are high; the instructions are
+the firm numbers. Tier 2 grows by its `COUNT` and `CHECK` words (61 and 37).
+
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.

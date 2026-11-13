@@ -4878,7 +4878,9 @@ pub(crate) fn install_languages() {
             parsers.push((language::GrammarDialect::Blade, &blade::tape::Forte));
         }
         if cfg!(feature = "lang-json") {
-            parsers.push((language::GrammarDialect::Json, &transducer::packed::json_parser::tape::Bitlex));
+            // simdjson where it builds; the Bitlex parser (`json_parser::tape::Bitlex`) is not yet the product's.
+            #[cfg(not(target_family = "wasm"))]
+            parsers.push((language::GrammarDialect::Json, &transducer::packed::json_parser::simdjson::Simdjson));
         }
         tape::install_parsers(parsers);
     }

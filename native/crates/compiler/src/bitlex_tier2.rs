@@ -150,6 +150,9 @@ struct Emit<'a> {
     whole: bool,
     /// The counts of tokens (`COUNT`): each one's ups' and downs' kinds.
     counts: Vec<(Vec<u16>, Vec<u16>)>,
+    /// The local checks (`CHECK`): each one's token kinds, and the mark whose refusing states
+    /// alone check it.
+    checks: Vec<(Vec<u16>, Option<u16>)>,
     /// The rows each state can meet (`bitlex_compile::row_modes`).
     meets: &'a [Vec<bool>],
     /// A first lowering, to find the rows `ROW` tests: their masks are not given yet.
@@ -291,6 +294,12 @@ impl Emit<'_> {
                     self.push("COUNT", 0, Arg::Num(i as u16));
                 } else if self.counts[i].1.contains(&token) {
                     self.push("COUNT", 1, Arg::Num(i as u16));
+                }
+            }
+            let refuses = &self.states[usize::from(self.arms[arm].from)].refuses;
+            for i in 0..self.checks.len() {
+                if self.checks[i].0.contains(&token) && self.checks[i].1.is_none_or(|m| refuses.contains(&m)) {
+                    self.push("CHECK", 0, Arg::Num(i as u16));
                 }
             }
         }
@@ -951,9 +960,10 @@ fn tests_of(states: &[StateRow], arms: &[ArmRow], marks: &[Mark]) -> Vec<Vec<usi
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], any_mark: Option<u16>, meets: &[Vec<bool>], empties: u16, whole: bool, survey: bool, rules: bool, token_extras: bool, counts: &[(Vec<u16>, Vec<u16>)]) -> Result<Lowered, String> {
+pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], any_mark: Option<u16>, meets: &[Vec<bool>], empties: u16, whole: bool, survey: bool, rules: bool, token_extras: bool, counts: &[(Vec<u16>, Vec<u16>)], checks: &[(Vec<u16>, Option<u16>)]) -> Result<Lowered, String> {
     let mut e = Emit {
         counts: counts.to_vec(),
+        checks: checks.to_vec(),
         token_extras,
         whole,
         rule_of: Vec::new(),

@@ -13,7 +13,7 @@ pub use crate::stream_ir::{ByteSwitch, DEAD, GONE, KEEP, REFUSE, REMEMBERED, Rea
 
 /// Whether a word is one of tier 2's.
 pub fn is_stream(opcode: u8) -> bool {
-    (TOKEN..=COUNT).contains(&opcode)
+    (TOKEN..=CHECK).contains(&opcode)
 }
 
 /// The operand rules of tier 2's words, and of the words a tier-2 program may hold besides
@@ -68,6 +68,7 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         REMEMBER => mode == 0 && operand != 0 && operand != REMEMBERED,
         FLAG => mode <= 2 && operand < 16,
         COUNT => mode <= 1 && usize::from(operand) < program.counts.len(),
+        CHECK => mode == 0 && usize::from(operand) < program.local_checks.len(),
         CLOSE => mode <= 1 && operand == 0,
         // `m`: the flag the call runs with (`push_flag`), of 16.
         PUSH => mode <= 32 && usize::from(operand) < words,
@@ -694,6 +695,24 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 }
             }
             COUNT => counts[usize::from(operand)] = counts[usize::from(operand)].saturating_sub(1),
+            CHECK => {
+                // The mask's bits in the token's bytes, a word at a time; at each, the check.
+                let c = &program.local_checks[usize::from(operand)];
+                let words = block.map(|b| &tier1.outputs[b.mask_outputs()[usize::from(c.mask)]]);
+                let (mut j, end) = (start, rec_end);
+                while j < end {
+                    let w = words.and_then(|ws| ws.get(j as usize / 64)).copied().unwrap_or(0) >> (j % 64);
+                    if w == 0 {
+                        j = (j / 64 + 1) * 64;
+                        continue;
+                    }
+                    j += w.trailing_zeros();
+                    if j < end && local_value(&c.ops, bytes, i64::from(j) + i64::from(c.delay)) {
+                        return refuse(pc - 1, "a local check holds");
+                    }
+                    j += 1;
+                }
+            }
             FLAG if mode == 0 => flags |= 1 << operand,
             FLAG if mode == 1 => flags &= !(1 << operand),
             FLAG => {
@@ -790,7 +809,29 @@ pub fn validate_tier2(program: &Words) -> Result<(), Error> {
     validate_word_kinds(program)?;
     validate_extras(program)?;
     validate_token_marks(program)?;
+    validate_local_checks(program)?;
     validate_rules(program)
+}
+
+/// The local checks (`Words::local_checks`): each a mask tier 2 reads, its ops' operands
+/// earlier ones, a `Prev` of 1 to 63, at least one op.
+pub fn validate_local_checks(program: &Words) -> Result<(), Error> {
+    let masks = program.block_programs.first().map_or(0, |b| b.masks.len());
+    for (i, c) in program.local_checks.iter().enumerate() {
+        let earlier = c.ops.iter().enumerate().all(|(k, op)| {
+            let k = k as u16;
+            match *op {
+                LocalOp::Not(a) => a < k,
+                LocalOp::And(a, b) | LocalOp::Or(a, b) | LocalOp::Xor(a, b) | LocalOp::AndNot(a, b) => a < k && b < k,
+                LocalOp::Prev(a, s) => a < k && (1..=63).contains(&s),
+                LocalOp::Bytes(_) | LocalOp::Const(_) | LocalOp::Within(_) => true,
+            }
+        });
+        if c.ops.is_empty() || !earlier || usize::from(c.mask) >= masks {
+            return Err(Error::InvalidOperand(i));
+        }
+    }
+    Ok(())
 }
 
 /// The token marks (`Words::token_marks`): rising by mark, each a mark in the records' codes

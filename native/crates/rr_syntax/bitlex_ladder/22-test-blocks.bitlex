@@ -217,6 +217,9 @@ mask io_run     = fill(io_past & blank, solid)
 mask io_next    = (io_past & solid) | (prev(io_run) & ~io_run)
 escape "an I/O directive with no relation, and no `.` after it" when (io_next & hash) | ((io_last | io_run) & last_byte)
 
+# A name's first byte: a `.end`'s word starts at one.
+mask id_first   = alpha & ident & ~prev(ident)
+
 # --- Punctuation -------------------------------------------------------------------------------
 
 # A two-byte spelling's first byte; in a run of them (`:->`), every other one, from the left.
@@ -278,7 +281,6 @@ mark no_value   = tokens after "min" | "max" | "sum" | "mean" | "join" "(" ")" "
 mark newline     = lf & ~after_comma, end
 # A `.end`'s `.`: a `.` before the word `end`, past blanks and comments. After the line
 # breaks' marks, which a statement before it takes.
-mask id_first    = alpha & ident & ~prev(ident)
 mask end_w       = id_first & c_e & next(c_n) & next(lc_d, 2) & ~next(ident, 3)
 mark end_on      = code & dot & p_start & next(back_fill(end_w, solid))
 # What JSON refuses: in a string, a control byte or an escape it has not; a comment; a form

@@ -1,15 +1,14 @@
-//! The `.rr` parser built ahead of time: the JIT's own functions, tier 1's and tier 2's (their
-//! Cranelift IR, as Cranelift is given it), written as Rust by `rerail-rr-aot-gen`
-//! (`clif_rust`) and compiled by rustc and LLVM, run on the JIT's harness. The two builds are
-//! one IR through two compilers, so a comparison of them is one of Cranelift's code against
-//! LLVM's.
+//! The `.rr` parser built ahead of time, run on the JIT's harness, compiled by rustc and LLVM
+//! from Rust that `rerail-rr-aot-gen` writes: tier 1's the JIT's own functions (their Cranelift
+//! IR, `clif_rust`); tier 2's the structured backend of the native IR (`rust_stream`), a
+//! function a rule, as the lean parser's.
 //!
 //! Build it optimized (`--profile profiling`): a dev build leaves this crate unoptimized.
 
 mod tier1_aot;
 mod tier2_aot;
 
-use rerail_compiler::{clif_rust, native_cpu_block, native_cpu_stream};
+use rerail_compiler::{clif_rust, native_cpu_block, native_cpu_stream, native_ir, rust_stream};
 
 /// Which tiers run the ahead-of-time build.
 #[derive(Clone, Copy, Debug)]
@@ -24,7 +23,8 @@ pub struct Tiers {
 pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
     native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
     let mut c = rerail_rr_parser::compile_with(rerail_compiler::bitlex_masks::Shape::Rules)?;
-    let (one, two) = clif_rust::rust_sources(&c.parser)?;
+    let one = clif_rust::rust_source(&c.parser)?;
+    let two = rust_stream::rust_source(&native_ir::lower(&c.program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?)?;
     let sealed = |src: &str| src.lines().last().and_then(|l| l.strip_prefix("pub const SOURCE: u64 = 0x")?.strip_suffix(';').and_then(|h| u64::from_str_radix(h, 16).ok()));
     if sealed(&one) != Some(tier1_aot::SOURCE) || sealed(&two) != Some(tier2_aot::SOURCE) {
         return Err("the ahead-of-time source is of another program: run `cargo run -p rerail-rr-aot-gen`".into());
@@ -44,8 +44,7 @@ pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
     }
     if tiers.two {
         // SAFETY: the source is this program's code (the fingerprint), reading and writing
-        // `Ctx` as the JIT's does. A rule function's frame is at least its frame pointer and
-        // return address (16 bytes, shift 4).
+        // `Ctx` as the JIT's does. It counts its calls open itself (the frame shift unused).
         unsafe { c.parser.tier2.set_entry(entry, 4) };
     }
     Ok(c)

@@ -11,8 +11,10 @@
 //! - **The lexer** is simdjson's shape over Bitlex's 64-byte block masks (`micro`): a block's
 //!   token starts found at once and taken one at a time (`lex`). A word ends at its run of
 //!   word bits; a comment, string or backtick literal by its micro-lexer, run from its start.
-//! - **No statements.** Only the tape is built: each node is written in preorder as it opens.
-//!   The open nodes and their children are a stack.
+//! - **No statements.** Only the tape is built, its rows as they stand at the end
+//!   (`tape::Row`): each node is written in preorder as it opens, its parent and extra flag
+//!   with it, its end and size where it closes. No pass after the parse. The open nodes and
+//!   their children are a stack.
 //! - **A wrap** (an operator found after its left operand: `a - b`, `x <= y`) puts its node
 //!   before the operand. When the operand is one leaf, the two swap; only a larger operand
 //!   moves the nodes after it.
@@ -21,7 +23,7 @@
 //! - **Backtracking** cuts the tape, the stack and the comments back to a mark.
 
 use crate::micro;
-use crate::tape::{ERROR, FIRST_ANONYMOUS, Field, Kind, Node};
+use crate::tape::{ERROR, FIRST_ANONYMOUS, Field, Kind, NO_PARENT, Row};
 
 // Token kinds; punctuation is `P0` plus its place in `syntax::PUNCT` (and in the anonymous kinds).
 const ID: u8 = 0;
@@ -587,7 +589,7 @@ struct Parser<'s> {
     i: usize,
     no_named: bool,
     /// The tape so far, in preorder.
-    out: Vec<Node>,
+    out: Vec<Row>,
     /// The open nodes: each its place in `out` and where its children start in `kids`.
     open: Vec<(u32, u32)>,
     /// The open nodes' children, by place in `out`.
@@ -603,11 +605,11 @@ pub fn token_count(src: &str) -> usize {
     lex(src).n
 }
 
-/// `src`'s tape: `crate::tape(src)`, node for node.
-pub fn tape(src: &str) -> Vec<Node> {
+/// `src`'s tape: `crate::engine_tape(src)`, node for node, as rows (`tape::rows`).
+pub fn tape(src: &str) -> Vec<Row> {
     let Lexed { toks, n, comments } = lex(src);
     let mut out = Vec::with_capacity(n + n / 2 + comments.len() + 8);
-    out.push(Node { kind: Kind::SourceFile as u16, field: 0, start: 0, end: src.len() as u32, parent: None, extra: false });
+    out.push(Row { kind: Kind::SourceFile as u16, start: 0, end: src.len() as u32, parent: NO_PARENT, ..Row::default() });
     let next_comment = comments.first().map_or(u32::MAX, |c| c.0);
     let mut p = Parser { b: src.as_bytes(), t: toks, n, i: 0, no_named: false, out, open: vec![(0, 0)], kids: Vec::with_capacity(64), comments, comment: 0, next_comment };
     while p.kind() != EOF {
@@ -618,6 +620,7 @@ pub fn tape(src: &str) -> Vec<Node> {
     }
     // Comments after the last statement are the file's.
     p.comments_before(0, u32::MAX);
+    p.out[0].size = p.out.len() as u32;
     p.out
 }
 
@@ -678,7 +681,7 @@ impl Parser<'_> {
     fn comments_before(&mut self, parent: u32, before: u32) {
         while self.next_comment < before {
             let (start, end) = self.comments[self.comment];
-            self.out.push(Node { kind: Kind::Comment as u16, field: 0, start, end, parent: Some(parent), extra: true });
+            self.out.push(Row { kind: Kind::Comment as u16, start, end, size: 1, parent, extra: 1, ..Row::default() });
             self.comment += 1;
             self.next_comment = self.comments.get(self.comment).map_or(u32::MAX, |c| c.0);
         }
@@ -706,7 +709,7 @@ impl Parser<'_> {
         }
         let parent = self.top().0;
         let id = self.out.len() as u32;
-        self.out.push(Node { kind, field: 0, start, end, parent: Some(parent), extra: false });
+        self.out.push(Row { kind, start, end, size: 1, parent, ..Row::default() });
         self.kids.push(id);
         if open {
             self.open.push((id, self.kids.len() as u32));
@@ -722,7 +725,7 @@ impl Parser<'_> {
             self.comments_before(parent, start);
         }
         let id = self.out.len() as u32;
-        self.out.push(Node { kind, field: 0, start, end, parent: Some(parent), extra: false });
+        self.out.push(Row { kind, start, end, size: 1, parent, ..Row::default() });
         self.kids.push(id);
         if open {
             self.open.push((id, self.kids.len() as u32));
@@ -753,6 +756,8 @@ impl Parser<'_> {
         if self.next_comment < end {
             self.comments_before(id, end);
         }
+        // Its subtree: the rows from it on.
+        self.out[id as usize].size = self.out.len() as u32 - id;
         self.kids.truncate(base as usize);
     }
 
@@ -778,15 +783,15 @@ impl Parser<'_> {
         let Some(&k) = self.kids.get(at) else {
             // Nothing to wrap: an empty node at the end.
             let id = self.out.len() as u32;
-            self.out.push(Node { kind: kind as u16, field: 0, start: 0, end: 0, parent: Some(x), extra: false });
+            self.out.push(Row { kind: kind as u16, size: 1, parent: x, ..Row::default() });
             self.kids.push(id);
             self.open.push((id, self.kids.len() as u32));
             return;
         };
         let mut first = self.out[k as usize];
-        let wrapper = Node { kind: kind as u16, field: first.field, start: first.start, end: first.start, parent: Some(x), extra: false };
+        let wrapper = Row { kind: kind as u16, field: first.field, start: first.start, end: first.start, size: 1, parent: x, ..Row::default() };
         first.field = 0;
-        first.parent = Some(k);
+        first.parent = k;
         if k as usize + 1 == self.out.len() {
             // One leaf: the two swap.
             self.out[k as usize] = wrapper;
@@ -795,16 +800,16 @@ impl Parser<'_> {
             // A larger operand: the nodes from it on shift by one, and the open node's children
             // there are the new node's.
             self.out[k as usize] = first;
+            // (No row there is the root, whose parent is none.)
             for node in &mut self.out[k as usize + 1..] {
-                if let Some(p) = node.parent.as_mut() {
-                    if *p >= k {
-                        *p += 1;
-                    } else if *p == x {
-                        *p = k;
-                    }
+                let p = &mut node.parent;
+                if *p >= k {
+                    *p += 1;
+                } else if *p == x {
+                    *p = k;
                 }
             }
-            self.out[k as usize].parent = Some(k);
+            self.out[k as usize].parent = k;
             self.out.insert(k as usize, wrapper);
         }
         for c in &mut self.kids[at..] {
@@ -1491,7 +1496,7 @@ impl Parser<'_> {
         self.out[call as usize].kind = Kind::Atom as u16;
         // Its function is its first child, after any comments.
         for node in &mut self.out[call as usize + 1..] {
-            if node.parent == Some(call) && !node.extra {
+            if node.parent == call && node.extra == 0 {
                 if node.field == Field::Function as u16 {
                     node.field = Field::Relation as u16;
                 }
@@ -1787,7 +1792,7 @@ mod tests {
             }
             for at in cuts {
                 let src = &text[..at];
-                let (lean, engine) = (super::tape(src), crate::tape(src));
+                let (lean, engine) = (super::tape(src), crate::tape::rows(&crate::engine_tape(src)));
                 if lean != engine {
                     // The first node that differs, and the text it is at.
                     let k = lean.iter().zip(&engine).position(|(a, b)| a != b).unwrap_or(lean.len().min(engine.len()));
@@ -1806,5 +1811,76 @@ mod tests {
             }
         }
         eprintln!("{} files, {checked} texts", files.len());
+    }
+
+    /// The lean parser stands for the engine's on every rule a user writes, the broken ones included: each
+    /// `.rr` file of the repository, edited at random points (a character of `.rr`'s syntax inserted, a
+    /// character deleted, two swapped), gives the engine's tape. Seeded, so a failure names its text again.
+    #[test]
+    fn lean_tape_is_the_engines_on_edited_files() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let (mut files, mut work) = (Vec::new(), vec![root]);
+        while let Some(dir) = work.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            for e in entries.flatten() {
+                let p = e.path();
+                let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
+                if p.is_dir() && !skip {
+                    work.push(p);
+                } else if p.extension().is_some_and(|x| x == "rr") {
+                    files.extend(std::fs::read_to_string(&p).ok().map(|t| (p.display().to_string(), t)));
+                }
+            }
+        }
+        files.sort();
+        assert!(files.len() > 1000, "{} files", files.len());
+        const ALPHABET: &[u8] = b"(){}[],.:;!=<>+-*/%@$#_|&~?\\\"'`\n \taz09";
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let mut checked = 0;
+        for (path, text) in &files {
+            for round in 0..4 {
+                let mut bytes = text.as_bytes().to_vec();
+                for _ in 0..1 + round {
+                    if bytes.is_empty() {
+                        break;
+                    }
+                    let at = (next() % bytes.len() as u64) as usize;
+                    match next() % 3 {
+                        0 => bytes.insert(at, ALPHABET[(next() % ALPHABET.len() as u64) as usize]),
+                        1 => {
+                            bytes.remove(at);
+                        }
+                        _ => {
+                            let to = (at + 1 + (next() % 8) as usize).min(bytes.len() - 1);
+                            bytes.swap(at, to);
+                        }
+                    }
+                }
+                // Only texts that are still UTF-8 (an edit inside a multi-byte character is not one).
+                let Ok(src) = String::from_utf8(bytes) else { continue };
+                let (lean, engine) = (super::tape(&src), crate::tape::rows(&crate::engine_tape(&src)));
+                if lean != engine {
+                    let k = lean.iter().zip(&engine).position(|(a, b)| a != b).unwrap_or(lean.len().min(engine.len()));
+                    let near = engine.get(k).or(lean.get(k)).map_or(0, |x| x.start as usize);
+                    let (from, to) = (near.saturating_sub(60), (near + 60).min(src.len()));
+                    panic!(
+                        "{path}, edit round {round}: node {k} of {} / {}\n lean   {:?}\n engine {:?}\n near {:?}",
+                        lean.len(),
+                        engine.len(),
+                        lean.get(k),
+                        engine.get(k),
+                        src.get(from..to)
+                    );
+                }
+                checked += 1;
+            }
+        }
+        eprintln!("{} files, {checked} edited texts", files.len());
     }
 }

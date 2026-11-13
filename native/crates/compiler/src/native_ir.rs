@@ -162,6 +162,8 @@ pub enum StructuralOperation {
     /// `COUNT`: a count of tokens (`Words::counts`, its index), one more (`up`, refused past
     /// `max`) or one less.
     Count { count: u16, up: bool, max: u16 },
+    /// `CHECK`: a local check over the token's bytes (`Words::local_checks`, its index).
+    Check { check: u16 },
     /// To switch on this token again (`again`), or to take the next.
     Return { again: bool },
     Accept,
@@ -231,6 +233,7 @@ impl StructuralOperation {
             Self::Remember { kind } => (REMEMBER, 0, kind),
             Self::Flag { flag, op } => (FLAG, op as u8, flag),
             Self::Count { count, up, .. } => (crate::program::COUNT, u8::from(!up), count),
+            Self::Check { check } => (crate::program::CHECK, 0, check),
             Self::Return { again } => (RETURN, u8::from(again), 0),
             Self::Accept => (ACCEPT, 0, 0),
             Self::Text { .. } | Self::Assert { .. } => {
@@ -362,6 +365,8 @@ pub struct Structure {
     pub extras: Vec<(u8, u16)>,
     /// The token marks (`Words::token_marks`).
     pub token_marks: Vec<crate::program::TokenMark>,
+    /// The local checks (`Words::local_checks`).
+    pub local_checks: Vec<crate::program::LocalCheck>,
     pub rules: Vec<u16>,
     /// The block programs, lowered (`BlockNative`).
     pub block_programs: Vec<BlockNative>,
@@ -485,6 +490,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
                     _ => FlagOp::Test,
                 },
             },
+            crate::program::CHECK => StructuralOperation::Check { check: operand },
             crate::program::COUNT => StructuralOperation::Count { count: operand, up: mode == 0, max: program.counts[usize::from(operand)] },
             RETURN => StructuralOperation::Return { again: mode != 0 },
             ACCEPT => StructuralOperation::Accept,
@@ -534,6 +540,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
         word_kinds: program.word_kinds.clone(),
         extras: program.extras.clone(),
         token_marks: program.token_marks.clone(),
+        local_checks: program.local_checks.clone(),
         block_programs: program.block_programs.iter().map(BlockNative::lower).collect(),
         output: FunctionRef::Output,
         reduction: FunctionRef::Reduction,

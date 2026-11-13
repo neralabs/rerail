@@ -333,6 +333,38 @@ impl Node {
     }
 }
 
+/// A row of a `.rr` tape, as the parsers write it: a node's kind and field, its bytes, the rows
+/// in its subtree (its own counted), its parent's row (`NO_PARENT` for the root), and 1 for an
+/// extra (a comment). In preorder. The lean parser writes these rows as it parses; the compiled
+/// parser's tier 2 writes the same 24 bytes (`rerail_compiler::native_cpu_stream::NodeRow`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Row {
+    pub kind: u16,
+    pub field: u16,
+    pub start: u32,
+    pub end: u32,
+    pub size: u32,
+    pub parent: u32,
+    pub extra: u8,
+    pub pad: [u8; 3],
+}
+
+/// The root's parent in a row.
+pub const NO_PARENT: u32 = u32::MAX;
+
+/// The reference parser's nodes (`crate::tape`) as rows: each node's size from the last node
+/// back. For comparing with the parsers that write rows.
+pub fn rows(nodes: &[Node]) -> Vec<Row> {
+    let mut rows: Vec<Row> = nodes.iter().map(|n| Row { kind: n.kind, field: n.field, start: n.start, end: n.end, size: 1, parent: n.parent.unwrap_or(NO_PARENT), extra: u8::from(n.extra), pad: [0; 3] }).collect();
+    for (i, n) in nodes.iter().enumerate().rev() {
+        if let Some(p) = n.parent {
+            rows[p as usize].size += rows[i].size;
+        }
+    }
+    rows
+}
+
 /// `tree` in preorder, each comment of `comments` a child of the innermost node whose span holds it, at its place in
 /// source order. A comment inside a leaf (a `json_object`, a `raw_text`) is part of the leaf's text.
 pub fn flatten(tree: &Tree, comments: &[(usize, usize)]) -> Vec<Node> {

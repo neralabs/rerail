@@ -3206,6 +3206,12 @@ path holds back cone relations that are outputs and expects them to be read from
 
 **Closure:** a cone relation declared `.output` is written with its rows, and `bootstrap.rr` drops the copies.
 
+**Seen again (2026-11-12), after the hub at 026a650ac.** `rr_embed_req`, the embed requests a policy writes as an
+output, is now written empty where it had rows: on dl1, `public-api-triples` had 22 `annotation` requests, now none;
+on dl10, two policies. Every `violation.csv` is unchanged, CPU and device, and the `.rr` parser (engine or lean)
+makes no difference. Likely this item's cause reached by the hub's memo and cross-part changes (041942a64); not yet
+traced.
+
 ## O145. A per-file relation with no node column is lost for documents a `load` brings in
 
 **Seen (2026-11-08, t25).** A loaded document's rows of the per-file relations the cone reads are found by its
@@ -4265,6 +4271,59 @@ saves. Measured as `Vocabulary::compile` below 1% of a batch, with match results
 neither kept nor cached is determinized only where it pays: the run keeps it in its store (decision 0075), or
 reads at least 64 documents; otherwise it runs on the lazy DFA. dl1 210.8 G → 196.8 G; `Vocabulary::compile`
 4.4% → below 1%; findings unchanged.
+## O-tape-pack-cost. Packing a tape costs 30 times simdjson's parse
+
+**Seen (2026-11-12, 0134).** Over the repository's JSON (2,200 files, 73.6 MB, 7.2 M nodes), simdjson parses and builds
+the tree in 1.1 G instructions; the tape from it takes 32.6 G (4,530 a node) in a debug build.
+
+**Measured why (`json_parse_costs`):**
+- **Most of it is the debug build.** `TapeImage::finish` and `pack` are generic over the budget closure, so they
+  are compiled in the caller's crate (`rerail-lang-json`), unoptimized. With `rerail-lang` and `rerail-lang-json`
+  at `-O3`, the same step is 5.0 G (697 a node): the packing 3.9 G (543 a node), 3.5 times the tree. The debug
+  profile's top frames are std's `precondition_check`s and iterator adapters.
+- **What is left, optimized** (profile): `finish`/`pack`'s loops 29% (each node's code folded through an
+  `FxHashMap` of `Code`, sizes summed from parents, parents checked, block minima, widths); the three column
+  writes 23% (`put_cell`, a `Vec::extend_from_slice` of 2–4 bytes a cell); the tree 13%; SHA-256 of the source
+  11%; simdjson 10%; the tree copied into `Pending` records (with an `Option<(String, bool)>` alias each) 7%.
+
+**JSON closed (2026-11-12, 0134):** simdjson writes the columns itself (`rerail_simdjson::tape`,
+`TapeImage::written`): the tape 1.89 G, against 32.6 G packed. **Still open for the parsers that pack:** tree-sitter's
+trees (every other language) and the Bitlex path (O-bitlex-writes-tape).
+
+**Closure:** the tape packed in code that is optimized in every build (not generic over the budget, or in a crate
+optimized as a dependency is), written from a parser's rows straight into the columns: sizes known from the
+parse, no `Pending` copy, a code by a table over the grammar's (kind, field, flags, supertypes) instead of a hash,
+cells written at fixed widths. Measured as the tape within 2 times the tree in a debug build.
+
+## O-bitlex-writes-tape. Bitlex does not write the tape: doc 12 §2.2 and doc 13 §7 step 3 were never built
+
+**Seen (2026-11-12).** Doc 12 §2.2 (decided): "the output is our v9np tape, written directly, by a final extract
+pass whose sizes come from the passes before it"; doc 13 §7 step 3: "the CPU executors write the tape … byte for
+byte". Neither exists, on this branch or on `Parser-generators` (33e9b514f): tier 2 writes `NodeRow`s
+(`native_cpu_stream::Columns`), and `json_parser::tape::encode_columns` copies them into `Pending` records and runs
+the engine's `TapeImage::finish`/`pack`, a second packing (O-tape-pack-cost: 31.5 of 35.6 G on the repository's JSON
+in a debug build). simdjson's first hookup copied that route; it now writes the columns itself (0134).
+
+**Why the table:** on 2026-11-08 tier 2 wrote the v9np columns (decision 0054; doc 19 §4, "four stores, a table probe
+and three ORs a node"). Doc 20 deleted those backends the same day, because the format, widths and first-use
+numbering were held in the backend, not stated by any instruction. The node table replaced them, generic but one
+step short: the tape writing was never stated in the program (doc 13 §2–§3 gives each column as one write at
+`ord`). Doc 34 then made the table 24-byte rows.
+
+**Closure:** the executors' last pass writes the v9np columns (codes, sizes, base and offsets, tails) from the
+records, with the sizes the passes before it found; no `Pending`, no `finish`. Tapes equal `TapeImage::encode`'s
+byte for byte (`json_tapes_from_the_bitlex_parser_are_tree_sitters`), and the tape's cost in `json_parse_costs` is
+the parse's plus the writing of its bytes, as simdjson's writer now does (`rerail_simdjson::tape`, 0134).
+
+## O-jsonc-simdjson. JSON with comments goes to tree-sitter-json
+
+**Seen (2026-11-12, 0134).** simdjson reads strict JSON. A file with `//` or `/* */` comments (`tsconfig.json`,
+editor settings) or a trailing comma is refused, and read with tree-sitter-json (31 times simdjson's cost to parse).
+In this repository 1 of 2,201 files is refused; JavaScript repositories have more.
+
+**Closure:** comments read without tree-sitter: blanked for simdjson (string-aware, by the same block masks as
+its stage 1) and placed as extras by tree-sitter's rule (the lowest node holding the tokens on either side), with
+the oracle extended to JSONC files; or the Bitlex parser, once it is ready for the product.
 
 ## O-texts-digest-twice. A run's texts were digested twice (closed)
 

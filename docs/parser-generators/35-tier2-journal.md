@@ -103,6 +103,7 @@ Each line gives what the machine code showed, and what could change the verdict.
 | The state as SSA values through each function | 691M to 908M instructions: each call stores and reloads them, joins spill them | Functions are small enough that joins do not spill |
 | Ten state fields held in registers through a function | 706 KB of code, 525M instructions: stack and a return area at calls | Fewer fields live at once |
 | Four fields passed to calls and given back | 21,725 stack accesses: they spill between blocks of large functions | Functions are small, or the allocator has no cliff |
+| The ahead-of-time Rust's state as locals copied at calls; hot fields local; the pointers behind a read-only `&P` | 406.0M, 370.9M, 351.6M instructions against 316.2M with all of it behind `&mut S`: copies and saved registers at about a call a token | Calls are far rarer than tokens |
 | A callee taking its caller's token at `RETURN m=0` | `ctx` kept on the stack in many functions: 1,780 stack accesses, 49,440 instructions | Retried with `ctx` pinned: no spill, kept (`2b46b2e8b`) |
 | Shared code as tail calls, `ctx` an argument | Nothing saved: an epilogue (six `ldp`s and an `add`) at each of 587 places | Epilogues get cheaper (fewer callee-saved registers) |
 | Shared code as calls, `ctx` an argument | `ctx` reloaded at each use in the largest functions: 5,700 stack loads | Solved by pinning `ctx` |
@@ -150,3 +151,8 @@ Numbers are tier 2's for `.rr`. Each step's commit is listed.
 | Tier 1 too through LLVM; the whole parse against the lean parser, by where it goes (page 34) | | | 276.6M (54.4M) |
 | Comments in the token step: 5,271 words to 3,341, 322 comment tests to 40 (page 34) | | 17,460 | 311.3M (60.7M) |
 | A mark refused only on its token's bytes: 320 mark tests to 193 (page 34) | | 17,278 | 307.1M (58.4M) |
+| Tier 1's checks at the token: a count of tokens (`COUNT`) and local checks (`CHECK`), tier 1's 606 operations to 452 (page 34) | `5da312927` | | 328.7M (57.2M; load 15) |
+| Tier 2 ahead of time as structured Rust from the native IR (`rust_stream`, decision 0135; AOT, not the JIT) | `403a5050f` | | AOT 307.0M (54.3M) |
+| A local check word-parallel in the JIT: no loop over bits | `72629b5ea` | | 330.4M (58.4M) |
+| The tape written directly: parents and extras with each row, wraps in place, no pass at `ACCEPT` (decision 0136) | `8a1762be0` | | 248.3M (41.0M; load 11); AOT 224.8M (36.4M) |
+| The lean parser writes the tape's rows too (sizes at its closes): its whole parse 356.5M to 362.4M (69.3M), the baseline from here | | | 248.3M (41.1M) |
