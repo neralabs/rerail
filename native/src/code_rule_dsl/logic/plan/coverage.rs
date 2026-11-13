@@ -400,6 +400,21 @@ fn every_operation_runs_on_every_executor() {
     let mut native_gaps = 0;
     let mut device_gaps = 0;
     let all = probes();
+    let path = ledger();
+    let had = std::fs::read_to_string(&path).unwrap_or_default();
+    // Without a Metal device (Linux, and so CI) the device column is the ledger's, as a Mac last measured it: only
+    // the native column is checked there, and a blessing keeps the device cells it cannot measure.
+    let measured: BTreeMap<&str, &str> = if metal() {
+        BTreeMap::new()
+    } else {
+        had.lines()
+            .filter(|l| !l.starts_with('#'))
+            .filter_map(|l| {
+                let mut c = l.split('\t');
+                Some((c.next()?, c.nth(1)?))
+            })
+            .collect()
+    };
     for (k, pr) in all.iter().enumerate() {
         let rel = format!("cov_{k:03}_p");
         let rule = pr.rule.replace("{HEAD}", &rel);
@@ -419,18 +434,20 @@ fn every_operation_runs_on_every_executor() {
         // renumbers the others, and the ledger does not churn with it.
         let shown = pr.rule.replace("{HEAD}", "p").replace('\n', " ");
         let unnamed = |c: &str| cell(c).replace(&rel, "p");
-        let _ = writeln!(rows, "{}\t{}\t{}\t{shown}", pr.name, unnamed(&native), unnamed(&device));
+        let device = match measured.get(pr.name.as_str()) {
+            Some(kept) if device == "no Metal device" => (*kept).to_owned(),
+            _ => unnamed(&device),
+        };
+        let _ = writeln!(rows, "{}\t{}\t{device}\t{shown}", pr.name, unnamed(&native));
     }
     eprintln!("{} probes: {native_gaps} not native, {device_gaps} not on the device", all.len());
     assert!(wrong.is_empty(), "an executor's rows differ from SQLite's:\n{}", wrong.join("\n"));
-    let path = ledger();
     if std::env::var_os("RERAIL_BLESS_COVERAGE").is_some() {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, &rows).unwrap();
         packs_ledger(&all, &rows);
         return;
     }
-    let had = std::fs::read_to_string(&path).unwrap_or_default();
     // The gaps by pack follow from the matrix: compared once the matrix is as the ledger says.
     if had == rows {
         packs_ledger(&all, &rows);
