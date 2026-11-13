@@ -78,6 +78,8 @@ pub(super) struct World {
     metadata_reads: BTreeSet<String>,
     files: BTreeMap<String, Vec<String>>,
     digests: BTreeMap<String, String>,
+    file_errors: BTreeMap<String, FileError>,
+    file_digests: BTreeMap<String, String>,
     loads: BTreeMap<String, Loaded>,
     refused: BTreeSet<String>,
     budget: usize,
@@ -147,17 +149,57 @@ impl World {
         if let Some(lines) = self.files.get(asked) {
             return lines.clone();
         }
-        let Some(text) = self.allowed(asked).and_then(|p| super::observe(|o| o.read(&p))).and_then(|(bytes, _)| String::from_utf8(bytes).ok()) else {
+        let Some(path) = self.allowed(asked) else {
             self.refused.insert(asked.to_owned());
             return Vec::new();
         };
-        let text = text.replace("\r\n", "\n").replace('\r', "\n");
-        let lines: Vec<String> = text.split_terminator('\n').map(str::to_owned).collect();
-        self.files.insert(asked.to_owned(), lines.clone());
-        lines
+        let read = super::observe(|o| o.read(&path)).map(|(bytes, digest)| (bytes, crate::content_store::observe::hex(&digest)));
+        // The observer records successful byte snapshots. Only a failed read
+        // probes the OS error; regular files are read once for both interfaces.
+        let read = match read {
+            Some(snapshot) => Ok(snapshot),
+            None => std::fs::read(&path).map(|bytes| {
+                use sha2::{Digest, Sha256};
+                let digest: [u8; 32] = Sha256::digest(&bytes).into();
+                (bytes, crate::content_store::observe::hex(&digest))
+            }),
+        };
+        let lines = match read {
+            Ok((bytes, digest)) => {
+                self.file_digests.insert(asked.to_owned(), digest);
+                match String::from_utf8(bytes) {
+                    Ok(text) => text.replace("\r\n", "\n").replace('\r', "\n").split_terminator('\n').map(str::to_owned).collect(),
+                    Err(error) => {
+                        let utf8 = error.utf8_error();
+                        let bytes = error.into_bytes();
+                        let start = utf8.valid_up_to();
+                        let (end, reason) = match utf8.error_len() {
+                            None => (bytes.len(), "unexpected end of data"),
+                            Some(n) => (start + n, if (0xc2..=0xf4).contains(&bytes[start]) { "invalid continuation byte" } else { "invalid start byte" }),
+                        };
+                        let mut hex = String::with_capacity(bytes.len() * 2);
+                        const DIGITS: &[u8] = b"0123456789abcdef";
+                        for b in bytes { hex.push(DIGITS[usize::from(b >> 4)] as char); hex.push(DIGITS[usize::from(b & 15)] as char); }
+                        self.file_errors.insert(asked.to_owned(), FileError { kind: "InvalidUtf8", errno: 0, detail: "invalid UTF-8".into(), bytes_hex: hex, start: start as i64, end: end as i64, reason: reason.into() });
+                        Vec::new()
+                    }
+                }
+            }
+            Err(error) => {
+                let errno = error.raw_os_error().unwrap_or(0);
+                let detail = error.to_string().strip_suffix(&format!(" (os error {errno})")).unwrap_or(&error.to_string()).to_owned();
+                self.file_errors.insert(asked.to_owned(), FileError { kind: "OsError", errno: i64::from(errno), detail, bytes_hex: String::new(), start: 0, end: 0, reason: String::new() });
+                Vec::new()
+            }
+        };
+        self.files.insert(asked.to_owned(), lines);
+        self.files[asked].clone()
     }
 
-    pub(super) fn file_error(&mut self, _asked: &str) -> Option<FileError> { None }
+    pub(super) fn file_error(&mut self, asked: &str) -> Option<FileError> {
+        if !self.files.contains_key(asked) { self.file(asked); }
+        self.file_errors.get(asked).cloned()
+    }
 
     /// A file's content digest (none when it is refused or missing): the observer's, read only where it cannot vouch
     /// for the file.
@@ -290,7 +332,7 @@ impl World {
             if self.metadata_reads.contains(asked) { out.push(("dir-metadata".to_owned(), asked.clone(), metadata_digest(entries, types))); }
         }
         for asked in self.files.keys() {
-            out.push(("file".to_owned(), asked.clone(), self.allowed(asked).map(|p| bytes_digest(&p)).unwrap_or_default()));
+            out.push(("file".to_owned(), asked.clone(), self.file_digests.get(asked).cloned().unwrap_or_else(|| self.allowed(asked).map(|p| bytes_digest(&p)).unwrap_or_default())));
         }
         for (asked, d) in &self.digests {
             out.push(("digest".to_owned(), asked.clone(), d.clone()));

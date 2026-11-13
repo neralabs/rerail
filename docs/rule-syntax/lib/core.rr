@@ -293,6 +293,9 @@
 // A link target is refreshed each run, even if the listing directory itself did not change.
 .decl dir_metadata(dir: symbol, name: symbol, is_file: number, is_symlink: number, errno: number)
 .decl file_line(path: symbol, i: number, text: symbol)
+// The same demanded byte snapshot as file_line. InvalidUtf8 retains the raw bytes
+// and Python-compatible decode positions; OsError retains errno and strerror.
+.decl file_error(path: symbol, io_kind: symbol, errno: number, detail: symbol, bytes_hex: symbol, start: number, end: number, reason: symbol)
 .decl file_digest(path: symbol, c: symbol)
 .decl load(path: symbol, module: symbol, grammar: symbol)
 .decl loaded(path: symbol, module: symbol, grammar: symbol)

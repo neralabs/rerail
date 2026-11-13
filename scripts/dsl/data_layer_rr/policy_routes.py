@@ -2,6 +2,8 @@
 
 
 def policy_filename(check, entry):
+    if check=='plan_scope_side_effects' and entry in {'_pse_repository','blocking_violations'}:
+        return 'plan-scope-side-effects-repository.rr'
     if check=='plan_scope_side_effects' and entry=='_directory_discovery':
         return 'plan-scope-directory-discovery.rr'
     if check=='connection_structural_boundaries' and entry in {'_structural_helper_configuration','_connection_file_violations'}:

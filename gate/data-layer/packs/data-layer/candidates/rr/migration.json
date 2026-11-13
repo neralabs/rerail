@@ -356,7 +356,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-side-effects.rr",
-      "sha256": "d70da7cc31b5bed4b4172a95cf291ce59b15c752cecfc6207e2e01c8a578c4f2",
+      "sha256": "e0143ca885607c2a1df07744a2de633c30eae1d1b8475dcb61a6b4e27bc295ff",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
@@ -513,7 +513,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "9bea027d17a0aca37ee070fe874ad102c05b90ba7ce66a9e88a5ba710311d0bd",
+      "sha256": "337b937cd81ed6ea40d27d48083bdea6bf3c6f8472f1ea9f4e50783944240a12",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -3424,6 +3424,27 @@
           "reason": "Native batched directory metadata preserves source linter discovery without following linked directories"
         }
       ]
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/side-effects-configuration.rr",
+      "sha256": "3eb41ed758bf51cce1297bd36477f87e5c08dbb9f0569d5ff72622de313af9af",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-side-effects-repository.rr",
+      "sha256": "a343d35cef4ab7e4214e01a246e056f22bea873bfccc874b11c9164bd35a17c9",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/side-effects-files.rr",
+      "sha256": "752bc67715d1c3589dc15a17696cc725f2d8f7a3d8a3d4fe682c2fe3b802444d",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
     }
   ],
   "rules": [
@@ -5126,7 +5147,7 @@
       "legacySha256": "2716f11ec3592689333631110eb74d3ec513d0ee82ca1701023621072347f12d",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-side-effects.rr",
-      "ruleSha256": "d70da7cc31b5bed4b4172a95cf291ce59b15c752cecfc6207e2e01c8a578c4f2",
+      "ruleSha256": "e0143ca885607c2a1df07744a2de633c30eae1d1b8475dcb61a6b4e27bc295ff",
       "migrationProgress": {
         "status": "hub kernel parity; full rule remains draft",
         "receipt": "gate/data-layer/fixtures/host/data-layer-port/rr-hub1ee-kernel-progress.json.gz",

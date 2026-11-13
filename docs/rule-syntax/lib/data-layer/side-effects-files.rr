@@ -1,0 +1,21 @@
+// scan_repo uses Path.rglob, then an explicit FileScopeSpec with tests included.
+// Root and source arguments come from the caller; native demand chooses the files.
+.decl pse_walk(path:symbol)
+pse_walk(".") :- env("pse.api","repository").
+pse_walk(cat(p,"/",name)) :- pse_walk(p),dir_entry(p,name,1),dir_metadata(p,name,_,0,_),!pse_constant("SKIP_DIRS",name).
+.decl pse_disk_file(path:symbol)
+pse_disk_file(@replace_all(cat(p,"/",name),"\\A\\./","")) :- pse_walk(p),dir_entry(p,name,0),dir_metadata(p,name,1,_,_),suffix(".py",name),name!=".py".
+.decl pse_demand(path:symbol)
+pse_demand(p) :- pse_disk_file(p),!pse_read_failure(_),file_line(p,_,line_text),pse_constant("PLAN_OPENERS",trigger),contains(trigger,line_text).
+load(p,cat("pse:",p),"python") :- pse_demand(p).
+.decl pse_disk_doc(d:number,path:symbol)
+pse_disk_doc(d,p) :- pse_demand(p),loaded(c,cat("pse:",p),"python"),doc(d,c,_).
+.violation SideEffectsDiskFact(at:span,ordinal:number,source_code:symbol,file_path:symbol,line_number:number,source_message:symbol,severity:symbol) code "PSE_FACT" "{source_message}"
+SideEffectsDiskFact(@place("",0),i,c,p,l,m,s) :- option("entryPoint","_pse_repository"),pse_disk_doc(d,p),!syntax_error(d,_,_),pse_finding(n,c,m,s),docof(n,d),pse_order(n,i),pse_line(n,l).
+.violation SideEffectsBlocking(at:span,ordinal:number) code "PSE_BLOCKING" "Blocking violation index"
+SideEffectsBlocking(@place("",0),i) :- option("entryPoint","blocking_violations"),option_item("pseSeverities",i,"error").
+
+.decl pse_read_failure(path:symbol)
+pse_read_failure(p) :- pse_disk_file(p),file_error(p,_,_,_,_,_,_,_).
+.violation SideEffectsReadError(at:span,file_path:symbol,io_kind:symbol,errno:number,detail:symbol,bytes_hex:symbol,start:number,end:number,reason:symbol) code "PSE_READ_ERROR" "Native source read error"
+SideEffectsReadError(@place("",0),p,k,n,d,b,s,e,r) :- pse_disk_file(p),file_error(p,k,n,d,b,s,e,r).

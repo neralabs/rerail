@@ -4995,6 +4995,13 @@ fn run_observed(
                             } else { out.push(vec![*key, name, i64::from(*is_dir)]); }
                         }
                     }
+                } else if *produced == "file_error" {
+                    let errors: Vec<_> = rows.iter().map(|row| Ok((row[0], world.file_error(&text(row[0])?)))).collect::<Result<_>>()?;
+                    let values: Vec<&str> = errors.iter().filter_map(|(_, e)| e.as_ref()).flat_map(|e| [e.kind, e.detail.as_str(), e.bytes_hex.as_str(), e.reason.as_str()]).collect();
+                    let mut encoded = atoms(&values)?.into_iter();
+                    for (key, error) in errors { if let Some(e) = error {
+                        out.push(vec![key, encoded.next().unwrap(), e.errno, encoded.next().unwrap(), encoded.next().unwrap(), e.start, e.end, encoded.next().unwrap()]);
+                    } }
                 } else if *produced == "file_digest" {
                     let digests: Vec<_> = rows.iter().map(|row| Ok((row[0], world.digest(&text(row[0])?)))).collect::<Result<_>>()?;
                     let values: Vec<&str> = digests.iter().filter_map(|(_, d)| d.as_deref()).collect();
@@ -5077,9 +5084,11 @@ fn run_observed(
                 // A load asked again (its stratum's requests answered again, t33 K3) is answered alike: the same
                 // document, its rows from the exports, not sent again. So is one taken back and asked again.
                 if let Some(doc) = world.loaded_as(&asked).or_else(|| world.reload(&asked)) {
+                    // Every request gets its module/grammar answer, including
+                    // aliases of a document first queued in this same batch.
+                    let file = atoms(&[doc.path.as_str()])?[0];
+                    loaded_rows.push(vec![file, row[1], row[2]]);
                     if let Some((key, _)) = loaded_docs.iter().find(|(_, p)| *p == doc.path) {
-                        let file = atoms(&[doc.path.as_str()])?[0];
-                        loaded_rows.push(vec![file, row[1], row[2]]);
                         load_ledger.lock().unwrap_or_else(|e| e.into_inner()).documents.insert(file, *key);
                         again.insert(*key);
                     }
