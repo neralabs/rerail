@@ -240,14 +240,26 @@ export function openRerailDatabaseIn(path: string, workspace: string, { readonly
  */
 export function copyKeysWaitingIn(path: string, workspace: string): string | undefined {
   const migrations = openedIn(RERAIL_MIGRATIONS, workspace);
+  const supported = schemaVersionOf(migrations);
+  let database: RerailDatabase | undefined;
   try {
-    openChecked(path, false, migrations, schemaVersionOf(migrations), 0).$client.close();
+    // A writable open's own steps (`openChecked`), on a connection that does not wait for the lock.
+    database = connectSqlite(path, false, 0);
+    checkBeforeWriting(database, path, supported);
+    applySchema(database, path, migrations, supported);
     return undefined;
   } catch (error) {
-    // Drizzle wraps SQLite's error ("Failed to run the query ..."); its cause says why ("database is locked").
-    const why = error instanceof Error && error.cause instanceof Error ? error.cause : error;
-    return `the keys an earlier build stored on ${win32.parse(workspace).root} wait: ${why instanceof Error ? why.message : String(why)}`;
+    if (database !== undefined) rollbackQuietly(database);
+    return `the keys an earlier build stored on ${win32.parse(workspace).root} wait: ${sqliteReason(error)}`;
+  } finally {
+    database?.$client.close();
   }
+}
+
+/** Why `error` happened: Drizzle wraps SQLite's error ("Failed to run the query ..."), whose cause says why. */
+function sqliteReason(error: unknown): string {
+  const why = error instanceof Error && error.cause instanceof Error ? error.cause : error;
+  return why instanceof Error ? why.message : String(why);
 }
 
 /**
@@ -322,10 +334,10 @@ function missingSchemaObjects(database: RerailDatabase): string[] {
   return SCHEMA_OBJECTS.filter(name => !present.has(name));
 }
 
-function openChecked(path: string, readonly: boolean, migrations: readonly Migration[], supported: number, lockWaitMs = LOCK_WAIT_MS): RerailDatabase {
+function openChecked(path: string, readonly: boolean, migrations: readonly Migration[], supported: number): RerailDatabase {
   let database: RerailDatabase;
   try {
-    database = connectSqlite(path, readonly, lockWaitMs);
+    database = connectSqlite(path, readonly);
   } catch (error) {
     throw notADatabase(error) ? new Error(unreadableDatabase(path, "not an SQLite database", supported)) : error;
   }
