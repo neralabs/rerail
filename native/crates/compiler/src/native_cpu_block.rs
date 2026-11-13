@@ -2425,8 +2425,16 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
 
         f.switch_to_block(entry);
         let entry_params = f.block_params(entry).to_vec();
-        let (arena, rows, nrows, out_all, pos_all, counts_all, scratch_all) =
-            (entry_params[0], entry_params[1], entry_params[2], entry_params[3], entry_params[4], entry_params[5], entry_params[6]);
+        // The pass's arguments and the row's index, in a slot: read where a row's work needs
+        // them, before and after its blocks. Held through the block loop, which reads none of
+        // them, they took its registers (or were spilled and reloaded in it).
+        let outer = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * 8, 3));
+        for (k, &v) in entry_params.iter().enumerate() {
+            f.ins().stack_store(v, outer, 8 * k as i32);
+        }
+        let reload = |f: &mut FunctionBuilder<'_>, k: i32| f.ins().stack_load(types::I64, outer, 8 * k);
+        const ROW_INDEX: i32 = 7;
+        let nrows = entry_params[2];
         let zero = f.ins().iconst(types::I64, 0);
         // The constants every block uses, made once. (Others are made where used, decision 0069.)
         let consts = Consts::make(&mut f);
@@ -2436,12 +2444,14 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         // A row: the file's blocks, length, outputs, positions and counts.
         f.switch_to_block(row);
         let r = f.block_params(row)[0];
+        f.ins().stack_store(r, outer, 8 * ROW_INDEX);
+        let (arena, rows, out_all, pos_all, scratch_all) = (reload(&mut f, 0), reload(&mut f, 1), reload(&mut f, 3), reload(&mut f, 4), reload(&mut f, 6));
         let at = f.ins().imul_imm(r, std::mem::size_of::<Row>() as i64);
         let at = f.ins().iadd(rows, at);
         let flags = MemFlags::trusted().with_readonly();
         let field = |f: &mut FunctionBuilder<'_>, k: i32| f.ins().load(types::I64, flags, at, 8 * k);
         let (start, blocks, len, first_word) = (field(&mut f, 0), field(&mut f, 1), field(&mut f, 2), field(&mut f, 3));
-        let (first_position, capacity, first_count) = (field(&mut f, 4), field(&mut f, 5), field(&mut f, 6));
+        let (first_position, capacity) = (field(&mut f, 4), field(&mut f, 5));
         let scratch = {
             let first = field(&mut f, 7);
             let from = f.ins().ishl_imm(first, 3);
@@ -2461,10 +2471,6 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
                 f.ins().iadd(pos_all, offset)
             })
             .collect();
-        let counts_at = {
-            let offset = f.ins().ishl_imm(first_count, 3);
-            f.ins().iadd(counts_all, offset)
-        };
         let none = f.ins().icmp_imm(IntCC::Equal, blocks, 0);
         // The first block's carries and counts are zero, made here: the entry's zero, live across
         // every row, would be spilled and reloaded once per carried word.
@@ -2542,6 +2548,25 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             let down = f.ins().ushr_imm(last, i64::from(native.output_delays[k]));
             f.ins().store(stores, down, dst, at);
         }
+        // The row's places again, from the slot: none is held through its blocks.
+        let r = reload(&mut f, ROW_INDEX);
+        let (rows, pos_all, counts_all) = (reload(&mut f, 1), reload(&mut f, 4), reload(&mut f, 5));
+        let at = f.ins().imul_imm(r, std::mem::size_of::<Row>() as i64);
+        let at = f.ins().iadd(rows, at);
+        let flags = MemFlags::trusted().with_readonly();
+        let (first_position, capacity, first_count) = (f.ins().load(types::I64, flags, at, 32), f.ins().load(types::I64, flags, at, 40), f.ins().load(types::I64, flags, at, 48));
+        let extract_base: Vec<Value> = (0..native.extracts.len())
+            .map(|e| {
+                let room = f.ins().imul_imm(capacity, e as i64);
+                let index = f.ins().iadd(first_position, room);
+                let offset = f.ins().ishl_imm(index, 2);
+                f.ins().iadd(pos_all, offset)
+            })
+            .collect();
+        let counts_at = {
+            let offset = f.ins().ishl_imm(first_count, 3);
+            f.ins().iadd(counts_all, offset)
+        };
         for c in 0..counted.len() {
             let mut v = p[3 + carried + c];
             if let Some(&base) = extract_base.get(c) {
@@ -2556,6 +2581,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         // The file's records, in the same pass (the last forward one): its positions and mask
         // words just made, still in the cache.
         if let (Some((rec, t, _)), Some((id, sig, _))) = (records, &record_call) {
+            let (arena, out_all) = (reload(&mut f, 0), reload(&mut f, 3));
             let cols = file_cols(&mut f, rec, t, native.extracts.len(), r, rows, arena, out_all, pos_all, counts_all);
             let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
             let signature = f.import_signature(sig.clone());
@@ -2565,6 +2591,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         f.ins().jump(exit, &[]);
 
         f.switch_to_block(exit);
+        let (r, nrows) = (reload(&mut f, ROW_INDEX), reload(&mut f, 2));
         let next_row = f.ins().iadd_imm(r, 1);
         let more_rows = f.ins().icmp(IntCC::UnsignedLessThan, next_row, nrows);
         f.ins().brif(more_rows, row, &[next_row.into()], done, &[]);
