@@ -1431,6 +1431,43 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.settleWorktreeWalk();
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
+
+  it("records only the deletions of a worktree nested in another walked worktree and removed during its first walk", async () => {
+    const root = await twoBranches();
+    const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    git(root, "worktree", "add", "--quiet", "-b", "nested", join(worktree, "nest"), "main");
+    const nested = await realpath(join(worktree, "nest"));
+    // A walk opens one level of folders at a time, so it opens this folder of the outer worktree after it has read the
+    // nested worktree's files: a gate here holds the walk between those reads and the audit of what it found.
+    const deepest = join(worktree, "deep", "deeper", "deepest");
+    await mkdir(deepest, { recursive: true });
+    await awaitClockAfter(join(nested, "src", "a.py"), join(nested, "src", "gone.py"));
+    const nest = relative(root, nested).split(sep).join("/");
+    const { bridge, auditGeneratedEdits } = await opened(root, {
+      ...extra,
+      sourceRoot: path => roots.filter(known => resolve(root, path).startsWith(`${known}${sep}`)).sort((a, b) => b.length - a.length)[0] ?? root,
+      // The outer worktree ignores the folder that holds the nested one, as a main checkout often ignores its
+      // worktrees' folder, so the outer worktree's walk never reads the nested worktree's files.
+      ignoresPath: (path, directory) => directory && path === nest,
+    });
+    roots.push(nested);
+    const walk = holdDiscovery("directories", deepest);
+    await bridge.checkpoint("turn");
+    await walk.entered;
+    git(root, "worktree", "remove", "--force", nested);
+    roots.splice(roots.indexOf(nested), 1);
+    // The session folder's walk finds the worktree gone: the held walk no longer takes its files as a baseline.
+    await bridge.checkpoint("turn");
+    walk.release();
+    await bridge.settleWorktreeWalk();
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    // No one wrote these files. A walk that kept their text recorded each one created, then deleted.
+    const deleted = { language: "python", previousReadError: "Source was deleted without a captured preimage", deleted: true };
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
+      [[{ path: `${nest}/src/a.py`, ...deleted }, { path: `${nest}/src/gone.py`, ...deleted }], "log"],
+    ]);
+  });
 });
 
 describe("CodeRuleBridge and Git's own writes", () => {
