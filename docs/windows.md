@@ -437,7 +437,9 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   exists and the engine there proves it holds the capability `daemon.json` records, the challenge the engine start
   uses: Windows soon reuses a pid, often for another of this user's processes, and anyone can create the pipe's name.
   Nothing goes to the recorded URL before that. An engine that does not answer the proof in time is taken for a busy
-  daemon: its state file is kept and the lookup reports it unresponsive. macOS and Linux treat `EPERM` as another user's.
+  daemon: its state file is kept and the lookup reports it unresponsive. The proof's limit counts from the ask and
+  covers the connect (`engineCapabilityProof`, `src/runtime/engine-proof.ts`): once a busy engine's pipe instances are
+  all taken, a connect waits up to 30 s for a free one. macOS and Linux treat `EPERM` as another user's.
 - `recordedDaemonAlive` (`src/runtime/daemon-control.ts`) makes both checks above, and every reader of `daemon.json`
   asks it before it sends the capability the file records to the URL it records: `lookupDaemon`, the MCP bridge
   (`src/api/mcp-bridge.ts`), and the status line, the rules link and the start check
