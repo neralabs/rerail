@@ -21,12 +21,12 @@ def install(backend,module,detectors=False):
         # Caller-selected resources authorize their parent directories. Native
         # relations decide suffixes, file kinds, aliases, errors and findings.
         parents=list(dict.fromkeys((p if p.is_absolute()else root/p).absolute().parent.as_posix()for p in files))
-        options=dict(psePhysicalRoot=root.absolute().as_posix(),pseOwnerRoot=root.as_posix(),pseFiles=[p.as_posix()for p in files],env=[f'pse.explicit.{i}={p}'for i,p in enumerate(parents)])
+        options=dict(env=['pse.api=files',f'pse.physicalRoot={root.absolute().as_posix()}',f'pse.ownerRoot={root.as_posix()}',*[f'pse.explicit.{i}={p}'for i,p in enumerate(parents)],*[f'pse.file.{i}={p.as_posix()}'for i,p in enumerate(files)]])
         return violations(root,'_pse_files',options)
     def scan_file_content(rel_path,source,tree=None):
         return explicit(module.REPO_ROOT,[module.REPO_ROOT/rel_path])
     def iter_python_files(root):
-        rows=backend.native(CHECK,'_pse_iter',[],root=root.absolute())
+        rows=backend.native(CHECK,'_pse_iter',[],dict(env=['pse.api=iter']),root=root.absolute())
         if any(r['code']!='PSE_ITER'for r in rows):raise ValueError('Unexpected native path iteration response')
         return [root/r['parameters']['path']for r in sorted(rows,key=lambda r:r['parameters']['order_key'])]
     def blocking_violations(violations):
