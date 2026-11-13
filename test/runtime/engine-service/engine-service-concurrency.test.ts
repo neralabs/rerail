@@ -255,13 +255,15 @@ describe("engine service session concurrency", () => {
   it("keeps only open connections in the list the close reads", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
     const socketPath = testEngineEndpoint(root);
+    // It answers once the whole request has arrived, as the engine service does. Answered on its headers alone, the
+    // connection left the list on Windows before the hook sent its body.
     const server = createServer((incoming, response) => {
       incoming.resume();
-      response.end("{}");
+      incoming.once("end", () => response.end("{}"));
     });
     const connections = trackConnections(server);
-    const size = async (expected: number): Promise<void> => {
-      await vi.waitFor(() => expect(connections.size).toBe(expected), { timeout: 5_000, interval: 20 });
+    const size = async (expected: number, when: string): Promise<void> => {
+      await vi.waitFor(() => expect(connections.size, when).toBe(expected), { timeout: 5_000, interval: 20 });
     };
     try {
       await new Promise<void>(done => server.listen(socketPath, done));
@@ -269,16 +271,16 @@ describe("engine service session concurrency", () => {
       // thousands of each, and the list must not keep their sockets. The first holds its body back until the list
       // shows it.
       const answered = await handHook(socketPath, "{}", 0);
-      await size(1);
+      await size(1, "a hook whose body has not come");
       answered.finish();
       expect(await answered.answer()).toContain("HTTP/1.1 200");
-      await size(0);
+      await size(0, "after that hook's answer");
       const silent = connect(socketPath);
       silent.on("error", () => undefined);
       await once(silent, "connect");
-      await size(1);
+      await size(1, "a connection with no request");
       silent.destroy();
-      await size(0);
+      await size(0, "after that connection closed");
     } finally {
       server.closeAllConnections();
       await new Promise<void>(done => server.close(() => done()));
