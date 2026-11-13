@@ -4,7 +4,7 @@
 // git checkout with a fake `aws` whose bucket is a local directory.
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -56,13 +56,15 @@ import { SAMPLE_ID } from "../../scripts/samples/format.ts";
 import { archiveSizeBound, buildArchive, compressArchive, decompressArchive, lockText, readArchive, sha256 } from "../../scripts/s3/test-data-archive.mjs";
 import { provenanceFiles, restaged } from "./support/provenance.mjs";
 import { cacheLicence } from "../support/samples.ts";
+import { linkFolder, symlinkOrSkip } from "../support/platform/links.ts";
+import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 /** A tool's UPSTREAM.md listing `files` (pack-relative) as Rerail's. */
 const record = (files) => `# cases Rerail wrote\n\n| File | Origin |\n|---|---|\n${files.map((file) => `| \`${file}\` | written by Rerail |\n`).join("")}`;
 
 const scratch = [];
 afterEach(() => {
-  for (const directory of scratch.splice(0)) rmSync(directory, { recursive: true, force: true });
+  for (const directory of scratch.splice(0)) removeFolderSync(directory);
 });
 
 /** Every file under `root`, relative to it, sorted. */
@@ -191,7 +193,7 @@ function published() {
 /** Removes the pack test data from disk, and the archive cache unless `keepCache`: a fresh checkout. */
 function fresh(root, keepCache = false) {
   for (const path of Object.keys(tree(root, true))) rmSync(join(root, path));
-  if (!keepCache) rmSync(join(root, ARCHIVE_CACHE), { recursive: true, force: true });
+  if (!keepCache) removeFolderSync(join(root, ARCHIVE_CACHE));
 }
 
 describe("isPackFixture", () => {
@@ -361,8 +363,8 @@ describe("pull", () => {
     fresh(root);
     const outside = join(dirname(root), "outside");
     mkdirSync(outside);
-    rmSync(join(root, "packs/p/upstream/t/fixtures"), { recursive: true });
-    symlinkSync(outside, join(root, "packs/p/upstream/t/fixtures"));
+    removeFolderSync(join(root, "packs/p/upstream/t/fixtures"));
+    linkFolder(outside, join(root, "packs/p/upstream/t/fixtures"));
     expect(failure(() => pull({ root, aws, log: () => {} }))).toContain("packs/p/upstream/t/fixtures is a symlink");
     expect(files(outside)).toEqual([]);
     expect(tree(root, true)).toEqual({});
@@ -373,7 +375,7 @@ describe("pull", () => {
     fresh(root);
     const elsewhere = join(dirname(root), "elsewhere");
     renameSync(join(root, "packs/q/upstream"), elsewhere);
-    symlinkSync(elsewhere, join(root, "packs/q/upstream"));
+    linkFolder(elsewhere, join(root, "packs/q/upstream"));
     const before = files(elsewhere);
     expect(failure(() => pull({ root, aws, pack: "q", log: () => {} }))).toContain("packs/q/upstream is a symlink");
     expect(files(elsewhere)).toEqual(before);
@@ -537,7 +539,8 @@ describe("upload", () => {
 });
 
 describe("pack", () => {
-  it("makes no aws call, and writes the same lock whatever the data's on-disk mode, mtime or write order", () => {
+  it("makes no aws call, and writes the same lock whatever the data's on-disk mode, mtime or write order", ({ skip }) => {
+    skip(process.platform === "win32", FAKE_AWS_NEEDS_SH);
     const { root, data, write } = withData();
     const base = dirname(root);
     const bin = join(base, "bin");
@@ -566,11 +569,11 @@ describe("pack", () => {
     }
   });
 
-  it("refuses a symlink among the pack test data rather than leave it out, before writing any lock", () => {
+  it("refuses a symlink among the pack test data rather than leave it out, before writing any lock", (context) => {
     const { root } = withData();
     const outside = join(dirname(root), "outside.expected.json");
     writeFileSync(outside, "{}\n");
-    symlinkSync(outside, join(root, "packs/q/upstream/u/linked.expected.json"));
+    symlinkOrSkip(context, outside, join(root, "packs/q/upstream/u/linked.expected.json"));
     expect(failure(() => pack({ root, log: () => {} }))).toContain("packs/q/upstream/u/linked.expected.json is a symlink");
     expect(LOCKS.filter((lock) => existsSync(join(root, lock)))).toEqual([]);
   });
@@ -681,7 +684,7 @@ describe("an archive that is not the canonical archive of its tool directory's p
     writeFileSync(cached, "not zstd");
     const signedOut = () => ({ status: 255, stderr: "\nUnable to locate credentials\n" });
     const message = failure(() => pull({ root, aws: signedOut, log: () => {} }));
-    expect(message).toContain(relative(root, cached));
+    expect(message).toContain(shown(root, cached));
     expect(message).toContain("gh cache delete");
     expect(existsSync(cached)).toBe(false);
   });
@@ -694,7 +697,7 @@ describe("an archive that is not the canonical archive of its tool directory's p
     const printed = [];
     pull({ root, aws, dryRun: true, log: (line) => printed.push(line) });
     expect(readFileSync(cached, "utf8")).toBe("not zstd");
-    expect(printed.join("\n")).toContain(`would delete ${relative(root, cached)}`);
+    expect(printed.join("\n")).toContain(`would delete ${shown(root, cached)}`);
   });
 });
 
@@ -703,7 +706,7 @@ describe("upload without a local archive", () => {
 
   it("verifies an archive S3 holds when the archive cache lacks it, and fails naming the key when neither holds it", () => {
     const { root, aws, object, called } = published();
-    rmSync(join(root, ARCHIVE_CACHE), { recursive: true });
+    removeFolderSync(join(root, ARCHIVE_CACHE));
     expect(upload({ root, aws, tags: TAGS, log: quiet }).uploaded).toEqual([]);
     expect(called("cp")).toHaveLength(3);
     const key = archiveKey(U, readLock(root, U).sha256);
@@ -1055,6 +1058,9 @@ const copyScripts = (root) => {
   for (const path of SCRIPT_FILES) putFile(join(root, path), readFileSync(join(REPOSITORY, path)));
 };
 
+/** Why a test that puts the fake `aws` first on PATH skips on Windows: it is a script with a #! line, which Windows does not start. */
+const FAKE_AWS_NEEDS_SH = "a fake aws is a script with a #! line, which Windows does not start as a program";
+
 /** setUp's fake `aws` as an executable, serving the bucket directory FAKE_BUCKET names. */
 const FAKE_AWS = `#!/usr/bin/env node
 const { copyFileSync, existsSync, mkdirSync, statSync } = require("node:fs");
@@ -1254,9 +1260,10 @@ describe("pack --from (the publish workflow's prep)", () => {
     const context = published();
     const pr = join(dirname(context.root), "link");
     git(context.root, "worktree", "add", "-q", "-b", "link", pr);
-    mkdirSync(join(pr, "packs/p/upstream/t/publish"), { recursive: true });
-    symlinkSync("../../../../../../etc/passwd", join(pr, "packs/p/upstream/t/publish/cases.json"));
-    git(pr, "add", "--", "packs/p/upstream/t/publish");
+    // The link goes into Git's index as a mode 120000 entry, so no file system link is made: Windows makes one only in
+    // Developer Mode.
+    const target = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: pr, input: "../../../../../../etc/passwd", encoding: "utf8" }).trim();
+    git(pr, "update-index", "--add", "--cacheinfo", `120000,${target},packs/p/upstream/t/publish/cases.json`);
     git(pr, "commit", "-qm", "link");
     expect(await packFailure(context, "link")).toContain("packs/p/upstream/t/publish/cases.json (mode 120000: not a regular file)");
   });
@@ -1698,7 +1705,8 @@ describe("check", () => {
     expect(calls.filter((args) => args[0] !== "sts" && args[1] !== "head-object")).toEqual([]);
   });
 
-  it("exits 0 when S3 holds everything and 1 when it lacks anything, as a command", () => {
+  it("exits 0 when S3 holds everything and 1 when it lacks anything, as a command", ({ skip }) => {
+    skip(process.platform === "win32", FAKE_AWS_NEEDS_SH);
     const { root, bucket, object, sample } = locked();
     const bin = join(dirname(root), "bin");
     putFile(join(bin, "aws"), FAKE_AWS);

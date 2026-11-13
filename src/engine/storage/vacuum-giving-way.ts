@@ -11,11 +11,12 @@
  * first quiet moment long enough for it; once it has waited `noticeMs` it says so, once, with what its attempts did
  * meanwhile.
  */
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { MessagePort } from "node:worker_threads";
 import type Database from "better-sqlite3";
+import { spawn } from "../child-process.js";
 
 /** How long the watched thread may go without answering before the `VACUUM` gives way: well under a hook's 2 s probe. */
 export const GIVE_WAY_MS = 500;
@@ -280,15 +281,12 @@ function attemptEnd(
 /**
  * `vacuum-process.ts` on `path`: its JavaScript as the package ships it, or, where this module runs from its TypeScript
  * source as the tests run it, that source through `tsx`. Its stdout says when it holds the write lock (`committedBy`),
- * its stderr why it failed. No console window opens for it on Windows.
+ * its stderr why it failed. No console window opens for it on Windows (`child-process.ts`).
  */
 function startVacuumProcess(path: string): ChildProcess {
   const fromSource = new URL(import.meta.url).pathname.endsWith(".ts");
   const entry = fileURLToPath(new URL(`./vacuum-process.${fromSource ? "ts" : "js"}`, import.meta.url));
-  return spawn(process.execPath, [...(fromSource ? ["--import", "tsx"] : []), entry, path], {
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-  });
+  return spawn(process.execPath, [...(fromSource ? ["--import", "tsx"] : []), entry, path], { stdio: ["ignore", "pipe", "pipe"] });
 }
 
 /** Calls `run` once `signal` aborts, at once when it already has; returns what stops listening. */

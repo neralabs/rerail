@@ -1,0 +1,1 @@
+An idle daemon no longer spends about 1.5% of a CPU core per three open sessions rereading each session's settings and audit queue four times a second; it rereads them only after another process changes the database.

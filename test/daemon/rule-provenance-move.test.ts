@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -6,8 +6,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { RerailDaemon } from "../../src/daemon/index.js";
 import { codeRuleSchema, openRerailDatabase } from "../../src/engine/index.js";
 import { ingestEngineEvent, RerailRuntime } from "../../src/runtime/index.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
+import { slowVacuumNext, untilExists } from "../support/processes/slow-vacuum.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
-import { slowVacuumNext, untilExists } from "../support/slow-vacuum.js";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
@@ -50,7 +51,7 @@ function fileState(path: string): { inline: number; freePages: number } {
  */
 function databaseWithInlineAudits(): { home: string; databasePath: string } {
   const home = mkdtempSync(join(tmpdir(), "rerail-provenance-daemon-"));
-  cleanups.push(() => rmSync(home, { recursive: true, force: true }));
+  cleanups.push(() => removeFolder(home));
   const databasePath = join(home, "rerail.sqlite");
   openRerailDatabase(databasePath).$client.close();
   const provenance = JSON.stringify(Array.from({ length: 300 }, (_, index) => ({

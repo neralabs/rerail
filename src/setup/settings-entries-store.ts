@@ -1,7 +1,8 @@
-import { chmodSync, existsSync, mkdirSync } from "node:fs";
+import { chmodSync, existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import type * as Sqlite from "node:sqlite";
+import { makeRerailHome } from "../engine/storage/private-files.js";
 import { enableWal } from "../engine/storage/sqlite-wal.js";
 import { holdsTable } from "../engine/storage/table-probe.js";
 import { claudeStatusDatabasePath } from "./claude-status-store.js";
@@ -69,7 +70,7 @@ export async function writeAddedSettingsEntries(
   home: string, settingsPath: string, added: AddedSettingsEntries | undefined, writeSettings: () => Promise<void>,
 ): Promise<void> {
   const databasePath = claudeStatusDatabasePath(home);
-  mkdirSync(dirname(databasePath), { recursive: true, mode: 0o700 });
+  makeRerailHome(dirname(databasePath));
   using database = openDatabase(databasePath, { timeout: 5000 });
   chmodSync(databasePath, 0o600);
   enableWal(() => database.exec("PRAGMA journal_mode = WAL"));

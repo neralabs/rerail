@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 //
 // `just rerail-setup | rerail-dev | rerail-down | rerail-status | rerail-reset | rerail-command`: this checkout's
 // development daemon, run on the host from the checkout's own build.
@@ -112,16 +111,23 @@ function readRestoreFlag(argument, next) {
   return { restore: {}, consumed: 0 };
 }
 
+const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+
+/** The fields of an instance file, in the order they are checked, each with the check it must pass. */
+const INSTANCE_FIELDS = [
+  ["checkout", (checkout) => typeof checkout === "string" && isAbsolute(checkout)],
+  ["home", (home) => typeof home === "string" && resolve(home) === home],
+  ["port", (port) => Number.isSafeInteger(port) && port >= 1024 && port <= 65_535],
+];
+
 /** Validates a parsed instance file: absolute paths, and a loopback URL naming exactly its port. */
 export function validateDevInstance(value) {
   const fail = (reason) => {
     throw new Error(`Invalid Rerail dev instance (${reason}); rerun just rerail-setup`);
   };
-  if (value === null || typeof value !== "object" || Array.isArray(value)) fail("not an object");
+  if (!isRecord(value)) fail("not an object");
+  for (const [field, valid] of INSTANCE_FIELDS) if (!valid(value[field])) fail(field);
   const { checkout, home, port, url } = value;
-  if (typeof checkout !== "string" || !isAbsolute(checkout)) fail("checkout");
-  if (typeof home !== "string" || resolve(home) !== home) fail("home");
-  if (!Number.isSafeInteger(port) || port < 1024 || port > 65_535) fail("port");
   if (url !== `http://127.0.0.1:${port}`) fail(`url must be http://127.0.0.1:${port}`);
   return { checkout, home, port, url };
 }
@@ -141,7 +147,7 @@ export function readDevInstance(checkout = CHECKOUT) {
 async function writeJsonAtomically(path, value) {
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const pending = `${path}.${randomUUID()}.tmp`;
-  await writeFile(pending, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+  await writeFile(pending, `${JSON.stringify(value, undefined, 2)}\n`, { mode: 0o600 });
   await rename(pending, path);
 }
 
@@ -282,11 +288,14 @@ export async function daemonInHome(home, checkout) {
   const state = readDaemonStateFile(home);
   if (state === undefined || !processAlive(state.pid)) return { status: "stopped" };
   const health = await daemonHealth(state);
-  const owner = typeof state.packageRoot === "string" && canonicalPath(state.packageRoot) === canonicalPath(checkout)
-    ? "ours"
-    : "foreign";
+  const owner = daemonOwner(state, checkout);
   if (health === undefined || health.pid !== state.pid) return { status: "unresponsive", state, owner };
   return { status: "running", state, health, owner };
+}
+
+/** `ours` when the daemon `state` records was launched from `checkout`'s build, else `foreign`. */
+function daemonOwner(state, checkout) {
+  return typeof state.packageRoot === "string" && canonicalPath(state.packageRoot) === canonicalPath(checkout) ? "ours" : "foreign";
 }
 
 async function terminate(pid) {
@@ -320,10 +329,14 @@ export async function stopDevCheckout(checkout = CHECKOUT) {
 const NATIVE_INPUTS = ["native/src", "native/grammars", "native/Cargo.toml", "native/build.rs", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml"];
 const TS_INPUTS = ["src", "package.json", "tsconfig.json", "tsconfig.build.json"];
 const TS_OUTPUTS = [
-  "dist/cli/cli.js", "dist/cli/daemon-entry.js", "dist/presentation/session-presentation.js", "dist/hosts/omp/default-extension.js", "dist/harness/event-stream.js",
+  "dist/cli/cli.js", "dist/cli/daemon-entry.js", "dist/presentation/session-presentation.js", "dist/runtime/start-state-reader.js",
+  "dist/hosts/omp/default-extension.js", "dist/harness/event-stream.js",
   "dist/hosts/cursor/cursor-hook.js", "dist/hosts/claude/claude-hook.js", "dist/hosts/codex/codex-hook.js",
 ];
 const TS_BUILD_SCRIPTS = ["build:ts", "build:omp", "build:events", "build:cursor", "build:claude", "build:codex"];
+
+/** Folders `newestMtime` does not walk into: installed packages, Cargo's output, and hidden ones. */
+const isUnwalked = (entry) => entry === "node_modules" || entry === "target" || entry.startsWith(".");
 
 /** Newest modification time under `paths` (files or directories), or 0 when none exist. */
 export function newestMtime(root, paths) {
@@ -340,8 +353,7 @@ export function newestMtime(root, paths) {
       return;
     }
     for (const entry of readdirSync(path)) {
-      if (entry === "node_modules" || entry === "target" || entry.startsWith(".")) continue;
-      visit(join(path, entry));
+      if (!isUnwalked(entry)) visit(join(path, entry));
     }
   };
   for (const path of paths) visit(join(root, path));
@@ -390,11 +402,14 @@ export function dependencyFreshness(checkout = CHECKOUT) {
   if (installed === undefined) return "missing";
   const locked = readLockPackages(join(checkout, "package-lock.json")) ?? {};
   for (const [path, entry] of Object.entries(locked)) {
-    if (path === "" || !path.startsWith("node_modules/")) continue;
-    const present = installed[path];
-    if (present === undefined ? entry?.optional !== true && entry?.peer !== true : present.version !== entry?.version) return "stale";
+    if (path.startsWith("node_modules/") && !matchesLock(installed[path], entry)) return "stale";
   }
   return "fresh";
+}
+
+/** Whether the installed package `present` is what the lock `entry` pins: its version, or none for an optional or peer one. */
+function matchesLock(present, entry) {
+  return present === undefined ? entry?.optional === true || entry?.peer === true : present.version === entry?.version;
 }
 
 /** `fresh`, `stale` or `missing` for the dependencies, the native addon, the TypeScript build and the copied UI. */
@@ -423,18 +438,23 @@ function npm(...args) {
   run(process.platform === "win32" ? "npm.cmd" : "npm", args, { shell: process.platform === "win32" });
 }
 
+/** Installs the dependencies when there are none (`missing`); a `stale` tree is reported for the user to refresh. */
+function installMissingDependencies(dependencies) {
+  if (dependencies === "missing") {
+    info("Installing dependencies (npm ci)");
+    npm("ci");
+  } else if (dependencies === "stale") {
+    process.stderr.write("rerail-dev: node_modules differs from package-lock.json; run npm ci to refresh it\n");
+  }
+}
+
 /**
  * Rebuilds whatever is older than its sources. Dependencies are installed only when there are none: `npm ci`
  * deletes node_modules under every process using it, so a drifted tree is reported for the user to refresh.
  */
 function buildStale(checkout) {
   const freshness = buildFreshness(checkout);
-  if (freshness.dependencies === "missing") {
-    info("Installing dependencies (npm ci)");
-    npm("ci");
-  } else if (freshness.dependencies === "stale") {
-    process.stderr.write("rerail-dev: node_modules differs from package-lock.json; run npm ci to refresh it\n");
-  }
+  installMissingDependencies(freshness.dependencies);
   if (freshness.native !== "fresh") {
     info(`Native rules engine is ${freshness.native}; building it`);
     run("/bin/bash", [join(checkout, "scripts", "dev", "rerail-native.sh")]);
@@ -487,15 +507,19 @@ async function clearTarget(instance, previousHome) {
     await terminate(daemon.state.pid);
     await rm(join(home, DAEMON_STATE_FILE), { force: true });
   }
-  if (!(await loopbackPortFree(instance.port))) {
-    // Every daemon of this checkout is stopped by now, so whatever still listens belongs to someone else.
-    const health = await daemonHealth({ url: instance.url });
-    const occupant = health === undefined ? "an unrecognized process" : `Rerail pid ${health.pid} for ${health.workspaceRoot ?? "another workspace"}`;
-    throw new Error(
-      `${instance.url}, this checkout's reserved port, is already served by ${occupant}; stop it, `
-      + `or delete ${INSTANCE_FILE} and rerun just rerail-setup for another port`,
-    );
-  }
+  // Every daemon of this checkout is stopped by now, so whatever still listens belongs to someone else.
+  await refuseTakenPort(instance);
+}
+
+/** Throws, naming what serves it, when the instance's reserved port is not free. */
+async function refuseTakenPort(instance) {
+  if (await loopbackPortFree(instance.port)) return;
+  const health = await daemonHealth({ url: instance.url });
+  const occupant = health === undefined ? "an unrecognized process" : `Rerail pid ${health.pid} for ${health.workspaceRoot ?? "another workspace"}`;
+  throw new Error(
+    `${instance.url}, this checkout's reserved port, is already served by ${occupant}; stop it, `
+    + `or delete ${INSTANCE_FILE} and rerun just rerail-setup for another port`,
+  );
 }
 
 async function up(argv) {
@@ -526,15 +550,20 @@ async function up(argv) {
   run(process.execPath, [join(CHECKOUT, "dist", "cli", "cli.js"), "daemon", "start", "--dev", "--port", String(instance.port)], {
     env: cliEnvironment(instance),
   });
+  await waitUntilHealthy(instance);
+  info(`Rerail dev daemon healthy at ${instance.url}`);
+  return 0;
+}
+
+/** Waits until this checkout's dev daemon answers on the instance's port; throws after `HEALTH_TIMEOUT_MS`. */
+async function waitUntilHealthy(instance) {
   const deadline = Date.now() + HEALTH_TIMEOUT_MS;
   for (;;) {
     const daemon = await daemonInHome(instance.home, CHECKOUT);
-    if (daemon.status === "running" && daemon.owner === "ours" && daemon.state.port === instance.port) break;
+    if (daemon.status === "running" && daemon.owner === "ours" && daemon.state.port === instance.port) return;
     if (Date.now() > deadline) throw new Error(`Rerail did not answer /healthz at ${instance.url}; see ${join(instance.home, "daemon.log")}`);
     await sleep(200);
   }
-  info(`Rerail dev daemon healthy at ${instance.url}`);
-  return 0;
 }
 
 async function down() {

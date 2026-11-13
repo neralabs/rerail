@@ -24,6 +24,7 @@ import {
   type LoadedRulePack,
   type RulePackLocalSource,
 } from "./rule-packs.js";
+import { packCompileChecks, type PackCompileChecks } from "./pack-compile-checks.js";
 import { engineRegexIssues } from "./rule-regexes.js";
 
 /** In the Rerail home: the npm prefix rule packs are installed into. */
@@ -171,6 +172,8 @@ export interface RuleCatalogOptions {
    * inactive. Without the native engine nothing is compiled here; the checkout catalog quarantines such rules.
    */
   readonly compile?: boolean;
+  /** With `compile`, verdicts kept from earlier reads: a pack with one is not compiled again, and one compiled adds its own. */
+  readonly compileChecks?: PackCompileChecks;
   /** The folder or tarball a pack directory was installed from, where it was (`localSources`). */
   readonly localSources?: ReadonlyMap<string, RulePackLocalSource>;
 }
@@ -255,6 +258,19 @@ function compileProblem(loaded: LoadedRulePack, coreVersion: string | undefined)
   return undefined;
 }
 
+/** {@link compileProblem}, from the verdict `options.compileChecks` kept on this pack's content when there is one. */
+function checkedCompileProblem(loaded: LoadedRulePack, options: RuleCatalogOptions): string | undefined {
+  const { compileChecks: checks, coreVersion } = options;
+  if (checks === undefined) return compileProblem(loaded, coreVersion);
+  // The core version is in the key because the reason names it.
+  const packKey = `${coreVersion ?? "-"} ${catalogDigest([loaded])}`;
+  const kept = checks.verdict(packKey);
+  if (kept !== undefined) return kept ?? undefined;
+  const problem = compileProblem(loaded, coreVersion);
+  checks.record(packKey, problem ?? null);
+  return problem;
+}
+
 /**
  * What a skipped pack's `package.json` says about it, as far as it can be read, named by the package npm installed it
  * as where there is one: a package.json naming another package is not taken at its word.
@@ -326,7 +342,7 @@ export function readRuleCatalog(packDirectories: readonly string[], options: Rul
     let problem = packProblem(pack, directory, { holders, owner, reserved }, options);
     if (problem === undefined && compile) {
       try {
-        problem = compileProblem(pack, options.coreVersion);
+        problem = checkedCompileProblem(pack, options);
       } catch (error) {
         if (!(error instanceof EngineUnavailableError)) throw error;
         compile = false;
@@ -378,14 +394,17 @@ let installed: { readonly stamp: string; readonly catalog: RuleCatalog } | undef
  * read again whenever the installed packs or the active core change (`rerail packs add`, `remove`, set-up installing
  * them, `rerail update`), so a running daemon and every catalog built on it follow an install without a restart;
  * otherwise each call returns the same one. A pack on disk the person did not install is left out with why
- * (`unrecordedPacks`), after those the catalog read.
+ * (`unrecordedPacks`), after those the catalog read. The engine's verdict on each pack is kept in the home
+ * (`packCompileChecks`), so only a pack it has not seen under this engine is compiled.
  */
 export function loadRuleCatalog(home: string = defaultRerailHome()): RuleCatalog {
   const directories = installedPackDirectories(home);
   const coreVersion = activeCoreVersion(home);
   const stamp = installedStamp(home, packDirectoriesOnDisk(home), coreVersion);
   if (installed?.stamp !== stamp) {
-    const catalog = readRuleCatalog(directories, { coreVersion, compile: true, localSources: localSources(home, directories) });
+    const compileChecks = packCompileChecks(home);
+    const catalog = readRuleCatalog(directories, { coreVersion, compile: true, compileChecks, localSources: localSources(home, directories) });
+    compileChecks.save();
     installed = { stamp, catalog: { ...catalog, skipped: [...catalog.skipped, ...unrecordedPacks(home)] } };
   }
   return installed.catalog;

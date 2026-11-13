@@ -1,0 +1,1 @@
+Audits recorded before the update now share one copy of which rules ran too, so a database that grew gets its space back: Rerail moves them in the background, then shrinks the file in a quiet moment; if it cannot, `daemon.log` says to run `rerail scrub`.

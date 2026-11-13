@@ -2,15 +2,16 @@
 // make the same bytes, which system tar reads), the tars readArchive refuses, and the locks parseLock refuses.
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { archiveSizeBound, buildArchive, compressArchive, decompressArchive, lockText, parseLock, readArchive, sha256 } from "../../scripts/s3/test-data-archive.mjs";
+import { removeFolderSync } from "../support/platform/remove-folder.ts";
 
 const scratch = [];
 afterEach(() => {
-  for (const directory of scratch.splice(0)) rmSync(directory, { recursive: true, force: true });
+  for (const directory of scratch.splice(0)) removeFolderSync(directory);
 });
 
 const entry = (path, text) => ({ path, bytes: Buffer.from(text, "utf8") });
@@ -132,12 +133,13 @@ describe("buildArchive", () => {
     scratch.push(base);
     const file = join(base, "data.tar");
     writeFileSync(file, buildArchive([...files, ...long]).tar);
-    const listed = spawnSync("tar", ["-tf", file], { encoding: "utf8" });
+    // Paths relative to the folder: GNU tar, first on PATH in Git Bash on Windows, reads `C:` in an absolute path as a host.
+    const listed = spawnSync("tar", ["-tf", "data.tar"], { cwd: base, encoding: "utf8" });
     expect(listed.status).toBe(0);
     expect(listed.stdout.trim().split("\n").sort()).toEqual([...files, ...long].map(({ path }) => path).sort());
     const out = join(base, "out");
     mkdirSync(out);
-    expect(spawnSync("tar", ["-xf", file, "-C", out]).status).toBe(0);
+    expect(spawnSync("tar", ["-xf", "data.tar", "-C", "out"], { cwd: base }).status).toBe(0);
     for (const { path, bytes } of [...files, ...long]) expect(readFileSync(join(out, path)).equals(bytes)).toBe(true);
   });
 

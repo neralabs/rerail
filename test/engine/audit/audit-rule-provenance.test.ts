@@ -2,7 +2,7 @@ import type * as ChildProcessModule from "node:child_process";
 import type { SpawnOptions } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statfsSync, statSync } from "node:fs";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
@@ -19,7 +19,8 @@ import {
 } from "../../../src/engine/storage/rule-provenance-move.js";
 import { tableColumns } from "../../../src/engine/storage/table-probe.js";
 import { type ThreadWatch, vacuumGivingWay } from "../../../src/engine/storage/vacuum-giving-way.js";
-import { slowVacuumNext, untilExists } from "../../support/slow-vacuum.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
+import { slowVacuumNext, untilExists } from "../../support/processes/slow-vacuum.js";
 import { SqliteAuditStore as MainAuditStore } from "../support/main-audit-store.js";
 
 // Every export calls the real one; a test that needs a disk with little free space overrides `statfsSync`.
@@ -48,7 +49,7 @@ const temporaryDirectories: string[] = [];
 afterEach(async () => {
   vi.mocked(statfsSync).mockReset();
   vacuumStart.before = undefined;
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function temporaryDatabase(): Promise<string> {

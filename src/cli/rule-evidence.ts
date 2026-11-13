@@ -108,8 +108,12 @@ function onlyPrefixes(words: readonly string[], index: number): boolean {
   return !state.valueNext;
 }
 
-/** Commands worth a conversation rule wherever they show up. Each `test` reads one simple command from its command word on. */
-export const RISKY_COMMANDS: ReadonlyArray<{ label: string; commands: readonly string[]; test: RegExp }> = [
+/**
+ * Commands worth a conversation rule wherever they show up. Each `test` reads one simple command from its command word
+ * on. `commands` are matched as written, unless `anyCase`: PowerShell and cmd ignore the case of a command word, so
+ * those entries list it in lower case and match any case.
+ */
+export const RISKY_COMMANDS: ReadonlyArray<{ label: string; commands: readonly string[]; test: RegExp; anyCase?: true }> = [
   { label: "force push", commands: ["git"], test: /^git\s+push\b.*\s(?:--force(?:\s|=|$)|-[A-Za-z]*f[A-Za-z]*(?:\s|$))/u },
   // `-n` skips hooks only for `git commit`: for push it is --dry-run, for merge --no-stat.
   {
@@ -121,14 +125,24 @@ export const RISKY_COMMANDS: ReadonlyArray<{ label: string; commands: readonly s
   { label: "discard changes", commands: ["git"], test: /^git\s+(?:clean\b.*\s-[A-Za-z]*f|checkout\s+(?:--|\.)(?:\s|$)|restore\s+(?:--worktree\s+)?\.(?:\s|$))/u },
   // Both flags, in any case, order or grouping: `-rf`, `-Rf`, `-r -f`, `--recursive --force`.
   { label: "recursive delete", commands: ["rm"], test: /^rm(?=.*\s(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive)(?:\s|$))(?=.*\s(?:-[A-Za-z]*f[A-Za-z]*|--force)(?:\s|$))/u },
+  // Codex and Cursor run PowerShell on Windows: Remove-Item or any of its aliases with -Recurse and -Force, each
+  // parameter as any prefix PowerShell takes (`-r`, `-rec`; `-fo`, since `-f` could be -Filter) and `:$true` allowed.
+  {
+    label: "recursive delete",
+    commands: ["remove-item", "ri", "rm", "rmdir", "rd", "del", "erase"],
+    anyCase: true,
+    test: /^(?:remove-item|ri|rm|rmdir|rd|del|erase)(?=.*\s-r(?:e(?:c(?:u(?:r(?:se?)?)?)?)?)?(?::\S*)?(?:\s|$))(?=.*\s-fo(?:r(?:ce?)?)?(?::\S*)?(?:\s|$))/iu,
+  },
+  // cmd's: `rd /s` and `rmdir /s` remove a folder and everything in it.
+  { label: "recursive delete", commands: ["rd", "rmdir"], anyCase: true, test: /^(?:rd|rmdir)(?=.*\s\/s(?:\s|$))/iu },
   { label: "publish", commands: ["npm", "pnpm", "yarn", "cargo", "twine"], test: /^(?:(?:npm|pnpm|yarn|cargo)\s+publish|twine\s+upload)(?:\s|$)/u },
   { label: "sudo", commands: ["sudo"], test: /^sudo(?:\s|$)/u },
 ];
 
 /** The labels one simple command earns, each read from its command word on. */
 function commandLabels(words: readonly string[]): string[] {
-  return RISKY_COMMANDS.filter(({ commands, test }) => {
-    const index = words.findIndex(word => commands.includes(word));
+  return RISKY_COMMANDS.filter(({ commands, test, anyCase }) => {
+    const index = words.findIndex(word => commands.includes(anyCase === true ? word.toLowerCase() : word));
     return index !== -1 && onlyPrefixes(words, index) && test.test(words.slice(index).join(" "));
   }).map(({ label }) => label);
 }
