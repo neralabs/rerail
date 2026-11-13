@@ -290,10 +290,12 @@ const IN_ANY_CASE: Spelling = { flags: "giu", key: text => text.replace(/[^\x20-
  * The forms a replacement can bring into a text that did not hold them. A replacement leaves the text's own characters
  * and the characters of labels, which are never empty, and a label's inner characters touch only labels' characters.
  * So a form that a replacement brings in holds the first or last character of a label, or is made of labels'
- * characters alone: a user or host name at most, or a short Windows path (`RUNNER~1`). Both are judged by `key`.
+ * characters alone: a user or host name at most, or a short Windows path (`RUNNER~1`). Both are judged by `key`. The
+ * labels of every group count, since a label one group's replacement puts in can complete a form of the other group:
+ * a checkout at `C:\Users\alice\src\app` becomes `<checkout>`, which holds a host named `checkout`.
  */
-function formsLabelsCanMake(forms: readonly KnownForm[], key: Spelling["key"]): KnownForm[] {
-  const labels = [...new Set(forms.map(form => key(form.label)))];
+function formsLabelsCanMake(forms: readonly KnownForm[], allLabels: readonly string[], key: Spelling["key"]): KnownForm[] {
+  const labels = [...new Set(allLabels.map(key))];
   if (labels.includes("")) return [...forms];
   const edges = new Set(labels.map(label => [...label]).flatMap(characters => [characters[0], characters.at(-1)]));
   const inLabels = new Set(labels.join(""));
@@ -315,13 +317,14 @@ function nextPlace(text: string, index: number): number {
 /**
  * The forms of a group a text holds. One pattern of every form, longest first, is tried at each place in the text,
  * inside a form it found too, and finds the longest form there; the shorter forms found at the same place are the ones
- * whose key that form's key starts with. Forms a replacement can bring in ({@link formsLabelsCanMake}) are always in.
+ * whose key that form's key starts with. Forms a replacement can bring in with any of `labels`, every group's
+ * ({@link formsLabelsCanMake}), are always in.
  */
-function formFinder(forms: readonly KnownForm[], { flags, key }: Spelling): (text: string) => KnownForm[] {
+function formFinder(forms: readonly KnownForm[], labels: readonly string[], { flags, key }: Spelling): (text: string) => KnownForm[] {
   const byKey = Map.groupBy(forms, form => key(form.value));
   if (byKey.size === 0) return () => [];
   const anywhere = new RegExp([...new Set(forms.map(form => form.value))].map(escapeRegExp).join("|"), flags);
-  const always = formsLabelsCanMake(forms, key);
+  const always = formsLabelsCanMake(forms, labels, key);
   const startingWith = new Map<string, KnownForm[]>();
   return text => {
     const found = new Set(always);
@@ -345,9 +348,10 @@ function formFinder(forms: readonly KnownForm[], { flags, key }: Spelling): (tex
  */
 function scrubFor(knownValues: readonly KnownValue[]): (text: string) => string {
   const forms = knownForms(knownValues);
+  const labels = forms.map(form => form.label);
   const finders = [
-    formFinder(forms.filter(form => WINDOWS_PATH.test(form.value)), IN_ANY_CASE),
-    formFinder(forms.filter(form => !WINDOWS_PATH.test(form.value)), AS_SPELLED),
+    formFinder(forms.filter(form => WINDOWS_PATH.test(form.value)), labels, IN_ANY_CASE),
+    formFinder(forms.filter(form => !WINDOWS_PATH.test(form.value)), labels, AS_SPELLED),
   ];
   return text => {
     let scrubbed = text;

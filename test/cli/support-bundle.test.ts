@@ -729,6 +729,21 @@ describe("scrubText", () => {
     expect(scrubText("x alice/secret y", { knownValues })).toBe("x <<word>> y");
   });
 
+  it("replaces a value that a label of a Windows path completes, and the reverse, as a scrub of one value at a time does", () => {
+    // Windows paths are found in any letter case and every other value as spelled; a label either kind puts in can
+    // complete a value of the other kind.
+    const sets: KnownValue[][] = [
+      [{ value: String.raw`C:\Users\alice\src\secret-proj`, label: "<checkout>" }, { value: "checkout", label: "<host>", word: true }],
+      [{ value: String.raw`C:\Users\alice`, label: "~" }, { value: "~/notes", label: "<redacted>" }],
+      [{ value: "/home/alice/src/app", label: "C:" }, { value: String.raw`C:\Temp`, label: "<temp>" }],
+    ];
+    const texts = (knownValues: readonly KnownValue[]): string[] => knownValues.flatMap(({ value }) => ["cd ", "", "x/"].flatMap(before =>
+      [value, value.toLowerCase(), value.toUpperCase()].flatMap(spelled => ["", "/notes", String.raw`\Temp`, " y"].map(after => `${before}${spelled}${after}`))));
+    const differing = sets.flatMap(knownValues => texts(knownValues).filter(text => scrubText(text, { knownValues }) !== scrubValueByValue(text, knownValues)));
+    expect(differing).toEqual([]);
+    expect(scrubText(String.raw`cd C:\Users\alice\src\secret-proj`, { knownValues: sets[0]! })).toBe("cd <<host>>");
+  });
+
   it("ignores a home or checkout of /, as a container can have, which would eat every path", () => {
     expect(scrubText("src/app.ts", { knownValues: [{ value: "/", label: "~" }] })).toBe("src/app.ts");
   });
