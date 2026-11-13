@@ -113,7 +113,7 @@ fn pinned_corpus_optional_body_and_injection_differential() {
             .iter()
             .all(|record| record.encoded && record.submitted && record.completed)
     );
-    assert!(trace.iter().all(|record| record.peak_application_buffer_bytes <= metal_backend::METAL_BUFFER_LIMIT));
+    assert!(trace.iter().all(|record| record.peak_application_buffer_bytes <= metal_backend::metal_buffer_limit()));
     assert_eq!(
         trace
             .iter()
@@ -4073,7 +4073,7 @@ fn long_interpolated_query_oracles(complete_cpu: bool, metal: bool) {
             assert!(trace.iter().all(|r| r.encoded
                 && r.submitted
                 && r.completed
-                && r.peak_application_buffer_bytes <= metal_backend::METAL_BUFFER_LIMIT));
+                && r.peak_application_buffer_bytes <= metal_backend::metal_buffer_limit()));
             if forced_views {
                 assert!(trace.iter().any(|r| r.kernel == "expanded_publish"));
             }

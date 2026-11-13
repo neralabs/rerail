@@ -40,6 +40,8 @@ const SOURCES: [(&str, GrammarDialect); 5] = [
 ];
 
 #[test]
+
+#[ignore = "open (decision 0128): parses files whose language only the engine registers; to be hosted by rerail-engine"]
 fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
     let Some(device) = METAL_DEVICE.as_ref() else { return };
     let path = temp();

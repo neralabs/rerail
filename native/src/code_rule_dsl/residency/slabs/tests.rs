@@ -30,6 +30,8 @@ use std::sync::Mutex;
 static SERIAL: Mutex<()> = Mutex::new(());
 
 #[test]
+
+#[ignore = "open (decision 0128): parses files whose language only the engine registers; to be hosted by rerail-engine"]
 fn stored_tapes_are_admitted_into_slabs_and_read_in_place() {
     if metal::Device::system_default().is_none() {
         return;

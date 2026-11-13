@@ -4335,6 +4335,7 @@ dependencies = [
  "regex",
  "regex-syntax",
  "rerail-accel",
+ "rerail-prof",
  "rerail-store",
  "rusqlite",
  "serde",

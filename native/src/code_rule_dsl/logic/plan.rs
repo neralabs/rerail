@@ -5473,25 +5473,28 @@ struct Ambient {
     observed: keeps::SharedObserved,
     device: placement::Binding,
     explain: bool,
+    /// The profile's span open where the run issued it: a job's span is under it, on whichever thread runs it.
+    under: Option<String>,
 }
 
 impl Ambient {
     fn here() -> Self {
         let explain = explaining(false);
         explaining(explain);
-        Ambient { plans: share_plans(), memo: super::derived::share(), observed: keeps::share_observed(), device: placement::binding(), explain }
+        Ambient { plans: share_plans(), memo: super::derived::share(), observed: keeps::share_observed(), device: placement::binding(), explain, under: super::profile::here() }
     }
 
     /// While the guard lives, this thread works in the run's ambient.
     fn enter(&self) -> impl Drop {
-        struct Entered(placement::Binding, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>);
+        struct Entered(placement::Binding, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>, super::profile::Span);
         impl Drop for Entered {
             fn drop(&mut self) {
                 placement::set_binding(self.0);
                 explaining(self.1);
             }
         }
-        Entered(placement::set_binding(self.device), explaining(self.explain), Box::new(enter_plans(self.plans.clone())), Box::new(super::derived::enter(self.memo.clone())), Box::new(keeps::enter_observed(self.observed.clone())))
+        let span = super::profile::span_at(self.under.as_deref(), || "issued components (stream job)".into());
+        Entered(placement::set_binding(self.device), explaining(self.explain), Box::new(enter_plans(self.plans.clone())), Box::new(super::derived::enter(self.memo.clone())), Box::new(keeps::enter_observed(self.observed.clone())), span)
     }
 }
 
@@ -6394,8 +6397,24 @@ impl<'a> Run<'a, '_> {
         let cyclic = cyclic_relations(scc, rules);
         self.why_not = None;
         self.why_class = None;
-        if scc.iter().any(|r| prog.lattice.contains_key(r)) {
-            self.why_not = Some("a lattice relation: the native set engine holds sets only".into());
+        // A lattice relation runs here as one row a key, folded by its lattice's join (decision 0124), except where
+        // the component's other machinery keeps sets: a gate, or a request answered (its SQL seeds and probes insert
+        // by key, not by join). A session's `levels` are kept as any relation's: a lattice stratum is not maintained
+        // (`maintain::unmaintainable`), it is derived again each run.
+        if let Some(why) = scc.iter().filter_map(|r| prog.lattice.get(r).map(|l| (r, l))).find_map(|(r, l)| {
+            let lattice = match super::native::lattice(l.lattice()) {
+                Ok(lattice) => lattice,
+                Err(e) => return Some(format!("a lattice relation ({r}): {e}")),
+            };
+            if !lattice.finite() && l.widen.is_none() {
+                return Some(format!("a lattice relation ({r}) of unbounded height without `widen`"));
+            }
+            if prog.gates.iter().any(|(g, _)| scc.contains(g)) || prog.answers.keys().any(|a| scc.contains(a)) {
+                return Some(format!("a lattice relation ({r}) in a component with gates or requests"));
+            }
+            None
+        }) {
+            self.why_not = Some(why);
             self.why_class = Some("a lattice relation".into());
             return Ok(Native::Declined);
         }
@@ -6688,6 +6707,17 @@ impl<'a> Run<'a, '_> {
                 let empty = prog.facts.get(*r).is_none_or(|f| f.is_empty()) && !sql_seeded.contains(*r);
                 rel_lines.push(SpecLine::Rel { name: (*r).clone(), types: types(r), start: if empty { Start::Empty } else { Start::Rows } });
             }
+        }
+        // A lattice relation's key and join, after the relations (decision 0124). One that starts from a kept
+        // relation (a maintained session's survivors) is a set there: it is not folded in place yet.
+        for r in &rels {
+            let Some(l) = prog.lattice.get(*r) else { continue };
+            if based.contains_key(*r) {
+                self.why_not = Some(format!("a lattice relation ({r}) maintained from its kept rows"));
+                self.why_class = Some("a lattice relation".into());
+                return Ok(Native::Declined);
+            }
+            rel_lines.push(SpecLine::Lattice { rel: ri[*r], keys: l.keys, name: l.lattice().to_owned(), widen: l.widen });
         }
         lines.splice(rel_at..rel_at, rel_lines);
         let nseeds = orders.len();
@@ -7130,14 +7160,7 @@ impl<'a> Run<'a, '_> {
         let device = super::native::component::device_report().or_else(|| {
             not_taken.map(|why| super::native::component::DeviceReport { refused: Some(why.to_owned()), ..Default::default() })
         });
-        #[cfg(not(target_os = "macos"))]
-        let _ = not_taken;
-        #[cfg(not(target_os = "macos"))]
-        let device: Option<()> = None;
-        #[cfg(target_os = "macos")]
         placement::record(&stratum_key(scc), &placed, device.as_ref().map(|d| d.refused.clone()));
-        #[cfg(not(target_os = "macos"))]
-        placement::record(&stratum_key(scc), &placed, None);
         if profiling {
             let (u, s) = corpus::thread_usage();
             let work: u64 = counted.iter().chain(earlier.iter().flatten().map(|(_, c)| c)).map(|c| super::profile::plan_work(c)).sum();

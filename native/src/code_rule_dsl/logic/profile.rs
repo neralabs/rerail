@@ -27,7 +27,7 @@
 //! `write(dir)` writes `profile.txt` (the report: spans by CPU, statements by time with their query plans, native
 //! steps by work, the roofline, and warnings) and the tables `spans.tsv`, `sql.tsv` and `native.tsv`. Off, a span costs one load.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -403,6 +403,8 @@ pub struct Open {
     peak: u64,
     children_alloc: u64,
     children_rise: u64,
+    /// Its id in the heap sampler (`rerail_prof::heap::intern`; 0 off).
+    heap: u32,
 }
 
 /// A thread's open spans and the SQL statement it runs, where a dump on another thread can read them (`watch`).
@@ -414,6 +416,178 @@ pub struct Thread {
     opens: Vec<Open>,
     /// The statement SQLite is running for it, and since when (`strict_statement`).
     statement: Option<(String, std::time::Instant)>,
+    /// The CPU its outermost spans took: what of its CPU the spans account for (`threads`).
+    covered: f64,
+    /// The outermost span that closed last, and the thread's CPU then.
+    between: Option<(String, f64)>,
+    /// Its CPU outside every span, by the outermost spans around it: (closed before, opened after) (`gaps`).
+    gaps: HashMap<(String, String), f64>,
+}
+
+/// Where a thread was outside every span before its first span opened, and after its last closed.
+const THREAD_START: &str = "(the thread's start)";
+const THREAD_END: &str = "(the thread's end, or now)";
+
+/// A thread that opened a span leaves its account when it ends (`threads`): its CPU and its spans' then.
+impl Drop for Thread {
+    fn drop(&mut self) {
+        if let Some(cpu) = thread_cpu(self.port) {
+            EXITED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((self.name.clone(), cpu, self.covered));
+            let mut gaps = std::mem::take(&mut self.gaps);
+            if let Some((after, at)) = self.between.take() {
+                *gaps.entry((after, THREAD_END.to_owned())).or_default() += (cpu - at).max(0.0);
+            }
+            let mut ended = EXITED_GAPS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            for (k, v) in gaps {
+                *ended.entry(k).or_default() += v;
+            }
+        }
+    }
+}
+
+/// The gaps of threads that have ended (`gaps`).
+static EXITED_GAPS: LazyLock<Mutex<HashMap<(String, String), f64>>> = LazyLock::new(Default::default);
+
+/// CPU a thread took outside every span, between the outermost span that closed before it (`after`) and the one that
+/// opened after it (`before`), summed over the threads.
+#[derive(Clone, Debug)]
+pub struct Gap {
+    pub after: String,
+    pub before: String,
+    pub cpu: f64,
+}
+
+/// Every thread's CPU outside its spans, by the spans around it, largest first: ended threads' and live ones' (their
+/// CPU since their last span closed counted as before their end).
+pub fn gaps() -> Vec<Gap> {
+    let mut all = EXITED_GAPS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    let live: Vec<_> = THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().filter_map(std::sync::Weak::upgrade).collect();
+    for t in live {
+        let t = t.lock();
+        for (k, v) in &t.gaps {
+            *all.entry(k.clone()).or_default() += v;
+        }
+        if t.opens.is_empty()
+            && let (Some((after, at)), Some(now)) = (&t.between, thread_cpu(t.port))
+        {
+            *all.entry((after.clone(), THREAD_END.to_owned())).or_default() += (now - at).max(0.0);
+        }
+    }
+    let mut out: Vec<Gap> = all.into_iter().map(|((after, before), cpu)| Gap { after, before, cpu }).collect();
+    out.sort_by(|a, b| b.cpu.total_cmp(&a.cpu));
+    out
+}
+
+/// The accounts of threads that opened spans and have ended: name, CPU, CPU under spans.
+static EXITED: LazyLock<Mutex<Vec<(String, f64, f64)>>> = LazyLock::new(Default::default);
+
+/// One thread's CPU, and what of it its spans took.
+#[derive(Clone, Debug)]
+pub struct ThreadCpu {
+    pub name: String,
+    pub cpu: f64,
+    pub covered: f64,
+}
+
+/// The process's CPU by thread (`threads`): every live thread, the ended ones that opened spans, and a row for the
+/// threads that ended without one (the process's CPU less all the others'), so the rows add up to `process`.
+#[derive(Clone, Debug, Default)]
+pub struct Threads {
+    pub process: f64,
+    pub rows: Vec<ThreadCpu>,
+}
+
+/// The process's CPU (user + system) so far.
+pub fn process_cpu() -> f64 {
+    #[cfg(unix)]
+    {
+        let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+        // SAFETY: fills a `rusage` for this process.
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+        let t = |v: libc::timeval| v.tv_sec as f64 + v.tv_usec as f64 / 1e6;
+        t(usage.ru_utime) + t(usage.ru_stime)
+    }
+    #[cfg(not(unix))]
+    {
+        0.0
+    }
+}
+
+/// The live threads' Mach ports and names (macOS; none elsewhere).
+fn live_threads() -> Vec<(u32, String)> {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn mach_port_deallocate(task: libc::mach_port_t, name: libc::mach_port_t) -> libc::kern_return_t;
+        }
+        let mut list: libc::thread_act_array_t = std::ptr::null_mut();
+        let mut count: libc::mach_msg_type_number_t = 0;
+        // SAFETY: the task's own threads; the list and each port's right are given back below.
+        let task = unsafe { libc::mach_task_self() };
+        if unsafe { libc::task_threads(task, &mut list, &mut count) } != 0 {
+            return Vec::new();
+        }
+        let ports: Vec<u32> = (0..count as usize).map(|i| unsafe { *list.add(i) }).collect();
+        let named = ports
+            .iter()
+            .map(|&port| {
+                let mut name = [0 as libc::c_char; 64];
+                // SAFETY: a thread of this task; a thread that ended meanwhile gives a null pthread.
+                let thread = unsafe { libc::pthread_from_mach_thread_np(port) };
+                let name = if thread == 0 || unsafe { libc::pthread_getname_np(thread, name.as_mut_ptr(), name.len()) } != 0 {
+                    String::new()
+                } else {
+                    unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) }.to_string_lossy().into_owned()
+                };
+                (port, if name.is_empty() { "unnamed".to_owned() } else { name })
+            })
+            .collect();
+        for &port in &ports {
+            unsafe { mach_port_deallocate(task, port) };
+        }
+        unsafe { libc::vm_deallocate(task, list as libc::vm_address_t, (count as usize * std::mem::size_of::<libc::thread_act_t>()) as libc::vm_size_t) };
+        named
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Vec::new()
+    }
+}
+
+/// The process's CPU now, by thread: each live thread's, with what its outermost spans took, and the ended ones'.
+/// A span's CPU is its own thread's, so work it hands to another thread (rayon's, a helper's) is under no span unless
+/// that thread opens one (`span_at`): this says where such CPU went.
+pub fn threads() -> Threads {
+    let process = process_cpu();
+    let registered: Vec<(u32, f64)> = THREADS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .filter_map(std::sync::Weak::upgrade)
+        .map(|t| {
+            let t = t.lock();
+            // Spans open now count what they have taken so far.
+            let open = t.opens.first().map_or(0.0, |o| thread_cpu(t.port).map_or(0.0, |now| now - o.start));
+            (t.port, t.covered + open)
+        })
+        .collect();
+    let mut rows: Vec<ThreadCpu> = live_threads()
+        .into_iter()
+        .filter_map(|(port, name)| {
+            let cpu = thread_cpu(port)?;
+            let covered = registered.iter().find(|(p, _)| *p == port).map_or(0.0, |(_, c)| *c);
+            Some(ThreadCpu { name, cpu, covered })
+        })
+        .collect();
+    let live: f64 = rows.iter().map(|t| t.cpu).sum();
+    let ended = EXITED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    let named: f64 = ended.iter().map(|(_, cpu, _)| cpu).sum();
+    rows.extend(ended.into_iter().map(|(name, cpu, covered)| ThreadCpu { name: format!("{name} (ended)"), cpu, covered }));
+    let unnamed = process - live - named;
+    if unnamed > 0.005 {
+        rows.push(ThreadCpu { name: "ended threads that opened no span".to_owned(), cpu: unnamed, covered: 0.0 });
+    }
+    Threads { process, rows }
 }
 
 /// Every thread that opened a span, while it lives.
@@ -431,6 +605,9 @@ fn register() -> std::sync::Arc<parking_lot::Mutex<Thread>> {
         counters: memory::Counters::mine(),
         opens: Vec::new(),
         statement: None,
+        covered: 0.0,
+        between: None,
+        gaps: HashMap::new(),
     }));
     let mut all = THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     all.retain(|t| t.strong_count() > 0);
@@ -463,6 +640,17 @@ pub fn here() -> Option<String> {
 
 /// Opens span `name` under `under`, a path another thread's `here` gave: a pool job's span (`crate::threads`), at
 /// that path whichever thread runs it. Without `under`, under this thread's open span, as `span` opens one.
+/// `f` for a parallel iterator's items, each a sizeable piece of work (a file, a tape): on a thread with no span
+/// open (a pool thread that took the item), under `name` in the span open where `carried` was called; on a thread
+/// with one open (the caller's), as it is. Rayon's work taken by another thread is under no span of that thread's.
+pub fn carried<A, R>(name: &'static str, f: impl Fn(A) -> R + Sync + Send) -> impl Fn(A) -> R + Sync + Send {
+    let under = here();
+    move |a| {
+        let _span = (under.is_some() && STACK.with(|s| s.lock().opens.is_empty())).then(|| span_at(under.as_deref(), || name.to_owned()));
+        f(a)
+    }
+}
+
 pub fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Span {
     match under {
         Some(p) => open(format!("{p}/{}", name())),
@@ -497,7 +685,17 @@ fn open(path: String) -> Span {
     STACK.with(|s| {
         let mut s = s.lock();
         let alloc = s.counters.read();
-        s.opens.push(Open { path, start: cpu(), children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0 });
+        let start = cpu();
+        if s.opens.is_empty() {
+            let (after, at) = s.between.take().unwrap_or_else(|| (THREAD_START.to_owned(), 0.0));
+            if start > at {
+                *s.gaps.entry((after, path.clone())).or_default() += start - at;
+            }
+        }
+        // The heap sampler charges this thread's allocations to the span now (`rerail_prof::heap`).
+        let heap = if rerail_prof::heap::on() { rerail_prof::heap::intern(&path) } else { 0 };
+        rerail_prof::heap::set_span(heap);
+        s.opens.push(Open { path, start, children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0, heap });
     });
     Span(true)
 }
@@ -513,7 +711,12 @@ impl Drop for Span {
             let mut s = s.lock();
             let (allocated, freed) = s.counters.read();
             let Some(open) = s.opens.pop() else { return };
+            rerail_prof::heap::set_span(s.opens.last().map_or(0, |o| o.heap));
             let total = now - open.start;
+            if s.opens.is_empty() {
+                s.covered += total;
+                s.between = Some((open.path.clone(), now));
+            }
             let alloc = allocated.saturating_sub(open.alloc.0);
             let rise = peak.saturating_sub(open.peak);
             if let Some(parent) = s.opens.last_mut() {
