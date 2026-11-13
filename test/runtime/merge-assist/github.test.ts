@@ -20,6 +20,11 @@ const PR_FIELDS = "number,title,url,headRefName,headRefOid,headRepositoryOwner,i
 const WINDOWS = process.platform === "win32";
 /** The file name of a program called `name` on this platform: Windows runs only a file with an extension in PATHEXT. */
 const program = (name: string): string => (WINDOWS ? `${name}.exe` : name);
+/**
+ * How a stopped gh is ended: asked with SIGTERM, or on Windows, which has no signal that asks, its tree ended at once,
+ * which for this stand-in (no pid, so no tree to reach) kills it alone.
+ */
+const STOP_SIGNALS = WINDOWS ? ["SIGKILL"] : ["SIGTERM"];
 
 /** What the fake `gh` does for one invocation. */
 interface Reply {
@@ -163,7 +168,7 @@ describe("gh invocation", () => {
     const error = await client.openPullRequests(REPOSITORY).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(GithubError);
     expect(error).toMatchObject({ reason: "timeout" });
-    expect(gh.calls[0]?.kills).toEqual(["SIGTERM"]);
+    expect(gh.calls[0]?.kills).toEqual(STOP_SIGNALS);
   });
 
   // gh stands in as a shell script, which Windows does not start without a shell; settling on gh's exit is the same code there.
@@ -180,7 +185,7 @@ describe("gh invocation", () => {
     const gh = fakeGh(() => ({ stdout: Buffer.alloc(4 * 1024 * 1024 + 1, 0x20), hang: true }));
     const error = await createGithubClient({ env, spawn: gh.spawn }).openPullRequests(REPOSITORY).catch((caught: unknown) => caught);
     expect(error).toMatchObject({ name: "GithubError", reason: "output" });
-    expect(gh.calls[0]?.kills).toEqual(["SIGTERM"]);
+    expect(gh.calls[0]?.kills).toEqual(STOP_SIGNALS);
   });
 
   it("refuses an owner, name or host that could change the API path, without running gh", async () => {
