@@ -1996,6 +1996,26 @@ fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
     Ok((ours, theirs))
 }
 
+/// The product reads JSON with simdjson: a JSON file's image through the engine's parse
+/// (`TapeImage::parse`, the parsers the library installs as it loads) is simdjson's, its digest the
+/// one simdjson's stage 1 computed (the source's SHA-256); a file simdjson refuses goes to tree-sitter-json.
+#[test]
+fn the_product_reads_json_with_simdjson() {
+    use crate::code_rule_dsl::transducer::packed::json_parser as jp;
+    use sha2::Digest;
+    let grammar = Grammar::new(GrammarDialect::Json).unwrap();
+    assert!(tree_parser(GrammarDialect::Json).is_some(), "JSON's parser is installed");
+    let source = "\u{feff}{\"a\": [1, true, \"x\\ny\"], \"b\": {\"c\": null}}\n";
+    let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+    let simdjson = jp::simdjson::encode(&grammar, source, &|| false).unwrap().unwrap();
+    assert_eq!(product.primary.to_bytes().unwrap(), simdjson.to_bytes().unwrap());
+    assert_eq!(product.primary.source_digest, Some(<[u8; 32]>::from(sha2::Sha256::digest(source.as_bytes()))));
+    // Refused by simdjson (a comment): tree-sitter-json's tape.
+    let jsonc = "// c\n{\"a\": 1}\n";
+    assert!(jp::simdjson::encode(&grammar, jsonc, &|| false).is_err());
+    assert!(TapeImage::parse(&grammar, jsonc, &|| false).unwrap().is_ok());
+}
+
 /// JSON's tapes from simdjson (the engine's JSON parser) are tree-sitter-json's, byte for byte: kinds,
 /// fields, spans and the `_value` supertype, on hand-written cases and on every `.json` file of the
 /// repository simdjson accepts. What it refuses (comments, a trailing comma, invalid JSON) goes to
