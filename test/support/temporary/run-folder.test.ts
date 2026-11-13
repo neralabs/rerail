@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -17,9 +17,22 @@ const DAY_MS = 24 * 60 * MINUTE_MS;
 const NO_PROCESS = 2147483644;
 /** The name vitest gives the folder it copies a run's transformed modules into. */
 const MODULE_COPIES = /^[A-Za-z0-9_-]{21}$/u;
+/** A run folder's name: `rv-`, the pid of the run's vitest process, then mkdtemp's six characters. */
+const RUN_FOLDER = /^rv-\d+-[A-Za-z0-9]{6}$/u;
+/** The longest Unix socket path in bytes, the terminating NUL aside: 107 on Linux, 103 on macOS. */
+const SOCKET_PATH_BYTES = process.platform === "linux" ? 107 : 103;
+/** How far below its temp folder the `socket` test file's socket ends, the deepest a test binds. */
+const DEEPEST_SOCKET_BYTES = "/rerail-socket-XXXXXX/rerail-socket/nested/engine.sock".length;
+/** The longest temp folder with room for that socket below a run folder, whose pid Linux gives at most 7 digits. */
+const ROOMY_TEMP_BYTES = SOCKET_PATH_BYTES - DEEPEST_SOCKET_BYTES - "/rv-1234567-XXXXXX".length;
+/** The shortest temp folder with no room for that socket below a run folder, whatever its pid. */
+const CRAMPED_TEMP_BYTES = SOCKET_PATH_BYTES - DEEPEST_SOCKET_BYTES - "/rv-1-XXXXXX".length + 1;
 /** Where this worker's pid means something, as a run folder's owner file names it: the runs below share it. */
 const HERE = thisPlace() ?? "";
-/** What the `stuck` and `locked` test files write next to themselves: the pid of the process in the folder, or the folder. */
+/**
+ * What the `stuck`, `locked` and `socket` test files write next to themselves: the pid of the process in the folder,
+ * the folder, or the temp folder the test file ran with.
+ */
 const NOTE = "note.txt";
 const IMPORTS = [
   `import { mkdtempSync } from "node:fs";`,
@@ -59,11 +72,13 @@ it("leaves a folder and a file it made read-only", () => {
   writeFileSync(new URL("${NOTE}", import.meta.url), locked);
 });
 `,
-  // Listens on a Unix socket as far below the temp folder as engine-service-socket.test.ts's, the deepest a test binds.
+  // Listens on a Unix socket as far below the temp folder as engine-service-socket.test.ts's, the deepest a test binds,
+  // and writes its temp folder next to itself.
   socket: `${IMPORTS}
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 it("listens on a socket 54 bytes below the temp folder", async () => {
+  writeFileSync(new URL("${NOTE}", import.meta.url), tmpdir());
   const folder = join(mkdtempSync(join(tmpdir(), "rerail-socket-")), "rerail-socket", "nested");
   mkdirSync(folder, { recursive: true });
   const server = createServer();
@@ -102,6 +117,19 @@ async function scratch(): Promise<{ temp: string; tests: string }> {
     await writeFile(join(root, "tests", name, `${name}.test.ts`), text);
   }
   return { temp: join(root, "temp"), tests: join(root, "tests") };
+}
+
+/**
+ * An empty temp folder `bytes` long, outside this run's folder, as a TMPDIR set by hand may be, so a run there picks
+ * its run folder's place as such a run does. Its parent in /tmp is named rerail-vitest-*, so a later run removes it a
+ * day after a kill left it.
+ */
+async function tempOfLength(bytes: number): Promise<string> {
+  const root = await mkdtemp("/tmp/rerail-vitest-k-");
+  scratches.push(root);
+  const temp = join(root, "t".repeat(bytes - root.length - 1));
+  await mkdir(temp);
+  return temp;
 }
 
 /**
@@ -234,8 +262,8 @@ async function takeNote(path: string): Promise<string | undefined> {
 describe("a test run's temporary folders", () => {
   it("are all gone after the run, with the folders of ended runs, and a running run's folder stays", async () => {
     const { temp, tests } = await scratch();
-    const endedRun = `rerail-vitest-${NO_PROCESS}-a1b2c3`;
-    const runningRun = `rerail-vitest-${process.pid}-d4e5f6`;
+    const endedRun = `rv-${NO_PROCESS}-a1b2c3`;
+    const runningRun = `rv-${process.pid}-d4e5f6`;
     // Each test file's home and store from before the run folder, made straight in the temp folder.
     const olderRunsDayOld = "rerail-vitest-home-g7h8i9";
     const olderRunsRecent = "rerail-vitest-store-j1k2l3";
@@ -264,16 +292,16 @@ describe("a test run's temporary folders", () => {
     const { temp, tests } = await scratch();
     // A run in a container or sandbox with a pid namespace of its own, or on another host, that shares this temp
     // folder: its pid names no process here, so only its owner file tells whether it still runs.
-    const elsewhereRunning = `rerail-vitest-${NO_PROCESS}-p1q2r3`;
-    const elsewhereQuiet = `rerail-vitest-${NO_PROCESS}-s4t5u6`;
+    const elsewhereRunning = `rv-${NO_PROCESS}-p1q2r3`;
+    const elsewhereQuiet = `rv-${NO_PROCESS}-s4t5u6`;
     await ownedFolder(join(temp, elsewhereRunning), { place: "host elsewhere\n", agoMs: 9 * MINUTE_MS });
     await ownedFolder(join(temp, elsewhereQuiet), { place: "host elsewhere\n", agoMs: 11 * MINUTE_MS });
     // A run from here that stopped a day ago, whose pid a running process has since been given.
-    const pidTakenSince = `rerail-vitest-${process.pid}-v7w8x9`;
+    const pidTakenSince = `rv-${process.pid}-v7w8x9`;
     await ownedFolder(join(temp, pidTakenSince), { place: HERE, agoMs: 2 * DAY_MS });
     // A run between making its folder and writing its owner file, or killed in between: its age decides.
-    const noOwnerYet = `rerail-vitest-${NO_PROCESS}-y1z2a3`;
-    const noOwnerDayOld = `rerail-vitest-${NO_PROCESS}-b4c5d6`;
+    const noOwnerYet = `rv-${NO_PROCESS}-y1z2a3`;
+    const noOwnerDayOld = `rv-${NO_PROCESS}-b4c5d6`;
     for (const name of [noOwnerYet, noOwnerDayOld]) await mkdir(join(temp, name, "inside"), { recursive: true });
     await backdate(join(temp, noOwnerDayOld), 2 * DAY_MS);
 
@@ -291,7 +319,7 @@ describe("a test run's temporary folders", () => {
     await killed.ended;
     // The killed run's folder, and the folder vitest copied its modules into.
     const afterKill = await readdir(temp);
-    expect(afterKill.filter(name => name.startsWith("rerail-vitest-"))).toHaveLength(1);
+    expect(afterKill.filter(name => RUN_FOLDER.test(name))).toHaveLength(1);
     expect(afterKill.filter(name => MODULE_COPIES.test(name))).toHaveLength(1);
 
     const next = await startRun(join(tests, "leaves"), temp).ended;
@@ -338,20 +366,31 @@ describe("a test run's temporary folders", () => {
     expect(await readdir(temp)).toEqual([]);
   }, 120_000);
 
+  it.skipIf(process.platform === "win32")("stay on the temp folder's filesystem when the deepest socket a test binds fits below a run folder there", async () => {
+    const { tests } = await scratch();
+    const temp = await tempOfLength(ROOMY_TEMP_BYTES);
+
+    const run = await startRun(join(tests, "socket"), temp).ended;
+
+    expect(run.code, run.output).toBe(0);
+    // The socket test file's temp folder was a run folder in `temp`.
+    const used = await readFile(join(tests, "socket", NOTE), "utf8");
+    expect([dirname(used), basename(used)]).toEqual([temp, expect.stringMatching(RUN_FOLDER)]);
+    expect(await readdir(temp)).toEqual([]);
+  }, 120_000);
+
   it.skipIf(process.platform === "win32")("go in /tmp when the deepest socket a test binds would not fit below a run folder in the temp folder", async () => {
     const { tests } = await scratch();
-    // Straight in /tmp, the temp folder is 32 bytes, as a TMPDIR set by hand may be: a socket 54 bytes below it fits,
-    // and one below a run folder there too does not. Named rerail-vitest-*, it goes with a later run a day after a kill
-    // left it.
-    const temp = await mkdtemp("/tmp/rerail-vitest-socket-");
-    scratches.push(temp);
+    const temp = await tempOfLength(CRAMPED_TEMP_BYTES);
     const run = startRun(join(tests, "socket"), temp);
 
     const result = await run.ended;
 
     expect(result.code, result.output).toBe(0);
+    const used = await readFile(join(tests, "socket", NOTE), "utf8");
+    expect([dirname(used), basename(used)]).toEqual(["/tmp", expect.stringMatching(RUN_FOLDER)]);
     expect(await readdir(temp)).toEqual([]);
-    expect((await readdir("/tmp")).filter(name => name.startsWith(`rerail-vitest-${run.child.pid}-`))).toEqual([]);
+    expect((await readdir("/tmp")).filter(name => name.startsWith(`rv-${run.child.pid}-`))).toEqual([]);
   }, 120_000);
 
   // A read-only folder stops only a user other than root.

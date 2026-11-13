@@ -4,6 +4,10 @@
  * vitest.config.ts loads this module as a global setup, in vitest's own process before the first test file: it points
  * TMPDIR, TEMP and TMP at the folder, which `os.tmpdir()` reads, and the workers and every process they start inherit.
  *
+ * A run folder's name is short (`rv-<pid>-XXXXXX`), since it lengthens every path a test makes: a test that bounds the
+ * size of an answer naming its folder, a Windows path near 260 characters, or a socket path, which the temp folder
+ * itself may leave little room for (see `runFolderParent`).
+ *
  * A run killed before it ends (a closed terminal, a tool call's time limit) leaves its folder behind, and a later run
  * removes it once that run has ended. The pid in a run folder's name tells that only where the pid means the same
  * process: a container or sandbox with a pid namespace of its own, or another host, may share the temp folder. So each
@@ -11,11 +15,12 @@
  * namespace and the boot), and the run touches the file every minute while it runs. A run removes a run folder from
  * its own place once no process has the pid, one from another place once its owner file has gone ten minutes
  * untouched, and any run folder once its owner file has gone a day untouched, since the pid may by then belong to
- * another process. A removal that leaves part of a run folder puts its owner file back as it was. Any other
- * `rerail-vitest-*` folder goes once it is a day old: test runs made each test file's home and store
- * (`rerail-vitest-home-*`, `rerail-vitest-store-*`) straight in the temp folder before there was a run folder, and a
- * checkout on an older commit may still be running its tests in one. A run picks those folders at its start and
- * removes them while its tests run, so its first test file waits for none of them; its end waits for that removal.
+ * another process. A run folder with no owner file goes once it is a day old. A removal that leaves part of a run
+ * folder puts its owner file back as it was. A `rerail-vitest-*` folder goes once it is a day old: test runs made each
+ * test file's home and store (`rerail-vitest-home-*`, `rerail-vitest-store-*`) straight in the temp folder before there
+ * was a run folder, and a checkout on an older commit may still be running its tests in one. A run picks those folders
+ * at its start and removes them while its tests run, so its first test file waits for none of them; its end waits for
+ * that removal.
  *
  * vitest makes one folder of its own outside the run folder: when its module cache is off or cannot be made (a
  * read-only node_modules), it copies each transformed module into a folder it names in the temp folder as it starts,
@@ -32,9 +37,12 @@ import { basename, isAbsolute, join, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { TestProject } from "vitest/node";
 
-const PREFIX = "rerail-vitest-";
+/** How a run folder's name starts. */
+const PREFIX = "rv-";
 /** A run folder's name: the prefix, the pid of the vitest process that made it, then mkdtemp's six characters. */
-const RUN_FOLDER = /^rerail-vitest-(\d+)-[A-Za-z0-9]{6}$/u;
+const RUN_FOLDER = /^rv-(\d+)-[A-Za-z0-9]{6}$/u;
+/** How the names start of the folders test runs made straight in the temp folder before there was a run folder. */
+const OLDER_RUNS = "rerail-vitest-";
 /** The file in a run folder that names where its run's pid means something, and that the run touches while it runs. */
 export const OWNER_FILE = ".owner";
 /** How a line of the owner file starts that names a folder vitest made for the run's module copies. */
@@ -128,10 +136,13 @@ export default async function setUpRunFolder(project: TestProject): Promise<() =
 /**
  * Where this run's folder goes: the temp folder, unless the deepest Unix socket a test binds would not fit below a run
  * folder there, when `/tmp` (or the folder RERAIL_TEST_SHORT_TEMP names) takes its place. Tests, and the daemons they
- * start, listen on sockets below the temp folder, and a socket path holds at most 107 bytes on Linux and 103 on macOS:
- * macOS's per-user temp folder (`/var/folders/<2>/<28>/T`, 46 bytes) never leaves the room, and a TMPDIR set by hand
- * may not. Windows sockets are named pipes, with no such limit. A run started inside another run's folder stays there,
- * so that run's end removes what this one leaves.
+ * start, listen on sockets below the temp folder, and a socket path holds at most 107 bytes on Linux and 103 on macOS.
+ * With a short run folder name, any temp folder of up to 35 bytes on Linux (31 on macOS) leaves the room, whatever
+ * the pid, so the run's files stay on that folder's filesystem; macOS's per-user temp folder
+ * (`/var/folders/<2>/<28>/T`, 46 bytes) never does, and a TMPDIR set by hand may not. `/tmp` can be another
+ * filesystem (tmpfs on many Linux hosts), and a test that reads a folder in the order the filesystem lists it can
+ * then see another order. Windows sockets are named pipes, with no such limit. A run started inside another run's
+ * folder stays there, so that run's end removes what this one leaves.
  */
 function runFolderParent(): string {
   const temp = tmpdir();
@@ -237,7 +248,8 @@ function pointVariablesAt(folder: string): () => void {
 /** The folders in `parent` that no running test run uses, this run's own (named `own`) aside. */
 async function endedFolders(parent: string, own: string, place: string | undefined): Promise<Folder[]> {
   const names = await readdir(parent).catch((): string[] => []);
-  const paths = names.filter(name => name.startsWith(PREFIX) && name !== own).map(name => join(parent, name));
+  const ours = names.filter(name => RUN_FOLDER.test(name) || name.startsWith(OLDER_RUNS));
+  const paths = ours.filter(name => name !== own).map(name => join(parent, name));
   const now = Date.now();
   const folders = await Promise.all(paths.map(async path => await endedFolder(path, place, now)));
   return folders.filter(folder => folder !== undefined);
@@ -245,9 +257,8 @@ async function endedFolders(parent: string, own: string, place: string | undefin
 
 /**
  * The folder at `path` when no running test run uses it, undefined while one may: a run folder goes by its owner file,
- * and any other `rerail-vitest-*` folder once it is a day old, a run folder whose run has not yet written its owner file
- * among them. A folder that cannot be read stays, and another user's folder, in a shared /tmp, is never this run's to
- * remove.
+ * and once it is a day old when its run has not written one; a `rerail-vitest-*` folder goes once it is a day old. A
+ * folder that cannot be read stays, and another user's folder, in a shared /tmp, is never this run's to remove.
  */
 async function endedFolder(path: string, place: string | undefined, now: number): Promise<Folder | undefined> {
   const info = await ownFolder(path);
