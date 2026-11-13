@@ -1700,6 +1700,8 @@ struct FileCols {
     nl: Value,
     out: Value,
     counts: Value,
+    /// The file's blocks: its rows of output words.
+    blocks: Value,
 }
 
 /// The record pass on its own (`records`), a function of the passes' signature, where the last
@@ -1759,7 +1761,8 @@ fn file_cols(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts:
     let (starts, lasts, codes) = (column(i64::from(r.starts)), column(i64::from(r.lasts)), column(extracts as i64));
     let ns = f.ins().load(types::I64, fl, counts, 8 * i32::from(r.starts));
     let nl = f.ins().load(types::I64, fl, counts, 8 * i32::from(r.lasts));
-    FileCols { bytes, starts, lasts, codes, ns, nl, out, counts }
+    let blocks = f.ins().load(types::I64, ro, at, 8);
+    FileCols { bytes, starts, lasts, codes, ns, nl, out, counts, blocks }
 }
 
 /// A file's records (`records::pass`): per token, its code from its first and last bytes, stored
@@ -1839,14 +1842,15 @@ fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Rec
     let mut no_word = kind;
     // The marks at its first byte (`Records::marks`): each its mask's word at the start, the
     // bit, and (a mark of one word) the word compared. Straight-line: a load a mark.
-    if !r.marks.is_empty() {
+    if r.marks.iter().any(|&(o, wc)| o != crate::records::WORD_ALONE && wc != 0) {
         let row_w = f.ins().ushr_imm(s, 6);
         let row_off = f.ins().imul_imm(row_w, 8 * outputs as i64);
         let row_at = f.ins().iadd(c.out, row_off);
         let sh = f.ins().band_imm(s, 63);
         for (k, &(o, wc)) in r.marks.iter().enumerate() {
-            // A mark of its word alone: in the word's code bits already.
-            if o == crate::records::WORD_ALONE {
+            // A mark of its word alone: in the word's code bits already. A mark of any word: set
+            // after the tokens, from its bits (`late_marks`).
+            if o == crate::records::WORD_ALONE || wc == 0 {
                 continue;
             }
             let x = f.ins().load(types::I64, fl, row_at, 8 * i32::from(o));
@@ -1903,7 +1907,142 @@ fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Rec
     let flag = f.ins().load(types::I64, fl, c.counts, 8 * extracts as i32);
     let flag = f.ins().bor(flag, bad);
     f.ins().store(stores, flag, c.counts, 8 * extracts as i32);
-    f.ins().jump(then, &[]);
+    late_marks(f, r, outputs, c, n, then, heads);
+}
+
+/// The marks of any word (`Records::marks` with no word): rare bits, so set after the tokens,
+/// not tested at each. Over the file's rows, the marks' words ORed; at each bit, its token by a
+/// binary search over the starts from the token before; where a token starts there, each
+/// mark's bit ORed into its code. Then on to `then`.
+fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, outputs: usize, c: &FileCols, n: Value, then: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
+    let late: Vec<(usize, u16)> = r.marks.iter().enumerate().filter(|(_, m)| m.0 != crate::records::WORD_ALONE && m.1 == 0).map(|(k, m)| (k, m.0)).collect();
+    if late.is_empty() {
+        f.ins().jump(then, &[]);
+        return;
+    }
+    let fl = MemFlags::trusted();
+    let stores = MemFlags::new().with_notrap();
+    let [rows, row, bits, bit, search, probe, found, set, next] = [(); 9].map(|_| f.create_block());
+    // (block, cursor)
+    f.append_block_param(rows, types::I64);
+    f.append_block_param(rows, types::I64);
+    // (block, cursor, bits)
+    for b in [bits, bit] {
+        for _ in 0..3 {
+            f.append_block_param(b, types::I64);
+        }
+    }
+    // (block, cursor, bits, low, high)
+    for _ in 0..5 {
+        f.append_block_param(search, types::I64);
+        f.append_block_param(probe, types::I64);
+    }
+    // (block, cursor, bits, token)
+    for b in [found, set, next] {
+        for _ in 0..4 {
+            f.append_block_param(b, types::I64);
+        }
+    }
+    heads.push((rows, Step::Block));
+    heads.push((bits, Step::Bits));
+    heads.push((search, Step::Token));
+    let zero = f.ins().iconst(types::I64, 0);
+    f.ins().jump(rows, &[zero.into(), zero.into()]);
+
+    f.switch_to_block(rows);
+    let (j, cur) = (f.block_params(rows)[0], f.block_params(rows)[1]);
+    let more = f.ins().icmp(IntCC::UnsignedLessThan, j, c.blocks);
+    f.ins().brif(more, row, &[], then, &[]);
+
+    f.switch_to_block(row);
+    let off = f.ins().imul_imm(j, 8 * outputs as i64);
+    let at = f.ins().iadd(c.out, off);
+    let mut any = None;
+    for &(_, o) in &late {
+        let w = f.ins().load(types::I64, fl, at, 8 * i32::from(o));
+        any = Some(match any {
+            None => w,
+            Some(a) => f.ins().bor(a, w),
+        });
+    }
+    let any = any.expect("a mark");
+    let j1 = f.ins().iadd_imm(j, 1);
+    f.ins().brif(any, bits, &[j.into(), cur.into(), any.into()], rows, &[j1.into(), cur.into()]);
+
+    f.switch_to_block(bits);
+    let p = f.block_params(bits).to_vec();
+    let j1 = f.ins().iadd_imm(p[0], 1);
+    f.ins().brif(p[2], bit, &[p[0].into(), p[1].into(), p[2].into()], rows, &[j1.into(), p[1].into()]);
+
+    // The bit's place, and the first token from the cursor on that starts at it or after.
+    f.switch_to_block(bit);
+    let p = f.block_params(bit).to_vec();
+    f.ins().jump(search, &[p[0].into(), p[1].into(), p[2].into(), p[1].into(), n.into()]);
+
+    f.switch_to_block(search);
+    let q = f.block_params(search).to_vec();
+    let open = f.ins().icmp(IntCC::UnsignedLessThan, q[3], q[4]);
+    let qa: Vec<BlockArg> = q.iter().map(|&v| v.into()).collect();
+    f.ins().brif(open, probe, &qa, found, &[q[0].into(), q[1].into(), q[2].into(), q[3].into()]);
+
+    f.switch_to_block(probe);
+    let q = f.block_params(probe).to_vec();
+    let place = {
+        let b = f.ins().ctz(q[2]);
+        let base = f.ins().ishl_imm(q[0], 6);
+        f.ins().iadd(base, b)
+    };
+    let sum = f.ins().iadd(q[3], q[4]);
+    let mid = f.ins().ushr_imm(sum, 1);
+    let ma = f.ins().ishl_imm(mid, 2);
+    let ma = f.ins().iadd(c.starts, ma);
+    let sv = f.ins().uload32(fl, ma, 0);
+    let below = f.ins().icmp(IntCC::UnsignedLessThan, sv, place);
+    let mid1 = f.ins().iadd_imm(mid, 1);
+    let lo = f.ins().select(below, mid1, q[3]);
+    let hi = f.ins().select(below, q[4], mid);
+    f.ins().jump(search, &[q[0].into(), q[1].into(), q[2].into(), lo.into(), hi.into()]);
+
+    // A token starting at the bit's place: the marks' bits there, into its code.
+    f.switch_to_block(found);
+    let q = f.block_params(found).to_vec();
+    let b = f.ins().ctz(q[2]);
+    let base = f.ins().ishl_imm(q[0], 6);
+    let place = f.ins().iadd(base, b);
+    let inside = f.ins().icmp(IntCC::UnsignedLessThan, q[3], n);
+    let k = f.ins().select(inside, q[3], zero);
+    let ka = f.ins().ishl_imm(k, 2);
+    let sa = f.ins().iadd(c.starts, ka);
+    let sv = f.ins().uload32(fl, sa, 0);
+    let at_it = f.ins().icmp(IntCC::Equal, sv, place);
+    let hit = f.ins().band(inside, at_it);
+    let qa: Vec<BlockArg> = q.iter().map(|&v| v.into()).collect();
+    f.ins().brif(hit, set, &qa, next, &qa);
+
+    f.switch_to_block(set);
+    let q = f.block_params(set).to_vec();
+    let off = f.ins().imul_imm(q[0], 8 * outputs as i64);
+    let at = f.ins().iadd(c.out, off);
+    let b = f.ins().ctz(q[2]);
+    let ka = f.ins().ishl_imm(q[3], 2);
+    let ca = f.ins().iadd(c.codes, ka);
+    let mut code = f.ins().uload32(fl, ca, 0);
+    for &(m, o) in &late {
+        let w = f.ins().load(types::I64, fl, at, 8 * i32::from(o));
+        let x = f.ins().ushr(w, b);
+        let x = f.ins().band_imm(x, 1);
+        let x = f.ins().ishl_imm(x, i64::from(crate::records::MARK_SHIFT) + m as i64);
+        code = f.ins().bor(code, x);
+    }
+    f.ins().istore32(stores, code, ca, 0);
+    f.ins().jump(next, &[q[0].into(), q[1].into(), q[2].into(), q[3].into()]);
+
+    // The bit done: the next, from this token on.
+    f.switch_to_block(next);
+    let q = f.block_params(next).to_vec();
+    let less = f.ins().iadd_imm(q[2], -1);
+    let rest = f.ins().band(q[2], less);
+    f.ins().jump(bits, &[q[0].into(), q[3].into(), rest.into()]);
 }
 
 /// A backward pass (`native_ir::Pass::Back`): per file, its blocks last to first, each
