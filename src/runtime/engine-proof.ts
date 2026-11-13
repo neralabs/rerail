@@ -21,6 +21,11 @@ const PROOF = CHALLENGE;
 const MAX_ANSWER_BYTES = 1_024;
 /** How often a proof tries again for a free instance of a Windows pipe whose instances are all taken. */
 const PIPE_RETRY_MS = 50;
+/**
+ * How long the engine start waits for a free instance of a held Windows pipe: as long as Node's own connect waits for
+ * one, so a busy engine of this home that frees one in that time proves itself, and no second daemon starts beside it.
+ */
+const START_PIPE_WAIT_MS = 30_000;
 
 /** Whether `value` is a challenge as {@link engineHoldsCapability} sends one. */
 export function isEngineChallenge(value: unknown): value is string {
@@ -179,8 +184,10 @@ export async function engineCapabilityProof(
 }
 
 /**
- * Whether the process listening on `socketPath` holds `accessToken` ({@link engineCapabilityProof}). A listener that
- * refuses, answers anything else, hangs up or stays silent for `timeoutMs` does not hold it.
+ * Whether the process listening on `socketPath` holds `accessToken`, as the engine start asks of a pipe another process
+ * holds ({@link engineCapabilityProof}). A Windows pipe whose instances are all taken is waited for up to
+ * {@link START_PIPE_WAIT_MS}, and the listener then has `timeoutMs` to answer. A listener that refuses, answers anything
+ * else, hangs up, stays silent or keeps every instance taken does not hold it.
  */
 export async function engineHoldsCapability(
   socketPath: string,
@@ -188,5 +195,6 @@ export async function engineHoldsCapability(
   timeoutMs = 2_000,
   challenge: string = randomBytes(32).toString("hex"),
 ): Promise<boolean> {
-  return await engineCapabilityProof(socketPath, accessToken, timeoutMs, challenge) === "proved";
+  const route = await proofRoute(socketPath, Date.now() + START_PIPE_WAIT_MS);
+  return typeof route !== "string" && await askForProof(route, accessToken, challenge, Date.now() + timeoutMs) === "proved";
 }
