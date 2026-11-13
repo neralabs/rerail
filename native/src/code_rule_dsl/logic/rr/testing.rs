@@ -164,7 +164,7 @@ fn fixture(path: &Path, dir: &Path, line: usize, text: &str) -> Result<(String, 
     let spanned = syntax::tokens(text).map_err(|e| format!("{}:{line}: {e:?}", path.display()))?;
     let toks: Vec<&Tok> = spanned.iter().map(|(t, _, _)| t).collect();
     let name = match toks.as_slice() {
-        [Tok::Str(name), ..] => name.clone(),
+        [Tok::Str(name), ..] => name.to_string(),
         _ => return bad(path, line, "`.fixture \"<path>\"` then its text"),
     };
     if name.starts_with('/') || name.split('/').any(|part| part == "..") {
@@ -179,8 +179,8 @@ fn fixture(path: &Path, dir: &Path, line: usize, text: &str) -> Result<(String, 
             let n = raw.bytes().take_while(|&b| b == b'`').count();
             Ok((name, dedent(&raw[n..raw.len() - n]).into_bytes()))
         }
-        [_, Tok::Id(from), Tok::Str(file)] if from == "from" => {
-            std::fs::read(dir.join(file)).map(|bytes| (name, bytes)).map_err(|e| format!("{}:{line}: {file}: {e}", path.display()))
+        [_, Tok::Id(from), Tok::Str(file)] if *from == "from" => {
+            std::fs::read(dir.join(file.as_ref())).map(|bytes| (name, bytes)).map_err(|e| format!("{}:{line}: {file}: {e}", path.display()))
         }
         _ => bad(path, line, "`.fixture \"<path>\"` then a fenced text or `from \"<file>\"`"),
     }
@@ -214,7 +214,13 @@ pub fn dedent(body: &str) -> String {
 fn expect(path: &Path, line: usize, text: &str) -> Result<Expect, String> {
     let toks = syntax::tokens(text).map_err(|e| format!("{}:{line}: {e:?}", path.display()))?;
     let mut toks: &[&Tok] = &toks.iter().map(|(t, _, _)| t).collect::<Vec<_>>();
-    let word = |t: &Tok, w: &str| matches!(t, Tok::Id(s) if s == w);
+    let word = |t: &Tok, w: &str| matches!(t, Tok::Id(s) if *s == w);
+    // A name: a word or a string.
+    let named = |t: &Tok| match t {
+        Tok::Id(s) => Some((*s).to_owned()),
+        Tok::Str(s) => Some(s.to_string()),
+        _ => None,
+    };
     let negated = toks.first().is_some_and(|t| word(t, "no"));
     if negated {
         toks = &toks[1..];
@@ -224,24 +230,25 @@ fn expect(path: &Path, line: usize, text: &str) -> Result<Expect, String> {
         toks = &toks[1..];
     }
     let usage = "`.expect [no] <code or _> [at \"<path>\"[:<line>[:<column>]]]`, `.expect [no | only] <relation>(<value>, …)` or `.expect count <name> = <n>`";
-    if let [count, Tok::Id(name) | Tok::Str(name), Tok::P("="), Tok::Num(n)] = toks
+    if let [count, name, Tok::P("="), Tok::Num(n)] = toks
         && word(count, "count")
         && !negated
+        && let Some(name) = named(name)
     {
-        return Ok(Expect { line, negated, what: Expected::Count { name: name.clone(), n: *n as usize } });
+        return Ok(Expect { line, negated, what: Expected::Count { name, n: *n as usize } });
     }
     let (name, rest) = match toks {
-        [Tok::Id(name) | Tok::Str(name), rest @ ..] => (name.clone(), rest),
+        [first, rest @ ..] if let Some(name) = named(first) => (name, rest),
         _ => return bad(path, line, usage),
     };
     if let [Tok::P("("), inner @ .., Tok::P(")")] = rest {
         let mut values = Vec::new();
         for (k, t) in inner.iter().enumerate() {
             match (k % 2, t) {
-                (0, Tok::Str(s)) => values.push(Some((s.clone(), true))),
+                (0, Tok::Str(s)) => values.push(Some((s.to_string(), true))),
                 (0, Tok::Num(n)) => values.push(Some((n.to_string(), false))),
-                (0, Tok::Float(x)) => values.push(Some((x.clone(), false))),
-                (0, Tok::Id(w)) if w == "_" => values.push(None),
+                (0, Tok::Float(x)) => values.push(Some(((*x).to_owned(), false))),
+                (0, Tok::Id(w)) if *w == "_" => values.push(None),
                 (1, Tok::P(",")) => {}
                 _ => return bad(path, line, usage),
             }
@@ -255,7 +262,7 @@ fn expect(path: &Path, line: usize, text: &str) -> Result<Expect, String> {
     match rest {
         [] => {}
         [a, Tok::Str(p), more @ ..] if word(a, "at") => {
-            at = Some(p.clone());
+            at = Some(p.to_string());
             match more {
                 [] => {}
                 [Tok::P(":"), Tok::Num(l)] => row = Some(*l),
