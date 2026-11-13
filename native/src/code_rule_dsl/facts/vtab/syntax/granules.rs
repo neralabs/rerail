@@ -108,6 +108,12 @@ pub fn extra_low(kind: ExtraSpan, i: u32) -> Option<u32> {
     (i < kind.capacity()).then(|| ((EXTRA_FIRST + kind.first() + i / INDEX) << INDEX_BITS) | (i % INDEX))
 }
 
+/// The comment number (from 1) of a `Comment` span's low bits, as `extra_low(ExtraSpan::Comment, i)` made them.
+pub fn comment_of(low: u32) -> Option<u32> {
+    let first = EXTRA_FIRST + ExtraSpan::Comment.first();
+    (low >> INDEX_BITS == first).then_some(low % INDEX)
+}
+
 /// What starts a granule.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Start {

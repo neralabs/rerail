@@ -87,8 +87,6 @@ pub struct Projection {
     /// The nodes whose `text` a rule reads (`TextDemand::read`): those of these kinds, or in these fields of their
     /// parent. `None` is every node.
     pub text_nodes: Option<TextNodes>,
-    /// The nodes whose `node_text` is made (`TextDemand::node_text`); `None` every node.
-    pub node_text_nodes: Option<TextNodes>,
     /// The grammars whose guests keep their partial tree when they do not parse (`.on guest_error partial`,
     /// decision 0055 §6); `"*"` is every grammar. Any other broken guest is withheld.
     pub partial: BTreeSet<String>,
@@ -103,7 +101,7 @@ pub struct Projection {
 
 impl Projection {
     pub fn core() -> Self {
-        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, node_text_nodes: None, partial: BTreeSet::new(), verdict: false, derived: BTreeSet::new() }
+        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: BTreeSet::new(), verdict: false, derived: BTreeSet::new() }
     }
     fn wants(&self, rel: &str) -> bool {
         self.reads.as_ref().is_none_or(|r| r.contains(rel))
@@ -125,13 +123,13 @@ impl Projection {
         let verdict = shape == Shape::T && program.decls.get("syntax_error").is_some_and(|cols| cols.len() == 3);
         let derived: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).collect();
         let reads = reads.into_iter().filter(|r| !derived.contains(r)).collect();
-        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, node_text_nodes: None, partial: partial.collect(), verdict, derived }
+        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: partial.collect(), verdict, derived }
     }
 
     /// This projection, with `text` made at any length for the node kinds whose text the program's rules read
     /// ([`text_kind_demand`]; `matchers` are the program's `ast` relations, by relation, as `matchers::lower` gives them).
     pub fn with_long_text(mut self, program: &crate::code_rule_dsl::logic::front::ast::Program, matchers: &[(String, String, Vec<String>)]) -> Self {
-        let TextDemand { long, any, read, wide, node_text, node_text_wide } = text_kind_demand(program, matchers);
+        let TextDemand { long, any, read, wide } = text_kind_demand(program, matchers);
         self.long_text = long;
         self.long_text_any = !any.is_empty();
         crate::code_rule_dsl::logic::profile::decision("text past the inline bound", || {
@@ -141,13 +139,8 @@ impl Projection {
             None => format!("every node ({} reads the text of a node it does not narrow)", wide.as_deref().unwrap_or("a rule")),
             Some(TextNodes { kinds, fields, parents }) => format!("{} kinds ({}), the nodes in {} fields ({}), and the children of {} kinds ({})", kinds.len(), kinds.iter().take(8).cloned().collect::<Vec<_>>().join(", "), fields.len(), fields.iter().take(8).cloned().collect::<Vec<_>>().join(", "), parents.len(), parents.iter().take(8).cloned().collect::<Vec<_>>().join(", ")),
         });
-        crate::code_rule_dsl::logic::profile::decision("nodes with node_text", || match &node_text {
-            None => format!("every node ({} reads the node_text of a node it does not narrow)", node_text_wide.as_deref().unwrap_or("a rule")),
-            Some(TextNodes { kinds, fields, parents }) => format!("{} kinds ({}), the nodes in {} fields, and the children of {} kinds ({})", kinds.len(), kinds.iter().take(8).cloned().collect::<Vec<_>>().join(", "), fields.len(), parents.len(), parents.iter().take(8).cloned().collect::<Vec<_>>().join(", ")),
-        });
         if !std::env::var("RERAIL_TEXT_NODES").is_ok_and(|v| v == "all") {
             self.text_nodes = read;
-            self.node_text_nodes = node_text;
         }
         self
     }
@@ -199,12 +192,6 @@ pub struct TextDemand {
     pub read: Option<TextNodes>,
     /// Where `read` is every node: the first rule that reads the text of a node it does not narrow.
     wide: Option<String>,
-    /// The nodes whose `node_text` (the exact source text, at any length) is read, as `read` is `text`'s; `None` every
-    /// node. Made for every node, `node_text` holds the source once for each level of nesting: a module's text, each
-    /// class's in it, each function's in those, as atoms.
-    pub node_text: Option<TextNodes>,
-    /// Where `node_text` is every node: the first rule that reads it of a node it does not narrow.
-    node_text_wide: Option<String>,
 }
 
 /// Whether `v` is a node in a field whose every kind is a leaf (`field(x, "attribute", v)`): a token's text, which
@@ -310,6 +297,37 @@ pub(crate) fn long_node_text(n: i64) -> Option<String> {
     let core = *p.core.get(local as usize)?;
     let text = p.facts.text(core);
     (text.len() > core_rr::TEXT_INLINE).then(|| text.to_owned())
+}
+
+/// Node `n`'s exact source text at any length, or a comment span's (a comment no node is: `Extra`'s `node_text`
+/// rows), read from its document in the batch that holds it; none for another span or a document no batch holds.
+/// It answers `node_text`'s requests (decision 0174): only the nodes a rule asks for are read and interned.
+pub(crate) fn node_text_any(n: i64) -> Option<String> {
+    let (key, low) = ((n >> 32) as u32, n as u32);
+    let (batch, i) = TEXTS.read().unwrap_or_else(|p| p.into_inner()).get(&key).cloned()?;
+    let batch = batch.upgrade()?;
+    let p = &batch.docs[i];
+    let f = &p.facts;
+    if let Some(k) = granules::comment_of(low) {
+        // The k-th comment kind's node not inside another that no node is, as `Extra::nodes` numbers them.
+        use crate::code_rule_dsl::language::is_comment_kind;
+        let dialect = batch.dialects.get(&p.tag)?;
+        let mut j = 0;
+        for id in 0..f.len() as u32 {
+            if !f.named(id) || !is_comment_kind(dialect.name(f, id)) || f.parent(id).is_some_and(|q| is_comment_kind(dialect.name(f, q))) {
+                continue;
+            }
+            if p.local[id as usize] == NONE {
+                j += 1;
+                if j == k {
+                    return Some(f.text(id).to_owned());
+                }
+            }
+        }
+        return None;
+    }
+    let core = *p.core.get(p.local_of(low)? as usize)?;
+    Some(f.text(core).to_owned())
 }
 
 /// The node kinds whose text a rule reads, and whether some rule reads the text of a node of any kind. A node's kinds
@@ -492,7 +510,6 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
     let (mut kinds, mut any) = (BTreeSet::new(), Vec::new());
     let mut read = Some(TextNodes::default());
     let mut wide = None;
-    let (mut node_text, mut node_text_wide) = (Some(TextNodes::default()), None::<String>);
     // The kinds of the nodes `v` is a child of (`child(p, v, _)`, `p` of fixed kinds); empty where none is fixed.
     let parents_of = |body: &[Literal], v: &str| -> BTreeSet<String> {
         body.iter()
@@ -527,16 +544,6 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
     for (r, rule) in program.rules.iter().enumerate() {
         for (i, l) in rule.body.iter().enumerate() {
             let Literal::Atom(text) = l else { continue };
-            if !text.neg && text.rel == "node_text" {
-                match text.args.first() {
-                    Some(Term::Var(v)) => narrow(&mut node_text, &mut node_text_wide, &rule.body, v, &rule.head.rel.to_string()),
-                    _ => {
-                        node_text = None;
-                        node_text_wide.get_or_insert_with(|| rule.head.rel.to_string());
-                    }
-                }
-                continue;
-            }
             if text.neg || text.rel != "text" {
                 continue;
             }
@@ -554,7 +561,7 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
             }
         }
     }
-    TextDemand { long: kinds, any, read, wide, node_text, node_text_wide }
+    TextDemand { long: kinds, any, read, wide }
 }
 
 /// Plan-time provenance, not a per-file scan. Only copying a span (including variable equality)
@@ -1632,8 +1639,6 @@ struct Extra {
     end_line: bool,
     col: bool,
     node_text: bool,
-    /// The nodes whose `node_text` is made: of these kinds, or in one of these fields of their parent; `None` every node.
-    node_text_nodes: Option<TextNodes>,
     docof: bool,
     value: bool,
     static_value: bool,
@@ -1697,7 +1702,6 @@ impl Extra {
             end_line: read("end_line"),
             col: read("col"),
             node_text: read("node_text"),
-            node_text_nodes: None,
             docof: read("docof"),
             value: read("value"),
             static_value: read("static_value"),
@@ -1755,7 +1759,7 @@ impl Extra {
     /// Document `p`'s node rows: `line`, `end_line`, `col`, `node_text` and `docof`; and `line`, `end_line`, `col` and
     /// `docof` of `core.rr`'s anonymous tokens (`Locs`), which follow the nodes. A guest's nodes are placed in its file
     /// (`Locs::place`, decision 0055).
-    fn nodes(&mut self, p: &Projected, dialect: Option<&Dialect>, string: &mut dyn FnMut(&str) -> usize) {
+    fn nodes(&mut self, p: &Projected, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
         let tokens = p.extra.as_ref().map_or(0, |x| x.tokens);
         let guest = p.extra.as_deref().filter(|x| x.host.is_some());
@@ -1763,9 +1767,7 @@ impl Extra {
             for (local, &id) in p.core.iter().enumerate() {
                 let n = p.global(local as u32);
                 let (start, end) = (f.start[id as usize] as usize, f.end[id as usize] as usize);
-                if self.node_text
-                    && self.node_text_nodes.as_ref().zip(dialect).is_none_or(|(nodes, dialect)| nodes.reads(f, id, dialect))
-                {
+                if self.node_text {
                     self.node_texts.push([n, string(f.text(id)) as i64]);
                 }
                 if let Some(x) = guest {
@@ -1875,7 +1877,7 @@ impl Extra {
                 }
             });
         }
-        self.nodes(p, dialect, string);
+        self.nodes(p, string);
         let key = i64::from(p.key);
         use granules::ExtraSpan;
         let span = |kind: ExtraSpan, i: usize| extra_span(key, kind, u32::try_from(i).unwrap_or(u32::MAX));
@@ -2288,7 +2290,6 @@ impl Batch {
         let mut errors = Vec::new();
         let span_text = [crate::code_rule_dsl::logic::front::ast::SpanIn::Source, crate::code_rule_dsl::logic::front::ast::SpanIn::Line].map(|within| !core || projection.wants_span_text(within));
         let mut extra = Extra::new(reads, matches, shape, span_text);
-        extra.node_text_nodes = projection.node_text_nodes.clone();
         let mut tree = tree::Tree::new(reads);
         let mut produced: Vec<(Option<u8>, Box<dyn ProducerRun>)> =
             producers().iter().map(|producer| (crate::code_rule_dsl::language::tape_tag(producer.dialect()), producer.start(reads, markers))).collect();
@@ -2527,7 +2528,7 @@ impl Batch {
             } else {
                 // A guest's nodes have their places in its file (`Locs::place`); W's values, f-string trees and CPython's
                 // verdicts are a file's, read off its tape.
-                extra.nodes(&p, dialect, &mut string);
+                extra.nodes(&p, &mut string);
             }
             // A guest's are read only by a producer of guests' rows (string annotations); the others' are its file's.
             for (own, run) in &mut produced {

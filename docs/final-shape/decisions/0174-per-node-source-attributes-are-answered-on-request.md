@@ -1,6 +1,6 @@
 # 0174: A node's source attributes are answered on request, by rules
 
-Status: draft (2026-11-13), for review. It applies decision 0145's shape ("Building on it": a relation answered by a
+Status: draft (2026-11-13), for review; step 1 built (§7). It applies decision 0145's shape ("Building on it": a relation answered by a
 native step) to the per-node relations the projection makes eagerly today, and replaces the Rust demand analysis
 of decisions 0109 and 0108 §1 with rules.
 
@@ -137,7 +137,44 @@ would cost more than the row it asks for (§6).
   the cross-file part that binds a node of another file asks across files. The cross-file part then needs that
   document's batch, which 0109's registry keeps only while a batch holds it.
 
-## 7. Order
+## 7. Step 1, `node_text`: as built (2026-11-13)
+
+`rr::lower`'s `node_text_on_request`, after the program is lowered. Two departures from §1, both found by running it:
+
+- **Only the literals that read the text are left out.** `world_demand` also drops every literal joined to them, so
+  `runtime_node(…) :- runtime_protected(lb, p, x), runtime_gate(d, p), node(d, n, k, _, _), field(n, "name", nm),
+  node_text(nm, x)` lost everything that binds `nm`. A request keeps the literals that do not read the text (or
+  what is computed from it), are joined to the node, and are no negation or aggregate. Dropping any literal only
+  widens a request.
+- **A binder that reads `node_text` is read through a widened copy.** In `cached_err(f, …) :- cached_sel(_, f, _),
+  node_text(f, t), …`, `cached_sel` reads `node_text` itself. Read as it is, the request is recursive with the texts.
+  In `cached-pure-lazy-allowlist` that is not stratifiable (`cached_import_alias` negates `cpl_hasalias` in its own
+  component). So the request reads `rr_wide_cached_sel`: `cached_sel`'s rules with the same literals left out, on
+  the columns they still bind (a fixpoint over the relations). It holds every row of `cached_sel` and reads no text,
+  so requests stratify below every reader. Copies are made only for the relations the requests reach.
+
+`@rr_node_text_any(n)` answers. It reads the node's document through 0109's registry, and also a comment no node is
+(a span `Extra` gives `node_text` rows), by its number. A reader that negates `node_text`, reads it inside an
+aggregate, or names its node by a constant keeps the relation an input, as `RERAIL_NODE_SOURCES=eager` does. The
+profile says which (`node_text on request`). 330d9cc2c's Rust demand for `node_text` is removed; its `text` half stays
+until step 3.
+
+Checked against the oracle (`RERAIL_NODE_SOURCES=eager`, every node), each on a cold store, strict SQL:
+
+| Rule, corpus | Findings | Atoms | Peak memory |
+|---|---|---|---|
+| `serverplan-target-architecture`, `impl/` | 7 = 7 | 467.5 → 54.8 MB | 1.54 → 1.10 GB |
+| `authentication-plan-purity`, `impl/` | 0 = 0 | 466.9 → 54.7 MB | 1.74 → 0.91 GB |
+| `serverplan-target-architecture`, `impl/sqlite` | 7 = 7 | 23.2 → 3.8 MB | |
+| `versioned-merged-identity`, `impl/sqlite` (13 widened relations) | 1 = 1 | 23.1 → 3.7 MB | |
+| `cached-pure-lazy-allowlist`, `impl/sqlite` (26 widened relations) | 8 = 8 | 59.2 = 59.2 MB | |
+
+`cached-pure-lazy-allowlist` reads the text of every node of the kinds it canonicalizes (`cpl_raw`, about 250 k
+requests), so its requests are as many as the nodes. What the 55 MB left on `impl/` holds is
+not yet broken down.
+Test: `node_text_answered_on_request`.
+
+## 8. Order
 
 1. `node_text` on request, checked by §5. Remove 330d9cc2c's demand.
 2. `value` on request, measured on `schema-introspection-data-paths`.
