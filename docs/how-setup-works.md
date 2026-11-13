@@ -583,8 +583,10 @@ no process has written to the database for 2 s, and that process gives way to th
 has not answered for half a second before the `VACUUM` has committed, the daemon ends the process, SQLite drops the
 unfinished `VACUUM`, and the write that was waiting goes through. A `VACUUM` that has committed holds the lock no more,
 and runs to its end; the process tells the daemon when it holds the lock, so a `rerail scrub` or `rerail reset` that
-shrinks the file meanwhile is never taken for that commit. A try that finds the space already given back runs no
-`VACUUM`. The next try waits for a quiet spell twice as long, up to 30 s, and `daemon.log` says so. If no
+shrinks the file before then is not taken for that commit. One whose whole `VACUUM` falls in the instant between the
+process's read and its own `VACUUM` is: that `VACUUM` was short, and the process's own then holds the lock about as
+long without giving way. A try that finds the space already given back runs no `VACUUM`. The next try waits for a
+quiet spell twice as long, up to 30 s, and `daemon.log` says so. If no
 try has committed an hour after the first wait began, `daemon.log` says so once, with what the tries did (none could
 start, how many gave way, or one is running now), the free space and `rerail scrub`, and the daemon keeps trying.
 Stopping the daemon ends a running `VACUUM` at once. Another process that writes while a `VACUUM` runs (a `rerail`
