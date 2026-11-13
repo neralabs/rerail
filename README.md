@@ -115,7 +115,7 @@ A ported rule ships only once it passes the conformance check: it is scored agai
 
 A worktree can also carry rules of its own: each rule document in its `.rerail/rules/` folder runs in that worktree only, with nothing to install or add, and `rerail packs list` there shows what loaded ([a rule for one worktree only](docs/writing-rules.md#a-rule-for-one-worktree-only)). `/rerail-create` writes a rule there when you ask for this worktree only.
 
-Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL and Vue; regex rules and `file` rules read every text file in their scope, `Justfile`, `LICENSE` and lock files included ([Writing path and text rules](docs/path-and-text-rules.md)). Move your own rules between machines with `rerail rules export` and `rerail rules import`.
+Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL, Vue and Java; regex rules and `file` rules read every text file in their scope, `Justfile`, `LICENSE` and lock files included ([Writing path and text rules](docs/path-and-text-rules.md)). Move your own rules between machines with `rerail rules export` and `rerail rules import`.
 
 ## Supported coding agents
 
