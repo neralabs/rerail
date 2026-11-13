@@ -240,25 +240,26 @@ export function gitInstalled(path: string, platform: NodeJS.Platform = process.p
 }
 
 /**
- * The folders Git for Windows keeps its own git.exe in, in the order they are tried: x64 (`mingw64`), ARM64
- * (`clangarm64`), 32-bit (`mingw32`), and the x64 build of Git for Windows 2.56 (`ucrt64`, with no `mingw64` beside
- * it). `ucrt64` comes last, so an install that also holds one of the other folders keeps running that folder's git.exe.
+ * The build folders Git for Windows keeps its own git.exe in, in the order they are tried: `mingw64` (x64),
+ * `clangarm64` (ARM64), `mingw32` (32-bit) and `ucrt64` (the x64 build of Git for Windows 2.56, whose install has no
+ * `mingw64`). `ucrt64` comes last, so an install that also holds one of the other folders keeps running that folder's
+ * git.exe.
  */
 const GIT_FOR_WINDOWS_BUILDS = ["mingw64", "clangarm64", "mingw32", "ucrt64"];
 
 /**
  * The Git program behind Git for Windows' launcher at `path`, or `path` itself. `<Git>\cmd\git.exe` and
- * `<Git>\bin\git.exe` set up the environment and run `<Git>\mingw64\bin\git.exe` (`ucrt64` in Git for Windows 2.56's
- * x64 build, `clangarm64` on ARM64, `mingw32` on 32-bit) as their own child. A timeout kills only the process Rerail
- * started, and on Windows killing a process leaves its children running, so the real Git ran on in the repository
- * after Rerail gave up on it. The real one runs the commands Rerail gives it without the launcher: it finds its own
- * DLLs, helpers and system configuration from its folder.
+ * `<Git>\bin\git.exe` set up the environment and run the build's own `<Git>\<build>\bin\git.exe` (a folder of
+ * {@link GIT_FOR_WINDOWS_BUILDS}) as their own child. A timeout kills only the process Rerail started, and on Windows
+ * killing a process leaves its children running, so the real Git ran on in the repository after Rerail gave up on it.
+ * The real one runs the commands Rerail gives it without the launcher: it finds its own DLLs, helpers and system
+ * configuration from its folder.
  *
  * A launcher is only a `git.exe` in a `cmd` or `bin` folder, which anyone can put on PATH beside a git.exe of their own,
  * so Rerail goes behind it only into a Git for Windows install: `<Git>\cmd\git.exe` runs, and `<Git>\etc\gitconfig` or
  * the build's `share\git` is there. The git.exe it then runs must pass what every PATH entry passes (`trustedFolder`):
  * outside `node_modules`, and outside the repository Rerail runs in by its path and its real path, which a junction
- * from `<Git>\mingw64` into the repository would reach.
+ * from `<Git>\<build>` into the repository would reach.
  */
 export function gitBehindLauncher(path: string, search: GitSearch = currentSearch(), probe: GitProbe & GitPathProbe = machine): string {
   return behindLauncher(path, gitTrust(search, probe), probe);
@@ -309,7 +310,7 @@ export function gitExecutable(): string {
 /**
  * Git Bash's `bash.exe` in the Git for Windows install Rerail runs Git from ({@link gitExecutable}), or undefined
  * without Git or a Git Bash beside it. `<Git>\bin\bash.exe` sits a folder or two above its git.exe: `cmd\`, `bin\` or
- * a build's `bin\` (`mingw64\bin\`, `ucrt64\bin\`).
+ * `<build>\bin\` ({@link GIT_FOR_WINDOWS_BUILDS}).
  */
 export function gitBash(exists: (path: string) => boolean = existsSync): string | undefined {
   let folder: string;
