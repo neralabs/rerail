@@ -1,0 +1,23 @@
+// Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_plan_scope_side_effects.py#L503
+#include "python/values.rr"
+.functor py_int_str(kind:symbol,value:symbol,max_digits:number):symbol
+.decl psf_prefix(code:number,path:number,line:number)
+psf_prefix(c,p,l) :- option("entryPoint","_pse_from_fact"),pv_member(0,"code",c),pv_member(0,"file_path",p),pv_member(0,"line_number",l).
+.decl psf_line(value:symbol)
+psf_line(v) :- psf_prefix(_,_,l),pv_kind(l,k),pv_text(l,t),option("pseIntMaxDigits",n),v=@py_int_str(k,t,to_number(n)).
+.decl psf_overflow()
+psf_overflow() :- psf_prefix(_,_,l),pv_kind(l,"float"),pv_text(l,b),f=@py_float_str(b),(f="inf";f="-inf").
+pv_need(c) :- psf_prefix(c,_,_).
+pv_need(p) :- psf_prefix(_,p,_).
+pv_need(m) :- psf_prefix(_,_,_),psf_line(_),pv_member(0,"message",m).
+pv_need(s) :- psf_prefix(_,_,_),psf_line(_),pv_member(0,"severity",s).
+.decl psf_severity(value:symbol)
+psf_severity("error") :- psf_prefix(_,_,_),!pv_member(0,"severity",_).
+psf_severity(s) :- psf_prefix(_,_,_),pv_member(0,"severity",n),pv_str(n,s).
+.decl psf_value(code:symbol,path:symbol,line:symbol,message:symbol,severity:symbol)
+psf_value(c,p,l,m,s) :- psf_prefix(ci,pi,_),psf_line(l),pv_str(ci,c),pv_str(pi,p),pv_member(0,"message",mi),pv_str(mi,m),psf_severity(s).
+.violation SideEffectsFactConversion(at:span,present:number,source_code:symbol,file_path:symbol,line_json:symbol,source_message:symbol,severity:symbol) code "PSE_FACT_CONVERSION" "Converted fact"
+SideEffectsFactConversion(@place("",0),1,c,p,l,m,s) :- psf_value(c,p,l,m,s).
+SideEffectsFactConversion(@place("",0),0,"","","0","","") :- option("entryPoint","_pse_from_fact"),!psf_value(_,_,_,_,_),!psf_overflow().
+.violation SideEffectsConversionError(at:span,error_type:symbol,detail:symbol) code "PSE_CONVERSION_ERROR" "Conversion error"
+SideEffectsConversionError(@place("",0),"OverflowError","cannot convert float infinity to integer") :- psf_overflow().

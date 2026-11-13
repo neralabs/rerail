@@ -1,0 +1,7 @@
+.policy "data-layer:plan-scope-side-effects-from-fact" revision 1
+.description "Exact typed fact casts and the source helper's exception boundary."
+.language python
+.mode block
+.scope dirs "__no_primary__"
+#include "core.rr"
+#include "data-layer/side-effects-from-fact.rr"
