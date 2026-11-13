@@ -248,14 +248,20 @@ function copyLines(descriptor: number, taken: string, path: string): void {
 
 /**
  * Whether a name of the log other than `taken` holds the file open as `descriptor`: the live log at `path`, `.1`, or a
- * log another hook took. On a file system with no file numbers each name counts as a file of its own ({@link fileId}),
+ * log another hook took. Another hook can move that name on while this one looks, as it takes the live log: when a name
+ * the listing found is gone by the time it is looked at, the files of the log are listed again, as a status read does
+ * ({@link readLogParts}). On a file system with no file numbers each name counts as a file of its own ({@link fileId}),
  * so none does.
  */
 function heldElsewhere(descriptor: number, taken: string, path: string): boolean {
   const id = fileId(fstatSync(descriptor, { bigint: true }), taken);
   const home = dirname(path);
-  const names = [path, join(home, MOVED_ASIDE_FILE), ...takenLogs(home).map(({ name }) => join(home, name))];
-  return names.some(name => name !== taken && fileIdAt(name) === id);
+  for (let listing = 0; listing < LOG_LISTINGS; listing += 1) {
+    const names = listLog(home);
+    if ([...names].some(([name, other]) => other === id && join(home, name) !== taken)) return true;
+    if (![...names.values()].includes(null)) return false;
+  }
+  return false;
 }
 
 /** The {@link fileId} of the file named `name`; undefined when it is missing or cannot be read. */

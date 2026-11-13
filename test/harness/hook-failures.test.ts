@@ -512,6 +512,38 @@ describe("the hook failure log", () => {
     }`);
     expect(said).toMatch(/^Hooks: 3 hook events could not be recorded since 1970-01-01T00:00:05\.000Z, as far back as the log goes; /u);
   });
+
+  // A hook takes the full log while it is also the live log under a second name, cannot move it to `.1`, and gives it
+  // back by copy. As it looks for the log's other names, another hook takes the live log: the first must find the log
+  // under the name the other took, and copy nothing.
+  it("copies nothing back when the log's other name moves on as the hook looks for it", async () => {
+    const rerailHome = await home();
+    writeFullLog(rerailHome);
+    const [live, takenByAnother] = [join(rerailHome, HOOK_FAILURES_FILE), takenName(rerailHome, 1_000)];
+    await recordWithWrapped(rerailHome, 2, {
+      renameSync: `rename => (from, to) => {
+        if (to.endsWith(".1")) throw Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" });
+        rename(from, to);
+        if (to.endsWith(".old")) fs.linkSync(to, from);
+      }`,
+      // Once the hook has removed its own name, so the copy is under way.
+      unlinkSync: `unlink => path => {
+        unlink(path);
+        if (String(path).endsWith(".old")) globalThis.copying = true;
+      }`,
+      readdirSync: `readdir => (...args) => {
+        const names = readdir(...args);
+        if (String(args[0]) === HOME && globalThis.copying && !globalThis.taken) {
+          globalThis.taken = true;
+          fs.linkSync(${JSON.stringify(live)}, ${JSON.stringify(takenByAnother)});
+          fs.unlinkSync(${JSON.stringify(live)});
+        }
+        return names;
+      }`,
+    });
+    expect(logFiles(rerailHome)).toEqual([HOOK_FAILURES_FILE, expect.stringMatching(/^hook-failures\.jsonl\.1000\.[0-9a-f-]+\.old$/u)]);
+    expect(statusCount(rerailHome)).toBe(full + 1);
+  });
 });
 
 interface HookProcess {
