@@ -559,8 +559,11 @@ pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Ve
             store.use_frame_parts(&space, &outputs_rel(&plan), &parts, token, MEMO_RUNS)?;
             // A path's earlier contents: its newest `MEMO_CONTENTS` kept (an edited file's entry each edit, 15 MB for
             // one file of the 20, was kept `MEMO_RUNS` runs: 450 MB of one space).
+            let mut keys: Vec<u64> = puts.iter().map(|p| p.digest).collect();
+            keys.sort_unstable();
+            keys.dedup();
             for rel in [entry_rel(&plan), outputs_rel(&plan)] {
-                store.keep_newest_by_path(&space, &rel.name, MEMO_CONTENTS)?;
+                store.keep_newest_by_path(&space, &rel.name, MEMO_CONTENTS, &keys)?;
             }
             Ok(())
         }),

@@ -661,12 +661,19 @@ impl ContentStore {
     }
 
     /// Forgets `rel`'s frames in `space` but each path's newest `keep` (a memo relation, `MEMO_RELS`: an edited
-    /// file's earlier contents' entries, decision 0117), and returns how many it forgot.
-    pub fn keep_newest_by_path(&self, space: &[u8; 32], rel: &str, keep: usize) -> StoreResult<usize> {
+    /// file's earlier contents' entries, decision 0117), and returns how many it forgot. Only the paths whose frames
+    /// have one of `digests` (their documents' keys, `memo::doc_keys`) are looked at: the ones a run just wrote. Was
+    /// every frame of the relation, at each write: 30,000 files' memo writes read the relation's frames over and over
+    /// (posthog, six minutes of the writer while the run waited).
+    pub fn keep_newest_by_path(&self, space: &[u8; 32], rel: &str, keep: usize, digests: &[u64]) -> StoreResult<usize> {
+        if digests.is_empty() {
+            return Ok(0);
+        }
         let gone: Vec<(Rel, i64)> = {
             let connection = self.connection.lock().expect("content store mutex poisoned");
-            let mut st = connection.prepare_cached("SELECT f.ident, f.part, f.reads, u.used FROM frames f JOIN frame_part_used u ON u.space = f.space AND u.rel = f.rel AND u.ident = f.ident AND u.part = f.part WHERE f.space = ?1 AND f.rel = ?2")?;
-            let rows = st.query_map(params![&space[..], rel], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?, row.get::<_, i64>(3)?)))?;
+            let mut st = connection.prepare_cached("SELECT f.ident, f.part, f.reads, u.used FROM frames f INDEXED BY frames_by_digest JOIN frame_part_used u ON u.space = f.space AND u.rel = f.rel AND u.ident = f.ident AND u.part = f.part WHERE f.space = ?1 AND f.rel = ?2 AND f.digest IN rarray(?3)")?;
+            let digests: rusqlite::vtab::array::Array = std::rc::Rc::new(digests.iter().map(|&d| rusqlite::types::Value::from(d as i64)).collect());
+            let rows = st.query_map(params![&space[..], rel, digests], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?, row.get::<_, i64>(3)?)))?;
             let mut by: HashMap<([u8; 32], String), Vec<(i64, i64)>> = HashMap::new();
             for row in rows {
                 let (ident, part, reads, used) = row?;
@@ -1574,7 +1581,8 @@ mod tests {
             store.keep_frames(&space, &[put(100, "b.py")], &[], Some((&[out.clone()][..], 7, [0; 32]))).unwrap();
         }
         let space = local_space(&live);
-        assert_eq!(store.keep_newest_by_path(&space, MEMO_RELS[1], 4).unwrap(), 2, "a.py's two oldest contents go");
+        assert_eq!(store.keep_newest_by_path(&space, MEMO_RELS[1], 4, &[2]).unwrap(), 0, "only the paths of the digests given are looked at");
+        assert_eq!(store.keep_newest_by_path(&space, MEMO_RELS[1], 4, &[1]).unwrap(), 2, "a.py's two oldest contents go");
         let parts: Vec<i64> = store.connection.lock().unwrap().prepare("SELECT part FROM frames WHERE space = ?1 ORDER BY part").unwrap().query_map([&space[..]], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
         assert_eq!(parts, vec![2, 3, 4, 5, 100]);
         let (frames, _) = store.preload_frames_live().unwrap();
