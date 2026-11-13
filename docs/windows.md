@@ -148,11 +148,11 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
 <summary>The launcher, install locations and Git's home</summary>
 
 - `<Git>\cmd\git.exe` and `<Git>\bin\git.exe` are launchers: they set up the environment and run
-  `<Git>\mingw64\bin\git.exe` (`ucrt64` in Git for Windows 2.56's x64 build, `clangarm64` on ARM64, `mingw32` on
-  32-bit) as their child. Killing a process on Windows leaves its children running, so when a Git call timed out the
-  real Git ran on in the repository and kept its locks. `gitBehindLauncher` (`src/engine/git.ts`) resolves a launcher
-  to that `git.exe`, which finds its own DLLs, helpers and system configuration from its folder. An install that holds
-  `ucrt64` and one of the other folders runs the other one's.
+  `<Git>\mingw64\bin\git.exe` (`ucrt64` in the x64 build from Git for Windows 2.56 on, `clangarm64` on ARM64,
+  `mingw32` on 32-bit) as their child. Killing a process on Windows leaves its children running, so when a Git call
+  timed out the real Git ran on in the repository and kept its locks. `gitBehindLauncher` (`src/engine/git.ts`)
+  resolves a launcher to that `git.exe`, which finds its own DLLs, helpers and system configuration from its folder.
+  On an install that holds `ucrt64` and one of the other folders, Rerail runs that folder's `git.exe`.
 - A Rerail process keeps the `git.exe` it finds (`ProcessGit` in `src/engine/git.ts`) and looks for Git again only
   when a start of it finds no program there (`ENOENT`). An upgrade from Git for Windows 2.55 to 2.56 removes the
   `mingw64\bin\git.exe` a daemon started on 2.55 runs; without the second look, every Git call of that daemon failed
