@@ -22,66 +22,19 @@ use std::sync::{Arc, Weak};
 use tree_sitter::{Language, Node as TsNode, TreeCursor};
 
 /// v9np (decision 0025): structure-only, regular columns, no parent column; 10: supertype
-/// memberships folded into the codes; 14: named-only, the tokens the grammar implies never
-/// written (`tokens::TokenGrammar::stored_children`, RER-131); 15: a keyword or operator left out
-/// only where its kind always implies it (`tokens::kept`).
-pub const TAPE_FORMAT_VERSION: u32 = 15;
-pub const TAPE_MAGIC: &[u8; 8] = b"TMPTAP9N";
-/// The image header: magic, language, the three column widths, version, source length and
-/// digest, and five table lengths: nodes, codes, the code table's bytes, aliases, the alias
-/// table's bytes.
-pub const HEADER_BYTES: usize = header::ALIAS_BYTES + 8;
-
-/// Where an image's header fields are, as byte offsets: the one place a reader of stored bytes
-/// (`resident`, tests) learns the layout, so a format change moves them here.
-pub mod header {
-    /// The magic, 8 bytes.
-    pub(in crate::code_rule_dsl) const MAGIC: usize = 0;
-    /// The language's tape tag, one byte.
-    pub(in crate::code_rule_dsl) const LANGUAGE: usize = 8;
-    /// The `size`, `off` and `tail` widths, a byte each (with `TAIL_FROM_START`).
-    pub const WIDTHS: usize = 9;
-    /// `TAPE_FORMAT_VERSION`, u32.
-    pub(in crate::code_rule_dsl) const VERSION: usize = 12;
-    /// The source's length in bytes, u64.
-    pub(in crate::code_rule_dsl) const SOURCE_LEN: usize = 16;
-    /// The node count, u64; then the code count, the code table's bytes, the alias count and
-    /// the alias table's bytes.
-    pub(in crate::code_rule_dsl) const NODES: usize = 24;
-    pub const CODES: usize = 32;
-    pub const CODE_BYTES: usize = 40;
-    pub const ALIASES: usize = 48;
-    pub const ALIAS_BYTES: usize = 56;
-}
+/// memberships folded into the codes; later formats: `rerail_tape_format::FORMAT_VERSION`.
+pub const TAPE_FORMAT_VERSION: u32 = rerail_tape_format::FORMAT_VERSION;
+/// The format's constants are `rerail_tape_format`'s: the parsers write tapes with its writer
+/// (decision 0140), and an image is one byte string however it was made.
+pub use rerail_tape_format::{CODE_ERROR, CODE_MISSING, COLUMN_ALIGN, ERROR_CODE, FIELD_LIMIT, HEADER_BYTES, KIND_LIMIT, MAGIC as TAPE_MAGIC, SENTINEL, TAIL_FROM_START, header, padded};
+use rerail_tape_format::CODE_EXTRA;
 /// The language tag (`language::tape_tag`) a stored tape image names in its header, if `bytes`
 /// starts like one (any format version): the store picks a frame's dictionary by it.
 pub fn stored_tape_tag(bytes: &[u8]) -> Option<u8> {
     (bytes.len() > header::LANGUAGE && bytes.starts_with(&TAPE_MAGIC[..6])).then(|| bytes[header::LANGUAGE])
 }
-
-/// Each column starts at this alignment from the image's start (format 11), so a reader of the
-/// image in place, as the device reads a resident tape (PIAT §20.2.3), reads aligned columns.
-pub const COLUMN_ALIGN: usize = 16;
-
-/// `length` rounded up to `COLUMN_ALIGN`.
-pub const fn padded(length: usize) -> usize {
-    length.div_ceil(COLUMN_ALIGN) * COLUMN_ALIGN
-}
-/// `TapeImage::widths[2]`'s high bit: a tail is measured from the node's own start, not from
-/// its last descendant's (for a tree where a node ends before its last descendant starts).
-pub const TAIL_FROM_START: u8 = 0x80;
-/// A code's flags.
-const CODE_EXTRA: u8 = 1;
-pub const CODE_ERROR: u8 = 2;
-pub const CODE_MISSING: u8 = 4;
-pub const KIND_LIMIT: usize = 1024;
-pub const FIELD_LIMIT: usize = 64;
-pub const SENTINEL: u16 = u16::MAX;
 pub const NONE: u32 = u32::MAX;
 pub const CHECKPOINT_LIMIT: usize = 0x00ff_ffff;
-/// Tree-sitter's ERROR symbol does not fit the 10-bit kind code. ERROR records store the
-/// grammar's hidden end symbol, which never labels a visible node, and are listed in `error`.
-pub const ERROR_CODE: u16 = 0;
 
 // P's index columns, read by `prefilter`'s `nera_tree` (the §17 SQL fallback, tests only so far).
 #[allow(dead_code)]
@@ -1058,6 +1011,11 @@ impl TapeImage {
     }
 
     pub fn from_bytes(bytes: &[u8], grammar: &Arc<Grammar>) -> Result<Self, String> {
+        Self::read_image(bytes, grammar)
+    }
+
+    /// The image `bytes` hold, of a `grammar` file.
+    fn read_image(bytes: &[u8], grammar: &Grammar) -> Result<Self, String> {
         let mut reader = TapeReader { bytes, offset: 0 };
         if reader.take(8)? != TAPE_MAGIC {
             return Err("wrong tape image magic".into());
@@ -1282,7 +1240,8 @@ impl TapeImage {
     }
 
     /// The tape of a `.rr` file: the tree `logic::rr::syntax` builds as it reads the statements, its comments as
-    /// extras and each statement that does not parse an ERROR leaf (decision 0061).
+    /// extras and each statement that does not parse an ERROR leaf (decision 0061). The lean parser writes it as
+    /// the image's bytes as it parses (decision 0140), so nothing here packs a node: the image is read as stored.
     pub fn encode_rr(grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
         checked(budget)?;
         if grammar.lang != GrammarDialect::Rr {
@@ -1291,29 +1250,7 @@ impl TapeImage {
         if source.len() > u32::MAX as usize {
             return Err("source exceeds tape range".into());
         }
-        // The lean parser's rows, packed as a tree's nodes are, until a parser writes the tape's columns
-        // itself (O-bitlex-writes-tape).
-        let nodes = rerail_rr_syntax::tape(source)
-            .into_iter()
-            .map(|row| {
-                let error = row.kind == rerail_rr_syntax::tape::ERROR;
-                if !error && (usize::from(row.kind) >= KIND_LIMIT || usize::from(row.field) >= FIELD_LIMIT) {
-                    return Err(format!("rr kind {} or field {} exceeds the tape's codes", row.kind, row.field));
-                }
-                Ok(Pending {
-                    kf: if error { ERROR_CODE } else { row.kind | (row.field << 10) },
-                    parent: (row.parent != rerail_rr_syntax::tape::NO_PARENT).then_some(row.parent),
-                    start: row.start,
-                    length: row.end.checked_sub(row.start).ok_or("inverted node span")?,
-                    size: 1,
-                    extra: row.extra != 0,
-                    error,
-                    missing: false,
-                    kind_alias: None,
-                })
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        Self::finish(nodes, Vec::new(), grammar, source, budget)
+        Self::read_image(&rerail_rr_syntax::tape(source), grammar)
     }
 
     /// The image of `nodes`, in preorder with their parents set.

@@ -3309,6 +3309,7 @@ dependencies = [
  "rerail-sessions",
  "rerail-simdjson",
  "rerail-store",
+ "rerail-tape-format",
  "rerail-transducer",
  "rerail-w",
  "roaring",
@@ -3463,6 +3464,7 @@ dependencies = [
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-store",
+ "rerail-tape-format",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
@@ -4207,6 +4209,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-rr-syntax",
+ "rerail-tape-format",
  "ruff_python_ast",
  "ruff_python_parser",
  "ruff_text_size",
@@ -4329,6 +4332,10 @@ dependencies = [
  "tikv-jemalloc-sys",
  "zstd",
 ]
+
+[[package]]
+name = "rerail-tape-format"
+version = "0.1.0"
 
 [[package]]
 name = "rerail-transducer"
