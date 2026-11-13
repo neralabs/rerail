@@ -473,7 +473,7 @@ pub fn syntax_error(src: &str) -> Option<(usize, String)> {
 /// that is no whole string literal.
 pub(in crate::code_rule_dsl) fn string_value(text: &str) -> Option<String> {
     match syntax::tokens(text).ok()?.as_slice() {
-        [(syntax::Tok::Str(value), 0, end)] if *end == text.len() => Some(value.clone()),
+        [(syntax::Tok::Str(value), 0, end)] if *end == text.len() => Some(value.to_string()),
         _ => None,
     }
 }
@@ -495,7 +495,7 @@ pub fn metadata(program: &Program) -> Result<serde_json::Value, Error> {
             return Err(Error::Syntax("policy metadata requires a quoted identifier".to_owned()));
         };
         let revision = tokens.windows(2).find_map(|pair| match (&pair[0].0, &pair[1].0) {
-            (Tok::Id(key), Tok::Num(n)) if key == "revision" => Some(*n),
+            (Tok::Id(key), Tok::Num(n)) if *key == "revision" => Some(*n),
             _ => None,
         });
         policies.push(serde_json::json!({"id": id, "revision": revision}));
