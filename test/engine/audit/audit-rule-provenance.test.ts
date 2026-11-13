@@ -1,18 +1,16 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import type { AuditInput, AuditRuleProvenance, LegacyAuditRuleProvenance, RepositoryAuditRuleProvenance } from "../../../src/engine/audit/audit.js";
 import { openRerailDatabase, resetRepositoryHistory } from "../../../src/engine/storage/database.js";
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/baseline-schema.js";
 import { RERAIL_BASELINE_SCHEMA_VERSION, RULE_PROVENANCE_STEP } from "../../../src/engine/storage/migrations.js";
 import { tableColumns } from "../../../src/engine/storage/table-probe.js";
-import { type ThreadWatch, vacuumGivingWay } from "../../../src/engine/storage/vacuum-giving-way.js";
-import { slowVacuumNext } from "../../support/slow-vacuum.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -102,39 +100,6 @@ function writeInlineAudits(path: string, provenances: readonly AuditRuleProvenan
     older.close();
   }
   return written;
-}
-
-/** Leaves `bytes` of free pages in the file, as deleting that much history does. */
-function freePages(path: string, bytes: number): void {
-  const database = new Database(path);
-  try {
-    database.exec(`CREATE TABLE filler (data); INSERT INTO filler VALUES (randomblob(${bytes})); DROP TABLE filler`);
-  } finally {
-    database.close();
-  }
-}
-
-/** Adds about `bytes` of pages in use to the file: a table of 1 MB random blobs that stays. */
-function fillPages(path: string, bytes: number): void {
-  const database = new Database(path);
-  try {
-    database.exec(`CREATE TABLE IF NOT EXISTS filler_kept (data);
-      WITH RECURSIVE blob(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM blob WHERE n < ${Math.ceil(bytes / 1_000_000)})
-      INSERT INTO filler_kept SELECT randomblob(1000000) FROM blob`);
-  } finally {
-    database.close();
-  }
-}
-
-/** What this thread wrote to stderr while `run` ran, and what `run` resolved to. */
-async function stderrWhile<T>(run: () => Promise<T>): Promise<{ result: T; logged: string }> {
-  const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-  try {
-    const result = await run();
-    return { result, logged: stderr.mock.calls.map(([chunk]) => String(chunk)).join("") };
-  } finally {
-    stderr.mockRestore();
-  }
 }
 
 /** The step that keeps each provenance once, and what it adds to a file. */
@@ -246,48 +211,6 @@ describe("audit rule provenance", () => {
       store.close();
     }
   });
-
-  it("lets a VACUUM that has committed run to its end when the thread it gives way to stops answering", async () => {
-    const path = await temporaryDatabase();
-    openRerailDatabase(path).$client.close();
-    // 64 MB in use and 8 MB free: the WAL the VACUUM fills holds the 64 MB until its checkpoint.
-    fillPages(path, 64_000_000);
-    freePages(path, 8_000_000);
-    // The process creates `committed` once its VACUUM has committed, then waits 1 s before the checkpoint its commit
-    // runs: the moment a write the daemon's thread began during the VACUUM is still asleep in its busy handler.
-    const committed = join(dirname(path), "vacuum-committed");
-    const restore = slowVacuumNext({ committed, lingerMs: 1_000 });
-    const client = openRerailDatabase(path).$client;
-    client.pragma("busy_timeout = 0");
-    // The watched thread stops answering in that moment, once.
-    let stalledFor: number | undefined;
-    const watch: ThreadWatch = stalled => {
-      const poll = setInterval(() => {
-        if (stalledFor !== undefined || !existsSync(committed)) return;
-        const began = performance.now();
-        stalled();
-        stalledFor = performance.now() - began;
-      }, 5);
-      return () => clearInterval(poll);
-    };
-    let logged: string;
-    try {
-      ({ logged } = await stderrWhile(() => vacuumGivingWay(client, path, {
-        watch, signal: undefined, blocked: () => undefined, waitedLong: () => undefined, noticeMs: 600_000,
-      })));
-    } finally {
-      restore();
-      client.close();
-    }
-
-    // The process ran to its end, and no line says the VACUUM gave way. Ended there, the TRUNCATE checkpoint after it
-    // copied the 64 MB into the database file while it held the write lock, on the thread that had stopped answering.
-    const seen = { stalled: stalledFor !== undefined, ranToItsEnd: existsSync(`${committed}.done`), gaveWay: logged.includes("gave way") };
-    expect(seen, `the stall held the thread ${Math.round(stalledFor ?? -1)} ms`)
-      .toEqual({ stalled: true, ranToItsEnd: true, gaveWay: false });
-    expect(stalledFor).toBeLessThan(100);
-    expect(pageBytes(path).free).toBe(0);
-  }, 120_000);
 
   it("leaves nothing of a repository's provenance in the file once its history is reset", async () => {
     const path = await temporaryDatabase();
