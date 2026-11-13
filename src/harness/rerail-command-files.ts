@@ -181,7 +181,7 @@ const COMMAND_BODIES: Record<RerailCommandName, BodyBuilder> = {
   // The removal itself is left out of `allowed`, so Claude Code asks the person once more before running it.
   "rerail-uninstall": (agent, { cli, shell }) => ({
     text: uninstallInstructions(cli, ADAPTER_CAPABILITIES[agent].commandSigil, shell),
-    allowed: [`${cli} install --remove --dry-run`, `${cli} stop`],
+    allowed: [`${cli} install --remove --dry-run`, `${cli} install --remove --delete-data --dry-run`, `${cli} stop`],
   }),
   // The demo file's write and fix still go through the coding agent's own edit permission.
   "rerail-show-me": (agent, { cli, shell }) => ({

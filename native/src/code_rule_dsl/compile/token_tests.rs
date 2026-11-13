@@ -181,9 +181,9 @@ impl Walk<'_> {
     }
 
     fn token_test(&mut self, regex: &str, rel: &Rel, from: &Frame, frame: &Frame, negated: bool, declared: bool, path: &str) {
-        use crate::code_rule_dsl::compile::ast_rule::shared_regex;
-        let Ok(compiled) = shared_regex(regex) else { return };
-        let Ok(whole) = shared_regex(&format!("^(?:{regex})$")) else { return };
+        use crate::code_rule_dsl::regexes::Regex;
+        let Ok(compiled) = Regex::new(regex) else { return };
+        let Ok(whole) = Regex::new(&format!("^(?:{regex})$")) else { return };
         if !self.lang.tokens.iter().any(|token| compiled.is_match(token)) {
             return;
         }
@@ -231,7 +231,7 @@ impl Walk<'_> {
 
     fn layout(&mut self, side: &str, frame: &Frame, negated: bool, path: &str) {
         let parents = frame.parent.clone().map(|kind| BTreeSet::from([kind])).or_else(|| frame.kind.as_ref().and_then(|kind| self.lang.parents.get(kind)).cloned());
-        let any = crate::code_rule_dsl::compile::ast_rule::shared_regex(".").unwrap();
+        let any = crate::code_rule_dsl::regexes::Regex::new(".").unwrap();
         let implied = self.lang.implied_in(parents.as_ref(), &any, None);
         let category = if implied.is_empty() { "stored" } else { "layout" };
         self.tests.insert(Test { category, negated, relation: format!("layout {side}"), regex: String::new(), implied, path: path.to_owned() });

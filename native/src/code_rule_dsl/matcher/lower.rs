@@ -8,7 +8,7 @@ use super::relation::StopBy;
 use super::{AstMatcher, GrammarMatcher};
 use ast_grep_core::MatchStrictness;
 use ast_grep_core::matcher::{Matcher, Pattern};
-use regex::Regex;
+use crate::code_rule_dsl::regexes::Regex;
 use std::sync::Arc;
 use std::collections::{BTreeMap, BTreeSet};
 

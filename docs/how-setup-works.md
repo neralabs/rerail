@@ -264,8 +264,11 @@ launcher starts node through winpty, so set-up shows a person its menu.
 - **Ownership.** Set-up records that it handled `PATH` in `~/.rerail/launcher-path.json`; from then on `PATH` is
   yours. A block you take out stays out until `rerail setup` runs again. `rerail update` adds the entry only when that
   record is missing.
-- **When nothing changes.** Set-up says what it changed. It changes nothing when the running `PATH` already has the
-  directory, the entry is in place, or `RERAIL_MODIFY_PATH=0`. A block written for another Rerail home is replaced.
+- **When nothing changes.** Set-up says what it changed. It changes nothing when the entry is in place, with
+  `RERAIL_MODIFY_PATH=0`, or, once that record exists, when the running `PATH` already has the directory. Before the
+  record exists the running `PATH` does not count: the shell that removed Rerail keeps the directory on its `PATH`
+  after the block is gone, so installing again from it writes the block. A block written for another Rerail home is
+  replaced.
 - **Backup.** A changed startup file keeps one `<file>.rerail.bak` beside it: the file before Rerail last changed it.
   Each change replaces it; `rerail install --remove` deletes it once the block is out.
 
@@ -571,6 +574,12 @@ the file, and a hook or the status line runs such steps itself. A step an older 
 floor. It waits for the new version's daemon or a command that writes; until then a hook or the status line says to
 run `rerail daemon start`.
 
+Storing each new audit's rule provenance once sets no floor, so coding agents on different Rerail versions keep
+sharing the file. An older Rerail reads an empty rule provenance for each audit a newer one wrote, in its
+`audits_list`, its support bundle and what its remote sink sends. Its dashboard and steering never read the
+provenance, and work as before. The audits it writes, and those recorded before the update, keep their provenance in
+their own row, where both versions read it.
+
 An update that finds nothing newer, or fails, keeps the copy from the last version change. One that changes the
 version but cannot take a copy removes the old one, which no longer holds the database before the now-active version.
 
@@ -578,16 +587,43 @@ version but cannot take a copy removes the old one, which no longer holds the da
 
 ## Removing Rerail in detail
 
-`rerail install --remove` takes Rerail off a machine and keeps your rules and history in a backup.
+There are two removals, and `/rerail-uninstall` in a coding agent offers both:
+
+- **`rerail install --remove`** takes Rerail off a machine and keeps your rules and history in a backup.
+- **`rerail install --remove --delete-data`** takes Rerail off and deletes what it kept too. This cannot be undone.
 
 ```sh
 rerail rules export --output ~/rerail-rules.json   # optional: a portable copy of your rules
 rerail install --remove --dry-run                  # print what would change
-rerail install --remove                            # or: --remove --delete-data, keeping nothing
+rerail install --remove                            # remove, keeping a backup
+rerail install --remove --delete-data --dry-run    # print what a full deletion would delete
+rerail install --remove --delete-data              # remove and delete everything
 ```
 
-The database goes to `~/.rerail-clean-YYYYMMDD/rerail-home/`. Restart open harness sessions afterwards: their loaded
-hooks point at files that are about to go.
+Restart open harness sessions afterwards: their loaded hooks point at files that are about to go.
+
+### What each removal leaves behind
+
+`rerail install --remove` leaves your data in place for you to restore or delete:
+
+- **Rerail home** (`~/.rerail`): Rerail's settings, logs and records, such as `consent.json`, `coding-agents.json`,
+  `daemon.log`, `access-token`, `locks`, `profiles` and `device-secrets`. The output names them.
+- **Backups:** `~/.rerail-clean-YYYYMMDD/`, holding your rules and history, and every earlier backup.
+- **Agent config copies:** a `<file>.<timestamp>.bak` beside each agent config file Rerail changed.
+- **Session ledgers:** `<checkout>/.rerail/sessions` in every checkout, and ledgers under a custom `RERAIL_STORAGE_ROOT`.
+- **Device secrets** of `rerail activate` profiles, in the system credential store.
+- **The content cache**, only while another Rerail home's daemon holds it.
+
+`rerail install --remove --delete-data` leaves nothing Rerail wrote in its home, and deletes the home once it is empty.
+It leaves only what it cannot reach, and names each in its output with the command that deletes it:
+
+- **Agent config copies:** each `<file>.<timestamp>.bak`. They hold your own settings from before Rerail changed them.
+- **Unrecorded checkouts:** `.rerail/sessions` in a checkout the database never recorded.
+- **A custom `RERAIL_STORAGE_ROOT`:** the folder it names, which may hold your own files.
+- **A held cache:** the content cache, or the `RERAIL_CONTENT_STORE_PATH` store, while another Rerail home's daemon
+  holds it.
+- **A shared home:** in a Rerail home shared with other files (`RERAIL_HOME=$HOME`), those files, with any `bin`,
+  `versions` or `packs` folder that holds some of them.
 
 <details>
 <summary>What it removes</summary>
@@ -617,8 +653,8 @@ In `bin`, `versions` and `packs` it deletes only what Rerail put there. A folder
 home shared with them, as with `RERAIL_HOME=$HOME`) is kept with those files, and named.
 
 It prints each path it removed, and what it kept in the Rerail home (settings such as `consent.json`, logs, records),
-which you can delete if you will not install Rerail again. A home that also holds other files is never offered for
-deletion whole; only Rerail's files in it are named.
+which you can delete if you will not install Rerail again, or delete with `--delete-data`. A home that also holds other
+files is never offered for deletion whole; only Rerail's files in it are named.
 
 </details>
 
@@ -636,7 +672,8 @@ finishes the job once that session is closed. The rest of the uninstall has happ
 
 ### Removing everything, data included
 
-`rerail install --remove --delete-data` does all of the above but deletes instead of backing up, printing each path it deletes.
+`rerail install --remove --delete-data` does all of the above but deletes instead of backing up, then deletes the rest
+of the Rerail home, printing each path it deletes.
 
 Nothing it deletes can be restored, so export your rules first if you may want them back.
 `rerail install --remove --delete-data --dry-run` lists what it would delete.
@@ -653,6 +690,10 @@ Nothing it deletes can be restored, so export your rules first if you may want t
   link, never its target. Ledgers written elsewhere with `RERAIL_STORAGE_ROOT` are not found.
 - **Content cache:** `~/.cache/rerail`, on Windows `%USERPROFILE%\AppData\Local\rerail` (kept while another Rerail home's daemon holds it, as above), and the file
   `RERAIL_CONTENT_STORE_PATH` names, with its sidecars, when it is set.
+- **The Rerail home:** everything else Rerail wrote there (settings, logs, records, locks, profiles, device secrets),
+  then the folder itself once it is empty. A home shared with other files keeps them.
+- **Device secrets in the system credential store:** the one each `rerail activate` profile keeps in the macOS
+  Keychain, Secret Service or Windows Credential Manager.
 
 `--delete-data` only goes with the whole uninstall: with `--agents`, or with `--root` naming a checkout other than the
 active install, it refuses before changing anything.

@@ -97,14 +97,17 @@ class DaemonLocator {
     const state = await readDaemonState(join(this.home, DAEMON_STATE_FILE));
     // A pid that cannot be the recorded daemon (`recordedDaemonAlive`) never has its URL probed with the capability.
     if (state === undefined || !(await recordedDaemonAlive(state))) throw new Error(DAEMON_NOT_RUNNING);
-    if (this.#confirmed === undefined || !sameDaemon(this.#confirmed, state)) {
-      this.#confirmed = undefined;
-      const probe = await probeDaemon(state, this.fetchImpl);
-      if (probe.status === "refused") throw new Error(DAEMON_REFUSED);
-      if (probe.status !== "ok" || probe.health.pid !== state.pid) throw new Error(DAEMON_NOT_RUNNING);
-      this.#confirmed = state;
-    }
+    if (this.#confirmed === undefined || !sameDaemon(this.#confirmed, state)) await this.#confirm(state);
     return daemonEndpoint(state, "/mcp");
+  }
+
+  /** Probes the daemon `state` records and keeps it as the confirmed one; throws when it refuses or another answers. */
+  async #confirm(state: DaemonState): Promise<void> {
+    this.#confirmed = undefined;
+    const probe = await probeDaemon(state, { fetchImpl: this.fetchImpl });
+    if (probe.status === "refused") throw new Error(DAEMON_REFUSED);
+    if (probe.status !== "ok" || probe.health.pid !== state.pid) throw new Error(DAEMON_NOT_RUNNING);
+    this.#confirmed = state;
   }
 
   /** After a request failed to connect: checks the home's daemon again, and throws when none answers. */

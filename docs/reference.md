@@ -277,6 +277,7 @@ Prerequisites (set-up checks them before changing anything, and says what to do)
 - `rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--port <n>] [--json] [--relay] [--powershell]` takes the answers as arguments. With `--powershell` each answer command is written for PowerShell (`& '<node>' '<rerail home>\current\dist\cli\cli.js' setup ...`), every value PowerShell would read in single quotes (`--packs 'typescript@0.1.1,complexity@0.1.1'`, which it would otherwise split at the comma), and carries `--powershell` on; Codex's and Cursor's `/rerail-start` pass it on Windows, where they run PowerShell. Without it the answers are written for a POSIX shell, Git Bash on Windows, where Claude Code runs them, starting with the sh launcher `rerail`. No answer runs `rerail.cmd`, since cmd.exe would read its arguments again: a `&` in a folder name would end the command there.
 - `rerail install --agents <list> [--dry-run]` only connects coding agents.
 - `rerail install --remove` removes Rerail, keeping `rerail.sqlite` in a dated backup.
+- `rerail install --remove --delete-data` removes Rerail and deletes its data, backups and home.
 
 <details>
 <summary>Launcher, PATH and removal details</summary>
@@ -284,6 +285,8 @@ Prerequisites (set-up checks them before changing anything, and says what to do)
 On Windows the launcher is `rerail.cmd`, plus `rerail` for Git Bash. The `PATH` entry is a marked block in your shell startup file, or the Windows user `Path`; `RERAIL_MODIFY_PATH=0` leaves `PATH` to you. `rerail update` adds it where an older set-up didn't. `rerail update` shells out to `npm` with your `~/.npmrc`.
 
 `rerail install --remove` disconnects every coding agent, takes Rerail off `PATH` and stops the daemon. It moves `rerail.sqlite` to a dated backup, so rules and history are kept. Then it deletes `current`, the launcher, every version, the rule packs and the content cache (`~/.cache/rerail`; on Windows `%USERPROFILE%\AppData\Local\rerail`, and the `~/.cache/rerail` an earlier release used there), naming each.
+
+`rerail install --remove --delete-data` deletes instead of backing up, then deletes the rest of the Rerail home. [What each removal leaves behind](how-setup-works.md#what-each-removal-leaves-behind) lists what stays after each.
 
 </details>
 
@@ -600,7 +603,7 @@ Anything else, including `/native/*`, `/mcp`, `/healthz` and the page, gets `421
 
 ### Daemon state
 
-`~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) holds pid, port and database path; output goes to `daemon.log` beside it. `RERAIL_AUTOSTART=0` or `RERAIL_AUTOSTART=false` stops automatic daemon creation (any other value leaves it on): no hook, session or set-up starts the daemon, so command hooks need an existing daemon or explicit endpoint. A hook that finds none records nothing and logs no failure; `rerail status` says the daemon is not running and that `RERAIL_AUTOSTART=0` keeps hooks from starting it.
+`~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) holds pid, port and database path; output goes to `daemon.log` beside it. Each line the daemon writes there starts with the UTC time it was written (`2026-11-11T15:33:02.123Z `); what Node or the engine write to the file directly, such as the report of a fatal error, has no time, nor do the lines of the `rerail daemon start` that a hook or session runs to start the daemon. `RERAIL_AUTOSTART=0` or `RERAIL_AUTOSTART=false` stops automatic daemon creation (any other value leaves it on): no hook, session or set-up starts the daemon, so command hooks need an existing daemon or explicit endpoint. A hook that finds none records nothing and logs no failure; `rerail status` says the daemon is not running and that `RERAIL_AUTOSTART=0` keeps hooks from starting it.
 
 <details>
 <summary>Ports, reuse and the kernel socket</summary>
@@ -740,7 +743,7 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 | `/rerail-start` | Start in this checkout and its worktrees, attached to the session; runs set-up's questions first if needed. |
 | `/rerail-stop` | Stop recording, evaluation, steering and daemon autostart here and in its worktrees. |
 | `/rerail-update` | Install the newest version. |
-| `/rerail-uninstall` | `rerail install --remove`, keeping a backup of rules and history. Asks first. |
+| `/rerail-uninstall` | `rerail install --remove`, keeping a backup of rules and history, or `--remove --delete-data`, deleting everything. Asks first. |
 | `/rerail-help` | Same as `/rerail`. |
 | `/rerail-show-me` | One-minute demo: the agent breaks a demo rule, is steered and fixes it. |
 | `/rerail-bug-report` | The agent reads a support bundle to tell an engine bug, a shipped-rule bug or your rule's bug. |
@@ -753,7 +756,7 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 - **`/rerail-create`**: suggestions come from sessions (`rerail rules evidence`) and written standards. Following `skills/rerail-create`, the agent drafts the rule, tests it (`rerail rules test <draft.json>`) and reads it back. On your yes, `rerail rules add <draft.json>` and `rerail rules approve <id>` add it to your library and this repository, setting the repository up with that rule if needed. It also tunes misfiring rules, changes where a rule applies (its scope only, a shipped rule's as your copy, without the full review), and audits a pending rule or pack before asking you to approve it.
 - **`/rerail-start`**: OMP and Pi ask set-up's questions via their picker; Claude Code and Cursor as text.
 - **`/rerail-stop`**: the shared daemon keeps running; the reply names `rerail daemon stop`, run in a terminal.
-- **`/rerail-uninstall`**: OMP and Pi ask via a native selector; Claude Code doesn't pre-approve it.
+- **`/rerail-uninstall`**: offers both removals, keeping a backup or deleting everything, the second with its `--dry-run` output. OMP and Pi ask via a native selector, then confirm a full deletion after showing that output; Claude Code doesn't pre-approve either removal.
 - **`/rerail-show-me`**: `rerail show-me` adds rule `local:rerail-show-me`, scoped to `rerail-show-me.js`. The agent writes that file breaking the rule, is steered, and fixes it. `rerail show-me --cleanup` removes both (a concurrent demo elsewhere keeps the rule). It needs Rerail on and set up, never starts or sets up Rerail, and touches only what it wrote. The steer stays in History.
 - **`/rerail-bug-report`**: following `skills/rerail-bug-report`, the agent reads `rerail support-bundle` output (allowlisted, scrubbed diagnostics). It fixes your rule via `/rerail-create`'s Tune. Otherwise it checks the bundle with you and offers a filled-in issue, or files it if asked. Nothing is sent without you ([what the bundle holds](troubleshooting.md#reporting-a-problem)). Claude Code pre-approves the bundle's fixed invocations, `rerail update check` and `rerail rules test`; `--output`, `rerail rules add` and filing ask first.
 
@@ -880,7 +883,7 @@ Full-repository work is capped by a five-minute execution budget, a 100,000-file
 <details>
 <summary>Per-file failures and large files</summary>
 
-A single file may use the policy engine's 32 MB source allowance. Unreadable files never stop a scan. At most 20 per-file failures are listed; the audit record and session summary keep the total (`failureCount`, with `unlistedFailureCount` unlisted), and the footer says `audit failed (N failures)`.
+A single file may use the policy engine's 32 MB source allowance. Unreadable files never stop a scan. At most 20 per-file failures are listed; the audit record and session summary keep the total (`failureCount`, with `unlistedFailureCount` unlisted), and the footer says `audit failed (N failures)`. A scan reads files in path order, the order Git sorts paths in. Where Rerail walks the folders itself (a folder that is not a Git checkout, a checkout whose repository storage did not attach, and the folders a touched-files audit is given), a scan that stays within its budgets lists the same failures for the same files on every machine. In a Git checkout, failures to list a folder, read a `.gitignore` or read a name that is not UTF-8 still come in the order the filesystem lists folders, and the 100,000-file budget keeps the files the filesystem listed first.
 
 Large files have no fixed cut-off:
 

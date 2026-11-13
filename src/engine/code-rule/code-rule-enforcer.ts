@@ -553,6 +553,26 @@ function auditFailureCap(scope: AuditScope, limit = AUDIT_MAX_FAILURES): (failur
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+/**
+ * A walked entry's place among its siblings in path order: the byte order of UTF-8 paths, which Git and the native
+ * repository index sort by. A folder sorts as its name followed by "/", so `a.txt` comes before `a/b.txt` and `a0.txt`
+ * after it.
+ */
+function walkOrderKey(entry: Dirent): Buffer {
+  return Buffer.from(entry.isDirectory() ? `${entry.name}/` : entry.name);
+}
+
+/** A folder's entry waiting to go on the walk's stack, with its `walkOrderKey`. */
+interface WalkEntry {
+  readonly path: string;
+  readonly key: Buffer;
+}
+
+/** Puts `entries` on the walk's stack so the walk, which takes from the stack's end, takes them in path order. */
+function pushInPathOrder(stack: string[], entries: WalkEntry[]): void {
+  entries.sort((left, right) => Buffer.compare(right.key, left.key));
+  for (const entry of entries) stack.push(entry.path);
+}
 
 /** The graph reads the edit's own text, which disk may not hold yet. */
 function overlayOf(edit: CodeRuleEdit): SourceOverlay {
@@ -1685,6 +1705,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return false;
   }
 
+  /**
+   * Puts a folder's walkable entries on the walk's stack so the walk takes them in path order (`walkOrderKey`), as the
+   * native repository index reads a Git checkout, whatever order the filesystem lists them in. A listing that fails
+   * partway (on a network or FUSE filesystem) still puts the entries it gave on the stack before its error leaves, so
+   * they are audited and the caller reports the folder.
+   */
   async #enqueueAuditDirectory(
     workspace: NativeCodeRuleDslWorkspace,
     canonicalRoot: string,
@@ -1692,10 +1718,15 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     stack: string[],
     nested: NestedCheckoutWalk,
   ): Promise<void> {
-    for await (const entry of await opendir(absolute)) {
-      if (this.#closing) return;
-      if (!this.#shouldWalkDirectoryEntry(workspace, canonicalRoot, absolute, entry, nested)) continue;
-      stack.push(join(absolute, entry.name));
+    const entries: WalkEntry[] = [];
+    try {
+      for await (const entry of await opendir(absolute)) {
+        if (this.#closing) return;
+        if (this.#shouldWalkDirectoryEntry(workspace, canonicalRoot, absolute, entry, nested))
+          entries.push({ path: join(absolute, entry.name), key: walkOrderKey(entry) });
+      }
+    } finally {
+      pushInPathOrder(stack, entries);
     }
   }
 

@@ -15,7 +15,7 @@ use ast_grep_core::source::SgNode;
 use ast_grep_core::{AstGrep, Doc, Node};
 #[cfg(any(test, feature = "test-hooks"))]
 use foldhash::{HashMap, HashMapExt, HashSet};
-use regex::Regex;
+use crate::code_rule_dsl::regexes::Regex;
 #[cfg(any(test, feature = "test-hooks"))]
 use std::borrow::Cow;
 #[cfg(any(test, feature = "test-hooks"))]

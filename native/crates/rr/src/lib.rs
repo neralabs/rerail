@@ -20,6 +20,7 @@ pub mod code_rule_dsl {
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_lang::code_rule_dsl::fixtures;
     pub use rerail_lang::code_rule_dsl::json;
+    pub use rerail_lang::code_rule_dsl::regexes;
     pub use rerail_lang::code_rule_dsl::language;
     pub use rerail_lang::code_rule_dsl::lines;
     #[path = "logic"]

@@ -313,6 +313,13 @@ describe("dashboard links", () => {
     expect(linked).toEqual({ ...steer, rules: [{ id: "a:b", state: "steered", url: "http://127.0.0.1:4737/#rule/a%3Ab" }] });
   });
 
+  it("asks the daemon nothing when no delivery has a rule to link, as on most events", async () => {
+    expect(await linkDeliveries([], cwd)).toEqual([]);
+    const note = { ...steer, ruleIds: [], rules: [] };
+    expect(await linkDeliveries([note], cwd)).toEqual([note]);
+    expect(requested).toEqual([]);
+  });
+
   it("leaves rules unlinked for a daemon bound to 0.0.0.0, which no browser should be sent to", async () => {
     await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, host: "0.0.0.0", url: "http://0.0.0.0:4737/" }));
     expect(await dashboardOrigin(cwd)).toBeUndefined();
@@ -326,6 +333,8 @@ describe("rules page", () => {
   let health: Record<string, unknown>;
   /** Whether the stub daemon has recorded the checkout, so `GET /api/repository?checkout=` answers. */
   let knownCheckout: boolean;
+  /** The paths the stub daemon was asked for. */
+  let served: string[];
   const repositoryKey = "remote:github.com/acme/app";
 
   const stop = async (): Promise<void> => {
@@ -344,10 +353,12 @@ describe("rules page", () => {
   const listen = async (pid: number = process.pid): Promise<number> => {
     vi.unstubAllGlobals();
     knownCheckout = true;
+    served = [];
     health = { status: "ok", pid, database: { path: database, exists: true }, native: { ok: true } };
     const checkoutPath = await realpath(cwd);
     stub = createServer((request, response) => {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      served.push(url.pathname);
       const answers: Record<string, unknown> = {
         "/healthz": health,
         "/api/presentation": { presence: "compact", repositoryState: "stopped" },
@@ -375,6 +386,8 @@ describe("rules page", () => {
     const port = await listen();
     await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
     expect(await readRulesDashboard({ cwd })).toEqual({ url: await scoped(`http://127.0.0.1:${port}`), reason: null });
+    // The stub answers only what every daemon version answers, so the link is scoped whichever version runs.
+    expect(served).toEqual(["/healthz", "/api/repository"]);
     await rm(join(home, "daemon.json"));
     expect(await readRulesDashboard({ cwd })).toEqual({ url: null, reason: "daemon unavailable" });
   });

@@ -21,6 +21,7 @@ pub mod code_rule_dsl {
     pub mod json;
     pub mod language;
     pub mod lines;
+    pub mod regexes;
     #[path = "logic"]
     pub mod logic {
         #[path = "front"]

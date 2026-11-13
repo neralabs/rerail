@@ -215,7 +215,7 @@ Three commands remove data, each reaching further.
 
 - **`rerail reset`** deletes the current repository's history.
 - **`rerail install --remove`** uninstalls Rerail and **moves** the database to a backup.
-- **`rerail install --remove --delete-data`** deletes the databases, backups, cache and recorded ledgers.
+- **`rerail install --remove --delete-data`** deletes the databases, backups, cache, recorded ledgers and Rerail home.
 
 <details>
 <summary>Exactly what each command removes</summary>
@@ -225,9 +225,12 @@ Three commands remove data, each reaching further.
   writes zero freed space (`secure_delete`).
 - **`rerail install --remove`** disconnects agents, stops the daemon, removes Rerail from `PATH`, and **moves** the
   database to `~/.rerail-clean-YYYYMMDD`.
-- **`rerail install --remove --delete-data`** deletes the databases, every `~/.rerail-clean-*` backup, the content cache
-  and recorded checkouts' `.rerail/sessions/`. `--dry-run` previews. Unrecorded checkouts and a custom
-  `RERAIL_STORAGE_ROOT` are not reached.
+- **`rerail install --remove --delete-data`** deletes the databases, every `~/.rerail-clean-*` backup, the content cache,
+  recorded checkouts' `.rerail/sessions/`, the device secrets of `rerail activate` profiles, and everything else Rerail
+  wrote in its home, then the home. `--dry-run` previews. Unrecorded checkouts, a custom `RERAIL_STORAGE_ROOT` and the
+  `<file>.<timestamp>.bak` copies of agent configs are not deleted; the output names each with the command that does.
+
+What each leaves behind: [Removing Rerail in detail](how-setup-works.md#what-each-removal-leaves-behind).
 
 </details>
 

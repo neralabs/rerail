@@ -103,25 +103,19 @@ pub struct UtilOrigin {
 /// grammar, indexed by `UtilRef::index`. Each utility is filled once, after it and every utility it
 /// reaches compiled, so utilities can refer to each other and to themselves: a query's own table
 /// fills them all at once, a document's shared table the ones its queries reach, as they reach
-/// them (`compile::shared`).
+/// them (`compile::shared`). A document has a shared table per grammar and `languageOptions`, each
+/// naming every utility of its define, so the tables share the names, parameters and origins, and
+/// a table holds a utility's own state only once a query compiles or reads it.
 pub struct UtilTable {
     #[cfg_attr(not(feature = "code-rule-profile"), allow(dead_code))]
-    pub names: Vec<String>,
+    pub names: Arc<[String]>,
     /// Whether each utility has parameters: it runs in a frame of its own, never in its caller's
     /// environment, so its captures are not the query's.
-    pub(crate) framed: Vec<bool>,
+    pub(crate) framed: Arc<[bool]>,
     /// What each utility compiles from (`UtilOrigin`); `None` in a define's validation table.
-    pub(crate) origins: Vec<Option<UtilOrigin>>,
-    /// Each utility's memo scope (`UtilRef::scope`), worked out on first use.
-    scopes: Vec<OnceLock<Option<Scope>>>,
-    /// Each utility's memo identity (`UtilRef::memo_term`), worked out on first use.
-    memo_terms: Vec<OnceLock<(usize, usize)>>,
-    /// Each utility's compiled rule, once filled.
-    rules: Vec<OnceLock<AstMatcher>>,
-    /// A first compilation of the utilities being compiled, which compile-time walks read while
-    /// their `rules` are being compiled: what a utility binds or exports does not depend on the
-    /// order of its terms, which is all that differs between the two.
-    draft: Vec<OnceLock<AstMatcher>>,
+    pub(crate) origins: Arc<[Option<UtilOrigin>]>,
+    /// Each utility's state in this table, made when a query first compiles or reads it.
+    slots: Vec<OnceLock<Box<Slot>>>,
     /// Whether a compile-time walk reached a utility neither filled nor drafted since the
     /// compilation began (`begin_compilation`).
     unfilled: AtomicBool,
@@ -129,17 +123,39 @@ pub struct UtilTable {
     instances: Mutex<BTreeSet<(usize, CallArgs)>>,
 }
 
+/// One utility's state in a table.
+#[derive(Default)]
+struct Slot {
+    /// Its memo scope (`UtilRef::scope`), worked out on first use.
+    scope: OnceLock<Option<Scope>>,
+    /// Its memo identity (`UtilRef::memo_term`), worked out on first use.
+    memo_term: OnceLock<(usize, usize)>,
+    /// Its compiled rule, once filled.
+    rule: OnceLock<AstMatcher>,
+    /// A first compilation of it, which compile-time walks read while its `rule` is being
+    /// compiled: what a utility binds or exports does not depend on the order of its terms, which
+    /// is all that differs between the two.
+    draft: OnceLock<AstMatcher>,
+}
+
 impl UtilTable {
     pub(crate) fn new(
-        names: Vec<String>,
-        framed: Vec<bool>,
+        names: Arc<[String]>,
+        framed: Arc<[bool]>,
         origins: Vec<Option<UtilOrigin>>,
     ) -> Self {
+        Self::sharing(names, framed, origins.into())
+    }
+
+    /// A table that shares its names, parameter flags and origins with the other shared tables
+    /// of its define (`compile::shared`).
+    pub(crate) fn sharing(
+        names: Arc<[String]>,
+        framed: Arc<[bool]>,
+        origins: Arc<[Option<UtilOrigin>]>,
+    ) -> Self {
         Self {
-            scopes: names.iter().map(|_| OnceLock::new()).collect(),
-            memo_terms: names.iter().map(|_| OnceLock::new()).collect(),
-            rules: names.iter().map(|_| OnceLock::new()).collect(),
-            draft: names.iter().map(|_| OnceLock::new()).collect(),
+            slots: names.iter().map(|_| OnceLock::new()).collect(),
             names,
             framed,
             origins,
@@ -148,14 +164,27 @@ impl UtilTable {
         }
     }
 
+    /// Utility `index`'s state, if a query compiled or read it.
+    fn slot(&self, index: usize) -> Option<&Slot> {
+        self.slots.get(index)?.get().map(Box::as_ref)
+    }
+
+    /// Utility `index`'s state, made empty on first use; `None` past the table's utilities.
+    fn slot_or_new(&self, index: usize) -> Option<&Slot> {
+        Some(self.slots.get(index)?.get_or_init(Box::default))
+    }
+
     /// Utility `index`'s compiled rule, once filled.
     pub fn rule(&self, index: usize) -> Option<&AstMatcher> {
-        self.rules.get(index)?.get()
+        self.slot(index)?.rule.get()
     }
 
     /// Fills utility `index` with its compiled rule.
     pub(crate) fn fill(&self, index: usize, rule: AstMatcher) {
-        if self.rules[index].set(rule).is_err() {
+        let slot = self
+            .slot_or_new(index)
+            .expect("a filled utility is the table's");
+        if slot.rule.set(rule).is_err() {
             unreachable!("a utility is filled once");
         }
     }
@@ -169,7 +198,10 @@ impl UtilTable {
 
     /// Drafts utility `index` with a first compilation of its rule.
     pub(crate) fn draft(&self, index: usize, rule: AstMatcher) {
-        if self.draft[index].set(rule).is_err() {
+        let slot = self
+            .slot_or_new(index)
+            .expect("a drafted utility is the table's");
+        if slot.draft.set(rule).is_err() {
             unreachable!("a utility is drafted once");
         }
     }
@@ -462,7 +494,7 @@ impl UtilRef {
     /// where its table is gone.
     pub(super) fn memo_term(&self) -> Option<(usize, usize)> {
         let table = self.table.upgrade()?;
-        let term = table.memo_terms.get(self.index)?.get_or_init(|| {
+        let term = table.slot_or_new(self.index)?.memo_term.get_or_init(|| {
             let shared = self.scope().flatten().is_some();
             match table.origins.get(self.index).cloned().flatten() {
                 Some(origin) if shared => {
@@ -486,7 +518,7 @@ impl UtilRef {
     /// `None` where its table is gone.
     pub(super) fn scope(&self) -> Option<Option<Scope>> {
         let table = self.table.upgrade()?;
-        let scope = table.scopes.get(self.index)?.get_or_init(|| {
+        let scope = table.slot_or_new(self.index)?.scope.get_or_init(|| {
             self.with_target(|rule| {
                 context_free(rule, &mut BTreeMap::new()).then(|| {
                     super::CaptureAnalysis::default()
@@ -571,8 +603,8 @@ impl UtilRef {
     /// (which the table records) or after the table is dropped.
     pub fn with_target<T>(&self, visit: impl FnOnce(&AstMatcher) -> T) -> Option<T> {
         let table = self.table.upgrade()?;
-        let (rule, draft) = (table.rules.get(self.index)?, table.draft.get(self.index)?);
-        let Some(rule) = rule.get().or_else(|| draft.get()) else {
+        let slot = table.slots.get(self.index)?.get();
+        let Some(rule) = slot.and_then(|slot| slot.rule.get().or_else(|| slot.draft.get())) else {
             table.unfilled.store(true, Ordering::Relaxed);
             return None;
         };
@@ -583,18 +615,14 @@ impl UtilRef {
     /// compilations is filled (none, the draft, the rule). A summary under this key holds in a
     /// walk that spans the utility's compilation steps.
     pub(crate) fn summary_key(&self) -> (usize, usize, u8) {
-        let filled = self.table.upgrade().map_or(0, |table| {
-            if table.rule(self.index).is_some() {
-                2
-            } else {
-                u8::from(
-                    table
-                        .draft
-                        .get(self.index)
-                        .is_some_and(|draft| draft.get().is_some()),
-                )
-            }
-        });
+        let filled = self
+            .table
+            .upgrade()
+            .map_or(0, |table| match table.slot(self.index) {
+                Some(slot) if slot.rule.get().is_some() => 2,
+                Some(slot) => u8::from(slot.draft.get().is_some()),
+                None => 0,
+            });
         (self.table.as_ptr() as usize, self.index, filled)
     }
 

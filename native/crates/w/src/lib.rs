@@ -62,6 +62,7 @@ pub mod code_rule_dsl {
     pub mod hooks;
     pub mod identifier;
     pub use rerail_lang::code_rule_dsl::json;
+    pub use rerail_lang::code_rule_dsl::regexes;
     #[path = "language"]
     pub mod language {
         pub use rerail_lang::code_rule_dsl::language::*;

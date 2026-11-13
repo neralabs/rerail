@@ -15,28 +15,13 @@ use crate::code_rule_dsl::matcher::{
     Related, Semantic, StopBy, UtilCall, UtilRef, parse_exported,
 };
 use crate::code_rule_dsl::model::Limits;
+use crate::code_rule_dsl::regexes::Regex;
 use ast_grep_core::Language;
 use ast_grep_core::matcher::{KindMatcher, Pattern, PatternNode};
 use napi::Result;
-use regex::Regex;
 use serde_json::Value;
 use std::collections::BTreeSet;
 use crate::code_rule_dsl::language::adapter::pack as language_pack;
-
-/// `source` compiled once per process. A rule's regex is compiled where it is checked, where it
-/// matches, again by its gap test and by the token-test guard (t31), and a catalog compiles every
-/// pack rule once to check it and once to run it: built once, each is a clone (an `Arc`).
-pub(in crate::code_rule_dsl) fn shared_regex(source: &str) -> std::result::Result<Regex, regex::Error> {
-    static REGEXES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, std::result::Result<Regex, regex::Error>>>> =
-        std::sync::LazyLock::new(Default::default);
-    let mut regexes = REGEXES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    if let Some(compiled) = regexes.get(source) {
-        return compiled.clone();
-    }
-    let compiled = Regex::new(source);
-    regexes.insert(source.to_owned(), compiled.clone());
-    compiled
-}
 
 #[cfg(not(any(test, feature = "test-hooks")))]
 const AST_RULE_KEYS: &[&str] = &[
@@ -170,7 +155,7 @@ pub fn validate_ast_rule(
             "maxRegexPatternBytes",
             limits.max_regex_pattern_bytes,
         )?;
-        shared_regex(source)
+        Regex::new(source)
             .map_err(|_| invalid(format!("{path}/regex: Parsing text matcher fails.")))?;
     }
     // Why the token a `regex` tests is stored where the rule looks (`compile::token_tests`).
@@ -481,7 +466,7 @@ pub fn compile_ast_rule(
         });
     }
     if let Some(regex) = rule.get("regex").and_then(Value::as_str) {
-        terms.push(AstMatcher::Regex(shared_regex(regex).map_err(|_| {
+        terms.push(AstMatcher::Regex(Regex::new(regex).map_err(|_| {
             invalid(format!("{path}/regex: Parsing text matcher fails."))
         })?));
     }
@@ -1065,7 +1050,7 @@ pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: 
     let bare = |rule: &Value| -> Option<String> {
         let rule = rule.as_object()?;
         let regex = rule.get("regex")?.as_str()?;
-        let compiled = shared_regex(regex).ok()?;
+        let compiled = Regex::new(regex).ok()?;
         fn other_kinds(rule: &Value, token: &Regex) -> bool {
             let Some(rule) = rule.as_object().filter(|rule| rule.len() == 1) else { return false };
             match (rule.get("kind"), rule.get("any")) {
@@ -1115,7 +1100,7 @@ pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: 
     if regexes.is_empty() {
         return None;
     }
-    let regex = shared_regex(&regexes.join("|")).ok()?;
+    let regex = Regex::new(&regexes.join("|")).ok()?;
     let tests = match &place {
         Place::Field(field) => grammar.tests_implied_in(&regex, field),
         _ => grammar.tests_implied(&regex),
@@ -1134,7 +1119,7 @@ pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: 
         let Some(rule) = rule.as_object().filter(|rule| rule.len() == 1) else { return false };
         match rule.iter().next() {
             Some((key, value)) if key == "kind" || key == "matches" => value.is_string(),
-            Some((key, value)) if key == "regex" => value.as_str().is_some_and(|regex| shared_regex(regex).is_ok()),
+            Some((key, value)) if key == "regex" => value.as_str().is_some_and(|regex| Regex::new(regex).is_ok()),
             Some((key, value)) if key == "any" => value.as_array().is_some_and(|any| any.iter().all(passable)),
             _ => false,
         }
@@ -1160,7 +1145,7 @@ fn token_condition(key: &str, relation: &Value, negated: bool) -> Option<crate::
         ("precedes", Some(Some("end"))) => Place::Later,
         _ => return None,
     };
-    Some(TokenCondition::Token { negated, place, regex: shared_regex(object.get("regex")?.as_str()?).ok()? })
+    Some(TokenCondition::Token { negated, place, regex: Regex::new(object.get("regex")?.as_str()?).ok()? })
 }
 
 /// A neighbour relation to a token the tape may leave out, which goes on to the next stored
@@ -1185,7 +1170,7 @@ pub(in crate::code_rule_dsl) fn gap_split(key: &str, relation: &Value, language:
     if nested.as_object()?.get("stopBy").is_some_and(|stop| stop != "neighbor") || nested.get("field").is_some() {
         return None;
     }
-    let regex = shared_regex(&format!("(?:{})", object.get("regex")?.as_str()?)).ok()?;
+    let regex = Regex::new(&format!("(?:{})", object.get("regex")?.as_str()?)).ok()?;
     let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(language)?;
     if !grammar.tests_implied(&regex) {
         return None;

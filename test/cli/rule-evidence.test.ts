@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import Database from "better-sqlite3";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { adoptRemote, openRerailDatabase, recordCheckout } from "../../src/engine/index.js";
 import { SqliteSessionStore } from "../../src/runtime/index.js";
 import {
@@ -39,19 +40,59 @@ async function repository(files: Record<string, string> = {}): Promise<string> {
 }
 
 const NOW = Date.UTC(2026, 9, 15);
-const DAY = 24 * 60 * 60 * 1000;
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
 
-/** A database where `repo`'s repository has one Claude Code session: a task, two calls, a correction, a steer. */
-async function recordedSession(repo: string, startedAt = NOW - DAY): Promise<string> {
+/** A new database that knows `repo`, and a session store attributing sessions to its repository. */
+async function sessionDatabase(repo: string): Promise<{ databasePath: string; store: SqliteSessionStore }> {
   const databasePath = join(await temporary("rerail-rule-evidence-db-"), "rerail.sqlite");
   const database = openRerailDatabase(databasePath);
   const { repositoryKey } = recordCheckout(database, repo);
   database.$client.close();
-  const store = new SqliteSessionStore(databasePath, { repositoryId: repositoryKey });
+  return { databasePath, store: new SqliteSessionStore(databasePath, { repositoryId: repositoryKey }) };
+}
+
+/** `recordSteer` stamps a steer with the clock; this sets the clock to `observedAt` for it. */
+function recordSteerAt(store: SqliteSessionStore, observedAt: number, ...steer: Parameters<SqliteSessionStore["recordSteer"]>): void {
+  vi.useFakeTimers({ toFake: ["Date"], now: observedAt });
+  try {
+    store.recordSteer(...steer);
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
+/**
+ * Runs `read`, counting the statements SQLite runs meanwhile through every statement's `all` and `get`, and the rows
+ * they hand back.
+ */
+async function rowsReturned<T>(read: () => Promise<T>): Promise<{ result: T; rows: number; statements: number }> {
+  const probe = new Database(":memory:");
+  const statement: Database.Statement = Object.getPrototypeOf(probe.prepare("select 1"));
+  probe.close();
+  const all = vi.spyOn(statement, "all");
+  const get = vi.spyOn(statement, "get");
+  try {
+    const result = await read();
+    const returned = [...all.mock.results, ...get.mock.results].map(({ type, value }) => {
+      if (type !== "return" || value === undefined) return 0;
+      return Array.isArray(value) ? value.length : 1;
+    });
+    return { result, rows: returned.reduce((sum, count) => sum + count, 0), statements: returned.length };
+  } finally {
+    all.mockRestore();
+    get.mockRestore();
+  }
+}
+
+/** A database where `repo`'s repository has one Claude Code session: a task, two calls, a correction, a steer. */
+async function recordedSession(repo: string, startedAt = NOW - DAY): Promise<string> {
+  const { databasePath, store } = await sessionDatabase(repo);
   try {
     const session = { host: "claude-code" as const, sessionId: "s1", cwd: repo };
     store.openSession(session, startedAt);
-    const at = (minutes: number) => startedAt + minutes * 60_000;
+    const at = (minutes: number) => startedAt + minutes * MINUTE;
     store.append({ sessionId: "s1", kind: "user-prompt", payload: { text: "Never use console.log, add the logging" }, observedAt: at(1) });
     store.append({ sessionId: "s1", kind: "call", payload: { toolName: "Edit", input: { file_path: "src/a.ts" } }, observedAt: at(2) });
     store.append({ sessionId: "s1", kind: "call", payload: { toolName: "Bash", input: { command: "git push --force origin main" } }, observedAt: at(3) });
@@ -59,8 +100,8 @@ async function recordedSession(repo: string, startedAt = NOW - DAY): Promise<str
     store.append({ sessionId: "s1", kind: "call", payload: { toolName: "Bash", input: { command: "cat .env && rm -rf .ssh" } }, observedAt: at(3) });
     store.append({ sessionId: "s1", kind: "user-prompt", payload: { text: "Don't use console.log, we use the logger in src/log.ts" }, observedAt: at(4) });
     store.append({ sessionId: "s1", kind: "user-prompt", payload: { text: "Thanks, now add a test" }, observedAt: at(5) });
-    store.recordSteer(session, "r1", ["n-no-sync", "local:no-console"]);
-    store.recordSteer(session, "r2", ["n-no-sync"]);
+    recordSteerAt(store, at(6), session, "r1", ["n-no-sync", "local:no-console"]);
+    recordSteerAt(store, at(7), session, "r2", ["n-no-sync"]);
   } finally {
     store.close();
   }
@@ -190,6 +231,196 @@ describe("rerail rules evidence", () => {
     expect(evidence.corrections).toEqual([]);
     const wider = await collectRuleEvidence(repo, { databasePath, now: NOW, days: 60 });
     expect(wider.correctionCount).toBe(1);
+  });
+
+  it("counts a session that started before the window and ran in it, and only what it did in the window", async () => {
+    const repo = await repository();
+    const { databasePath, store } = await sessionDatabase(repo);
+    try {
+      const event = (sessionId: string, kind: string, payload: unknown, observedAt: number) => {
+        store.append({ sessionId, kind, payload, observedAt });
+      };
+      // Started three days ago and still running: its task, a risky command, a correction and a steer come before the
+      // window, and its latest work falls in it.
+      const running = { host: "claude-code" as const, sessionId: "running", cwd: repo };
+      store.openSession(running, NOW - 3 * DAY);
+      event("running", "user-prompt", { text: "Add the logging" }, NOW - 3 * DAY + MINUTE);
+      event("running", "call", { toolName: "Bash", input: { command: "rm -rf build" } }, NOW - 3 * DAY + 2 * MINUTE);
+      event("running", "user-prompt", { text: "Never delete build" }, NOW - 3 * DAY + 3 * MINUTE);
+      recordSteerAt(store, NOW - 3 * DAY + 3 * MINUTE, running, "r1", ["no-recursive-delete"]);
+      event("running", "call", { toolName: "Bash", input: { command: "git push --force origin main" } }, NOW - HOUR);
+      event("running", "user-prompt", { text: "Don't force push" }, NOW - HOUR + MINUTE);
+      recordSteerAt(store, NOW - HOUR + MINUTE, running, "r2", ["no-force-push"]);
+      // Started and ended before the window.
+      store.openSession({ host: "codex", sessionId: "ended", cwd: repo }, NOW - 3 * DAY);
+      event("ended", "user-prompt", { text: "Fix the build" }, NOW - 3 * DAY + MINUTE);
+      store.closeSession("ended", NOW - 3 * DAY + HOUR);
+    } finally {
+      store.close();
+    }
+    const evidence = await collectRuleEvidence(repo, { databasePath, now: NOW, days: 1 });
+    expect(evidence.window).toEqual({ days: 1, sessions: 1, hosts: { "claude-code": 1 }, prompts: 1 });
+    // The task came before the window, so the first prompt in it is a correction, after the session's last calls.
+    expect(evidence.corrections).toEqual([expect.objectContaining({
+      sessionId: "running",
+      text: "Don't force push",
+      before: ["Bash rm -rf build", "Bash git push --force origin main"],
+    })]);
+    expect(evidence.riskyCommands).toEqual([{ label: "force push", count: 1, example: "git push --force origin main" }]);
+    expect(evidence.steers).toEqual([{ ruleId: "no-force-push", count: 1 }]);
+  });
+
+  it("reads a session that started before the window from the window on, plus its task and its last calls", async () => {
+    /** A 1-day window over a session with `history` calls before it, and the rows SQLite returned for it. */
+    const evidenceAfter = async (history: number) => {
+      const repo = await repository();
+      const { databasePath, store } = await sessionDatabase(repo);
+      try {
+        const event = (sessionId: string, kind: string, payload: unknown, observedAt: number) => {
+          store.append({ sessionId, kind, payload, observedAt });
+        };
+        store.openSession({ host: "claude-code", sessionId: "long", cwd: repo }, NOW - 10 * DAY);
+        event("long", "user-prompt", { text: "Add the logging" }, NOW - 10 * DAY + MINUTE);
+        for (let index = 0; index < history; index += 1) {
+          event("long", "call", { toolName: "Bash", input: { command: `npm test -- ${index}` } }, NOW - 9 * DAY + index * MINUTE);
+        }
+        event("long", "call", { toolName: "Edit", input: { file_path: "src/a.ts" } }, NOW - 2 * DAY);
+        event("long", "call", { toolName: "Bash", input: { command: "git push --force origin main" } }, NOW - HOUR);
+        event("long", "user-prompt", { text: "Don't force push" }, NOW - HOUR + MINUTE);
+        // Its only prompt before the window has no text, so its first prompt in the window is its task.
+        store.openSession({ host: "codex", sessionId: "untasked", cwd: repo }, NOW - 2 * DAY);
+        event("untasked", "user-prompt", { images: 1 }, NOW - 2 * DAY + MINUTE);
+        event("untasked", "user-prompt", { text: "Never use sudo here" }, NOW - HOUR);
+      } finally {
+        store.close();
+      }
+      return rowsReturned(() => collectRuleEvidence(repo, { databasePath, now: NOW, days: 1 }));
+    };
+    const shorter = await evidenceAfter(20);
+    const longer = await evidenceAfter(120);
+    expect(longer.result.window).toEqual({ days: 1, sessions: 2, hosts: { "claude-code": 1, codex: 1 }, prompts: 2 });
+    expect(longer.result.corrections).toEqual([expect.objectContaining({
+      sessionId: "long",
+      text: "Don't force push",
+      before: ["Bash npm test -- 119", "Edit src/a.ts", "Bash git push --force origin main"],
+    })]);
+    expect(longer.result.riskyCommands).toEqual([{ label: "force push", count: 1, example: "git push --force origin main" }]);
+    // A hundred more calls before the window, and not one more row read.
+    expect(longer.rows).toBe(shorter.rows);
+  });
+
+  it("looks up what a session did before the window only for a session that started before it", async () => {
+    /** A 1-day window over `count` sessions that started in it, and the statements SQLite ran for it. */
+    const evidenceOver = async (count: number) => {
+      const repo = await repository();
+      const { databasePath, store } = await sessionDatabase(repo);
+      try {
+        for (let index = 0; index < count; index += 1) {
+          const sessionId = `recent-${index}`;
+          store.openSession({ host: "claude-code", sessionId, cwd: repo }, NOW - HOUR);
+          store.append({ sessionId, kind: "user-prompt", payload: { text: "Add the logging" }, observedAt: NOW - HOUR + MINUTE });
+          store.append({ sessionId, kind: "call", payload: { toolName: "Edit", input: { file_path: "src/a.ts" } }, observedAt: NOW - HOUR + 2 * MINUTE });
+          store.append({ sessionId, kind: "user-prompt", payload: { text: "Don't use console.log" }, observedAt: NOW - HOUR + 3 * MINUTE });
+        }
+      } finally {
+        store.close();
+      }
+      return rowsReturned(() => collectRuleEvidence(repo, { databasePath, now: NOW, days: 1 }));
+    };
+    const fewer = await evidenceOver(2);
+    const more = await evidenceOver(12);
+    expect(more.result.window).toEqual({ days: 1, sessions: 12, hosts: { "claude-code": 12 }, prompts: 24 });
+    expect(more.result.correctionCount).toBe(12);
+    expect(more.result.corrections.map(correction => correction.before)).toEqual(Array.from({ length: 12 }, () => ["Edit src/a.ts"]));
+    // Ten more sessions, each started in the window, and not one more statement.
+    expect(more.statements).toBe(fewer.statements);
+  });
+
+  it("takes a session's event written last as its newest, whatever time the clock gave it", async () => {
+    /** A session that started before a 1-day window and worked in it, then wrote calls stamped `lastStamps`. */
+    const evidenceWith = async (lastStamps: readonly number[]) => {
+      const repo = await repository();
+      const { databasePath, store } = await sessionDatabase(repo);
+      try {
+        store.openSession({ host: "claude-code", sessionId: "set-back", cwd: repo }, NOW - 3 * DAY);
+        store.append({ sessionId: "set-back", kind: "user-prompt", payload: { text: "Add the logging" }, observedAt: NOW - 3 * DAY + MINUTE });
+        store.append({ sessionId: "set-back", kind: "user-prompt", payload: { text: "Don't force push" }, observedAt: NOW - HOUR });
+        for (const observedAt of lastStamps) {
+          store.append({ sessionId: "set-back", kind: "call", payload: { toolName: "Edit", input: { file_path: "src/a.ts" } }, observedAt });
+        }
+      } finally {
+        store.close();
+      }
+      return collectRuleEvidence(repo, { databasePath, now: NOW, days: 1 });
+    };
+    // The clock was set back past the window's start before the session's last event, which then says the session
+    // ended before the window: it is left out, as every session that started before the window was before sessions
+    // counted by their last event. Reading every event's time instead would read each session's whole history.
+    const setBack = await evidenceWith([NOW - 2 * DAY]);
+    expect(setBack.window).toEqual({ days: 1, sessions: 0, hosts: {}, prompts: 0 });
+    // Once the clock is right again, the session's next event brings back what it did in the window.
+    const putRight = await evidenceWith([NOW - 2 * DAY, NOW - MINUTE]);
+    expect(putRight.window).toEqual({ days: 1, sessions: 1, hosts: { "claude-code": 1 }, prompts: 1 });
+    expect(putRight.corrections).toEqual([expect.objectContaining({ sessionId: "set-back", text: "Don't force push", before: [] })]);
+  });
+
+  it("reads every event of a session that started in the window, whatever time the clock gave it", async () => {
+    const repo = await repository();
+    const { databasePath, store } = await sessionDatabase(repo);
+    const windowStart = NOW - DAY;
+    // Each session opens in a 1-day window and writes a task, a force push and a correction. In all but the first, the
+    // clock then went back past the window's start (an NTP step of a fast clock, a manual change) for its task, for its
+    // call, or for all three: each gives the answer of the session stamped in the window.
+    const stamped = {
+      inWindow: { startedAt: windowStart + MINUTE, task: windowStart + 2 * MINUTE, push: NOW - 2 * HOUR, correction: NOW - HOUR },
+      taskBefore: { startedAt: windowStart + MINUTE, task: windowStart - MINUTE, push: NOW - 2 * HOUR, correction: NOW - HOUR },
+      callBefore: { startedAt: windowStart + MINUTE, task: windowStart + 2 * MINUTE, push: windowStart - MINUTE, correction: NOW - HOUR },
+      allBefore: { startedAt: NOW - HOUR, task: NOW - 2 * DAY, push: NOW - 2 * DAY, correction: NOW - 2 * DAY },
+    };
+    try {
+      for (const [sessionId, at] of Object.entries(stamped)) {
+        store.openSession({ host: "claude-code", sessionId, cwd: repo }, at.startedAt);
+        store.append({ sessionId, kind: "user-prompt", payload: { text: "Add the logging" }, observedAt: at.task });
+        store.append({ sessionId, kind: "call", payload: { toolName: "Bash", input: { command: "git push --force origin main" } }, observedAt: at.push });
+        store.append({ sessionId, kind: "user-prompt", payload: { text: "Don't force push, never do that" }, observedAt: at.correction });
+      }
+    } finally {
+      store.close();
+    }
+    const evidence = await collectRuleEvidence(repo, { databasePath, now: NOW, days: 1 });
+    expect({
+      window: evidence.window,
+      before: Object.fromEntries(evidence.corrections.map(correction => [correction.sessionId, correction.before])),
+      riskyCommands: evidence.riskyCommands,
+    }).toEqual({
+      window: { days: 1, sessions: 4, hosts: { "claude-code": 4 }, prompts: 8 },
+      before: Object.fromEntries(Object.keys(stamped).map(sessionId => [sessionId, ["Bash git push --force origin main"]])),
+      riskyCommands: [{ label: "force push", count: 4, example: "git push --force origin main" }],
+    });
+  });
+
+  it("counts what is stamped at the window's very start, and nothing a millisecond before it", async () => {
+    const repo = await repository();
+    const { databasePath, store } = await sessionDatabase(repo);
+    const since = NOW - DAY;
+    const push = { toolName: "Bash", input: { command: "git push --force origin main" } };
+    try {
+      // Started at the window's start, its one push stamped earlier by a clock set back: read whole, as a session that
+      // started in the window, though only its start finds it.
+      store.openSession({ host: "claude-code", sessionId: "startedAtSince", cwd: repo }, since);
+      store.append({ sessionId: "startedAtSince", kind: "call", payload: push, observedAt: since - HOUR });
+      // Started the day before; its last event, a push, came at the window's start.
+      store.openSession({ host: "codex", sessionId: "pushAtSince", cwd: repo }, since - DAY);
+      store.append({ sessionId: "pushAtSince", kind: "call", payload: push, observedAt: since });
+      // Started the day before; its last event, a push, came a millisecond before the window.
+      store.openSession({ host: "claude-code", sessionId: "pushedBefore", cwd: repo }, since - DAY);
+      store.append({ sessionId: "pushedBefore", kind: "call", payload: push, observedAt: since - 1 });
+    } finally {
+      store.close();
+    }
+    const evidence = await collectRuleEvidence(repo, { databasePath, now: NOW, days: 1 });
+    expect(evidence.window).toEqual({ days: 1, sessions: 2, hosts: { "claude-code": 1, codex: 1 }, prompts: 0 });
+    expect(evidence.riskyCommands).toEqual([{ label: "force push", count: 2, example: "git push --force origin main" }]);
   });
 
   it("reports a repository Rerail has never seen, and still lists its standards files", async () => {

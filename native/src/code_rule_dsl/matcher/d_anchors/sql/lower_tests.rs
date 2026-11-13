@@ -855,7 +855,7 @@ fn impossible_kind_branch_does_not_prepare_its_structural_or_source_producers() 
                 root_kinds: Some(BTreeSet::from([3])),
                 exact: true,
                 condition: Condition::Text {
-                    regex: regex::Regex::new("expensive_source_predicate").unwrap(),
+                    regex: crate::code_rule_dsl::regexes::Regex::new("expensive_source_predicate").unwrap(),
                     probe: crate::code_rule_dsl::matcher::d_anchors::text::TextProbe::compile(
                         "expensive_source_predicate",
                     ),

@@ -52,14 +52,23 @@ struct Language<'a> {
     defs: Vec<&'a UtilDef<'a>>,
     ids: UtilIds<'a>,
     indices: HashMap<&'a str, usize>,
-    /// Each utility's `UtilOrigin`, once a table needs them; `None` where they cannot be computed.
-    origins: OnceCell<Option<Vec<Option<UtilOrigin>>>>,
+    /// What every table of the language shares, once a table needs it; `None` where the origins
+    /// cannot be computed.
+    common: OnceCell<Option<Common>>,
+}
+
+/// What a language's shared tables share (`UtilTable::sharing`): each utility's id, whether it has
+/// parameters, and its `UtilOrigin`.
+struct Common {
+    names: Arc<[String]>,
+    framed: Arc<[bool]>,
+    origins: Arc<[Option<UtilOrigin>]>,
 }
 
 /// A shared table and what compiling each utility in it added to the queries that reach it.
 struct Table {
     table: Arc<UtilTable>,
-    added: Vec<Option<Added>>,
+    added: AddedByIndex,
 }
 
 /// What compiling a utility adds to a query that reaches it: its first grammar gap and its
@@ -67,6 +76,28 @@ struct Table {
 struct Added {
     gap: Option<String>,
     instances: BTreeSet<(usize, CallArgs)>,
+}
+
+/// What compiling each utility added, indexed as a list of one entry per utility would be (`None`
+/// until the utility compiles), but holding only the utilities compiled so far: a define of
+/// thousands of utilities has a table per grammar and `languageOptions`, and each compiles only
+/// the utilities its queries reach.
+#[derive(Default)]
+struct AddedByIndex(HashMap<usize, Option<Added>>);
+
+impl std::ops::Index<usize> for AddedByIndex {
+    type Output = Option<Added>;
+
+    fn index(&self, index: usize) -> &Option<Added> {
+        const NOT_COMPILED: &Option<Added> = &None;
+        self.0.get(&index).unwrap_or(NOT_COMPILED)
+    }
+}
+
+impl std::ops::IndexMut<usize> for AddedByIndex {
+    fn index_mut(&mut self, index: usize) -> &mut Option<Added> {
+        self.0.entry(index).or_default()
+    }
 }
 
 /// A query's utilities in a shared table.
@@ -100,7 +131,7 @@ impl<'a> SharedTables<'a> {
                         .enumerate()
                         .map(|(index, id)| (id.as_str(), index))
                         .collect(),
-                    origins: OnceCell::new(),
+                    common: OnceCell::new(),
                 };
                 (language.language, language)
             })
@@ -166,23 +197,28 @@ impl Language<'_> {
     /// An empty table of the language's shared utilities; `None` where their origins cannot be
     /// computed.
     fn table(&self) -> Option<Table> {
-        let origins = self
-            .origins
-            .get_or_init(|| {
-                let origins = util_origins(self.utils, self.language).ok()?;
-                Some(origins.into_iter().map(Some).collect())
-            })
-            .clone()?;
+        let common = self.common.get_or_init(|| self.collect_common()).as_ref()?;
         Some(Table {
-            table: Arc::new(UtilTable::new(
-                self.utils.keys().cloned().collect(),
-                self.defs
-                    .iter()
-                    .map(|util| !util.params.is_empty())
-                    .collect(),
-                origins,
+            table: Arc::new(UtilTable::sharing(
+                Arc::clone(&common.names),
+                Arc::clone(&common.framed),
+                Arc::clone(&common.origins),
             )),
-            added: self.defs.iter().map(|_| None).collect(),
+            added: AddedByIndex::default(),
+        })
+    }
+
+    /// What the language's tables share; `None` where the origins cannot be computed.
+    fn collect_common(&self) -> Option<Common> {
+        let origins = util_origins(self.utils, self.language).ok()?;
+        Some(Common {
+            names: self.utils.keys().cloned().collect(),
+            framed: self
+                .defs
+                .iter()
+                .map(|util| !util.params.is_empty())
+                .collect(),
+            origins: origins.into_iter().map(Some).collect(),
         })
     }
 }
@@ -254,3 +290,5 @@ impl Table {
         Some(())
     }
 }
+
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

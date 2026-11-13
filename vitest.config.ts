@@ -32,6 +32,9 @@ export default defineConfig({
     // RERAIL_DEVICE_SECRET_STORE keeps activation tests, and every CLI they spawn, out of the system keychain.
     // RERAIL_MODIFY_PATH keeps set-up out of the shell startup files and the Windows user Path.
     env: { RERAIL_AUTOSTART: "0", RERAIL_DEVICE_SECRET_STORE: "file", RERAIL_MODIFY_PATH: "0" },
+    // Points the temp folder at one folder per run, which the run removes when it ends and the next run removes if a
+    // kill ended this one first, so no test's temporary folder outlives the run.
+    globalSetup: ["./test/support/temporary/run-folder.ts"],
     // The setup file mutates process.env to give every test file its own catalog home. Forked
     // workers prevent that environment from racing with concurrently executing test files.
     pool: "forks",
