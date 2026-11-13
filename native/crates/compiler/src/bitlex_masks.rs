@@ -1912,8 +1912,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     TokenElem::Word(w) => first[usize::from(w[0]) / 64] |= 1 << (w[0] % 64),
                     TokenElem::Kind(name) => {
                         for r in (0..rows.len()).filter(|&r| &token_rows[r].0 == name) {
-                            for i in 0..4 {
-                                first[i] |= rows[r].first[i];
+                            for (f, x) in first.iter_mut().zip(rows[r].first) {
+                                *f |= x;
                             }
                         }
                     }
@@ -2050,8 +2050,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 }
                 let both = low.and(m, token_rows[r].1)?;
                 if !bitlex_prove::never(&low.program.ops, &low.program.tables, both.v, both.d) {
-                    for i in 0..4 {
-                        first[i] |= rows[r].first[i];
+                    for (f, x) in first.iter_mut().zip(rows[r].first) {
+                        *f |= x;
                     }
                 }
             }

@@ -2500,7 +2500,7 @@ fn run_observed(
     super::ready_native(db)?;
     // The cost statistics read before the first wave (decision 0104), the executor's prices fitted from them.
     crate::code_rule_dsl::logic::costs::start();
-    let statements = Statements::on(&db);
+    let statements = Statements::on(db);
     // The program's preparation (kept or read, split, its parts' plans), until the files are parsed.
     statements.enter("prepare");
     // The program as this run prepares it, kept for the process (`Prepared`): a session or a test running one program
@@ -6367,7 +6367,7 @@ fn run_observed(
                     let at: HashMap<String, usize> = cross_inputs.iter().enumerate().map(|(i, (r, _))| (r.clone(), i)).collect();
                     for (rel, source) in same {
                         if let Some(&i) = at.get(rel.as_str()) {
-                            modules.bind(&db, &rel, Arc::clone(&source))?;
+                            modules.bind(db, &rel, Arc::clone(&source))?;
                             cross_inputs[i].1 = source;
                         }
                     }
@@ -6503,7 +6503,7 @@ fn run_observed(
                     let mut seeds: Vec<String> = Vec::new();
                     let mut given_rels: BTreeSet<String> = BTreeSet::new();
                     let mut maintained = if driven {
-                        let mut part = cut.program(&cross);
+                        let mut part = cut.program(cross);
                         let mut sources = Vec::new();
                         for rel in &cut.changed {
                             let Some((plus, minus)) = answer(rel) else {
@@ -6531,7 +6531,7 @@ fn run_observed(
                         }
                         maintain::Maintained { program: part, sources, maintained: 0, derived_again: 0, recursive: 0, again: Vec::new(), views: BTreeSet::new() }
                     } else {
-                        maintain::rewrite(&cut, cell.as_ref(), &cross, &cross_sccs, &mut answer)?
+                        maintain::rewrite(&cut, cell.as_ref(), cross, &cross_sccs, &mut answer)?
                     };
                     if maintain::levels_wanted() && !driven {
                         let program = &mut maintained.program.program;
@@ -6609,7 +6609,7 @@ fn run_observed(
                     };
                     for (rel, source, held) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
                         let maintains = rel.strip_suffix("__old").is_some_and(|of| part.program.decls.contains_key(&format!("{of}__del")));
-                        bind_kept(&mut binder, &modules, &db, &mut stats, rel, source, held, maintains)?;
+                        bind_kept(&mut binder, &modules, db, &mut stats, rel, source, held, maintains)?;
                     }
                     drop(s);
                     // Each input's statistics as this run plans with them: next run's `__old`'s (`retain::InputStats`).
@@ -6666,7 +6666,7 @@ fn run_observed(
                                 at_end: wanted.clone(),
                                 binder: &mut binder,
                                 modules: &modules,
-                                db: &db,
+                                db,
                                 inputs: part.program.inputs.iter().cloned().collect(),
                                 has_delta: given_rels,
                                 bound_olds: BTreeSet::new(),
@@ -6678,7 +6678,7 @@ fn run_observed(
                                 walked: (0, 0, 0),
                             };
                             let hooks = crate::code_rule_dsl::logic::plan::Hooks { maintain: Some(&mut driver), ..Default::default() };
-                            let got = super::run_atoms_native_hooked(part, &db, "main", stats, keep, modes, hooks)?;
+                            let got = super::run_atoms_native_hooked(part, db, "main", stats, keep, modes, hooks)?;
                             let (rows_read, rels_read) = kept.admitted();
                             if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
                                 eprintln!("rerail: kept rows read where reached: {rels_read} relations ({rows_read} rows); {} relations left stored, unread", got.unread.len());
@@ -6695,7 +6695,7 @@ fn run_observed(
                             step(&format!("driven: {reached} of {of} strata reached, {} maintained, {} derived again, {quiet} quiet", driver.counts.0, driver.counts.1));
                             got
                         }
-                        None => super::run_atoms_native_over(part, &db, "main", stats, keep, modes)?,
+                        None => super::run_atoms_native_over(part, db, "main", stats, keep, modes)?,
                     };
                     drop(s);
                     let Binder { constants, mut measured_kept, mut bound_old, mut lazies, .. } = binder;
@@ -7667,7 +7667,7 @@ fn bind_kept(b: &mut Binder, modules: &Modules, db: &rusqlite::Connection, stats
             if patched.is_none() && b.lazy_kept
                 && let Some(h) = &held
             {
-                let maintains = rel.strip_suffix("__old").is_some_and(|of| maintains);
+                let maintains = rel.strip_suffix("__old").is_some_and(|_of| maintains);
                 let (h2, source2, tested2, rel2) = (Arc::clone(h), Arc::clone(&source), tested.clone(), rel.clone());
                 let wanted = tested_of(&b.constants, &rel).cloned();
                 let lazy = crate::code_rule_dsl::logic::plan::LazyStats::new(move || {
@@ -7729,7 +7729,7 @@ fn bind_kept(b: &mut Binder, modules: &Modules, db: &rusqlite::Connection, stats
             // about what a measure did, once.
             let patched = patched.or_else(|| {
                 // Only a relation this run maintains (it has an overdelete): one derived again is measured.
-                let of = rel.strip_suffix("__old")?;
+                let _of = rel.strip_suffix("__old")?;
                 let h = held.as_ref().filter(|_| maintains)?;
                 let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}"));
                 let names = source.columns();

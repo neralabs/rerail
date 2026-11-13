@@ -423,7 +423,7 @@ impl<L: Layout> Writer<L> {
         // The block's base holds unless the node starts a block, or starts before its base
         // (its offset wraps), or its offset needs 4 bytes, or nodes are marked.
         let off = start.wrapping_sub(self.block_base);
-        if node % CHECKPOINT_STRIDE == 0 || off >= self.wide_from {
+        if node.is_multiple_of(CHECKPOINT_STRIDE) || off >= self.wide_from {
             self.block(node / CHECKPOINT_STRIDE);
         } else {
             Self::put(&mut self.off, node, self.layout.widths().off, off);
@@ -510,7 +510,7 @@ impl<L: Layout> Writer<L> {
         self.marks.retain(|m| (m.0 as usize) < len);
         let blocks = len.div_ceil(CHECKPOINT_STRIDE);
         self.base.truncate(blocks);
-        if len % CHECKPOINT_STRIDE != 0 {
+        if !len.is_multiple_of(CHECKPOINT_STRIDE) {
             self.block(blocks - 1);
         } else {
             // The next push starts a block.

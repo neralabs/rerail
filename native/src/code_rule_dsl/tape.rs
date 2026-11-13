@@ -1309,7 +1309,7 @@ impl TapeImage {
         let count = code.len() / 2;
         let [size_width, off_width, tail_width] = widths.map(|w| usize::from(w & !TAIL_FROM_START));
         if count == 0
-            || code.len() % 2 != 0
+            || !code.len().is_multiple_of(2)
             || ![size_width, off_width, tail_width].iter().all(|w| matches!(w, 2 | 4))
             || size.len() != count * size_width
             || off.len() != count * off_width

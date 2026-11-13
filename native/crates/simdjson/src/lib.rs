@@ -304,7 +304,7 @@ impl Writer<'_> {
             self.tape.codes.push((kind, field_id, slot >= OBJECT && field != KEY));
         }
         self.tape.code.extend_from_slice(&id.to_le_bytes());
-        if ord as usize % STRIDE == 0 {
+        if (ord as usize).is_multiple_of(STRIDE) {
             self.base = start;
             self.tape.base.extend_from_slice(&start.to_le_bytes());
         }
@@ -615,10 +615,11 @@ mod tests {
                 let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
                 if p.is_dir() && !skip {
                     work.push(p);
-                } else if p.extension().is_some_and(|x| x == "json") && e.metadata().is_ok_and(|m| m.len() <= 4 << 20) {
-                    if let Ok(f) = std::fs::read(&p) {
-                        checked += usize::from(same(&f));
-                    }
+                } else if p.extension().is_some_and(|x| x == "json")
+                    && e.metadata().is_ok_and(|m| m.len() <= 4 << 20)
+                    && let Ok(f) = std::fs::read(&p)
+                {
+                    checked += usize::from(same(&f));
                 }
             }
         }

@@ -356,8 +356,8 @@ impl Shape {
             for part in parts {
                 let inside: std::collections::HashSet<usize> = part.iter().copied().collect();
                 let mut entries: Vec<usize> = Vec::new();
-                for u in 0..succ.len() {
-                    for &t in &succ[u] {
+                for (u, ts) in succ.iter().enumerate() {
+                    for &t in ts {
                         if inside.contains(&t) && !inside.contains(&u) && !entries.contains(&t) {
                             entries.push(t);
                         }
@@ -374,11 +374,11 @@ impl Shape {
                     return None;
                 }
                 let d = block.len();
-                for u in 0..succ.len() {
-                    for k in 0..succ[u].len() {
-                        if let Some(j) = entries.iter().position(|&e| e == succ[u][k]) {
+                for (u, ts) in succ.iter_mut().enumerate() {
+                    for (k, t) in ts.iter_mut().enumerate() {
+                        if let Some(j) = entries.iter().position(|&e| e == *t) {
                             label.insert((u, k), j);
-                            succ[u][k] = d;
+                            *t = d;
                         }
                     }
                 }

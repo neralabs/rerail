@@ -227,6 +227,7 @@ impl Admitted {
     }
 
     /// Its rows' count, where its rows were admitted.
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> Option<usize> {
         match &self.data {
             Data::Encoded { n, .. } => Some(*n),
@@ -251,6 +252,12 @@ impl Admitted {
 // Stay below even SQLite's older 999-parameter limit. Full batches share one prepared shape.
 const READ_BATCH: usize = 128;
 
+/// A space's frames as the snapshot holds them, by relation and part.
+type Held = HashMap<(Rel, i64), Arc<Admitted>>;
+
+/// A relation given a delta after its frame: its digest and stored reads now (`write_frames`).
+type Head = (Rel, u64, Vec<(String, u64)>);
+
 /// Every frame of a store as this process holds it (decision 0104: a run reads before its first wave): read once
 /// (`preload_frames`), kept current by every write this process queues or makes, by space, then relation and part.
 /// Shared by the store's handles in this process, by its path. With the frames, what else the store keeps of them:
@@ -258,7 +265,7 @@ const READ_BATCH: usize = 128;
 /// process queues, and the memo spaces whose entries were admitted (`admit_memo_entries`).
 #[derive(Default)]
 struct Snapshot {
-    frames: HashMap<[u8; 32], HashMap<(Rel, i64), Arc<Admitted>>>,
+    frames: HashMap<[u8; 32], Held>,
     confirmed: Confirms,
     admitted: HashSet<[u8; 32]>,
 }
@@ -395,6 +402,7 @@ impl ContentStore {
             // The memo's frames read: per relation and path, the newest of the run's memo space.
             // Of the memos' frames, the live plans' outputs (`local_out`), each path's newest; their entries
             // (`local`) a run reads as it looks them up (`admit_memo_entries`, `admit_parts_of`).
+            #[allow(clippy::type_complexity)]
             let mut wanted: Vec<([u8; 32], Vec<(Rel, i64)>)> = Vec::new();
             for space in memos.iter().flatten() {
                 wanted.push((*space, newest_by_path(&connection, space, MEMO_RELS[1])?.into_iter().map(|(rel, _, part)| (rel, part)).collect()));
@@ -668,6 +676,7 @@ impl ContentStore {
             let connection = self.connection.lock().expect("content store mutex poisoned");
             let mut st = connection.prepare_cached("SELECT f.ident, f.part, f.reads, u.used FROM frames f JOIN frame_part_used u ON u.space = f.space AND u.rel = f.rel AND u.ident = f.ident AND u.part = f.part WHERE f.space = ?1 AND f.rel = ?2")?;
             let rows = st.query_map(params![&space[..], rel], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?, row.get::<_, i64>(3)?)))?;
+            #[allow(clippy::type_complexity)]
             let mut by: HashMap<([u8; 32], String), Vec<(i64, i64)>> = HashMap::new();
             for row in rows {
                 let (ident, part, reads, used) = row?;
@@ -742,7 +751,7 @@ impl ContentStore {
     pub fn queue_frames_retagged(&self, space: [u8; 32], frames: Vec<Encoded>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
         // Each delta after its relation's frame as it is now (in memory, queued or stored).
         let mut delta_puts: Vec<Arc<Put>> = Vec::new();
-        let mut heads: Vec<(Rel, u64, Vec<(String, u64)>)> = Vec::new();
+        let mut heads: Vec<Head> = Vec::new();
         // A relation's deltas queued in this call so far (two of one relation follow each other).
         let mut composed: Vec<(Rel, Arc<Admitted>)> = Vec::new();
         for d in deltas {
@@ -921,7 +930,7 @@ impl ContentStore {
     /// Writes encoded `rows` (frames, and deltas after their frames) into `space`, each replacing its frame, sets the
     /// `heads` of relations given deltas, confirms `retags`, and forgets `gone`, in one transaction; with `used`, as
     /// `keep_frames`.
-    fn write_frames(&self, space: &[u8; 32], rows: &[Framed], retags: &[Retag], heads: &[(Rel, u64, Vec<(String, u64)>)], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>) -> StoreResult<()> {
+    fn write_frames(&self, space: &[u8; 32], rows: &[Framed], retags: &[Retag], heads: &[Head], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>) -> StoreResult<()> {
         let timed = std::env::var_os("RERAIL_WRITES").is_some();
         self.immediate_transaction_once(|t| {
             let mut at = std::time::Instant::now();
@@ -1039,7 +1048,7 @@ impl ContentStore {
                 let mut live: HashSet<u64> = HashSet::new();
                 let mut stale: Vec<(Vec<u8>, i64)> = Vec::new();
                 for (p, mut rs) in by_program {
-                    rs.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+                    rs.sort_unstable_by_key(|r| std::cmp::Reverse(r.0));
                     for (i, (r, k)) in rs.into_iter().enumerate() {
                         if i < RUNS as usize && r > run - ABANDON {
                             live.extend(k.iter().copied());
@@ -1182,13 +1191,6 @@ fn admitted_part(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, Arc<Admitted
 /// The entry a base frame's stored reads end with when deltas follow it (decision 0117 step 4): how many. A frame
 /// put whole has none, so deltas a put left behind are not read.
 const CHAIN: &str = "~deltas";
-
-/// How `CHAIN`'s entry starts in stored reads: its name's length and its name.
-fn chain_mark() -> Vec<u8> {
-    let mut out = (CHAIN.len() as u32).to_le_bytes().to_vec();
-    out.extend(CHAIN.as_bytes());
-    out
-}
 
 /// A frame's stored reads, and how many deltas follow it.
 fn decode_reads_chain(bytes: &[u8]) -> (Vec<(String, u64)>, u32) {
@@ -1396,7 +1398,7 @@ mod tests {
             store.queue_frames([1; 32], vec![Put { rel: r.clone(), part: 0, digest: 1, reads: vec![], rows: rows(&[1, 1, 2, 2, 3, 3]) }], vec![], None);
             store.queue_frames_retagged([1; 32], vec![], vec![], vec![delta(2, &[2, 2], &[4, 4])], vec![], None);
             // Queued, in memory: the rows after the delta.
-            let now = store.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+            let now = store.admit_frames(&[1; 32], std::slice::from_ref(&r), 0).unwrap();
             assert_eq!(now[&r].stored.digest, 2);
             assert_eq!(sorted(now[&r].rows().unwrap().rows), vec![[1, 1], [3, 3], [4, 4]]);
             assert_eq!(now[&r].chain(), (1, 2));
@@ -1404,7 +1406,7 @@ mod tests {
         }
         // Stored: read from SQL with its deltas, oldest first.
         let store = ContentStore::open(&path).unwrap();
-        let got = store.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        let got = store.admit_frames(&[1; 32], std::slice::from_ref(&r), 0).unwrap();
         assert_eq!(got[&r].stored, Stored { digest: 3, reads: vec![("a".into(), 3)] });
         assert_eq!(sorted(got[&r].rows().unwrap().rows), vec![[3, 3], [4, 4], [5, 5]]);
         assert_eq!(got[&r].chain(), (2, 4));
@@ -1413,7 +1415,7 @@ mod tests {
         store.queue_frames_retagged([1; 32], vec![], vec![Retag { rel: r.clone(), part: 0, reads: vec![("b".into(), 4)] }], vec![], vec![], None);
         drop(store);
         let store = ContentStore::open(&path).unwrap();
-        let got = store.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        let got = store.admit_frames(&[1; 32], std::slice::from_ref(&r), 0).unwrap();
         assert_eq!((got[&r].stored.reads.clone(), got[&r].chain()), (vec![("a".into(), 3)], (2, 4)));
         assert_eq!(store.confirmed(&[1; 32]).unwrap().get(&confirm_key(&r, 0)), Some(&reads_hash(&[("b".into(), 4)])));
         assert_eq!(sorted(got[&r].rows().unwrap().rows), vec![[3, 3], [4, 4], [5, 5]]);
@@ -1421,12 +1423,12 @@ mod tests {
         // And from the frames read before the first wave.
         let store = ContentStore::open(&path).unwrap();
         store.preload_frames().unwrap();
-        let got = store.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        let got = store.admit_frames(&[1; 32], std::slice::from_ref(&r), 0).unwrap();
         assert_eq!(sorted(got[&r].rows().unwrap().rows), vec![[3, 3], [4, 4], [5, 5]]);
         assert_eq!(got[&r].chain(), (2, 4));
         // A frame put whole ends its deltas.
         store.keep_frames(&[1; 32], &[Put { rel: r.clone(), part: 0, digest: 9, reads: vec![], rows: rows(&[9, 9]) }], &[], None).unwrap();
-        let got = store.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        let got = store.admit_frames(&[1; 32], std::slice::from_ref(&r), 0).unwrap();
         assert_eq!((sorted(got[&r].rows().unwrap().rows), got[&r].chain()), (vec![[9, 9]], (0, 0)));
         // A frame put whole is no longer confirmed: in memory (the snapshot's), and in the store.
         assert_eq!(store.confirmed(&[1; 32]).unwrap().get(&confirm_key(&r, 0)), None);

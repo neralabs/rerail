@@ -986,6 +986,7 @@ fn own_word(f: &mut FunctionBuilder<'_>, p: &[Value], refuses: bool, body: &dyn 
 /// value at each of its 64 places at once (`local_word`), and the test one AND. 1 where it holds
 /// at a bit, else 0. No loop over bits or bytes. The token's start and end are passed: the
 /// state may be the caller's variables.
+#[allow(clippy::too_many_arguments)]
 fn check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, output: usize, start: Value, limit: Value, heads: &mut Vec<(Block, Step)>) -> Value {
     let (outputs_p, stride, lasts_stride) = ((e.ctx)(f, OUTPUTS), (e.ctx)(f, OUTPUT_STRIDE), (e.ctx)(f, LASTS_STRIDE));
     let (bytes, len) = ((e.ctx)(f, BYTES), (e.ctx)(f, LEN));
@@ -1444,6 +1445,7 @@ impl Table<'_> {
 
 /// `LEAF`: its row (its kind, with its field above it or none; its bytes; one record; its
 /// parent and extra flag), the pending extras, the level's last node.
+#[allow(clippy::too_many_arguments)]
 fn leaf_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: Value, deferred: bool, extra: bool, end_at: EndAt, wrapping: bool) {
     let flags = MemFlags::trusted();
     let zero = f.ins().iconst(types::I64, 0);

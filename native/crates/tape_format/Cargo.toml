@@ -6,8 +6,6 @@ publish = false
 description = "The engine's tape (v9np, format 15) as bytes: its constants, and a writer a parser writes the tape with as it parses."
 
 [dependencies]
-sha2 = "0.10"
-
-# SHA-256 on the CPU's SHA instructions, as the engine has it (its Cargo.toml says why).
-[target.'cfg(all(target_arch = "aarch64", not(windows)))'.dependencies]
-sha2 = { version = "0.10", features = ["asm"] }
+# As the engine's: sha2 0.11 runs SHA-256 on the CPU's SHA instructions by itself (0.10 needed `asm`, whose
+# `sha2-asm` builds neither with MSVC nor with every aarch64 cross C toolchain).
+sha2 = "0.11"

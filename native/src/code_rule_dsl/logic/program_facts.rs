@@ -1064,7 +1064,7 @@ pub fn decode_view(bytes: &[u8]) -> Result<View<'_>, String> {
     let mut table: Vec<&str> = Vec::with_capacity(count.min(1 << 20));
     for _ in 0..count {
         let n = u64_at(&mut at)? as usize;
-        table.push(std::str::from_utf8(take(&mut at, n)?).map_err(|e| bad(e))?);
+        table.push(std::str::from_utf8(take(&mut at, n)?).map_err(bad)?);
     }
     let string = |k: u64| table.get(k as usize).copied().ok_or_else(|| bad("no such string"));
     let mut rels = Vec::new();
@@ -1075,7 +1075,7 @@ pub fn decode_view(bytes: &[u8]) -> Result<View<'_>, String> {
         let mut values = Vec::with_capacity(rows_n.min((bytes.len() - at) / 9));
         let mut starts = Vec::with_capacity(rows_n.min(1 << 24));
         for _ in 0..rows_n {
-            starts.push(u32::try_from(values.len()).map_err(|e| bad(e))?);
+            starts.push(u32::try_from(values.len()).map_err(bad)?);
             let width = u64_at(&mut at)? as usize;
             for _ in 0..width {
                 values.push(match take(&mut at, 1)?[0] {

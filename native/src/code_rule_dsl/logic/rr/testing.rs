@@ -124,10 +124,10 @@ pub fn tests(path: &Path) -> Result<Vec<Test>, String> {
     let (statements, _) = super::read(path).map_err(|e| e.to_string())?;
     let mut sets: BTreeMap<String, Block> = BTreeMap::new();
     for (item, line) in &statements {
-        if let Item::Fixtures { name, items } = item {
-            if sets.insert(name.clone(), block(path, items.clone(), false)?).is_some() {
-                return bad(path, *line, format!("a second fixture set named {name}"));
-            }
+        if let Item::Fixtures { name, items } = item
+            && sets.insert(name.clone(), block(path, items.clone(), false)?).is_some()
+        {
+            return bad(path, *line, format!("a second fixture set named {name}"));
         }
     }
     let mut out: Vec<Test> = Vec::new();
@@ -277,6 +277,7 @@ pub struct Outcome {
 }
 
 impl Outcome {
+    #[cfg(test)]
     pub fn passed(&self) -> bool {
         self.failures.is_empty()
     }
@@ -456,6 +457,7 @@ fn sample(rows: &[Vec<String>]) -> String {
 
 /// The text of each `.test` and `.fixtures` block of `src`, as written, in order: what a printer of the file's
 /// program (`flatten`) adds after it, so the file's tests go with it.
+#[cfg(test)]
 pub fn blocks(src: &str) -> Vec<String> {
     use super::tape::Kind;
     let mut parser = syntax::Parser::taped(src);

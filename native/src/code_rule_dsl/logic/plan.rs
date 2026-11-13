@@ -1112,7 +1112,7 @@ fn plans_update(key: &PlanKey, f: impl FnOnce(&mut Kept)) {
             let mut o = o.borrow_mut();
             let Some(m) = o.as_mut() else { return Some(f) };
             if !m.contains_key(key) {
-                let Some(k) = shared.read().kept.get(key).cloned() else { return None };
+                let k = shared.read().kept.get(key).cloned()?;
                 m.insert(*key, k);
             }
             if let Some(k) = m.get_mut(key) {
@@ -1928,7 +1928,7 @@ impl Model {
             if let Some(p) = p.borrow().as_ref() {
                 let gap = got.0.1 / SEED.with(|c| c.get()).max(1.0);
                 let ran = plans_get(&key).and_then(|k| k.5);
-                plans_put(p, key.clone(), (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap, None, ran));
+                plans_put(p, key, (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap, None, ran));
             }
         });
         remember(&key, &got);
@@ -2159,7 +2159,7 @@ impl Model {
         let mut waits = Vec::new();
         for shape in self.shapes_for(head) {
             for (i, &bi) in joins.iter().enumerate() {
-                if first == Some(bi) || !body[bi].atom().is_some_and(|a| shape_base(&a.rel) == shape.lit) {
+                if first == Some(bi) || body[bi].atom().is_none_or(|a| shape_base(&a.rel) != shape.lit) {
                     continue;
                 }
                 match &shape.wait {
@@ -2370,9 +2370,9 @@ impl Model {
                 let mut g = SEEN.lock();
                 g.0 += 1;
                 g.1.get_or_insert_default().insert(a.rel.to_string());
-                let with_constants = format!("{}{:?}", a.rel, a.args.iter().map(|t| constant(t)).collect::<Vec<_>>());
+                let with_constants = format!("{}{:?}", a.rel, a.args.iter().map(constant).collect::<Vec<_>>());
                 g.2.get_or_insert_default().insert(with_constants);
-                if g.0.is_power_of_two() || g.0 % 10_000 == 0 {
+                if g.0.is_power_of_two() || g.0.is_multiple_of(10_000) {
                     eprintln!("column tables: {} made, {} relations, {} relations with their constants", g.0, g.1.as_ref().map_or(0, |s| s.len()), g.2.as_ref().map_or(0, |s| s.len()));
                 }
             }
@@ -3036,9 +3036,9 @@ impl Model {
             s[at] += 1.0;
             s[at + 1] += candidates as f64;
             s[at + 2] += *gc as f64;
-            s[at + 3] += if same { 0.0 } else { regret.min(1e12).max(0.0) };
+            s[at + 3] += if same { 0.0 } else { regret.clamp(0.0, 1e12) };
             let n = (s[0] + s[4]) as u64;
-            if n.is_power_of_two() || n % 1000 == 0 {
+            if n.is_power_of_two() || n.is_multiple_of(1000) {
                 eprintln!("greedy probe: {n} searches; greedy taken {} (candidates {}, greedy {}, regret {} rows); searched {} (candidates {}, greedy {}, regret {} rows)", s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7]);
             }
         }
@@ -6825,7 +6825,7 @@ impl<'a> Run<'a, '_> {
                         None => {
                             let _span = planning(r, "plan whole at open");
                             let ((new, _, _), _) = self.model.plan_rule_live(prog, &r.head, &r.body, None)?;
-                            let Some(w) = self.whole_join_spec(&r.head, &new, None, &ri, scc, &native_rels) else { continue };
+                            let Some(w) = self.whole_join_spec(&r.head, &new, None, &ri, scc, native_rels) else { continue };
                             whole.push((r, w.clone()));
                             w
                         }
@@ -6990,6 +6990,7 @@ impl<'a> Run<'a, '_> {
                 // distinct counts), again from the live counts: once per rule, the same plan for each of its probes
                 // (`setfix` runs it once a wave).
                 let mut whole: Vec<(*const Rule, Arc<JoinSpec>)> = Vec::new();
+                #[allow(clippy::nonminimal_bool)]
                 let wants_whole = |k: usize, this: &Self| {
                     let r = probes[k].0;
                     !sql_probe[k]
@@ -7002,11 +7003,11 @@ impl<'a> Run<'a, '_> {
                 // Searched whatever was kept (`plan_rule_live`): every deferred relation they read.
                 let wanted: BTreeSet<String> = (0..probes.len()).filter(|&k| wants_whole(k, self)).flat_map(|k| Model::read_by([probes[k].0])).map(str::to_owned).collect();
                 self.model.make_statistics(prog, &wanted)?;
-                for k in 0..probes.len() {
+                for (k, probe) in probes.iter().enumerate() {
                     if !wants_whole(k, self) {
                         continue;
                     }
-                    let r = probes[k].0;
+                    let r = probe.0;
                     if !replanned_at.take_whole(k) { continue; }
                     let spec = match whole.iter().find(|(p, _)| std::ptr::eq(*p, r)) {
                         Some((_, w)) => w.clone(),
@@ -7653,17 +7654,19 @@ pub trait Maintain {
 }
 
 /// Holds `rel`'s kept rows `o` as the run's relation, with its cardinality (a quiet stratum's, decision 0117 step 3).
-fn hold_quiet(run: &mut Run, prog: &Program, db: &Connection, rel: &String, o: Arc<super::native::component::InRel>) {
+fn hold_quiet(run: &mut Run, prog: &Program, db: &Connection, rel: &str, o: Arc<super::native::component::InRel>) {
     let seeded = (o.rows() as f64).max(1.0);
     let card = prior_stats(&mut run.model, prog, rel).map_or(seeded, |n| n.max(seeded));
-    run.model.stats.card.insert(rel.clone(), card);
+    run.model.stats.card.insert(rel.to_owned(), card);
     super::native::component::hold_as(db, rel, o);
-    run.native_rels.insert(rel.clone());
+    run.native_rels.insert(rel.to_owned());
 }
 
 /// Programs made while a run goes (a maintained stratum's form, decision 0117 step 3), each kept where it is until
 /// the run ends: the run's rules are borrowed from them.
+// Boxed: a run's rules borrow a form's program while later forms are pushed.
 #[derive(Default)]
+#[allow(clippy::vec_box)]
 struct Forms(RefCell<Vec<Box<Program>>>);
 
 /// A stratum of a maintained run, as its level's start placed it (decision 0117 step 3).
@@ -8875,8 +8878,8 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                 prepared_to = end;
                 let _level = super::profile::span(|| format!("a level of {} strata placed", end - at));
                 if let Some(load) = hooks.load.as_deref_mut() {
-                    for j in at + 1..end {
-                        let now: Vec<String> = std::mem::take(&mut loads[j]);
+                    for slot in &mut loads[at + 1..end] {
+                        let now: Vec<String> = std::mem::take(slot);
                         if !now.is_empty() {
                             load(&now)?;
                         }
@@ -9031,8 +9034,8 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     // Per form that may run off the thread: its slot, reads, relations, rules' digests, statistics to
                     // resolve and estimate.
                     let mut ready: Vec<(usize, &Program, BTreeSet<String>, BTreeSet<String>, Vec<u64>, Vec<&str>, f64)> = Vec::new();
-                    for j in at..end {
-                        let Slot::Reached { form, pieces, .. } = &slots[j] else { continue };
+                    for (j, slot) in slots.iter().enumerate().take(end).skip(at) {
+                        let Slot::Reached { form, pieces, .. } = slot else { continue };
                         let form: &Program = form;
                         run.prog = form;
                         let mut own: BTreeSet<String> = BTreeSet::new();
@@ -9796,7 +9799,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         }
     }
     // What the caller reads of the relations left stored (decision 0117 step 4): read and held; the rest stand.
-    if let Some(m) = maintaining.as_deref_mut() {
+    if let Some(m) = maintaining {
         let wanted: Vec<String> = unread.iter().filter(|r| prog.outputs.contains(*r) || m.at_end(r)).cloned().collect();
         if !wanted.is_empty() {
             m.need(&wanted, &mut run.model)?;

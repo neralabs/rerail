@@ -383,8 +383,6 @@ fn resolve_shared(statements: Vec<syntax::Statement>) -> Result<(SharedFiles, Ve
     Ok((files, own))
 }
 
-/// Each module's statements, without its includes (the graph placed them), read off its stored tape.
-
 /// The seed phase 0 starts from for a program text: whether it is in T's shape, and the names it includes. `None`
 /// for a text that includes nothing, or while phase 0 itself runs.
 pub fn text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>, Error> {
@@ -972,7 +970,7 @@ impl Shared {
         let own = self.0.last().map(|(p, _)| p.clone());
         self.0.iter().map(move |(p, statements)| {
             let included = Some(p) != own.as_ref() && Some(p) != core.as_ref();
-            (p, statements.iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_)) && !(included && matches!(item, syntax::Item::Io { output: true, .. }))).collect())
+            (p, statements.iter().filter(|(item, _)| !(matches!(item, syntax::Item::Include(_)) || included && matches!(item, syntax::Item::Io { output: true, .. }))).collect())
         })
     }
 }

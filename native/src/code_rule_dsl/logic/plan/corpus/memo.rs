@@ -433,7 +433,7 @@ fn by_digest_from(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted:
         // back to its whole entry when the kept inputs are not taken. Marked alone, the entry aged out after
         // `MEMO_RUNS` runs that read only outputs (one 44-policy batch), and the next batch's fallback found it gone.
         if rel.name == outputs_rel(plan).name {
-            store.queue_frame_parts_used(space.clone(), entry_rel(plan), used.clone(), super::run_token(), MEMO_RUNS);
+            store.queue_frame_parts_used(space, entry_rel(plan), used.clone(), super::run_token(), MEMO_RUNS);
         }
         store.queue_frame_parts_used(space, rel, used, super::run_token(), MEMO_RUNS);
     }

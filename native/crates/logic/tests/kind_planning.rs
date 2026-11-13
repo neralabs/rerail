@@ -2,6 +2,8 @@ use rerail_logic::code_rule_dsl::logic::{plan::{Model, Stats, Inputs, Constant},
 use std::collections::{HashMap,HashSet};
 use std::sync::Arc;
 #[test]
+// The model is the planner's, held by one thread: its `Arc`s are as the planner makes them.
+#[allow(clippy::arc_with_non_send_sync)]
 fn current_kind_postings_override_biased_priors_and_preserve_missing_vs_zero() {
     let p=Program::default();
     let mut stats=Stats::empty(&p);

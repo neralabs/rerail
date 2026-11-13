@@ -262,10 +262,7 @@ pub fn run_rr(
     out: &std::path::Path,
     options: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    use super::{
-        logic::{plan::corpus, rr},
-        typing::file_local::Binding,
-    };
+    use super::logic::rr;
     let (program, files) = rr::read_file(path).map_err(|e| e.to_string())?;
     if !program.outputs.iter().any(|name| name == "rr_diagnostic") {
         return Err(format!("{}: no .violation declarations", path.display()));
@@ -275,7 +272,7 @@ pub fn run_rr(
 
 /// `run_rr` of a program already read: `path`'s, or a test's (decision 0130, `rr::testing`).
 pub fn run_program(
-    path: &std::path::Path,
+    _path: &std::path::Path,
     program: super::logic::front::Program,
     files: &[super::logic::rr::LibraryFile],
     root: &std::path::Path,

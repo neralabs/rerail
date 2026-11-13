@@ -1916,6 +1916,7 @@ fn rr_parse_costs() {
         unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
         t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
     };
+    #[allow(clippy::type_complexity)]
     let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
         ("lean: rows", Box::new(|f| rerail_rr_syntax::tape(f).len())),
         ("lean: the tape (the engine's path)", Box::new(|f| usize::from(std::hint::black_box(TapeImage::encode_rr(&grammar, f, &|| false)).is_ok()))),
@@ -2162,6 +2163,7 @@ fn json_parse_costs() {
     let grammar = Grammar::new(GrammarDialect::Json).unwrap();
     let kinds = &jp::simdjson::kinds().unwrap().0;
     let nodes: usize = files.iter().map(|f| rerail_simdjson::tape(f.as_bytes(), kinds).unwrap().node_count()).sum();
+    #[allow(clippy::type_complexity)]
     let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
         ("simdjson: stage 1 alone", Box::new(|f| rerail_simdjson::stage1_only(f.as_bytes(), false) as usize)),
         ("simdjson: stage 1, SHA-256 in it", Box::new(|f| rerail_simdjson::stage1_only(f.as_bytes(), true) as usize)),

@@ -1,3 +1,5 @@
+// The sketch alone: what its relation reads of it (`small`) is not this binary's.
+#[allow(dead_code)]
 #[path = "../../../src/code_rule_dsl/logic/native/setfix/sketch.rs"]
 mod sketch;
 #[test]
