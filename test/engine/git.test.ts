@@ -267,10 +267,11 @@ describe("Git reads and their time limit", () => {
 
   it("ends a read at the time limit when Git has exited but a process it started keeps the output open", async () => {
     const root = await repository({ ".gitattributes": "a.py filter=held\n", "a.py": "print(1)\n" });
-    const released = join(root, ".git", "released");
+    const held = join(root, ".git", "held");
     // Git runs the clean filter to compare a.py, changed on disk, with the index. The loop the filter leaves behind holds
-    // Git's stderr, outside the repository, until the test creates `released`.
-    git(root, "config", "filter.held.clean", `(cd / && while [ ! -e '${released.replaceAll("\\", "/")}' ]; do sleep 0.2; done) </dev/null >/dev/null & cat`);
+    // Git's stderr, outside the repository, while `held` is there: the test removes it, and so does removing the repository.
+    git(root, "config", "filter.held.clean", `(cd / && while [ -e '${held.replaceAll("\\", "/")}' ]; do sleep 0.2; done) </dev/null >/dev/null & cat`);
+    await writeFile(held, "");
     await writeFile(join(root, "a.py"), "print(2)\n");
     let late: NodeJS.Timeout | undefined;
     try {
@@ -279,7 +280,7 @@ describe("Git reads and their time limit", () => {
       await expect(Promise.race([read, waited])).resolves.toBeUndefined();
     } finally {
       clearTimeout(late);
-      await writeFile(released, "");
+      await rm(held, { force: true });
     }
   }, 30_000);
 });
