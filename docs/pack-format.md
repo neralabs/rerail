@@ -152,7 +152,7 @@ packs/<id>/
 - **`honourSuppressionComments`** (optional, default `true`): whether its rules honour their linters' suppression
   comments.
 - **`rules`**: the pack's rules. Each entry has an `id` ([Rule ids](#rule-ids)), a `document` (required,
-  `rules/<id>.json`), a `title` and `group`, and optional `mode`, `on` and `examples`.
+  `rules/<id>.json`), a `title` and `group`, and optional `mode`, `on`, `heldOff` and `examples`.
 
 <details>
 <summary>Field details</summary>
@@ -191,6 +191,10 @@ packs/<id>/
   - `mode` is the rule mode the pack starts the rule in; otherwise the document's. Ports use it for upstream's
     warning level (below).
   - `on` (default `true`) is whether the pack starts the rule on.
+  - `heldOff` is one line saying why a reviewer holds the rule off though upstream turns it on: its steer would do
+    harm. It needs `"on": false`. Set-up never turns a held-off rule on from the repository's lint config, by a
+    linter's defaults, a preset, a prefix, a group or the rule's own name; it notes what would have, with the reason
+    ([rule scoping](rule-scoping.md#the-repositorys-own-lint-config)). A person can still turn the rule on.
   - `examples` is `{ "caught": { "path"?, "text" }, "passes": { … } }`. A code rule's examples need a `path` inside
     the rule's scope, which decides the file's language; a conversation rule's have none. The complexity pack has one
     pair per rule.
