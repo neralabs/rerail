@@ -129,11 +129,6 @@ interface PendingEdit {
   readonly paths: readonly string[];
   readonly preimages: ReadonlyMap<string, Preimage>;
 }
-/**
- * A tool call made while the evaluator opened (`deferCall`), or left unresolved by the session's previous runtime
- * (`deferRestored`): what the files it names held before the tool ran, and, once its result came, whether the tool
- * failed.
- */
 /** A tool call the session's ledger keeps as begun and unresolved: its tool, the paths it names and their preimages. */
 export interface RestoredCall {
   readonly toolCallId: string;
@@ -141,9 +136,19 @@ export interface RestoredCall {
   readonly paths: readonly string[];
   readonly preimages?: Readonly<Record<string, Preimage>>;
 }
+/**
+ * A tool call made while the evaluator opened (`deferCall`), or left unresolved by the session's previous runtime
+ * (`deferRestored`): what the files it names held before the tool ran, and, once its result came, whether the tool
+ * failed and what the result says the file it wrote held (`DeferredResult`).
+ */
 interface DeferredCall extends PendingEdit {
   readonly toolName: string;
-  result: { readonly failed: boolean } | undefined;
+  result: DeferredResult | undefined;
+}
+/** The result of a deferred call: whether its tool failed, and what it says the file it wrote held before. */
+interface DeferredResult {
+  readonly failed: boolean;
+  readonly reported: ReportedPreimage | undefined;
 }
 /** A finished edit `rewind` may still roll back: the revision its finish audited, and each path's digest after it (none when absent). */
 interface RewindableEdit {
@@ -1002,13 +1007,16 @@ export class CodeRuleBridge {
 
   /**
    * The result of a call answered while the evaluator opened. Its window ends here. A call `deferCall` took is checked
-   * once the workspace opens, or now if it opened meanwhile, and its steer reaches a later boundary.
+   * once the workspace opens, or now if it opened meanwhile, and its steer reaches a later boundary. `reported` is what
+   * the result says the file it wrote held, read as `finish` reads it: a call taken up only after its tool ran, as on a
+   * daemon too busy to answer its hook, captured the file as the tool left it.
    */
-  async finishDeferred(toolCallId: string, failed: boolean): Promise<void> {
+  async finishDeferred(toolCallId: string, failed: boolean, reported?: ReportedPreimage): Promise<void> {
     const deferred = this.#deferred.get(toolCallId);
-    if (deferred !== undefined) deferred.result = { failed };
+    const result = { failed, reported };
+    if (deferred !== undefined) deferred.result = result;
     await this.unwatchedResult(toolCallId);
-    if (deferred === undefined) this.#finishLate(toolCallId, failed);
+    if (deferred === undefined) this.#finishLate(toolCallId, result);
   }
 
   /**
@@ -1021,20 +1029,21 @@ export class CodeRuleBridge {
       for (const path of preimages.keys()) this.#touchSource(discovery, path);
       if (call.paths.length > 0) this.#pending.set(toolCallId, { paths: call.paths, preimages });
       else if (isCommandTool(call.toolName)) this.#commands.add(toolCallId);
-      if (call.result !== undefined) this.#finishLate(toolCallId, call.result.failed);
+      if (call.result !== undefined) this.#finishLate(toolCallId, call.result);
     }
     this.#deferred.clear();
   }
 
   /**
    * Checks the edit of a begun call whose result has already been answered; what it finds steers at a later boundary.
-   * A command's shell writes are left to the next walk, as they would be had the call never been begun: no boundary
-   * waits for this one's.
+   * The result's report of what the file held is read as `finish` reads it, so a call that was taken up only after its
+   * tool ran is still checked. A command's shell writes are left to the next walk, as they would be had the call never
+   * been begun: no boundary waits for this one's.
    */
-  #finishLate(toolCallId: string, failed: boolean): void {
+  #finishLate(toolCallId: string, { failed, reported }: DeferredResult): void {
     if (this.#commands.delete(toolCallId) || !this.#pending.has(toolCallId)) return;
     // A workspace closed meanwhile has nothing left to check the edit with.
-    void this.finish(toolCallId, failed).catch(() => undefined);
+    void this.finish(toolCallId, failed, { reported }).catch(() => undefined);
   }
 
   /** The preimages of the files the auditor reads, as `begin` captures them. */

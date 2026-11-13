@@ -1181,15 +1181,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * Finishes a tool call on the open evaluator, with what the tool's result says the file it wrote held: only Claude
    * Code's Write and Edit results say it, so no other agent's result is read as theirs. A result answered without the
    * evaluator, while it still opens, ends the call's window, and the call's edit is checked once the evaluator has
-   * opened, its steer riding a later boundary (`CodeRuleBridge.finishDeferred`).
+   * opened, against that report too, its steer riding a later boundary (`CodeRuleBridge.finishDeferred`).
    */
   async #finishCall(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, result: Extract<AdapterEvent, { kind: "result" }>): Promise<void> {
-    if (bridge === undefined) {
-      await state.codeRuleBridge?.finishDeferred(result.toolCallId, result.failed === true);
-      return;
-    }
     const reported = state.descriptor.host === "claude-code" ? claudeCodeReportedPreimage(result.output) : undefined;
-    await bridge.finish(result.toolCallId, result.failed === true, { rewindable: true, reported });
+    if (bridge !== undefined) await bridge.finish(result.toolCallId, result.failed === true, { rewindable: true, reported });
+    else await state.codeRuleBridge?.finishDeferred(result.toolCallId, result.failed === true, reported);
   }
 
   /**

@@ -2220,6 +2220,23 @@ describe("CodeRuleBridge and another session's writes", () => {
     ]);
   });
 
+  it("checks the edit of a call made while the evaluator opened, and taken up only after its tool ran, against what its result says", async () => {
+    const root = await twoBranches();
+    const held = await heldOpenBridge(root);
+    const path = join(root, "src", "a.py");
+    // A daemon too busy to answer the hook in time takes the call up once the tool has written the file.
+    await appendFile(path, "mine\n");
+    await held.bridge.deferCall("edit-1", "Edit", { file_path: path });
+    const result = { type: "update", filePath: path, structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, lines: [" old", "+mine"] }], originalFile: null };
+    await held.bridge.finishDeferred("edit-1", false, claudeCodeReportedPreimage(result));
+    await held.open();
+    await held.bridge.settleGeneratedEdits();
+    await held.bridge.checkpoint("turn");
+    expect(held.auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\n" }],
+    ]);
+  });
+
   it("checks at its result, once the evaluator has opened, the edit of a call made while it opened", async () => {
     const root = await twoBranches();
     const held = await heldOpenBridge(root);

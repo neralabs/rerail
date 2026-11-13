@@ -885,6 +885,22 @@ describe("source-scoped steers", () => {
       } finally { await test.close(); }
     });
 
+    it("checks, once the evaluator opens, a Claude Code edit whose call came after its tool ran, by what its result says", async () => {
+      const test = await openingFixture();
+      try {
+        const sessionId = test.session.sessionId;
+        const path = join(test.root, "edited.py");
+        // A daemon too busy to answer the hook in time takes the call up once the Write has made the file.
+        await writeFile(path, "NEEDLE\n");
+        const input = { file_path: path, content: "NEEDLE\n" };
+        expect(await test.runtime.ingest({ kind: "call", eventId: "call-late", sessionId, toolCallId: "late", toolName: "Write", input })).toEqual([]);
+        const output = { type: "create", filePath: path, content: "NEEDLE\n", structuredPatch: [] };
+        expect(await test.runtime.ingest({ kind: "result", eventId: "result-late", sessionId, toolCallId: "late", toolName: "Write", output })).toEqual([]);
+        test.open();
+        expect(await test.steers()).toEqual([needleSteer]);
+      } finally { await test.close(); }
+    });
+
     it("checks at its result the edit of a call answered while the evaluator opened, once it has opened", async () => {
       const test = await openingFixture();
       try {
