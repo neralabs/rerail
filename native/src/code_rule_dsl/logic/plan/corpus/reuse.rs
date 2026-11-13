@@ -151,7 +151,7 @@ pub fn decode_outputs(mut b: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
 
 /// The kept outputs written into `out`, when every read of the last run under this key is as it was.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn reused(programs: &[&str], root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value) -> Result<Option<Report>> {
+pub(super) fn reused(programs: &[&str], graphs: &[Option<[u8; 32]>], root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value) -> Result<Option<Report>> {
     let checking = super::thread_usage();
     let texts = with_settings(programs, root, options)?;
     let key = key(&texts, root, options, modes, typing);
@@ -177,7 +177,7 @@ pub(super) fn reused(programs: &[&str], root: &Path, out: &Path, modes: &str, ty
         miss("the rule files differ");
         return Ok(None);
     }
-    if !unchanged(programs, root, typing, options, &rest)? {
+    if !unchanged(programs, graphs, root, typing, options, &rest)? {
         miss("a consulted file or read changed");
         return Ok(None);
     }

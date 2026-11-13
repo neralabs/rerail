@@ -93,37 +93,9 @@ pub fn parse_own(src: &str) -> Result<Program, Error> {
     parse_with(src, false)
 }
 
+// A run handed a program it read is handed the program itself (`corpus::run_read`), not its print to lower again.
 fn parse_with(src: &str, clauses: bool) -> Result<Program, Error> {
-    if clauses && let Some(program) = lowered(src) {
-        crate::code_rule_dsl::prof::count("rr.lowered_reused", 1);
-        return Ok(program);
-    }
     read_text(src)?.lower(clauses)
-}
-
-/// Programs already lowered, by the digest of the text they print as (`remember_lowered`).
-static LOWERED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<[u8; 32], Program>>> = std::sync::LazyLock::new(Default::default);
-
-fn text_digest(src: &str) -> [u8; 32] {
-    use sha2::Digest as _;
-    sha2::Sha256::digest(src.as_bytes()).into()
-}
-
-/// Keeps `program` as the program `text` (its print) is: a run handed the text (`tools::run_rr`, which read the file
-/// and lowered it) parses it back to `program` itself, not lowering it a second time. Lowering a printed program
-/// is no identity (a regex's group bindings are added again, a unit atom grounds a rule of constants), so the run
-/// would otherwise hold another program than the one read.
-pub fn remember_lowered(text: &str, program: &Program) {
-    if let Ok(mut kept) = LOWERED.lock() {
-        if kept.len() >= 256 {
-            kept.clear();
-        }
-        kept.insert(text_digest(text), program.clone());
-    }
-}
-
-fn lowered(src: &str) -> Option<Program> {
-    LOWERED.lock().ok()?.get(&text_digest(src)).cloned()
 }
 
 /// A program text read once (its tape, its statements, its includes resolved), for what a run needs of it: its
@@ -379,27 +351,13 @@ fn modules_of(paths: Vec<PathBuf>) -> Result<Files, Error> {
 /// for a text that includes nothing, or while phase 0 itself runs.
 pub fn text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>, Error> {
     use super::plan::corpus::phase0;
-    use sha2::Digest as _;
-    use std::sync::{Mutex, OnceLock};
     // An include is the lexer's `#include` (`syntax::Tok::Hash`): a text without those letters includes nothing.
     // A printed program, its includes resolved, is not read for it; its parse errors are its parse's to report.
     if phase0::active() || !src.contains("#include") {
         return Ok(None);
     }
-    // A function of the text alone, so read once a process: every digest of a run's texts (`texts_digest`) asks it.
-    static SEEDS: OnceLock<Mutex<std::collections::HashMap<[u8; 32], Option<phase0::Seed>>>> = OnceLock::new();
-    let key: [u8; 32] = sha2::Sha256::digest(src.as_bytes()).into();
-    let seeds = SEEDS.get_or_init(Default::default);
-    if let Some(seed) = seeds.lock().expect("text seeds").get(&key) {
-        return Ok(seed.clone());
-    }
-    let seed = read_text_seed(src)?;
-    let mut kept = seeds.lock().expect("text seeds");
-    if kept.len() >= 256 {
-        kept.clear();
-    }
-    kept.insert(key, seed.clone());
-    Ok(seed)
+    // Read once a run: the run hands its texts' graph digests to its combines (`corpus::run_handed`).
+    read_text_seed(src)
 }
 
 fn read_text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>, Error> {

@@ -4466,3 +4466,16 @@ long rules' orders and searches short ones it could keep.
 **Closure:** one O125 measurement of a search's fixed cost and its cost per candidate, in the build both run; both
 gates read `search_rows`, and `SEARCH_WORK` is its fixed part.
 
+
+## O-phase0-kept-flake. Phase 0's kept graph of a text once differed from a fresh derive
+
+**Seen (2026-11-12, once in about ten runs of `logic::rr::` with `phase0::`, at four threads, under load).**
+`phase0::tests::bootstrap_resolves_as_the_builtin_reader_does` failed its third part: for `python/conditions.rr`,
+the graph kept for the file's text (`keep_text`, from the file's graph) had another digest than `derive` gave the
+same seed. It passed alone three times, and in eight more runs of its chunk (at 4 and 20 threads). The kept file
+graph comes from `KEPT`, which other tests in the process fill. Suspects: a module's digest taken while another
+run had begun phase 0's observer (`observe::begin`), or a graph cut (`Graph::of`) from a run batched with other
+seeds. The message now prints each graph's module digests, so the next failure shows which.
+
+**Closure:** the field that differs is known from a failure's message, and the cause is fixed; or it does not
+recur in ten runs of the chunk.

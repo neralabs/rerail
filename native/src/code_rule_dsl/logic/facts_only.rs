@@ -355,10 +355,6 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/rr.rs", "LIBRARIES", "2"),
     ("code_rule_dsl/logic/rr.rs", "PARSED", "2"),
     ("code_rule_dsl/logic/rr.rs", "PROGRAMS", "2"),
-    // Programs already lowered, by the text they print as (0ae9e091c, the hub's): as `PROGRAMS`.
-    ("code_rule_dsl/logic/rr.rs", "LOWERED", "2"),
-    // A text's include seed, by the text (04f66708c, the hub's): as `PROGRAMS`.
-    ("code_rule_dsl/logic/rr.rs", "SEEDS", "2"),
     ("code_rule_dsl/logic/plan/corpus/phase0.rs", "KEPT", "2"),
     ("code_rule_dsl/logic/plan/corpus.rs", "COMBINED", "2"),
     ("code_rule_dsl/logic/plan/corpus.rs", "PREPARED", "2"),
@@ -381,10 +377,8 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/text.rs", "LOWERED", "7"),
     ("code_rule_dsl/text.rs", "NAMES", "7"),
 ];
-/// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised. Raised once, 24 to 26, by the merge of the
-/// hub into the planning trees (2026-11-12): `rr.rs`'s `LOWERED` and `SEEDS`, caches by a program's text made on the
-/// hub, which a move to facts has yet to take.
-const NOT_YET_MAPS_PIN: usize = 26;
+/// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised.
+const NOT_YET_MAPS_PIN: usize = 24;
 
 fn src() -> PathBuf {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src")

@@ -269,14 +269,15 @@ pub struct Report {
 /// now: the same workspace documents with the same bytes, and every request answered alike (decision 0083 §2). It
 /// reads what the run read, and derives nothing. A program whose inputs come from elsewhere too (declarations,
 /// earlier phases, an explicit batch) is never judged unchanged.
-pub(crate) fn unchanged(programs: &[&str], root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<bool> {
-    Ok(changes(programs, root, typing, options, consulted)?.is_some_and(|c| c.is_empty()))
+/// `graphs`: each program text's include graph's digest, as the run found it (`run_handed`).
+pub(crate) fn unchanged(programs: &[&str], graphs: &[Option<[u8; 32]>], root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<bool> {
+    Ok(changes(programs, graphs, root, typing, options, consulted)?.is_some_and(|c| c.is_empty()))
 }
 
 /// The workspace documents whose bytes changed since a run that consulted `consulted`, when nothing else it
 /// consulted did: the same documents, by path, and every request's answer as it was (`World::still`). `None` when
 /// anything else changed, or the run cannot be compared (its documents named, typing, phases read).
-pub(crate) fn changes(programs: &[&str], root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<Option<Vec<String>>> {
+pub(crate) fn changes(programs: &[&str], graphs: &[Option<[u8; 32]>], root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<Option<Vec<String>>> {
     let trace = |why: String| if std::env::var_os("RERAIL_REUSE_TRACE").is_some() { eprintln!("rerail: changes: {why}"); };
     // A run given no file of its own (`inputFiles: []`, a phase's: phase 1 loads its documents by request) has no
     // listed documents to compare; what it loaded is among its requests, checked below. Other named files are not
@@ -290,7 +291,8 @@ pub(crate) fn changes(programs: &[&str], root: &Path, typing: &Typing, options: 
     let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
     let with_settings: Vec<String> = programs.iter().map(|p| crate::code_rule_dsl::logic::settings::with_settings(p, &settings)).collect();
     let programs: Vec<&str> = with_settings.iter().map(String::as_str).collect();
-    let prog = combine(&programs, "")?;
+    // The settings are `env` facts added to each text: its includes, and so its graph, are the text's own.
+    let (prog, _) = combine_keyed(&programs, "", None, graphs)?;
     // A program reading earlier phases is comparable: its record names every phase's program and what each phase
     // consulted (`reuse::record`, O-cutoff-phases).
     if prog.decls.contains_key("declared_ret") {
@@ -498,24 +500,35 @@ pub fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, binding:
 /// `violation` output are shared, and kind sets are named by their kinds (`ks<j>`), so programs asking for one set
 /// share its tape pass. The simplifier then merges relations that are equal across programs (decision 0038).
 pub fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
-    combine_keyed(programs, extra).map(|(program, _)| program)
+    combine_keyed(programs, extra, None, &graph_digests(programs)).map(|(program, _)| program)
+}
+
+/// Each text's include graph's digest, as phase 0 finds it (`rr::graph_digest`): `None` for a text that includes
+/// nothing, or whose graph is not found (its parse reports why).
+fn graph_digests(programs: &[&str]) -> Vec<Option<[u8; 32]>> {
+    programs.iter().map(|text| crate::code_rule_dsl::logic::rr::graph_digest(text).ok().flatten()).collect()
 }
 
 /// `combine`, with the digest of its texts (`texts_digest`) it is kept by: a run keys what it prepares by the same
-/// digest, so it is taken once.
-fn combine_keyed(programs: &[&str], extra: &str) -> Result<(front::Program, [u8; 32])> {
+/// digest, so it is taken once. `graphs` are the texts' include graphs' digests, which the run found before it
+/// (`run_handed`); `read` is the program the one text prints from, already lowered, when the run was handed it
+/// (`tools::run_program`): the program itself, not its text lowered again.
+fn combine_keyed(programs: &[&str], extra: &str, read: Option<&front::Program>, graphs: &[Option<[u8; 32]>]) -> Result<(front::Program, [u8; 32])> {
     use std::sync::{Mutex, OnceLock};
     // A function of the texts alone (`rr::parse` reads no file), so kept for the process by their digest: a session or
     // a test that runs one program over many roots parses and hides it once. A few programs at a time are kept.
     static COMBINED: OnceLock<Mutex<HashMap<[u8; 32], front::Program>>> = OnceLock::new();
     const KEPT: usize = 32;
-    let key = texts_digest(programs, extra);
+    let key = texts_digest(programs, extra, graphs);
     let cache = COMBINED.get_or_init(Default::default);
     if let Some(program) = cache.lock().expect("the combined programs").get(&key) {
         crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
         return Ok((program.clone(), key));
     }
-    let program = combine_stored(programs, extra, &key)?;
+    let program = match read {
+        Some(read) if programs.len() == 1 && extra.is_empty() => combine_read(programs, extra, Some(read))?,
+        _ => combine_stored(programs, extra, &key)?,
+    };
     let mut kept = cache.lock().expect("the combined programs");
     if kept.len() >= KEPT {
         kept.clear();
@@ -558,20 +571,23 @@ fn combine_stored(programs: &[&str], extra: &str, key: &[u8; 32]) -> Result<fron
     Ok(program)
 }
 
-/// The digest of `combine`'s texts: what a combined program is a function of.
-fn texts_digest(programs: &[&str], extra: &str) -> [u8; 32] {
+/// The digest of `combine`'s texts: what a combined program is a function of. `graphs`: each program text's include
+/// graph's digest (`graph_digests`).
+fn texts_digest(programs: &[&str], extra: &str, graphs: &[Option<[u8; 32]>]) -> [u8; 32] {
     use sha2::Digest as _;
     let mut hash = sha2::Sha256::new();
     // Without decision 0091's guards (`scoping`, a measurement's switch) the same texts combine to another program.
     if programs.len() > 1 && std::env::var("RERAIL_SCOPE_GUARDS").is_ok_and(|v| v == "off") {
         hash.update(b"scope guards off");
     }
-    for text in programs.iter().copied().chain([extra]) {
+    debug_assert_eq!(programs.len(), graphs.len(), "a graph digest per program text");
+    let extra_graph = crate::code_rule_dsl::logic::rr::graph_digest(extra).ok().flatten();
+    for (text, graph) in programs.iter().copied().zip(graphs.iter().copied()).chain([(extra, extra_graph)]) {
         hash.update((text.len() as u64).to_le_bytes());
         hash.update(text.as_bytes());
         // What the text includes, as phase 0 found it: its modules' paths and digests, and the graph's edges. A text
         // is a function of these, not of its `#include` lines alone.
-        if let Ok(Some(graph)) = crate::code_rule_dsl::logic::rr::graph_digest(text) {
+        if let Some(graph) = graph {
             hash.update(graph);
         }
     }
@@ -807,6 +823,12 @@ fn keep_prepared(key: [u8; 32], p: Arc<Prepared>) {
 }
 
 pub fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
+    combine_read(programs, extra, None)
+}
+
+/// `combine_texts`, the one text's program given already lowered (`read`): it is that program, not the text lowered
+/// again.
+fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -> Result<front::Program> {
     use front::{Literal, Program};
     // A program reads only relations it declares: an error here, not the planner's panic later (`front::declared`).
     let parse = |text: &str| -> Result<Program> {
@@ -846,8 +868,12 @@ pub fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
         .iter()
         .zip(&own_only)
         .zip(texts.iter_mut())
-        .map(|((text, &own_only), read)| {
-            if let Some(read) = read.take() {
+        .map(|((text, &own_only), slot)| {
+            if let Some(read) = read.filter(|_| programs.len() == 1 && extra.is_empty()) {
+                front::declared(read)?;
+                return Ok(read.clone());
+            }
+            if let Some(read) = slot.take() {
                 let prog = read.lower(!own_only)?;
                 front::declared(&prog)?;
                 return Ok(prog);
@@ -1829,6 +1855,39 @@ pub fn run_with_options(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
+    run_handed(programs, None, root, t_facts, out, modes, binding, chunk_nodes, typing, options)
+}
+
+/// `run_with_options` of one program text and the program it prints from, already lowered (`tools::run_program`,
+/// which read the file): the run holds that program, not its text lowered a second time.
+#[allow(clippy::too_many_arguments)]
+pub fn run_read(
+    text: &str,
+    read: &front::Program,
+    root: &Path,
+    out: &Path,
+    modes: &str,
+    binding: Binding,
+    chunk_nodes: usize,
+    typing: &Typing,
+    options: &serde_json::Value,
+) -> Result<Report> {
+    run_handed(&[text], Some(read), root, None, out, modes, binding, chunk_nodes, typing, options)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_handed(
+    programs: &[&str],
+    read: Option<&front::Program>,
+    root: &Path,
+    t_facts: Option<&Path>,
+    out: &Path,
+    modes: &str,
+    binding: Binding,
+    chunk_nodes: usize,
+    typing: &Typing,
+    options: &serde_json::Value,
+) -> Result<Report> {
     let lifecycle_start = usage();
     // Library and test callers do not pass through the CLI/Node pool setup.
     // Initialize before phase 0 or a parallel read can create rayon's default pool.
@@ -1858,10 +1917,20 @@ pub fn run_with_options(
     // Resolve `components.rr` only when the program or one of its modules can use
     // it, before the main run takes its execution lock.
     let seeding = crate::code_rule_dsl::logic::profile::span(|| "phase 0: the texts' include graphs".into());
-    let seeds: Vec<phase0::Seed> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::text_seed(t)).collect::<std::result::Result<Vec<_>, _>>()?.into_iter().flatten().collect();
+    // Each text's seed read once, here: its graph's digest is handed to the run's combines (`combine_keyed`), which
+    // key the program by it, and is not read from the text again.
+    let text_seeds: Vec<Option<phase0::Seed>> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::text_seed(t)).collect::<std::result::Result<_, _>>()?;
+    let seeds: Vec<phase0::Seed> = text_seeds.iter().flatten().cloned().collect();
+    let mut graph_digests: Vec<Option<[u8; 32]>> = vec![None; programs.len()];
     let mut component_seeded = false;
     if !phase0::active() {
         let graphs = phase0::graphs(&seeds)?;
+        let mut each = graphs.iter();
+        for (digest, seed) in graph_digests.iter_mut().zip(&text_seeds) {
+            if seed.is_some() {
+                *digest = each.next().map(|g| g.digest());
+            }
+        }
         // Includes alone do not imply component demand. Inspect each observed
         // module once; comments can conservatively request preparation. Missing
         // or malformed modules remain the parser's error, not a proof of no demand.
@@ -1882,11 +1951,11 @@ pub fn run_with_options(
     let lifecycle_seeded = usage();
     // Phase 0's cutoff (`reuse`): a run whose every read is as it was writes the outputs it wrote.
     let reuse = reuse::wanted(options, typing, t_facts);
-    let kept = if reuse { reuse::reused(programs, root, out, modes, typing, options) } else { Ok(None) };
+    let kept = if reuse { reuse::reused(programs, &graph_digests, root, out, modes, typing, options) } else { Ok(None) };
     let report = match kept {
         Ok(Some(report)) => Ok(report),
         Err(e) => Err(e),
-        Ok(None) => run_observed(programs, root, t_facts, out, modes, binding, chunk_nodes, typing, options).and_then(|report| {
+        Ok(None) => run_observed(programs, read, &graph_digests, root, t_facts, out, modes, binding, chunk_nodes, typing, options).and_then(|report| {
             if reuse {
                 reuse::record(programs, root, out, modes, typing, options, &report)?;
             }
@@ -1982,6 +2051,8 @@ impl Drop for UnderWay {
 #[allow(clippy::too_many_arguments)]
 fn run_observed(
     programs: &[&str],
+    read: Option<&front::Program>,
+    graphs: &[Option<[u8; 32]>],
     root: &Path,
     t_facts: Option<&Path>,
     out: &Path,
@@ -2003,6 +2074,9 @@ fn run_observed(
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
     let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
     let with_settings: Vec<String> = programs.iter().map(|p| crate::code_rule_dsl::logic::settings::with_settings(p, &settings)).collect();
+    // The program read is the text's only while the settings add nothing to it: a text they add `env` facts to is
+    // another program, lowered whole. Its graph is the text's own (facts include nothing).
+    let read = read.filter(|_| with_settings.iter().zip(programs).all(|(with, text)| with == text));
     let programs: &[&str] = &with_settings.iter().map(String::as_str).collect::<Vec<_>>();
     drop(setting);
     // The main thread's own CPU (the chunk builder's jobs' is theirs, below; the jobs the main thread runs for the
@@ -2065,7 +2139,7 @@ fn run_observed(
         crate::code_rule_dsl::logic::profile::reset();
     }
     let combining = crate::code_rule_dsl::logic::profile::span(|| "parse the program".into());
-    let (mut prog, mut texts) = combine_keyed(programs, "")?;
+    let (mut prog, mut texts) = combine_keyed(programs, "", read, graphs)?;
     drop(combining);
     // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
     let (bridged, typing_runs) = bridge::facts(&prog, root, out, modes, binding, chunk_nodes, typing)?;
@@ -2243,7 +2317,7 @@ fn run_observed(
         let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p)).collect();
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
-            (prog, texts) = combine_keyed(programs, &facts)?;
+            (prog, texts) = combine_keyed(programs, &facts, None, graphs)?;
             add_bridged(&mut prog);
             folded = fold_constants(&mut prog)?;
         }
@@ -8156,9 +8230,8 @@ fn json_scopes(policies: &[serde_json::Value]) -> Option<Vec<(Vec<String>, Vec<S
 /// `.tsx` and `.js` files): those with files under `root` in the program's scope, the named one first. A program is
 /// lowered for one dialect (its kind names are that grammar's ids), so each is a run of its own. Empty when the
 /// language has one dialect: the run reads it as before.
-pub fn run_dialects(root: &Path, program: &str, options: &serde_json::Value) -> Result<Vec<&'static str>> {
+pub fn run_dialects(root: &Path, prog: &front::Program, options: &serde_json::Value) -> Result<Vec<&'static str>> {
     use crate::code_rule_dsl::language::{CodeRuleLanguage, label};
-    let prog = combine(&[program], "")?;
     let Some(name) = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned()) else {
         return Ok(Vec::new());
     };
@@ -8166,7 +8239,7 @@ pub fn run_dialects(root: &Path, program: &str, options: &serde_json::Value) -> 
     if language.dialects().len() < 2 {
         return Ok(Vec::new());
     }
-    let found = scoped(corpus_files(root)?, &prog, options);
+    let found = scoped(corpus_files(root)?, prog, options);
     let mut labels: Vec<&'static str> = language.dialects().iter().filter_map(|d| label(*d)).filter(|l| found.count(l) > 0).collect();
     labels.sort_by_key(|l| *l != name);
     Ok(labels)

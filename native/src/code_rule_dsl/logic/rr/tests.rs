@@ -1378,6 +1378,32 @@ Seen(@place(p, l), t) :- doc(d, p, _), split_line(d, l, t).
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// A policy's run holds the program `run-rr` read (`corpus::run_read`), unless the root's settings add `env` facts to
+/// its text: then the run holds that text's program, which reads them. The same policy, without settings and then
+/// with them, in one process.
+#[test]
+fn a_policy_read_once_still_reads_the_roots_settings() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrenv");
+    let root = dir.join("corpus");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "x = 1\n").unwrap();
+    let policy = dir.join("rule.rr");
+    std::fs::write(&policy, r#"
+.policy "settings-read" revision 1
+.language python
+.violation Seen(at: span, m: symbol) "{m}"
+Seen(@place(p, l), m) :- doc(d, p, _), split_line(d, l, _), env("mark", m).
+"#).unwrap();
+    let marks = |out: &str| -> Vec<String> {
+        let result = crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join(out), &serde_json::Value::Null).unwrap();
+        result["diagnostics"].as_array().unwrap().iter().map(|r| r["parameters"]["m"].as_str().unwrap().to_owned()).collect()
+    };
+    assert!(marks("plain").is_empty(), "no settings, no mark");
+    std::fs::write(root.join("rerail.env"), "mark = here\n").unwrap();
+    assert!(!marks("set").is_empty() && marks("again").iter().all(|m| m == "here"), "the setting read");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// async_executor uses str.split('\n'), not physical lines or Python splitlines.
 #[test]
 fn lf_lines_keep_other_separators_and_the_trailing_empty_line() {
@@ -3100,24 +3126,6 @@ fn converted_cases_are_tests() {
     assert_eq!(read[0].fixtures, [(first["path"].as_str().unwrap().to_owned(), first["content"].as_str().unwrap().as_bytes().to_vec())]);
 }
 
-/// A policy file's program, printed, reads back as the program itself once remembered (`remember_lowered`): what
-/// `run-rr` hands the run. Every data-layer policy, by its print.
-#[test]
-fn a_policys_printed_program_reads_back_as_the_program_read() {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer");
-    let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "rr")).collect();
-    paths.sort();
-    let mut read = 0;
-    for path in paths.iter().take(12) {
-        let Ok((program, _)) = super::read_file(path) else { continue };
-        read += 1;
-        let printed = super::print(&program).unwrap();
-        super::remember_lowered(&printed, &program);
-        assert_eq!(super::print(&super::parse(&printed).unwrap()).unwrap(), printed, "{}", path.display());
-    }
-    assert!(read > 5, "{read} policies read");
-}
-
 /// Aggregate demand's stratification shortcut (`aggregate_demand::optimize`): every data-layer policy lowers to the
 /// program it lowers to with each candidate stratified whole.
 #[test]
@@ -3143,7 +3151,7 @@ fn aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps() {
 }
 
 /// Lowering is idempotent: each program file under `dirs` (shard `k` of `n`, by its place in name order), printed and
-/// lowered again (not from `remember_lowered`'s cache), prints as the same text, statement for statement and in order.
+/// lowered again, prints as the same text, statement for statement and in order.
 /// A file that is no program of its own (a library module's part) is passed over. `RERAIL_IDEMPOTENCY_DUMP=<dir>`
 /// writes both prints of each that differs.
 fn lowers_back(dirs: &[&str], k: usize, n: usize) {
