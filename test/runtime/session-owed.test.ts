@@ -51,9 +51,10 @@ const BAD = "export const a = 1;\nconst bad = 2;\n";
  * A Claude Code session in a checkout holding `a.ts`, whose rule check steers on an edit that writes `bad` into it, and
  * when the test asks (`steer`, `hold`), as a check that finishes after the boundary that waited for it does. `reopen`
  * makes the runtime a daemon would make after a restart, over the same records. An evaluator opened after the first
- * opens once `reopened` settles, as one whose rules compile again does.
+ * opens once `reopened` settles, as one whose rules compile again does. The session is Claude Code's unless `host` says
+ * otherwise.
  */
-async function owingSession(options: { reopened?: Promise<void> } = {}) {
+async function owingSession(options: { reopened?: Promise<void>; host?: "claude-code" | "omp" } = {}) {
   // The real path: macOS's temporary folder is reached through a symlink, which would name the file twice.
   const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-session-owed-")));
   directories.push(root);
@@ -98,7 +99,7 @@ async function owingSession(options: { reopened?: Promise<void> } = {}) {
       };
     },
   });
-  const session = { host: "claude-code" as const, sessionId: "owing", cwd: root };
+  const session = { host: options.host ?? "claude-code", sessionId: "owing", cwd: root };
   let runtime = open();
   await runtime.ingest({ kind: "session-start", eventId: "start", session });
   await runtime.codeRulesOpened(session.sessionId);
@@ -129,6 +130,15 @@ async function owingSession(options: { reopened?: Promise<void> } = {}) {
     },
   };
 }
+
+/**
+ * Where the steer for a call answered as a session opens again reaches the agent, by coding agent: Claude Code's result
+ * waits for the reopened session's rules and carries it; OMP's does not wait, and the next event carries it.
+ */
+const WAITS_FOR_RULES = [
+  { host: "claude-code", atResult: [STEER], atNext: [] },
+  { host: "omp", atResult: [], atNext: [STEER] },
+] as const;
 
 /**
  * Waits for `checked` once the session's reopened evaluator is open: the check of a call the ledger held open runs
@@ -181,8 +191,10 @@ describe("what a session owes its agent while it is closed", () => {
     }
   });
 
-  it("checks the edit of a call that waited across a close once the session's rules are open, though its result came while they opened", async () => {
-    const owing = await owingSession();
+  // Claude Code's result waits for the reopened session's rules (`REOPENED_RULES_WAIT_MS`), and the steer rides it. OMP's
+  // does not wait: it comes while the rules open, and the edit is checked once they are, its steer with the next event.
+  it.each(WAITS_FOR_RULES)("checks the edit of a call that waited across a close once the session's rules are open, its result in $host", async ({ host, atResult, atNext }) => {
+    const owing = await owingSession({ host });
     const { session } = owing;
     try {
       await owing.runtime.ingest({
@@ -193,9 +205,9 @@ describe("what a session owes its agent while it is closed", () => {
       expect(await owing.runtime.closeIdleSession(session.sessionId, { evenIfOwing: true })).toMatchObject({ kind: "suspended" });
       await writeFile(join(owing.root, "a.ts"), BAD);
       const result = await owing.runtime.ingest({ kind: "result", eventId: "result", sessionId: session.sessionId, session, toolCallId: "t1", toolName: "Write", output: "ok" });
-      expect(result).toEqual([]);
+      expect(result.map(delivery => delivery.content)).toEqual(atResult);
       await waitForCheck(owing, () => expect(owing.checked).toContain("a.ts"));
-      expect((await owing.prompt("next")).map(delivery => delivery.content)).toEqual([STEER]);
+      expect((await owing.prompt("next")).map(delivery => delivery.content)).toEqual(atNext);
     } finally {
       await owing.runtime.dispose();
     }
@@ -203,8 +215,8 @@ describe("what a session owes its agent while it is closed", () => {
 
   // The suspension keeps where the session's walks stood, and the waiting call's check reads the file once the rules are
   // open: the edit is the call's, read once in the session's mode, not again as another writer's change.
-  it("checks once, as the call's own, the edit a call that waited across the day's close made to a file the session had edited", async () => {
-    const owing = await owingSession();
+  it.each(WAITS_FOR_RULES)("checks once, as the call's own, the edit a call that waited across the day's close made to a file the session had edited, its result in $host", async ({ host, atResult, atNext }) => {
+    const owing = await owingSession({ host });
     const { session } = owing;
     const tool = (toolCallId: string) => ({ sessionId: session.sessionId, session, toolCallId, toolName: "Write" }) as const;
     const call = (toolCallId: string) => owing.runtime.ingest({
@@ -220,9 +232,9 @@ describe("what a session owes its agent while it is closed", () => {
       // Left at the permission prompt past the day, then allowed: the write lands, and its result opens the session again.
       expect(await owing.runtime.closeIdleSession(session.sessionId, { evenIfOwing: true })).toMatchObject({ kind: "suspended" });
       await writeFile(join(owing.root, "a.ts"), BAD);
-      expect(await result("t1")).toEqual([]);
+      expect((await result("t1")).map(delivery => delivery.content)).toEqual(atResult);
       await waitForCheck(owing, () => expect(owing.reads.some(read => read.bad)).toBe(true));
-      expect((await owing.prompt("next")).map(delivery => delivery.content)).toEqual([STEER]);
+      expect((await owing.prompt("next")).map(delivery => delivery.content)).toEqual(atNext);
       expect(await owing.turnEnd("turn-2")).toEqual([]);
       expect(owing.reads.filter(read => read.bad)).toEqual([{ path: "a.ts", mode: "session", bad: true }]);
     } finally {
@@ -230,8 +242,8 @@ describe("what a session owes its agent while it is closed", () => {
     }
   });
 
-  // A steer reaches the agent with the next event either way; a session closed and opened again would check the agent's
-  // next edit only at the turn end, while its rules compile again.
+  // A steer reaches the agent with the next event either way; a session closed and opened again would hold the agent's
+  // next tool call while its rules compile again, or check its edit only at the turn end where its host does not wait.
   it("keeps a quiet session that owes a steer open at the idle limit, so the agent's next edit is checked at its own result", async () => {
     const reopened = Promise.withResolvers<void>();
     const owing = await owingSession({ reopened: reopened.promise });

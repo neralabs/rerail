@@ -242,9 +242,13 @@ function editsOf(batches: readonly CodeRuleEditBatch[], path: string) {
 describe("the engine service's idle close", () => {
   /**
    * A service over two started checkouts whose sessions are suspended after a minute of `clock` without an event;
-   * `gitFirst` makes `first` a Git repository before it starts, as a checkout's identity is taken then.
+   * `gitFirst` makes `first` a Git repository before it starts, as a checkout's identity is taken then. Sessions come
+   * from Claude Code unless `host` says otherwise.
    */
-  async function idleService(options: Partial<Parameters<typeof startEngineService>[0]> = {}, { gitFirst = false } = {}) {
+  async function idleService(
+    options: Partial<Parameters<typeof startEngineService>[0]> = {},
+    { gitFirst = false, host = "claude-code" }: { gitFirst?: boolean; host?: "claude-code" | "omp" } = {},
+  ) {
     const root = await mkdtemp(join(tmpdir(), "rerail-idle-"));
     roots.push(root);
     const databasePath = join(root, "rerail.sqlite");
@@ -267,7 +271,7 @@ describe("the engine service's idle close", () => {
       ...options,
     });
     services.push(service);
-    const session = (sessionId: string, cwd = first) => ({ host: "claude-code" as const, sessionId, cwd });
+    const session = (sessionId: string, cwd = first) => ({ host, sessionId, cwd });
     const send = (event: AdapterEvent) => ingestEngineEvent({ socketPath }, event);
     return {
       first, second, clock, service, session, send, databasePath,
@@ -579,11 +583,13 @@ describe("the engine service's idle close", () => {
   }, 20_000);
 
   // The agent's first command after the quiet can run while the session's rules compile again, before the reopened
-  // session's first walk has looked at the file it writes.
+  // session's first walk has looked at the file it writes: in OMP and Pi, whose tool calls do not wait for a reopened
+  // session's rules as Claude Code's, Codex's and Cursor's do (`REOPENED_RULES_WAIT_MS`), and in any of them once that
+  // wait has run out.
   it("measures it so too when the write lands while the reopened session's rules compile", async () => {
     const reopening = Promise.withResolvers<void>();
     const { create, batches, looked, reopened } = recordingAuditor({ reopening: reopening.promise });
-    const { first, clock, service, start, prompt, writes, turnEnd } = await idleService({ createAuditor: create });
+    const { first, clock, service, start, prompt, writes, turnEnd } = await idleService({ createAuditor: create }, { host: "omp" });
     const app = join(first, "app.py");
     await writeFile(app, "x = 1\n");
     await start("a");
@@ -628,11 +634,12 @@ describe("the engine service's idle close", () => {
   }, 20_000);
 
   // The reopened session's first walk had no `HEAD` from before the quiet, so it took `HEAD`'s last move as made since:
-  // after a checkout, the agent's removal of a file it made and never committed read as Git's, recorded in Log only.
+  // after a checkout, the agent's removal of a file it made and never committed read as Git's, recorded in Log only. The
+  // command runs while the rules compile again, as in OMP (above).
   it("takes the agent's removal of a file it made, in its first command after the quiet, as its own, as the open session did", async () => {
     const reopening = Promise.withResolvers<void>();
     const { create, batches, looked, reopened } = recordingAuditor({ reopening: reopening.promise });
-    const { first, clock, service, session, send, start, writes, turnEnd } = await idleService({ createAuditor: create }, { gitFirst: true });
+    const { first, clock, service, session, send, start, writes, turnEnd } = await idleService({ createAuditor: create }, { gitFirst: true, host: "omp" });
     const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=Rerail Test", "-c", "user.email=test@example.invalid", ...args], { cwd: first });
     git("commit", "--quiet", "--allow-empty", "-m", "start");
     // `HEAD`'s last move is a checkout, which writes files, not a commit.
