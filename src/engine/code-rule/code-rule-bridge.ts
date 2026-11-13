@@ -2500,9 +2500,9 @@ export class CodeRuleBridge {
     this.#texts.set(path, { text, bytes, origin });
     this.#textBytes += bytes;
     if (origin === "first-sight") this.#firstSightBytes += bytes;
-    for (const [oldest, entry] of this.#texts) {
+    for (const [oldest] of this.#texts) {
       if (this.#textBytes <= this.#sessionTextBytes) break;
-      this.#dropText(oldest, entry);
+      this.#forgetText(oldest);
     }
   }
 
