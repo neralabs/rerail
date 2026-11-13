@@ -12,7 +12,7 @@
  * a later run gives it back while it is more than half the file and `OWED_FREE_BYTES` (`shrinkOwed`).
  */
 import { createHash } from "node:crypto";
-import { existsSync, statfsSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, statfsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -20,7 +20,7 @@ import { Worker } from "node:worker_threads";
 import Database from "better-sqlite3";
 import { openRerailDatabase, type RerailDatabase } from "./database.js";
 import { RULE_PROVENANCE_STEP } from "./migrations.js";
-import { PING, PONG, type ThreadWatch, vacuumGivingWay, VacuumStopped, WAIT_NOTICE_MS } from "./vacuum-giving-way.js";
+import { PING, PONG, type ThreadWatch, vacuumGivingWay, VacuumNotRun, WAIT_NOTICE_MS } from "./vacuum-giving-way.js";
 
 /** What `moveRuleProvenancesInWorker` posts to stop the move's thread (`rule-provenance-move-worker.ts`). */
 export const MOVE_STOP = "rerail-move-stop";
@@ -140,6 +140,8 @@ function vacuumFor(client: Client, path: string, free: Free, options: RuleProven
   const noticeMs = options.waitNotice ?? WAIT_NOTICE_MS;
   return () => vacuumGivingWay(client, path, {
     watch, signal, noticeMs,
+    // Read again before each attempt: one can start hours after the first, when the disk holds less.
+    blocked: () => shortOfDisk(client, path),
     waitedLong: quietMs => sayStillWaiting(client, path, { quietMs, noticeMs }),
   });
 }
@@ -384,7 +386,7 @@ async function vacuumSkipped(client: Client, path: string, free: Free, vacuum: (
     await vacuum();
     return undefined;
   } catch (error) {
-    return error instanceof VacuumStopped ? error.message : `VACUUM failed (${errorText(error)})`;
+    return error instanceof VacuumNotRun ? error.message : `VACUUM failed (${errorText(error)})`;
   }
 }
 
@@ -474,15 +476,15 @@ function pragmaNumber(client: Client, name: string): number {
 
 /**
  * Why `VACUUM` may run out of disk space for the database at `path`, or undefined when it has room. `VACUUM` copies the
- * pages in use, not the free ones, to a temporary file in the temporary folder, then writes them back through the WAL
- * beside the database: the disk of each folder needs room for one copy of the pages in use, and a disk that holds both
- * folders room for two. Right after the move most of the file is free pages (1.3 GB of 1.4 GB for 4,000 audits), so the
- * file's size would ask several times the room `VACUUM` takes.
+ * pages in use, not the free ones, to a temporary file in SQLite's temporary folder (`sqliteTemporaryFolder`), then
+ * writes them back through the WAL beside the database: the disk of each folder needs room for one copy of the pages in
+ * use, and a disk that holds both folders room for two. Right after the move most of the file is free pages (1.3 GB of
+ * 1.4 GB for 4,000 audits), so the file's size would ask several times the room `VACUUM` takes.
  */
 function shortOfDisk(client: Client, path: string): string | undefined {
   try {
     const inUse = (pragmaNumber(client, "page_count") - pragmaNumber(client, "freelist_count")) * pragmaNumber(client, "page_size");
-    for (const { folder, copies } of disksOf([dirname(path), tmpdir()])) {
+    for (const { folder, copies } of disksOf([dirname(path), sqliteTemporaryFolder()])) {
       const { bavail, bsize } = statfsSync(folder);
       if (bavail * bsize < copies * inUse) {
         return `${folder} has ${megabytes(bavail * bsize)} of free disk space, less than the ${megabytes(copies * inUse)} `
@@ -492,6 +494,27 @@ function shortOfDisk(client: Client, path: string): string | undefined {
     return undefined;
   } catch (error) {
     return `its free disk space could not be read (${errorText(error)})`;
+  }
+}
+
+/**
+ * The folder SQLite writes `VACUUM`'s temporary copy to. On Windows it asks the system (GetTempPath: TMP, then TEMP,
+ * then the user's profile folder). Elsewhere it takes the first of SQLITE_TMPDIR, TMPDIR, /var/tmp, /usr/tmp and /tmp
+ * that is a folder it may write in (`os_unix.c`), so with TMPDIR unset it is /var/tmp, where Node's `tmpdir()` is /tmp,
+ * which many systems keep in memory.
+ */
+function sqliteTemporaryFolder(): string {
+  const { SQLITE_TMPDIR, TMPDIR, TMP, TEMP, USERPROFILE } = process.env;
+  if (process.platform === "win32") return TMP ?? TEMP ?? USERPROFILE ?? tmpdir();
+  return [SQLITE_TMPDIR, TMPDIR, "/var/tmp", "/usr/tmp", "/tmp"].find(writableFolder) ?? ".";
+}
+
+function writableFolder(folder: string | undefined): folder is string {
+  try {
+    accessSync(folder ?? "", constants.W_OK | constants.X_OK);
+    return folder !== undefined && statSync(folder).isDirectory();
+  } catch {
+    return false;
   }
 }
 

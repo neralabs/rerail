@@ -67,17 +67,18 @@ export interface GivingWay {
   readonly watch: ThreadWatch;
   /** Stops the wait, and ends a running attempt at once. */
   readonly signal: AbortSignal | undefined;
+  /** Why the next attempt may not run (too little free disk), read before each one; undefined when it may. */
+  readonly blocked: () => string | undefined;
   /** Called once if no attempt has committed `noticeMs` after the first wait began, with the quiet the next one needs. */
   readonly waitedLong: (quietMs: number) => void;
   readonly noticeMs: number;
 }
 
-/** The `VACUUM` stopped before it finished, because the move was asked to stop; the file is as it was. */
-export class VacuumStopped extends Error {
-  constructor() {
-    super("Rerail stopped before VACUUM finished");
-  }
-}
+/** The `VACUUM` did not run to its end, for the reason its message gives; the file is as it was. */
+export class VacuumNotRun extends Error {}
+
+/** The reason a stop gives. */
+export const STOPPED = "Rerail stopped before VACUUM finished";
 
 /**
  * One attempt: it gave the free pages back (or found none left), it gave way to the watched thread or a stop, or
@@ -113,8 +114,8 @@ export function watchThread(port: MessagePort): ThreadWatch {
  * Runs `VACUUM` on the database at `path`, giving way to the thread `way.watch` watches, until it commits: each attempt
  * waits until no connection but `client`, the caller's, has committed for a while (`quietFor`), then runs in a process
  * of its own that ends once the thread stops answering (`vacuumOnce`), and stderr says when the next one runs. Resolves
- * once the file holds no free page; throws `VacuumStopped` once `way.signal` stops it, and what `vacuum-process.ts`
- * reported when `VACUUM` failed.
+ * once the file holds no free page; throws `VacuumNotRun` once `way.signal` stops it or `way.blocked` gives a reason, and
+ * what `vacuum-process.ts` reported when `VACUUM` failed.
  */
 export async function vacuumGivingWay(client: Database.Database, path: string, way: GivingWay): Promise<void> {
   let quiet = FIRST_QUIET_MS;
@@ -131,16 +132,21 @@ export async function vacuumGivingWay(client: Database.Database, path: string, w
   }
 }
 
-/** Waits for `quietMs` of quiet, then runs one attempt unless `way` stops it, or no free page is left to give back. */
+/**
+ * Waits for `quietMs` of quiet, then runs one attempt unless `way` stops or blocks it, or no free page is left to give
+ * back.
+ */
 async function nextAttempt(client: Database.Database, path: string, way: GivingWay, quietMs: number): Promise<Attempt> {
-  if (!(await quietFor(client, quietMs, way.signal))) throw new VacuumStopped();
+  if (!(await quietFor(client, quietMs, way.signal))) throw new VacuumNotRun(STOPPED);
+  const blocked = way.blocked();
+  if (blocked !== undefined) throw new VacuumNotRun(blocked);
   if (pragmaNumber(client, "freelist_count") === 0) return "shrunk";
   return stoppedOr(await vacuumOnce(client, path, way), way.signal);
 }
 
 /** `attempt`, unless a stop ended it before it committed. */
 function stoppedOr(attempt: Attempt, signal: AbortSignal | undefined): Attempt {
-  if (attempt !== "shrunk" && signal?.aborted === true) throw new VacuumStopped();
+  if (attempt !== "shrunk" && signal?.aborted === true) throw new VacuumNotRun(STOPPED);
   return attempt;
 }
 

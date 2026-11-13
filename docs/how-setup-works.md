@@ -572,12 +572,14 @@ for any write, up to 5 s, then fails with `database is locked`.
 
 The daemon skips the `VACUUM`, and says why in `daemon.log` with `rerail scrub` as the way to give the space back, when
 another process is still using the database after the move's tries, when emptying the WAL into the file fails, when a
-disk has less free space than `VACUUM` writes to it, or when it stops before a `VACUUM` has finished. `VACUUM` writes a
-copy of the database's pages in use, not its free ones, to the temporary folder, and another through the WAL beside the
-database, so the disk of each folder needs room for one copy, and a disk that holds both folders room for two. The file
-then keeps its size, and new history reuses the free space. A later daemon start, finding audits the move moved and
-free pages that make up more than half the file and more than 64 MB, runs the `VACUUM` again; `rerail scrub` gives the
-space back at once. The audits stay moved whatever happens to the `VACUUM`.
+disk has less free space than `VACUUM` writes to it (checked again before each try), or when it stops before a `VACUUM`
+has finished. `VACUUM` writes a copy of the database's pages in use, not its free ones, to the folder SQLite uses for
+temporary files (on Linux and macOS the first of `SQLITE_TMPDIR`, `TMPDIR`, `/var/tmp`, `/usr/tmp` and `/tmp` it may
+write in; on Windows the system's temporary folder), and another through the WAL beside the database, so the disk of
+each folder needs room for one copy, and a disk that holds both folders room for two. The file then keeps its size,
+and new history reuses the free space. A later daemon start, finding audits the move moved and free pages that make up
+more than half the file and more than 64 MB, runs the `VACUUM` again; `rerail scrub` gives the space back at once. The
+audits stay moved whatever happens to the `VACUUM`.
 
 Most steps add a column or a table, which older versions read correctly: the floor stays, an older Rerail still opens
 the file, and a hook or the status line runs such steps itself. A step an older version would misread raises the

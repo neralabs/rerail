@@ -567,7 +567,7 @@ describe("audit rule provenance", () => {
     let logged: string;
     try {
       ({ logged } = await stderrWhile(() => vacuumGivingWay(client, path, {
-        watch, signal: undefined, waitedLong: () => undefined, noticeMs: 600_000,
+        watch, signal: undefined, blocked: () => undefined, waitedLong: () => undefined, noticeMs: 600_000,
       })));
     } finally {
       restore();
@@ -609,6 +609,48 @@ describe("audit rule provenance", () => {
     expect(told[0]).toContain("in 2.5 s no other connection left the file alone for the 2 s its VACUUM waits for");
     expect(pageBytes(path).free).toBe(0);
   }, 60_000);
+
+  it("reads the free disk space again before each attempt of a VACUUM that gives way", async () => {
+    const path = await fileOfTheBuildBefore();
+    writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
+    // Room when the move first asks (one read per disk); 64 KB from the next read on, as when the disk fills before the
+    // first quiet moment comes.
+    const disks = statSync(dirname(path)).dev === statSync(tmpdir()).dev ? 1 : 2;
+    let reads = 0;
+    vi.mocked(statfsSync).mockImplementation(() => {
+      const bavail = (reads += 1) <= disks ? 1 << 30 : 16;
+      return { type: 0, bsize: 4096, frsize: 4096, blocks: 1 << 30, bfree: bavail, bavail, files: 0, ffree: 0 };
+    });
+
+    const { logged } = await stderrWhile(async () => {
+      expect(await move(path, { watch: () => () => undefined })).toBe(30);
+    });
+    expect(logged).toContain(`rerail: ${path} keeps its size`);
+    expect(logged).toContain("of free disk space, less than the");
+    expect(pageBytes(path).free).toBeGreaterThan(0);
+  }, 30_000);
+
+  it.skipIf(!existsSync("/dev/shm"))("measures the disk of the folder SQLite writes VACUUM's copy to, when SQLITE_TMPDIR names one", async () => {
+    // A folder on a disk of its own (memory), as SQLite takes SQLITE_TMPDIR before TMPDIR.
+    const sqliteTemporary = await mkdtemp("/dev/shm/rerail-sqlite-temporary-");
+    temporaryDirectories.push(sqliteTemporary);
+    const before = process.env.SQLITE_TMPDIR;
+    process.env.SQLITE_TMPDIR = sqliteTemporary;
+    try {
+      const { logged } = await moveLogging(() => {
+        // That disk has 64 KB free; every other has plenty.
+        vi.mocked(statfsSync).mockImplementation(folder => {
+          const bavail = folder === sqliteTemporary ? 16 : 1 << 30;
+          return { type: 0, bsize: 4096, frsize: 4096, blocks: 1 << 30, bfree: bavail, bavail, files: 0, ffree: 0 };
+        });
+        return () => vi.mocked(statfsSync).mockReset();
+      });
+      expect(logged).toContain(`${sqliteTemporary} has 0.1 MB of free disk space`);
+    } finally {
+      if (before === undefined) delete process.env.SQLITE_TMPDIR;
+      else process.env.SQLITE_TMPDIR = before;
+    }
+  });
 
   it("leaves the free space in the file when there is no provenance to move", async () => {
     const path = await fileOfTheBuildBefore();
