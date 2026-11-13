@@ -602,7 +602,7 @@ impl Retained {
         let (mut rows, mut n) = self.admitted.get();
         for (rel, key) in wanted.into_iter().zip(&keys) {
             let Some(got) = admitted.get(key).and_then(|f| f.rows().ok()) else { return Ok(false) };
-            let Some(width) = prog.decls.get(rel).map(Vec::len) else { return Ok(false) };
+            let Some(width) = prog.decls.get(rel.as_str()).map(|c| c.len()) else { return Ok(false) };
             if got.types.len() != width {
                 return Ok(false);
             }
@@ -1124,7 +1124,7 @@ pub mod tests {
         let key=[1;32];
         let inputs:HashMap<_,_>=p.inputs.iter().map(|r|(r.clone(),7)).collect();
         let rels=strata.iter().flatten().map(|name| {
-            let width=p.decls[name].len();
+            let width=p.decls[name.as_str()].len();
             (name.clone(),Kept { rel:InRel::flat(&[],vec![b'i';width]),width,output:None })
         }).collect();
         let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),input_docs:Default::default(),docs:Default::default(),patched:Default::default(),frames:None,admitted:Default::default(),late:Default::default(),late_stats:Default::default(),past:Default::default()};
@@ -1256,7 +1256,7 @@ pub(in crate::code_rule_dsl) type Locations = BTreeMap<String, Vec<usize>>;
 /// by `d`, and frames grouped by `a` refused every edit's kept inputs.
 pub(in crate::code_rule_dsl) fn group_col(prog: &front::Program, locations: &Locations, rel: &str) -> usize {
     let decl = prog.decls.get(rel);
-    let width = decl.map_or(0, Vec::len);
+    let width = decl.map_or(0, |c| c.len());
     locations.get(rel).and_then(|l| l.first().copied()).filter(|c| *c < width)
         .or_else(|| decl.and_then(|c| c.iter().position(|(_, t)| t == "node")))
         .or_else(|| crate::code_rule_dsl::typing::file_local::document_column(rel).filter(|c| *c < width))
@@ -1357,7 +1357,7 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
     let parts = store.admit_frame_parts(&space, &keys).map_err(|e| Error::Plan(e.to_string()))?;
     let mut out = HashMap::new();
     for (rel, frame) in &names {
-        let Some(decl) = prog.decls.get(rel) else { return Ok(Err(format!("{rel}: not declared by the cross part"))) };
+        let Some(decl) = prog.decls.get(rel.as_str()) else { return Ok(Err(format!("{rel}: not declared by the cross part"))) };
         let width = decl.len();
         let g = group_col(prog, locations, rel).min(width.max(1) - 1);
         let mut columns: Vec<Vec<i64>> = vec![Vec::new(); width];
@@ -1390,7 +1390,7 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
             }
             at += got.n;
         }
-        let source = crate::code_rule_dsl::logic::native::component::columns_source(decl.iter().map(|(n, _)| n.clone()).collect(), columns.into_iter().map(Some).collect());
+        let source = crate::code_rule_dsl::logic::native::component::columns_source(decl.iter().map(|(n, _)| n.clone()).map(String::from).collect(), columns.into_iter().map(Some).collect());
         out.insert(rel.clone(), KeptInput { source, docs: Arc::clone(docs), digest: *digest, ranges: Arc::new(ranges) });
     }
     Ok(Ok(out))
@@ -1464,7 +1464,7 @@ impl Retained {
             if rows.types.len() != 3 || rows.rows.len() != rows.n * 3 { return Ok(Self::empty_frames(key, frames)); }
             let docs: DocDigests = rows.rows.chunks_exact(3).map(|r| (r[0], (r[1] as u64, r[2] as u64))).collect();
             // A relation of no columns is its count (`write_frames`): one entry, its digest the input's.
-            let counted = prog.decls.get(&frame.name).is_some_and(Vec::is_empty) && rows.n == 1;
+            let counted = prog.decls.get(frame.name.as_str()).is_some_and(|c| c.is_empty()) && rows.n == 1;
             if docs.len() != rows.n || (!counted && digest_of_docs(&docs) != at.digest) { return Ok(Self::empty_frames(key, frames)); }
             let docs = Arc::new(docs);
             inputs.insert(frame.name.clone(), at.digest);
@@ -1567,14 +1567,14 @@ impl Retained {
             let mut rows = 0;
             for (rel, key) in wanted.iter().zip(&derived_keys) {
                 let got = admitted.get(key)?.rows().ok()?;
-                let width = prog.decls.get(rel)?.len();
+                let width = prog.decls.get(rel.as_str())?.len();
                 if got.types.len() != width { return None; }
                 rows += got.n;
                 let rel_ = with_levels(frames, levels, rel, key, got)?;
                 rels.push((rel.clone(), Kept { rel: rel_, width, output: None }));
             }
             for (rel, keys) in &input_parts {
-                let width = prog.decls.get(*rel)?.len();
+                let width = prog.decls.get(rel.as_str())?.len();
                 let mut columns: Vec<Vec<i64>> = vec![Vec::new(); width];
                 for key in keys {
                     let got = admitted.get(key)?.rows().ok()?;
@@ -1586,7 +1586,7 @@ impl Retained {
                 // Named as the program declares them, as the run's own rows are: the session's input delta by
                 // document (`document_delta`) takes an old and a new source of the same columns, and with other names
                 // every input fell back to the diff by rules (`r__old, !r`), a scan per row (192 s on 20 files).
-                let names = prog.decls.get(*rel)?.iter().map(|(n, _)| n.clone()).collect();
+                let names = prog.decls.get(rel.as_str())?.iter().map(|(n, _)| n.clone()).map(String::from).collect();
                 let source = crate::code_rule_dsl::logic::native::component::columns_source(names, columns.into_iter().map(Some).collect());
                 // Granule headers carry no digest. Their rows must match the admitted per-document digests,
                 // including documents removed or replaced between the header and payload reads.
@@ -1692,7 +1692,7 @@ impl Retained {
     /// Input `rel`'s rows, as bound or read back from the frames; with `docs`, only the rows of the owners it takes
     /// (`group_col`), and only their granules read.
     pub(in crate::code_rule_dsl) fn read_input(&self, store: &ContentStore, prog: &front::Program, locations: &Locations, rel: &str, docs: Option<&dyn Fn(i64) -> bool>) -> Result<Option<Vec<Vec<i64>>>> {
-        let width = prog.decls.get(rel).map_or(0, Vec::len);
+        let width = prog.decls.get(rel).map_or(0, |c| c.len());
         let g = group_col(prog, locations, rel);
         let take = |row: &[i64]| docs.is_none_or(|d| d(owner_of(row, g)));
         if let Some(src) = self.input_srcs.get(rel) {
@@ -1786,7 +1786,7 @@ impl Retained {
             }
             if std::env::var_os("RERAIL_INPUT_TRACE").is_some() && changed.len() <= 8 && source.len() > 20_000 {
                 let differ_n: Vec<(i64, Option<(u64, u64)>, Option<(u64, u64)>)> = docs.iter().filter(|(d, _)| differ(d)).take(4).map(|(d, v)| (*d, Some(*v), old.as_ref().and_then(|o| o.get(d)).copied())).collect();
-                eprintln!("rerail: input {rel} {:?} (group col {g} of {width}, {} rows, {} owners): granules {changed:?}; owners differ {differ_n:?}", prog.decls.get(rel), source.len(), docs.len());
+                eprintln!("rerail: input {rel} {:?} (group col {g} of {width}, {} rows, {} owners): granules {changed:?}; owners differ {differ_n:?}", prog.decls.get(rel.as_str()), source.len(), docs.len());
             }
             if changed.len() > 8 && std::env::var_os("RERAIL_INPUT_TRACE").is_some() {
                 let differ_n = docs.keys().filter(|d| differ(d)).count();

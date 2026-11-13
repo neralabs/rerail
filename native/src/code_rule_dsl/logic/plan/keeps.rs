@@ -643,7 +643,7 @@ fn factorizable(prog: &Program, rules_of: &BTreeMap<&str, Vec<&Rule>>, estimates
                     for part in &parts {
                         let mut vars: BTreeSet<String> = BTreeSet::new();
                         part.iter().for_each(|l| vars.extend(l.vars()));
-                        let head = Atom { rel: format!("{rel}_part").into(), args: vars.into_iter().map(Term::Var).collect(), neg: false, gated: false };
+                        let head = Atom { rel: format!("{rel}_part").into(), args: vars.into_iter().map(|v| Term::Var(v.into())).collect(), neg: false, gated: false };
                         let rows = model.plan_rule(prog, &head, part, None).map_or(f64::INFINITY, |p| p.2);
                         parts_rows += rows;
                         texts.push(format!("{} [{rows:.0}]", part.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")));
@@ -733,8 +733,8 @@ fn unfold(reader: &Rule, at: usize, defs: &[&Rule], fresh: usize) -> Option<Vec<
                 match (h, r) {
                     (_, Term::Wild) => {}
                     // A head variable read as a variable becomes it, once.
-                    (Term::Var(v), Term::Var(x)) if matched.insert(v.clone()) => {
-                        to.insert(v.clone(), x.clone());
+                    (Term::Var(v), Term::Var(x)) if matched.insert(v.to_string()) => {
+                        to.insert(v.to_string(), x.to_string());
                     }
                     // A head variable named twice, or a head term against a read's: the head's equal to the read's.
                     _ => eqs.push((h, r)),
@@ -812,7 +812,7 @@ fn negated(read: &Atom, defs: &[&Rule]) -> Option<Vec<Vec<Literal>>> {
             if let Literal::Atom(a) = l {
                 for t in &a.args {
                     if let Term::Var(v) = t {
-                        *count.entry(v.clone()).or_default() += 1;
+                        *count.entry(v.to_string()).or_default() += 1;
                     }
                 }
             }
@@ -822,12 +822,12 @@ fn negated(read: &Atom, defs: &[&Rule]) -> Option<Vec<Vec<Literal>>> {
                 // Each variable not matched to a bound term (the rule's own, or read as `_`) appears once: `_`.
                 for t in &b.args {
                     if let Term::Var(v) = t {
-                        let free = !matches!(to.get(v), Some(Term::Var(_) | Term::Int(_) | Term::Str(_)));
-                        if free && count[v] != 1 {
+                        let free = !matches!(to.get(v.as_str()), Some(Term::Var(_) | Term::Int(_) | Term::Str(_)));
+                        if free && count[v.as_str()] != 1 {
                             return None;
                         }
                         if free {
-                            to.insert(v.clone(), Term::Wild);
+                            to.insert(v.to_string(), Term::Wild);
                         }
                     }
                 }
@@ -836,7 +836,7 @@ fn negated(read: &Atom, defs: &[&Rule]) -> Option<Vec<Vec<Literal>>> {
             }
             body => {
                 // Every literal over the head's variables, each bound by the read.
-                let bound = |v: &String| matches!(to.get(v), Some(Term::Var(x)) if read_vars.contains(x)) || matches!(to.get(v), Some(Term::Int(_) | Term::Str(_)));
+                let bound = |v: &String| matches!(to.get(v), Some(Term::Var(x)) if read_vars.contains(x.as_str())) || matches!(to.get(v), Some(Term::Int(_) | Term::Str(_)));
                 let mut alts = Vec::new();
                 for l in body {
                     if !l.vars().iter().all(bound) {
@@ -870,8 +870,8 @@ fn negate(op: &str) -> Option<&'static str> {
 
 fn subst(t: &Term, to: &BTreeMap<String, Term>) -> Term {
     match t {
-        Term::Var(v) => to.get(v).cloned().unwrap_or_else(|| t.clone()),
-        Term::Call(f, args) => Term::Call(f.clone(), args.iter().map(|a| subst(a, to)).collect()),
+        Term::Var(v) => to.get(v.as_str()).cloned().unwrap_or_else(|| t.clone()),
+        Term::Call(f, args) => Term::Call(f.clone().into(), args.iter().map(|a| subst(a, to)).collect()),
         t => t.clone(),
     }
 }
@@ -880,8 +880,8 @@ fn subst(t: &Term, to: &BTreeMap<String, Term>) -> Term {
 fn rename_all(l: &Literal, to: &BTreeMap<String, String>) -> Literal {
     fn term(t: &Term, to: &BTreeMap<String, String>) -> Term {
         match t {
-            Term::Var(v) => Term::Var(to.get(v).cloned().unwrap_or_else(|| v.clone())),
-            Term::Call(f, args) => Term::Call(f.clone(), args.iter().map(|a| term(a, to)).collect()),
+            Term::Var(v) => Term::Var(to.get(v.as_str()).cloned().unwrap_or_else(|| v.to_string()).into()),
+            Term::Call(f, args) => Term::Call(f.clone().into(), args.iter().map(|a| term(a, to)).collect()),
             t => t.clone(),
         }
     }
@@ -1107,7 +1107,7 @@ pub(super) fn observe(rules: &[(u64, &[(u64, u64)])], rels: &[Seen], nodes: f64)
 /// sides are bound; a `nearest`'s kinds and direction.
 fn pattern(l: &Literal, bound: &BTreeSet<String>) -> Option<String> {
     let term = |t: &Term| match t {
-        Term::Var(v) if bound.contains(v) => "_".to_owned(),
+        Term::Var(v) if bound.contains(v.as_str()) => "_".to_owned(),
         Term::Var(_) => "?".to_owned(),
         Term::Wild => "*".to_owned(),
         t => t.to_string(),
@@ -1248,7 +1248,7 @@ fn overlay<'a>(prog: &Program, model: &mut Model, rels: impl Iterator<Item = &'a
     let mut saved = Vec::new();
     for rel in rels {
         let Some(rows) = observed_rows(rel, nodes) else { continue };
-        let width = prog.decls.get(rel).map_or(0, Vec::len);
+        let width = prog.decls.get(rel).map_or(0, |c| c.len());
         let cols = observed_cols(rel, nodes, rows);
         let before = (0..width).map(|c| (model.ndv.get(&(rel.to_owned(), c)).copied(), model.stats.fan.get(&(rel.to_owned(), c)).copied())).collect();
         saved.push((rel.to_owned(), model.stats.card.get(rel).copied(), before));
@@ -1412,7 +1412,7 @@ fn estimate(prog: &Program, model: &mut Model, rules_of: &BTreeMap<&str, Vec<&Ru
                 model.stats.card.insert(rel.clone(), rows.max(1.0));
                 inserted.card.push(rel.clone());
                 // A column's distinct values: at most the rows, and at most those of the body column that binds it.
-                let width = prog.decls.get(rel).map_or(0, Vec::len);
+                let width = prog.decls.get(rel.as_str()).map_or(0, |c| c.len());
                 let seen = observed_cols(rel, nodes, rows);
                 for c in 0..width {
                     let (seen_ndv, seen_fan) = seen.get(c).copied().unwrap_or((None, None));

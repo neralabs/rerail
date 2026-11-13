@@ -43,7 +43,7 @@ pub fn caches(prog: &Program) -> Result<Vec<Cache>, Error> {
             return Err(bad(format!("{c} is its own key")));
         }
         for rel in [&c, &k] {
-            if !prog.decls.contains_key(rel) {
+            if !prog.decls.contains_key(rel.as_str()) {
                 return Err(bad(format!("{rel} is not declared")));
             }
         }

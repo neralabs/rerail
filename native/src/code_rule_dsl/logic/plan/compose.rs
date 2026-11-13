@@ -112,7 +112,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
     for rel in prog.decls.keys().filter(|r|counts[&r.to_ascii_lowercase()] > 1) {
         let mut name = format!("__rr_relation_{}", names.len());
         while !taken.insert(name.to_ascii_lowercase()) { name.push('_'); }
-        names.insert(rel.clone(), name);
+        names.insert(rel.to_string(), name);
     }
     let physical = |rel: &str| ident(names.get(rel).map(String::as_str).unwrap_or(rel)).into_owned();
     let outputs: Vec<String> = prog
@@ -145,7 +145,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
     let mut frame_defs = Vec::new();
     for (input, count) in frame_counts {
         let mut name = format!("__rr_demand_{}", frames.len());
-        while prog.decls.contains_key(&name) {
+        while prog.decls.contains_key(name.as_str()) {
             name.push('_');
         }
         frame_defs.push(format!(
@@ -220,7 +220,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
         )
     };
     for rel in prog.decls.keys().filter(|r| {
-        needed.contains(*r) && !prog.inputs.contains(*r) && !has_rules.contains(r.as_str())
+        needed.contains(r.as_str()) && !prog.inputs.iter().any(|i| i == r.as_str()) && !has_rules.contains(r.as_str())
     }) {
         let arms = constants(rel);
         add(
@@ -260,7 +260,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
         if let Some((kind,input,targets,parameters))=producer {
             *dependencies.entry(input.clone()).or_default() += 1;
             if let Some(target) = targets { *dependencies.entry(target.clone()).or_default() += 1; }
-            let cols = prog.decls[rel]
+            let cols = prog.decls[rel.as_str()]
                 .iter()
                 .enumerate()
                 .map(|(c, (_, ty))| {
@@ -343,7 +343,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
     }
     let width = outputs
         .iter()
-        .map(|r| prog.decls[r].len())
+        .map(|r| prog.decls[r.as_str()].len())
         .max()
         .unwrap_or(1);
     let arms = outputs
@@ -352,7 +352,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
         .map(|(id, rel)| {
             let cols = (0..width)
                 .map(|c| {
-                    if c >= prog.decls[rel].len() {
+                    if c >= prog.decls[rel.as_str()].len() {
                         "NULL".into()
                     } else {
                         format!("c{c}")
@@ -482,7 +482,7 @@ impl Compiled {
         while let Some(row) = cursor.next()? {
             let rel = &self.outputs[row.get::<_, i64>(0)? as usize];
             values.get_mut(rel).unwrap().push(
-                (0..prog.decls[rel].len())
+                (0..prog.decls[rel.as_str()].len())
                     .map(|c| row.get(c + 1))
                     .collect::<rusqlite::Result<_>>()?,
             );
@@ -542,7 +542,7 @@ impl Compiled {
                     db,
                     &rel,
                     ints,
-                    vec![b'i'; prog.decls[&rel].len()],
+                    vec![b'i'; prog.decls[rel.as_str()].len()],
                 )?;
                 }
                 out.kept.insert(rel.clone());

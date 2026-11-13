@@ -3,9 +3,13 @@
 //! once, with no nodes decoded, no tree indexed and no statements made between. A name is copied once, into the
 //! part that holds it; a string once, unescaped only when it holds a `\`.
 //!
+//! Each list (arguments, a body, columns, a row) is gathered in the walk's own stack and taken from the run's
+//! `Lists` (decision 0172): a list the run has already met is that list, and makes nothing.
+//!
 //! It reads what `program_text::print` writes, and refuses the rest as `read` over the statements did.
 
-use crate::code_rule_dsl::logic::front::{AggOp, Atom, Literal, Rule, Term, Value};
+use crate::code_rule_dsl::logic::front::{AggOp, Atom, List, Lists, Literal, Name, Rule, Stacks, Term, Value};
+use std::cell::RefCell;
 use rerail_rr_syntax::tape::{ERROR, Field, Kind};
 use rerail_rr_syntax::tape_format::{CODE_ERROR, CODE_EXTRA, KIND_BITS, View};
 use std::collections::BTreeMap;
@@ -17,7 +21,7 @@ pub const VAR_WORDS: [&str; 10] = ["top", "count", "min", "max", "sum", "product
 pub const REL_WORDS: [&str; 2] = ["nearest", "ast"];
 
 /// Each relation's rows (`program_facts::Facts`).
-pub type Facts = BTreeMap<String, Vec<Vec<Value>>>;
+pub type Facts = BTreeMap<String, Vec<List<Value>>>;
 
 /// `name` with its escape (`program_text::escape`) undone.
 pub fn unescape(name: &str, words: &[&str]) -> String {
@@ -55,7 +59,7 @@ fn bad(what: impl std::fmt::Display) -> String {
 /// The parts a text holds, as read: the rest of the program is made from `about` (`program_facts::program`).
 #[derive(Default)]
 pub struct Parts {
-    pub decls: BTreeMap<String, Vec<(String, String)>>,
+    pub decls: BTreeMap<Name, List<(Name, Name)>>,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
     pub facts: Facts,
@@ -81,6 +85,39 @@ const fn f(field: Field) -> u16 {
 struct Walk<'a> {
     src: &'a str,
     view: View<'a>,
+    /// The names met in this text, by their text: each interned once a text (`Name::new` takes the process's
+    /// table's lock), then cloned by a count.
+    names: RefCell<rustc_hash::FxHashMap<&'a str, Name>>,
+    /// The run's distinct lists.
+    lists: &'a Lists,
+    /// Argument lists and declarations' columns met in this text, by their text: the same text is the same list,
+    /// taken again without walking it.
+    arguments: RefCell<rustc_hash::FxHashMap<&'a str, List<Term>>>,
+    declared: RefCell<rustc_hash::FxHashMap<&'a str, List<(Name, Name)>>>,
+    /// Where each kind of list is gathered before it is taken from `lists`: one stack each, nested lists above.
+    terms: RefCell<Vec<Term>>,
+    literals: RefCell<Vec<Literal>>,
+    columns: RefCell<Vec<(Name, Name)>>,
+    values: RefCell<Vec<Value>>,
+}
+
+/// `f` of each of `items`, gathered on `stack` above what it holds and taken as one list by `take`; the stack is
+/// left as it was found.
+fn gather<T, I: Iterator<Item = usize>>(stack: &RefCell<Vec<T>>, items: I, f: impl Fn(usize) -> Result<T, String>, take: impl FnOnce(&[T]) -> List<T>) -> Result<List<T>, String> {
+    let mark = stack.borrow().len();
+    let mut made = Ok(());
+    for c in items {
+        match f(c) {
+            Ok(t) => stack.borrow_mut().push(t),
+            Err(e) => {
+                made = Err(e);
+                break;
+            }
+        }
+    }
+    let list = made.map(|()| take(&stack.borrow()[mark..]));
+    stack.borrow_mut().truncate(mark);
+    list
 }
 
 impl<'a> Walk<'a> {
@@ -106,6 +143,12 @@ impl<'a> Walk<'a> {
         self.view.children(n).filter(|&c| self.view.key(c) >> 16 & u32::from(CODE_EXTRA) == 0)
     }
 
+    /// `n`'s children of `field`, in order.
+    #[inline(always)]
+    fn all(&self, n: usize, field: Field) -> impl Iterator<Item = usize> + '_ {
+        self.children(n).filter(move |&c| self.field(c) == f(field))
+    }
+
     fn get(&self, n: usize, field: Field) -> Option<usize> {
         self.children(n).find(|&c| self.field(c) == f(field))
     }
@@ -121,6 +164,32 @@ impl<'a> Walk<'a> {
     /// An anonymous child written `text`.
     fn has_token(&self, n: usize, text: &str) -> bool {
         self.children(n).any(|c| self.kind(c) >= rerail_rr_syntax::tape::FIRST_ANONYMOUS && self.kind(c) != ERROR && self.text(c) == text)
+    }
+
+    /// `text` as a name: from this text's table, or interned and kept there.
+    #[inline]
+    fn intern(&self, text: &'a str) -> Name {
+        if let Some(name) = self.names.borrow().get(text) {
+            return name.clone();
+        }
+        let name = Name::new(text);
+        self.names.borrow_mut().insert(text, name.clone());
+        name
+    }
+
+    /// A string node's value as a name: its text's span when it holds no escape, so no string is made.
+    fn string_name(&self, n: usize) -> Result<Name, String> {
+        if self.kind(n) != k(Kind::String) {
+            return Err(bad(format!("{:?} where a string goes", self.text(n))));
+        }
+        let t = self.text(n);
+        let body = t.strip_prefix('"').and_then(|t| t.strip_suffix('"')).ok_or_else(|| bad(format!("a string {t:?}")))?;
+        if body.contains('\\') { rerail_rr_syntax::syntax::unescape(body).map(|s| Name::new(&s)).map_err(bad) } else { Ok(self.intern(body)) }
+    }
+
+    /// A variable's name, its escape undone, interned.
+    fn var_name(&self, v: &'a str) -> Name {
+        self.intern(unescaped(v, &VAR_WORDS))
     }
 
     fn string(&self, n: usize) -> Result<String, String> {
@@ -152,31 +221,37 @@ impl<'a> Walk<'a> {
     }
 
     fn value(&self, n: usize) -> Result<Value, String> {
-        if self.kind(n) == k(Kind::String) { self.string(n).map(Value::Str) } else { self.int(n).map(Value::Int) }
+        if self.kind(n) == k(Kind::String) { self.string_name(n).map(Value::Str) } else { self.int(n).map(Value::Int) }
     }
 
     fn term(&self, n: usize) -> Result<Term, String> {
         Ok(match self.kind(n) {
             x if x == k(Kind::Variable) => match self.text(n) {
                 "top" => Term::Top,
-                v => Term::Var(unescape(v, &VAR_WORDS)),
+                v => Term::Var(self.var_name(v)),
             },
             x if x == k(Kind::Wildcard) => Term::Wild,
-            x if x == k(Kind::String) => Term::Str(self.string(n)?),
+            x if x == k(Kind::String) => Term::Str(self.string_name(n)?),
             x if x == k(Kind::FunctorCall) => {
                 let args = match self.get(n, Field::Arguments) {
                     Some(a) => self.terms(a)?,
-                    None => Vec::new(),
+                    None => List::new(),
                 };
-                Term::Call(self.name(n, Field::Function)?.to_owned(), args)
+                Term::Call(self.intern(self.name(n, Field::Function)?), args)
             }
             _ => Term::Int(self.int(n)?),
         })
     }
 
-    /// An argument list's terms.
-    fn terms(&self, list: usize) -> Result<Vec<Term>, String> {
-        self.children(list).filter(|&c| self.field(c) == f(Field::Argument)).map(|c| self.term(c)).collect()
+    /// An argument list's terms: this text's list of the same text, else the run's.
+    fn terms(&self, list: usize) -> Result<List<Term>, String> {
+        let text = self.text(list);
+        if let Some(found) = self.arguments.borrow().get(text) {
+            return Ok(found.clone());
+        }
+        let made = gather(&self.terms, self.all(list, Field::Argument), |c| self.term(c), |t| self.lists.terms(t))?;
+        self.arguments.borrow_mut().insert(text, made.clone());
+        Ok(made)
     }
 
     /// An atom (or a head): its relation and its arguments.
@@ -191,15 +266,15 @@ impl<'a> Walk<'a> {
             }
         }
         let rel = rel.ok_or_else(|| bad("an atom with no relation"))?;
-        Ok(Atom { rel: unescaped(rel, &REL_WORDS).into(), args: args.ok_or_else(|| bad("an atom with no arguments"))?, neg, gated: false })
+        Ok(Atom { rel: self.intern(unescaped(rel, &REL_WORDS)), args: args.ok_or_else(|| bad("an atom with no arguments"))?, neg, gated: false })
     }
 
-    /// A conjunction's literals, each the walk's `literal`.
-    fn conjunction(&self, b: usize) -> Result<Vec<usize>, String> {
+    /// A body: one conjunction.
+    fn conjunction(&self, b: usize) -> Result<usize, String> {
         if self.kind(b) != k(Kind::Conjunction) {
             return Err(bad("a body of other than one conjunction"));
         }
-        Ok(self.children(b).filter(|&c| self.field(c) == f(Field::Literal)).collect())
+        Ok(b)
     }
 
     fn literal(&self, l: usize) -> Result<Literal, String> {
@@ -208,12 +283,14 @@ impl<'a> Walk<'a> {
                 let rel = self.name(l, Field::Relation)?;
                 if rel == "nearest" || rel == "ast" {
                     let list = self.one(l, Field::Arguments)?;
-                    let args: Vec<usize> = self.children(list).filter(|&c| self.field(c) == f(Field::Argument)).collect();
+                    // Rare (a few hundred in a run's programs): the arguments' nodes collected.
+                    let args: Vec<usize> = self.all(list, Field::Argument).collect();
+                    let args = args.as_slice();
                     if rel == "nearest" {
-                        let [n, a, set] = args.as_slice() else { return Err(bad("nearest of other than three arguments")) };
+                        let [n, a, set] = args else { return Err(bad("nearest of other than three arguments")) };
                         Literal::Nearest { n: self.var(*n)?, a: self.var(*a)?, kindset: self.string(*set)? }
                     } else {
-                        let [document, node, matcher, captures @ ..] = args.as_slice() else { return Err(bad("ast of under three arguments")) };
+                        let [document, node, matcher, captures @ ..] = args else { return Err(bad("ast of under three arguments")) };
                         if captures.len() % 2 != 0 {
                             return Err(bad("an ast capture without its variable"));
                         }
@@ -269,11 +346,12 @@ impl<'a> Walk<'a> {
                 _ => {}
             }
         }
-        let lits = self.conjunction(body.ok_or_else(|| bad("an aggregate with no body"))?)?;
-        let [l] = lits.as_slice() else { return Err(bad("an aggregate over other than one atom")) };
-        let atom = match self.kind(*l) {
-            x if x == k(Kind::Atom) => self.atom(*l, false)?,
-            x if x == k(Kind::Negation) => self.negated(*l)?,
+        let body = self.conjunction(body.ok_or_else(|| bad("an aggregate with no body"))?)?;
+        let mut lits = self.all(body, Field::Literal);
+        let (Some(l), None) = (lits.next(), lits.next()) else { return Err(bad("an aggregate over other than one atom")) };
+        let atom = match self.kind(l) {
+            x if x == k(Kind::Atom) => self.atom(l, false)?,
+            x if x == k(Kind::Negation) => self.negated(l)?,
             _ => return Err(bad("an aggregate over other than one atom")),
         };
         let over = match over {
@@ -292,25 +370,28 @@ impl<'a> Walk<'a> {
         Ok(Literal::Agg { var: unescape(v, &VAR_WORDS), op, over, atom })
     }
 
-    /// A declaration's columns: each its name and type.
-    fn columns(&self, s: usize) -> Result<Vec<(String, String)>, String> {
+    /// A declaration's columns, each its name and type: this text's list of the same text, else the run's.
+    fn columns(&self, s: usize) -> Result<List<(Name, Name)>, String> {
         let list = self.one(s, Field::Columns)?;
-        self.children(list)
-            .filter(|&c| self.field(c) == f(Field::Column))
-            .map(|c| {
+        let text = self.text(list);
+        if let Some(found) = self.declared.borrow().get(text) {
+            return Ok(found.clone());
+        }
+        let made = gather(&self.columns, self.all(list, Field::Column), |c| {
                 let ty = self.one(c, Field::Type)?;
                 let name = self.name(ty, Field::Name)?;
-                let ty = match self.get(ty, Field::Argument) {
-                    Some(a) => format!("{name}<{}>", self.text(a)),
-                    None if self.has_token(ty, "<") => format!("{name}<>"),
-                    None => name.to_owned(),
+                let ty: Name = match self.get(ty, Field::Argument) {
+                    Some(a) => format!("{name}<{}>", self.text(a)).into(),
+                    None if self.has_token(ty, "<") => format!("{name}<>").into(),
+                    None => self.intern(name),
                 };
-                Ok((self.name(c, Field::Name)?.to_owned(), ty))
-            })
-            .collect()
+                Ok((self.intern(self.name(c, Field::Name)?), ty))
+            }, |c| self.lists.columns(c))?;
+        self.declared.borrow_mut().insert(text, made.clone());
+        Ok(made)
     }
 
-    fn statement(&self, s: usize, part: &mut Part, out: &mut Parts) -> Result<(), String> {
+    fn statement(&self, s: usize, part: &mut Part, out: &mut Parts, decls: &mut Vec<(Name, List<(Name, Name)>)>) -> Result<(), String> {
         match self.kind(s) {
             x if x == k(Kind::Setting) => match self.name(s, Field::Name)? {
                 "rules" => *part = Part::Rules,
@@ -318,7 +399,7 @@ impl<'a> Walk<'a> {
                 other => return Err(bad(format!("setting .{other}"))),
             },
             x if x == k(Kind::Declaration) => {
-                out.decls.insert(unescape(self.name(s, Field::Name)?, &REL_WORDS), self.columns(s)?);
+                decls.push((self.intern(unescaped(self.name(s, Field::Name)?, &REL_WORDS)), self.columns(s)?));
             }
             x if x == k(Kind::IoDirective) => {
                 let into = if self.has_token(s, ".output") { &mut out.outputs } else { &mut out.inputs };
@@ -339,21 +420,17 @@ impl<'a> Walk<'a> {
                 let head = head.ok_or_else(|| bad("a clause with no head"))?;
                 if *part == Part::Rules {
                     let lits = match body {
-                        Some(b) => self.conjunction(b)?.into_iter().map(|l| self.literal(l)).collect::<Result<_, _>>()?,
-                        None => Vec::new(),
+                        Some(b) => gather(&self.literals, self.all(self.conjunction(b)?, Field::Literal), |l| self.literal(l), |l| self.lists.literals(l))?,
+                        None => List::new(),
                     };
                     out.rules.push(Rule { head: self.atom(head, false)?, body: lits });
                 } else if body.is_none() {
                     let mut rel = None;
-                    let mut row = Vec::new();
+                    let mut row = List::new();
                     for c in self.children(head) {
                         match self.field(c) {
                             x if x == f(Field::Relation) => rel = Some(self.text(c)),
-                            x if x == f(Field::Arguments) => {
-                                for a in self.children(c).filter(|&a| self.field(a) == f(Field::Argument)) {
-                                    row.push(self.value(a)?);
-                                }
-                            }
+                            x if x == f(Field::Arguments) => row = gather(&self.values, self.all(c, Field::Argument), |a| self.value(a), |v| self.lists.values(v))?,
                             x if x == f(Field::Modal) => return Err(bad("a modal head")),
                             _ => {}
                         }
@@ -381,19 +458,46 @@ impl<'a> Walk<'a> {
     }
 }
 
-/// The parts of `src`, read off its image `image` (`rerail_rr_syntax::tape(src)`).
-pub fn parts(src: &str, image: &[u8]) -> Result<Parts, String> {
-    let walk = Walk { src, view: View::new(image)? };
+/// The parts of `src`, read off its image `image` (`rerail_rr_syntax::tape(src)`), its lists taken from `lists`.
+pub fn parts(src: &str, image: &[u8], lists: &Lists) -> Result<Parts, String> {
+    let view = View::new(image)?;
+    let stacks = lists.take_stacks();
+    // Room for what a text of this many nodes meets: in the run's programs, about a distinct name every 40 nodes, an
+    // argument list every 90 and a declaration's columns every 700.
+    let nodes = view.len();
+    let walk = Walk {
+        src,
+        view,
+        names: RefCell::new(rustc_hash::FxHashMap::with_capacity_and_hasher(nodes / 40, Default::default())),
+        lists,
+        arguments: RefCell::new(rustc_hash::FxHashMap::with_capacity_and_hasher(nodes / 90, Default::default())),
+        declared: RefCell::new(rustc_hash::FxHashMap::with_capacity_and_hasher(nodes / 700, Default::default())),
+        terms: RefCell::new(stacks.terms),
+        literals: RefCell::new(stacks.literals),
+        columns: RefCell::new(stacks.columns),
+        values: RefCell::new(stacks.values),
+    };
     let mut out = Parts::default();
+    let mut decls = Vec::new();
+    let read = walk_statements(&walk, &mut out, &mut decls);
+    // Declarations gathered and the map built at once (`BTreeMap::from_iter`: full nodes, the last of a name kept).
+    out.decls = decls.into_iter().collect();
+    let Walk { terms, literals, columns, values, .. } = walk;
+    lists.give_stacks(Stacks { terms: terms.into_inner(), literals: literals.into_inner(), columns: columns.into_inner(), values: values.into_inner() });
+    read.map(|()| out)
+}
+
+fn walk_statements(walk: &Walk<'_>, out: &mut Parts, decls: &mut Vec<(Name, List<(Name, Name)>)>) -> Result<(), String> {
     if walk.view.is_empty() {
-        return Ok(out);
+        return Ok(());
     }
     let mut part = Part::Facts;
+    out.rules.reserve(walk.children(0).count());
     for s in walk.children(0) {
         if walk.kind(s) == ERROR {
             return Err(bad(format!("a statement that does not parse: {:?}", walk.text(s))));
         }
-        walk.statement(s, &mut part, &mut out)?;
+        walk.statement(s, &mut part, out, decls)?;
     }
-    Ok(out)
+    Ok(())
 }

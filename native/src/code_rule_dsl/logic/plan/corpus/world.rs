@@ -90,7 +90,7 @@ impl World {
                 if k == "load.budget" {
                     budget = v.parse().unwrap_or(budget);
                 }
-                if let Some(dir) = canonical(&root.join(v)).filter(|p| p.is_dir()) {
+                if let Some(dir) = canonical(&root.join(v.as_str())).filter(|p| p.is_dir()) {
                     roots.push(dir);
                 }
             }

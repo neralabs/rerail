@@ -2,23 +2,25 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use crate::code_rule_dsl::logic::front::name::Name;
+use crate::code_rule_dsl::logic::front::name::{List, Name};
 
-#[derive(Clone, Debug, PartialEq, Hash)]
+/// A term. Its names and texts are `Name`s, interned for the process as relation names are: a program read or
+/// copied makes no string for a name it has met before (decision 0166).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Term {
-    Var(String),
+    Var(Name),
     Wild,
     Int(i64),
-    Str(String),
+    Str(Name),
     Top,
-    Call(String, Vec<Term>),
+    Call(Name, List<Term>),
 }
 
 impl Term {
     pub fn vars(&self, out: &mut BTreeSet<String>) {
         match self {
             Term::Var(v) => {
-                out.insert(v.clone());
+                out.insert(v.to_string());
             }
             Term::Call(_, args) => args.iter().for_each(|a| a.vars(out)),
             _ => {}
@@ -31,10 +33,10 @@ impl Term {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Atom {
     pub rel: Name,
-    pub args: Vec<Term>,
+    pub args: List<Term>,
     pub neg: bool,
     /// A negation held until its relation's `done_` gate passes (magic sets, row 4): not a negative edge.
     pub gated: bool,
@@ -66,7 +68,7 @@ pub enum AggOp {
     Join { by: Vec<String>, sep: String },
 }
 
-#[derive(Clone, Debug, PartialEq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Literal {
     Atom(Atom),
     Cmp { l: Term, op: &'static str, r: Term },
@@ -117,8 +119,8 @@ impl Literal {
 pub fn cmp_binds(l: &Term, op: &str, r: &Term, bound: &BTreeSet<String>) -> Option<BTreeSet<String>> {
     let mut rv = BTreeSet::new();
     r.vars(&mut rv);
-    if op == "=" && let Term::Var(x) = l && !bound.contains(x) {
-        return rv.is_subset(bound).then(|| BTreeSet::from([x.clone()]));
+    if op == "=" && let Term::Var(x) = l && !bound.contains(x.as_str()) {
+        return rv.is_subset(bound).then(|| BTreeSet::from([x.to_string()]));
     }
     let mut all = rv.clone();
     l.vars(&mut all);
@@ -190,10 +192,10 @@ pub fn join<T: fmt::Display>(items: &[T]) -> String {
     items.iter().map(T::to_string).collect::<Vec<_>>().join(", ")
 }
 
-#[derive(Clone, Debug, PartialEq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Rule {
     pub head: Atom,
-    pub body: Vec<Literal>,
+    pub body: List<Literal>,
 }
 
 /// A relation's lattice column: the last, after `keys` key columns.
@@ -217,20 +219,20 @@ impl LatticeDecl {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Value {
     Int(i64),
-    Str(String),
+    Str(Name),
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct Program {
     /// Each relation's columns: (name, type).
-    pub decls: BTreeMap<String, Vec<(String, String)>>,
+    pub decls: BTreeMap<Name, List<(Name, Name)>>,
     /// Logically nullary relations encoded with one physical unit column.
     pub nullary: BTreeSet<String>,
     pub lattice: BTreeMap<String, LatticeDecl>,
-    pub facts: BTreeMap<String, Vec<Vec<Value>>>,
+    pub facts: BTreeMap<String, Vec<List<Value>>>,
     pub rules: Vec<Rule>,
     pub inputs: Vec<String>,
     pub outputs: Vec<String>,
@@ -515,4 +517,108 @@ pub struct Gate {
     pub level: usize,
     pub quiet: Vec<String>,
     pub deps: Vec<String>,
+}
+
+/// A term's parts by their addresses (`Shallow`): its names and its call's arguments.
+impl crate::code_rule_dsl::logic::front::name::Shallow for Term {
+    fn shallow_hash(&self, h: &mut rustc_hash::FxHasher) {
+        use std::hash::Hasher;
+        match self {
+            Term::Var(v) => {
+                h.write_u8(0);
+                h.write_usize(v.address());
+            }
+            Term::Wild => h.write_u8(1),
+            Term::Int(i) => {
+                h.write_u8(2);
+                h.write_i64(*i);
+            }
+            Term::Str(s) => {
+                h.write_u8(3);
+                h.write_usize(s.address());
+            }
+            Term::Top => h.write_u8(4),
+            Term::Call(f, args) => {
+                h.write_u8(5);
+                h.write_usize(f.address());
+                h.write_usize(args.address());
+            }
+        }
+    }
+    fn shallow_eq(&self, other: &Term) -> bool {
+        match (self, other) {
+            (Term::Call(f, a), Term::Call(g, b)) => f == g && a.same(b),
+            (a, b) => a == b,
+        }
+    }
+}
+
+impl Atom {
+    fn shallow_hash(&self, h: &mut rustc_hash::FxHasher) {
+        use std::hash::Hasher;
+        h.write_usize(self.rel.address());
+        h.write_usize(self.args.address());
+        h.write_u8(u8::from(self.neg) | u8::from(self.gated) << 1);
+    }
+    fn shallow_eq(&self, other: &Atom) -> bool {
+        self.rel == other.rel && self.args.same(&other.args) && self.neg == other.neg && self.gated == other.gated
+    }
+}
+
+/// A literal's parts by their addresses (`Shallow`): its atom's relation and arguments, its terms.
+impl crate::code_rule_dsl::logic::front::name::Shallow for Literal {
+    fn shallow_hash(&self, h: &mut rustc_hash::FxHasher) {
+        use std::hash::{Hash, Hasher};
+        match self {
+            Literal::Atom(a) => {
+                h.write_u8(0);
+                a.shallow_hash(h);
+            }
+            Literal::Cmp { l, op, r } => {
+                h.write_u8(1);
+                l.shallow_hash(h);
+                op.hash(h);
+                r.shallow_hash(h);
+            }
+            Literal::Agg { var, op, over, atom } => {
+                h.write_u8(2);
+                var.hash(h);
+                op.hash(h);
+                over.hash(h);
+                atom.shallow_hash(h);
+            }
+            other => {
+                h.write_u8(3);
+                other.hash(h);
+            }
+        }
+    }
+    fn shallow_eq(&self, other: &Literal) -> bool {
+        match (self, other) {
+            (Literal::Atom(a), Literal::Atom(b)) => a.shallow_eq(b),
+            (Literal::Cmp { l, op, r }, Literal::Cmp { l: l2, op: op2, r: r2 }) => op == op2 && l.shallow_eq(l2) && r.shallow_eq(r2),
+            (Literal::Agg { var, op, over, atom }, Literal::Agg { var: v2, op: o2, over: w2, atom: a2 }) => var == v2 && op == o2 && over == w2 && atom.shallow_eq(a2),
+            (a, b) => std::mem::discriminant(a) == std::mem::discriminant(b) && !matches!(a, Literal::Atom(_) | Literal::Cmp { .. } | Literal::Agg { .. }) && a == b,
+        }
+    }
+}
+
+/// A value by its name's address (`Shallow`).
+impl crate::code_rule_dsl::logic::front::name::Shallow for Value {
+    fn shallow_hash(&self, h: &mut rustc_hash::FxHasher) {
+        use std::hash::Hasher;
+        match self {
+            Value::Int(i) => {
+                h.write_u8(0);
+                h.write_i64(*i);
+            }
+            Value::Str(s) => {
+                h.write_u8(1);
+                h.write_usize(s.address());
+            }
+        }
+    }
+    fn shallow_eq(&self, other: &Value) -> bool {
+        self == other
+    }
 }

@@ -30,7 +30,7 @@ pub(in crate::code_rule_dsl) struct KeyInference {
 
 fn variable(t: &Term) -> Option<String> {
     if let Term::Var(v) = t {
-        Some(v.clone())
+        Some(v.to_string())
     } else {
         None
     }
@@ -38,7 +38,7 @@ fn variable(t: &Term) -> Option<String> {
 fn equality(model: &mut keys::Projection, a: &Term, b: &Term) {
     if let Some(a) = variable(a) {
         match b {
-            Term::Var(b) => model.equalities.push((a, b.clone())),
+            Term::Var(b) => model.equalities.push((a, b.to_string())),
             Term::Int(_) | Term::Str(_) | Term::Top => {
                 model.fixed.insert(a);
             }
@@ -59,7 +59,7 @@ fn projection(head: &Atom, body: &[Literal], known: &keys::Keys) -> keys::Projec
                     .collect();
                 for (c, term) in atom.args.iter().enumerate() {
                     match term {
-                        Term::Var(v) => model.equalities.push((columns[c].clone(), v.clone())),
+                        Term::Var(v) => model.equalities.push((columns[c].clone(), v.to_string())),
                         Term::Int(_) | Term::Str(_) | Term::Top => {
                             model.fixed.insert(columns[c].clone());
                         }
@@ -126,10 +126,10 @@ fn scalar_inputs(body: &[Literal]) -> Vec<scalars::Scalar> {
                 let mut variables = BTreeSet::new();
                 b.vars(&mut variables);
                 if variables.is_subset(&outer) {
-                    outer.insert(a.clone());
+                    outer.insert(a.to_string());
                     if matches!(b, Term::Call(_, _)) || !variables.is_disjoint(&dependent_variables)
                     {
-                        dependent_variables.insert(a.clone());
+                        dependent_variables.insert(a.to_string());
                     }
                 }
             }
@@ -159,7 +159,7 @@ fn scalar_inputs(body: &[Literal]) -> Vec<scalars::Scalar> {
         let mut dependent = false;
         for (i, term) in atom.args.iter().enumerate() {
             match term {
-                Term::Var(v) if Some(v) == over.as_ref() => {
+                Term::Var(v) if Some(v.as_str()) == over.as_deref() => {
                     if let Some(previous) = locals.insert(v, i) {
                         predicates.push(E::Apply(
                             "=".into(),
@@ -168,10 +168,10 @@ fn scalar_inputs(body: &[Literal]) -> Vec<scalars::Scalar> {
                     }
                     value = E::Column(i);
                 }
-                Term::Var(v) if outer.contains(v) || aggregate_outputs.contains(v) => {
+                Term::Var(v) if outer.contains(v.as_str()) || aggregate_outputs.contains(v.as_str()) => {
                     keys.push(E::Column(i));
-                    lookup.push(E::Column(variables[v]));
-                    dependent |= dependent_variables.contains(v);
+                    lookup.push(E::Column(variables[v.as_str()]));
+                    dependent |= dependent_variables.contains(v.as_str());
                 }
                 Term::Var(v) => {
                     if let Some(previous) = locals.insert(v, i) {
@@ -185,7 +185,7 @@ fn scalar_inputs(body: &[Literal]) -> Vec<scalars::Scalar> {
                     predicates.push(E::Apply("=".into(), vec![E::Column(i), E::Integer(*n)]))
                 }
                 Term::Str(s) => {
-                    predicates.push(E::Apply("=".into(), vec![E::Column(i), E::Text(s.clone())]))
+                    predicates.push(E::Apply("=".into(), vec![E::Column(i), E::Text(s.to_string())]))
                 }
                 Term::Wild => {}
                 _ => predicates.push(E::Opaque(format!("{term:?}"))),
@@ -222,8 +222,8 @@ impl ProgramAnalysis {
             .decls
             .iter()
             .map(|(name, cols)| {
-                let width = program.lattice.get(name).map_or(cols.len(), |l| l.keys);
-                (name.clone(), vec![(0..width).collect()])
+                let width = program.lattice.get(name.as_str()).map_or(cols.len(), |l| l.keys);
+                (name.to_string(), vec![(0..width).collect()])
             })
             .collect();
         let mut key_inferences = relation_keys.iter().flat_map(|(name, keys)| keys.iter().map(|key| KeyInference {

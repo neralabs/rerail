@@ -24,7 +24,7 @@ impl Builder {
         if self.literal_start < end {
             self.children.push(
                 PNode::new(G, "literal", self.literal_start, end).with_value(Value::Str(
-                    self.decoded.text[self.literal_start..end].to_owned(),
+                    self.decoded.text[self.literal_start..end].to_owned().into(),
                 )),
             );
         }
@@ -71,7 +71,7 @@ impl Builder {
         }
         self.children.push(
             PNode::new(G, "interpolation", start, self.decoded.text.len())
-                .with_value(Value::Str(marker.to_owned())),
+                .with_value(Value::Str(marker.to_owned().into())),
         );
         self.literal_start = self.decoded.text.len();
         true
@@ -271,7 +271,7 @@ pub(crate) fn parse<D: Doc>(
     }
     builder.flush();
     let mut root = PNode::new(G, "template", 0, builder.decoded.text.len())
-        .with_value(Value::Str(builder.decoded.text.clone()));
+        .with_value(Value::Str(builder.decoded.text.clone().into()));
     root.children = builder.children;
     if !spend(root.size() + builder.decoded.text.len()) {
         return None;

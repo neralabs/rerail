@@ -12,7 +12,7 @@ impl CodeRuleSqlExecutor {
         let _scope = profiling::scope(&self.db, "compile");
         for name in &program.inputs {
             if let Some((arity, types)) = self.input_shapes.get(name)
-                && let Some(cols) = program.decls.get(name)
+                && let Some(cols) = program.decls.get(name.as_str())
             {
                 if program::logical_arity(&program, name) != *arity {
                     return Err(error(format!(
@@ -58,7 +58,7 @@ impl CodeRuleSqlExecutor {
             .collect();
         for name in unused {
             program.inputs.retain(|input| *input != name);
-            program.decls.remove(&name);
+            program.decls.remove(name.as_str());
             program.facts.remove(&name);
         }
         let mut lattice_operations = BTreeMap::new();
@@ -133,7 +133,7 @@ impl CodeRuleSqlExecutor {
                 .prepare(&format!("SELECT * FROM {}", quote(name)))
                 .map_err(error)?;
             let columns: Vec<&str> = statement.column_names().collect();
-            if columns.len() != lowered.program.decls[name].len() {
+            if columns.len() != lowered.program.decls[name.as_str()].len() {
                 return Err(error(format!(
                     "{name}: input arity differs from its declaration"
                 )));

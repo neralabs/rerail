@@ -60,14 +60,14 @@ fn plan() -> FactsPlanSet {
 }
 
 /// The combined program of texts `key`, when the store keeps one whose library files all still read as recorded.
-pub(super) fn lookup(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<Program>> {
+pub(super) fn lookup(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<Program>> {
     let Some(source) = store.held_source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? else { return Ok(None) };
     let set = plan();
     let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?;
     let Some(result) = memo.results.get(&set.plans[0]) else { return Ok(None) };
     let Ok(facts) = program_facts::decode(&result.entry) else { return Ok(None) };
     let read = facts.get(READ_FILE).into_iter().flatten().map(|row| match row.as_slice() {
-        [Value::Str(path), Value::Str(digest)] => Some(LibraryFile { path: PathBuf::from(path), sha256: unhex(digest) }),
+        [Value::Str(path), Value::Str(digest)] => Some(LibraryFile { path: PathBuf::from(path.as_str()), sha256: unhex(digest) }),
         _ => None,
     });
     for file in read {
@@ -76,9 +76,9 @@ pub(super) fn lookup(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option
             _ => return Ok(None),
         }
     }
-    let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(Vec::as_slice) else { return Ok(None) };
-    let Some(digest) = unhex(digest) else { return Ok(None) };
-    Ok(program_text::load(store, &digest)?.map(|(program, _)| program))
+    let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(|r| r.as_slice()) else { return Ok(None) };
+    let Some(digest) = unhex(&digest) else { return Ok(None) };
+    Ok(program_text::load(store, &digest, lists)?.map(|(program, _)| program))
 }
 
 fn unhex(text: &str) -> Option<[u8; 32]> {
@@ -98,8 +98,8 @@ pub(super) fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile
     // A program that does not read back the same from its text is not kept: the next run combines it again.
     let Some((digest, _)) = program_text::store(store, program)? else { return Ok(false) };
     let mut facts = Facts::new();
-    facts.insert(PROGRAM.to_owned(), vec![vec![Value::Str(hex(&digest))]]);
-    let rows = read.iter().map(|f| vec![Value::Str(f.path.to_string_lossy().into_owned()), Value::Str(f.sha256.map(|d| hex(&d)).unwrap_or_default())]).collect();
+    facts.insert(PROGRAM.to_owned(), vec![[Value::Str(hex(&digest).into())].into()]);
+    let rows = read.iter().map(|f| [Value::Str(f.path.to_string_lossy().into_owned().into()), Value::Str(f.sha256.map(|d| hex(&d)).unwrap_or_default().into())].into()).collect();
     facts.insert(READ_FILE.to_owned(), rows);
     let text = source_text(key);
     let hash = HashKey::sha256(text.as_bytes());
@@ -127,8 +127,8 @@ pub(super) fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::syn
             let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?;
             let Some(result) = memo.results.get(&plan().plans[0]) else { return Ok(()) };
             let Ok(facts) = program_facts::decode(&result.entry) else { return Ok(()) };
-            let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(Vec::as_slice) else { return Ok(()) };
-            let Some(digest) = unhex(digest) else { return Ok(()) };
+            let Some([Value::Str(digest)]) = facts.get(PROGRAM).and_then(|rows| rows.first()).map(|r| r.as_slice()) else { return Ok(()) };
+            let Some(digest) = unhex(&digest) else { return Ok(()) };
             let found = store.held_source_by_hash(HashKey::from_sha256_digest(digest))?;
             late.lock().expect("the late sources").extend(found);
             Ok(())

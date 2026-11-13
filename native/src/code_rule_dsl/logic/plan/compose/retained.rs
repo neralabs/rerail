@@ -53,7 +53,7 @@ pub fn run(prog: &Program, db: &Connection, mut inputs: Inputs, lowered: Option<
     let out = if roots.iter().all(|r|clean.contains(r)) {
         let values = roots.iter().map(|r| {
             let source=&restored[r];
-            (r.clone(),(0..source.len()).map(|row|(0..prog.decls[r].len()).map(|c|SqlValue::Integer(source.value(row,c))).collect()).collect())
+            (r.clone(),(0..source.len()).map(|row|(0..prog.decls[r.as_str()].len()).map(|c|SqlValue::Integer(source.value(row,c))).collect()).collect())
         }).collect();
         let plan=Compiled {sql:String::new(),outputs:roots.iter().cloned().collect(),kept:inputs.kept,reads:Vec::new(),aliases:HashMap::new(),resident:clean.clone(),prepares:Default::default()};
         plan.finish(db,prog,lowered,hooks,values)?

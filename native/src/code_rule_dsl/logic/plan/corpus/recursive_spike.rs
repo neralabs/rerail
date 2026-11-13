@@ -441,7 +441,7 @@ fn compile(rule: &front::Rule, rel_of: &dyn Fn(&str) -> Option<usize>, fanout: &
     }
     fn head_term(t: &Term, names: &BTreeMap<String, usize>) -> Result<Head, String> {
         Ok(match t {
-            Term::Var(v) => Head::Slot(*names.get(v).ok_or_else(|| format!("head variable {v} unbound"))?),
+            Term::Var(v) => Head::Slot(*names.get(v.as_str()).ok_or_else(|| format!("head variable {v} unbound"))?),
             Term::Int(i) => Head::Const(*i),
             Term::Call(f, args) if f == "cat" && args.len() == 2 => Head::Cat(Box::new(head_term(&args[0], names)?), Box::new(head_term(&args[1], names)?)),
             other => return Err(format!("head term {other:?}")),
@@ -591,7 +591,7 @@ fn compile(rule: &front::Rule, rel_of: &dyn Fn(&str) -> Option<usize>, fanout: &
         .head
         .args
         .iter()
-        .filter_map(|t| if let Term::Var(v) = t { names.get(v).copied() } else { None })
+        .filter_map(|t| if let Term::Var(v) = t { names.get(v.as_str()).copied() } else { None })
         .collect();
     let mut plans = vec![plan(BTreeSet::new(), None)?, plan(head_bound, None)?];
     // A negated seed (a row of the negated relation gone or new) binds the slots the rule binds elsewhere, and keeps
@@ -1808,7 +1808,7 @@ pub(in crate::code_rule_dsl) fn run(
         }
         let names: Vec<String> = scc.iter().chain(&reads).cloned().collect();
         let index: BTreeMap<&str, usize> = names.iter().enumerate().map(|(i, n)| (n.as_str(), i)).collect();
-        let mut stores: Vec<Store> = names.iter().map(|n| Store::new(program.decls.get(n).map_or(0, Vec::len))).collect();
+        let mut stores: Vec<Store> = names.iter().map(|n| Store::new(program.decls.get(n.as_str()).map_or(0, |c| c.len()))).collect();
         let mut assumed: Vec<String> = Vec::new();
         let mut as_was: Vec<String> = Vec::new();
         let mut want: Vec<std::collections::HashSet<Vec<i64>>> = vec![Default::default(); names.len()];

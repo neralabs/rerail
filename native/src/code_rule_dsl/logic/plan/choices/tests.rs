@@ -12,7 +12,7 @@
         assert!(holds(1000.0, 10.0) && holds(1000.0, 2000.0) && !holds(1000.0, 2001.0));
         let prepared = [3u8; 32];
         {
-            let _durable = Durable::start(&db, prepared, Default::default());
+            let _durable = Durable::start(&db, prepared, Default::default(), Default::default());
             remember(key, Chosen { program: Some(Arc::new(rewritten.clone())), inlined: vec!["e".into()], demanded: vec![], nodes: 1000.0 });
         }
         // Another process: nothing kept in memory, the store's entry read back.
@@ -23,7 +23,7 @@
         store.collect_corpus_pass(&crate::content_store::CorpusPolicy::default(), 1_000).unwrap();
         let entry = read_all(&store, &prepared).unwrap().remove(&path(&key)).expect("kept in the store");
         let texts = super::super::super::program_text::texts(&store, &[super::rewritten(&entry).expect("a rewritten program")]).unwrap().into_iter().map(|(d, (text, _))| (d, text)).collect();
-        let back = decode_chosen(&texts, &entry).expect("decodes");
+        let back = decode_chosen(&texts, &entry, &Default::default()).expect("decodes");
         assert_eq!(format!("{:?}", back.program.as_deref()), format!("{:?}", Some(&rewritten)));
         assert_eq!((back.inlined.clone(), back.nodes), (vec!["e".to_owned()], 1000.0));
         let (text, _) = named(&prepared);
@@ -31,7 +31,7 @@
         // Under another prepared program, nothing.
         assert!(read_all(&store, &[4u8; 32]).unwrap().is_empty());
         {
-            let _durable = Durable::start(&db, prepared, Default::default());
+            let _durable = Durable::start(&db, prepared, Default::default(), Default::default());
             assert!(lookup(&key, 10.0).is_some(), "a smaller run takes the choices");
             assert!(lookup(&key, 5000.0).is_none(), "a run over many more nodes chooses again");
         }
