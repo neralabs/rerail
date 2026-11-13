@@ -352,14 +352,19 @@ function failFolder(walk: SourceWalk, path: string, readError: string): void {
 function unchangedSince(source: Source, preimage: Preimage | undefined): boolean {
   return preimage?.withheld === undefined ? preimage?.text === source.text : preimage.withheld.sha256 === source.digest;
 }
+/** Why a late tool edit is checked over its whole file (`editPreimage`). */
+const UNREBUILT_PREIMAGE = "The tool's result no longer fits the file, so what it held before the tool ran is unknown";
 /**
  * The preimage a tool edit of `source` is read against: the call's own capture, or, where that capture already holds
  * what the tool wrote (the call reached Rerail only after the tool ran), what the tool's result says the file held.
+ * Where the result says something of it that no longer fits the file and gives no text (`reportedText`), what the file
+ * held is unknown: the edit is then read as one whose earlier text could not be read, so it is checked over its whole
+ * file and says why, rather than read as no change.
  */
 function editPreimage(source: Source, captured: Preimage | undefined, reported: ReportedPreimage | undefined): Preimage | undefined {
   if (reported === undefined || captured === undefined || !unchangedSince(source, captured)) return captured;
   const preimage = reportedText(reported, source.text);
-  return preimage === undefined ? captured : keptPreimage(source.path, preimage);
+  return preimage === undefined ? { readError: UNREBUILT_PREIMAGE } : keptPreimage(source.path, preimage);
 }
 function absentThroughout(source: Source, preimage: Preimage | undefined): boolean {
   return source.deleted === true && preimage !== undefined && preimage.text === undefined && preimage.readError === undefined;

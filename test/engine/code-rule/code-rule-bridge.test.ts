@@ -1062,9 +1062,13 @@ describe("CodeRuleBridge and a call it takes up only after its tool wrote the fi
     expect(await lateEdit(before, after, output)).toEqual([{ path: "src/a.py", language: "python", previousText: before, generatedText: after }]);
   });
 
-  it("leaves the edit unchecked when the file no longer holds the diff's lines and the result gives no text it replaced", async () => {
-    // Changed again after the tool wrote it, and `originalFile` is null: nothing says what the file held.
-    expect(await lateEdit("one\ntwo\n", "one\nTWO, then changed\n", editResult([" one", "-two", "+TWO"]))).toEqual([]);
+  it("checks the edit over its whole file, saying why, when the file no longer holds the diff's lines and the result gives no text it replaced", async () => {
+    // Changed again after the tool wrote it, and `originalFile` is null: nothing says what the file held, so the edit is
+    // read as one whose earlier text is unknown, as a shell write to a file never seen is, not as no change.
+    expect(await lateEdit("one\ntwo\n", "one\nTWO, then changed\n", editResult([" one", "-two", "+TWO"]))).toEqual([{
+      path: "src/a.py", language: "python", generatedText: "one\nTWO, then changed\n",
+      previousReadError: "The tool's result no longer fits the file, so what it held before the tool ran is unknown",
+    }]);
   });
 
   // Changed again after the tool wrote it (a formatter, another edit): the diff no longer fits, so the edit is read
@@ -1185,14 +1189,17 @@ describe("CodeRuleBridge and a burst of late calls on one file", () => {
     ]);
   });
 
-  it("leaves the first of two late edits of one line unchecked where its result gives no originalFile", async () => {
+  it("checks the first of two late edits of one line over its whole file where its result gives no originalFile", async () => {
     const before = text("\n");
     const afterFirst = text("\n", { 3: "LINE03" });
     const after = text("\n", { 3: "LINE03B" });
     const first = editResult(1, [" line01", " line02", "-line03", "+LINE03", " line04", " line05", " line06"], null);
     const second = editResult(1, [" line01", " line02", "-LINE03", "+LINE03B", " line04", " line05", " line06"], null);
     expect(await burst(before, [{ after: afterFirst, output: first }, { after, output: second }])).toEqual([
-      [],
+      [{
+        path: "src/a.py", language: "python", generatedText: after,
+        previousReadError: "The tool's result no longer fits the file, so what it held before the tool ran is unknown",
+      }],
       [edit(afterFirst, after)],
     ]);
   });
