@@ -498,12 +498,53 @@ pub fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, binding:
 /// `violation` output are shared, and kind sets are named by their kinds (`ks<j>`), so programs asking for one set
 /// share its tape pass. The simplifier then merges relations that are equal across programs (decision 0038).
 pub fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
+    let graphs: Vec<Option<[u8; 32]>> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::graph_digest(t).ok().flatten()).collect();
+    combine_with(programs, &graphs, extra)
+}
+
+/// The run's program texts, each read once (`rr::read_seed`, in `run_with_options`): their include graphs' digests,
+/// and their library files and names, resolved when the whole-run cutoff first asks (`reuse::rule_files`). Held by
+/// the run, and gone with it.
+pub(super) struct Texts<'a> {
+    pub programs: &'a [&'a str],
+    /// Each text's include graph's digest (`phase0::Graph::digest`), `None` for a text that includes nothing.
+    pub graphs: Vec<Option<[u8; 32]>>,
+    /// Phase 0's graphs for the texts that include something, one run of `bootstrap.rr` for all of them.
+    pub derived: Vec<Arc<phase0::Graph>>,
+    read: std::cell::RefCell<Vec<crate::code_rule_dsl::logic::rr::TextRead>>,
+    names: std::cell::OnceCell<Vec<crate::code_rule_dsl::logic::rr::TextNames>>,
+}
+
+impl<'a> Texts<'a> {
+    /// `programs`, each parsed once, and phase 0's graphs derived for those that include something.
+    pub fn of(programs: &'a [&'a str]) -> Result<Self> {
+        let read: Vec<crate::code_rule_dsl::logic::rr::TextRead> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::read_seed(t)).collect::<std::result::Result<_, _>>()?;
+        let seeds: Vec<phase0::Seed> = read.iter().filter_map(|r| r.seed.clone()).collect();
+        let derived = if phase0::active() { Vec::new() } else { phase0::graphs(&seeds)? };
+        let mut at = derived.iter();
+        let graphs = read.iter().map(|r| r.seed.as_ref().and_then(|_| at.next()).map(|g| g.digest())).collect();
+        Ok(Texts { programs, graphs, derived, read: std::cell::RefCell::new(read), names: std::cell::OnceCell::new() })
+    }
+
+    /// Each text's library files, declared relations and phase (`rr::TextRead::resolved`).
+    pub fn names(&self) -> Result<&[crate::code_rule_dsl::logic::rr::TextNames]> {
+        if self.names.get().is_none() {
+            let read = std::mem::take(&mut *self.read.borrow_mut());
+            let names = read.into_iter().map(crate::code_rule_dsl::logic::rr::TextRead::resolved).collect::<std::result::Result<Vec<_>, _>>()?;
+            let _ = self.names.set(names);
+        }
+        Ok(self.names.get().expect("set above"))
+    }
+}
+
+/// `combine`, the texts' include graphs' digests given (`Texts::graphs`).
+fn combine_with(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &str) -> Result<front::Program> {
     use std::sync::{Mutex, OnceLock};
     // A function of the texts alone (`rr::parse` reads no file), so kept for the process by their digest: a session or
     // a test that runs one program over many roots parses and hides it once. A few programs at a time are kept.
     static COMBINED: OnceLock<Mutex<HashMap<[u8; 32], front::Program>>> = OnceLock::new();
     const KEPT: usize = 32;
-    let key = texts_digest(programs, extra);
+    let key = texts_digest(programs, graphs, extra);
     let cache = COMBINED.get_or_init(Default::default);
     if let Some(program) = cache.lock().expect("the combined programs").get(&key) {
         crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
@@ -552,20 +593,22 @@ fn combine_stored(programs: &[&str], extra: &str, key: &[u8; 32]) -> Result<fron
     Ok(program)
 }
 
-/// The digest of `combine`'s texts: what a combined program is a function of.
-fn texts_digest(programs: &[&str], extra: &str) -> [u8; 32] {
+/// The digest of `combine`'s texts: what a combined program is a function of. `graphs`: each text's include graph's
+/// digest (`Texts::graphs`).
+fn texts_digest(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &str) -> [u8; 32] {
     use sha2::Digest as _;
     let mut hash = sha2::Sha256::new();
     // Without decision 0091's guards (`scoping`, a measurement's switch) the same texts combine to another program.
     if programs.len() > 1 && std::env::var("RERAIL_SCOPE_GUARDS").is_ok_and(|v| v == "off") {
         hash.update(b"scope guards off");
     }
-    for text in programs.iter().copied().chain([extra]) {
+    let extra_graph = crate::code_rule_dsl::logic::rr::graph_digest(extra).ok().flatten();
+    for (text, graph) in programs.iter().copied().zip(graphs.iter().copied()).chain([(extra, extra_graph)]) {
         hash.update((text.len() as u64).to_le_bytes());
         hash.update(text.as_bytes());
         // What the text includes, as phase 0 found it: its modules' paths and digests, and the graph's edges. A text
         // is a function of these, not of its `#include` lines alone.
-        if let Ok(Some(graph)) = crate::code_rule_dsl::logic::rr::graph_digest(text) {
+        if let Some(graph) = graph {
             hash.update(graph);
         }
     }
@@ -1705,10 +1748,11 @@ pub fn run_with_options(
     // Resolve `components.rr` only when the program or one of its modules can use
     // it, before the main run takes its execution lock.
     let seeding = crate::code_rule_dsl::logic::profile::span(|| "phase 0: the texts' include graphs".into());
-    let seeds: Vec<phase0::Seed> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::text_seed(t)).collect::<std::result::Result<Vec<_>, _>>()?.into_iter().flatten().collect();
+    // Each text read once here (`Texts`): its seed and its graph, its names when the cutoff asks.
+    let texts = Texts::of(programs)?;
     let mut component_seeded = false;
     if !phase0::active() {
-        let graphs = phase0::graphs(&seeds)?;
+        let graphs = &texts.derived;
         // Includes alone do not imply component demand. Inspect each observed
         // module once; comments can conservatively request preparation. Missing
         // or malformed modules remain the parser's error, not a proof of no demand.
@@ -1729,13 +1773,13 @@ pub fn run_with_options(
     let lifecycle_seeded = usage();
     // Phase 0's cutoff (`reuse`): a run whose every read is as it was writes the outputs it wrote.
     let reuse = reuse::wanted(options, typing, t_facts);
-    let kept = if reuse { reuse::reused(programs, root, out, modes, typing, options) } else { Ok(None) };
+    let kept = if reuse { reuse::reused(&texts, root, out, modes, typing, options) } else { Ok(None) };
     let report = match kept {
         Ok(Some(report)) => Ok(report),
         Err(e) => Err(e),
-        Ok(None) => run_observed(programs, root, t_facts, out, modes, binding, chunk_nodes, typing, options).and_then(|report| {
+        Ok(None) => run_observed(&texts, root, t_facts, out, modes, binding, chunk_nodes, typing, options).and_then(|report| {
             if reuse {
-                reuse::record(programs, root, out, modes, typing, options, &report)?;
+                reuse::record(&texts, root, out, modes, typing, options, &report)?;
             }
             Ok(report)
         }),
@@ -1828,7 +1872,7 @@ impl Drop for UnderWay {
 
 #[allow(clippy::too_many_arguments)]
 fn run_observed(
-    programs: &[&str],
+    given: &Texts<'_>,
     root: &Path,
     t_facts: Option<&Path>,
     out: &Path,
@@ -1838,6 +1882,7 @@ fn run_observed(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
+    let programs = given.programs;
     let process_cpu = || { let u = usage(); u.0 + u.1 };
     let process_started = process_cpu();
     // The store's writer held from the run's start to its end (decision 0102): the handles the run opens and closes on
@@ -1912,8 +1957,8 @@ fn run_observed(
         crate::code_rule_dsl::logic::profile::reset();
     }
     let combining = crate::code_rule_dsl::logic::profile::span(|| "parse the program".into());
-    let mut prog = combine(programs, "")?;
-    let mut texts = texts_digest(programs, "");
+    let mut prog = combine_with(programs, &given.graphs, "")?;
+    let mut texts = texts_digest(programs, &given.graphs, "");
     drop(combining);
     // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
     let (bridged, typing_runs) = bridge::facts(&prog, root, out, modes, binding, chunk_nodes, typing)?;
@@ -2091,8 +2136,8 @@ fn run_observed(
         let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p)).collect();
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
-            prog = combine(programs, &facts)?;
-            texts = texts_digest(programs, &facts);
+            prog = combine_with(programs, &given.graphs, &facts)?;
+            texts = texts_digest(programs, &given.graphs, &facts);
             add_bridged(&mut prog);
             folded = fold_constants(&mut prog)?;
         }

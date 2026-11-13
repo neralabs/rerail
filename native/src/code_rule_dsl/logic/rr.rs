@@ -251,37 +251,78 @@ pub(in crate::code_rule_dsl) fn lower_library(paths: &[PathBuf]) -> Result<Progr
     Ok(program)
 }
 
-/// The library files a program's text reads, includes resolved (`core.rr` first unless the text is in T's shape):
-/// what a record of the run must check besides the text (phase 0, t23). Empty for a text that includes nothing.
-pub fn included_files(src: &str) -> Result<Vec<PathBuf>, Error> {
-    let statements = from_tape::statements(src, &tape(src))?;
-    let mut paths: Vec<PathBuf> = if statements.iter().any(|(item, _)| matches!(item, syntax::Item::Include(_))) {
-        resolve(statements)?.0.into_iter().map(|(p, _)| p).collect()
-    } else {
-        Vec::new()
-    };
-    // The engine's own library programs, which the runner adds to a run (decision 0076's components).
-    paths.extend(ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()));
-    Ok(paths)
+/// A program text read once for what a run needs of it besides its rules (`plan::corpus::run_with_options`): its
+/// statements, and the seed phase 0 derives its include graph from. Once every text's graph is derived
+/// (`phase0::graphs`, one run for all of them), [`TextRead::resolved`] gives its library files, the relations it
+/// declares and the phase it names. The whole-run cutoff, its record and the texts' digest take these; none reads a
+/// text again (each parsed a pack's 278 texts again, about eight times a process).
+pub struct TextRead {
+    /// `None` for a text that includes nothing, or while phase 0 itself runs (`text_seed`).
+    pub seed: Option<super::plan::corpus::phase0::Seed>,
+    statements: Vec<syntax::Statement>,
 }
 
-/// The relations a program's text declares, its includes' with its own, and the phase it names itself (`.phase`):
-/// read off the statements, nothing lowered, for a caller that wants only the names (the whole-run cutoff's phase
-/// files, `corpus::phases::phase_files`).
-pub fn declared_names(src: &str) -> Result<(Vec<String>, Option<String>), Error> {
+/// What [`TextRead::resolved`] reads off a text: its library files (includes resolved, `core.rr` first unless the
+/// text is in T's shape, and the engine's own library programs), the relations it and its includes declare, and the
+/// phase it names itself (`.phase`).
+pub struct TextNames {
+    pub included: Vec<PathBuf>,
+    pub names: Vec<String>,
+    pub phase: Option<String>,
+}
+
+/// `src` parsed, and its seed (`TextRead`).
+pub fn read_seed(src: &str) -> Result<TextRead, Error> {
+    use super::plan::corpus::phase0;
     let statements = from_tape::statements(src, &tape(src))?;
-    let (files, own) = if statements.iter().any(|(item, _)| matches!(item, syntax::Item::Include(_))) { resolve(statements)? } else { (Vec::new(), statements) };
-    let (mut names, mut phase) = (Vec::new(), None);
-    for (item, _) in files.iter().flat_map(|(_, st)| st.iter()).chain(own.iter()) {
-        match item {
-            syntax::Item::Decl { name, .. } => names.push(name.clone()),
-            syntax::Item::Setting { key, text } if key == "phase" && phase.is_none() => phase = Some(text.trim().to_owned()),
-            _ => {}
+    let includes: Vec<(i64, String)> = statements
+        .iter()
+        .filter_map(|(item, _)| match item {
+            syntax::Item::Include(name) => Some(name.clone()),
+            _ => None,
+        })
+        .enumerate()
+        .map(|(k, n)| (k as i64, n))
+        .collect();
+    let seed = (!includes.is_empty() && !phase0::active()).then(|| {
+        let t_shape = statements.iter().any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
+        phase0::Seed::Text { t_shape, includes }
+    });
+    Ok(TextRead { seed, statements })
+}
+
+impl TextRead {
+    /// The text's library files, names and phase, its includes resolved in the graph phase 0 derived for its seed.
+    pub fn resolved(self) -> Result<TextNames, Error> {
+        let (files, own) = if self.statements.iter().any(|(item, _)| matches!(item, syntax::Item::Include(_))) { resolve(self.statements)? } else { (Vec::new(), self.statements) };
+        let (mut names, mut phase) = (Vec::new(), None);
+        for (item, _) in files.iter().flat_map(|(_, st)| st.iter()).chain(own.iter()) {
+            match item {
+                syntax::Item::Decl { name, .. } => names.push(name.clone()),
+                syntax::Item::Setting { key, text } if key == "phase" && phase.is_none() => phase = Some(text.trim().to_owned()),
+                _ => {}
+            }
         }
+        names.sort();
+        names.dedup();
+        let mut included: Vec<PathBuf> = files.into_iter().map(|(p, _)| p).collect();
+        // The engine's own library programs, which the runner adds to a run (decision 0076's components).
+        included.extend(ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()));
+        Ok(TextNames { included, names, phase })
     }
-    names.sort();
-    names.dedup();
-    Ok((names, phase))
+}
+
+/// The library files a program's text reads (`TextNames::included`): what a record of the run must check besides
+/// the text (phase 0, t23). For a text read alone; a run reads its programs once (`read_seed`).
+pub fn included_files(src: &str) -> Result<Vec<PathBuf>, Error> {
+    Ok(read_seed(src)?.resolved()?.included)
+}
+
+/// The relations a program's text declares, its includes' with its own, and the phase it names itself
+/// (`TextNames`): for a text read alone (a phase program found by name, `corpus::phases::phase_files`).
+pub fn declared_names(src: &str) -> Result<(Vec<String>, Option<String>), Error> {
+    let t = read_seed(src)?.resolved()?;
+    Ok((t.names, t.phase))
 }
 
 /// `statements`' `#include`s resolved in the library: its files (`core.rr` first unless the statements are in T's
