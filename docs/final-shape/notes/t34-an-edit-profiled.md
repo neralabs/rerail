@@ -41,6 +41,33 @@ store's collection 0.2 s.
 | The cost model | 0.3 s | a new model trained by every process |
 | The store's collection | 0.2 s | an incremental vacuum by every process |
 
+## The profile after items 1–5 (2026-11-12, load 14–25)
+
+An edit: 118–124 G, 8.5–9.4 s CPU. 8.7 s busy: main 4.35 s, workers 3.6 s, the writer 0.59 s, the cost model 0.12 s
+(the saved model put in place, no training), collection 0.07 s. **The main thread is the critical path**: busy 4.35
+s of a 5–6 s edit, while the workers are idle most of it (3.6 s over 18 threads).
+
+Sections of the main program's run (`RERAIL_TIMELINE`, CPU of all threads): local 4.0 s, cross 1.4 s, prepare
+1.1 s, stats 0.8 s, waits 0.26 s, combine 0.44 s.
+
+| Main thread | Busy | What |
+|---|---|---|
+| The engine's driver on main (`run_atoms_native_over`, `_hooked`) | 0.96 s | `plan::run`'s strata loop: `form`, `strand_forms`, `slice_contains` 48 ms, `choices::lookup` 98 ms, strata 42 ms |
+| Prepared programs read back (`prepared::lookup`) | 0.50 s | `prepared_from` builds the program 0.27 s; `decode_view` 75 ms; `facts_memo::decode` 80 ms |
+| The cross part's kept inputs and statistics (`{c273}`) | 0.46 s | `kept_inputs` 127 ms, `maintained_cross`/`supports` 73 ms, sorts 44 ms, `retain::key` 32 ms |
+| `bridge::facts` | 0.16 s | |
+| `combine_with` → `combined::lookup` | 0.14 s | |
+| Drops of the run's structures | 0.12 s | |
+| `from_frames` (identities, strata) | 0.12 s | |
+| `text_kind_demand` | 0.11 s | |
+| The constants and semijoins (`file_local`) | 0.17 s | |
+| Per-item spans | | "native" 17,310 times, "key" 5,851, "hold the export"/"attribute to files"/"totals" 5,628 each |
+
+SQLite's I/O is down to about 0.3 s (`pread` 63 ms, `pwrite` 90 ms, `fsync` 65 ms, the checkpoints). Planning on
+the workers is 0.1 s (`plan_rule_reused`). The joins are 2.2 s on the workers, off the critical path.
+
+The cost store gets about 6,000 samples a run: training is due again every 10 minutes (`RETRAIN_EVERY`).
+
 ## Done
 
 - Prepared programs, the combined program and the stored choices read in place off their encodings
@@ -70,13 +97,13 @@ store's collection 0.2 s.
 
 Items 1–3 (texts read once, caches refused by construction, my statics by flow) are done: see above.
 
-4. **SQLite's I/O.** The checkpoint at the cost model's close (0.14 s), the commit `fsync`s on the writer (0.12 s),
+4. **SQLite's I/O** (mostly done by the file map, 0.3 s left: the checkpoints' `fsync`s). The checkpoint at the cost model's close (0.14 s), the commit `fsync`s on the writer (0.12 s),
    the vacuum every process (0.11 s), the main thread's page reads (`frames::newest_by_path`, `facts_memo`).
 5. **The cost model**: done. A process trains as a running one does: once 2,000 samples were written since the saved
    model and it is 10 minutes old; else the saved model is put in place (0.3 s CPU an edit). (see git log)
-6. **Planning in an edit**: why `plan_search` runs (0.3 s on the workers) when the plans are kept (0116 step 2).
+6. **Planning in an edit**: 0.1 s now (`plan_rule_reused`); left as it is.
 7. **The joins** (2.0 s): `candidates`' binary searches per probe, `flush`'s sorts, `value`/`locate` per row.
-8. **The main thread's passes**: `bridge::facts`, strata computed more than once (`derived`, `cut`, `supports`),
+8. **The main thread's passes** (next: the critical path, above): `bridge::facts`, strata computed more than once (`derived`, `cut`, `supports`),
    `text_kind_demand`, `kept_inputs`' decode, the engine driver's `slice_contains`.
 9. **The alternating edits** after a rebuild (above): find what flips between runs.
 10. **Memory**: an edit's peak is 2.2 GB, against a budget of 1 GB.
