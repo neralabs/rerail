@@ -339,7 +339,7 @@ pub fn code(kind: u16, field: u16, extra: bool) -> u32 {
     if kind == ERROR {
         u32::from(ERROR_CODE) | u32::from(CODE_ERROR) << 16
     } else {
-        u32::from(kind | field << 10) | u32::from(u8::from(extra) * CODE_EXTRA) << 16
+        rerail_tape_format::key(kind, field, u8::from(extra) * CODE_EXTRA)
     }
 }
 

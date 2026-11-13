@@ -3161,6 +3161,7 @@ dependencies = [
  "cranelift-jit-wasm",
  "cranelift-module",
  "libc",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -3297,6 +3298,7 @@ dependencies = [
  "rerail-compiler",
  "rerail-metal",
  "rerail-rr-syntax",
+ "rerail-tape-format",
  "sha2 0.10.9",
 ]
 

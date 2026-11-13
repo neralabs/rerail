@@ -8,6 +8,7 @@ description = "The .rr parser: its Bitlex grammar compiled to tier 1 and tier 2,
 [dependencies]
 rerail-compiler = { path = "../compiler" }
 rerail-rr-syntax = { path = "../rr_syntax" }
+rerail-tape-format = { path = "../tape_format" }
 bitlex = { path = "../../../tools/bitlex", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]

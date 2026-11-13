@@ -40,6 +40,44 @@ pub const ERROR_CODE: u16 = 0;
 /// The `.rr` dialect's language tag (`languages/rr.json`'s `tapeTag`).
 pub const RR_TAG: u8 = 13;
 
+/// A kind's bits in a code's `kf`: the field is above them.
+pub const KIND_BITS: u32 = 10;
+
+/// A node's key (`Writer`'s): its kind and field, and its flags (`CODE_EXTRA`, …).
+pub const fn key(kind: u16, field: u16, flags: u8) -> u32 {
+    (kind as u32 | (field as u32) << KIND_BITS) | (flags as u32) << 16
+}
+
+/// The image of nodes in preorder, each its key, start, end and the nodes in its subtree
+/// (itself counted): each closed where its subtree ends. The widths are the narrowest, from
+/// `Widths::guess` and again where it does not hold.
+pub fn preorder_image(tag: u8, src: &[u8], nodes: &[(u32, u32, u32, u32)]) -> Vec<u8> {
+    let mut widths = Widths::guess(src.len());
+    loop {
+        let mut w = Writer::new(tag, widths, nodes.len());
+        // The open nodes, each its place and where its subtree ends.
+        let mut open: Vec<(usize, usize, u32)> = Vec::new();
+        for (i, &(key, start, end, size)) in nodes.iter().enumerate() {
+            while let Some(&(o, to, e)) = open.last() {
+                if i < to {
+                    break;
+                }
+                w.close(o, e);
+                open.pop();
+            }
+            w.push(key, start);
+            open.push((i, i + size.max(1) as usize, end));
+        }
+        while let Some((o, _, e)) = open.pop() {
+            w.close(o, e);
+        }
+        match w.finish(src) {
+            Ok(bytes) => return bytes,
+            Err(Redo(x)) => widths = x,
+        }
+    }
+}
+
 /// The header's digest of a source: SHA-256.
 pub fn digest(src: &[u8]) -> [u8; 32] {
     Sha256::digest(src).into()

@@ -511,6 +511,36 @@ pub mod tests {
         assert_eq!(taken[0], taken[1], "the shapes take the same files");
     }
 
+    /// The engine's bytes over the corpus, against the lean parser's: the interpreter's tape
+    /// (`stream::image`), and the JIT's node table through the tape's writer (a bridge while
+    /// tier 2 writes its rows; decision 0140).
+    #[test]
+    #[ignore = "the corpus: run by name"]
+    fn corpus_images_are_the_lean_tapes() {
+        use rerail_tape_format::{CODE_EXTRA, RR_TAG, key, preorder_image};
+        let files = corpus();
+        let c = crate::compiled().expect("compiles");
+        let extras = &c.program.readings.extras;
+        let (mut taken, mut jit, mut interp) = (0, Vec::new(), Vec::new());
+        for (i, f) in files.iter().enumerate() {
+            let Ok(cols) = c.parser.columns(f.as_bytes()) else { continue };
+            taken += 1;
+            let lean = crate::rr::lean::tape(f);
+            let rows: Vec<_> = cols.rows.iter().map(|r| (key(r.kind, r.field, r.extra * CODE_EXTRA), r.start, r.end, r.size)).collect();
+            if preorder_image(RR_TAG, f.as_bytes(), &rows) != lean {
+                jit.push(i);
+            }
+            let run = c.program.block_programs[0].run(f.as_bytes());
+            let same = rerail_compiler::stream::run(&c.program, f.as_bytes(), &run).is_ok_and(|n| rerail_compiler::stream::image(&n, extras, RR_TAG, f.as_bytes()) == lean);
+            if !same {
+                interp.push(i);
+            }
+        }
+        eprintln!("{} files, {taken} taken", files.len());
+        assert_eq!(jit, Vec::<usize>::new(), "files whose JIT image is not the lean tape");
+        assert_eq!(interp, Vec::<usize>::new(), "files whose interpreter image is not the lean tape");
+    }
+
     /// `tapes` over the corpus as one batch equals `tape` file by file. Prints the time.
     #[test]
     #[ignore = "the corpus on Metal: run by hand"]
