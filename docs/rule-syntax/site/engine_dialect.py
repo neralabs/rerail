@@ -199,7 +199,13 @@ def aggregate_spans(body):
     return spans
 
 
+HOST_READS = re.compile(r"^// Guest captures a host rule reads, by text \(another document\): (.*)$", re.M)
+
+
 def same_document_joins(text, base):
+    # a guest capture a `host` rule reads (translate.py names them) is in the guest's document, its host's node not
+    crossing = {x.strip() for m in HOST_READS.finditer(text) for x in m.group(1).split(",")}
+
     def same_doc(m):
         body = m.group(0)
         if "parsed(" in body:   # a node of a parsed string lives in the string's own (guest) document
@@ -222,7 +228,7 @@ def same_document_joins(text, base):
         for t, uses in by_t.items():
             first = uses[0][0]
             for node, sc in uses[1:]:
-                if node == first:
+                if node == first or node in crossing or first in crossing:
                     continue
                 s0 = uses[0][1]
                 deeper = sc if sc is not None and (s0 is None or sc[1] - sc[0] < s0[1] - s0[0]) else s0

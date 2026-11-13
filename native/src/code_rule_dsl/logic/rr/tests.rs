@@ -2567,6 +2567,24 @@ outer(k) :- kind(n, "call"), nearest(n, a, clauses), node(_, a, k, _, _).
     assert_eq!(outer, ["function_definition"], "and Python's kinds over the file");
 }
 
+/// The tree axes over a guest's nodes (decision 0058 §2): `has(r, f, "field")` and `inside(x, f, "field")` name
+/// `field` in the guest's grammar (a format string's, decision 0176), and the axis's other node is the guest's
+/// too, so it is not bounded to the shown documents. Before, both found nothing.
+#[test]
+fn tree_axes_over_a_guest_are_its_grammars() {
+    let py = "\"{a} {b:>{w}}\".format(a=1, b=2, w=3)\n";
+    let rule = r#"
+.decl fields(f: symbol)
+fields(t) :- kind(s, "string"), parsed(s, "braceFormat", r), has(r, f, "field"), text(f, t).
+.decl names(x: symbol)
+names(t) :- kind(s, "string"), parsed(s, "braceFormat", r), within(x, r), kind(x, "name"), inside(x, _, "field"), text(x, t).
+.output fields, names
+"#;
+    let [fields, names] = <[Vec<String>; 2]>::try_from(guests_run("guestaxes", &[("a.py", py)], rule, &["fields", "names"])).unwrap();
+    assert_eq!(fields, ["{a}", "{b:>{w}}", "{w}"], "`has` reaches the guest's fields, nested ones too");
+    assert_eq!(names, ["a", "b", "w"], "`inside` climbs to a guest's field");
+}
+
 /// `.scope` selects a repository's files (`core.rr`): a finding in a document outside `dirs`, or under a `tests`
 /// part with `tests false`, is dropped; `.scope given` (files a test gives) keeps them all.
 #[test]

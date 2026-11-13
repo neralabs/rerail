@@ -81,11 +81,11 @@ on one file, under the caps (2 minutes, 2 GB).
   Ruff's message). They are now the guest dialects `percent-format` and `brace-format` of the registry language
   `languages/python-format.json`. The same ported parsers write the tree, and the error's message is the node's
   value. The reader passes all 12 rules. On 10 files, F501, F502, F503, F506, F508, F509, F521, F525 and UP031 run.
-  Their findings have not been compared with main's yet. F523 and F524 now run too (`formatArgs`, below). FAST003 needs the
-  `host` term (`{"host": {"not": {"matches": …}}}`), which the engine's matcher compiler lacks. The final shape is a
+  Their findings have not been compared with main's yet. F523 and F524 now run too (`formatArgs`, below). FAST003 and UP032 run
+  through the `host` term (below). The final shape is a
   transducer program per grammar (rank 0 allows a lean parser until then).
-- **Fixed: UP030 and UP032 use `formatArgs` outside `ast(…)`**: `formatArgs` is now Datalog (below). UP030 runs;
-  UP032 still needs the `host` term, as FAST003 does.
+- **Fixed: UP030 and UP032 use `formatArgs` outside `ast(…)`**: `formatArgs` is now Datalog (below). UP030 and
+  UP032 run.
 
 ### 13 refused at run time: 9 fixed, 4 left
 
@@ -106,6 +106,33 @@ on one file, under the caps (2 minutes, 2 GB).
   unknown verdict reports nothing either way. On a probe of 15 lines with known answers
   (`"{a}".format(a=1, b=2)`, `"%s %s" % pair`, …), F504, F505, F507, F522, F523, F524 and UP030 each give exactly
   the expected lines. UP030 also agrees with the hand-written `packs/python` rule.
+
+### The `host` term, and what it found (FAST003, UP032)
+
+`host: R` inside a `parse` matches R on the host string that holds the guest. The translator writes it as
+`docof(v, d), guest(d, _, h, _)` and lowers R at h. Getting FAST003 right on a probe took three more fixes. With
+them, its findings and UP032's on probes with known answers equal the hand-written `packs/python` rules'.
+
+- **Engine: tree axes over a guest.** `has(r, c, "field")` and `inside(n, p, "field")` over a guest's nodes found
+  nothing. The kind was named in the run language's grammar, and the descendant was not known to be in the
+  guest's document, so it was bounded away. Hiding (`plan/corpus/hiding.rs`) now names an axis's kind set in the
+  guest's grammar, as it already did for `nearest`, and holds an axis's two nodes in one document. This also
+  fixes every generated `has`/`inside` test over a format string: UP030's `has(r1, c5, "format_spec")` was false
+  for every string.
+- **Translator: a util's parameter passed on.** A util that only passes its parameter to a helper
+  (`covered(n, K)` calling `param_eq(c, K)`) was taken to capture it, so the helper's column was dropped as dead
+  and K was grounded over every node. `drop_dead_columns`'s `binds_in` now counts only real captures, through the
+  callees. That fix also changes C414, N802, N804, SLOT000 and UP008, which passed `unset` or grounded columns
+  before.
+- **Translator: a guest capture read by the host.** Main compares a guest capture with a host node by text.
+  `engine_dialect.same_document_joins` added `@doc(K) = @doc(N)`, which never holds across a guest. The
+  translator now lists the captures a `host` rule reads (`// Guest captures a host rule reads …`), and the
+  same-document constraint skips them.
+
+**Left: FAST003 is heavy.** It takes 488 MB on a 14-line probe and 934 MB on 10 files. The helpers that now take
+K (`fast003_param_eq`, `fast003_alt_2`) get no demand relation, so they are evaluated for every node as K. The
+fix is the translator's demand pass (`demand()`), which gives up on a helper called from a util's parameter; it
+is the same item as ANN401's.
 
 ### 8 too heavy, or aborting, at scale
 
