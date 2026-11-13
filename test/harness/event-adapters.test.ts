@@ -66,6 +66,15 @@ describe("lifecycle event adapters", () => {
       .toThrow("Unsupported Claude hook event: Notification");
   });
 
+  it("takes any text as a Claude MessageDisplay delta, blank or empty included, and rejects a missing one", () => {
+    const batch = { hook_event_name: "MessageDisplay", session_id: "claude-1", cwd: "/workspace", message_id: "m1", index: 0, final: true };
+    for (const delta of ["", "\n", "Done."]) {
+      expect(claudeHookEvents({ ...batch, delta })).toEqual([expect.objectContaining({ kind: "assistant-delta", delta, final: true })]);
+    }
+    expect(() => claudeHookEvents(batch)).toThrow("Claude hook omitted delta");
+    expect(() => claudeHookEvents({ ...batch, delta: 7 })).toThrow("Claude hook delta must be text, not number");
+  });
+
   it("maps one Codex stop hook to ordered assistant and turn events", async () => {
     const ingest = vi.fn<(event: AdapterEvent) => Promise<readonly []>>().mockResolvedValue([]);
     const input = {

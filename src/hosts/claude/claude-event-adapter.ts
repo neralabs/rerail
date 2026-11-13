@@ -43,6 +43,17 @@ function promptEvent(input: ClaudeHookInput, descriptor: AdapterSession): Adapte
   };
 }
 
+/**
+ * `MessageDisplay`'s `delta`, the lines completed since the batch before: any text, blank included. A batch can be one
+ * blank line, and the last batch of a reply that ends on a newline is empty, since `final` marks the end.
+ */
+function batchDelta(input: ClaudeHookInput): string {
+  const { delta } = input;
+  if (delta === undefined) throw new Error("Claude hook omitted delta");
+  if (typeof delta !== "string") throw new Error(`Claude hook delta must be text, not ${typeof delta}`);
+  return delta;
+}
+
 /** One batch of a reply as it streams (`MessageDisplay`). */
 function batchEvent(input: ClaudeHookInput, descriptor: AdapterSession): AdapterEvent {
   const sessionId = descriptor.sessionId;
@@ -53,7 +64,7 @@ function batchEvent(input: ClaudeHookInput, descriptor: AdapterSession): Adapter
     sessionId,
     session: descriptor,
     messageId,
-    delta: requiredText(input, "delta"),
+    delta: batchDelta(input),
     final: input.final === true || input.final === "true",
   };
 }
