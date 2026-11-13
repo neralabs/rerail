@@ -9,7 +9,7 @@ from side_effects_plugin_port import install as configure
 CHECK='plan_scope_side_effects'
 
 
-def cases(_module):return [dict(kind='demand',id=name)for name in ['inactive-row','unused-field']]
+def cases(_module):return [dict(kind='demand',id=name)for name in ['inactive-row','unused-field','whole-positive-batch']]
 
 
 def exercise(module,case,scratch):
@@ -20,7 +20,8 @@ def exercise(module,case,scratch):
         if case['id']=='inactive-row':row.update(severity='audit',message=10**5000)
         else:row['unused']=10**5000
         family=module.PLAN_SCOPE_SIDE_EFFECTS_EXTRACTOR.extractor_id
-        bundle=SimpleNamespace(path=Path('bundle.py'),facts={family:[row]})
+        rows=[dict(row,line_number=i)for i in range(100)]if case['id']=='whole-positive-batch'else [row]
+        bundle=SimpleNamespace(path=Path('bundle.py'),facts={family:rows})
         plugin=module._plan_scope_side_effects_plugin(root,module.FileScopeSpec())
         return dict(value=canonical(plugin.reporter(SimpleNamespace(root=root,files={'caller':bundle})),scratch))
     except Exception as error:return dict(error=dict(type=type(error).__name__,args=canonical(error.args,scratch)))
