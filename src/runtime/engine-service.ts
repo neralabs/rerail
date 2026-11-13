@@ -17,7 +17,7 @@ import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-
 import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./engine-proof.js";
 import { isNamedPipe } from "./engine-pipe.js";
 import {
-  endSuspendedSessions, RerailRuntime, type RerailRuntimeOptions, type SessionSuspension, type SuspendedSessions,
+  endSuspendedSessions, failQueuedScans, RerailRuntime, type RerailRuntimeOptions, type SessionSuspension, type SuspendedSessions,
 } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
 
@@ -38,8 +38,8 @@ export interface EngineService {
   closeIdleSessions(): Promise<void>;
   /**
    * Opens again the session the idle close suspended, so a scan just queued for it runs now, as it would have while the
-   * session was open; nothing for a session that is not suspended. Never rejects: it reports its own failure, and the
-   * service's close waits for it.
+   * session was open; nothing for a session that is not suspended. Never rejects: it reports its own failure, fails the
+   * scans that waited for the open with why, and the service's close waits for it.
    */
   resumeSession(sessionId: string): Promise<void>;
 }
@@ -440,8 +440,9 @@ function keepSuspended(state: EngineRoutingState, runtimeKey: string, suspension
 /**
  * Opens again, in its lane, the session the idle close suspended (`RerailRuntime.resumeSession`), making its runtime
  * again when that has closed, so a scan just queued for it runs now. A session that is not suspended is left alone, and
- * so is one whose end, or an event that opened it, took its suspension while this waited for the lane; a failure is
- * reported, and the scan waits for the session's next event.
+ * so is one whose end, or an event that opened it, took its suspension while this waited for the lane. A failure is
+ * reported, and the scans queued for a session still suspended fail with it (`failQueuedScans`), as an open session's
+ * do when its evaluator cannot open.
  */
 async function resumeSuspended(state: EngineRoutingState, sessionId: string, now: () => number): Promise<void> {
   const entry = state.suspended.get(sessionId);
@@ -459,7 +460,18 @@ async function resumeSuspended(state: EngineRoutingState, sessionId: string, now
   try {
     await resuming;
   } catch (error) {
-    process.stderr.write(`rerail: opening quiet session ${sessionId} again failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    const reason = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`rerail: opening quiet session ${sessionId} again failed: ${reason}\n`);
+    if (state.suspended.get(sessionId) === entry) failScans(suspension, reason);
+  }
+}
+
+/** Fails the scans queued for a suspended session that could not be opened again (`failQueuedScans`); a failure is reported. */
+function failScans(suspension: SessionSuspension, reason: string): void {
+  try {
+    failQueuedScans(suspension, reason);
+  } catch (error) {
+    process.stderr.write(`rerail: failing the scans of quiet session ${suspension.descriptor.sessionId} failed: ${error instanceof Error ? error.message : String(error)}\n`);
   }
 }
 

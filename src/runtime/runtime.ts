@@ -756,6 +756,23 @@ export function endSuspendedSessions(databasePath: string, suspensions: readonly
   }
 }
 
+/**
+ * Fails the scans queued for a suspended session that could not be opened again to run them, saying why, as an open
+ * session fails them when its evaluator cannot open. Its record and owner stay as they are, for its next event.
+ */
+export function failQueuedScans(suspension: SessionSuspension, reason: string): void {
+  const { descriptor: { sessionId }, ownerClaim, databasePath } = suspension;
+  if (ownerClaim === undefined) return;
+  const controls = new SqliteAuditControlStore(databasePath);
+  try {
+    for (let request = controls.claim(sessionId, ownerClaim); request !== undefined; request = controls.claim(sessionId, ownerClaim)) {
+      controls.finish(request.id, "failed", [], `The session could not be opened again to run the scan: ${reason}`);
+    }
+  } finally {
+    controls.close();
+  }
+}
+
 /** A session's ledger as read back when the session opens. */
 interface OpenedLedger {
   readonly directory: string;
