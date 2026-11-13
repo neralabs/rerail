@@ -554,6 +554,11 @@
             ["f((1,", "f(-1,", "f([1,", "f(f'{x}',"]
         );
         assert_eq!(pairs("structure", "ne", source), ["f(1,", "f(1,"]);
+        // An f-string's debug text (`=`) is its source from after the `{`, which the tape does not
+        // store: `{00=}` and `{000=}` print `00=0` and `000=0` (Ruff's PYI016 fixture, field50).
+        let debug = "f(f'{00=}', f'{000=}')\nf(f'{0x0=}', f'{0o0=}')\nf(f'{x=}', f'{x=}')\nf(f'{00}', f'{000}')\nf(f'{x=}', f'{x}')\n";
+        assert_eq!(pairs("structure", "eq", debug), ["f(f'{x=}',", "f(f'{00}',"]);
+        assert_eq!(pairs("structure", "ne", debug), ["f(f'{00=}',", "f(f'{0x0=}',", "f(f'{x=}',"]);
         // A capture whose structure is not known (an unknown `\N{...}` name) compares neither
         // equal nor unequal.
         let unknown = "f('\\N{NOT A NAME}', 'a')\nf('b', 'a')\n";
