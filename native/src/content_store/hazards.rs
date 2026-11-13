@@ -12,6 +12,8 @@ pub struct Hazards {
     pub behind_the_run: fn(),
     /// A statement about to run (its connection and text): the strict mode's check (`RERAIL_SQL_STRICT`).
     pub statement: fn(&'static str, &str),
+    /// Whether a run's waves are under way in this process (decision 0104): what is not read before them is not read.
+    pub inside_waves: fn() -> bool,
 }
 
 static HAZARDS: std::sync::OnceLock<Hazards> = std::sync::OnceLock::new();
@@ -35,6 +37,10 @@ pub(crate) fn statement(conn: &'static str, text: &str) {
     if let Some(h) = HAZARDS.get() {
         (h.statement)(conn, text);
     }
+}
+
+pub(crate) fn inside_waves() -> bool {
+    HAZARDS.get().is_some_and(|h| (h.inside_waves)())
 }
 
 pub(crate) fn wait_in_wave(what: &str, wall: f64) {

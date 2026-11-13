@@ -2,7 +2,7 @@
 //! folder.
 
 use super::STORE_FILE_NAME;
-use super::connection::ThreadConnection;
+use super::connection::release_all_at;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -95,8 +95,6 @@ impl AsRef<Path> for TemporaryDatabase {
 
 impl Drop for TemporaryDatabase {
     fn drop(&mut self) {
-        // A handle of its own, closed at once: when no store handle to the path is left, every thread's idle
-        // connection to it closes.
-        ThreadConnection::new(self.path.clone(), 0).close();
+        release_all_at(&self.path);
     }
 }

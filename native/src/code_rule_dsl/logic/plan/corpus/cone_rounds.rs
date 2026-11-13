@@ -1,4 +1,4 @@
-//! The cone of requests maintained by delta (decision 0108).
+//! The cone of requests maintained by delta (decision 0145).
 //!
 //! With its answers and its gates taken as inputs, the cone's rules stratify: each relation is a stratum of its own,
 //! and all of the cone's recursion is through the answers. So the cone is run as rounds of one stratified program,
@@ -45,7 +45,7 @@ pub(in crate::code_rule_dsl) struct RoundProgram {
     fs: Vec<(String, String)>,
 }
 
-/// The relation of the file system an answer is the join of its request with (decision 0108, t33's K2): its rows are
+/// The relation of the file system an answer is the join of its request with (decision 0145, t33's K2): its rows are
 /// the file system's where asked, kept as inputs, and the answer is derived.
 pub(in crate::code_rule_dsl) fn fs_input(answer: &str) -> String {
     format!("rr_fs_{answer}")
@@ -161,7 +161,7 @@ pub(in crate::code_rule_dsl) struct Inputs<'a> {
     pub(in crate::code_rule_dsl) ledger: &'a std::sync::Mutex<LoadLedger>,
 }
 
-/// What the rounds and the thread answering their loads share (decision 0108, a load taken back).
+/// What the rounds and the thread answering their loads share (decision 0145, a load taken back).
 #[derive(Default)]
 pub(in crate::code_rule_dsl) struct LoadLedger {
     /// Each file a load answered (its path's atom, `loaded`'s first column) with its document: what a load taken
@@ -174,7 +174,7 @@ pub(in crate::code_rule_dsl) struct LoadLedger {
     /// the budget's levels.
     pub(in crate::code_rule_dsl) rounds: bool,
     /// A load the rounds asked was past the budget: what they load then depends on their order, so they give up and
-    /// the cone runs fresh, in levels (decision 0108).
+    /// the cone runs fresh, in levels (decision 0145).
     pub(in crate::code_rule_dsl) bound: bool,
     /// The rounds gave up and the cone runs fresh: what was answered to them is not the run's answers.
     pub(in crate::code_rule_dsl) restarted: bool,

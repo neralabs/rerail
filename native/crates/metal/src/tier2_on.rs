@@ -3,13 +3,13 @@
 //! and totals in the device's shared memory, where tier 1 wrote them.
 
 use crate::block_program::serial::Resident;
-use rerail_compiler::native_cpu_stream::{Columns, Parser, Tier1View};
+use rerail_compiler::native_cpu_stream::{Parser, Tier1View};
 use rerail_compiler::stream::Refused;
 
-/// File `i`'s node table from tier 1's buffers as the device left them (`Resident`): tier 2
-/// reads the file's bytes, positions, mask words and totals in the device's shared memory,
-/// where tier 1 wrote them. Or the word that refused it.
-pub fn columns_on(parser: &Parser, run: &Resident, i: usize) -> Result<Columns, Refused> {
+/// File `i`'s tape (the engine's bytes) from tier 1's buffers as the device left them
+/// (`Resident`): tier 2 reads the file's bytes, positions, mask words and totals in the device's
+/// shared memory, where tier 1 wrote them. Or the word that refused it.
+pub fn image_on(parser: &Parser, run: &Resident, i: usize) -> Result<Vec<u8>, Refused> {
     let f = run.files[i];
     let source = &run.sources[i];
     let (pos, tot, out) = (run.positions.host().cast::<u32>(), run.tot.host().cast::<u32>(), run.out.host().cast::<u64>());
@@ -47,6 +47,6 @@ pub fn columns_on(parser: &Parser, run: &Resident, i: usize) -> Result<Columns, 
     if r != 0 {
         return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse" });
     }
-    Ok(tape.columns())
+    Ok(tape.image())
 }
 

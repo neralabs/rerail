@@ -121,7 +121,9 @@ pub struct Admitted {
 
 #[derive(Clone)]
 enum Data {
-    Encoded { types: Vec<u8>, n: usize, bytes: Arc<Vec<u8>> },
+    /// `store`: the bytes are the store's, read from it, their symbols the store's ids (decision 0170): mapped to this
+    /// process's as they are decoded. `None`: this process's own (its snapshot of what it queued).
+    Encoded { types: Vec<u8>, n: usize, bytes: Arc<Vec<u8>>, store: Option<Arc<super::atoms::Atoms>> },
     Queued(Arc<Put>),
     Metadata,
     /// A relation's rows as its base frame (part 0) and the deltas written after it, oldest first (decision 0117
@@ -173,13 +175,16 @@ fn apply_deltas(mut rows: Rows, deltas: &[Arc<Admitted>]) -> StoreResult<Rows> {
 fn rows_of(data: &Data) -> StoreResult<Rows> {
     match data {
         Data::Queued(p) => Ok(p.rows.clone()),
-        Data::Encoded { types, n, bytes } => {
+        Data::Encoded { types, n, bytes, store } => {
             let width = types.len();
             let mut cols = vec![Vec::new(); width];
             super::cross_rows::decode(width, *n, bytes, &mut cols)?;
             let mut rows = Vec::with_capacity(width * n);
             for r in 0..if width == 0 { 0 } else { *n } {
                 rows.extend(cols.iter().map(|c| c[r]));
+            }
+            if let Some(atoms) = store {
+                super::atoms::map_columns(types, &mut rows, |v| atoms.to_local(v))?;
             }
             Ok(Rows { types: types.clone(), rows, n: *n })
         }
@@ -211,7 +216,7 @@ impl Admitted {
         match &self.data {
             Data::Chain { .. } => rows_of(&self.data),
             Data::Queued(p) => Ok(p.rows.clone()),
-            Data::Encoded { types, n, bytes } => {
+            Data::Encoded { types, n, bytes, store } => {
                 let width = types.len();
                 let mut cols = vec![Vec::new(); width];
                 super::cross_rows::decode(width, *n, bytes, &mut cols)?;
@@ -219,10 +224,26 @@ impl Admitted {
                 for r in 0..if width == 0 { 0 } else { *n } {
                     rows.extend(cols.iter().map(|c| c[r]));
                 }
+                if let Some(atoms) = store {
+                    super::atoms::map_columns(types, &mut rows, |v| atoms.to_local(v))?;
+                }
                 Ok(Rows { types: types.clone(), rows, n: *n })
             }
             Data::Metadata => Err(super::StoreError::Invalid("frame payload was not admitted".into())),
         }
+    }
+
+    /// The store whose ids its rows' symbols are (decision 0170): set for rows read from the store, none for this
+    /// process's own. Rows `rows` gives map the typed (`b's'`) columns; a reader of untyped ones maps them itself.
+    pub fn store_atoms(&self) -> Option<Arc<super::atoms::Atoms>> {
+        fn of(data: &Data) -> Option<Arc<super::atoms::Atoms>> {
+            match data {
+                Data::Encoded { store, .. } => store.clone(),
+                Data::Chain { base, deltas, .. } => of(base).or_else(|| deltas.iter().find_map(|d| of(&d.data))),
+                Data::Queued(_) | Data::Metadata => None,
+            }
+        }
+        of(&self.data)
     }
 
     /// Its rows' count, where its rows were admitted.
@@ -283,7 +304,7 @@ fn snapshots() -> &'static std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std:
     SNAPSHOTS.get_or_init(Default::default)
 }
 
-/// The relations a corpus memo's space keeps per file (decision 0108: `memo::entry_rel`, `outputs_rel`): one frame a
+/// The relations a corpus memo's space keeps per file (decision 0146: `memo::entry_rel`, `outputs_rel`): one frame a
 /// file content and path, whose first read is its path.
 const MEMO_RELS: [&str; 2] = ["local", "local_out"];
 
@@ -364,7 +385,7 @@ impl ContentStore {
 
     /// `preload_frames`, of the memos' per-file frames (`MEMO_RELS`) only those of live plans' spaces (each
     /// root's protected runs' plans and those a run holds: `keep_corpus_runs`), and of each path the newest. A dead
-    /// plan's (an earlier engine build's, decision 0108) are read by no run, nor an edited file's earlier contents'
+    /// plan's (an earlier engine build's, decision 0146) are read by no run, nor an edited file's earlier contents'
     /// entries; a run that looks one up misses it, and evaluates the file (the memo is a cache).
     pub fn preload_frames_live(&self) -> StoreResult<(usize, usize)> {
         let spaces: Vec<[u8; 32]> = {
@@ -409,7 +430,7 @@ impl ContentStore {
                 let (reads, k) = decode_reads_chain(&row.get::<_, Vec<u8>>(5)?);
                 Ok((space, (Rel { name: row.get(1)?, ident }, row.get::<_, i64>(3)?), k, Arc::new(Admitted {
                     stored: Stored { digest: row.get::<_, i64>(4)? as u64, reads },
-                    data: Data::Encoded { n: row.get::<_, i64>(6)? as usize, types: row.get(7)?, bytes: Arc::new(data) },
+                    data: Data::Encoded { n: row.get::<_, i64>(6)? as usize, types: row.get(7)?, bytes: Arc::new(data), store: Some(self.atoms_handle()) },
                 })))
             })?;
             for row in rows {
@@ -531,7 +552,7 @@ impl ContentStore {
                 let (reads, k) = decode_reads_chain(&row.get::<_, Vec<u8>>(4)?);
                 Ok(((Rel { name: row.get(0)?, ident }, row.get(2)?), k, Arc::new(Admitted {
                     stored: Stored { digest: row.get::<_, i64>(3)? as u64, reads },
-                    data: if payload { Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: Arc::new(row.get(7)?) } } else { Data::Metadata },
+                    data: if payload { Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: Arc::new(row.get(7)?), store: Some(self.atoms_handle()) } } else { Data::Metadata },
                 })))
             })?;
             for frame in frames {
@@ -559,7 +580,7 @@ impl ContentStore {
                     let ident: [u8; 32] = ident.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
                     Ok((Rel { name: row.get(0)?, ident }, row.get::<_, i64>(2)?, Arc::new(Admitted {
                         stored: Stored { digest: row.get::<_, i64>(3)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(4)?) },
-                        data: Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: Arc::new(row.get(7)?) },
+                        data: Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: Arc::new(row.get(7)?), store: Some(self.atoms_handle()) },
                     })))
                 })?;
                 for row in rows {
@@ -648,7 +669,8 @@ impl ContentStore {
         let mut st = connection.prepare_cached(
             "SELECT part, digest, reads, rows, types, data FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 ORDER BY part",
         )?;
-        let rows = st.query_map(params![&space[..], rel.name, &rel.ident[..]], admitted_part)?;
+        let atoms = self.atoms_handle();
+        let rows = st.query_map(params![&space[..], rel.name, &rel.ident[..]], |row| admitted_part(row, &atoms))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -657,16 +679,23 @@ impl ContentStore {
     /// forgotten (an incremental store returns its dead rows).
     pub fn queue_frame_parts_used(&self, space: [u8; 32], rel: Rel, parts: Vec<i64>, token: u64, keep: i64) {
         let bytes = parts.len() * 8;
-        self.write_back("the frames' parts used", bytes, Vec::new(), Box::new(move |store| store.use_frame_parts(&space, &rel, &parts, token, keep)));
+        self.write_back_syms(crate::content_store::write_back::Syms::None, "the frames' parts used", bytes, Vec::new(), Box::new(move |store| store.use_frame_parts(&space, &rel, &parts, token, keep)));
     }
 
     /// Forgets `rel`'s frames in `space` but each path's newest `keep` (a memo relation, `MEMO_RELS`: an edited
-    /// file's earlier contents' entries, decision 0117), and returns how many it forgot.
-    pub fn keep_newest_by_path(&self, space: &[u8; 32], rel: &str, keep: usize) -> StoreResult<usize> {
+    /// file's earlier contents' entries, decision 0117), and returns how many it forgot. Only the paths whose frames
+    /// have one of `digests` (their documents' keys, `memo::doc_keys`) are looked at: the ones a run just wrote. Was
+    /// every frame of the relation, at each write: 30,000 files' memo writes read the relation's frames over and over
+    /// (posthog, six minutes of the writer while the run waited).
+    pub fn keep_newest_by_path(&self, space: &[u8; 32], rel: &str, keep: usize, digests: &[u64]) -> StoreResult<usize> {
+        if digests.is_empty() {
+            return Ok(0);
+        }
         let gone: Vec<(Rel, i64)> = {
             let connection = self.connection.lock().expect("content store mutex poisoned");
-            let mut st = connection.prepare_cached("SELECT f.ident, f.part, f.reads, u.used FROM frames f JOIN frame_part_used u ON u.space = f.space AND u.rel = f.rel AND u.ident = f.ident AND u.part = f.part WHERE f.space = ?1 AND f.rel = ?2")?;
-            let rows = st.query_map(params![&space[..], rel], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?, row.get::<_, i64>(3)?)))?;
+            let mut st = connection.prepare_cached("SELECT f.ident, f.part, f.reads, u.used FROM frames f INDEXED BY frames_by_digest JOIN frame_part_used u ON u.space = f.space AND u.rel = f.rel AND u.ident = f.ident AND u.part = f.part WHERE f.space = ?1 AND f.rel = ?2 AND f.digest IN rarray(?3)")?;
+            let digests: rusqlite::vtab::array::Array = std::rc::Rc::new(digests.iter().map(|&d| rusqlite::types::Value::from(d as i64)).collect());
+            let rows = st.query_map(params![&space[..], rel, digests], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?, row.get::<_, i64>(3)?)))?;
             let mut by: HashMap<([u8; 32], String), Vec<(i64, i64)>> = HashMap::new();
             for row in rows {
                 let (ident, part, reads, used) = row?;
@@ -842,7 +871,7 @@ impl ContentStore {
                 }
             }
         }
-        self.write_back("frames", bytes, keys, Box::new(move |store| {
+        self.write_back_syms(super::write_back::Syms::Mapped, "frames", bytes, keys, Box::new(move |store| {
             // Attempted once: a busy store leaves these frames unwritten, and the next run derives them again.
             let refs: Vec<_> = puts.iter().map(Arc::as_ref).collect();
             let delta_refs: Vec<_> = delta_puts.iter().map(Arc::as_ref).collect();
@@ -896,7 +925,7 @@ impl ContentStore {
             let mut snapshot = snapshot.lock().expect("the frames' snapshot");
             let held = snapshot.entry(*space).or_default();
             for (p, block) in puts.iter().zip(&blocks) {
-                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Encoded { types: p.rows.types.clone(), n: p.rows.n, bytes: Arc::new(block.clone()) } }));
+                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Encoded { types: p.rows.types.clone(), n: p.rows.n, bytes: Arc::new(block.clone()), store: None } }));
             }
             for key in gone {
                 held.remove(key);
@@ -917,7 +946,17 @@ impl ContentStore {
             // A frame put whole has no deltas after it: its reads name none (`CHAIN`), so those left are not read.
             // Nine bound values per frame, plus shared space and run, stay below 999 parameters.
             // Each statement publishes a bounded batch. No frame launches its own SQL execution.
-            for batch in puts.iter().zip(&blocks).chain(delta_puts.iter().zip(&delta_blocks)).collect::<Vec<_>>().chunks(96) {
+            // Forked (decision 0170): the rows' symbols as the store numbers them, in this transaction.
+            let store_blocks = |puts: &[&Put]| -> StoreResult<Vec<Vec<u8>>> {
+                puts.iter().map(|p| {
+                    let mut rows = p.rows.rows.clone();
+                    super::atoms::map_columns(&p.rows.types, &mut rows, |v| self.atoms.to_store(t, v))?;
+                    Ok(super::cross_rows::encode(p.rows.types.len(), &rows))
+                }).collect()
+            };
+            let mapped = if self.atoms.forked() { Some((store_blocks(puts)?, store_blocks(delta_puts)?)) } else { None };
+            let (blocks, delta_blocks) = match &mapped { Some((b, d)) => (b, d), None => (&blocks, &delta_blocks) };
+            for batch in puts.iter().zip(blocks).chain(delta_puts.iter().zip(delta_blocks)).collect::<Vec<_>>().chunks(96) {
                 let values = (0..batch.len()).map(|i| {
                     let p=3+9*i;
                     format!("(?1,?{p},?{},?{},?{},?{},?{},?{},?{},?{},?2)",p+1,p+2,p+3,p+4,p+5,p+6,p+7,p+8)
@@ -1100,7 +1139,7 @@ fn encode_reads(reads: &[(String, u64)]) -> Vec<u8> {
     out
 }
 
-/// The space of the per-file memo of plan `plan` (decision 0108): one space per file-local program.
+/// The space of the per-file memo of plan `plan` (decision 0146): one space per file-local program.
 pub fn local_space(plan: &[u8; 32]) -> [u8; 32] {
     use sha2::{Digest as _, Sha256};
     let mut h = Sha256::new();
@@ -1123,10 +1162,10 @@ fn count_run(t: &rusqlite::Connection, space: &[u8; 32], token: u64) -> rusqlite
 }
 
 /// A frame read by part: `(part, digest, reads, rows, types, data)`.
-fn admitted_part(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, Arc<Admitted>)> {
+fn admitted_part(row: &rusqlite::Row<'_>, atoms: &Arc<super::atoms::Atoms>) -> rusqlite::Result<(i64, Arc<Admitted>)> {
     Ok((row.get(0)?, Arc::new(Admitted {
         stored: Stored { digest: row.get::<_, i64>(1)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(2)?) },
-        data: Data::Encoded { n: row.get::<_, i64>(3)? as usize, types: row.get(4)?, bytes: Arc::new(row.get(5)?) },
+        data: Data::Encoded { n: row.get::<_, i64>(3)? as usize, types: row.get(4)?, bytes: Arc::new(row.get(5)?), store: Some(Arc::clone(atoms)) },
     })))
 }
 
@@ -1574,7 +1613,8 @@ mod tests {
             store.keep_frames(&space, &[put(100, "b.py")], &[], Some((&[out.clone()][..], 7, [0; 32]))).unwrap();
         }
         let space = local_space(&live);
-        assert_eq!(store.keep_newest_by_path(&space, MEMO_RELS[1], 4).unwrap(), 2, "a.py's two oldest contents go");
+        assert_eq!(store.keep_newest_by_path(&space, MEMO_RELS[1], 4, &[2]).unwrap(), 0, "only the paths of the digests given are looked at");
+        assert_eq!(store.keep_newest_by_path(&space, MEMO_RELS[1], 4, &[1]).unwrap(), 2, "a.py's two oldest contents go");
         let parts: Vec<i64> = store.connection.lock().unwrap().prepare("SELECT part FROM frames WHERE space = ?1 ORDER BY part").unwrap().query_map([&space[..]], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
         assert_eq!(parts, vec![2, 3, 4, 5, 100]);
         let (frames, _) = store.preload_frames_live().unwrap();

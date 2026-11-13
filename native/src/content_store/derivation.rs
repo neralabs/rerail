@@ -60,11 +60,14 @@ impl ContentStore {
     /// (newly bound, or bound to another digest), in input order.
     pub fn bind_names(&self, bindings: &[Binding]) -> StoreResult<Vec<String>> {
         let names = self.intern_atoms(&bindings.iter().map(|b| b.name.as_str()).collect::<Vec<_>>())?;
-        self.immediate_transaction(|transaction| {
+        // Its atoms are the store's (`syms_to_store`), so it is written after a fork too (decision 0170).
+        super::atoms::mapped(|| self.immediate_transaction(|transaction| {
+            let mut names = names.clone();
+            self.syms_to_store(transaction, &mut names)?;
             let named: Vec<(Sym, [u8; 32])> = names.iter().copied().zip(bindings.iter().map(|b| b.digest)).collect();
             let changed = bind_all(transaction, &named)?;
             Ok(bindings.iter().zip(changed).filter(|(_, c)| *c).map(|(b, _)| b.name.clone()).collect())
-        })
+        }))
     }
 
     /// Records each derivation (replacing its inputs) and binds its output name to its digest, in
@@ -89,16 +92,18 @@ impl ContentStore {
             derivations.push((output, StoredDerivation { producer: record.producer, status: record.status, cost: record.cost, inputs }));
             bindings.push((output, record.digest));
         }
-        self.immediate_transaction(|transaction| {
+        // Its atoms are the store's (`syms_to_store`), so it is written after a fork too (decision 0170).
+        super::atoms::mapped(|| self.immediate_transaction(|transaction| {
+            let (derivations, bindings) = self.derivations_to_store(transaction, &derivations, &bindings)?;
             write_derivations(transaction, &derivations)?;
             let changed = bind_all(transaction, &bindings)?;
             Ok(records.iter().zip(changed).filter(|(_, c)| *c).map(|(r, _)| r.output.clone()).collect())
-        })
+        }))
     }
 
     /// The digest `name` is bound to, if any.
     pub fn binding(&self, name: &str) -> StoreResult<Option<[u8; 32]>> {
-        let Some(id) = self.atom(name)? else {
+        let Some(id) = self.atom(name)?.map(|id| self.stored_sym(id)).transpose()?.flatten() else {
             return Ok(None);
         };
         let connection = self.connection.lock().expect("content store mutex poisoned");
@@ -117,17 +122,17 @@ impl ContentStore {
         for name in names {
             ids.extend(self.atom(name)?);
         }
+        let ids: Vec<Sym> = self.atoms.stored(&ids)?.into_iter().flatten().collect();
         let mut rows = Vec::new();
         {
             let connection = self.connection.lock().expect("content store mutex poisoned");
             let mut readers = connection.prepare_cached(
-                "SELECT a.value,d.producer,d.status,d.cost FROM derivation_inputs i INDEXED BY derivation_inputs_by_name \
-                 JOIN derivations d ON d.output_atom=i.output_atom \
-                 JOIN atoms a ON a.atom=d.output_atom WHERE i.name_atom=?1",
+                "SELECT d.output_atom,d.producer,d.status,d.cost FROM derivation_inputs i INDEXED BY derivation_inputs_by_name \
+                 JOIN derivations d ON d.output_atom=i.output_atom WHERE i.name_atom=?1",
             )?;
             for id in ids {
                 let found = readers.query_map([id], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?, row.get(2)?, row.get(3)?))
+                    Ok((row.get::<_, Sym>(0)?, row.get::<_, Vec<u8>>(1)?, row.get(2)?, row.get(3)?))
                 })?;
                 for row in found {
                     rows.push(row?);
@@ -135,7 +140,7 @@ impl ContentStore {
             }
         }
         let mut frontier = BTreeSet::new();
-        for (output, producer, status, cost) in rows {
+        for (output, producer, status, cost) in self.named_outputs(rows)? {
             frontier.insert(Derivation { output, producer: digest(&producer)?, status, cost });
         }
         Ok(frontier.into_iter().collect())
@@ -144,7 +149,7 @@ impl ContentStore {
     /// Whether `output`'s derivation is stored and every name it read still binds to the digest
     /// it read (an unbound name to `ABSENT`).
     pub fn derivation_valid(&self, output: &str) -> StoreResult<bool> {
-        let Some(id) = self.atom(output)? else {
+        let Some(id) = self.atom(output)?.map(|id| self.stored_sym(id)).transpose()?.flatten() else {
             return Ok(false);
         };
         let connection = self.connection.lock().expect("content store mutex poisoned");
@@ -192,18 +197,19 @@ impl ContentStore {
             let connection = self.connection.lock().expect("content store mutex poisoned");
             connection
                 .prepare_cached(
-                    "SELECT a.value,d.producer,d.status,d.cost FROM derivations d \
-                     JOIN atoms a ON a.atom=d.output_atom \
+                    "SELECT d.output_atom,d.producer,d.status,d.cost FROM derivations d \
                      WHERE EXISTS (SELECT 1 FROM derivation_inputs i \
                      LEFT JOIN name_bindings b ON b.name_atom=i.name_atom \
                      WHERE i.output_atom=d.output_atom AND i.name_atom IS NOT NULL \
-                     AND coalesce(b.digest,?1)<>i.digest) ORDER BY a.value",
+                     AND coalesce(b.digest,?1)<>i.digest)",
                 )?
                 .query_map([&ABSENT[..]], |row| {
-                    Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?, row.get(2)?, row.get(3)?))
+                    Ok((row.get::<_, Sym>(0)?, row.get::<_, Vec<u8>>(1)?, row.get(2)?, row.get(3)?))
                 })?
                 .collect::<Result<Vec<_>, _>>()?
         };
+        let mut rows = self.named_outputs(rows)?;
+        rows.sort_by(|a, b| a.0.cmp(&b.0));
         rows.into_iter()
             .map(|(output, producer, status, cost)| Ok(Derivation { output, producer: digest(&producer)?, status, cost }))
             .collect()
@@ -211,6 +217,7 @@ impl ContentStore {
 
     /// The digest the atom `name` is bound to, if any.
     pub fn binding_of(&self, name: Sym) -> StoreResult<Option<[u8; 32]>> {
+        let Some(name) = self.stored_sym(name)? else { return Ok(None) };
         let connection = self.connection.lock().expect("content store mutex poisoned");
         connection
             .prepare_cached("SELECT digest FROM name_bindings WHERE name_atom=?1")?
@@ -222,6 +229,7 @@ impl ContentStore {
 
     /// The stored derivation whose output is the atom `output`, with its inputs in order.
     pub fn derivation_of(&self, output: Sym) -> StoreResult<Option<StoredDerivation>> {
+        let Some(output) = self.stored_sym(output)? else { return Ok(None) };
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let Some((producer, status, cost)) = connection
             .prepare_cached("SELECT producer,status,cost FROM derivations WHERE output_atom=?1")?
@@ -237,12 +245,25 @@ impl ContentStore {
                 let (name, bytes) = row?;
                 Ok((name, digest(&bytes)?))
             })
-            .collect::<StoreResult<_>>()?;
+            .collect::<StoreResult<Vec<(Option<Sym>, [u8; 32])>>>()?;
+        drop(connection);
+        let mut inputs = inputs;
+        if self.atoms.forked() {
+            let mut names: Vec<i64> = inputs.iter().filter_map(|(n, _)| n.map(i64::from)).collect();
+            self.atoms.to_local(&mut names)?;
+            let mut names = names.into_iter();
+            for (name, _) in &mut inputs {
+                if name.is_some() {
+                    *name = Some(names.next().expect("one per named input") as Sym);
+                }
+            }
+        }
         Ok(Some(StoredDerivation { producer: digest(&producer)?, status, cost, inputs }))
     }
 
     /// The outputs of the stored derivations that read the atom `name`, ascending.
     pub fn readers_of(&self, name: Sym) -> StoreResult<Vec<Sym>> {
+        let Some(name) = self.stored_sym(name)? else { return Ok(Vec::new()) };
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let mut readers = connection
             .prepare_cached(
@@ -251,6 +272,13 @@ impl ContentStore {
             )?
             .query_map([name], |row| row.get(0))?
             .collect::<Result<Vec<Sym>, _>>()?;
+        drop(connection);
+        if self.atoms.forked() {
+            let mut local: Vec<i64> = readers.iter().map(|&r| i64::from(r)).collect();
+            self.atoms.to_local(&mut local)?;
+            readers = local.into_iter().map(|r| r as Sym).collect();
+            readers.sort_unstable();
+        }
         readers.dedup();
         Ok(readers)
     }
@@ -263,11 +291,82 @@ impl ContentStore {
         bindings: &[(Sym, [u8; 32])],
         derivations: &[(Sym, StoredDerivation)],
     ) -> StoreResult<()> {
-        self.immediate_transaction(|transaction| {
-            bind_all(transaction, bindings)?;
-            write_derivations(transaction, derivations)?;
+        // Its atoms are the store's (`syms_to_store`), so it is written after a fork too (decision 0170).
+        super::atoms::mapped(|| self.immediate_transaction(|transaction| {
+            let (derivations, bindings) = self.derivations_to_store(transaction, derivations, bindings)?;
+            bind_all(transaction, &bindings)?;
+            write_derivations(transaction, &derivations)?;
             Ok(())
-        })
+        }))
+    }
+}
+
+/// The derivation tables name atoms by the store's ids. A process whose atoms forked from the store's (decision
+/// 0170) maps its own to the store's when it writes them, and back when it reads them.
+impl ContentStore {
+    /// The store's id of `atom` for a read: `None` when the store does not hold it (then nothing is bound to it).
+    fn stored_sym(&self, atom: Sym) -> StoreResult<Option<Sym>> {
+        Ok(self.atoms.stored(&[atom])?[0])
+    }
+
+    /// `atoms` as the store's, in `transaction` (a write): a pending atom gets its store id first.
+    fn syms_to_store(&self, transaction: &Connection, atoms: &mut [Sym]) -> StoreResult<()> {
+        if !self.atoms.forked() {
+            return Ok(());
+        }
+        let mut values: Vec<i64> = atoms.iter().map(|&a| i64::from(a)).collect();
+        self.atoms.to_store(transaction, &mut values)?;
+        for (atom, value) in atoms.iter_mut().zip(values) {
+            *atom = value as Sym;
+        }
+        Ok(())
+    }
+
+    /// Derivations and bindings with the store's ids, in `transaction`.
+    #[allow(clippy::type_complexity)]
+    fn derivations_to_store(
+        &self,
+        transaction: &Connection,
+        derivations: &[(Sym, StoredDerivation)],
+        bindings: &[(Sym, [u8; 32])],
+    ) -> StoreResult<(Vec<(Sym, StoredDerivation)>, Vec<(Sym, [u8; 32])>)> {
+        let (mut derivations, mut bindings) = (derivations.to_vec(), bindings.to_vec());
+        if !self.atoms.forked() {
+            return Ok((derivations, bindings));
+        }
+        let mut atoms: Vec<Sym> = Vec::new();
+        for (output, derivation) in &derivations {
+            atoms.push(*output);
+            atoms.extend(derivation.inputs.iter().filter_map(|(name, _)| *name));
+        }
+        atoms.extend(bindings.iter().map(|(name, _)| *name));
+        self.syms_to_store(transaction, &mut atoms)?;
+        let mut atoms = atoms.into_iter();
+        for (output, derivation) in &mut derivations {
+            *output = atoms.next().expect("an output");
+            for (name, _) in &mut derivation.inputs {
+                if name.is_some() {
+                    *name = atoms.next();
+                }
+            }
+        }
+        for (name, _) in &mut bindings {
+            *name = atoms.next().expect("a binding");
+        }
+        Ok((derivations, bindings))
+    }
+
+    /// Rows keyed by an output atom (the store's id), with the output's string.
+    fn named_outputs<T>(&self, rows: Vec<(Sym, T, i64, i64)>) -> StoreResult<Vec<(String, T, i64, i64)>> {
+        let mut ids: Vec<i64> = rows.iter().map(|r| i64::from(r.0)).collect();
+        self.atoms.to_local(&mut ids)?;
+        rows.into_iter()
+            .zip(ids)
+            .map(|((_, a, b, c), id)| {
+                let name = self.atoms.value(id as Sym)?.ok_or_else(|| StoreError::Corrupt(format!("derivation output atom {id} is no atom")))?;
+                Ok((name, a, b, c))
+            })
+            .collect()
     }
 }
 

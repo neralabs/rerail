@@ -255,8 +255,10 @@ and 39% of the step's join work read or wrote one. Two kinds were pure duplicati
   its relation apart from its twin, since `simplify`'s congruence compares rule lists.
 
 **What runs now.** After hiding and combining, and again after the joins are pushed, the program drops repeated
-rules and merges identical relations (`simplify::merge_identical`), in turn until neither changes anything
-(`corpus::merge_to_fixpoint`). `RERAIL_SAME=off` turns it off. The test
+rules, merges identical relations (`simplify::merge_identical`) and drops the rules the merge made repeat
+(`corpus::merge_and_drop_repeats`). The congruence compares a relation's rules as a set, so a repeat no longer keeps
+a relation apart from its twin, and one merge finds every class. (Until 2026-11-13 the two ran in turn until
+neither changed anything: 2-3 congruences a call, 1.5 s of the dl1 batch's 13.8 s CPU.) `RERAIL_SAME=off` turns it off. The test
 `the_combined_program_has_no_relation_twice_and_no_rule_twice` guards the combined `calls` program; with the
 switch off it finds 39 classes.
 
@@ -283,7 +285,7 @@ So in a Python run, with guests shown, every copy specialised only to Python's o
 runs when the programs are combined, before the run knows its language (it comes from the files found). So the run
 folds them once it does, before the prepared program's key, which already holds the language
 (`hiding::fold_own`). Readers read the original, the copies' rules and kind sets go, and a `python:` kind is written
-plainly. An O110 clone is then its rule again, and `merge_to_fixpoint` drops it. Copies for another grammar's guests
+plainly. An O110 clone is then its rule again, and `merge_and_drop_repeats` drops it. Copies for another grammar's guests
 (an SQL string in Python) and every copy in a run with guests hidden are kept. `RERAIL_SHOWN_COPIES=on` keeps them
 all. Test: `copies_for_a_guest_in_the_runs_own_language_are_folded_into_their_originals`.
 

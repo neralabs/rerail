@@ -600,7 +600,7 @@ named(n, x) :- def(n, x), x = "g".
     // A frame that does not decode fails the statement that needs it, naming the file; a lookup
     // into another document does not decode it, so it still answers.
     let a_node = rows(&mut executor, "SELECT min(n) FROM def JOIN corpus_document d ON d.doc = n >> 32 WHERE sym_text(d.path) LIKE '%a.py'")[0][0]["integer"].as_str().unwrap().to_owned();
-    // Only this run's entries: b.py's frames in the per-file memo (decision 0108), its content's digest among each
+    // Only this run's entries: b.py's frames in the per-file memo (decision 0146), its content's digest among each
     // frame's reads (a frame per program that read it).
     let b = {
         use sha2::Digest as _;

@@ -195,6 +195,12 @@ struct Lowerer {
     /// A context for a `match_all` over a span (`aggregate`): made of the rule's literals, not inputs alone, so it
     /// binds the span where the rule does and `span_patterns` finds its containers (decision 0081).
     span_context: bool,
+    /// A context for a request (`demand`: a guest to parse, a value to make): made of every literal beside it, own
+    /// heads and derived relations included. A request's context is all that limits what is asked for, so the
+    /// narrowing an ordinary context may take (inputs alone, which the rule joins with its own literals again)
+    /// would ask for every row the inputs give: `type_ctx(r) :- type_ctx(s), str_node(s), parsed(s, …)` asked to
+    /// parse every string of a file.
+    request_context: bool,
     /// Whether the clause being lowered binds a variable named `top` (`path_part(d, top)`); otherwise `top` is a
     /// lattice's top value (`v != top`), as the translated programs write it.
     top_is_var: bool,
@@ -1370,7 +1376,9 @@ impl Lowerer {
         let all_bound = vars.iter().all(|v| binds(v, &self.siblings));
         // A demand of constants (`@parse("sql", "SELECT 1")`) is made where the rest of the rule holds (a nullary
         // context), or in every chunk when nothing else in the rule is independent of it.
+        self.request_context = true;
         let ctx = if all_bound && !(vars.is_empty() && self.siblings.is_empty()) { Some(self.context(&vars)) } else { None };
+        self.request_context = false;
         let every_chunk = every_chunk_doc || (all_bound && vars.is_empty() && ctx.is_none());
         self.siblings = saved;
         if !all_bound {
@@ -2541,7 +2549,10 @@ impl Lowerer {
             }
             vars.iter().all(|v| reach.contains(v))
         };
-        let context = if !self.span_context && vars.iter().all(|v| base_bound.contains(v)) && joined(&base) {
+        let whole = if self.request_context { Some(Self::bound_context(context(false))) } else { None };
+        let context = if let Some((whole, _)) = whole.filter(|(_, b)| vars.iter().all(|v| b.contains(v))) {
+            whole
+        } else if !self.span_context && !self.request_context && vars.iter().all(|v| base_bound.contains(v)) && joined(&base) {
             base
         } else if vars.iter().all(|v| bound.contains(v)) {
             first

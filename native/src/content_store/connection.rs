@@ -333,20 +333,26 @@ impl ThreadConnection {
 
     /// Closes every thread's idle connection to this database; one in use stays open.
     pub(super) fn release_all(&self) {
-        ALL_CONNECTIONS.lock().retain(|(path, connection)| {
-            let Some(connection) = connection.upgrade() else {
-                return false;
-            };
-            // One inside a transaction stays: the writer's batch holds its transaction open between jobs.
-            if *path == self.database_path
-                && let Some(mut connection) = connection.try_lock()
-                && connection.as_ref().is_none_or(Connection::is_autocommit)
-            {
-                connection.take();
-            }
-            true
-        });
+        release_all_at(&self.database_path);
     }
+}
+
+/// Closes every thread's idle connection to the database at `database_path`, whatever store was opened there; one
+/// in use stays open. A test's temporary database (`test_support::TemporaryDatabase`) calls it as it drops.
+pub(super) fn release_all_at(database_path: &Path) {
+    ALL_CONNECTIONS.lock().retain(|(path, connection)| {
+        let Some(connection) = connection.upgrade() else {
+            return false;
+        };
+        // One inside a transaction stays: the writer's batch holds its transaction open between jobs.
+        if path == database_path
+            && let Some(mut connection) = connection.try_lock()
+            && connection.as_ref().is_none_or(Connection::is_autocommit)
+        {
+            connection.take();
+        }
+        true
+    });
 }
 
 /// A connection's page cache at rest, in KiB.
@@ -606,6 +612,11 @@ impl ContentStore {
         retry_busy(&mut BusyRetries::default(), || {
             let connection = self.connection.lock().map_err(StoreError::Invalid)?;
             connection.execute_batch("BEGIN IMMEDIATE")?;
+            // Before the jobs make their rows: a fork found now maps the pending atoms first (decision 0170).
+            if let Err(e) = self.atoms.begin_write(&connection) {
+                let _ = connection.execute_batch("ROLLBACK");
+                return Err(e);
+            }
             Ok(())
         })?;
         struct Batch;
@@ -626,7 +637,8 @@ impl ContentStore {
                 std::panic::resume_unwind(panic);
             }
         };
-        let committed = self.atoms.write_pending(&connection).and_then(|upto| {
+        // The batch's jobs declared their rows' symbols mapped, or ran not at all, after a fork (`write_back::Syms`).
+        let committed = super::atoms::mapped(|| self.atoms.write_pending(&connection)).and_then(|upto| {
             connection.execute_batch("COMMIT")?;
             Ok(upto)
         });

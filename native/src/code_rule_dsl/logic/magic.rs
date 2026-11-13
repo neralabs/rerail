@@ -365,7 +365,7 @@ fn magic_sets_once(mut prog: Program, options: &Options) -> Result<Program, Erro
     Ok(prog)
 }
 
-/// A corpus run's `.pragma "magic-transform" "r, …"` (decision 0108, "Building on it"): each listed relation computed only for what its
+/// A corpus run's `.pragma "magic-transform" "r, …"` (decision 0145, "Building on it"): each listed relation computed only for what its
 /// readers ask, by adornments over every column they bind (`found(c, a, at)` read with `c` and `a` bound is
 /// `found_bbf`), not its first column alone as `magic_sets` (T's `.demand`) restricts it. It is `magic_adorn` with
 /// every relation not listed computed in full; `"*"` is `magic_adorn` itself. A use of a demanded relation with

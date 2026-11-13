@@ -344,6 +344,9 @@ fn runtime_reservations(tree_sitter_query: bool) -> impl Iterator<Item = Reserva
 /// output programs.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Structure {
+    /// The language's tape tag (`rerail_tape_format`, the image's header): the language sets
+    /// it; 0 is none.
+    pub tag: u8,
     pub structural: Vec<StructuralBlock>,
     pub value_functions: u16,
     pub capture_functions: u16,
@@ -523,6 +526,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
         .chain(runtime_reservations(program.tree_sitter_query))
         .collect();
     Ok(Structure {
+        tag: 0,
         structural,
         value_functions,
         capture_functions,

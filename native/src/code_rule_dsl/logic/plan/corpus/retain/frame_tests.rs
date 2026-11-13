@@ -193,3 +193,73 @@ fn failed_k4_admission_makes_a_clean_consumer_run_again() {
     assert_eq!(rerun.strata.0, rerun.strata.1);
     assert!(kept.frames().unwrap().derived.is_empty(), "new results must be republished");
 }
+
+/// Smoking gun 3 (t34, 2026-11-13): an export's kept rows are grouped by the column the memo attributes them by (the
+/// split's locations), not by the first node column. `p197_arg_at(d, i, a: node)` was kept by column 2 and the memo
+/// attributed it by column 0, so every edit refused the kept inputs ("memo entry is gone").
+#[test]
+fn kept_rows_are_grouped_by_the_column_the_memo_attributes_them_by() {
+    let prog = rr::parse(".decl arg_at(d:number, i:number, a:node)\n.input arg_at\n").unwrap();
+    assert_eq!(group_col(&prog, &Locations::new(), "arg_at"), 2, "with no location: the node column");
+    let located: Locations = [("arg_at".to_owned(), vec![0])].into_iter().collect();
+    assert_eq!(group_col(&prog, &located, "arg_at"), 0, "the memo's location column");
+}
+
+/// Smoking gun 4 (t34, 2026-11-13): whether an edit takes the kept inputs is known before the first wave, with the
+/// reason when it does not (decision 0104: the waves read no entry of the store). The fallback found out inside the
+/// waves and read the store there.
+#[test]
+fn the_kept_inputs_are_known_before_the_waves_with_why_not() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
+    let prog = rr::parse(".decl input0(x:number)\n.input input0\n.decl result0(x:number)\nresult0(x) :- input0(x).\n").unwrap();
+    let why = kept_inputs_stored(&store, SPACE, KEY, &prog, &["input0".to_owned()]).unwrap().expect_err("an empty store holds no kept inputs");
+    assert!(why.contains("input0"), "the reason names the input: {why}");
+    let (prog, _, _) = fixture(&store, 1);
+    kept_inputs_stored(&store, SPACE, KEY, &prog, &["input0".to_owned()]).unwrap().expect("the frames of its documents are stored");
+}
+
+/// Smoking gun 5 (t34, 2026-11-13): the retain budget is of memory, not of the store. A relation past it was neither
+/// held nor written to the frames, so every next process derived it again (an edit ran 3,758 of 4,087 strata, 1,546
+/// derived again). It is written, then let go.
+#[test]
+fn a_relation_past_the_retain_budget_is_written_to_the_frames_and_let_go() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
+    let (prog, now, _) = fixture(&store, 2);
+    let was = Retained::from_frames(&store, SPACE, KEY, &prog, &st(&prog), &HashMap::new()).unwrap().frames.unwrap();
+    let cut = cut(None, KEY, &prog, &st(&prog), &now).unwrap();
+    let rows = |base: i64| component::InRel::flat(&(0..4).map(|i| vec![base + i]).collect::<Vec<_>>(), vec![b'i']);
+    let derived = vec![("result0".to_owned(), 1, rows(100)), ("result1".to_owned(), 1, rows(200))];
+    let mut next = after(None, KEY, now.clone(), &cut, derived, &BTreeMap::new(), &[], HashMap::new(), HashMap::new(), HashMap::new(), Default::default(), HashMap::new(), 0);
+    assert_eq!(next.bytes(), 0, "nothing past the budget is held for the next run");
+    assert_eq!(next.parts().1.len(), 2, "both are this run's to write");
+    let written = next.write_frames(&store, &was, &prog, &Locations::new(), &st(&prog), &cut, &[], &now, &BTreeSet::new(), &HashMap::new()).unwrap();
+    assert_eq!(written, 8, "the rows past the budget are written to the frames");
+    next.let_go_past();
+    assert!(next.parts().1.is_empty(), "and then let go");
+}
+
+/// Smoking gun 9 (t34, 2026-11-13), red until fixed. A kept relation's statistics are a part of its frame under its
+/// rows' digest (decision 0120 §3), admitted with its rows by `load`. Rows read where the walk reaches them (`admit`,
+/// decision 0117 step 4) took the rows and their levels, not the statistics, so every `__old` the edit planned with
+/// was counted from its rows ("count run_scope__old from its rows", dozens an edit).
+#[test]
+fn rows_read_where_reached_come_with_their_kept_statistics() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
+    let (prog, _, frames) = fixture(&store, 1);
+    let stored = Retained::from_frames(&store, SPACE, KEY, &prog, &st(&prog), &HashMap::new()).unwrap();
+    let digest = stored.frames.as_ref().unwrap().derived["result0"].digest;
+    let mut all = kept_stats::ByDigest::new();
+    all.insert(("result0".to_owned(), digest), kept_stats::KeptStat::Measured((vec![("result0_c0".to_owned(), 3, 3, 3, 3)], vec![], BTreeSet::new())));
+    let words = kept_stats::to_words(&kept_stats::encode(&all));
+    store.keep_frames(&SPACE, &[FramePut { rel: frames.names["result0"].clone(), part: kept_stats::PART, digest, reads: vec![], rows: FrameRows { types: vec![b'i'], n: words.len(), rows: words } }], &[], None).unwrap();
+    let kept = Retained::from_frames(&store, SPACE, KEY, &prog, &st(&prog), &HashMap::new()).unwrap();
+    assert!(kept.admit(&store, &prog, &["result0".to_owned()]).unwrap(), "its rows are read where reached");
+    let at = Arc::as_ptr(&kept.late.borrow()["result0"].rel) as *const u8 as usize;
+    let held = Arc::clone(&kept.late.borrow()["result0"].rel);
+    assert_eq!(Arc::as_ptr(&held) as *const u8 as usize, at);
+    assert!(kept.measured("result0", &held).is_some(), "its statistics come with its rows: not counted from them");
+    assert!(kept.measured_all().contains_key(&("result0".to_owned(), at)), "and are carried to the next run");
+}

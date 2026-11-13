@@ -643,3 +643,35 @@ pub fn json_str(s: &str) -> String {
     out.push('"');
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Smoking gun 6 (t34, 2026-11-13): a maintained stratum has no SQL fallback, and `@place` in a head (`spot(d,
+    /// @place(p, 7))`) had no native form, so the edit failed. `@place`, `@place_path` and `@place_line` are native
+    /// functions, and their values are those of SQL's encoding (`plan::sql_term`), the path a symbol's atom.
+    #[test]
+    fn a_place_is_native_and_encoded_as_sql_encodes_it() {
+        for f in ["place", "place_path", "place_line"] {
+            let (_, kinds, ret) = native_call(f).unwrap_or_else(|| panic!("@{f} has a native function"));
+            assert!(kinds.iter().chain([&ret]).all(|k| *k == Kind::Number), "@{f} is over numbers: a symbol is its atom");
+        }
+        let int = |v: Value| match v {
+            Value::Integer(n) => n,
+            other => panic!("{other:?}"),
+        };
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        for (p, l) in [(0, 0), (5, 7), (123_456, (1 << 32) - 1), (9, -1), (9, 1 << 32)] {
+            let sql: i64 = db
+                .query_row("SELECT CASE WHEN ?2 >= 0 AND ?2 < 4294967296 THEN -2 - (?1 * 4294967296 + ?2) ELSE -1 END", [p, l], |r| r.get(0))
+                .unwrap();
+            let place = int(eval("rr_place", &[], &[p, l]));
+            assert_eq!(place, sql, "@place({p}, {l}) as SQL makes it");
+            if sql != -1 {
+                assert_eq!(int(eval("rr_place_path", &[], &[place])), p);
+                assert_eq!(int(eval("rr_place_line", &[], &[place])), l);
+            }
+        }
+    }
+}

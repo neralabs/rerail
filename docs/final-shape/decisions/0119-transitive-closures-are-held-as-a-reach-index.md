@@ -160,7 +160,7 @@ run of the cross-file part alone, with the per-file memo warm.
 ## Built: a closure the demand puts in a cycle is rows again (2026-11-12)
 
 `find` takes a closure only when nothing it reads reads it back, but it runs before the magic-set rewrites
-(decision 0108), and those add readers. At O125, once hiding's copies were folded (decision 0058), `anc` had the
+(decision 0145), and those add readers. At O125, once hiding's copies were folded (decision 0058), `anc` had the
 form: its seeds and its edge `base` did not read it. Then the demand made `magic_found_bbf`, which reads `anc` and
 feeds `found`, which `base` reads. So `anc` sat inside a recursive component of 44 relations, and a native operator's
 stratum has no maintained form: the whole component was derived from its reads at every edit (1.6 s of step 07's

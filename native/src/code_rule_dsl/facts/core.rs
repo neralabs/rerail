@@ -284,7 +284,8 @@ pub fn build_in_wave_with_tape(
             let canonical = HashKey::from_sha256_digest(digest);
             let frames = std::sync::Arc::new(cache.source_and_tape_frames(bytes, canonical, &tape).map_err(|e| e.to_string())?);
             let (held, stored) = (std::sync::Arc::clone(&frames), stored.cloned());
-            cache.write_back(
+            cache.write_back_syms(
+                crate::content_store::write_back::Syms::None,
                 "a tape and its source",
                 frames.bytes(),
                 vec![(key, Some(frames as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
@@ -386,7 +387,8 @@ pub(crate) fn build_cached_with_tape(
             let canonical = HashKey::from_sha256_digest(digest);
             let frames = std::sync::Arc::new(cache.source_and_tape_frames(bytes, canonical, &tape).map_err(|e| e.to_string())?);
             let held = std::sync::Arc::clone(&frames);
-            cache.write_back(
+            cache.write_back_syms(
+                crate::content_store::write_back::Syms::None,
                 "a tape and its source",
                 frames.bytes(),
                 vec![(queued_tape(&digest, tag, gv, fv), Some(frames as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
@@ -697,7 +699,7 @@ impl LeBytes for u16 {
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
-/// The relations `core.rr` declares (the engine's names, decision 0047), as the rule language reads them;
+/// The relations `core.rr` declares (the engine's names, decision 0141), as the rule language reads them;
 /// registered at load (`install_core_names`). Empty without one.
 pub(crate) fn core_names() -> &'static std::collections::BTreeSet<String> {
     static EMPTY: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();

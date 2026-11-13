@@ -21,7 +21,7 @@ pub mod runtime;
 pub mod slabs;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod test_pool;
-/// Tier 2 on the buffers tier 1 left on the device (`columns_on`).
+/// Tier 2 on the buffers tier 1 left on the device (`image_on`).
 pub mod tier2_on;
 
 pub use rerail_compiler::Error;

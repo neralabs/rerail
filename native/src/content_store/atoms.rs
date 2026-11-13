@@ -29,7 +29,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Weak};
 use std::time::{Duration, Instant};
 
+mod map;
 mod vtab;
+pub use map::{map_columns, mapped};
 
 pub type Sym = u32;
 
@@ -148,14 +150,26 @@ impl Interner {
         held + self.buf.capacity() + self.ends.capacity() * 4 + self.hashes.capacity() * 8 + self.table.capacity() * 5
     }
 
-    /// The pending atoms from `from` on as one segment: their end offsets (u32, little-endian, relative to the
-    /// segment's first byte), their bytes, and each one's (hash, id).
-    fn segment(&self, from: usize) -> (Vec<u8>, Vec<u8>, Vec<(u64, Sym)>) {
-        let i = from - self.base();
-        let start = if i == 0 { 0 } else { self.ends[i - 1] };
-        let ends = self.ends[i..].iter().flat_map(|&end| (end - start).to_le_bytes()).collect();
-        let keys = self.hashes[i..].iter().enumerate().map(|(k, &h)| (h, (from + k) as Sym)).collect();
-        (ends, self.buf[start as usize..].to_vec(), keys)
+    /// The pending atoms from `from` on as segments of about `most` bytes each (one atom at least): each its first
+    /// id, its end offsets (u32, little-endian, relative to the segment's first byte) and its bytes; and each atom's
+    /// (hash, id). One segment of every pending atom passed SQLite's largest blob (1 GB) at the end of a run over
+    /// posthog's 30,000 files.
+    fn segments(&self, from: usize, most: usize) -> (Vec<(usize, Vec<u8>, Vec<u8>)>, Vec<(u64, Sym)>) {
+        let at = |i: usize| if i == 0 { 0 } else { self.ends[i - 1] as usize };
+        let mut out = Vec::new();
+        let mut i = from - self.base();
+        while i < self.ends.len() {
+            let start = at(i);
+            let mut j = i + 1;
+            while j < self.ends.len() && self.ends[j] as usize - start <= most {
+                j += 1;
+            }
+            let ends = self.ends[i..j].iter().flat_map(|&end| (end - start as u32).to_le_bytes()).collect();
+            out.push((self.base() + i, ends, self.buf[start..self.ends[j - 1] as usize].to_vec()));
+            i = j;
+        }
+        let keys = self.hashes[from - self.base()..].iter().enumerate().map(|(k, &h)| (h, (from + k) as Sym)).collect();
+        (out, keys)
     }
 
     /// The pending atoms below `upto` are stored now: held as a segment of their own.
@@ -247,6 +261,10 @@ impl Interner {
     }
 }
 
+/// The most bytes of strings a segment holds (SQLite's largest blob is 1 GB); 1 MB in tests, so a test of the split
+/// writes a few MB.
+const SEGMENT_BYTES: usize = if cfg!(test) { 1 << 20 } else { 64 << 20 };
+
 /// More pending atoms than this, more pending bytes, or atoms pending this long, make a flush due
 /// (decision 0049 §4.2): what a crash can lose.
 const DUE_ATOMS: usize = 256 * 1024;
@@ -264,6 +282,8 @@ struct State {
     since: Option<Instant>,
     /// Every stored atom below this is held (`read_all`): a scan reads only the segments from it on.
     all_held: usize,
+    /// After a fork (decision 0170): this process's ids and the store's past it.
+    map: Option<map::Map>,
 }
 
 /// A process's atoms of one database (decision 0049): the arena, its watermark and the lease.
@@ -291,8 +311,15 @@ pub struct Atoms {
     sorted: Mutex<Vec<Sym>>,
     /// Segments this process appended, their atoms and their bytes (the profile's `atoms` line).
     written: Mutex<(u64, u64, u64)>,
-    /// A run holds the lease from before its first wave to its end (`ready_for_run`), unless another process asks.
-    kept: AtomicBool,
+    /// Runs under way in this process (`ready_for_run` to `run_over`): while one is, and every stored atom is held
+    /// (`complete`), ids are given out without the lease (provisional, decision 0160).
+    runs: std::sync::atomic::AtomicUsize,
+    /// Where this process's last appended segment ended (`write_pending`): the database's end there is its own, not
+    /// another process's.
+    wrote: std::sync::atomic::AtomicUsize,
+    /// Another process stored atoms while this one's were provisional (decision 0160): this process's ids are not the
+    /// store's past `base`, and are mapped to them at the store's boundary (decision 0170, `map`).
+    forked: AtomicBool,
     /// Every stored atom is held in this process, and the lease has been held since that was seen: a string not in
     /// memory is not interned, and is found without reading the store (decision 0104).
     complete: AtomicBool,
@@ -392,6 +419,17 @@ impl Drop for Reserved {
         }
     }
 }
+
+/// Decision 0160's trial (`RERAIL_ATOMS_PROVISIONAL=1`): ids are provisional and the lease is never taken. Off, the
+/// lease is taken as before (decision 0049).
+fn lease_free() -> bool {
+    static FREE: LazyLock<bool> = LazyLock::new(|| std::env::var("RERAIL_ATOMS_PROVISIONAL").is_ok_and(|v| v == "1"));
+    *FREE
+}
+
+/// The error of a write refused after a fork (decisions 0160, 0170): its rows may name this process's ids, not the
+/// store's. A write behind the run that meets it is dropped, as a cache's miss.
+pub const DIVERGED_TEXT: &str = "this process's atoms forked from the store's and this write's are not mapped (decision 0170)";
 
 static REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Weak<Atoms>>>> = LazyLock::new(Default::default);
 /// The atoms of in-memory databases: one set for the process, as the planner's symbols had.
@@ -494,7 +532,7 @@ impl Atoms {
             path,
             identity,
             // Atom 0, the empty string, is the schema's first segment.
-            state: RwLock::new(State { atoms: Interner::default(), since: None, all_held: 1 }),
+            state: RwLock::new(State { atoms: Interner::default(), since: None, all_held: 1, map: None }),
             lease: Mutex::new(None),
             leased: AtomicBool::new(false),
             wanted: Mutex::new((None, false)),
@@ -503,7 +541,9 @@ impl Atoms {
             flushed: Mutex::new(HashMap::new()),
             sorted: Mutex::new(Vec::new()),
             written: Mutex::new((0, 0, 0)),
-            kept: AtomicBool::new(false),
+            runs: std::sync::atomic::AtomicUsize::new(0),
+            wrote: std::sync::atomic::AtomicUsize::new(0),
+            forked: AtomicBool::new(false),
             complete: AtomicBool::new(false),
             flush_queued: AtomicBool::new(false),
         }
@@ -619,6 +659,9 @@ impl Atoms {
                 // SAFETY: called by SQLite on this connection's thread, under its mutex.
                 let state = unsafe { ffi::sqlite3_txn_state(handle as *mut ffi::sqlite3, c"main".as_ptr()) };
                 if state == ffi::SQLITE_TXN_WRITE {
+                    if held.forked() {
+                        return true;
+                    }
                     eprintln!("rerail: atoms: a commit that writes the store without its pending atoms was refused (decision 0049)");
                     if std::env::var_os("RERAIL_ATOMS_BACKTRACE").is_some() {
                         eprintln!("{}", std::backtrace::Backtrace::force_capture());
@@ -647,6 +690,21 @@ impl Atoms {
         self.state.read().atoms.len()
     }
 
+    /// Whether ids are given out provisionally (decision 0160): a run is under way and every stored atom is held, so a
+    /// string not in memory is new to this process, and its id is checked against the store's when it is written.
+    fn provisional(&self) -> bool {
+        lease_free() && self.runs.load(Ordering::Acquire) > 0 && self.complete.load(Ordering::Acquire)
+    }
+
+    /// Forks on this process's reader (outside a write): another process stored atoms past this one's pending ones.
+    fn fork_reading(&self) -> StoreResult<()> {
+        self.with_reader(|connection| {
+            let mut state = self.state.write();
+            self.fork_now(connection, &mut state)
+        })?;
+        Ok(())
+    }
+
     /// Segments this process appended so far: (segments, atoms, bytes), and the atoms pending now.
     pub fn writes(&self) -> ((u64, u64, u64), usize) {
         let pending = self.state.read().atoms.pending().0;
@@ -664,6 +722,9 @@ impl Atoms {
             return false;
         }
         let state = self.state.read();
+        if let Some(n) = self.pending_forked(&state) {
+            return n > 0;
+        }
         let (n, _) = state.atoms.pending();
         if n == 0 {
             return false;
@@ -701,6 +762,15 @@ impl Atoms {
         if let Some(atom) = self.state.read().atoms.get(value) {
             return Ok(Some(atom));
         }
+        // Every stored atom is held: a string not in memory is not stored, as far as this run is concerned.
+        if self.provisional() {
+            return Ok(None);
+        }
+        // Forked: another process's atom of it is found by its key and held here (decision 0170).
+        if self.forked() {
+            self.find_forked(value)?;
+            return Ok(self.state.read().atoms.get(value));
+        }
         if !self.leased.load(Ordering::Acquire) {
             self.catch_up()?;
         }
@@ -737,6 +807,25 @@ impl Atoms {
                 return Ok(found);
             }
         }
+        // Inside a run, with every stored atom held: new ids are provisional, given out without the lease and checked
+        // against the store's as they are written (decision 0160). Nothing is read. Forked, the store's are found as
+        // they are written (decision 0170).
+        if self.provisional() || self.forked() {
+            return Ok(self.give(values));
+        }
+        // Outside the waves: what this process does not hold may be stored, found in the database first (decision
+        // 0111), and the rest is provisional too. No lease (decision 0160).
+        if lease_free() {
+            let missing: Vec<&str> = {
+                let state = self.state.read();
+                values.iter().copied().filter(|value| state.atoms.get(value).is_none()).collect()
+            };
+            if !missing.is_empty() {
+                self.catch_up_free()?;
+                self.find(&missing)?;
+            }
+            return Ok(self.give(values));
+        }
         // The lease is held while ids are given out, so a flush on another thread cannot give it
         // back between the check and the new ids.
         let mut lease = self.lease.lock();
@@ -749,6 +838,13 @@ impl Atoms {
         if !missing.is_empty() {
             self.find(&missing)?;
         }
+        let ids = self.give(values);
+        drop(lease);
+        Ok(ids)
+    }
+
+    /// The ids of `values`, new ones pending from this process's end.
+    fn give(&self, values: &[&str]) -> Vec<Sym> {
         let mut state = self.state.write();
         let before = state.atoms.len() as Sym;
         let ids: Vec<Sym> = values.iter().map(|value| state.atoms.intern(value)).collect();
@@ -767,7 +863,7 @@ impl Atoms {
                 }
             }
         });
-        Ok(ids)
+        ids
     }
 
     /// The atom of `value`, given out (pending) under the lease if it is new.
@@ -826,9 +922,17 @@ impl Atoms {
         state.atoms.base() <= 1 || state.all_held >= state.atoms.base()
     }
 
+    /// Without the lease (decision 0160): learns where the database's ids end, outside the waves.
+    fn catch_up_free(&self) -> StoreResult<()> {
+        if self.provisional() {
+            return Ok(());
+        }
+        self.read_end()
+    }
+
     /// Learns where the database's ids end, unless this process holds the lease (then it knows).
     fn catch_up(&self) -> StoreResult<()> {
-        if self.leased.load(Ordering::Acquire) {
+        if self.leased.load(Ordering::Acquire) || self.provisional() {
             return Ok(());
         }
         // Under the lease's mutex: no thread of this process gives out ids while it reads.
@@ -866,6 +970,14 @@ impl Atoms {
         else {
             return Ok(());
         };
+        if self.forked() {
+            return Ok(());
+        }
+        // Provisional ids pending here (decision 0160) and another process's stored past them: forked (0170).
+        let (base, pending) = { let s = self.state.read(); (s.atoms.base(), s.atoms.pending().0) };
+        if end > base && pending > 0 && end != self.wrote.load(Ordering::Acquire) {
+            return self.fork_reading();
+        }
         self.state.write().atoms.advance(end)
     }
 
@@ -875,7 +987,7 @@ impl Atoms {
         if self.path.is_none() || values.is_empty() {
             return Ok(());
         }
-        if self.complete.load(Ordering::Acquire) && self.leased.load(Ordering::Acquire) {
+        if self.complete.load(Ordering::Acquire) && (self.leased.load(Ordering::Acquire) || self.provisional()) {
             return Ok(());
         }
         if !self.keyed()? {
@@ -985,6 +1097,9 @@ impl Atoms {
         if let Some(flushed) = self.flushed.lock().get(&handle) {
             flushed.store(true, Ordering::Release);
         }
+        if self.forked() {
+            return self.write_forked(connection);
+        }
         // Where the database's segments end now (another connection of this process may have
         // committed a flush whose `committed` has not run yet).
         let end: i64 = connection
@@ -992,26 +1107,45 @@ impl Atoms {
             .query_row([], |row| row.get(0))
             .optional()?
             .unwrap_or(0);
-        let (from, ends, bytes, mut keys, upto) = {
+        let (from, segments, mut keys, upto) = {
             let state = self.state.read();
-            let (end, len) = (end as usize, state.atoms.len());
-            if end < state.atoms.base() {
-                return Err(StoreError::Corrupt(format!("the database's atoms end at {end}, before the {} this process wrote", state.atoms.base())));
+            let (end, len, base) = (end as usize, state.atoms.len(), state.atoms.base());
+            if end < base {
+                return Err(StoreError::Corrupt(format!("the database's atoms end at {end}, before the {} this process wrote", base)));
+            }
+            // Past this process's end: its own segment, committed on another connection (`wrote`), or another
+            // process's. Another's with none pending here moves this process's end; with some pending, the ids given
+            // out here are another's strings in the store (decision 0160): this process forks (0170). This
+            // transaction's rows may name the ids given out here, so it is refused, as a cache's miss; a writer's batch
+            // forks before its rows are made (`begin_write`).
+            if end > base && end != self.wrote.load(Ordering::Acquire) {
+                if len > base {
+                    drop(state);
+                    let mut state = self.state.write();
+                    self.fork_now(connection, &mut state)?;
+                    return Err(StoreError::Invalid(DIVERGED_TEXT.to_owned()));
+                }
+                drop(state);
+                self.advance_holding(connection, base, end)?;
+                return Ok(end);
             }
             if end >= len {
                 return Ok(end);
             }
-            let (ends, bytes, keys) = state.atoms.segment(end);
-            (end, ends, bytes, keys, len)
+            let (segments, keys) = state.atoms.segments(end, SEGMENT_BYTES);
+            (end, segments, keys, len)
         };
-        let size = (ends.len() + bytes.len()) as u64;
+        let size: u64 = segments.iter().map(|(_, e, b)| (e.len() + b.len()) as u64).sum();
         // A key that does not reach this segment's first (a new store, an older one) is extended to it first.
         if key_end(connection).is_none_or(|upto| upto < from) {
             key_segments(connection)?;
         }
-        connection
-            .prepare_cached("INSERT INTO atom_segment(first, ends, bytes) VALUES (?1, ?2, ?3)")?
-            .execute(rusqlite::params![from as i64, ends, bytes])?;
+        let count = segments.len() as u64;
+        for (first, ends, bytes) in segments {
+            connection
+                .prepare_cached("INSERT INTO atom_segment(first, ends, bytes) VALUES (?1, ?2, ?3)")?
+                .execute(rusqlite::params![first as i64, ends, bytes])?;
+        }
         // Their keys, in the same transaction, sorted so that the flush writes neighbouring leaves together
         // (decision 0111 §1).
         if key_end(connection) == Some(from) {
@@ -1022,10 +1156,33 @@ impl Atoms {
             }
             connection.prepare_cached("UPDATE atom_key_end SET upto = ?1")?.execute([upto as i64])?;
         }
+        self.wrote.store(upto, Ordering::Release);
         // Counted when written; a transaction that then rolls back still counts.
         let mut written = self.written.lock();
-        *written = (written.0 + 1, written.1 + (upto - from) as u64, written.2 + size);
+        *written = (written.0 + count, written.1 + (upto - from) as u64, written.2 + size);
         Ok(upto)
+    }
+
+    /// Another process stored atoms `base..end` and none is pending here: this process's end moves there, and, where
+    /// it held every stored atom, it reads those too (on the writer's connection, behind the run), so a run's lookups
+    /// still read nothing (decision 0160).
+    fn advance_holding(&self, connection: &Connection, base: usize, end: usize) -> StoreResult<()> {
+        let mut state = self.state.write();
+        if state.map.is_some() || state.atoms.pending().0 > 0 || state.atoms.base() != base {
+            return Ok(());
+        }
+        let whole = state.all_held >= base;
+        state.atoms.advance(end)?;
+        if !whole || !lease_free() {
+            return Ok(());
+        }
+        let mut statement = connection.prepare_cached("SELECT first, ends, bytes FROM atom_segment WHERE first >= ?1 AND first < ?2 ORDER BY first")?;
+        let mut rows = statement.query([base as i64, end as i64])?;
+        while let Some(row) = rows.next()? {
+            state.atoms.add_segment(row.get::<_, i64>(0)? as Sym, &row.get::<_, Vec<u8>>(1)?, &row.get::<_, Vec<u8>>(2)?)?;
+        }
+        state.all_held = state.atoms.base();
+        Ok(())
     }
 
     /// After a commit that held `write_pending`'s segment: atoms below `upto` are stored. The
@@ -1036,6 +1193,10 @@ impl Atoms {
         }
         let mut lease = self.lease.lock();
         let mut state = self.state.write();
+        if state.map.is_some() {
+            self.committed_forked(&mut state);
+            return;
+        }
         let before = state.atoms.base();
         state.atoms.store_upto(upto);
         // What this process stored it holds: where it held every segment before, it still does.
@@ -1045,7 +1206,7 @@ impl Atoms {
         if state.atoms.pending().0 == 0 {
             state.since = None;
             // A run keeps the lease to its end (`ready_for_run`), unless another process waits for it.
-            if (!self.kept.load(Ordering::Acquire) || self.wanted()) && lease.take().is_some() {
+            if (self.runs.load(Ordering::Acquire) == 0 || self.wanted()) && lease.take().is_some() {
                 self.leased.store(false, Ordering::Release);
                 self.complete.store(false, Ordering::Release);
             }
@@ -1059,16 +1220,37 @@ impl Atoms {
         if self.path.is_none() {
             return Ok(true);
         }
-        {
+        // The outermost run reads where the database's ids end, once, before its first wave; no lease is taken
+        // (decision 0160: the run's new ids are provisional). A nested run is inside it and reads nothing.
+        if !lease_free() {
             let mut lease = self.lease.lock();
             self.acquire(&mut lease)?;
-            self.kept.store(true, Ordering::Release);
+            self.runs.fetch_add(1, Ordering::AcqRel);
+        } else if self.runs.fetch_add(1, Ordering::AcqRel) == 0 && !self.leased.load(Ordering::Acquire) && !super::hazards::inside_waves() {
+            let _lease = self.lease.lock();
+            let path = self.path.clone();
+            let end = self.with_reader(|connection| {
+                database_end(connection).map_err(|error| StoreError::Corrupt(format!("{}: reading atom segments: {error}", path.as_deref().unwrap_or(Path::new("")).display())))
+            })?;
+            if let Some(end) = end {
+                let (base, pending) = { let s = self.state.read(); (s.atoms.base(), s.atoms.pending().0) };
+                if end > base && end != self.wrote.load(Ordering::Acquire) && pending > 0 && !self.forked() {
+                    self.fork_reading()?;
+                } else if pending == 0 && !self.forked() {
+                    self.state.write().atoms.advance(end)?;
+                }
+            }
         }
         let held = || self.holds_all();
         // A store's atoms are read whole when they are few (the full corpus's are about 21 MB, decision 0049), or when
         // its segments are large (decision 0171: a lookup would read them whole anyway): the run's lookups and ids then
         // read nothing. A larger store of small segments (many small flushes) is found by its key as the run needs it
         // (decision 0111), which the strict mode reports.
+        // Inside another run's waves (decision 0160's trial) nothing is read: what is held stays as complete as it was.
+        if lease_free() && super::hazards::inside_waves() {
+            let complete = held() && self.complete.load(Ordering::Acquire);
+            return Ok(complete);
+        }
         if !held() {
             let (bytes, segments) = self
                 .with_reader(|connection| {
@@ -1086,13 +1268,13 @@ impl Atoms {
 
     /// A run's end: the lease is given back with its next commit, as before the run.
     pub fn run_over(&self) {
-        self.kept.store(false, Ordering::Release);
+        let _ = self.runs.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
     }
 
     /// Whether a flush is due: enough pending (count, bytes or age), or another process waiting. Never inside a run
     /// (`ready_for_run`): the store's writer flushes then (`queue_atoms_flush`), and no wave writes (decision 0104).
     pub fn due(&self) -> bool {
-        !self.kept.load(Ordering::Acquire) && self.due_now()
+        self.runs.load(Ordering::Acquire) == 0 && self.due_now()
     }
 
     pub(super) fn due_now(&self) -> bool {
@@ -1154,7 +1336,8 @@ impl Atoms {
                 _ => Err(error.into()),
             };
         }
-        let written = self.write_pending(connection).and_then(|upto| {
+        // A flush writes atoms alone: forked or forking, they are mapped (decision 0170).
+        let written = self.begin_write(connection).and_then(|()| mapped(|| self.write_pending(connection))).and_then(|upto| {
             connection.execute_batch("COMMIT")?;
             Ok(upto)
         });
@@ -1261,7 +1444,7 @@ impl super::ContentStore {
     /// The pending atoms, appended by the store's writer behind the run (decision 0104).
     pub fn queue_atoms_flush(&self) {
         let atoms = std::sync::Arc::clone(&self.atoms);
-        self.write_back("the pending atoms", 0, Vec::new(), Box::new(move |store| {
+        self.write_back_syms(crate::content_store::write_back::Syms::None, "the pending atoms", 0, Vec::new(), Box::new(move |store| {
             atoms.flush_queued.store(false, Ordering::Release);
             store.flush_atoms()
         }));
@@ -1278,7 +1461,8 @@ impl super::ContentStore {
         if !self.atoms.pending() {
             return Ok(());
         }
-        match self.immediate_transaction_no_wait(|_| Ok(())) {
+        let atoms = std::sync::Arc::clone(&self.atoms);
+        match mapped(|| self.immediate_transaction_no_wait(|t| atoms.begin_write(t))) {
             Ok(()) | Err(StoreError::Busy) => Ok(()),
             Err(StoreError::Database(error))
                 if matches!(error.sqlite_error_code(), Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)) =>
@@ -1287,6 +1471,16 @@ impl super::ContentStore {
             }
             Err(error) => Err(error),
         }
+    }
+
+    /// `values` (this process's symbols) as the store numbers them, in this handle's open write transaction (the
+    /// writer's batch): unchanged unless forked (decision 0170).
+    pub fn symbols_to_store(&self, values: &mut [i64]) -> StoreResult<()> {
+        if !self.atoms.forked() {
+            return Ok(());
+        }
+        let connection = self.connection.lock().map_err(StoreError::Invalid)?;
+        self.atoms.to_store(&connection, values)
     }
 
     /// The atom of `value`, if the store holds it.

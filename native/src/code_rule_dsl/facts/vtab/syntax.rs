@@ -2970,7 +2970,7 @@ impl Batch {
 /// `rr_nearest_<set>(n, a)`, the nearest ancestor in the set, `rr_inside_<set>(n, a)`, every one (decision 0036), or
 /// `rr_has_<set>(n, a)`, n in the set and a each of its strict ancestors. Each is made per looked-up node on the host
 /// (`within::Axis`), or for the whole batch by the transducer's file-local FIX (`typing::file_local::nearest`, bound
-/// `binding`) where the planner expects more lookups than that costs (decision 0105).
+/// `binding`) where the planner expects more lookups than that costs (decision 0143).
 pub fn with_nearest(
     store: &ContentStore,
     documents: Vec<Document>,

@@ -90,6 +90,7 @@ fn install_store_functions() {
         wait_in_wave: code_rule_dsl::sql_hazards::wait_in_wave,
         behind_the_run: code_rule_dsl::sql_hazards::behind_the_run,
         statement: code_rule_dsl::sql_hazards::strict_statement,
+        inside_waves: code_rule_dsl::sql_hazards::inside_waves,
     });
     code_rule_dsl::sql_hazards::strict_on_every_connection();
 }

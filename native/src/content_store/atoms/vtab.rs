@@ -156,6 +156,9 @@ fn text(value: Value) -> Option<Vec<u8>> {
 // SAFETY: SQLite's base is first; the cursor owns its rows and an `Arc` of the arena.
 unsafe impl VTabCursor for Cursor {
     fn filter(&mut self, idx_num: c_int, _: Option<&str>, args: &Filters<'_>) -> Result<()> {
+        // Its ids are this process's; the tables it is joined with hold the store's. Forked (decision 0170), the two
+        // differ, so the table refuses rather than join one string's id to another's.
+        self.atoms.refuse_forked("the atoms table").map_err(error)?;
         self.at = 0;
         self.rows = match idx_num {
             BY_ATOM => {
