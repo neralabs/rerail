@@ -1,0 +1,50 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f707-default-except-not-last",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Put a bare except handler last in its try statement; Python rejects any handler after it.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "default-except-not-last",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "regex": "^except$",
+            "precedes": {
+              "stopBy": "neighbor",
+              "regex": "^:$"
+            },
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "except_clause",
+              "precedes": {
+                "stopBy": "end",
+                "kind": "except_clause"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F707",
+        "message": "Move this bare `except:` handler after all typed handlers; a bare handler must be last.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F707"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-isc003-explicit-string-concatenation",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Join string literals split across lines by implicit concatenation inside parentheses instead of the + operator, which adds noise without changing the result.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "explicit-string-concatenation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "string-like": {
+              "any": [
+                { "kind": "string" },
+                { "kind": "concatenated_string" }
+              ]
+            },
+            "left-string": {
+              "any": [
+                { "matches": "string-like", "pattern": "$L" },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "left-string" } }
+              ]
+            },
+            "right-string-on-later-line": {
+              "any": [
+                {
+                  "matches": "string-like",
+                  "all": [{ "layout": { "before": { "to": "capture.L", "breaks": { "min": 1 } } } }]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": { "stopBy": "neighbor", "matches": "right-string-on-later-line" }
+                }
+              ]
+            },
+            "bytes": {
+              "any": [
+                { "kind": "string", "regex": "^[^'\"]*[bB]" },
+                { "kind": "concatenated_string", "has": { "stopBy": "neighbor", "matches": "bytes" } },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "bytes" } }
+              ]
+            },
+            "template": {
+              "any": [
+                { "kind": "string", "regex": "^[^'\"]*[tT]" },
+                { "kind": "concatenated_string", "has": { "stopBy": "neighbor", "matches": "template" } },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "template" } }
+              ]
+            },
+            "text": {
+              "not": { "any": [{ "matches": "bytes" }, { "matches": "template" }] }
+            }
+          },
+          "rule": {
+            "kind": "binary_operator",
+            "all": [
+              { "has": { "field": "operator", "regex": "^\\+$" } },
+              { "has": { "field": "left", "matches": "left-string" } },
+              { "has": { "field": "right", "matches": "right-string-on-later-line" } },
+              {
+                "any": [
+                  { "all": [{ "has": { "field": "left", "matches": "text" } }, { "has": { "field": "right", "matches": "text" } }] },
+                  { "all": [{ "has": { "field": "left", "matches": "bytes" } }, { "has": { "field": "right", "matches": "bytes" } }] },
+                  { "all": [{ "has": { "field": "left", "matches": "template" } }, { "has": { "field": "right", "matches": "template" } }] }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "ISC003",
+        "message": "Drop the `+` so the string literals concatenate implicitly inside parentheses; unwrap parenthesized operands first, and keep `+` if the result would become a docstring.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "ISC003"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

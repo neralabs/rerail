@@ -1,0 +1,73 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b406-import-xml-sax",
+  "revision": 2,
+  "mode": "steer",
+  "description": "Avoid parsing XML with xml.sax (importing only its saxutils helpers is fine); it is open to XML attacks, so use defusedxml.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "B406",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "import xml.sax"
+              },
+              {
+                "pattern": "import xml.sax as $ALIAS"
+              },
+              {
+                "pattern": "from xml.sax import $$$NAMES"
+              },
+              {
+                "pattern": "from xml import sax"
+              },
+              {
+                "pattern": "from xml import sax as $ALIAS"
+              }
+            ],
+            "not": {
+              "any": [
+                {
+                  "pattern": "from xml.sax.saxutils import $$$NAMES"
+                },
+                {
+                  "pattern": "from xml.sax import saxutils"
+                },
+                {
+                  "pattern": "from xml.sax import saxutils as $ALIAS"
+                },
+                {
+                  "pattern": "from xml.sax import (saxutils)"
+                },
+                {
+                  "pattern": "from xml.sax import (saxutils as $ALIAS)"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B406",
+        "anchor": "witness.span",
+        "message": "xml.sax parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B406"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

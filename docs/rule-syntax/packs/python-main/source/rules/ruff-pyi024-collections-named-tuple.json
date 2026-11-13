@@ -1,0 +1,184 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi024-collections-named-tuple",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use typing.NamedTuple instead of collections.namedtuple; it lets each field carry a type annotation that type checkers can analyze.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "collections-named-tuple",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "nt-ref": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "import": [
+                      "collections.namedtuple"
+                    ]
+                  },
+                  "not": {
+                    "any": [
+                      {
+                        "inside": {
+                          "stopBy": {
+                            "not": {
+                              "any": [
+                                {
+                                  "kind": "expression_list"
+                                },
+                                {
+                                  "kind": "tuple"
+                                },
+                                {
+                                  "kind": "list"
+                                },
+                                {
+                                  "kind": "parenthesized_expression"
+                                }
+                              ]
+                            }
+                          },
+                          "kind": "delete_statement"
+                        }
+                      },
+                      {
+                        "matches": "aug-target"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "kind": "attribute",
+                  "resolves": {
+                    "import": [
+                      "collections.namedtuple"
+                    ]
+                  }
+                }
+              ]
+            },
+            "in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "nt-ref",
+                      "capture": "NT"
+                    },
+                    {
+                      "matches": "in-string"
+                    }
+                  ]
+                }
+              }
+            },
+            "aug-target": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "augmented_assignment",
+                    "field": "left"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "any": [
+                      {
+                        "kind": "parenthesized_expression"
+                      },
+                      {
+                        "kind": "tuple_pattern"
+                      }
+                    ],
+                    "matches": "aug-target"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "nt-ref",
+                "pattern": "$NT"
+              },
+              {
+                "kind": "dotted_name",
+                "inside": {
+                  "stopBy": "end",
+                  "kind": "case_pattern"
+                },
+                "regex": "^(?P<NT>\\w+\\s*\\.\\s*namedtuple)(?:\\s*\\.|$)",
+                "has": {
+                  "kind": "identifier",
+                  "nthChild": 1,
+                  "resolves": {
+                    "import": [
+                      "collections"
+                    ]
+                  }
+                }
+              },
+              {
+                "kind": "attribute",
+                "regex": "^\\*\\s*(?P<NT>\\w+\\s*\\.\\s*namedtuple)$",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "object",
+                  "kind": "list_splat",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "resolves": {
+                      "import": [
+                        "collections"
+                      ]
+                    }
+                  }
+                }
+              },
+              {
+                "matches": "in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.NT",
+        "code": "PYI024",
+        "message": "Replace `collections.namedtuple` with a class inheriting `typing.NamedTuple` that annotates each field; keep it where field names are built at runtime or `rename=True` is needed.",
+        "each": "NT",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI024"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b509-snmp-weak-cryptography",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass authentication and privacy keys to pysnmp UsmUserData; without them SNMPv3 runs with no authentication or encryption.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit:B509",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "$F()"
+              },
+              {
+                "pattern": "$F($A)"
+              },
+              {
+                "pattern": "$F($A, $B)"
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "pysnmp.hlapi.UsmUserData"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B509",
+        "anchor": "capture.F",
+        "message": "Pass authentication and privacy keys to this UsmUserData call; without them SNMPv3 runs with no authentication or encryption.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B509"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

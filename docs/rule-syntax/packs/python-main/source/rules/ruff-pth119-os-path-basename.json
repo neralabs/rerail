@@ -1,0 +1,192 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-pth119-os-path-basename",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Use the name property of a Path object instead of os.path.basename; pathlib reads better than string-based os.path functions.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "os-path-basename",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "rule": {
+      "any": [
+       {
+        "matches": "target"
+       },
+       {
+        "matches": "in-string"
+       }
+      ]
+     },
+     "utils": {
+      "callee": {
+       "any": [
+        {
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "import": [
+           "os.path.basename"
+          ]
+         },
+         "pattern": "$F"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee"
+         }
+        }
+       ]
+      },
+      "target": {
+       "kind": "call",
+       "all": [
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "callee",
+          "precedes": {
+           "stopBy": "end",
+           "any": [
+            {
+             "kind": "argument_list"
+            },
+            {
+             "kind": "generator_expression"
+            }
+           ]
+          }
+         }
+        },
+        {
+         "has": {
+          "stopBy": "neighbor",
+          "any": [
+           {
+            "kind": "generator_expression"
+           },
+           {
+            "kind": "argument_list",
+            "count": {
+             "has": {
+              "stopBy": "neighbor",
+              "not": {
+               "matches": "trivia"
+              }
+             },
+             "min": 1,
+             "max": 1
+            },
+            "has": {
+             "stopBy": "neighbor",
+             "any": [
+              {
+               "kind": "keyword_argument",
+               "has": {
+                "stopBy": "neighbor",
+                "kind": "identifier",
+                "regex": "^p$",
+                "precedes": {
+                 "stopBy": "end",
+                 "regex": "^=$"
+                }
+               }
+              },
+              {
+               "not": {
+                "any": [
+                 {
+                  "kind": "keyword_argument"
+                 },
+                 {
+                  "kind": "list_splat"
+                 },
+                 {
+                  "kind": "dictionary_splat"
+                 },
+                 {
+                  "matches": "trivia"
+                 }
+                ]
+               }
+              }
+             ]
+            }
+           }
+          ]
+         }
+        }
+       ]
+      },
+      "in-string": {
+       "any": [
+        {
+         "kind": "string"
+        },
+        {
+         "kind": "concatenated_string"
+        }
+       ],
+       "parse": {
+        "grammar": "annotation",
+        "has": {
+         "stopBy": "end",
+         "any": [
+          {
+           "matches": "target"
+          },
+          {
+           "matches": "in-string"
+          }
+         ]
+        }
+       }
+      },
+      "trivia": {
+       "any": [
+        {
+         "kind": "comment"
+        },
+        {
+         "kind": "line_continuation"
+        },
+        {
+         "regex": "^[(),]$"
+        }
+       ]
+      }
+     }
+    }
+   },
+   "violation": {
+    "anchor": "capture.F",
+    "code": "PTH119",
+    "message": "Use `Path(...).name` instead of `os.path.basename(...)`. Path normalizes the path first (trailing slashes, `.`) and rejects bytes, so keep `basename` where the exact result matters.",
+    "each": "F",
+    "suppress": {
+     "noqa": {
+      "codes": [
+       "PTH119"
+      ]
+     }
+    }
+   }
+  }
+ ]
+}

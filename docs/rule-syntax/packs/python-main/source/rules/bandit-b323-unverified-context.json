@@ -1,0 +1,47 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b323-unverified-context",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't create SSL contexts with ssl._create_unverified_context(); it turns off certificate and hostname verification and allows man-in-the-middle attacks.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "B323",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "ssl._create_unverified_context"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B323",
+        "anchor": "witness.span",
+        "message": "Use ssl.create_default_context() instead, which verifies certificates and hostnames.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B323"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

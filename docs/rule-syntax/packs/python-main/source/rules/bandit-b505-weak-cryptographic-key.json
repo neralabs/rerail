@@ -1,0 +1,166 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b505-weak-cryptographic-key",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use RSA and DSA keys of at least 2048 bits and elliptic curves of at least 224 bits; smaller keys can be broken.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "weak-cryptographic-key",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "any": [
+              {
+                "has": {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "cryptography.hazmat.primitives.asymmetric.dsa.generate_private_key"
+                    ]
+                  }
+                },
+                "arguments": {
+                  "signature": [
+                    "key_size",
+                    "backend"
+                  ],
+                  "bind": {
+                    "K": "key_size"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "cryptography.hazmat.primitives.asymmetric.rsa.generate_private_key"
+                    ]
+                  }
+                },
+                "arguments": {
+                  "signature": [
+                    "public_exponent",
+                    "key_size",
+                    "backend"
+                  ],
+                  "bind": {
+                    "K": "key_size"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "cryptography.hazmat.primitives.asymmetric.ec.generate_private_key"
+                    ]
+                  }
+                },
+                "arguments": {
+                  "signature": [
+                    "curve",
+                    "backend"
+                  ],
+                  "bind": {
+                    "C": "curve"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "Crypto.PublicKey.DSA.generate",
+                      "Crypto.PublicKey.RSA.generate",
+                      "Cryptodome.PublicKey.DSA.generate",
+                      "Cryptodome.PublicKey.RSA.generate"
+                    ]
+                  }
+                },
+                "arguments": {
+                  "signature": [
+                    "bits"
+                  ],
+                  "bind": {
+                    "K": "bits"
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "K": {
+              "value": {
+                "lt": 2048
+              }
+            },
+            "C": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "regex": "\\.(SECP192R1|SECT163K1|SECT163R2)$"
+                },
+                {
+                  "kind": "identifier",
+                  "regex": "^(SECP192R1|SECT163K1|SECT163R2)$"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B505",
+        "message": "Generate this key with at least 2048 bits for RSA or DSA, or a curve of at least 224 bits for EC; smaller keys can be broken.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B505"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

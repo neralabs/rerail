@@ -1,0 +1,44 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi033-legacy-type-comment",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use inline annotations instead of type comments in stub files; type comments are deprecated and never needed in stubs.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "legacy-type-comment",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "comment",
+            "regex": "^#\\s*type:(?:[^\\si#]|\\s*(?:i(?:$|[^g])|ig(?:$|[^n])|ign(?:$|[^o])|igno(?:$|[^r])|ignor(?:$|[^e]))|\\s+(?:$|[^\\si]))"
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI033",
+        "message": "Replace this type comment with an inline annotation, such as `x: int = 1` or a per-parameter annotation; stubs never need type comments. Leave `type: ignore` comments alone.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI033"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

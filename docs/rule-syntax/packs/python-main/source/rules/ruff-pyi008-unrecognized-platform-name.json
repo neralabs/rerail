@@ -1,0 +1,300 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi008-unrecognized-platform-name",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Compare sys.platform only against linux, win32, cygwin or darwin in stub files; other names are likely typos that type checkers don't recognize.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "test-slot": {
+            "any": [
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "if_statement",
+                  "field": "condition"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "test-slot"
+                }
+              }
+            ]
+          },
+          "bool-and-top": {
+            "kind": "boolean_operator",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "operator",
+              "regex": "^and$"
+            },
+            "any": [
+              {
+                "matches": "test-slot"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "matches": "bool-and-top"
+                }
+              }
+            ]
+          },
+          "bool-or-top": {
+            "kind": "boolean_operator",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "operator",
+              "regex": "^or$"
+            },
+            "any": [
+              {
+                "matches": "test-slot"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "matches": "bool-or-top"
+                }
+              }
+            ]
+          },
+          "test-operand": {
+            "any": [
+              {
+                "matches": "test-slot"
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "any": [
+                    {
+                      "matches": "bool-and-top"
+                    },
+                    {
+                      "matches": "bool-or-top"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "test-operand"
+                }
+              }
+            ]
+          },
+          "sys-platform": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "sys.platform"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "sys-platform"
+                }
+              }
+            ]
+          },
+          "str-literal": {
+            "any": [
+              {
+                "kind": "string",
+                "regex": "^[uUrR]?[\"']"
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "not": {
+                      "regex": "^[uUrR]?[\"']"
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "str-literal"
+                }
+              }
+            ]
+          },
+          "platform-test": {
+            "kind": "comparison_operator",
+            "all": [
+              {
+                "matches": "test-operand"
+              },
+              {
+                "count": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "not": {
+                      "any": [
+                        {
+                          "regex": "^(==|!=|<|>|<=|>=|is|not|in|is\\s+not|not\\s+in)$"
+                        },
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "line_continuation"
+                        }
+                      ]
+                    }
+                  },
+                  "min": 2,
+                  "max": 2
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "regex": "^(==|!=)$"
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "matches": "sys-platform"
+                }
+              }
+            ]
+          },
+          "right-slot": {
+            "any": [
+              {
+                "follows": {
+                  "stopBy": {
+                    "not": {
+                      "any": [
+                        {
+                          "kind": "comment"
+                        },
+                        {
+                          "kind": "line_continuation"
+                        }
+                      ]
+                    }
+                  },
+                  "regex": "^(==|!=)$"
+                },
+                "inside": {
+                  "stopBy": "neighbor",
+                  "matches": "platform-test"
+                }
+              },
+              {
+                "inside": {
+                  "stopBy": "neighbor",
+                  "kind": "parenthesized_expression",
+                  "matches": "right-slot"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unknown-platform",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "kind": "string"
+              },
+              {
+                "kind": "concatenated_string"
+              }
+            ],
+            "all": [
+              {
+                "matches": "str-literal"
+              },
+              {
+                "matches": "right-slot"
+              },
+              {
+                "any": [
+                  {
+                    "not": {
+                      "value": {
+                        "regex": "^(?:linux|win32|cygwin|darwin)$"
+                      }
+                    }
+                  },
+                  {
+                    "value": {
+                      "constant": false
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI008",
+        "message": "Compare `sys.platform` against `linux`, `win32`, `cygwin` or `darwin`; type checkers don't recognize other names, so this is likely a typo. Leave it if the other name is deliberate.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI008"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

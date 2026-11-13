@@ -1,0 +1,138 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b113-request-without-timeout",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Pass a timeout to requests calls, and never set it to None on requests or httpx calls; without one, a slow server can hang the program indefinitely.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "request-without-timeout",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "call",
+            "any": [
+              {
+                "has": {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "requests.get",
+                      "requests.options",
+                      "requests.head",
+                      "requests.post",
+                      "requests.put",
+                      "requests.patch",
+                      "requests.delete"
+                    ]
+                  }
+                },
+                "arguments": {
+                  "signature": [
+                    "*",
+                    "timeout"
+                  ],
+                  "absent": [
+                    "timeout"
+                  ]
+                }
+              },
+              {
+                "has": {
+                  "any": [
+                    {
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "attribute"
+                        }
+                      ],
+                      "resolves": {
+                        "import": [
+                          "requests.get",
+                          "requests.options",
+                          "requests.head",
+                          "requests.post",
+                          "requests.put",
+                          "requests.patch",
+                          "requests.delete"
+                        ]
+                      }
+                    },
+                    {
+                      "any": [
+                        {
+                          "kind": "identifier"
+                        },
+                        {
+                          "kind": "attribute"
+                        }
+                      ],
+                      "resolves": {
+                        "import": [
+                          "httpx.get",
+                          "httpx.options",
+                          "httpx.head",
+                          "httpx.post",
+                          "httpx.put",
+                          "httpx.patch",
+                          "httpx.delete",
+                          "httpx.request",
+                          "httpx.stream",
+                          "httpx.Client",
+                          "httpx.AsyncClient"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "arguments": {
+                  "signature": [
+                    "*",
+                    "timeout"
+                  ],
+                  "bind": {
+                    "T": "timeout"
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "T": {
+              "kind": "none"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B113",
+        "message": "Pass a finite timeout to this HTTP call; without one a slow server can hang the program.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B113"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

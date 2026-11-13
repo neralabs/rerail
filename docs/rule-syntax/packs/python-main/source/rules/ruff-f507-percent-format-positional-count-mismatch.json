@@ -1,0 +1,78 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f507-percent-format-positional-count-mismatch",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Match the number of %-format placeholders to the number of values supplied; a mismatch raises TypeError at run time.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "percent-format-positional-count-mismatch",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$S % $R",
+            "all": [
+              {
+                "any": [
+                  {
+                    "formatArgs": {
+                      "style": "percent",
+                      "string": "S",
+                      "args": "R",
+                      "unused": {
+                        "not": {
+                          "kind": "pair"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "formatArgs": {
+                      "style": "percent",
+                      "string": "S",
+                      "args": "R",
+                      "missing": {
+                        "any": [
+                          {
+                            "kind": "star"
+                          },
+                          {
+                            "kind": "placeholder",
+                            "not": {
+                              "has": {
+                                "kind": "mapping_key"
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F507",
+        "message": "Make the number of values match the placeholders in this %-format string; a mismatch raises TypeError.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F507"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

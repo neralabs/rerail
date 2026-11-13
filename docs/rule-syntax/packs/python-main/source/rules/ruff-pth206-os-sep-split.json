@@ -1,0 +1,136 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pth206-os-sep-split",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use Path.parts instead of splitting a path string on os.sep; path objects read better than string-based path handling.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "os-sep-split",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "sep-ref": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "os.sep"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "sep-ref"
+                  }
+                }
+              ]
+            },
+            "split-callee": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "attribute",
+                    "kind": "identifier",
+                    "regex": "^split$",
+                    "pattern": "$M"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "split-callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "call",
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "split-callee"
+                }
+              },
+              {
+                "arguments": {
+                  "signature": [
+                    "sep"
+                  ],
+                  "mode": "syntactic",
+                  "bind": {
+                    "S": "sep"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "arguments",
+                  "kind": "argument_list",
+                  "count": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "any": [
+                          {
+                            "regex": "^[(),\\[\\]{}]$"
+                          },
+                          {
+                            "kind": "comment"
+                          }
+                        ]
+                      }
+                    },
+                    "min": 1,
+                    "max": 1
+                  }
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "S": {
+              "matches": "sep-ref"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.M",
+        "code": "PTH206",
+        "message": "Use `Path(...).parts` instead of `.split(os.sep)` for the path components (`.name` or `.parent` for just the last or parent one); leave it where empty segments or non-path text matter.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PTH206"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
