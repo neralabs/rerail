@@ -1,0 +1,1 @@
+`rerail rules evidence` now counts a session that started before its window but was still active in it, with the prompts, corrections, commands and steers from the window. Before, `--days 1` left out a session that had run since the day before, however much it did that day.

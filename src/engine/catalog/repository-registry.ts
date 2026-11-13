@@ -5,8 +5,8 @@
  */
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, parse } from "node:path";
-import { and, eq, inArray, ne, sql } from "drizzle-orm";
+import { dirname, parse, resolve } from "node:path";
+import { and, eq, getTableColumns, inArray, ne, sql } from "drizzle-orm";
 import { physicalPath, storedPath, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
 import { gitExecutable, GitUnavailableError, runGit } from "../git.js";
@@ -334,12 +334,40 @@ function absorbAliasOwner(tx: Writer, key: RepositoryKey, alias: RepositoryKey):
   return [other.repositoryKey, ...other.aliases];
 }
 
+/**
+ * A recorded checkout and its row's rowid. SQLite gives a row it records a rowid above every row the table holds, so
+ * rowids keep the order checkouts were recorded in, whatever the clock said when each was.
+ */
+export interface RecordedCheckout extends CheckoutRecord {
+  readonly rowid: number;
+}
+
+/** The columns of a checkout row, and its rowid. */
+const recordedCheckoutColumns = { ...getTableColumns(checkouts), rowid: sql<number>`rowid` };
+
+/** A checkout row that contains another checkout, and how long the key of the folder it names is ({@link listedFolderKey}). */
+interface ContainingCheckout {
+  readonly row: RecordedCheckout;
+  readonly folderLength: number;
+}
+
+/**
+ * A checkout's containing checkouts, nearest first: the one whose folder's key is longer is nearer, since every folder
+ * that holds the checkout is one of the folders above it. A row recorded unresolved (a `.` segment, a trailing
+ * separator) counts as the folder it names, however long its spelling. Rows of one folder (two spellings, or letter
+ * case on Windows) go in the order they were recorded, by rowid, the order SQLite reads a repository's checkouts in: so
+ * the order never depends on the clock or on how a reader got its rows.
+ */
+function nearestFirst(containing: readonly ContainingCheckout[]): RecordedCheckout[] {
+  return [...containing].sort((left, right) => right.folderLength - left.folderLength || left.row.rowid - right.row.rowid).map(({ row }) => row);
+}
+
 /** The recorded checkouts of the same repository whose folder contains `checkout`, nearest first; never itself. */
-export function parentCheckouts(db: Reader, checkout: Pick<CheckoutContext, "checkoutPath" | "repositoryKey">): CheckoutRecord[] {
-  return db.select().from(checkouts)
+export function parentCheckouts(db: Reader, checkout: Pick<CheckoutContext, "checkoutPath" | "repositoryKey">): RecordedCheckout[] {
+  const rows = db.select(recordedCheckoutColumns).from(checkouts)
     .where(and(eq(checkouts.repositoryKey, checkout.repositoryKey), ne(checkouts.checkoutPath, checkout.checkoutPath))).all()
-    .filter(row => withinCheckout(row.checkoutPath, checkout.checkoutPath))
-    .sort((left, right) => right.checkoutPath.length - left.checkoutPath.length);
+    .filter(row => withinCheckout(row.checkoutPath, checkout.checkoutPath));
+  return nearestFirst(rows.map(row => ({ row, folderLength: listedFolderKey(row.checkoutPath).length })));
 }
 
 /**
@@ -350,11 +378,20 @@ export function checkoutStatus(db: Reader, checkout: CheckoutContext | undefined
   if (checkout === undefined) return { started: false, setUp: false, startedBy: "repository" };
   const repository = db.select({ started: repositories.started, configuredAt: repositories.configuredAt })
     .from(repositories).where(eq(repositories.repositoryKey, checkout.repositoryKey)).get();
+  const own = db.select({ started: checkouts.started }).from(checkouts).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).get()?.started ?? null;
+  return statusOf(repository, own, own === null ? parentCheckouts(db, checkout) : []);
+}
+
+/** The status a checkout's own on/off, its parents' (nearest first) and its repository's row give it. */
+function statusOf(
+  repository: { readonly started: boolean | null; readonly configuredAt: number | null } | undefined,
+  own: boolean | null,
+  parents: readonly Pick<CheckoutRecord, "started">[],
+): RepositoryStatus {
   const setUp = repository?.configuredAt != null;
-  const own = db.select({ started: checkouts.started }).from(checkouts).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).get()?.started;
-  if (own != null) return { started: own, setUp, startedBy: "checkout" };
-  const parent = parentCheckouts(db, checkout).find(row => row.started !== null);
-  if (parent?.started != null) return { started: parent.started, setUp, startedBy: "parent" };
+  if (own !== null) return { started: own, setUp, startedBy: "checkout" };
+  const parent = parents.find(row => row.started !== null)?.started;
+  if (parent != null) return { started: parent, setUp, startedBy: "parent" };
   return { started: repository?.started === true, setUp, startedBy: "repository" };
 }
 
@@ -383,18 +420,88 @@ export function nestedCheckouts(db: Reader, checkout: Pick<CheckoutContext, "che
 }
 
 export interface RepositoryListing extends RepositoryRecord {
-  readonly checkouts: readonly CheckoutRecord[];
+  readonly checkouts: readonly RecordedCheckout[];
 }
 
 /** Every repository Rerail knows, with its recorded checkouts, ordered by name. */
 export function listRepositories(db: Reader): RepositoryListing[] {
-  const byRepository = new Map<RepositoryKey, CheckoutRecord[]>();
-  for (const row of db.select().from(checkouts).orderBy(checkouts.checkoutPath).all()) {
+  const byRepository = new Map<RepositoryKey, RecordedCheckout[]>();
+  for (const row of db.select(recordedCheckoutColumns).from(checkouts).orderBy(checkouts.checkoutPath).all()) {
     byRepository.set(row.repositoryKey, [...(byRepository.get(row.repositoryKey) ?? []), row]);
   }
   return db.select().from(repositories).all()
     .map(repository => ({ ...recordOf(repository), checkouts: byRepository.get(repository.repositoryKey) ?? [] }))
     .sort((left, right) => left.displayName.localeCompare(right.displayName) || left.repositoryKey.localeCompare(right.repositoryKey));
+}
+
+/** A checkout of a listed repository as {@link listedCheckoutStates} reads it. */
+export interface ListedCheckoutState {
+  /** {@link checkoutStatus} of the checkout. */
+  readonly status: RepositoryStatus;
+  /** The nearest recorded checkout of the repository whose folder holds it ({@link parentCheckouts}' first); null when none does. */
+  readonly parentCheckoutPath: string | null;
+}
+
+/**
+ * A folder as {@link withinCheckout} compares it: resolved, as path.relative resolves both sides, so a trailing
+ * separator, a `.` segment or a share root without its separator names the folder it is in; and on Windows, where
+ * path.relative ignores letter case, lower-cased.
+ */
+function listedFolderKey(path: string): string {
+  return resolvedFolderKey(resolve(path));
+}
+
+/** {@link listedFolderKey} of a folder already resolved. */
+function resolvedFolderKey(folder: string): string {
+  return process.platform === "win32" ? folder.toLowerCase() : folder;
+}
+
+/** `path` resolved, and each folder above it, nearest first. */
+function folderAndAbove(path: string): string[] {
+  const resolved = resolve(path);
+  const folders = [resolved];
+  for (let folder = resolved; dirname(folder) !== folder; folder = dirname(folder)) folders.push(dirname(folder));
+  return folders;
+}
+
+/**
+ * {@link checkoutStatus} and the nearest parent of a checkout of `repository`, recorded or not, from its listing
+ * ({@link listRepositories}) alone: the listing's rows at the checkout's folder and at each folder above it, nearest
+ * first. It runs no statement, so a reader that asks after every checkout of the repository pays one read of the
+ * listing and each checkout's folder depth, not a few statements and a read of every checkout per checkout.
+ */
+export function listedCheckoutStates(repository: RepositoryListing): (checkoutPath: string) => ListedCheckoutState {
+  const byFolder = new Map<string, RecordedCheckout[]>();
+  for (const row of repository.checkouts) {
+    const key = listedFolderKey(row.checkoutPath);
+    byFolder.set(key, [...(byFolder.get(key) ?? []), row]);
+  }
+  return checkoutPath => {
+    const { own, parents } = listedRowsAt(byFolder, checkoutPath);
+    return { status: statusOf(repository, own, parents), parentCheckoutPath: parents[0]?.checkoutPath ?? null };
+  };
+}
+
+/**
+ * The rows of `byFolder` (a listing's rows by {@link listedFolderKey}) at `checkoutPath`'s folder and at each folder
+ * above it: the on/off of the row at `checkoutPath` itself, and the others as its parents, in parentCheckouts' order,
+ * so a folder recorded under two spellings gives both readers the same parent.
+ */
+function listedRowsAt(
+  byFolder: ReadonlyMap<string, readonly RecordedCheckout[]>,
+  checkoutPath: string,
+): { own: boolean | null; parents: RecordedCheckout[] } {
+  let own: boolean | null = null;
+  const parents: ContainingCheckout[] = [];
+  // folderAndAbove resolves each folder once; its key is that folder's, so each folder above is resolved once.
+  for (const folder of folderAndAbove(checkoutPath)) {
+    const key = resolvedFolderKey(folder);
+    for (const row of byFolder.get(key) ?? []) {
+      if (row.checkoutPath === checkoutPath) own = row.started;
+      else parents.push({ row, folderLength: key.length });
+    }
+  }
+  return { own, parents: nearestFirst(parents) };
 }
 
 /**

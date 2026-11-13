@@ -1,0 +1,1 @@
+With hundreds of worktrees, hooks no longer keep Rerail busy asking for the dashboard link: every event asked, steer or not, and each answer worked out every worktree's state. Now only a steer or a session start asks, and the dashboard reads every worktree's state at once.

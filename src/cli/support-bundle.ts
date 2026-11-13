@@ -29,15 +29,25 @@ import {
 } from "../engine/catalog/repository-registry.js";
 import { activeCoreVersion, loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { listRepositoryRules } from "../engine/catalog/rule-configuration.js";
+import {
+  contentStoreOverride,
+  isInMainContentStoreDirectory,
+  mainContentStoreDirectory,
+  NoContentStoreError,
+  type RerailBuild,
+  resolveRerailBuild,
+} from "../engine/native/rerail-build.js";
+import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { sensitiveByName } from "../engine/path-boundary.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
-import { CURRENT_LINK, defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { events, policySessionOwners, sessions } from "../engine/storage/schema.js";
 import {
   DAEMON_ACCESS_PARAM,
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
+  type DaemonLookup,
   lookupDaemon,
 } from "../runtime/daemon-control.js";
 import { workspaceStartState } from "../runtime/repository-start.js";
@@ -61,6 +71,11 @@ const MAX_AUDIT_ENTRIES = 100;
 const MAX_LOG_LINES = 200;
 const MAX_LOG_LINE_CHARACTERS = 2000;
 const MAX_LOG_BYTES = 1024 * 1024;
+/**
+ * How long the bundle waits for a daemon that is alive but missed its first 2 s health probe, as one does while an
+ * audit or a long garbage collection holds its one event loop.
+ */
+const BUSY_DAEMON_WAIT_MS = 10_000;
 
 export interface KnownValue {
   value: string;
@@ -156,6 +171,8 @@ export interface SupportBundle {
     version?: string;
     ui?: string;
     uptimeMs?: number;
+    /** How long the daemon took to answer its health probe, a first probe it missed included. */
+    answeredInMs?: number;
     engine?: { ok: boolean; version?: string; error?: string };
   };
   codingAgents: string[] | null;
@@ -221,28 +238,141 @@ function pathForms(value: string): string[] {
   return [...new Set([value, forward, backward, backward.replaceAll("\\", "\\\\"), forward.replaceAll("/", "\\/")])];
 }
 
-/** Takes what this computer knows out of `text`, longest value first so a path goes before a folder inside it, then what looks like a secret. */
-export function scrubText(text: string, { knownValues }: { knownValues: readonly KnownValue[] }): string {
-  let scrubbed = text;
-  const forms = knownValues.flatMap(literal => pathForms(literal.value).map(value => ({ ...literal, value })));
-  for (const { value, label, word, pathOnly } of forms.sort((left, right) => right.value.length - left.value.length)) {
-    // A home or checkout of `/`, as a container can have, would take every slash with it.
-    if (value.length < 2) continue;
-    // Windows paths ignore case, and a host can spell one with another drive letter case than Git does (VS Code's `d:\`).
-    const flags = /^[A-Za-z]:[\\/]/u.test(value) ? "giu" : "gu";
-    if (pathOnly === true) scrubbed = scrubbed.replace(new RegExp(`(?<=[\\\\/])${escapeRegExp(value)}(?![\\w-])`, flags), () => label);
-    else if (word === true) scrubbed = scrubbed.replace(new RegExp(`(?<![\\w-])${escapeRegExp(value)}(?![\\w-])`, flags), () => label);
-    else scrubbed = scrubbed.replace(new RegExp(escapeRegExp(value), flags), () => label);
-  }
-  for (const [pattern, replacement] of SECRET_PATTERNS) scrubbed = scrubbed.replace(pattern, replacement);
-  return scrubbed;
+/** Windows paths ignore case, and a host can spell one with another drive letter case than Git does (VS Code's `d:\`). */
+const WINDOWS_PATH = /^[A-Za-z]:[\\/]/u;
+
+/** One spelling of a known value ({@link pathForms}), as the scrub replaces it. */
+interface KnownForm extends KnownValue {
+  /** How it is found when not as it is spelled: a Windows path in any case, a user name only as a whole word, or only inside a path. */
+  pattern: RegExp | undefined;
+  /** Its place in the order forms are replaced in: longest first, so a path goes before a folder inside it. */
+  rank: number;
 }
 
-function scrubValue<T>(value: T, knownValues: readonly KnownValue[]): T {
-  if (typeof value === "string") return scrubText(value, { knownValues }) as T;
-  if (Array.isArray(value)) return value.map(item => scrubValue(item as unknown, knownValues)) as T;
+function knownPattern({ value, word, pathOnly }: KnownValue): RegExp | undefined {
+  const flags = WINDOWS_PATH.test(value) ? "giu" : "gu";
+  if (pathOnly === true) return new RegExp(`(?<=[\\\\/])${escapeRegExp(value)}(?![\\w-])`, flags);
+  if (word === true) return new RegExp(`(?<![\\w-])${escapeRegExp(value)}(?![\\w-])`, flags);
+  return flags === "gu" ? undefined : new RegExp(escapeRegExp(value), flags);
+}
+
+function knownForms(knownValues: readonly KnownValue[]): KnownForm[] {
+  return knownValues
+    .flatMap(literal => pathForms(literal.value).map(value => ({ ...literal, value })))
+    // A home or checkout of `/`, as a container can have, would take every slash with it.
+    .filter(({ value }) => value.length >= 2)
+    .sort((left, right) => right.value.length - left.value.length)
+    .map((form, rank) => ({ ...form, pattern: knownPattern(form), rank }));
+}
+
+function replaceForm(text: string, { value, label, pattern }: KnownForm): string {
+  return pattern === undefined ? text.replaceAll(value, () => label) : text.replace(pattern, () => label);
+}
+
+/**
+ * How a group of forms is found in a text: the flags of the pattern that finds them, and a key that two spellings of
+ * one form found at the same place share, one character of key for each character of text.
+ */
+interface Spelling {
+  flags: string;
+  key: (text: string) => string;
+}
+
+const AS_SPELLED: Spelling = { flags: "gu", key: text => text };
+
+/**
+ * A Windows path, in any case. Its key gives a printable ASCII character its lower case, and gives every other
+ * character, and `k` and `s` (which the Kelvin sign and the long s match in any case), one shared mark: two characters
+ * that match in any case get the same key, and so do some that do not, which only adds forms that then replace nothing.
+ */
+const IN_ANY_CASE: Spelling = { flags: "giu", key: text => text.replace(/[^\x20-\x7e]|[KSks]/gu, "\uffff").toLowerCase() };
+
+/**
+ * The forms a replacement can bring into a text that did not hold them. A replacement leaves the text's own characters
+ * and the characters of labels, which are never empty, and a label's inner characters touch only labels' characters.
+ * So a form that a replacement brings in holds the first or last character of a label, or is made of labels'
+ * characters alone: a user or host name at most, or a short Windows path (`RUNNER~1`). Both are judged by `key`. The
+ * labels of every group count, since a label one group's replacement puts in can complete a form of the other group:
+ * a checkout at `C:\Users\alice\src\app` becomes `<checkout>`, which holds a host named `checkout`.
+ */
+function formsLabelsCanMake(forms: readonly KnownForm[], allLabels: readonly string[], key: Spelling["key"]): KnownForm[] {
+  const labels = [...new Set(allLabels.map(key))];
+  if (labels.includes("")) return [...forms];
+  const edges = new Set(labels.map(label => [...label]).flatMap(characters => [characters[0], characters.at(-1)]));
+  const inLabels = new Set(labels.join(""));
+  return forms.filter(({ value }) => [...key(value)].some(character => edges.has(character)) || [...key(value)].every(character => inLabels.has(character)));
+}
+
+/** The forms whose key `found` starts with, its own included. */
+function formsStarting(found: string, byKey: ReadonlyMap<string, readonly KnownForm[]>): KnownForm[] {
+  const starting: KnownForm[] = [];
+  for (let length = 1; length <= found.length; length += 1) starting.push(...(byKey.get(found.slice(0, length)) ?? []));
+  return starting;
+}
+
+/** The place after the character at `index`: a match starts on a character, and one outside the BMP is two units. */
+function nextPlace(text: string, index: number): number {
+  return index + ((text.codePointAt(index) ?? 0) > 0xffff ? 2 : 1);
+}
+
+/**
+ * The forms of a group a text holds. One pattern of every form, longest first, is tried at each place in the text,
+ * inside a form it found too, and finds the longest form there; the shorter forms found at the same place are the ones
+ * whose key that form's key starts with. Forms a replacement can bring in with any of `labels`, every group's
+ * ({@link formsLabelsCanMake}), are always in.
+ */
+function formFinder(forms: readonly KnownForm[], labels: readonly string[], { flags, key }: Spelling): (text: string) => KnownForm[] {
+  const byKey = Map.groupBy(forms, form => key(form.value));
+  if (byKey.size === 0) return () => [];
+  const anywhere = new RegExp([...new Set(forms.map(form => form.value))].map(escapeRegExp).join("|"), flags);
+  const always = formsLabelsCanMake(forms, labels, key);
+  const startingWith = new Map<string, KnownForm[]>();
+  return text => {
+    const found = new Set(always);
+    anywhere.lastIndex = 0;
+    for (let match = anywhere.exec(text); match !== null; match = anywhere.exec(text)) {
+      const starting = startingWith.get(match[0]) ?? formsStarting(key(match[0]), byKey);
+      startingWith.set(match[0], starting);
+      for (const form of starting) found.add(form);
+      anywhere.lastIndex = nextPlace(text, match.index);
+    }
+    return [...found];
+  };
+}
+
+/**
+ * The scrub of `knownValues`, built once for every text it is given. It replaces as a scrub of one value at a time
+ * does: each form of each value in turn, longest first, over the whole text, so a path goes before a folder inside it
+ * and a value that overlaps another still goes. But a text gets only the forms it holds, which one pattern per group
+ * finds in one read (Windows paths in any case, the rest as spelled): a bundle holds thousands of texts, and a database
+ * can record hundreds of checkouts. Then what looks like a secret goes.
+ */
+function scrubFor(knownValues: readonly KnownValue[]): (text: string) => string {
+  const forms = knownForms(knownValues);
+  const labels = forms.map(form => form.label);
+  const finders = [
+    formFinder(forms.filter(form => WINDOWS_PATH.test(form.value)), labels, IN_ANY_CASE),
+    formFinder(forms.filter(form => !WINDOWS_PATH.test(form.value)), labels, AS_SPELLED),
+  ];
+  return text => {
+    let scrubbed = text;
+    const found = finders.flatMap(formsIn => formsIn(text)).sort((left, right) => left.rank - right.rank);
+    for (const form of found) scrubbed = replaceForm(scrubbed, form);
+    for (const [pattern, replacement] of SECRET_PATTERNS) scrubbed = scrubbed.replace(pattern, replacement);
+    return scrubbed;
+  };
+}
+
+/** Takes what this computer knows out of `text`, then what looks like a secret ({@link scrubFor}). */
+export function scrubText(text: string, { knownValues }: { knownValues: readonly KnownValue[] }): string {
+  return scrubFor(knownValues)(text);
+}
+
+function scrubValue<T>(value: T, scrub: (text: string) => string): T {
+  if (typeof value === "string") return scrub(value) as T;
+  if (Array.isArray(value)) return value.map(item => scrubValue(item as unknown, scrub)) as T;
   if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [scrubText(key, { knownValues }), scrubValue(item as unknown, knownValues)])) as T;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [scrub(key), scrubValue(item as unknown, scrub)])) as T;
 }
 
 function readQuietly(path: string): string | undefined {
@@ -466,8 +596,32 @@ function readLogTail(home: string): { lines: string[]; omitted: number } {
   }
 }
 
-async function readDaemon(home: string): Promise<SupportBundle["daemon"]> {
-  const lookup = await lookupDaemon(home);
+/**
+ * The daemon recorded in `home` as `lookupDaemon` finds it, with a busy daemon waited for: one that is alive but missed
+ * the 2 s probe is looked up once more, with up to `busyWaitMs` for its answer. That lookup reads `daemon.json` again,
+ * so a daemon that took the busy one's place meanwhile is the one reported. One 2 s probe called the same daemon running
+ * in one bundle and unresponsive in the next. `whileWaiting` gets what the first lookup found before the wait starts.
+ */
+async function patientDaemon(home: string, busyWaitMs: number, whileWaiting: (first: SupportBundle["daemon"]) => void, problems: string[]): Promise<SupportBundle["daemon"]> {
+  const started = performance.now();
+  const first = await readDaemon(lookupDaemon(home), started, problems);
+  if (first.status !== "unresponsive") return first;
+  whileWaiting(first);
+  // `undefined`: this machine, lookupDaemon's own default.
+  return await readDaemon(lookupDaemon(home, undefined, busyWaitMs), started, problems);
+}
+
+/** The daemon section from one lookup started at `started`; one that fails gives `unknown` and says why in `problems`. */
+async function readDaemon(pending: Promise<DaemonLookup>, started: number, problems: string[]): Promise<SupportBundle["daemon"]> {
+  try {
+    return daemonSection(await pending, started);
+  } catch (error) {
+    problems.push(`daemon: ${error instanceof Error ? error.message : String(error)}`);
+    return { status: "unknown" };
+  }
+}
+
+function daemonSection(lookup: DaemonLookup, started: number): SupportBundle["daemon"] {
   if (lookup.status !== "running") return { status: lookup.status };
   const { version, ui, uptimeMs, native } = lookup.health;
   return {
@@ -475,8 +629,40 @@ async function readDaemon(home: string): Promise<SupportBundle["daemon"]> {
     version,
     ui,
     uptimeMs,
+    answeredInMs: Math.round(performance.now() - started),
     engine: native.ok ? { ok: true, version: native.kernelVersion } : { ok: false, error: native.error },
   };
+}
+
+/**
+ * The build the package at `packageRoot` is, or an error that says why it has no content store its rules can open. The
+ * managed installation is a version under the home's `versions/`, which `current` usually points at; `current` can also
+ * point at a checkout or another package, and one that is neither has no store of its own. `RERAIL_CONTENT_STORE_PATH`
+ * names a store for any build, as `contentStorePath` takes it first, except a file in the machine-wide store directory:
+ * `assertContentStoreOwner` lets only the main daemon open that, so there it counts for the managed installation alone.
+ * A package folder that cannot be read is an error with or without that store.
+ */
+function installBuild(packageRoot: string, home: string): RerailBuild | undefined {
+  const override = contentStoreOverride();
+  const build = buildWithStore(packageRoot, home, override !== undefined);
+  if (override === undefined || build?.kind === "main" || !isInMainContentStoreDirectory(override)) return build;
+  throw new Error(
+    `RERAIL_CONTENT_STORE_PATH names ${override}, in the machine-wide content store directory ` +
+      `${mainContentStoreDirectory()}, which only the main Rerail daemon opens`,
+  );
+}
+
+/**
+ * The build the package at `packageRoot` is ({@link resolveRerailBuild}); undefined for a package with no content store
+ * of its own when `storeNamed`, since the store RERAIL_CONTENT_STORE_PATH names serves it. Any other error throws.
+ */
+function buildWithStore(packageRoot: string, home: string, storeNamed: boolean): RerailBuild | undefined {
+  try {
+    return resolveRerailBuild(packageRoot, { ...process.env, RERAIL_HOME: home });
+  } catch (error) {
+    if (storeNamed && error instanceof NoContentStoreError) return undefined;
+    throw error;
+  }
 }
 
 function emptyRepository(state: string, git: boolean): SupportBundle["repository"] {
@@ -489,13 +675,30 @@ interface CollectInput {
   databasePath: string;
   sessionId: string | undefined;
   packageVersion: string;
+  /** The package this command runs from; the bundle says whether it is the managed installation. */
+  packageRoot: string;
+  /** How long to wait for a busy daemon (`patientDaemon`); `BUSY_DAEMON_WAIT_MS` unless a test shortens it. */
+  busyDaemonWaitMs?: number;
+  /**
+   * Given the bundle as it stands, with the daemon unresponsive, before the wait for a busy daemon starts: the command
+   * writes it, so a caller that stops the command during the wait still has the bundle it had before there was a wait.
+   */
+  whileWaiting?: (draft: CollectedBundle) => void;
+}
+
+/** A bundle, scrubbed, and the ids of the rules the person's team wrote, which the summary names. */
+interface CollectedBundle {
+  bundle: SupportBundle;
+  ownRules: string[];
 }
 
 /**
  * Everything but the session is read section by section, and a section that fails says why in `problems`: the bundle
- * matters most when Rerail cannot start, its database is damaged or set-up never finished.
+ * matters most when Rerail cannot start, its database is damaged or set-up never finished. The daemon is read last, as
+ * it can be waited for.
  */
-export async function collectSupportBundle({ repo, home, databasePath, sessionId, packageVersion }: CollectInput): Promise<{ bundle: SupportBundle; ownRules: string[] }> {
+export async function collectSupportBundle(input: CollectInput): Promise<CollectedBundle> {
+  const { repo, home, databasePath, sessionId, packageVersion, packageRoot, busyDaemonWaitMs = BUSY_DAEMON_WAIT_MS } = input;
   const problems: string[] = [];
   const attempt = <T>(section: string, read: () => T, fallback: T): T => {
     try {
@@ -524,31 +727,35 @@ export async function collectSupportBundle({ repo, home, databasePath, sessionId
   }
 
   const { lines, omitted } = attempt("daemon log", () => readLogTail(home), { lines: [], omitted: 0 });
-  const daemon = await readDaemon(home).catch((error: unknown) => {
-    problems.push(`daemon: ${error instanceof Error ? error.message : String(error)}`);
-    return { status: "unknown" };
-  });
-  const bundle: SupportBundle = {
-    format: SUPPORT_BUNDLE_FORMAT,
-    createdAt: Date.now(),
-    leftOut: LEFT_OUT,
-    rerail: {
-      version: packageVersion,
-      activeVersion: attempt("active version", () => activeCoreVersion(home), null),
-      managedInstall: existsSync(join(home, CURRENT_LINK)),
-      installedPacks: [...(catalog?.packs.values() ?? [])].map(pack => ({ id: pack.id, version: pack.version })),
-      skippedPacks: (catalog?.skipped ?? []).map(pack => ({ package: pack.packageName, version: pack.version, reason: pack.reason })),
-    },
-    platform: { os: platform(), arch: arch(), release: release(), node: process.versions.node },
-    daemon,
-    codingAgents: seenCodingAgents(home) ?? null,
-    repository,
-    session,
-    daemonLog: lines,
-    daemonLogOmittedLines: omitted,
-    problems,
+  const build = attempt("install", () => installBuild(packageRoot, home), undefined);
+  const rerail: SupportBundle["rerail"] = {
+    version: packageVersion,
+    activeVersion: attempt("active version", () => activeCoreVersion(home), null),
+    managedInstall: build?.kind === "main",
+    installedPacks: [...(catalog?.packs.values() ?? [])].map(pack => ({ id: pack.id, version: pack.version })),
+    skippedPacks: (catalog?.skipped ?? []).map(pack => ({ package: pack.packageName, version: pack.version, reason: pack.reason })),
   };
-  return { bundle: scrubValue(bundle, knownValues), ownRules: scrubValue(ownRules, knownValues) };
+  const codingAgents = seenCodingAgents(home) ?? null;
+  const createdAt = Date.now();
+  const scrub = scrubFor(knownValues);
+  const collected = (daemon: SupportBundle["daemon"]): CollectedBundle => {
+    const bundle: SupportBundle = {
+      format: SUPPORT_BUNDLE_FORMAT,
+      createdAt,
+      leftOut: LEFT_OUT,
+      rerail,
+      platform: { os: platform(), arch: arch(), release: release(), node: process.versions.node },
+      daemon,
+      codingAgents,
+      repository,
+      session,
+      daemonLog: lines,
+      daemonLogOmittedLines: omitted,
+      problems,
+    };
+    return { bundle: scrubValue(bundle, scrub), ownRules: scrubValue(ownRules, scrub) };
+  };
+  return collected(await patientDaemon(home, busyDaemonWaitMs, first => input.whileWaiting?.(collected(first)), problems));
 }
 
 /** Reads one section of the bundle; a section that throws gives `fallback` and says why in `problems`. */
@@ -652,6 +859,12 @@ function summaryText(summary: SupportBundleSummary): string {
   ].join("\n");
 }
 
+/** What the person or agent is told while the bundle waits for a busy daemon: the file is already there. */
+function waitingText(output: string): string {
+  return `● The Rerail daemon is alive but has not answered yet. ${output} already holds a bundle that says so; ` +
+    `waiting up to ${BUSY_DAEMON_WAIT_MS / 1000} s more for a busy daemon, then writing it again.\n`;
+}
+
 function writeBundle(output: string, bundle: SupportBundle): void {
   mkdirSync(dirname(output), { recursive: true, mode: 0o700 });
   replaceFileSync(output, `${JSON.stringify(bundle, null, 2)}\n`, { mode: 0o600 });
@@ -659,6 +872,8 @@ function writeBundle(output: string, bundle: SupportBundle): void {
 
 export interface SupportBundleCommandIo {
   packageVersion: string;
+  /** The package this command runs from: this one's unless a test names another. */
+  packageRoot?: string;
   stdout?: Pick<NodeJS.WriteStream, "write">;
   stderr?: Pick<NodeJS.WriteStream, "write">;
 }
@@ -671,6 +886,7 @@ export async function runSupportBundleCommand(args: readonly string[], usage: ()
     { flags: ["--json"], options: ["--repo", "--session", "--output"] },
     argument => `Unknown support-bundle option: ${argument}\n\n${usage()}`,
   );
+  const stderr = io.stderr ?? process.stderr;
   const output = resolve(options.get("--output") ?? join(homedir(), DEFAULT_OUTPUT_NAME));
   try {
     const { bundle, ownRules } = await collectSupportBundle({
@@ -679,6 +895,11 @@ export async function runSupportBundleCommand(args: readonly string[], usage: ()
       databasePath: defaultRerailDatabasePath(),
       sessionId: options.get("--session"),
       packageVersion: io.packageVersion,
+      packageRoot: io.packageRoot ?? PACKAGE_ROOT,
+      whileWaiting: draft => {
+        writeBundle(output, draft.bundle);
+        stderr.write(waitingText(output));
+      },
     });
     writeBundle(output, bundle);
     const summary = summaryOf(output, bundle, ownRules);
@@ -686,7 +907,7 @@ export async function runSupportBundleCommand(args: readonly string[], usage: ()
     return 0;
   } catch (error) {
     if (!(error instanceof SupportBundleError)) throw error;
-    (io.stderr ?? process.stderr).write(`● ${error.message}\n`);
+    stderr.write(`● ${error.message}\n`);
     return 1;
   }
 }
