@@ -161,7 +161,7 @@ describe("the daemon's move of audit rule provenance", () => {
     // A VACUUM that holds the write lock 12 s, past the 5 s any Rerail writer waits for it: the VACUUM after 4,000
     // audits held it 8.9 s on a loaded Windows machine.
     const held = join(home, "vacuum-held");
-    const restore = slowVacuumNext(held, 12_000);
+    const restore = slowVacuumNext({ held, holdMs: 12_000 });
     let daemon: RerailDaemon;
     try {
       daemon = await RerailDaemon.start({

@@ -4,8 +4,9 @@
  * that lock on its own thread for up to its 5 s busy timeout (`database.ts`), and the daemon's stores wait on the thread
  * that answers hooks: the `VACUUM` after 4,000 audits took 8.9 s on a loaded Windows machine. better-sqlite3 cannot stop
  * a statement once it runs, so the `VACUUM` runs in a process of its own (`vacuum-process.ts`), which this ends once the
- * watched thread has not answered for `GIVE_WAY_MS`: SQLite drops a `VACUUM` that has not committed, the lock is free,
- * this cuts the WAL back from the pages that `VACUUM` wrote (`cutWal`), and the write that waited goes through. Each
+ * watched thread has not answered for `GIVE_WAY_MS` while the `VACUUM` has not committed: SQLite drops a `VACUUM` that
+ * has not committed, the lock is free, this cuts the WAL back from the pages that `VACUUM` wrote (`cutWal`), and the
+ * write that waited goes through. A `VACUUM` that has committed holds the lock no more and runs to its end. Each
  * attempt starts once no other connection has committed to the file for a while, twice as long after each one that gave
  * way, so a busy hour costs a few short attempts, and the `VACUUM` runs in the first quiet moment long enough for it.
  */
@@ -97,7 +98,7 @@ export async function vacuumGivingWay(
 ): Promise<void> {
   for (let quiet = FIRST_QUIET_MS; ; quiet = longerQuiet(quiet)) {
     if (!(await quietFor(client, quiet, signal))) throw new VacuumStopped();
-    // An attempt ended just after it committed counts as one that ran.
+    // A file with no free page left has nothing to give back.
     if (pragmaNumber(client, "freelist_count") === 0) return;
     if ((await vacuumOnce(client, path, { watch, signal })) === "vacuumed") return;
     if (signal?.aborted === true) throw new VacuumStopped();
@@ -127,30 +128,61 @@ async function quietFor(client: Database.Database, quietMs: number, signal: Abor
 }
 
 /**
- * One attempt in a process of its own, which a stall of the watched thread or a stop ends. Once it ends that process,
- * it cuts the WAL back on `client` (`cutWal`) before the write that waited takes the lock.
+ * One attempt in a process of its own, which a stop ends, and a stall of the watched thread too until the `VACUUM` has
+ * committed (`attemptEnd`). Ended before it committed, it cuts the WAL back on `client` (`cutWal`) before the write that
+ * waited takes the lock.
  */
 async function vacuumOnce(
   client: Database.Database,
   path: string,
   { watch, signal }: { readonly watch: ThreadWatch; readonly signal: AbortSignal | undefined },
 ): Promise<Attempt> {
+  const committed = committedSince(client);
   const child = startVacuumProcess(path);
-  let ended = false;
-  const end = (): void => {
-    if (ended) return;
-    ended = true;
-    child.kill("SIGKILL");
-    cutWal(client);
-  };
-  const unwatch = watch(end);
-  const unlisten = onAbort(signal, end);
+  const attempt = attemptEnd(child, client, committed);
+  const unwatch = watch(() => attempt.end(false));
+  const unlisten = onAbort(signal, () => attempt.end(true));
   try {
-    return await attemptOf(child, () => ended);
+    const { code, errors } = await exitOf(child);
+    const outcome = attemptOf(committed(), attempt.ended(), code);
+    if (outcome === undefined) throw new Error(errors || `the VACUUM process exited with code ${code}`);
+    return outcome;
   } finally {
     unwatch();
     unlisten();
   }
+}
+
+/**
+ * Whether a `VACUUM` has committed since this was called. It gives the free pages back, so the file's page count falls,
+ * which no other write does; a `VACUUM` that has not committed leaves it as it was.
+ */
+function committedSince(client: Database.Database): () => boolean {
+  const pages = pragmaNumber(client, "page_count");
+  return () => pragmaNumber(client, "page_count") < pages;
+}
+
+/**
+ * What ends an attempt early, and whether it did. A stop always ends it. A stall of the watched thread ends it only
+ * while the `VACUUM` has not committed: once it has, it holds the write lock no more, its process only writes the WAL
+ * into the file without that lock, and whatever the thread waits for is not the `VACUUM`. Ending kills the process,
+ * then cuts the WAL back (`cutWal`).
+ */
+function attemptEnd(
+  child: ChildProcess,
+  client: Database.Database,
+  committed: () => boolean,
+): { readonly end: (stopping: boolean) => void; readonly ended: () => boolean } {
+  let ended = false;
+  return {
+    end: stopping => {
+      if (ended || (!stopping && committed())) return;
+      ended = true;
+      child.kill("SIGKILL");
+      cutWal(client, committed);
+    },
+    ended: () => ended,
+  };
 }
 
 /**
@@ -174,23 +206,20 @@ function onAbort(signal: AbortSignal | undefined, run: () => void): () => void {
   return () => signal.removeEventListener("abort", run);
 }
 
-/** How `child` ended: given way once `ended` says this process ended it, else by its exit code and stderr. */
-function attemptOf(child: ChildProcess, ended: () => boolean): Promise<Attempt> {
+/** How `child` ended: its exit code, and what it wrote to stderr. */
+function exitOf(child: ChildProcess): Promise<{ code: number | null; errors: string }> {
   const errors: Buffer[] = [];
   child.stderr?.on("data", (chunk: Buffer) => errors.push(chunk));
   return new Promise((resolve, reject) => {
     child.once("error", reject);
-    child.once("close", (code: number | null) => {
-      const attempt = attemptByExit(ended(), code);
-      if (attempt !== undefined) resolve(attempt);
-      else reject(new Error(Buffer.concat(errors).toString().trim() || `the VACUUM process exited with code ${code}`));
-    });
+    child.once("close", (code: number | null) => resolve({ code, errors: Buffer.concat(errors).toString().trim() }));
   });
 }
 
-function attemptByExit(ended: boolean, code: number | null): Attempt | undefined {
+/** An attempt by whether its `VACUUM` committed, whether a stall or stop ended it, and its process's exit code. */
+function attemptOf(committed: boolean, ended: boolean, code: number | null): Attempt | undefined {
+  if (committed || code === 0) return "vacuumed";
   if (ended) return "gave-way";
-  if (code === 0) return "vacuumed";
   return code === BUSY_EXIT ? "busy" : undefined;
 }
 
@@ -200,21 +229,30 @@ function attemptByExit(ended: boolean, code: number | null): Attempt | undefined
  * wrote in the WAL, still unwritten to disk, and the next commit's sync writes them all out first: 2 s after a `VACUUM`
  * of 1 GB in use, on the daemon's thread when the write that waited is the daemon's. Truncating drops them unwritten.
  * Taking the lock within a millisecond of its release, this beats that write, whose busy handler tries again every
- * 100 ms; when it loses, that commit writes the pages out, as before.
+ * 100 ms; when it loses, that commit writes the pages out, as before. It never truncates once the `VACUUM` turns out to
+ * have committed: the WAL then holds the rewritten file, which a TRUNCATE checkpoint would copy into the database file
+ * while it holds the write lock. A PASSIVE checkpoint copies it instead, holding no write lock, so no other
+ * connection's commit makes its own checkpoint copy it on its thread.
  */
-function cutWal(client: Database.Database): void {
+function cutWal(client: Database.Database, committed: () => boolean): void {
   const until = performance.now() + CUT_WAL_MS;
   const pause = new Int32Array(new SharedArrayBuffer(4));
-  while (!walCut(client) && performance.now() < until) Atomics.wait(pause, 0, 0, 1);
+  while (!committed() && !walCut(client) && performance.now() < until) Atomics.wait(pause, 0, 0, 1);
+  if (committed()) checkpointQuietly(client, "PASSIVE");
 }
 
 /** One TRUNCATE checkpoint: whether it emptied the WAL, or failed for a reason a retry does not fix. */
 function walCut(client: Database.Database): boolean {
+  return checkpointQuietly(client, "TRUNCATE");
+}
+
+/** One checkpoint in `mode`: whether no other connection kept it from finishing; true when it failed otherwise. */
+function checkpointQuietly(client: Database.Database, mode: "PASSIVE" | "TRUNCATE"): boolean {
   try {
-    const [checkpoint] = client.pragma("wal_checkpoint(TRUNCATE)") as { busy: number }[];
+    const [checkpoint] = client.pragma(`wal_checkpoint(${mode})`) as { busy: number }[];
     return checkpoint?.busy === 0;
   } catch {
-    // Not another connection in the way (that reports busy): the checkpoint after the next attempt empties the WAL.
+    // Not another connection in the way (that reports busy): the checkpoint after the move empties the WAL.
     return true;
   }
 }
