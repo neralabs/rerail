@@ -52,11 +52,17 @@ struct Language<'a> {
     defs: Vec<&'a UtilDef<'a>>,
     ids: UtilIds<'a>,
     indices: HashMap<&'a str, usize>,
-    /// Each utility's id and whether it has parameters, which every table of the language names.
+    /// What every table of the language shares, once a table needs it; `None` where the origins
+    /// cannot be computed.
+    common: OnceCell<Option<Common>>,
+}
+
+/// What a language's shared tables share (`UtilTable::sharing`): each utility's id, whether it has
+/// parameters, and its `UtilOrigin`.
+struct Common {
     names: Arc<[String]>,
     framed: Arc<[bool]>,
-    /// Each utility's `UtilOrigin`, once a table needs them; `None` where they cannot be computed.
-    origins: OnceCell<Option<Arc<[Option<UtilOrigin>]>>>,
+    origins: Arc<[Option<UtilOrigin>]>,
 }
 
 /// A shared table and what compiling each utility in it added to the queries that reach it.
@@ -125,9 +131,7 @@ impl<'a> SharedTables<'a> {
                         .enumerate()
                         .map(|(index, id)| (id.as_str(), index))
                         .collect(),
-                    names: utils.keys().cloned().collect(),
-                    framed: utils.values().map(|util| !util.params.is_empty()).collect(),
-                    origins: OnceCell::new(),
+                    common: OnceCell::new(),
                 };
                 (language.language, language)
             })
@@ -193,20 +197,28 @@ impl Language<'_> {
     /// An empty table of the language's shared utilities; `None` where their origins cannot be
     /// computed.
     fn table(&self) -> Option<Table> {
-        let origins = self
-            .origins
-            .get_or_init(|| {
-                let origins = util_origins(self.utils, self.language).ok()?;
-                Some(origins.into_iter().map(Some).collect())
-            })
-            .clone()?;
+        let common = self.common.get_or_init(|| self.collect_common()).as_ref()?;
         Some(Table {
             table: Arc::new(UtilTable::sharing(
-                Arc::clone(&self.names),
-                Arc::clone(&self.framed),
-                origins,
+                Arc::clone(&common.names),
+                Arc::clone(&common.framed),
+                Arc::clone(&common.origins),
             )),
             added: AddedByIndex::default(),
+        })
+    }
+
+    /// What the language's tables share; `None` where the origins cannot be computed.
+    fn collect_common(&self) -> Option<Common> {
+        let origins = util_origins(self.utils, self.language).ok()?;
+        Some(Common {
+            names: self.utils.keys().cloned().collect(),
+            framed: self
+                .defs
+                .iter()
+                .map(|util| !util.params.is_empty())
+                .collect(),
+            origins: origins.into_iter().map(Some).collect(),
         })
     }
 }

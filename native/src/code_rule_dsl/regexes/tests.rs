@@ -6,24 +6,48 @@ use crate::code_rule_dsl::test_support::{
 };
 use serde_json::{Value, json};
 
-// Each test writes patterns no other test writes: tests on other threads compile documents and
-// drop rules, and each compilation and each rule that drops sweeps the table.
+// Each test writes patterns no other test writes, and lets go of its handles on its own thread,
+// which compiles nothing then unless the test says so.
 
-fn regex(pattern: &str) -> Arc<regex::Regex> {
-    Regex::new(pattern).expect("the pattern compiles").0
+fn shared(regex: &Regex) -> &Arc<regex::Regex> {
+    &regex.0
+}
+
+fn regex(pattern: &str) -> Regex {
+    Regex::new(pattern).expect("the pattern compiles")
 }
 
 #[test]
-fn every_holder_of_a_pattern_holds_one_regex_until_a_sweep_finds_none() {
+fn every_holder_of_a_pattern_holds_one_regex_until_none_does() {
     let held = regex("^regexes-held$");
-    assert!(Arc::ptr_eq(&held, &regex("^regexes-held$")));
-    assert!(!Arc::ptr_eq(&held, &regex("^regexes-other$")));
+    assert!(Arc::ptr_eq(shared(&held), shared(&regex("^regexes-held$"))));
+    assert!(!Arc::ptr_eq(
+        shared(&held),
+        shared(&regex("^regexes-other$"))
+    ));
+    assert!(!TABLE.read().contains_key("^regexes-other$"));
     assert!(Regex::new("(").is_err() && Regex::new("(").is_err());
-    sweep();
-    assert!(Arc::ptr_eq(&held, &regex("^regexes-held$")));
-    let gone = Arc::downgrade(&held);
+    let copy = held.clone();
+    let gone = Arc::downgrade(shared(&held));
     drop(held);
-    sweep();
+    assert!(gone.upgrade().is_some());
+    drop(copy);
+    assert!(gone.upgrade().is_none());
+    assert!(!TABLE.read().contains_key("^regexes-held$"));
+}
+
+#[test]
+fn a_compiling_thread_keeps_the_regexes_it_lets_go_of_until_the_compilation_ends() {
+    let compilation = compiling();
+    let gone = Arc::downgrade(shared(&regex("^regexes-validated$")));
+    let taken = regex("^regexes-validated$");
+    assert!(
+        gone.upgrade()
+            .is_some_and(|kept| Arc::ptr_eq(&kept, shared(&taken)))
+    );
+    drop(taken);
+    assert!(gone.upgrade().is_some());
+    drop(compilation);
     assert!(gone.upgrade().is_none());
 }
 
@@ -35,7 +59,7 @@ fn regex_of(rule: &CompiledCodeRuleDsl) -> Arc<regex::Regex> {
     terms
         .iter()
         .find_map(|term| match term {
-            AstMatcher::Regex(regex) => Some(Arc::clone(&regex.0)),
+            AstMatcher::Regex(regex) => Some(Arc::clone(shared(regex))),
             _ => None,
         })
         .expect("a regex term")
