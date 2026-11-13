@@ -330,17 +330,18 @@ describe("Git reads and their time limit", () => {
     expect(endProcessTree).not.toHaveBeenCalled();
   }, 30_000);
 
-  it("reads to its end a listing that Git could print only once the stalled event loop read it, past the time limit on the clock", async () => {
+  it("ends a read whose Git still prints at its first look past the time limit on the clock, and answers that it ran late", async () => {
     const root = await repository({ "a.py": "print(1)\n" });
     // About 300 KB of paths, more than the output pipe holds on Linux and Windows: Git waits for the event loop to read
-    // before it prints the rest.
+    // before it prints the rest, so it is still printing after the stall.
     const names = Array.from({ length: 3_000 }, (_, index) => `${"x".repeat(96)}${String(index).padStart(4, "0")}.py`);
     await Promise.all(names.map(name => writeFile(join(root, name), "")));
     const read = gitModifiedOrUntrackedPaths(root);
     clockAhead(10_000);
-    // The read's first look after the stall finds it past the limit on the clock, with output still coming.
+    // The read's first look after the stall finds it past the limit on the clock, with output still coming: it ends
+    // there, as execFile's timeout ended it, and a walk asks the listing once more off its path.
     stallSoon(1_500);
-    expect((await read)?.length).toBe(3_000);
+    await expect(read).resolves.toBeUndefined();
   }, 30_000);
 });
 
