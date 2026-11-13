@@ -291,7 +291,7 @@ type Named = (String, String, usize, usize, usize);
 
 /// The engine's tree of `src`, by names, and whether it holds an `ERROR`.
 fn engine(src: &str) -> (Vec<Named>, bool) {
-    let tape = rr::tape(src);
+    let tape = rr::engine_tape(src);
     let mut size = vec![1usize; tape.len()];
     for i in (0..tape.len()).rev() {
         if let Some(p) = tape[i].parent {

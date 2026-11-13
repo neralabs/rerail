@@ -1283,7 +1283,7 @@ impl TapeImage {
 
     /// The tape of a `.rr` file: the tree `logic::rr::syntax` builds as it reads the statements, its comments as
     /// extras and each statement that does not parse an ERROR leaf (decision 0061).
-    pub(super) fn encode_rr(grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
+    pub fn encode_rr(grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
         checked(budget)?;
         if grammar.lang != GrammarDialect::Rr {
             return Err("only a .rr file is encoded from its rule tree".into());
@@ -1291,20 +1291,22 @@ impl TapeImage {
         if source.len() > u32::MAX as usize {
             return Err("source exceeds tape range".into());
         }
+        // The lean parser's rows, packed as a tree's nodes are, until a parser writes the tape's columns
+        // itself (O-bitlex-writes-tape).
         let nodes = rerail_rr_syntax::tape(source)
             .into_iter()
-            .map(|node| {
-                let error = node.is_error();
-                if !error && (usize::from(node.kind) >= KIND_LIMIT || usize::from(node.field) >= FIELD_LIMIT) {
-                    return Err(format!("rr kind {} or field {} exceeds the tape's codes", node.kind, node.field));
+            .map(|row| {
+                let error = row.kind == rerail_rr_syntax::tape::ERROR;
+                if !error && (usize::from(row.kind) >= KIND_LIMIT || usize::from(row.field) >= FIELD_LIMIT) {
+                    return Err(format!("rr kind {} or field {} exceeds the tape's codes", row.kind, row.field));
                 }
                 Ok(Pending {
-                    kf: if error { ERROR_CODE } else { node.kind | (node.field << 10) },
-                    parent: node.parent,
-                    start: node.start,
-                    length: node.end.checked_sub(node.start).ok_or("inverted node span")?,
+                    kf: if error { ERROR_CODE } else { row.kind | (row.field << 10) },
+                    parent: (row.parent != rerail_rr_syntax::tape::NO_PARENT).then_some(row.parent),
+                    start: row.start,
+                    length: row.end.checked_sub(row.start).ok_or("inverted node span")?,
                     size: 1,
-                    extra: node.extra,
+                    extra: row.extra != 0,
                     error,
                     missing: false,
                     kind_alias: None,

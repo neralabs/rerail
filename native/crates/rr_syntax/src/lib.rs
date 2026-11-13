@@ -20,11 +20,11 @@ pub enum Error {
 /// as extras, and an ERROR leaf for each statement that does not parse. Never fails: a file
 /// the engine refuses to run still has a tape.
 ///
-/// Written by the lean parser (`lean::tape`, docs/parser-generators/30): a block lexer and a
-/// parser that writes each node as it opens, with no statements built. It gives
-/// `engine_tape`'s tree node for node (`lean_tape_is_the_engines`, every `.rr` file of the
-/// repository and seven cuts of each).
-pub fn tape(src: &str) -> Vec<tape::Node> {
+/// Written by the lean parser (`lean::tape`, docs/parser-generators/30) as the tape's rows
+/// (`tape::Row`: kind, field, span, size, parent, extra), each in its place as the parse goes, with
+/// no statements built. It gives `engine_tape`'s tree node for node (`lean_tape_is_the_engines`,
+/// every `.rr` file of the repository and seven cuts of each).
+pub fn tape(src: &str) -> Vec<tape::Row> {
     lean::tape(src)
 }
 

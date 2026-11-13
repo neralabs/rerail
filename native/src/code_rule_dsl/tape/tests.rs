@@ -1838,6 +1838,119 @@ fn json_tapes(source: &str) -> Option<(Vec<u8>, Vec<u8>)> {
     Some((ours, theirs))
 }
 
+/// The repository's `.rr` files (outside `.git`, `target` and `node_modules`), with their text.
+fn rr_files() -> Vec<(String, String)> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (mut files, mut work) = (Vec::new(), vec![root]);
+    while let Some(dir) = work.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
+            if p.is_dir() && !skip {
+                work.push(p);
+            } else if p.extension().is_some_and(|x| x == "rr") {
+                files.extend(std::fs::read_to_string(&p).ok().map(|t| (p.display().to_string(), t)));
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+/// A `.rr` file's tape as it was made before the parsers wrote rows: the statement parser's tree, packed
+/// (`Pending` records, `TapeImage::finish`).
+fn packed_rr_tape(grammar: &Grammar, source: &str) -> Vec<u8> {
+    let nodes = rerail_rr_syntax::engine_tape(source)
+        .into_iter()
+        .map(|n| {
+            let error = n.is_error();
+            Pending {
+                kf: if error { ERROR_CODE } else { n.kind | (n.field << 10) },
+                parent: n.parent,
+                start: n.start,
+                length: n.end - n.start,
+                size: 1,
+                extra: n.extra,
+                error,
+                missing: false,
+                kind_alias: None,
+            }
+        })
+        .collect();
+    TapeImage::finish(nodes, Vec::new(), grammar, source, &|| false).unwrap().to_bytes().unwrap()
+}
+
+/// A `.rr` file's tape from the lean parser's rows (the engine's path, `encode_rr`) equals the statement
+/// parser's tree packed, byte for byte: every `.rr` file of the repository.
+#[test]
+fn rr_tapes_from_the_lean_parser_are_the_statement_parsers() {
+    let grammar = Grammar::new(GrammarDialect::Rr).unwrap();
+    let mut checked = 0;
+    for (path, source) in rr_files() {
+        let packed = packed_rr_tape(&grammar, &source);
+        let lean = TapeImage::encode_rr(&grammar, &source, &|| false).unwrap().to_bytes().unwrap();
+        assert!(lean == packed, "{path}: the lean parser's tape is not the statement parser's");
+        checked += 1;
+    }
+    eprintln!("{checked} files");
+    assert!(checked > 1000, "{checked}");
+}
+
+/// What a `.rr` tape costs, in instructions retired and thread CPU time, over the repository's `.rr` files
+/// the compiled parser takes: the lean parser's rows and its tape (the engine's path), the compiled Bitlex
+/// parser's rows, and the statement parser's tree and its tape. With `RERAIL_RR_COST_LOOP` set to a step's name, runs that step
+/// alone for 20 s (for a profiler).
+#[test]
+#[ignore = "a measurement: run by name with --nocapture"]
+fn rr_parse_costs() {
+    use crate::code_rule_dsl::transducer::packed::rr_parser;
+    let grammar = Grammar::new(GrammarDialect::Rr).unwrap();
+    let mut files: Vec<String> = rr_files().into_iter().map(|(_, t)| t).collect();
+    let all = files.len();
+    files.retain(|f| rr_parser::compiled_tape(f).is_some());
+    let bytes: usize = files.iter().map(String::len).sum();
+    let nodes: usize = files.iter().map(|f| rerail_rr_syntax::tape(f).len()).sum();
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let cpu = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+        ("lean: rows", Box::new(|f| rerail_rr_syntax::tape(f).len())),
+        ("lean: the tape (the engine's path)", Box::new(|f| usize::from(std::hint::black_box(TapeImage::encode_rr(&grammar, f, &|| false)).is_ok()))),
+        ("bitlex: rows (tiers 1 and 2, JIT)", Box::new(|f| rr_parser::compiled_tape(f).unwrap().rows.len())),
+        ("statement parser: tree", Box::new(|f| rerail_rr_syntax::engine_tape(f).len())),
+        ("statement parser: the tape, packed (before)", Box::new(|f| packed_rr_tape(&grammar, f).len())),
+    ];
+    if let Ok(only) = std::env::var("RERAIL_RR_COST_LOOP") {
+        let (_, step) = steps.iter().find(|(name, _)| *name == only).expect("a step's name");
+        let t0 = cpu();
+        let mut n = 0;
+        while cpu() - t0 < 20.0 {
+            files.iter().for_each(|f| n += step(f));
+        }
+        std::hint::black_box(n);
+        return;
+    }
+    let mut best = vec![(f64::MAX, u64::MAX); steps.len()];
+    for _ in 0..3 {
+        for ((_, step), best) in steps.iter().zip(&mut best) {
+            let (i0, t0) = (retired().0, cpu());
+            let n: usize = files.iter().map(|f| step(f)).sum();
+            let (i1, t1) = (retired().0, cpu());
+            std::hint::black_box(n);
+            *best = (best.0.min(t1 - t0), best.1.min(i1 - i0));
+        }
+    }
+    let mb = bytes as f64 / 1e6;
+    for ((name, _), (t, i)) in steps.iter().zip(best) {
+        eprintln!("{name:44} {:8.1} M instructions {:6.0} a node {:7.1} ms {:7.1} MB/s", i as f64 / 1e6, i as f64 / nodes as f64, t * 1e3, mb / t);
+    }
+    eprintln!("{} of {all} files (the compiled parser takes them), {mb:.1} MB, {nodes} nodes", files.len());
+}
+
 /// The Bitlex parser's JSON tapes are tree-sitter-json's, byte for byte: kinds, fields, spans,
 /// extras (comments) and the `_value` supertype; and an invalid file is refused, so it goes to
 /// tree-sitter-json.
