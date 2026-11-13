@@ -374,12 +374,37 @@ function attemptOf(committed: boolean, endedBy: EndedBy | undefined, code: numbe
  * have committed: the WAL then holds the rewritten file, which a TRUNCATE checkpoint would copy into the database file
  * while it holds the write lock. A PASSIVE checkpoint copies it instead, holding no write lock, so no other
  * connection's commit makes its own checkpoint copy it on its thread.
+ *
+ * No checkpoint runs until the ended process has let go of the write lock (`lockFree`). One that finds the lock held
+ * copies what it can as a PASSIVE checkpoint and syncs the database file; on Windows, under other disk load, that sync
+ * took 3.7 s and the killed process let go of the lock only as it ended, so the lock stayed held 7.6 s and another
+ * process's write failed after its 5 s busy timeout.
  */
 function cutWal(client: Database.Database, committed: () => boolean): void {
   const until = performance.now() + CUT_WAL_MS;
-  const pause = new Int32Array(new SharedArrayBuffer(4));
-  while (!committed() && !walCut(client) && performance.now() < until) Atomics.wait(pause, 0, 0, 1);
+  retried(() => committed() || lockFree(client), until);
+  retried(() => committed() || walCut(client), until);
   if (committed()) checkpointQuietly(client, "PASSIVE");
+}
+
+/** Runs `step` every millisecond until it returns true or `until` (`performance.now()`) passes, at least once. */
+function retried(step: () => boolean, until: number): void {
+  const pause = new Int32Array(new SharedArrayBuffer(4));
+  while (!step() && performance.now() < until) Atomics.wait(pause, 0, 0, 1);
+}
+
+/**
+ * Whether no connection holds the write lock: a write transaction begun and rolled back at once, which reads and writes
+ * nothing on disk. False while another connection holds the lock, or the probe fails.
+ */
+function lockFree(client: Database.Database): boolean {
+  try {
+    client.exec("BEGIN IMMEDIATE");
+    client.exec("ROLLBACK");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** One TRUNCATE checkpoint: whether it emptied the WAL, or failed for a reason a retry does not fix. */

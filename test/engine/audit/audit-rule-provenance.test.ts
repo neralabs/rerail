@@ -971,6 +971,59 @@ describe("audit rule provenance", () => {
     expect(pageBytes(path).free).toBe(0);
   }, 60_000);
 
+  it("runs no checkpoint after ending a try until the ended process has let go of the write lock", async () => {
+    // The first VACUUM would hold the write lock 6 s; a write of another connection before it leaves frames in the WAL,
+    // which a checkpoint copies and syncs.
+    const { path, held, client, close } = await fileToVacuum(6_000);
+    const other = new Database(path);
+    other.exec("CREATE TABLE before_vacuum (at); INSERT INTO before_vacuum VALUES (1)");
+    other.close();
+    // Each write-lock probe and TRUNCATE checkpoint the move's connection runs, and whether the write lock was held as
+    // that checkpoint began, as another connection finds it.
+    const probe = new Database(path);
+    probe.pragma("busy_timeout = 0");
+    const lockHeld = (): boolean => {
+      try {
+        probe.exec("BEGIN IMMEDIATE; ROLLBACK");
+        return false;
+      } catch {
+        return true;
+      }
+    };
+    const steps: string[] = [];
+    const exec = client.exec.bind(client);
+    const pragma = client.pragma.bind(client);
+    const execs = vi.spyOn(client, "exec").mockImplementation(source => {
+      if (source === "BEGIN IMMEDIATE") steps.push("lock probe");
+      return exec(source);
+    });
+    const pragmas = vi.spyOn(client, "pragma").mockImplementation((source: string, options?: Database.PragmaOptions) => {
+      if (source === "wal_checkpoint(TRUNCATE)") steps.push(lockHeld() ? "checkpoint while held" : "checkpoint");
+      return pragma(source, options);
+    });
+    try {
+      await stderrWhile(async () => {
+        const vacuuming = vacuumGivingWay(client, path, ALWAYS_ANSWERS);
+        await untilExists(held, 60_000);
+        await vacuuming;
+      });
+    } finally {
+      execs.mockRestore();
+      pragmas.mockRestore();
+      probe.close();
+      close();
+    }
+
+    // The try ended 4 s in; its WAL was cut only once a probe found the lock free. Before, the first checkpoint ran as
+    // the process was being killed, found the lock held, and synced the database file meanwhile: on Windows that sync
+    // held the killed process's release of the lock back past another process's 5 s busy timeout.
+    const first = steps.findIndex(step => step.startsWith("checkpoint"));
+    expect(first, steps.join(", ")).toBeGreaterThan(0);
+    expect(steps.slice(0, first), steps.join(", ")).toContain("lock probe");
+    expect(steps, steps.join(", ")).not.toContain("checkpoint while held");
+    expect(pageBytes(path).free).toBe(0);
+  }, 60_000);
+
   it("stops after three tries that each held the write lock 4 s, and says to run rerail scrub", async () => {
     const path = await fileOfTheBuildBefore();
     writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
