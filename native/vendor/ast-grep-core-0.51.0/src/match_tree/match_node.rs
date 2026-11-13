@@ -157,14 +157,29 @@ fn may_match_ellipsis_impl<'p, 't: 'p, D: Doc>(
   // skip trivial nodes in goal after ellipsis
   let mut skipped_anonymous = 0;
   while goal_children.peek().unwrap().is_trivial() {
-    goal_children.next();
-    skipped_anonymous += 1;
+    let goal = goal_children.next().unwrap();
+    // Rerail (RER-131): the end-of-children goal stands for the implied tokens after the
+    // pattern's last child. A candidate keeps those tokens only where its own gap is not that word
+    // (`print(a, b,)` keeps `,` and `)`): the ones it keeps are the goal's, not the ellipsis's.
+    let end_word = goal.children_end_word();
+    if end_word.is_none() {
+      skipped_anonymous += 1;
+    }
     if goal_children.peek().is_none() {
+      let mut rest: Vec<_> = cand_children.collect();
+      for token in end_word.iter().flatten().rev() {
+        match rest.last() {
+          Some(last) if !last.is_named() && last.text() == *token => {
+            rest.pop();
+          }
+          _ => break,
+        }
+      }
       match_ellipsis(
         agg,
         &optional_name,
         matched,
-        cand_children,
+        rest.into_iter(),
         skipped_anonymous,
       )?;
       return Some(ControlFlow::Return);

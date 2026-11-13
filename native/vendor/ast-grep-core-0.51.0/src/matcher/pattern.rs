@@ -23,15 +23,16 @@ pub struct Pattern {
 /// shape, as upstream.
 #[derive(Default)]
 pub struct PatternShape<'a> {
-  /// Whether the node's children end with the end-of-children goal (`PatternNode::children_end`).
-  pub ends: Option<&'a dyn Fn(usize) -> bool>,
+  /// Whether the node's children end with the end-of-children goal (`PatternNode::children_end`),
+  /// and the implied tokens' texts it stands for, in order.
+  pub ends: Option<&'a dyn Fn(usize) -> Option<Vec<String>>>,
   /// Whether the node is a single node (`is_single_node`) in the tree it was written from.
   pub single: Option<&'a dyn Fn(usize) -> bool>,
 }
 
 impl PatternShape<'_> {
-  fn ends(&self, node: usize) -> bool {
-    self.ends.is_some_and(|ends| ends(node))
+  fn ends(&self, node: usize) -> Option<Vec<String>> {
+    self.ends.and_then(|ends| ends(node))
   }
   fn is_single<D: Doc>(&self, node: &Node<'_, D>) -> bool {
     match self.single {
@@ -220,10 +221,11 @@ pub enum PatternNode {
 }
 
 impl PatternNode {
-  /// Rerail (RER-131): the end-of-children goal (`kind_utils::CHILDREN_END`).
-  pub fn children_end() -> Self {
+  /// Rerail (RER-131): the end-of-children goal (`kind_utils::CHILDREN_END`), standing for the
+  /// implied tokens `word` (their texts, in order) that a tape leaves out after the last child.
+  pub fn children_end(word: Vec<String>) -> Self {
     PatternNode::Terminal {
-      text: String::new(),
+      text: word.join(END_WORD_SEPARATOR),
       is_named: false,
       kind_id: super::kind_utils::CHILDREN_END,
     }
@@ -232,6 +234,16 @@ impl PatternNode {
   /// Rerail (RER-131): whether this is the end-of-children goal.
   pub fn is_children_end(&self) -> bool {
     matches!(self, PatternNode::Terminal { kind_id, .. } if *kind_id == super::kind_utils::CHILDREN_END)
+  }
+
+  /// Rerail (RER-131): the implied tokens the end-of-children goal stands for, in order.
+  pub fn children_end_word(&self) -> Option<Vec<&str>> {
+    match self {
+      PatternNode::Terminal { kind_id, text, .. } if *kind_id == super::kind_utils::CHILDREN_END => {
+        Some(text.split(END_WORD_SEPARATOR).filter(|token| !token.is_empty()).collect())
+      }
+      _ => None,
+    }
   }
 
   // for skipping trivial nodes in goal after ellipsis
@@ -244,6 +256,8 @@ impl PatternNode {
 
   pub fn fixed_string(&self) -> Cow<'_, str> {
     match &self {
+      // Rerail (RER-131): the end-of-children goal matches no text of its own.
+      PatternNode::Terminal { kind_id, .. } if *kind_id == super::kind_utils::CHILDREN_END => Cow::Borrowed(""),
       PatternNode::Terminal { text, .. } => Cow::Borrowed(text),
       PatternNode::MetaVar { .. } => Cow::Borrowed(""),
       PatternNode::Internal { children, .. } => {
@@ -261,27 +275,32 @@ impl PatternNode {
     }
   }
 }
+
+/// Rerail (RER-131): between the implied tokens of an end-of-children goal's word, which no token's
+/// text holds.
+const END_WORD_SEPARATOR: &str = "\u{1f}";
+
 impl<'r, D: Doc> From<Node<'r, D>> for PatternNode {
   fn from(node: Node<'r, D>) -> Self {
-    convert_node_to_pattern(node, &|_| false)
+    convert_node_to_pattern(node, &|_| None)
   }
 }
 
 impl<'r, D: Doc> From<Node<'r, D>> for Pattern {
   fn from(node: Node<'r, D>) -> Self {
     Self {
-      node: convert_node_to_pattern(node, &|_| false),
+      node: convert_node_to_pattern(node, &|_| None),
       root_kind: None,
       strictness: MatchStrictness::Smart,
     }
   }
 }
 
-fn convert_node_to_pattern<D: Doc>(node: Node<'_, D>, ends: &dyn Fn(usize) -> bool) -> PatternNode {
+fn convert_node_to_pattern<D: Doc>(node: Node<'_, D>, ends: &dyn Fn(usize) -> Option<Vec<String>>) -> PatternNode {
   let end = ends(node.node_id());
   if let Some(meta_var) = extract_var_from_node(&node) {
     PatternNode::MetaVar { meta_var }
-  } else if node.is_leaf() && !end {
+  } else if node.is_leaf() && end.is_none() {
     PatternNode::Terminal {
       text: node.text().to_string(),
       is_named: node.is_named(),
@@ -298,8 +317,8 @@ fn convert_node_to_pattern<D: Doc>(node: Node<'_, D>, ends: &dyn Fn(usize) -> bo
         }
       })
       .collect();
-    if end {
-      children.push(PatternNode::children_end());
+    if let Some(word) = end {
+      children.push(PatternNode::children_end(word));
     }
     PatternNode::Internal {
       kind_id: node.kind_id(),
