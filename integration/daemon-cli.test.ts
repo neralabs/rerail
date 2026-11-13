@@ -148,9 +148,12 @@ describe("Rerail daemon CLI", () => {
       const lockedOut = join(root, "key.pem");
       await writeFile(lockedOut, selfSignedCertificate().key);
       // A misspelled name and a path through a file; then two paths others can read where this account reads no key: a
-      // folder, and a key this account may not read (except as root, which reads every file).
+      // folder, and a key this account may not read.
       const keys: [string, string][] = [unread(join(root, "keyy.pem")), unread(join(certFile, "key.pem")), [folder, await letOthersRead(folder, 0o755)]];
-      if (process.getuid?.() !== 0) keys.push([lockedOut, await lockOut(lockedOut)]);
+      const lockedOutRefusal = await lockOut(lockedOut);
+      // Root, and a Windows account whose backup privilege is on (as over ssh, Node opening files for backup), still
+      // read that key: for them it is a key this account reads, which serves this computer alone.
+      if (!(await readFile(lockedOut).then(() => true, () => false))) keys.push([lockedOut, lockedOutRefusal]);
       for (const [keyFile, refusal] of keys) {
         const remote = ["--host", "0.0.0.0", "--allow-remote", "--tls-cert", certFile, "--tls-key", keyFile];
         const start = promisify(execFile)(process.execPath, [cli, "daemon", "start", "--dev", "--port", "0", ...remote], { env });
@@ -213,7 +216,7 @@ async function letOthersRead(keyFile: string, mode: number): Promise<string> {
 }
 
 /**
- * Lets other accounts read `keyFile` and keeps this account from reading it: mode 0044, or on Windows read granted to
+ * Lets other accounts read `keyFile` and denies this account reading it: mode 0044, or on Windows read granted to
  * BUILTIN\Users and reading its data denied to this account, whose ACL it can still read. Returns the daemon's refusal
  * of it as `letOthersRead` does.
  */
