@@ -1,6 +1,6 @@
 ---
 name: rerail-create
-description: Suggest, write, test, tune and approve Rerail rules for the repository you are in. Suggests rules from this repo's own sessions (the person's corrections, risky commands, which rules already steer) and its written standards, drafts each rule as a code rule or a command rule, tests it against cases and the whole repo, reads it back, and adds it only after the person says yes. Also writes architecture rules (where code belongs, which way dependencies run) from the repo's design docs and maintainers' review comments, proved against the repo's history. Audits a rule or pack that waits for approval and asks the person before approving it. Use for /rerail-create, "suggest rules", "what rules should we have", "make a rule that…", "architecture rules", "layering rules", "this rule is wrong", or "approve the rules" / a rule waiting for approval.
+description: Suggest, write, test, tune and approve Rerail rules for the repository you are in. Suggests rules from this repo's own sessions (the person's corrections, risky commands, which rules already steer) and its written standards, drafts each rule as a code rule or a command rule, tests it against cases and the whole repo, reads it back, and adds it only after the person says yes. Also writes architecture rules (where code belongs, which way dependencies run) from the repo's design docs and maintainers' review comments, proved against the repo's history. Changes where a rule applies, shipped rules included. Audits a rule or pack that waits for approval and asks the person before approving it. Use for /rerail-create, "suggest rules", "what rules should we have", "make a rule that…", "architecture rules", "layering rules", "this rule is wrong", "update the rule … I want it to apply to", "exclude tests from this rule", or "approve the rules" / a rule waiting for approval.
 ---
 
 # Create a Rerail rule
@@ -43,6 +43,8 @@ steers no one until a person approves its content; until then it runs in Log. An
   [references/architecture-rules.md](references/architecture-rules.md), then go to [Suggest](#suggest) or [Write](#write) as
   above. It adds evidence to gather in Suggest and a history check in Write.
 - **A rule misfires** ("this rule is wrong", "stop telling me X", a `◆ Rerail` message the person disputes): go to [Tune](#tune).
+- **Only where a rule applies changes** ("exclude tests from this rule", the dashboard's "Using Rerail, update the rule …
+  I want it to apply to: …"): go to [Scope](#scope). This holds for a rule that ships with Rerail too.
 - **"Approve the rules", a rule or pack waiting for approval** (`rerail rules approve` lists them, `rerail packs list` says
   "waiting for approval"): go to [Approve](#approve).
 
@@ -99,6 +101,11 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    - Every case comes out right. A case marked not checked (`notChecked`) is not right.
    - Read every match in `repository.matches`, and decide whether each is a real violation. A match with no `line` is the
      file's path.
+   - `repository.folders` are the folders the repo pass covered: where `rules add` would have the rule run (`""` is the
+     whole repo). A match outside them is not counted, since the added rule would not catch it.
+   - `refusal`, when the report has one, is why `rules add` would refuse the draft as it is. Fix the draft and test it
+     again before the card. `repository.notNarrowed`, when there, means the count may not be what the rule would catch:
+     say so on the card.
    - `repository.leftOut` counts files and folders the repo pass did not read: hidden, secret-named, or ignored by Git.
      Its matches say nothing about those. `repository.binary` counts files in scope it skipped as binary.
    - A rule that matches hundreds of places fights the repo's convention.
@@ -122,7 +129,7 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
      Applies to       All of <this repo's name> | This worktree only (<its folder name>)
      What happens     Steer: I'm told in the session and fix it. I'm not stopped.
      How often        Every time | The first time only
-     Tested           Would have caught <N> places in this repo
+     Tested           Would have caught <N> places in this repo | Would have caught <N> places under <folder>/
 
    Add this rule?
      1. Yes, add it
@@ -136,8 +143,10 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
      excludes that matter: "When I edit a file under src/ (not src/scripts/ or tests)". How often is "Every time" for a code
      rule; for a command rule it follows `repeat.mode` (`always`: Every time, `once`: The first time only). Tested names the
      places: "Would have caught 2 places in this repo (src/api/refunds.ts:2, …)"; with none, "Matches nothing in this repo
-     today: the code already follows it". A command rule gets no repo pass, so its Tested row gives the cases: "Caught 4 of 4 cases,
-     let 5 of 5 through". That alone is no reason for `Not sure`.
+     today: the code already follows it". Where `repository.folders` is not `[""]`, the count covers only those folders, so
+     name them in place of "in this repo": "Would have caught 2 places under src/, web/ (…)". A command rule gets no repo
+     pass, so its Tested row gives the cases: "Caught 4 of 4 cases, let 5 of 5 through". That alone is no reason for
+     `Not sure`.
    - **Log rules.** The What happens row reads "Log: Rerail keeps a record. I'm not told."
    - **Rows you are unsure of.** Mark the row `Not sure`. Below the card, show one line from this repo that the rule catches and
      one that it misses, and set the rule to Log.
@@ -194,9 +203,11 @@ A rule the person wrote by hand into `.rerail/rules/` can be checked as it is: `
    - A rule in this worktree's `.rerail/rules/` (`rerail packs list` lists them under "This worktree's own rules") is the
      person's. Change its file in place; the change applies at the next edit.
    - A `local:` rule, or any rule in `rerail rules export`, is the person's. Change it here.
-   - Any other rule ships with Rerail. You cannot change it. Offer to set it to Log or turn it off in this repo from the dashboard
-     (`rerail manage --print` gives the link). If the person wants it changed for everyone, `/rerail-bug-report` reports it to the
-     Rerail team in an issue.
+   - Any other rule ships with Rerail. Its file can't change, but the person can run their own copy of it in this repo:
+     `rerail rules show <id>` prints it as a draft, and `rules add` of a draft that keeps its id stores the person's copy
+     where the original is; approving the copy turns the original off there. Offer that, or setting it to Log or off in
+     this repo from the dashboard (`rerail manage --print` gives the link). If the person wants it changed for everyone,
+     `/rerail-bug-report` reports it to the Rerail team in an issue.
 3. **Fix it** with the most targeted step on the fix ladder in
    [references/rule-quality.md](references/rule-quality.md#the-fix-ladder). Add the misfire as a `passed` case, and show it was
    wrong before: run it against the current rule and see it caught. Keep every earlier case: from the draft file, or, without it,
@@ -205,6 +216,68 @@ A rule the person wrote by hand into `.rerail/rules/` can be checked as it is: `
    approval again, and the person's yes to the read-back gives it. In the read-back, add one line above the card, at most two
    sentences:
    `Changed: inline type imports (import { type User }) now pass; a mixed import is still caught.`
+
+## Scope
+
+The person changes only where a rule applies. Change its `scope` and nothing else: what it checks, its message, its
+mode and its id stay as they are. Write's review and quality gates are about those, so skip them; this takes a handful of
+commands, not a new rule.
+
+1. **Read the rule:** `rerail rules show <id>`. It prints the rule as a draft, as it runs in this repo; save it as
+   `<tmp>/draft.json`. A line on stderr says what saving does. Go on after the first two lines below, start again with
+   the rule they name after the next two, and after the rest say what the line says, and stop:
+   - "is yours, added to <repo>": saving changes the person's rule where it is. If the line says it is also added to
+     other repositories, saving changes it there too: the card's Saved as row names them.
+   - "ships with Rerail": saved as the person's copy, added where it is; approving the copy turns it off there.
+   - "already has your copy … Change that one": run `rules show` on the copy's id and start again with that one.
+   - "is your copy of <original> for another repository": run `rules show <original>` and start again with that one.
+   - "is not added to <repo>": the rule does not run here, so there is no scope to change here.
+   - "is off in <repo>": a copy would run where the person has the rule off. Ask whether they want it on first.
+   - A rule in this worktree's `.rerail/rules/` is not printed: read its file instead and change it in place.
+
+   A rule with no `scope` (one about commands, not files) has no paths to change: say so, and stop.
+2. **Change only `rule.scope`.** Turn the person's words into `include` and `exclude` globs (an exclude wins; `**/`
+   matches any folder). Name what this repo really has: one listing of its files shows, for example, where tests live
+   (`tests/`, `test_*.py`, `*_test.py`, `conftest.py`, `*.test.ts`, `__tests__/`). If the words can be read two ways, ask
+   one question. If the scope already does what they ask, say so with the globs that do it, and stop. Raise `revision`
+   by one for the person's own rule; keep it for a rule that ships with Rerail.
+3. **Check the paths.** Add `cases` to the draft: for each path the change keeps or leaves out, one file at that path with
+   the same content, a line the rule catches (take it from the rule's description or one of its matches). A path
+   still in scope is `caught`; a path the change leaves out is `passed`. Run `rerail rules test <tmp>/draft.json --json`
+   once. Every case must come out right; a left-out path reads "(outside the files this rule covers)". Count
+   `repository.matches` for the card; do not review them. The repo pass covers only the folders the rule runs in
+   (`repository.folders`), so the count is what the saved rule will catch. Where they are not `[""]`, the Tested row
+   names them in place of "in this repo": "Would catch 2 places under src/, web/".
+4. **Show the change, in this form, and ask once:**
+
+   ```text
+   Change where <id> applies?
+
+     scope.exclude  + "**/tests/**"
+                    + "**/conftest.py"
+
+     Still checked  src/app/models.py, scripts/sync.py
+     Left out now   tests/test_api.py, conftest.py
+     Tested         Would catch <N> places in this repo | Would catch <N> places under <folder>/
+     Unchanged      What it checks, its message, <Steer|Log>
+     Saved as       Your copy of <id>; the original turns off where the copy is added | <id>, revision <n>, here
+                    (and in <other repositories>)
+
+     1. Yes, save it
+     2. Change something
+     3. Cancel
+   ```
+
+   The diff lists only the globs added (`+`) and removed (`-`). If the person already said yes in this conversation to
+   exactly these globs, every case passed, and that earlier preview said what saving does (what the Saved as row says),
+   that yes stands: show the card without its question and save. Otherwise ask.
+5. **Save it, only after the person says yes.** `rerail rules add <tmp>/draft.json`, then `rerail rules approve <the id
+   rules add printed>`: the person's yes to the card is their approval, and a copy's approval turns the original off. A
+   rule in `.rerail/rules/` is saved by writing its file, then `rerail rules approve <id>`. Reply in one line:
+   `● <id> now applies to <the person's words>.`
+
+Anything else you notice on the way (a message you would word differently, a match that looks wrong) is one line after
+the reply, offered as its own change. Never fold it into this one.
 
 ## Approve
 
