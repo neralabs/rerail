@@ -1,12 +1,13 @@
 //! The adapter test kit: every family's adapter against known-good literals (`kit`), and the
 //! registry's capabilities against the concerns the adapters read. A new family adds one `#[test]`
-//! function calling `kit::<Family>(&Expect { .. })`.
+//! function calling `kit::<Family>(&Expect { .. })`; one that reads no semantic concern yet calls
+//! `identity::<Family>` and the syntax kit instead, as `java` does.
 
 use super::value::kit as value_kit;
 use super::{
-    Adapter, ArgumentRules, Blade, CallRules, Ecma, FormatArgRules, Php, Python, Rust, ScopeRules,
-    Sql, ValueRules, Vue, has_import_targets, is_comment_kind, is_paren_kind, parsed_by_forte,
-    with_adapter,
+    Adapter, ArgumentRules, Blade, CallRules, Ecma, FormatArgRules, Java, Php, Python, Rust,
+    ScopeRules, Sql, ValueRules, Vue, has_import_targets, is_comment_kind, is_paren_kind,
+    parsed_by_forte, with_adapter,
 };
 use crate::code_rule_dsl::language::{
     CodeRuleLanguage, Family, GrammarDialect, Semantic, SourceType, Support, kind_ids,
@@ -57,6 +58,34 @@ struct Expect {
     scope: super::scope::kit::Expect,
 }
 
+/// What identifies a family's adapter, whichever concerns it reads: `Expect`'s fields of the same
+/// names.
+struct Identity {
+    family: Family,
+    label: &'static str,
+    terminators: Terminators,
+    dialect: GrammarDialect,
+    name: &'static str,
+    documents: &'static [Documents],
+    module: (&'static str, Option<&'static str>),
+    package_manifests: (bool, bool),
+}
+
+impl Expect {
+    fn identity(&self) -> Identity {
+        Identity {
+            family: self.family,
+            label: self.label,
+            terminators: self.terminators,
+            dialect: self.dialect,
+            name: self.name,
+            documents: self.documents,
+            module: self.module,
+            package_manifests: self.package_manifests,
+        }
+    }
+}
+
 /// The tape of a file of `source` in `dialect`, as files are read: Blade's from its Forte tree,
 /// the rest from tree-sitter's.
 fn file(source: &str, dialect: GrammarDialect) -> TapeDoc {
@@ -98,11 +127,24 @@ impl Drop for Package {
     }
 }
 
-/// Runs the generic suite over family `A` against `expect`: its identity (`family`, `label`,
-/// `terminators`), name normalisation, the regions of each document, module paths, the node kinds
-/// `rerail-ignore` is read by, and each concern's own kit. A new family adds one `#[test]` function
-/// calling `kit::<Family>(&Expect { .. })`.
+/// Runs the generic suite over family `A` against `expect`: its identity (`identity`) and each
+/// concern's own kit.
 fn kit<A: Adapter>(expect: &Expect) {
+    identity::<A>(&expect.identity());
+    value_kit::check::<A>(&expect.value, |s| semantic(s, expect.dialect));
+    super::calls::kit::check::<A>(&expect.calls, expect.dialect);
+    super::arguments::kit::check::<A>(&expect.arguments, expect.semantic, |s| {
+        semantic(s, expect.dialect)
+    });
+    super::format_args::kit::check::<A>(&expect.format_args);
+    with_adapter!(expect.family, B => super::syntax::kit::check::<B>(&expect.syntax));
+    super::scope::kit::kit::<A>(expect.dialect, expect.module.0, &expect.scope);
+}
+
+/// What every family's adapter answers, whichever concerns it reads: its identity (`family`,
+/// `label`, `terminators`), name normalisation, the regions of each document, module paths, and
+/// the node kinds `rerail-ignore` is read by.
+fn identity<A: Adapter>(expect: &Identity) {
     assert_eq!(A::FAMILY, expect.family);
     assert_eq!(with_adapter!(expect.family, B => B::LABEL), expect.label);
     assert_eq!(A::LABEL, expect.label);
@@ -156,14 +198,6 @@ fn kit<A: Adapter>(expect: &Expect) {
             assert_ne!(dialect.kind_id(kind), 0, "{kind} in {dialect:?}");
         }
     }
-    value_kit::check::<A>(&expect.value, |s| semantic(s, expect.dialect));
-    super::calls::kit::check::<A>(&expect.calls, expect.dialect);
-    super::arguments::kit::check::<A>(&expect.arguments, expect.semantic, |s| {
-        semantic(s, expect.dialect)
-    });
-    super::format_args::kit::check::<A>(&expect.format_args);
-    with_adapter!(expect.family, B => super::syntax::kit::check::<B>(&expect.syntax));
-    super::scope::kit::kit::<A>(expect.dialect, expect.module.0, &expect.scope);
 }
 
 #[test]
@@ -1171,6 +1205,44 @@ fn rust() {
             ],
             unpackaged: None,
         },
+    });
+}
+
+/// Java reads no semantic concern yet (`adapters_read_the_capabilities_the_registry_supports`
+/// holds that to the registry), so only its identity and its syntax are checked.
+#[test]
+fn java() {
+    identity::<Java>(&Identity {
+        family: Family::Java,
+        label: "java",
+        terminators: Terminators::Newlines,
+        dialect: GrammarDialect::Java,
+        name: "ﬁle",
+        documents: &[("class A {}\n", &[("program", 0..11)])],
+        module: (".java", None),
+        package_manifests: (false, false),
+    });
+    super::syntax::kit::check::<Java>(&super::syntax::kit::Expect {
+        dollar_names: false,
+        language_options: Some("`languageOptions` is not available for java policies"),
+        compiled_options: None,
+        when: &[
+            ("{}", Ok((true, None))),
+            (
+                r#"{"ecmaVersion": {"min": 2015}}"#,
+                Err("unknown field `ecmaVersion` at /q/when"),
+            ),
+        ],
+        parse: [
+            Some("`percentFormat` parses Python literals"),
+            Some("`braceFormat` parses Python literals"),
+            Some("`annotation` parses Python literals"),
+            Some("`eslintDirective` parses TypeScript comments"),
+            Some("`printfFormat` parses PHP strings"),
+            Some("`scanfFormat` parses PHP strings"),
+            Some("`phpDoc` parses PHP doc comments"),
+            Some("`rustFormat` parses Rust strings"),
+        ],
     });
 }
 
