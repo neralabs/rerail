@@ -12,7 +12,7 @@ For [pull request #635](https://github.com/neralabs/rerail/pull/635), head 24741
 
 | Size | Lane | Waits on | Not verified |
 |---|---|---|---|
-| 202 lines in 5 files: 39 ship, 163 are tests and text | Fast. A maintainer rules on the intent before it is approved. | CI at 24741d435. Not run yet: it starts with the push. | 4 |
+| 202 lines in 5 files: 39 ship, 163 are tests and text | Fast. A maintainer rules on the intent before it is approved. | Nothing. CI is green at 24741d435. | 3 |
 
 ## 2. Intent, and the gap
 
@@ -38,18 +38,17 @@ Found on 12 November 2026 in CI's unit test jobs. #639 made the test pass the ne
 
 ## 4. Risk against verification
 
-<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. Path order, medium risk: users lose nothing holds with a limit, rules scan: nothing new holds with a limit, Windows 11: no new failure holds with a limit. CI at this head does not hold yet for every change.">
+<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. Path order, medium risk: users lose nothing holds with a limit, rules scan: nothing new holds with a limit, Windows 11: no new failure holds with a limit. CI at this head holds for every change.">
 
-CI has not run at 24741d435. Three half marks: no walk past the file budget, a rules scan from before the merge, two test files on Windows.
+CI is green at 24741d435. Three half marks: no walk past the file budget, a rules scan from before the merge, two test files on Windows 11.
 
-<details><summary>Each limit, and each check that does not hold yet</summary>
+<details><summary>Each half mark's limit</summary>
 
-| Change | Check | Its limit, or why it does not hold yet |
+| Change | Check | It holds with this limit |
 |---|---|---|
 | Path order | users lose nothing | At 83e627c0f against main, over 1,741 files on tmpfs and ext4: status, violations and unlisted counts are unchanged, and the walk reads the same files. Under the 20-failure cap the failures are the same set. Over it a plain folder lists what a Git checkout lists. Not rerun since main gained #503. No walk went past its 100,000-file budget. |
 | Path order | rules scan: nothing new | 15 findings over the ceiling at the merge base and the same 15 at ad3b06026, none new. The two new functions count 2, and the edited method counts 4, as at main. The scan ran before the merge of main at 24741d435 and was not rerun there. |
-| Path order | Windows 11: no new failure | Both changed test files ran once at 24741d435 on Windows 11 with Node 24.21.0: 72 passed, 1 skipped, none failed, with nothing outside main's baseline there. The skip is main's own since #503, on the unreadable-folder test. The whole suite did not run on Windows, and that machine's engine was built from an older native tree. |
-| Path order | CI at this head | CI has not run at 24741d435: it starts with the push. At 24fd78e81, three commits earlier, 26 of 27 checks passed and 1 was skipped, the Rust engine. Since then two commits edit one test file, and one merges main, which now holds #503 and #636. |
+| Path order | Windows 11: no new failure | Both changed test files ran once at 24741d435 on Windows 11 with Node 24.21.0: 72 passed, 1 skipped, none failed, with nothing outside main's baseline there. The skip is main's own since #503, on the unreadable-folder test. The whole suite ran only in CI, on Windows Server 2025. The Windows 11 engine was built from an older native tree. |
 
 </details>
 
@@ -110,16 +109,15 @@ It stands on main alone, which it merged at 24741d435 with #503 and #636. Four c
 
 </details>
 
-<details><summary><b>8. What is not covered</b>: 4 not verified, 5 smaller gaps, 4 limits that stay</summary>
+<details><summary><b>8. What is not covered</b>: 3 not verified, 5 smaller gaps, 4 limits that stay</summary>
 
-1. **CI at 24741d435** has not run: it starts with the push.
-2. **The 100,000-file budget's stop** has no test and no run: [ask 3](#9-what-we-ask-of-you).
-3. **Windows.** Only the two changed test files ran.
-4. **macOS** never ran.
+1. **The 100,000-file budget's stop** has no test and no run: [ask 3](#9-what-we-ask-of-you).
+2. **Windows 11.** Only the two changed test files ran. CI ran the whole suite on Windows Server 2025.
+3. **macOS** never ran.
 
 **Smaller gaps**
 
-- **Since the merge of main.** At 24741d435 these ran: both changed test files, 5 times on Linux and once on Windows 11, and the two order tests with the sort line deleted. The comparison over 1,741 files last ran at 83e627c0f, the rules scan at ad3b06026.
+- **Since the merge of main.** At 24741d435 CI ran. Our own runs there: both changed test files, 5 times on Linux and once on Windows 11, and the two order tests with the sort line deleted. The comparison over 1,741 files last ran at 83e627c0f, the rules scan at ad3b06026.
 - **Cost at the head.** Audit time and peak memory were measured at the first commit, a0fd11bde. The third commit moves the same sort and push into a `finally` and adds no work, and the later ones change tests only. It takes a rerun of one probe.
 - **A test of the file budget's stop.** It needs 100,000 files, or the budgets passed in through the enforcer's options, which is a source change. This pull request adds neither: [ask 3](#9-what-we-ask-of-you).
 - **The engine on Windows.** The Windows 11 machine ran the tests with an engine built on 12 November 2026 from an older native tree. The Linux runs used the engine of the merge's own native tree. This change edits no native code.
@@ -148,7 +146,7 @@ The description on GitHub is the record: "How you tested it" for the runs and th
 
 | Where | What ran | Result |
 |---|---|---|
-| CI on GitHub | The pull request's checks, read on 13 November 2026 | None at 24741d435: CI starts with the push. At 24fd78e81, three commits earlier, 27 checks: 26 passed, 1 skipped (the Rust engine), none failed. In the first attempt `Unit tests (2/2)` hit one 5 s timeout in `test/cli/rule-draft.test.ts`, a test of main that #636, now merged, fixed. The job was rerun once and passed. |
+| CI on GitHub | The pull request's checks at 24741d435, read at 17:54 UTC on 13 November 2026: CI run 43473519987, second attempt | 29 checks: 28 passed, 1 skipped (the Rust engine), none failed. `Unit tests (1/2)`, `Unit tests (2/2)`, `Unit tests (Windows, 1/2)`, `Unit tests (Windows, 2/2)`, `Dependency audit` and `CI result` passed. In the first attempt `Unit tests (2/2)` failed on one test of main in `test/engine/code-rule/code-rule-bridge.test.ts`, and `Unit tests (Windows, 2/2)` on one in `test/hosts/claude/claude-status.test.ts`. This pull request edits neither file. We reran the failed jobs once and both passed. |
 | Linux, 32 cores | Both changed test files at 24741d435, 5 runs one after another, with the engine built from the merge's native tree | 73 of 73 passed in each run. |
 | Windows 11, Node 24.21.0 | Both changed test files at 24741d435, 1 run, compared with main's baseline on that machine | 72 passed, 1 skipped, none failed. Nothing is outside main's baseline. The skip is main's own since #503: "audits a Git checkout holding unreadable untracked directories as the walk does" does not run on Windows. |
 | Linux, 32 cores | At 24741d435 with the sort line deleted from `pushInPathOrder`: the path-order test and the byte-budget test, on tmpfs and on ext4 | The path-order test failed through the directory walk and passed through the Git checkout's index, on both. The byte-budget test failed on both: the walk audits the last 16 of 17 files, where the test expects the first 16. With the line restored all 4 runs passed. |
