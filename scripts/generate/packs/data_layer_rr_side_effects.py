@@ -95,6 +95,17 @@ def main():
 #include "data-layer/side-effects-from-fact.rr"
 ''')
  manifest=read_json(ROOT/MANIFEST)
+ production=DESTINATION/'plan-scope-side-effects-production.rr'
+ (ROOT/production).write_text(prefix+'''.policy "data-layer:plan-scope-side-effects-production" revision 1
+.description "Plan scopes contain only declarative planning work"
+.language python
+.mode block
+.scope dirs "__no_primary__"
+#include "core.rr"
+#include "data-layer/side-effects-configuration.rr"
+#include "data-layer/side-effects-detect.rr"
+#include "data-layer/side-effects-production.rr"
+''')
  cli=DESTINATION/'plan-scope-side-effects-cli.rr'
  (ROOT/cli).write_text(prefix+'''.policy "data-layer:plan-scope-side-effects-cli" revision 1
 .description "Exact public report streams and CLI status over typed finding batches."
@@ -109,7 +120,7 @@ def main():
   if item['check']=='plan_scope_side_effects':item['ruleSha256']=sha(text.encode())
  for item in manifest['files']:
   if item['destination']==str(path):item.update(sha256=sha(text.encode()),origin='authored',sourceCommit=PIN,upstreamPath='scripts/lint_plan_scope_side_effects.py')
- for target in [config,repository,events,plugin,select,conversion,from_fact,cli,Path('docs/rule-syntax/lib/data-layer/side-effects-cli.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-from-fact.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-conversion.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-files.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-select.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-plugin.rr'),Path('docs/rule-syntax/lib/python/values.rr'),Path('docs/rule-syntax/lib/python/paths.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-events.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-detect.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-helpers.rr')]:
+ for target in [config,repository,events,plugin,select,conversion,from_fact,cli,production,Path('docs/rule-syntax/lib/data-layer/side-effects-production.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-cli.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-from-fact.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-conversion.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-files.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-select.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-plugin.rr'),Path('docs/rule-syntax/lib/python/values.rr'),Path('docs/rule-syntax/lib/python/paths.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-events.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-detect.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-helpers.rr')]:
   content=(ROOT/target).read_bytes();row=dict(destination=str(target),sha256=sha(content),origin='authored',sourceCommit=PIN,upstreamPath='scripts/lint_plan_scope_side_effects.py')
   old=next((r for r in manifest['files']if r['destination']==str(target)),None)
   if old is None:manifest['files'].append(row)

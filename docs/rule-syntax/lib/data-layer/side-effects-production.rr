@@ -1,0 +1,34 @@
+// Production uses the plugin's FileScopeSpec, rather than the CLI's whole repository scope.
+#include "data-layer/side-effects-production-roots.rr"
+.decl psep_read_error(path:symbol)
+psep_read_error(p) :- pfd_file(p),file_error(p,_,_,_,_,_,_,_).
+.decl psep_trigger(path:symbol)
+psep_trigger(p) :- pfd_file(p),!psep_read_error(_),file_line(p,_,t),pse_constant("PLAN_OPENERS",trigger),contains(trigger,t).
+load(p,cat("psep:",p),"python") :- psep_trigger(p).
+.decl psep_doc(path:symbol,d:number)
+psep_doc(p,d) :- psep_trigger(p),loaded(c,cat("psep:",p),"python"),doc(d,c,_).
+.decl psep_present(path:symbol)
+psep_present(p) :- psep_doc(p,d),!syntax_error(d,_,_).
+.decl psep_fact(path:symbol,ordinal:number,code:symbol,line:number,message:symbol,severity:symbol)
+psep_fact(p,i,c,l,m,s) :- psep_doc(p,d),!syntax_error(d,_,_),pse_finding(n,c,m,s),docof(n,d),pse_order(n,i),pse_line(n,l).
+.violation SideEffectsProductionMetadata(at:span,name:symbol,enforcement:symbol,description:symbol,family:symbol) code "PSEP_META" "Production plugin metadata"
+SideEffectsProductionMetadata(@place("",0),"plan_scope_side_effects","hard-fail","Plan scopes contain only declarative planning work","plan_scope_side_effects.violations") :- option("entryPoint","_production_contract").
+.violation SideEffectsProductionFile(at:span,path:symbol,path_order:symbol,present:number) code "PSEP_FILE" "Selected production file"
+SideEffectsProductionFile(@place("",0),p,@replace_all(p,"/","\u0000"),1) :- option("entryPoint","_production_contract"),pfd_file(p),psep_present(p),!psep_read_error(_).
+SideEffectsProductionFile(@place("",0),p,@replace_all(p,"/","\u0000"),0) :- option("entryPoint","_production_contract"),pfd_file(p),!psep_present(p),!psep_read_error(_).
+.violation SideEffectsProductionFact(at:span,path:symbol,ordinal:number,source_code:symbol,line_number:number,source_message:symbol,severity:symbol) code "PSEP_FACT" "Complete production fact"
+SideEffectsProductionFact(@place("",0),p,i,c,l,m,s) :- option("entryPoint","_production_contract"),psep_fact(p,i,c,l,m,s).
+.violation SideEffectsProductionReport(at:span,path:symbol,ordinal:number,source_code:symbol,line_number:number,source_message:symbol) code "PSEP_REPORT" "Complete production finding"
+SideEffectsProductionReport(@place("",0),p,i,c,l,m) :- option("entryPoint","_production_contract"),psep_fact(p,i,c,l,m,"error").
+.violation SideEffectsProductionError(at:span,path:symbol,io_kind:symbol,errno:number,detail:symbol,bytes_hex:symbol,start:number,end:number,reason:symbol) code "PSEP_ERROR" "Production source read error"
+SideEffectsProductionError(@place("",0),p,k,n,d,b,s,e,r) :- pfd_file(p),file_error(p,k,n,d,b,s,e,r).
+.violation SideEffectsProduction010(at:span,source_message:symbol,ordinal:number) code "PSE-010" "{source_message}"
+SideEffectsProduction010(@place(p,l),m,i) :- !option("entryPoint",_),psep_fact(p,i,"PSE-010",l,m,"error").
+.violation SideEffectsProduction020(at:span,source_message:symbol,ordinal:number) code "PSE-020" "{source_message}"
+SideEffectsProduction020(@place(p,l),m,i) :- !option("entryPoint",_),psep_fact(p,i,"PSE-020",l,m,"error").
+.violation SideEffectsProduction030(at:span,source_message:symbol,ordinal:number) code "PSE-030" "{source_message}"
+SideEffectsProduction030(@place(p,l),m,i) :- !option("entryPoint",_),psep_fact(p,i,"PSE-030",l,m,"error").
+.violation SideEffectsProduction040(at:span,source_message:symbol,ordinal:number) code "PSE-040" "{source_message}"
+SideEffectsProduction040(@place(p,l),m,i) :- !option("entryPoint",_),psep_fact(p,i,"PSE-040",l,m,"error").
+.violation SideEffectsProduction050(at:span,source_message:symbol,ordinal:number) code "PSE-050" "{source_message}"
+SideEffectsProduction050(@place(p,l),m,i) :- !option("entryPoint",_),psep_fact(p,i,"PSE-050",l,m,"error").

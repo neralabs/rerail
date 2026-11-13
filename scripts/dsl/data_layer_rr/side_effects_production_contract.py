@@ -48,7 +48,8 @@ def exercise(module,case,scratch):
 
 
 def install(backend,module,detectors=False):
-    pass
+    from side_effects_production_port import production
+    module._rerail_side_effects_production=lambda root:production(backend,root)
 
 
 if __name__=='__main__':
