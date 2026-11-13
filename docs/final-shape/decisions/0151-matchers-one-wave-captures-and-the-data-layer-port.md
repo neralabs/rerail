@@ -1,4 +1,6 @@
-# 0107: Matchers run as one wave, with captures; the data-layer programs run on the `.rr` engine
+# 0151: Matchers run as one wave, with captures; the data-layer programs run on the `.rr` engine
+
+Numbered 0107 where it was written.
 
 Status: proposed (2026-11-10)
 

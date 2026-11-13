@@ -1,4 +1,6 @@
-# 0108: The cone of requests is magic sets, maintained by delta
+# 0152: The cone of requests is magic sets, maintained by delta
+
+Numbered 0108 where it was written.
 
 Status: built (2026-11-10). The join half and the delta half (rounds) are both built (below).
 

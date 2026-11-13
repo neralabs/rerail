@@ -1,4 +1,6 @@
-# 0105: The planner picks how each kind-set axis is made: per looked-up node, or for the batch by the transducer
+# 0150: The planner picks how each kind-set axis is made: per looked-up node, or for the batch by the transducer
+
+Numbered 0105 where it was written.
 
 Status: proposed (2026-11-10)
 
