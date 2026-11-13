@@ -25,19 +25,27 @@ fn oracle() {
         let expected = std::fs::read_to_string(p).unwrap();
         let (head, want) = expected.split_once('\n').unwrap();
         // A cut text: its file's first `cut` bytes; `ERROR` where tree-sitter's tree has an error.
-        let (path, cut) = match head.split_once('\t') {
-            Some((p, c)) => (p, c.parse::<usize>().ok()),
-            None => (head, None),
+        // An edited text: `@<cut>-<line end>`, the line cut short in the middle of the file.
+        let (path, cut, edit) = match head.split_once('\t') {
+            Some((p, c)) => match c.strip_prefix('@').and_then(|e| e.split_once('-')) {
+                Some((a, b)) => (p, None, a.parse::<usize>().ok().zip(b.parse::<usize>().ok())),
+                None => (p, c.parse::<usize>().ok(), None),
+            },
+            None => (head, None, None),
         };
         let Ok(mut src) = std::fs::read(path) else { continue };
         if let Some(cut) = cut {
             src.truncate(cut);
         }
-        let path = &format!("{path}{}", cut.map_or(String::new(), |c| format!(" (cut at {c})")));
+        if let Some((a, b)) = edit {
+            src = [&src[..a], &src[b..]].concat();
+        }
+        let path = &format!("{path}{}{}", cut.map_or(String::new(), |c| format!(" (cut at {c})")), edit.map_or(String::new(), |(a, b)| format!(" (line cut at {a}, to {b})")));
         // A text where tree-sitter's tree has an error: its recovered tape follows the `ERROR` line.
         let (want, error) = match want.strip_prefix("ERROR\n") {
             Some(w) => (w, true),
-            None => (want, false),
+            // tree-sitter's `has_error` can miss an ERROR its tree holds: the tape says so too.
+            None => (want, want.contains(" flags=2 ") || want.contains(" flags=3 ")),
         };
         if error {
             match tape(&src) {
@@ -65,7 +73,7 @@ fn oracle() {
                     }
                     if shown < show {
                         shown += 1;
-                        show_diff(path, &got, want, &src);
+                        show_diff(&format!("{path} [error text]"), &got, want, &src);
                     }
                 }
             }

@@ -111,5 +111,5 @@ running the layout scanner: 643 instructions a node before those two changes.
   one is its oracle and its cost to beat.
 - **GLR forks.** `print(a, *b)` and any other construct where tree-sitter's tree comes from a fork are
   refused. They are rare (1 file in 3,917).
-- **Error recovery.** A file with a syntax error goes to tree-sitter-python, which is what a file being
-  written mostly is. A permissive read (as 0158's trailing commas) is not built.
+- **Error recovery.** Built in 0169: an error where a line is being typed is recovered as
+  tree-sitter-python recovers it; other errors still go to tree-sitter-python.

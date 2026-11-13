@@ -2525,6 +2525,7 @@ fn python_tape_expect() {
     // `<n>-<j>.txt`, the path and the cut on the first line, and an `ERROR` line before the tape
     // where tree-sitter-python's tree has an error.
     let cuts: usize = std::env::var("RERAIL_PY_CUTS").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let edits: usize = std::env::var("RERAIL_PY_EDITS").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
     let (mut written, mut errors) = (0usize, 0usize);
     for (n, path) in list.lines().filter(|l| !l.is_empty()).enumerate() {
         let Ok(source) = std::fs::read_to_string(path) else { continue };
@@ -2551,6 +2552,30 @@ fn python_tape_expect() {
             let tape = python_tape_plain(&TapeImage::encode(tree.root_node(), &grammar, text, &|| false).unwrap().primary, &grammar);
             let body = if tree.root_node().has_error() { format!("ERROR\n{tape}") } else { tape };
             std::fs::write(out.join(format!("{n:05}-{j}.txt")), format!("{path}\t{cut}\n{body}")).unwrap();
+        }
+        // With `RERAIL_PY_EDITS=k`, also `k` lines each cut short in the middle of the file, the rest
+        // kept, as a line is while it is typed: `<n>-e<j>.txt`, the path and `@<cut>-<line end>` on
+        // the first line (the text is the file's bytes before the cut and from the line's end on).
+        for j in 0..edits {
+            let lines: Vec<usize> = std::iter::once(0).chain(source.match_indices('\n').map(|(k, _)| k + 1)).collect();
+            if lines.len() < 3 {
+                break;
+            }
+            let l = lines.len() * (j + 1) / (edits + 1);
+            let (from, to) = (lines[l.min(lines.len() - 1)], lines.get(l + 1).map_or(source.len(), |&e| e - 1));
+            let indent = source[from..to].len() - source[from..to].trim_start().len();
+            if to <= from + indent + 1 {
+                continue;
+            }
+            let mut cut = from + indent + (to - from - indent) / 2;
+            while !source.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            let text = format!("{}{}", &source[..cut], &source[to..]);
+            let tree = parser.parse(&text, None).unwrap();
+            let tape = python_tape_plain(&TapeImage::encode(tree.root_node(), &grammar, &text, &|| false).unwrap().primary, &grammar);
+            let body = if tree.root_node().has_error() { format!("ERROR\n{tape}") } else { tape };
+            std::fs::write(out.join(format!("{n:05}-e{j}.txt")), format!("{path}\t@{cut}-{to}\n{body}")).unwrap();
         }
     }
     eprintln!("{written} tapes written, {errors} files with errors left out");
@@ -2611,6 +2636,11 @@ fn python_tapes_from_the_lean_parser_are_tree_sitters() {
         "print \"py2\", x\nexec code in ns\nx = `y`\n",
         "x = r'\\\\' + rb'\\d' + b'\\N{x}' + '\\u00e9\\q'\n",
         "x = 1 \\\n    + 2\n",
+        // A line end where tree-sitter's scanner gives no NEWLINE (the parser takes none): the line
+        // goes on in the next (`_ = b = 1`, `col: message: str`).
+        "with a as _:\n    _ =\n    b = 1\n",
+        "class A:\n    col:\n    message: str\n",
+        "def f(x: a: b): pass\n",
     ] {
         let ours = python_lean::encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
         let tree = parser.parse(source, None).unwrap();
@@ -2628,6 +2658,9 @@ fn python_tapes_from_the_lean_parser_are_tree_sitters() {
         "class A:\n    def f(self):\n        return 1\n\n    x = g(y.z",
         "# c\nif x:\n    y = 1\n    # d\n    z = [a for",
         "from os.path impor",
+        // An error at a line's end where the next line's first token is one no NEWLINE-less line
+        // takes: the `ERROR` is the line's.
+        "@p.\ndef f():\n    pass\n",
     ] {
         let tree = parser.parse(cut, None).unwrap();
         assert!(tree.root_node().has_error(), "{cut:?} reads without an error");

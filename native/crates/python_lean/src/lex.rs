@@ -14,6 +14,10 @@
 //!
 //! Inside brackets, and inside a string's interpolation, there are none. An indent the grammar
 //! does not take (past the current, not after a header) gives no token, as in tree-sitter.
+//!
+//! **Joined lines.** tree-sitter's scanner gives a NEWLINE only where the parser takes one: where it
+//! does not (after `x =`), the line end is a blank, and the statement goes on in the next line
+//! (`lex_joined`: the parser names those line ends; the scanner does not run at them).
 
 use crate::block;
 
@@ -211,12 +215,19 @@ struct Lexer<'s> {
     p: usize,
     /// Interpolations nested.
     depth: u32,
+    /// Where the scanner does not run (each a NEWLINE the parser did not take), in order.
+    joins: &'s [u32],
 }
 
 const MAX_NESTING: u32 = 64;
 
 pub fn lex(src: &[u8]) -> Result<Lexed, Refusal> {
-    let mut l = Lexer { src, b: block::Blocks::of(src), toks: Vec::with_capacity(src.len() / 3 + 16), extras: Vec::new(), p: 0, depth: 0 };
+    lex_joined(src, &[])
+}
+
+/// `src` lexed, the line ends at `joins` (where a NEWLINE was, in order) read as blanks.
+pub fn lex_joined(src: &[u8], joins: &[u32]) -> Result<Lexed, Refusal> {
+    let mut l = Lexer { src, b: block::Blocks::of(src), toks: Vec::with_capacity(src.len() / 3 + 16), extras: Vec::new(), p: 0, depth: 0, joins };
     l.module()?;
     Ok(Lexed { toks: l.toks, extras: l.extras })
 }
@@ -320,6 +331,21 @@ fn keyword(src: &[u8], i: usize, end: usize) -> (T, u8) {
 }
 
 impl<'s> Lexer<'s> {
+    /// The scanner does not run here: a line end the parser joined.
+    #[inline(always)]
+    fn joined(&mut self) -> bool {
+        while let Some((&j, rest)) = self.joins.split_first() {
+            if j as usize > self.p {
+                break;
+            }
+            self.joins = rest;
+            if j as usize == self.p {
+                return true;
+            }
+        }
+        false
+    }
+
     #[inline(always)]
     fn at(&self, i: usize) -> u8 {
         self.src.get(i).copied().unwrap_or(0)
@@ -426,7 +452,7 @@ impl<'s> Lexer<'s> {
             while matches!(self.at(k), b' ' | b'\t') {
                 k += 1;
             }
-            if brackets == 0 && (k >= src.len() || matches!(src[k], b'\n' | b'\r' | b'#' | b'\\' | 0x0c)) {
+            if brackets == 0 && (k >= src.len() || matches!(src[k], b'\n' | b'\r' | b'#' | b'\\' | 0x0c)) && !self.joined() {
                 while let Some((indent, first_comment)) = self.scan(self.p)? {
                     let current = *indents.last().expect("an indent");
                     let p = self.p;

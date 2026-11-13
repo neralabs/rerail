@@ -127,9 +127,29 @@ struct P<'a> {
     w: Writer<Widths>,
     last_end: u32,
     depth: u32,
+    /// The text to be lexed again: the parse stops (`Relex`).
+    relex: Option<Relex>,
+    /// The line ends joined, and those not to join, in order.
+    joins: &'a [u32],
+    kept: &'a [u32],
 }
 
-pub fn parse(src: &[u8], lexed: &Lexed) -> R<Tape> {
+/// How the text is to be lexed again, and parsed.
+#[derive(Clone, Copy, Debug)]
+pub enum Relex {
+    /// A NEWLINE a statement failed at, where no DEDENT follows: tree-sitter's scanner gives
+    /// nothing there (NEWLINE is not valid), and the statement goes on in the next line.
+    Join(u32),
+    /// A joined line end, where the statement failed at the next line's first token: tree-sitter
+    /// failed there too, and its `ERROR` is the line's, as if the line ended.
+    Keep(u32),
+}
+
+/// Line ends a text may join, or keep, before its statements are recovered without.
+pub const MAX_JOINS: usize = 64;
+
+/// `src` parsed, `joins` joined, `kept` not; `Err(Ok(r))`, the text to be lexed again.
+pub fn parse(src: &[u8], lexed: &Lexed, joins: &[u32], kept: &[u32]) -> Result<Tape, Result<Relex, Refusal>> {
     let mut widths = Widths::guess(src.len());
     loop {
         let mut p = P {
@@ -141,13 +161,18 @@ pub fn parse(src: &[u8], lexed: &Lexed) -> R<Tape> {
             w: Writer::new(0, widths, lexed.toks.len() + lexed.extras.len() + 1),
             last_end: 0,
             depth: 0,
+            relex: None,
+            joins,
+            kept,
         };
-        p.module()?;
+        if let Err(r) = p.module() {
+            return Err(p.relex.ok_or(r));
+        }
         match p.w.finish_columns() {
             Ok(columns) => return Ok(columns),
             Err(Redo(w)) => {
                 if w == widths {
-                    return Err(Refusal::TooLarge);
+                    return Err(Err(Refusal::TooLarge));
                 }
                 widths = w;
             }
@@ -381,9 +406,35 @@ impl<'a> P<'a> {
         let mark = Mark { n: self.w.len(), i: self.i, depth: self.depth };
         match self.statement() {
             Ok(()) => Ok(()),
+            Err(r @ Refusal::Parse(_)) if self.relex.is_some() => Err(r),
+            Err(r @ Refusal::Parse(_)) if self.joins.len() + self.kept.len() < MAX_JOINS && self.relexed().is_some() => {
+                self.relex = self.relexed();
+                Err(r)
+            }
             Err(Refusal::Parse(_)) => self.recover_at_end(mark, block),
             Err(r) => Err(r),
         }
+    }
+
+    /// A statement failed at the next token: whether tree-sitter's scanner read the line ends
+    /// around it otherwise (`Relex`).
+    #[cold]
+    fn relexed(&self) -> Option<Relex> {
+        let t = self.tok();
+        if t.kind == T::Newline {
+            let dedent = self.toks.get(self.i + 1).is_some_and(|n| n.kind == T::Dedent);
+            return (!dedent && self.kept.binary_search(&t.start).is_err()).then_some(Relex::Join(t.start));
+        }
+        // The first token of a joined line: a line end joined between the last token and it. Only
+        // where that line is not indented past the line before it: else tree-sitter mostly skips
+        // the token into the `ERROR` (refused, as a statement over a joined line end).
+        let k = self.joins.partition_point(|&j| j < self.last_end);
+        let &j = self.joins.get(k).filter(|&&j| j < t.start)?;
+        let indent = |at: usize| {
+            let from = self.src[..at].iter().rposition(|&c| c == b'\n').map_or(0, |i| i + 1);
+            self.src[from..].iter().take_while(|&&c| c == b' ' || c == b'\t').count()
+        };
+        (indent(t.start as usize) <= indent(j as usize)).then_some(Relex::Keep(j))
     }
 
     /// A statement the text ends in, as tree-sitter-python recovers it: one `ERROR`, an extra of the
@@ -398,20 +449,36 @@ impl<'a> P<'a> {
     /// - A block's first statement: the `ERROR` is the compound statement's, before its block,
     ///   which is empty, at the text's end (tree-sitter had no block yet to put it in).
     ///
-    /// Only where the statement failed for want of tokens: what is left is layout tokens and the
-    /// end. A syntax error before the end is refused (tree-sitter-python reads the file).
+    /// Only where the statement's line ends after the failure (or the text does), with no bracket
+    /// closed in between; else refused (tree-sitter-python reads the file).
     #[cold]
     #[inline(never)]
     fn recover_at_end(&mut self, mark: Mark, block: Option<&mut N>) -> R<()> {
-        // The token the statement failed at, the text's last: the `ERROR`'s too (tree-sitter skips
-        // it into it). Past it, only layout tokens and the end.
+        // The tokens from the one the statement failed at to its line's end: the `ERROR`'s too
+        // (tree-sitter skips them into it). Then the line ends (a line end restarts the parse), or
+        // the text does. None of them closes a bracket: there tree-sitter takes up the statement
+        // again (`)` after `f(a b`), inside it.
         let layout = |t: &Tok| matches!(t.kind, T::Newline | T::Indent | T::Dedent | T::Eof);
+        // A statement over a joined line end: tree-sitter's recovery there goes on into the lines
+        // after (keywords read as names, an `ERROR` a line); refused.
+        let begin = self.toks[mark.i].start;
+        if self.joins.iter().any(|&j| j >= begin && j < self.tok().start) {
+            return self.refuse();
+        }
         // (Its line as the text has it: inside brackets the lexer gives no line ends.)
         let from = self.toks[self.i].start as usize;
         let line_end = self.src[from.min(self.src.len())..].iter().position(|&c| c == b'\n').map_or(u32::MAX, |k| (from + k) as u32);
         let rest = self.toks[self.i..].iter().take_while(|t| !layout(t) && t.start < line_end).count();
-        // (One at most: past it tree-sitter may take up the statement again, as `)` after `f(a b`.)
-        if rest > 1 || !self.toks[self.i + rest..].iter().all(layout) {
+        let after = &self.toks[self.i + rest..];
+        let ends = after.iter().all(layout) || after.first().is_some_and(|t| t.kind == T::Newline);
+        if !ends || self.toks[self.i..self.i + rest].iter().any(|t| matches!(t.kind, T::RParen | T::RBracket | T::RBrace)) {
+            return self.refuse();
+        }
+        // A statement over a line end inside brackets (no NEWLINE there), failing before the
+        // text's last token: tree-sitter takes the statement up again after its `ERROR`
+        // (`x = (1,⏎y = 2`); refused.
+        let span = &self.src[(begin as usize).min(self.src.len())..(self.tok().start as usize).min(self.src.len())];
+        if span.contains(&b'\n') && (rest > 1 || after.iter().any(|t| !layout(t))) {
             return self.refuse();
         }
         let Some(last) = self.toks[mark.i..self.i].iter().rev().find(|t| !layout(t)).copied() else { return self.refuse() };
@@ -510,7 +577,25 @@ impl<'a> P<'a> {
                     pieces.push(nodes);
                     k += 1;
                 }
-                (_, Some(tok)) => {
+                (ks, Some(tok)) => {
+                    // `not in` and `is not`: one operator of two tokens, as in a comparison.
+                    let next = toks.get(t + 1).filter(|n| ks.is_none_or(|ks| n.start < ks));
+                    // Only after an operand (`a not in`; `if not in` is a unary `not`): a kept
+                    // subtree, or a token that ends one.
+                    let operand = pieces.last().is_some_and(|p| {
+                        p.len() > 1 || t == 0 || toks[t - 1].start != p[0].1 || matches!(toks[t - 1].kind, T::Name | T::Int | T::Float | T::True | T::False | T::None | T::Ellipsis | T::RParen | T::RBracket | T::RBrace | T::StrEnd)
+                    });
+                    let pair = match (tok.kind, next.map(|n| n.kind).filter(|_| operand)) {
+                        (T::Not, Some(T::In)) => Some(K::NotIn),
+                        (T::Is, Some(T::Not)) => Some(K::IsNot),
+                        _ => Option::None,
+                    };
+                    if let (Some(op), Some(&n)) = (pair, next) {
+                        let leaf = |t: Tok| -> R<(u32, u32, u32, u32)> { Ok((key(token_kind(t)?, f::NONE, C_NONE, false), t.start, 1, t.end)) };
+                        pieces.push(vec![(key(op, f::NONE, C_NONE, false), tok.start, 3, n.end), leaf(tok)?, leaf(n)?]);
+                        t += 2;
+                        continue;
+                    }
                     pieces.push(vec![(key(token_kind(tok)?, f::NONE, C_NONE, false), tok.start, 1, tok.end)]);
                     t += 1;
                 }
@@ -911,7 +996,7 @@ impl<'a> P<'a> {
                 self.to_pattern(a.at + 1, f::LEFT)?;
                 self.bump();
                 if kind == T::Colon {
-                    self.ty(f::TYPE)?;
+                    self.annotation(f::TYPE)?;
                     if self.peek() == T::Eq {
                         self.bump();
                         self.rhs(f::RIGHT)?;
@@ -1334,7 +1419,7 @@ impl<'a> P<'a> {
                     let t = self.wrap(n, K::TypedParameter, param);
                     self.w.set_key(n.at + 1, key(kind, f::NONE, C_NONE, false));
                     self.bump();
-                    self.ty(f::TYPE)?;
+                    self.annotation(f::TYPE)?;
                     self.close(t);
                 }
             }
@@ -1358,7 +1443,7 @@ impl<'a> P<'a> {
                     let n = self.open_in(K::TypedParameter, param);
                     self.name(f::NONE)?;
                     self.bump();
-                    self.ty(f::TYPE)?;
+                    self.annotation(f::TYPE)?;
                     if self.peek() == T::Eq {
                         self.w.set_key(n.at, key(K::TypedDefaultParameter, f::NONE, C_PARAM, false));
                         self.w.set_key(n.at + 1, key(K::Identifier, f::NAME, C_NONE, false));
@@ -2473,6 +2558,32 @@ impl<'a> P<'a> {
             t = outer;
         }
         Ok(t)
+    }
+
+    /// An annotation's `type` (an assignment's, a parameter's): `a: b` in it is a
+    /// `constrained_type`, right to left (`a: b: c` is `a: (b: c)`). (There tree-sitter reads a
+    /// union `a | b` as a `binary_operator`: refused.)
+    fn annotation(&mut self, field: u8) -> R<N> {
+        let t = self.ty(field)?;
+        if self.peek() != T::Colon {
+            return Ok(t);
+        }
+        if self.kind_at(t.at + 1) == K::UnionType {
+            return self.refuse();
+        }
+        self.deeper()?;
+        let c = self.wrap(t, K::ConstrainedType, slot(f::NONE, Ctx::Bare));
+        let outer = self.wrap(c, K::Type, slot(field, Ctx::Bare));
+        self.w.set_key(outer.at + 2, key(K::Type, f::NONE, C_NONE, false));
+        self.bump();
+        let r = self.annotation(f::NONE)?;
+        if self.kind_at(r.at + 1) == K::UnionType {
+            return self.refuse();
+        }
+        self.w.close(outer.at + 1, self.last_end);
+        self.close(outer);
+        self.depth -= 1;
+        Ok(outer)
     }
 
     /// A `type` without a union at its top: a splat, a generic (and member types after it), or an

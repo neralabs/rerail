@@ -563,8 +563,26 @@ pub fn tape(src: &[u8]) -> Result<Tape, Refusal> {
     if src.len() >= u32::MAX as usize / 2 {
         return Err(Refusal::TooLarge);
     }
-    let lexed = lex::lex(src)?;
-    parse::parse(src, &lexed)
+    // Each line end a statement did not take, joined (as tree-sitter's scanner gives no NEWLINE
+    // there), and the text read again.
+    // A joined line end where the next line's first token failed is kept (`parse::Relex`).
+    let (mut joins, mut kept): (Vec<u32>, Vec<u32>) = (Vec::new(), Vec::new());
+    let insert = |v: &mut Vec<u32>, at: u32| {
+        let k = v.partition_point(|&j| j < at);
+        v.insert(k, at);
+    };
+    loop {
+        let lexed = lex::lex_joined(src, &joins)?;
+        match parse::parse(src, &lexed, &joins, &kept) {
+            Ok(t) => return Ok(t),
+            Err(Ok(parse::Relex::Join(at))) => insert(&mut joins, at),
+            Err(Ok(parse::Relex::Keep(at))) => {
+                joins.retain(|&j| j != at);
+                insert(&mut kept, at);
+            }
+            Err(Err(r)) => return Err(r),
+        }
+    }
 }
 
 /// How many tokens and extras `src` lexes to (the lexer alone, for a measurement).
