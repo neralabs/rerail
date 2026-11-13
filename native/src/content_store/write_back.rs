@@ -161,6 +161,8 @@ fn small_job() -> usize {
 struct Lane {
     tx: mpsc::Sender<Queued>,
     thread: std::thread::JoinHandle<()>,
+    /// The WAL's checkpointer: it ends when the writer does, and its connection holds the file open until then.
+    checkpointer: std::thread::JoinHandle<()>,
 }
 
 /// A store's writer, one for every handle of the store in this process (by its path), so every handle reads what
@@ -217,11 +219,14 @@ fn unregister(path: &Path, w: &Arc<Writer>) {
         all.remove(path);
     }
     let lane = w.lane.lock().expect("the writer").take();
-    if let Some(Lane { tx, thread }) = lane {
+    if let Some(Lane { tx, thread, checkpointer }) = lane {
         let (jobs, bytes) = w.shared.state.lock().map(|s| (s.jobs, s.bytes)).unwrap_or_default();
         let t = std::time::Instant::now();
         drop(tx);
         let _ = thread.join();
+        // The writer's end ends the checkpointer's signals; joined, its connection is closed, as a run that deletes
+        // the file and creates it again (`corpus::closed`) needs every connection to it closed.
+        let _ = checkpointer.join();
         // What the end of the run waited for: the queue the waves left behind them.
         let waited = t.elapsed().as_secs_f64();
         if waited > 0.05 && std::env::var_os("RERAIL_PROFILE").is_some() {
@@ -390,7 +395,7 @@ impl ContentStore {
         // come while it checkpoints are one.
         let (told, tells) = mpsc::channel::<()>();
         let checkpointer = self.sibling();
-        rerail_accel::exec::service("rerail-store-checkpoint", None, move || {
+        let checkpoint = rerail_accel::exec::service("rerail-store-checkpoint", None, move || {
             super::hazards::behind_the_run();
             while tells.recv().is_ok() {
                 while tells.try_recv().is_ok() {}
@@ -475,7 +480,7 @@ impl ContentStore {
                 }
             })
             .expect("the store's writer thread");
-        Lane { tx, thread }
+        Lane { tx, thread, checkpointer: checkpoint }
     }
 
     /// The value a queued job left for `key`, while the job is queued.
