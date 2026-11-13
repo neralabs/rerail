@@ -510,8 +510,11 @@ const hooksWhereRerailIsOff: Array<{ host: string; event: string; run: (cwd: str
   },
 ];
 
-/** What coding agents and editors set for the commands they run, Git's included; none of it moves where Git looks. */
-const AGENT_GIT_ENVIRONMENT = { GIT_ASKPASS: "askpass", GIT_EDITOR: "true", GIT_PAGER: "cat", GIT_TERMINAL_PROMPT: "0" };
+/**
+ * What coding agents and editors set for the commands they run, and a person's own Git setting the daemon holds too;
+ * none of it moves where Git looks away from where the daemon's Git looks.
+ */
+const AGENT_GIT_ENVIRONMENT = { GIT_ASKPASS: "askpass", GIT_EDITOR: "true", GIT_PAGER: "cat", GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1" };
 
 describe("hooks where Rerail does not run", () => {
   beforeEach(() => {
