@@ -16,7 +16,7 @@
 //! - **Facts:** `fact_row(p, rel, row, width)` and `fact(p, rel, row, i, kind, n, s)`.
 //! - **What preparing made:** `demand`, `demand_dropped`, `magic_extras`, `magic_report` (with `report_list`),
 //!   `gate` (with `gate_src`, `gate_quiet`, `gate_dep`), `native_dfs` (with `native_roots`), `native_match` (with
-//!   `native_group`), `native_components`, `rx_span`, `policy` and `setting`.
+//!   `native_group`), `native_components`, `native_reach`, `native_reach_through`, `rx_span`, `policy` and `setting`.
 //!
 //! Each list is indexed (`k`, `i`, `row`), so a row's place is in the row itself: the rows are a set, and any order
 //! of them reads back as the same program. Ids (`r`, `l`, `a`, `t`) are numbered per program.
@@ -77,6 +77,8 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         ("native_python_candidates", &["p:sym", "rel:sym", "input:sym", "targets:sym", "context:sym", "member:sym"]),
         ("native_python", &["p:sym", "rel:sym", "kind:sym", "input:sym", "targets:sym"]),
         ("native_components", &["p:sym", "rel:sym", "edge:sym", "own:sym"]),
+        ("native_reach", &["p:sym", "rel:sym", "seed:sym", "edge:sym"]),
+        ("native_reach_through", &["p:sym", "rel:sym", "reach:sym", "map:sym"]),
         ("rx_span", &["p:sym", "span:sym", "s:sym"]),
         // `ast_patterns`: the AST patterns the program matches (`n ~ `…``), each by its text.
         ("ast_pattern", &["p:sym", "s:sym"]),
@@ -329,6 +331,8 @@ impl Writer<'_> {
                 Native::PythonCandidates {input,targets,context,member} => self.row("native_python_candidates",vec![s(rel),s(input),s(targets),s(context),s(member)]),
                 Native::Python {kind,input,targets} => self.row("native_python",vec![s(rel),s(kind),s(input),s(targets.as_deref().unwrap_or(""))]),
                 Native::Components { edge, own } => self.row("native_components", vec![s(rel), s(edge), s(own)]),
+                Native::Reach { seed, edge } => self.row("native_reach", vec![s(rel), s(seed), s(edge)]),
+                Native::ReachThrough { reach, map } => self.row("native_reach_through", vec![s(rel), s(reach), s(map)]),
             }
         }
         if let Some(scopes) = &prog.doc_scopes {
@@ -686,6 +690,12 @@ impl<'a> Reader<'a> {
         }
         for row in self.get("native_components") {
             prog.natives.insert(text(&row[0])?, Native::Components { edge: text(&row[1])?, own: text(&row[2])? });
+        }
+        for row in self.get("native_reach") {
+            prog.natives.insert(text(&row[0])?, Native::Reach { seed: text(&row[1])?, edge: text(&row[2])? });
+        }
+        for row in self.get("native_reach_through") {
+            prog.natives.insert(text(&row[0])?, Native::ReachThrough { reach: text(&row[1])?, map: text(&row[2])? });
         }
         for row in self.get("rx_span") {
             // `kind:K`, and `capture:G:P` (a group is a name, so the pattern is what follows its colon).

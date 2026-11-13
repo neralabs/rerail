@@ -50,6 +50,23 @@ pub const SPAN: u8 = 0x5c;
 pub const EMPTY: u8 = 0x5d;
 /// A mark (a token of no width) before the token: `m=k` its order, the operand its mask.
 pub const MARK: u8 = 0x5e;
+/// `MARK`'s mode bit: on the mark, its arm, the mark kept for the callee that arm calls.
+pub const MARK_KEEP: u8 = 64;
+/// `TOKEN`'s mode bit: the extras taken in the token step (`Words::extras`), as the lean parser
+/// places comments where it passes them: a token that is an extra is its leaf, deferred, and
+/// the next token is taken.
+pub const TOKEN_EXTRAS: u8 = 128;
+
+/// A `PUSH`'s mode: the flag its call runs with (`flag`, set or cleared), as a parameter: the
+/// caller's flags saved first and given back where the call returns. 0: none.
+pub const fn push_flag(flag: u16, set: bool) -> u8 {
+    1 + ((flag as u8) << 1 | if set { 0 } else { 1 })
+}
+
+/// A `PUSH` mode's flag (`push_flag`): the flag and whether it is set.
+pub const fn push_flag_of(mode: u8) -> Option<(u16, bool)> {
+    if mode == 0 { None } else { Some((((mode - 1) >> 1) as u16, (mode - 1) & 1 == 0)) }
+}
 /// Runs the next word when the token starts at a bit of mask `operand`, else skips it: which of
 /// two rows beginning with one byte the token is.
 pub const ROW: u8 = 0x5f;
@@ -70,6 +87,11 @@ pub const REMEMBER: u8 = 0x63;
 /// `PUSH` (the called level's; the caller's come back where it returns); `m=2` a test, which
 /// runs the next word where the flag is set and skips it where it is clear.
 pub const FLAG: u8 = 0x64;
+/// A count of tokens, the file refused past its most (`Words::counts`, operand its index): `m=0`
+/// one more (the token is an up's, as `{`), `m=1` one less where above 0 (a down's, `}`).
+/// Tier 1's `count(up, down) max M` where its ups and downs are tokens' starts, at the arms
+/// that take them, as the lean parser counts a depth as it parses.
+pub const COUNT: u8 = 0x65;
 
 pub const NAMED: u8 = 1;
 pub const GREEDY: u8 = 1;
@@ -117,4 +139,43 @@ pub struct Words {
     /// order) holds where its mask does and the token's record names string `W`, as a parser
     /// tests the next token's word. Rising by mark.
     pub mark_words: Vec<(u8, u16)>,
+    /// Each keyword's node kind (`wordkind sW #K`): a token whose record names string `W` makes a
+    /// leaf of kind `K` where a `LEAF` names `stream_ir::WORD_KIND`. Rising by string.
+    pub word_kinds: Vec<(u16, u16)>,
+    /// The extras a `TOKEN` takes (`m` with `TOKEN_EXTRAS`; `tokenextra bB #K`): a token whose
+    /// record's code has mark bit `B` (`records::MARK_SHIFT + B`) is an extra of kind `K`. Rising
+    /// by bit.
+    pub extras: Vec<(u8, u16)>,
+    /// The token marks (decision 0129; `tokenmark K oO kK sW …`): mark `K` holds where its
+    /// record's bit does and its tokens follow, each element one record (the extras between
+    /// skipped). Rising by mark.
+    pub token_marks: Vec<TokenMark>,
+    /// The counts of tokens (`COUNT`; `tokencount N max M`): each one's most.
+    pub counts: Vec<u16>,
+}
+
+/// A token mark (`Words::token_marks`): its order, and its elements.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TokenMark {
+    pub order: u8,
+    pub elems: Vec<TokenElem>,
+}
+
+/// One token of a token mark: its offset from the mark's token (-1 the one before), and what
+/// the token's record may be: a kind of `kinds` (bit `k`: the records' kind `k`), or a word of
+/// `words` (strings).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TokenElem {
+    pub offset: i8,
+    pub kinds: u64,
+    pub words: Vec<u16>,
+}
+
+impl TokenElem {
+    /// Whether a record's code is one of the element's.
+    pub fn takes(&self, code: u32) -> bool {
+        let kind = code & 0xff;
+        let word = crate::records::word_of(code);
+        (kind < 64 && self.kinds >> kind & 1 == 1) || (word > 0 && self.words.contains(&((word - 1) as u16)))
+    }
 }

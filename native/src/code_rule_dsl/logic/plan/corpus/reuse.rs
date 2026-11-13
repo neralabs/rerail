@@ -35,7 +35,7 @@ pub(super) fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Opti
 /// The run's key: everything it is a function of besides what it consults.
 /// Switches that change how a run is measured or held, never what it outputs: left out of the key. A profile's path
 /// differs every run, so with it in the key no profiled run ever found the last run's record.
-const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WRITE_QUEUE_MB"];
+const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE"];
 
 fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
     let mut h = Sha256::new();
@@ -81,18 +81,22 @@ fn with_settings(programs: &[&str], root: &Path, options: &serde_json::Value) ->
 }
 
 /// The library files the programs include, each with its digest now: the record's `rule` entries.
-pub fn rule_files(programs: &[String]) -> Result<Vec<(String, String, String)>> {
+pub fn rule_files(programs: &[String], options: &serde_json::Value) -> Result<Vec<(String, String, String)>> {
     let mut out = Vec::new();
     // Phase 1's program (`sources.rr`), which every run's documents come from: its includes are core's, as the
     // programs' are.
     let sources = super::phases::sources_path();
     let digest = observe(|o| o.digest(&sources)).map(|d| crate::content_store::observe::hex(&d)).unwrap_or_default();
     out.push(("rule".to_owned(), sources.to_string_lossy().into_owned(), digest));
+    // The programs' includes, and every phase program they read (with its includes).
+    let dir = options.get("phase_dir").and_then(|v| v.as_str()).map(std::path::PathBuf::from);
+    let mut paths = super::phases::phase_files(programs, dir.as_deref())?;
     for p in programs {
-        for path in crate::code_rule_dsl::logic::rr::included_files(p)? {
-            let digest = observe(|o| o.digest(&path)).map(|d| crate::content_store::observe::hex(&d)).unwrap_or_default();
-            out.push(("rule".to_owned(), path.to_string_lossy().into_owned(), digest));
-        }
+        paths.extend(crate::code_rule_dsl::logic::rr::included_files(p)?);
+    }
+    for path in paths {
+        let digest = observe(|o| o.digest(&path)).map(|d| crate::content_store::observe::hex(&d)).unwrap_or_default();
+        out.push(("rule".to_owned(), path.to_string_lossy().into_owned(), digest));
     }
     out.sort();
     out.dedup();
@@ -162,7 +166,14 @@ pub(super) fn reused(programs: &[&str], root: &Path, out: &Path, modes: &str, ty
     };
     // The library files first (a `stat` each), then the documents and the resolution rules' reads.
     let (rules, rest): (Vec<_>, Vec<_>) = consulted.into_iter().partition(|c| c.0 == "rule");
-    if rule_files(&texts)? != rules {
+    // What the record names, by its digest, first: an edit's document or rule file differs here, before the rule
+    // files are listed again (each phase program parsed) or the programs combined. Each is the observer's answer,
+    // which the journal trusts unread where nothing changed.
+    if let Some(c) = rules.iter().chain(rest.iter().filter(|c| c.0 == "doc" && !c.2.is_empty())).find(|c| super::world::bytes_digest(&root.join(&c.1)) != c.2) {
+        miss(&format!("{} {} changed", c.0, c.1));
+        return Ok(None);
+    }
+    if rule_files(&texts, options)? != rules {
         miss("the rule files differ");
         return Ok(None);
     }
@@ -197,19 +208,24 @@ fn miss(why: &str) {
 }
 
 pub(super) fn record(programs: &[&str], root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report) -> Result<()> {
-    // A phase's program and exports are its own record's (`phases`), not this one's: such a run is not kept. Phase 1's
-    // program is among the rule files, and what it consulted (the source files, and the directories, files and
-    // library documents its imports read) is the record's too: a run of the same files would load the same.
-    if report.consulted.is_empty() || report.phase_runs.iter().any(|r| r.name != "sources") {
-        let phases: Vec<&str> = report.phase_runs.iter().map(|r| r.name.as_str()).filter(|n| *n != "sources").collect();
-        miss(&format!("not recorded: {} consulted, other phases {phases:?}", report.consulted.len()));
+    // Every phase's program is among the rule files (`rule_files`), and what each phase consulted is the record's
+    // too: a phase's exports are a function of its program and what it consulted, so a run whose every read, its
+    // phases' included, is as it was derives the same (O-cutoff-phases). Phase 1's are the source files, and the
+    // directories, files and library documents its imports read.
+    if report.consulted.is_empty() {
+        miss("not recorded: nothing consulted");
         return Ok(());
     }
     let texts = with_settings(programs, root, options)?;
     let key = key(&texts, root, options, modes, typing);
-    let mut consulted = rule_files(&texts)?;
-    consulted.extend(report.consulted.iter().cloned());
-    consulted.extend(report.phase_runs.iter().filter(|r| r.name == super::phases::SOURCES).flat_map(|r| r.report.consulted.iter().cloned()));
+    let mut consulted = rule_files(&texts, options)?;
+    let mut read: Vec<(String, String, String)> = report.consulted.iter().cloned().chain(report.phase_runs.iter().flat_map(|r| r.report.consulted.iter().cloned())).collect();
+    read.sort();
+    read.dedup();
+    // One entry a document: a phase that read its bytes names its digest, where another listed it unread.
+    let read_docs: std::collections::BTreeSet<String> = read.iter().filter(|c| c.0 == "doc" && !c.2.is_empty()).map(|c| c.1.clone()).collect();
+    read.retain(|c| !(c.0 == "doc" && c.2.is_empty() && read_docs.contains(&c.1)));
+    consulted.extend(read);
     let outputs = encode_outputs(&outputs_of(out,report.rows.keys().map(String::as_str)));
     if std::env::var_os("RERAIL_REUSE_TRACE").is_some() {
         eprintln!("rerail: whole-run cutoff: recorded under {} ({} consulted)", &key[..12], consulted.len());

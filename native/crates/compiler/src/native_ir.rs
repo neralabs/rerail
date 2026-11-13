@@ -62,6 +62,9 @@ pub enum On {
     Made = 2,
     /// A field's only: the node the node made last, a wrap, holds first.
     Inner = 3,
+    /// A field's only: the node made last at the level, where it has none (a call's field, set
+    /// where it returns: the callee's own field, or its relabel's, is kept).
+    MadeUnset = 4,
 }
 
 impl On {
@@ -70,6 +73,7 @@ impl On {
             0 => On::Here,
             1 => On::Moved,
             2 => On::Made,
+            4 => On::MadeUnset,
             _ => On::Inner,
         }
     }
@@ -104,8 +108,9 @@ pub enum StructuralOperation {
     Emit { label: u16, output: FunctionRef },
     // Tier 2's words over the token stream (decision 0087, `stream`).
     /// The next start of tier 1's extract `extract`.
-    /// `any`: the mask of any mark (`TOKEN m=1+k`).
-    Token { extract: u16, any: Option<u8> },
+    /// `any`: the mask of any mark (`TOKEN m=1+k`). `extras`: the extras taken too
+    /// (`TOKEN_EXTRAS`, `Structure::extras`).
+    Token { extract: u16, any: Option<u8>, extras: bool },
     Switch { table: u16 },
     /// The token's end: `len` bytes, or (`last`) one past the next position of extract `len`.
     Span { last: bool, len: u16 },
@@ -127,7 +132,9 @@ pub enum StructuralOperation {
     /// Mark `order` (its bit in mask `mask` at the token's start; at the stream's end, `end`),
     /// if not yet taken nor passed: take it and run the next word; else skip that word.
     /// `word`: the string the token's record must name too (`Words::mark_words`).
-    Mark { mask: u16, order: u8, end: bool, word: Option<u16> },
+    /// `keep`: on the mark, its arm, the mark left for the callee the arm calls.
+    /// `pattern`: a token mark's (`Words::token_marks`, its index there).
+    Mark { mask: u16, order: u8, end: bool, keep: bool, word: Option<u16>, pattern: Option<u16> },
     /// The token starts at a bit of mask `mask`: run the next word; else skip it.
     Row { mask: u16 },
     /// A node becomes a `kind`: the innermost open node, or another (`On`).
@@ -145,12 +152,16 @@ pub enum StructuralOperation {
     /// A node's field: the last node's, or another's (`On`).
     NodeField { field: u16, on: On },
     NodeSuper { kind: u16 },
-    Push { target: u16 },
+    /// `flag`: the flag the call runs with, set or cleared (`push_flag`).
+    Push { target: u16, flag: Option<(u16, bool)> },
     /// The token just taken is its level's word, of `kind` (`REMEMBER`).
     Remember { kind: u16 },
     /// The level's flag `flag`: set, clear, or a test that runs the next word where it is set
     /// (`FLAG m=0, 1, 2`).
     Flag { flag: u16, op: FlagOp },
+    /// `COUNT`: a count of tokens (`Words::counts`, its index), one more (`up`, refused past
+    /// `max`) or one less.
+    Count { count: u16, up: bool, max: u16 },
     /// To switch on this token again (`again`), or to take the next.
     Return { again: bool },
     Accept,
@@ -199,7 +210,7 @@ impl StructuralOperation {
             Self::Fork { greedy, target } => (FORK, u8::from(greedy), target),
             Self::Goto { target } => (GOTO, 0, target),
             Self::Emit { label, .. } => (EMIT, 0, label),
-            Self::Token { extract, any } => (TOKEN, any.map_or(0, |k| k + 1), extract),
+            Self::Token { extract, any, extras } => (TOKEN, any.map_or(0, |k| k + 1) | if extras { crate::program::TOKEN_EXTRAS } else { 0 }, extract),
             Self::Empty { total } => (EMPTY, 0, total),
             Self::Switch { table } => (SWITCH, 0, table),
             Self::Span { last, len } => (SPAN, u8::from(last), len),
@@ -208,7 +219,7 @@ impl StructuralOperation {
             Self::Close { this } => (CLOSE, u8::from(this), 0),
             Self::Leaf { kind, deferred, extra } => (LEAF, if extra { 2 } else { u8::from(deferred) }, kind),
             Self::Settle { kind } => (LEAF, 3, kind),
-            Self::Mark { mask, order, end, .. } => (MARK, order | if end { 32 } else { 0 }, mask),
+            Self::Mark { mask, order, end, keep, .. } => (MARK, order | if end { 32 } else { 0 } | if keep { MARK_KEEP } else { 0 }, mask),
             Self::Row { mask } => (ROW, 0, mask),
             Self::Retag { kind, on } => (RETAG, on as u8, kind),
             Self::Reread { reading } => (RETAG, 3, reading),
@@ -216,9 +227,10 @@ impl StructuralOperation {
             Self::Merge { kind, fold } => (MERGE, u8::from(fold), kind),
             Self::NodeField { field, on } => (NODE_FIELD, on as u8, field),
             Self::NodeSuper { kind } => (NODE_SUPER, 0, kind),
-            Self::Push { target } => (PUSH, 0, target),
+            Self::Push { target, flag } => (PUSH, flag.map_or(0, |(k, set)| push_flag(k, set)), target),
             Self::Remember { kind } => (REMEMBER, 0, kind),
             Self::Flag { flag, op } => (FLAG, op as u8, flag),
+            Self::Count { count, up, .. } => (crate::program::COUNT, u8::from(!up), count),
             Self::Return { again } => (RETURN, u8::from(again), 0),
             Self::Accept => (ACCEPT, 0, 0),
             Self::Text { .. } | Self::Assert { .. } => {
@@ -344,6 +356,12 @@ pub struct Structure {
     pub switches: Vec<crate::stream_ir::ByteSwitch>,
     pub readings: crate::stream_ir::Readings,
     /// Tier 2's rules (`Words::rules`): each rule's first place.
+    /// Each keyword's node kind, by string (`Words::word_kinds`).
+    pub word_kinds: Vec<(u16, u16)>,
+    /// The extras a `TOKEN` takes (`Words::extras`): a code's mark bit and the leaf's kind.
+    pub extras: Vec<(u8, u16)>,
+    /// The token marks (`Words::token_marks`).
+    pub token_marks: Vec<crate::program::TokenMark>,
     pub rules: Vec<u16>,
     /// The block programs, lowered (`BlockNative`).
     pub block_programs: Vec<BlockNative>,
@@ -433,7 +451,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
                 label: operand,
                 output: FunctionRef::Output,
             },
-            TOKEN => StructuralOperation::Token { extract: operand, any: mode.checked_sub(1) },
+            TOKEN => StructuralOperation::Token { extract: operand, any: (mode & !crate::program::TOKEN_EXTRAS).checked_sub(1), extras: mode & crate::program::TOKEN_EXTRAS != 0 },
             EMPTY => StructuralOperation::Empty { total: operand },
             SWITCH => StructuralOperation::Switch { table: operand },
             SPAN => StructuralOperation::Span { last: mode != 0, len: operand },
@@ -442,7 +460,14 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             CLOSE => StructuralOperation::Close { this: mode != 0 },
             LEAF if mode == 3 => StructuralOperation::Settle { kind: operand },
             LEAF => StructuralOperation::Leaf { kind: operand, deferred: mode == 1, extra: mode == 2 },
-            MARK => StructuralOperation::Mark { mask: operand, order: mode % 32, end: mode & 32 != 0, word: program.mark_words.iter().find(|&&(k, _)| k == mode % 32).map(|&(_, s)| s) },
+            MARK => StructuralOperation::Mark {
+                mask: operand,
+                order: mode % 32,
+                end: mode & 32 != 0,
+                keep: mode & MARK_KEEP != 0,
+                word: program.mark_words.iter().find(|&&(k, _)| k == mode % 32).map(|&(_, s)| s),
+                pattern: program.token_marks.iter().position(|m| m.order == mode % 32).map(|i| i as u16),
+            },
             ROW => StructuralOperation::Row { mask: operand },
             RETAG if mode == 3 => StructuralOperation::Reread { reading: operand },
             RETAG => StructuralOperation::Retag { kind: operand, on: On::of(mode) },
@@ -450,7 +475,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             MERGE => StructuralOperation::Merge { kind: operand, fold: mode == 1 },
             NODE_FIELD => StructuralOperation::NodeField { field: operand, on: On::of(mode) },
             NODE_SUPER => StructuralOperation::NodeSuper { kind: operand },
-            PUSH => StructuralOperation::Push { target: operand },
+            PUSH => StructuralOperation::Push { target: operand, flag: push_flag_of(mode) },
             REMEMBER => StructuralOperation::Remember { kind: operand },
             FLAG => StructuralOperation::Flag {
                 flag: operand,
@@ -460,6 +485,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
                     _ => FlagOp::Test,
                 },
             },
+            crate::program::COUNT => StructuralOperation::Count { count: operand, up: mode == 0, max: program.counts[usize::from(operand)] },
             RETURN => StructuralOperation::Return { again: mode != 0 },
             ACCEPT => StructuralOperation::Accept,
             _ => {
@@ -505,6 +531,9 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
         switches: program.switches.clone(),
         readings: program.readings.clone(),
         rules: program.rules.clone(),
+        word_kinds: program.word_kinds.clone(),
+        extras: program.extras.clone(),
+        token_marks: program.token_marks.clone(),
         block_programs: program.block_programs.iter().map(BlockNative::lower).collect(),
         output: FunctionRef::Output,
         reduction: FunctionRef::Reduction,

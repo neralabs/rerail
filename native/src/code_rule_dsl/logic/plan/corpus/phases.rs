@@ -136,11 +136,51 @@ pub fn declared(prog: &Program) -> Option<Declared> {
 /// The phase program `name`, with its `#include`s read in: `<phase_dir>/<name>.rr` when the run's options name a
 /// `phase_dir`, else `typing/programs/<name>.rr`.
 fn source(name: &str, dir: Option<&Path>) -> Result<Option<String>> {
-    let builtin = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/typing/programs");
-    let Some(path) = dir.into_iter().chain([builtin.as_path()]).map(|d| d.join(format!("{name}.rr"))).find(|p| p.exists()) else {
+    let Some(path) = locate(name, dir) else {
         return Ok(None);
     };
     crate::code_rule_dsl::logic::settings::program_text(&path).map(Some).map_err(Error::Plan)
+}
+
+/// The file of phase program `name` (`source`).
+fn locate(name: &str, dir: Option<&Path>) -> Option<PathBuf> {
+    let builtin = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/typing/programs");
+    dir.into_iter().chain([builtin.as_path()]).map(|d| d.join(format!("{name}.rr"))).find(|p| p.exists())
+}
+
+/// The files of every phase program `programs` may read, and of the phases those may read: each phase's `.rr` and
+/// its `#include`s. A run of a phased program is a function of them too, so the whole-run cutoff names them
+/// (O-cutoff-phases).
+///
+/// Read off the texts' declarations (`rr::declared_names`), nothing lowered: lowering the main program to find
+/// them was 2.7 s of a one-file edit. A relation declared `<phase>__<x>`, for a phase program, names that phase:
+/// a superset of what `wanted` finds (it also counts one a rule of the reader makes), so the record names as many
+/// files or more, and the record and its check list them the same way.
+pub(super) fn phase_files(programs: &[String], dir: Option<&Path>) -> Result<Vec<PathBuf>> {
+    let (mut seen, mut out) = (BTreeSet::new(), Vec::new());
+    let mut todo: Vec<String> = programs.to_vec();
+    while let Some(text) = todo.pop() {
+        let (names, own) = crate::code_rule_dsl::logic::rr::declared_names(&text)?;
+        let phases: BTreeSet<&str> = names
+            .iter()
+            .filter_map(|rel| rel.split_once(SEP))
+            .filter(|(phase, export)| !phase.is_empty() && !export.is_empty() && own.as_deref() != Some(*phase) && !phase.starts_with("typing_") && !phase.starts_with("rr_"))
+            .map(|(phase, _)| phase)
+            .collect();
+        for name in phases {
+            let Some(path) = locate(name, dir) else { continue };
+            if !seen.insert(name.to_owned()) {
+                continue;
+            }
+            let raw = std::fs::read_to_string(&path).map_err(|e| Error::Plan(format!("{}: {e}", path.display())))?;
+            out.extend(crate::code_rule_dsl::logic::rr::included_files(&raw)?);
+            out.push(path);
+            if let Some(src) = source(name, dir)? {
+                todo.push(src);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// The relations `prog` reads from earlier phases, by phase: `(the reader's relation, the export)`. A relation named

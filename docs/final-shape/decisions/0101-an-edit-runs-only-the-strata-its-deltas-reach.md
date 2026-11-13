@@ -558,7 +558,7 @@ The O125 run above did not compare its steps with a full run (`O125_NO_FULL`).
 **What was recorded.** Above, at step 07: the four `ifn__ins` rules took `fv__ins` (526 rows), probed `pv` by
 `k` (201,000 rows), then filtered by `icall` to nothing. Starting from `icall` was not measured.
 
-**How it was measured now.** O125 step 07, with the pieces together (§3). `RERAIL_REL_KEEP` with `RERAIL_REL_DIR`
+**How it was measured now.** O125 step 07, with the pieces together (§3). `RERAIL_REL_DIR` (which keeps every relation to the run's end)
 dumped every relation the step read or derived. `O125_RULES=ifn__ins` printed the maintained rules. Each order's
 work was counted from the dumped rows and compared with the engine's own (`native.tsv`, rows into each step,
 summed over the waves).

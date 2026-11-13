@@ -135,8 +135,13 @@ pub enum Line {
     /// reach themselves through the stratum's rules as written, so they keep levels even where this run's rules over
     /// empty relations were left out and their cycle is not run (`leveled <rels|->`).
     Leveled(Vec<usize>),
+    /// Its relations started from kept rows (`Start::Base`) hold them as no wave's delta: its first wave is driven by
+    /// its inputs' changes (seeds that read them, `plan::reads_change`), not by its kept rows (decision 0122 §2).
+    KeptOld,
     Request(usize),
     Produced(usize),
+    /// The relation's statistics are kept as its rows come (`Rel::stats`): a session keeps it for its next run.
+    Stats(usize),
     Seed { head: usize, join: Arc<JoinSpec> },
     Join { head: usize, delta: usize, join: Arc<JoinSpec>, whole: Option<Arc<JoinSpec>> },
     Probe { head: usize, delta: usize, sql: String },
@@ -418,8 +423,10 @@ impl std::fmt::Display for Line {
             Line::NoWrite => f.write_str("nowrite"),
             Line::Device => f.write_str("device"),
             Line::Leveled(rels) => write!(f, "leveled {}", comma(rels)),
+            Line::KeptOld => f.write_str("keptold"),
             Line::Request(r) => write!(f, "request {r}"),
             Line::Produced(r) => write!(f, "produced {r}"),
+            Line::Stats(r) => write!(f, "stats {r}"),
             Line::Seed { head, join } => write!(f, "seed {head} {}", hex(&join.to_text())),
             Line::Join { head, delta, join, whole } => {
                 write!(f, "join {head} {delta} {}", hex(&join.to_text()))?;
@@ -502,8 +509,10 @@ impl ComponentSpec {
                 "nowrite" => Line::NoWrite,
                 "device" => Line::Device,
                 "leveled" => Line::Leveled(t.get(1).map(|x| list(x)).transpose()?.unwrap_or_default()),
+                "keptold" => Line::KeptOld,
                 "request" => Line::Request(num(at(1)?)?),
                 "produced" => Line::Produced(num(at(1)?)?),
+                "stats" => Line::Stats(num(at(1)?)?),
                 "seed" => Line::Seed { head: num(at(1)?)?, join: join(at(2)?)? },
                 "join" => Line::Join {
                     head: num(at(1)?)?,

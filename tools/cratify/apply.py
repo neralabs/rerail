@@ -527,7 +527,9 @@ def manifest(c, engine):
                     if k.startswith('rerail-') and (sect == 'dev-dependencies' or c != 'rerail-device-metal'):
                         continue  # Metal's runtime is the Metal device's alone
                     lines.append(f'{k} = {toml_value(rebase(v, d))}')
-    lines += ['', '[dev-dependencies]']
+    # A crate's own test build turns on its test hooks, as the engine's does: its tests read what test-hooks builds
+    # in the crates below it (`fixtures`, tempfile), which no test build of theirs would otherwise compile.
+    lines += ['', '[dev-dependencies]', f'{c} = {{ path = ".", features = ["test-hooks"] }}']
     for k, v in engine.get('dev-dependencies', {}).items():
         # the rerail crates outside the split (the parsers' tests, the compiler's hooks) serve every crate's own tests
         if (k.startswith('rerail-') and k in DIRS) or k in test_only:

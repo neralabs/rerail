@@ -42,9 +42,10 @@ const NOT_CACHES: &[&str] = &[
     "x", "rows", "facts", "x.node_type", "s.stat_col", "s.stat_docrange", "s.stat_edge", "s.stat_kind", "s.stat_meta", "s.stat_val",
 ];
 
-/// The relations' own storage between runs: every relation's rows as frames (notes/t33, K1). A cache's rows are
-/// kept here as any relation's are, never in a table of their own.
-const RELATIONS: &[&str] = &["frames", "frame_spaces"];
+/// The relations' own storage between runs: every relation's rows as frames (notes/t33, K1), with the frames' own
+/// bookkeeping: those found unchanged under new reads (`frame_confirmed`) and each run's use of a space (`frame_used`,
+/// decision 0117). A cache's rows are kept here as any relation's are, never in a table of their own.
+const RELATIONS: &[&str] = &["frames", "frame_spaces", "frame_confirmed", "frame_used"];
 
 /// Caches made before decision 0103, each to move to the two rules (§7 lists each one's). This list may only shrink.
 const NOT_YET_MOVED: &[&str] = &[
@@ -62,8 +63,8 @@ const NOT_YET_MOVED: &[&str] = &[
     "completed_workspace_revisions", "tree_result_segments", "completed_snapshot_trees", "accel_models",
     // The derivation graph: what it records is the keys of §7.
     "name_bindings", "derivations", "derivation_inputs",
-    // Phase 0's observations (what each read is now) and the run's constants by them.
-    "observed", "observer_meta", "constant_rows",
+    // Phase 0's observations (what each read is now).
+    "observed", "observer_meta",
 ];
 
 #[test]

@@ -65,10 +65,43 @@ pub fn volume(path: &Path) -> Option<[u8; 16]> {
     }
 }
 
+/// A new outermost run begins: a question asked after this is answered with every change made before it (each kept
+/// stream waits for a cookie once, `fsevents::sync`). Runs inside it share its answer.
+pub fn next_epoch() {
+    #[cfg(target_os = "macos")]
+    fsevents::next_epoch();
+}
+
+/// Starts, for the process, a stream for the roots the last runs watched, each from its stored cursor (`roots`:
+/// `(root, cursor)`): their replays run beside each other and beside the process's start, before a run asks
+/// (`since`). A root under another is the outer one's stream's, from the older of their cursors.
+pub fn prepare(roots: &[(PathBuf, String)], cookie_dir: &Path) {
+    match backend() {
+        #[cfg(target_os = "macos")]
+        Backend::FsEvents => {
+            let roots: Vec<(PathBuf, u64)> = roots.iter().filter_map(|(r, c)| Some((r.clone(), c.parse().ok()?))).collect();
+            fsevents::prepare(&roots, cookie_dir);
+        }
+        _ => {
+            let _ = (roots, cookie_dir);
+        }
+    }
+}
+
 /// What changed under `roots` (each a directory, by the path the caller keeps its records under) since `cursor`
 /// (`None`: no earlier cursor), the journal synchronised by a cookie written in `cookie_dir` (Watchman syncs with its
 /// own).
 pub fn since(roots: &[PathBuf], cursor: Option<&str>, cookie_dir: &Path) -> Since {
+    let at = std::time::Instant::now();
+    let r = since_backend(roots, cursor, cookie_dir);
+    if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
+        let what = match &r { Since::Changed { paths, .. } => format!("{} paths", paths.len()), Since::Lost { why, .. } => format!("lost: {why}") };
+        eprintln!("journal: {:.3} s, {} roots ({}), {what}", at.elapsed().as_secs_f64(), roots.len(), roots.first().map_or(String::new(), |r| r.display().to_string()));
+    }
+    r
+}
+
+fn since_backend(roots: &[PathBuf], cursor: Option<&str>, cookie_dir: &Path) -> Since {
     match backend() {
         #[cfg(target_os = "macos")]
         Backend::FsEvents => match fsevents::since(roots, cursor.and_then(|c| c.parse().ok()), cookie_dir) {
@@ -174,6 +207,7 @@ mod fsevents {
     type Since = super::Since<u64>;
     use std::ffi::{CStr, CString, c_char, c_void};
     use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Condvar, Mutex};
     use std::time::{Duration, Instant};
 
@@ -255,28 +289,36 @@ mod fsevents {
     /// How long a replay may wait for its cookie.
     const WAIT: Duration = Duration::from_secs(2);
 
+    /// How many streams a process keeps (one per root not under another's): the oldest unused goes first.
+    const STREAMS: usize = 16;
+    /// How many events a stream keeps before it says it lost track (and is replaced by a fresh replay).
+    const MAX_EVENTS: usize = 1 << 21;
+
+    /// What a stream has been told: every event since the id it was started from, with its id.
     #[derive(Default)]
     struct Seen {
-        paths: Vec<(String, u32)>,
+        events: Vec<(u64, String)>,
         history_done: bool,
-        cookie: bool,
+        /// The cookies seen, with their events' ids.
+        cookies: std::collections::HashMap<String, u64>,
         lost: Option<&'static str>,
     }
 
     struct Shared {
         seen: Mutex<Seen>,
         ready: Condvar,
+        /// The cookies' prefix, `<cookie dir>/rerail-cookie-<pid>-`: an event under it is a cookie, not a change.
         cookie: String,
     }
 
-    extern "C" fn callback(_: Stream, info: *mut c_void, n: usize, paths: *mut c_void, flags: *const u32, _ids: *const u64) {
-        // SAFETY: `info` is the `Shared` that `since` keeps alive until the stream is invalidated, and the arrays
-        // hold `n` entries for the callback's duration (FSEvents' contract, without `UseCFTypes`).
+    extern "C" fn callback(_: Stream, info: *mut c_void, n: usize, paths: *mut c_void, flags: *const u32, ids: *const u64) {
+        // SAFETY: `info` is the `Shared` the stream holds a reference to (`retain`), and the arrays hold `n` entries
+        // for the callback's duration (FSEvents' contract, without `UseCFTypes`).
         let shared = unsafe { &*(info as *const Shared) };
         let paths = paths as *const *const c_char;
         let mut seen = shared.seen.lock().unwrap_or_else(|e| e.into_inner());
         for i in 0..n {
-            let (path, flag) = unsafe { (CStr::from_ptr(*paths.add(i)).to_string_lossy().into_owned(), *flags.add(i)) };
+            let (path, flag, id) = unsafe { (CStr::from_ptr(*paths.add(i)).to_string_lossy().into_owned(), *flags.add(i), *ids.add(i)) };
             if flag & LOST != 0 {
                 seen.lost = Some("the system dropped or renumbered events");
             }
@@ -284,18 +326,143 @@ mod fsevents {
                 seen.history_done = true;
                 continue;
             }
-            if path == shared.cookie {
-                seen.cookie = true;
+            if path.starts_with(&shared.cookie) {
+                seen.cookies.entry(path).or_insert(id);
                 continue;
             }
-            seen.paths.push((path, flag));
+            seen.events.push((id, path));
+        }
+        if seen.events.len() > MAX_EVENTS {
+            seen.lost = Some("more changes than a stream keeps");
+            seen.events = Vec::new();
         }
         shared.ready.notify_all();
+    }
+
+    /// A stream the process keeps: started from the oldest cursor asked of its roots, its history replayed once,
+    /// then told every change as it comes. A later question under its roots is answered from what it was told, once
+    /// a cookie shows it has been told everything up to the question's run (`sync`).
+    struct Live {
+        stream: Stream,
+        queue: *mut c_void,
+        shared: Arc<Shared>,
+        /// Its roots, canonical, and the cookie directory it watches with them.
+        roots: Vec<PathBuf>,
+        cookie_dir: PathBuf,
+        /// The id it was started from: it holds every event after it.
+        from: u64,
+        /// The run it was last synchronised for (`EPOCH`), and its cookie's event's id: every change before it has an
+        /// earlier id, and was told before it.
+        synced: Option<(u64, u64)>,
+        used: u64,
+    }
+
+    // SAFETY: the stream and queue are FSEvents' and libdispatch's handles, usable from any thread; they are only
+    // touched under `LIVE`'s lock.
+    unsafe impl Send for Live {}
+
+    impl Drop for Live {
+        fn drop(&mut self) {
+            // SAFETY: stopped and invalidated before release; the stream holds its own reference to `shared`
+            // (`retain`) until FSEvents frees it, so no callback reads freed memory whenever it runs.
+            unsafe {
+                FSEventStreamStop(self.stream);
+                FSEventStreamInvalidate(self.stream);
+                FSEventStreamRelease(self.stream);
+                dispatch_release(self.queue);
+            }
+        }
+    }
+
+    static LIVE: Mutex<Vec<Live>> = Mutex::new(Vec::new());
+    /// The outermost run under way (`next_epoch`): a stream is synchronised once for it.
+    static EPOCH: AtomicU64 = AtomicU64::new(0);
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    /// A new outermost run: a question after this waits for a cookie of its own, once per stream.
+    pub(super) fn next_epoch() {
+        EPOCH.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn start(roots: &[PathBuf], cookie_dir: &Path, from: u64) -> Result<Live, &'static str> {
+        let prefix = cookie_dir.join(format!("rerail-cookie-{}-", std::process::id()));
+        let shared = Arc::new(Shared { seen: Mutex::new(Seen::default()), ready: Condvar::new(), cookie: prefix.to_string_lossy().into_owned() });
+        let mut watched: Vec<CString> = roots.iter().map(|r| CString::new(r.to_string_lossy().as_bytes()).unwrap_or_default()).collect();
+        watched.push(CString::new(cookie_dir.to_string_lossy().as_bytes()).unwrap_or_default());
+        // SAFETY: the strings and array are released below; the stream holds its own references while it lives.
+        unsafe {
+            let strings: Vec<CFRef> = watched.iter().map(|s| CFStringCreateWithCString(std::ptr::null(), s.as_ptr(), UTF8)).collect();
+            let array = CFArrayCreate(std::ptr::null(), strings.as_ptr(), strings.len() as CFIndex, &kCFTypeArrayCallBacks);
+            for s in strings {
+                CFRelease(s);
+            }
+            let mut context = Context { version: 0, info: Arc::as_ptr(&shared) as *mut c_void, retain: retain as *const c_void, release: release as *const c_void, copy_description: std::ptr::null() };
+            let stream = FSEventStreamCreate(std::ptr::null(), callback, &mut context, array, from, 0.0, NO_DEFER | FILE_EVENTS);
+            CFRelease(array);
+            if stream.is_null() {
+                return Err("the journal refused the stream");
+            }
+            let queue = dispatch_queue_create(c"rerail.journal".as_ptr(), std::ptr::null());
+            FSEventStreamSetDispatchQueue(stream, queue);
+            if FSEventStreamStart(stream) == 0 {
+                FSEventStreamInvalidate(stream);
+                FSEventStreamRelease(stream);
+                dispatch_release(queue);
+                return Err("the journal did not start");
+            }
+            Ok(Live { stream, queue, shared, roots: roots.to_vec(), cookie_dir: cookie_dir.to_path_buf(), from, synced: None, used: 0 })
+        }
+    }
+
+    /// Waits, once for the run (`EPOCH`), until `live` has been told every change made before now: a cookie written
+    /// now has a later id than each, and comes after them. The cookie's id: what it has been told up to it is
+    /// complete, so a replay from it misses nothing (and no id need be asked of the system).
+    fn sync(live: &mut Live, epoch: u64) -> Result<u64, &'static str> {
+        if let Some((e, now)) = live.synced
+            && e == epoch
+        {
+            return Ok(now);
+        }
+        let cookie = format!("{}{}", live.shared.cookie, COUNTER.fetch_add(1, Ordering::Relaxed));
+        if std::fs::write(&cookie, b"").is_err() {
+            return Err("no cookie could be written");
+        }
+        let deadline = Instant::now() + WAIT;
+        let mut seen = live.shared.seen.lock().unwrap_or_else(|e| e.into_inner());
+        while !(seen.cookies.contains_key(&cookie) && seen.history_done) && seen.lost.is_none() {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            seen = live.shared.ready.wait_timeout(seen, left).unwrap_or_else(|e| e.into_inner()).0;
+        }
+        let done = seen.history_done.then(|| seen.cookies.get(&cookie).copied()).flatten();
+        seen.cookies.clear();
+        let lost = seen.lost;
+        drop(seen);
+        let _ = std::fs::remove_file(&cookie);
+        if let Some(why) = lost {
+            return Err(why);
+        }
+        let Some(id) = done else { return Err("the cookie's event did not arrive") };
+        live.synced = Some((epoch, id));
+        Ok(id)
     }
 
     pub(super) fn volume(path: &Path) -> Option<[u8; 16]> {
         use std::os::unix::fs::MetadataExt as _;
         let dev = std::fs::metadata(path).ok()?.dev() as i32;
+        // Asked of the system once a device, for the process: each root a run watches asks it.
+        static BY_DEV: Mutex<Vec<(i32, Option<[u8; 16]>)>> = Mutex::new(Vec::new());
+        if let Some((_, v)) = BY_DEV.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(d, _)| *d == dev) {
+            return *v;
+        }
+        let v = uuid_of(dev);
+        BY_DEV.lock().unwrap_or_else(|e| e.into_inner()).push((dev, v));
+        v
+    }
+
+    fn uuid_of(dev: i32) -> Option<[u8; 16]> {
         // SAFETY: a CFUUID is returned owned, or null.
         unsafe {
             let uuid = FSEventsCopyUUIDForDevice(dev);
@@ -308,95 +475,113 @@ mod fsevents {
         }
     }
 
-    pub(super) fn since(roots: &[PathBuf], cursor: Option<u64>, cookie_dir: &Path) -> Since {
-        // The id now, before anything is asked: a change from here on is the next replay's.
+    pub(super) fn prepare(roots: &[(PathBuf, u64)], cookie_dir: &Path) {
         // SAFETY: no arguments; returns the latest id.
         let now = unsafe { FSEventsGetCurrentEventId() };
-        let Some(cursor) = cursor else { return Since::Lost { cursor: Some(now), why: "no earlier cursor" } };
-        if cursor > now {
-            return Since::Lost { cursor: Some(now), why: "a cursor ahead of the journal" };
+        let Ok(cookie_dir) = std::fs::canonicalize(cookie_dir) else { return };
+        let mut real: Vec<(PathBuf, u64)> = roots.iter().filter(|(_, c)| *c <= now).filter_map(|(r, c)| Some((std::fs::canonicalize(r).ok()?, *c))).collect();
+        real.sort();
+        // Outer roots first (a path sorts before those under it): each takes the cursors of the roots under it.
+        let mut groups: Vec<(PathBuf, u64)> = Vec::new();
+        for (r, c) in real {
+            match groups.last_mut() {
+                Some((g, from)) if r.starts_with(&*g) => *from = (*from).min(c),
+                _ => groups.push((r, c)),
+            }
         }
-        // Records are kept by the path the caller gave; events come by the real path.
-        let Ok(cookie_dir) = std::fs::canonicalize(cookie_dir) else { return Since::Lost { cursor: Some(now), why: "no cookie directory" } };
-        let real: Vec<(PathBuf, PathBuf)> = roots.iter().filter_map(|r| Some((std::fs::canonicalize(r).ok()?, r.clone()))).collect();
-        if real.len() != roots.len() {
-            return Since::Lost { cursor: Some(now), why: "a root is not readable" };
-        }
-        let cookie = cookie_dir.join(format!("rerail-cookie-{}-{}", std::process::id(), now));
-        let shared = Arc::new(Shared { seen: Mutex::new(Seen::default()), ready: Condvar::new(), cookie: cookie.to_string_lossy().into_owned() });
-        let mut watched: Vec<CString> = real.iter().map(|(r, _)| CString::new(r.to_string_lossy().as_bytes()).unwrap_or_default()).collect();
-        watched.push(CString::new(cookie_dir.to_string_lossy().as_bytes()).unwrap_or_default());
-        // SAFETY: the strings and array are released below; the stream holds its own references while it lives.
-        let (stream, queue) = unsafe {
-            let strings: Vec<CFRef> = watched.iter().map(|s| CFStringCreateWithCString(std::ptr::null(), s.as_ptr(), UTF8)).collect();
-            let array = CFArrayCreate(std::ptr::null(), strings.as_ptr(), strings.len() as CFIndex, &kCFTypeArrayCallBacks);
-            for s in strings {
-                CFRelease(s);
-            }
-            let mut context = Context { version: 0, info: Arc::as_ptr(&shared) as *mut c_void, retain: retain as *const c_void, release: release as *const c_void, copy_description: std::ptr::null() };
-            let stream = FSEventStreamCreate(std::ptr::null(), callback, &mut context, array, cursor, 0.0, NO_DEFER | FILE_EVENTS);
-            CFRelease(array);
-            if stream.is_null() {
-                return Since::Lost { cursor: Some(now), why: "the journal refused the stream" };
-            }
-            let queue = dispatch_queue_create(c"rerail.journal".as_ptr(), std::ptr::null());
-            FSEventStreamSetDispatchQueue(stream, queue);
-            if FSEventStreamStart(stream) == 0 {
-                FSEventStreamInvalidate(stream);
-                FSEventStreamRelease(stream);
-                dispatch_release(queue);
-                return Since::Lost { cursor: Some(now), why: "the journal did not start" };
-            }
-            (stream, queue)
-        };
-        // The cookie: its event comes after every change made before it.
-        let wrote = std::fs::write(&cookie, b"").is_ok();
-        let deadline = Instant::now() + WAIT;
-        let mut seen = shared.seen.lock().unwrap_or_else(|e| e.into_inner());
-        while wrote && !(seen.cookie && seen.history_done) && seen.lost.is_none() {
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
+        let mut all = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        for (root, from) in groups {
+            if all.len() >= STREAMS {
                 break;
             }
-            seen = shared.ready.wait_timeout(seen, left).unwrap_or_else(|e| e.into_inner()).0;
+            if all.iter().any(|l| l.cookie_dir == cookie_dir && l.from <= from && l.roots.iter().any(|lr| root.starts_with(lr))) {
+                continue;
+            }
+            if let Ok(live) = start(std::slice::from_ref(&root), &cookie_dir, from) {
+                all.push(live);
+            }
         }
-        let done = seen.cookie && seen.history_done;
-        let lost = seen.lost;
-        let paths = std::mem::take(&mut seen.paths);
-        drop(seen);
-        // SAFETY: stopped and invalidated before release; the stream holds its own reference to `shared` (`retain`)
-        // until FSEvents frees it, so no callback reads freed memory whenever it runs.
-        unsafe {
-            FSEventStreamStop(stream);
-            FSEventStreamInvalidate(stream);
-            FSEventStreamRelease(stream);
-            dispatch_release(queue);
+    }
+
+    pub(super) fn since(roots: &[PathBuf], cursor: Option<u64>, cookie_dir: &Path) -> Since {
+        // The id now, asked of the system only where no stream's cookie gives one (it waits on `fseventsd`): a change
+        // after it is the next replay's.
+        // SAFETY: no arguments; returns the latest id.
+        let now = || unsafe { FSEventsGetCurrentEventId() };
+        let Some(cursor) = cursor else { return Since::Lost { cursor: Some(now()), why: "no earlier cursor" } };
+        // Records are kept by the path the caller gave; events come by the real path.
+        let Ok(cookie_dir) = std::fs::canonicalize(cookie_dir) else { return Since::Lost { cursor: Some(now()), why: "no cookie directory" } };
+        let real: Vec<(PathBuf, PathBuf)> = roots.iter().filter_map(|r| Some((std::fs::canonicalize(r).ok()?, r.clone()))).collect();
+        if real.len() != roots.len() {
+            return Since::Lost { cursor: Some(now()), why: "a root is not readable" };
         }
-        let _ = std::fs::remove_file(&cookie);
-        if let Some(why) = lost {
-            return Since::Lost { cursor: Some(now), why };
+        let epoch = EPOCH.load(Ordering::Relaxed);
+        let mut all = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        // A stream that lost track answers nothing more: a question under its roots replays afresh.
+        all.retain(|l| l.shared.seen.lock().unwrap_or_else(|e| e.into_inner()).lost.is_none());
+        // The stream that holds every change under the roots since the cursor, else one started for them from it.
+        let held = all.iter().position(|l| l.cookie_dir == cookie_dir && l.from <= cursor && real.iter().all(|(r, _)| l.roots.iter().any(|lr| r.starts_with(lr))));
+        let at = match held {
+            Some(at) => at,
+            None => {
+                let id_now = now();
+                if cursor > id_now {
+                    return Since::Lost { cursor: Some(id_now), why: "a cursor ahead of the journal" };
+                }
+                if all.len() >= STREAMS
+                    && let Some(old) = all.iter().enumerate().min_by_key(|(_, l)| l.used).map(|(i, _)| i)
+                {
+                    all.remove(old);
+                }
+                let mut asked: Vec<PathBuf> = real.iter().map(|(r, _)| r.clone()).collect();
+                asked.sort();
+                asked.dedup_by(|b, a| b.starts_with(&*a));
+                match start(&asked, &cookie_dir, cursor) {
+                    Ok(live) => {
+                        all.push(live);
+                        all.len() - 1
+                    }
+                    Err(why) => return Since::Lost { cursor: Some(id_now), why },
+                }
+            }
+        };
+        all[at].used = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let t = Instant::now();
+        let fresh = all[at].synced.is_none_or(|(e, _)| e != epoch);
+        let r = sync(&mut all[at], epoch);
+        if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
+            let n = all[at].shared.seen.lock().map(|s| s.events.len()).unwrap_or(0);
+            eprintln!("journal stream {at} of {}: {}{}, epoch {epoch}, {:.3} s, {n} events kept, from {} (cursor {cursor})", all.len(), if held.is_some() { "kept" } else { "new" }, if fresh { ", cookie" } else { "" }, t.elapsed().as_secs_f64(), all[at].from);
         }
-        if !done {
-            return Since::Lost { cursor: Some(now), why: if wrote { "the cookie's event did not arrive" } else { "no cookie could be written" } };
-        }
+        let synced = match r {
+            Ok(synced) => synced,
+            Err(why) => {
+                all.remove(at);
+                return Since::Lost { cursor: Some(now()), why };
+            }
+        };
         // A directory to scan again is changed as a whole: the caller drops what it knows under it.
         let mut out: Vec<PathBuf> = Vec::new();
-        for (path, flag) in paths {
-            let path = PathBuf::from(path.trim_end_matches('/'));
-            let Some((real_root, root)) = real.iter().find(|(r, _)| path.starts_with(r)) else { continue };
-            let under = path.strip_prefix(real_root).map(|rest| if rest.as_os_str().is_empty() { root.clone() } else { root.join(rest) }).unwrap_or(path.clone());
-            let _ = flag & MUST_SCAN;
-            out.push(under);
+        {
+            let seen = all[at].shared.seen.lock().unwrap_or_else(|e| e.into_inner());
+            for (id, path) in seen.events.iter().filter(|(id, _)| *id > cursor) {
+                let _ = id;
+                let path = Path::new(path.trim_end_matches('/'));
+                let Some((real_root, root)) = real.iter().find(|(r, _)| path.starts_with(r)) else { continue };
+                let under = path.strip_prefix(real_root).map(|rest| if rest.as_os_str().is_empty() { root.clone() } else { root.join(rest) }).unwrap_or_else(|_| path.to_path_buf());
+                out.push(under);
+            }
         }
         out.sort();
         out.dedup();
-        Since::Changed { paths: out, cursor: now }
+        Since::Changed { paths: out, cursor: synced.max(cursor) }
     }
 }
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::Since;
+    use super::fsevents::next_epoch;
     use super::fsevents::since;
     use std::path::PathBuf;
 
@@ -412,15 +597,24 @@ mod tests {
         std::fs::write(root.join("sub/kept.py"), "x = 1\n").unwrap();
         let Since::Lost { cursor: Some(first), .. } = since(std::slice::from_ref(&root), None, &cookies) else { panic!("no cursor without one") };
         std::fs::write(root.join("sub/edited.py"), "y = 2\n").unwrap();
+        next_epoch();
         let Since::Changed { paths, cursor } = since(std::slice::from_ref(&root), Some(first), &cookies) else { panic!("a replay") };
         assert!(paths.contains(&root.join("sub/edited.py")), "the edit is named: {paths:?}");
         assert!(cursor >= first);
         std::thread::sleep(std::time::Duration::from_millis(500));
+        next_epoch();
         let Since::Changed { cursor: settled, .. } = since(std::slice::from_ref(&root), Some(cursor), &cookies) else { panic!("a replay") };
+        next_epoch();
         match since(std::slice::from_ref(&root), Some(settled), &cookies) {
             Since::Changed { paths, .. } => assert!(paths.is_empty(), "nothing since: {paths:?}"),
             other => panic!("{other:?}"),
         }
+        // A root under one asked is answered by the same stream, kept for the process: a change made since the
+        // run's question is told to the next run.
+        std::fs::write(root.join("sub/later.py"), "z = 3\n").unwrap();
+        next_epoch();
+        let Since::Changed { paths, .. } = since(&[root.join("sub")], Some(settled), &cookies) else { panic!("a replay") };
+        assert!(paths.contains(&root.join("sub/later.py")), "the next run is told: {paths:?}");
         let _ = std::fs::remove_dir_all(&base);
     }
 }

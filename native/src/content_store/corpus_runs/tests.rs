@@ -315,3 +315,38 @@ fn old_memo_rows_are_collected_while_their_source_lives() {
     assert_eq!((rows(lapsed), rows(running), rows(unrecorded)), (0, 1, 1), "the lapsed hold's rows go, with no new run to prompt it");
     assert!(store.get_source(source).is_ok(), "the source lives on");
 }
+
+/// Decision 0117: a kept manifest past a root's protected runs keeps its sources, not its plan (a plan's memo serves
+/// one engine build only); and the hold of a run whose process is gone (a killed run never releases it) is released by
+/// the next collection pass, which then collects every dead plan, not one a pass.
+#[test]
+fn only_protected_runs_keep_plans_and_a_dead_process_holds_nothing() {
+    let (_path, store) = store("corpus-protected-plans");
+    let policy = CorpusPolicy { protected_runs: 1, high_water: u64::MAX / 4, low_water: u64::MAX / 4, backstop_secs: 86_400, ..CorpusPolicy::default() };
+    let live = |plan: [u8; 32]| -> Option<i64> {
+        store.connection.lock().unwrap().query_row("SELECT live FROM corpus_plans WHERE plan_digest=?1", [&plan[..]], |r| r.get(0)).optional().unwrap()
+    };
+    let plans = [[41u8; 32], [42u8; 32], [43u8; 32]];
+    for (i, plan) in plans.iter().enumerate() {
+        let source = store.put_source(&noise(60 + i as u64, 256), &[]).unwrap();
+        store.put_tape(source, 1, 7, 9, &noise(560 + i as u64, 256)).unwrap();
+        assert!(store.record_corpus_run("/repo", &[source], 7, 9, *plan, 1_000 + i as i64).unwrap());
+        store.keep_corpus_runs(&policy, 1_000 + i as i64).unwrap();
+    }
+    let manifests: i64 = store.connection.lock().unwrap().query_row("SELECT count(*) FROM corpus_manifests", [], |r| r.get(0)).unwrap();
+    assert_eq!(manifests, 3, "under the high-water mark every manifest is kept");
+    assert_eq!(plans.map(live), [Some(0), Some(0), Some(1)], "only the protected run's plan is live");
+    // A process that has exited: its hold is an orphan.
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let pid = child.id();
+    child.wait().unwrap();
+    store.hold_corpus_plan(plans[0], &format!("corpus-run:{pid}:0:0"), 9_000).unwrap();
+    store.hold_corpus_plan(plans[1], &format!("corpus-run:{}:0:0", std::process::id()), 9_000).unwrap();
+    assert_eq!(live(plans[0]), Some(1), "held, the plan is live");
+    for _ in 0..3 {
+        store.collect_corpus_pass(&policy, 1_010).unwrap();
+    }
+    assert_eq!(live(plans[0]), None, "the dead process's hold went, and its plan with it");
+    assert_eq!(live(plans[1]), Some(1), "a running process's hold stays");
+    assert_eq!(live(plans[2]), Some(1));
+}

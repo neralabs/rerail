@@ -1,6 +1,6 @@
 # 0117: A relation carries its delta; maintenance is the core's, driven by the deltas that are not empty
 
-Status: accepted (2026-11-11). Steps 1 and 2 are built (below); steps 3–4 are not.
+Status: accepted (2026-11-11). Steps 1–4 are built (below).
 
 ## Intro
 
@@ -135,6 +135,7 @@ unchanged. Then the step is measured on the data layer's 9,010 files.
 | 2 | Deltas as side structures of the relation (dead rows, appended rows); `__plus`/`__minus` views, not relations | Strata opened and indexed for deltas (part of 1.0–2.0 s) |
 | 3 | The driver: rewrite per stratum when reached; base-program passes kept | Rewrite 0.5–1.7 s; whole-program passes about 1.8 s; strata split 0.4–2.0 s |
 | 4 | Old rows read back only for strata reached | Kept part read 0.6–1.0 s; part of the 5.5 GB peak |
+| 5 | A reached stratum's component kept across steps (amended 2026-11-12, below) | About 13 M instructions per opened component; 53% of an O125 edit step |
 
 **The end target** stays 0090's: an edit of one function costs under 5% of a cold cross part. On the 20-file corpus,
 the joins are about 0.7 s of an edit's 26 s of CPU today. The target is a run whose cost is mostly its joins.
@@ -265,3 +266,352 @@ derived again), with 148 inputs changed. That is steps 3's and 4's work, not thi
 **The deletion costs more than a cold run** (1089.5 G against 922.2 G). Deleting 100 lines changes nearly every row of
 that file (its nodes move), so the deltas are most of the file's rows, and maintaining from deltas that large costs
 more than deriving again. The driver of step 3 should choose between the two by the size of the delta.
+
+## Amendment (2026-11-12): step 5, a reached stratum's component kept across steps
+
+**Why.** Steps 3 and 4 remove the work on strata an edit does not reach. What is left is the cost of each stratum it
+does reach. On O125 (74 files, one or two files edited per step, debug build, strict):
+
+- A component costs about 13 M instructions even when it moves no rows. Measured by opening the strata held empty
+  (`RERAIL_KEEP_EMPTY_JOINS=1`): steps 01-03 went from 270.3 G to 355.4 G for about 2,000-2,400 more components a
+  step.
+- About 1,858 components open a step, so that fixed cost is some 24 G of a step's 90 G.
+- Sampled over steps 02-03, components are 53% of the CPU and their joins 13%. The rest of a component's cost is:
+
+| Part | Share of the steps' CPU |
+|---|---|
+| opening (spec parsed, joins compiled, inputs indexed) | 8% |
+| planning before the run, kept plans looked up and re-priced | 7% |
+| observed fanouts recorded (`observe`, `observed_fans`) | 4% |
+| statistics before the run (`prior_stats`) | 4% |
+| planning during the run (live replans) | 4% |
+| spec written, close, live statistics | 4% |
+
+- None of these is a big rock alone. Removing join-order search entirely (every delta-driven piece ordered
+  greedily) saved 4.4% of the steps' instructions; merging a stratum's pieces into one component (0101 §3) can save
+  about 6%.
+
+**The step.** A reached stratum's component is kept with the session: its plans, its spec, its compiled joins and
+the indexes of its kept relations. A later step that reaches the stratum binds its deltas and runs it. It is planned
+again only when a statistic its plans read leaves its bucket (decision 0038's rule). Its relations carry their deltas
+as in step 2, so the kept component's relations are updated in place, not copied.
+
+**Target.** A reached stratum costs its joins. At O125 that is the components' 53% toward their joins' 13%.
+
+## Built: step 3, first parts (2026-11-12)
+
+The driver itself (each stratum rewritten when reached) is not built. Two of the whole-program passes a maintained
+run made every step are removed:
+
+- **The inline choice on a session's part** decides "nothing may be inlined" from the qualifiers and names alone
+  (every relation `no_inline` or a maintenance piece), before its strata, refusals and readers are made.
+- **A level's seed joins are not planned ahead in a maintained run** (decision 0100 §5's batch): its seeds join
+  deltas of a few rows, under the batch's `MIN_LEFT`, so the batch sent nothing and the planning ahead doubled
+  theirs. `RERAIL_LEVEL_JOINS=on` batches them as before; a cold run batches as it did.
+
+Together with the cheap-replan rule (a plan re-priced under `REPLAN_ROWS` is kept, before and during a run), on
+O125 steps 01-03 (debug, strict, load 30-45): 276.6 G to 251.9 G instructions (-9%), 82.8 G to 73.2 G cycles.
+Steps 01-02 are the same as full runs.
+
+**Under the driver (merged 2026-11-12).** The walk of step 3 (below) runs the base program, whose `prog.again` is
+empty, so the maintained-run skip of the level batch never applies there: the walk batches a level's reached strata
+itself (the walk a level at a time, below). The skip holds only where the rewritten program still runs whole. The
+inline choice from names holds in both.
+
+## Built: step 3 (2026-11-12): the run walks the base program; a reached stratum's form is made there
+
+**What it does.**
+- **The run is given the base program** (the cut's: clean strata left out, as before), with a driver
+  (`plan::Maintain`, `Hooks::maintain`). The changed inputs' deltas are bound first (step 2), and they seed the set
+  of relations that moved.
+- **Each stratum is a slot of the walk** (`plan::run`, decision 0117 step 3 in its loop):
+  - *No read moved:* each relation is its kept rows, held in place (`hold_as`); nothing is rewritten, planned,
+    opened or read.
+  - *A read moved:* the driver makes the stratum's form (`corpus::Driver::form`): `maintain::rewrite_with` over a
+    program of that stratum alone, its reads declared as inputs and the moved ones as changed
+    (`maintain::One`). The old rows it reads are bound there, with their statistics (`bind_kept`, the binding the
+    whole rewrite did for every relation before the run). Its pieces (`__del`, survivors, `__redo`, `__ins`, its
+    deltas) are the form's own strata, each run by the same native engine (`native_stratum_now`), with the form as
+    the program.
+  - *After it:* a relation whose delta (`r__minus`, `r__plus`) holds rows moves its readers. One derived again
+    with no old rows to diff against moves them with no delta, and they derive again. The form's pieces are
+    released; its relations, deltas and old rows stay.
+- **A form always makes its relations' deltas**, since the walk asks whether they are empty. A delta or old source
+  an earlier form made or bound is read, not made again.
+- **The device waves' prefetch and the strata scoreboard (0113) were off in a driven run** at first: both work over
+  the base program's strata ahead of the walk. The walk now places a level at a time, and does both for the strata it
+  reaches (below, "Built: the walk a level at a time").
+- `RERAIL_MAINTAIN_WHOLE` rewrites the whole program first, as before.
+
+**Measured** (20 files, unprofiled, findings equal to the cold run's each time; load 27–45):
+
+| | Whole rewrite (hub) | Driven |
+|---|---|---|
+| First edit after cold | 283.1 G | 250.7 G |
+| Later edits | 261.3, 257.2 G | 219.0, 208.7, 210.4 G |
+| Strata | 8,438 rewritten (189,301 rules), 45,321 maintained strata walked | 3,719 of 8,438 reached and maintained, 4,719 held as kept |
+| Main thread (sampled) | 12.24 s | 10.06 s |
+
+**What an edit costs now** (sampled, 16.1 s CPU in all, 10.1 s on the main thread):
+- statistics 1.6 s: the reached strata's lazy statistics (0.6 s), patching kept statistics by delta (0.35 s), the
+  given deltas measured (0.17 s);
+- opening strata 1.2 s;
+- the prepared program from the store 1.2 s (0116 step 2's; not this step's);
+- the kept part 0.7 s;
+- the memo 0.5 s, joins 0.5 s, planning 0.4 s;
+- and on the store's writer, 2.4 s, with the main thread waiting 1.7 s for it.
+
+**What step 4 has to remove, measured.** Each edit reads 12,960,053 rows of 9,671 relations from the frames, and
+writes back 12,227,715 rows:
+- 2,752 relations whose rows changed: 9,323,541 rows, each relation written whole, though a delta changed it;
+- 2,674 relations whose rows did not change, rewritten only because their reads' digests changed: 2,904,174 rows.
+
+## Built: step 4, first part (2026-11-12): a relation whose rows did not change is not written again
+
+**What it does.**
+- **The run names the relations whose rows are as they were** (`Outcome::unchanged`): those of a stratum held as
+  kept, and those a form maintained to an empty delta.
+- **Their frames are not written again** (`Retained::write_frames`). Each one's digest is its stored one, so its rows
+  are neither copied out nor hashed. Where its reads' digests changed, only the reads are written:
+  `ContentStore::queue_frames_retagged` updates the frame's `reads`, and its rows, digest and the rest stay as stored.
+  The frames' snapshot shares the stored rows (`Data::Encoded` holds them in an `Arc`).
+
+**Measured** (20 files, unprofiled, `RERAIL_STATS_KEEP_TRACE`; findings equal to the cold run's each time):
+
+| | Before | After |
+|---|---|---|
+| Frames written whole although their rows had not changed | 2,674 (2,904,174 rows) | 0; 3,620 frames' reads updated, no rows |
+| Frames of relations that changed | 2,752 (9,323,541 rows) | 214–216 (8,989,543–9,012,206 rows) |
+| Later edits | 208.7–219.0 G | 214.1–218.6 G (load 49–63) |
+
+The second edit after a rebuild still writes 2,752 relations whole. That edit's first run kept every relation as
+changed, since none had a frame of the run's yet.
+
+**Then open in step 4** (both built below):
+- **A relation that changed is still written whole**: 214 relations, 9.0 M rows an edit, where a delta of a few
+  rows changed each. Its frame is one part. The fix is the inputs' layout (step 2): a derived relation's frame in
+  parts by its owner's granule, with only the changed owners' granules written. The digest is a sum of row hashes
+  (`rows_digest`), so it can be patched by the delta, without a pass over the rows.
+- **The old rows are still read for every stratum the cut keeps dirty** (`Retained::load`: 9,671 relations,
+  12,960,053 rows), though the walk reaches 3,719 strata. A relation should be admitted from its frames when a
+  reached stratum reads it, or when the run's end hands it on.
+
+## Built: the walk a level at a time (2026-11-12): the choice of 0090 §4, the device waves and the strata issued ahead
+
+A stratum's producers are all on lower levels, so at a level's first stratum whether a changed read reaches each
+stratum of the level is known. The walk places the whole level there (`plan::run`, `Slot`):
+
+- **Quiet or reached.** A stratum no changed read reaches holds its kept rows, or leaves them stored (below). A
+  reached one gets its form.
+- **Maintained or derived again (decision 0090 §4).** A form keeps its form derived again (`front::Again`: its rules
+  over the current reads, and its deltas against its old rows). The run chooses as the whole rewrite chose: its input
+  deltas past θ of its old rows, and the form derived again priced below the maintained one (`again_wanted`). Derived
+  again, its pieces are its rules and its deltas. On the 20 files no stratum's input deltas pass θ, so none is.
+- **The device waves (decisions 0095 §5, 0100 §5).** The count tables and first joins of every stratum the level
+  runs (the forms' pieces, and the base program's strata that run) go out as one batch, as a base level's do.
+- **The strata issued ahead (decision 0113).** Each form whose pieces a strand can run is issued as a job on the host
+  stream, its pieces in order on one strand, and retired at its stratum's position (`stream.wait`, `Run::absorb`). The
+  pieces after one that declined, read SQL or made an atom run on the loop's thread. `RERAIL_STRATA_PARALLEL=off`
+  runs them all there.
+- **A strand's statistics** were copied by a pass over every relation's column statistics (`Model::fork`): 5.4 s of
+  an edit with 3,700 forks. They are kept by relation now (`ColStats`), and a strand copies those of what it reads.
+
+**Measured** (20 files, a fresh store, unprofiled; findings equal to the cold run's each time; load 17–30):
+
+| An edit | Instructions | CPU | Wall |
+|---|---|---|---|
+| Forms run on the loop's thread (`RERAIL_STRATA_PARALLEL=off`) | 210.0, 210.3 G | 13.1, 13.2 s | 15.0, 13.4 s |
+| Forms issued as jobs (the default) | 226.2–230.7 G | 18.0–18.2 s | 11.6–12.1 s |
+
+3,701 of 3,701 reached strata's forms ran as jobs. Issuing them costs 16 G instructions and 5 s of CPU for 1.5–3 s
+of wall: a job a form is small (a form is 5 pieces on average), and each pays for its strand. The board merges strata
+into components of 8 fixed costs; forms were not merged. They are now: see *A level's forms merged* below.
+
+## Built: step 4 (2026-11-12): old rows read for the strata reached; a changed relation writes its delta
+
+**Old rows read where they are read.** A maintained run with frames no longer reads every kept relation of the
+dirty strata before it starts (`Retained::load` reads only the clean outputs then):
+- **A quiet stratum's relations stay stored** (`Outcome::unread`) unless a stratum that runs reads them, or the caller
+  does after the run (an output, or what it asked for).
+- **A level reads, in one batch, what its running strata read** (`Maintain::need`, `Retained::admit`): the old rows of
+  the strata it reaches, and the kept rows they read. A clean relation the part reads is bound there, with its
+  statistics (`bind_kept`). Until then the planner knows its rows' count only (`plan::Unbound`).
+
+**A changed relation writes its delta.** A relation a form maintained has its rows gone and added (`r__minus`,
+`r__plus`, `Outcome::deltas`). Its frame keeps its rows, and the delta is written after it as a frame of its own
+(part −1, −2, …; `FrameDelta`, first type `~`, a sign column first). The relation's digest is patched by the delta
+(`rows_digest_patched`: the digest is a sum of row hashes), so its rows are not read to hash them.
+- The store reads a frame with its deltas (`Data::Chain`): queued, in the snapshot read before the first wave, or
+  from SQL. Every reader of the frame sees the rows after its deltas.
+- A frame's stored reads end with how many deltas follow it (`CHAIN`), so the store reads only the deltas of the
+  frames that have them, in one statement a batch, and none for a frame put whole. A retag keeps the count. A frame
+  put whole ends its deltas: those the snapshot holds are deleted with it, in the put's batch.
+- A relation is written whole again when its frame has 16 deltas (`RERAIL_FRAME_DELTAS`), or when its deltas would
+  hold more than a quarter of its rows.
+
+**Measured** (20 files, a fresh store, unprofiled, `RERAIL_STATS_KEEP_TRACE`; findings equal to the cold run's each
+time):
+
+| An edit | Before step 4 | After |
+|---|---|---|
+| Kept relations read from the frames | 9,671 (12,960,053 rows) | 5,586–5,600 (12,155,079–12,155,517 rows); 3,552–3,566 left stored |
+| Derived frames written | 2,968 (12,227,715 rows) | 214–218 deltas (564–580 rows); 3,583–3,593 frames' reads updated |
+
+- **The rows read fell less than the relations.** The strata reached read most of the rows: the 214 relations that
+  change hold 9.0 M of them, and their old rows are what they are maintained from. A process reads them from the
+  store. A session holds them, and reads none.
+- **Checked:** a file deleted gives the findings of a cold run of the corpus without it (61); put back, those of the
+  cold run (62). With `RERAIL_FRAME_DELTAS=2`, two edits wrote deltas and the third wrote the 212 relations whole
+  that had two, with the findings equal each time; the next edits wrote deltas after the new frames, and no delta
+  past a frame's count is left in the store. A store test reads a frame's deltas queued, stored, from the snapshot,
+  after a retag, and after a frame put whole (`a_relations_deltas_are_read_after_its_frame`).
+
+**Found while measuring, not changed:** the store read before the first wave (decision 0104) reads every frame of
+every space. Each engine rebuild made a new space of the memo's entries (about 220 MB each), and no run uses the old
+ones again, so none is forgotten: the store of the measurements above had 1.86 GB of frames, 1.75 GB of them old
+spaces'. The numbers above are on a fresh store.
+
+## Built (2026-11-12): a level's forms merged into components, and the frames read before the first wave
+
+### A level's forms merged
+
+A level's forms run as at most `RERAIL_STRATA_WIDTH` jobs (6), each a component of forms (`Run::strand_forms`,
+`Strand::run_forms`, `Run::absorb_forms`). A component has one strand, one fork of the statistics and one prime of
+the scope, and runs its forms' pieces in level order.
+- **Balanced.** The forms go into the least loaded component, the largest first. A form's estimate is its fixed cost
+  per piece plus, per rule, the rows of the least of its positive atoms (a delta rule's driver). The full
+  cardinalities of the relations it reads counted old rows' millions, so almost nothing merged.
+- **Fewer components where a level is small.** A level has no more components than its estimate holds `k` fixed costs
+  (`RERAIL_STRATA_K`, 8). A component's first slot is its lead: the loop takes the component back there.
+- **The width, not a size, bounds the jobs.** Cut into components of `k` fixed costs, a run made 1,700 jobs. With
+  18 threads that cost 6–10 G instructions more than no jobs, and with 6 threads (`RERAIL_THREADS=6`) 1–4 G.
+- **Shared state a job takes.** The plans cache and the observed statistics took a lock for each use from each job
+  (2.9 s and 2.2 s of an edit's samples). Each job now writes to an overlay of its own thread
+  (`OWN_PLANS`, `OWN_OBSERVED`), folded into the run's when the job ends.
+
+**Measured** (20 files, a fresh store, unprofiled, findings equal to the cold run's each time; load 12–42, so wall is
+indicative only). The edited file grows by a line each edit, so compare within a round:
+
+| An edit | Instructions | CPU | Wall |
+|---|---|---|---|
+| Forms on the loop's thread (`RERAIL_STRATA_PARALLEL=off`) | 219–237 G | 14.1–19.0 s | 14.7–21.2 s |
+| A form a job (`RERAIL_STRATA_MERGE=off`) | 231–243 G | 18.6–20.4 s | 12.0–15.2 s |
+| Components, cut at 8 fixed costs | 229–239 G | 18.4–21.9 s | 11.0–20.2 s |
+| Components, at most 6 a level (the default) | 245–251 G | 16.7–17.4 s | 15.6–17.8 s |
+
+Per thread (`PROC_PIDTHREADCOUNTS`, two edits each): with no jobs, the main thread retires 206 G. With components, the
+main thread retires 114–116 G and the pool 100 G, about 8 G more in all. Every one of the 18 pool threads retires 1–3
+G, including those no component ran on. A sample of the pool's busy time shows the strata's joins and settles
+(`run_join_in_each`, `Fresh::settle`), the work the main thread does with no jobs. **Not found yet:** why the same
+strata retire about 8 G (4%) more on the pool.
+
+### The frames read before the first wave
+
+The store read before the first wave (decision 0104) read every frame of every space: 1.86 GB on the store measured,
+1.75 GB of it no run would read. The frames came from three places:
+- **Every engine build's memo stayed live.** A plan names the engine build, and its memo is a space of frames
+  (decision 0108). A plan was live while any kept manifest named it, and manifests are kept by the bytes of their
+  sources and tapes, which a small corpus never fills.
+- **Killed runs' holds.** A run holds its plans for a 6-hour lease and releases them as it ends. A run the watchdog
+  killed never did, so its plans stayed live for 6 hours.
+- **An edited file's earlier contents.** The memo kept an entry for each content of a path for 32 runs: 30 contents
+  of the edited file, 593 MB of one space.
+
+What the store does now:
+- **Only a root's protected runs keep a plan live** (`keep_corpus_runs_held`), with the plans their manifests name
+  and those a running run holds. A kept manifest past them keeps its sources and tapes, which any build reads.
+- **A hold whose process is gone is released** by the next collection pass (`orphaned_holds`; a run's holder names its
+  process). A decision follows at once.
+- **A pass collects every dead plan**, a transaction each, within its budget of rows. A dead plan's memo is a few
+  frames, and the pass counted none as work, so it stopped after one plan a run.
+- **A path keeps its 4 newest contents** (`MEMO_CONTENTS`, `keep_newest_by_path`), so worktrees or branches that take
+  turns at a file keep theirs (decision 0108 §4).
+- **The read before the first wave takes the live plans' memo outputs only** (`preload_frames_live`), each path's
+  newest. A memo's entries (`local`, 15 MB for the edited file) are read by their keys where they are looked up. The
+  files of a run are looked up before its first wave, from the store; the entries a wave may look up (a load's files)
+  are read into the snapshot before the first wave (`admit_memo_entries`).
+
+**Measured** on the store of 1.86 GB, findings equal to the cold run's each time:
+
+| | Before | After |
+|---|---|---|
+| Frames in the store | 1,582 MB (46,958 frames) | 374 MB (48,205); every recorded plan live |
+| Read before the first wave | 482 MB (45,448 frames) | 160–163 MB (45,154–48,150), 0.2–0.5 s |
+| An edit | 241–282 G | 240–288 G |
+
+Of the 163 MB still read, 107 MB are the kept strata's frames (one space a root, all of them used by the last run).
+The run reads the rows of 5,595 of their 9,152 relations; the others' frames are read and left undecoded.
+Tests: `only_protected_runs_keep_plans_and_a_dead_process_holds_nothing`,
+`a_memo_keeps_a_paths_newest_and_preloads_live_plans_only`.
+
+## Built (2026-11-12): a frame found unchanged is confirmed, not written
+
+(Recorded on benchmarks-on-integration as "step 5". It is part of step 4's writes; step 5 is the amendment above: a
+reached stratum's component kept across steps.)
+
+**Before**, an edit rewrote the reads of each unchanged relation whose reads' digests had moved
+(`queue_frames_retagged`): 3,589 frames, one `UPDATE` each, every edit. That was most of the end-of-run wait.
+
+**What it does.**
+- **Each space keeps one row of confirmations** (`frame_confirmed`): for each frame found unchanged under reads
+  other than its stored ones, the hash of the reads it was confirmed under (`confirm_key`, `reads_hash`). A retag is
+  now an entry in that row, written once per space and only if the map changed. The frame's own row is not touched.
+- **A frame is current** (`from_frame_snapshot`) if its stored reads are today's, or if its confirmation names
+  today's reads' hash. It is then taken with today's reads.
+- **A frame written whole, given a delta, or gone loses its confirmation.** This happens in memory and in the store
+  (`keep_frame_refs`, `keep_frames`).
+- **The confirmations are read with the frames before the first wave** (`preload_frames_for`), so no SQL runs in the
+  waves. They are kept current by the writes the process queues.
+- **A frame admitted later is checked by digest** (`admission_matches`): its rows are its digest's, and its reads
+  may be newer in what the run opened than as stored.
+- The trace settings `RERAIL_WRITES`, `RERAIL_STATS_KEEP_TRACE` and `RERAIL_JOURNAL_TRACE` are no longer part of the
+  run's key (`NOT_OUTPUTS`). A traced unchanged run was missing the whole-run cutoff.
+
+**Measured** (20 files, findings equal to the cold run's each time, load 16–67):
+
+| | Before | After |
+|---|---|---|
+| `UPDATE`s of unchanged frames an edit | 3,589 | 0; one row of confirmations |
+| Frames written an edit | 25.4 MB, 2.76 s | 22.9 MB (4,669 frames, all with changed rows), 1.85–3.1 s |
+| End-of-run wait (main) | 2.58 s | 1.9 s |
+| An unchanged run | — | 0.8 s, 11.4 G |
+
+Tests: `a_relations_deltas_are_read_after_its_frame` (confirmations in memory and stored).
+
+### A string's rows keep every holder's copy
+
+A string test's input (`strtest_<k>(s)`, `memo::Owner::Text`) holds a string once for each file whose text holds it.
+`patch_owners` gathered the owners it treats as "documents evaluated this run" from every staged input, the string
+inputs included. Their owners are strings, so a string the changed file holds passed as an evaluated document. Its
+rows became this run's single copy: 20 copies became 1, and later edits flipped between counts.
+- **Why it matters.** Each flip rewrote every granule of about 70 relations. And the count no longer said how many
+  files hold the string: once the changed file dropped it, the string would go though 19 files still hold it.
+- **Fix.** Only node-owned inputs name evaluated documents, and a string's owner is never one.
+- Test: `a_strings_rows_keep_the_other_files_copies`.
+
+### A run's use is one row, not a stamp on every frame
+
+After the above, the end-of-run wait was mostly the `used` stamp. That `UPDATE` covered every frame of the 16,481
+relations a run used, 2.5 s of a 3.25 s wait. SQLite rewrites a whole record, blob included, to change one column.
+- **Each run's use of a space is one row** (`frame_used`): the relations its programs used, as sorted 8-byte keys,
+  kept for the last `RUNS` runs. A frame's `used` stays the run that put it.
+- **A frame is collected** once its put run is `RUNS` runs old and no run since names its relation. That is the
+  rule as before, and a relation used every run without being put again is kept
+  (`a_relation_no_run_used_for_four_runs_is_collected`).
+- **The switch-over collects early.** The first run under it collects the relations of earlier builds that no row
+  names yet (10,717 on the bench store), instead of after `RUNS` runs. That happens once, and frames are a cache.
+
+### The corpus had grown
+
+Each edit of the bench appended an `x_edit_probe` line to `connection_helpers.py`: 259 of them on a 787-line file.
+Each one added about 300 rows to the module-level `pyi` joins, so cold runs had reached 3.09 T and edits 310–420 G.
+The file is now its original lines plus one probe line, whose value an edit changes (`edit1.sh`).
+
+**Measured** (20 files, findings equal to the cold run's every time, load 20–34):
+
+| | Grown file, before these two | Grown file, after | Original file, after |
+|---|---|---|---|
+| End-of-run wait (main) | 2.6–3.3 s | 0.33–0.85 s | 0.03–0.06 s |
+| An edit | 12–26 s wall | 15–27 s wall (load 27–30) | 7.6–9.0 s wall, 13–14.6 s CPU, 171–197 G |
+| Cold | 3,090 G | 3,084 G | 2,107 G |
+| Unchanged | | | 1.1–1.8 s wall, 11.4 G |

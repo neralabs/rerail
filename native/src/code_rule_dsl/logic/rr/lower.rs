@@ -334,6 +334,9 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
                 _ => return not_yet(format!(".pragma {words:?}")).map_err(at),
             },
             Item::Policy(document) => l.prog.policies.push(document),
+            // A test is never the program's (decision 0130): testing mode splices its statements into a program of
+            // its own (`rr::testing`).
+            Item::Test { .. } | Item::Fixtures { .. } => {}
             Item::Setting { key, text } => l.prog.settings.push((key, text)),
             Item::Violation { name, cols, code, code_in, tag, suppress, fixes, message, .. } => l.violation(name, cols, code, code_in, tag, suppress, fixes, message).map_err(at)?,
             Item::Clause { heads, body, edits } => {
@@ -536,7 +539,7 @@ impl Lowerer {
                 q if crate::code_rule_dsl::logic::front::QUALIFIERS.contains(&q) => {
                     let own = self.prog.qualifiers.entry(name.clone()).or_default();
                     own.insert(q.to_owned());
-                    for (a, b) in [("inline", "no_inline"), ("magic", "no_magic"), ("inline", "magic")] {
+                    for (a, b) in [("inline", "no_inline"), ("magic", "no_magic"), ("inline", "magic"), ("reach", "no_reach")] {
                         if own.contains(a) && own.contains(b) {
                             return Err(Error::Syntax(format!(".decl {name}: `{a}` and `{b}` together")));
                         }

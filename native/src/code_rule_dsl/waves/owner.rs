@@ -137,7 +137,7 @@ impl Lease<'_> {
         self.storage.borrow_mut().owner = Some(self.id);
         Ok(())
     }
-    pub(in crate::code_rule_dsl) fn resident_bytes(&self) -> rusqlite::Result<usize> {
+    pub fn resident_bytes(&self) -> rusqlite::Result<usize> {
         Ok(self.deref().resident_bytes()?.saturating_add(self.storage.borrow().bytes()))
     }
 }

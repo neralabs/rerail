@@ -9,11 +9,11 @@ use crate::program::*;
 use crate::Error;
 use std::collections::{HashMap, HashSet};
 
-pub use crate::stream_ir::{ByteSwitch, DEAD, GONE, KEEP, REFUSE, REMEMBERED, Reading, Readings};
+pub use crate::stream_ir::{ByteSwitch, DEAD, GONE, KEEP, REFUSE, REMEMBERED, Reading, Readings, WORD_KIND};
 
 /// Whether a word is one of tier 2's.
 pub fn is_stream(opcode: u8) -> bool {
-    (TOKEN..=FLAG).contains(&opcode)
+    (TOKEN..=COUNT).contains(&opcode)
 }
 
 /// The operand rules of tier 2's words, and of the words a tier-2 program may hold besides
@@ -29,7 +29,11 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
     let ok = match opcode {
         // A token is a record (`records`): its extract is the records' starts.
         // `m=1+k`: mask `k` holds where any mark does (the marks are live only there).
-        TOKEN => (mode == 0 || usize::from(mode - 1) < masks) && usize::from(operand) < extracts && records.is_some_and(|r| r.starts == operand),
+        // `TOKEN_EXTRAS`: the extras taken too (`Words::extras`).
+        TOKEN => {
+            let m = mode & !TOKEN_EXTRAS;
+            (m == 0 || usize::from(m - 1) < masks) && (mode & TOKEN_EXTRAS == 0 || !program.extras.is_empty()) && usize::from(operand) < extracts && records.is_some_and(|r| r.starts == operand)
+        }
         ACCEPT => mode == 0 && operand == 0,
         EMPTY => mode == 0 && usize::from(operand) < totals,
         SWITCH => mode == 0 && usize::from(operand) < program.switches.len(),
@@ -43,22 +47,30 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // `m=1`: an extra's leaf, deferred; `m=2`: an extra's leaf placed now, never the node
         // made last at its level.
         // `m=3`: a token the grammar implies, no node.
+        // A keyword's leaf (`WORD_KIND`, `m=0`): the kind of its token's word, which the records
+        // name (`Words::word_kinds`).
+        LEAF if operand == WORD_KIND => mode == 0 && !program.word_kinds.is_empty() && records.is_some_and(|r| r.words == program.strings),
         LEAF => mode <= 3 && operand != REMEMBERED,
-        // Mark `m % 32` (its order), its bit in mask `operand`; `m & 32`: the file's end has it.
-        MARK => mode < 64 && usize::from(operand) < masks,
+        // Mark `m % 32` (its order), its bit in mask `operand`; `m & 32`: the file's end has it;
+        // `m & 64`: kept, for the callee its arm calls, which takes it (`MARK_KEEP`).
+        MARK => mode < 128 && usize::from(operand) < masks,
         ROW => mode == 0 && usize::from(operand) < masks,
         // `m=1`: the node a wrap moved; `m=2`: the node made last at this level (`relabel`);
         // `m=3` (a field): the node that one, a wrap, holds first. `RETAG m=3`: that node and
         // the nodes inside it, read by reading `operand` (`reread`).
         RETAG => (mode <= 2 && (mode != 0 || operand != REMEMBERED)) || (mode == 3 && usize::from(operand) < program.readings.maps.len()),
-        NODE_FIELD => mode <= 3 && operand != 0,
+        NODE_FIELD => mode <= 4 && operand != 0,
         // `m=1`: the open node's two leaves, one (`fold`).
         MERGE => mode <= 1 && operand != REMEMBERED,
         WRAP => mode == 0 && operand != REMEMBERED,
+        // A keyword's word (`WORD_KIND`): its token's word's kind, as a keyword's leaf's.
+        REMEMBER if operand == WORD_KIND => mode == 0 && !program.word_kinds.is_empty() && records.is_some_and(|r| r.words == program.strings),
         REMEMBER => mode == 0 && operand != 0 && operand != REMEMBERED,
         FLAG => mode <= 2 && operand < 16,
+        COUNT => mode <= 1 && usize::from(operand) < program.counts.len(),
         CLOSE => mode <= 1 && operand == 0,
-        PUSH => mode == 0 && usize::from(operand) < words,
+        // `m`: the flag the call runs with (`push_flag`), of 16.
+        PUSH => mode <= 32 && usize::from(operand) < words,
         RETURN => mode <= 1 && operand == 0,
         // `m=1`: the token's end is its record's (operand 0).
         SPAN => (mode == 0 && operand != 0) || (mode == 1 && operand == 0),
@@ -109,8 +121,13 @@ pub fn validate(program: &Words) -> Result<(), Error> {
         .map(|&w| usize::from(split(w).2))
         .collect();
     // A state: `TOKEN`, a `MARK` and its way (`GOTO` or `STOP`) per mark it tests, `SWITCH`.
+    // After the `TOKEN`, a call's field on the node it made (`NODE_FIELD m=4`), where both
+    // returns land (`RETURN m=0` at the `TOKEN`, `m=1` past it).
     let state = |p: usize| {
         let mut q = p + 1;
+        if words.get(q).is_some_and(|&w| split(w).0 == NODE_FIELD && split(w).1 == 4) {
+            q += 1;
+        }
         while words.get(q).is_some_and(|&w| split(w).0 == MARK) {
             if words.get(q + 1).is_none_or(|&w| !matches!(split(w).0, GOTO | STOP)) {
                 return false;
@@ -350,6 +367,8 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
     let mut word: u16 = 0;
     // The level's flags (`FLAG`), a bit each: the caller's come back where a call returns.
     let mut flags: u16 = 0;
+    // The counts of tokens (`COUNT`).
+    let mut counts: Vec<u32> = vec![0; program.counts.len()];
     let refuse = |pc: usize, why: &'static str| Err(Refused { pc, why });
     loop {
         seen(pc);
@@ -362,20 +381,33 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     return refuse(pc - 1, "a token past the stream's end");
                 }
                 need = false;
-                last_end = end;
-                // The record pass checked the records (the totals' flag, `EMPTY`): as many lasts
-                // as starts, each token after the one before.
-                if next == starts.len().min(lasts.len()) {
-                    at_end = true;
-                } else {
+                loop {
+                    last_end = end;
+                    // The record pass checked the records (the totals' flag, `EMPTY`): as many
+                    // lasts as starts, each token after the one before.
+                    if next == starts.len().min(lasts.len()) {
+                        at_end = true;
+                        break;
+                    }
                     (start, end) = (starts[next], starts[next]);
                     rec_end = lasts[next] + 1;
                     code = tier1.codes.get(next).copied().unwrap_or(0);
                     next += 1;
+                    // An extra (`TOKEN_EXTRAS`): its bytes taken and its leaf deferred, as
+                    // `SPAN m=1; LEAF m=1 #K`; then the next token.
+                    let extra = if mode & TOKEN_EXTRAS == 0 { None } else { program.extras.iter().find(|&&(b, _)| code >> (crate::records::MARK_SHIFT + u32::from(b)) & 1 == 1) };
+                    let Some(&(_, kind)) = extra else { break };
+                    end = rec_end;
+                    if pending == 0 {
+                        keep = last_end;
+                    }
+                    pending += 1;
+                    nodes.push(Node { kind, field: 0, supers: vec![], start, end, size: 1 });
                 }
                 // The marks live: all, or (`m=1+k`) none where no mark holds and the stream
                 // goes on.
-                live = if mode == 0 || at_end || mask_bit(u16::from(mode - 1), start) { u32::MAX } else { 0 };
+                let m = mode & !TOKEN_EXTRAS;
+                live = if m == 0 || at_end || mask_bit(u16::from(m - 1), start) { u32::MAX } else { 0 };
             }
             SPAN => {
                 // The token's bytes taken: its record's end, or a length (a one-byte token),
@@ -433,9 +465,14 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 } else {
                     mask_bit(operand, start) && word_ok()
                 };
+                // A token mark (`Words::token_marks`): its tokens follow too.
+                let here = here && (at_end || program.token_marks.iter().find(|m| u32::from(m.order) == k).is_none_or(|m| token_mark_holds(m, &tier1.codes, next, u32::from(program.extras.first().map_or(0, |e| e.0)))));
                 if live >> k & 1 == 1 && here {
-                    // Taken: it and the marks before it are done at this token.
-                    live &= !(u32::MAX >> (31 - k));
+                    // Taken: it and the marks before it are done at this token. Kept: its arm
+                    // calls the level that takes it.
+                    if mode & MARK_KEEP == 0 {
+                        live &= !(u32::MAX >> (31 - k));
+                    }
                 } else {
                     pc += 1;
                 }
@@ -517,6 +554,13 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     return refuse(pc - 1, "an inner field on a node that is no wrap of a plain node");
                 }
                 nodes[base].field = operand;
+            }
+            // A call's field where it returns: on the node it made, where that has none.
+            NODE_FIELD if mode == 4 => {
+                let Some(Some((r, _))) = lasts_made.last().copied() else { return refuse(pc - 1, "a call's field with no node before it") };
+                if nodes[r].field == 0 {
+                    nodes[r].field = operand;
+                }
             }
             RETAG | NODE_FIELD if mode == 2 => {
                 let Some(Some((r, _))) = lasts_made.last().copied() else { return refuse(pc - 1, "a relabel with no node before it") };
@@ -602,6 +646,16 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             // they are, as a leaf's would.
             LEAF if mode == 3 => pending = 0,
             LEAF => {
+                // A keyword's leaf: its token's word's kind, refused where it names none.
+                let operand = if operand != WORD_KIND {
+                    operand
+                } else {
+                    let w = crate::records::word_of(code).checked_sub(1);
+                    match w.and_then(|w| program.word_kinds.binary_search_by_key(&(w as u16), |&(s, _)| s).ok()) {
+                        Some(i) => program.word_kinds[i].1,
+                        None => return refuse(pc - 1, "a keyword's leaf at a token of no keyword"),
+                    }
+                };
                 if mode == 1 && pending == 0 {
                     keep = last_end;
                 }
@@ -617,8 +671,29 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             NODE_FIELD if mode == 1 => nodes[moved].field = operand,
             NODE_FIELD => nodes.last_mut().expect("a node before its field").field = operand,
             NODE_SUPER => nodes.last_mut().expect("a node before its supertype").supers.push(operand),
-            PUSH => returns.push((operand, word, flags)),
+            PUSH => {
+                returns.push((operand, word, flags));
+                match push_flag_of(mode) {
+                    Some((k, true)) => flags |= 1 << k,
+                    Some((k, false)) => flags &= !(1 << k),
+                    None => {}
+                }
+            }
+            REMEMBER if operand == WORD_KIND => {
+                let w = crate::records::word_of(code).checked_sub(1);
+                match w.and_then(|w| program.word_kinds.binary_search_by_key(&(w as u16), |&(s, _)| s).ok()) {
+                    Some(i) => word = program.word_kinds[i].1,
+                    None => return refuse(pc - 1, "a keyword's word at a token of no keyword"),
+                }
+            }
             REMEMBER => word = operand,
+            COUNT if mode == 0 => {
+                counts[usize::from(operand)] += 1;
+                if counts[usize::from(operand)] > u32::from(program.counts[usize::from(operand)]) {
+                    return refuse(pc - 1, "a count past its most");
+                }
+            }
+            COUNT => counts[usize::from(operand)] = counts[usize::from(operand)].saturating_sub(1),
             FLAG if mode == 0 => flags |= 1 << operand,
             FLAG if mode == 1 => flags &= !(1 << operand),
             FLAG => {
@@ -712,7 +787,68 @@ pub fn validate_tier2(program: &Words) -> Result<(), Error> {
     }
     validate(program)?;
     validate_mark_words(program)?;
+    validate_word_kinds(program)?;
+    validate_extras(program)?;
+    validate_token_marks(program)?;
     validate_rules(program)
+}
+
+/// The token marks (`Words::token_marks`): rising by mark, each a mark in the records' codes
+/// (its bit gates it), with extras taken in the token step (they are skipped by their bit);
+/// its elements rising by offset, the mark's own (0) among them, the words the program's.
+pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
+    let marks = program.block_programs.first().and_then(|b| b.records.as_ref()).map_or(0, |r| r.marks.len());
+    for (i, m) in program.token_marks.iter().enumerate() {
+        let rising = i == 0 || program.token_marks[i - 1].order < m.order;
+        let offsets = m.elems.windows(2).all(|w| w[0].offset < w[1].offset) && m.elems.iter().any(|e| e.offset == 0) && m.elems.first().is_some_and(|e| e.offset >= -1);
+        let words = m.elems.iter().flat_map(|e| &e.words).all(|&s| usize::from(s) < program.strings.len());
+        if !rising || !offsets || !words || usize::from(m.order) >= marks || program.extras.is_empty() {
+            return Err(Error::InvalidOperand(i));
+        }
+    }
+    Ok(())
+}
+
+/// Whether token mark `m` holds at the record before `next` (`Words::token_marks`): each element
+/// at its offset among the records that are no extra (`extra_bit`, the code's bit).
+pub fn token_mark_holds(m: &TokenMark, codes: &[u32], next: usize, extra_bit: u32) -> bool {
+    let is_extra = |c: u32| c >> (crate::records::MARK_SHIFT + extra_bit) & 1 == 1;
+    let Some(here) = next.checked_sub(1) else { return false };
+    m.elems.iter().all(|e| {
+        let at = match e.offset {
+            0 => Some(here),
+            o if o > 0 => {
+                // The `o`th record after, past the extras.
+                let (mut j, mut left) = (here + 1, o);
+                loop {
+                    match codes.get(j) {
+                        None => break None,
+                        Some(&c) if is_extra(c) => j += 1,
+                        Some(_) if left == 1 => break Some(j),
+                        Some(_) => {
+                            left -= 1;
+                            j += 1;
+                        }
+                    }
+                }
+            }
+            _ => (0..here).rev().find(|&j| !is_extra(codes[j])),
+        };
+        at.is_some_and(|j| e.takes(codes[j]))
+    })
+}
+
+/// The extras a `TOKEN` takes (`Words::extras`): rising by bit, each a mark the records' codes
+/// hold.
+pub fn validate_extras(program: &Words) -> Result<(), Error> {
+    let marks = program.block_programs.first().and_then(|b| b.records.as_ref()).map_or(0, |r| r.marks.len());
+    for (i, &(b, _)) in program.extras.iter().enumerate() {
+        let rising = i == 0 || program.extras[i - 1].0 < b;
+        if !rising || usize::from(b) >= marks {
+            return Err(Error::InvalidOperand(i));
+        }
+    }
+    Ok(())
 }
 
 /// The marks' words (`Words::mark_words`): rising by mark, each a mark a `MARK` tests and a
@@ -730,10 +866,23 @@ pub fn validate_mark_words(program: &Words) -> Result<(), Error> {
     Ok(())
 }
 
+/// The keywords' leaf kinds (`Words::word_kinds`): rising by string, each a string of the
+/// program's (the records' words, `LEAF`'s check) and a kind that names no level's word.
+pub fn validate_word_kinds(program: &Words) -> Result<(), Error> {
+    for (i, &(s, k)) in program.word_kinds.iter().enumerate() {
+        let rising = i == 0 || program.word_kinds[i - 1].0 < s;
+        if !rising || usize::from(s) >= program.strings.len() || k == WORD_KIND || k == REMEMBERED {
+            return Err(Error::InvalidOperand(i));
+        }
+    }
+    Ok(())
+}
+
 /// Tier 2's rules (`Words::rules`), when it has them: from place 0, rising, within the words;
-/// every word goes on within its own rule (a `PUSH` to its return's places, and its next word,
-/// a `GOTO`), but for that `GOTO`: a call's, to its callee in any rule. So a rule is a
-/// function, and a rule's code reaches another's by its calls alone.
+/// every word goes on by position within its own rule (its next word, a test's two ways), and
+/// a `PUSH` returns into it. A call's jump goes to its callee, any rule; any other jump (a
+/// `GOTO`, a switch's targets) stays within its rule. So a rule is a function, entered by calls
+/// alone, as the lean parser's methods are.
 pub fn validate_rules(program: &Words) -> Result<(), Error> {
     let (rules, words) = (&program.rules, &program.words);
     if rules.is_empty() {
@@ -748,15 +897,20 @@ pub fn validate_rules(program: &Words) -> Result<(), Error> {
     for pc in 0..n {
         let (op, mode, operand) = split(words[pc]);
         let after_push = pc > 0 && split(words[pc - 1]).0 == PUSH;
-        let next: Vec<usize> = match op {
-            STOP | ACCEPT | RETURN => vec![],
-            // A call's `GOTO`: to its callee, in any rule.
-            GOTO if after_push => vec![],
-            GOTO => vec![target(operand)],
+        // A jump that is not a call's: within its rule.
+        let jumps: Vec<usize> = match op {
+            GOTO if !after_push => vec![target(operand)],
             SWITCH => {
                 let s = &program.switches[usize::from(operand)];
                 s.all_targets().filter(|&t| t != REFUSE).map(target).collect()
             }
+            _ => vec![],
+        };
+        if jumps.iter().any(|&t| t < n && rule_of(t) != rule_of(pc)) {
+            return Err(Error::InvalidTarget(pc));
+        }
+        let next: Vec<usize> = match op {
+            STOP | ACCEPT | RETURN | GOTO | SWITCH => vec![],
             PUSH => {
                 if split(*words.get(pc + 1).ok_or(Error::InvalidTarget(pc))?).0 != GOTO {
                     return Err(Error::InvalidTarget(pc));
@@ -769,7 +923,10 @@ pub fn validate_rules(program: &Words) -> Result<(), Error> {
             MARK | ROW => vec![pc + 1, pc + 2],
             _ => vec![pc + 1],
         };
-        if next.into_iter().any(|t| t < n && rule_of(t) != rule_of(pc)) {
+        if next.iter().any(|&t| t < n && rule_of(t) != rule_of(pc)) {
+            if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
+                eprintln!("rules: {pc} (op {op} m={mode} {operand}, rule {}) goes to {next:?} (rules {:?}); the word before: {:?}", rule_of(pc), next.iter().map(|&t| rule_of(t)).collect::<Vec<_>>(), pc.checked_sub(1).map(|p| split(words[p])));
+            }
             return Err(Error::InvalidTarget(pc));
         }
     }
