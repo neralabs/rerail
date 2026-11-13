@@ -4237,6 +4237,11 @@ keeping it there was measured to gain nothing, O-store-single-program), decoding
 store (127), and reading its sources (55). What is left of O91 is that setup, not a rerun: a process that serves
 many batches (a session) pays it once; else each piece is its own item (O-prepared-decode below).
 
+**Batch as one pack (2026-11-13, decision 0168).** `run-policies` now runs a batch's policies of one grammar as
+one pack, so the typing program, its setup and every library are read, combined, hidden and planned once for the
+batch, not per policy. dl1 147.9 → 137.5 G cold without a store, 89.5 → 71.1 G warm, findings unchanged. What is
+left is the pack's own passes (O-pack-passes).
+
 ## O-batch-phase-sources. Earlier phases' sources are made again for each policy
 
 **Seen (2026-11-12).** 5.5% of the batch: `phases::sources` → `run_with_options`, inside each policy's run. The
@@ -4301,6 +4306,10 @@ samples) and 3.3% without a store; of the warm 216, 127 are the typing program's
 44 policies' together: dropping the libraries' unreached clauses before lowering cut what each policy hides. A
 hiding analysis kept per library module would now save about 2%, against its cost of keying and invalidating;
 not built. Open at that size.
+
+**A batch is one pack (2026-11-13, decision 0168).** The library's analysis is now made once a batch, over the
+pack's program: hiding the combined program was 0.46 s of the dl1 pack (4,287 rules), against each policy hiding
+its own. The analysis kept per library module is still open, for packs whose programs change.
 
 ## O-vocabulary-dfa-reuse. The text vocabulary's DFAs are built again for each policy
 
@@ -4895,3 +4904,31 @@ engine's set-up called it. The native module now installs it before it keeps any
 
 **Not measured:** O99 and O130 run on the 9,010-file data layer (minutes, past the run cap). O133 and O114 run
 on the 84-file Jedi recording, which is not on this machine (a 40-file subset is).
+
+## O-pack-passes. A pack's passes cost more per rule than one policy's
+
+**Seen (2026-11-13, decision 0168).** The dl1 batch as one pack has 4,287 rules, against about 30,000 with the
+libraries pasted into each policy, yet costs 134 G against 148 G. In the pack:
+- `combine` is 46 G: parsing 2.9 s (each of 44 programs lowered 0.95 s), and merging the programs 1.4 s (hiding the
+  combined program 0.46 s, fact spaces 0.41 s, merging identical relations 0.39 s);
+- `prepare` is 52 G: prune, simplify and demand 1.2 s; pushing the file-local joins into the chunks 1.4 s, which
+  splits the program 8 times (`split: N of M relations again`); merging identical relations again 0.58 s;
+- inline-or-store is 1.0 s on the local part and 0.4 s on the cross part, most of it outside any span inside it.
+
+**Closure:** each pass measured against the rules it reads. Passes that grow faster than the pack's rules are made
+to grow with them, and the dl1 pack is measured below 100 G cold without a store, with findings unchanged.
+
+**Progress (2026-11-13, decision 0168 "Loading the pack, made lighter").** 137.3 → 124.8 G cold, 69.9 → 63.7 G warm.
+The constants-ignored congruence is made only when profiled; hiding edits rules in place and borrows its names; the
+guard moves the rules out instead of cloning them. Left in loading:
+- the fact spaces (0.41 s debug, 0.06 s optimized), which split the whole program (`file_local::split_located`) for
+  its located columns alone;
+- hiding a single policy's own run: 0.27 s for 678 rules against 0.35 s for the pack's 4,287 (debug). Each round
+  computes reaching and the carried variables from scratch.
+
+**Optimized build (2026-11-13, decision 0168 "Loading on an optimized build").** The 0.90 s of "parse each program"
+was a debug build's. Optimized, it is 0.12 s, of which reading the texts into tapes and statements is 11 ms. The rest
+is lowering: each program's rules 31 ms, its analyses 24 ms, aggregate demand 15 ms, cycle checks 12 ms. Reading
+the libraries once per run and checking cycles once, combined, were built and measured; neither paid. The next
+lever in loading is the per-rule cost of lowering (about 2 ms a program), not the libraries.
+

@@ -128,6 +128,9 @@ pub fn simplify(prog: &mut Program) -> Report {
         for rule in &mut prog.rules {
             report.implied += drop_implied(rule);
         }
+        if super::profile::on() {
+            similar_relations(prog, &mut report);
+        }
     }
     report.unread = drop_unread(prog);
     report.projected = project_unread_columns(prog);
@@ -2068,12 +2071,16 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
         }
         report.merged.push((t.clone(), from.clone()));
     }
-    // Relations equal up to their constants (not merged: one relation keyed by the constant would serve them).
+    true
+}
+
+/// Relations equal up to their constants (not merged: one relation keyed by the constant would serve them), into
+/// the report a profiled run writes. A congruence of its own over the whole program, so made only when profiled.
+fn similar_relations(prog: &Program, report: &mut Report) {
     let similar = congruence(prog, true);
     report.similar = similar.iter().map(Vec::len).sum();
     report.similar_groups = similar.len();
     report.similar_examples = similar.iter().take(3).map(|g| g.iter().take(4).cloned().collect::<Vec<_>>().join(" ~ ")).collect();
-    true
 }
 
 #[cfg(test)]
@@ -2264,8 +2271,37 @@ pub mod tests {
         assert_eq!(prog.rules.iter().filter(|r| r.head.rel == "s_reach").count(), 2);
         assert_eq!(prog.facts["s_seed"].len(), 1);
         assert!(prog.decls.contains_key("p0_mine") && prog.decls.contains_key("p1_mine"));
-        // p0_mine and p1_mine differ only in their constant.
-        assert_eq!((report.similar, report.similar_groups), (2, 1));
+        // p0_mine and p1_mine differ only in their constant: reported in a profiled run only (below).
+        assert_eq!((report.similar, report.similar_groups), (0, 0));
+    }
+
+    /// Relations equal up to their constants are a profile's report (`relations equal up to their constants`), not
+    /// a part of the merge: an unprofiled simplify makes no second congruence for them (it was about half of each
+    /// merge's cost in a pack, decision 0168), and a profiled one reports them as before.
+    #[test]
+    fn relations_alike_but_for_their_constants_are_found_only_when_profiled() {
+        let text = r#"
+            .decl edge(a: number, b: number)
+            .input edge
+            .decl p0_reach(a: number)
+            p0_reach(b) :- edge(1, b).
+            .decl p1_reach(a: number)
+            p1_reach(b) :- edge(1, b).
+            .decl p0_mine(a: number)
+            p0_mine(b) :- edge(2, b), p0_reach(b).
+            .decl p1_mine(a: number)
+            p1_mine(b) :- edge(3, b), p1_reach(b).
+            .output p0_mine, p1_mine
+        "#;
+        let quiet = simplify(&mut super::super::rr::parse(text).unwrap());
+        assert_eq!(quiet.merged.len(), 2, "{:?}", quiet.merged);
+        assert_eq!((quiet.similar, quiet.similar_groups), (0, 0));
+        let _run = super::super::profile::one_run();
+        super::super::profile::set(true);
+        let profiled = simplify(&mut super::super::rr::parse(text).unwrap());
+        super::super::profile::set(false);
+        assert_eq!(profiled.merged, quiet.merged);
+        assert_eq!((profiled.similar, profiled.similar_groups), (2, 1));
     }
 
     /// The converter's `has` with no stop: a node holding a match among its descendants, climbed one `child` edge a

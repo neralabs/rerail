@@ -876,6 +876,7 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
     };
     let parsing = crate::code_rule_dsl::logic::profile::span(|| format!("parse each program ({})", programs.len()));
     // Each text read once, for its modules and its program, when the two are of the same text (no `extra`).
+    let reading = crate::code_rule_dsl::logic::profile::span(|| "read each text (tape, statements, includes)".to_owned());
     let mut texts: Vec<Option<crate::code_rule_dsl::logic::rr::Text>> = if programs.len() > 1 && extra.is_empty() {
         programs.iter().map(|text| crate::code_rule_dsl::logic::rr::read_text(text).map(Some).map_err(|e| in_policy(text, e))).collect::<std::result::Result<_, _>>()?
     } else {
@@ -902,6 +903,8 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
         modules.heads.iter().any(|h| !core.contains(h) && modules.files.iter().any(|(_, _, names)| names.contains(h)))
     };
     let own_only: Vec<bool> = modular.iter().map(|m| !copied && m.as_ref().is_some_and(|m| !asks(m))).collect();
+    drop(reading);
+    let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower each program".to_owned());
     let mut parsed = programs
         .iter()
         .zip(&own_only)
@@ -924,6 +927,7 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
             Ok(prog)
         })
         .collect::<std::result::Result<Vec<_>, Error>>()?;
+    drop(lowering);
     // `RERAIL_DUMP_PROGRAMS=<file>`: each program's prefix (`p<i>_`) and its first policy or line (a debugging aid).
     if let Ok(path) = std::env::var("RERAIL_DUMP_PROGRAMS") {
         let lines: String = programs
@@ -8310,6 +8314,16 @@ impl CorpusFiles {
 
 /// The language a corpus run reads: the one its program names (`.language`: any dialect of the registry this build
 /// parses), else Rust or Python by `Typing::rust`, or by whichever has more files.
+/// The grammar a run of `prog` reads (`corpus_language`, as `run_observed` picks it): its `.language`'s, else the
+/// tree's own, of the files its scope selects. A batch's policies that read one grammar run as one pack (decision 0168).
+pub fn run_language(root: &Path, prog: &front::Program, options: &serde_json::Value) -> Result<&'static str> {
+    let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
+    if let Some(label) = language.as_deref().and_then(crate::code_rule_dsl::language::label_named) {
+        return Ok(label);
+    }
+    Ok(corpus_language(language.as_deref(), &Typing::default(), &scoped(corpus_files(root)?, prog, options)))
+}
+
 fn corpus_language(language: Option<&str>, typing: &Typing, found: &CorpusFiles) -> &'static str {
     match language {
         Some(name) if let Some(label) = crate::code_rule_dsl::language::label_named(name) => label,

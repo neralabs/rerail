@@ -370,12 +370,129 @@ pub fn run_policies(
     }
     // What the batch's runs share is kept while it runs (phase 1's runs, by their inputs), and nothing past it.
     let _batch = super::logic::plan::corpus::phases::Batch::enter();
+    // The policies of one language run as one pack (decision 0168): libraries read, lowered, hidden and evaluated once
+    // (decisions 0051, 0089), each policy's findings split back by its id. The rest run alone.
+    // `RERAIL_BATCH_PACK=off` runs each policy alone, as before, to compare (a measurement's switch).
+    let packed = std::env::var("RERAIL_BATCH_PACK").map_or(true, |v| v != "off");
+    let texts = if packed { program_texts(&paths.iter().map(|p| p.as_path()).collect::<Vec<_>>()).ok() } else { None };
+    let groups = texts.as_deref().map(|texts| policy_groups(texts, root, options)).unwrap_or_default();
+    let mut done: Vec<Option<(Vec<serde_json::Value>, serde_json::Value)>> = paths.iter().map(|_| None).collect();
+    for group in groups.iter().filter(|g| g.members.len() > 1) {
+        if let Some(each) = run_pack(paths, texts.as_deref().unwrap_or_default(), group, root, out, options)? {
+            for (&k, found) in group.members.iter().zip(each) {
+                done[k] = Some(found);
+            }
+        }
+    }
     for (k, path) in paths.iter().enumerate() {
-        let report = run_rr(path, root, &out.join(k.to_string()), options).map_err(|e| format!("{}: {e}", path.display()))?;
-        diagnostics.extend(report["diagnostics"].as_array().cloned().unwrap_or_default());
-        runs.push(serde_json::json!({"path": path.display().to_string(), "files": report["files"], "metadata": report["metadata"]}));
+        let (found, run) = match done[k].take() {
+            Some(found) => found,
+            None => {
+                let report = run_rr(path, root, &out.join(k.to_string()), options).map_err(|e| format!("{}: {e}", path.display()))?;
+                let run = serde_json::json!({"path": path.display().to_string(), "files": report["files"], "metadata": report["metadata"], "together": 1});
+                (report["diagnostics"].as_array().cloned().unwrap_or_default(), run)
+            }
+        };
+        diagnostics.extend(found);
+        runs.push(run);
     }
     Ok(serde_json::json!({"diagnostics": diagnostics, "runs": runs}))
+}
+
+/// Policies of a batch that run as one pack: one language of one dialect, each with its own policy id (its findings
+/// are told apart by it) and findings declared. `members` index the batch's paths; `metadata` is each one's.
+struct PolicyGroup {
+    members: Vec<usize>,
+    ids: Vec<String>,
+    metadata: Vec<serde_json::Value>,
+}
+
+/// The batch's policies (`texts`, as `program_texts` reads them) grouped by the grammar each run reads (decision
+/// 0168, `corpus::run_language`: its `.language`'s, else the tree's), each read for its header only (`rr::Text::header`:
+/// its directives and declarations, no clause), which is all a group needs before its run.
+/// Findings are told apart by their policy's `.policy` id, so a group holds each id once (one policy of none). A
+/// policy whose header does not read, has an id another of its grammar has, declares no findings, or names a
+/// language of several dialects runs as `run_rr` runs it (and fails there with its own error).
+fn policy_groups(texts: &[String], root: &std::path::Path, options: &serde_json::Value) -> Vec<PolicyGroup> {
+    use super::logic::{plan::corpus, rr};
+    let mut groups: Vec<(&'static str, PolicyGroup)> = Vec::new();
+    for (k, text) in texts.iter().enumerate() {
+        let own = rr::read_text(text).and_then(rr::Text::header).ok();
+        let joined = own.and_then(|own| {
+            let named = own.settings.iter().find(|(k, _)| k == "language").map(|(_, v)| v.trim().trim_matches('"').to_owned());
+            let one_dialect = named.as_deref().is_none_or(|name| {
+                crate::code_rule_dsl::language::CodeRuleLanguage::ALL.into_iter().find(|l| l.name() == name).is_some_and(|l| l.dialects().len() < 2)
+            });
+            let language = corpus::run_language(root, &own, &with_reuse(options)).ok()?;
+            let id = own.settings.iter().find(|(k, _)| k == "policy").and_then(|(_, t)| t.split('"').nth(1)).unwrap_or_default().to_owned();
+            let findings = own.outputs.iter().any(|o| o == "rr_diagnostic");
+            let metadata = rr::metadata(&own).ok()?;
+            (one_dialect && findings).then_some((language, id, metadata))
+        });
+        match joined {
+            Some((language, id, metadata)) if !groups.iter().any(|(_, g)| g.ids.contains(&id)) => {
+                let at = match groups.iter().position(|(l, _)| *l == language) {
+                    Some(at) => at,
+                    None => {
+                        groups.push((language, PolicyGroup { members: Vec::new(), ids: Vec::new(), metadata: Vec::new() }));
+                        groups.len() - 1
+                    }
+                };
+                let group = &mut groups[at].1;
+                group.members.push(k);
+                group.ids.push(id);
+                group.metadata.push(metadata);
+            }
+            _ => {}
+        }
+    }
+    groups.into_iter().map(|(_, g)| g).collect()
+}
+
+/// One group's policies run as one pack into `out/pack-<first>`, and each one's findings written to its own
+/// `out/<k>/rr_diagnostic.csv`: per member, its findings and its run's record. `None` when the pack's run fails or a
+/// finding names no member's id: the group's policies then run alone, each with its own error.
+fn run_pack(
+    paths: &[std::path::PathBuf],
+    texts: &[String],
+    group: &PolicyGroup,
+    root: &std::path::Path,
+    out: &std::path::Path,
+    options: &serde_json::Value,
+) -> Result<Option<Vec<(Vec<serde_json::Value>, serde_json::Value)>>, String> {
+    use super::{logic::plan::corpus, typing::file_local::Binding};
+    let texts: Vec<&str> = group.members.iter().map(|&k| texts[k].as_str()).collect();
+    let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
+    let dir = out.join(format!("pack-{}", group.members[0]));
+    crate::code_rule_dsl::logic::profile::decision("a batch's policies as one pack (decision 0168)", || {
+        format!("{} policies: {}", texts.len(), group.ids.join(", "))
+    });
+    let Ok(report) = corpus::run_with_options(&texts, root, None, &dir, "program", binding, 1 << 18, &Default::default(), &with_reuse(options)) else {
+        return Ok(None);
+    };
+    let mut each: Vec<Vec<serde_json::Value>> = group.members.iter().map(|_| Vec::new()).collect();
+    let mut lines: Vec<Vec<&str>> = group.members.iter().map(|_| Vec::new()).collect();
+    let text = match std::fs::read_to_string(dir.join("rr_diagnostic.csv")) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e.to_string()),
+    };
+    for line in text.lines() {
+        let finding: serde_json::Value = serde_json::from_str(line).map_err(|e| e.to_string())?;
+        let Some(at) = finding["policy"].as_str().and_then(|id| group.ids.iter().position(|x| x == id)) else { return Ok(None) };
+        each[at].push(finding);
+        lines[at].push(line);
+    }
+    let mut done = Vec::with_capacity(group.members.len());
+    for (((&k, found), lines), metadata) in group.members.iter().zip(each).zip(lines).zip(&group.metadata) {
+        let own = out.join(k.to_string());
+        std::fs::create_dir_all(&own).map_err(|e| format!("{}: {e}", own.display()))?;
+        let written: String = lines.iter().map(|l| format!("{l}\n")).collect();
+        std::fs::write(own.join("rr_diagnostic.csv"), written).map_err(|e| format!("{}: {e}", own.display()))?;
+        let run = serde_json::json!({"path": paths[k].display().to_string(), "files": report.files, "metadata": metadata, "together": group.members.len()});
+        done.push((found, run));
+    }
+    Ok(Some(done))
 }
 
 /// `policies` ((name, source, format `json`/`yaml`)) lowered with no store and dumped as `rir`:
