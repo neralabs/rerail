@@ -212,7 +212,11 @@ npm run package:check     # build and dry-run the npm pack
 `npm ci` and `npm install` (`prepare`) install a Git pre-commit hook that runs `scripts/check/pre-commit.sh`, the
 checks of CI's "Lint and type-check" job: the Justfile's format, the release notes your branch adds against your local
 `origin/main`, `npm run check`, `check:ui-tokens` and `check:reference`. It checks the working tree, not only what is
-staged; `git commit --no-verify` skips it. A `pre-commit` hook of your own is left in place.
+staged. CI checks a pull request merged into main, so when your branch is behind your local `origin/main` the hook
+checks your working tree merged into it, in a throwaway worktree (about a second more): main's newer files then count,
+as they do in CI (a folder over its file limit, a migration both sides added). It never fetches, so `git fetch` first
+for the newest main. When the merge would conflict, it says so and checks your branch alone. `git commit --no-verify`
+skips it. A `pre-commit` hook of your own is left in place.
 
 The pack tests also need the pack test data: run `npm run fixtures:pull` ([Pack test data](#pack-test-data)).
 

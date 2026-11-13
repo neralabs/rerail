@@ -21,7 +21,8 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   reference check (`check-internal-refs.mjs`: no internal ticket ID, and no `nera-` identifier outside its list of
   public ones, in a tracked path or text), the CI path filter check (`check-ci-paths.mjs`: every file the jobs `ci.yml`'s path filters skip import, from the entry
   points it lists, matches their filter), the licence allowlist, and the pre-commit check (`pre-commit.sh`: CI's lint
-  and type-check job, before each commit).
+  and type-check job, before each commit, on the working tree merged into the local `origin/main` when the branch is
+  behind it, as CI checks the pull request merged into main; `merged-checkout.mjs` makes that throwaway checkout).
 - `deps/`: pins that follow a dependency (`sync-pins.mjs`, `npm run deps:sync`): the OMP host and its release digests
   follow the OMP SDK, the ast-grep differential test's reference follows the ast-grep CLI, and `reviewer.yml`'s
   `reviewer_ref` follows the commit its `uses:` pins. `.github/workflows/dependabot-pins.yml` runs it on Dependabot's
