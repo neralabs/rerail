@@ -371,7 +371,8 @@ describe("source-scoped steers", () => {
     const session = { host: "omp" as const, sessionId: "turn", cwd: root };
     try {
       const start = runtime.ingest({ kind: "session-start", eventId: "start", session });
-      await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(1));
+      // The evaluator opens without waiting for its attach, so the repository audit's workspace may follow at once.
+      await vi.waitFor(() => expect(attachments.workspaces.length).toBeGreaterThanOrEqual(1));
       attachments.workspaces[0]!.release();
       await start;
       await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(2));
@@ -414,7 +415,7 @@ describe("source-scoped steers", () => {
     const session = { host: "omp" as const, sessionId: "closing", cwd: root };
     try {
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
-      await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(1));
+      await vi.waitFor(() => expect(attachments.workspaces.length).toBeGreaterThanOrEqual(1));
       attachments.workspaces[0]!.release();
       await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(2));
       let closed = false;
@@ -657,6 +658,7 @@ describe("source-scoped steers", () => {
     const attachments = gateStorageAttachments();
     const evaluators: NativeCodeRuleEnforcer[] = [];
     const firstClosed = Promise.withResolvers<void>();
+    const firstOpening = Promise.withResolvers<void>();
     const runtime = new RerailRuntime({
       storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
       createAuditor: options => {
@@ -664,6 +666,7 @@ describe("source-scoped steers", () => {
         if (evaluators.length === 0) {
           const close = evaluator.close.bind(evaluator);
           evaluator.close = async (...args) => { await close(...args); firstClosed.resolve(); };
+          heldOpen(evaluator, firstOpening.promise);
         }
         evaluators.push(evaluator);
         return evaluator;
@@ -673,19 +676,18 @@ describe("source-scoped steers", () => {
     const session = { host: "omp" as const, sessionId: "reopened", cwd: root };
     try {
       await runtime.ingest({ kind: "session-start", eventId: "start-1", session });
-      await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(1));
-      // The first evaluator is still held in its storage attach: the session closes and its id starts again.
+      // The first evaluator is still held in its open: the session closes and its id starts again.
       await runtime.closeSession(session.sessionId);
       await runtime.ingest({ kind: "session-start", eventId: "start-2", session });
+      // The second session's evaluator has opened and its repository audit's workspace waits for the gate.
       await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(2));
-      attachments.workspaces[1]!.release();
-      // The second session's evaluator has opened and its repository audit waits for the gate.
-      await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(3));
-      expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([expect.objectContaining({ scope: "repository", status: "running" })]);
       attachments.workspaces[0]!.release();
+      await vi.waitFor(() => expect(audits.list({ sessionId: session.sessionId }).audits)
+        .toEqual([expect.objectContaining({ scope: "repository", status: "running" })]));
+      firstOpening.resolve();
       await firstClosed.promise;
       expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([expect.objectContaining({ scope: "repository", status: "running" })]);
-      attachments.workspaces[2]!.release();
+      attachments.workspaces[1]!.release();
       await vi.waitFor(() => expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([
         expect.objectContaining({ scope: "repository", status: "completed" }),
       ]));
@@ -716,6 +718,7 @@ describe("source-scoped steers", () => {
     const databasePath = join(root, "rerail.sqlite");
     const attachments = gateStorageAttachments();
     const firstClosed = Promise.withResolvers<void>();
+    const firstOpening = Promise.withResolvers<void>();
     let created = 0;
     const runtimeOptions = {
       storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
@@ -724,6 +727,7 @@ describe("source-scoped steers", () => {
         if (created++ === 0) {
           const close = evaluator.close.bind(evaluator);
           evaluator.close = async (...args) => { await close(...args); firstClosed.resolve(); };
+          heldOpen(evaluator, firstOpening.promise);
         }
         return evaluator;
       },
@@ -735,19 +739,18 @@ describe("source-scoped steers", () => {
     const session = { host: "omp" as const, sessionId: "reopened-elsewhere", cwd: root };
     try {
       await first.ingest({ kind: "session-start", eventId: "start-1", session });
-      await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(1));
-      // The first evaluator is still held in its storage attach; its runtime closes the session without waiting for it.
+      // The first evaluator is still held in its open; its runtime closes the session without waiting for it.
       await first.closeSession(session.sessionId);
       await second.ingest({ kind: "session-start", eventId: "start-2", session });
+      // The second runtime's evaluator has opened and its repository audit's workspace waits for the gate.
       await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(2));
-      attachments.workspaces[1]!.release();
-      // The second runtime's evaluator has opened and its repository audit waits for the gate.
-      await vi.waitFor(() => expect(attachments.workspaces).toHaveLength(3));
-      expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([expect.objectContaining({ scope: "repository", status: "running" })]);
       attachments.workspaces[0]!.release();
+      await vi.waitFor(() => expect(audits.list({ sessionId: session.sessionId }).audits)
+        .toEqual([expect.objectContaining({ scope: "repository", status: "running" })]));
+      firstOpening.resolve();
       await firstClosed.promise;
       expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([expect.objectContaining({ scope: "repository", status: "running" })]);
-      attachments.workspaces[2]!.release();
+      attachments.workspaces[1]!.release();
       await vi.waitFor(() => expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([
         expect.objectContaining({ scope: "repository", status: "completed" }),
       ]));
