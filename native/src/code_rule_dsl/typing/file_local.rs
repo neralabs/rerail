@@ -742,11 +742,14 @@ pub struct Programs {
     pub locations: std::collections::BTreeMap<String, Vec<usize>>,
     /// The same-document columns of each file-local or base relation (`split_located`): what a cross-file hop reads.
     pub same_doc: std::collections::BTreeMap<String, Vec<usize>>,
+    /// What the split found, and the parts are made of (`assemble`): the file-local relations, and the relations of
+    /// constants derived in both parts. A prepared program keeps these, not the two parts: each is the program's own
+    /// rules, a part of them, so the parts are made from the program again when it is read.
+    pub file_local: std::collections::BTreeSet<String>,
+    pub constants: std::collections::BTreeSet<String>,
 }
 
 pub fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Programs {
-    use crate::code_rule_dsl::logic::front::Literal;
-    use std::collections::BTreeSet;
     let (mut local, locations, same_doc) = split_located(prog);
     // A program that reads no document (a later phase over an earlier one's exports, `corpus::phases`) has no
     // file-local part: its relations made from those exports alone would be constants, derived again whole in the
@@ -756,6 +759,24 @@ pub fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Programs 
     if no_document {
         local.clear();
     }
+    // A relation of constants is derived in both parts (`constant_relations`), but where no document is read: the
+    // file-local part then has nothing to give them to.
+    let constants = if no_document { Default::default() } else { constant_relations(prog) };
+    assemble(prog, local, constants, locations, same_doc)
+}
+
+/// `prog` split at its file-local relations `local` (`programs`), deriving the relations of `constants` in both parts:
+/// the parts and what passes between them. What is costly to find is the arguments; this only selects (`programs`
+/// finds them, a prepared program keeps them).
+pub fn assemble(
+    prog: &crate::code_rule_dsl::logic::front::Program,
+    local: std::collections::BTreeSet<String>,
+    constants: std::collections::BTreeSet<String>,
+    locations: std::collections::BTreeMap<String, Vec<usize>>,
+    same_doc: std::collections::BTreeMap<String, Vec<usize>>,
+) -> Programs {
+    use crate::code_rule_dsl::logic::front::Literal;
+    use std::collections::BTreeSet;
     let is_local = |rel: &str| local.contains(rel);
     let read = |rules: &mut dyn Iterator<Item = &crate::code_rule_dsl::logic::front::Rule>| -> BTreeSet<String> {
         rules
@@ -792,9 +813,6 @@ pub fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Programs 
         }
     }
     let mut l = prog.clone();
-    // A relation of constants is derived in both parts (`constant_relations`), but where no document is read: the
-    // file-local part then has nothing to give them to.
-    let constants = if no_document { Default::default() } else { constant_relations(prog) };
     l.rules.retain(|r| is_local(&r.head.rel) || constants.contains(r.head.rel.as_str()));
     l.natives.retain(|rel, _| is_local(rel));
     l.lattice.retain(|rel, _| is_local(rel));
@@ -809,7 +827,7 @@ pub fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Programs 
     c.gates.retain(|(rel, _)| !is_local(rel));
     c.outputs.retain(|o| !is_local(o));
     c.inputs = base_read.into_iter().chain(exports.iter().cloned()).collect();
-    Programs { local: l, cross: c, exports, base, locations, same_doc }
+    Programs { local: l, cross: c, exports, base, locations, same_doc, file_local: local, constants }
 }
 
 /// Pushes the file-local part of each cross-file rule into the chunks: the rule's positive reads of base relations

@@ -1037,8 +1037,9 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
 /// Bytes `encode` made, read in place: the facts `decode` reads, their strings borrowed from `bytes`.
 pub fn decode_view(bytes: &[u8]) -> Result<View<'_>, String> {
     let mut at = 0usize;
+    // A corrupt length is refused, not added past the end (`checked_add`).
     let take = |at: &mut usize, n: usize| -> Result<&[u8], String> {
-        let out = bytes.get(*at..*at + n).ok_or_else(|| bad("truncated"))?;
+        let out = bytes.get(*at..at.checked_add(n).ok_or_else(|| bad("truncated"))?).ok_or_else(|| bad("truncated"))?;
         *at += n;
         Ok(out)
     };
@@ -1054,7 +1055,8 @@ pub fn decode_view(bytes: &[u8]) -> Result<View<'_>, String> {
     for _ in 0..u64_at(&mut at)? {
         let name = string(u64_at(&mut at)?)?;
         let rows_n = u64_at(&mut at)? as usize;
-        let mut values = Vec::new();
+        // Each value is at least nine bytes, so a relation's rows hold no more values than its row count leaves room for.
+        let mut values = Vec::with_capacity(rows_n.min((bytes.len() - at) / 9));
         let mut starts = Vec::with_capacity(rows_n.min(1 << 24));
         for _ in 0..rows_n {
             starts.push(u32::try_from(values.len()).map_err(|e| bad(e))?);
