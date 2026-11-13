@@ -837,10 +837,11 @@ async function packageVersion(): Promise<string> {
 }
 
 /**
- * What the process entry point (`src/cli/daemon-entry.ts`) supplies from the layers above the daemon, and why it serves
- * this computer alone when it does (`serveRerailDaemon`).
+ * What `runRerailDaemon` starts the daemon with: what the process entry point (`src/cli/daemon-entry.ts`) supplies from
+ * the layers above the daemon, and why it serves this computer alone, which only `serveRerailDaemon`'s loopback restart
+ * sets.
  */
-export type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "remoteRefused">;
+type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "remoteRefused">;
 
 /**
  * The daemon flags and options (each followed by its value) that make it reachable from other machines: where it binds
@@ -872,8 +873,10 @@ export function loopbackOnlyNotice(reason: string): string {
  * options that reach other machines (`loopbackArguments`): on loopback, over http, as a daemon started with no options
  * is, so hooks keep recording and steering, and the state file, daemon.log, `rerail daemon start` and `rerail status`
  * say why (`loopbackOnlyNotice`). The refusal comes before anything is opened, so the second start begins from nothing.
+ * Its caller supplies only the services of the layers above: why the daemon serves this computer alone is this
+ * function's alone to say, so no caller can record a daemon other machines reach as one they cannot.
  */
-export async function serveRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
+export async function serveRerailDaemon(argv: readonly string[], services: Pick<RerailDaemonOptions, "codingAgents"> = {}): Promise<void> {
   try {
     await runRerailDaemon(argv, services);
   } catch (error) {
@@ -883,7 +886,7 @@ export async function serveRerailDaemon(argv: readonly string[], services: Rerai
   }
 }
 
-export async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
+async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
   const arguments_ = parseDaemonArguments(argv);
   // The launcher starts the daemon in the Rerail home and names the checkout it serves (`launchDaemonProcess`). Git is
   // looked for from that checkout, before anything runs Git, so its PATH entries are skipped as a hook skips them.

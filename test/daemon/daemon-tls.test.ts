@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { PassThrough, Readable } from "node:stream";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it } from "vitest";
 import { runRerailMcpBridge } from "../../src/api/index.js";
 import {
   DAEMON_TRANSPORT_FLAGS,
@@ -15,6 +15,7 @@ import {
   parseArguments,
   parseDaemonTransport,
   RerailDaemon,
+  serveRerailDaemon,
   TlsKeyExposedError,
 } from "../../src/daemon/daemon.js";
 import { DAEMON_STATE_FILE, daemonFetch, probeDaemon, readDaemonState, type DaemonState } from "../../src/runtime/index.js";
@@ -68,6 +69,11 @@ describe("daemon transport arguments", () => {
     // Every transport flag and option the daemon reads, so one added later cannot ride into the loopback restart.
     const transport = [...DAEMON_TRANSPORT_FLAGS, ...DAEMON_TRANSPORT_OPTIONS.flatMap(option => [option, "value"])];
     expect(loopbackArguments(["--dev", ...transport, "--port", "4737"])).toEqual(["--dev", "--port", "4737"]);
+  });
+
+  it("says why it serves this computer alone only from its own loopback restart, never from what a caller passes", () => {
+    // A caller that could set it would record a daemon other machines reach as one they cannot.
+    expectTypeOf<NonNullable<Parameters<typeof serveRerailDaemon>[1]>>().not.toHaveProperty("remoteRefused");
   });
 });
 
