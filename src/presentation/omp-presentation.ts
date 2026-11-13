@@ -25,7 +25,7 @@ export interface OmpPresentation {
    * failing to attach); 0 once it stops. The daemon's health cannot say so: `/healthz` may well answer.
    */
   dropped(count: number): void;
-  /** Whether the daemon is still indexing the repository: code rules check nothing until it is done. */
+  /** Whether the daemon is still opening the repository's code rules: a tool result or turn end waits for them meanwhile. */
   indexing(on: boolean): void;
 }
 

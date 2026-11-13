@@ -75,9 +75,9 @@ describe("Pi native code rule engine", () => {
 
     try {
       await session.bindExtensions({});
-      // The write's own check runs only for a call that finds the evaluator open: one reached while it is still opening
-      // (indexing the repository) goes on without code rules, and only the baseline walk could find the edit, if it
-      // read the file after the write. So the test waits for the evaluator, through calls that edit nothing.
+      // The write's steer rides its own result only once the evaluator is open: a result that finds it still opening
+      // once its wait is over goes on without code rules, and the edit's steer comes at a later step. So the test waits
+      // for the evaluator, through calls and results that edit nothing.
       await awaitCodeRulesOpenThrough(sessionManager.getSessionId(), async probe => {
         const probeCallId = `open-probe:${probe}`;
         const input = { path: "api/route.py" };

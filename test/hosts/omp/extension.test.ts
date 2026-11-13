@@ -1064,7 +1064,7 @@ describe("OMP conversation-rules extension", () => {
   });
 
   describe("while the daemon indexes the repository", () => {
-    it("says so in the footer until it is done, while a prompt and its tool call go on at once, without code rules", async () => {
+    it("says so in the footer until it is done, while a prompt and its tool call go on at once", async () => {
       const opening = Promise.withResolvers<void>();
       const open = CodeRuleBridge.prototype.openWorkspace;
       const spy = vi.spyOn(CodeRuleBridge.prototype, "openWorkspace").mockImplementationOnce(async function (this: CodeRuleBridge, sessionId: string) {
@@ -1084,7 +1084,8 @@ describe("OMP conversation-rules extension", () => {
         await harness.handlers.get("session_start")!({ type: "session_start" }, harness.context);
         await vi.waitFor(() => expect(indexingShown()).toBe(true));
 
-        // Neither waits for indexing: both answer while the evaluator is still held in its open.
+        // Neither waits for the open: both answer while the evaluator is still held in it, and the call is begun once it
+        // has opened.
         await harness.handlers.get("before_agent_start")!({ type: "before_agent_start", prompt: "hello" }, harness.context);
         await harness.handlers.get("tool_call")!({ type: "tool_call", toolCallId: "write-1", toolName: "write", input: { path: "a.ts", content: "x" } }, harness.context);
         expect(indexingShown()).toBe(true);

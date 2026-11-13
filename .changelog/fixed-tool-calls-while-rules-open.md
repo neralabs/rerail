@@ -1,0 +1,1 @@
+A tool call made while a session's code rules open, when the session starts or in OMP and Pi when it reopens, is now checked: its edit at its own result when the rules open within the time the result already waits for a check, else at the next step. The call itself does not wait.

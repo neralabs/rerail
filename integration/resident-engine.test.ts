@@ -244,7 +244,7 @@ describe("engine service", () => {
       await writeFile(join(root, "api/route.py"), "def route(cursor):\n    cursor.execute('SELECT 1')\n");
       service = await startEngineService(options);
       // The restarted runtime takes the session back at its next event and reopens its evaluator; a result that
-      // arrived during that open would go on without code rules. The wait probes with a read, not a turn end: Codex
+      // arrived during an open longer than its wait would go on without code rules. The wait probes with a read, not a turn end: Codex
       // sends no Stop between a call and its result, and a Stop finishes the calls still waiting for theirs.
       await ingestEngineEvent(engine, { kind: "user-prompt", eventId: "reattach", sessionId: session.sessionId, session, text: "go on" });
       await awaitCodeRulesOpenThrough(session.sessionId, async probe => {

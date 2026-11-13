@@ -949,7 +949,7 @@ describe("source-scoped steers", () => {
         attachments.restore();
         await test.close();
       }
-    });
+    }, 30_000);
 
     it("ends a result's wait for the evaluator at its cap of wall time, however often other work holds the loop", async () => {
       const test = await openingFixture();

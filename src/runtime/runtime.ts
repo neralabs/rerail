@@ -127,6 +127,11 @@ const HOOK_EDIT_CHECK_MS = 1_000;
  * for the source walk (`BOUNDARY_DISCOVERY_WAIT_MS`) that precedes it.
  */
 const NATIVE_EDIT_CHECK_MS = 10_000;
+
+/** How long a tool result of `host` waits for its edit's check, and for the session's evaluator to open with it. */
+function editCheckCapMs(host: RerailHost): number {
+  return ADAPTER_CAPABILITIES[host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS;
+}
 /**
  * How long a code-rule boundary of a reopened session waits for its rules to open. A session opens again on its next
  * event after an idle close (`IDLE_SESSION_MS`), a daemon restart or a resume, and its rules may compile again (about 12 s
@@ -580,6 +585,13 @@ interface RuntimeSessionState {
    * boundaries wait for its rules to open, within `REOPENED_RULES_WAIT_MS`.
    */
   waitsForRules: boolean;
+  /** A boundary's wait for the evaluator to open ran out: later boundaries answer without waiting until it has. */
+  codeRuleOpenWaitedOut: boolean;
+  /**
+   * How long the code-rule boundary in progress waited for the evaluator to open (`#awaitCodeRuleOpen`): its wait for
+   * its edit checks spends only what is left of the same cap (`#awaitEditChecks`).
+   */
+  codeRuleOpenWaitMs: number;
   ownerClaim: PolicyOwnerClaim | undefined;
   /** The database's `data_version` this session's settings and audit queue were last read at; undefined to read on the next tick. */
   controlsVersion: number | undefined;
@@ -976,8 +988,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * The session's code-rule bridge for an event, its rules refreshed. A code-rule boundary reached while the session's
-   * evaluator is still opening (indexing) goes on without code rules.
+   * The session's code-rule bridge for an event, its rules refreshed. While the session's evaluator is still opening, a
+   * tool call goes on and is begun once it opens; a tool result or turn end waits for it, within a bound
+   * (`#codeRuleWorkspaceNow`).
    */
   async #eventBridge(state: RuntimeSessionState, event: AdapterEvent): Promise<CodeRuleBridge | undefined> {
     const bridge = CODE_RULE_BOUNDARIES[event.kind] === true ? await this.#codeRuleWorkspaceNow(state, event) : state.codeRuleBridge;
@@ -1004,7 +1017,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       await this.#waitingForEditChecks(state, false, async () => {
         await this.#finishCall(state, bridge, call!.id, event.failed === true);
         await this.#append(state, { type: "policy-result", toolCallId: call!.id });
-        await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS);
+        await this.#awaitEditChecks(state, bridge, editCheckCapMs(host));
       });
     } finally {
       if (window !== undefined) {
@@ -1089,11 +1102,21 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * A boundary's wait for the session's edit checks, capped at `capMs`. Checks run in order, so while a backlog an
-   * earlier boundary stopped waiting for is still draining, a later edit's check is behind it too: the boundary answers
-   * at once rather than spend the cap again, and those steers wait for the yield digest.
+   * A code-rule boundary's wait for the session's edit checks, within what its wait for the evaluator to open left of
+   * `capMs`: one cap for both, so a boundary that found the evaluator opening waits no longer than any other of its kind.
    */
   async #awaitEditChecks(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, capMs: number): Promise<void> {
+    const leftMs = Math.max(0, capMs - state.codeRuleOpenWaitMs);
+    state.codeRuleOpenWaitMs = 0;
+    await this.#awaitEditChecksWithin(state, bridge, leftMs);
+  }
+
+  /**
+   * A wait for the session's edit checks, capped at `capMs`. Checks run in order, so while a backlog an earlier boundary
+   * stopped waiting for is still draining, a later edit's check is behind it too: the boundary answers at once rather
+   * than spend the cap again, and those steers wait for the yield digest.
+   */
+  async #awaitEditChecksWithin(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, capMs: number): Promise<void> {
     if (bridge === undefined || state.overdueEditChecks !== undefined) return;
     const settled = bridge.settleGeneratedEdits();
     if (await settledWithin(settled, capMs)) return;
@@ -1111,8 +1134,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * Begins a tool call on the open evaluator. One answered while the evaluator opens is never begun, but what it writes
-   * is the session's own, so it opens only its window (`CodeRuleBridge.unwatchedCall`).
+   * Begins a tool call on the open evaluator. One that comes while the evaluator opens does not wait for it: the bridge
+   * reads what the call's files hold before the tool runs and begins the call once the evaluator has opened, so its edit
+   * is still checked (`CodeRuleBridge.deferCall`). Its preimages stay out of the ledger (undefined here).
    */
   async #beginCall(
     state: RuntimeSessionState,
@@ -1120,7 +1144,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     event: Extract<AdapterEvent, { kind: "call" }>,
   ): Promise<Readonly<Record<string, Preimage>> | undefined> {
     if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input);
-    await state.codeRuleBridge?.unwatchedCall(event.toolCallId);
+    await state.codeRuleBridge?.deferCall(event.toolCallId, event.toolName, event.input);
     return undefined;
   }
 
@@ -1152,28 +1176,68 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     else if (event.kind === "turn-end") await state.codeRuleBridge?.unwatchedResult(TURN_WINDOW_ID);
   }
 
-  /** Finishes a tool call on the open evaluator; one answered while it opened only ends its window (`unwatchedResult`). */
+  /**
+   * Finishes a tool call on the open evaluator. A result answered without it, while it still opens, ends the call's
+   * window, and the call's edit is checked once the evaluator has opened, its steer riding a later boundary
+   * (`CodeRuleBridge.finishDeferred`).
+   */
   async #finishCall(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, toolCallId: string, failed: boolean): Promise<void> {
     if (bridge !== undefined) await bridge.finish(toolCallId, failed, { rewindable: true });
-    else await state.codeRuleBridge?.unwatchedResult(toolCallId);
+    else await state.codeRuleBridge?.finishDeferred(toolCallId, failed);
   }
 
   /**
-   * The session's evaluator for a code-rule boundary. One still opening (indexing the repository, compiling its rules)
-   * is not waited for at a session's first start, so the agent is never held up by a first index: such a boundary is
-   * answered without code rules and recorded in the session's history. The boundary's own check is skipped, but the file
-   * stays checked: the first pass once the evaluator is open finds the edit and checks it, so its steer can arrive a
-   * turn later. A reopened session (`waitsForRules`) waits for its rules instead, within `REOPENED_RULES_WAIT_MS`, so
-   * its first edit is checked at its own result as every later one is.
+   * The session's evaluator for a code-rule boundary. A reopened session (`waitsForRules`) waits for one still opening
+   * (registering its rules; its content store attaches behind it), within `REOPENED_RULES_WAIT_MS`, so its first edit is
+   * checked at its own result as every later one is. Otherwise, and past that wait, a tool call never waits for it: the
+   * bridge reads its files before the tool runs and begins it once the evaluator opens (`#beginCall`), and it is recorded
+   * as answered without code rules only should the evaluator not open. A tool result or turn end waits within the cap
+   * its host already gives the boundary's edit checks (`#awaitCodeRuleOpen`); one the evaluator did not open for is
+   * answered without code rules and recorded in the session's history. A session's first start never waits longer than
+   * that cap for a first index.
    */
   async #codeRuleWorkspaceNow(state: RuntimeSessionState, event: AdapterEvent): Promise<CodeRuleBridge | undefined> {
+    state.codeRuleOpenWaitMs = 0;
     if (!state.codeRuleOpening) return await state.codeRuleWorkspace;
     if (state.waitsForRules) {
       const opened = await openedWithin(state.codeRuleWorkspace, REOPENED_RULES_WAIT_MS);
       if (opened.settled) return opened.bridge;
     }
-    this.#recordRulesPending(state, event);
+    if (event.kind === "call") {
+      this.#recordUnlessOpened(state, event);
+      return undefined;
+    }
+    const bridge = await this.#awaitCodeRuleOpen(state);
+    if (bridge === undefined) this.#recordRulesPending(state, event);
+    return bridge;
+  }
+
+  /**
+   * A tool result's or turn end's wait for the session's evaluator to open, in the cap its host's tool result waits for
+   * an edit's check (`editCheckCapMs`), on the wall clock as that wait is; what it spends is not spent again on the
+   * boundary's edit checks. A reopened session's boundary has already waited its own longer bound. Once a boundary has
+   * waited the whole cap, the later ones answer at once until the evaluator opens: a slow open holds one boundary, not
+   * each in turn.
+   */
+  async #awaitCodeRuleOpen(state: RuntimeSessionState): Promise<CodeRuleBridge | undefined> {
+    if (state.waitsForRules || state.codeRuleOpenWaitedOut) return undefined;
+    const startedAt = performance.now();
+    const opened = await openedWithin(state.codeRuleWorkspace, editCheckCapMs(state.descriptor.host));
+    state.codeRuleOpenWaitMs = performance.now() - startedAt;
+    if (opened.settled) return opened.bridge;
+    state.codeRuleOpenWaitedOut = true;
     return undefined;
+  }
+
+  /**
+   * Records a tool call that came while the evaluator opened once the open ends without it (failed, or the session
+   * closed first): that call went on without code rules. Arranged as the call comes, since the bridge that would begin
+   * it may already be gone.
+   */
+  #recordUnlessOpened(state: RuntimeSessionState, event: AdapterEvent): void {
+    void state.codeRuleWorkspace.then(open => {
+      if (open === undefined) this.#recordRulesPending(state, event);
+    });
   }
 
   /** Records in the session's history that a code-rule boundary was answered without code rules; best-effort. */
@@ -1215,7 +1279,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       const bridge = state.codeRuleReady ? state.codeRuleBridge : undefined;
       await this.#waitingForEditChecks(state, true, async () => {
         await this.#settleUnresolvedCalls(state);
-        await this.#awaitEditChecks(state, bridge, NATIVE_EDIT_CHECK_MS);
+        await this.#awaitEditChecksWithin(state, bridge, NATIVE_EDIT_CHECK_MS);
       });
       const deliveries = await this.#collectPendingSteers(state);
       const digest = await this.#takeMissedDigest(state);
@@ -1667,6 +1731,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       codeRuleReady: false,
       codeRuleOpening: false,
       waitsForRules: false,
+      codeRuleOpenWaitedOut: false,
+      codeRuleOpenWaitMs: 0,
       auditRequestWork: undefined,
       repositoryAudit: undefined,
       // Restored whether or not the evaluator opens, so their results still close them in the ledger.
@@ -1685,10 +1751,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * Opens a published session's evaluator behind its attach: Git discovery and the content-store snapshot of a large
-   * checkout take longer than a host waits for a session to start. The calls a previous runtime left unresolved are
-   * begun again before any new boundary sees the bridge, and the repository audit starts once it is open. An
-   * evaluator that cannot open is recorded as a failed audit; the session goes on without code rules.
+   * Opens a published session's evaluator behind the event that opened the session, so the host's session start never
+   * waits for it; a code-rule boundary that comes meanwhile waits for it within a bound (`#codeRuleWorkspaceNow`), and
+   * the content store attaches behind the open evaluator (`NativeCodeRuleEnforcer.openWorkspace`). The calls a previous
+   * runtime left unresolved are begun again before any new boundary sees the bridge, and the repository audit starts
+   * once it is open. An evaluator that cannot open is recorded as a failed audit; the session goes on without code rules.
    */
   async #openCodeRuleWorkspace(
     state: RuntimeSessionState,

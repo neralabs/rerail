@@ -128,6 +128,14 @@ interface PendingEdit {
   readonly paths: readonly string[];
   readonly preimages: ReadonlyMap<string, Preimage>;
 }
+/**
+ * A tool call made while the evaluator opened (`deferCall`): what the files it names held before the tool ran, and,
+ * once its result came, whether the tool failed.
+ */
+interface DeferredCall extends PendingEdit {
+  readonly toolName: string;
+  result: { readonly failed: boolean } | undefined;
+}
 /** A finished edit `rewind` may still roll back: the revision its finish audited, and each path's digest after it (none when absent). */
 interface RewindableEdit {
   readonly revision: number;
@@ -797,6 +805,8 @@ export class CodeRuleBridge {
   #textBytes = 0;
   /** The calls the runtime answered while the evaluator opened (`unwatchedCall`), until the workspace opens and takes them. */
   #unwatched = new ToolCallWindows();
+  /** The calls `deferCall` took while the evaluator opened, until the workspace opens and begins them (`#beginDeferred`). */
+  readonly #deferred = new Map<string, DeferredCall>();
   #lastResponse = emptyResponse(0);
   #sessionId: string | undefined;
   #revision = 0;
@@ -884,6 +894,8 @@ export class CodeRuleBridge {
       };
       this.#unwatched = new ToolCallWindows();
       this.#discovery = discovery;
+      // Before the baseline walk starts, so it skips their paths as it skips any begun call's.
+      this.#beginDeferred(discovery);
       // The lowest priority: whichever boundary first waits on the baseline labels what it finds.
       void this.#requestDiscovery(discovery, "edit");
     });
@@ -917,10 +929,10 @@ export class CodeRuleBridge {
   }
 
   /**
-   * A call the runtime answered without code rules while the evaluator was still opening: never begun, so nothing of it
-   * is captured, but what it writes is the session's own. Its window is taken by the workspace as it opens, so the walk
-   * credits what was stamped while it ran; its result reconciles nothing, and what it wrote is the next walk's. A host
-   * whose edit tool no hook shows opens one for each turn the same way, as its writes are seen by no call.
+   * A window for a call no `begin` captures: what is stamped while it runs is the session's own. One opened while the
+   * evaluator opens (`deferCall` opens one) is taken by the workspace as it opens, so the walk credits what was stamped
+   * while it ran. A host whose edit tool no hook shows opens one for each turn the same way, as its writes are seen by no
+   * call; its end reconciles nothing, and what was written is the next walk's.
    */
   async unwatchedCall(toolCallId: string): Promise<void> {
     (this.#discovery?.toolCalls ?? this.#unwatched).begin(toolCallId, await filesystemClock());
@@ -929,6 +941,91 @@ export class CodeRuleBridge {
   /** Ends the window `unwatchedCall` opened for the call, at its result. */
   async unwatchedResult(toolCallId: string): Promise<void> {
     (this.#discovery?.toolCalls ?? this.#unwatched).finish(toolCallId, await filesystemClock());
+  }
+
+  /**
+   * A tool call the runtime answers while the evaluator is still opening, so the agent never waits for the open. Its
+   * window opens as `unwatchedCall`'s does, and what the files it names hold is read now, before the tool runs: once the
+   * workspace opens the call is begun with those preimages, so its edit is checked as if it had been begun at once. A
+   * workspace that opened meanwhile begins it now. Kept in memory only, never in the ledger: before the evaluator opens
+   * nothing says which of the files its rules read, and the ledger keeps only the preimages of those.
+   */
+  async deferCall(toolCallId: string, toolName: string, input: unknown): Promise<void> {
+    await this.unwatchedCall(toolCallId);
+    const paths = generatedEditPaths(toolName, input);
+    const preimages = await this.#readBeforeOpen(paths);
+    // No await from this check to the call's place in `#deferred`: the open begins all of them in one step.
+    if (this.#discovery === undefined || this.#discovery.cancelled) this.#deferred.set(toolCallId, { toolName, paths, preimages, result: undefined });
+    else await this.begin(toolCallId, toolName, input, Object.fromEntries(this.#acceptedPreimages(preimages)));
+  }
+
+  /**
+   * The result of a call answered while the evaluator opened. Its window ends here. A call `deferCall` took is checked
+   * once the workspace opens, or now if it opened meanwhile, and its steer reaches a later boundary.
+   */
+  async finishDeferred(toolCallId: string, failed: boolean): Promise<void> {
+    const deferred = this.#deferred.get(toolCallId);
+    if (deferred !== undefined) deferred.result = { failed };
+    await this.unwatchedResult(toolCallId);
+    if (deferred === undefined) this.#finishLate(toolCallId, failed);
+  }
+
+  /**
+   * Begins the calls `deferCall` took while the workspace opened, with what their files held before they ran, and
+   * checks at once those whose result came meanwhile. In the step that publishes the workspace, so no call is missed.
+   */
+  #beginDeferred(discovery: SourceDiscovery): void {
+    for (const [toolCallId, call] of this.#deferred) {
+      const preimages = this.#acceptedPreimages(call.preimages);
+      for (const path of preimages.keys()) this.#touchSource(discovery, path);
+      if (call.paths.length > 0) this.#pending.set(toolCallId, { paths: call.paths, preimages });
+      else if (isCommandTool(call.toolName)) this.#commands.add(toolCallId);
+      if (call.result !== undefined) this.#finishLate(toolCallId, call.result.failed);
+    }
+    this.#deferred.clear();
+  }
+
+  /**
+   * Checks the edit of a begun call whose result has already been answered; what it finds steers at a later boundary.
+   * A command's shell writes are left to the next walk, as they would be had the call never been begun: no boundary
+   * waits for this one's.
+   */
+  #finishLate(toolCallId: string, failed: boolean): void {
+    if (this.#commands.delete(toolCallId) || !this.#pending.has(toolCallId)) return;
+    // A workspace closed meanwhile has nothing left to check the edit with.
+    void this.finish(toolCallId, failed).catch(() => undefined);
+  }
+
+  /** The preimages of the files the auditor reads, as `begin` captures them. */
+  #acceptedPreimages(preimages: ReadonlyMap<string, Preimage>): Map<string, Preimage> {
+    return new Map([...preimages].filter(([path]) => this.#auditor.acceptsPath(path)));
+  }
+
+  /**
+   * What the files at `paths` hold, read as `begin` reads them (one descriptor that does not follow a final symlink,
+   * inside the checkout that owns the file), but before the auditor can say which of them its rules read; a file named
+   * like one holding secrets keeps only its digest and size, as in `begin`.
+   */
+  async #readBeforeOpen(paths: readonly string[]): Promise<ReadonlyMap<string, Preimage>> {
+    const preimages = new Map<string, Preimage>();
+    // A session folder gone since the session opened has nothing to read; the call goes on as any other would.
+    const root = await realpath(this.#cwd).catch(() => undefined);
+    if (root === undefined) return preimages;
+    for (const configuredPath of paths) {
+      const read = await this.#preimageBeforeOpen(root, configuredPath);
+      if (read !== undefined) preimages.set(read.path, read.preimage);
+    }
+    return preimages;
+  }
+
+  /** The preimage of the file a tool names as `configuredPath`, keyed as `begin` keys it; undefined when it has none. */
+  async #preimageBeforeOpen(root: string, configuredPath: string): Promise<{ path: string; preimage: Preimage } | undefined> {
+    const path = sessionRelativePath(root, configuredPath);
+    if (path === undefined) return undefined;
+    const source = await this.#readLocation(root, sourceLocation(resolve(root, configuredPath), path));
+    if (source === undefined) return undefined;
+    const preimage = preimageOf(source);
+    return preimage === undefined ? undefined : { path: source.path, preimage };
   }
 
   /**
@@ -1240,6 +1337,7 @@ export class CodeRuleBridge {
     await this.#enqueue(async () => {
       if (this.#discovery !== discovery) return;
       this.#sessionId = undefined;
+      this.#deferred.clear();
       this.#pending.clear();
       this.#rewindable.clear();
       this.#commands.clear();
@@ -2046,7 +2144,11 @@ export class CodeRuleBridge {
 
   async #readSource(root: string, configuredPath: string): Promise<Source | undefined> {
     const location = this.#sourceLocation(root, configuredPath);
-    if (location === undefined) return undefined;
+    return location === undefined ? undefined : await this.#readLocation(root, location);
+  }
+
+  /** The source at `location`, or why it could not be read. */
+  async #readLocation(root: string, location: SourceLocation): Promise<Source | undefined> {
     try {
       return await this.#readLocatedSource(root, location);
     } catch (error) {

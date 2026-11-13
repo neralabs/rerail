@@ -1974,6 +1974,55 @@ describe("CodeRuleBridge and another session's writes", () => {
       [{ path: "src/a.py", language: "python", previousReadError: "Source changed during initial discovery without a captured preimage", generatedText: "old\nmine\n" }],
     ]);
   });
+
+  /** A bridge on `root` whose open is held until `release`, and its auditor's calls. */
+  async function heldOpenBridge(root: string) {
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const indexing = Promise.withResolvers<void>();
+    const entered = Promise.withResolvers<void>();
+    let opened = false;
+    const bridge = createBridge(root, {
+      ...auditor(auditGeneratedEdits),
+      // As a router before its open: it reads nothing until its lanes exist.
+      acceptsPath: () => opened,
+      openWorkspace: async () => {
+        entered.resolve();
+        await indexing.promise;
+        opened = true;
+      },
+    });
+    const open = bridge.openWorkspace("session-1");
+    passes.push(open);
+    await entered.promise;
+    return { bridge, auditGeneratedEdits, open: async () => { indexing.resolve(); await open; } };
+  }
+
+  it("checks the edit of a call made while the evaluator opened against what its file held before it ran", async () => {
+    const root = await twoBranches();
+    const held = await heldOpenBridge(root);
+    await held.bridge.deferCall("write-1", "write", { path: "src/a.py" });
+    await appendFile(join(root, "src", "a.py"), "mine\n");
+    await held.bridge.finishDeferred("write-1", false);
+    await held.open();
+    await held.bridge.settleGeneratedEdits();
+    await held.bridge.checkpoint("turn");
+    // Checked once, from its own preimage, as a call begun at once is; the walk leaves it to the call.
+    expect(held.auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\n" }],
+    ]);
+  });
+
+  it("checks at its result, once the evaluator has opened, the edit of a call made while it opened", async () => {
+    const root = await twoBranches();
+    const held = await heldOpenBridge(root);
+    await held.bridge.deferCall("write-1", "write", { path: "src/new.py" });
+    await held.open();
+    await writeFile(join(root, "src", "new.py"), "mine\n");
+    await held.bridge.finish("write-1");
+    expect(held.auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/new.py", language: "python", generatedText: "mine\n" }],
+    ]);
+  });
 });
 
 describe("ToolCallWindows", () => {
