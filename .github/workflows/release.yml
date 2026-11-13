@@ -114,6 +114,10 @@ jobs:
     name: Package
     needs: metadata
     uses: ./.github/workflows/package.yml
+    # package.yml's sign-windows job signs in to Azure with an OIDC token to sign the Windows engines.
+    permissions:
+      contents: read
+      id-token: write
 
   # The tarball must ship the npm-shrinkwrap.json the tag's package-lock.json gives (docs/release.md, "Shrinkwrap"):
   # npm installs core's dependencies from it. A missing or stale one fails the release before anything is published.
