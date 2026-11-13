@@ -6454,13 +6454,17 @@
   ],
   "engineSource": {
     "checkout": ".",
-    "upstreamCommit": "dacb041448545b4723e54cf877a9443f70daa559",
+    "upstreamCommit": "e3776af9c270a2ab8ba273f512512b95d204517f",
     "upstreamBranch": "refs/heads/jeremybarnes/final-shape-serverplan-quality",
     "status": "Integration hub with generic filesystem metadata, typed read errors, stated requests and load aliases",
     "nativeExtensions": [
       {
         "path": "native/src/code_rule_dsl/logic/answers.rs",
         "sha256": "006dc54fec21bfda3732e0309d56fe178f996f3c5567cfe0b360bdd9d64a46ed"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/plan.rs",
+        "sha256": "c991dabeacebc725c4a33f8409bc976ac031a35111e4ccba9bb7b6e666ae0a4b"
       },
       {
         "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
@@ -6489,6 +6493,10 @@
       {
         "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
         "sha256": "0b4a95748eff7183ed9a48cfd63832564c89fef049c9d5fd91926a8848d98b07"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/simplify.rs",
+        "sha256": "9226a6b238517064e5b9905e6ef95dd8aebc711ea244a9bba2aa4b32537c1cf6"
       },
       {
         "path": "native/src/content_store/observe.rs",
@@ -6678,53 +6686,114 @@
         "wallSeconds": 134.69,
         "userCpuSeconds": 1065.92,
         "systemCpuSeconds": 29.42
+      },
+      {
+        "format": "rerail.root-engine-build/v1",
+        "engineCommit": "f2cc53964c7c1f061a66457ec0e551658f367892",
+        "upstreamCommit": "dacb041448545b4723e54cf877a9443f70daa559",
+        "sourceTrees": {
+          "native": "e688042848677bac75ed15df1a290ac8668a3692",
+          "accel": "833b03c7dec900dc6ff61f3b5889aa52e781c066",
+          "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
+          "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
+          "Cargo.toml": "647aa5ad82ba0964b3f33811ed6b86c0cfb5dde0",
+          "Cargo.lock": "fafa0a3fcc672093bfc2348b7a3ae41b56027b31"
+        },
+        "path": ".rerail/modern-engine-alignment/cli-f8361430776ea8bc",
+        "sha256": "f8361430776ea8bce931d7f2c8eb3866f1983fc8d4f084f51364183c94dc1cf2",
+        "command": "RUSTUP_TOOLCHAIN=1.97.1 timeout 110 nice -n 19 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling --locked",
+        "buildAttempts": [
+          {
+            "wallSeconds": 110.01,
+            "userCpuSeconds": 628.13,
+            "systemCpuSeconds": 40.24,
+            "status": "deadline"
+          },
+          {
+            "wallSeconds": 36.82,
+            "userCpuSeconds": 114.65,
+            "systemCpuSeconds": 8.4,
+            "status": "passed"
+          }
+        ],
+        "wallSeconds": 146.83,
+        "userCpuSeconds": 742.78,
+        "systemCpuSeconds": 48.64
+      },
+      {
+        "format": "rerail.root-engine-build/v1",
+        "engineCommit": "033549696d118ec44525a8d932ab9f77cfd78987",
+        "upstreamCommit": "e3776af9c270a2ab8ba273f512512b95d204517f",
+        "sourceTrees": {
+          "native": "07a1560ac05d5398bfd6a6e54ed1244dc72194a1",
+          "accel": "833b03c7dec900dc6ff61f3b5889aa52e781c066",
+          "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
+          "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
+          "Cargo.toml": "647aa5ad82ba0964b3f33811ed6b86c0cfb5dde0",
+          "Cargo.lock": "71551eb3d2aa8c858b484faa9ab0677cc12ae79d"
+        },
+        "path": ".rerail/modern-engine-alignment/cli-33a7d438ee5db148",
+        "sha256": "33a7d438ee5db14867d09ff2d2da68e76037064e819f32c502af521ee180e6e9",
+        "command": "RUSTUP_TOOLCHAIN=1.97.1 timeout 110 nice -n 19 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling --locked",
+        "buildAttempts": [
+          {
+            "log": "build-identity.log",
+            "status": "deadline",
+            "wallSeconds": 110.01,
+            "userCpuSeconds": 623.94,
+            "systemCpuSeconds": 38.49
+          },
+          {
+            "log": "build-identity-2.log",
+            "status": "deadline",
+            "wallSeconds": 110.02,
+            "userCpuSeconds": 471.08,
+            "systemCpuSeconds": 14.29
+          },
+          {
+            "log": "build-identity-3.log",
+            "status": "passed",
+            "wallSeconds": 24.53,
+            "userCpuSeconds": 123.62,
+            "systemCpuSeconds": 5.69
+          }
+        ],
+        "wallSeconds": 244.56,
+        "userCpuSeconds": 1218.64,
+        "systemCpuSeconds": 58.47
       }
     ],
     "adoptionAudit": {
       "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "dacb041448545b4723e54cf877a9443f70daa559",
-      "engineCommit": "f2cc53964c7c1f061a66457ec0e551658f367892",
+      "upstreamCommit": "e3776af9c270a2ab8ba273f512512b95d204517f",
+      "engineCommit": "075cc2233a4fe35b20152127720ef025b90ae6d8",
       "sourceTrees": {
-        "native": "e688042848677bac75ed15df1a290ac8668a3692",
+        "native": "a031eb878080ed79b6396aa609c3f8155539dbd8",
         "accel": "833b03c7dec900dc6ff61f3b5889aa52e781c066",
         "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
         "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
         "Cargo.toml": "647aa5ad82ba0964b3f33811ed6b86c0cfb5dde0",
-        "Cargo.lock": "fafa0a3fcc672093bfc2348b7a3ae41b56027b31"
+        "Cargo.lock": "71551eb3d2aa8c858b484faa9ab0677cc12ae79d"
       }
     },
     "cliArtifact": {
       "format": "rerail.root-engine-build/v1",
-      "engineCommit": "f2cc53964c7c1f061a66457ec0e551658f367892",
-      "upstreamCommit": "dacb041448545b4723e54cf877a9443f70daa559",
+      "engineCommit": "075cc2233a4fe35b20152127720ef025b90ae6d8",
+      "upstreamCommit": "e3776af9c270a2ab8ba273f512512b95d204517f",
       "sourceTrees": {
-        "native": "e688042848677bac75ed15df1a290ac8668a3692",
+        "native": "a031eb878080ed79b6396aa609c3f8155539dbd8",
         "accel": "833b03c7dec900dc6ff61f3b5889aa52e781c066",
         "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
         "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
         "Cargo.toml": "647aa5ad82ba0964b3f33811ed6b86c0cfb5dde0",
-        "Cargo.lock": "fafa0a3fcc672093bfc2348b7a3ae41b56027b31"
+        "Cargo.lock": "71551eb3d2aa8c858b484faa9ab0677cc12ae79d"
       },
-      "path": ".rerail/modern-engine-alignment/cli-f8361430776ea8bc",
-      "sha256": "f8361430776ea8bce931d7f2c8eb3866f1983fc8d4f084f51364183c94dc1cf2",
+      "path": ".rerail/modern-engine-alignment/cli-23deba96245df660",
+      "sha256": "23deba96245df660537d20d6c257e60de5075fd589c9fc08f3275532185b8ac6",
       "command": "RUSTUP_TOOLCHAIN=1.97.1 timeout 110 nice -n 19 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling --locked",
-      "buildAttempts": [
-        {
-          "wallSeconds": 110.01,
-          "userCpuSeconds": 628.13,
-          "systemCpuSeconds": 40.24,
-          "status": "deadline"
-        },
-        {
-          "wallSeconds": 36.82,
-          "userCpuSeconds": 114.65,
-          "systemCpuSeconds": 8.4,
-          "status": "passed"
-        }
-      ],
-      "wallSeconds": 146.83,
-      "userCpuSeconds": 742.78,
-      "systemCpuSeconds": 48.64
+      "wallSeconds": 58.78,
+      "userCpuSeconds": 312.82,
+      "systemCpuSeconds": 10.5
     }
   },
   "engineSourceSnapshots": [

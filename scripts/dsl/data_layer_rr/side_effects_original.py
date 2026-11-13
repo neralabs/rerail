@@ -4,6 +4,8 @@ import gzip
 import importlib
 import inspect
 import json
+import os
+import tempfile
 from pathlib import Path
 import select
 import subprocess
@@ -22,11 +24,12 @@ def main():
     for name in names:compare((source/name).read_bytes(),subprocess.check_output(['git','-C',str(source),'show',PIN+':'+name]))
     sys.path[:0]=[str(source),str(source/'scripts')];module=importlib.import_module('scripts.lint_plan_scope_side_effects')
     from data_layer_audit.native_guard import codes
-    originals=codes({'plan_scope_side_effects':module});native=[];fallbacks=[];worker=None
+    originals=codes({'plan_scope_side_effects':module});native=[];fallbacks=[];worker=None;cache=None
     if a.command=='native':
+        cache=tempfile.TemporaryDirectory(prefix='rerail-side-effects-original-cache-')
         worker=subprocess.Popen([sys.executable,str(Path(__file__).with_name('replay.py')),
             '--workspace-worker'if a.mode=='workspace'else '--worker',str(a.engine.absolute())],cwd=ROOT,
-            text=True,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+            text=True,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=dict(os.environ,RERAIL_TAPE_CACHE=str(Path(cache.name)/'store.sqlite')))
         class Backend:
             def replace(self,owner,name,value):setattr(owner,name,value)
             def native(self,check,entry,files,options=None,*,root=None):
@@ -76,6 +79,7 @@ def main():
     try:code=int(pytest.main(['--rootdir',str(source),'-c',str(source/'pyproject.toml'),'-q',str(source/names[1])],plugins=[plugin]))
     finally:
         if worker:worker.stdin.close();worker.wait(timeout=10)
+        if cache:cache.cleanup()
     report=dict(format='rerail.side-effects-original/v1',sourcePin=PIN,fullMigrationAcceptance=False,mode=a.command,executionMode=a.mode,
         exitCode=code,collected=plugin.collected,cases=plugin.cases,observations=plugin.observations,
         sourceFiles={name:sha((source/name).read_bytes())for name in names},harnessFiles=hashes,semanticFallbacks=fallbacks,native=native)

@@ -10,6 +10,57 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 The current inventory has twenty-two admitted rules, seventy-seven drafts, and one absent translation.
 Draft policies do not count as completed migrations.
 
+## 2026-11-13 — Side-effects scanners pass after shared request repairs
+
+All seven unchanged side-effects assertions pass through both native APIs on CLI `23deba96245df660…`.
+The independent original inventory identifies exactly seven owned cases in `test_lint_plan_scope_side_effects.py`.
+The new runner also compares every complete scanner and severity-selection observation with its pinned Python recording.
+No original linter callback executes. Both API runs use their own temporary native cache.
+
+All thirty-five supplemental scanner cases pass through both APIs on that same binary.
+They cover positive findings, audits, duplicates, source triggers, tests, excluded directories, aliases, cycles, filenames, and severity selection.
+Eight cases compare complete `UnicodeDecodeError` arguments: encoding, raw bytes, start, end, and reason.
+The symlink fixture retains both logical-file findings while native loading parses their shared physical document once.
+The existing directory contract also passes both APIs: fourteen static fixtures and fifteen update stages, or 58 discovery observations.
+
+The [public progress receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-side-effects-public-current.json.gz) retains those results and their consumed programs.
+It also retains source and harness revisions, the original red runs, the hub regression, and five unresolved collector cases.
+This receipt does not claim full rule admission. All **759 Python tooling tests pass in 51.956 seconds**.
+
+Actual porting exposes four request-path defects, each repaired on the integrated engine:
+
+- Grounded requests lower as facts. Handler discovery now recognizes facts and rule heads.
+- Stated keys now enter the executable cone through one producer per request family.
+  A 1,000-key unit case verifies the complete batch and repeated preparation.
+- Equal key sets do not identify equal external handlers. Simplification now preserves their names and implicit consumers.
+  Two failing unit cases prove the previous merging and pruning defects.
+- An empty answer is a complete typed relation. Later negated readers now receive zero rows instead of a missing table.
+  The valid-file scanner and direct probe expose that failure before the repair.
+
+The generic file reader supplies exact UTF-8 errors from the same byte snapshot as its line reader.
+Its TDD case rewrites the file between interfaces and still observes the first snapshot.
+Directory, line, error, and digest answers intern each complete demand group as one batch.
+Load answers preserve every request's module and grammar when aliases first arrive together.
+Rule decisions remain in `.rr`; these engine changes implement generic request and filesystem contracts.
+
+The hub advances during this work. Merges adopt `473167aa5`, `9a203197e`, `dacb04144`, and `e3776af9c`.
+The first merge resolves one observer initializer conflict, preserving both volume tracking and directory metadata epochs.
+The final artifact is built from `075cc2233`, over hub `e3776af9c`.
+Its successful incremental build costs 58.78 seconds wall, 312.82 seconds user CPU, and 10.50 seconds system CPU.
+Earlier bounded integration attempts retain separate resource logs and cohort receipts.
+No full-repository or whole-batch cold benchmark runs.
+
+Two linkers report missing symbols in one compiled logic archive during integration.
+Cleaning that package removes 13.0 GiB of build artifacts; the ordinary Apple linker then succeeds.
+Later, a full filesystem interrupts validation. Removing this worktree's disposable incremental cache frees space for complete replacement runs.
+Source files, frozen binaries, and test evidence remain intact. No linker override remains in the accepted build command.
+
+Five additional source-recorded cases still fail natively: callback-visible state, private scope entry and exit,
+mutation after callbacks, clearing findings after finish, and collector reuse across files.
+They demonstrate defects in the current deferred whole-tree adapter.
+Incremental callbacks, the other public helpers and scanners, raw plugin reporting, CLI, production, history, updates, and removal controls remain open.
+The side-effects rule remains a draft. The inventory remains **22 historical admissions, 77 drafts, and one absent translation**.
+
 ## 2026-11-13 — Batched directory metadata on the integration hub
 
 The active engine includes hub `1ee25bdf6`, plus generic directory metadata and transport repairs.
