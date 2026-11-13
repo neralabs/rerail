@@ -282,6 +282,11 @@ impl ContentStore {
 
     /// Memo plan `plan`'s kept statistics (`put_stat_blob`), if a run kept them; a queued write of them first.
     pub fn stat_blob(&self, plan: [u8; 32]) -> StoreResult<Option<Vec<u8>>> {
+        // Its statistics may name symbols by the store's ids, which a forked process numbers otherwise (decision 0170):
+        // it plans without them.
+        if self.atoms.forked() {
+            return Ok(None);
+        }
         self.settle(&stat_blob_key(&plan));
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let kept: i64 = connection.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='stat_blob'", [], |r| r.get(0))?;

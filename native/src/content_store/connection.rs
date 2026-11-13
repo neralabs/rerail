@@ -612,6 +612,11 @@ impl ContentStore {
         retry_busy(&mut BusyRetries::default(), || {
             let connection = self.connection.lock().map_err(StoreError::Invalid)?;
             connection.execute_batch("BEGIN IMMEDIATE")?;
+            // Before the jobs make their rows: a fork found now maps the pending atoms first (decision 0170).
+            if let Err(e) = self.atoms.begin_write(&connection) {
+                let _ = connection.execute_batch("ROLLBACK");
+                return Err(e);
+            }
             Ok(())
         })?;
         struct Batch;
@@ -632,7 +637,8 @@ impl ContentStore {
                 std::panic::resume_unwind(panic);
             }
         };
-        let committed = self.atoms.write_pending(&connection).and_then(|upto| {
+        // The batch's jobs declared their rows' symbols mapped, or ran not at all, after a fork (`write_back::Syms`).
+        let committed = super::atoms::mapped(|| self.atoms.write_pending(&connection)).and_then(|upto| {
             connection.execute_batch("COMMIT")?;
             Ok(upto)
         });

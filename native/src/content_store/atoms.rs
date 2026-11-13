@@ -29,7 +29,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Weak};
 use std::time::{Duration, Instant};
 
+mod map;
 mod vtab;
+pub use map::{map_columns, mapped};
 
 pub type Sym = u32;
 
@@ -280,6 +282,8 @@ struct State {
     since: Option<Instant>,
     /// Every stored atom below this is held (`read_all`): a scan reads only the segments from it on.
     all_held: usize,
+    /// After a fork (decision 0170): this process's ids and the store's past it.
+    map: Option<map::Map>,
 }
 
 /// A process's atoms of one database (decision 0049): the arena, its watermark and the lease.
@@ -314,8 +318,8 @@ pub struct Atoms {
     /// another process's.
     wrote: std::sync::atomic::AtomicUsize,
     /// Another process stored atoms while this one's were provisional (decision 0160): this process's ids are not the
-    /// store's past `base`, so it writes no more and reads the store no more.
-    diverged: AtomicBool,
+    /// store's past `base`, and are mapped to them at the store's boundary (decision 0170, `map`).
+    forked: AtomicBool,
     /// Every stored atom is held in this process, and the lease has been held since that was seen: a string not in
     /// memory is not interned, and is found without reading the store (decision 0104).
     complete: AtomicBool,
@@ -410,9 +414,6 @@ impl Drop for Reserved {
     }
 }
 
-/// Arenas of this process that diverged from their store's (decision 0160).
-static DIVERGED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
 /// Decision 0160's trial (`RERAIL_ATOMS_PROVISIONAL=1`): ids are provisional and the lease is never taken. Off, the
 /// lease is taken as before (decision 0049).
 fn lease_free() -> bool {
@@ -420,8 +421,9 @@ fn lease_free() -> bool {
     *FREE
 }
 
-/// A diverged arena's error (decision 0160): a write behind the run that meets it is dropped, as a cache's miss.
-pub const DIVERGED_TEXT: &str = "this process's atoms diverged from the store's (decision 0160)";
+/// The error of a write refused after a fork (decisions 0160, 0170): its rows may name this process's ids, not the
+/// store's. A write behind the run that meets it is dropped, as a cache's miss.
+pub const DIVERGED_TEXT: &str = "this process's atoms forked from the store's and this write's are not mapped (decision 0170)";
 
 static REGISTRY: LazyLock<Mutex<HashMap<PathBuf, Weak<Atoms>>>> = LazyLock::new(Default::default);
 /// The atoms of in-memory databases: one set for the process, as the planner's symbols had.
@@ -524,7 +526,7 @@ impl Atoms {
             path,
             identity,
             // Atom 0, the empty string, is the schema's first segment.
-            state: RwLock::new(State { atoms: Interner::default(), since: None, all_held: 1 }),
+            state: RwLock::new(State { atoms: Interner::default(), since: None, all_held: 1, map: None }),
             lease: Mutex::new(None),
             leased: AtomicBool::new(false),
             wanted: Mutex::new((None, false)),
@@ -535,7 +537,7 @@ impl Atoms {
             written: Mutex::new((0, 0, 0)),
             runs: std::sync::atomic::AtomicUsize::new(0),
             wrote: std::sync::atomic::AtomicUsize::new(0),
-            diverged: AtomicBool::new(false),
+            forked: AtomicBool::new(false),
             complete: AtomicBool::new(false),
             flush_queued: AtomicBool::new(false),
         }
@@ -651,7 +653,7 @@ impl Atoms {
                 // SAFETY: called by SQLite on this connection's thread, under its mutex.
                 let state = unsafe { ffi::sqlite3_txn_state(handle as *mut ffi::sqlite3, c"main".as_ptr()) };
                 if state == ffi::SQLITE_TXN_WRITE {
-                    if held.diverged() {
+                    if held.forked() {
                         return true;
                     }
                     eprintln!("rerail: atoms: a commit that writes the store without its pending atoms was refused (decision 0049)");
@@ -688,19 +690,13 @@ impl Atoms {
         lease_free() && self.runs.load(Ordering::Acquire) > 0 && self.complete.load(Ordering::Acquire)
     }
 
-    /// Whether this process's atoms diverged from the store's (decision 0160).
-    pub fn diverged(&self) -> bool {
-        self.diverged.load(Ordering::Acquire)
-    }
-
-    fn diverge(&self, end: usize, base: usize, pending: usize) -> StoreError {
-        if !self.diverged.swap(true, Ordering::AcqRel) {
-            DIVERGED.fetch_add(1, Ordering::Relaxed);
-            eprintln!(
-                "rerail: atoms: another process stored atoms {base}..{end} while this one held {pending} provisional (decision 0160): this process's later writes to the store are dropped, and it reads the store no more"
-            );
-        }
-        StoreError::Invalid(DIVERGED_TEXT.to_owned())
+    /// Forks on this process's reader (outside a write): another process stored atoms past this one's pending ones.
+    fn fork_reading(&self) -> StoreResult<()> {
+        self.with_reader(|connection| {
+            let mut state = self.state.write();
+            self.fork_now(connection, &mut state)
+        })?;
+        Ok(())
     }
 
     /// Segments this process appended so far: (segments, atoms, bytes), and the atoms pending now.
@@ -720,6 +716,9 @@ impl Atoms {
             return false;
         }
         let state = self.state.read();
+        if let Some(n) = self.pending_forked(&state) {
+            return n > 0;
+        }
         let (n, _) = state.atoms.pending();
         if n == 0 {
             return false;
@@ -761,6 +760,11 @@ impl Atoms {
         if self.provisional() {
             return Ok(None);
         }
+        // Forked: another process's atom of it is found by its key and held here (decision 0170).
+        if self.forked() {
+            self.find_forked(value)?;
+            return Ok(self.state.read().atoms.get(value));
+        }
         if !self.leased.load(Ordering::Acquire) {
             self.catch_up()?;
         }
@@ -798,8 +802,9 @@ impl Atoms {
             }
         }
         // Inside a run, with every stored atom held: new ids are provisional, given out without the lease and checked
-        // against the store's as they are written (decision 0160). Nothing is read.
-        if self.provisional() {
+        // against the store's as they are written (decision 0160). Nothing is read. Forked, the store's are found as
+        // they are written (decision 0170).
+        if self.provisional() || self.forked() {
             return Ok(self.give(values));
         }
         // Outside the waves: what this process does not hold may be stored, found in the database first (decision
@@ -948,10 +953,13 @@ impl Atoms {
         else {
             return Ok(());
         };
-        // Provisional ids pending here (decision 0160) and another process's stored past them: diverged.
+        if self.forked() {
+            return Ok(());
+        }
+        // Provisional ids pending here (decision 0160) and another process's stored past them: forked (0170).
         let (base, pending) = { let s = self.state.read(); (s.atoms.base(), s.atoms.pending().0) };
         if end > base && pending > 0 && end != self.wrote.load(Ordering::Acquire) {
-            return Err(self.diverge(end, base, pending));
+            return self.fork_reading();
         }
         self.state.write().atoms.advance(end)
     }
@@ -1072,6 +1080,9 @@ impl Atoms {
         if let Some(flushed) = self.flushed.lock().get(&handle) {
             flushed.store(true, Ordering::Release);
         }
+        if self.forked() {
+            return self.write_forked(connection);
+        }
         // Where the database's segments end now (another connection of this process may have
         // committed a flush whose `committed` has not run yet).
         let end: i64 = connection
@@ -1082,18 +1093,20 @@ impl Atoms {
         let (from, segments, mut keys, upto) = {
             let state = self.state.read();
             let (end, len, base) = (end as usize, state.atoms.len(), state.atoms.base());
-            if self.diverged() {
-                return Err(self.diverge(end, base, len - base));
-            }
             if end < base {
                 return Err(StoreError::Corrupt(format!("the database's atoms end at {end}, before the {} this process wrote", base)));
             }
             // Past this process's end: its own segment, committed on another connection (`wrote`), or another
             // process's. Another's with none pending here moves this process's end; with some pending, the ids given
-            // out here are another's strings in the store (decision 0160).
+            // out here are another's strings in the store (decision 0160): this process forks (0170). This
+            // transaction's rows may name the ids given out here, so it is refused, as a cache's miss; a writer's batch
+            // forks before its rows are made (`begin_write`).
             if end > base && end != self.wrote.load(Ordering::Acquire) {
                 if len > base {
-                    return Err(self.diverge(end, base, len - base));
+                    drop(state);
+                    let mut state = self.state.write();
+                    self.fork_now(connection, &mut state)?;
+                    return Err(StoreError::Invalid(DIVERGED_TEXT.to_owned()));
                 }
                 drop(state);
                 self.advance_holding(connection, base, end)?;
@@ -1138,7 +1151,7 @@ impl Atoms {
     /// still read nothing (decision 0160).
     fn advance_holding(&self, connection: &Connection, base: usize, end: usize) -> StoreResult<()> {
         let mut state = self.state.write();
-        if state.atoms.pending().0 > 0 || state.atoms.base() != base {
+        if state.map.is_some() || state.atoms.pending().0 > 0 || state.atoms.base() != base {
             return Ok(());
         }
         let whole = state.all_held >= base;
@@ -1163,6 +1176,10 @@ impl Atoms {
         }
         let mut lease = self.lease.lock();
         let mut state = self.state.write();
+        if state.map.is_some() {
+            self.committed_forked(&mut state);
+            return;
+        }
         let before = state.atoms.base();
         state.atoms.store_upto(upto);
         // What this process stored it holds: where it held every segment before, it still does.
@@ -1186,9 +1203,6 @@ impl Atoms {
         if self.path.is_none() {
             return Ok(true);
         }
-        if self.diverged() {
-            return Err(StoreError::Invalid(format!("{DIVERGED_TEXT}: it reads the store no more")));
-        }
         // The outermost run reads where the database's ids end, once, before its first wave; no lease is taken
         // (decision 0160: the run's new ids are provisional). A nested run is inside it and reads nothing.
         if !lease_free() {
@@ -1203,11 +1217,9 @@ impl Atoms {
             })?;
             if let Some(end) = end {
                 let (base, pending) = { let s = self.state.read(); (s.atoms.base(), s.atoms.pending().0) };
-                if end > base && end != self.wrote.load(Ordering::Acquire) && pending > 0 {
-                    self.run_over();
-                    return Err(self.diverge(end, base, pending));
-                }
-                if pending == 0 {
+                if end > base && end != self.wrote.load(Ordering::Acquire) && pending > 0 && !self.forked() {
+                    self.fork_reading()?;
+                } else if pending == 0 && !self.forked() {
                     self.state.write().atoms.advance(end)?;
                 }
             }
@@ -1305,7 +1317,8 @@ impl Atoms {
                 _ => Err(error.into()),
             };
         }
-        let written = self.write_pending(connection).and_then(|upto| {
+        // A flush writes atoms alone: forked or forking, they are mapped (decision 0170).
+        let written = self.begin_write(connection).and_then(|()| mapped(|| self.write_pending(connection))).and_then(|upto| {
             connection.execute_batch("COMMIT")?;
             Ok(upto)
         });
@@ -1374,7 +1387,7 @@ impl Drop for Atoms {
     /// symbols closing). Atoms never written are lost, as in a crash; nothing durable names them.
     fn drop(&mut self) {
         let Some(path) = &self.path else { return };
-        if !self.pending() || !path.exists() || self.diverged() {
+        if !self.pending() || !path.exists() {
             return;
         }
         let flushed = Connection::open(path).map_err(StoreError::from).and_then(|connection| {
@@ -1412,7 +1425,7 @@ impl super::ContentStore {
     /// The pending atoms, appended by the store's writer behind the run (decision 0104).
     pub fn queue_atoms_flush(&self) {
         let atoms = std::sync::Arc::clone(&self.atoms);
-        self.write_back("the pending atoms", 0, Vec::new(), Box::new(move |store| {
+        self.write_back_syms(crate::content_store::write_back::Syms::None, "the pending atoms", 0, Vec::new(), Box::new(move |store| {
             atoms.flush_queued.store(false, Ordering::Release);
             store.flush_atoms()
         }));
@@ -1429,7 +1442,8 @@ impl super::ContentStore {
         if !self.atoms.pending() {
             return Ok(());
         }
-        match self.immediate_transaction_no_wait(|_| Ok(())) {
+        let atoms = std::sync::Arc::clone(&self.atoms);
+        match mapped(|| self.immediate_transaction_no_wait(|t| atoms.begin_write(t))) {
             Ok(()) | Err(StoreError::Busy) => Ok(()),
             Err(StoreError::Database(error))
                 if matches!(error.sqlite_error_code(), Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)) =>
@@ -1438,6 +1452,16 @@ impl super::ContentStore {
             }
             Err(error) => Err(error),
         }
+    }
+
+    /// `values` (this process's symbols) as the store numbers them, in this handle's open write transaction (the
+    /// writer's batch): unchanged unless forked (decision 0170).
+    pub fn symbols_to_store(&self, values: &mut [i64]) -> StoreResult<()> {
+        if !self.atoms.forked() {
+            return Ok(());
+        }
+        let connection = self.connection.lock().map_err(StoreError::Invalid)?;
+        self.atoms.to_store(&connection, values)
     }
 
     /// The atom of `value`, if the store holds it.

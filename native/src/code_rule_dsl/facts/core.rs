@@ -277,8 +277,8 @@ pub fn build_in_wave_with_tape(
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, tape.len() as u64);
             // Handed to the writer, the source and the tape each moved, not copied; read from memory until written.
             let (source, held, stored) = (std::sync::Arc::clone(file.source()), std::sync::Arc::clone(&tape), stored.cloned());
-            cache.write_back(
-                "a tape and its source",
+            cache.write_back_syms(
+                crate::content_store::write_back::Syms::None, "a tape and its source",
                 bytes.len() + tape.len(),
                 vec![(key, Some(std::sync::Arc::clone(&tape) as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
                 Box::new(move |store| {
@@ -375,8 +375,8 @@ pub(crate) fn build_cached_with_tape(
             use sha2::Digest as _;
             let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
             let (source, held) = (std::sync::Arc::clone(file.source()), std::sync::Arc::clone(&tape));
-            cache.write_back(
-                "a tape and its source",
+            cache.write_back_syms(
+                crate::content_store::write_back::Syms::None, "a tape and its source",
                 bytes.len() + tape.len(),
                 vec![(queued_tape(&digest, tag, gv, fv), Some(tape as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
                 Box::new(move |store| store.put_source_and_tape(source.as_bytes(), HashKey::from_sha256_digest(digest), tag, gv, fv, &held).map(|_| ())),

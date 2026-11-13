@@ -105,7 +105,7 @@ contend for no lease.
 
 ## Departures and open points
 
-- The trial's diverged process fails its next run; the finished design maps instead.
+- The trial's diverged process fails its next run; the finished design maps instead (0170).
 - A store whose atoms exceed `READ_WHOLE` (64 MB) is not `complete`, so a run looks atoms up inside its waves,
   lease or not. One posthog/hogql run (9 MB of source) left 485,289 atoms, 77 MB, in the store: 60 MB of it is
   strings over 100 bytes, the texts of whole modules, classes and functions. So the second run over the same store

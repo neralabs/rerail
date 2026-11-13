@@ -118,8 +118,8 @@ pub(super) fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile
 /// write when this process queued one.
 pub(super) fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::sync::Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>) {
     let (key, late) = (*key, std::sync::Arc::clone(late));
-    cache.write_back(
-        "the combined program's text, named",
+    cache.write_back_syms(
+        crate::content_store::write_back::Syms::None, "the combined program's text, named",
         0,
         Vec::new(),
         Box::new(move |store| {

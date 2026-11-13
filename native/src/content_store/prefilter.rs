@@ -275,6 +275,8 @@ impl Counts {
 
     /// Writes and clears the sums; postings in key order, so consecutive rows share leaves.
     fn flush(&mut self, transaction: &Connection, store: &super::atoms::Atoms) -> StoreResult<()> {
+        // The term columns hold atoms, unmapped (decision 0170): a forked process does not write them.
+        store.refuse_forked("the prefilter's terms")?;
         let counts = std::mem::take(self);
         // Each term's atom, from the store's arena (decision 0049): new ones are pending, and the
         // transaction's commit appends them before these rows (`ContentStore::commit`).

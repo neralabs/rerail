@@ -62,6 +62,17 @@ impl Key {
     }
 }
 
+/// What a job's rows hold of this process's atoms (decision 0170): after a fork, its ids and the store's differ.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Syms {
+    /// No symbols: written as ever.
+    None,
+    /// Symbols mapped to the store's where they are written (`Atoms::to_store`).
+    Mapped,
+    /// Symbols as this process numbers them, or not known: after a fork the job is dropped, as a cache's miss.
+    Unmapped,
+}
+
 /// A queued write: run on the writer's handle, its own transactions. Run again whole if it finds
 /// the store busy (`run_job`), so it writes what it holds without consuming it.
 pub type Job = Box<dyn FnMut(&ContentStore) -> StoreResult<()> + Send>;
@@ -271,13 +282,23 @@ impl ContentStore {
     /// The writer drains what is queued into one transaction (`ContentStore::in_one_transaction`), each job a
     /// savepoint in it, and a read of a key waits for its batch's commit.
     pub fn write_back(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
-        self.queue(what, bytes, keys, job, Run::Batched);
+        self.queue(what, bytes, keys, guarded(Syms::Unmapped, job), Run::Batched);
+    }
+
+    /// [`Self::write_back`] of a job whose rows hold `syms` (decision 0170).
+    pub fn write_back_syms(&self, syms: Syms, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
+        self.queue(what, bytes, keys, guarded(syms, job), Run::Batched);
+    }
+
+    /// [`Self::write_back_alone`] of a job whose rows hold `syms` (decision 0170).
+    pub fn write_back_alone_syms(&self, syms: Syms, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
+        self.queue(what, bytes, keys, guarded(syms, job), Run::Alone);
     }
 
     /// [`Self::write_back`] for a job that must commit before it goes on (it starts work on another connection that
     /// reads what it wrote): the batch before it commits first, and it runs in transactions of its own.
     pub fn write_back_alone(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job) {
-        self.queue(what, bytes, keys, job, Run::Alone);
+        self.queue(what, bytes, keys, guarded(Syms::Unmapped, job), Run::Alone);
     }
 
     fn queue(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job, run: Run) {
@@ -422,14 +443,25 @@ impl ContentStore {
                             }
                         }
                     };
-                    let outcomes = match store.in_one_transaction(|| {
-                        w.shared.state.lock().expect("the writer's state").open = true;
-                        let outcomes = run(&mut batch, &mut next);
-                        w.shared.state.lock().expect("the writer's state").open = false;
-                        outcomes
-                    }) {
-                        Ok(outcomes) => outcomes,
-                        Err(e) => batch.iter().map(|_| Err(StoreError::Invalid(format!("the batch's commit: {e}")))).collect(),
+                    // A batch that finds the store busy (another process's writer held SQLite's write lock past this
+                    // one's wait, at its start or its commit) rolled back whole: run again, as a busy job is
+                    // (`run_job`), its jobs being a cache's writes. Failing them dropped every write of the batch.
+                    let started = Instant::now();
+                    let mut backoff = JOB_BACKOFF_FIRST;
+                    let outcomes = loop {
+                        match store.in_one_transaction(|| {
+                            w.shared.state.lock().expect("the writer's state").open = true;
+                            let outcomes = run(&mut batch, &mut next);
+                            w.shared.state.lock().expect("the writer's state").open = false;
+                            outcomes
+                        }) {
+                            Ok(outcomes) => break outcomes,
+                            Err(StoreError::Busy) if started.elapsed() < JOB_DEADLINE => {
+                                std::thread::sleep(super::connection::jittered(backoff));
+                                backoff = (backoff * 2).min(JOB_BACKOFF_MAX);
+                            }
+                            Err(e) => break batch.iter().map(|_| Err(StoreError::Invalid(format!("the batch's commit: {e}")))).collect(),
+                        }
                     };
                     let _ = told.send(());
                     let cpu = (thread_cpu() - before) / batch.len() as f64;
@@ -522,6 +554,17 @@ impl ContentStore {
             unregister(&self.database_path, &w);
         }
     }
+}
+
+/// `job` as its rows' `syms` allow after a fork (decision 0170): an unmapped one is not run, a mapped one runs as
+/// a write whose symbols are the store's (`atoms::mapped`).
+fn guarded(syms: Syms, mut job: Job) -> Job {
+    Box::new(move |store| {
+        if syms == Syms::Unmapped && store.atoms.forked() {
+            return Err(StoreError::Invalid(super::atoms::DIVERGED_TEXT.to_owned()));
+        }
+        if syms == Syms::Unmapped { job(store) } else { super::atoms::mapped(|| job(store)) }
+    })
 }
 
 fn finish(shared: &Shared, bytes: usize, keys: &[Key], outcome: StoreResult<()>, cpu: f64, counted: bool) {
