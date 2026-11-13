@@ -674,10 +674,13 @@ read it first and replace anything you'd rather not post with `<redacted>`.
 - `--output <file>` writes elsewhere. The file is readable by your user only.
 - It covers the repository's latest session; `--session <id>` names another (the id is in its dashboard address).
 - It works where Rerail won't start or set-up never finished, and says which parts it could not read.
+- A daemon that misses the first 2-second health check gets 10 more seconds to answer before the bundle calls it
+  unresponsive; one that answers is recorded with how long it took. The file is written before that wait, calling the
+  daemon unresponsive, and again after it, so a command stopped while it waits still leaves a bundle.
 
 | In the file | Left out |
 | --- | --- |
-| Rerail, Node and OS versions; daemon and engine health; connected agents | Your prompts and the agent's replies |
+| Rerail, Node and OS versions; whether Rerail runs from its managed install; daemon and engine health; connected agents | Your prompts and the agent's replies |
 | Installed packs and load failures; the repository's state; rule ids and modes | Tool input and output; source code |
 | Session timeline: event kinds, tool names, times, what it dropped or could not check | Rule text; a violation's message, captures and fix |
 | Steers as the agent got them; violations by rule, file and line | Paths named like secrets |

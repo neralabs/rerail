@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { constants, type Dirent, type Stats } from "node:fs";
-import { type FileHandle, lstat, mkdtemp, open, opendir, readFile, realpath, unlink } from "node:fs/promises";
+import { type FileHandle, lstat, mkdtemp, open, opendir, realpath, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
@@ -42,6 +42,7 @@ import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
 import { ToolCallWindows } from "./tool-call-windows.js";
+import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 
 
 /** The name of the ignore files a walk observes whatever Git says of them. */
@@ -297,11 +298,24 @@ async function modifiedSince(absolute: string, modifiedAt: number): Promise<numb
   const after = await lstat(absolute);
   return Math.max(modifiedAt, after.mtimeMs, after.ctimeMs);
 }
-/** A text file as a walk observes it, with its text when it changed since the session's start. */
-function observedText(walk: SourceWalk, stamped: StampedSource, previous: ObservedSource | undefined, source: Buffer): Source {
-  const digest = sha256(source);
-  const changed = (walk.captureChanges || stamped.modifiedAt >= walk.discovery.startedAt) && previous?.digest !== digest;
-  return { ...stamped, digest, ...(changed ? { text: source.toString("utf8") } : {}) };
+/**
+ * A text file as a walk observes it, with its text only when it may be an edit (`#discoveredEdit`): its digest is not
+ * the one observed before, and it was stamped since the session's start (`changedSinceStart`), or the walk captures
+ * changes and this is no first sight of a baseline (`firstSightIsBaseline`). A walk reads every file it holds no digest
+ * for, such as each file of a worktree it walks first, and text of those would be a string per file that nothing reads.
+ */
+function observedText(walk: SourceWalk, stamped: StampedSource, previous: ObservedSource | undefined, read: LentBytes): Source {
+  const digest = sha256(read.bytes);
+  const changed = previous?.digest !== digest
+    && (changedSinceStart(walk.discovery, stamped) || (walk.captureChanges && !firstSightIsBaseline(walk, stamped.path, previous)));
+  return { ...stamped, digest, ...(changed ? { text: read.text() } : {}) };
+}
+/**
+ * The walk sees `path` for the first time under one of its `baselineRoots`, so `#discoveredEdit` takes it as a baseline
+ * unless it was stamped since the session's start (`changedSinceStart`).
+ */
+function firstSightIsBaseline(walk: SourceWalk, path: string, previous: ObservedSource | undefined): boolean {
+  return previous === undefined && underBaselineRoot(walk.baselineRoots, path);
 }
 /** An unlisted file too large to read is unread, reported once per stamp (`newlyUnread`); any other read error is the walk's. */
 function recordReadError(scan: SourceScan, source: Source): void {
@@ -504,6 +518,10 @@ interface SourceWalk {
   readonly observedAt: number;
   readonly previousSources: ReadonlyMap<string, ObservedSource>;
   readonly captureChanges: boolean;
+  /** Where a source the walk has no observation of is a baseline, as the walk began (`#walkBaselineRoots`). */
+  readonly baselineRoots: ReadonlySet<string>;
+  /** The buffers the walk reads files into: one per read it runs at once, not one per file. */
+  readonly buffers: WalkReadBuffers;
   readonly scan: SourceScan;
   readonly stack: string[];
   /** Where the walk starts: a folder reached again from another is not walked twice. */
@@ -660,8 +678,16 @@ async function folderStamp(root: string, path: string): Promise<number | undefin
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+/**
+ * Whether `path` lies below one of `roots` (`""` holds every path). Each folder above `path` is looked up in `roots`, so
+ * a walk that asks this of every file costs the depth of the file, not the number of the repository's worktrees.
+ */
 function underBaselineRoot(roots: ReadonlySet<string>, path: string): boolean {
-  for (const root of roots) if (root === "" || path.startsWith(`${root}/`)) return true;
+  if (roots.size === 0) return false;
+  if (roots.has("")) return true;
+  for (let slash = path.indexOf("/"); slash >= 0; slash = path.indexOf("/", slash + 1)) {
+    if (roots.has(path.slice(0, slash))) return true;
+  }
   return false;
 }
 /** `absolute` relative to the walk's root (the session folder), `/`-separated, as the auditor names paths. */
@@ -1539,6 +1565,8 @@ export class CodeRuleBridge {
       discovery, observedAt: walk.observedAt,
       previousSources: seed === undefined ? walk.previous : new Map([...seed, ...walk.previous]),
       captureChanges: !walk.baseline,
+      baselineRoots: this.#walkBaselineRoots(discovery, walk),
+      buffers: new WalkReadBuffers(MAX_SOURCE_BYTES + 1),
       scan: { sources: new Map(), failedRoots: new Set(), errors: [], unread: new Map(), firstSeen: new Map(), checkouts: new Set(), unmerged: new Map() },
       stack: walk.inSession ? [discovery.root] : [...worktrees], roots: new Set([discovery.root, ...worktrees]),
       view: this.#auditor.walkView?.() ?? this.#auditor,
@@ -1906,6 +1934,20 @@ export class CodeRuleBridge {
       && [discovery.baselineRoots, discovery.worktrees.baselineRoots, discovery.worktrees.fresh].some(roots => underBaselineRoot(roots, path));
   }
 
+  /**
+   * The roots of `#baselinePath` that stay roots until `walk` applies, as it begins: what a walk keeps no text of under
+   * them (`firstSightIsBaseline`) is what `#discoveredEdit` then takes as a baseline. Walks of one kind run one at a time,
+   * so for the session folder's walk these are the subtrees its last walk could not read, and for the worktrees' walk
+   * the worktrees whose first walk is still to finish with the subtrees the last worktree walk could not read. A worktree
+   * removed meanwhile stops being one, and its files leave the walk with it, unless it sits inside another walked
+   * worktree: that worktree's walk then answers for them, and observes a first sight there, stamped before the session,
+   * with no text and no edit, since no one wrote it. The session folder's subtrees are left out of the worktrees' walk:
+   * that folder's walk may change them while it runs.
+   */
+  #walkBaselineRoots(discovery: SourceDiscovery, walk: WalkStart): ReadonlySet<string> {
+    return walk.inSession ? discovery.baselineRoots : new Set([...discovery.worktrees.fresh, ...discovery.worktrees.baselineRoots]);
+  }
+
   #deletedEdit(path: string, before: ObservedSource | undefined): CodeRuleEdit | undefined {
     this.#observed.delete(path);
     if (before === undefined) return undefined;
@@ -1991,7 +2033,9 @@ export class CodeRuleBridge {
     if (!walk.view.acceptsPath(location.path)) return { ...stamped, ...knownDigest(previous) };
     const unread = await unreadFile(location, info);
     if (unread !== undefined) return { ...stamped, modifiedAt, ...unread };
-    return await this.#readObservedFile(walk, location, { ...stamped, modifiedAt }, previous);
+    return await walk.buffers.lend(
+      location.absolute, info.size, async read => await this.#readObservedFile(walk, location, { ...stamped, modifiedAt }, previous, read),
+    );
   }
 
   async #readObservedFile(
@@ -1999,15 +2043,15 @@ export class CodeRuleBridge {
     location: SourceLocation,
     stamped: StampedSource,
     previous: ObservedSource | undefined,
+    read: LentBytes,
   ): Promise<Source | undefined> {
-    const source = await readFile(location.absolute);
     if (walk.discovery.cancelled) return undefined;
-    // A shell may mutate the file while readFile is pending. Keep the original stamp
+    // A shell may mutate the file while the read is pending. Keep the original stamp
     // so the next reconciliation re-reads it, but do not silently baseline those bytes.
     const modifiedAt = walk.captureChanges ? stamped.modifiedAt : await modifiedSince(location.absolute, stamped.modifiedAt);
     if (walk.discovery.cancelled) return undefined;
-    const content = nonText(location, source);
-    return content === undefined ? observedText(walk, { ...stamped, modifiedAt }, previous, source) : { ...stamped, modifiedAt, ...content };
+    const content = nonText(location, read.bytes);
+    return content === undefined ? observedText(walk, { ...stamped, modifiedAt }, previous, read) : { ...stamped, modifiedAt, ...content };
   }
 
   /** `file` when the path is known to be a file: an unlisted one fails as a source, not as a folder walked. */
