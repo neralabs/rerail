@@ -102,6 +102,47 @@ The cost store gets about 6,000 samples a run: training is due again every 10 mi
   (`maintained_early`). `kept_inputs` (0.13 s) decodes the kept inputs' old rows to patch them with the changed
   files' rows: the read of unchanged rows, left for the design of the local part's delta. (see git log)
 
+## Smoking guns (2026-11-13, 300 files, profiling build)
+
+A search for the large, structural wastes, not a benchmark. Fixed (see git log):
+
+1. **A cover's cross product.** A cover of two asked variables was a product of everything that binds either one. It
+   is now narrowed by the group that binds them. On 50 files: 716 → 463 G instructions, 5.67 → 2.34 GB.
+2. **The planner's zero rows.** A relation that was empty when it was planned (`rel_base` before its guest round,
+   `impmod`, `ruff_qual`, `frag_str`) priced every later step at 0. That made cross products look free
+   (10,728 → 25.8 M → 10,728 rows). Estimates are now floored at one row; a memo's exact count is not.
+   A cold run's local part: 1,079 → 921 G.
+3. **Kept inputs refused.** `group_col` grouped `p197_arg_at` by column 2, the memo by column 0. Every edit then
+   failed with "memo entry is gone". It now groups by the split's locations.
+4. **A fallback that read the store inside the waves.** The kept route is decided before the first wave
+   (decision 0104).
+5. **The memory budget capped the store.** A relation past `RERAIL_CROSS_RETAIN_MB` was not written to the frames,
+   so every next process derived it again: an edit ran 3,758 of 4,087 strata, 1,546 of them derived again. It is now
+   written, then let go: 0 derived again.
+6. **`@place` in a head had no native form.** The 0117 walk's maintained form has no SQL fallback.
+   `violations_at_places…` had been red in every worktree since 11-12.
+7. **A flaky test.** In `closures_of_one_level…`, the three closures' wave ran on a stratum job's thread and was
+   counted there. The tally now goes with the run's ambient.
+
+Open, largest first (the edit after items 1–5: 12.85 s of span CPU):
+
+8. **A maintained stratum copies and re-indexes its whole kept relation** (4.47 s, 43.5% of the edit, against 0.76 s
+   of joins). `Rel::based` clones the kept rows and chains, and `Rel::compacted` pushes every row again with a new
+   dedup index (open: survivors, 1.41 s in 210 calls). `set_delta` and `restamp` walk every index, and `want(cols)`
+   builds a whole-relation index per multi-column key (open: indexes, 1.37 s). A derived input read back from the
+   frames has no chains, so each probed key set is indexed over all its rows (1.17 s in 2,447 calls). Each of these
+   costs the relation's size, not the delta's. The shape is the one `Layered` gives inputs:
+   - the stratum's relation is the kept `InRel`, shared through an `Arc`, with its dead rows marked;
+   - its new rows go in a vector of its own (ids from `old.n` on);
+   - the kept chains and indexes serve the old rows, and only the added rows are indexed.
+9. **Statistics of `__old` relations are counted from their rows** ("count run_scope__old from its rows", 0.05–0.07 s
+   each, dozens per edit), although decision 0120 keeps statistics in the frames under the rows' digest.
+10. **`frag_str`'s `doc_role(d, 17505)` is planned from statistics made before its rows exist:** estimated at 1 row,
+    2,455 found, 7.1 M rows, none kept. The floor (item 2) bounds this but does not fix it. The plan should be made
+    when the relation is known.
+11. **Smaller:** `p149_LOG001` scans `import_alias` with nothing bound (3.9 M rows → 0). `rr_agg48` goes from 135 k
+    to 3.1 M rows. There are 1.5 M scalar node visits.
+
 ## To do, in order
 
 Items 1–3 (texts read once, caches refused by construction, my statics by flow) are done: see above.

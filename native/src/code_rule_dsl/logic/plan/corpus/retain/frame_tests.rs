@@ -56,7 +56,7 @@ fn k4_admission_batches_input_digests_derived_rows_and_mixed_granules() {
     let span = profile::span(|| "bulk K4 admission".into());
     let mut kept = Retained::from_frames(&store,SPACE,KEY,&prog,&st(&prog), &HashMap::new()).unwrap();
     let cut = cut(Some(&kept),KEY,&prog,&st(&prog), &changed).unwrap();
-    kept.load(&store,&cut,&prog,false).unwrap();
+    kept.load(&store,&cut,&prog,&Locations::new(),false).unwrap();
     assert_eq!(kept.input_srcs.len(), 131);
     assert_eq!(kept.rels.len(), 130);
     for i in 0..131 {
@@ -86,7 +86,7 @@ fn k4_clean_outputs_are_admitted_together_without_rerunning_their_producers() {
     let mut kept=Retained::from_frames(&store,SPACE,KEY,&prog,&st(&prog),&HashMap::new()).unwrap();
     assert!(prog.outputs.iter().all(|r|kept.holds(r,&prog)),"raw output facts are sufficient to keep a derivation");
     let cut=Cut{clean:prog.outputs.iter().cloned().collect(),strata:(0,130),changed:vec![]};
-    assert_eq!(kept.load(&store,&cut,&prog,false).unwrap(),Some((130,390)));
+    assert_eq!(kept.load(&store,&cut,&prog,&Locations::new(),false).unwrap(),Some((130,390)));
     for i in 0..130 {
         let rel=&kept.rels[&format!("result{i}")];
         let source=rel.source(&format!("result{i}"));
@@ -110,7 +110,7 @@ fn k4_retains_consumers_of_literal_facts_and_invalidates_them_when_the_literal_c
     let computed=Retained{key:KEY,rels:HashMap::from([("result".into(),Kept{
         rel:InRel::flat(&[vec![1]],vec![b'i']),width:1,output:None,
     })]),..Default::default()};
-    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&prog,&st(&prog),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new()).unwrap(),1);
+    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&prog,&Locations::new(),&st(&prog),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new()).unwrap(),1);
     let restored=Retained::from_frames(&store,SPACE,KEY,&prog,&st(&prog),&HashMap::new()).unwrap();
     assert_eq!(cut(Some(&restored),KEY,&prog,&st(&prog),&HashMap::new()).unwrap().strata,(0,1));
     let changed=rr::parse(&text.replace("literal(1).","literal(2).")).unwrap();
@@ -119,7 +119,7 @@ fn k4_retains_consumers_of_literal_facts_and_invalidates_them_when_the_literal_c
     let external=rr::parse(&format!("{text}\n.input literal\n")).unwrap();
     let empty=Retained::from_frames(&store,[52;32],KEY,&external,&st(&external),&HashMap::new()).unwrap();
     let initial=cut(Some(&empty),KEY,&external,&st(&external),&HashMap::new()).unwrap();
-    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&external,&st(&external),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new()).unwrap(),0,
+    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&external,&Locations::new(),&st(&external),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new()).unwrap(),0,
         "a relation with literal rows AND external inputs still needs a runtime dependency digest");
 }
 
@@ -133,7 +133,7 @@ fn k4_rejects_a_derived_frame_replaced_after_metadata_admission() {
     let cut=cut(Some(&kept),KEY,&prog,&st(&prog),&changed).unwrap();
     store.keep_frames(&SPACE,&[FramePut{rel:frames.names["result0"].clone(),part:0,digest:99,reads:vec![],
         rows:FrameRows{types:vec![b'i'],n:1,rows:vec![999]}}],&[],None).unwrap();
-    assert!(kept.load(&store,&cut,&prog,false).unwrap().is_none());
+    assert!(kept.load(&store,&cut,&prog,&Locations::new(),false).unwrap().is_none());
     assert!(kept.rels.is_empty(),"old dependency metadata must not certify replacement payloads");
     assert!(kept.frames().unwrap().derived.is_empty(),"a failed admission must invalidate the cut");
 }
@@ -149,7 +149,7 @@ fn k4_rejects_an_input_granule_replaced_after_its_digest_was_admitted() {
     // Granule headers have no content digest. Validate the rows against the admitted per-document digests.
     store.keep_frames(&SPACE,&[FramePut{rel:frames.names["input0"].clone(),part:granule(1),digest:0,reads:vec![],
         rows:FrameRows{types:vec![b'i'],n:1,rows:vec![(1<<32)|999]}}],&[],None).unwrap();
-    assert!(kept.load(&store,&cut,&prog,false).unwrap().is_none());
+    assert!(kept.load(&store,&cut,&prog,&Locations::new(),false).unwrap().is_none());
     assert!(kept.input_srcs.is_empty(),"replacement rows must not become the old side of maintenance");
     assert!(kept.frames().unwrap().inputs.is_empty(),"a failed admission must invalidate the cut");
 }
@@ -187,7 +187,7 @@ fn failed_k4_admission_makes_a_clean_consumer_run_again() {
     let demanded = Cut { clean: BTreeSet::from(["result0".into()]), strata: initial.strata, changed: vec![] };
     let result = kept.frames().unwrap().names["result0"].clone();
     store.keep_frames(&SPACE, &[], &[(result, DOCS_PART)], None).unwrap();
-    assert!(kept.load(&store, &demanded, &prog, false).unwrap().is_none());
+    assert!(kept.load(&store, &demanded, &prog, &Locations::new(), false).unwrap().is_none());
     let rerun = cut(None,KEY,&prog,&st(&prog), &now).unwrap();
     assert!(rerun.clean.is_empty());
     assert_eq!(rerun.strata.0, rerun.strata.1);
