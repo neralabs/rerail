@@ -159,6 +159,9 @@ describe("the daemons of a Rerail home", () => {
     const { live, recorded } = await settled();
     expect(live).toHaveLength(1);
     expect(recorded).toBe(live[0]);
+    // Each daemon process that stopped did so on the home's lock. On macOS and Linux the engine socket's own check stops a
+    // second daemon too, so without this the test could fail only on Windows.
+    for (const daemon of direct.filter(daemon => daemon.exitCode !== null)) expect(await exitMessage(daemon)).toMatch(HOME_TAKEN);
   }, 180_000);
 
   it("leaves a start to the hooks that find a claim left from before a restart, and they leave one daemon", async () => {
