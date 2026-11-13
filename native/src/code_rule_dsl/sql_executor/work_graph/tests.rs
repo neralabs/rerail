@@ -24,6 +24,34 @@ fn sources() -> BTreeMap<String, Arc<dyn Source>> {
     BTreeMap::from([("edges".into(), Arc::new(edges) as Arc<dyn Source>)])
 }
 
+/// Runs `child`, an ignored test of this module, alone in a child process of this binary. A graph's groups run on the
+/// one pool, which every other test of the run shares: there, a long parallel loop of another test's holds every
+/// thread, and the groups wait for it (minutes, on a loaded 4-core runner). In the child, the pool is the test's own,
+/// so what it times or overlaps is the graph's alone.
+fn alone(child: &str) {
+    let mut process = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            &format!("code_rule_dsl::sql_executor::work_graph::tests::{child}"),
+            "--ignored",
+        ])
+        .spawn()
+        .unwrap();
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = process.try_wait().unwrap() {
+            break status;
+        }
+        if started.elapsed() > Duration::from_secs(120) {
+            let _ = process.kill();
+            let _ = process.wait();
+            panic!("{child} stalled");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(status.success(), "{child} failed: {status}");
+}
+
 #[test]
 fn recursive_join_diamond_fuses_once_and_independent_groups_use_sql() {
     let graph = request(
@@ -196,6 +224,12 @@ fn invalid_dependencies_opaque_functions_and_writes_are_rejected() {
 
 #[test]
 fn workers_share_vm_limits_and_failed_queries_do_not_publish() {
+    alone("shared_vm_limits_child");
+}
+
+#[test]
+#[ignore = "child process of workers_share_vm_limits_and_failed_queries_do_not_publish"]
+fn shared_vm_limits_child() {
     let expensive = "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<50) SELECT sum(x) FROM n";
     let one = execute(
         request(vec![node("a", expensive, 1, &[])], &["a"], 1),
@@ -388,6 +422,12 @@ fn public_query_plan_reads_pinned_facts_and_explains_its_groups() {
 
 #[test]
 fn actual_sql_readers_overlap_and_a_shared_intermediate_reads_storage_once() {
+    alone("overlapping_readers_child");
+}
+
+#[test]
+#[ignore = "child process of actual_sql_readers_overlap_and_a_shared_intermediate_reads_storage_once"]
+fn overlapping_readers_child() {
     struct Observed {
         entered: AtomicUsize,
         active: AtomicUsize,
@@ -527,6 +567,12 @@ fn ten_thousand_regions_and_512_operators_fit_four_submissions() {
 
 #[test]
 fn successors_run_before_an_unrelated_group_finishes() {
+    alone("released_successors_child");
+}
+
+#[test]
+#[ignore = "child process of successors_run_before_an_unrelated_group_finishes"]
+fn released_successors_child() {
     if rerail_accel::exec::threads() < 2 {
         return;
     }
