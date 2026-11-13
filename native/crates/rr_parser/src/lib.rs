@@ -1330,6 +1330,36 @@ pub mod tests {
         }
     }
 
+    /// A float read as simdjson reads one: digits, a `.`, digits, then a byte that is not
+    /// one more `.` and digit. `1.2.3` goes to the engine; tier 1 iterates nothing for it.
+    #[test]
+    fn chained_floats_go_to_the_engine() {
+        let c = crate::compiled().expect("compiles");
+        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let mut cases = Vec::new();
+        for pad in [0usize, 40, 50, 55, 58, 60] {
+            let head = format!(".decl a(x: number)\n// {}\n", "x".repeat(pad));
+            cases.push((format!("{head}a(1.5).\n"), true));
+            cases.push((format!("{head}a(x) :- a(y), x = y + 12.25 * 3.0.\n"), true));
+            cases.push((format!("{head}a(x) :- a(y), x = y - 0.125.\n"), true));
+            cases.push((format!("{head}a(1.2.3).\n"), false));
+            cases.push((format!("{head}a(x) :- a(y), x = 10.25.5.\n"), false));
+        }
+        for (src, taken) in &cases {
+            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
+            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter");
+            for p in [&c.parser, &machine.parser] {
+                match p.image(src.as_bytes()) {
+                    Ok(t) => {
+                        assert!(*taken, "{src}: taken");
+                        assert_eq!(t, crate::engine_tape(src), "{src}: the engine's tape");
+                    }
+                    Err(_) => assert!(!*taken, "{src}: refused"),
+                }
+            }
+        }
+    }
+
     #[test]
     #[ignore = "a profile's load: run by hand"]
     fn rr_profile_loop() {

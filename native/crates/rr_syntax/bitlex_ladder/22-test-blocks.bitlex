@@ -160,15 +160,13 @@ mask hashword   = fill(directive, ~(code & word))
 mask w          = code & word & ~hashword
 mask ident      = fill(w & alpha, ~w)           # from a run's first letter to its end
 mask num        = w & ~ident                    # the digits before it
-# A float, `1.5`: a `.` after digits that are no fraction and before a digit (`f_dot`); the
-# digits after it, its fraction. A `.` after a fraction is no float's: `1.2.3` is `1.2`, `.`
-# and `3`. Each float's `.` needs the one before it settled: a carry, a byte more a round.
-rounds until settled {
-  carry fraction = empty
-  mask f_dot     = code & dot & prev(num & ~fraction) & next(digit)
-  next fraction  = fill(prev(f_dot), ~digit)
-}
+# A float, `1.5`: a `.` between digits (`f_dot`); the digits after it, its fraction. Read as
+# simdjson reads one, straight through: digits, a `.`, digits, and the float ends. A float's
+# `.` right after a fraction (`1.2.3`) is a chain no file has: the engine reads it, so no
+# float's `.` waits on the one before it.
+mask f_dot      = code & dot & prev(num) & next(digit)
 mask frac       = fill(prev(f_dot), ~digit)
+escape "a float's `.` after a fraction" when f_dot & prev(frac)
 mask int        = num & ~frac                   # an integer's digits
 # The engine reads an integer as an i64: one of 19 or more digits (leading zeros aside) is
 # checked by it. A float's digits are its text: no limit. Checked at the number's token

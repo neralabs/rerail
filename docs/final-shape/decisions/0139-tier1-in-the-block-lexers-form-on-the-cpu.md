@@ -150,3 +150,26 @@ What holds the registers now is the body's own values, by statement: the floats'
 until settled (6,119 points over the registers), `uesc` (3,692), the region walk (3,406),
 `two` (1,747).
 
+
+## Floats read as simdjson reads them
+
+simdjson marks no float in its first stage. Its second stage reads a number
+straight through, at its start: digits, a `.`, digits, an exponent. It refuses
+a number with a byte after it that is not whitespace or structural.
+
+Tier 1 now does the same for a float's `.`. It is a `.` between digits, with
+no fixed point over the ones before it:
+
+```
+# was: rounds until settled, a `.` after digits that are no fraction
+mask f_dot = code & dot & prev(num) & next(digit)
+mask frac  = fill(prev(f_dot), ~digit)
+# `1.2.3`: the engine reads it (no file in the corpus has one)
+escape "a float's `.` after a fraction" when f_dot & prev(frac)
+```
+
+The rounds were cheap in instructions: one round settles nearly every block.
+Tier 1 through the JIT went 494.7M to 492.8M, ahead of time 471.8M to 469.9M.
+Spills stayed at 277: `f_dot`'s values now hold the registers in the rounds'
+place (4,189 points over them), live from the classes to the tokens that read
+them.
