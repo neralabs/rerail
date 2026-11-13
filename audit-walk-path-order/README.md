@@ -1,6 +1,6 @@
 # Audits: the directory walk reads files in path order
 
-For [pull request #635](https://github.com/neralabs/rerail/pull/635), head 24741d435. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #635](https://github.com/neralabs/rerail/pull/635), head 664e766aa. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -8,11 +8,11 @@ For [pull request #635](https://github.com/neralabs/rerail/pull/635), head 24741
 
 1. A walk reads in path order: a folder gives the same audit on every machine. **Changes the intent.**
 
-**We recommend:** yes to the change of intent, which a maintainer rules on first, then approve after reading the [one place marked read first](#3-where-to-look). Closing it instead costs nothing in CI, and audits keep differing by machine.
+**We recommend:** approve after reading the [one place marked read first](#3-where-to-look), once #654 rules that a walk reads in path order. Closing it instead costs nothing in CI, and audits keep differing by machine.
 
 | Size | Lane | Waits on | Not verified |
 |---|---|---|---|
-| 202 lines in 5 files: 39 ship, 163 are tests and text | Fast. A maintainer rules on the intent before it is approved. | Nothing. CI is green at 24741d435. | 3 |
+| 202 lines in 5 files: 39 ship, 163 are tests and text | Fast. #654 settles the intent before it is approved. | #654. Its ruling on intent; CI is green at 664e766aa. | 3 |
 
 ## 2. Intent, and the gap
 
@@ -34,21 +34,20 @@ Found on 12 November 2026 in CI's unit test jobs. #639 made the test pass the ne
 
 1. **Read first**, 5 min: `code-rule-enforcer.ts`: `#enqueueAuditDirectory`, `pushInPathOrder`, `walkOrderKey`. Its `finally` pushes what a failed listing gave. Does every entry main pushed still reach the stack?
 
-**Then skim**, 5 min: One helper comment changes: it held main's words on entry order. No existing assertion changes. Two new tests mock `opendir`. The release note is filed as `fixed-`, not `changed-`.
+**Then skim**, 5 min: One helper comment changes: it held main's words on entry order. No existing assertion changes. Two new tests mock `opendir`. The release note is `changed-`.
 
 ## 4. Risk against verification
 
-<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. Path order, medium risk: users lose nothing holds with a limit, rules scan: nothing new holds with a limit, Windows 11: no new failure holds with a limit. CI at this head holds for every change.">
+<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. Path order, medium risk: users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. CI at this head holds for every change.">
 
-CI is green at 24741d435. Three half marks: no walk past the file budget, a rules scan from before the merge, two test files on Windows 11.
+CI is green at 664e766aa. Two half marks: no walk past the file budget, no whole suite on Windows 11.
 
 <details><summary>Each half mark's limit</summary>
 
 | Change | Check | It holds with this limit |
 |---|---|---|
 | Path order | users lose nothing | At 83e627c0f against main, over 1,741 files on tmpfs and ext4: status, violations and unlisted counts are unchanged, and the walk reads the same files. Under the 20-failure cap the failures are the same set. Over it a plain folder lists what a Git checkout lists. Not rerun since main gained #503. No walk went past its 100,000-file budget. |
-| Path order | rules scan: nothing new | 15 findings over the ceiling at the merge base and the same 15 at ad3b06026, none new. The two new functions count 2, and the edited method counts 4, as at main. The scan ran before the merge of main at 24741d435 and was not rerun there. |
-| Path order | Windows 11: no new failure | Both changed test files ran once at 24741d435 on Windows 11 with Node 24.21.0: 72 passed, 1 skipped, none failed, with nothing outside main's baseline there. The skip is main's own since #503, on the unreadable-folder test. The whole suite ran only in CI, on Windows Server 2025. The Windows 11 engine was built from an older native tree. |
+| Path order | Windows 11: no new failure | The head's code on Windows 11, Node 24.21.0: both changed test files gave 72 passed, 1 skipped, none failed; the 22 files that import the enforcer gave 259 passed, 2 skipped, both main's own; one did not load, lacking pack test data. Nothing is outside main's baseline. The whole suite ran only in CI, on Windows Server 2025. |
 
 </details>
 
@@ -60,7 +59,7 @@ CI is green at 24741d435. Three half marks: no walk past the file budget, a rule
 
 **Does a walk follow the filesystem's entry order, or read in path order?** (ask 1)
 
-**We chose** path order: the failure list and the budgets stop depending on the filesystem. **Would change our mind:** a ruling that an audit may differ by machine, or folders of hundreds of thousands of entries outside Git checkouts.
+**We chose** path order: the failure list and the budgets stop depending on the filesystem. **Would change our mind:** a ruling in #654 that an audit may differ by machine, or folders of hundreds of thousands of entries outside Git checkouts.
 
 | Option | What a user gets | Cost | What it breaks |
 |---|---|---|---|
@@ -97,36 +96,36 @@ Before: At main opendir lists a folder in the filesystem's order, each walkable 
 
 Before: At main opendir gives 2 of a folder's 5 entries, then fails with EIO. Both are already on the stack, both are audited, and the folder is reported. After: With this change the finally sorts and pushes the 2 entries the listing gave before its error. Both are audited in path order, and the folder is reported.
 
-**Evidence.** The new test "audits the entries a folder listed before its listing failed partway, and reports the folder" mocks `opendir` so one folder's listing throws EIO after two of its five entries. It passes with main's walk on Linux, and at 24741d435 on Linux and on Windows 11. With a walk that pushes only after a complete listing it fails: the audit reads one file and leaves out the two listed ones.
+**Evidence.** The new test "audits the entries a folder listed before its listing failed partway, and reports the folder" mocks `opendir` so one folder's listing throws EIO after two of its five entries. It passes with main's walk on Linux, and at 24741d435, and on the same code after the review, on Linux and on Windows 11. With a walk that pushes only after a complete listing it fails: the audit reads one file and leaves out the two listed ones.
 
 </details>
 
 <details><summary><b>7. How it fits</b></summary>
 
-It stands on main alone, which it merged at 24741d435 with #503 and #636. Four changes of ours to follow edit `code-rule-enforcer.ts`. Each takes main after this lands.
+It stands on main alone, which it merged at 24741d435 with #503 and #636. The change that fixes #594 and three more of ours to follow edit `code-rule-enforcer.ts`; this one adds no conflict to the first.
 
-**The merge of main, and the shared files.** The merge of main (53f5b92a1) had one conflict, in the import lines of `code-rule-enforcer-mechanical.test.ts`, where #503 and this change both add names. It keeps both sides' imports. The other three shared files merged clean. Four built changes of ours, none open, edit `code-rule-enforcer.ts`: Git's ignore rules asked once per folder, no rule checker for a worktree a walk only asks about, tool calls still checked while rules open, and one opener for in-process Git reads. Open pull requests #638, #640, #562 and #526 also edit `docs/reference.md`.
+**The merge of main, and the shared files.** The merge of main (53f5b92a1) had one conflict, in the import lines of `code-rule-enforcer-mechanical.test.ts`; it keeps both sides. Trial merges at 664e766aa with the change that fixes #594, as built on main's line and as carried now: each conflicts in the same files as with main alone at 53f5b92a1 (4 and 27), with the same number of conflicts in this change's two shared files. Open pull requests #640, #562 and #526 also edit `docs/reference.md`, as does #638, merged since, which merges clean with this branch.
 
 </details>
 
 <details><summary><b>8. What is not covered</b>: 3 not verified, 5 smaller gaps, 4 limits that stay</summary>
 
-1. **The 100,000-file budget's stop** has no test and no run: [ask 3](#9-what-we-ask-of-you).
-2. **Windows 11.** Only the two changed test files ran. CI ran the whole suite on Windows Server 2025.
+1. **The 100,000-file budget's stop** has no test and no run. One `if` holds both budgets, and the byte budget's stop is pinned.
+2. **Windows 11.** The two changed test files and the 22 that import the enforcer ran, not the whole suite. CI ran the whole suite on Windows Server 2025.
 3. **macOS** never ran.
 
 **Smaller gaps**
 
-- **Since the merge of main.** At 24741d435 CI ran. Our own runs there: both changed test files, 5 times on Linux and once on Windows 11, and the two order tests with the sort line deleted. The comparison over 1,741 files last ran at 83e627c0f, the rules scan at ad3b06026.
+- **Since the merge of main.** CI ran at 24741d435 and at 664e766aa, a maintainer's text commit later. Our runs on the head's code: the changed test files and the 22 that import the enforcer, on Linux and Windows 11, and the rules scan. The 1,741-file comparison last ran at 83e627c0f.
 - **Cost at the head.** Audit time and peak memory were measured at the first commit, a0fd11bde. The third commit moves the same sort and push into a `finally` and adds no work, and the later ones change tests only. It takes a rerun of one probe.
-- **A test of the file budget's stop.** It needs 100,000 files, or the budgets passed in through the enforcer's options, which is a source change. This pull request adds neither: [ask 3](#9-what-we-ask-of-you).
+- **A test of the file budget's stop.** It needs 100,000 files, or the budgets passed in through the enforcer's options, which is a source change. This pull request adds neither: one `if` holds both budgets.
 - **The engine on Windows.** The Windows 11 machine ran the tests with an engine built on 12 November 2026 from an older native tree. The Linux runs used the engine of the merge's own native tree. This change edits no native code.
 - **Main's own test.** Since #639 the test that failed CI passes in either order, so it no longer tests this change. The path-order test does: it compares the unsorted list.
 
 **Limits that stay**
 
-- The five-minute budget still stops a walk after different files on machines of different speed. `docs/reference.md` promises the same failures only for a scan that stays within its budgets.
-- The native index still stops listing at 100,000 files in the filesystem's order, and sorts only what it listed (`native/src/code_rule_dsl/workspace/index.rs` lines 440 to 453). [Ask 2](#9-what-we-ask-of-you) is about it.
+- The five-minute budget still stops a walk after different files on slower machines. `docs/reference.md` promises the same failures only where Rerail walks the folders itself, within the budgets; in a Git checkout the native index still follows the filesystem.
+- The native index still stops listing at 100,000 files in the filesystem's order, and sorts only what it listed (`native/src/code_rule_dsl/workspace/index.rs` lines 440 to 453). #654 holds it.
 - A touched-files audit still takes the paths it is given last first, as at main. A folder among them is walked in path order.
 - A folder's entries wait with a sort key each until the listing ends: about half a kilobyte per entry in a folder of 50,000, where peak memory rose 6% (3 runs each, a 32-core Linux machine).
 
@@ -136,9 +135,7 @@ It stands on main alone, which it merged at 24741d435 with #503 and #636. Four c
 
 Ask 1 rules on answer 1.
 
-1. **Should a walk read in path order, so audits match on every machine, now the test no longer needs it?** We recommend yes: results that differ by filesystem are hard to reproduce.
-2. **Should the native index list in path order before it stops at 100,000 files?** We recommend yes, as its own pull request with a Rust test.
-3. **Should a test pin the 100,000-file stop? It needs the budgets as enforcer options.** We recommend no: one `if` holds both budgets. If yes, its own pull request.
+1. **Rule in #654: should a walk read in path order, so audits match on every machine?** We recommend yes: results that differ by filesystem are hard to reproduce.
 
 <details><summary><b>10. Evidence</b></summary>
 
@@ -146,21 +143,20 @@ The description on GitHub is the record: "How you tested it" for the runs and th
 
 | Where | What ran | Result |
 |---|---|---|
-| CI on GitHub | The pull request's checks at 24741d435, read at 17:54 UTC on 13 November 2026: CI run 43473519987, second attempt | 29 checks: 28 passed, 1 skipped (the Rust engine), none failed. `Unit tests (1/2)`, `Unit tests (2/2)`, `Unit tests (Windows, 1/2)`, `Unit tests (Windows, 2/2)`, `Dependency audit` and `CI result` passed. In the first attempt `Unit tests (2/2)` failed on one test of main in `test/engine/code-rule/code-rule-bridge.test.ts`, and `Unit tests (Windows, 2/2)` on one in `test/hosts/claude/claude-status.test.ts`. This pull request edits neither file. We reran the failed jobs once and both passed. |
-| Linux, 32 cores | Both changed test files at 24741d435, 5 runs one after another, with the engine built from the merge's native tree | 73 of 73 passed in each run. |
-| Windows 11, Node 24.21.0 | Both changed test files at 24741d435, 1 run, compared with main's baseline on that machine | 72 passed, 1 skipped, none failed. Nothing is outside main's baseline. The skip is main's own since #503: "audits a Git checkout holding unreadable untracked directories as the walk does" does not run on Windows. |
-| Linux, 32 cores | At 24741d435 with the sort line deleted from `pushInPathOrder`: the path-order test and the byte-budget test, on tmpfs and on ext4 | The path-order test failed through the directory walk and passed through the Git checkout's index, on both. The byte-budget test failed on both: the walk audits the last 16 of 17 files, where the test expects the first 16. With the line restored all 4 runs passed. |
+| CI on GitHub | The checks at 664e766aa, read at 19:41 UTC on 13 November 2026, and at 24741d435 (CI run 43473519987, second attempt) | At 664e766aa: 29 passed, 9 skipped (the Rust engine and the automated reviewer's jobs), none failed. At 24741d435: 28 passed, none failed; in its first attempt `Unit tests (2/2)` failed on one test of main in `code-rule-bridge.test.ts`, and `Unit tests (Windows, 2/2)` on one in `claude-status.test.ts`, files this pull request does not edit. One rerun passed both. |
+| Linux, 32 and 16 cores | Both changed test files at 24741d435, 5 runs, with the engine built from the merge's native tree; after the review, 1 run on the 16-core machine and 1 each on tmpfs and ext4 on the 32-core one | 73 of 73 passed in each run, at both commits. After the review the 22 test files that import the enforcer passed 261 tests on the 32-core machine, with nothing new against its base run; one did not load, for lack of its pack test data. |
+| Windows 11, Node 24.21.0 | Both changed test files on the head's code, 1 run, and the 22 test files that import the enforcer, 1 run, each compared with main's baseline on that machine | Changed files: 72 passed, 1 skipped, none failed. The 22 files: 259 passed, 2 skipped, both main's own; one did not load, for lack of its pack test data. Nothing is outside main's baseline. The changed files' skip is main's own since #503: "audits a Git checkout holding unreadable untracked directories as the walk does" does not run on Windows. |
+| Linux, 32 cores | At 24741d435, and again on the same code, with the sort line deleted from `pushInPathOrder`: the path-order test and the byte-budget test, on tmpfs and on ext4 | The path-order test failed through the directory walk and passed through the Git checkout's index, on both. The byte-budget test failed on both: the walk audits the last 16 of 17 files, where the test expects the first 16. With the line in place every run passed. |
 | Linux, 32 and 16 cores | The path-order test at ad3b06026 with main's walk (the source file of 6135908eb), on tmpfs and on ext4. Main's own test at 6135908eb, 1 run on each | With main's walk the test failed through the directory walk on both filesystems, on both machines: the 20 failures came in another order and with other members. It passed through the Git checkout's index. Main's own test passed on both: its helper sorts. |
 | Linux, 32 cores | Before #639: main's test at e5bdf8b2, eight at a time, on tmpfs, an ext4 root and ten new ext4 filesystems, with and without load | Failed 200 of 200 on tmpfs and 24 of 24 on each of the 7 new filesystems that list `data` first. Failed 0 wherever `web` is listed first. Load changed neither result. With this change, at the first commit, the whole file ran 1,240 times on the same filesystems: 0 failed. |
 | Linux, 32 cores | Three corpora of up to 1,741 files, each as a plain folder and as a Git checkout, audited at main, at 83e627c0f and at main again, on tmpfs and on ext4 | Status, violations and unlisted counts are unchanged. The walk reads the same files as main, in path order only at 83e627c0f. Under the 20-failure cap the failures are the same set. Over it a plain folder lists the same failures, in the same order, as the Git checkout. Main run twice gave the same results. |
-| Linux, 32 cores | The rules scan as the automated reviewer runs it, at ad3b06026 against its merge base, 6135908eb | 15 findings over the ceiling at the base and the same 15 at ad3b06026, all in `code-rule-enforcer.ts`, none new. |
+| Linux, 32 cores | The rules scan as the automated reviewer runs it, on the head's code against its merge base, 53f5b92a1 | 15 findings over the ceiling at the base and the same 15 on the head's code, all in `code-rule-enforcer.ts`, none new. |
 
 **What this report adds to the description**
 
-- **The release note is filed as a fix, and misstates main's order.** `.changelog/fixed-repository-audit-path-order.md` opens with `fixed-`, the type for a bug fixed. Main states the old order as intended, and `changed-` is the type for something that works differently now. The note also says the audit "took them in the order the filesystem listed them"; main's walk takes each folder's entries last listed first. At 24741d435 both stand. One text commit would rename the file and correct the sentence.
 - **What the sort costs one folder of 100,000 entries.** Our cold check timed the two new functions against main's direct push, 9 rounds taking turns, on a 16-core Linux machine. Listing a folder of 100,000 empty files took a median 152 ms at main and 325 ms here on tmpfs, 167 ms and 329 ms on ext4: under 2% of the time the walk then spends reading those files.
 - **The merge of main at 24741d435.** Main at 53f5b92a1 holds #503 and #636. One file conflicted, `code-rule-enforcer-mechanical.test.ts`, in its import lines: the merge keeps #503's `once` and this change's `opendirSync`, `Dir`, `Dirent`, `link` and `opendir`. The diff against main is unchanged in size: 5 files, 191 insertions and 11 deletions, of which 39 lines ship.
 
-**Sources.** The pull request, its diff and its CI on GitHub, read on 13 November 2026. Rerail at main (53f5b92a1) for each quoted intent, and #639's diff for what it changed. The CI logs of 12 November 2026 for how the order was found. Our run records at 24741d435 and at earlier commits, and our independent checks.
+**Sources.** The pull request, its diff and its CI on GitHub, read on 13 November 2026. Rerail at main (53f5b92a1) for each quoted intent, and #639's diff for what it changed. The CI logs of 12 November 2026 for how the order was found. Our run records at 24741d435, on the same code after the review, and at earlier commits, and our independent checks.
 
 </details>
