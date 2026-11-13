@@ -55,7 +55,34 @@ function unsupportedPredicate(value: Json, path: string, language: CodeRuleAstLa
   return undefined;
 }
 
-/** Whether a query's or define's language, or what its rules read, is not supported yet. */
+/** The transform kinds that read a capture's value with `value: true`; `toPrecision` always reads one. */
+const VALUE_SOURCE_KINDS: ReadonlySet<string> = new Set(["replace", "substring", "convert"]);
+
+const entriesOf = (value: Json): [string, Json][] => (isObject(value) ? Object.entries(value) : []);
+
+const readsValue = (body: Json): boolean => isObject(body) && body.value === true;
+
+/** Where the transform step `step` at `path` reads a value, and the key that does: `toPrecision` always, another kind with `value: true`. */
+function valueRead(step: Json, path: string): { at: string; key: string } | undefined {
+  const [only, ...others] = entriesOf(step);
+  if (only === undefined || others.length > 0) return undefined;
+  const [kind, body] = only;
+  if (kind === "toPrecision") return { at: `${path}/toPrecision`, key: "toPrecision" };
+  return VALUE_SOURCE_KINDS.has(kind) && readsValue(body) ? { at: `${path}/${kind}/value`, key: "value" } : undefined;
+}
+
+/** The first step of a query's `transform` that reads a value, if `language` has the value capability `not-supported-yet`. */
+function unsupportedTransform(transform: Json, path: string, language: CodeRuleAstLanguage): CodeRuleLanguageNotSupported | undefined {
+  if (codeRuleLanguageCapability(language, "value") !== "not-supported-yet") return undefined;
+  // The engine compiles the variables in name order.
+  for (const [name, step] of entriesOf(transform).sort(([a], [b]) => (a < b ? -1 : 1))) {
+    const read = valueRead(step, `${path}/${name}`);
+    if (read !== undefined) return { code: LANGUAGE_NOT_SUPPORTED, reason: `${read.at}: \`${read.key}\` is not supported yet for ${language} policies` };
+  }
+  return undefined;
+}
+
+/** Whether a query's or define's language, what its rules read, or what its `transform` reads is not supported yet. */
 function unsupportedIn(holder: Record<string, Json>, path: string, rules: readonly string[]): CodeRuleLanguageNotSupported | undefined {
   const language = holder.language;
   if (typeof language !== "string") return undefined;
@@ -65,7 +92,7 @@ function unsupportedIn(holder: Record<string, Json>, path: string, rules: readon
     const found = holder[key] === undefined ? undefined : unsupportedPredicate(holder[key], `${path}/${key}`, language);
     if (found !== undefined) return found;
   }
-  return undefined;
+  return unsupportedTransform(holder.transform, `${path}/transform`, language);
 }
 
 /**

@@ -1,6 +1,7 @@
 //! The adapter test kit: every family's adapter against known-good literals (`kit`), and the
 //! registry's capabilities against the concerns the adapters read. A new family adds one `#[test]`
-//! function calling `kit::<Family>(&Expect { .. })`.
+//! function calling `kit::<Family>(&Expect { .. })`; one that reads no semantic concern yet calls
+//! `identity::<Family>` and the syntax kit instead, as `java` does.
 
 use super::value::kit as value_kit;
 use super::{
@@ -127,8 +128,7 @@ impl Drop for Package {
 }
 
 /// Runs the generic suite over family `A` against `expect`: its identity (`identity`) and each
-/// concern's own kit. A new family adds one `#[test]` function calling
-/// `kit::<Family>(&Expect { .. })`.
+/// concern's own kit.
 fn kit<A: Adapter>(expect: &Expect) {
     identity::<A>(&expect.identity());
     value_kit::check::<A>(&expect.value, |s| semantic(s, expect.dialect));

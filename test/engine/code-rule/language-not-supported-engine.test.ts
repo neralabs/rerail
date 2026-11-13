@@ -61,4 +61,33 @@ describe("the engine's language-not-supported refusal, through the real native b
     expect(storableCodeRule(semantic)).toEqual({ rule: semantic, inactive: { code: LANGUAGE_NOT_SUPPORTED, reason } });
     expect(codeRuleLanguageNotSupported(semantic)).toEqual({ code: LANGUAGE_NOT_SUPPORTED, reason });
   });
+
+  // A transform step reading a value needs the value capability, as `value` and `compare` do; one reading text runs.
+  it("stores a rule whose transform reads a value inactive where values are not read yet, and the host predicts it", ({ skip }) => {
+    const language = CODE_RULE_AST_LANGUAGES.find(candidate => codeRuleLanguageCapability(candidate, "value") === "not-supported-yet");
+    if (language === undefined) return skip("every supported language reads values");
+    const rule = (transform: Record<string, unknown>) => codeRuleSchema.parse({
+      format: "rerail.policy/v1", id: `transform:${language}`, revision: 1, mode: "steer",
+      scope: { include: ["**/*"], exclude: [] },
+      clauses: [{
+        id: "any",
+        violation: { code: "ANY", anchor: "witness.span", message: "$T" },
+        forbid: { ast: { language, rule: { pattern: "f($A)" }, transform } },
+      }],
+    });
+    const text = rule({ T: { substring: { source: "$A", startChar: 1 } } });
+    expect(() => assertCodeRuleCompiles(text)).not.toThrow();
+    expect(codeRuleLanguageNotSupported(text)).toBeUndefined();
+
+    const at = "/clauses/0/forbid/ast/transform";
+    for (const [transform, reason] of [
+      [{ T: { toPrecision: { source: "$A", digits: 3, value: true } } }, `${at}/T/toPrecision: \`toPrecision\` is not supported yet for ${language} policies`],
+      [{ U: { convert: { source: "$A", value: true, toCase: "upperCase" } }, T: { substring: { source: "$A", value: true } } }, `${at}/T/substring/value: \`value\` is not supported yet for ${language} policies`],
+    ] as const) {
+      const valued = rule(transform);
+      expect(() => assertCodeRuleCompiles(valued)).toThrow(`${LANGUAGE_NOT_SUPPORTED}: ${reason}`);
+      expect(storableCodeRule(valued)).toEqual({ rule: valued, inactive: { code: LANGUAGE_NOT_SUPPORTED, reason } });
+      expect(codeRuleLanguageNotSupported(valued)).toEqual({ code: LANGUAGE_NOT_SUPPORTED, reason });
+    }
+  });
 });

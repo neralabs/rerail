@@ -130,9 +130,9 @@ its structural terms run; no semantic capability is read yet.
 - **Runs:** `kind`, `pattern`, `regex`, the relations, `field`, `nthChild`, `count`, `layout`, `matches`, and Rerail's
   own `rerail-ignore` comments (`line_comment`, `block_comment`).
 - **Kept inactive:** a rule naming `resolves`, `binds`, `value`, `compare` (in every text mode, `tokens` included:
-  it is the value capability's), `arguments`, `calls` or `formatArgs`. The registry marks each capability
-  `not-supported-yet`, so the rule compiles to `language-not-supported` and waits
-  ([Status lifecycle](#status-lifecycle)).
+  it is the value capability's), `arguments`, `calls` or `formatArgs`, or whose `transform` reads a value
+  (`toPrecision`, a `value` source). The registry marks each capability `not-supported-yet`, so the rule compiles to
+  `language-not-supported` and waits ([Status lifecycle](#status-lifecycle)).
 - **Refused:** `languageOptions`, `parse` (Java hosts no literal grammar) and every `suppress` kind (no linter's
   comments are read).
 - **Scope and value** are implemented on `Java` itself, reading nothing, because `Refused` stands in only for
@@ -305,14 +305,14 @@ changing a value's meaning, needs `rerail.language/v2`.
 
 ## Status lifecycle
 
-A language moves from planned, through capabilities one at a time, to supported.
+A language moves from planned to supported; its capabilities become supported one at a time, before or after it does.
 
 1. **Planned.** Dialects have suffixes but no grammar; every capability is `not-supported-yet`. Rules may name the
    language, so its packs can land first, but the engine reads none of it.
 2. **Capabilities, one at a time.** A capability becomes `supported` only when its oracle suite passes: its
    `fixtures/` oracles and the conformance scores of code rules that read it.
 3. **Supported.** The entry flips once its dialects have a grammar, parser and tape tag and its adapter exists. The
-   build fails until each does.
+   build fails until each does. A capability still `not-supported-yet` keeps waiting (Java ships with all five).
 
 <details>
 <summary>What happens to a rule the engine cannot read yet</summary>

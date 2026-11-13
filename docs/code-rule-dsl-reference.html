@@ -439,7 +439,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <p>Languages come from the registry (<code>languages/*.json</code>, see <code>docs/language-packs.md</code>):</p>
 <ul>
 <li><b>Planned</b> language: stored, but refused at compile time with <code>language-not-supported</code>; the catalog keeps the rule inactive until the engine reads it.</li>
-<li><b><code>not-supported-yet</code></b> capability: its predicates are refused likewise.</li>
+<li><b><code>not-supported-yet</code></b> capability: its predicates are refused likewise, and so is a <a href="#transform"><code>transform</code></a> step reading a value (<code>toPrecision</code>, a <code>value</code> source) where values are not read yet.</li>
 <li><b><code>refused</code></b> capability: its predicates are invalid.</li>
 </ul>
 
@@ -516,7 +516,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 </tbody></table></div>
 <p>TypeScript rules also run on JavaScript with the JavaScript grammar; kinds unique to another dialect are <code>Never</code> there.</p>
 
-<p><b>Java.</b> Structural terms only, over tree-sitter-java 0.23.5: its files parse and <code>kind</code>, <code>pattern</code>, the relations, <code>count</code> and <code>layout</code> run. Every semantic capability is <i>not yet</i> supported: a rule naming <code>resolves</code>, <code>binds</code>, <code>value</code>, <code>compare</code> (in every text mode), <code>arguments</code>, <code>calls</code> or <code>formatArgs</code> is stored but refused with <code>language-not-supported</code>, and stays inactive until the engine reads it. <code>languageOptions</code>, <code>parse</code> and <code>suppress</code> are refused. The grammar does not parse a type-use annotation on an array or varargs type (<code>@Nullable Object @Nullable ... args</code>), nor Java 25&#39;s flexible constructor bodies and module imports: such a file is read around the syntax error.</p>
+<p><b>Java.</b> Structural terms only, over tree-sitter-java 0.23.5: its files parse and <code>kind</code>, <code>pattern</code>, <code>regex</code>, the relations, <code>field</code>, <code>nthChild</code>, <code>count</code>, <code>layout</code> and <code>matches</code> run. Every semantic capability is <i>not yet</i> supported: a rule naming <code>resolves</code>, <code>binds</code>, <code>value</code>, <code>compare</code> (in every text mode), <code>arguments</code>, <code>calls</code> or <code>formatArgs</code>, or whose <code>transform</code> reads a value (<code>toPrecision</code>, a <code>value</code> source), is stored but refused with <code>language-not-supported</code>, and stays inactive until the engine reads it. <code>languageOptions</code>, <code>parse</code> and <code>suppress</code> are refused. The grammar does not parse a type-use annotation on an array or varargs type (<code>@Nullable Object @Nullable ... args</code>), nor Java 25&#39;s flexible constructor bodies and module imports: such a file is read around the syntax error.</p>
 
 <p><b>PHP.</b> PHP-only files; <code>.blade.php</code> templates use Blade.</p>
 <ul>
@@ -714,6 +714,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <li><b>TypeScript, TSX, JavaScript</b> add <code>html_comment</code> (<code>&lt;!--</code> and <code>--&gt;</code> lines).</li>
 <li><b>Blade, Vue</b>: the template's comments; under <a href="#embedded"><code>ast.embedded</code></a>, the program's (<a href="#blade">Blade</a>, <a href="#vue">Vue</a>).</li>
 <li><b>Rust</b>: <code>line_comment</code> and <code>block_comment</code>; a doc comment has an <code>outer_doc_comment_marker</code> or <code>inner_doc_comment_marker</code> child and a <code>doc_comment</code> text child.</li>
+<li><b>Java</b>: <code>line_comment</code> and <code>block_comment</code>; a Javadoc comment is a <code>block_comment</code>, told apart by its opening (below).</li>
 </ul>
 <p>Elsewhere, tell line, block and doc comments apart by their opening, with <code>regex</code>:</p>
 <div class="table-wrap"><table>
@@ -5350,7 +5351,7 @@ ModuleType = "unknown" | "relative" | "absolute" | "node" | "npm" | "http" | "da
 <li>A witness regex group's text is known only once the rule matched.</li>
 <li><code>toPrecision</code> reads a numeric literal as written (<code>0x</code>, <code>0o</code>, <code>0b</code>, legacy octal and <code>_</code> separators included) or a <code>value</code>'s text. <code>digits</code> is a number, or the text of another capture or variable read as an integer.</li>
 <li>ESLint's <code>no-loss-of-precision</code> compares a literal with <code>value.toPrecision(n)</code> for its <code>n</code> significant digits: <code>9223372036854775808</code> is exact at 19 digits though <code>String</code> gives <code>9223372036854776000</code>.</li>
-<li><code>toPrecision</code> gives the empty text where the source is no number (a BigInt, a name) or the digits no integer from 1 to 100, and <code>String(x)</code> for an infinite or NaN number. Other families' numbers are not laid out as ECMAScript's, so compiling it there is refused.</li>
+<li><code>toPrecision</code> gives the empty text where the source is no number (a BigInt, a name) or the digits no integer from 1 to 100, and <code>String(x)</code> for an infinite or NaN number. Other families' numbers are not laid out as ECMAScript's, so compiling it there is refused; in a language whose values are not read yet (Java), it is <code>language-not-supported</code> instead.</li>
 <li><code>line</code> uses the linter's terminators. <code>count</code> skips comments and Python line continuations.</li>
 <li><code>default: ""</code> with <code>replace: "^$"</code> supplies a fallback. Without <code>default</code>, an unbound source gives the empty text and runs no operation, as upstream.</li>
 <li><code>value: true</code> conversions: JavaScript <code>String(v)</code> (<code>'\x61'</code> is <code>a</code>, <code>1e2</code> is <code>100</code>); Python <code>str(v)</code> (<code>1e2</code> is <code>100.0</code>).</li>
