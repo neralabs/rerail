@@ -96,7 +96,11 @@ The cost store gets about 6,000 samples a run: training is due again every 10 mi
   `cut`, the frames read and written, the derived relations, `maintain::rewrite`), not by each; `bridge::wanted`
   no longer scans every rule per relation read, and skips a program declaring no bridged relation. An edit:
   114.6–115.0 G, 7.7–8.0 s CPU (was 117–124 G). The prepared programs' decode (0.26 s) reads four programs, all used
-  in an edit: left. (see git log)
+  in an edit: left. (65accabdb)
+- Item 8, second part: `text_kind_demand`'s `twinned` scanned every rule per text read; the pairs it asks about are
+  found in one pass. An edit: 113.5 G. The supports rewrite (`maintained_cross`, 71 ms) already runs once, handed on
+  (`maintained_early`). `kept_inputs` (0.13 s) decodes the kept inputs' old rows to patch them with the changed
+  files' rows: the read of unchanged rows, left for the design of the local part's delta. (see git log)
 
 ## To do, in order
 
@@ -112,3 +116,7 @@ Items 1–3 (texts read once, caches refused by construction, my statics by flow
    `text_kind_demand`, `kept_inputs`' decode, the engine driver's `slice_contains`.
 9. **The alternating edits** after a rebuild (above): find what flips between runs.
 10. **Memory**: an edit's peak is 2.2 GB, against a budget of 1 GB.
+11. **A cold run's frames write waits on the writer** (found 2026-11-12, run n48s169, load 26): the cross part's
+    frames are one job of 289.6 MB, above the writer queue's cap (192 MB) alone, so it waits while the memo's
+    entries (158.6 MB) are still written; `RERAIL_SQL_STRICT` ends the run at that wait (`hazards::wait_in_wave`).
+    Cold runs pass or abort by the writer's speed. With item 10: a job that size should not be held whole.
