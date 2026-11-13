@@ -3721,10 +3721,15 @@ impl InRel {
                 Csr { chain: Some(chain), lead, ..empty(false, false) }
             } else {
                 charge(Unit::IndexEntry, self.len() as u64);
-                if self.view.is_none() {
+                // `RERAIL_KEY_PRINTS` (measurement aids): `off` probes the sorted order by its rows, `hash` builds the hash
+                // table of before decision 0112's derived-input order.
+                static MODE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+                let mode = MODE.get_or_init(|| std::env::var("RERAIL_KEY_PRINTS").ok()).as_deref();
+                if self.view.is_none() && mode != Some("hash") {
                     // A derived relation's rows are its own: a sorted order on the key columns (dead rows are in
-                    // it, as in a kept chain; readers skip them).
-                    let mut order = Index::new(cols.to_vec());
+                    // it, as in a kept chain; readers skip them). Its probes give whole keys, so it keeps a print a
+                    // row and a probe reads prints, not rows (`runs::print_span`).
+                    let mut order = if mode != Some("off") { Index::printed(cols.to_vec()) } else { Index::new(cols.to_vec()) };
                     order.add_run(&self.rows, self.k, 0, self.n, 0);
                     Csr { order: Some(order), ..empty(false, false) }
                 } else {

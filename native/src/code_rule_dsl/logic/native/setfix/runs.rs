@@ -51,6 +51,87 @@ pub(super) struct Run {
     ids: Vec<u32>,
     fences: Vec<i64>,
     tags: Vec<u16>,
+    /// In an order probed by whole keys (`Index::printed`): each id's key print (`print`), beside it. A whole key's
+    /// ids are found among the prints of its window, a word of prints at a time, and only the first and last match
+    /// read (`print_span`). Empty otherwise.
+    prints: Vec<u8>,
+}
+
+/// A key's print: 8 bits of a hash of its values in `cols` (another multiplier than `tag`'s, so a tagged run's span
+/// of one tag still spreads over the prints).
+#[inline]
+fn print_vals(vals: impl Iterator<Item = i64>) -> u8 {
+    let h = vals.fold(0x2545_F491_4F6C_DD1Du64, |h, v| (h ^ v as u64).wrapping_mul(0xD6E8_FEB8_6659_FD93));
+    (h >> 56) as u8
+}
+
+/// A row's print in an order on `cols`.
+#[inline]
+fn print_of(row: &[i64], cols: &[usize]) -> u8 {
+    print_vals(cols.iter().map(|&c| row[c]))
+}
+
+/// A whole key's print (its values in the order's column order), as its rows' are.
+#[inline]
+fn print_of_key(key: &[i64]) -> u8 {
+    print_vals(key.iter().copied())
+}
+
+/// Each byte of `w` equal to `b`, as its top bit (the lowest set bit marks the first exactly).
+#[inline]
+fn bytes_eq(w: u64, b: u8) -> u64 {
+    let x = w ^ (b as u64 * 0x0101_0101_0101_0101);
+    x.wrapping_sub(0x0101_0101_0101_0101) & !x & 0x8080_8080_8080_8080
+}
+
+/// The word of `prints` at `at` (bytes past `to` read as `pad`): eight prints a word.
+#[inline]
+fn word(prints: &[u8], at: usize, to: usize, pad: u8) -> u64 {
+    if at + 8 <= to {
+        return u64::from_le_bytes(prints[at..at + 8].try_into().expect("eight prints"));
+    }
+    let mut b = [pad; 8];
+    b[..to - at].copy_from_slice(&prints[at..to]);
+    u64::from_le_bytes(b)
+}
+
+/// The first position in `from..to` whose print is `p` (`eq`) or is not (`!eq`); `to` if none.
+#[inline]
+fn first_print(prints: &[u8], from: usize, to: usize, p: u8, eq: bool) -> usize {
+    let mut at = from;
+    while at < to {
+        let w = word(prints, at, to, if eq { !p } else { p });
+        let m = if eq { bytes_eq(w, p) } else { !bytes_eq(w, p) & 0x8080_8080_8080_8080 };
+        if m != 0 {
+            return (at + (m.trailing_zeros() / 8) as usize).min(to);
+        }
+        at += 8;
+    }
+    to
+}
+
+/// The span of positions `lo..hi` whose ids hold the whole key printed `p` (`is_key` reads a position's row): the
+/// first print `p` that is the key starts it, and it ends at the last such before the prints stop being `p`. A
+/// key's ids are next to each other in the order, so only prints equal by chance (one in 256) are read besides
+/// the span's ends.
+#[inline]
+fn print_span(prints: &[u8], lo: usize, hi: usize, p: u8, is_key: impl Fn(usize) -> bool) -> (usize, usize) {
+    let mut at = lo;
+    let s = loop {
+        let q = first_print(prints, at, hi, p, true);
+        if q >= hi {
+            return (hi, hi);
+        }
+        if is_key(q) {
+            break q;
+        }
+        at = q + 1;
+    };
+    let mut e = first_print(prints, s + 1, hi, p, false);
+    while e > s + 1 && !is_key(e - 1) {
+        e -= 1;
+    }
+    (s, e)
 }
 
 /// 16 bits of a value's hash (Fibonacci hashing: the product's high bits).
@@ -111,11 +192,13 @@ pub(super) struct Index {
     runs: Vec<(Arc<Run>, u32)>,
     /// Runs read past the first by probes since the last merge.
     rent: AtomicU64,
+    /// Probed by whole keys: its runs keep their ids' key prints (`Run::prints`).
+    printed: bool,
 }
 
 impl Clone for Index {
     fn clone(&self) -> Index {
-        Index { cols: self.cols.clone(), runs: self.runs.clone(), rent: AtomicU64::new(0) }
+        Index { cols: self.cols.clone(), runs: self.runs.clone(), rent: AtomicU64::new(0), printed: self.printed }
     }
 }
 
@@ -130,13 +213,19 @@ impl Run {
     fn fenced<D: RowData + ?Sized>(data: &D, k: usize, cols: &[usize], ids: Vec<u32>) -> Run {
         if tagged(cols, k) {
             let tags = ids.iter().map(|&id| tag(data.row(id, k)[cols[0]])).collect();
-            return Run { ids, fences: Vec::new(), tags };
+            return Run { ids, fences: Vec::new(), tags, prints: Vec::new() };
         }
         let fences = match cols.first() {
             Some(&lead) => ids.iter().step_by(FENCE).map(|&id| data.row(id, k)[lead]).collect(),
             None => Vec::new(),
         };
-        Run { ids, fences, tags: Vec::new() }
+        Run { ids, fences, tags: Vec::new(), prints: Vec::new() }
+    }
+
+    /// This run with its ids' key prints (an order probed by whole keys): one row read an id.
+    fn printed<D: RowData + ?Sized>(mut self, data: &D, k: usize, cols: &[usize]) -> Run {
+        self.prints = self.ids.iter().map(|&id| print_of(data.row(id, k), cols)).collect();
+        self
     }
 
     /// The ids of `ids` sorted by `cols` (then id), with their tag and first two values held beside them while
@@ -145,7 +234,7 @@ impl Run {
         let tagged = tagged(cols, k);
         let tags = sort_keyed(&mut ids, tagged, cols.len(), |id, i| data.row(id, k)[cols[i]], |a, b| cmp_rows(data, k, cols, a, b));
         if tagged {
-            return Run { ids, fences: Vec::new(), tags };
+            return Run { ids, fences: Vec::new(), tags, prints: Vec::new() };
         }
         Run::fenced(data, k, cols, ids)
     }
@@ -159,17 +248,21 @@ impl Run {
             let r = data.row(id, k);
             cols.iter().zip(key).map(|(&c, v)| r[c].cmp(v)).find(|o| o.is_ne()).unwrap_or(Ordering::Equal)
         };
-        let window = if !self.tags.is_empty() {
+        let (lo, hi) = if !self.tags.is_empty() {
             // The leading value's tag among the tags: only its ids are read.
-            let (s, e) = tag_span(&self.tags, tag(lead), 0, true);
-            &self.ids[s..e]
+            tag_span(&self.tags, tag(lead), 0, true)
         } else {
             // The rows of `lead` start in the block before the first fence at or past it, and end before the first
             // fence past it.
             let a = self.fences.partition_point(|&f| f < lead);
             let b = a + self.fences[a..].partition_point(|&f| f == lead);
-            &self.ids[a.saturating_sub(1) * FENCE..(b * FENCE).min(self.ids.len())]
+            (a.saturating_sub(1) * FENCE, (b * FENCE).min(self.ids.len()))
         };
+        if !self.prints.is_empty() && key.len() == cols.len() {
+            let (s, e) = print_span(&self.prints, lo, hi, print_of_key(key), |i| cmp(self.ids[i]).is_eq());
+            return &self.ids[s..e];
+        }
+        let window = &self.ids[lo..hi];
         let s = window.partition_point(|&id| cmp(id) == Ordering::Less);
         let e = s + window[s..].partition_point(|&id| cmp(id) == Ordering::Equal);
         &window[s..e]
@@ -195,6 +288,12 @@ impl Run {
             let b = a + gallop(&self.fences[a..], 0, |&f| f == lead);
             (a.saturating_sub(1) * FENCE, (b * FENCE).min(n))
         };
+        if !self.prints.is_empty() && key.len() == cols.len() {
+            let (s, e) = print_span(&self.prints, lo, hi, print_of_key(key), |i| cmp(self.ids[i]).is_eq());
+            // Past the key's ids, or where it would be: the next key of a sorted batch is after it.
+            *hint = if s < e { e } else { lo } as u32;
+            return &self.ids[s..e];
+        }
         let window = &self.ids[lo..hi];
         let s = window.partition_point(|&id| cmp(id) == Ordering::Less);
         let e = s + window[s..].partition_point(|&id| cmp(id) == Ordering::Equal);
@@ -256,6 +355,8 @@ impl Run {
         let mut ids = Vec::with_capacity(a.ids.len() + b.ids.len());
         let tagged = !a.tags.is_empty() && !b.tags.is_empty();
         let mut tags = Vec::with_capacity(if tagged { ids.capacity() } else { 0 });
+        let printed = !a.prints.is_empty() && !b.prints.is_empty();
+        let mut prints = Vec::with_capacity(if printed { ids.capacity() } else { 0 });
         let (mut i, mut j) = (0, 0);
         while i < a.ids.len() && j < b.ids.len() {
             // Tagged, the tags decide unless equal: rows are read only for ids of one tag.
@@ -263,21 +364,27 @@ impl Run {
             if first {
                 ids.push(a.ids[i]);
                 if tagged { tags.push(a.tags[i]); }
+                if printed { prints.push(a.prints[i]); }
                 i += 1;
             } else {
                 ids.push(b.ids[j]);
                 if tagged { tags.push(b.tags[j]); }
+                if printed { prints.push(b.prints[j]); }
                 j += 1;
             }
         }
         ids.extend_from_slice(&a.ids[i..]);
         ids.extend_from_slice(&b.ids[j..]);
+        if printed {
+            prints.extend_from_slice(&a.prints[i..]);
+            prints.extend_from_slice(&b.prints[j..]);
+        }
         if tagged {
             tags.extend_from_slice(&a.tags[i..]);
             tags.extend_from_slice(&b.tags[j..]);
-            return Run { ids, fences: Vec::new(), tags };
+            return Run { ids, fences: Vec::new(), tags, prints };
         }
-        Run::fenced(data, k, cols, ids)
+        Run { prints, ..Run::fenced(data, k, cols, ids) }
     }
 
     /// Calls `f` on each group of ids equal on the first `m` columns of `cols`, in order.
@@ -392,7 +499,25 @@ pub(super) fn sort_keyed(ids: &mut [u32], tagged: bool, ncols: usize, val: impl 
 
 impl Index {
     pub(super) fn new(cols: Vec<usize>) -> Index {
-        Index { cols, runs: Vec::new(), rent: AtomicU64::new(0) }
+        Index { cols, runs: Vec::new(), rent: AtomicU64::new(0), printed: false }
+    }
+
+    /// An order its probes give whole keys to (a derived input's own index, decision 0112): a byte a row more, each
+    /// id's key print, so a probe reads the prints of its window, not its rows (`print_span`).
+    pub(super) fn printed(cols: Vec<usize>) -> Index {
+        Index { printed: true, ..Index::new(cols) }
+    }
+
+    /// A run of the rows `lo..hi` in this order, printed if the order is: the prints made in row order (the rows
+    /// read in turn), then placed as the ids sort.
+    fn run_of<D: RowData + ?Sized>(&self, data: &D, k: usize, lo: u32, hi: u32) -> Run {
+        if !self.printed {
+            return Run::of(data, k, &self.cols, (lo..hi).collect());
+        }
+        let by_row: Vec<u8> = (lo..hi).map(|id| print_of(data.row(id, k), &self.cols)).collect();
+        let mut run = Run::of(data, k, &self.cols, (lo..hi).collect());
+        run.prints = run.ids.iter().map(|&id| by_row[(id - lo) as usize]).collect();
+        run
     }
 
     /// Whether the set `keys` is a prefix of this order's columns (in any order).
@@ -403,7 +528,8 @@ impl Index {
     /// The rows `lo..hi` as a new run of wave `wave` (dead rows are indexed as any; readers skip them).
     pub(super) fn add_run<D: RowData + ?Sized>(&mut self, data: &D, k: usize, lo: usize, hi: usize, wave: u32) {
         if lo < hi {
-            self.runs.push((Arc::new(Run::of(data, k, &self.cols, (lo as u32..hi as u32).collect())), wave));
+            let run = self.run_of(data, k, lo as u32, hi as u32);
+            self.runs.push((Arc::new(run), wave));
         }
     }
 
@@ -436,7 +562,7 @@ impl Index {
             let b = parts.pop().expect("a run");
             parts.push(Arc::new(Run::merge(data, k, &self.cols, &a, &b)));
         }
-        Arc::try_unwrap(parts.pop().expect("a run")).unwrap_or_else(|r| Run { ids: r.ids.clone(), fences: r.fences.clone(), tags: r.tags.clone() })
+        Arc::try_unwrap(parts.pop().expect("a run")).unwrap_or_else(|r| Run { ids: r.ids.clone(), fences: r.fences.clone(), tags: r.tags.clone(), prints: r.prints.clone() })
     }
 
     /// At most `max` runs, the two smallest merged at a time (a relation's frozen order: its probes cannot merge it
@@ -459,7 +585,8 @@ impl Index {
         }
         self.cols = cols;
         for (r, _) in &mut self.runs {
-            *r = Arc::new(Run::of(data, k, &self.cols, r.ids.clone()));
+            let run = Run::of(data, k, &self.cols, r.ids.clone());
+            *r = Arc::new(if self.printed { run.printed(data, k, &self.cols) } else { run });
         }
     }
 
@@ -557,10 +684,10 @@ impl Index {
         self.runs.iter().all(|(r, _)| other.runs.iter().any(|(o, _)| Arc::ptr_eq(r, o)))
     }
 
-    /// Bytes held: an id a row, its tag (a tagged order), its fences, and each run's own allocation (shared runs
+    /// Bytes held: an id a row, its tag (a tagged order), its print (a printed order), its fences, and each run's own allocation (shared runs
     /// counted by each holder).
     pub(super) fn bytes(&self) -> usize {
-        self.runs.iter().map(|(r, _)| r.ids.capacity() * 4 + r.tags.capacity() * 2 + r.fences.capacity() * 8 + 64).sum::<usize>() + self.runs.capacity() * 16
+        self.runs.iter().map(|(r, _)| r.ids.capacity() * 4 + r.tags.capacity() * 2 + r.prints.capacity() + r.fences.capacity() * 8 + 64).sum::<usize>() + self.runs.capacity() * 16
     }
 }
 
@@ -609,6 +736,51 @@ pub mod tests {
         by10.tier(&rows, k, 2);
         assert_eq!(by10.runs(), 2);
         assert_eq!(by10.find(&rows, k, &[3], None).len(), (0..2000).filter(|i| i % 7 == 3).count());
+    }
+
+    /// A printed order (a derived input's own index) finds what the plain order finds, key for key: whole keys
+    /// present and absent, by `find` and by `find_at` (a sorted batch and a shuffled one), over several runs and after
+    /// they merge; with one leading value spanning many fences, a tagged order (every column), and prints equal by
+    /// chance (thousands of keys over 256 prints).
+    #[test]
+    fn a_printed_order_finds_what_the_rows_find() {
+        let k = 3;
+        // Half the rows lead with 0..3 (each value over many fences), half with a wide range; keys repeat.
+        let n = 6000i64;
+        let rows: Vec<i64> = (0..n).flat_map(|i| [if i % 2 == 0 { i % 3 } else { (i * 7919) % 2003 }, (i * 31) % 97, i % 1009]).collect();
+        let ids = |f: Found| { let mut v: Vec<u32> = f.parts().flat_map(|s| s.iter().copied()).collect(); v.sort_unstable(); v };
+        for cols in [vec![0], vec![0, 1], vec![0, 1, 2]] {
+            let (mut plain, mut printed) = (Index::new(cols.clone()), Index::printed(cols.clone()));
+            for (w, (lo, hi)) in [(0, 2500), (2500, 4000), (4000, 6000)].into_iter().enumerate() {
+                plain.add_run(&rows, k, lo, hi, w as u32 + 1);
+                printed.add_run(&rows, k, lo, hi, w as u32 + 1);
+            }
+            // Keys: every row's, and as many absent (values no row holds in some column).
+            let mut keys: Vec<Vec<i64>> = (0..n as usize).map(|r| cols.iter().map(|&c| rows[r * k + c]).collect()).collect();
+            keys.extend((0..n).map(|i| cols.iter().enumerate().map(|(j, _)| if j + 1 == cols.len() { 5000 + i } else { i % 3 }).collect()));
+            let check = |plain: &Index, printed: &Index, keys: &[Vec<i64>]| {
+                let (mut h0, mut h1) = ([0u32; HINTS], [0u32; HINTS]);
+                for key in keys {
+                    let want = ids(plain.find(&rows, k, key, None));
+                    assert_eq!(ids(printed.find(&rows, k, key, None)), want, "{cols:?} {key:?}");
+                    assert_eq!(ids(printed.find_at(&rows, k, key, None, &mut h1)), ids(plain.find_at(&rows, k, key, None, &mut h0)), "{cols:?} {key:?} (find_at)");
+                    assert_eq!(ids(printed.find(&rows, k, key, Some(2))), ids(plain.find(&rows, k, key, Some(2))), "{cols:?} {key:?} (delta)");
+                }
+            };
+            // Shuffled, then sorted as the order is (a sorted batch of probes).
+            let mut shuffled = keys.clone();
+            shuffled.sort_by_key(|key| key.iter().fold(0u64, |h, &v| (h ^ v as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)));
+            check(&plain, &printed, &shuffled);
+            let tagged = tagged(&cols, k);
+            keys.sort_by(|a, b| cmp_vals(&(0..cols.len()).collect::<Vec<_>>(), tagged, a, b));
+            check(&plain, &printed, &keys);
+            // Merged: prints carried through, the same finds.
+            plain.tier(&rows, k, 1);
+            printed.tier(&rows, k, 1);
+            assert_eq!(printed.runs(), 1);
+            check(&plain, &printed, &shuffled);
+            assert_eq!(printed.bytes(), plain.bytes() + printed.rows(), "a byte a row more");
+        }
     }
 
     /// The order on every column is tagged (decision 0112, the dedup test sorted by 16 bits of the leading value's
