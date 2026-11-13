@@ -133,6 +133,25 @@ pub(super) fn with_tree_demand(digest: [u8; 32], tree: bool) -> [u8; 32] {
     hash.finalize().into()
 }
 
+/// `digest` with the modules named by package roots, not paths, folded in (`corpus::package_root_modules`): a file's
+/// `doc` row names its module, which an `__init__.py` added or removed elsewhere in the tree changes. None leaves the
+/// digest as it was.
+pub(super) fn with_modules(digest: [u8; 32], modules: &BTreeMap<String, String>) -> [u8; 32] {
+    if modules.is_empty() {
+        return digest;
+    }
+    let mut hash = Sha256::new();
+    hash.update(b"rerail.corpus-local-modules/v1\0");
+    hash.update(digest);
+    for (path, module) in modules {
+        hash.update(path.as_bytes());
+        hash.update(b"\0");
+        hash.update(module.as_bytes());
+        hash.update(b"\0");
+    }
+    hash.finalize().into()
+}
+
 /// `digest` with the run's options folded in: the key of a file-local part that reads them (`option_item`).
 pub(super) fn with_options(digest: [u8; 32], options: &serde_json::Value) -> [u8; 32] {
     let mut hash = Sha256::new();

@@ -965,3 +965,55 @@ fn benchmark_test_store_copy_steps() {
         }
     });
 }
+
+/// A module is named as Python imports it, from its package root, not from the path below the corpus root: in a
+/// `src` layout `src/shop/base.py` is `shop.base`, so `from shop.base import Base` reaches the class of the run
+/// (`subclass`). A file in no package keeps its path's name. And a relative import of any number of dots binds its
+/// names to their qualified names (`sym_of`), where only one dot did before: `from ..x import two` in `a.b.c.m` is
+/// `a.b.x.two`. An import that climbs above the top package binds an unknown name, as before.
+#[test]
+fn modules_are_named_from_their_package_roots_and_relative_imports_of_any_depth_resolve() {
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("package-roots");
+    let _ = std::fs::remove_dir_all(&base);
+    let src = base.join("tree");
+    for (path, text) in [
+        ("src/shop/__init__.py", ""),
+        ("src/shop/base.py", "class Base: pass\n"),
+        ("src/shop/child.py", "from shop.base import Base\nclass Child(Base): pass\n"),
+        ("src/manage.py", "x = 1\n"),
+        ("a/__init__.py", ""),
+        ("a/b/__init__.py", ""),
+        ("a/b/c/__init__.py", ""),
+        ("a/x.py", "def three(): pass\n"),
+        ("a/b/x.py", "def two(): pass\n"),
+        ("a/b/c/x.py", "def one(): pass\n"),
+        ("a/b/c/m.py", "from .x import one\nfrom ..x import two\nfrom ...x import three\nfrom ....x import four\none(); two(); three(); four()\n"),
+    ] {
+        let p = src.join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+    let rule = base.join("names.rr");
+    std::fs::write(
+        &rule,
+        ".language python\n.scope include \"**/*.py\"\n#include \"python/names.rr\"\n\
+         .decl mods(p: symbol, m: symbol)\nmods(p, m) :- doc(_, p, m).\n\
+         .decl subs(q: symbol)\nsubs(q) :- subclass(q, \"shop.base.Base\").\n\
+         .decl syms(q: symbol)\nsyms(q) :- kind(k, \"call\"), field(k, \"function\", c), sym_of(c, q).\n\
+         .decl open_names(x: symbol)\nopen_names(x) :- rotgt(_, x).\n\
+         .output mods, subs, syms, open_names\n",
+    )
+    .unwrap();
+    let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
+    let out = base.join("out");
+    super::run(&program, &src, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+    let mods = read("mods");
+    for row in ["src/shop/__init__.py\tshop", "src/shop/base.py\tshop.base", "src/shop/child.py\tshop.child", "src/manage.py\tsrc.manage", "a/b/c/m.py\ta.b.c.m"] {
+        assert!(mods.lines().any(|l| l == row), "{row} in:\n{mods}");
+    }
+    assert_eq!(read("subs"), "shop.child.Child\n");
+    assert_eq!(read("syms"), "a.b.c.x.one\na.b.x.two\na.x.three\n");
+    assert_eq!(read("open_names"), "four\n");
+    let _ = std::fs::remove_dir_all(&base);
+}
