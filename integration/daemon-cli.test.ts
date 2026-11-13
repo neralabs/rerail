@@ -116,13 +116,13 @@ describe("Rerail daemon CLI", () => {
       const { cert, key } = selfSignedCertificate();
       await writeFile(join(root, "cert.pem"), cert);
       await writeFile(keyFile, key);
-      const exposed = await letOthersRead(keyFile);
+      const exposed = await letOthersRead(keyFile, 0o644);
       const remote = ["--host", "0.0.0.0", "--allow-remote", "--tls-cert", join(root, "cert.pem"), "--tls-key", keyFile];
       const { stdout } = await promisify(execFile)(process.execPath, [cli, "daemon", "start", "--dev", "--port", "0", ...remote], { env });
       expect(stdout).toMatch(/running at http:\/\/127\.0\.0\.1:\d+\//u);
       const state = JSON.parse(await readFile(join(root, "daemon.json"), "utf8")) as Pick<DaemonState, "url" | "accessToken"> & { remoteRefused?: unknown };
       const why = String(state.remoteRefused);
-      expect(why).toMatch(exposed);
+      expect(why).toMatch(new RegExp(`^${exposed}$`, "u"));
       expect(stdout).toContain(`This daemon serves this computer alone, over plain http on loopback, until its TLS key is fixed: ${why}`);
       const health = await fetch(new URL("/healthz", state.url), { headers: { "x-rerail-access": state.accessToken! } });
       expect(health.status).toBe(200);
@@ -133,20 +133,28 @@ describe("Rerail daemon CLI", () => {
     }
   }, 60_000);
 
-  // A --tls-key that names no file is a mistake in the command, not a key others can read: the start fails, naming the
-  // key, and no daemon runs, on this computer or for others.
+  // A --tls-key that names no file this account can read is a mistake in the command, not a key others can read: the
+  // start fails with the reason main gives, naming the key, and no daemon runs, on this computer or for others.
   test("refuses to start when --tls-key names no file", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-daemon-cli-"));
     const cli = join(process.cwd(), "dist", "cli", "cli.js");
     const env = { ...process.env, RERAIL_HOME: root };
     const certFile = join(root, "cert.pem");
+    const unread = (keyFile: string): [string, string] => [keyFile, `Could not read who may read ${literal(keyFile)}: `];
     try {
       await writeFile(certFile, selfSignedCertificate().cert);
-      // A misspelled name, and a path through a file.
-      for (const keyFile of [join(root, "keyy.pem"), join(certFile, "key.pem")]) {
+      const folder = join(root, "keys");
+      await mkdir(folder);
+      const lockedOut = join(root, "key.pem");
+      await writeFile(lockedOut, selfSignedCertificate().key);
+      // A misspelled name and a path through a file; then two paths others can read where this account reads no key: a
+      // folder, and a key this account may not read (except as root, which reads every file).
+      const keys: [string, string][] = [unread(join(root, "keyy.pem")), unread(join(certFile, "key.pem")), [folder, await letOthersRead(folder, 0o755)]];
+      if (process.getuid?.() !== 0) keys.push([lockedOut, await lockOut(lockedOut)]);
+      for (const [keyFile, refusal] of keys) {
         const remote = ["--host", "0.0.0.0", "--allow-remote", "--tls-cert", certFile, "--tls-key", keyFile];
         const start = promisify(execFile)(process.execPath, [cli, "daemon", "start", "--dev", "--port", "0", ...remote], { env });
-        await expect(start).rejects.toMatchObject({ code: 1, stderr: expect.stringContaining(`Could not read who may read ${keyFile}: `) });
+        await expect(start).rejects.toMatchObject({ code: 1, stderr: expect.stringMatching(new RegExp(refusal, "u")) });
         expect(existsSync(join(root, "daemon.json"))).toBe(false);
       }
     } finally {
@@ -181,20 +189,36 @@ describe("Rerail daemon CLI", () => {
   }, 15_000);
 });
 
+/** `text` as a regular expression source that matches it alone. */
+function literal(text: string): string {
+  return text.replace(/[\\^$.*+?()[\]{}|]/gu, "\\$&");
+}
+
 /**
- * Lets other accounts read `keyFile`: mode 0644, or on Windows, which has no mode bits, read granted to BUILTIN\Users,
- * as a key under C:\certs inherits. Returns the whole of the daemon's refusal of it, the command that fixes it included.
+ * Lets other accounts read `keyFile`: `mode`, or on Windows, which has no mode bits, read granted to BUILTIN\Users, as
+ * a key under C:\certs inherits. Returns, as a regular expression source, the whole of the daemon's refusal of it, the
+ * command that fixes it included.
  */
-async function letOthersRead(keyFile: string): Promise<RegExp> {
-  const literal = (text: string): string => text.replace(/[\\^$.*+?()[\]{}|]/gu, "\\$&");
+async function letOthersRead(keyFile: string, mode: number): Promise<string> {
   const path = literal(keyFile);
   const owner = "; a TLS private key must be readable by its owner only: ";
   if (process.platform !== "win32") {
-    await chmod(keyFile, 0o644);
-    return new RegExp(`^${path} is open to other users \\(mode 0644\\)${owner}chmod 600 "${path}"$`, "u");
+    await chmod(keyFile, mode);
+    return `${path} is open to other users \\(mode ${mode.toString(8).padStart(4, "0")}\\)${owner}chmod 600 "${path}"`;
   }
   await promisify(execFile)("icacls", [keyFile, "/grant", "*S-1-5-32-545:R"], { windowsHide: true });
   // Its folder's ACL may let other accounts read it as well, as Authenticated Users may outside the profile.
   const fix = `icacls "${path}" /inheritance:r /grant:r "${literal(userInfo().username)}:R"`;
-  return new RegExp(`^${path} can be read by other accounts \\((?:[^)]*, )?BU(?:, [^)]*)?\\)${owner}${fix}$`, "u");
+  return `${path} can be read by other accounts \\((?:[^)]*, )?BU(?:, [^)]*)?\\)${owner}${fix}`;
+}
+
+/**
+ * Lets other accounts read `keyFile` and keeps this account from reading it: mode 0044, or on Windows read granted to
+ * BUILTIN\Users and reading its data denied to this account, whose ACL it can still read. Returns the daemon's refusal
+ * of it as `letOthersRead` does.
+ */
+async function lockOut(keyFile: string): Promise<string> {
+  const refusal = await letOthersRead(keyFile, 0o044);
+  if (process.platform === "win32") await promisify(execFile)("icacls", [keyFile, "/deny", `${userInfo().username}:(RD)`], { windowsHide: true });
+  return refusal;
 }

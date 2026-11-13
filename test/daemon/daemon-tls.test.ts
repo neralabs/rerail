@@ -145,6 +145,10 @@ describe("TLS daemon", () => {
     const missing = { ...files, keyFile: join(root, "keyy.pem") };
     await expect(loadDaemonTls(missing, { platform: "linux" })).rejects.toThrow(`Could not read who may read ${missing.keyFile}: ENOENT`);
     await expect(loadDaemonTls(missing, { platform: "linux" })).rejects.not.toBeInstanceOf(TlsKeyExposedError);
+    // So is a folder others can read: it is refused for that, but this account reads no key there.
+    const folder = { ...files, keyFile: root };
+    await expect(loadDaemonTls(folder, shared)).rejects.toThrow(`${root} can be read by other accounts (BU)`);
+    await expect(loadDaemonTls(folder, shared)).rejects.not.toBeInstanceOf(TlsKeyExposedError);
   });
 
   it("records in its state file why it serves this computer alone, for rerail status to say", async () => {
