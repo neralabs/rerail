@@ -1960,7 +1960,7 @@ pub(in crate::code_rule_dsl) fn merge_identical(prog: &mut Program) -> (usize, u
 
 /// The classes of relations equal by their rules (`congruence`), for `corpus::scoping`: whether each policy's copy of
 /// a global relation is one relation.
-pub(in crate::code_rule_dsl) fn identical_classes(prog: &Program) -> Vec<Vec<String>> {
+pub fn identical_classes(prog: &Program) -> Vec<Vec<String>> {
     congruence(prog, false)
 }
 
