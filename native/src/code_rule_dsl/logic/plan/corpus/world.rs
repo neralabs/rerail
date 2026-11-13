@@ -47,7 +47,7 @@ pub(super) const LOADED: &str = "loaded";
 
 /// Whether the program reads the file system or loads documents.
 pub(super) fn wanted(prog: &front::Program) -> bool {
-    prog.rules.iter().any(|r| r.head.rel == LOAD || WORLD.iter().any(|(_, d)| *d == r.head.rel))
+    !answers(prog).is_empty()
 }
 
 /// The requests a program makes, each with what answers it, before a load's per-file rows are added
@@ -57,7 +57,7 @@ pub(super) fn answers(prog: &front::Program) -> BTreeMap<String, Vec<String>> {
         .iter()
         .map(|(rel, req)| (*req, *rel))
         .chain([(LOAD, LOADED)])
-        .filter(|(req, _)| prog.rules.iter().any(|x| x.head.rel == *req))
+        .filter(|(req, _)| prog.facts.contains_key(*req) || prog.rules.iter().any(|x| x.head.rel == *req))
         .map(|(req, rel)| (req.to_owned(), vec![rel.to_owned()]))
         .collect()
 }
@@ -492,7 +492,9 @@ mod grounded_request_tests {
     fn grounded_world_requests_register_their_handlers() {
         for (answer, request) in WORLD.iter().copied().chain([(LOADED, LOAD)]) {
             let mut program = front::Program::default();
-            program.facts.insert(request.to_owned(), vec![vec![front::Value::Str(".".into())]]);
+            let row = if request == LOAD { vec![front::Value::Str(".".into()), front::Value::Str("module".into()), front::Value::Str("python".into())] }
+                      else { vec![front::Value::Str(".".into())] };
+            program.facts.insert(request.to_owned(), vec![row]);
             assert!(wanted(&program), "ground request {request} needs its world handler");
             assert_eq!(answers(&program).get(request), Some(&vec![answer.to_owned()]));
         }
