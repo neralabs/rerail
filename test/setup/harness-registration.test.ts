@@ -425,6 +425,22 @@ describe("Claude Code settings.json", () => {
     expect(await command()).toBe("node");
   });
 
+  it("writes node for the Windows hooks where PATH reaches the recorded node through a link to its folder", async () => {
+    const { home, root } = await fixture();
+    const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
+    const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
+    const nodePath = await windowsNode(home, "v24.9.0");
+    // nvm-windows puts a link on PATH to the folder of the node in use: `node` from PATH is the recorded node itself.
+    const link = join(dirname(home), "nodejs");
+    linkFolder(dirname(nodePath), link);
+    vi.stubEnv("PATH", link);
+    vi.stubEnv("PATHEXT", ".exe");
+
+    await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["claude-code"] });
+    const hooks = (await readJson(join(home, ".claude", "settings.json"))).hooks as Record<string, unknown[]>;
+    expect(hooks.SessionStart).toEqual([{ hooks: [{ type: "command", command: "node", args: [launcherPath, nodePath, hookPath] }] }]);
+  });
+
   it.runIf(process.platform === "win32")("starts a Windows hook as Claude Code does, in one node: the recorded one, and once it is gone node.exe from PATH", async () => {
     const { home, root } = await fixture();
     const launcherPath = join(root, "dist", "harness", "hook-launcher.js");
@@ -489,6 +505,51 @@ describe("Claude Code settings.json", () => {
     vi.stubEnv("PATH", dirname(nodePath));
     expect(await plan({})).toBe("updated");
     expect(await plan({ keepHookCommand: true })).toBe("unchanged");
+  });
+
+  it("keeps a person's own cmd.exe hook that runs Rerail's launcher among words of its own, on registration and removal", async () => {
+    const { home, root } = await fixture();
+    const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
+    const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
+    const path = join(home, ".claude", "settings.json");
+    await windowsPathNode(home, "older-node");
+    const nodePath = await windowsNode(home, "newer-node");
+    const ours = cmdEntry(launcherPath, nodePath, hookPath);
+    // It ends as Rerail's entry does, with the launcher, the recorded node, the hook and `)`, but sets a variable first:
+    // it is the person's, and only an entry Rerail wrote word for word is Rerail's to replace or remove.
+    const theirs = { type: "command", command: ours.command, args: ["/d", "/c", "(", "set", "MY_HOOK_FLAG=1", "&", nodePath, launcherPath, nodePath, hookPath, ")"] };
+    await seed(path, { hooks: { PreToolUse: [{ matcher: "", hooks: [theirs] }] } });
+    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const };
+
+    await registerHarnesses(windows);
+    expect(((await readJson(path)).hooks as Record<string, unknown[]>).PreToolUse).toEqual([
+      { matcher: "", hooks: [theirs] },
+      { matcher: "", hooks: [ours] },
+    ]);
+    await unregisterHarnesses(windows);
+    expect((await readJson(path)).hooks).toEqual({ PreToolUse: [{ matcher: "", hooks: [theirs] }] });
+  });
+
+  it.each([
+    ["a bare cmd.exe, which a spawn looks for in the hook's working folder first", "cmd.exe"],
+    ["another program", String.raw`C:\Tools\hook-runner.exe`],
+  ])("keeps a hook of %s that carries the words of Rerail's cmd.exe entry", async (_case, command) => {
+    const { home, root } = await fixture();
+    const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
+    const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
+    const path = join(home, ".claude", "settings.json");
+    await windowsPathNode(home, "older-node");
+    const nodePath = await windowsNode(home, "newer-node");
+    const ours = cmdEntry(launcherPath, nodePath, hookPath);
+    // Rerail writes cmd.exe by its System32 path: the same words after any other command are the person's.
+    const theirs = { ...ours, command };
+    await seed(path, { hooks: { SessionStart: [{ hooks: [theirs] }] } });
+    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const };
+
+    await registerHarnesses(windows);
+    expect(((await readJson(path)).hooks as Record<string, unknown[]>).SessionStart).toEqual([{ hooks: [theirs] }, { hooks: [ours] }]);
+    await unregisterHarnesses(windows);
+    expect((await readJson(path)).hooks).toEqual({ SessionStart: [{ hooks: [theirs] }] });
   });
 
   it("registers Windows hooks through the exec-form launcher and replaces the cmd wrapper Git Bash mangles", async () => {
