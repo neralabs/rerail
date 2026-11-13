@@ -1,5 +1,7 @@
 # Rerail rule pack: React
 
+**Linter-equivalent to eslint-plugin-react 7.37.5 and react-hooks 7.1.1.** Each rule flags what the original flags, bar declared differences. Its own practice rules are Rerail's, not ports. [What this means](../../docs/rule-packs.md#linter-equivalent).
+
 The pack ships 30 eslint-plugin-react and 10 eslint-plugin-react-hooks rules, ports of eslint-plugin-react 7.37.5 and
 eslint-plugin-react-hooks 7.1.1, and 11 React practice rules of its own, which port no linter
 ([React practice rules](#react-practice-rules)). A port starts in `candidates/rules/` (none today) and moves to `rules/` and

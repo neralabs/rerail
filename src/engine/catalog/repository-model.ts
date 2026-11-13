@@ -84,6 +84,14 @@ export type RuleSettingTargetKind = (typeof RULE_SETTING_TARGET_KINDS)[number];
 export const RULE_SUPPRESSIONS = ["honour", "ignore"] as const;
 export type RuleSuppressions = (typeof RULE_SUPPRESSIONS)[number];
 
+/**
+ * Where a rule setting came from, when not from a person or an agent: `lint-config`, the repository's own lint config,
+ * read by set-up or `rerail packs calibrate`. A setting of no origin is a person's (or an agent's), and calibrating
+ * never changes it.
+ */
+export const RULE_SETTING_ORIGINS = ["lint-config"] as const;
+export type RuleSettingOrigin = (typeof RULE_SETTING_ORIGINS)[number];
+
 /** Option values for a code rule by Rerail, by option name: they replace the values its `define.options` declare. */
 export type RuleConfig = Readonly<Record<string, CodeRuleDslValue>>;
 
@@ -112,6 +120,8 @@ export interface RuleSetting {
   readonly mode: RuleMode | null;
   readonly suppressions?: RuleSuppressions | null;
   readonly config?: RuleConfig | null;
+  /** Where the setting came from; omitted: a person's or an agent's, so any write that omits it makes the row theirs. */
+  readonly origin?: RuleSettingOrigin;
 }
 
 /** What decided one field of an effective rule. */

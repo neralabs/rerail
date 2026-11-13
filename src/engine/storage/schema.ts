@@ -14,6 +14,7 @@ import {
 } from "../audit/audit.js";
 import { CODE_RULE_FORMAT, type CodeRuleClause, type CodeRuleScope } from "../code-rule/code-rule-schema.js";
 import {
+  RULE_SETTING_ORIGINS,
   RULE_SETTING_OWNER_KINDS,
   RULE_SETTING_TARGET_KINDS,
   RULE_SOURCE_KINDS,
@@ -226,7 +227,8 @@ export const ruleAttachments = sqliteTable(
 /**
  * `on` / `mode` / `suppressions` / `config_json` for a rule or a whole pack, owned by a repository (`owner_id` =
  * repository key) or a checkout (`owner_id` = checkout path), optionally for one folder. A null field defers to the
- * next owner. `config_json` (option values of a rule by Rerail) is set only on rule targets.
+ * next owner. `config_json` (option values of a rule by Rerail) is set only on rule targets. `origin`: `lint-config`
+ * when the repository's lint config gave the row (set-up, `rerail packs calibrate`); null when a person or an agent did.
  */
 export const ruleSettings = sqliteTable(
   "rule_settings",
@@ -241,6 +243,7 @@ export const ruleSettings = sqliteTable(
     suppressions: text("suppressions", { enum: RULE_SUPPRESSIONS }),
     config: text("config_json", { mode: "json" }).$type<RuleConfig>(),
     updatedAt: integer("updated_at").notNull(),
+    origin: text("origin", { enum: RULE_SETTING_ORIGINS }),
   },
   table => [
     primaryKey({ columns: [table.ownerKind, table.ownerId, table.folder, table.targetKind, table.targetId] }),

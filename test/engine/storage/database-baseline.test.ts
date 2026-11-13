@@ -485,13 +485,32 @@ describe("the migration path", () => {
       // Twice: the first refusal must not change the file's mode so that the next reader upgrades it after all.
       for (let attempt = 0; attempt < 2; attempt += 1) {
         expect(() => listRepositoryRules(openRerailDatabase(path, { readonly: true }), loadRuleCatalog(), "repo"))
-          .toThrow(/needs this Rerail's schema steps \(rule-settings-suppressions-config, audit-history-derived-tables, repositories-follow-gitignore, rule-approvals, audit-violations-logged-by-audit-mode, audit-rule-provenance-once\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
+          .toThrow(/needs this Rerail's schema steps \(rule-settings-suppressions-config, audit-history-derived-tables, repositories-follow-gitignore, rule-approvals, audit-violations-logged-by-audit-mode, audit-rule-provenance-once, rule-settings-origin\) before it can be read, and this process cannot write it: .+\. Run a rerail command as the file's owner, or make it writable for this user\.$/u);
         expect(statSync(path).mode).toBe(mode);
       }
     } finally {
       chmodSync(path, 0o600);
     }
     expect(readFileSync(path).equals(before)).toBe(true);
+  });
+
+  it("gives an existing file's rule settings an origin column, every row a person's, and keeps lint-config writes", async () => {
+    const path = await temporaryDatabase();
+    // A file from before the step: rule_settings without `origin`, the step not recorded.
+    stampedFile(path, `${SETTING_ROW};
+      ALTER TABLE rule_settings DROP COLUMN origin;
+      DELETE FROM schema_migrations WHERE id = 'rule-settings-origin'`);
+    const database = openRerailDatabase(path);
+    try {
+      database.insert(ruleSettings).values({ ownerKind: "repository", ownerId: "repo", targetKind: "rule", targetId: "q", on: false, origin: "lint-config", updatedAt: 1 }).run();
+      expect(database.select({ targetId: ruleSettings.targetId, on: ruleSettings.on, origin: ruleSettings.origin }).from(ruleSettings).orderBy(ruleSettings.targetId).all()).toEqual([
+        { targetId: "q", on: false, origin: "lint-config" },
+        { targetId: "r", on: true, origin: null },
+      ]);
+    } finally {
+      database.$client.close();
+    }
+    expect(migrationState(path).recorded).toEqual(WITHOUT_NOTE);
   });
 
   it("approves, at the content it has, every library rule a file held before approvals, and nothing added after", async () => {

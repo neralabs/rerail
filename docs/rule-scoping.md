@@ -84,37 +84,60 @@ A set-up repository runs only what is attached to it, plus each checkout's own r
 
 ### The repository's own lint config
 
-So Rerail does not steer against what a repository deliberately configured, set-up reads its lint config at the repository root. The added packs' rules get matching settings, owned by the repository.
+So Rerail runs the rules a repository's own linters run, and no others, set-up reads the lint config at the repository root. The added packs' rules get matching settings, owned by the repository: the same rules on, the same rules off.
 
-It reads ESLint, oxlint and Ruff configs as data and never runs them. A rule the config turns off for every file starts off; set-up never turns a rule on.
+It reads ESLint, oxlint, Biome, Ruff, Bandit, Clippy, PHPStan, Psalm, PHP_CodeSniffer and SQLFluff configs as data and never runs them. A linter the repository has no config for changes nothing: its ports keep the pack's values.
 
 <details>
 <summary>What is read, per linter</summary>
 
 | Linter | Read | Not read |
 |---|---|---|
-| ESLint | The config ESLint would use: the first flat config (`eslint.config.{js,mjs,cjs,ts,mts,cts}`) when it is data throughout, parsed and never run; else `.eslintrc.json`, or `.eslintrc` when JSON; else `package.json`'s `eslintConfig`. JSON may have comments and trailing commas. Its own `rules` and its `overrides`' `rules`. | A flat config that runs code (a function, a statement that changes something, a namespace, a loop). A flat-config value that needs code run (an imported config such as `js.configs.recommended`, a call's result, an imported variable). `.eslintrc.{js,cjs,yaml,yml}`. An `.eslintrc`'s `extends` and plugins' presets. |
-| oxlint | `.oxlintrc.json`, top-level `rules`. Each key resolves to a built-in rule as oxlint 1.88.0 resolves it; a rule's last key applies. | `extends`, `overrides`, `categories`, `plugins` (a key for a plugin the config leaves off still counts); rule options. |
-| Ruff | `select`, `extend-select`, `ignore`, `extend-ignore`, `per-file-ignores`, `extend-per-file-ignores` (from `[lint]` where set there, else the top level). From the file Ruff uses (`.ruff.toml`, then `ruff.toml`, then `pyproject.toml`'s `[tool.ruff]`/`[tool.ruff.lint]`) and configs its `extend` names inside the repository. | A config `extend` names outside the repository; per-file ignores of an extended config in another folder; Bandit config. |
+| ESLint | The config ESLint would use: the first flat config (`eslint.config.{js,mjs,cjs,ts,mts,cts}`) when it is data throughout, parsed and never run; else `.eslintrc.json`, or `.eslintrc` when JSON; else `package.json`'s `eslintConfig`. JSON may have comments and trailing commas. Its own `rules`, its `overrides`' `rules`, and the shared configs of @eslint/js, typescript-eslint, eslint-plugin-react, react-hooks, unicorn, n, Next.js, vue and @vitest/eslint-plugin at the packs' versions, by import and member path (`js.configs.recommended`) or by `extends` name (`plugin:react/recommended`). | A flat config that runs code (a function, a statement that changes something, a namespace, a loop). A flat-config value that needs code run (a call's result, an imported variable). Any other shared config (`airbnb`). `.eslintrc.{js,cjs,yaml,yml}`. An override's `extends` and nested `overrides`. A shared config's rule options. |
+| oxlint | `.oxlintrc.json`: `rules` (each key resolved as oxlint 1.88.0 resolves it; a rule's last key applies), `plugins`, `categories`, and oxlint's default: the `correctness` category of the plugins it runs. | `extends`, `overrides`; type-aware rules a category turns on; rule options. |
+| Biome | The first of `biome.json`, `biome.jsonc`, `.biome.json`, `.biome.jsonc` (a `.json` file as plain JSON): `linter.enabled`, `linter.rules` (`recommended`, `preset`, group severities, rule entries), `linter.domains`; the configs its `extends` names inside the repository; `overrides` for whole folders. Which rules a preset or domain holds, from Biome 2.5.15's rule metadata. | Packages and files outside the repository in `extends`; a config that is not Biome's root; `overrides` for narrower globs; `linter.includes`; nested configs; the dependencies that turn a domain on; rule options. |
+| Ruff | The file Ruff uses (`.ruff.toml`, then `ruff.toml`, then `pyproject.toml`'s `[tool.ruff]`/`[tool.ruff.lint]`) and the configs its `extend` names inside the repository: `select`, `extend-select`, `ignore`, `extend-ignore`, `per-file-ignores`, `extend-per-file-ignores`, `preview`, `explicit-preview-rules` (from `[lint]` where set there, else the top level), and Ruff 0.16.9's default selection, with and without preview. | An `extend` outside the repository; per-file ignores of configs below the root; selection by rule name. |
+| Bandit | `.bandit`'s `[bandit]` `tests`, `skips`, `exclude` and `configfile` at the root; the TOML file `configfile` names, else `pyproject.toml`'s `[tool.bandit]` `tests`, `skips`, `exclude_dirs`. Tests match by id (`B101`); `B001` stands for every blacklist test. | YAML configs; `profile`; a `.bandit` below the root; excludes narrower than a whole folder; `targets`. |
+| Clippy | The root `Cargo.toml`'s `[lints.clippy]` and `[lints.rust]`, or the `[workspace.lints]` it takes with `[lints] workspace = true`, or in a workspace without its own, `[workspace.lints]`; levels and `priority`, in the order Cargo passes them to rustc. Then the crate-wide lint attributes at the top of `src/lib.rs` and `src/main.rs`, `cfg_attr(clippy, …)` included. Clippy 0.1.99's default groups. | Workspace members' own `Cargo.toml`; other crate roots and module attributes; `.cargo/config.toml` rustflags, `RUSTFLAGS` and CI command lines; `clippy.toml` options. |
+| PHPStan | The first of `.phpstan.neon`, `phpstan.neon`, `.phpstan.neon.dist`, `phpstan.neon.dist`, `.phpstan.dist.neon`, `phpstan.dist.neon`: `level` (or an included level config), `ignoreErrors` entries naming an identifier, for every file or a folder, and the files it includes in the repository. The level each ported rule needs, from PHPStan 2.2.16. | `--level` and the rest of the command line; ignores by message or count; `paths`, `excludePaths`; extension configs and anything under `vendor/`. |
+| Psalm | `psalm.xml`, then `psalm.xml.dist`: `errorLevel` (2 when absent), `<issueHandlers>`, and their `<errorLevel>` directories. Info counts as off. | `--show-info`; `projectFiles`, `ignoreFiles`; what plugins change. |
+| PHP_CodeSniffer | The first of `.phpcs.xml`, `phpcs.xml`, `.phpcs.xml.dist`, `phpcs.xml.dist`: `<rule ref>` standards, categories and sniffs (the standards PHP_CodeSniffer 4.0.4 ships), `<exclude>`, `<severity>`, folder `<exclude-pattern>`s, rulesets in the repository, the `exclude` and `sniffs` arguments. | `--standard` and the rest of the command line; external standards; top-level exclude patterns; properties. |
+| SQLFluff | `rules` and `exclude_rules` from `setup.cfg`, `tox.ini`, `pep8.ini`, `.sqlfluff` and `pyproject.toml`'s `[tool.sqlfluff.core]` at the root, a later file's value replacing an earlier one's; `force_enable` for PG01 and PG02. A reference matches a rule's code, name, alias or group, globs included. | `.sqlfluff` files in subfolders; the home-folder config; rule options. |
 
 </details>
 
 <details>
 <summary>What set-up does with it</summary>
 
-- **Nothing runs.** Each config is parsed as data, never run or imported. Set-up never turns a rule on.
-- **Off.** A rule the config turns off for every file (`"off"`, `0`, oxlint's `"allow"`, a Ruff ignore that wins over its selects) starts off. If one config turns a rule off and another keeps it on, it starts off and set-up says so.
+- **Nothing runs.** Each config is parsed as data, never run or imported.
+- **On and off.** A rule the config turns on for every file starts on, even where the pack starts it off; one it turns off starts off (`"off"`, `0`, oxlint's `"allow"`, a Ruff ignore that wins over its selects, a Bandit skip, Clippy's `allow`). Naming a rule's group or prefix counts (`pedantic = "warn"`, `select = ["E"]`). If one config turns a rule off and another keeps it on, it starts off and set-up says so.
+- **Rules the config does not name.** They follow what the linter itself would do with that config: on where its defaults or a shared config Rerail recognises turn them on (Ruff's default selection, Clippy's default groups, Biome's recommended rules, `js.configs.recommended`), off otherwise. Where the config takes something Rerail cannot read (an unrecognised shared config, a file outside the repository, a PHPStan extension), they keep the pack's value.
+- **Several linters.** A rule is matched in every linter it ports or mirrors. An explicit off wins, then an explicit on, then a default that turns it on; a rule one linter's default leaves off and another's config may set keeps the pack's value.
+- **Only differences are written.** A rule whose outcome is the pack's own starting value gets no setting.
 - **Options.** ESLint options become the port's options (`config`) when every value maps onto an option the port declares. Otherwise the port keeps its defaults, with a note.
-- **Some files only.** An entry limited to some files (ESLint's `files: ["scripts/**"]`, a Ruff per-file ignore of `tests/**`) turns a rule off only in a folder it covers whole. For narrower files (`**/test_*.py`) the rule stays on, with a note.
-- **A flat config Rerail cannot read.** If the flat config is more than data (defines a function, runs a loop, changes something), is a symlink, or exceeds 1 MiB, every rule Rerail ports from ESLint starts off, with no options. Set-up says why first. A single entry whose value needs the config run (a call's result, an imported variable) turns only that port off. A shared config the file imports (`js.configs.recommended`) is named as not read.
+- **Some files only.** An entry limited to some files (ESLint's `files: ["scripts/**"]`, a Ruff per-file ignore of `tests/**`, a PHPStan ignore with a folder `path`) sets the rule only in a folder it covers whole. Narrower files (`**/test_*.py`) never turn a rule off: the rule stays on, with a note. An ESLint entry that turns a rule on for narrower files turns it on everywhere, since ESLint runs it there.
+- **A flat config Rerail cannot read.** If the flat config is more than data (defines a function, runs a loop, changes something), is a symlink, or exceeds 1 MiB, every rule Rerail ports from ESLint starts off, with no options. Set-up says why first. A single entry whose value needs the config run (a call's result, an imported variable) turns only that port off.
 - **Configs not read.** An `.eslintrc.js`, `.eslintrc.cjs` or YAML config is named as not read and changes nothing.
-- **Your choices win.** A rule you already set in the dashboard's review, in that folder, keeps your setting. "Skip, I'll pick packs" takes nothing from the lint config, even for the packs you then pick.
+- **Your choices win.** A rule you already set, in that folder, keeps your setting. "Skip, I'll pick packs" takes nothing from the lint config, even for the packs you then pick.
+- **The confirm screen** lists each rule a config names, and counts the rest by reason (`87 rules start off  eslint.config.js does not turn it on`).
 
-A port matches an upstream rule by the names its document honours suppression comments for. So `custom/no-console`, another plugin's rule, leaves the port of ESLint's `no-console` alone.
+A port matches an upstream rule by the names its document honours suppression comments for. So `custom/no-console`, another plugin's rule, leaves the port of ESLint's `no-console` alone. A rule with no such names (Blade's, the complexity pack's) keeps the pack's value.
 
 </details>
 
-The exact reading rules (what counts as data in a flat config, the order ESLint applies entries in, how Ruff's selectors resolve) are in the header comments of `src/engine/catalog/lint-config/`.
+### Calibrate later
+
+`rerail packs calibrate` reads the lint config again for a repository already set up, after the config changes or a pack is added. `--dry-run` shows what would change without writing; `--json` prints it as data.
+
+<details>
+<summary>Whose settings it changes</summary>
+
+- **The lint config's.** A setting set-up or calibrating took from the lint config is marked as the lint config's. Calibrating updates it, and removes it once the config no longer gives it, so the pack's value returns.
+- **Yours.** A setting you or a coding agent made, in the dashboard, the API or MCP, is yours: calibrating keeps it and says so. Changing a calibrated setting in the dashboard makes it yours.
+
+</details>
+
+The exact reading rules (what counts as data in a flat config, the order each linter applies its entries in, the upstream versions the default and preset tables come from) are in the header comments of `src/engine/catalog/lint-config/`.
 
 ## Rules: attachments and settings
 

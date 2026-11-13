@@ -31,6 +31,7 @@ export { approve, currentSubject, isApproved, packSubject, ruleSubject } from ".
 export { RULE_PACK_LIST } from "./catalog/pack-list.generated.js";
 export { ConversationRuleRegistry } from "./catalog/registry.js";
 export { repositoryIdentityLocation, resolveCloneId } from "./catalog/repository-identity.js";
+export { parseXml, xmlChildren, type XmlElement } from "./catalog/lint-config/formats/xml-format.js";
 export {
   type RuleCatalog,
   CALLER_CWD_HEADER,
@@ -40,6 +41,7 @@ export {
   type RepositoryKey,
   type RepositoryStartState,
   type RepositoryStatus,
+  type RuleSetting,
 } from "./catalog/repository-model.js";
 export { adoptRemote, checkoutStatus, listRepositories, lookupCheckout, recordCheckout } from "./catalog/repository-registry.js";
 export { exportRulesDump, importRulesDump, RULES_DUMP_FILE, type RulesDump } from "./catalog/rule-bootstrap.js";

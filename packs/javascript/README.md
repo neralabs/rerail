@@ -1,5 +1,7 @@
 # Rerail rule pack: JavaScript
 
+**Linter-equivalent to ESLint 10.11.0 and eslint-plugin-unicorn 76.0.0.** Each rule flags what the original flags, bar declared differences. [What this means](../../docs/rule-packs.md#linter-equivalent).
+
 121 code rules for JavaScript and TypeScript source, with their default options: 118 ported from ESLint 10.11.0's core
 rules and 3 from eslint-plugin-unicorn 76.0.0, which run on `.js`, `.jsx`, `.mjs` and `.cjs` files only, as unicorn
 lints them. 36 start on; 85 start off (`"on": false`) because neither tool's `recommended` configuration turns them

@@ -351,20 +351,58 @@ describe("T4 / C4 recommended rule packs", () => {
     expect(row.indexOf("the reason")).toBe(header.indexOf("Why it fits"));
   });
 
-  it("lists what the lint config did not read, then the rules it starts off or configures, counting past eight lines", () => {
-    const settings = Array.from({ length: 8 }, (_, index) => ({ ruleId: `eslint-rule-${index}`, folder: index === 0 ? "tests" : "", on: false as const, config: null, because: `.eslintrc.json: "rule-${index}": "off"` }));
+  it("lists what the lint config did not read, then the rules it starts on, off or configures, counting past eight lines", () => {
+    const settings = Array.from({ length: 8 }, (_, index) => ({ ruleId: `eslint-rule-${index}`, folder: index === 0 ? "tests" : "", on: false as const, config: null, explicit: true, because: `.eslintrc.json: "rule-${index}": "off"` }));
     const text = renderRecommendedPacks({
       ...PACKS,
       lintConfig: {
-        settings: [{ ruleId: "typescript-eslint-consistent-type-definitions", folder: "", on: null, config: { option: "type" }, because: ".eslintrc.json: \"x\": [\"error\",\"type\"]" }, ...settings],
+        settings: [
+          { ruleId: "typescript-eslint-consistent-type-definitions", folder: "", on: null, config: { option: "type" }, explicit: true, because: ".eslintrc.json: \"x\": [\"error\",\"type\"]" },
+          { ruleId: "eslint-no-debugger", folder: "", on: true, config: null, explicit: true, because: ".eslintrc.json: \"no-debugger\": \"error\"" },
+          ...settings,
+        ],
         notes: ["eslint.config.ts is not read: Rerail never runs your config."],
       },
     }, "agent");
-    expect(text).toContain("  From your lint config (read as data, never run):\n    eslint.config.ts is not read: Rerail never runs your config.\n    typescript-eslint-consistent-type-definitions starts with option = \"type\"  .eslintrc.json: \"x\": [\"error\",\"type\"]\n    eslint-rule-0 starts off in tests/  .eslintrc.json: \"rule-0\": \"off\"\n    eslint-rule-1 starts off  .eslintrc.json: \"rule-1\": \"off\"");
-    expect(text).toContain("    eslint-rule-4 starts off");
-    expect(text).not.toContain("eslint-rule-5");
-    expect(text).toContain("    …and 3 more.");
+    expect(text).toContain([
+      "  From your lint config (read as data, never run):",
+      "    eslint.config.ts is not read: Rerail never runs your config.",
+      "    typescript-eslint-consistent-type-definitions starts with option = \"type\"  .eslintrc.json: \"x\": [\"error\",\"type\"]",
+      "    eslint-no-debugger starts on  .eslintrc.json: \"no-debugger\": \"error\"",
+      "    eslint-rule-0 starts off in tests/  .eslintrc.json: \"rule-0\": \"off\"",
+      "    eslint-rule-1 starts off  .eslintrc.json: \"rule-1\": \"off\"",
+    ].join("\n"));
+    expect(text).toContain("    eslint-rule-3 starts off");
+    expect(text).not.toContain("eslint-rule-4");
+    expect(text).toContain("    …and 4 more.");
     expect(renderRecommendedPacks({ ...PACKS, lintConfig: { settings: [], notes: [] } }, "agent")).not.toContain("lint config");
+  });
+
+  it("counts the rules a linter's defaults or a preset decide, one row per reason, within the eight lines", () => {
+    const implicit = (index: number, on: boolean, because: string) => ({ ruleId: `eslint-rule-${index}`, folder: "", on, config: null, explicit: false, because });
+    const text = renderRecommendedPacks({
+      ...PACKS,
+      lintConfig: {
+        settings: [
+          ...Array.from({ length: 87 }, (_, index) => implicit(index, false, "eslint.config.js does not turn it on")),
+          implicit(100, true, "eslint.config.js: js.configs.recommended"),
+          { ruleId: "eslint-no-console", folder: "", on: true, config: { allow: ["warn"] }, explicit: false, because: "eslint.config.js: js.configs.recommended" },
+          ...Array.from({ length: 6 }, (_, index) => ({ ruleId: `eslint-off-${index}`, folder: "", on: false, config: null, explicit: true, because: `eslint.config.js: "off-${index}": "off"` })),
+        ],
+        notes: [],
+      },
+    }, "agent");
+    expect(text).toContain([
+      "  From your lint config (read as data, never run):",
+      "    87 rules start off  eslint.config.js does not turn it on",
+      "    1 rule starts on  eslint.config.js: js.configs.recommended",
+      "    eslint-no-console starts on with allow = [\"warn\"]  eslint.config.js: js.configs.recommended",
+      "    eslint-off-0 starts off  eslint.config.js: \"off-0\": \"off\"",
+    ].join("\n"));
+    expect(text).not.toContain("eslint-rule-");
+    expect(text).toContain("    eslint-off-3 starts off");
+    expect(text).not.toContain("eslint-off-4");
+    expect(text).toContain("    …and 2 more.");
   });
 
   it("marks the scan with a bullet in the terminal only", () => {

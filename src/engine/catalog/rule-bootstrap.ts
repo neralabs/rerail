@@ -12,7 +12,7 @@ import {
   ruleSettings,
 } from "../storage/schema.js";
 import type { RerailDatabase } from "../storage/database.js";
-import { normalizeFolder, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS, RULE_SUPPRESSIONS, type RuleCatalog } from "./repository-model.js";
+import { normalizeFolder, RULE_SETTING_ORIGINS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS, RULE_SUPPRESSIONS, type RuleCatalog } from "./repository-model.js";
 import { approve, isApproved, ruleSubject } from "./rule-approval.js";
 import { listLibraryRules, quarantinedLibraryRules, validateLibraryDocument, writeLibraryRule } from "./rule-library.js";
 import { RULE_MODES } from "./rule-mode.js";
@@ -65,7 +65,8 @@ const repositoryEntrySchema = z.object({
     sourceKind: z.enum(RULE_SOURCE_KINDS),
     sourceId: z.string().min(1),
   }).strict()),
-  // `suppressions` and `config` are written only when set, so a dump without them reads in builds that predate them.
+  // `suppressions`, `config` and `origin` are written only when set, so a dump without them reads in builds that predate
+  // them. `origin` keeps a setting the lint config gave as the lint config's, for `rerail packs calibrate`.
   settings: z.array(z.object({
     folder: z.string(),
     targetKind: z.enum(RULE_SETTING_TARGET_KINDS),
@@ -74,6 +75,7 @@ const repositoryEntrySchema = z.object({
     mode: z.enum(RULE_MODES).nullable(),
     suppressions: z.enum(RULE_SUPPRESSIONS).nullable().optional(),
     config: z.record(z.string(), codeRuleValueSchema).nullable().optional(),
+    origin: z.enum(RULE_SETTING_ORIGINS).nullable().optional(),
   }).strict()
     .refine(
       setting => setting.on !== null || setting.mode !== null || (setting.suppressions ?? null) !== null || (setting.config ?? null) !== null,
@@ -152,10 +154,11 @@ export function exportRulesDump(db: RerailDatabase, now = new Date()): RulesDump
         .map(({ folder, sourceKind, sourceId }) => ({ folder, sourceKind, sourceId })),
       settings: settings.filter(setting => setting.ownerId === row.repositoryKey
         && (setting.on !== null || setting.mode !== null || setting.suppressions !== null || setting.config !== null))
-        .map(({ folder, targetKind, targetId, on, mode, suppressions, config }) => ({
+        .map(({ folder, targetKind, targetId, on, mode, suppressions, config, origin }) => ({
           folder, targetKind, targetId, on, mode,
           ...(suppressions === null ? {} : { suppressions }),
           ...(config === null ? {} : { config }),
+          ...(origin === null ? {} : { origin }),
         })),
     })),
   };

@@ -469,8 +469,9 @@ function packLabels(packs: readonly { packId: string; folder: string }[]): strin
 
 /**
  * The rule settings the repository's own lint config gives the rules of packs `packIds`, owned by the repository,
- * read from its files now. None for a rule the repository has a setting of its own for in that folder (one the person
- * made in the dashboard stands).
+ * read from its files now and marked as the lint config's (`origin`), so `rerail packs calibrate` may change them
+ * later. None for a rule the repository has a setting of its own for in that folder (one the person made in the
+ * dashboard stands).
  */
 function lintConfigSettings(database: RerailDatabase, home: string, root: string, repositoryKey: RepositoryKey, packIds: readonly string[]): RuleSetting[] {
   const own = new Set(database.select({ folder: ruleSettings.folder, targetId: ruleSettings.targetId }).from(ruleSettings).where(and(
@@ -480,7 +481,7 @@ function lintConfigSettings(database: RerailDatabase, home: string, root: string
   )).all().map(row => `${row.folder}\0${row.targetId}`));
   return readRepositoryLintConfig(root, loadRuleCatalog(home), packIds).settings
     .filter(setting => !own.has(`${setting.folder}\0${setting.ruleId}`))
-    .map(({ ruleId, folder, on, config }) => ({ owner: { kind: "repository", repositoryKey }, folder, targetKind: "rule", targetId: ruleId, on, mode: null, config }));
+    .map(({ ruleId, folder, on, config }) => ({ owner: { kind: "repository", repositoryKey }, folder, targetKind: "rule", targetId: ruleId, on, mode: null, config, origin: "lint-config" }));
 }
 
 /** Names of the other set-up repositories Rerail is on in: as a whole, or in one of their checkouts. */

@@ -1,7 +1,8 @@
 # Rerail rule packs
 
 Rule packs for Rerail. Each published pack is its own npm package, versioned and released separately from the core
-package at the repository root.
+package at the repository root. Packs that port a linter are
+[linter-equivalent](../docs/rule-packs.md#linter-equivalent) to it.
 
 > Status: pre-release (below 1.0.0). Every pack here is published to npm, public like core, except a private one
 > (`"private": true` in its `package.json`; today `rerail`), which is never published, is left out of core's pack

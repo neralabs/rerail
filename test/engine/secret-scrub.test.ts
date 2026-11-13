@@ -218,11 +218,15 @@ describe("scrubSecrets", () => {
     `-sk_live_${"a".repeat(300)}_`, "glpat-", "xoxb-", "pypi-", "a.a.a.a.a.a.a.a.a.a://u:", `a://${"a".repeat(255)}:${"a".repeat(255)} `,
     "Bearer ", "token=", "aws_secret_access_key=", "-----END PRIVATE KEY-----",
   ].map(unit => ({ unit, shown: JSON.stringify(unit.length > 24 ? `${unit.slice(0, 24)}...` : unit) })))("scrubs a megabyte of $shown repeated in linear time", ({ unit }) => {
+    // The fastest of several passes: other test files share the CPU, and a pass they preempt only takes longer, so
+    // the minimum is the scan's own cost. A single sample under a full suite run measured the scheduler instead.
     const time = (size: number): number => {
       const text = unit.repeat(Math.ceil(size / unit.length)).slice(0, size);
-      const started = performance.now();
-      scrubSecrets(text);
-      return performance.now() - started;
+      return Math.min(...Array.from({ length: 5 }, () => {
+        const started = performance.now();
+        scrubSecrets(text);
+        return performance.now() - started;
+      }));
     };
     time(64 * 1024);
     const quarter = time(256 * 1024);
