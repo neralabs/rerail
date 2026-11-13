@@ -111,7 +111,8 @@ describe("the overlap rule", () => {
   });
 });
 
-describe("work the base already holds, and a ref that forked elsewhere", () => {
+// Each test builds a repository with real Git commits and merges, which takes seconds on a busy machine.
+describe("work the base already holds, and a ref that forked elsewhere", { timeout: 30_000 }, () => {
   it("leaves out a branch squash-merged into the base, also after the base moved on, near its lines too", async () => {
     const repo = repository();
     const theirs = theirBranch(repo, { 20: "theirs 20", 21: "theirs 21" });

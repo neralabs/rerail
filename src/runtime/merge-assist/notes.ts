@@ -6,8 +6,9 @@
  */
 import { z } from "zod";
 import type { ConflictNotice } from "../../engine/adapter-contract.js";
-import { cappedLine, conflictNote, hookFollowUpNote, hookNote, sideName, STEER_LINE_CHARS } from "../../engine/code-rule/rerail-steer.js";
+import { cappedLine, STEER_LINE_CHARS } from "../../engine/code-rule/rerail-steer.js";
 import { mergeAssistExperimentEnabled } from "../../engine/experimental-features.js";
+import { conflictNote, hookFollowUpNote, hookNote, sideName } from "../../engine/merge-assist/conflict-note.js";
 import type { Conflict } from "../../engine/merge-assist/model.js";
 import type { RerailDatabase } from "../../engine/storage/database.js";
 import { statusText } from "./conflict-delivery.js";

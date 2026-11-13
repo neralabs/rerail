@@ -88,7 +88,7 @@ export {
 export { CODE_RULE_FORMAT, type CodeRule, codeRuleSchema, type CodeRuleScope } from "./code-rule/code-rule-schema.js";
 export { type CodeRuleAuditor, type CodeRuleSourceLanguage, type CodeRuleViolation, renderSteer, type RuleSteerDelivery } from "./code-rule/code-rule.js";
 export {
-  asLateSteer, conflictNote, headlineText, messageSteer, SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, steerBlock, steerHeadlines,
+  asLateSteer, headlineText, messageSteer, SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, steerBlock, steerHeadlines,
   steerRules, type SteerFinding, type SteerTrigger,
 } from "./code-rule/rerail-steer.js";
 export { steerOrigin } from "./code-rule/steer-origin.js";
@@ -167,3 +167,4 @@ export {
   type MergeAssistSettings,
   type MergeAssistStatus,
 } from "./merge-assist/model.js";
+export { conflictNote } from "./merge-assist/conflict-note.js";

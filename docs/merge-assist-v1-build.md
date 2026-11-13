@@ -51,7 +51,9 @@ so the daemon keeps answering sessions while it runs. It never runs while Merge 
   and a change of its that the base tip already holds (a squash merge, a cherry-pick) is not live work.
 - **Overlap**: two `git diff --unified=0` hunks in the same file that touch the same base lines or leave at most 3
   unchanged lines between them (`src/engine/merge-assist/overlap.ts`). Renames are ignored, and the same change on
-  both sides is not a conflict. Each (their branch, overlap) is one conflict.
+  both sides is not a conflict. Each (their branch, overlap) is one conflict. A conflict here is not a Git merge
+  conflict: it is a possible one, since changes a few lines apart often merge cleanly. It says both sides are working
+  on the same code, which is worth a word between the people involved before either merges.
 
 A scan records when it ran, how many branches and pull requests it compared, and what it could not read, including a
 `gh` whose sign-in or pull requests could not be read (remote-tracking branches then stood in).

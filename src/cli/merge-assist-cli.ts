@@ -10,8 +10,8 @@ import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArguments } from "../daemon/daemon.js";
 import { repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
-import { sideName } from "../engine/code-rule/rerail-steer.js";
 import { mergeAssistExperimentEnabled } from "../engine/experimental-features.js";
+import { sideName } from "../engine/merge-assist/conflict-note.js";
 import {
   conflictHookCommandSchema,
   DEFAULT_HOOK_TIMEOUT_SECONDS,

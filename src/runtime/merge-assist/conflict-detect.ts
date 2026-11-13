@@ -13,7 +13,6 @@
 import { basename } from "node:path";
 import type { CheckoutContext } from "../../engine/catalog/repository-model.js";
 import { mergeAssistEnabled } from "../../engine/catalog/repository-registry.js";
-import { sideName } from "../../engine/code-rule/rerail-steer.js";
 import {
   baseBranch,
   branchBeingRebased,
@@ -24,6 +23,7 @@ import {
   resolveCommit,
   upstreamOf,
 } from "../../engine/merge-assist/branch-git.js";
+import { sideName } from "../../engine/merge-assist/conflict-note.js";
 import { conflictId, overlapQuestion, quietFiles, shortConflictId } from "../../engine/merge-assist/conflicts.js";
 import type { Conflict, ConflictSide } from "../../engine/merge-assist/model.js";
 import { ADJACENT_LINES, clipLines, type GitConflict, HUNK_LINES, identify, OverlapReader, type RefHunk, workspaceRanges } from "../../engine/merge-assist/overlap.js";

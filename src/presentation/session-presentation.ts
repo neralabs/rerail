@@ -15,7 +15,8 @@ import { withinCheckout } from "../engine/catalog/checkout-control.js";
 import { DAEMON_STATE_FILE, daemonAccessHeaders, daemonFetch, readDaemonState, recordedDaemonAlive, type DaemonState } from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { PresentationPresence } from "../engine/storage/presentation-presence.js";
-import { cappedLine, conflictUrl, ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
+import { cappedLine, ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
+import { conflictUrl } from "../engine/merge-assist/conflict-note.js";
 import { colourDepth, RERAIL_MARK_TEXT, rerailMark, stateMark, type TerminalEnv } from "./rerail-mark.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 

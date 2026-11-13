@@ -326,6 +326,7 @@ in code or by running it when this model was written; unmarked items are code re
 | T12 | Native engine crash or hang | Malicious repo | Partly mitigated | Low |
 | T13 | CI and release compromise | Malicious PR, compromised action | Mostly mitigated | Low–Medium (maintainers) |
 | T14 | Smaller local exposures | Other OS users | Partly mitigated | Low |
+| T15 | An agent saves a command the daemon later runs as the person (Merge Assist's conflict hook) | Prompt-injected agent with a shell | Partly mitigated: experimental switch, people-only operations, host permission prompt | Medium where Merge Assist is on, none otherwise |
 
 ### T1: Agent escalates from `agent` to `person`
 
@@ -812,6 +813,60 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
   `.rerail/rules` in Log until approved. A `.git` file it writes without registering a worktree takes no files from the
   checkout around it. Each session walks and reads the files of every such worktree of its repository and records
   what it finds there, but another session's work never steers it.
+
+</details>
+
+### T15: An agent saves a command the daemon later runs as the person
+
+[Merge Assist](merge-assist-v1-build.md) is experimental: nothing of it runs unless `RERAIL_EXPERIMENTAL_MERGE_ASSIST=1`
+(or `RERAIL_EXPERIMENTAL=1`) is set for the daemon and the CLI, and then only in a repository a person turned it on
+for ([Internal testing](internal-testing.md#merge-assist)). Where it runs, it adds Rerail's first network reads of
+its own and a command the person chooses, which the daemon runs on every conflict event.
+
+**The threat.** The conflict hook command (`rerail merge-assist settings --hook-command '<json argv>'`) is saved in
+`rerail.sqlite` (`settings:<repository>` in `merge_assist_state`) and run by the daemon, as the person and outside any
+coding agent's sandbox, on each `detected` and `closed` event of every checkout of the repository, until someone
+removes it. An agent that can run the `rerail` CLI can save one, and so gets commands run outside its sandbox after
+its session ends. In Claude Code, Rerail's CLI is in `sandbox.excludedCommands` (T1), so it runs outside the sandbox
+through the person's permission rules; no command file pre-approves `rerail merge-assist`, so the host asks the person
+first, except in an auto-approve mode.
+
+<details>
+<summary>Mitigations</summary>
+
+- **Off by default**, twice: the experimental switch, then the per-repository opt-in. With the switch unset, its
+  operations answer `404 experimental-off`, the CLI refuses, and the daemon runs no hook command, even one saved
+  earlier (`mergeAssistExperimentEnabled` in `src/engine/experimental-features.ts`).
+- **People only on MCP:** `merge_assist_settings_set` (turning it on, setting the command) and
+  `merge_assist_conflict_dismiss` answer an `agent` `403 agent-not-permitted`. An agent may read the status and the
+  settings of its own repository and scan only its own checkout.
+- **No shell:** the command is an argv array of 1–64 strings run with `shell: false` from the checkout's root; the
+  conflict reaches it on stdin only, never in argv, with `RERAIL_CONFLICT_EVENT` and `RERAIL_CONFLICT_ID` added to the
+  person's environment. A 1–60 second timeout ends its process tree (a POSIX process group, `taskkill /T` on Windows),
+  and stopping the daemon ends every running one (`src/runtime/merge-assist/hook-command.ts`).
+- **Its answer is data:** at most 4 KiB of JSON, `note` and `status` cut and stripped of control characters before
+  they reach the agent's note or the footer.
+
+</details>
+
+<details>
+<summary>What remains, and the rest of Merge Assist's surface</summary>
+
+- An unsandboxed agent, or one in an auto-approve mode, can save a hook command through the CLI or `/api` (always
+  `person`, T1), as it can run any other `rerail` command; this one outlives the session. The dashboard's Merge Assist
+  page and `rerail merge-assist settings` show the saved command.
+- **Subprocesses:** `gh` (`auth status`, `pr list`, `api` with `GET` only) with the person's own sign-in, prompts and
+  colour off and Enterprise tokens stripped, from the temporary folder, with a 20 second timeout and a 4 MiB output
+  cap; and the hook command above. Git runs with hooks, fsmonitor, external diff and textconv off.
+- **Other people's text** (branch names, commit subjects, pull request titles, logins, hunks) reaches the agent's
+  context as labelled, quoted, capped one-line data in a note that says it is not an instruction (T3), and the dashboard
+  only as text nodes, linking a pull request only to its GitHub URL.
+- **Stored data:** each checkout's conflicts (both sides' summaries and contested hunks; a dismissed one keeps none),
+  its last scan, the `gh` sign-in state and login, the notes each session was handed, and the hook command
+  ([privacy](privacy.md)). Turning Merge Assist off clears the conflicts, scans and `gh` sign-in state; `rerail reset`
+  clears the notes of the sessions it removes; the hook command stays until someone removes it.
+- **Routes and tools:** `merge_assist_get`, `merge_assist_settings_get`, `merge_assist_scan`,
+  `merge_assist_settings_set`, `merge_assist_conflict_dismiss` ([reference](reference.md#merge-assist)).
 
 </details>
 
