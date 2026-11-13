@@ -5262,25 +5262,26 @@ struct Ambient {
     observed: keeps::SharedObserved,
     device: placement::Binding,
     explain: bool,
+    waves: super::lanes::wave::Tally,
 }
 
 impl Ambient {
     fn here() -> Self {
         let explain = explaining(false);
         explaining(explain);
-        Ambient { plans: share_plans(), memo: super::derived::share(), observed: keeps::share_observed(), device: placement::binding(), explain }
+        Ambient { plans: share_plans(), memo: super::derived::share(), observed: keeps::share_observed(), device: placement::binding(), explain, waves: super::lanes::wave::tally() }
     }
 
     /// While the guard lives, this thread works in the run's ambient.
     fn enter(&self) -> impl Drop {
-        struct Entered(placement::Binding, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>);
+        struct Entered(placement::Binding, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>);
         impl Drop for Entered {
             fn drop(&mut self) {
                 placement::set_binding(self.0);
                 explaining(self.1);
             }
         }
-        Entered(placement::set_binding(self.device), explaining(self.explain), Box::new(enter_plans(self.plans.clone())), Box::new(super::derived::enter(self.memo.clone())), Box::new(keeps::enter_observed(self.observed.clone())))
+        Entered(placement::set_binding(self.device), explaining(self.explain), Box::new(enter_plans(self.plans.clone())), Box::new(super::derived::enter(self.memo.clone())), Box::new(keeps::enter_observed(self.observed.clone())), Box::new(super::lanes::wave::enter_tally(self.waves.clone())))
     }
 }
 

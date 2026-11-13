@@ -99,11 +99,41 @@ pub mod wave {
         static QUEUED: RefCell<Vec<(&'static str, u64, Kernel)>> = const { RefCell::new(Vec::new()) };
         static DONE: RefCell<HashMap<u64, Output>> = RefCell::new(HashMap::new());
         static NEXT: Cell<u64> = const { Cell::new(0) };
-        /// Waves flushed on this thread and the launches they held (for tests).
-        static FLUSHED: Cell<(u64, u64)> = const { Cell::new((0, 0)) };
+        /// Waves flushed and the launches they held (for tests): this thread's tally, shared with a run's strata
+        /// that run off its thread (`tally`, `enter_tally`), so a run's waves count wherever its jobs flushed them.
+        static FLUSHED: RefCell<Tally> = RefCell::new(Tally::default());
         /// What else the wave runs when it is flushed, after its launches: a form's own submission (the device
         /// joins' open command buffer, `setfix::device`), once.
         static DEFERRED: RefCell<Vec<Box<dyn FnOnce() -> Result<(), String>>>> = RefCell::new(Vec::new());
+    }
+
+    /// A thread's count of the waves flushed and their launches (`flushed`).
+    pub type Tally = std::sync::Arc<[std::sync::atomic::AtomicU64; 2]>;
+
+    fn count(waves: u64, launches: u64) {
+        use std::sync::atomic::Ordering::Relaxed;
+        FLUSHED.with_borrow(|t| {
+            t[0].fetch_add(waves, Relaxed);
+            t[1].fetch_add(launches, Relaxed);
+        });
+    }
+
+    /// This thread's tally, for a job of its run to count into (`enter_tally`).
+    pub fn tally() -> Tally {
+        FLUSHED.with_borrow(Tally::clone)
+    }
+
+    /// While the guard lives, this thread's waves count into `t` (a stratum's job, in its run's ambient).
+    pub fn enter_tally(t: Tally) -> impl Drop {
+        struct Back(Option<Tally>);
+        impl Drop for Back {
+            fn drop(&mut self) {
+                if let Some(t) = self.0.take() {
+                    FLUSHED.set(t);
+                }
+            }
+        }
+        Back(Some(FLUSHED.replace(t)))
     }
 
     /// Runs `f` when the wave is flushed (a form that encoded its work into a submission of its own, shared by the
@@ -159,8 +189,7 @@ pub mod wave {
         let ran = deferred.len();
         if q.is_empty() {
             if ran > 0 {
-                let (w, l) = FLUSHED.get();
-                FLUSHED.set((w + 1, l));
+                count(1, 0);
                 super::prof::wave(ran, strata);
             }
             for f in deferred {
@@ -175,8 +204,7 @@ pub mod wave {
         let (done, _) = super::prof::run(form, batch)?;
         super::prof::wave(n, strata);
         DONE.with_borrow_mut(|d| d.extend(tickets.into_iter().zip(done.into_iter().map(|d| d.out))));
-        let (w, l) = FLUSHED.get();
-        FLUSHED.set((w + 1, l + n as u64));
+        count(1, n as u64);
         for f in deferred {
             f()?;
         }
@@ -188,10 +216,11 @@ pub mod wave {
         DONE.with_borrow_mut(|d| tickets.iter().map(|t| d.remove(t).ok_or_else(|| format!("launch {t} has not run: its wave was not flushed"))).collect())
     }
 
-    /// This thread's waves flushed and the launches they held, so far.
+    /// The waves flushed and the launches they held, so far: this thread's, and its runs' jobs' elsewhere.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn flushed() -> (u64, u64) {
-        FLUSHED.get()
+        let t = tally();
+        (t[0].load(std::sync::atomic::Ordering::Relaxed), t[1].load(std::sync::atomic::Ordering::Relaxed))
     }
 }
 
