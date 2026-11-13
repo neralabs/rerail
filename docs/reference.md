@@ -883,7 +883,7 @@ Full-repository work is capped by a five-minute execution budget, a 100,000-file
 <details>
 <summary>Per-file failures and large files</summary>
 
-A single file may use the policy engine's 32 MB source allowance. Unreadable files never stop a scan. At most 20 per-file failures are listed; the audit record and session summary keep the total (`failureCount`, with `unlistedFailureCount` unlisted), and the footer says `audit failed (N failures)`.
+A single file may use the policy engine's 32 MB source allowance. Unreadable files never stop a scan. At most 20 per-file failures are listed; the audit record and session summary keep the total (`failureCount`, with `unlistedFailureCount` unlisted), and the footer says `audit failed (N failures)`. A scan reads files in path order, the order Git sorts paths in. Where Rerail walks the folders itself (a folder that is not a Git checkout, a checkout whose repository storage did not attach, and the folders a touched-files audit is given), a scan that stays within its budgets lists the same failures for the same files on every machine. In a Git checkout, failures to list a folder, read a `.gitignore` or read a name that is not UTF-8 still come in the order the filesystem lists folders, and the 100,000-file budget keeps the files the filesystem listed first.
 
 Large files have no fixed cut-off:
 
