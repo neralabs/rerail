@@ -4306,6 +4306,7 @@ dependencies = [
  "cc",
  "libc",
  "memchr",
+ "sha2 0.11.1",
 ]
 
 [[package]]

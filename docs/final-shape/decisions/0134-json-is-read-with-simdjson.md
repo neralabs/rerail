@@ -98,46 +98,68 @@ Bitlex path still packs that way (O-bitlex-writes-tape); tree-sitter's trees do 
 
 The Bitlex parse is 85% generated code (tier 2 51%, tier 1 34%), the rest buffer set-up.
 
-## Amendment (2026-11-13): a stage 2 of our own
+## Amendment (2026-11-13): a stage 2 of our own, the digest in stage 1
 
 Point 2 wrote the tape from the index *after* simdjson's DOM parser ran its own stage 2. That stage 2
 builds simdjson's tape, unescapes every string into its buffer, and converts every number. The engine
-uses none of it, and the index was then walked a second time to write our columns.
+uses none of it, and the index was then walked a second time to write our columns. The source was then
+read a third time, for its SHA-256.
 
-Now the shim has a stage 2 of its own, and nothing is written twice:
+Now one pass of stage 1 and one of a stage 2 of ours make the tape and the digest, and nothing is
+written twice:
 
-- simdjson's stage 1 finds the index, as before (its DOM document is never allocated);
-- simdjson's own stage 2 walker (`json_iterator::walk_document`, which checks the document's
-  structure) drives a visitor of ours, compiled in the same translation unit as the amalgamation;
-- the visitor checks each scalar as simdjson's tape builder does:
+- **Stage 1 is simdjson's**, its scanner, UTF-8 checker and indexer, in the shim's copy of its block
+  loop (`index_and_hash`). Each 64-byte block of the source is also hashed with the CPU's SHA-256
+  instructions while it is in the cache. The digest comes out with the index, and `TapeImage::written`
+  takes it instead of hashing the source again. Its DOM document is never allocated.
+- **Stage 2 walks the index itself**. It is simdjson's `json_iterator::walk_document`, one label for
+  each state, with the tape builder's checks, and its state in locals:
+  - structure, depth, and what follows the value;
   - escapes and surrogate pairs, without unescaping;
-  - numbers, with `parse_number` and a writer that keeps no value;
-  - `true`, `false` and `null`;
-- it writes the v9np columns at each node's preorder slot, into the `Tape`'s own `Vec`s (grown
-  through a callback), at their stored widths, with the tape's code table.
+  - numbers, by a copy of `parse_number` that keeps no value and returns where the number ends;
+  - `true`, `false` and `null`.
+- **The tape is written in place:** each node's columns go in at its preorder slot, in the `Tape`'s
+  own `Vec`s, at their stored widths, with the tape's code table.
+  - A string with no escape in its first 32 bytes (most strings) is written as its two nodes at once:
+    the string and its content.
+  - The buffers are made once, for the most nodes a file of its length can have. A node starts at a
+    byte of its own, except a pair (at its key's quote) and the document (at its value's first byte),
+    and a pair takes four bytes or more. So no node checks for room. What the tape does not use is
+    given back after.
 
-The columns are 2 bytes wide unless a value needs 4. `size` is predicted from the structural count;
-`off` and `tail` start at 2. Each column's values are or-ed as they are written, and a prediction that
-proves wrong is walked again at the right widths: 7 of the 2,200 files, each walked twice. The old
-writer (`tape_from_index`) stays as the oracle: the two tapes are equal byte for byte, widths
-included, on every `.json` file of the repository and on documents made to reach each check
-(`the_stage_2_tape_is_the_index_writers`).
+The columns are 2 bytes wide unless a value needs 4. `size`'s width is predicted from the structural
+count; `off` and `tail` start at 2. Each column's values are or-ed as they are written, and a file whose
+prediction proves wrong is walked again at the right widths: 7 of the 2,200 files.
+
+The old writer (`tape_from_index`) stays as the oracle (`the_stage_2_tape_is_the_index_writers`). The
+two tapes are equal byte for byte, widths included. Each refuses what the other refuses, and the
+digest equals the `sha2` crate's. This holds:
+- on every `.json` file of the repository;
+- on documents made to reach each check (structure, depth, escapes, numbers at their ranges);
+- on strings across the 32-byte blocks.
 
 | | instructions | a node | CPU |
 |---|---:|---:|---:|
-| simdjson: stage 1 alone | 0.20 G | 28 | 14 ms |
-| simdjson: DOM parse (stages 1 and 2) | 0.45 G | 62 | 27 ms |
-| simdjson: DOM parse, then columns from the index (before) | 1.63 G | 227 | 78 ms |
-| **simdjson: stage 1, our stage 2** | **0.74 G** | **102** | 41 ms |
-| simdjson: the tape (with the source's SHA-256) | 1.00 G | 138 | 67 ms |
+| simdjson: stage 1 alone | 0.20 G | 28 | 16 ms |
+| simdjson: stage 1, SHA-256 in it | 0.34 G | 47 | 32 ms |
+| simdjson: DOM parse (stages 1 and 2) | 0.45 G | 62 | 28 ms |
+| simdjson: DOM parse, columns from the index (before) | 1.63 G | 227 | 81 ms |
+| **the tape: stage 1 (hashed), stage 2, the codes** | **0.79 G** | **110** | 56 ms |
+| the source's SHA-256 alone, Rust's `sha2` (before) | 0.21 G | 29 | 24 ms |
 
-Our stage 2 costs 74 instructions a node; simdjson's own costs 34. Ablations of the corpus, a node:
-the walker 9 to 14, the scalar checks 22 to 25, the column writes the rest. The visitor's state is
-about twenty live values (five column pointers, the stacks, the counters), more than the
-callee-saved registers; a fifth of the walk's instructions are stack loads and stores. What is left
-to push, in the order it should pay:
+The tape with its digest was 1.89 G with the DOM parse, then 1.00 G with the first stage 2 of ours (a
+visitor of simdjson's walker); now 0.79 G. The SHA-256 in stage 1 costs 1.9 instructions a byte,
+against 2.9 for the `sha2` crate. Stage 2 alone costs 58 instructions a node; simdjson's own DOM stage
+2 costs 34. By shape, in instructions a node (`shape_costs`), simdjson's DOM stage 2 first and ours
+second:
 
-1. a walker of our own over the index, its state in registers, in place of `json_iterator`;
-2. a string with no escape written as its two nodes at once (string and content);
-3. a number's end from `parse_number` itself, not the next structural;
-4. the room check per node removed, with a bound reserved up front.
+- an array of short strings: 34 and 44;
+- objects of a number and a string: 35 and 49;
+- an array of `true`: 42 and 67;
+- an array of small integers: 95 and 108.
+
+Two steps did most of it:
+- **The walker of our own**, once its slow paths were inlined too. A lambda that is not inlined and
+  captures the walk's state by reference puts all that state in memory. That cost 30 instructions a
+  node until it was found.
+- **The digest's block loop unrolled by hand** (6.2 instructions a byte before).

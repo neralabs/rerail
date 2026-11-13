@@ -48,7 +48,7 @@ pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Res
     let t = rerail_simdjson::tape(source.as_bytes(), kinds)?;
     let codes: Result<Vec<Code>, String> =
         t.codes.iter().map(|&(kind, field, in_value)| Code::plain(kind, field, if in_value { std::slice::from_ref(value) } else { &[] })).collect();
-    Ok(codes.and_then(|codes| TapeImage::written(t.code, t.size, t.base, t.off, t.tail, t.widths, codes, grammar, source, budget)))
+    Ok(codes.and_then(|codes| TapeImage::written(t.code, t.size, t.base, t.off, t.tail, t.widths, codes, t.digest, grammar, source, budget)))
 }
 
 /// JSON's tree parser: simdjson, standing in for tree-sitter-json.

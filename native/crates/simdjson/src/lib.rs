@@ -1,7 +1,8 @@
 //! simdjson (the C++ library, vendored at `native/vendor/simdjson-5.0.5`) and the engine's JSON tape.
 //!
-//! `tape` is simdjson's stage 1 and a stage 2 of the shim's, which validates the document as simdjson's
-//! does and writes the v9np tape into the tape's own buffers. `structurals` is simdjson's DOM parser
+//! `tape` is simdjson's stage 1, the source hashed in it, and a stage 2 of the shim's, which walks the
+//! index itself, validates the document as simdjson's does, and writes the v9np tape into the tape's own
+//! buffers. `structurals` is simdjson's DOM parser
 //! and the structural index its stage 1 found (`tape_from_index`, the stage 2's oracle, writes a tape from it).
 //!
 //! The index holds, in order, the offset of each structural byte (`{ } [ ] : ,`) and of each
@@ -13,7 +14,7 @@ use std::ffi::{CStr, c_char};
 unsafe extern "C" {
     fn rerail_simdjson_structurals(src: *const c_char, len: usize, indexes: *mut *const u32, count: *mut u32) -> i32;
     fn rerail_simdjson_v9np(src: *const c_char, len: usize, sink: *mut Sink) -> i32;
-    fn rerail_simdjson_stage1(src: *const c_char, len: usize) -> i64;
+    fn rerail_simdjson_stage1(src: *const c_char, len: usize, hashed: i32) -> i64;
     fn rerail_simdjson_v9np_rewalks() -> u64;
     fn rerail_simdjson_release_above(keep: usize);
     fn rerail_simdjson_error_message(code: i32) -> *const c_char;
@@ -37,6 +38,7 @@ struct Sink {
     code_kind: [u16; 33],
     code_field: [u16; 33],
     code_value: [u8; 33],
+    digest: [u8; 32],
 }
 
 /// `grow`: each buffer holds `need[i]` bytes, its first `len[i]` kept.
@@ -140,6 +142,8 @@ pub struct Tape {
     pub tail: Vec<u8>,
     /// `size`, `off` and `tail`'s widths in bytes (2 or 4); every tail is from the last descendant's start.
     pub widths: [u8; 3],
+    /// The source's SHA-256, where the pass that read it computed it (`tape`, not `tape_from_index`).
+    pub digest: Option<[u8; 32]>,
 }
 
 impl Tape {
@@ -172,15 +176,18 @@ impl std::fmt::Display for Refusal {
     }
 }
 
-/// `src`'s tape, from a stage 2 of the shim's: simdjson's stage 1 finds the structural index, and
-/// simdjson's own stage 2 walker (which checks the document's structure) drives a visitor that checks
-/// each scalar as simdjson's tape builder does (escapes, numbers, atoms) and writes the columns at each
-/// node's preorder slot, into the returned `Tape`'s own buffers (grown through `grow`), at their stored
-/// widths, with the tape's codes. No DOM tape, no unescaped strings, no number values, nothing copied
-/// or converted after. Each column is 2 bytes wide unless a value needs 4: `size`'s width is predicted
-/// from the structural count, `off` and `tail` start at 2; a file a prediction fails is walked again at
-/// the right widths (7 of the repository's 2,200 files). Where the build has no such stage 2 (not
-/// arm64), the index's writer (`tape_from_index`).
+/// `src`'s tape and its SHA-256, in one pass of stage 1 and one of a stage 2 of the shim's:
+/// - stage 1 is simdjson's, each 64-byte block of the source also hashed with the CPU's SHA-256
+///   instructions;
+/// - stage 2 walks the index itself, as simdjson's walker does, checks each scalar as simdjson's tape
+///   builder does (escapes, numbers, atoms), and writes the columns at each node's preorder slot, into
+///   the returned `Tape`'s own buffers, at their stored widths, with the tape's codes. No DOM tape, no
+///   unescaped strings, no number values, nothing copied or converted after.
+///
+/// Each column is 2 bytes wide unless a value needs 4: `size`'s width is predicted from the structural
+/// count, `off` and `tail` start at 2, and a file a prediction fails is walked again at the right widths
+/// (7 of the repository's 2,200). Where the build has no such stage 2 (not arm64), the index's writer
+/// (`tape_from_index`), with no digest.
 ///
 /// The nodes are `tape_from_index`'s, byte for byte (`the_stage_2_tape_is_the_index_writers`).
 pub fn tape(src: &[u8], kinds: &Kinds) -> Result<Tape, Refusal> {
@@ -203,6 +210,7 @@ pub fn tape(src: &[u8], kinds: &Kinds) -> Result<Tape, Refusal> {
         code_kind: [0; 33],
         code_field: [0; 33],
         code_value: [0; 33],
+        digest: [0; 32],
     };
     // SAFETY: `src` is read for its length; the shim writes the buffers only within what `grow` gave.
     let code = unsafe { rerail_simdjson_v9np(src.as_ptr().cast(), src.len(), &mut sink) };
@@ -215,10 +223,15 @@ pub fn tape(src: &[u8], kinds: &Kinds) -> Result<Tape, Refusal> {
             for (v, &len) in columns.iter_mut().zip(&sink.len) {
                 // SAFETY: the shim wrote `len` bytes of each, within its capacity.
                 unsafe { v.set_len(len) };
+                // The buffers were made for the most nodes a file of its length can have: what the
+                // tape does not use is given back.
+                if v.capacity() > len + len / 2 + 64 {
+                    v.shrink_to_fit();
+                }
             }
             let codes = (0..sink.codes as usize).map(|i| (sink.code_kind[i], sink.code_field[i], sink.code_value[i] != 0)).collect();
             let [code, size, off, tail, base] = columns;
-            Ok(Tape { code, codes, size, base, off, tail, widths: sink.width })
+            Ok(Tape { code, codes, size, base, off, tail, widths: sink.width, digest: Some(sink.digest) })
         }
         error => Err(Refusal::Simdjson(Error(error))),
     }
@@ -445,10 +458,11 @@ fn write(src: &[u8], index: &[u32], shift: u32, kinds: &Kinds) -> Result<Tape, R
     Ok(w.finish())
 }
 
-/// simdjson's stage 1 alone, for a measurement: the structural index's length.
-pub fn stage1_only(src: &[u8]) -> i64 {
+/// Stage 1 alone, for a measurement: simdjson's, or with `hashed` ours (the source hashed with it). The
+/// structural index's length.
+pub fn stage1_only(src: &[u8], hashed: bool) -> i64 {
     // SAFETY: `src` is read for its length.
-    unsafe { rerail_simdjson_stage1(src.as_ptr().cast(), src.len()) }
+    unsafe { rerail_simdjson_stage1(src.as_ptr().cast(), src.len(), i32::from(hashed)) }
 }
 
 /// This thread's stage 2 walks made again at other widths (a column's prediction wrong), for a measurement.
@@ -519,7 +533,8 @@ mod tests {
                 n += match run.as_str() {
                     "index" => structurals(f, <[u32]>::len).unwrap(),
                     "tape" => tape(f, &kinds).unwrap().node_count(),
-                    "stage1" => stage1_only(f) as usize,
+                    "stage1" => stage1_only(f, false) as usize,
+                    "stage1-hashed" => stage1_only(f, true) as usize,
                     "index-tape" => tape_from_index(f, &kinds).unwrap().node_count(),
                     _ => f.len(),
                 };
@@ -539,6 +554,8 @@ mod tests {
             let (a, b) = (tape(src, &kinds), tape_from_index(src, &kinds));
             match (a, b) {
                 (Ok(a), Ok(b)) => {
+                    use sha2::Digest;
+                    assert_eq!(a.digest, Some(<[u8; 32]>::from(sha2::Sha256::digest(src))), "the digest of {:?}", String::from_utf8_lossy(src));
                     assert_eq!((&a.code, &a.codes, &a.size, &a.base, &a.off, &a.tail, a.widths), (&b.code, &b.codes, &b.size, &b.base, &b.off, &b.tail, b.widths), "{:?}", String::from_utf8_lossy(src));
                     true
                 }
@@ -558,6 +575,20 @@ mod tests {
         for src in made {
             same(src);
         }
+        // The walker's own checks: structure, depth, what follows the value.
+        let walker: &[&[u8]] = &[
+            b"{\"a\":1,}", b"{\"a\"}", b"{\"a\":}", b"[1]]", b"{} {}", b"{\"a\":1 \"b\":2}", b"   ", b"[\"\\u", b"{1:2}", b"[,1]",
+            b"[1,,2]", b"{\"a\":1]", b"[{]", b"[[]", b"{\"a\":[}]", b"[true false]", b"[nulll]", b"[-0, -0.0e-0, 1E+2, 0.5]", b"[\"a\"x]",
+            b"  {  \"a\"  :  [ 1 , { } , [ ] , \"\" ]  }  ", b"\"x\" ", b"7 ", b" 7", b"-", b"[01]", b"[1e]", b"[18446744073709551615, -9223372036854775808]",
+            b"[18446744073709551616]", b"[-9223372036854775809]", b"[1e400]",
+        ];
+        for src in walker {
+            same(src);
+        }
+        let deep = |n: usize| format!("{}{}", "[".repeat(n), "]".repeat(n));
+        // Both refuse past simdjson's depth: some of these.
+        let refused = [1023, 1024, 1025, 1026, 2000].iter().filter(|&&n| !same(deep(n).as_bytes())).count();
+        assert!(refused >= 1, "no depth refused");
         // Strings past a block of 32 bytes, with escapes on either side of one's end.
         for n in [0, 1, 15, 16, 30, 31, 32, 33, 63, 64, 65, 100] {
             for esc in [&b""[..], b"\\n", b"\\u00e9", b"\\\\"] {
@@ -626,10 +657,16 @@ mod tests {
                 }
                 best as f64 / nodes as f64
             };
-            let s1 = measure(&|| stage1_only(d) as usize);
+            let s1 = measure(&|| stage1_only(d, false) as usize);
+            let hashed = measure(&|| stage1_only(d, true) as usize);
             let dom = measure(&|| structurals(d, <[u32]>::len).unwrap());
             let ours = measure(&|| tape(d, &kinds).unwrap().node_count());
-            eprintln!("{name:14} {nodes:7} nodes: stage 1 {s1:5.1}, DOM stage 2 {:5.1}, v9np stage 2 {:5.1} a node", dom - s1, ours - s1);
+            eprintln!(
+                "{name:14} {nodes:7} nodes: stage 1 {s1:5.1}, SHA-256 in it {:5.1}, DOM stage 2 {:5.1}, v9np stage 2 {:5.1} a node",
+                hashed - s1,
+                dom - s1,
+                ours - hashed
+            );
         }
     }
 
