@@ -40,6 +40,8 @@ interface RecordedDaemon {
    * endpoint that stays held until the test ends, as a live daemon holds its engine pipe.
    */
   kernelSocketPath?: string;
+  /** The capability the daemon holds: its engine proves it, and the state records it. */
+  accessToken?: string;
 }
 
 interface BridgeSetup {
@@ -79,7 +81,7 @@ async function recordDaemon(home: string, daemon: RecordedDaemon): Promise<void>
   // A short folder: macOS reads a recorded socket path of at most 103 bytes, and a temp home there already takes
   // about 90. Nothing listens on it off Windows.
   const kernelSocketPath = daemon.kernelSocketPath ?? testEngineEndpoint("/tmp");
-  if (daemon.kernelSocketPath === undefined) heldEndpoints.push(await holdEngineEndpoint(kernelSocketPath));
+  if (daemon.kernelSocketPath === undefined) heldEndpoints.push(await holdEngineEndpoint(kernelSocketPath, daemon.accessToken));
   await mkdir(home, { recursive: true });
   await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify({
     pid: daemon.pid,
@@ -92,6 +94,7 @@ async function recordDaemon(home: string, daemon: RecordedDaemon): Promise<void>
     ui: "bundled",
     startedAt: daemon.startedAt ?? 0,
     packageRoot: "/tmp/rerail-bridge-test-package",
+    ...(daemon.accessToken === undefined ? {} : { accessToken: daemon.accessToken }),
   }));
 }
 
@@ -376,7 +379,7 @@ describe("Rerail MCP bridge", () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-bridge-access-"));
     directories.push(root);
     const home = join(root, "home");
-    await recordDaemon(home, { pid: process.pid, port: 4321 });
+    await recordDaemon(home, { pid: process.pid, port: 4321, accessToken: "kept" });
     const state = JSON.parse(await readFile(join(home, DAEMON_STATE_FILE), "utf8")) as Record<string, unknown>;
     const request = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" });
     const pong = JSON.stringify({ jsonrpc: "2.0", id: 1, result: {} });
@@ -399,8 +402,11 @@ describe("Rerail MCP bridge", () => {
       return { sent, stdout: lines() };
     };
     expect(await bridge("kept", "kept")).toEqual({ sent: ["/healthz kept", "/mcp kept"], stdout: [pong] });
-    // A capability daemon.json no longer matches is refused at the health check: said so, not "not running".
-    expect(await bridge("stale", "kept")).toEqual({ sent: ["/healthz stale"], stdout: [refused] });
+    // A capability daemon.json no longer matches is refused at the health check: said so, not "not running". On
+    // Windows the daemon's engine has already refused to prove it holds that capability, so nothing is sent at all.
+    expect(await bridge("stale", "kept")).toEqual(process.platform === "win32"
+      ? { sent: [], stdout: [JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32000, message: NOT_RUNNING } })] }
+      : { sent: ["/healthz stale"], stdout: [refused] });
     // One that stops being accepted after the check: the 401 body is no MCP answer, so the client gets the same error.
     expect(await bridge("kept", "kept", () => jsonResponse(401, { error: "access-required", message: "…" })))
       .toEqual({ sent: ["/healthz kept", "/mcp kept"], stdout: [refused] });

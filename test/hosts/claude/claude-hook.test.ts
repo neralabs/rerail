@@ -122,7 +122,7 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     expect(eventIds()).toEqual(expect.arrayContaining(["busy-session:SessionStart", "busy-session:prompt:p1"]));
   });
 
-  it("sends nothing to an engine socket whose daemon never answers as itself, so a squatter gets no capability", { timeout: 60_000 }, async () => {
+  it("sends no capability to an engine socket whose daemon never answers as itself, so a squatter gets none", { timeout: 60_000 }, async () => {
     const root = await temporaryDirectory();
     startTestRepository(root);
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
@@ -131,7 +131,7 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     // Something else listens where the state file says the engine is, and nothing answers at the recorded URL.
     const received: string[] = [];
     const squatter = createHttpServer((request, response) => {
-      received.push(String(request.headers["x-rerail-access"] ?? "no capability"));
+      received.push(`${request.method} ${request.url} ${String(request.headers["x-rerail-access"] ?? "no capability")}`);
       response.writeHead(500).end();
     });
     servers.push(squatter);
@@ -142,7 +142,8 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     const common = { session_id: "squatted-session", cwd: root };
     await expect(runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath)).rejects.toThrow();
     expect(await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath)).toEqual({});
-    expect(received).toEqual([]);
+    // On Windows the hook asks the engine there to prove it holds the capability, which sends only a challenge.
+    expect(received.filter(line => process.platform !== "win32" || line !== "POST /proof no capability")).toEqual([]);
   });
 
   /** A listener at a new loopback URL that takes every request and answers none: a daemon whose event loop is held. */

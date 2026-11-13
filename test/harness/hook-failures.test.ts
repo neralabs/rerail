@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { createServer as createNetServer, type AddressInfo } from "node:net";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +14,7 @@ vi.mock("../../src/runtime/daemon-control.js", async () => {
 
 import { HOOK_FAILURES_FILE, hookFailureLines, readHookFailures, recordHookFailure, type HookFailure } from "../../src/harness/hook-failures.js";
 import { DaemonUnreachableError, runHostHook } from "../../src/harness/hook-host.js";
+import { listenAsEngine } from "../support/platform/engine-endpoint.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 const homes: string[] = [];
@@ -98,12 +99,12 @@ describe("a hook that cannot record its event", () => {
     const rerailHome = await home();
     vi.stubEnv("RERAIL_HOME", rerailHome);
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
-    // A live daemon: this process, holding the engine socket daemon.json names, with `answer` at the URL it records.
+    // A live daemon: this process, holding the engine socket daemon.json names and proving the capability it records,
+    // with `answer` at the URL it records.
     const front = createHttpServer(answer);
-    const engine = createNetServer();
     const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-alive-${process.pid}-${Date.now()}` : join(rerailHome, "engine.sock");
     await new Promise<void>(resolve => front.listen(0, "127.0.0.1", resolve));
-    await new Promise<void>(resolve => engine.listen(socketPath, resolve));
+    const closeEngine = await listenAsEngine(socketPath, "token");
     try {
       const port = (front.address() as AddressInfo).port;
       writeFileSync(join(rerailHome, "daemon.json"), JSON.stringify({
@@ -122,7 +123,7 @@ describe("a hook that cannot record its event", () => {
       })]);
     } finally {
       front.closeAllConnections();
-      await Promise.all([front, engine].map(server => new Promise(resolve => server.close(resolve))));
+      await Promise.all([new Promise(resolve => front.close(resolve)), closeEngine()]);
     }
   });
 

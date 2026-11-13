@@ -82,7 +82,8 @@ describe("hook launcher", () => {
     const { status, stdout, stderr } = await launch("cannot-run");
     expect(stdout).toBe("{}\n");
     expect(status).toBe(0);
-    // libuv's codes: no execute bit is EACCES; a file Windows cannot load as a program is EFTYPE.
-    expect(stderr).toMatch(WINDOWS ? /rerail hook: .*EFTYPE/u : /rerail hook: .*EACCES/u);
+    // The failure names the program it could not start. Its code is libuv's: EACCES without the execute bit; on Windows,
+    // a file it cannot load as a program, whose code Node reports as UNKNOWN.
+    expect(stderr).toMatch(WINDOWS ? /rerail hook: spawnSync .*recorded-node\.exe \w+/u : /rerail hook: .*EACCES/u);
   });
 });
