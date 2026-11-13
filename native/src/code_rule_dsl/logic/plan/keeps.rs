@@ -59,6 +59,11 @@ pub(super) const M: f64 = 4.0;
 pub(super) const K: usize = 4;
 /// At most this many reader copies made by inlining one relation.
 pub(super) const COPIES: usize = 8;
+/// At most this many copies of one rule of the program, over every pass of `unfold_reads`: each pass may multiply
+/// a rule's copies (a negated read of a relation of several rules is their product), and a chain of inlined relations
+/// compounds them. `lazy-architecture` (data-layer) took 8 GB in 7 s unfolding, over one file. A rule past it keeps
+/// its read, and the relation read keeps its rules (stored).
+const RULE_COPIES: usize = COPIES * 4;
 /// A relation estimated under this many rows is stored without pricing: its rows cost little either way.
 const SMALL: f64 = 1024.0;
 
@@ -303,14 +308,18 @@ fn unfold_reads(mut rules: Vec<Rule>, inline: &BTreeSet<String>) -> (Vec<Rule>, 
         let mut changed = false;
         let mut next = Vec::with_capacity(rules.len());
         let mut next_origin = Vec::with_capacity(rules.len());
+        let mut of_rule: BTreeMap<usize, usize> = BTreeMap::new();
+        origin.iter().for_each(|(o, _)| *of_rule.entry(*o).or_default() += 1);
         for (rule, from) in rules.into_iter().zip(origin) {
             let at = rule.body.iter().position(|l| l.atom().is_some_and(|a| inline.contains(a.rel.as_str())));
             match at {
                 Some(i) => {
                     let rel = rule.body[i].atom().map(|a| a.rel.clone()).unwrap_or_default();
                     let defs: Vec<&Rule> = bodies[rel.as_str()].iter().collect();
-                    match unfold(&rule, i, &defs, pass) {
+                    match unfold(&rule, i, &defs, pass).filter(|copies| of_rule[&from.0] + copies.len() <= RULE_COPIES + 1) {
                         Some(copies) => {
+                            let n = of_rule.get_mut(&from.0).unwrap();
+                            *n = (*n + copies.len()).saturating_sub(1);
                             let mut into = from.1.clone();
                             into.insert(rel.to_string());
                             next_origin.extend(copies.iter().map(|_| (from.0, into.clone())));
@@ -1562,5 +1571,16 @@ pub mod tests {
         let def = rule("r(z) :- b(z, w), a(w).");
         let (rules, _) = unfold_reads(vec![reader, def], &BTreeSet::from(["r".to_owned()]));
         assert_eq!(rules[0].to_string(), "o($x) :- a($y), b($x, $w_i0_1), a($w_i0_1), b($y, $w_i1_1), a($w_i1_1)");
+    }
+
+    /// A rule's copies over every pass stay within `RULE_COPIES`: each read of a two-rule inlined relation doubles
+    /// them, and six reads would make 64. Past the bound the rule keeps its read, so the relation keeps its rules.
+    #[test]
+    fn unfolding_stops_at_a_rules_copy_bound() {
+        let reader = rule("o(x) :- r(x), r(y1), r(y2), r(y3), r(y4), r(y5).");
+        let (rules, _) = unfold_reads(vec![reader, rule("r(z) :- a(z)."), rule("r(z) :- b(z).")], &BTreeSet::from(["r".to_owned()]));
+        let copies: Vec<&Rule> = rules.iter().filter(|r| r.head.rel == "o").collect();
+        assert_eq!(copies.len(), RULE_COPIES);
+        assert!(copies.iter().all(|r| r.body.iter().filter_map(Literal::atom).filter(|a| a.rel == "r").count() == 1));
     }
 }
