@@ -3259,7 +3259,12 @@ fn run_observed(
     // store's writer writes them behind the run. Taken after, a phase that ran past `DUE_AFTER` (a loaded machine) had
     // the constants' run write its symbols ahead of the waves, which the strict mode refuses.
     let complete = store.atoms_handle().ready_for_run().map_err(|e| Error::Plan(e.to_string()))?;
-    crate::code_rule_dsl::logic::profile::decision("atoms before the first wave (decision 0104)", || if complete { "every stored atom held: lookups read nothing".into() } else { "the store's atoms are too many to read whole: lookups read its key".into() });
+    let mapped = store.atoms_handle().forked();
+    crate::code_rule_dsl::logic::profile::decision("atoms before the first wave (decision 0104)", || match (complete, mapped) {
+        (true, false) => "every stored atom held: lookups read nothing".into(),
+        (true, true) => "mapped to the store's (decision 0170): the atoms the run's stored rows name are held as they are read; lookups read nothing".into(),
+        (false, _) => "the store's atoms are too many to read whole: lookups read its key".into(),
+    });
     let mut repository = repository;
     if let Some((consts, rels)) = &run_constants {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "derive the constants of the phases' exports".into());
@@ -3372,6 +3377,14 @@ fn run_observed(
         (None, Some(memo::Memo::Stored(store))) => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "read the kept statistics".into());
             let mut k = store.stat_blob(memo_program).ok().flatten().and_then(|b| keptstats::Keeper::decode(&b)).unwrap_or_default();
+            // Its constants are the store's atoms: this process's, mapped (decision 0170), in one call.
+            let atoms = store.atoms_handle();
+            if atoms.holds_by_reading() {
+                let plan = memo::plan_digest(&memo_program);
+                if k.map_symbols(&|key, w| memo::symbol_columns(&plan, key, w), atoms.forked(), |v| atoms.to_local(v)).is_err() {
+                    k = keptstats::Keeper::default();
+                }
+            }
             // The contents its last run had not stored yet, by their sources now.
             k.resolve(|digests| store.sources_by_hashes(&digests.iter().map(|d| crate::content_store::HashKey::from_sha256_digest(*d)).collect::<Vec<_>>()).unwrap_or_else(|_| vec![None; digests.len()]));
             Some(k)
@@ -5870,7 +5883,10 @@ fn run_observed(
         // The exports' statistics as kept by file: a memo hit's rows are not measured again. An export whose kept rows
         // are not the rows held (a row handed to two files is held once) is measured from the rows held, as is every
         // export when the keeper was given up after the hits went unmeasured.
-        if hits_unmeasured || kept.is_some() {
+        // An export no chunk measured and the keeper gave none of (it gave up after its hits, as in a phase whose
+        // files are all loads) is measured from its rows held too: the planner prices every input it reads.
+        let unmeasured: BTreeSet<&String> = split.exports.iter().filter(|rel| !totals.rels.contains_key(rel.as_str())).collect();
+        if hits_unmeasured || kept.is_some() || !unmeasured.is_empty() {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the exports' statistics, kept or measured".into());
             let tested = constants_tested(&lowered.program);
             let (mut from_kept, mut measured_held) = (0usize, Vec::<String>::new());
@@ -5900,7 +5916,7 @@ fn run_observed(
                         }
                         from_kept += 1;
                     }
-                    None if hits_unmeasured => {
+                    None if hits_unmeasured || unmeasured.contains(rel) => {
                         let _m = crate::code_rule_dsl::logic::profile::span(|| format!("measure export {rel}"));
                         totals.forget(rel);
                         let src = exports.borrow_mut().source(rel, decl.len());
@@ -5920,7 +5936,16 @@ fn run_observed(
             // patches it. A run that could not keep them writes it empty, so the next counts every file in.
             (None, Some(k), Some(memo::Memo::Stored(store))) if kept.is_none() || k.counted != (0, 0) => {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "write the kept statistics, queued".into());
-                store.queue_stat_blob(memo_program, k.encode());
+                // Its constants as the store numbers them, in the writer's transaction (decision 0170).
+                let plan = memo::plan_digest(&memo_program);
+                store.queue_stat_blob_mapped(memo_program, k.encode(), Box::new(move |store, blob| {
+                    if !store.atoms_handle().forked() {
+                        return Ok(blob.to_vec());
+                    }
+                    let mut k = keptstats::Keeper::decode(blob).ok_or_else(|| crate::content_store::StoreError::Invalid("the kept statistics do not read back".into()))?;
+                    k.map_symbols(&|key, w| memo::symbol_columns(&plan, key, w), true, |v| store.symbols_to_store(v))?;
+                    Ok(k.encode())
+                }));
             }
             _ => {}
         }

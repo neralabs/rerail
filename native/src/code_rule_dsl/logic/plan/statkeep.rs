@@ -348,6 +348,18 @@ impl RelStats {
     }
 
     /// Column `c`'s count of each value, while it has few enough to keep them exactly (`EXACT`).
+    /// Column `c`'s exact map taken out as (value, count) pairs, to be mapped and put back (`put_exact`).
+    pub(in crate::code_rule_dsl) fn take_exact(&mut self, c: usize) -> Option<Vec<(i64, i64)>> {
+        self.cols.get_mut(c)?.exact.take().map(|e| e.into_iter().collect())
+    }
+
+    /// Column `c`'s exact map from (value, count) pairs.
+    pub(in crate::code_rule_dsl) fn put_exact(&mut self, c: usize, pairs: Vec<(i64, i64)>) {
+        if let Some(col) = self.cols.get_mut(c) {
+            col.exact = Some(pairs.into_iter().collect());
+        }
+    }
+
     pub(in crate::code_rule_dsl) fn exact(&self, c: usize) -> Option<impl Iterator<Item = (i64, i64)> + '_> {
         self.cols.get(c)?.exact.as_ref().map(|e| e.iter().map(|(v, n)| (*v, *n)))
     }

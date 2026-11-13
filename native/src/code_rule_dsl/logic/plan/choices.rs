@@ -200,7 +200,9 @@ pub(super) fn remember(key: [u8; 32], chosen: Chosen) {
             let _span = super::super::profile::span(|| "planning choices, kept in the store, queued".into());
             // Made into facts and written by the store's writer (decision 0102).
             let (prepared, late) = (*prepared, Arc::clone(late));
-            store.write_back("the planning choices", 0, vec![(queued(&prepared, &key), None)], Box::new(move |store| write(store, &prepared, &key, &chosen, &late).map(drop)));
+            // Its facts hold strings as text (`program_facts::encode`'s own table), no atom: kept after a fork too
+            // (decision 0170).
+            store.write_back_syms(crate::content_store::write_back::Syms::None, "the planning choices", 0, vec![(queued(&prepared, &key), None)], Box::new(move |store| write(store, &prepared, &key, &chosen, &late).map(drop)));
         }
     });
 }

@@ -67,13 +67,14 @@ impl ContentStore {
             return Err(StoreError::Invalid("prefilter publication exceeds 64 tapes".to_owned()));
         }
         self.require_write_capacity()?;
-        self.immediate_transaction(|transaction| {
+        // Its terms are the store's ids (`Counts::flush`): written after a fork too (decision 0170).
+        super::atoms::mapped(|| self.immediate_transaction(|transaction| {
             let mut counts = Counts::default();
             for set in sets {
                 put(transaction, set, &mut counts, &self.atoms)?;
             }
             counts.flush(transaction, &self.atoms)
-        })?;
+        }))?;
         self.hold_prefilters(sets);
         Ok(())
     }
@@ -142,7 +143,9 @@ impl ContentStore {
             Ok(())
         };
         cache(CANDIDATE_CACHE_KB)?;
-        let value = (|| {
+        // Its statements read and write terms as the store numbers them (the `atoms` table answers in the store's ids,
+        // decision 0170), never this process's: written after a fork too.
+        let value = super::atoms::mapped(|| {
             if writes {
                 self.require_write_capacity()?;
                 return self.immediate_transaction(|transaction| Ok(operation(transaction)?));
@@ -152,7 +155,7 @@ impl ContentStore {
             let value = operation(&transaction)?;
             self.commit(transaction)?;
             Ok(value)
-        })();
+        });
         cache(1_024)?;
         value
     }
@@ -275,14 +278,14 @@ impl Counts {
 
     /// Writes and clears the sums; postings in key order, so consecutive rows share leaves.
     fn flush(&mut self, transaction: &Connection, store: &super::atoms::Atoms) -> StoreResult<()> {
-        // The term columns hold atoms, unmapped (decision 0170): a forked process does not write them.
-        store.refuse_forked("the prefilter's terms")?;
         let counts = std::mem::take(self);
         // Each term's atom, from the store's arena (decision 0049): new ones are pending, and the
-        // transaction's commit appends them before these rows (`ContentStore::commit`).
+        // transaction's commit appends them before these rows (`ContentStore::commit`). The term columns
+        // hold the store's ids: a process whose atoms are mapped (decision 0170) maps them here, in one batch.
         let texts = counts.term_freq.keys().map(|(_, term)| term.as_str()).collect::<Vec<_>>();
-        let ids = store.intern_all(&texts)?;
-        let atoms: BTreeMap<&str, i64> = texts.iter().copied().zip(ids.into_iter().map(i64::from)).collect();
+        let mut ids: Vec<i64> = store.intern_all(&texts)?.into_iter().map(i64::from).collect();
+        store.to_store(transaction, &mut ids)?;
+        let atoms: BTreeMap<&str, i64> = texts.iter().copied().zip(ids).collect();
         let atom = |term: &str| atoms.get(term).copied().ok_or_else(|| StoreError::Invalid("a posting's term has no atom".to_owned()));
         insert(
             transaction,

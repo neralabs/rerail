@@ -208,9 +208,10 @@ impl Interner {
         s >= self.base || self.held.range(..=s).next_back().is_some_and(|(first, h)| ((s - first) as usize) < h.ends.len())
     }
 
-    /// Holds a stored segment read from the database: atoms `first..`. Those already held are skipped; a string
-    /// held twice is refused as corrupt.
-    fn add_segment(&mut self, first: Sym, ends: &[u8], bytes: &[u8]) -> StoreResult<()> {
+    /// Holds a stored segment read from the database: atoms `first..`. Those already held are skipped. A string held
+    /// under another id is refused as corrupt, or, given `dups`, not held and listed there as (stored id, held id):
+    /// this process gave it an id of its own before it held the store's (decision 0170).
+    fn add_segment(&mut self, first: Sym, ends: &[u8], bytes: &[u8], mut dups: Option<&mut Vec<(Sym, Sym)>>) -> StoreResult<()> {
         let corrupt = |what: &str| StoreError::Corrupt(format!("atom segment {first}: {what}"));
         if ends.len() % 4 != 0 {
             return Err(corrupt("its end offsets are not u32s"));
@@ -230,6 +231,13 @@ impl Interner {
             let id = first + k as Sym;
             start = end;
             if self.holds(id) {
+                runs.extend(run.take());
+                continue;
+            }
+            if let Some(dups) = dups.as_deref_mut()
+                && let Some(held) = self.get(s)
+            {
+                dups.push((id, held));
                 runs.extend(run.take());
                 continue;
             }
@@ -512,10 +520,7 @@ fn key_segments(connection: &Connection) -> StoreResult<()> {
         }
     }
     keys.sort_unstable();
-    let mut insert = connection.prepare("INSERT OR IGNORE INTO atom_key(h, id) VALUES (?1, ?2)")?;
-    for (h, id) in keys {
-        insert.execute([h, id])?;
-    }
+    super::bounded_insert::insert(connection, "INSERT OR IGNORE INTO atom_key(h, id)", "", keys.into_iter().map(|(h, id)| [rusqlite::types::Value::Integer(h), rusqlite::types::Value::Integer(id)]))?;
     connection.execute("INSERT OR REPLACE INTO atom_key_end(one, upto) VALUES (0, ?1)", [database_end(connection)? as i64])?;
     Ok(())
 }
@@ -684,10 +689,12 @@ impl Atoms {
         self.state.read().atoms.len()
     }
 
-    /// Whether ids are given out provisionally (decision 0160): a run is under way and every stored atom is held, so a
-    /// string not in memory is new to this process, and its id is checked against the store's when it is written.
+    /// Whether ids are given out provisionally (decision 0160): a run is under way and every stored atom it may meet is
+    /// held, so a string not in memory is new to it, and its id is checked against the store's when it is written.
+    /// Every stored atom is held (`complete`), or this process maps its ids to the store's (decision 0170): forked, or
+    /// over a store it does not hold whole, holding the atoms its stored rows name as they are read (`hold_named`).
     fn provisional(&self) -> bool {
-        lease_free() && self.runs.load(Ordering::Acquire) > 0 && self.complete.load(Ordering::Acquire)
+        lease_free() && self.runs.load(Ordering::Acquire) > 0 && (self.complete.load(Ordering::Acquire) || self.forked())
     }
 
     /// Forks on this process's reader (outside a write): another process stored atoms past this one's pending ones.
@@ -762,7 +769,7 @@ impl Atoms {
         }
         // Forked: another process's atom of it is found by its key and held here (decision 0170).
         if self.forked() {
-            self.find_forked(value)?;
+            self.find_forked(&[value])?;
             return Ok(self.state.read().atoms.get(value));
         }
         if !self.leased.load(Ordering::Acquire) {
@@ -770,6 +777,26 @@ impl Atoms {
         }
         self.find(&[value])?;
         Ok(self.state.read().atoms.get(value))
+    }
+
+    /// The atom of each of `values` (`lookup`), those not in memory found in one read.
+    pub fn lookup_all(&self, values: &[&str]) -> StoreResult<Vec<Option<Sym>>> {
+        let missing: Vec<&str> = {
+            let state = self.state.read();
+            values.iter().copied().filter(|v| state.atoms.get(v).is_none()).collect()
+        };
+        if !missing.is_empty() && !self.provisional() {
+            if self.forked() {
+                self.find_forked(&missing)?;
+            } else {
+                if !self.leased.load(Ordering::Acquire) {
+                    self.catch_up()?;
+                }
+                self.find(&missing)?;
+            }
+        }
+        let state = self.state.read();
+        Ok(values.iter().map(|v| state.atoms.get(v)).collect())
     }
 
     /// The string of `atom`, if the database or this process holds it.
@@ -1013,22 +1040,11 @@ impl Atoms {
         if wanted.is_empty() {
             return Ok(());
         }
-        let segments = self.with_reader(|connection| {
-            let mut statement = connection.prepare_cached("SELECT first, ends, bytes FROM atom_segment WHERE first <= ?1 ORDER BY first DESC LIMIT 1")?;
-            let mut out: Vec<(i64, Vec<u8>, Vec<u8>)> = Vec::new();
-            for &id in &wanted {
-                if out.last().is_some_and(|(first, ends, _)| i64::from(id) < first + (ends.len() / 4) as i64) {
-                    continue;
-                }
-                if let Some(segment) = statement.query_row([i64::from(id)], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).optional()? {
-                    out.push(segment);
-                }
-            }
-            Ok(out)
-        })?;
+        // Their segments, in one statement (`map::fetch`).
+        let segments = self.with_reader(|connection| map::fetch(connection, &wanted))?;
         let mut state = self.state.write();
         for (first, ends, bytes) in segments.unwrap_or_default() {
-            state.atoms.add_segment(first as Sym, &ends, &bytes)?;
+            map::add_stored(&mut state, first, &ends, &bytes)?;
         }
         Ok(())
     }
@@ -1052,7 +1068,7 @@ impl Atoms {
                 if first as usize >= state.atoms.base() {
                     break;
                 }
-                state.atoms.add_segment(first as Sym, &row.get::<_, Vec<u8>>(1)?, &row.get::<_, Vec<u8>>(2)?)?;
+                map::add_stored(&mut state, first as Sym, &row.get::<_, Vec<u8>>(1)?, &row.get::<_, Vec<u8>>(2)?)?;
             }
             state.all_held = state.atoms.base();
             Ok(())
@@ -1133,10 +1149,12 @@ impl Atoms {
         // (decision 0111 §1).
         if key_end(connection) == Some(from) {
             keys.sort_unstable();
-            let mut insert = connection.prepare_cached("INSERT OR IGNORE INTO atom_key(h, id) VALUES (?1, ?2)")?;
-            for (h, id) in keys {
-                insert.execute([h as i64, i64::from(id)])?;
-            }
+            super::bounded_insert::insert(
+                connection,
+                "INSERT OR IGNORE INTO atom_key(h, id)",
+                "",
+                keys.into_iter().map(|(h, id)| [rusqlite::types::Value::Integer(h as i64), rusqlite::types::Value::Integer(i64::from(id))]),
+            )?;
             connection.prepare_cached("UPDATE atom_key_end SET upto = ?1")?.execute([upto as i64])?;
         }
         self.wrote.store(upto, Ordering::Release);
@@ -1162,7 +1180,7 @@ impl Atoms {
         let mut statement = connection.prepare_cached("SELECT first, ends, bytes FROM atom_segment WHERE first >= ?1 AND first < ?2 ORDER BY first")?;
         let mut rows = statement.query([base as i64, end as i64])?;
         while let Some(row) = rows.next()? {
-            state.atoms.add_segment(row.get::<_, i64>(0)? as Sym, &row.get::<_, Vec<u8>>(1)?, &row.get::<_, Vec<u8>>(2)?)?;
+            map::add_stored(&mut state, row.get::<_, i64>(0)? as Sym, &row.get::<_, Vec<u8>>(1)?, &row.get::<_, Vec<u8>>(2)?)?;
         }
         state.all_held = state.atoms.base();
         Ok(())
@@ -1244,7 +1262,56 @@ impl Atoms {
         }
         let complete = held();
         self.complete.store(complete, Ordering::Release);
-        Ok(complete)
+        // Past `READ_WHOLE`, without the lease: this process maps its ids to the store's from its end (decision 0170),
+        // so the run's waves read nothing. The atoms its stored rows name are held as they are read (`hold_named`).
+        if !complete && lease_free() {
+            self.map_from_end();
+        }
+        Ok(complete || self.forked())
+    }
+
+    /// Whether the atoms a stored row names are held as the row is read (`hold_named`): this process does not hold
+    /// every stored atom, maps its ids to the store's, or gives ids out without the lease. Without it, a row another
+    /// process stored past this one's end names ids this one may have given to other strings: reading the row finds
+    /// the fork (decision 0170) before its symbols are decoded, in a wave.
+    pub fn holds_by_reading(&self) -> bool {
+        if self.path.is_none() {
+            return false;
+        }
+        if self.forked() || !self.leased.load(Ordering::Acquire) {
+            return true;
+        }
+        let state = self.state.read();
+        state.atoms.base() > 1 && state.all_held < state.atoms.base()
+    }
+
+    /// Holds the stored atoms `ids` (as the store numbers them: a stored row's symbols) that this process does not, in
+    /// one read, as the rows are read before a run's waves. Every stored atom held (`complete`), or none named, reads
+    /// nothing. So the waves find each such atom in memory, and a string not there is not one of them.
+    pub fn hold_named(&self, ids: &[i64]) -> StoreResult<()> {
+        if self.path.is_none() || ids.is_empty() {
+            return Ok(());
+        }
+        let ids: Vec<Sym> = ids.iter().filter_map(|&v| Sym::try_from(v).ok()).collect();
+        if self.forked() {
+            let missing: Vec<Sym> = {
+                let state = self.state.read();
+                let map = state.map.as_ref().expect("forked");
+                ids.iter().copied().filter(|&v| if v >= map.fork { map.local_of(v).is_none() } else { !map.relinked(v) && !state.atoms.holds(v) }).collect()
+            };
+            return if missing.is_empty() { Ok(()) } else { self.hold_forked(&missing) };
+        }
+        let (base, whole) = { let s = self.state.read(); (s.atoms.base(), s.all_held >= s.atoms.base()) };
+        if whole && ids.iter().all(|&v| (v as usize) < base) {
+            return Ok(());
+        }
+        if ids.iter().any(|&v| v as usize >= base) {
+            self.read_end()?;
+            if self.forked() {
+                return self.hold_named(&ids.iter().map(|&v| i64::from(v)).collect::<Vec<_>>());
+            }
+        }
+        self.read_atoms(&ids)
     }
 
     /// A run's end: the lease is given back with its next commit, as before the run.

@@ -440,7 +440,7 @@ fn atoms_another_process_stored_past_this_ones_end_are_mapped_after_a_fork() {
 
 /// After a fork (decision 0170), the derivation tables name the store's ids: a forked process binds and records under
 /// them, reads its own bindings back, and another process reading the store finds them under the right strings. The
-/// `atoms` table, whose ids are this process's, refuses.
+/// `atoms` table answers in the store's ids.
 #[test]
 fn a_forked_processs_derivations_name_the_stores_atoms() {
     let path = path("forked-derivations");
@@ -482,8 +482,12 @@ fn a_forked_processs_derivations_name_the_stores_atoms() {
     let other = ContentStore::open(&path).unwrap();
     assert_eq!(other.binding("b").unwrap(), Some(digest(3)));
     assert_eq!(other.binding("z").unwrap(), None);
-    let refused = store.open_connection().unwrap().query_row("SELECT value FROM atoms WHERE atom = 1", [], |r| r.get::<_, String>(0));
-    assert!(refused.as_ref().is_err_and(|e| e.to_string().contains(super::DIVERGED_TEXT)), "{refused:?}");
+    // The `atoms` table answers in the store's ids, as the tables it joins hold them.
+    let sql = store.open_connection().unwrap();
+    let value = |atom: i64| sql.query_row("SELECT value FROM atoms WHERE atom = ?1", [atom], |r| r.get::<_, String>(0)).unwrap();
+    assert_eq!([value(1), value(3), value(4)], ["a", "y", "b"]);
+    let atom: i64 = sql.query_row("SELECT atom FROM atoms WHERE value = 'b'", [], |r| r.get(0)).unwrap();
+    assert_eq!(atom, 4);
 }
 
 /// A segment a fork appended in a transaction that rolled back is forgotten: its atoms are pending again, and the
@@ -538,4 +542,71 @@ fn pending_atoms_are_written_in_segments_of_bounded_size() {
 
 fn segments_of(path: &std::path::Path) -> usize {
     segments(path).len()
+}
+
+/// Decision 0170's guard: every integer, untyped and blob column of a store's schema is classified, as holding atoms
+/// (`ATOM_COLUMNS`, with how it is mapped across numberings) or not (`NOT_ATOMS`). A new column in neither fails here,
+/// so a column of atoms is never kept unmapped; an entry for a column the schema no longer has fails too.
+#[test]
+fn every_stored_column_is_classified() {
+    let path = path("classified");
+    let store = ContentStore::open(&path).unwrap();
+    drop(store);
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    let columns: Vec<(String, String, String)> = connection
+        .prepare("SELECT m.name, p.name, upper(p.type) FROM sqlite_master m, pragma_table_info(m.name) p WHERE m.type = 'table' ORDER BY 1, p.cid")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    let atoms: std::collections::HashSet<(&str, &str)> = super::map::ATOM_COLUMNS.iter().map(|(t, c, _)| (*t, *c)).collect();
+    let not: std::collections::HashSet<(&str, &str)> = super::map::NOT_ATOMS.iter().flat_map(|(t, cs)| cs.iter().map(move |c| (*t, *c))).collect();
+    let both: Vec<_> = atoms.intersection(&not).collect();
+    assert!(both.is_empty(), "classified both ways: {both:?}");
+    let unclassified: Vec<String> = columns
+        .iter()
+        .filter(|(_, _, ty)| ty.starts_with("INT") || ty.starts_with("BLOB") || ty == "ANY" || ty.is_empty())
+        .filter(|(t, c, _)| !atoms.contains(&(t.as_str(), c.as_str())) && !not.contains(&(t.as_str(), c.as_str())))
+        .map(|(t, c, ty)| format!("{t}.{c} ({ty})"))
+        .collect();
+    assert!(unclassified.is_empty(), "columns neither in ATOM_COLUMNS nor NOT_ATOMS (decision 0170): {unclassified:?}");
+    let tables: std::collections::HashSet<&str> = columns.iter().map(|(t, _, _)| t.as_str()).collect();
+    let present: std::collections::HashSet<(&str, &str)> = columns.iter().map(|(t, c, _)| (t.as_str(), c.as_str())).collect();
+    let stale: Vec<_> = atoms.iter().chain(&not).filter(|(t, c)| tables.contains(t) && !present.contains(&(*t, *c))).collect();
+    assert!(stale.is_empty(), "classified columns the schema does not have: {stale:?}");
+}
+
+/// A run over a store it does not hold whole maps from its end (decision 0170, `map_from_end`): it gives its own id
+/// to a string the store has under one it does not hold. Holding the stored rows' atoms as they are read
+/// (`hold_named`) makes the store's id read as that one, so one string keeps one id here, and the write stores
+/// nothing twice: the string takes the store's id, and only a new one is appended.
+#[test]
+fn a_run_mapped_from_its_end_keeps_one_id_a_string_and_stores_none_twice() {
+    let path = path("from-end");
+    let store = ContentStore::open(&path).unwrap();
+    // Another process's atoms 1..4: `a`, `b`, `c`.
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute("INSERT INTO atom_segment(first, ends, bytes) VALUES (1, x'010000000200000003000000', CAST('abc' AS BLOB))", [])
+        .unwrap();
+    let handle = store.atoms_handle();
+    handle.read_stored().unwrap();
+    handle.map_from_end();
+    assert!(handle.forked());
+    // In the run, `c` is not held: it gets an id of this process's.
+    assert_eq!(store.intern_atoms(&["c"]).unwrap(), [4]);
+    // A stored row naming 3 (`c`) is read: 3 reads as 4, and 1 as itself.
+    handle.hold_named(&[3, 1]).unwrap();
+    let mut ids = [3i64, 1];
+    handle.to_local(&mut ids).unwrap();
+    assert_eq!(ids, [4, 1], "the store's `c` is this process's");
+    assert_eq!(handle.stored(&[4]).unwrap(), [Some(3)], "and this process's `c` the store's");
+    store.flush_atoms().unwrap();
+    assert_eq!(segments(&path), [(0, 1), (1, 3)], "`c` is not stored twice");
+    // A string the store does not have is appended at its end.
+    assert_eq!(store.intern_atoms(&["d"]).unwrap(), [5]);
+    store.flush_atoms().unwrap();
+    assert_eq!(segments(&path), [(0, 1), (1, 3), (4, 1)]);
+    assert_eq!(handle.stored(&[5, 4, 1]).unwrap(), [Some(4), Some(3), Some(1)]);
 }

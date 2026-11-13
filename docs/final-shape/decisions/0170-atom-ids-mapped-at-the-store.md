@@ -36,24 +36,42 @@ and maps them to the store's wherever a row crosses the store's boundary.
    The lookups happen in the writer's transaction or when rows are read, never in the waves.
 
 3. **What is mapped.** A write job says what its rows hold (`write_back::Syms`):
-   - `Mapped`: rows with symbol columns, mapped inside the job. Frames (`b's'` columns), and the memo's entries
-     (their symbol columns, known from the program's declarations, `memo::register_syms`).
+   - `Mapped`: rows with symbol columns, mapped inside the job. Frames (`b's'` columns, typed from the program's
+     declarations: the kept strata, the retained part, and the kept cross-file part's inputs, which were untyped
+     before and are read back only when their types match), the memo's entries (their symbol columns, known from
+     the program's declarations, `memo::register_syms`), and the kept statistics by constant (`stat_blob`: the
+     exact maps of symbol columns, `Keeper::map_symbols`).
    - `None`: no atoms in the rows (tapes, plans, programs, automata, statistics of files, pins, the pending atoms
-     themselves).
+     themselves, the planning choices, whose facts keep their own string table).
    - `Unmapped` (the default): rows that may hold a `Sym` in an untyped column. A forked process drops them, as a
-     cache's misses (`DIVERGED_TEXT`). Today: the planning choices and the kept statistics by constant
-     (`stat_blob`, which also reads none when forked).
-   So a job that does not say is never written with the wrong ids. A new job holding atoms has to type its columns
-   to be kept across a fork.
-   - The derivation tables (`name_bindings`, `derivations`, `derivation_inputs`), written in their own transactions,
-     map their atom columns themselves, and their reads map back. The tree counts a run keeps are bound there.
-   - Refused once forked, as an error and never a wrong id: the `atoms` virtual table (its ids are this process's,
-     the tables it joins hold the store's) and the prefilter's `term_*` rows.
+     cache's misses (`DIVERGED_TEXT`). No job is left there today; a new one holding atoms types its columns or is
+     dropped when forked, never written with the wrong ids.
+   - Written in their own transactions, and mapped there: the derivation tables (`name_bindings`, `derivations`,
+     `derivation_inputs`), the cross-file memo's rows (`put_cross_rows`, by the program's `sym` columns), and the
+     prefilter's term ids (`Counts::flush`, `put_prefilters_bulk`, `candidate_transaction`, inside `atoms::mapped`).
+   - The `atoms` virtual table answers in the store's ids once forked (`Cursor::stored`): the tables it joins hold
+     the store's. So the prefilter's gates and the vocabulary run in a forked process.
+   - Guard: `every_stored_column_is_classified` lists every integer, untyped and blob column of the store's schema,
+     each either an atom column (`ATOM_COLUMNS`, with how it is mapped) or not one (`NOT_ATOMS`, with why). A new
+     column fails it until it is classified.
 
 4. **Reads.** A row read from the store carries the store's atoms (`Data::Encoded { store }`), and is mapped to
-   local ids when decoded. Snapshot rows (this process's own) are not mapped.
+   local ids when decoded. Snapshot rows (this process's own) are not mapped. The atoms a read row names are held
+   as it is admitted, before the waves (`hold_symbols`: a frame's `s` columns, and a memo frame's entry rows through
+   the reader the memo registers for its space, `register_frame_symbols`), so a wave decodes it without SQL. A
+   process that gives ids out without the lease holds them too: a row another process stored past its end shows
+   the fork as it is read, not in a wave.
 
-5. **The writer** retries a batch that finds the store busy, with backoff, until the job's deadline. Mapping holds
+5. **Past `READ_WHOLE`.** A run over a store whose atoms are too many to read whole, without the lease, maps from
+   its end (`map_from_end`) as a fork does: its waves give out ids from its end, and the writer finds the store's
+   by key. One string keeps one id within the run because every id its read rows name is held at admission.
+
+6. **Batched.** Every id lookup and translation is one statement per batch: the segments a batch names read once
+   (`map::fetch`, `WHERE first IN rarray`), strings found by key in one `rarray` lookup (`find`), the derivation
+   tables' names in one lookup (`Atoms::lookup_all`) and one `json_each` read, key rows written by
+   `bounded_insert`. A job maps all its rows in one call (`map_entries`, `Keeper::map_symbols`).
+
+7. **The writer** retries a batch that finds the store busy, with backoff, until the job's deadline. Mapping holds
    the write lock longer than a plain write; a writer that failed `busy` lost the run's results.
 
 ## Measured
@@ -85,17 +103,51 @@ and slices it.
 | cost when forked | a failed run | a lookup per symbol of rows crossing the store | none |
 | invariant to keep | none | every stored `Sym` is in a typed column, or its job is `Unmapped` | none |
 
+## Measured, the second step
+
+Same four parts, profiling build, load 40 to 85, the shape above:
+
+| | runs with their solo findings | wall of the four |
+|---|---|---|
+| cold, a fresh store each (26 trials, the final build but the export measure below) | 104 of 104 | 15 to 41 s |
+| cold, the final build (6 trials) | 24 of 24 | 14 to 22 s |
+| cold, then three warm passes over it (86 MB of atoms, past `READ_WHOLE`) | 16 of 16 | 26.0, 15.1, 4.2, 4.2 s |
+| the final build: two warm passes over a cold trial's store | 7 of 8 | 10.5, 1.9 s |
+| two parts at once (models, temporal), cold | 2 of 2 | 12.0 s |
+
+The store after: 1,461,032 atoms, each string once, no gaps.
+
+What the trials found on the way, each fixed:
+
+- A wave mapped a memo entry's ids and read the store (strict abort): the admission hold saw a frame's `s` columns
+  only, and a memo entry types its symbols in its own rows. The memo now registers a reader for its space.
+- A warm run read another process's local ids from the kept cross-file part's inputs (`no symbol 1461127`): they
+  were written untyped. Typed now, and an untyped one stored before is derived again.
+- Before a process giving ids out without the lease held what its read rows name, a row another process stored
+  past its end was read as this process's ids.
+
 ## Departures and open points
 
-- The four parts' atoms together (90 MB) exceed `READ_WHOLE` (64 MB), so a later run over that store is not
-  `complete` and looks atoms up in its waves; under `RERAIL_SQL_STRICT` it aborts. That is 0160's open point, not
-  the map's.
-- Dropped when forked: the planning choices and the kept statistics by constant. Typing their columns keeps them.
-- Refused when forked: SQL over the `atoms` table (the prefilter's gates, the vocabulary) and the `term_*` writes.
-  None runs in these runs; a forked process that needs them fails. Answering the table in the store's ids maps them.
-- `fact_value_stats` (the facts database's value statistics, `val ANY`) is written on its own connection, outside
-  this map. It is empty in these runs.
-- No guard yet checks that every column holding a `Sym` is typed. The default `Unmapped` is what keeps it safe.
+- Two failures seen once or a few times each in about 150 cold runs, both in a process that forked early, neither
+  reproduced since:
+  - Phase 0 (`bootstrap.rr`, whose files are all loads) ended with no statistics for an export
+    (`no statistics for p0_file_t_shape.c0`): the keeper gave up after its hits, so nothing measured it. Such an
+    export is measured from its rows held now; why the keeper gave up in a forked process is not known.
+  - A warm run's output named an id past the store's atoms (`rr_diagnostic: no symbol 1465749`), once in 8 warm
+    runs of the final build, after the kept cross-file part's inputs were typed (which fixed the deterministic case
+    above). Alone over the same store afterwards it passes: the other runs had stored that result again. Some stored
+    result still holds a process's own ids; which one is not found.
+  - A memo entry held an id past this process's atoms (`symbol 2767 is no atom of this process's (it holds 2760)`):
+    the writer refused it, so the run failed and nothing wrong was stored. Its source is not found.
+- The kept statistics' sketches (estimated distinct counts) and the retained part's statistics by constant
+  (`kept_stats`, `Patched { counts, tested }`) are not mapped: a forked process's estimates for a symbol constant
+  may be another string's. Estimates only; the rows are mapped.
+- `fact_value_stats` (the facts database's value statistics, `val ANY`) holds slice scope text and clause numbers,
+  no atoms, and is written on its own connection.
+- Once, on a store made by an earlier build of this step, three of four warm runs panicked at open:
+  `content store mutex poisoned: "content store writer is busy"` (`objects.rs:155`, opening a thread's connection
+  found the store busy and the lock's error was `expect`ed). Not seen again in the trials above.
+- Still behind `RERAIL_ATOMS_PROVISIONAL=1` (0160).
 
 ## Prior work consulted
 

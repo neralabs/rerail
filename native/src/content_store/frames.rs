@@ -233,6 +233,33 @@ impl Admitted {
         }
     }
 
+    /// Appends the store's ids its rows' symbol columns name, for rows read from the store (as the store numbers them).
+    fn stored_symbols(&self, out: &mut Vec<i64>) -> StoreResult<()> {
+        fn of(data: &Data, out: &mut Vec<i64>) -> StoreResult<()> {
+            match data {
+                Data::Encoded { types, n, bytes, store: Some(_) } => {
+                    if !types.contains(&b's') {
+                        return Ok(());
+                    }
+                    let mut cols = vec![Vec::new(); types.len()];
+                    super::cross_rows::decode(types.len(), *n, bytes, &mut cols)?;
+                    for (c, col) in cols.into_iter().enumerate() {
+                        if types[c] == b's' {
+                            out.extend(col);
+                        }
+                    }
+                    Ok(())
+                }
+                Data::Chain { base, deltas, .. } => {
+                    of(base, out)?;
+                    deltas.iter().try_for_each(|d| of(&d.data, out))
+                }
+                Data::Encoded { store: None, .. } | Data::Queued(_) | Data::Metadata => Ok(()),
+            }
+        }
+        of(&self.data, out)
+    }
+
     /// The store whose ids its rows' symbols are (decision 0170): set for rows read from the store, none for this
     /// process's own. Rows `rows` gives map the typed (`b's'`) columns; a reader of untyped ones maps them itself.
     pub fn store_atoms(&self) -> Option<Arc<super::atoms::Atoms>> {
@@ -433,10 +460,12 @@ impl ContentStore {
                     data: Data::Encoded { n: row.get::<_, i64>(6)? as usize, types: row.get(7)?, bytes: Arc::new(data), store: Some(self.atoms_handle()) },
                 })))
             })?;
+            let mut read: Vec<([u8; 32], String, Arc<Admitted>)> = Vec::new();
             for row in rows {
                 let (space, key, k, frame) = row?;
                 frames += 1;
                 bytes += frame.encoded_bytes();
+                read.push((space, key.0.name.clone(), Arc::clone(&frame)));
                 if k > 0 && key.1 == 0 {
                     chains.entry(space).or_default().insert(key.0.clone(), k);
                 }
@@ -456,6 +485,7 @@ impl ContentStore {
             }
             snapshot.confirmed = confirmed;
             drop(connection);
+            hold_symbols(&self.atoms, read.iter().map(|(s, r, f)| (s, r.as_str(), f)))?;
             for (space, held) in snapshot.iter_mut() {
                 compose_chains(held, chains.get(space))?;
             }
@@ -603,6 +633,8 @@ impl ContentStore {
                 out.insert((rel, 0), Arc::new(whole));
             }
         }
+        drop(connection);
+        hold_symbols(&self.atoms, out.iter().map(|((rel, _), f)| (space, rel.name.as_str(), f)))?;
         Ok(out)
     }
 
@@ -671,7 +703,11 @@ impl ContentStore {
         )?;
         let atoms = self.atoms_handle();
         let rows = st.query_map(params![&space[..], rel.name, &rel.ident[..]], |row| admitted_part(row, &atoms))?;
-        Ok(rows.collect::<Result<_, _>>()?)
+        let parts: Vec<(i64, Arc<Admitted>)> = rows.collect::<Result<_, _>>()?;
+        drop(st);
+        drop(connection);
+        hold_symbols(&self.atoms, parts.iter().map(|(_, f)| (space, rel.name.as_str(), f)))?;
+        Ok(parts)
     }
 
     /// Run `token`'s use of `parts` of `rel` in `space`, queued behind the run: the space counts the run once, the
@@ -1159,6 +1195,44 @@ fn count_run(t: &rusqlite::Connection, space: &[u8; 32], token: u64) -> rusqlite
         return Ok(run + 1);
     }
     Ok(run)
+}
+
+/// What reads the symbols of a frame of a space's memo relations (`MEMO_RELS`), whose rows type them themselves: the
+/// memo's, by the space of its plan (`register_frame_symbols`).
+type SymbolReader = Arc<dyn Fn(&Admitted, &mut Vec<i64>) -> StoreResult<()> + Send + Sync>;
+
+fn frame_symbols() -> &'static std::sync::Mutex<HashMap<[u8; 32], SymbolReader>> {
+    static READERS: std::sync::OnceLock<std::sync::Mutex<HashMap<[u8; 32], SymbolReader>>> = std::sync::OnceLock::new();
+    READERS.get_or_init(Default::default)
+}
+
+/// Registers how the symbols of space `space`'s memo frames are read (decision 0170): admitted before a run's waves,
+/// their atoms are held then, as a frame's typed columns' are.
+pub fn register_frame_symbols(space: [u8; 32], read: SymbolReader) {
+    frame_symbols().lock().expect("the frames' symbol readers").insert(space, read);
+}
+
+/// Holds the stored atoms the symbol columns of `frames` (rows read from the store) name, in one read (decision
+/// 0170), as they are read before a run's waves: so the waves decode them without reading the store, and a string a
+/// wave interns that is not in memory is none of theirs. Every stored atom held here already, nothing is decoded.
+fn hold_symbols<'a>(atoms: &super::atoms::Atoms, frames: impl IntoIterator<Item = (&'a [u8; 32], &'a str, &'a Arc<Admitted>)>) -> StoreResult<()> {
+    if !atoms.holds_by_reading() {
+        return Ok(());
+    }
+    let mut ids = Vec::new();
+    let readers = frame_symbols().lock().expect("the frames' symbol readers").clone();
+    for (space, rel, frame) in frames {
+        frame.stored_symbols(&mut ids)?;
+        // A memo's entry keeps its symbols in rows of its own (typed by the memo's declarations, not `s`).
+        if MEMO_RELS.contains(&rel)
+            && let Some(read) = readers.get(space)
+        {
+            read(frame, &mut ids)?;
+        }
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    atoms.hold_named(&ids)
 }
 
 /// A frame read by part: `(part, digest, reads, rows, types, data)`.

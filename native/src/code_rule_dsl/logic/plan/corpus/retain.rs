@@ -1240,7 +1240,7 @@ fn input_ident(rel: &str, prog: &front::Program, key: &[u8; 32]) -> [u8; 32] {
 }
 
 /// A relation's column types, as frames store them.
-fn types_of(prog: &front::Program, rel: &str) -> Vec<u8> {
+pub(super) fn types_of(prog: &front::Program, rel: &str) -> Vec<u8> {
     prog.decls.get(rel).map(|cols| cols.iter().map(|(_, t)| if t == "sym" { b's' } else { b'i' }).collect()).unwrap_or_default()
 }
 

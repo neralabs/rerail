@@ -84,7 +84,9 @@ impl ContentStore {
 
     /// The rows of `rels` (name, width) stored under `sources`, as columns per relation, in one query; with
     /// `with_source`, each relation's last column is the source a row is stored under.
-    pub fn cross_rows(&self, sources: &[SourceId], rels: &[(String, usize)], with_source: bool) -> StoreResult<BTreeMap<String, Vec<Vec<i64>>>> {
+    /// `syms`: each relation's symbol columns, stored as the store numbers its atoms and read as this process's
+    /// (decision 0170), every relation's in one call.
+    pub fn cross_rows(&self, sources: &[SourceId], rels: &[(String, usize)], syms: &BTreeMap<String, Vec<bool>>, with_source: bool) -> StoreResult<BTreeMap<String, Vec<Vec<i64>>>> {
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let ids = serde_json::to_string(&sources.iter().map(|s| s.0).collect::<Vec<_>>()).expect("ids encode");
         let names = serde_json::to_string(&rels.iter().map(|(r, _)| r.as_str()).collect::<Vec<_>>()).expect("names encode");
@@ -107,14 +109,32 @@ impl ContentStore {
                 cols[width].extend(std::iter::repeat_n(source, rows));
             }
         }
-        Ok(out.into_iter().collect())
+        drop(q);
+        drop(st);
+        drop(connection);
+        let mut out: BTreeMap<String, Vec<Vec<i64>>> = out.into_iter().collect();
+        map_symbols(&mut out, syms, |v| self.atoms.to_local(v))?;
+        Ok(out)
     }
 
     /// Stores a component's descriptor as a source, names it by `digest`, and replaces its rows with `rels` (name to
     /// width and flat rows), in one transaction: a block per relation with rows.
-    pub fn put_cross_rows(&self, digest: &str, descriptor: &[u8], rels: &BTreeMap<String, (usize, Vec<i64>)>) -> StoreResult<SourceId> {
+    /// `syms`: each relation's symbol columns, written as the store numbers its atoms (decision 0170).
+    pub fn put_cross_rows(&self, digest: &str, descriptor: &[u8], rels: &BTreeMap<String, (usize, Vec<i64>)>, syms: &BTreeMap<String, Vec<bool>>) -> StoreResult<SourceId> {
         let source = self.put_source(descriptor, &[])?;
-        self.immediate_transaction_once(|t| {
+        super::atoms::mapped(|| self.immediate_transaction_once(|t| {
+            let mapped;
+            let rels = if self.atoms.forked() {
+                let mut cols: BTreeMap<String, Vec<Vec<i64>>> = rels.iter().map(|(r, (w, v))| (r.clone(), (0..*w).map(|c| v.iter().skip(c).step_by((*w).max(1)).copied().collect()).collect())).collect();
+                map_symbols(&mut cols, syms, |v| self.atoms.to_store(t, v))?;
+                mapped = cols.into_iter().map(|(r, cols)| {
+                    let (w, n) = (cols.len(), cols.first().map_or(0, Vec::len));
+                    (r, (w, (0..n).flat_map(|i| cols.iter().map(move |c| c[i])).collect::<Vec<i64>>()))
+                }).collect::<BTreeMap<_, _>>();
+                &mapped
+            } else {
+                rels
+            };
             t.prepare_cached("INSERT INTO cross_components(digest, source_id) VALUES (?1, ?2) ON CONFLICT(digest) DO UPDATE SET source_id = excluded.source_id")?
                 .execute(params![format!("{BLOCKS}{digest}"), source.0])?;
             t.prepare_cached("DELETE FROM cross_blocks WHERE source_id = ?1")?.execute([source.0])?;
@@ -130,8 +150,37 @@ impl ContentStore {
                 ins.execute(params![source.0, rel, *width as i64, rows as i64, encode(*width, values)])?;
             }
             Ok(source)
-        })
+        }))
     }
+}
+
+/// Maps the symbol columns (`syms`) of `rels` (columns per relation) with `f`, every relation's in one call.
+fn map_symbols(rels: &mut BTreeMap<String, Vec<Vec<i64>>>, syms: &BTreeMap<String, Vec<bool>>, f: impl FnOnce(&mut [i64]) -> StoreResult<()>) -> StoreResult<()> {
+    let mut values = Vec::new();
+    for (rel, cols) in rels.iter() {
+        let Some(s) = syms.get(rel) else { continue };
+        for (c, col) in cols.iter().enumerate() {
+            if s.get(c) == Some(&true) {
+                values.extend_from_slice(col);
+            }
+        }
+    }
+    if values.is_empty() {
+        return Ok(());
+    }
+    f(&mut values)?;
+    let mut at = 0;
+    for (rel, cols) in rels.iter_mut() {
+        let Some(s) = syms.get(rel) else { continue };
+        for (c, col) in cols.iter_mut().enumerate() {
+            if s.get(c) == Some(&true) {
+                let n = col.len();
+                col.copy_from_slice(&values[at..at + n]);
+                at += n;
+            }
+        }
+    }
+    Ok(())
 }
 
 impl SourceId {
@@ -158,11 +207,11 @@ mod tests {
     fn cross_rows_are_read_by_key_ranges_in_one_query() {
         let (path, store) = store();
         let rels = BTreeMap::from([("a".to_owned(), (2, vec![1, 2, 3, 4])), ("b".to_owned(), (1, vec![9]))]);
-        let one = store.put_cross_rows("d1", b"one", &rels).unwrap();
-        let two = store.put_cross_rows("d2", b"two", &BTreeMap::from([("a".to_owned(), (2, vec![5, 6]))])).unwrap();
+        let one = store.put_cross_rows("d1", b"one", &rels, &BTreeMap::new()).unwrap();
+        let two = store.put_cross_rows("d2", b"two", &BTreeMap::from([("a".to_owned(), (2, vec![5, 6]))]), &BTreeMap::new()).unwrap();
         let found = store.cross_lookup(&["d1".to_owned(), "d2".to_owned(), "d3".to_owned()]).unwrap();
         assert_eq!(found, HashMap::from([("d1".to_owned(), one), ("d2".to_owned(), two)]));
-        let rows = store.cross_rows(&[one, two], &[("a".to_owned(), 2)], false).unwrap();
+        let rows = store.cross_rows(&[one, two], &[("a".to_owned(), 2)], &BTreeMap::new(), false).unwrap();
         let mut a: Vec<(i64, i64)> = rows["a"][0].iter().copied().zip(rows["a"][1].iter().copied()).collect();
         a.sort_unstable();
         assert_eq!(a, vec![(1, 2), (3, 4), (5, 6)]);

@@ -248,7 +248,21 @@ static SYMS: std::sync::LazyLock<std::sync::Mutex<HashMap<[u8; 32], std::sync::A
 /// Registers memo program `program`'s symbol columns: each relation's, from its declaration (`sym`).
 pub(super) fn register_syms(program: &[u8; 32], decls: &BTreeMap<String, Vec<(String, String)>>) {
     let map: HashMap<String, Vec<bool>> = decls.iter().map(|(r, cols)| (r.clone(), cols.iter().map(|(_, t)| t == "sym").collect())).collect();
-    SYMS.lock().expect("the memo's symbol columns").insert(plan_digest(program), std::sync::Arc::new(map));
+    let plan = plan_digest(program);
+    let map = std::sync::Arc::new(map);
+    SYMS.lock().expect("the memo's symbol columns").insert(plan, std::sync::Arc::clone(&map));
+    // Its entries' symbols, held as their frames are admitted before a run's waves (decision 0170): a wave decodes an
+    // entry another process stored without reading the store.
+    crate::content_store::register_frame_symbols(crate::content_store::local_space(&plan), std::sync::Arc::new(move |frame, out| {
+        let Ok(entry) = from_rows_projected(&frame.rows()?, &|_| true) else { return Ok(()) };
+        for (key, (w, rows)) in &entry.rows {
+            let Some(cols) = key_syms(&map, key, *w) else { continue };
+            for row in rows.chunks_exact((*w).max(1)) {
+                out.extend(row.iter().zip(&cols).filter(|(_, s)| **s).map(|(v, _)| *v));
+            }
+        }
+        Ok(())
+    }));
 }
 
 fn has_syms(plan: &[u8; 32]) -> bool {
@@ -272,26 +286,61 @@ fn key_syms(syms: &HashMap<String, Vec<bool>>, key: &str, width: usize) -> Optio
     syms.get(key).cloned()
 }
 
-/// Maps the symbols of `entry`'s rows with `f` (decision 0170), by memo plan `plan`'s columns. `strict` (forked): an
-/// entry of a plan or relation with none registered is refused, its rows may name ids of the other numbering; else
-/// such rows are left as they are.
-fn map_entry(entry: &mut Entry, plan: &[u8; 32], strict: bool, mut f: impl FnMut(&mut [i64]) -> StoreResult<()>) -> StoreResult<()> {
+/// The symbol columns of rows kept under `key` (as an entry keeps them: a relation's, a base relation's), `width`
+/// wide, in memo plan `plan` (the program `register_syms` registered).
+pub(super) fn symbol_columns(plan: &[u8; 32], key: &str, width: usize) -> Option<Vec<bool>> {
+    let syms = SYMS.lock().expect("the memo's symbol columns").get(plan).cloned()?;
+    key_syms(&syms, key, width)
+}
+
+/// Maps the symbols of `entries`' rows with `f` (decision 0170), by memo plan `plan`'s columns, in one call: every
+/// symbol of the batch gathered, mapped, and put back. `strict` (forked): an entry of a plan or relation with none
+/// registered is refused, its rows may name ids of the other numbering; else such rows are left as they are.
+fn map_entries(entries: &mut [Entry], plan: &[u8; 32], strict: bool, f: impl FnOnce(&mut [i64]) -> StoreResult<()>) -> StoreResult<()> {
     let refused = || StoreError::Invalid(crate::content_store::atoms::DIVERGED_TEXT.to_owned());
     let Some(syms) = SYMS.lock().expect("the memo's symbol columns").get(plan).cloned() else {
         return if strict { Err(refused()) } else { Ok(()) };
     };
-    for (key, (w, values)) in entry.rows.iter_mut() {
-        let Some(cols) = key_syms(&syms, key, *w) else {
-            if strict {
+    // Each key's symbol columns, in the entries' order, gathered once and put back in the same order.
+    let mut columns: Vec<Option<Vec<usize>>> = Vec::new();
+    let mut values: Vec<i64> = Vec::new();
+    for entry in entries.iter() {
+        for (key, (w, rows)) in entry.rows.iter() {
+            let Some(cols) = key_syms(&syms, key, *w) else {
+                if strict {
+                    return Err(refused());
+                }
+                columns.push(None);
+                continue;
+            };
+            if cols.len() != *w {
                 return Err(refused());
             }
-            continue;
-        };
-        if cols.len() != *w {
-            return Err(refused());
+            let at: Vec<usize> = (0..*w).filter(|&c| cols[c]).collect();
+            if *w > 0 {
+                for row in rows.chunks_exact(*w) {
+                    values.extend(at.iter().map(|&c| row[c]));
+                }
+            }
+            columns.push(Some(at));
         }
-        let types: Vec<u8> = cols.iter().map(|&s| if s { b's' } else { b'i' }).collect();
-        crate::content_store::atoms::map_columns(&types, values, &mut f)?;
+    }
+    if values.is_empty() {
+        return Ok(());
+    }
+    f(&mut values)?;
+    let (mut columns, mut values) = (columns.into_iter(), values.into_iter());
+    for entry in entries.iter_mut() {
+        for (_, (w, rows)) in entry.rows.iter_mut() {
+            let Some(at) = columns.next().expect("one a key") else { continue };
+            if *w > 0 {
+                for row in rows.chunks_exact_mut(*w) {
+                    for &c in &at {
+                        row[c] = values.next().expect("one a symbol");
+                    }
+                }
+            }
+        }
     }
     Ok(())
 }
@@ -367,7 +416,7 @@ impl Frame {
         if let Some(atoms) = self.frame.store_atoms()
             && (atoms.forked() || has_syms(&self.plan))
         {
-            map_entry(&mut entry, &self.plan, atoms.forked(), |v| atoms.to_local(v))?;
+            map_entries(std::slice::from_mut(&mut entry), &self.plan, atoms.forked(), |v| atoms.to_local(v))?;
         }
         Ok(entry)
     }
@@ -607,8 +656,16 @@ pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Ve
             let forked = store.atoms_handle().forked();
             let ids: Vec<SourceId> = held.iter().filter_map(|(c, _, _)| match c { Content::Stored(id) => Some(*id), _ => None }).collect();
             let mut stored = store.source_digests(&ids)?.into_iter();
+            // Every entry's symbols mapped in one call.
+            let mapped: Option<Vec<Entry>> = if forked {
+                let mut all: Vec<Entry> = held.iter().map(|(_, _, e)| Entry::clone(e)).collect();
+                map_entries(&mut all, &plan, true, |v| store.symbols_to_store(v))?;
+                Some(all)
+            } else {
+                None
+            };
             let mut puts = Vec::with_capacity(held.len());
-            for (content, path, e) in &held {
+            for (k, (content, path, e)) in held.iter().enumerate() {
                 let digest = match content {
                     Content::Stored(_) => stored.next().flatten(),
                     Content::Unstored(d) => Some(*d),
@@ -617,14 +674,9 @@ pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Ve
                 // A source collected since the run found it leaves the entry unwritten: the next run misses it.
                 let Some(digest) = digest else { continue };
                 let part = part_of(&digest, path);
-                let mapped;
-                let e: &Entry = if forked {
-                    let mut m = Entry::clone(e);
-                    map_entry(&mut m, &plan, true, |v| store.symbols_to_store(v))?;
-                    mapped = m;
-                    &mapped
-                } else {
-                    e
+                let e: &Entry = match &mapped {
+                    Some(all) => &all[k],
+                    None => e,
                 };
                 puts.push(crate::content_store::FramePut { rel: entry_rel(&plan), part, digest: e.key as u64, reads: frame_reads(path, e.key, &digest), rows: to_rows(e) });
                 puts.push(crate::content_store::FramePut { rel: outputs_rel(&plan), part, digest: e.key as u64, reads: frame_reads(path, e.key, &digest), rows: to_rows(&outputs_of(e)) });

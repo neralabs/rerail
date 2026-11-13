@@ -118,25 +118,19 @@ impl ContentStore {
     /// Every derivation that read one of `names`: the frontier those names' changes dirty, each
     /// once, ordered by output name.
     pub fn derivations_reading(&self, names: &[String]) -> StoreResult<Vec<Derivation>> {
-        let mut ids = Vec::with_capacity(names.len());
-        for name in names {
-            ids.extend(self.atom(name)?);
-        }
+        // The names' atoms in one lookup, as the store numbers them, and their readers in one statement.
+        let ids: Vec<Sym> = self.atoms.lookup_all(&names.iter().map(String::as_str).collect::<Vec<_>>())?.into_iter().flatten().collect();
         let ids: Vec<Sym> = self.atoms.stored(&ids)?.into_iter().flatten().collect();
         let mut rows = Vec::new();
-        {
+        if !ids.is_empty() {
             let connection = self.connection.lock().expect("content store mutex poisoned");
             let mut readers = connection.prepare_cached(
-                "SELECT d.output_atom,d.producer,d.status,d.cost FROM derivation_inputs i INDEXED BY derivation_inputs_by_name \
-                 JOIN derivations d ON d.output_atom=i.output_atom WHERE i.name_atom=?1",
+                "SELECT DISTINCT d.output_atom,d.producer,d.status,d.cost FROM derivation_inputs i INDEXED BY derivation_inputs_by_name \
+                 JOIN derivations d ON d.output_atom=i.output_atom WHERE i.name_atom IN (SELECT value FROM json_each(?1))",
             )?;
-            for id in ids {
-                let found = readers.query_map([id], |row| {
-                    Ok((row.get::<_, Sym>(0)?, row.get::<_, Vec<u8>>(1)?, row.get(2)?, row.get(3)?))
-                })?;
-                for row in found {
-                    rows.push(row?);
-                }
+            let ids = serde_json::to_string(&ids).expect("ids encode");
+            for row in readers.query_map([ids], |row| Ok((row.get::<_, Sym>(0)?, row.get::<_, Vec<u8>>(1)?, row.get(2)?, row.get(3)?)))? {
+                rows.push(row?);
             }
         }
         let mut frontier = BTreeSet::new();

@@ -224,6 +224,9 @@ pub(in crate::code_rule_dsl) struct Part {
     frames: HashMap<String, (FrameRel, Option<FrameStored>)>,
     /// Each derived relation's inputs (`cone`).
     cones: HashMap<String, std::collections::BTreeSet<String>>,
+    /// Each input's column types as its frame keeps them, from its declaration: `s` a symbol, which the store's
+    /// writer maps to the store's atoms (decision 0170), else `i`.
+    types: HashMap<String, Vec<u8>>,
 }
 
 /// Whether a new process maintains its cross-file part from the store (`RERAIL_KEPT_PART=off`: the per-stratum
@@ -298,7 +301,8 @@ pub(in crate::code_rule_dsl) fn load(
             e.1 = Some(s);
         }
     }
-    load_from_snapshot(store, key, inputs, now, Part { space, key, frames, cones })
+    let types = inputs.iter().map(|(rel, _)| (rel.clone(), super::retain::types_of(prog, rel))).collect();
+    load_from_snapshot(store, key, inputs, now, Part { space, key, frames, cones, types })
 }
 
 fn load_from_snapshot(
@@ -329,7 +333,8 @@ fn restore(
         let rows = admitted.get(f)?.rows().ok()?;
         let names = source.columns();
         let w = rows.types.len();
-        if names.len() != w { return None; }
+        // Kept under other column types (untyped, before decision 0170): its symbols may be another numbering's.
+        if names.len() != w || part.types.get(rel).is_none_or(|t| *t != rows.types) { return None; }
         let values = (0..w).map(|c| Some((0..rows.n).map(|i| rows.rows[i * w + c]).collect())).collect();
         kept_inputs.push((rel.clone(), was.digest, crate::code_rule_dsl::logic::native::component::columns_source(names, values)));
     }
@@ -377,13 +382,15 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
             continue;
         }
         let w = source.columns().len();
+        // Its symbols typed, so the writer maps them; an input of no declared width is not kept.
+        let Some(types) = part.types.get(rel).filter(|t| t.len() == w).cloned() else { continue };
         let n = source.len();
         let mut rows = Vec::with_capacity(n * w);
         for i in 0..n {
             rows.extend((0..w).map(|c| source.value(i, c)));
         }
         written += n;
-        puts.push(FramePut { rel: f.clone(), part: 0, digest, reads: Vec::new(), rows: FrameRows { types: vec![0; w], rows, n } });
+        puts.push(FramePut { rel: f.clone(), part: 0, digest, reads: Vec::new(), rows: FrameRows { types, rows, n } });
     }
     for (rel, width, held) in rels {
         let Some((f, was)) = part.frames.get(rel) else { continue };

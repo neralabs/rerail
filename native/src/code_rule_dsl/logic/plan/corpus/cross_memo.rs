@@ -116,6 +116,8 @@ pub(super) struct Plan {
     pub(super) components: front::Program,
     /// The memoised relations: the column of each one's first node, and its width.
     pub(super) memo: BTreeMap<String, (usize, usize)>,
+    /// Each memoised relation's symbol columns (`sym`): stored as the store numbers its atoms (decision 0170).
+    pub(super) syms: BTreeMap<String, Vec<bool>>,
     /// The digest every stored row is a function of besides its component's key.
     pub(super) digest: [u8; 32],
 }
@@ -287,6 +289,7 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
         let first = cols.iter().position(|(_, t)| t == "node").ok_or_else(|| Error::Plan(format!("{rel}: a `{PRAGMA}` relation needs a node column, the document its rows are about")))?;
         memo.insert(rel.to_string(), (first, cols.len()));
     }
+    let syms: BTreeMap<String, Vec<bool>> = memo.keys().map(|rel| (rel.clone(), cross.decls[rel].iter().map(|(_, t)| t == "sym").collect())).collect();
     for r in cross.rules.iter().filter(|r| memo.contains_key(r.head.rel.as_str())) {
         for a in r.body.iter().filter_map(|l| l.atom()) {
             if derived.contains(a.rel.as_str()) && !memo.contains_key(a.rel.as_str()) && !a.rel.starts_with(PREFIX) {
@@ -298,7 +301,7 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
         }
     }
     if memo.is_empty() {
-        return Ok(Some(Plan { components, memo, digest }));
+        return Ok(Some(Plan { components, memo, syms, digest }));
     }
     // Replay: an input and a copy per memoised relation; its other rules derive no row about a replayed document.
     cross.decls.insert(DOCS.to_owned(), vec![("d".to_owned(), "int".to_owned())]);
@@ -354,7 +357,7 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
             }
         }
     }
-    Ok(Some(Plan { components, memo, digest }))
+    Ok(Some(Plan { components, memo, syms, digest }))
 }
 
 /// Drops the guards `split` added (`$rr_xd = @doc(x), !rr_cross_doc($rr_xd)`): for a run that found no component,
@@ -514,7 +517,7 @@ impl Found {
         let mut inputs = vec![(DOCS.to_owned(), 1, vec![docs])];
         let rels: Vec<(String, usize)> = plan.memo.iter().filter(|(r, _)| need(r)).map(|(r, &(_, w))| (r.clone(), w)).collect();
         let mut rows = if replay && !self.hits.is_empty() {
-            store.cross_rows(&self.hits.values().copied().collect::<Vec<_>>(), &rels, false).map_err(|e| Error::Plan(e.to_string()))?
+            store.cross_rows(&self.hits.values().copied().collect::<Vec<_>>(), &rels, &plan.syms, false).map_err(|e| Error::Plan(e.to_string()))?
         } else {
             BTreeMap::new()
         };
@@ -647,7 +650,7 @@ pub(super) fn record(
     let mut had: HashMap<(i64, String), BTreeSet<Vec<i64>>> = HashMap::new();
     if mode == Mode::Verify && !found.hits.is_empty() {
         let rels: Vec<(String, usize)> = plan.memo.iter().map(|(r, &(_, w))| (r.clone(), w)).collect();
-        let stored = store.cross_rows(&found.hits.values().copied().collect::<Vec<_>>(), &rels, true).map_err(|e| Error::Plan(e.to_string()))?;
+        let stored = store.cross_rows(&found.hits.values().copied().collect::<Vec<_>>(), &rels, &plan.syms, true).map_err(|e| Error::Plan(e.to_string()))?;
         for (rel, cols) in stored {
             let (source, cols) = cols.split_last().expect("a source column");
             for (i, s) in source.iter().enumerate() {
@@ -685,7 +688,7 @@ pub(super) fn record(
         }
         recorded.rows += rels.values().map(|(w, v)| v.len() / w).sum::<usize>();
         let (digest, bytes) = descriptor(&plan.digest, key, &keys);
-        recorded.sources.push(store.put_cross_rows(&digest, &bytes, &rels).map_err(|e| Error::Plan(e.to_string()))?);
+        recorded.sources.push(store.put_cross_rows(&digest, &bytes, &rels, &plan.syms).map_err(|e| Error::Plan(e.to_string()))?);
         recorded.stored += 1;
     }
     if !differ.is_empty() {
