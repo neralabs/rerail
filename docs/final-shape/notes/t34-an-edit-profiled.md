@@ -115,8 +115,18 @@ Items 1–3 (texts read once, caches refused by construction, my statics by flow
 8. **The main thread's passes** (next: the critical path, above): `bridge::facts`, strata computed more than once (`derived`, `cut`, `supports`),
    `text_kind_demand`, `kept_inputs`' decode, the engine driver's `slice_contains`.
 9. **The alternating edits** after a rebuild (above): find what flips between runs.
-10. **Memory**: an edit's peak is 2.2 GB, against a budget of 1 GB.
+10. **Memory**: an edit's peak is 2.1 GB (footprint), against a budget of 1 GB. Measured (2026-11-12, `RERAIL_PROFILE`,
+    whose peak matches an unprofiled edit's): the peak is set by the **programs**, not the rows. Live at the peak, of
+    1.72 GB of jemalloc heap: the prepared program's forms 435 MB (front and lowered 198 MB, the split's local and
+    cross programs 120 MB, the rest), the join specs kept across chunks (`spec`, 8,808 of them) 366 MB, the kept
+    inputs' rows 263 MB, the joins' indexes (`open: joins`) 159 MB. Transient rises: reading the prepared program
+    off the store +1.0 GB (the encoded parts, their views and the programs at once), the combined program +348 MB.
+    Done: the combined program is dropped once the prepared one is found (it was held through the run): peak 2081–
+    2103 MB (was 2178–2180 MB). (see git log) Next: one form of the program where four are held; the specs' size.
 11. **A cold run's frames write waits on the writer** (found 2026-11-12, run n48s169, load 26): the cross part's
     frames are one job of 289.6 MB, above the writer queue's cap (192 MB) alone, so it waits while the memo's
     entries (158.6 MB) are still written; `RERAIL_SQL_STRICT` ends the run at that wait (`hazards::wait_in_wave`).
-    Cold runs pass or abort by the writer's speed. With item 10: a job that size should not be held whole.
+    Cold runs pass or abort by the writer's speed: 2 of the last 3 cold runs aborted (loads 14 and 26). The writer
+    writes the memo's entries at about 35 MB/s of its CPU (1.7 s for the first 2 of 7 jobs). Splitting the frames job
+    alone would not help (all of it is queued at once, when the cross part ends): the direction is each stratum's
+    frame queued as the stratum finishes, so the writer works while the cross part runs, and a cheaper memo entry.

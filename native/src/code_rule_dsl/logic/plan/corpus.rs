@@ -2350,6 +2350,9 @@ fn run_observed(
     let prepared = match kept {
         Some(p) => {
             crate::code_rule_dsl::prof::count("corpus.prepared_reused", 1);
+            // The combined program is the prepared one's source only: the run reads the prepared forms from here on,
+            // so it is not held through the run (a prepared run moves it into its `Prepared`).
+            drop(prog);
             if from == "store" {
                 keep_prepared(prepared_key, Arc::clone(&p));
             }
