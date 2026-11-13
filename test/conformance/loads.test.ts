@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "vitest";
 
 import type { Engine } from "../../conformance/languages/checks/engine.js";
 import { loadsGate, currentContract, loadAsBundled, type RuleDocument } from "../../conformance/languages/checks/loads.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const RAW = {
   format: "rerail.policy/v1",
@@ -38,7 +39,7 @@ test("loads hands later gates the document as the engine evaluates it, with opti
     assert.deepEqual(result.document, RAW);
     assert.deepEqual(result.resolved, RESOLVED);
   } finally {
-    await rm(scratch, { recursive: true, force: true });
+    await removeFolder(scratch);
   }
 });
 
@@ -51,7 +52,7 @@ test("loads fails a rule that does not apply to a file type gates.yaml declares 
     assert.equal(inScope.ok, false);
     assert.match(inScope.detail, /^does not apply to src\/example\.pyi: gates\.yaml declares upstream lints that file type \(upstream\.lints\)/u);
   } finally {
-    await rm(scratch, { recursive: true, force: true });
+    await removeFolder(scratch);
   }
 });
 
@@ -67,7 +68,7 @@ test("a document rerail's bundled-rule loader rejects is named by its path in th
       message: "python-bandit/rules/assert-used.json is neither a rerail.policy/v1 document nor a conversation rule: m",
     });
   } finally {
-    await rm(scratch, { recursive: true, force: true });
+    await removeFolder(scratch);
   }
 });
 
@@ -99,6 +100,6 @@ test("loads fails a document written for an earlier contract and compiles it as 
     assert.deepEqual(result.checks.filter((check) => !check.ok).map((check) => check.id), ["current-contract"]);
     assert.equal(compiledTexts[0], text);
   } finally {
-    await rm(scratch, { recursive: true, force: true });
+    await removeFolder(scratch);
   }
 });

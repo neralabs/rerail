@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { removeFolder } from "../support/platform/remove-folder.js";
 import { runMergeAssistCommand, type MergeAssistCommandIo } from "../../src/cli/merge-assist-cli.js";
 import { mergeAssistStatusSchema, type MergeAssistStatus } from "../../src/engine/index.js";
 import { MergeAssistError } from "../../src/runtime/index.js";
@@ -37,7 +38,7 @@ describe("rerail merge-assist", () => {
   });
 
   afterEach(async () => {
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root);
   });
 
   const io = (dashboardUrl: string | null = PAGE): MergeAssistCommandIo => ({

@@ -7,7 +7,8 @@
  * a timeout or output that is not that JSON is recorded on the conflict (`hook: { ok: false, error }`) and changes
  * nothing else: delivery goes on without it.
  */
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawn } from "../../engine/child-process.js";
 import type { ConflictEvent, ConflictHookCommand, ConflictHookOutcome } from "../../engine/merge-assist/model.js";
 import type { ConflictHandler, ConflictHandlerContext } from "./conflict-hook.js";
 import type { StoredConflict } from "./conflict-store.js";

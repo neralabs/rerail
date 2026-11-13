@@ -1,14 +1,15 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 import { mergeAssistState, openRerailDatabase } from "../../../src/engine/index.js";
 import { PULL_REQUEST_LIMIT, type PullRequestListing, type PullRequestSummary } from "../../../src/runtime/merge-assist/github.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../../../src/runtime/merge-assist/service.js";
-import { commit, git } from "../../support/git.js";
+import { commit, git } from "../../support/merge-assist/git.js";
 import { FakeGithub, mergeAssistWorkspaces, type Workspace } from "../../support/merge-assist/workspace.js";
 
 const workspace = mergeAssistWorkspaces();
@@ -145,7 +146,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
       expect(await service.setEnabled(unrecorded, true)).toMatchObject({ checkout: unrecorded, enabled: true });
       expect(await service.status(unrecorded)).toMatchObject({ checkout: unrecorded, enabled: true });
     } finally {
-      await rm(folder, { recursive: true, force: true });
+      await removeFolder(folder);
     }
   });
 

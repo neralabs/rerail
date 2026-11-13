@@ -143,7 +143,7 @@ Repository text (paths, captured code, fixes) is cleaned: control and invisible 
 
 </details>
 
-The latitude closes it: ``Fix it, or tell the user in one line why you won't and run `rerail feedback <rule-id> '<that line>'`.`` `rerail feedback` keeps the reason on this computer ([Steer feedback](reference.md#steer-feedback)).
+The latitude closes it: ``Fix it, or tell the user in one line why you won't and run `rerail feedback <rule-id> '<that line>'`.`` On Windows the command pipes the line in instead, which cmd.exe never parses: ``echo '<that line>' | rerail feedback <rule-id> -`` in Git Bash, and for Codex and Cursor, which run PowerShell there, three lines: ``$OutputEncoding = [Text.UTF8Encoding]::new(); @'``, a space and the line, then ``'@ | rerail feedback <rule-id> -``. PowerShell reads nothing inside that here-string, so no quote in the line can end it and run the rest as a command, and the first line has Windows PowerShell 5.1 pipe UTF-8, where it otherwise pipes every character outside ASCII as a `?`. `rerail feedback` keeps the reason on this computer ([Steer feedback](reference.md#steer-feedback)).
 
 <details>
 <summary>Latitude variants and modes</summary>
@@ -210,7 +210,7 @@ A steer never becomes your message, before or after the agent compacts its conte
 
 ### Edits made by shell commands and before rules are ready
 
-Rerail checks shell-written files when the command finishes. Edits made while a large repository indexes are checked in the first pass after.
+Rerail checks shell-written files when the command finishes. Edits made while a large repository indexes, or while a session idle for 30 minutes opens again, are checked in the first pass after.
 
 <details>
 <summary>Shell edits and indexing</summary>
@@ -223,6 +223,13 @@ In a large repository, Rerail indexes at session start before code rules can run
 - Edits made meanwhile are not checked at their own result; the first pass after indexing checks every changed file.
 - OMP's footer shows ` · indexing` while it lasts, only if it takes over half a second.
 - The dashboard timeline says code rules were not yet running at those steps.
+
+The daemon closes a session that sends nothing for 30 minutes, and frees a checkout's compiled rules 15 minutes after
+its last session ends. The session's next event opens it again, and its rules may compile again (about 12 s of CPU for
+a TypeScript repository's five packs on a Windows laptop). In Claude Code, Codex and Cursor, a reopened session's tool
+calls and turn end wait up to 20 seconds for its rules, so its first edit is checked and steered at its own result as
+every later one is. A daemon restart or a resumed session reopens the same way. Rules still not open after 20 seconds
+are not waited for further: that edit is checked by the first pass once they open.
 
 </details>
 

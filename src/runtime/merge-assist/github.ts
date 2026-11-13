@@ -6,11 +6,11 @@
  * cap. Everything it prints is untrusted: each response is validated, and every value placed in an API path is checked
  * for shape first. See docs/merge-assist-v1-build.md.
  */
-import { spawn } from "node:child_process";
+import { spawn } from "../../engine/child-process.js";
 import { tmpdir } from "node:os";
 import { z } from "zod";
 import type { GithubReadiness } from "../../engine/merge-assist/model.js";
-import { resolveExecutable } from "../npm.js";
+import { programOnPath } from "../../engine/system-programs.js";
 
 /** Grace a stopped `gh` gets after SIGTERM before SIGKILL. */
 const KILL_GRACE_MS = 2_000;
@@ -227,7 +227,7 @@ export function createGithubClient(options: GithubClientOptions = {}): GithubCli
    */
   async function run(args: readonly string[]): Promise<GhRun> {
     const env = ghEnvironment(options.env ?? process.env);
-    const command = resolveExecutable("gh", env);
+    const command = programOnPath("gh", { env });
     if (command === undefined) throw new GithubError("missing", "gh is not installed or not on PATH.");
     const { promise, resolve } = Promise.withResolvers<GhRun | GithubError>();
     const child = spawnProcess(command, [...args], {

@@ -1,8 +1,11 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createServer as createHttpServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import Database from "better-sqlite3";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { type AdapterDelivery, conflictNote, type RerailEventLoop, sessionStartNote } from "../../../src/engine/index.js";
+import { type AdapterDelivery, conflictNote, defaultRerailDatabasePath, type RerailEventLoop, sessionStartNote } from "../../../src/engine/index.js";
 import { claudeHookOutput, handleClaudeEvent } from "../../../src/hosts/claude/claude-hook-adapter.js";
 import { runClaudeHook } from "../../../src/hosts/claude/claude-hook.js";
 import { bindSteerReceipt, type HookInput, type HookOptions } from "../../../src/harness/index.js";
@@ -10,8 +13,21 @@ import { dashboardOrigin, presentedSessionNoteRules } from "../../../src/present
 import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { editSteer, steeredRules } from "../../support/steers.js";
+import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
+import { testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
 
 const temporaryDirectory = temporaryDirectories("rerail-claude-hook-");
+
+/**
+ * `hookOptions` without the test's embedder, so a hook takes the daemon path a coding agent's hook takes, and, unless
+ * `keepDatabase`, without the test's database, so the hook reads the one the daemon serves.
+ */
+function daemonHookOptions(root: string, { keepDatabase }: { keepDatabase: boolean }): HookOptions {
+  const options = hookOptions(root);
+  delete options.embedder;
+  if (!keepDatabase) delete options.databasePath;
+  return options;
+}
 
 function delivery(requested: AdapterDelivery["requested"], content: string, ruleIds: readonly string[] = [], rules = steeredRules(ruleIds)): AdapterDelivery {
   return { sessionId: "claude-session", requested, mechanism: "additional-context", content, ruleIds, rules };
@@ -33,7 +49,7 @@ describe("Claude Code hook without a daemon", () => {
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
     try {
       // The test runtime's embedder is left out, so the hook takes the daemon path a coding agent's hook takes.
-      const { embedder: _, ...daemonPath } = hookOptions(root);
+      const daemonPath = daemonHookOptions(root, { keepDatabase: true });
       const output = await runClaudeHook({
         session_id: "s", cwd: root, hook_event_name: "PostToolUse", tool_name: "Write", tool_use_id: "t", tool_input: {}, tool_response: "ok",
       }, daemonPath);
@@ -42,6 +58,156 @@ describe("Claude Code hook without a daemon", () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+});
+
+describe("Claude Code hook with a daemon that misses its health probe", () => {
+  const servers: Server[] = [];
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await Promise.all(servers.splice(0).map(server => {
+      server.closeAllConnections();
+      return new Promise(resolve => server.close(resolve));
+    }));
+    await closeNativeTestDaemons();
+  });
+
+  /** A listener at a new loopback URL that answers each request as `upstream` does, `delayMs` late: a busy daemon. */
+  async function slowFront(upstream: string, delayMs: number): Promise<string> {
+    const server = createHttpServer((request, response) => {
+      setTimeout(() => {
+        const headers = Object.fromEntries(Object.entries(request.headers).filter((entry): entry is [string, string] => typeof entry[1] === "string"));
+        fetch(new URL(request.url ?? "/", upstream), { headers }).then(async answer => {
+          response.writeHead(answer.status, { "content-type": answer.headers.get("content-type") ?? "application/json" });
+          response.end(await answer.text());
+        }, () => response.destroy());
+      }, delayMs);
+    });
+    servers.push(server);
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    return `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+  }
+
+  /** Rewrites the home's daemon.json with `change` applied; returns the state as the daemon wrote it. */
+  async function rewriteState(change: (state: Record<string, unknown>) => Record<string, unknown>): Promise<Record<string, unknown>> {
+    const stateFile = join(process.env.RERAIL_HOME!, "daemon.json");
+    const state = JSON.parse(await readFile(stateFile, "utf8")) as Record<string, unknown>;
+    await writeFile(stateFile, JSON.stringify(change(state)));
+    return state;
+  }
+
+  function eventIds(): string[] {
+    const database = new Database(defaultRerailDatabasePath(), { readonly: true });
+    try {
+      return database.prepare<[], { eventId: string }>("SELECT event_id AS eventId FROM events ORDER BY sequence").all().map(row => row.eventId);
+    } finally {
+      database.close();
+    }
+  }
+
+  // RERAIL_AUTOSTART=1 is a person's session, where the session-start hook may start a daemon; 0 starts none.
+  it.each(["1", "0"])("waits for a busy daemon to answer as itself, then records the session (RERAIL_AUTOSTART=%s)", { timeout: 60_000 }, async autostart => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", autostart);
+    const daemon = await startNativeTestDaemon(root);
+    // The daemon answers 3 s late, past the first probe's 2 s, as one does while an audit holds its event loop.
+    const front = await slowFront(daemon.url, 3_000);
+    await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+    const common = { session_id: "busy-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+    await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath);
+    expect(eventIds()).toEqual(expect.arrayContaining(["busy-session:SessionStart", "busy-session:prompt:p1"]));
+  });
+
+  it("sends no capability to an engine socket whose daemon never answers as itself, so a squatter gets none", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", "0");
+    await startNativeTestDaemon(root);
+    // Something else listens where the state file says the engine is, and nothing answers at the recorded URL.
+    const received: string[] = [];
+    const squatter = createHttpServer((request, response) => {
+      received.push(`${request.method} ${request.url} ${String(request.headers["x-rerail-access"] ?? "no capability")}`);
+      response.writeHead(500).end();
+    });
+    servers.push(squatter);
+    const squatted = process.platform === "win32" ? `\\\\.\\pipe\\rerail-squatted-${process.pid}-${Date.now()}` : join(root, "squatted.sock");
+    await new Promise<void>(resolve => squatter.listen(squatted, resolve));
+    await rewriteState(state => ({ ...state, url: "http://127.0.0.1:1/", port: 1, kernelSocketPath: squatted }));
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+    const common = { session_id: "squatted-session", cwd: root };
+    await expect(runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath)).rejects.toThrow();
+    expect(await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: "p1", prompt: "hi" }, daemonPath)).toEqual({});
+    // On Windows the hook asks the engine there to prove it holds the capability, which sends only a challenge.
+    expect(received.filter(line => process.platform !== "win32" || line !== "POST /proof no capability")).toEqual([]);
+  });
+
+  /** A listener at a new loopback URL that takes every request and answers none: a daemon whose event loop is held. */
+  async function silentFront(): Promise<string> {
+    const server = createHttpServer(() => undefined);
+    servers.push(server);
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    return `http://127.0.0.1:${(server.address() as AddressInfo).port}/`;
+  }
+
+  it("waits out a silent daemon once for a session's concurrent hooks, not once per hook in turn", { timeout: 90_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    await startNativeTestDaemon(root);
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+    const common = { session_id: "parallel-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+    // Parallel tool calls and subagents send one session's PreToolUse hooks at once, while a walk holds the daemon.
+    const front = await silentFront();
+    await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
+    const started = performance.now();
+    const toolCall = async (id: string): Promise<number> => {
+      await runClaudeHook({ ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: id, tool_input: { file_path: "a.ts" } }, daemonPath);
+      return performance.now() - started;
+    };
+    const finished = await Promise.all([toolCall("t1"), toolCall("t2"), toolCall("t3")]);
+    // Each hook gives up on the silent daemon about 12 s after its event arrives. Under the session's lock each would
+    // begin its wait when the one before it gave up, and the three would finish 2 s or more apart.
+    expect(Math.max(...finished) - Math.min(...finished)).toBeLessThan(1_000);
+  });
+
+  it("gives up on a silent daemon 12 s after the event arrives, the start check's read of it included", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    await startNativeTestDaemon(root);
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+    const common = { session_id: "silent-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+    const front = await silentFront();
+    await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
+    const started = performance.now();
+    expect(await runClaudeHook({ ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "t1", tool_input: { file_path: "a.ts" } }, daemonPath)).toEqual({});
+    // The start check waited 2 s for the daemon, then the endpoint lookup waited its own 2 s and 10 s: about 14.3 s.
+    expect(performance.now() - started).toBeLessThan(13_000);
+  });
+
+  // RERAIL_AUTOSTART=1 is a person's session, where the start finds the daemon alive and waits for it; 0 starts none.
+  it.each(["1", "0"])("gives up on a silent daemon at a session's start 12 s after the event arrives (RERAIL_AUTOSTART=%s)", { timeout: 60_000 }, async autostart => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    vi.stubEnv("RERAIL_AUTOSTART", autostart);
+    await startNativeTestDaemon(root);
+    const front = await silentFront();
+    await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+    const started = performance.now();
+    await expect(runClaudeHook({ session_id: "silent-start", cwd: root, hook_event_name: "SessionStart", source: "startup" }, daemonPath))
+      .rejects.toThrow(/is alive but not answering/u);
+    // The start check waited 2 s for the daemon, then the start's lookup waited its own 2 s and 10 s: about 14 s, and
+    // 24 s with RERAIL_AUTOSTART=0, whose lookup waited the 10 s twice.
+    expect(performance.now() - started).toBeLessThan(13_000);
   });
 });
 
@@ -157,7 +323,7 @@ describe("Claude Code one-shot hook", () => {
     const home = join(root, "home");
     await mkdir(home);
     await writeFile(join(home, "daemon.json"), JSON.stringify({ pid: process.pid, host: "127.0.0.1", port: 4791, url: "http://127.0.0.1:4791/",
-      version: "test", databasePath: join(home, "rerail.sqlite"), kernelSocketPath: join(home, "kernel.sock"), ui: "bundled", startedAt: 1, packageRoot: home }));
+      version: "test", databasePath: join(home, "rerail.sqlite"), kernelSocketPath: testEngineEndpoint(home), ui: "bundled", startedAt: 1, packageRoot: home }));
     vi.stubEnv("RERAIL_HOME", home);
     try {
       const common = { session_id: "claude-session", cwd: root };

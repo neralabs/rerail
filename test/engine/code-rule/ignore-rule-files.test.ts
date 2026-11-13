@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { appendFile, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IgnoreRuleFiles } from "../../../src/engine/code-rule/ignore-rule-files.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 let home: string;
 
@@ -16,7 +17,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   vi.unstubAllEnvs();
-  await rm(home, { recursive: true, force: true });
+  await removeFolder(home);
 });
 
 async function checkout(path: string): Promise<string> {

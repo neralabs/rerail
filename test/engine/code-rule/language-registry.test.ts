@@ -22,6 +22,7 @@ import {
   codeRuleDialectForPath,
 } from "../../../src/engine/code-rule/code-rule-languages.js";
 import { EXEMPLAR, exemplarLanguageRegistry, exemplarRegistryModule } from "../support/exemplar-registry.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const capabilities = (support: "supported" | "refused" | "not-supported-yet") => ({ scope: support, value: support, arguments: support, calls: support, formatArgs: support });
 
@@ -94,8 +95,8 @@ describe("the language registry", () => {
       expect(readLanguageRegistry(product, directory).map(entry => entry.id)).toEqual(["one", "four"]);
       expect(readLanguageRegistry(product).map(entry => entry.id)).toEqual(["one"]);
     } finally {
-      rmSync(product, { recursive: true, force: true });
-      rmSync(directory, { recursive: true, force: true });
+      removeFolderSync(product);
+      removeFolderSync(directory);
     }
   });
 

@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { steers, type RuleMode } from "./catalog/rule-mode.js";
+import type { Shell } from "./command-line.js";
 
 /** Every coding agent Rerail works with. */
 export const RERAIL_HOSTS = ["omp", "pi", "claude-code", "codex", "cursor"] as const;
@@ -59,6 +60,12 @@ export interface AdapterCapabilityProfile {
   commandSigil: CommandSigil;
   /** How this coding agent writes a file so that Rerail's hooks see the edit. */
   observedFileWrite: ObservedFileWrite;
+  /**
+   * The shell this coding agent runs the commands Rerail names in on Windows (steers, command files, set-up answers):
+   * Git Bash (`posix`) or PowerShell. Off Windows every agent runs a POSIX shell. Hooks are separate: their commands
+   * are registered per agent in `harness-registration.ts`.
+   */
+  windowsCommandShell: Shell;
 }
 
 export const ADAPTER_CAPABILITIES = {
@@ -82,6 +89,7 @@ export const ADAPTER_CAPABILITIES = {
     },
     commandSigil: "/",
     observedFileWrite: "edit-tool",
+    windowsCommandShell: "posix",
   },
   pi: {
     host: "pi",
@@ -103,6 +111,7 @@ export const ADAPTER_CAPABILITIES = {
     },
     commandSigil: "/",
     observedFileWrite: "edit-tool",
+    windowsCommandShell: "posix",
   },
   "claude-code": {
     host: "claude-code",
@@ -124,6 +133,7 @@ export const ADAPTER_CAPABILITIES = {
     },
     commandSigil: "/",
     observedFileWrite: "edit-tool",
+    windowsCommandShell: "posix",
   },
   codex: {
     host: "codex",
@@ -145,6 +155,7 @@ export const ADAPTER_CAPABILITIES = {
     },
     commandSigil: "$",
     observedFileWrite: "shell",
+    windowsCommandShell: "powershell",
   },
   cursor: {
     host: "cursor",
@@ -166,6 +177,7 @@ export const ADAPTER_CAPABILITIES = {
     },
     commandSigil: "/",
     observedFileWrite: "edit-tool",
+    windowsCommandShell: "powershell",
   },
 } as const satisfies Record<RerailHost, AdapterCapabilityProfile>;
 
@@ -175,13 +187,22 @@ export interface AdapterSession {
   cwd: string;
 }
 
-/** Host hook payloads are untyped JSON; nonblank text is the only accepted field value. */
+/**
+ * Host hook payloads are untyped JSON; nonblank text is the accepted value of a text field. A key that orders events
+ * (`requiredKey`) may come as text or as a whole number, as Claude Code sends MessageDisplay's `index`.
+ */
 export function hookText(host: string) {
   return {
     required(input: Readonly<Record<string, unknown>>, field: string): string {
       const value = input[field];
       if (typeof value !== "string" || value.trim() === "") throw new Error(`${host} hook omitted ${field}`);
       return value;
+    },
+    requiredKey(input: Readonly<Record<string, unknown>>, field: string): string {
+      const value = input[field];
+      if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return String(value);
+      if (typeof value === "string" && value.trim() !== "") return value;
+      throw new Error(`${host} hook omitted ${field}, or sent it as ${value === null ? "null" : typeof value} rather than text or a whole number`);
     },
     optional(input: Readonly<Record<string, unknown>>, field: string): string | undefined {
       const value = input[field];
@@ -221,7 +242,17 @@ export type AdapterEvent =
     })
   | (ContextualAdapterEvent & { kind: "assistant-message"; messageId: string; text: string })
   | (ContextualAdapterEvent & { kind: "assistant-abort"; messageId: string })
-  | (ContextualAdapterEvent & { kind: "call"; toolCallId: string; toolName: string; input: unknown })
+  | (ContextualAdapterEvent & {
+      kind: "call";
+      toolCallId: string;
+      toolName: string;
+      input: unknown;
+      /**
+       * The subagent that made the call, where a host sends a subagent's calls under its parent's session: Claude Code's
+       * `agent_id`. Absent for the session's own agent.
+       */
+      agentId?: string | undefined;
+    })
   | (ContextualAdapterEvent & { kind: "result"; toolCallId: string; toolName: string; output: unknown; failed?: boolean | undefined })
   | (ContextualAdapterEvent & { kind: "turn-end"; text: string });
 

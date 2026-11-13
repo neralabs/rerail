@@ -5,13 +5,14 @@ Unit tests, run by `npm test` (vitest over this directory). They mirror the laye
 `test/<layer>/` may import its own layer's modules; anything else in `src/` it reaches through that layer's `index.ts`
 (`npm run check:boundaries`).
 
-- `support/`: shared test helpers (oracle paths, hook events, a native test daemon, the per-file Rerail home, `git.ts`
-  for repositories with a fixed identity and none of the machine's Git configuration, and Merge Assist's stand-ins in
-  `merge-assist/`: `workspace.ts`, real repositories and a database with a fake `gh`, and `status.ts`, sample statuses
-  and a recording service). A layer's own helpers live in `test/<layer>/support/` (`runtime/merge-assist/support/`
-  holds the files and session runtime the conflict tests share); a helper a second layer needs moves here.
+- `support/`: shared test helpers (oracle paths, hook events, a native test daemon, the per-file Rerail home, and
+  Merge Assist's stand-ins in `merge-assist/`: `git.ts`, repositories with a fixed identity and none of the machine's
+  Git configuration, `workspace.ts`, real repositories and a database with a fake `gh`, and `status.ts`, sample
+  statuses and a recording service), and in `support/processes/` processes racing for one lock. A layer's own helpers live in
+  `test/<layer>/support/` (`runtime/merge-assist/support/` holds the files and session runtime the conflict tests
+  share); a helper a second layer needs moves here.
 - `scripts/`: tests of the repository scripts under `scripts/`; `ensure-sqlite.test.mjs` runs under `node --test`
-  (`npm run test:scripts`), as does `docs/test_transducer_design.py`, which checks `docs/transducer-design.md`.
+  (`npm run test:scripts`), as does `docs/transducer-design.test.mjs`, which checks `docs/transducer-design.md`.
 - `ui/`: the dashboard page's modules that need no DOM (`ui/`): view models, routes, polling and scoped writes;
   `ui/support/merge-conflicts.ts` builds the conflicts the Merge Assist ones read. The pages themselves are driven in a
   browser by the specs in [`e2e/`](../e2e/README.md).

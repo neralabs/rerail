@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ExtensionAPI as OmpAPI, ExtensionContext as OmpContext } from "@oh-my-pi/pi-coding-agent";
@@ -11,6 +11,7 @@ import { CodeRuleBridge, type ConversationRule, defaultRerailDatabasePath, messa
 import { EVENTS_DROPPED_ENTRY_TYPE, MATCH_ENTRY_TYPE, RerailRuntime, SqliteSessionReader, TURN_ENTRY_TYPE } from "../../../src/runtime/index.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 /** The checkout rule's steer for a step of the conversation, as `host` sends it: Pi's says it is Rerail's. */
 function checkoutSteer(host: "omp" | "pi"): string {
@@ -29,7 +30,7 @@ afterEach(async () => {
   await closeNativeTestDaemons();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
-  for (const path of directories.splice(0)) rmSync(path, { recursive: true, force: true });
+  for (const path of directories.splice(0)) removeFolderSync(path);
 });
 
 async function harness(host: "omp" | "pi") {

@@ -1,0 +1,1 @@
+Claude Code on Windows needs Git Bash, from Git for Windows. Claude Code runs without it, using PowerShell, but Rerail writes its status line, `/rerail` commands and set-up's answers for Git Bash there; hooks still record and steer.

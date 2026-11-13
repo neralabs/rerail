@@ -25,17 +25,22 @@ export function nodeUpgradeCommand(origin: NodeOrigin, major: number): string | 
     roots.some(root => root !== undefined && root !== "" && path.startsWith(`${root.replaceAll("\\", "/").replace(/\/+$/u, "")}/`));
   const { VOLTA_HOME, FNM_DIR, NVM_DIR, NVM_HOME, NVM_SYMLINK } = origin.env;
   const volta = `volta install node@${major}`;
-  const fnm = `fnm install ${major} && fnm use ${major}`;
+  // One command, which every shell runs: Windows PowerShell 5.1 refuses `&&`.
+  const fnm = `fnm use --install-if-missing ${major}`;
   const nvm = `nvm install ${major}`;
+  // nvm-windows (`NVM_HOME`, `NVM_SYMLINK`) installs a version without switching to it, unlike nvm.
+  const nvmWindows = `nvm install ${major}, then nvm use ${major}`;
   if (under(VOLTA_HOME) || path.includes("/.volta/")) return volta;
   if (under(FNM_DIR) || path.includes("/fnm/node-versions/")) return fnm;
-  if (under(NVM_DIR, NVM_HOME, NVM_SYMLINK) || path.includes("/.nvm/")) return nvm;
+  if (under(NVM_HOME, NVM_SYMLINK)) return nvmWindows;
+  if (under(NVM_DIR) || path.includes("/.nvm/")) return nvm;
   // `node` is Homebrew's current Node; a versioned formula (`node@22`) stays on its major, so the answer is `node`.
   if (path.includes("/Cellar/node/")) return "brew upgrade node";
   if (path.includes("/Cellar/") || path.startsWith("/opt/homebrew/") || path.startsWith("/home/linuxbrew/.linuxbrew/")) return "brew install node";
   if (VOLTA_HOME) return volta;
   if (FNM_DIR) return fnm;
-  if (NVM_DIR || NVM_HOME) return nvm;
+  if (NVM_HOME || NVM_SYMLINK) return nvmWindows;
+  if (NVM_DIR) return nvm;
   return undefined;
 }
 

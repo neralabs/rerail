@@ -3,12 +3,15 @@ import { steerBlock, steerRules, type AdapterDelivery, type SteerFinding } from 
 /**
  * The steers of the session enforcement design (scenes N4 and N4b), as each
  * coding agent's adapter receives them: their rules linked to a loopback dashboard. Every agent's golden output
- * renders these same deliveries.
+ * renders these same deliveries, on every machine: the scenes are the design's, so their commands are written for sh
+ * (`SCENE_PLATFORM`), not for the shell of the machine the test runs on.
  */
 export const SCENE_DASHBOARD = "http://127.0.0.1:4737/";
 export const SCENE_SESSION = "5f2c";
 /** The coloured `R E R A I L` a coding agent that draws colour shows for Rerail, tagged so a golden reads its place. */
 export const SCENE_MARK = "<mark>R E R A I L</mark>";
+/** The platform the scenes are drawn for; on Windows the commands a note or steer names are written for its shells. */
+export const SCENE_PLATFORM: NodeJS.Platform = "linux";
 
 const ORIGIN = "From the TypeScript rule pack.";
 
@@ -33,7 +36,7 @@ function sceneSteer(...findings: SteerFinding[]): AdapterDelivery {
     sessionId: SCENE_SESSION,
     requested: "steer",
     mechanism: "additional-context",
-    content: steerBlock({ kind: "edit" }, findings),
+    content: steerBlock({ kind: "edit" }, findings, "posix"),
     ruleIds: rules.map(rule => rule.id),
     rules,
   };

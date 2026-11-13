@@ -100,7 +100,7 @@ repository's `.rerail/sessions/`.
 | Where | What |
 | --- | --- |
 | `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits, findings, steer feedback, and all agent events (prompts, replies, tool inputs and outputs). With Merge Assist on, also its in-flight conflicts (both sides' summaries and contested hunks; a dismissed one keeps only its title, the other side's label and author, and who dismissed it), its last scan, your `gh` sign-in state and login, which notes each session was handed, and your Merge Assist settings; turning Merge Assist off clears the conflicts, scans and `gh` sign-in state, and `rerail reset` clears the notes of the sessions it removes. Also daemon state and log, consent answer, rule packs, managed installs |
-| `~/.cache/rerail/` | `content-v1.sqlite`: compressed source files Rerail read, with syntax trees and check results |
+| `~/.cache/rerail/` (Windows: `%USERPROFILE%\AppData\Local\rerail`) | `content-v1.sqlite`: compressed source files Rerail read, with syntax trees and check results |
 | `<your repository>/.rerail/sessions/` | One ledger per session: events and pre-edit file text. Its `.gitignore` of `*` keeps it out of Git |
 
 Steer feedback is the agent's one-line reason for ignoring a steer (`rerail feedback`). It is sent nowhere;
@@ -147,7 +147,9 @@ Secret-like file names match `SENSITIVE_FILE_NAMES` in `src/engine/path-boundary
 
 ### Permissions
 
-Rerail's files are private to your user: directories `0700`, files `0600`.
+Rerail's files are private to your user: directories `0700`, files `0600`. Windows has no such modes: a Rerail home
+or a session records folder Rerail makes outside your profile folder gets an access list that only you, SYSTEM and
+Administrators are on.
 
 <details>
 <summary>What is covered and repaired</summary>

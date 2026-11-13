@@ -1,0 +1,1 @@
+On Windows, `rerail profile remove` and finding rule packs during set-up no longer fail when a virus scan or the search indexer holds a file in a folder they remove for a moment: they wait for it to let go.

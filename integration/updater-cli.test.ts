@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { text } from "node:stream/consumers";
 import { pathToFileURL } from "node:url";
+import { runNpm } from "../src/runtime/index.js";
+import { removeFolder } from "../test/support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 /** Each command the test ran and how long it took, so a slow run says where the time went, not just that it ran out. */
@@ -12,8 +14,9 @@ const commandTimes: Array<[string, number]> = [];
 /** Two thirds of the 60 s a test gets for its CLI runs; the pack and install have their own budget and are not counted. */
 const SLOW_RUN_MS = 40_000;
 afterEach(async () => {
-  // A test that timed out keeps running, and its CLI children may still be writing under the directory (ENOTEMPTY).
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true, maxRetries: 5 })));
+  // A test that timed out keeps running, and its CLI children may still be writing under the directory: removeFolder
+  // then names each one still running there.
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
   const total = commandTimes.reduce((sum, [, ms]) => sum + ms, 0);
   if (total > SLOW_RUN_MS) {
     const lines = commandTimes.map(([command, ms]) => `  ${String(ms).padStart(6)} ms  ${command}`);
@@ -144,10 +147,8 @@ process.exit(1);
   // The POSIX shim deliberately exercises launching a runtime-selected fixture path.
   await writeFile(npm, `#!/usr/bin/env node\nawait import(${JSON.stringify(fixture)});\n`);
   await chmod(npm, 0o755);
-  await writeFile(
-    join(bin, "npm.cmd"),
-    `@echo off\r\n"${process.execPath.replaceAll("%", "%%")}" "${fixture.replaceAll("%", "%%")}" %*\r\n`,
-  );
+  // Rerail on Windows runs no npm from PATH: it runs npm's own script under Node, the npm-cli.js that npm_execpath names.
+  await writeFile(join(bin, "npm-cli.js"), `await import(${JSON.stringify(pathToFileURL(fixture).href)});\n`);
   return bin;
 }
 
@@ -161,21 +162,18 @@ describe("Rerail managed launcher", () => {
   beforeAll(async () => {
     packageRoot = await mkdtemp(join(tmpdir(), "rerail-launcher-package-"));
     const manifest = await packageManifest();
-    const packed = await run(["npm", "pack", "--pack-destination", packageRoot], process.env);
-    expect(packed.exitCode, packed.stderr).toBe(0);
+    // npm as Rerail starts it: on Windows npm is a npm.cmd script, which only a shell runs.
+    await runNpm(["pack", "--pack-destination", packageRoot]);
     const archive = join(packageRoot, `${manifest.name.slice(1).replace("/", "-")}-${manifest.version}.tgz`);
     const consumer = join(packageRoot, "consumer");
     // A clean install from the tarball's declared dependencies, so one missing from package.json fails here; packages
     // already in the npm cache (CI restores it and runs npm ci first) are taken from it instead of the registry.
-    const installed = await run(["npm", "install", "--prefer-offline", "--prefix", consumer, "--no-audit", "--no-fund", archive], process.env);
-    expect(installed.exitCode, installed.stderr).toBe(0);
+    await runNpm(["install", "--prefer-offline", "--prefix", consumer, "--no-audit", "--no-fund", archive]);
     packaged = { manifest, root: join(consumer, "node_modules", ...manifest.name.split("/")) };
-    // The pack and install have their own budget: each test's report counts only its own CLI runs.
-    commandTimes.length = 0;
   }, 120_000);
 
   afterAll(async () => {
-    if (packageRoot !== undefined) await rm(packageRoot, { recursive: true, force: true, maxRetries: 5 });
+    if (packageRoot !== undefined) await removeFolder(packageRoot);
   });
 
   test("installs the packaged launcher and accepts then rejects deterministic local updates", async () => {
@@ -194,10 +192,15 @@ describe("Rerail managed launcher", () => {
     await mkdir(join(userHome, ".cursor"));
     const marker = join(root, "launched-version");
     const environment = {
-      ...process.env,
+      // Windows reads a variable's name in any case and takes the first in sort order, so the NPM_EXECPATH npm sets
+      // there would win over the npm_execpath below.
+      ...Object.fromEntries(Object.entries(process.env).filter(([name]) => name.toLowerCase() !== "npm_execpath")),
       PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
-      // The coding agents' config: Claude Code connected below, Cursor present but never connected.
+      npm_execpath: join(bin, "npm-cli.js"),
+      // The coding agents' config: Claude Code connected below, Cursor present but never connected. The home is HOME on
+      // POSIX and USERPROFILE on Windows.
       HOME: userHome,
+      USERPROFILE: userHome,
       RERAIL_DEVICE_SECRET_STORE: "file",
       RERAIL_HOME: home,
       RERAIL_ACCEPTED_VERSION: acceptedVersion,

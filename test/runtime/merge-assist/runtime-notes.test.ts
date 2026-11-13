@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { PullRequestListing } from "../../../src/runtime/merge-assist/github.js";
-import { commit, writeFiles } from "../../support/git.js";
+import { commit, writeFiles } from "../../support/merge-assist/git.js";
 import { FakeGithub, mergeAssistWorkspaces } from "../../support/merge-assist/workspace.js";
 import { sessionRuntime } from "./support/conflict-sessions.js";
 

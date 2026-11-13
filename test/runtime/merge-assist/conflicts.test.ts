@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { mergeAssistStatusSchema, type Conflict } from "../../../src/engine/index.js";
 import type { PullRequestSummary } from "../../../src/runtime/index.js";
-import { commit, git, writeFiles } from "../../support/git.js";
+import { commit, git, writeFiles } from "../../support/merge-assist/git.js";
 import { FakeGithub, mergeAssistWorkspaces, takeNotes, type Workspace } from "../../support/merge-assist/workspace.js";
 
 const workspace = mergeAssistWorkspaces();

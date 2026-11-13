@@ -6,12 +6,18 @@ use std::borrow::Cow;
 use std::cmp::Ordering;
 
 /// `parseIdentifier`'s path part of a target: up to its query (`?`) or fragment (`#`, past the
-/// first character).
+/// first character), both looked for past a DOS device prefix (`\\?\`, `\\.\`), whose `?` is no
+/// query.
 pub(super) fn identifier_path(identifier: &str) -> &str {
-    let query = identifier.find('?');
+    let start = if identifier.starts_with(r"\\?\") || identifier.starts_with(r"\\.\") {
+        4
+    } else {
+        0
+    };
+    let query = identifier[start..].find('?').map(|at| start + at);
     let fragment = identifier
         .char_indices()
-        .skip(1)
+        .skip(start.max(1))
         .find(|&(_, c)| c == '#')
         .map(|(at, _)| at);
     let end = match (query, fragment) {

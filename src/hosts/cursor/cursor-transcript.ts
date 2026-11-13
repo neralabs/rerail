@@ -1,10 +1,11 @@
-import { mkdir, open, readFile, rename, writeFile, type FileHandle } from "node:fs/promises";
+import { mkdir, open, readFile, type FileHandle } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
 import type { AdapterEvent, AdapterSession, RerailEventLoop } from "../../engine/adapter-contract.js";
 import { createHash } from "node:crypto";
 import { pendingPath, type HookInput, persistPending } from "../../harness/hook-adapter.js";
 import { steers } from "../../engine/catalog/rule-mode.js";
+import { replaceFile } from "../../engine/file-replace.js";
 
 const CursorTranscriptStateSchema = z
   .object({
@@ -63,9 +64,7 @@ async function readState(path: string): Promise<CursorTranscriptState> {
 
 async function writeState(path: string, state: CursorTranscriptState): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, JSON.stringify(state), { mode: 0o600 });
-  await rename(temporary, path);
+  await replaceFile(path, JSON.stringify(state), { mode: 0o600 });
 }
 
 function userText(record: TranscriptRecord): string | undefined {
@@ -195,7 +194,8 @@ async function ingestCompleteLines(
 
 /**
  * Recovers Cursor's append-only JSONL transcript when the CLI does not supply text hooks.
- * The caller holds Cursor's per-session hook lock, so the cursor sidecar is single-writer.
+ * The caller keeps Cursor's per-session hook lock through the whole ingest, its checks included (`SessionLock.kept`),
+ * so the cursor sidecar is single-writer.
  */
 export async function ingestCursorTranscript(
   input: HookInput,

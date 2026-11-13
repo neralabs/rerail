@@ -8,12 +8,13 @@
  *   database (support bundles and `rerail scrub` read the database) and never printed.
  * - `<home>/machine-id` (`0600`): a random UUID made once, which names this machine to every remote.
  */
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { linkSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { renameWithRetrySync, replaceFileSync } from "../engine/file-replace.js";
 import { hostname } from "node:os";
 import { join } from "node:path";
-import { keepPrivate, makeRerailHome } from "../engine/storage/private-files.js";
+import { execFileSync } from "../engine/child-process.js";
+import { keepFolderPrivate, makeRerailHome, type PrivateMachine } from "../engine/storage/private-files.js";
 import { defaultRerailHome, MACHINE_ID_FILE, REMOTE_CONFIG_FILE, REMOTE_TOKENS_FOLDER } from "../engine/storage/rerail-home.js";
 
 export interface RemoteEntry {
@@ -66,17 +67,6 @@ export function excludedAt(exclusions: readonly RepositoryExclusion[], repositor
 const NAME = /^[a-z0-9][a-z0-9._-]{0,62}$/u;
 const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
-/** `content` as the whole of `file`, owner-only, through a temporary file renamed over it. */
-function writePrivate(file: string, content: string): void {
-  const temporary = `${file}.${process.pid}.tmp`;
-  try {
-    writeFileSync(temporary, content, { mode: 0o600 });
-    renameSync(temporary, file);
-  } finally {
-    rmSync(temporary, { force: true });
-  }
-}
-
 /** The remote's URL, checked: HTTPS, or HTTP to this machine only (a local test server); no credentials in it. */
 export function remoteUrl(value: string): string {
   let url: URL;
@@ -117,7 +107,8 @@ export function readRemoteConfig(home: string = defaultRerailHome()): RemoteConf
 function writeRemoteConfig(home: string, config: Omit<RemoteConfig, "excludedRepositories">): void {
   makeRerailHome(home);
   const excludedRepositories = [...new Set(config.exclusions.filter(exclusion => exclusion.to === null).map(exclusion => exclusion.repositoryKey))].sort();
-  writePrivate(join(home, REMOTE_CONFIG_FILE), `${JSON.stringify({ remotes: config.remotes, excludedRepositories, exclusions: config.exclusions }, null, 2)}\n`);
+  const text = `${JSON.stringify({ remotes: config.remotes, excludedRepositories, exclusions: config.exclusions }, null, 2)}\n`;
+  replaceFileSync(join(home, REMOTE_CONFIG_FILE), text, { mode: 0o600 });
 }
 
 function tokenFile(home: string, name: string): string {
@@ -139,10 +130,16 @@ export function defaultRemoteName(url: string): string {
   return name === "" ? "remote" : name;
 }
 
+/**
+ * Adds a remote and writes its token. The tokens folder is kept private on every add, on Windows too, where a home an
+ * earlier release made outside the profile folder kept its parent's ACL until a daemon launch: the token would
+ * otherwise be readable by every local user. `machine` is for tests.
+ */
 export function addRemote(
   options: { url: string; token: string; name?: string; content: boolean; label?: string },
   home: string = defaultRerailHome(),
   now: number = Date.now(),
+  machine: PrivateMachine = {},
 ): RemoteEntry {
   const url = remoteUrl(options.url);
   const name = options.name ?? defaultRemoteName(url);
@@ -151,11 +148,11 @@ export function addRemote(
   if (token === "" || /\s/u.test(token)) throw new Error("The token is empty or has whitespace in it");
   const config = readRemoteConfig(home);
   if (config.remotes.some(remote => remote.name === name)) throw new Error(`A remote named ${name} exists; remove it first, or pass --name`);
-  makeRerailHome(home);
+  makeRerailHome(home, machine);
   const folder = join(home, REMOTE_TOKENS_FOLDER);
   mkdirSync(folder, { recursive: true, mode: 0o700 });
-  keepPrivate(folder);
-  writePrivate(tokenFile(home, name), `${token}\n`);
+  keepFolderPrivate(folder, { ...machine, repair: true });
+  replaceFileSync(tokenFile(home, name), `${token}\n`, { mode: 0o600 });
   const label = options.label?.trim();
   if (label !== undefined && (label === "" || label.length > 100 || /[\p{Cc}]/u.test(label))) throw new Error("A label is 1 to 100 characters, with no control characters");
   const entry: RemoteEntry = { name, id: randomUUID(), url, content: options.content, addedAt: now, ...(label === undefined ? {} : { label }) };
@@ -188,24 +185,48 @@ export function setRepositoryExcluded(repositoryKey: string, excluded: boolean, 
   writeRemoteConfig(home, { ...config, exclusions });
 }
 
-/** This machine's id for remotes, made once and kept in the home. */
-export function machineId(home: string = defaultRerailHome()): string {
-  const file = join(home, MACHINE_ID_FILE);
+const MACHINE_ID = /^[0-9a-f-]{36}$/u;
+
+/** What the machine-id file holds, trimmed; undefined when there is none. */
+function readMachineIdFile(file: string): string | undefined {
   try {
-    const existing = readFileSync(file, "utf8").trim();
-    if (/^[0-9a-f-]{36}$/u.test(existing)) return existing;
+    return readFileSync(file, "utf8").trim();
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
   }
-  makeRerailHome(home);
-  const id = randomUUID();
+}
+
+/** Links `from` in as `to` unless a file is there already: another process made it first, and its content stands. */
+function linkUnlessThere(from: string, to: string): void {
   try {
-    // Exclusive create: two processes making it at once agree on the first one's id.
-    writeFileSync(file, `${id}\n`, { mode: 0o600, flag: "wx" });
+    linkSync(from, to);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    return readFileSync(file, "utf8").trim();
   }
+}
+
+/**
+ * This machine's id for remotes, made once and kept in the home. The id is written whole under a temporary name, then
+ * linked in only if no file is there: two processes making it at once agree on the first one's id, and neither can read
+ * the file before the id is in it. A file with no id in it, left by a process that died writing one in place, is
+ * replaced.
+ */
+export function machineId(home: string = defaultRerailHome()): string {
+  const file = join(home, MACHINE_ID_FILE);
+  const existing = readMachineIdFile(file);
+  if (existing !== undefined && MACHINE_ID.test(existing)) return existing;
+  makeRerailHome(home);
+  const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  writeFileSync(temporary, `${randomUUID()}\n`, { mode: 0o600, flag: "wx" });
+  try {
+    if (existing === undefined) linkUnlessThere(temporary, file);
+    else renameWithRetrySync(temporary, file);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+  const id = readMachineIdFile(file);
+  if (id === undefined || !MACHINE_ID.test(id)) throw new Error(`${file} holds no machine id`);
   return id;
 }
 

@@ -3,10 +3,11 @@
  * here reaches the network.
  */
 import { existsSync, mkdirSync } from "node:fs";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach } from "vitest";
+import { removeFolder } from "../platform/remove-folder.js";
 import {
   openRerailDatabase,
   recordCheckout,
@@ -23,7 +24,7 @@ import {
   type MergeAssistRuntime,
   type PullRequestSummary,
 } from "../../../src/runtime/index.js";
-import { commit, git } from "../git.js";
+import { commit, git } from "./git.js";
 
 /** The notes the session has not been handed, recorded as handed, as a delivery that takes them all would. */
 export function takeNotes(service: MergeAssistRuntime, sessionId: string, checkoutPath: string): string[] {
@@ -126,7 +127,7 @@ export function mergeAssistWorkspaces(): (options?: { setUp?: boolean; remote?: 
       // The conflict hook's handlers run in the background: let them finish before the database closes.
       await Promise.all(services.map(service => service.settled()));
       database.$client.close();
-      await rm(folder, { recursive: true, force: true });
+      await removeFolder(folder);
     });
     return {
       folder,

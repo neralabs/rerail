@@ -21,7 +21,7 @@ import {
 } from "../../engine/merge-assist/model.js";
 import type { RerailDatabase } from "../../engine/storage/database.js";
 import { checkouts, repositories } from "../../engine/storage/schema.js";
-import { ownProcessAlive } from "../daemon-control.js";
+import { processAlive } from "../daemon-control.js";
 import { detectConflicts, STALE_BRANCH_DAYS } from "./conflict-detect.js";
 import { deliveryHandler, readSettings, settingsAt, writeSettings } from "./conflict-delivery.js";
 import { ConflictHook, conflictEvents, type ConflictFire, type ConflictHandlerContext } from "./conflict-hook.js";
@@ -294,7 +294,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   /** The checkout's scan mark when a live scan holds it: fresh, and claimed by a process that is still running. */
   #liveMark(db: StateQueries, checkoutPath: string): ScanMark | undefined {
     const mark = readState(db, STATE_KEYS.scanning(checkoutPath), scanningSchema);
-    return mark !== undefined && this.#now() - mark.since < SCAN_STALE_MS && ownProcessAlive(mark.pid) ? mark : undefined;
+    return mark !== undefined && this.#now() - mark.since < SCAN_STALE_MS && processAlive(mark.pid) ? mark : undefined;
   }
 
   /** Whether a scan of the checkout runs in this process or, by its live mark, in another. */

@@ -1,13 +1,15 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { defaultRerailDatabasePath, events, openRerailDatabase, policySessionOwners, sessions, SqliteAuditStore } from "../../src/engine/index.js";
 import { runSupportBundleCommand, scrubText, type SupportBundle } from "../../src/cli/support-bundle.js";
 import { startTestRepository } from "../support/started-repository.js";
+import { NO_POSIX_MODES, POSIX_MODES } from "../support/platform/file-mode.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const directories: string[] = [];
 const fileRerailHome = process.env.RERAIL_HOME;
@@ -15,7 +17,7 @@ const fileRerailHome = process.env.RERAIL_HOME;
 afterEach(async () => {
   if (fileRerailHome === undefined) delete process.env.RERAIL_HOME;
   else process.env.RERAIL_HOME = fileRerailHome;
-  await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
+  await Promise.all(directories.splice(0).map(directory => removeFolder(directory)));
 });
 
 const SESSION = "session-under-report";
@@ -304,7 +306,8 @@ describe("rerail support-bundle", () => {
     expect(bundle.problems).toEqual([expect.stringContaining("steered 1 time")]);
   });
 
-  it("writes the file for the person's user only", async () => {
+  it("writes the file for the person's user only", async ({ skip }) => {
+    skip(!POSIX_MODES, NO_POSIX_MODES);
     const world = await reportedWorld();
     await run(world);
     expect(statSync(world.output).mode & 0o777).toBe(0o600);
@@ -325,6 +328,13 @@ describe("rerail support-bundle", () => {
 
 describe("scrubText", () => {
   const scrub = (text: string): string => scrubText(text, { knownValues: [] });
+
+  it("takes out a known Windows path whatever case a log spells it in", () => {
+    const knownValues = [{ value: String.raw`D:\src\client-x`, label: "<checkout>" }];
+    expect(scrubText(String.raw`d:\src\client-x\a.ts and D:/SRC/Client-X/b.ts`, { knownValues })).toBe(String.raw`<checkout>\a.ts and <checkout>/b.ts`);
+    // A POSIX path keeps its case: another case is another folder there.
+    expect(scrubText("/src/Client-X/a.ts", { knownValues: [{ value: "/src/client-x", label: "<checkout>" }] })).toBe("/src/Client-X/a.ts");
+  });
 
   it.each([
     ["a GitHub token", "ghp_abcdefghijklmnopqrstuvwxyz0123456789"],
@@ -390,9 +400,9 @@ describe("scrubText", () => {
   });
 
   it.each([
-    ["as recorded", String.raw`C:\Users\somebody\src\acme-app\x.ts`],
-    ["with forward slashes", "C:/Users/somebody/src/acme-app/x.ts"],
-    ["JSON-escaped", String.raw`C:\\Users\\somebody\\src\\acme-app\\x.ts`],
+    ["as recorded", String.raw`C:\Users\somebody\src\acme-app\index.ts`],
+    ["with forward slashes", "C:/Users/somebody/src/acme-app/index.ts"],
+    ["JSON-escaped", String.raw`C:\\Users\\somebody\\src\\acme-app\\index.ts`],
   ])("replaces a Windows checkout path written %s", (_name, text) => {
     const knownValues = [{ value: String.raw`C:\Users\somebody\src\acme-app`, label: "<checkout>" }];
     expect(scrubText(text, { knownValues })).not.toContain("acme-app");

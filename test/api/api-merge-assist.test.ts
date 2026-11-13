@@ -1,8 +1,9 @@
 import { mkdirSync, realpathSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { removeFolder } from "../support/platform/remove-folder.js";
 import type { OpenAPIHono } from "@hono/zod-openapi";
 import { createRerailApi } from "../../src/api/http.js";
 import { createRerailMcpHandler } from "../../src/api/mcp.js";
@@ -10,7 +11,7 @@ import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores } from "../../src/api/stores.js";
 import { CALLER_CWD_HEADER, mergeAssistStatusSchema, recordCheckout } from "../../src/engine/index.js";
 import { MERGE_ASSIST_ERROR_CODES, MergeAssistError } from "../../src/runtime/index.js";
-import { git } from "../support/git.js";
+import { git } from "../support/merge-assist/git.js";
 import { RecordingMergeAssistService } from "../support/merge-assist/status.js";
 
 const CONFLICT = "conflict:overlap:0123456789abcdef01234567:89abcdef";
@@ -63,7 +64,7 @@ describe("the Merge Assist operations", () => {
 
   afterEach(async () => {
     stores.close();
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root);
   });
 
   async function request(method: string, path: string, body?: Record<string, unknown>): Promise<Answer> {

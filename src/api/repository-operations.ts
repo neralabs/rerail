@@ -6,7 +6,7 @@
  * while it is not set up, to add a rule they created in the same call, or to add the copy of a By Rerail rule they
  * edited; they may never turn Follow .gitignore off; people may change anything.
  */
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { isAbsolute, relative, sep } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { z, ZodError } from "zod";
@@ -27,6 +27,7 @@ import {
   type RuleSettingTargetKind,
   type RuleSuppressions,
 } from "../engine/catalog/repository-model.js";
+import { checkoutRealpath } from "../engine/catalog/checkout-control.js";
 import { repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
 import { checkoutStatus, linkAlias, listRepositories, parentCheckouts, repositoryHistoryIds, type RepositoryListing } from "../engine/catalog/repository-registry.js";
 import { setCheckoutStarted, setRepositoryStarted, stateOf } from "../runtime/repository-start.js";
@@ -129,7 +130,7 @@ function checkoutNotFound(path: string): ApiError {
 export function checkoutAt(stores: RerailApiStores, path: string, write: boolean): { checkout: CheckoutContext; folder: string } {
   let physical: string;
   try {
-    physical = realpathSync(path);
+    physical = checkoutRealpath(path);
   } catch {
     throw checkoutNotFound(path);
   }

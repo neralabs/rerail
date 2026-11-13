@@ -17,7 +17,7 @@ description: >-
   workflow run saved, verifies each archive against its lock and extracts it; it holds no `id-token`, never assumes a
   role and never saves, and a miss fails. So a job with `id-token: write` never extracts a cache entry, whoever wrote
   it, and a job that extracts one, or runs upstream's code (the generators), holds no token to mint.
-  Consumers verify what they restore.
+  Consumers verify what they restore. A consuming job may run on Windows: the entry is saved and restored cross-OS.
 
 inputs:
   pack:
@@ -75,6 +75,10 @@ runs:
         '
 
     # The fetching job only asks whether the entry exists: what a cache entry holds never reaches a job with a token.
+    # Cross-OS, here and on the save: actions/cache marks an entry Windows saves or looks up as Windows-only unless
+    # enableCrossOsArchive is set, so without it the Windows unit job would miss the entry the Linux test-data job
+    # saved. On Linux and macOS the setting changes nothing, so the entries already saved still match. The paths are
+    # checkout-relative, which is what lets one archive extract on either OS.
     - id: cache
       name: Restore the locked archives (fetching, only look them up)
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -82,6 +86,7 @@ runs:
         path: ${{ steps.entry.outputs.paths }}
         key: ${{ steps.entry.outputs.key }}
         lookup-only: ${{ inputs.fetch == 'true' }}
+        enableCrossOsArchive: true
 
     # A job that does not fetch (fetch: "false") holds no OIDC token, so the cache must already hold the archives: saved
     # by the job of this run that fetched them, or by an earlier run.
@@ -134,3 +139,4 @@ runs:
       with:
         path: ${{ steps.entry.outputs.paths }}
         key: ${{ steps.entry.outputs.key }}
+        enableCrossOsArchive: true

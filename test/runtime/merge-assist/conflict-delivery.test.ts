@@ -6,7 +6,7 @@ import { claudeHookOutput } from "../../../src/hosts/claude/index.js";
 import { SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/index.js";
 import type { RerailRuntime } from "../../../src/runtime/runtime.js";
 import type { MergeAssistRuntime } from "../../../src/runtime/merge-assist/service.js";
-import { commit, git, writeFiles } from "../../support/git.js";
+import { commit, git, writeFiles } from "../../support/merge-assist/git.js";
 import { mergeAssistWorkspaces, takeNotes, type Workspace } from "../../support/merge-assist/workspace.js";
 import { body, changed, open, sessionRuntime } from "./support/conflict-sessions.js";
 

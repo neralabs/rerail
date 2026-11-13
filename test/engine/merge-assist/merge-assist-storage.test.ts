@@ -1,19 +1,20 @@
 import { mkdirSync, realpathSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 import { mergeAssistEnabled, pruneCheckouts, recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import { openRerailDatabase, resetRepositoryHistoryIn, type RerailDatabase } from "../../../src/engine/storage/database.js";
 import { mergeAssistState, repositories, sessions } from "../../../src/engine/storage/schema.js";
-import { git } from "../../support/git.js";
+import { git } from "../../support/merge-assist/git.js";
 
 const roots: string[] = [];
 const databases: RerailDatabase[] = [];
 afterEach(async () => {
   for (const database of databases.splice(0)) database.$client.close();
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
 
 async function folder(): Promise<string> {
@@ -50,7 +51,7 @@ describe("Merge Assist storage", () => {
     recordCheckout(db, checkout);
     db.insert(mergeAssistState).values([`conflicts:${checkout}`, `scan:${checkout}`, `scanning:${checkout}`, `settings:${REPOSITORY}`]
       .map(key => ({ key, valueJson: "[]", updatedAt: 1 }))).run();
-    await rm(checkout, { recursive: true, force: true });
+    await removeFolder(checkout);
 
     expect(pruneCheckouts(db)).toEqual([checkout]);
     expect(keys(db)).toEqual([`settings:${REPOSITORY}`]);

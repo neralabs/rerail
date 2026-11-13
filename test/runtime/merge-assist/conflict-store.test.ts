@@ -1,7 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/index.js";
 import { readConflicts, writeConflicts, type StoredConflict } from "../../../src/runtime/merge-assist/conflict-store.js";
 import { STATE_KEYS, writeState } from "../../../src/runtime/merge-assist/state.js";
@@ -11,7 +12,7 @@ const roots: string[] = [];
 const databases: RerailDatabase[] = [];
 afterEach(async () => {
   for (const database of databases.splice(0)) database.$client.close();
-  await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+  await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
 
 async function database(): Promise<RerailDatabase> {

@@ -1,11 +1,10 @@
-import { realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 import { SECRET_FILE_FINDING_MESSAGE, type CodeRuleViolation, type CodeRuleViolationFix, type CodeRuleSourceSpan } from "../engine/code-rule/code-rule.js";
 import { AUDIT_BLIND_REASONS, AUDIT_FAILURE_CODES, AUDIT_MODES, AUDIT_SCOPES, AUDIT_STATUSES, type AuditFailure } from "../engine/audit/audit.js";
 import type { AuditQuery, RepositoryAuditEntryQuery, RepositoryAuditQuery } from "../engine/audit/audit-store.js";
-import { withinCheckout } from "../engine/catalog/checkout-control.js";
+import { checkoutRealpath, withinCheckout } from "../engine/catalog/checkout-control.js";
 import { RERAIL_HOSTS } from "../engine/adapter-contract.js";
 import { internalTesting } from "../engine/internal-testing.js";
 import { agentTranscriptPayload } from "../engine/transcript-boundary.js";
@@ -349,8 +348,8 @@ export const operations: readonly Operation[] = [
       if (session !== null) {
         try {
           // A host may report a directory below its launch root; presence and identity follow the session's canonical cwd.
-          const cwd = realpathSync(session.session.cwd);
-          if (session.session.host !== input.host || !withinCheckout(cwd, realpathSync(input.repository))) session = null;
+          const cwd = checkoutRealpath(session.session.cwd);
+          if (session.session.host !== input.host || !withinCheckout(cwd, checkoutRealpath(input.repository))) session = null;
           else repository = cwd;
         } catch { session = null; }
       }

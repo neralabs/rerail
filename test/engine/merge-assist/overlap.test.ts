@@ -1,14 +1,15 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 import { conflictId, quietFiles } from "../../../src/engine/merge-assist/conflicts.js";
 import { contestedAnchor, identify, OverlapReader, overlaps, workspaceRanges } from "../../../src/engine/merge-assist/overlap.js";
-import { git as gitIn } from "../../support/git.js";
+import { git as gitIn } from "../../support/merge-assist/git.js";
 
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeFolderSync(root);
 });
 
 const LINES = Array.from({ length: 40 }, (_, index) => `line ${index + 1}`);

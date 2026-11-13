@@ -1,9 +1,12 @@
-import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { appendFile, mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { basename, join } from "node:path";
 import { Readable, Writable } from "node:stream";
+import { setTimeout as delay } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { type AdapterDelivery, sessionStartNote } from "../../src/engine/index.js";
+import { encodeRerailEventResult, type EngineEndpoint } from "../../src/runtime/index.js";
 import {
   emitHookOutput,
   holdStopSteers,
@@ -26,10 +29,57 @@ import { runCodexHook } from "../../src/hosts/codex/index.js";
 import { runCursorHook } from "../../src/hosts/cursor/index.js";
 import { hookOptions, serveText, temporaryDirectories, sessionDatabaseQuery } from "../support/hook-events.js";
 
+// The lookup of a named engine socket works as it does; a test stands in for one call of it at a time.
+const lookups = vi.hoisted(() => ({ engineEndpointAt: vi.fn<(socketPath: string) => Promise<EngineEndpoint>>() }));
+vi.mock("../../src/runtime/daemon-control.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
+  lookups.engineEndpointAt.mockImplementation(socketPath => actual.engineEndpointAt(socketPath));
+  return { ...actual, engineEndpointAt: lookups.engineEndpointAt };
+});
+
 const temporaryDirectory = temporaryDirectories("rerail-hook-host-");
 
 function delivery(content: string, ruleIds: readonly string[] = []): AdapterDelivery {
   return { sessionId: "session-1", requested: "steer", mechanism: "deferred-context", content, ruleIds, rules: [] };
+}
+
+interface HeldEngine {
+  socketPath: string;
+  /** The ids of the events that reached it, in the order they came. */
+  received: string[];
+  firstArrived: Promise<void>;
+  answerFirst(): void;
+  close(): Promise<void>;
+}
+
+/**
+ * A daemon's engine socket that answers the first event only once `answerFirst` is called, as a busy daemon checking an
+ * edit does, and every later event at once.
+ */
+async function heldEngine(root: string): Promise<HeldEngine> {
+  const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-held-engine-${randomUUID()}` : join(root, "engine.sock");
+  const received: string[] = [];
+  const firstArrived = Promise.withResolvers<void>();
+  const first = Promise.withResolvers<void>();
+  const server = createServer(async (request, response) => {
+    let body = "";
+    for await (const chunk of request) body += String(chunk);
+    const { event } = JSON.parse(body) as { event: { eventId: string } };
+    received.push(event.eventId);
+    if (received.length === 1) {
+      firstArrived.resolve();
+      await first.promise;
+    }
+    response.end(encodeRerailEventResult({ eventId: event.eventId, deliveries: [] }));
+  });
+  await new Promise<void>(resolve => server.listen(socketPath, resolve));
+  return {
+    socketPath,
+    received,
+    firstArrived: firstArrived.promise,
+    answerFirst: () => first.resolve(),
+    close: () => new Promise<void>(resolve => server.close(() => resolve())),
+  };
 }
 
 function receiptCount(root: string): number {
@@ -277,6 +327,94 @@ describe("hook host durable state", () => {
       throw new Error("ingest failed");
     })).rejects.toThrow("ingest failed");
     await expect(withSessionLock(root, "codex", "session-1", async () => "recovered")).resolves.toBe("recovered");
+  });
+
+  it("lets the session's other hooks reach the daemon while one waits for the daemon's answer, as parallel subagents' hooks do", { timeout: 20_000 }, async () => {
+    const root = await temporaryDirectory();
+    const engine = await heldEngine(root);
+    const hooks: Promise<unknown>[] = [];
+    try {
+      const { embedder: _embedder, ...options } = hookOptions(root);
+      // Every subagent's tool call reaches Rerail under its parent's session id.
+      const toolCall = (agent: string) => runClaudeHook({
+        session_id: "parent-session", cwd: root, hook_event_name: "PreToolUse", agent_id: agent, agent_type: "general-purpose",
+        tool_name: "Write", tool_use_id: `${agent}-write`, tool_input: { file_path: join(root, `${agent}.py`), content: "x = 1\n" },
+      }, { ...options, kernelSocketPath: engine.socketPath });
+      hooks.push(toolCall("agent-a"));
+      await engine.firstArrived;
+      hooks.push(toolCall("agent-b"));
+      await vi.waitFor(() => expect(engine.received).toEqual(["parent-session:tool-call:agent-a-write", "parent-session:tool-call:agent-b-write"]), { timeout: 5_000 });
+      engine.answerFirst();
+      await expect(Promise.all(hooks)).resolves.toEqual([{}, {}]);
+    } finally {
+      engine.answerFirst();
+      await Promise.allSettled(hooks);
+      await engine.close();
+    }
+  });
+
+  it("finds the daemon before it takes the session's lock, so a hook waiting on a busy daemon's probe holds up no other hook", { timeout: 20_000 }, async () => {
+    const root = await temporaryDirectory();
+    const engine = await heldEngine(root);
+    engine.answerFirst();
+    const lookupStarted = Promise.withResolvers<void>();
+    const lookupDone = Promise.withResolvers<void>();
+    // The first hook's lookup waits as one does on a daemon too busy to answer its health probe at once.
+    lookups.engineEndpointAt.mockImplementationOnce(async socketPath => {
+      lookupStarted.resolve();
+      await lookupDone.promise;
+      return { socketPath };
+    });
+    const hooks: Promise<unknown>[] = [];
+    try {
+      const { embedder: _embedder, ...options } = hookOptions(root);
+      const toolCall = (agent: string) => runClaudeHook({
+        session_id: "parent-session", cwd: root, hook_event_name: "PreToolUse", agent_id: agent, agent_type: "general-purpose",
+        tool_name: "Write", tool_use_id: `${agent}-write`, tool_input: { file_path: join(root, `${agent}.py`), content: "x = 1\n" },
+      }, { ...options, kernelSocketPath: engine.socketPath });
+      hooks.push(toolCall("agent-a"));
+      await lookupStarted.promise;
+      hooks.push(toolCall("agent-b"));
+      await vi.waitFor(() => expect(engine.received).toEqual(["parent-session:tool-call:agent-b-write"]), { timeout: 5_000 });
+      lookupDone.resolve();
+      await expect(Promise.all(hooks)).resolves.toEqual([{}, {}]);
+      expect(engine.received).toEqual(["parent-session:tool-call:agent-b-write", "parent-session:tool-call:agent-a-write"]);
+    } finally {
+      lookupDone.resolve();
+      await Promise.allSettled(hooks);
+      await engine.close();
+    }
+  });
+
+  it("keeps a Cursor session's lock while its transcript's lines are checked, so a prompt meanwhile still turns transcript reading off", { timeout: 20_000 }, async () => {
+    const root = await temporaryDirectory();
+    const engine = await heldEngine(root);
+    const transcript = join(root, "transcript.jsonl");
+    const reply = (text: string) => `${JSON.stringify({ role: "assistant", message: { content: [{ type: "text", text }] } })}\n`;
+    await writeFile(transcript, reply("Reading the file."));
+    const { embedder: _embedder, ...options } = hookOptions(root);
+    const session = { conversation_id: "session-1", workspace_roots: [root], transcript_path: transcript };
+    const run = (input: HookInput) => runCursorHook({ ...session, ...input }, { ...options, kernelSocketPath: engine.socketPath });
+    const toolResult = (id: string) => run({ hook_event_name: "postToolUse", tool_use_id: id, tool_name: "Read", tool_output: "x = 1" });
+    const hooks: Promise<unknown>[] = [];
+    try {
+      // A tool result's hook checks the transcript's new reply, and the daemon holds that check.
+      hooks.push(toolResult("read-1"));
+      await engine.firstArrived;
+      // The person's next prompt reaches Rerail through Cursor's own prompt hook, so the transcript is read no more.
+      hooks.push(run({ hook_event_name: "beforeSubmitPrompt", prompt: "Next." }));
+      // Time for the prompt's hook to run, were the session's lock free.
+      await delay(500);
+      engine.answerFirst();
+      await Promise.all(hooks);
+      await appendFile(transcript, reply("Done."));
+      await toolResult("read-2");
+      expect(engine.received.filter(id => id.includes(":transcript:"))).toHaveLength(1);
+    } finally {
+      engine.answerFirst();
+      await Promise.allSettled(hooks);
+      await engine.close();
+    }
   });
 
   it("holds steers on disk scrubbed of secrets and hands the hook their original text", async () => {

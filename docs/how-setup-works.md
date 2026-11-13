@@ -127,8 +127,8 @@ agents already connected, to bring the new version's commands and skills.
 
 </details>
 
-**6. Summary.** Set-up lists the packs and rules added, the dashboard link, and agents it could not connect, then
-opens the browser.
+**6. Summary.** Set-up lists the packs and rules added, the dashboard link, and agents it could not connect. In a
+terminal it then opens the browser; run by a coding agent (`--relay`, `--json`), it shows the link alone.
 
 <details>
 <summary>What the summary shows</summary>
@@ -141,7 +141,8 @@ opens the browser.
 - With no agent found, it says so, names the supported ones, and says to rerun `rerail setup` once one is installed.
 - The daemon is the active install's and serves every repository; one from another version or port is replaced
   (`--port` picks the port).
-- The browser opens unless `BROWSER=none`, the session is over SSH, or Linux has no display.
+- In a terminal the browser opens unless `BROWSER=none`, the session is over SSH, or Linux has no display. A coding
+  agent's run opens none: it may run where no one watches the screen, or in a sandbox.
 
 </details>
 
@@ -151,7 +152,7 @@ Set-up denies coding agents access to Rerail's data wherever the agent's user se
 
 - **Rerail home** (`~/.rerail`, or `RERAIL_HOME`): access token, every repository's history database, installed
   package.
-- **Content cache** (`~/.cache/rerail`): parsed files and results.
+- **Content cache** (`~/.cache/rerail`, on Windows `%USERPROFILE%\AppData\Local\rerail`): parsed files and results.
 
 Agents run commands as you, so only their own sandbox can keep them out.
 
@@ -205,7 +206,8 @@ Agents run commands as you, so only their own sandbox can keep them out.
   Access: Workspace" in Cursor's settings makes the agent ask before reading outside the workspace; it covers every
   path, so set-up leaves it alone.
 - **Cursor CLI** (`cursor-agent`): `Write(...)` denies for both folders and Claude Code's `Read(...)` denies, for its
-  file tools only. Written only when the CLI has written that file, and not on Windows.
+  file tools only. Written only when the CLI has written that file; on Windows as native paths
+  (`C:\Users\me\.rerail\**`), the only form the CLI matches.
 - **OMP and Pi** have no sandbox: their agents can read and change all of Rerail's data.
 
 </details>
@@ -251,7 +253,8 @@ On macOS and Linux, a block between `# >>> rerail >>>` and `# <<< rerail <<<` go
 The block adds the directory only when `PATH` lacks it, so a file sourced twice adds it once. On Windows the
 directory is appended to the user `Path` (`HKCU\Environment`), keeping that value's registry kind. The Windows
 launcher is `rerail.cmd`, with an sh launcher `rerail` beside it for Git Bash, which runs neither `.cmd` nor `.bat`
-files by bare name.
+files by bare name. In Git Bash's own window (mintty), which gives Windows programs pipes instead of a console, that
+launcher starts node through winpty, so set-up shows a person its menu.
 
 </details>
 
@@ -308,7 +311,17 @@ with one command per answer. Answer flags:
 
 Each answer run starts from what it is told, so running one twice repeats no earlier step's side effect. Claude
 Code's, Cursor's and Codex's `/rerail-start` runs `rerail start --relay`, and every answer command carries `--relay`,
-so an agent running commands in a terminal gets these questions, not a prompt waiting on input.
+so an agent running commands in a terminal gets these questions, not a prompt waiting on input. On Windows Codex's and
+Cursor's `/rerail-start` runs `rerail start --relay --powershell`, since they run PowerShell there: each answer
+command is then written for PowerShell (`& '<node>' '<rerail home>\current\dist\cli\cli.js' setup ...`, or the CLI
+running set-up until set-up has installed one) and carries `--powershell` too. Every value PowerShell would read goes in single quotes, as
+`--packs 'typescript@0.1.1,complexity@0.1.1'`, since PowerShell passes a bare `a,b` to a program as two arguments; so
+does the value the agent writes in (`--packs '<packs>'`). PowerShell ends a single-quoted value at any of `'`, `‘`, `’`,
+`‚` and `‛`, so the answer for a folder the person names tells the agent to write each of them twice in it (a folder
+named `O'Neil` goes in as `'O''Neil'`). Claude Code runs Git Bash on Windows, so its answer commands
+are written for a POSIX shell there too, and start with the sh launcher `rerail`. No answer runs `rerail.cmd`: cmd.exe
+reads a batch file's arguments again, so a folder named `C:\code\R&D` would end the command at its `&` and run the
+rest, and a `%NAME%` in one would expand.
 
 </details>
 
@@ -369,8 +382,8 @@ Xcode installed.
 
 Set-up records the Node that ran it for the launcher, the hooks and the Claude Code status line. Homebrew's is
 recorded by the link `brew upgrade` keeps (`/opt/homebrew/bin/node`), not its versioned `Cellar` folder. Once the
-recorded Node is gone (after `nvm uninstall`, say), each falls back to `node` on `PATH`, except the status line on
-Windows.
+recorded Node is gone (after `nvm uninstall`, say), each falls back to `node` on `PATH`. The status line does so on
+Windows too: Claude Code runs it through Git Bash there, so its `sh -c` fallback works as on macOS and Linux.
 
 On a Node older than 24, the CLI and the daemon stop with set-up's message, the hooks do nothing, and the status line
 says `needs Node 24 or newer`.
@@ -471,8 +484,9 @@ database before the now-active version, to put back by hand (see [Database compa
 
 Policy evaluation caches parsed files and results in a content store; where the package lives, not a flag, picks which one.
 
-The managed installation uses `~/.cache/rerail/content-v1.sqlite`; a build from a Git checkout uses
-`<checkout>/.rerail/content-v1.sqlite`. `RERAIL_CONTENT_STORE_PATH` overrides either location.
+The managed installation uses `~/.cache/rerail/content-v1.sqlite`, and on Windows `%USERPROFILE%\AppData\Local\rerail\content-v1.sqlite`, out of
+a roaming profile's reach (earlier releases kept it in `~/.cache/rerail` there too; the uninstall removes that copy); a
+build from a Git checkout uses `<checkout>/.rerail/content-v1.sqlite`. `RERAIL_CONTENT_STORE_PATH` overrides either location.
 
 <details>
 <summary>Which store a build uses</summary>
@@ -498,8 +512,9 @@ process (`rerail daemon stop`, or end it by pid) and start again.
 <details>
 <summary>The lock</summary>
 
-The daemon holds an exclusive OS lock (`flock` / `LockFileEx`) on `~/.cache/rerail/main-instance.lock` for its whole
-life, and records its pid, version, package root and start time beside it in `main-instance.json`. The OS drops the
+The daemon holds an exclusive OS lock (`flock` / `LockFileEx`) on `~/.cache/rerail/main-instance.lock` (on Windows
+`%USERPROFILE%\AppData\Local\rerail\main-instance.lock`) for its whole life, and records its pid, version, package root and start time
+beside it in `main-instance.json`. The OS drops the
 lock however the daemon ends, `kill -9` included, so there is never a stale lock to clear.
 
 A second main daemon can come from another `$RERAIL_HOME`, or be an orphan its `daemon.json` no longer names.
@@ -590,7 +605,8 @@ hooks point at files that are about to go.
 - **Removes the `PATH` entry** set-up added from every shell startup file (or the Windows user `Path`).
 - **Deletes the installation**, last: `~/.rerail/current`, the launcher's `~/.rerail/bin`, every version under
   `~/.rerail/versions` with `update-state.json`, the rule packs in `~/.rerail/packs`, and the cache `~/.cache/rerail`
-  (left alone, and said so, while another Rerail home's daemon holds it).
+  (on Windows `%USERPROFILE%\AppData\Local\rerail`, and the `~/.cache/rerail` an earlier release used there; left alone, and said so, while
+  another Rerail home's daemon holds it).
 
 </details>
 
@@ -635,7 +651,7 @@ Nothing it deletes can be restored, so export your rules first if you may want t
   database goes), and the checkout's `.rerail` when the ledgers were all it held. A checkout that no longer exists is
   skipped. Links are never followed: a `.rerail` that is a link is left alone, and a `sessions` link is removed as a
   link, never its target. Ledgers written elsewhere with `RERAIL_STORAGE_ROOT` are not found.
-- **Content cache:** `~/.cache/rerail` (kept while another Rerail home's daemon holds it, as above), and the file
+- **Content cache:** `~/.cache/rerail`, on Windows `%USERPROFILE%\AppData\Local\rerail` (kept while another Rerail home's daemon holds it, as above), and the file
   `RERAIL_CONTENT_STORE_PATH` names, with its sidecars, when it is set.
 
 `--delete-data` only goes with the whole uninstall: with `--agents`, or with `--root` naming a checkout other than the

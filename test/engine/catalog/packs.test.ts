@@ -17,6 +17,7 @@ import { z } from "zod";
 import { PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 // The exemplar is a language only tests plan: the registry module lists it for this file, and the engine refuses it as a
 // planned language (test/engine/support/exemplar-registry.ts, exemplar-engine.ts).
@@ -87,7 +88,7 @@ describe("rule ids across packs", () => {
 describe("validatePack", () => {
   const temporary: string[] = [];
   afterEach(() => {
-    for (const directory of temporary.splice(0)) rmSync(directory, { recursive: true, force: true });
+    for (const directory of temporary.splice(0)) removeFolderSync(directory);
   });
 
   /** A copy of fixture pack `name`, in a directory of that name, with `change` applied to it. */
@@ -245,12 +246,14 @@ describe("validatePack", () => {
       { rules: ["candidates/rules/pass.json: has id pass-statement; name it candidates/rules/pass-statement.json"] },
     ],
     [
+      // An underscore, not a namespace colon (eslint:no-alert): a Windows file name cannot hold a colon, so that file
+      // could not exist there, and the id must fail the check on every platform.
       "a candidate whose id is not lowercase letters, digits and dashes, though its file is named for it",
       directory => {
         mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
-        writeJson(join(directory, "candidates", "rules", "eslint:no-alert.json"), { format: "rerail.policy/v1", id: "eslint:no-alert", description: "Avoid alert().", clauses: [] });
+        writeJson(join(directory, "candidates", "rules", "no_alert.json"), { format: "rerail.policy/v1", id: "no_alert", description: "Avoid alert().", clauses: [] });
       },
-      { rules: ["candidates/rules/eslint:no-alert.json: id eslint:no-alert is not lowercase letters, digits and dashes"] },
+      { rules: ["candidates/rules/no_alert.json: id no_alert is not lowercase letters, digits and dashes"] },
     ],
     [
       "a candidate with no id",

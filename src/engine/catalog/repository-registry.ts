@@ -432,9 +432,23 @@ export function pruneCheckouts(db: RerailDatabase): string[] {
  * Changes whenever a checkout is recorded, re-recorded under another identity or removed: the count, the newest row
  * and the newest record time. Caches of which checkout holds a folder are forgotten when it changes.
  */
-export function recordedCheckoutsVersion(db: Pick<RerailDatabase, "get">): string {
-  const row = db.get<{ count: number; newest: number | null; created: number | null }>(
-    sql`SELECT count(*) AS count, max(rowid) AS newest, max(${checkouts.createdAt}) AS created FROM ${checkouts}`,
-  );
-  return `${row?.count ?? 0}:${row?.newest ?? 0}:${row?.created ?? 0}`;
+export function recordedCheckoutsVersion(db: Pick<RerailDatabase, "select">): string {
+  return recordedCheckoutsVersionQuery(db).get()?.version ?? EMPTY_RECORDED_CHECKOUTS;
+}
+
+/**
+ * {@link recordedCheckoutsVersion} for a connection that asks on every lookup, as a source walk does for each file: the
+ * statement is prepared once, where each one-off read prepared it again.
+ */
+export function recordedCheckoutsVersionReader(db: Pick<RerailDatabase, "select">): () => string {
+  const query = recordedCheckoutsVersionQuery(db).prepare();
+  return () => query.get()?.version ?? EMPTY_RECORDED_CHECKOUTS;
+}
+
+const EMPTY_RECORDED_CHECKOUTS = "0:0:0";
+
+function recordedCheckoutsVersionQuery(db: Pick<RerailDatabase, "select">) {
+  return db.select({
+    version: sql<string>`count(*) || ':' || coalesce(max(rowid), 0) || ':' || coalesce(max(${checkouts.createdAt}), 0)`,
+  }).from(checkouts);
 }
