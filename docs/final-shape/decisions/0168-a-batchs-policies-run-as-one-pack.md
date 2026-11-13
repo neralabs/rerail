@@ -93,6 +93,38 @@ one store is where keeping a single program's hidden form failed before (O-combi
 
   These passes run once now, over the whole pack. Their cost is the next lever (O-pack-passes).
 
+## Loading the pack, made lighter
+
+Three passes over the combined program did more than their job needed. A profile of the pack's `combine` showed:
+- **hiding** (`corpus::hiding::hide`) at 3,046 of 6,719 samples;
+- **merging identical relations** (`simplify::merge`) at 1,392;
+- **guarding the fact spaces** (`scoping::guard`) at 1,089.
+
+What changed (the programs they produce are the same):
+- **Relations alike but for their constants are found only when profiled.** `merge` made a second congruence over
+  the whole program, with constants ignored, only to report relations one keyed relation could serve. That report
+  is a profile's note (`relations equal up to their constants`), so `simplify` makes it only when profiled
+  (`similar_relations`). It was about half of each merge, including the merge `prepare` runs again.
+- **Hiding reads the rules in place.** Each round recorded its edits (a literal's kindset, or its relation renamed
+  to a copy) against the unchanged rules and applied them after the round. It no longer cloned every rule each round
+  as a snapshot. Its maps of carried and read variables borrow the rules' names instead of copying them.
+- **The guard takes the rules out and puts them back**, instead of cloning them.
+
+Checked: a temporary harness ran the old and the new `hide` side by side on all 42 calls of the dl1 batch, pack
+and per-policy, and their rules, declarations and kindsets printed the same. Findings: 48, the same.
+
+Measured on dl1 (44 policies, one pack, debug, `RERAIL_THREADS=4`, load 62–87), against the same tree before:
+
+| | before | after |
+|---|---|---|
+| cold, `RERAIL_TAPE_CACHE=off` | 137.3 G | 124.8 G (12.8 s user) |
+| first batch over a new store | 170.0 G | 158.3 G |
+| second batch (warm) | 69.9 G | 63.7 G (6.6 s user) |
+
+Spans in the pack (cold): hiding 0.46 → 0.35 s; merging identical relations 0.39 → 0.24 s; merging identical
+relations again in `prepare` 0.58 → 0.28 s. The fact spaces (0.41 s, a full `split` of 2,134 relations for the
+locations alone) and parsing the 44 programs (0.90 s) are what is left of loading (O-pack-passes).
+
 ## Tests
 
 `rr::tape_tests::a_batchs_policies_of_one_language_run_as_one_pack` runs four policies over one tree:

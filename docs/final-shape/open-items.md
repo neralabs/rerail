@@ -4893,3 +4893,11 @@ libraries pasted into each policy, yet costs 134 G against 148 G. In the pack:
 **Closure:** each pass measured against the rules it reads. Passes that grow faster than the pack's rules are made
 to grow with them, and the dl1 pack is measured below 100 G cold without a store, with findings unchanged.
 
+**Progress (2026-11-13, decision 0168 "Loading the pack, made lighter").** 137.3 → 124.8 G cold, 69.9 → 63.7 G warm.
+The constants-ignored congruence is made only when profiled; hiding edits rules in place and borrows its names; the
+guard moves the rules out instead of cloning them. Left in loading:
+- the fact spaces (0.41 s), which split the whole program (`file_local::split_located`) for its located columns alone;
+- parsing the 44 programs (0.90 s);
+- hiding a single policy's own run: 0.27 s for 678 rules against 0.35 s for the pack's 4,287. Each round
+  computes reaching and the carried variables from scratch.
+

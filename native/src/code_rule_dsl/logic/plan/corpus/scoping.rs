@@ -126,8 +126,10 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
         return Ok(report);
     }
     let (_, locations, _) = crate::code_rule_dsl::typing::file_local::split_located(all);
-    let typed = |rel: &str, c: usize, ty: &[&str]| all.decls.get(rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| ty.contains(&t.as_str()));
     let derived: BTreeSet<String> = all.rules.iter().map(|r| r.head.rel.to_string()).chain(all.natives.keys().cloned()).filter(|r| !all.inputs.contains(r)).collect();
+    // The rules are guarded out of the program and put back: what the guards read of it is its declarations.
+    let mut rules = std::mem::take(&mut all.rules);
+    let typed = |rel: &str, c: usize, ty: &[&str]| all.decls.get(rel).and_then(|cols| cols.get(c)).is_some_and(|(_, t)| ty.contains(&t.as_str()));
     // Per relation, where a row's document is read: (document columns, node columns, span or node columns). A node's
     // document is its id's high half (`@doc`); a span's is `docof`'s, as `file_local::locate` reads it.
     let place = |rel: &str| -> (Vec<usize>, Vec<usize>, Vec<usize>) {
@@ -217,7 +219,6 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
         }
         added
     };
-    let mut rules = all.rules.clone();
     // Each rule's groups, in order: one pass over the rules, not one per group.
     let mut groups_of: rustc_hash::FxHashMap<&str, Vec<usize>> = Default::default();
     for (k, (heads, _)) in groups.iter().enumerate() {
@@ -235,7 +236,6 @@ pub(super) fn guard(all: &mut Program, policies: &[Policy]) -> Result<Report, St
     for ((_, outside), n) in groups.iter().zip(added) {
         report.guarded.push((outside.clone(), n));
     }
-    drop(place);
     all.rules = rules;
     Ok(report)
 }
