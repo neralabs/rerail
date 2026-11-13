@@ -264,8 +264,11 @@ launcher starts node through winpty, so set-up shows a person its menu.
 - **Ownership.** Set-up records that it handled `PATH` in `~/.rerail/launcher-path.json`; from then on `PATH` is
   yours. A block you take out stays out until `rerail setup` runs again. `rerail update` adds the entry only when that
   record is missing.
-- **When nothing changes.** Set-up says what it changed. It changes nothing when the running `PATH` already has the
-  directory, the entry is in place, or `RERAIL_MODIFY_PATH=0`. A block written for another Rerail home is replaced.
+- **When nothing changes.** Set-up says what it changed. It changes nothing when the entry is in place, with
+  `RERAIL_MODIFY_PATH=0`, or, once that record exists, when the running `PATH` already has the directory. Before the
+  record exists the running `PATH` does not count: the shell that removed Rerail keeps the directory on its `PATH`
+  after the block is gone, so installing again from it writes the block. A block written for another Rerail home is
+  replaced.
 - **Backup.** A changed startup file keeps one `<file>.rerail.bak` beside it: the file before Rerail last changed it.
   Each change replaces it; `rerail install --remove` deletes it once the block is out.
 
@@ -570,6 +573,12 @@ Most steps add a column or a table, which older versions read correctly: the flo
 the file, and a hook or the status line runs such steps itself. A step an older version would misread raises the
 floor. It waits for the new version's daemon or a command that writes; until then a hook or the status line says to
 run `rerail daemon start`.
+
+Storing each new audit's rule provenance once sets no floor, so coding agents on different Rerail versions keep
+sharing the file. An older Rerail reads an empty rule provenance for each audit a newer one wrote, in its
+`audits_list`, its support bundle and what its remote sink sends. Its dashboard and steering never read the
+provenance, and work as before. The audits it writes, and those recorded before the update, keep their provenance in
+their own row, where both versions read it.
 
 An update that finds nothing newer, or fails, keeps the copy from the last version change. One that changes the
 version but cannot take a copy removes the old one, which no longer holds the database before the now-active version.

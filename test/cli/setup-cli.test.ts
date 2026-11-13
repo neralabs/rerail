@@ -472,6 +472,45 @@ describe("rerail install --root", () => {
     await runInstallCommand(["--root", packageRoot, "--remove"], context);
     expect(await readFile(zshrc, "utf8")).toBe("setopt autocd\n");
   });
+
+  it.skipIf(process.platform === "win32")("puts the launcher back on PATH when Rerail is installed again from the shell that removed it", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    vi.stubEnv("RERAIL_MODIFY_PATH", "");
+    vi.stubEnv("SHELL", "/bin/zsh");
+    vi.stubEnv("ZDOTDIR", undefined);
+    const zshrc = join(hostConfigHome, ".zshrc");
+    await writeFile(zshrc, "setopt autocd\n");
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    await runInstallCommand(["--root", packageRoot, "--remove"], context);
+    expect(await readFile(zshrc, "utf8")).toBe("setopt autocd\n");
+    // The uninstall took the block out of the file, not the directory out of the PATH of the shell it ran in.
+    vi.stubEnv("PATH", `${join(context.home, "bin")}:${process.env.PATH}`);
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+
+    expect(output.mock.calls.join("")).toContain(`Added ${join(context.home, "bin")} to PATH in ${zshrc}`);
+    expect(await readFile(zshrc, "utf8")).toContain(join(context.home, "bin"));
+  });
+
+  it.skipIf(process.platform === "win32")("leaves a block the person took out alone on a later install, while their PATH has the launcher", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    vi.stubEnv("RERAIL_MODIFY_PATH", "");
+    vi.stubEnv("SHELL", "/bin/zsh");
+    vi.stubEnv("ZDOTDIR", undefined);
+    const zshrc = join(hostConfigHome, ".zshrc");
+    await writeFile(zshrc, "setopt autocd\n");
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    await writeFile(zshrc, "setopt autocd\n");
+    vi.stubEnv("PATH", `${join(context.home, "bin")}:${process.env.PATH}`);
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+
+    expect(await readFile(zshrc, "utf8")).toBe("setopt autocd\n");
+    // " to PATH" is in every launcher line: added, would add, could not add.
+    expect(output.mock.calls.join("")).not.toContain(" to PATH");
+  });
 });
 
 describe("rerail install --refresh", () => {
@@ -587,6 +626,26 @@ describe("rerail install --refresh", () => {
     expect(output.stdout()).toContain(`Added ${join(context.home, "bin")} to PATH in ${zshrc}`);
     // Once, not every update: the next refresh finds the record and leaves PATH to the person.
     expect(existsSync(launcherPathMarker(context.home))).toBe(true);
+  });
+
+  it.skipIf(process.platform === "win32")("puts the launcher on PATH when an earlier set-up never added it, from a shell whose PATH has it", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    vi.stubEnv("RERAIL_MODIFY_PATH", "");
+    vi.stubEnv("SHELL", "/bin/zsh");
+    vi.stubEnv("ZDOTDIR", undefined);
+    const zshrc = join(hostConfigHome, ".zshrc");
+    await writeFile(zshrc, "setopt autocd\n");
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    await writeFile(zshrc, "setopt autocd\n");
+    await rm(launcherPathMarker(context.home));
+    // The running PATH is no record of a new terminal's: with no record, the block is still written.
+    vi.stubEnv("PATH", `${join(context.home, "bin")}:${process.env.PATH}`);
+    const output = captureOutput();
+
+    expect(await runInstallCommand(["--refresh"], context)).toBe(0);
+
+    expect(await readFile(zshrc, "utf8")).toContain(join(context.home, "bin"));
+    expect(output.stdout()).toContain(`Added ${join(context.home, "bin")} to PATH in ${zshrc}`);
   });
 
   it.skipIf(process.platform === "win32")("leaves a block the person took out alone once a set-up has written it", async () => {
