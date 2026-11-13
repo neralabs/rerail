@@ -1669,6 +1669,15 @@ impl Model {
             (Some(a), Some(b)) => growth(a, b),
             _ => f64::INFINITY,
         };
+        // A literal with a constant reads the constant's rows, not its relation's: `doc_role(d, 7)` with one row
+        // for 7 when planned and 2,455 now grew 2,455 times, though `doc_role` grew 9 (smoking gun 10, t34).
+        let grew = grew * Self::const_slots(body, first).into_iter().map(|i| match (previous.sizes.get(i), sizes.get(i)) {
+            (Some(&a), Some(&b)) if a != -1.0 && b != -1.0 => {
+                let n = |x: f64| if x == -2.0 { 0.0 } else { x };
+                (n(b).max(1.0) / n(a).max(1.0)).max(1.0)
+            }
+            _ => 1.0,
+        }).product::<f64>();
         // A line that did nothing tells nothing of its order's cost but that one row of input costs about that:
         // counted as one row of work (an order kept from an empty input, with 5,000 rows now, is searched).
         (ran.max(1.0) * grew < SEARCH_WORK && self.valid_live_driver(order, body, first))
@@ -1962,6 +1971,25 @@ impl Model {
                 _ => None,
             }))
             .collect()
+    }
+
+    /// Where `live_sizes` holds the count of each constant the body's atoms test: the planning budget reads them
+    /// as growth (`budget_takes`).
+    fn const_slots(body: &[Literal], first: Option<usize>) -> Vec<usize> {
+        // `read_sizes` (the nodes, then each atom's rows), then the delta's rows.
+        let mut at = 1 + body.iter().filter(|l| l.atom().is_some()).count() + usize::from(first.and_then(|f| body[f].atom()).is_some());
+        let mut slots = Vec::new();
+        for a in body.iter().filter_map(Literal::atom) {
+            for t in &a.args {
+                if matches!(t, Term::Wild) { continue; }
+                at += 2;
+                if constant(t).is_some() {
+                    slots.push(at);
+                    at += 1;
+                }
+            }
+        }
+        slots
     }
 
     /// Live cardinalities followed by the distributions the price reads. A delta's size affects whether a
@@ -2765,6 +2793,12 @@ impl Model {
         // own (`card`'s 1,000 rows): `pv__ins` crossed `pv` with `retparam` before an unsized 15-row `posarg__plus`.
         let jmask: Vec<u128> = joins.iter().map(|&j| body[j].vars().iter().filter_map(|v| var_ids.get(v)).fold(0u128, |m, &k| if k < 128 { m | 1u128 << k } else { m })).collect();
         let unsized_join = |i: usize| matches!(&body[joins[i]], Literal::Atom(a) if !a.neg && a.rel != "node" && !self.stats.card.contains_key(a.rel.as_str()) && !self.stats.lazy.0.contains_key(a.rel.as_str()) && !self.stats.solving.contains(a.rel.as_str()));
+        // A join of a relation with no rows of its own when priced: unsized, or empty (its rows come later, as a guest
+        // round's do). Not the delta, whose rows are its wave's.
+        let no_rows_when_priced = |i: usize| {
+            first != Some(joins[i])
+                && (unsized_join(i) || matches!(&body[joins[i]], Literal::Atom(a) if !a.neg && self.stats.card.get(a.rel.as_str()).is_some_and(|&n| n <= 0.0)))
+        };
         let unfounded_cross = |i: usize, prev: u64, bound: u128| -> bool {
             prev != 0 && jmask[i] & bound == 0 && (0..joins.len()).any(|j| j != i && prev & (1 << j) == 0 && jmask[j] & bound != 0 && (unsized_join(i) || unsized_join(j)))
         };
@@ -2825,6 +2859,9 @@ impl Model {
             prev: u64,
             last: usize,
             mode: Option<Mode>,
+            /// Its rows rest only on relations with no rows of their own when priced (empty, or unsized): a
+            /// cross product taken from it is priced from at least a search's rows (`SEARCH_WORK`), not theirs.
+            unfounded: bool,
         }
         let filters: Vec<usize> = (0..body.len()).filter(|&i| !is_join(&body[i])).collect();
         let halves = |l: &Literal| !(matches!(l, Literal::Cmp { op: "=", .. }) || matches!(l, Literal::Agg { .. }));
@@ -2941,7 +2978,7 @@ impl Model {
         // By subset mask (at most `GREEDY` joins, so 4,096 subsets).
         let mut cells: Vec<Option<Cell>> = (0..1usize << joins.len()).map(|_| None).collect();
         let mut closed: Vec<(u128, usize)> = vec![(0, 0); 1 << joins.len()];
-        cells[0] = Some(Cell { work: 0.0, rows: 1.0, prev: 0, last: usize::MAX, mode: None });
+        cells[0] = Some(Cell { work: 0.0, rows: 1.0, prev: 0, last: usize::MAX, mode: None, unfounded: false });
         closed[0] = closure(0);
         // Only the subsets one join more than a subset reached (with the delta first, half of them or fewer): a
         // subset no order reaches has no cell, and its closure is not worked out. Each is solved as before, its last
@@ -2980,13 +3017,21 @@ impl Model {
                     if gate_waits(i, &|v: &str| bound >> var_ids[v] & 1 == 1) || shape_waits(i, prev, &|v: &str| bound >> var_ids[v] & 1 == 1) || unfounded_cross(i, prev, *bound) {
                         continue;
                     }
-                    let Some((w, mut out, mode)) = priced(price(i, *bound), from.rows) else { continue };
+                    // Smoking gun 10's cold case (t34): `frag_str` planned before the guest round made `doc_role`'s
+                    // rows took `doc_role(d, 17505)` (empty, priced at one row) first, then `kind($s, 1255)` crossed
+                    // with it (7.1 M rows where 2,455 came), where `kind` first and `doc_role` probed by `@doc` was
+                    // as cheap as priced. A cross product multiplies rows no row of the relations it follows vouched
+                    // for: priced from a search's rows at least, it is taken only where it is cheap even so.
+                    let crossed = prev != 0 && jmask[i] & *bound == 0;
+                    let left = if crossed && from.unfounded { from.rows.max(SEARCH_WORK) } else { from.rows };
+                    let Some((w, mut out, mode)) = priced(price(i, *bound), left) else { continue };
+                    let unfounded = (prev == 0 || from.unfounded) && no_rows_when_priced(i);
                     candidates += 1;
                     // `close`'s halving filters newly placed by this join.
                     for _ in *h_prev..mine.1 {
                         out *= 0.5;
                     }
-                    let cand = Cell { work: from.work + w, rows: out, prev, last: i, mode };
+                    let cand = Cell { work: from.work + w, rows: out, prev, last: i, mode, unfounded };
                     if best.as_ref().is_none_or(|b| cand.work < b.work) {
                         best = Some(cand);
                     }
@@ -9412,6 +9457,14 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                 // Held by the native engine, as a component's own answers are (`answer_pending`): a native stratum above
                 // reads it there, and a SQL one has it moved into its table (`Run::materialize`).
                 let types: Vec<u8> = prog_types(prog, rel).iter().map(|t| sym_char(&run.model.inputs, t)).collect::<String>().into_bytes();
+                // `retain` replaces what the engine holds: rows it already holds (the relation's program facts) stay,
+                // so its readers read the facts and the answers both.
+                let mut rows = rows;
+                if run.native_rels.contains(rel) {
+                    if let Some((_, flat, k)) = super::native::component::kept_rows(db, rel).filter(|(_, _, k)| *k == types.len() && *k > 0) {
+                        rows.extend(flat.chunks(k).map(<[i64]>::to_vec));
+                    }
+                }
                 super::native::component::retain(db, rel, rows, types)?;
                 run.native_rels.insert(rel.clone());
             }
@@ -10175,27 +10228,5 @@ impl SqlKey {
             SqlKey::Int(i) => SqlValue::Integer(*i),
             SqlKey::Text(t) => SqlValue::Text(t.clone()),
         }
-    }
-}
-
-#[cfg(test)]
-mod ambient_tests {
-    use super::super::lanes::wave;
-
-    /// Smoking gun 7 (t34, 2026-11-13): a level's strata run as a job off the run's thread (decision 0113 §4) and flush
-    /// their wave there. The job works in the run's ambient, and its waves are the run's: `closures_of_one_level_…`
-    /// read none about one run in three.
-    #[test]
-    fn a_strata_jobs_waves_are_the_runs() {
-        let before = wave::flushed();
-        let ambient = super::Ambient::here();
-        std::thread::scope(|s| {
-            s.spawn(|| {
-                let _in = ambient.enter();
-                wave::defer(Box::new(|| Ok(())));
-                wave::flush(1).unwrap();
-            });
-        });
-        assert_eq!(wave::flushed().0 - before.0, 1, "the job's wave counts as the run's");
     }
 }

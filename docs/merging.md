@@ -107,7 +107,9 @@ The message says, for each conflict that needed a choice:
 
 Run the targeted tests that each side added or changed since the base (`git diff --stat $base
 <side> -- '*tests*.rs' '*_tests.rs'`), and the tests of the files that had conflicts. Do not run
-full suites (see AGENTS.md). A failing test that one side had passing is a merge defect. Fix it in
+full suites (see AGENTS.md). Build the test targets, not only the library, and judge the build by
+cargo's exit status or its `Finished` line. A build piped through `grep` reports success
+whatever cargo does. A failing test that one side had passing is a merge defect. Fix it in
 the merge, or in the commit right after it, naming the merge.
 
 ## If a loss is found later

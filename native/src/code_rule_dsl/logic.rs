@@ -110,6 +110,7 @@ pub mod profile {
     pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::profile::roofline::Unit;
 }
 pub mod program_facts;
+pub mod program_text;
 #[allow(dead_code)]
 pub mod rr;
 pub mod settings;
