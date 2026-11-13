@@ -523,6 +523,33 @@ mod directory_metadata_tests {
 #[cfg(test)]
 mod file_error_tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn selected_broken_file_links_retain_os_errors_without_widening_roots() {
+        let base = tempfile::tempdir().unwrap();
+        let root = base.path().join("root");
+        let outside = base.path().join("outside");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink("target.py", root.join("broken.py")).unwrap();
+        std::os::unix::fs::symlink("missing.py", outside.join("broken.py")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("directory-link")).unwrap();
+        let prog = front::Program::default();
+        let mut world = World::new(&root, &prog);
+        let error = world.file_error("broken.py").expect("a selected broken file link retains its read error");
+        assert_eq!((error.kind, error.errno, error.detail.as_str()), ("OsError", i64::from(libc::ENOENT), "No such file or directory"));
+        assert!(world.file_error("missing.py").is_none(), "an absent unselected file remains refused");
+        assert!(world.file_error("directory-link/broken.py").is_none(), "a directory link cannot widen the scope");
+        assert!(world.file_error("../outside/broken.py").is_none(), "an outside spelling remains refused");
+        let consulted = world.consulted();
+        std::fs::write(root.join("target.py"), "fixed\n").unwrap();
+        assert_eq!(world.file_error("broken.py"), Some(error), "one world retains one failed snapshot");
+        let mut next = World::new(&root, &prog);
+        assert!(!next.still(&consulted), "repairing a broken target invalidates the failed read");
+        assert_eq!(next.file("broken.py"), vec!["fixed".to_owned()]);
+        assert!(next.file_error("broken.py").is_none());
+    }
+
     #[test]
     fn file_lines_and_decode_errors_share_a_single_snapshot() {
         let dir = tempfile::tempdir().unwrap();
