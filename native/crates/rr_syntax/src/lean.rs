@@ -26,7 +26,7 @@
 
 use crate::micro;
 use crate::tape::{ERROR, FIRST_ANONYMOUS, Field, Kind, code, kind_field};
-use rerail_tape_format::{CODE_EXTRA, Redo, Widths, Writer};
+use rerail_tape_format::{CODE_EXTRA, Layout, Narrow, Redo, Widths, Writer};
 
 // Token kinds; punctuation is `P0` plus its place in `syntax::PUNCT` (and in the anonymous kinds).
 const ID: u8 = 0;
@@ -585,14 +585,14 @@ struct Mark {
     comment: usize,
 }
 
-struct Parser<'s> {
+struct Parser<'s, L: Layout> {
     b: &'s [u8],
     t: &'s [Tok],
     n: usize,
     i: usize,
     no_named: bool,
     /// The tape so far, in preorder.
-    out: Writer,
+    out: Writer<L>,
     /// The open nodes: each its place in `out` and where its children start in `kids`.
     open: Vec<(u32, u32)>,
     /// The open nodes' children, by place in `out`.
@@ -613,17 +613,19 @@ pub fn tape(src: &str) -> Vec<u8> {
     let lexed = lex(src);
     let mut widths = Widths::guess(src.len());
     loop {
-        match tape_at(src, &lexed, widths) {
+        // Nearly every file is written at the narrow widths, fixed in the parser's code.
+        let at = if widths == Narrow::WIDTHS { tape_at(src, &lexed, Narrow) } else { tape_at(src, &lexed, widths) };
+        match at {
             Ok(bytes) => return bytes,
             Err(Redo(w)) => widths = w,
         }
     }
 }
 
-/// `tape` at `widths`, the lexer's tokens given.
-fn tape_at(src: &str, lexed: &Lexed, widths: Widths) -> Result<Vec<u8>, Redo> {
+/// `tape` at `layout`'s widths, the lexer's tokens given.
+fn tape_at<L: Layout>(src: &str, lexed: &Lexed, layout: L) -> Result<Vec<u8>, Redo> {
     let Lexed { toks, n, comments } = lexed;
-    let mut out = Writer::new(rerail_tape_format::RR_TAG, widths, n + n / 2 + comments.len() + 8);
+    let mut out = Writer::new(rerail_tape_format::RR_TAG, layout, n + n / 2 + comments.len() + 8);
     out.push(code(Kind::SourceFile as u16, 0, false), 0);
     let next_comment = comments.first().map_or(u32::MAX, |c| c.0);
     let mut p = Parser { b: src.as_bytes(), t: toks, n: *n, i: 0, no_named: false, out, open: vec![(0, 0)], kids: Vec::with_capacity(64), comments, comment: 0, next_comment };
@@ -632,6 +634,8 @@ fn tape_at(src: &str, lexed: &Lexed, widths: Widths) -> Result<Vec<u8>, Redo> {
         if p.statement().is_err() {
             p.recover(save);
         }
+        // The statement's nodes are final: their codes are written now.
+        p.out.commit();
     }
     // Comments after the last statement are the file's.
     p.comments_before(0, u32::MAX);
@@ -639,7 +643,7 @@ fn tape_at(src: &str, lexed: &Lexed, widths: Widths) -> Result<Vec<u8>, Redo> {
     p.out.finish(src.as_bytes())
 }
 
-impl Parser<'_> {
+impl<L: Layout> Parser<'_, L> {
     // Tokens.
 
     fn kind_at(&self, k: usize) -> u8 {

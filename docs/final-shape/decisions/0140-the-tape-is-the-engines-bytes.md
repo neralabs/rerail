@@ -30,12 +30,18 @@ called the tape. A tape from either still needed the engine's passes.
 **The decision.** A parser writes the image's bytes, byte for byte the engine's,
 with no conversion after it (`rerail_tape_format::Writer`):
 
-- **Each node's columns at their place, as it is made:** its code id at its push,
-  its offset from its block's base, its size and tail at its close.
+- **Each node's columns at their place, as it is made:** its offset from its block's base
+  at its push, its size and tail at its close.
+- **Code ids at commit points.** Codes are numbered by first use, so an edit could
+  renumber every node after it. Instead the parser commits after each statement,
+  when its nodes are final, and the commit writes their code ids.
+  Nodes past the last commit carry only their keys.
 - **Edits touch only the tail.** A parser edits only the nodes it made last:
   a field set after a node, a node put before its operand (a wrap), nodes taken back.
-  Codes first used at or after the edit are a suffix of the code table, numbered again
-  over the nodes from there; the blocks from there get their bases again.
+  These are past the commit point, so they rewrite no code ids;
+  the blocks from the edit get their bases again.
+- **Every column is sized for the same node count.** A push is indexed stores,
+  with one check for room; the image's bytes are reserved at the start.
 - **The widths are guessed from the source's length** (2 bytes below 320,000 bytes for sizes,
   2 always for offsets and tails). Where a value does not fit, or 2 would have held a column
   written at 4, the file is parsed again at the widths it needs.
@@ -55,6 +61,47 @@ so the writer writes the hub's images. The engine's `encode_rr` reads the lean p
 as it is (no `finish`, no `Pending`), and the statements are read off the same image
 (`rerail_tape_format::decode`, `rr_syntax::tape::nodes`), as a stored tape's are (decision 0062).
 The statement parser's tree through the engine's passes (`packed_rr_tape`) is the tests' oracle.
+
+In the hub the header holds no digest (format 12 on), so the writer computes none: the
+SHA-256 rows below are this branch's, before the merge. The engine's in-memory digest of a
+parsed source (`TapeImage::source_digest`) is made apart (`encode_rr`).
+
+## Cost
+
+Over the corpus (1,360 files, 8.80 MB, 1,166,154 nodes; instructions, cycles):
+
+| The lean parser, whole | Instructions | Cycles |
+|---|---|---|
+| Writing the old node table (not the tape) | 362.4M | 69.3M |
+| The tape, codes renumbered at each edit | 1,326.0M | |
+| … SHA-256 by the CPU's instructions (`sha2`'s `asm`) | 1,074.4M | 178.0M |
+| … code ids at commit points | 620.8M | 116.5M |
+| … every column one capacity, indexed stores | 550.6M | 106.9M |
+| … the hot path inlined, one check a push and a close | 465.2M | about 97M |
+| … the widths a type (`Narrow`), the commit over local slices | 425.6M | 96.2M |
+
+Over the same files, the lean parser with a writer that keeps only keys and starts
+(what the parser reads back) is 354.2M (69.3M cycles); the digest alone is 14.2M (11.6M).
+
+**Why the column stores were slow** (each part skipped in turn, one build):
+the code ids cost 32 instructions a node, a close's size and tail 27, a push's offset 22.
+The stores were not the cost. Around each one:
+
+- **Every column was reached through the struct.** Each store reloaded the column's pointer
+  and length, and the commit loop reloaded six fields a node: a 2-byte store, as far as
+  the compiler knew, could change the writer's own fields.
+- **The widths were read as the writer ran.** A store was a load of the width, a compare,
+  a branch and the address arithmetic, for a value fixed for the whole file.
+- **Two or three checks where one does.** "Ends before its last descendant" is a tail
+  that wraps; "some node is marked" is a threshold of 0.
+- **Calls.** `push` and `close` were calls with their registers saved.
+
+Now the writer's widths are a type parameter: `Narrow` (2, 2, 2, nearly every file) is
+fixed at compile time, `Widths` is any. The lean parser is compiled for both.
+A push's offset is 8 instructions, a close's size and tail 13, a code id 11.
+About 57M above the keys-and-starts writer remain, 49 a node:
+those 32, a block's base every 16 nodes, a commit a statement, the wraps' shifts,
+the new columns' zeroing, and the columns moved into place at the end.
 
 ## Tests
 

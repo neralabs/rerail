@@ -11,4 +11,5 @@ rerail-rr-parser = { path = "../rr_parser" }
 rerail-rr-syntax = { path = "../rr_syntax" }
 
 [dev-dependencies]
+rerail-tape-format = { path = "../tape_format" }
 libc = "0.2.189"
