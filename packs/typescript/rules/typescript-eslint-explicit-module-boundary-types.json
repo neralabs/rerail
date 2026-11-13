@@ -1894,7 +1894,7 @@
           "language": "typescript",
           "rule": {
             "precedes": {
-              "regex": "^=>$"
+              "regex": "^(?<ARROW>=>)$"
             },
             "inside": {
               "stopBy": "neighbor",
@@ -1908,7 +1908,7 @@
         }
       },
       "violation": {
-        "anchor": "witness.end",
+        "anchor": "capture.ARROW",
         "code": "@typescript-eslint/explicit-module-boundary-types",
         "message": "Add an explicit return type to this exported function.",
         "suppress": {
