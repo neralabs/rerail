@@ -1,16 +1,16 @@
 # Engine: the node-builtins rule holds 87 MiB, not 500 MiB
 
-For [pull request #529](https://github.com/neralabs/rerail/pull/529), head 85e5f33e. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #529](https://github.com/neralabs/rerail/pull/529), head b58522713. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
 **Is one process-wide table of compiled regexes, swept when a compilation ends and when a rule drops, the right owner of a rule's regexes?**
 
-**We recommend:** approve it once the automated reviewer has read the eight commits since its review, CI is green, and you accept the regex table, after reading the [three places marked read first](#3-where-to-look).
+**We recommend:** approve it once the automated reviewer has read the eight commits since its review and you accept the regex table, after reading the [three places marked read first](#3-where-to-look).
 
 | Size | Lane | Waits on | Not verified |
 |---|---|---|---|
-| 405 lines in 13 files: 252 ship, 153 are tests and text | Fast. No high-risk path; the automated reviewer can approve. | #634, a re-review. `Dependency audit` is red; the review predates eight commits. | 5 |
+| 405 lines in 13 files: 252 ship, 153 are tests and text | Fast. No high-risk path; the automated reviewer can approve. | A re-review. The review predates eight commits. | 4 |
 
 ## 2. Intent, and the gap
 
@@ -45,7 +45,7 @@ Release builds of main on a 32-core Linux machine. Issue #637 has the reproducti
 
 ## 4. Risk against verification
 
-<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. A, Shared regexes, medium risk: independent review holds with a limit, users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. B, Lean tables, medium risk: independent review holds with a limit, users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. CI at this head holds with a limit for every change.">
+<img src="grid.png" width="544" alt="The changes by risk, high on top, against six checks. A, Shared regexes, medium risk: independent review holds with a limit, users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. B, Lean tables, medium risk: independent review holds with a limit, users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. CI at this head holds for every change.">
 
 Start at A. No outside review has read either final design.
 
@@ -59,7 +59,6 @@ Start at A. No outside review has read either final design.
 | B. Lean tables | independent review | The automated review read the slots at 2ea7b4b4: `rule`, `with_target` and `summary_key` keep main's answers. The record of only the utilities compiled (11d64327), its `AddedByIndex` type (bd4e7cfa) and the `UtilTable::new` and `sharing` pair (e6baebd6) came after, and no review outside ours has read them. Our review found that the memory tests counted the input they free; 4573e0a3 fixed the count. |
 | B. Lean tables | users lose nothing | The engine's output is byte for byte main's: 281 rules over 99 files at this head. Matching 109 rules over 656 files took a median of 14.8 s at main and 14.4 s at 1e3c8127, not measured at this head: `matcher/util.rs` differs from that commit only in its two constructors. |
 | B. Lean tables | Windows 11: no new failure | The two memory tests read jemalloc's counters and are left out on Windows. The other lib tests of `compile` and `matcher` pass there, apart from the anchors test that fails as often at main. |
-| A and B | CI at this head | 27 of 31 checks pass at 85e5f33e, the three Rust engine jobs and Conformance 1/8 to 8/8 among them. `Dependency audit` and the `CI result` that sums up fail until #634 merges; this pull request changes no dependency. 2 are skipped: they run on an approved commit. |
 
 </details>
 
@@ -135,24 +134,23 @@ Before: At main a rule that drops lets go of its clauses, and each term drops th
 
 It stands on main alone; no pull request needs it. The team's draft #508 changes 10 of its 13 files at 29de931d; a trial merge conflicts in four.
 
-Pull request #529 is based on main alone, with a clean trial merge. Its CI waits for #634. It fixes issue #637, and no pull request stands on it. In a trial merge at 29de931d it shares 10 files with the team's draft #508, of which 4 conflict, and it shares no file with our five other open pull requests, which merge clean.
+Pull request #529 is based on main alone and holds main at 6135908eb, merged at b58522713. It fixes issue #637, and no pull request stands on it. In a trial merge at 29de931d it shares 10 files with the team's draft #508, of which 4 conflict, and it shares no file with our five other open pull requests, which merge clean.
 
-**Shared files, issues, the tracking issue.** Whichever of this and #508 lands second resolves four files. `code_rule_dsl/mod.rs`: the `mod` list and the `compile_document` call, which must keep the sweep. `matcher/mod.rs` and `value/text_regex.rs`: the `use` lines, where the shared `Regex` import must stay, and a doc comment. `matcher/util.rs`: the `UtilTable` fields and `rule`. It shares no file with #503, #530, #635, #636 or #638, and a trial merge with each one's head is clean. It fixes #637 and is part of #548, which stays open. [Tracking issue #632](https://github.com/neralabs/rerail/issues/632) lists it among our open pull requests.
+**Shared files, trial merges, issues.** Whichever of this and #508 lands second resolves four files. `code_rule_dsl/mod.rs`: the `mod` list and the `compile_document` call, which must keep the sweep. `matcher/mod.rs` and `value/text_regex.rs`: the `use` lines, where the shared `Regex` import must stay, and a doc comment. `matcher/util.rs`: the `UtilTable` fields and `rule`. It shares no file with #503, #530, #635, #636 or #638, and a trial merge with each one's head is clean. It shares none with our changes not yet open as pull requests. It fixes #637 and is part of #548, which stays open.
 
 </details>
 
-<details><summary><b>8. What is not covered</b>: 5 not verified, 6 smaller gaps, 7 limits that stay</summary>
+<details><summary><b>8. What is not covered</b>: 4 not verified, 6 smaller gaps, 7 limits that stay</summary>
 
 1. **The automated reviewer has not read the eight commits since its review.** Its change request stands.
-2. **CI is not green** until #634 merges.
-3. **The sweep alone is not timed:** it scans about 1,700 entries under the write lock.
-4. **Matching time is not measured at this head,** only at 1e3c8127.
-5. **Windows:** only the five touched modules' lib tests ran. macOS never ran.
+2. **The sweep alone is not timed:** it scans about 1,700 entries under the write lock.
+3. **Matching time is not measured at this head,** only at 1e3c8127.
+4. **Windows:** only the five touched modules' lib tests ran. macOS never ran.
 
 **Smaller gaps**
 
 - **What the review has not read.** The process-wide table, the sweep as a rule drops, the `Regex` type, `AddedByIndex` and the `UtilTable::new` and `sharing` pair all came after the automated review of 2ea7b4b4.
-- **The follow-up thread.** Our reply to the review's one inline finding is posted, and the thread is still open. Nobody has asked for a second review since the push: we ask for it once CI is green.
+- **The follow-up thread.** Our reply to the review's one inline finding is posted, and the thread is still open. Nobody has asked for a second review since the push: we ask for it with this update.
 - **A running daemon.** Every figure comes from fresh Node 24 processes that load the engine and compile the rules, not from a daemon's own memory.
 - **Backreference patterns.** They run on another regex engine and are not shared. What they hold was not measured.
 - **Our own whole-suite runs.** They date from bd4e7cfa for the Rust workspace and from 2ea7b4b4 for the vitest suite, both without the pack test data. CI ran both with the data at this head, and they passed.
@@ -182,20 +180,20 @@ The description is the record: "How you tested it" holds the tests, runs and mea
 
 | Where | What ran | Result |
 |---|---|---|
-| CI on GitHub | The run at 85e5f33e, read on 13 November 2026 | 27 checks passed, among them the three Rust engine jobs, both unit test jobs, the integration tests and Conformance 1/8 to 8/8: 941 of 941 shipped rules, `node/eslint-plugin-n` 37 of 37. 2 failed: `Dependency audit` and the `CI result` that sums up. 2 were skipped: they run on an approved commit. |
+| CI on GitHub | Run 43445317456 at b58522713, read on 13 November 2026. That head is 85e5f33ec plus one merge of main, which changes no file under `native/src/code_rule_dsl/`; the diff against main is unchanged. The rows below ran before that merge | All 29 checks passed, 28 of them in this run, none failed and none pending. Among them: `Dependency audit`, `CI result`, the three `Rust engine` jobs, `Unit tests (1/2)` and `(2/2)`, `Integration tests` and `Conformance (1/8)` to `(8/8)`: 941 of 941 shipped rules, `node/eslint-plugin-n` 37 of 37. The dependency fix is on main: it merged as #639. |
 | Linux, Rust 1.95.0 | Lib tests of `regexes`, `compile`, `matcher`, `value` and `violations`, at e6baebd6, the code at this head | 631 passed, 0 failed, 2 benchmarks ignored: the same test names as at bd4e7cfa. |
 | Linux, Rust 1.95.0 | `cargo fmt --all --check`, clippy over the workspace with warnings denied, and clippy with the profile feature | Exit 0, all three. |
 | Windows 11, MSVC | The same five module filters, 10 runs here and 10 at main's merge base in alternating order, each with a one-line `#[cfg(unix)]` on an ignored benchmark that is not committed | 629 passed and 0 failed in 6 runs; 628 passed and 1 failed in 4. The one failure, an anchors test, fails in 4 of 10 runs at main too, at the same assertion. The two jemalloc memory tests are left out on Windows. |
 | Linux, 32 cores | Release builds of main's merge base and of e6baebd6: each rule set compiled in a fresh Node 24 process, three runs a row, the two builds in alternating order | The rule: 500 MiB and 2.6 s at main, 87 MiB and 1.4 s here. All 281 rules of five packs: 940 and 201 MiB. Medians; a row's runs lie within 0.4 MiB and 0.3 s. |
 | Linux | All 281 rules evaluated in report mode on 99 of the repository's files, at main, at bd4e7cfa and at this head | The output, 6,479,886 bytes with 10,655 violations, is byte for byte the same at all three. |
 | Linux | The rules scan as the automated reviewer runs it, rules from main, against the merge base | 0 new findings and 44 existing at e6baebd6. 9 new at 2ea7b4b4, the review's own. |
-| Trial merges | This head with main and with the heads of open pull requests | Main clean. #508, a draft, at 29de931d: 10 files shared, 4 conflict (`code_rule_dsl/mod.rs`, `matcher/mod.rs`, `matcher/util.rs`, `value/text_regex.rs`). #503, #530, #635, #636 and #638: clean, no shared file. |
+| Trial merges | 85e5f33e with main and with the heads of open pull requests | Main clean. #508, a draft, at 29de931d: 10 files shared, 4 conflict (`code_rule_dsl/mod.rs`, `matcher/mod.rs`, `matcher/util.rs`, `value/text_regex.rs`). #503, #530, #635, #636 and #638: clean, no shared file. |
 
 **What this report adds to the description**
 
 - **Brought into the description.** Writing this report found five things the description did not say: that CI has run at this head, which design the automated review read, that a compiled rule is copied and each copy sweeps, the two files the diff does not show at work, and that #508 had moved. The description now says each.
 - **The state of the review on GitHub.** The change request on 2ea7b4b4 stands, with 8 blockers and 1 follow-up, all functions over the complexity ceiling at main. Our comment of 13 November answers each, the follow-up's thread is open, and issue #637 has no reply yet.
 
-**Sources.** The pull request, its diff, its conversation, its reviews and its CI on GitHub, read on 13 November 2026. Rerail at main (feef6b5f) for each quoted intent. Issue #637 for the reproduction. Our run records and review records, and [tracking issue #632](https://github.com/neralabs/rerail/issues/632).
+**Sources.** The pull request, its diff, its conversation, its reviews and its CI on GitHub, read on 13 November 2026. Rerail at main (feef6b5f) for each quoted intent. Issue #637 for the reproduction. Our run records and review records.
 
 </details>
