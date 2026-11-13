@@ -2,6 +2,8 @@
 
 
 def policy_filename(check, entry):
+    if check=='plan_scope_side_effects' and entry=='_directory_discovery':
+        return 'plan-scope-directory-discovery.rr'
     if check=='connection_structural_boundaries' and entry in {'_structural_helper_configuration','_connection_file_violations'}:
         return 'connection-structural-boundaries-supplied.rr'
     if check=='unresolved_forward_refs' and (entry=='cli_selection' or (entry or '').startswith('_uf_cli_')):

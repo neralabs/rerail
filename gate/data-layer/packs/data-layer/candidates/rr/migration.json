@@ -513,7 +513,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/core.rr",
-      "sha256": "7a15cdc0f4ca2f24a63bcca972b42794a046d544f0c3c74bed0fd9db4e960069",
+      "sha256": "9bea027d17a0aca37ee070fe874ad102c05b90ba7ce66a9e88a5ba710311d0bd",
       "importedSha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f",
       "repairs": [
         {
@@ -687,6 +687,11 @@
           "before": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112",
           "after": "7a15cdc0f4ca2f24a63bcca972b42794a046d544f0c3c74bed0fd9db4e960069",
           "reason": "Merge serverplan-quality integration hub 1ee25bdf6; retain its shared-library resolutions"
+        },
+        {
+          "before": "7a15cdc0f4ca2f24a63bcca972b42794a046d544f0c3c74bed0fd9db4e960069",
+          "after": "9bea027d17a0aca37ee070fe874ad102c05b90ba7ce66a9e88a5ba710311d0bd",
+          "reason": "Native batched directory metadata preserves source linter discovery without following linked directories"
         }
       ],
       "upstreamCommit": "dde9f3dc45a2ac13ff4d8313eec22c5886008104"
@@ -3405,6 +3410,20 @@
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_connection_structural_boundaries.py"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-directory-discovery.rr",
+      "sha256": "33bf90e2bd108e46817869a464abbd412915a81fa3044131a5c0244df6e2af9f",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_plan_scope_side_effects.py",
+      "repairs": [
+        {
+          "before": "10e830f558f927752e00b95c53a4114b6e1fb5447e3b1b436f1316d613c59011",
+          "after": "33bf90e2bd108e46817869a464abbd412915a81fa3044131a5c0244df6e2af9f",
+          "reason": "Native batched directory metadata preserves source linter discovery without following linked directories"
+        }
+      ]
     }
   ],
   "rules": [
@@ -6416,54 +6435,64 @@
     "checkout": ".",
     "upstreamCommit": "1ee25bdf678c8fef902f66c2f3bebe4f5fb172f9",
     "upstreamBranch": "refs/heads/jeremybarnes/final-shape-serverplan-quality",
-    "status": "Serverplan-quality hub 1ee25bdf6 adopted exactly; root CLI 6e03c07070fbd0d0 registered; compatibility migration in progress",
-    "nativeExtensions": [],
+    "status": "Hub with shared batched directory metadata; source-reviewed extension, root build pending",
+    "nativeExtensions": [
+      {
+        "path": "native/src/code_rule_dsl/logic/plan/corpus.rs",
+        "sha256": "7ce2f87d524bd2835c16b8565e3387af77b76ba581fc955d577a1282911192f7"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/plan/corpus/cross_memo.rs",
+        "sha256": "b5d12413ec7a4e40d954d8cafe93f38b0afde05b112964591147cdc73efed81e"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/plan/corpus/world.rs",
+        "sha256": "d5411fc2bc7fb149e95ca8b47bc61a2b2dadd118c54d61b2b04cf13a6ec1728e"
+      },
+      {
+        "path": "native/src/code_rule_dsl/logic/rr/lower.rs",
+        "sha256": "11415cea50e32bda07fd5756ba6222104426f783f2a81266ef68843c5bb8eacb"
+      },
+      {
+        "path": "native/src/content_store/observe.rs",
+        "sha256": "f4a837c3e91a0cdeb7e2c0555e17fe0929b84ab7d2f5ecf7cb38dd27f14c2de7"
+      }
+    ],
     "previousUpstreamCommit": "fcce32b26cf5e561ded72575ed6d327394f822fe",
     "retiredCheckout": ".rerail/rr-migration-20261106/engine",
-    "adoptionAudit": {
-      "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "1ee25bdf678c8fef902f66c2f3bebe4f5fb172f9",
-      "engineCommit": "333bd18a75fe2e33ca4f14c1385e919965603204",
-      "sourceTrees": {
-        "native": "8a5fe06ce9d5d66f6eab404b8127ecfa9748b5f0",
-        "accel": "b1d220195c1733143a144b414ef93b41956596ef",
-        "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
-        "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
-        "Cargo.toml": "cbe7eb09c3f22ebfb9b6c9cfefa738d24cb9dc95",
-        "Cargo.lock": "abf7bd05eded9842a426abd41372d8cf98025ded"
-      }
-    },
-    "cliArtifact": {
-      "format": "rerail.root-engine-build/v1",
-      "engineCommit": "333bd18a75fe2e33ca4f14c1385e919965603204",
-      "upstreamCommit": "1ee25bdf678c8fef902f66c2f3bebe4f5fb172f9",
-      "sourceTrees": {
-        "native": "8a5fe06ce9d5d66f6eab404b8127ecfa9748b5f0",
-        "accel": "b1d220195c1733143a144b414ef93b41956596ef",
-        "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
-        "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
-        "Cargo.toml": "cbe7eb09c3f22ebfb9b6c9cfefa738d24cb9dc95",
-        "Cargo.lock": "abf7bd05eded9842a426abd41372d8cf98025ded"
-      },
-      "path": ".rerail/modern-engine-alignment/cli-6e03c07070fbd0d0",
-      "sha256": "6e03c07070fbd0d0ae7da0c6950408396a19a9300dfde0acc865510e71b138ee",
-      "command": "RUSTUP_TOOLCHAIN=1.97.1 timeout 110 nice -n 19 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling --locked",
-      "buildAttempts": [
-        {
-          "wallSeconds": 110.02,
-          "userCpuSeconds": 368.16,
-          "systemCpuSeconds": 52.31
+    "artifactHistory": [
+      {
+        "format": "rerail.root-engine-build/v1",
+        "engineCommit": "333bd18a75fe2e33ca4f14c1385e919965603204",
+        "upstreamCommit": "1ee25bdf678c8fef902f66c2f3bebe4f5fb172f9",
+        "sourceTrees": {
+          "native": "8a5fe06ce9d5d66f6eab404b8127ecfa9748b5f0",
+          "accel": "b1d220195c1733143a144b414ef93b41956596ef",
+          "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
+          "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
+          "Cargo.toml": "cbe7eb09c3f22ebfb9b6c9cfefa738d24cb9dc95",
+          "Cargo.lock": "abf7bd05eded9842a426abd41372d8cf98025ded"
         },
-        {
-          "wallSeconds": 108.6,
-          "userCpuSeconds": 885.04,
-          "systemCpuSeconds": 33.57
-        }
-      ],
-      "wallSeconds": 218.62,
-      "userCpuSeconds": 1253.2,
-      "systemCpuSeconds": 85.88
-    }
+        "path": ".rerail/modern-engine-alignment/cli-6e03c07070fbd0d0",
+        "sha256": "6e03c07070fbd0d0ae7da0c6950408396a19a9300dfde0acc865510e71b138ee",
+        "command": "RUSTUP_TOOLCHAIN=1.97.1 timeout 110 nice -n 19 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling --locked",
+        "buildAttempts": [
+          {
+            "wallSeconds": 110.02,
+            "userCpuSeconds": 368.16,
+            "systemCpuSeconds": 52.31
+          },
+          {
+            "wallSeconds": 108.6,
+            "userCpuSeconds": 885.04,
+            "systemCpuSeconds": 33.57
+          }
+        ],
+        "wallSeconds": 218.62,
+        "userCpuSeconds": 1253.2,
+        "systemCpuSeconds": 85.88
+      }
+    ]
   },
   "engineSourceSnapshots": [
     {
