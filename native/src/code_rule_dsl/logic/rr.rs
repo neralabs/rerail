@@ -178,6 +178,24 @@ impl Text {
         Some(Modules { files: files.iter().map(|(path, digest, statements)| (path.clone(), *digest, declares(statements))).collect(), heads, declared: declares(own) })
     }
 
+    /// The text's header: its program without a clause of its own or of its libraries (their declarations, its
+    /// directives, its findings' declarations), for what a batch reads of a policy before its run (decision 0167):
+    /// its settings, `.policy`, `.language` and outputs, as its whole program has them, less `.global library` (which
+    /// `read_file` writes) and the settings a clause makes. Lowering only that is a fraction of lowering its rules.
+    pub fn header(self) -> Result<Program, Error> {
+        let header = |statements: Vec<syntax::Statement>| -> Vec<syntax::Statement> {
+            statements.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { .. } | syntax::Item::Include(_))).collect()
+        };
+        match self.0 {
+            Read::Plain(statements) => lower::lower(header(statements)),
+            Read::Modular { files, own } => {
+                let mut statements: Vec<syntax::Statement> = files.iter().flat_map(|(_, _, s)| s.iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { .. } | syntax::Item::Include(_))).cloned()).collect();
+                statements.extend(header(own));
+                lower::lower(statements)
+            }
+        }
+    }
+
     /// The text's program, as `parse` (`clauses`) or `parse_own` reads it.
     pub fn lower(self, clauses: bool) -> Result<Program, Error> {
         let (files, own) = match self.0 {

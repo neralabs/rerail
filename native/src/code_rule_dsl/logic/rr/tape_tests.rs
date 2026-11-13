@@ -301,6 +301,82 @@ fn python_and_rr_policies_run_over_one_repository() {
     assert!(files[0].ends_with("x.py") && files[1].ends_with("a.rr"), "{files:?}");
 }
 
+/// O-batch-setup (decision 0167): a batch's policies of one language run as one pack (decisions 0051, 0089): their
+/// libraries read, lowered, hidden and evaluated once, not once a policy. Each policy's findings are its own, in
+/// its own `out/<k>`, and the same as its run alone; a policy of another language runs in its own group.
+#[test]
+fn a_batchs_policies_of_one_language_run_as_one_pack() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("batch-pack");
+    std::fs::create_dir_all(root.join("rules")).unwrap();
+    std::fs::write(root.join("rules/a.rr"), ".decl f(x: symbol)\n.input f(IO=file, filename=\"/etc/passwd\")\n").unwrap();
+    std::fs::write(root.join("x.py"), "eval(\"1\")\nexec(\"2\")\nprint(3)\n").unwrap();
+    let policy = |name: &str, callee: &str| {
+        let path = root.with_extension(format!("{name}.rr"));
+        std::fs::write(
+            &path,
+            format!(
+                ".policy \"t:{name}\" revision 1\n.language python\n#include \"python/calls.rr\"\n\
+                 .violation {name}_call(at: node) code \"{name}\" \"a call of {callee}\"\n\
+                 {name}_call(c) :- node(_, c, \"call\", _, _), field(c, \"function\", f), text(f, \"{callee}\").\n"
+            ),
+        )
+        .unwrap();
+        path
+    };
+    let (a, b) = (policy("ev", "eval"), policy("ex", "exec"));
+    // A policy with neither `.policy` nor `.language` reads the tree's grammar (Python here), so it joins the pack.
+    let c = root.with_extension("pr.rr");
+    std::fs::write(
+        &c,
+        "#include \"python/calls.rr\"\n.violation pr_call(at: node) code \"pr\" \"a call of print\"\n\
+         pr_call(c) :- node(_, c, \"call\", _, _), field(c, \"function\", f), text(f, \"print\").\n",
+    )
+    .unwrap();
+    let rr = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/rr/rr-input-outside-repository.rr");
+    let paths = [a.clone(), rr.clone(), b.clone(), c.clone()];
+    let batch = crate::code_rule_dsl::tools::run_policies(&paths, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let codes = |report: &serde_json::Value| -> Vec<String> {
+        report["diagnostics"].as_array().unwrap().iter().map(|d| d["code"].as_str().unwrap_or("").to_owned()).collect()
+    };
+    let reports: Vec<serde_json::Value> = paths
+        .iter()
+        .enumerate()
+        .map(|(k, p)| crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(p), &root, &root.join(format!("alone{k}")), &serde_json::Value::Null).unwrap())
+        .collect();
+    let alone: Vec<Vec<String>> = reports.iter().map(codes).collect();
+    let written = |k: usize| std::fs::read_to_string(root.join("out").join(k.to_string()).join("rr_diagnostic.csv")).unwrap_or_default();
+    let (w0, w1, w2) = (written(0), written(1), written(2));
+    let _ = std::fs::remove_dir_all(&root);
+    for p in [&a, &b, &c] {
+        let _ = std::fs::remove_file(p);
+    }
+    // The findings, in the order of the policies, each the policy's own run's.
+    assert_eq!(codes(&batch), alone.concat(), "{batch:#}");
+    assert_eq!(alone[0], ["ev"]);
+    assert_eq!(alone[2], ["ex"]);
+    assert_eq!(alone[3], ["pr"]);
+    // The three policies of the Python tree were one run; the rr policy its own.
+    let together: Vec<u64> = batch["runs"].as_array().unwrap().iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect();
+    // Under `RERAIL_BATCH_PACK=off` each runs alone, and this fails.
+    assert_eq!(together, [3, 1, 3, 3], "{batch:#}");
+    // Each policy's metadata, as its run alone gives it, less the `.global library` settings the reader writes for
+    // each file a policy includes (decision 0091): the engine's, not the policy's.
+    let own = |m: &serde_json::Value| -> serde_json::Value {
+        let mut m = m.clone();
+        if let Some(settings) = m["settings"].as_array_mut() {
+            settings.retain(|s| s[0] != "global" || !s[1].as_str().is_some_and(|t| t.starts_with("library ")));
+        }
+        m
+    };
+    for (k, report) in reports.iter().enumerate() {
+        assert_eq!(own(&batch["runs"][k]["metadata"]), own(&report["runs"][0]["metadata"]), "policy {k}");
+    }
+    // Each policy's findings in its own directory.
+    assert!(w0.contains("\"ev\"") && !w0.contains("\"ex\""), "{w0}");
+    assert!(w2.contains("\"ex\"") && !w2.contains("\"ev\""), "{w2}");
+    assert!(w1.contains("rules/a.rr"), "{w1}");
+}
+
 /// O-pha000-kept-part: a reader whose body is only a negation of a demanded relation (`PHA000 :- !allow_status(
 /// "plan_helpers", "valid")`) demands nothing, so the relation is built whole: computed only for its other readers'
 /// keys, it held no row for this one, and the constant finding was reported though the status is valid. The run
