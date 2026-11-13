@@ -454,21 +454,17 @@ async function readGit(cwd: string, args: readonly string[], signal: AbortSignal
   const executable = readerGit(signal);
   if (executable === undefined) return { ended: signal?.aborted === true ? "timed-out" : "failed" };
   const { promise, resolve: settle } = Promise.withResolvers<GitRead>();
-  let cutShort = false;
-  const unfinished = (): GitRead => ({ ended: cutShort || signal?.aborted === true ? "timed-out" : "failed" });
   const child = execFile(
     executable,
     [...SAFE_CONFIG, "-C", cwd, ...args],
     { encoding: "utf8", maxBuffer, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" } },
-    (error, stdout) => settle(error === null && signal?.aborted !== true ? { ended: "printed", stdout } : unfinished()),
-  );
-  // execFile's own `close` listener comes first and answers with the output; this one answers a Git that was ended and
-  // whose output stays open.
-  settleWhenDone(child, () => settle(unfinished()), {
-    timeoutMs: DEFAULT_TIMEOUT_MS, signal, ending: () => {
-      cutShort = true;
+    (error, stdout) => {
+      if (error === null && signal?.aborted !== true) settle({ ended: "printed", stdout });
     },
-  });
+  );
+  // execFile's own `close` listener comes first and answers with the output. This one answers every other end, saying
+  // whether the time limit or `signal` ended the read, and a Git that was ended and whose output stays open.
+  settleWhenDone(child, ended => settle({ ended: ended ? "timed-out" : "failed" }), { timeoutMs: DEFAULT_TIMEOUT_MS, signal });
   const [read] = await Promise.all([promise, exited(child)]);
   return read;
 }
@@ -736,8 +732,6 @@ const TIME_LIMIT_TICK_MS = 1_000;
 interface ReadLimits {
   readonly timeoutMs: number;
   readonly signal: AbortSignal | undefined;
-  /** Called when the time limit or the signal ends the read, before its Git is ended. */
-  readonly ending?: () => void;
 }
 
 /**
@@ -749,9 +743,9 @@ interface ReadLimits {
  * alone, so it is not used. The real Git holds the output too, so the output closes once the whole tree has exited;
  * should it stay open anyway, the answer does not wait for it. A Git that exits by itself is read to the end of its
  * output; one a signal from elsewhere ended is waited for as one this ended. `timeoutMs` counts event-loop time
- * ({@link TIME_LIMIT_TICK_MS}).
+ * ({@link TIME_LIMIT_TICK_MS}). `settle` is told whether `timeoutMs` or `signal` ended the read.
  */
-function settleWhenDone(child: ChildProcess, settle: () => void, { timeoutMs, signal, ending }: ReadLimits): void {
+function settleWhenDone(child: ChildProcess, settle: (ended: boolean) => void, { timeoutMs, signal }: ReadLimits): void {
   let ended = false;
   const forget = (): void => {
     clearInterval(ticks);
@@ -761,13 +755,12 @@ function settleWhenDone(child: ChildProcess, settle: () => void, { timeoutMs, si
     forget();
     setTimeout(() => {
       child.stdout?.destroy();
-      settle();
+      settle(ended);
     }, EXIT_DRAIN_MS).unref();
   };
   const end = (): void => {
     clearInterval(ticks);
     ended = true;
-    ending?.();
     // A child that has exited has no tree left to reach, and its pid may name another process by now.
     if (child.exitCode === null && child.signalCode === null) endProcessTree(child);
     else drain();
@@ -781,7 +774,7 @@ function settleWhenDone(child: ChildProcess, settle: () => void, { timeoutMs, si
   signal?.addEventListener("abort", end, { once: true });
   const done = (): void => {
     forget();
-    settle();
+    settle(ended);
   };
   child.on("error", done);
   child.on("close", done);
@@ -812,7 +805,7 @@ async function streamGit(cwd: string, args: readonly string[], stream: GitStream
     stdio: ["pipe", "pipe", "ignore"],
   });
   child.stdout.on("data", stream.onData);
-  settleWhenDone(child, settle, { timeoutMs: stream.timeout ?? DEFAULT_TIMEOUT_MS, signal: stream.signal });
+  settleWhenDone(child, () => settle(), { timeoutMs: stream.timeout ?? DEFAULT_TIMEOUT_MS, signal: stream.signal });
   // Git exits before reading every line when it cannot start in `cwd`; what it answered before that is kept.
   child.stdin.on("error", () => undefined);
   child.stdin.end(stream.input);
