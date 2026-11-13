@@ -32,33 +32,32 @@ impl<S: Simd8x64> Block<S> {
     }
 }
 
-/// The lexer's four masks over the 64 bytes `p[..64]`; `p[64..]` are the bytes after, for the
-/// pairs' second bytes (read as the 64 bytes from `p[1]`).
+/// The lexer's four masks over the 64 bytes `p[..64]`; `p[64]` is the byte after, the last
+/// pair's second byte.
 #[inline(always)]
 unsafe fn lexer<S: Simd8x64>(p: &[u8; 80]) -> [u64; 4] {
     // SAFETY: the kernel runs where the CPU runs `S` (`dispatch!`).
     unsafe {
         let x = S::load(p[..64].try_into().expect("64 bytes"));
-        let d = S::load(p[1..65].try_into().expect("64 bytes"));
+        let d = S::shift_in(x, p[64]);
         let c = S::classify(x, &LO, &HI);
-        let space = S::nonzero(S::and(c, S::splat(SPACE)));
-        let word = S::nonzero(S::and(c, S::splat(WORD)));
-        // A non-ASCII character's first byte (`0xc0..`): its high nibble.
-        let rare = S::nonzero(S::and(c, S::splat(RARE))) | S::nonzero(S::lookup_16(S::high_nibbles(x), &LEAD));
+        // Each mask one test, packed once (`test` and `ge` stay vectors).
+        let space = S::to_bitmask(S::test(c, S::splat(SPACE)));
+        let word = S::to_bitmask(S::test(c, S::splat(WORD)));
+        // Or a non-ASCII character's first byte (`0xc0..`).
+        let rare = S::to_bitmask(S::or(S::test(c, S::splat(RARE)), S::ge(x, 0xc0)));
         // A pair: the first byte's table names the second bytes it takes, the next byte's which
         // it is.
-        let pair = S::nonzero(S::and(S::classify(x, &FIRST_LO, &FIRST_HI), S::classify(d, &SECOND_LO, &SECOND_HI)));
+        let pair = S::to_bitmask(S::test(S::classify(x, &FIRST_LO, &FIRST_HI), S::classify(d, &SECOND_LO, &SECOND_HI)));
         [space, word, rare, pair]
     }
 }
 
 dispatch! {
-    /// The lexer's four masks (`Window`).
+    /// The lexer's four masks (`Window`): a step of the lexer's loop, inlined.
+    #[inline(always)]
     fn lexer_masks(p: &[u8; 80]) -> [u64; 4] = lexer, on lexer_masks_on;
 }
-
-/// The high nibbles of a non-ASCII character's first byte.
-const LEAD: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1];
 
 /// The block at `i`: 64 bytes, zeros past the end.
 #[inline(always)]
@@ -181,15 +180,26 @@ pub(crate) struct Window {
 impl Window {
     #[inline(always)]
     pub(crate) fn at(b: &[u8], base: usize) -> Self {
-        let bytes: [u8; 80] = match b.get(base..base + 80) {
-            Some(s) => s.try_into().expect("80 bytes"),
-            None => {
-                let mut pad = [0u8; 80];
-                let s = &b[base..];
-                pad[..s.len()].copy_from_slice(s);
-                pad
+        // The masks from the text itself where it holds the 80 bytes (not from the copy: its
+        // stores would be loaded again).
+        match b.get(base..base + 80) {
+            Some(s) => {
+                let s: &[u8; 80] = s.try_into().expect("80 bytes");
+                let [space, word, rare, pair] = lexer_masks(s);
+                Window { base, space, word, rare, pair, bytes: *s }
             }
-        };
+            None => Self::padded(b, base),
+        }
+    }
+
+    /// The window at the text's end, its bytes padded with zeros: once a text, so called (the
+    /// lexer's loop holds one copy of the kernel).
+    #[cold]
+    #[inline(never)]
+    fn padded(b: &[u8], base: usize) -> Self {
+        let mut bytes = [0u8; 80];
+        let s = &b[base..];
+        bytes[..s.len()].copy_from_slice(s);
         let [space, word, rare, pair] = lexer_masks(&bytes);
         Window { base, space, word, rare, pair, bytes }
     }
@@ -290,7 +300,7 @@ unsafe fn find_pair_k<S: Simd8x64>(b: &[u8], from: usize, x: u8, y: u8) -> Optio
 }
 
 #[inline(always)]
-unsafe fn string_end_k<S: Simd8x64>(b: &[u8], from: usize) -> (Option<usize>, bool) {
+unsafe fn string_end_k<S: Simd8x64>(b: &[u8], from: usize) -> (usize, bool) {
     let (mut carry, mut u) = (0, 0);
     // SAFETY: the kernel runs where the CPU runs `S` (`dispatch!`).
     let end = unsafe {
@@ -298,11 +308,15 @@ unsafe fn string_end_k<S: Simd8x64>(b: &[u8], from: usize) -> (Option<usize>, bo
             let (esc, out) = escaped(blk.eq(b'\\'), carry);
             carry = out;
             let quote = blk.eq(b'"') & !esc;
-            u |= esc & blk.eq(b'u') & below(quote);
+            // `u` is looked for only in a block with an escape (most have none).
+            if esc != 0 {
+                u |= esc & blk.eq(b'u') & below(quote);
+            }
             quote
         })
     };
-    (end, u != 0)
+    // Two words, so the call returns them in registers (`usize::MAX`: the text ends first).
+    (end.unwrap_or(usize::MAX), u != 0)
 }
 
 dispatch! {
@@ -317,9 +331,34 @@ dispatch! {
 }
 
 dispatch! {
-    /// A string's body from `from` (after its opening quote): its closing quote, the first not
-    /// escaped; and whether a `\u` escape comes before it.
-    pub(crate) fn string_end(b: &[u8], from: usize) -> (Option<usize>, bool) = string_end_k, on string_end_on;
+    /// `string_end`'s call: the end as a word (`usize::MAX`: none).
+    fn string_end_raw(b: &[u8], from: usize) -> (usize, bool) = string_end_k, on string_end_on;
+}
+
+/// A string's body from `from` (after its opening quote): its closing quote, the first not
+/// escaped; and whether a `\u` escape comes before it.
+///
+/// A string that closes within its first 16 bytes, with no `\` before its quote, is read here
+/// by word operations (most strings: a call costs more than the scan of a short one).
+#[inline(always)]
+pub(crate) fn string_end(b: &[u8], from: usize) -> (Option<usize>, bool) {
+    if let Some(w) = b.get(from..from + 16) {
+        // The bytes that are `"` and `\`, by the zero-byte test: its lowest flag is exact.
+        let zero = |v: u64| v.wrapping_sub(0x0101_0101_0101_0101) & !v & 0x8080_8080_8080_8080;
+        for k in [0, 8] {
+            let x = u64::from_le_bytes(w[k..k + 8].try_into().expect("8 bytes"));
+            let quote = zero(x ^ 0x2222_2222_2222_2222);
+            let slash = zero(x ^ 0x5c5c_5c5c_5c5c_5c5c);
+            if quote != 0 && quote.trailing_zeros() < slash.trailing_zeros() {
+                return (Some(from + k + (quote.trailing_zeros() / 8) as usize), false);
+            }
+            if slash != 0 {
+                break;
+            }
+        }
+    }
+    let (end, u) = string_end_raw(b, from);
+    ((end != usize::MAX).then_some(end), u)
 }
 
 #[cfg(test)]
@@ -417,7 +456,9 @@ mod tests {
             for be in backends() {
                 assert_eq!(find_on(be, &b, from, b'`'), Some(find(&b, from, b'`')), "{be:?}");
                 assert_eq!(find_pair_on(be, &b, from, b'*', b'/'), Some(find_pair(&b, from, b'*', b'/')), "{be:?}");
-                assert_eq!(string_end_on(be, &b, from), Some(string_end(&b, from)), "{be:?}");
+                assert_eq!(string_end_on(be, &b, from), Some(string_end_raw(&b, from)), "{be:?}");
+                let (end, u) = string_end_raw(&b, from);
+                assert_eq!(string_end(&b, from), ((end != usize::MAX).then_some(end), u));
             }
             let (at, got_u) = string_end(&b, from);
             if end < n {

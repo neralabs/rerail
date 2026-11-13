@@ -1,10 +1,12 @@
-# 0169: The lean Python parser runs on any CPU, finds keywords by a hash, and recovers as tree-sitter does
+# 0169: The lean Python parser runs on any CPU, finds keywords by a hash, and joins lines as tree-sitter does
 
 Status: built (user, 2026-11-13: "please use or port SIMDJSON's portable SIMD operations so that this
 can run on other CPUs, we need at least x86_64 / Take a look at using other techniques instructions for
 the keyword recognition (it's decision 162 in the typing support worktree) / figure out the patterns
 for the more-forgiving parser; we should match or mostly match tree-sitter on these, especially for
-Python where we have very strong restart signals from the indents")
+Python where we have very strong restart signals from the indents"; then: "recovery can always bail
+to treesitter. I don't want to have different behavior in different "modes", it becomes impossible to
+reason about")
 
 ## Intro
 
@@ -13,15 +15,16 @@ The lean Python parser (0163) writes tree-sitter-python's tape directly. It had 
 - **Arm64 only.** Its lexer found runs of word bytes and blanks 64 bytes a step with NEON. On any
   other CPU it did not build.
 - **Keywords by comparison.** A name was checked against the keywords one by one.
-- **No recovery.** A file with a syntax error went to tree-sitter-python. A file being typed mostly
-  has one: the line being written.
+- **Line ends.** tree-sitter-python's scanner joins a line whose statement goes on (`x =⏎b`); the
+  lean parser refused those files.
 
 This decision fills all three:
 
 - The SIMD operations are simdjson's, ported to Rust.
 - Keywords are found by a perfect hash (0162's technique).
-- An error where a line is being typed is recovered as tree-sitter-python recovers it, node for node.
-  Where the recovery cannot be predicted, the file still goes to tree-sitter.
+- A line end tree-sitter's scanner does not give is joined, as the scanner joins it.
+- A syntax error is always a refusal: tree-sitter-python reads the file. Recovery was built and
+  measured, then removed (below).
 
 ```
 a Python file -> stage 1: byte classes, 64 bytes a step (rerail-simd8: NEON, AVX2, SSE4.2, scalar)
@@ -29,8 +32,6 @@ a Python file -> stage 1: byte classes, 64 bytes a step (rerail-simd8: NEON, AVX
               -> recursive descent, writing the tape
                    a statement fails at a NEWLINE tree-sitter's scanner would not give
                      -> that line end joined, the text lexed again
-                   a statement fails where the line (or the text) ends
-                     -> one ERROR, as tree-sitter builds it
                    anything else -> refused -> tree-sitter-python
 ```
 
@@ -51,8 +52,8 @@ a Python file -> stage 1: byte classes, 64 bytes a step (rerail-simd8: NEON, AVX
   - prefix XOR for strings (Python strings nest f-string interpolations, so quote parity does not
     give their extent);
   - Teddy (0162 itself says it is not for tokenizers).
-- **0163.** **Amends:** its Open item "Error recovery" is built here, for errors where a line is being
-  typed.
+- **0163.** **Keeps** its refusal of every syntax error. Its Open item "Error recovery" is closed:
+  not built (below).
 - **0158 (JSONC trailing commas).** **Agrees:** the same principle, being permissive exactly where
   the reference parser is.
 
@@ -79,17 +80,37 @@ from nibble tables. Stage 2 is the scalar lexer, which reads runs and stops off 
 zeros.
 
 The `.rr` parser's micro-lexers (`rr_syntax/src/micro.rs`) are kernels over the same trait, so
-they also run on any CPU. Before, they had NEON code and an 8-bytes-a-word portable version. Two
-NEON-only steps have trait equivalents:
+they also run on any CPU. Before, they had NEON code and an 8-bytes-a-word portable version. The
+trait took three operations so the NEON code maps one to one:
 
-- The pair mask's next bytes come from a second load at offset 1 (the window holds 80 bytes), in
-  place of a byte extract.
-- A non-ASCII first byte (`>= 0xc0`) is found by a high-nibble table, in place of an unsigned
-  compare.
+- `test` (NEON's `vtst`): a class test kept as a vector, so tests are combined before one pack;
+- `ge` (`vcge`): a non-ASCII first byte (`>= 0xc0`);
+- `shift_in` (`vext`): each byte's next one, for the two-byte punctuation's pair test.
 
 The portable byte compare (8 bytes a word, SWAR) is now the Fallback backend's `eq_mask`, so wasm
-keeps it. The `.rr` lean rows went from 713 to 721 M instructions over the repository's 1,454 `.rr`
-files (`rr_parse_costs`, +1%; the extra table lookup).
+keeps it.
+
+The first port cost 1% (713 to 721 M instructions of lean rows over the repository's `.rr` files,
+`rr_parse_costs`). By the disassembly:
+
+- `nonzero(and(..))` cost an op a vector where `vtst` is one (now `test`);
+- the non-ASCII mask was packed apart, a second pack (now one `or` before the pack);
+- a load at offset 1 stood for `vext` (now `shift_in`);
+- `dispatch!` made its function `#[inline]`, which inlined the string and comment scans into the
+  lexer's loop and spilled its registers (the caller now picks);
+- the window's padded path inlined a second copy of the kernel (now a cold call).
+
+That left the call into the string scan, about 25 instructions a string where the old code inlined
+it. A string that closes within its first 16 bytes with no `\` before its quote is now read inline
+by two zero-byte word tests, and only the rest make the call.
+
+Over the 1,461 `.rr` files, best of 9 passes, instructions retired:
+
+| | before the port | the port | now |
+|---|---:|---:|---:|
+| lean rows | 748.5 M | 752.0 M | 745.4 M |
+
+So the port is 0.4% faster than the NEON-only code.
 
 ### Keywords by a perfect hash
 
@@ -105,64 +126,53 @@ hit  = WORDS[slot].key == key && WORDS[slot].len == len
 A soft keyword stays a name. Its code goes in the token's spare byte (`Tok.soft`), and the parser reads
 it where the grammar takes the soft keyword.
 
-### Recovery, as tree-sitter-python recovers
+### Joined lines, as tree-sitter-python's scanner joins them
 
-The rules come from tree-sitter's runtime, and each is checked against its trees by the oracle:
-
-- tree-sitter's parser reduces while a state has no shift;
-- then it tries a missing token;
-- then it recovers to a state in a stack summary, wrapping what it popped in an `ERROR` that is an
-  extra.
-
-**Joined lines.** tree-sitter-python's scanner gives a NEWLINE only where the parse state takes one.
-Where it takes none (after `x =`, after `col:`), the line end is a blank, and the statement goes on in
-the next line. The lean lexer runs ahead of the parser, so the parser reports such a line end, and the
-text is lexed again with it joined (`lex::lex_joined`).
+tree-sitter-python's scanner gives a NEWLINE only where the parse state takes one. Where it takes none
+(after `x =`, after `col:`), the line end is a blank, and the statement goes on in the next line. The
+lean lexer runs ahead of the parser, so the parser reports such a line end, and the text is lexed again
+with it joined (`lex::lex_joined`).
 
 - A statement that fails at a NEWLINE asks for a join (`parse::Relex::Join`), unless a DEDENT follows.
   Where the next line is indented less, the scanner gives the DEDENT instead.
-- A statement that then fails at the joined line's first token asks for the join to be undone
-  (`Relex::Keep`). tree-sitter failed at that token too, so its `ERROR` is the first line's.
-- There are at most 64 joins and kept line ends a text. The text is lexed and parsed again for each,
-  which costs only on texts with errors.
+- There are at most 64 joins a text. The text is lexed and parsed again for each; a clean text that
+  needs none is lexed once.
+- Any other failure is a refusal, a joined text's too.
 
 So `_ =⏎b = 1` is the assignment `_ = b = 1`, and `col:⏎message: str` is `col: message: str`. That
 needs `constrained_type`, which the parser now writes in annotations: `a: b` is
 `constrained_type(a, b)`, right to left. A union beside a constraint is refused: tree-sitter reads it
 there as a `binary_operator`.
 
-**One ERROR at the failing line.** A statement that fails where its line ends (or the text does)
-becomes one `ERROR`, an extra of the innermost block or the module:
+One more refusal keeps a clean-looking text exact: in an interpolation, after a bare name, `:=` is
+tree-sitter's walrus token (`f"{x:=}"` is a `named_expression` with a missing value). After any other
+expression it is a format specifier, as the lean parser reads it.
 
-- **Kept subtrees:** a subtree the parser closed is kept whole, without its field. An import's names
-  keep `name:`, which a hidden rule gives them.
-- **Open nodes:** dissolved; their pieces are the `ERROR`'s.
-- **Tokens:** every token not inside a kept subtree is a leaf. `not in` and `is not` are their
-  two-token operator nodes.
-- **The last token:** whether tree-sitter reduced it depends on the token before it.
-  - After `(` `[` `{` `=` `->` or a keyword that takes an operand, it is not reduced. Closed nodes that
-    end at it are dissolved, and the leaf loses its supertypes.
-  - Otherwise it is reduced; a trailing expression-primary becomes a primary.
-- **Comments** before the statement stay outside the `ERROR`.
-- **A block's first statement:** the `ERROR` is the compound statement's, before its block. The block
-  is empty, at the `ERROR`'s end.
-- **The rest of the line:** the tokens from the failure to the line's end are the `ERROR`'s too.
-  Refused if one of them closes a bracket: tree-sitter picks the statement up again there.
+### No error recovery: one behavior
 
-**Refused, for tree-sitter-python:**
+The lean parser gives tree-sitter-python's tape, or refuses. There is no second mode where it gives
+some other tape for a text with an error.
 
-- a statement that fails over a joined line end. There tree-sitter's error mode reads keywords as
-  names, and its `ERROR`s go on through the lines after. A join is undone (`Relex::Keep`) only where
-  the next line is not indented past the first. Where it is, tree-sitter mostly skips the token into
-  the `ERROR`. (Keeping `return` and `raise` at any indent gave 2 more exact texts and 47 more wrong
-  ones; not taken.)
-- a statement over a line end inside brackets that fails before the text's last token
-  (`x = (1,⏎y = 2`). tree-sitter takes the statement up again after its `ERROR`.
-- a string cut short;
-- errors whose recovery tree-sitter picks by error cost: a root `ERROR` from the text's start, and a
-  token skipped inside an assignment.
+Recovery was built first, from tree-sitter's runtime rules (reduce while no shift; try a missing
+token; recover to a state in the stack summary, wrapping what was popped in an `ERROR`). It wrote one
+`ERROR` where a statement failed at the end of its line, with tree-sitter's kept subtrees, dissolved
+open nodes and leaves. Measured against tree-sitter's trees:
 
-None of these can be predicted without tree-sitter's parse table.
+| set | error texts: as tree-sitter / differ / refused |
+|---|---|
+| e-cut (1,000 files, each cut at 4 points) | 1,576 / 215 / 1,160 |
+| e-edit (1,000 files, 4 lines cut short each) | 57 / 76 / 1,800 |
+
+The texts that differ were wrong tapes the product would carry. Most were root `ERROR`s and choices
+tree-sitter makes by error cost between competing stack versions. No feature of the lean parse
+separated the exact recoveries from the wrong ones: depth, a statement over several lines, the parent
+kinds, the first child. Exact recovery needs tree-sitter's parse table and its cost competition, which
+is tree-sitter itself. So every error is refused, and tree-sitter-python recovers.
+
+If error texts become a cost, there are two paths that keep one behavior:
+
+- port tree-sitter's recovery over its parse table (exact by construction);
+- reparse only the damaged statement's region with tree-sitter and splice its tape in.
 
 ## Results
 
@@ -177,17 +187,16 @@ oracle file a text:
 
 | set | clean texts: same / differ / refused | error texts: as tree-sitter / differ / refused |
 |---|---|---|
-| e-4k | 3,916 / 0 / 0 | 0 / 1 / 0 |
+| e-4k | 3,916 / 0 / 0 | 0 / 0 / 1 |
 | cases | 56 / 0 / 0 | — |
-| e-cut | 2,049 / 0 / 0 | 1,565 / 225 / 1,161 |
-| e-edit | 2,138 / 0 / 5 | 57 / 76 / 1,800 |
+| e-cut | 2,049 / 0 / 0 | 0 / 0 / 2,951 |
+| e-edit | 2,138 / 0 / 5 | 0 / 0 / 1,933 |
 
-Before this decision, every error text was refused. With recovery but before the join, e-edit's clean
-texts were 2,098 same, 28 differ and 17 refused: recovery gave an `ERROR` where tree-sitter joined the
-line. The 5 refused now are constrained types with a union.
+No tape differs: each is tree-sitter-python's or a refusal. The 5 clean texts refused are constrained
+types with a union. Before the join, e-edit's clean texts were 2,098 same, 28 differ and 17 refused.
 
-The error texts that differ are wrong tapes, not refusals: the product would carry those tapes. They
-are the open item below.
+e-4k's error text is `f"{labels:=}"`: tree-sitter reads a walrus with a missing value, the lean
+parser read a format specifier; it is now refused (above).
 
 The x86_64 build was checked three ways:
 
@@ -198,19 +207,17 @@ The x86_64 build was checked three ways:
 Costs on arm64 (M5), profiling build, over the 1,000 files (`python_parse_costs`), in instructions a
 node:
 
-| | before (0163) | now |
-|---|---:|---:|
-| lean: the tokens alone | 228 | 236 |
-| lean: the tape | 604 | 618 |
-| tree-sitter-python: the tape | 8,912 | 8,945 |
+| | before (0163) | with recovery | now |
+|---|---:|---:|---:|
+| lean: the tokens alone | 228 | 236 | 234 |
+| lean: the tape | 604 | 618 | 615 |
+| tree-sitter-python: the tape | 8,912 | 8,945 | 8,921 |
 
-Stage 1 and the hash replaced code that cost about the same. The rest is the recovery path's checks.
 A clean text is never lexed again.
 
 ## Open
 
-- **Error texts that differ.** They are recovered wrongly, so the product carries a tape tree-sitter
-  would not write. Each remaining shape is to become a rule or a refusal; most are root `ERROR`s and
-  error-cost choices.
+- **Error texts** go to tree-sitter-python. If they become a cost: tree-sitter's recovery over its
+  parse table, or the damaged region reparsed by tree-sitter and spliced in (above).
 - **Lexing again on a join** reads the whole text again. A lexer that resumes from a saved layout
   state would read only from the join.

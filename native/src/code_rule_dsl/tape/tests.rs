@@ -2641,6 +2641,8 @@ fn python_tapes_from_the_lean_parser_are_tree_sitters() {
         "with a as _:\n    _ =\n    b = 1\n",
         "class A:\n    col:\n    message: str\n",
         "def f(x: a: b): pass\n",
+        // `:=` after a string is a format specifier.
+        "print(f\"{' a ':=^8}\")\n",
     ] {
         let ours = python_lean::encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
         let tree = parser.parse(source, None).unwrap();
@@ -2648,9 +2650,14 @@ fn python_tapes_from_the_lean_parser_are_tree_sitters() {
         let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary;
         assert!(ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(), "the tapes of {source:?} differ:\n{}\n{}", python_tape_plain(&ours, &grammar), python_tape_plain(&theirs, &grammar));
     }
-    // A text that ends in a statement (a file being written): recovered as tree-sitter recovers it,
-    // its `ERROR` byte for byte.
-    for cut in [
+    // Any syntax error: refused, for tree-sitter-python, which recovers as it recovers. The lean
+    // parser has one behavior: tree-sitter's tape, or a refusal.
+    for invalid in [
+        "if a\n    b\n",
+        "x = 'open\n",
+        "f(a b)\n",
+        "x = (1,\ny = 2\n",
+        // Texts that end in a statement (a file being written).
         "x = (1,\n",
         "x = [1, 2\n",
         "def f(x):\n    return foo(a, b",
@@ -2658,18 +2665,10 @@ fn python_tapes_from_the_lean_parser_are_tree_sitters() {
         "class A:\n    def f(self):\n        return 1\n\n    x = g(y.z",
         "# c\nif x:\n    y = 1\n    # d\n    z = [a for",
         "from os.path impor",
-        // An error at a line's end where the next line's first token is one no NEWLINE-less line
-        // takes: the `ERROR` is the line's.
         "@p.\ndef f():\n    pass\n",
+        // After a bare name, tree-sitter's lexer reads `:=` in an interpolation: a walrus.
+        "f\"{x:=}\"\n",
     ] {
-        let tree = parser.parse(cut, None).unwrap();
-        assert!(tree.root_node().has_error(), "{cut:?} reads without an error");
-        let ours = python_lean::encode(&grammar, cut, &|| false).unwrap_or_else(|why| panic!("refused {cut:?}: {why:?}")).unwrap();
-        let theirs = TapeImage::encode(tree.root_node(), &grammar, cut, &|| false).unwrap().primary;
-        assert!(ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(), "the tapes of {cut:?} differ:\n{}\n{}", python_tape_plain(&ours, &grammar), python_tape_plain(&theirs, &grammar));
-    }
-    // An error before the end: refused, for tree-sitter-python.
-    for invalid in ["if a\n    b\n", "x = 'open\n", "f(a b)\n", "x = (1,\ny = 2\n"] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(python_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }

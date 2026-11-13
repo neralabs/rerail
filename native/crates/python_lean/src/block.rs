@@ -98,11 +98,12 @@ unsafe fn masks<S: Simd8x64>(b: &[u8; 64]) -> [u64; 4] {
     unsafe {
         let v = S::load(b);
         let c = S::classify(v, &LO, &HI);
-        let word = S::nonzero(S::and(c, S::splat(C_WORD)));
-        let blank = S::nonzero(S::and(c, S::splat(C_BLANK)));
-        let eol = S::nonzero(S::and(c, S::splat(C_EOL)));
+        // Each mask one test, packed once (`test` stays a vector).
+        let word = S::to_bitmask(S::test(c, S::splat(C_WORD)));
+        let blank = S::to_bitmask(S::test(c, S::splat(C_BLANK)));
+        let eol = S::to_bitmask(S::test(c, S::splat(C_EOL)));
         let others = S::or(S::or(S::eq(v, S::splat(b'`')), S::eq(v, S::splat(b'\\'))), S::or(S::eq(v, S::splat(b'{')), S::eq(v, S::splat(b'}'))));
-        let stop = S::nonzero(S::and(c, S::splat(C_EOL | C_QUOTE))) | S::to_bitmask(others);
+        let stop = S::to_bitmask(S::or(S::test(c, S::splat(C_EOL | C_QUOTE)), others));
         [word, blank, eol, stop]
     }
 }

@@ -3,12 +3,11 @@
 //! tree-sitter-python's tree encodes to, node for node (`python_tapes_from_the_lean_parser_are_tree_sitters`).
 //!
 //! The parser's keys name kinds, fields and supertypes by their names in tree-sitter-python
-//! (`rerail_python_lean::{KINDS, FIELDS, CLASSES}`); here they are its ids. A statement the text ends
-//! in is recovered as tree-sitter recovers it (an `ERROR`). A file the parser refuses (a syntax error
-//! elsewhere, which tree-sitter recovers from; a construct it does not read) goes to
+//! (`rerail_python_lean::{KINDS, FIELDS, CLASSES}`); here they are its ids. A file the parser refuses
+//! (any syntax error, which tree-sitter recovers from; a construct it does not read) goes to
 //! tree-sitter-python.
 
-use crate::code_rule_dsl::tape::{CODE_EXTRA, Code, ERROR_CODE, FIELD_LIMIT, FileImage, Grammar, KIND_LIMIT, TapeImage, TemplateError, TreeParser};
+use crate::code_rule_dsl::tape::{CODE_EXTRA, Code, FIELD_LIMIT, FileImage, Grammar, KIND_LIMIT, TapeImage, TemplateError, TreeParser};
 
 /// tree-sitter-python's ids of the parser's kinds, fields and supertype sets.
 struct Ids {
@@ -24,8 +23,7 @@ fn ids() -> Option<&'static Ids> {
         use ast_grep_language::LanguageExt;
         let language = GrammarDialect::Python.get_ts_language();
         let id = |name: &str, named: bool| Some(language.id_for_node_kind(name, named)).filter(|&k| k != 0 && (k as usize) < KIND_LIMIT);
-        // `ERROR` is tree-sitter's error symbol, past the grammar's: the tape's own code.
-        let kinds = rerail_python_lean::KINDS.iter().map(|&(name, named)| if name == "ERROR" { Some(ERROR_CODE) } else { id(name, named) }).collect::<Option<Vec<_>>>()?;
+        let kinds = rerail_python_lean::KINDS.iter().map(|&(name, named)| id(name, named)).collect::<Option<Vec<_>>>()?;
         let fields = rerail_python_lean::FIELDS
             .iter()
             .map(|&name| if name.is_empty() { Some(0) } else { language.field_id_for_name(name).map(|f| f.get()).filter(|&f| (f as usize) < FIELD_LIMIT) })
@@ -56,7 +54,7 @@ pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Res
         .map(|&key| {
             let (kind, field, class, extra) = rerail_python_lean::unkey(key);
             let kind = ids.kinds[usize::from(kind)];
-            let mut code = if kind == ERROR_CODE { Code::error(ids.fields[usize::from(field)])? } else { Code::plain(kind, ids.fields[usize::from(field)], &ids.classes[usize::from(class)])? };
+            let mut code = Code::plain(kind, ids.fields[usize::from(field)], &ids.classes[usize::from(class)])?;
             if extra {
                 code.flags |= CODE_EXTRA;
             }

@@ -129,9 +129,8 @@ struct P<'a> {
     depth: u32,
     /// The text to be lexed again: the parse stops (`Relex`).
     relex: Option<Relex>,
-    /// The line ends joined, and those not to join, in order.
+    /// The line ends joined, in order.
     joins: &'a [u32],
-    kept: &'a [u32],
 }
 
 /// How the text is to be lexed again, and parsed.
@@ -140,16 +139,13 @@ pub enum Relex {
     /// A NEWLINE a statement failed at, where no DEDENT follows: tree-sitter's scanner gives
     /// nothing there (NEWLINE is not valid), and the statement goes on in the next line.
     Join(u32),
-    /// A joined line end, where the statement failed at the next line's first token: tree-sitter
-    /// failed there too, and its `ERROR` is the line's, as if the line ended.
-    Keep(u32),
 }
 
-/// Line ends a text may join, or keep, before its statements are recovered without.
+/// Line ends a text may join before it is refused.
 pub const MAX_JOINS: usize = 64;
 
-/// `src` parsed, `joins` joined, `kept` not; `Err(Ok(r))`, the text to be lexed again.
-pub fn parse(src: &[u8], lexed: &Lexed, joins: &[u32], kept: &[u32]) -> Result<Tape, Result<Relex, Refusal>> {
+/// `src` parsed, `joins` joined; `Err(Ok(r))`, the text to be lexed again.
+pub fn parse(src: &[u8], lexed: &Lexed, joins: &[u32]) -> Result<Tape, Result<Relex, Refusal>> {
     let mut widths = Widths::guess(src.len());
     loop {
         let mut p = P {
@@ -163,7 +159,6 @@ pub fn parse(src: &[u8], lexed: &Lexed, joins: &[u32], kept: &[u32]) -> Result<T
             depth: 0,
             relex: None,
             joins,
-            kept,
         };
         if let Err(r) = p.module() {
             return Err(p.relex.ok_or(r));
@@ -391,7 +386,7 @@ impl<'a> P<'a> {
         let start = self.extras.first().map_or(first, |x| x.start.min(first));
         let m = self.w.push(key(K::Module, f::NONE, C_NONE, false), start);
         while self.peek() != T::Eof {
-            self.statement_or_recovered(None)?;
+            self.statement_or_joined()?;
             self.w.commit();
         }
         self.flush(u32::MAX);
@@ -399,226 +394,28 @@ impl<'a> P<'a> {
         Ok(())
     }
 
-    /// A statement of a module or of `block`; one the text ends in, recovered as tree-sitter
-    /// recovers it (`recover_at_end`).
+    /// A statement of a module or of a block. One that fails at a NEWLINE with no DEDENT after it
+    /// asks for that line end joined: tree-sitter's scanner gives no NEWLINE where the parse state
+    /// takes none, and the statement goes on in the next line. Any other failure is a refusal:
+    /// tree-sitter-python reads the file, and its recovery is its own.
     #[inline(always)]
-    fn statement_or_recovered(&mut self, block: Option<&mut N>) -> R<()> {
-        let mark = Mark { n: self.w.len(), i: self.i, depth: self.depth };
+    fn statement_or_joined(&mut self) -> R<()> {
         match self.statement() {
             Ok(()) => Ok(()),
-            Err(r @ Refusal::Parse(_)) if self.relex.is_some() => Err(r),
-            Err(r @ Refusal::Parse(_)) if self.joins.len() + self.kept.len() < MAX_JOINS && self.relexed().is_some() => {
-                self.relex = self.relexed();
+            Err(r @ Refusal::Parse(_)) if self.relex.is_none() && self.joins.len() < MAX_JOINS => {
+                self.relex = self.joinable();
                 Err(r)
             }
-            Err(Refusal::Parse(_)) => self.recover_at_end(mark, block),
             Err(r) => Err(r),
         }
     }
 
-    /// A statement failed at the next token: whether tree-sitter's scanner read the line ends
-    /// around it otherwise (`Relex`).
+    /// A statement failed at the next token: the line end to join there, if any.
     #[cold]
-    fn relexed(&self) -> Option<Relex> {
+    fn joinable(&self) -> Option<Relex> {
         let t = self.tok();
-        if t.kind == T::Newline {
-            let dedent = self.toks.get(self.i + 1).is_some_and(|n| n.kind == T::Dedent);
-            return (!dedent && self.kept.binary_search(&t.start).is_err()).then_some(Relex::Join(t.start));
-        }
-        // The first token of a joined line: a line end joined between the last token and it. Only
-        // where that line is not indented past the line before it: else tree-sitter mostly skips
-        // the token into the `ERROR` (refused, as a statement over a joined line end).
-        let k = self.joins.partition_point(|&j| j < self.last_end);
-        let &j = self.joins.get(k).filter(|&&j| j < t.start)?;
-        let indent = |at: usize| {
-            let from = self.src[..at].iter().rposition(|&c| c == b'\n').map_or(0, |i| i + 1);
-            self.src[from..].iter().take_while(|&&c| c == b' ' || c == b'\t').count()
-        };
-        (indent(t.start as usize) <= indent(j as usize)).then_some(Relex::Keep(j))
-    }
-
-    /// A statement the text ends in, as tree-sitter-python recovers it: one `ERROR`, an extra of the
-    /// block (or module) the statement is in, holding what tree-sitter's stack holds at the end.
-    ///
-    /// - A subtree tree-sitter reduced (one the parser closed) is kept whole, without its field
-    ///   (but for an import's names, which a hidden rule gives theirs); its supertypes are its
-    ///   context's.
-    /// - A node still open is not made: its pieces are the `ERROR`'s, each by the same rule.
-    /// - Every token not in a kept subtree is a leaf of its own: an `ERROR` implies none.
-    /// - Comments before the statement stay outside the `ERROR`.
-    /// - A block's first statement: the `ERROR` is the compound statement's, before its block,
-    ///   which is empty, at the text's end (tree-sitter had no block yet to put it in).
-    ///
-    /// Only where the statement's line ends after the failure (or the text does), with no bracket
-    /// closed in between; else refused (tree-sitter-python reads the file).
-    #[cold]
-    #[inline(never)]
-    fn recover_at_end(&mut self, mark: Mark, block: Option<&mut N>) -> R<()> {
-        // The tokens from the one the statement failed at to its line's end: the `ERROR`'s too
-        // (tree-sitter skips them into it). Then the line ends (a line end restarts the parse), or
-        // the text does. None of them closes a bracket: there tree-sitter takes up the statement
-        // again (`)` after `f(a b`), inside it.
-        let layout = |t: &Tok| matches!(t.kind, T::Newline | T::Indent | T::Dedent | T::Eof);
-        // A statement over a joined line end: tree-sitter's recovery there goes on into the lines
-        // after (keywords read as names, an `ERROR` a line); refused.
-        let begin = self.toks[mark.i].start;
-        if self.joins.iter().any(|&j| j >= begin && j < self.tok().start) {
-            return self.refuse();
-        }
-        // (Its line as the text has it: inside brackets the lexer gives no line ends.)
-        let from = self.toks[self.i].start as usize;
-        let line_end = self.src[from.min(self.src.len())..].iter().position(|&c| c == b'\n').map_or(u32::MAX, |k| (from + k) as u32);
-        let rest = self.toks[self.i..].iter().take_while(|t| !layout(t) && t.start < line_end).count();
-        let after = &self.toks[self.i + rest..];
-        let ends = after.iter().all(layout) || after.first().is_some_and(|t| t.kind == T::Newline);
-        if !ends || self.toks[self.i..self.i + rest].iter().any(|t| matches!(t.kind, T::RParen | T::RBracket | T::RBrace)) {
-            return self.refuse();
-        }
-        // A statement over a line end inside brackets (no NEWLINE there), failing before the
-        // text's last token: tree-sitter takes the statement up again after its `ERROR`
-        // (`x = (1,⏎y = 2`); refused.
-        let span = &self.src[(begin as usize).min(self.src.len())..(self.tok().start as usize).min(self.src.len())];
-        if span.contains(&b'\n') && (rest > 1 || after.iter().any(|t| !layout(t))) {
-            return self.refuse();
-        }
-        let Some(last) = self.toks[mark.i..self.i].iter().rev().find(|t| !layout(t)).copied() else { return self.refuse() };
-        let toks: Vec<Tok> = self.toks[mark.i..self.i + rest].iter().copied().filter(|t| !layout(t)).collect();
-        let consumed = toks.len() - rest;
-        self.i += rest;
-        // Whether tree-sitter reduced the last token into what the parser closed around it: by the
-        // token before it (measured over cut texts). After an opening bracket, `=`, `->` or a
-        // keyword it did not (the last token's subtrees are pieces; its leaf has no supertypes);
-        // after `,`, `.`, `:`, an operator, a closing bracket it did, up to a primary expression.
-        let reduced = consumed < 2
-            || !matches!(
-                toks[consumed - 2].kind,
-                T::LParen | T::LBracket | T::LBrace | T::Eq | T::Arrow | T::From | T::If | T::In | T::Not | T::With | T::Elif | T::While | T::For | T::Return | T::Import | T::Del | T::Assert | T::Raise | T::Yield | T::Lambda | T::Global | T::Nonlocal | T::Except | T::As | T::Class | T::Def
-            );
-        // The kept subtrees, in order (first node, size, its key in the `ERROR`); the open nodes
-        // are the ancestors of all after them, so a kept node's parent is the last open one.
-        let mut kept: Vec<(usize, usize, u32)> = Vec::new();
-        let mut parent = None;
-        let mut j = mark.n;
-        while j < self.w.len() {
-            let size = self.w.size(j) as usize;
-            let at_end = !self.w.is_open(j) && self.w.end(j) >= last.end;
-            if self.w.is_open(j) || (!reduced && at_end && size > 1) {
-                parent = Some(self.kind_at(j));
-                j += 1;
-                continue;
-            }
-            let (kind, field, class, extra) = unkey(self.w.key(j));
-            let import = matches!(parent, Some(K::ImportStatement | K::ImportFromStatement | K::FutureImportStatement));
-            let field = if import && field == f::NAME { field } else { f::NONE };
-            let class = match (at_end, reduced) {
-                (true, false) => C_NONE,
-                (true, true) if size > 1 && class == C_EP => C_P,
-                _ => class,
-            };
-            kept.push((j, size, key(kind_of(kind), field, class, extra)));
-            j += size;
-        }
-        // The comments before the statement's first token, outside the `ERROR`.
-        let lead = kept.iter().take_while(|&&(j, _, k)| unkey(k).3 && self.w.start(j) < toks[0].start).count();
-        let pieces = self.pieces(&kept, &toks)?;
-        // A block's first statement: the block goes, and comes back empty after the `ERROR`.
-        let first = block.as_ref().map(|b| (b.at + 1 == mark.n, self.w.key(b.at)));
-        let from = match first {
-            Some((true, _)) => mark.n - 1,
-            _ => mark.n,
-        };
-        self.w.truncate(from);
-        self.depth = mark.depth;
-        for nodes in &pieces[..lead] {
-            self.replay(nodes);
-        }
-        let error = self.w.push(key(K::Error, f::NONE, C_NONE, true), pieces[lead][0].1);
-        for nodes in &pieces[lead..] {
-            self.replay(nodes);
-        }
-        let end = toks.last().map_or(last.end, |t| t.end);
-        self.w.close(error, end);
-        self.last_end = end;
-        if let (Some((true, key)), Some(b)) = (first, block) {
-            b.at = self.w.push(key, end);
-        }
-        // The statement's line ends are the `ERROR`'s; the dedents close the blocks around it.
-        while self.peek() == T::Newline {
-            self.i += 1;
-        }
-        Ok(())
-    }
-
-    /// The pieces of an `ERROR` by start: each kept subtree's nodes (key, start, size, end), and a
-    /// leaf for each token not in one.
-    fn pieces(&self, kept: &[(usize, usize, u32)], toks: &[Tok]) -> R<Vec<Vec<(u32, u32, u32, u32)>>> {
-        let node = |w: &Writer<Widths>, n: usize| (w.key(n), w.start(n), w.size(n), w.end(n));
-        let mut pieces: Vec<Vec<(u32, u32, u32, u32)>> = Vec::new();
-        let (mut k, mut t) = (0, 0);
-        while k < kept.len() || t < toks.len() {
-            let ks = kept.get(k).map(|&(j, _, _)| self.w.start(j));
-            match (ks, toks.get(t).copied()) {
-                (Some(ks), Some(tok)) if tok.start >= ks => {
-                    let (j, size, key) = kept[k];
-                    let end = self.w.end(j);
-                    let mut nodes: Vec<_> = (j..j + size).map(|n| node(&self.w, n)).collect();
-                    nodes[0].0 = key;
-                    pieces.push(nodes);
-                    // The tokens inside it are its own.
-                    while toks.get(t).is_some_and(|x| x.start < end) {
-                        t += 1;
-                    }
-                    k += 1;
-                }
-                (Some(_), None) => {
-                    let (j, size, key) = kept[k];
-                    let mut nodes: Vec<_> = (j..j + size).map(|n| node(&self.w, n)).collect();
-                    nodes[0].0 = key;
-                    pieces.push(nodes);
-                    k += 1;
-                }
-                (ks, Some(tok)) => {
-                    // `not in` and `is not`: one operator of two tokens, as in a comparison.
-                    let next = toks.get(t + 1).filter(|n| ks.is_none_or(|ks| n.start < ks));
-                    // Only after an operand (`a not in`; `if not in` is a unary `not`): a kept
-                    // subtree, or a token that ends one.
-                    let operand = pieces.last().is_some_and(|p| {
-                        p.len() > 1 || t == 0 || toks[t - 1].start != p[0].1 || matches!(toks[t - 1].kind, T::Name | T::Int | T::Float | T::True | T::False | T::None | T::Ellipsis | T::RParen | T::RBracket | T::RBrace | T::StrEnd)
-                    });
-                    let pair = match (tok.kind, next.map(|n| n.kind).filter(|_| operand)) {
-                        (T::Not, Some(T::In)) => Some(K::NotIn),
-                        (T::Is, Some(T::Not)) => Some(K::IsNot),
-                        _ => Option::None,
-                    };
-                    if let (Some(op), Some(&n)) = (pair, next) {
-                        let leaf = |t: Tok| -> R<(u32, u32, u32, u32)> { Ok((key(token_kind(t)?, f::NONE, C_NONE, false), t.start, 1, t.end)) };
-                        pieces.push(vec![(key(op, f::NONE, C_NONE, false), tok.start, 3, n.end), leaf(tok)?, leaf(n)?]);
-                        t += 2;
-                        continue;
-                    }
-                    pieces.push(vec![(key(token_kind(tok)?, f::NONE, C_NONE, false), tok.start, 1, tok.end)]);
-                    t += 1;
-                }
-                (None, None) => unreachable!(),
-            }
-        }
-        Ok(pieces)
-    }
-
-    /// Nodes written again, in preorder: (key, start, size, end) each.
-    fn replay(&mut self, nodes: &[(u32, u32, u32, u32)]) {
-        let mut open: Vec<(usize, usize, u32)> = Vec::new();
-        for (k, &(key, start, size, end)) in nodes.iter().enumerate() {
-            let at = self.w.push(key, start);
-            open.push((at, k + size as usize, end));
-            while let Some(&(at, until, end)) = open.last() {
-                if until != k + 1 {
-                    break;
-                }
-                self.w.close(at, end);
-                open.pop();
-            }
-        }
+        let dedent = self.toks.get(self.i + 1).is_some_and(|n| n.kind == T::Dedent);
+        (t.kind == T::Newline && !dedent).then_some(Relex::Join(t.start))
     }
 
     fn statement(&mut self) -> R<()> {
@@ -1137,15 +934,11 @@ impl<'a> P<'a> {
         match self.peek() {
             T::Indent => {
                 self.bump();
-                let mut b = self.open(K::Block, field, C_NONE);
+                let b = self.open(K::Block, field, C_NONE);
                 while !matches!(self.peek(), T::Dedent | T::Eof) {
-                    self.statement_or_recovered(Some(&mut b))?;
+                    self.statement_or_joined()?;
                 }
-                // The text's end closes a block too: one recovered inside brackets, where the
-                // lexer gives no dedents.
-                if self.peek() != T::Eof {
-                    self.expect(T::Dedent)?;
-                }
+                self.expect(T::Dedent)?;
                 self.close(b);
             }
             T::Newline => {
@@ -2520,6 +2313,12 @@ impl<'a> P<'a> {
             bare_eq = false;
         }
         if self.peek() == T::Spec {
+            // `{x:=}`: after a bare name, tree-sitter's lexer reads `:=` (a walrus whose value is
+            // missing).
+            let bare_name = self.i >= 2 && self.toks[self.i - 1].kind == T::Name && self.toks[self.i - 2].kind == T::IOpen;
+            if bare_name && self.src.get(self.tok().start as usize + 1) == Some(&b'=') {
+                return Err(Refusal::Parse(self.tok().start));
+            }
             bare_eq = false;
             let fs = self.open(K::FormatSpecifier, f::FORMAT_SPECIFIER, C_NONE);
             self.bump();
@@ -2667,121 +2466,6 @@ impl<'a> P<'a> {
         self.close(n);
         Ok(())
     }
-}
-
-/// Where a statement began: the writer's nodes, the tokens read, the depth.
-#[derive(Clone, Copy)]
-struct Mark {
-    n: usize,
-    i: usize,
-    depth: u32,
-}
-
-/// A token's leaf in an `ERROR`: its kind as tree-sitter names the token.
-fn token_kind(t: Tok) -> R<K> {
-    use T::*;
-    Ok(match t.kind {
-        Name => match t.soft {
-            soft::ASYNC => K::TAsync,
-            soft::AWAIT => K::TAwait,
-            soft::MATCH => K::TMatch,
-            soft::CASE => K::TCase,
-            soft::TYPE => K::TType,
-            soft::PRINT => K::TPrint,
-            soft::EXEC => K::TExec,
-            _ => K::Identifier,
-        },
-        Int => K::Integer,
-        Float => K::Float,
-        False => K::False,
-        None => K::None,
-        True => K::True,
-        Ellipsis => K::Ellipsis,
-        And => K::TAnd,
-        As => K::TAs,
-        Assert => K::TAssert,
-        Break => K::TBreak,
-        Class => K::TClass,
-        Continue => K::TContinue,
-        Def => K::TDef,
-        Del => K::TDel,
-        Elif => K::TElif,
-        Else => K::TElse,
-        Except => K::TExcept,
-        Finally => K::TFinally,
-        For => K::TFor,
-        From => K::TFrom,
-        Global => K::TGlobal,
-        If => K::TIf,
-        Import => K::TImport,
-        In => K::TIn,
-        Is => K::TIs,
-        Lambda => K::TLambda,
-        Nonlocal => K::TNonlocal,
-        Not => K::TNot,
-        Or => K::TOr,
-        Pass => K::TPass,
-        Raise => K::TRaise,
-        Return => K::TReturn,
-        Try => K::TTry,
-        While => K::TWhile,
-        With => K::TWith,
-        Yield => K::TYield,
-        LParen => K::TLParen,
-        RParen => K::TRParen,
-        LBracket => K::TLBracket,
-        RBracket => K::TRBracket,
-        LBrace | IOpen => K::TLBrace,
-        RBrace | IClose => K::TRBrace,
-        Comma => K::TComma,
-        Colon | Spec => K::TColon,
-        Semi => K::TSemi,
-        Dot => K::TDot,
-        Eq => K::TEq,
-        Walrus => K::TWalrus,
-        Arrow => K::TArrow,
-        At => K::TAt,
-        Plus => K::TPlus,
-        Minus => K::TMinus,
-        Star => K::TStar,
-        Pow => K::TPow,
-        Slash => K::TSlash,
-        DSlash => K::TDSlash,
-        Percent => K::TPercent,
-        Amp => K::TAmp,
-        Pipe => K::TPipe,
-        Caret => K::TCaret,
-        Tilde => K::TTilde,
-        LShift => K::TLShift,
-        RShift => K::TRShift,
-        Lt => K::TLt,
-        Gt => K::TGt,
-        Le => K::TLe,
-        Ge => K::TGe,
-        EqEq => K::TEqEq,
-        Ne => K::TNe,
-        LtGt => K::TLtGt,
-        PlusEq => K::TPlusEq,
-        MinusEq => K::TMinusEq,
-        StarEq => K::TStarEq,
-        SlashEq => K::TSlashEq,
-        AtEq => K::TAtEq,
-        DSlashEq => K::TDSlashEq,
-        PercentEq => K::TPercentEq,
-        PowEq => K::TPowEq,
-        RShiftEq => K::TRShiftEq,
-        LShiftEq => K::TLShiftEq,
-        AmpEq => K::TAmpEq,
-        CaretEq => K::TCaretEq,
-        PipeEq => K::TPipeEq,
-        StrStart => K::StringStart,
-        StrEnd => K::StringEnd,
-        Text => K::StringContent,
-        Escape => K::EscapeSequence,
-        EscInterp => K::EscapeInterpolation,
-        Backslash => K::TBackslash,
-        Eof | Newline | Indent | Dedent | Conversion => return Err(Refusal::Parse(t.start)),
-    })
 }
 
 /// A key's kind as `K`.
