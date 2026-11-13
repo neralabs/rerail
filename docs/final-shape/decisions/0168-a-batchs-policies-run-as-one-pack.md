@@ -113,7 +113,9 @@ What changed (the programs they produce are the same):
 Checked: a temporary harness ran the old and the new `hide` side by side on all 42 calls of the dl1 batch, pack
 and per-policy, and their rules, declarations and kindsets printed the same. Findings: 48, the same.
 
-Measured on dl1 (44 policies, one pack, debug, `RERAIL_THREADS=4`, load 62–87), against the same tree before:
+Measured on dl1 (44 policies, one pack, **debug build**, `RERAIL_THREADS=4`, load 62–87), against the same tree
+before. A debug build runs host code many times slower than an optimized one, and not evenly. The optimized figures
+are under "Loading on an optimized build" below.
 
 | | before | after |
 |---|---|---|
@@ -121,9 +123,40 @@ Measured on dl1 (44 policies, one pack, debug, `RERAIL_THREADS=4`, load 62–87)
 | first batch over a new store | 170.0 G | 158.3 G |
 | second batch (warm) | 69.9 G | 63.7 G (6.6 s user) |
 
-Spans in the pack (cold): hiding 0.46 → 0.35 s; merging identical relations 0.39 → 0.24 s; merging identical
-relations again in `prepare` 0.58 → 0.28 s. The fact spaces (0.41 s, a full `split` of 2,134 relations for the
-locations alone) and parsing the 44 programs (0.90 s) are what is left of loading (O-pack-passes).
+Spans in the pack (cold, debug): hiding 0.46 → 0.35 s; merging identical relations 0.39 → 0.24 s; merging identical
+relations again in `prepare` 0.58 → 0.28 s.
+
+## Loading on an optimized build
+
+On `--profile profiling` (dl1, one pack, cold, `RERAIL_TAPE_CACHE=off`, load 24), the whole batch is 27.4–27.8 G
+instructions and 2.8–3.1 s user, with 48 findings. "Parse each program (44)" is 0.12 s, not the debug build's 0.90 s,
+and almost none of it is parsing:
+
+| part | ms |
+|---|---|
+| read each text: its tape, statements and includes | 11 |
+| lower the rules (`Lowerer::clause`) | 31 |
+| the program's analyses (findings, span patterns, kind sets) | 24 |
+| aggregate demand and sets | 15 |
+| check the program's cycles and caches (`front::finish`) | 12 |
+| type the tapes' terms | 6 |
+| read the statements (each program's ~690 library declarations among them) | 4 |
+| the rest (copying the library's statements, `front::declared`) | 17 |
+
+The text becomes a tape in well under a millisecond (`rr_syntax::lean::tape`, 1 sample in 3 sampled runs).
+
+Two changes were built, checked and dropped, because neither pays on optimized code:
+- **Library statements read once per run.** 40 of the programs each lower about 690 library statements (27,619 in
+  all, against 3,618 of their own), which `own_part` then drops. A lowering's state after the library's statements
+  was made once per list of files and continued by each program. Its programs printed the same as before on all 57
+  lowerings of the batch, pack and per-policy. But the declarations cost 4 ms in all, and copying the state cost
+  about as much as it saved: the span was 0.17–0.21 s with it and 0.16–0.22 s without (three alternating pairs, load
+  55–83).
+- **Value cycles checked once, in the combined program.** The 44 per-program checks cost 0.022 s, and one check of
+  the combined program cost 0.026 s: it holds all the programs' rules and the library's.
+
+The patch of the first is kept outside the tree. What lowering costs is each program's own rules and the analyses
+over them, about 2 ms a program (O-pack-passes).
 
 ## Tests
 

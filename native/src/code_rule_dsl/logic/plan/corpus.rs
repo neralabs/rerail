@@ -875,6 +875,7 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
     };
     let parsing = crate::code_rule_dsl::logic::profile::span(|| format!("parse each program ({})", programs.len()));
     // Each text read once, for its modules and its program, when the two are of the same text (no `extra`).
+    let reading = crate::code_rule_dsl::logic::profile::span(|| "read each text (tape, statements, includes)".to_owned());
     let mut texts: Vec<Option<crate::code_rule_dsl::logic::rr::Text>> = if programs.len() > 1 && extra.is_empty() {
         programs.iter().map(|text| crate::code_rule_dsl::logic::rr::read_text(text).map(Some).map_err(|e| in_policy(text, e))).collect::<std::result::Result<_, _>>()?
     } else {
@@ -901,6 +902,8 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
         modules.heads.iter().any(|h| !core.contains(h) && modules.files.iter().any(|(_, _, names)| names.contains(h)))
     };
     let own_only: Vec<bool> = modular.iter().map(|m| !copied && m.as_ref().is_some_and(|m| !asks(m))).collect();
+    drop(reading);
+    let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower each program".to_owned());
     let mut parsed = programs
         .iter()
         .zip(&own_only)
@@ -923,6 +926,7 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
             Ok(prog)
         })
         .collect::<std::result::Result<Vec<_>, Error>>()?;
+    drop(lowering);
     // `RERAIL_DUMP_PROGRAMS=<file>`: each program's prefix (`p<i>_`) and its first policy or line (a debugging aid).
     if let Ok(path) = std::env::var("RERAIL_DUMP_PROGRAMS") {
         let lines: String = programs

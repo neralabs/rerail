@@ -293,7 +293,10 @@ fn scope_report_globs(settings: &[(String, String)]) -> Vec<String> {
 }
 
 pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
+    let typing = crate::code_rule_dsl::logic::profile::span(|| "type the tapes' terms".to_owned());
     super::tape_type::check(&statements)?;
+    drop(typing);
+    let reading = crate::code_rule_dsl::logic::profile::span(|| "read the statements".to_owned());
     let mut l = Lowerer::default();
     let mut clauses = Vec::new();
     // `.shape` binds to the rule just before it (O-join-shape-directives): its heads, then each directive and its line.
@@ -361,6 +364,8 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
             }
         }
     }
+    drop(reading);
+    let rules = crate::code_rule_dsl::logic::profile::span(|| "lower the rules".to_owned());
     l.derived = clauses.iter().flat_map(|(heads, ..)| heads.iter().map(|h| h.rel.clone())).chain(l.prog.facts.keys().cloned()).collect();
     l.printed_demands = DEMANDS.iter().chain(WORLD.iter().map(|(_, d)| d)).filter(|d| l.prog.decls.contains_key(**d)).map(|d| (*d).to_owned()).collect();
     for (heads, body, edits, line) in clauses {
@@ -389,6 +394,8 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
         }
         l.prog.shapes.push(shape);
     }
+    drop(rules);
+    let analyses = crate::code_rule_dsl::logic::profile::span(|| "the program's analyses (findings, spans, kinds)".to_owned());
     l.three_valued();
     l.findings()?;
     l.declare_core()?;
@@ -422,7 +429,9 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     if l.prog.doc_scopes.is_none() {
         l.prog.doc_scopes = scope_globs(&l.prog.settings).map(|g| vec![g]);
     }
+    drop(analyses);
     let mut program = crate::code_rule_dsl::logic::front::finish(l.prog)?;
+    let demand = crate::code_rule_dsl::logic::profile::span(|| "aggregate demand and sets".to_owned());
     super::aggregate_demand::optimize(&mut program);
     // The demand's rules, and the rules whose aggregate it made an existence test, read no relation either.
     unit(&mut program);
@@ -467,6 +476,7 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
         }
         *rows = kept;
     }
+    drop(demand);
     Ok(program)
 }
 

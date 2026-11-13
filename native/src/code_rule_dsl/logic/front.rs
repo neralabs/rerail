@@ -703,9 +703,11 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
     if let Some(relation) = prog.inputs.iter().find(|rel| !prog.decls.contains_key(*rel)) {
         return Err(Error::UndeclaredInput { relation: relation.clone() });
     }
+    let checking = crate::code_rule_dsl::logic::profile::span(|| "check the program's cycles and caches".to_owned());
     cycles::check(&prog)?;
     // A cache is two rules (decision 0103): a broken form refuses the program.
     caches::caches(&prog)?;
+    drop(checking);
     Ok(prog)
 }
 
