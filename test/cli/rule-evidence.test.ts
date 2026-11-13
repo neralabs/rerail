@@ -323,6 +323,34 @@ describe("rerail rules evidence", () => {
     expect(more.statements).toBe(fewer.statements);
   });
 
+  it("takes a session's event written last as its newest, whatever time the clock gave it", async () => {
+    /** A session that started before a 1-day window and worked in it, then wrote calls stamped `lastStamps`. */
+    const evidenceWith = async (lastStamps: readonly number[]) => {
+      const repo = await repository();
+      const { databasePath, store } = await sessionDatabase(repo);
+      try {
+        store.openSession({ host: "claude-code", sessionId: "set-back", cwd: repo }, NOW - 3 * DAY);
+        store.append({ sessionId: "set-back", kind: "user-prompt", payload: { text: "Add the logging" }, observedAt: NOW - 3 * DAY + MINUTE });
+        store.append({ sessionId: "set-back", kind: "user-prompt", payload: { text: "Don't force push" }, observedAt: NOW - HOUR });
+        for (const observedAt of lastStamps) {
+          store.append({ sessionId: "set-back", kind: "call", payload: { toolName: "Edit", input: { file_path: "src/a.ts" } }, observedAt });
+        }
+      } finally {
+        store.close();
+      }
+      return collectRuleEvidence(repo, { databasePath, now: NOW, days: 1 });
+    };
+    // The clock was set back past the window's start before the session's last event, which then says the session
+    // ended before the window: it is left out, as every session that started before the window was before sessions
+    // counted by their last event. Reading every event's time instead would read each session's whole history.
+    const setBack = await evidenceWith([NOW - 2 * DAY]);
+    expect(setBack.window).toEqual({ days: 1, sessions: 0, hosts: {}, prompts: 0 });
+    // Once the clock is right again, the session's next event brings back what it did in the window.
+    const putRight = await evidenceWith([NOW - 2 * DAY, NOW - MINUTE]);
+    expect(putRight.window).toEqual({ days: 1, sessions: 1, hosts: { "claude-code": 1 }, prompts: 1 });
+    expect(putRight.corrections).toEqual([expect.objectContaining({ sessionId: "set-back", text: "Don't force push", before: [] })]);
+  });
+
   it("reports a repository Rerail has never seen, and still lists its standards files", async () => {
     const repo = await repository({ "AGENTS.md": "x" });
     const databasePath = join(await temporary("rerail-rule-evidence-none-"), "rerail.sqlite");
