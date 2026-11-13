@@ -194,6 +194,34 @@ describe("what a session owes its agent while it is closed", () => {
     }
   });
 
+  it("does not give the agent a steer owed across a close once its file changed while the session was closed", async () => {
+    const owing = await owingSession();
+    try {
+      await owing.steer();
+      await owing.reopen();
+      // The person edits the file before the agent's next event opens the session again.
+      await writeFile(join(owing.root, "a.ts"), "export const a = 2;\n");
+      expect(await owing.turnEnd("stop")).toEqual([]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  it("leaves out of the digest a finding held across a close once its file changed while the session was closed", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST", "1");
+    const owing = await owingSession();
+    try {
+      await owing.hold();
+      expect(await owing.runtime.closeIdleSession(owing.session.sessionId, { evenIfOwing: true })).toMatchObject({ kind: "suspended" });
+      await writeFile(join(owing.root, "a.ts"), "export const a = 2;\n");
+      expect(await owing.prompt("next-morning")).toEqual([]);
+      await owing.runtime.codeRulesOpened(owing.session.sessionId);
+      expect(await owing.turnEnd("turn")).toEqual([]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
   it("drops what a session owed once it ends, as its end always has", async () => {
     const owing = await owingSession();
     try {

@@ -550,7 +550,8 @@ audit errors, and Rerail's `daemon.log` lines. Rule matching and steers use the 
   (`secret-call`, `secret-result`), so a result arriving after a daemon restart or host reconnect is withheld too.
   Preimages of a secret-like file, or one whose text holds a secret, keep only a hash and size. A finding in a
   secret-like file that a closed session still owes its agent is kept in the ledger without its message or fix, as
-  its steer withholds them.
+  its steer withholds them. Each steer and finding a closed session owes keeps the SHA-256 of each file it names, as a
+  preimage does, so a file changed meanwhile drops it.
 - **Erasure.** Database writers use `secure_delete`. `rerail reset` checkpoints the WAL, runs `VACUUM`, and checkpoints
   again, so deleted history cannot be read back from the file.
 - **History stored by older versions.** `rerail scrub` redacts the database, its pre-update copy, every recorded

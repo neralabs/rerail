@@ -1,3 +1,6 @@
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
+import { join } from "node:path";
 import { z } from "zod/v4";
 import { STEER_STRATEGIES, type AdapterDelivery } from "../engine/adapter-contract.js";
 import { RULE_SOURCE_KINDS } from "../engine/catalog/repository-model.js";
@@ -11,8 +14,17 @@ import { SteerRuleSchema } from "./event-protocol.js";
  * What a session owes its agent while it is closed. A session that closes without its end (quiet past the idle limit,
  * or open when its runtime closes, as at a daemon stop or restart) writes the steers and held findings it has not yet
  * delivered to its ledger as one `owed` entry; the session takes them back when its next event opens it again, and
- * writes the entry again, emptied, once they have gone out.
+ * writes the entry again, emptied, once they have gone out. Each keeps what the files it names held as the session last
+ * saw them, so one whose file changed while the session was closed is not sent (`changedFiles`).
  */
+
+/**
+ * What each file a steer or held finding names (relative to the session's folder) held as the session last saw it: the
+ * SHA-256 of its bytes, or null when there was no file to read.
+ */
+export type FileDigests = Readonly<Record<string, string | null>>;
+
+const FileDigestsSchema = z.record(z.string(), z.string().nullable());
 
 /** A delivery as a session ledger records it. */
 export const LedgerDeliverySchema = z.object({
@@ -52,17 +64,24 @@ const OwedViolationSchema = z.object({
   fix: z.object({ span: SpanSchema, text: z.string() }).optional(),
 });
 
-/** A steer the session had not delivered when it closed, and the sources whose newer revision makes it stale. */
-export interface OwedSteer {
-  readonly delivery: AdapterDelivery;
+/**
+ * Where a steer or held finding speaks: the sources whose newer revision makes it stale, and what each held as the
+ * session last saw it.
+ */
+export interface OwedPlace {
   readonly scope: readonly string[];
+  readonly digests: FileDigests;
+}
+
+/** A steer the session had not delivered when it closed. */
+export interface OwedSteer extends OwedPlace {
+  readonly delivery: AdapterDelivery;
 }
 
 /** A finding the session held for its yield digest when it closed, with where its rule comes from. */
-export interface OwedFinding {
+export interface OwedFinding extends OwedPlace {
   readonly violation: OwedViolation;
   readonly source: SteerRuleSource | null;
-  readonly scope: readonly string[];
 }
 
 export interface OwedEntry {
@@ -73,11 +92,12 @@ export interface OwedEntry {
 
 export const OwedEntrySchema = z.object({
   type: z.literal("owed"),
-  steers: z.array(z.object({ delivery: LedgerDeliverySchema, scope: z.array(z.string()) })),
+  steers: z.array(z.object({ delivery: LedgerDeliverySchema, scope: z.array(z.string()), digests: FileDigestsSchema })),
   findings: z.array(z.object({
     violation: OwedViolationSchema,
     source: z.object({ kind: z.enum(RULE_SOURCE_KINDS), packId: z.string().nullable() }).nullable(),
     scope: z.array(z.string()),
+    digests: FileDigestsSchema,
   })),
 });
 
@@ -88,12 +108,12 @@ export const OwedEntrySchema = z.object({
 export function owedFinding(
   violation: CodeRuleViolation,
   source: SteerRuleSource | undefined,
-  scope: readonly string[],
+  place: OwedPlace,
   sensitive: (path: string) => boolean,
 ): OwedFinding {
   const { captures: _captures, variables: _variables, ...said } = violation;
   const secret = said.path !== undefined && sensitive(said.path);
-  return { violation: secret ? withheld(said) : said, source: source ?? null, scope: [...scope] };
+  return { violation: secret ? withheld(said) : said, source: source ?? null, scope: [...place.scope], digests: { ...place.digests } };
 }
 
 function withheld(violation: OwedViolation): OwedViolation {
@@ -105,12 +125,36 @@ function withheld(violation: OwedViolation): OwedViolation {
  * A held finding the ledger kept (`owedFinding`), as the session holds it again: with no text captured, which the
  * ledger never keeps, and the source of its rule as the ledger recorded it.
  */
-export function restoredFinding(owed: OwedFinding): { violation: CodeRuleViolation; sourceOf: SteerSourceOf; scope: string[] } {
+export function restoredFinding(owed: OwedFinding): { violation: CodeRuleViolation; sourceOf: SteerSourceOf; scope: string[]; digests: FileDigests } {
   return {
     violation: { ...owed.violation, captures: {}, variables: {} },
     sourceOf: () => owed.source ?? undefined,
     scope: [...owed.scope],
+    digests: { ...owed.digests },
   };
+}
+
+/** The SHA-256 of what the file at `path` holds now, read in chunks; null when there is no file to read there. */
+export async function fileDigest(path: string): Promise<string | null> {
+  const hash = createHash("sha256");
+  try {
+    // Without an encoding, a file's stream gives its bytes.
+    const bytes: AsyncIterable<Buffer> = createReadStream(path);
+    for await (const chunk of bytes) hash.update(chunk);
+  } catch {
+    return null;
+  }
+  return hash.digest("hex");
+}
+
+/**
+ * The files `digests` names, relative to the session's folder `root`, that no longer hold what it says the session last
+ * saw in them: changed, made or removed since, by the person or another session. One read per file.
+ */
+export async function changedFiles(root: string, digests: FileDigests): Promise<string[]> {
+  const entries = Object.entries(digests);
+  const now = await Promise.all(entries.map(async ([path]) => await fileDigest(join(root, path))));
+  return entries.filter(([, digest], index) => now[index] !== digest).map(([path]) => path);
 }
 
 /**

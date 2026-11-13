@@ -1197,6 +1197,14 @@ export class CodeRuleBridge {
   }
 
   /**
+   * The SHA-256 of `path` (relative to the session's folder, `/`-separated) as this session last observed it, by a walk
+   * or a tool call's finish; undefined when it has observed no file there.
+   */
+  observedDigest(path: string): string | undefined {
+    return this.#observed.get(path)?.digest;
+  }
+
+  /**
    * Rolls a finished, still rewindable edit back to its captured preimages, every file or none: a file that did not
    * exist is deleted. Only for a steer at the revision its finish audited whose `scope` lies within the captured
    * paths, while every preimage was read, every file still holds what the edit left, and no other call begun and

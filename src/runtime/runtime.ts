@@ -17,7 +17,8 @@ import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState }
 import { autostartDaemon } from "./daemon-control.js";
 import { InactiveSessionError } from "./event-protocol.js";
 import {
-  LedgerDeliverySchema, owedFinding, owedForDisk, OwedEntrySchema, restoredFinding, type OwedEntry, type OwedSteer,
+  changedFiles, fileDigest, LedgerDeliverySchema, owedFinding, owedForDisk, OwedEntrySchema, restoredFinding,
+  type FileDigests, type OwedEntry, type OwedSteer,
 } from "./owed-ledger.js";
 import {
   CodeRuleBridge, generatedEditPaths, ledgerPreimage, type Preimage, type RewoundEdit, type SessionWalkResume, type SourceObservationCache,
@@ -267,16 +268,22 @@ function secretCallsOf(ledger: readonly LedgerEntry[]): { calls: Set<string>; re
 
 /**
  * What the ledger says the session owed its agent when it last closed without its end, as the session takes it back
- * when it opens: at revision 0, so the first revision this opening makes of a source drops what spoke for it.
+ * when it opens: at revision 0, so the first revision this opening makes of a source drops what spoke for it, and with
+ * what each file it names held then, so a file changed while the session was closed drops it too (`#stillOwed`).
  */
 function restoredOwed(ledger: readonly LedgerEntry[]): OwedState {
   const owed = ledger.findLast((entry): entry is OwedEntry => entry.type === "owed");
   if (owed === undefined) return { steers: [], findings: [], recorded: 0 };
   return {
-    steers: owed.steers.map(steer => ({ delivery: steer.delivery, revision: 0, scope: [...steer.scope] })),
+    steers: owed.steers.map(steer => ({ delivery: steer.delivery, revision: 0, scope: [...steer.scope], digests: { ...steer.digests } })),
     findings: owed.findings.map(finding => ({ ...restoredFinding(finding), revision: 0 })),
     recorded: owed.steers.length + owed.findings.length,
   };
+}
+
+/** Whether `item` is the steer of an edit Rerail rolled back: the agent's only word that its edit is gone. */
+function rollsBack(item: PendingSteer | MissedFinding): boolean {
+  return "delivery" in item && item.delivery.rewound !== undefined;
 }
 
 
@@ -540,13 +547,25 @@ interface MissedFinding {
 }
 
 /**
+ * A steer or held finding the session owes while it is closed, with what each file it names held as the session last
+ * saw it (`#withDigests`).
+ */
+type Kept<T extends PendingSteer | MissedFinding> = T & { digests: FileDigests };
+
+/** What a closing session owes its agent: what it took back from its ledger (`kept`), and what this opening found. */
+interface Owing {
+  kept: { steers: Kept<PendingSteer>[]; findings: Kept<MissedFinding>[] };
+  found: { steers: PendingSteer[]; findings: MissedFinding[] };
+}
+
+/**
  * What the session owed its agent when it last closed without its end, taken back from its ledger (`restoredOwed`)
  * until it goes out. Its steers go out with the session's next answer without waiting for its evaluator, which did not
  * find them; its findings join the evaluator's once it is open, for the next yield's digest.
  */
 interface OwedState {
-  steers: PendingSteer[];
-  findings: MissedFinding[];
+  steers: Kept<PendingSteer>[];
+  findings: Kept<MissedFinding>[];
   /** How many steers and findings the ledger's last `owed` entry lists. */
   recorded: number;
 }
@@ -1343,21 +1362,38 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * The steers the session owed its agent when it last closed, recorded as delivered, for the answer collecting them; a
-   * source revised since drops a steer that spoke for it, as it drops any. Its held findings join the evaluator's once
-   * it is open. The ledger's entry is written again with what is still owed.
+   * The steers the session owed its agent when it last closed, recorded as delivered, for the answer collecting them;
+   * one that no longer speaks for its files is dropped (`#stillOwed`). Its held findings join the evaluator's once it is
+   * open, checked the same way. The ledger's entry is written again with what is still owed.
    */
   async #takeOwed(state: RuntimeSessionState): Promise<AdapterDelivery[]> {
     const steers = state.owed.steers.splice(0);
     const findings = state.codeRuleReady ? state.owed.findings.splice(0) : [];
-    state.missedFindings.unshift(...findings);
-    if (steers.length + findings.length > 0) await this.#recordOwed(state, this.#owedEntry(state, [], state.owed.findings));
+    if (steers.length + findings.length === 0) return [];
+    state.missedFindings.unshift(...await this.#stillOwedOf(state, findings));
+    await this.#recordOwed(state, this.#owedEntry(state, [], state.owed.findings));
     const deliveries: AdapterDelivery[] = [];
-    for (const steer of steers) {
-      if (this.#isCurrentSteer(state, steer)) deliveries.push(await this.#recordedDelivery(steer.delivery));
-      else this.#recordUndelivered(state, steer);
-    }
+    for (const steer of await this.#stillOwedOf(state, steers)) deliveries.push(await this.#recordedDelivery(steer.delivery));
     return deliveries;
+  }
+
+  /** `owed` without what no longer speaks for its files (`#stillOwed`), in its order. */
+  async #stillOwedOf<T extends Kept<PendingSteer> | Kept<MissedFinding>>(state: RuntimeSessionState, owed: readonly T[]): Promise<T[]> {
+    const holds = await Promise.all(owed.map(async item => await this.#stillOwed(state, item)));
+    return owed.filter((_, index) => holds[index]);
+  }
+
+  /**
+   * Whether a steer or held finding taken back from the ledger still speaks for the files it names: no revision since
+   * the session opened again overtook it (`#isCurrentSteer`), and each holds what the session last saw in it before it
+   * closed. The opening's first walk takes files as it finds them, so a file the person or another session changed while
+   * this one was closed would otherwise leave it current. A rolled-back edit's steer goes all the same, as
+   * `#isCurrentSteer` says. One that does not is dropped as a revision drops it. One read per file it names.
+   */
+  async #stillOwed(state: RuntimeSessionState, item: Kept<PendingSteer> | Kept<MissedFinding>): Promise<boolean> {
+    const holds = this.#isCurrentSteer(state, item) && (rollsBack(item) || (await changedFiles(state.checkout.cwd, item.digests)).length === 0);
+    if (!holds) this.#recordUndelivered(state, item);
+    return holds;
   }
 
   /** `delivery`, recorded in its session's ledger; a failure to record it is reported and does not withhold it. */
@@ -1372,32 +1408,52 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   /**
    * What the session owes its agent as it closes, taken from it: the steers and held findings no newer revision has
-   * overtaken, as its ledger keeps them (`owedFinding`), when the close keeps them (`keepsOwed`); none at its end.
+   * overtaken, when the close keeps them (`keepsOwed`); none at its end.
    */
-  #owedAtClose(state: RuntimeSessionState): OwedEntry {
+  #owedAtClose(state: RuntimeSessionState): Owing {
     const current = <T extends PendingSteer | MissedFinding>(owed: T[]): T[] => owed.filter(item => this.#isCurrentSteer(state, item));
-    const steers = [...current(state.owed.steers), ...current(state.pendingSteers)];
-    const findings = [...current(state.owed.findings), ...current(state.missedFindings)];
+    const owing: Owing = {
+      kept: { steers: current(state.owed.steers), findings: current(state.owed.findings) },
+      found: { steers: current(state.pendingSteers), findings: current(state.missedFindings) },
+    };
     state.owed.steers = [];
     state.owed.findings = [];
     state.pendingSteers = [];
     state.missedFindings = [];
-    return state.keepsOwed ? this.#owedEntry(state, steers, findings) : this.#owedEntry(state, [], []);
+    return state.keepsOwed ? owing : { kept: { steers: [], findings: [] }, found: { steers: [], findings: [] } };
   }
 
-  #owedEntry(state: RuntimeSessionState, steers: readonly PendingSteer[], findings: readonly MissedFinding[]): OwedEntry {
+  #owedEntry(state: RuntimeSessionState, steers: readonly Kept<PendingSteer>[], findings: readonly Kept<MissedFinding>[]): OwedEntry {
     // Judged as the digest judges them, so a file there that links to a secret is one.
     const sensitive = findings.length === 0 ? () => false : checkoutPathBoundary(state.checkout.cwd).sensitive;
     return {
       type: "owed",
-      steers: steers.map((steer): OwedSteer => ({ delivery: steer.delivery, scope: [...steer.scope] })),
-      findings: findings.map(finding => owedFinding(finding.violation, finding.sourceOf(finding.violation.ruleId), finding.scope, sensitive)),
+      steers: steers.map((steer): OwedSteer => ({ delivery: steer.delivery, scope: [...steer.scope], digests: { ...steer.digests } })),
+      findings: findings.map(finding => owedFinding(finding.violation, finding.sourceOf(finding.violation.ruleId), finding, sensitive)),
     };
   }
 
-  /** Writes what the session owes as it closes (`#owedAtClose`) when it owes something, or its ledger says it did. */
-  async #keepOwed(state: RuntimeSessionState, entry: OwedEntry): Promise<void> {
-    if (entry.steers.length + entry.findings.length > 0 || state.owed.recorded > 0) await this.#recordOwed(state, entry);
+  /**
+   * Writes what the session owes as it closes (`#owedAtClose`) when it owes something, or its ledger says it did. Runs
+   * before the session's evaluator closes, which says what the files held as the session last saw them.
+   */
+  async #keepOwed(state: RuntimeSessionState, owed: Owing): Promise<void> {
+    const steers = [...owed.kept.steers, ...await this.#withDigests(state, owed.found.steers)];
+    const findings = [...owed.kept.findings, ...await this.#withDigests(state, owed.found.findings)];
+    if (steers.length + findings.length > 0 || state.owed.recorded > 0) await this.#recordOwed(state, this.#owedEntry(state, steers, findings));
+  }
+
+  /**
+   * `items` with what each file they name held as the session last saw it: as its evaluator last observed it, which a
+   * file changed outside the session since the evaluator's last walk has not changed, else as the file reads now.
+   */
+  async #withDigests<T extends PendingSteer | MissedFinding>(state: RuntimeSessionState, items: readonly T[]): Promise<Kept<T>[]> {
+    const seen = async (path: string): Promise<string | null> =>
+      state.codeRuleBridge?.observedDigest(path) ?? await fileDigest(join(state.checkout.cwd, path));
+    return await Promise.all(items.map(async item => {
+      const digests = await Promise.all(item.scope.map(async path => [path, await seen(path)] as const));
+      return { ...item, digests: Object.fromEntries(digests) };
+    }));
   }
 
   /**
@@ -1988,7 +2044,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * it queues for it (`SessionSuspension`). A session that still owes its agent something (`#owesAgent`) stays as it is,
    * unless `evenIfOwing`: the engine service suspends it anyway once it has been quiet a day (`OWING_SESSION_IDLE_MS` in
    * engine-service.ts). The steers it has not delivered and the findings it holds then wait in its ledger, and go out
-   * with its next event (`#takeOwed`).
+   * with its next event while their files still hold what they spoke for (`#takeOwed`).
    */
   closeIdleSession(sessionId: string, options: { evenIfOwing?: boolean } = {}): Promise<IdleClose> {
     return this.#ingestLanes.run(sessionId, async (): Promise<IdleClose> => {
