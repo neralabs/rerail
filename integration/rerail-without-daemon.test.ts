@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, test } from "vitest";
 import { openRerailDatabase, resolveCloneId, setUpRepository } from "../src/engine/index.js";
 import { workspaceStartState } from "../src/runtime/index.js";
+import { holdEngineEndpoint, testEngineEndpoint } from "../test/support/platform/engine-endpoint.js";
 import { startTestRepository, stopTestRepository } from "../test/support/started-repository.js";
 
 const run = promisify(execFile);
@@ -56,6 +57,9 @@ async function rerailSessionExit(root: string, env: NodeJS.ProcessEnv, args: rea
  */
 async function listenAsDaemon(home: string, answers: Readonly<Record<string, number>> = {}): Promise<{ asked: string[]; close: () => Promise<void> }> {
   const asked: string[] = [];
+  // On Windows a recorded daemon counts as alive only while its engine pipe exists (`recordedDaemonAlive`).
+  const kernelSocketPath = testEngineEndpoint(home);
+  const releaseEndpoint = await holdEngineEndpoint(kernelSocketPath);
   const daemon = createServer((request, response) => {
     const path = new URL(request.url ?? "/", "http://daemon").pathname;
     asked.push(path);
@@ -65,11 +69,12 @@ async function listenAsDaemon(home: string, answers: Readonly<Record<string, num
   const close = async (): Promise<void> => {
     daemon.closeAllConnections();
     await new Promise<void>(resolve => daemon.close(() => resolve()));
+    await releaseEndpoint();
   };
   const { port } = daemon.address() as AddressInfo;
   await writeFile(join(home, "daemon.json"), JSON.stringify({
     pid: process.pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "test", ui: "bundled",
-    databasePath: join(home, "rerail.sqlite"), kernelSocketPath: join(home, "engine.sock"), startedAt: 1, packageRoot: process.cwd(),
+    databasePath: join(home, "rerail.sqlite"), kernelSocketPath, startedAt: 1, packageRoot: process.cwd(),
   })).catch(async (error: unknown) => { await close(); throw error; });
   return { asked, close };
 }
