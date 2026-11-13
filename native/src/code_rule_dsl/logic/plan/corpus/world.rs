@@ -25,6 +25,8 @@ use super::front;
 use crate::code_rule_dsl::logic::rr::WORLD;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use crate::content_store::observe::{Listing, EntryTypes};
+type Directory = (Listing, EntryTypes);
 
 /// Documents loaded at most, unless `env("load.budget", n)` says otherwise.
 const BUDGET: usize = 4000;
@@ -61,7 +63,8 @@ pub(super) struct Loaded {
 pub(super) struct World {
     roots: Vec<PathBuf>,
     root: PathBuf,
-    dirs: BTreeMap<String, Vec<(String, bool)>>,
+    dirs: BTreeMap<String, Directory>,
+    metadata_reads: BTreeSet<String>,
     files: BTreeMap<String, Vec<String>>,
     digests: BTreeMap<String, String>,
     loads: BTreeMap<String, Loaded>,
@@ -108,24 +111,24 @@ impl World {
         self.roots.iter().any(|r| path.starts_with(r)).then_some(path)
     }
 
-    /// A directory's entries, sorted (none when it is refused or missing).
-    pub(super) fn dir(&mut self, asked: &str) -> Vec<(String, bool)> {
-        if let Some(entries) = self.dirs.get(asked) {
-            return entries.clone();
-        }
+    /// Both directory interfaces share one observer preparation for each request key.
+    fn directory(&mut self, asked: &str) -> Directory {
+        if let Some(entries) = self.dirs.get(asked) { return entries.clone(); }
         let Some(path) = self.allowed(asked) else {
             self.refused.insert(asked.to_owned());
-            return Vec::new();
+            return Default::default();
         };
-        // Phase 0's observer: listed again only when the directory's stat changed.
-        let entries: Vec<(String, bool)> = super::observe(|o| o.listing(&path)).map(|l| l.as_ref().clone()).unwrap_or_default();
+        let entries = super::observe(|o| o.listing_types(&path)).unwrap_or_default();
         self.dirs.insert(asked.to_owned(), entries.clone());
         entries
     }
 
-    /// Fixed-width type columns share the directory's observed names.
-    pub(super) fn dir_types(&mut self, _asked: &str) -> (crate::content_store::observe::Listing, crate::content_store::observe::EntryTypes) {
-        Default::default()
+    pub(super) fn dir(&mut self, asked: &str) -> Listing { self.directory(asked).0 }
+
+    /// File/symlink/error columns align with the same name column as dir_entry.
+    pub(super) fn dir_types(&mut self, asked: &str) -> Directory {
+        self.metadata_reads.insert(asked.to_owned());
+        self.directory(asked)
     }
 
     /// A file's lines (none when it is refused or missing).
@@ -269,8 +272,9 @@ impl World {
     /// consulted things are all as they were would ask, load and derive the same (`still`).
     pub(super) fn consulted(&self) -> Vec<(String, String, String)> {
         let mut out = Vec::new();
-        for (asked, entries) in &self.dirs {
+        for (asked, (entries, types)) in &self.dirs {
             out.push(("dir".to_owned(), asked.clone(), listing_digest(entries)));
+            if self.metadata_reads.contains(asked) { out.push(("dir-metadata".to_owned(), asked.clone(), metadata_digest(entries, types))); }
         }
         for asked in self.files.keys() {
             out.push(("file".to_owned(), asked.clone(), self.allowed(asked).map(|p| bytes_digest(&p)).unwrap_or_default()));
@@ -293,6 +297,7 @@ impl World {
         consulted.iter().all(|(what, path, digest)| {
             let now = match what.as_str() {
                 "dir" => listing_digest(&self.dir(path)),
+                "dir-metadata" => { let (names, types) = self.dir_types(path); metadata_digest(&names, &types) },
                 "file" | "digest" => self.allowed(path).map(|p| bytes_digest(&p)).unwrap_or_default(),
                 "load" => bytes_digest(Path::new(path)),
                 "refused" => self.probe(path),
@@ -315,7 +320,7 @@ impl World {
     }
 
     pub(super) fn summary(&self, pauses: usize) -> String {
-        let entries: usize = self.dirs.values().map(Vec::len).sum();
+        let entries: usize = self.dirs.values().map(|(names, _)| names.len()).sum();
         let lines: usize = self.files.values().map(Vec::len).sum();
         format!(
             "requests answered in {pauses} pauses of the fixpoint: {} directories ({entries} entries), {} files ({lines} lines), {} documents loaded; {} paths refused or missing, {} loads not taken",
@@ -343,6 +348,16 @@ fn listing_digest(entries: &[(String, bool)]) -> String {
     for (name, is_dir) in entries {
         h.update(name.as_bytes());
         h.update([0, u8::from(*is_dir)]);
+    }
+    hex(&h.finalize())
+}
+
+/// All columns consumed by dir_metadata, including distinctions absent from dir_entry.
+fn metadata_digest(entries: &[(String, bool)], types: &[crate::content_store::observe::EntryType]) -> String {
+    use sha2::Digest;
+    let mut h = sha2::Sha256::new();
+    for ((name, _), ty) in entries.iter().zip(types) {
+        h.update(name.as_bytes());h.update([0, u8::from(ty.is_file), u8::from(ty.is_symlink)]);h.update(ty.errno.to_le_bytes());
     }
     hex(&h.finalize())
 }

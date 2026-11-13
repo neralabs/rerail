@@ -4852,7 +4852,7 @@ fn run_observed(
                 move |req: &str, key: &[i64]| -> bool {
                     let Some(text) = key.first().and_then(|a| crate::code_rule_dsl::logic::native::sym_text_of(db_text, *a).ok()) else { return false };
                     let path = std::path::Path::new(&text);
-                    roots.iter().any(|(r, _)| path.starts_with(r)) && named.iter().all(|n| !path.starts_with(n) && !(req == "rr_dir_req" && n.parent() == Some(path)))
+                    req != "rr_dir_meta_req" && roots.iter().any(|(r, _)| path.starts_with(r)) && named.iter().all(|n| !path.starts_with(n) && !(req == "rr_dir_req" && n.parent() == Some(path)))
                 }
             });
             let still_ref = still_fn.as_ref().map(|f| f as &dyn Fn(&str, &[i64]) -> bool);
@@ -4977,25 +4977,34 @@ fn run_observed(
             if let Some((produced, _)) = WORLD.iter().find(|(_, req)| *req == rel) {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("answer {rel}"));
                 let mut out = Vec::new();
-                for row in rows {
-                    let asked = text(row[0])?;
-                    if *produced == "dir_entry" {
-                        let entries = world.dir(&asked);
-                        let names: Vec<&str> = entries.iter().map(|(n, _)| n.as_str()).collect();
-                        for ((_, is_dir), name) in entries.iter().zip(atoms(&names)?) {
-                            out.push(vec![row[0], name, i64::from(*is_dir)]);
-                        }
-                    } else if *produced == "file_digest" {
-                        if let Some(d) = world.digest(&asked) {
-                            out.push(vec![row[0], atoms(&[d.as_str()])?[0]]);
-                        }
-                    } else {
-                        let lines = world.file(&asked);
-                        let texts: Vec<&str> = lines.iter().map(String::as_str).collect();
-                        for (i, line) in atoms(&texts)?.into_iter().enumerate() {
-                            out.push(vec![row[0], i as i64 + 1, line]);
+                // Intern one complete demand batch, rather than one batch per requested directory/file.
+                if matches!(*produced, "dir_entry" | "dir_metadata") {
+                    let directories: Vec<_> = rows.iter().map(|row| {
+                        let asked = text(row[0])?;
+                        Ok((row[0], if *produced == "dir_metadata" { world.dir_types(&asked) } else {
+                            let names = world.dir(&asked); (names, Default::default())
+                        }))
+                    }).collect::<Result<_>>()?;
+                    let names: Vec<&str> = directories.iter().flat_map(|(_, (names, _))| names.iter().map(|(n, _)| n.as_str())).collect();
+                    let mut encoded = atoms(&names)?.into_iter();
+                    for (key, (names, types)) in &directories {
+                        for (i, (_, is_dir)) in names.iter().enumerate() {
+                            let name = encoded.next().expect("one atom per directory name");
+                            if *produced == "dir_metadata" {
+                                let t = types[i];out.push(vec![*key, name, i64::from(t.is_file), i64::from(t.is_symlink), i64::from(t.errno)]);
+                            } else { out.push(vec![*key, name, i64::from(*is_dir)]); }
                         }
                     }
+                } else if *produced == "file_digest" {
+                    let digests: Vec<_> = rows.iter().map(|row| Ok((row[0], world.digest(&text(row[0])?)))).collect::<Result<_>>()?;
+                    let values: Vec<&str> = digests.iter().filter_map(|(_, d)| d.as_deref()).collect();
+                    let mut encoded = atoms(&values)?.into_iter();
+                    for (key, d) in digests { if d.is_some() { out.push(vec![key, encoded.next().unwrap()]); } }
+                } else {
+                    let files: Vec<_> = rows.iter().map(|row| Ok((row[0], world.file(&text(row[0])?)))).collect::<Result<_>>()?;
+                    let values: Vec<&str> = files.iter().flat_map(|(_, lines)| lines.iter().map(String::as_str)).collect();
+                    let mut encoded = atoms(&values)?.into_iter();
+                    for (key, lines) in files { for i in 0..lines.len() { out.push(vec![key, i as i64 + 1, encoded.next().unwrap()]); } }
                 }
                 return Ok(vec![((*produced).to_owned(), out)]);
             }

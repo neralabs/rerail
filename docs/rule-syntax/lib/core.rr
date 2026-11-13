@@ -288,6 +288,10 @@
 // loaded, by canonical path. A loaded document is evaluated like any other; its rows are not the run's findings.
 .decl env(key: symbol, value: symbol)
 .decl dir_entry(dir: symbol, name: symbol, is_dir: number)
+// Shares its name column and observer scan with dir_entry. is_file follows the target; is_symlink names the
+// directory entry itself. errno is zero on successful classification, otherwise the target's OS error.
+// A link target is refreshed each run, even if the listing directory itself did not change.
+.decl dir_metadata(dir: symbol, name: symbol, is_file: number, is_symlink: number, errno: number)
 .decl file_line(path: symbol, i: number, text: symbol)
 .decl file_digest(path: symbol, c: symbol)
 .decl load(path: symbol, module: symbol, grammar: symbol)

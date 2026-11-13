@@ -26,7 +26,7 @@ const PREFIX: &str = "rr_cx_";
 pub(super) const SUFFIX: &str = "__cross";
 pub(super) const DOCS: &str = "rr_cross_doc";
 /// The facts `world` gives a run (its answers), not in the plan's digest.
-const WORLD_FACTS: [&str; 3] = ["dir_entry", "file_line", "loaded"];
+fn world_fact(rel: &str) -> bool { rel == "loaded" || crate::code_rule_dsl::logic::rr::WORLD.iter().any(|(name, _)| *name == rel) }
 const SCHEMA: &str = "rerail.cross-rows/v1";
 /// The stored rows' encoding version: bumped when its meaning changes.
 const ROWS_SCHEMA: u32 = 2;
@@ -242,7 +242,7 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
     // decides the edges, so a component's key covers what its rows read of them. In the digest, a file added
     // anywhere (a directory's entries) or a load fewer would miss every component. `RERAIL_CROSS_MEMO=verify` over an
     // edited corpus is the check (O114).
-    let facts: Vec<_> = cross.facts.iter().filter(|(rel, rows)| !rows.is_empty() && !WORLD_FACTS.contains(&rel.as_str())).collect();
+    let facts: Vec<_> = cross.facts.iter().filter(|(rel, rows)| !rows.is_empty() && !world_fact(rel.as_str())).collect();
     hash.update(format!("{:?}{:?}{:?}{:?}{:?}", cross.decls, cross.rules, facts, cross.natives, cross.lattice).as_bytes());
     let digest: [u8; 32] = hash.finalize().into();
     // The contract's static half: a memoised relation has a node column, and its rules read only what is not derived
