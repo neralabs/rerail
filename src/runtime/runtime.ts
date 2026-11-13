@@ -1653,6 +1653,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#evaluatorOpens.add(workspace);
     const released = (): void => { this.#evaluatorOpens.delete(workspace); };
     void workspace.then(released, released);
+    // A suspended session's first event is answered once the text of the files its agent edited is read back, which
+    // waits for no rule to compile: the agent's next command may rewrite one, and is measured from that text.
+    await bridge.heldTextsRead();
     return { processedEventIds: [...opened.processed] };
   }
 

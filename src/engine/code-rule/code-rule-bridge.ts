@@ -879,6 +879,8 @@ export class CodeRuleBridge {
   readonly #resumedHeld = new Set<string>();
   /** Where the first `openWorkspace` goes on from, for a session its runtime suspended; taken once. */
   #resume: SessionWalkResume | undefined;
+  /** Settles once the first `openWorkspace` has read back the held sources' text (`#restoreHeldTexts`), or found none to. */
+  readonly #heldTexts = Promise.withResolvers<void>();
   /** The calls the runtime answered while the evaluator opened (`unwatchedCall`), until the workspace opens and takes them. */
   #unwatched = new ToolCallWindows();
   #lastResponse = emptyResponse(0);
@@ -929,6 +931,8 @@ export class CodeRuleBridge {
     this.#onRevision = options.onRevision;
     this.#observations = options.observations;
     this.#resume = options.resume;
+    // A session opened fresh has no text to read back before its first event is answered.
+    if (options.resume === undefined) this.#heldTexts.resolve();
     this.#discoveryWaitMs = options.discoveryWaitMs ?? BOUNDARY_DISCOVERY_WAIT_MS;
     this.#onDiscoveryPending = options.onDiscoveryPending;
     this.#onIgnoredEdit = options.onIgnoredEdit;
@@ -982,18 +986,44 @@ export class CodeRuleBridge {
   /**
    * Where the session's walks start: `now`, or for a session its runtime suspended, where they stood then, with each
    * source the evaluator held kept as last observed, so the first walk compares it as the open session's next walk would
-   * have, and finds it changed or gone. The text of each such source still as observed is read back (`#restoreHeldTexts`).
+   * have, and finds it changed or gone. The text of each such source still as observed is read back (`#restoreHeldTexts`),
+   * and `heldTextsRead` settles once it is.
    */
   async #takeResume(root: string, now: number): Promise<number> {
     const resume = this.#resume;
     this.#resume = undefined;
-    if (resume === undefined) return now;
-    for (const [path, observed] of resume.held) {
+    try {
+      if (resume === undefined) return now;
+      this.#holdResumed(resume.held);
+      await this.#restoreHeldTexts(root, resume.held);
+      return Math.min(now, resume.since);
+    } finally {
+      this.#heldTexts.resolve();
+    }
+  }
+
+  /** Counts each source of `held` as the evaluator's, observed as it was last (`#resumedHeld`). */
+  #holdResumed(held: SessionWalkResume["held"]): void {
+    for (const [path, observed] of held) {
       this.#resumedHeld.add(path);
       if (observed !== undefined) this.#observed.set(path, observed);
     }
-    await this.#restoreHeldTexts(root, resume.held);
-    return Math.min(now, resume.since);
+  }
+
+  /**
+   * Settles once the first `openWorkspace` has read back the text of the sources the session held before its runtime
+   * suspended it (`#restoreHeldTexts`), which waits for no rule to compile; at once for a session opened fresh, and at
+   * the latest after `#discoveryWaitMs`. The runtime answers a reopened session's first event after it, so the agent's
+   * next command, which may rewrite such a source, is measured from the text the agent left there.
+   */
+  async heldTextsRead(): Promise<void> {
+    const bound = Promise.withResolvers<void>();
+    const timer = setTimeout(bound.resolve, this.#discoveryWaitMs);
+    try {
+      await Promise.race([this.#heldTexts.promise, bound.promise]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**

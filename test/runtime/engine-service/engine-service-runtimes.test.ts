@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -16,9 +16,36 @@ import { removeFolder } from "../../support/platform/remove-folder.js";
 
 type CodeRuleEditBatch = Parameters<CodeRuleAuditor["auditGeneratedEdits"]>[1];
 
+/** The opens of a file a test holds (`holdOpen`), by its absolute path, each waiting until the test lets it go on. */
+const heldOpens = vi.hoisted(() => ({ paths: new Map<string, Array<() => Promise<void>>>(), releases: [] as Array<() => void> }));
+vi.mock("../../../src/engine/no-follow.js", async importOriginal => {
+  const actual = await importOriginal<{ openNoFollow: (path: string, ...flags: number[]) => Promise<FileHandle> }>();
+  return {
+    ...actual,
+    openNoFollow: async (path: string, ...flags: number[]) => {
+      await heldOpens.paths.get(path)?.shift()?.();
+      return await actual.openNoFollow(path, ...flags);
+    },
+  };
+});
+
+/** Holds the next open of the file at `path` until `release`; `entered` settles once that open has begun. */
+function holdOpen(path: string) {
+  const entered = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
+  heldOpens.paths.set(path, [...(heldOpens.paths.get(path) ?? []), async () => {
+    entered.resolve();
+    await released.promise;
+  }]);
+  heldOpens.releases.push(released.resolve);
+  return { entered: entered.promise, release: () => released.resolve() };
+}
+
 const roots: string[] = [];
 const services: EngineService[] = [];
 afterEach(async () => {
+  for (const release of heldOpens.releases.splice(0)) release();
+  heldOpens.paths.clear();
   vi.unstubAllEnvs();
   await Promise.all(services.splice(0).map(service => service.close()));
   // A session's source walk can still hold a checkout folder open for a moment after its runtime closed, which fails an
@@ -568,6 +595,33 @@ describe("the engine service's idle close", () => {
     await reopened;
     await writes("a", "t2", "Bash", app, "x = 2\ny = 3\n");
     reopening.resolve();
+    await turnEnd("a", "turn2");
+    expect(editsOf(batches, "app.py")).toContainEqual({ generatedText: "x = 2\ny = 3\n", previousText: "x = 2\n", previousReadError: undefined });
+  }, 20_000);
+
+  // After a long think the agent's first event can be a command that rewrites a file it edited. The event was answered
+  // before the reopened session had read the file's text back, so a command that ran first left nothing to measure from.
+  it("answers the event that opens a quiet session again once the text of the files its agent edited is read back", async () => {
+    const { create, batches, looked } = recordingAuditor();
+    const { first, clock, service, session, send, start, writes, turnEnd } = await idleService({ createAuditor: create });
+    const app = join(first, "app.py");
+    await writeFile(app, "x = 1\n");
+    await start("a");
+    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    await writes("a", "t1", "Write", app, "x = 2\n");
+    await turnEnd("a", "turn1");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    // The read back of app.py is slow: it goes on once the agent's command has run, or after 2 s.
+    const readBack = holdOpen(await realpath(app));
+    const tool = { sessionId: "a", session: session("a"), toolCallId: "t2", toolName: "Bash" } as const;
+    const command = send({ kind: "call", eventId: "a:t2:call", ...tool, input: { command: "python generate.py" } })
+      .then(() => writeFile(app, "x = 2\ny = 3\n"));
+    await readBack.entered;
+    await Promise.race([command, delay(2_000)]);
+    readBack.release();
+    await command;
+    await send({ kind: "result", eventId: "a:t2:result", ...tool, output: "ok" });
     await turnEnd("a", "turn2");
     expect(editsOf(batches, "app.py")).toContainEqual({ generatedText: "x = 2\ny = 3\n", previousText: "x = 2\n", previousReadError: undefined });
   }, 20_000);
