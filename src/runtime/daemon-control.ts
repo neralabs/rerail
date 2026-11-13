@@ -892,7 +892,7 @@ export function relaunchDaemon(args: string[], logFile: string, machine: DaemonM
 
 export interface LaunchedDaemon {
   pid: number | undefined;
-  /** Why the launched process is gone, or undefined while it runs. */
+  /** Why the launched process is gone, the same each time it is asked once it is; undefined while it runs. */
   exitReason: () => string | undefined;
 }
 
@@ -930,7 +930,8 @@ export interface DetachedLaunch {
 
 /**
  * Why a process the native spawn started is gone, or undefined while it runs: its exit code, from the handle the native
- * module kept. A binary built before it had no such handle, and there only a pid that no process holds says so.
+ * module kept, which it closes once it has given the code, so a second read after the exit throws. A binary built before
+ * it had no such handle, and there only a pid that no process holds says so.
  */
 function detachedExitReason(launched: NativeProcess, kill: ProcessSignal): string | undefined {
   if (launched.exitCode === undefined) return processAlive(launched.pid, kill) ? undefined : "exited";
@@ -954,7 +955,9 @@ export function launchDetached(launch: DetachedLaunch, machine: DaemonMachine = 
   if (machine.platform === "win32") {
     const env = Object.fromEntries(Object.entries(launch.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
     const launched = machine.spawnDetached({ program, args: [...launch.args], cwd: launch.cwd ?? null, env, logFile: launch.logFile });
-    return { pid: launched.pid, exitReason: () => detachedExitReason(launched, machine.kill) };
+    // The native module closes the handle once it has given the exit code, and a later read throws: keep the answer.
+    let exited: string | undefined;
+    return { pid: launched.pid, exitReason: () => (exited ??= detachedExitReason(launched, machine.kill)) };
   }
   const log = openSync(launch.logFile, "a", 0o600);
   let child: StartedChild;
