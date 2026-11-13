@@ -648,6 +648,13 @@ pub fn json_str(s: &str) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn transported_float_bits_have_a_native_python_string_function() {
+        let (_, arguments, result) = native_call("py_float_str").expect("typed float transport needs native formatting");
+        assert_eq!(arguments, &[Kind::Text]);
+        assert_eq!(result, Kind::Text);
+    }
+
     /// Smoking gun 6 (t34, 2026-11-13): a maintained stratum has no SQL fallback, and `@place` in a head (`spot(d,
     /// @place(p, 7))`) had no native form, so the edit failed. `@place`, `@place_path` and `@place_line` are native
     /// functions, and their values are those of SQL's encoding (`plan::sql_term`), the path a symbol's atom.
