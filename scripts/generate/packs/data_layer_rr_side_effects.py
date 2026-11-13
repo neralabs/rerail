@@ -117,7 +117,7 @@ def main():
 #include "data-layer/side-effects-cli.rr"
 ''')
  for item in manifest['rules']:
-  if item['check']=='plan_scope_side_effects':item['ruleSha256']=sha(text.encode())
+  if item['check']=='plan_scope_side_effects':item.update(rulePath=str(production),ruleSha256=sha((ROOT/production).read_bytes()))
  for item in manifest['files']:
   if item['destination']==str(path):item.update(sha256=sha(text.encode()),origin='authored',sourceCommit=PIN,upstreamPath='scripts/lint_plan_scope_side_effects.py')
  for target in [config,repository,events,plugin,select,conversion,from_fact,cli,production,Path('docs/rule-syntax/lib/data-layer/side-effects-production.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-cli.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-from-fact.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-conversion.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-files.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-select.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-plugin.rr'),Path('docs/rule-syntax/lib/python/values.rr'),Path('docs/rule-syntax/lib/python/paths.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-events.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-detect.rr'),Path('docs/rule-syntax/lib/data-layer/side-effects-helpers.rr')]:

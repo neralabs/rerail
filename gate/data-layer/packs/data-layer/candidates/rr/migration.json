@@ -5330,8 +5330,8 @@
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-plan-scope-side-effects.json",
       "legacySha256": "2716f11ec3592689333631110eb74d3ec513d0ee82ca1701023621072347f12d",
       "status": "draft",
-      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-side-effects.rr",
-      "ruleSha256": "e0143ca885607c2a1df07744a2de633c30eae1d1b8475dcb61a6b4e27bc295ff",
+      "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-side-effects-production.rr",
+      "ruleSha256": "466e568aced4e07460fc01047a9a70d2448904f19a1391024a06a271ac8bdd3b",
       "migrationProgress": {
         "status": "hub kernel parity; full rule remains draft",
         "receipt": "gate/data-layer/fixtures/host/data-layer-port/rr-hub1ee-kernel-progress.json.gz",
