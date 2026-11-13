@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { appendFileSync, closeSync, existsSync, openSync, readdirSync, readFileSync, utimesSync, writeFileSync, writeSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, openSync, readdirSync, readFileSync, renameSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -438,6 +438,25 @@ describe("the hook failure log", () => {
     }
   });
 
+  // A log under the name of a hook that took it, `<log>.<pid>.<id>.old`.
+  const takenName = (rerailHome: string, pid: number): string => join(rerailHome, `${HOOK_FAILURES_FILE}.${pid}.${randomUUID()}.old`);
+
+  // On Windows a rename opens the file by name and renames what it opened, so a hook that opened the full log before
+  // another took it moves it on from that hook's name to its own. Here it does so as status lists the Rerail home.
+  it("counts the log a hook moves on from another hook's name while status lists the home", async () => {
+    const rerailHome = await home();
+    writeFullLog(rerailHome);
+    const [first, second] = [takenName(rerailHome, 1_000), takenName(rerailHome, 1_004)];
+    renameSync(join(rerailHome, HOOK_FAILURES_FILE), first);
+    appendFileSync(join(rerailHome, HOOK_FAILURES_FILE), `${JSON.stringify(failure(2))}\n`);
+    const said = await statusWhileListing(rerailHome, `readdir => (...args) => {
+      const names = readdir(...args);
+      if (String(args[0]) === HOME && fs.existsSync(${JSON.stringify(first)})) fs.renameSync(${JSON.stringify(first)}, ${JSON.stringify(second)});
+      return names;
+    }`);
+    expect(countOf(said)).toBe(full + 1);
+  });
+
   // Status reads the live log before it lists the others: a log hooks take as it lists them, and move on from name to
   // name, was met already.
   it("counts the live log hooks take and move from name to name at each listing while status reads", async () => {
@@ -452,6 +471,25 @@ describe("the hook failure log", () => {
       return names;
     }`);
     expect(countOf(said)).toBe(full);
+  });
+
+  // A hook on Windows can move `.1` on to its own name for a moment, and back. Here it does so as status lists the home:
+  // away just after the first listing, back just before the third, so the second finds it under the hook's name.
+  it("says since when it counts when a hook holds .1 under its own name as status lists the home", async () => {
+    const rerailHome = await home();
+    const part = (startedAt: number, ...ats: number[]): string => [{ startedAt }, ...ats.map(at => failure(at))].map(line => `${JSON.stringify(line)}\n`).join("");
+    writeFileSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`), part(5_000, 5_000, 6_000));
+    writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), part(9_000, 9_000));
+    const [movedAside, held] = [join(rerailHome, `${HOOK_FAILURES_FILE}.1`), takenName(rerailHome, 1_000)];
+    const said = await statusWhileListing(rerailHome, `readdir => (...args) => {
+      if (String(args[0]) !== HOME) return readdir(...args);
+      globalThis.listings = (globalThis.listings ?? 0) + 1;
+      if (globalThis.listings === 3) fs.renameSync(${JSON.stringify(held)}, ${JSON.stringify(movedAside)});
+      const names = readdir(...args);
+      if (globalThis.listings === 1) fs.renameSync(${JSON.stringify(movedAside)}, ${JSON.stringify(held)});
+      return names;
+    }`);
+    expect(said).toMatch(/^Hooks: 3 hook events could not be recorded since 1970-01-01T00:00:05\.000Z, as far back as the log goes; /u);
   });
 });
 

@@ -347,20 +347,7 @@ function unrecordedSince(first: HookFailure, count: number, { total, keptSince }
  * move aside and hold under their own names, and the part moved aside to `.1`. A file missing or unreadable holds none.
  */
 export function readHookFailures(home: string, since: number): HookFailureLog {
-  // A hook moves the log from the live name to its own and on to `.1` by renames, which keep the file. Read in that
-  // order, a log moved during this read is met again under a later name: the read under that name stands, so its
-  // failures count once, as the part it became. A give-back puts a taken log back at the live name, or copies its lines
-  // to the live log, against that order: a read it overlaps can miss them, or, when it copied them and that live log
-  // also moves to `.1` before the read gets there, count them twice.
-  const parts = new Map<string, LogPart>();
-  const read = (name: string): void => {
-    const part = readLogFile(join(home, name));
-    if (part !== null) parts.set(part.id, { name, ...part.log });
-  };
-  read(HOOK_FAILURES_FILE);
-  for (const { name } of takenLogs(home)) read(name);
-  read(MOVED_ASIDE_FILE);
-  const all = [...parts.values()];
+  const all = readLogParts(home);
   const keptSince = keptSinceOf(all, since);
   const from = keptSince ?? since;
   // Hooks take the time before they append, and a hook gives back the lines of a log it took after other hooks wrote
@@ -369,9 +356,124 @@ export function readHookFailures(home: string, since: number): HookFailureLog {
   return { failures, keptSince };
 }
 
-/** A file of the log, by the last name a read met it under. */
+/** How many times a read lists the files of the log: once, and up to 3 more while files move under it. */
+const LOG_LISTINGS = 4;
+
+/**
+ * Every file of the log in the Rerail home `home`, read once each by its {@link fileId}.
+ *
+ * Hooks move the log by renames, which keep the file: from the live name to a hook's own and on to `.1`, and back to the
+ * live name when a hook gives it back. A read takes the live log first, so a log a hook takes from there while the read
+ * goes on was met already. Then it lists the files of the log, takes each one's file id and reads each file it has not
+ * met. When a file moved under it (a name gone by the time it looked, a file it found but could not read, another file
+ * at the live name or `.1`), it lists them again, up to 3 more times. On Windows a rename opens the file by name and
+ * then renames what it opened, so a log can move from one hook's name to another's, or from `.1` to a hook's name,
+ * between a listing and its read: the next listing finds it where it went. After the last listing the read stands: a
+ * log that moved on between each listing and its read is missed by that status, and a status that no move overlaps
+ * counts it.
+ *
+ * A give-back by copy moves lines, not a file. Between the removal of the taken name and the append to the live log the
+ * lines are under no name, so a read in that moment misses them; a read that met the taken log, then a live log it had
+ * not met that already holds the copy, counts them twice. Either is limited to the lines of the small log being given
+ * back, for that status.
+ */
+function readLogParts(home: string): LogPart[] {
+  const parts = new Map<string, LogPart>();
+  readPart(home, HOOK_FAILURES_FILE, parts);
+  for (let listing = 0; listing < LOG_LISTINGS; listing += 1) {
+    if (!readUnmet(home, parts)) break;
+  }
+  return [...parts.values()];
+}
+
+/**
+ * A file of the log: the live log's or `.1`'s name when a read last found it there, else the name it was read under,
+ * or {@link MOVED_ON} once another file is found under the name it had.
+ */
 interface LogPart extends LogText {
   name: string;
+}
+
+/** The name of a part of the log that another file has since taken. */
+const MOVED_ON = "";
+
+/** Reads the file of the log named `name` in `home` into `parts`, under its file id; nothing when it is gone or unreadable. */
+function readPart(home: string, name: string, parts: Map<string, LogPart>): void {
+  const part = readLogFile(join(home, name));
+  // A file met before keeps its name: only a listing moves it.
+  if (part !== null) parts.set(part.id, { ...part.log, name: parts.get(part.id)?.name ?? name });
+}
+
+/**
+ * Lists the files of the log in `home`, reads each one `parts` has not met, and says whether a file moved under it: a
+ * name gone by the time it looked, a file it found but could not read, another file under the live name or `.1` than
+ * the one last found there, or no file known as `.1` while a part says a hook moved one there.
+ */
+function readUnmet(home: string, parts: Map<string, LogPart>): boolean {
+  const names = listLog(home);
+  const missed = readNew(home, names, parts);
+  const moved = nameParts(parts, names);
+  return missed || moved || awaitingMovedAside(parts);
+}
+
+/** The files of the log a listing found, by name: each one's file id, or null when it was gone before it was looked at. */
+type LogNames = Map<string, string | null>;
+
+/** The files of the log in `home`, in the order a hook moves a log through them: the live log, the logs hooks took, `.1`. */
+function listLog(home: string): LogNames {
+  let listed: string[];
+  try {
+    listed = readdirSync(home);
+  } catch {
+    return new Map();
+  }
+  const order = [HOOK_FAILURES_FILE, ...listed.filter(name => TAKEN_LOG.test(name)), MOVED_ASIDE_FILE];
+  return new Map(order.filter(name => listed.includes(name)).map(name => [name, fileIdAt(join(home, name)) ?? null] as const));
+}
+
+/** Reads each file `names` holds that `parts` has not met, and says whether one of them is still unmet or a name was gone. */
+function readNew(home: string, names: LogNames, parts: Map<string, LogPart>): boolean {
+  let missed = false;
+  for (const [name, id] of names) {
+    if (id !== null && !parts.has(id)) readPart(home, name, parts);
+    if (id === null || !parts.has(id)) missed = true;
+  }
+  return missed;
+}
+
+/**
+ * Gives the live log's name and `.1` to the parts `names` found under them, and says whether either moved. With no file
+ * under one of them, the part last found there keeps it: a hook on Windows can hold `.1` under its own name for a moment.
+ */
+function nameParts(parts: ReadonlyMap<string, LogPart>, names: LogNames): boolean {
+  let moved = false;
+  for (const name of [HOOK_FAILURES_FILE, MOVED_ASIDE_FILE]) {
+    const id = names.get(name);
+    if (typeof id === "string" && giveName(parts, name, id)) moved = true;
+  }
+  return moved;
+}
+
+/** Gives `name` to the part with file id `id`, taking it from any other part, and says whether it moved. */
+function giveName(parts: ReadonlyMap<string, LogPart>, name: string, id: string): boolean {
+  let moved = false;
+  for (const [partId, part] of parts) {
+    const next = partId === id ? name : part.name === name ? MOVED_ON : part.name;
+    if (next !== part.name) moved = true;
+    part.name = next;
+  }
+  return moved;
+}
+
+/**
+ * Whether no file of the log is known as `.1` though a part holds a start ({@link PartStart}), which a hook writes only
+ * once it has moved a full log to `.1`, where a log stays until the next replaces it: a hook on Windows holds it under
+ * its own name for a moment, and a read that stopped there would say it counts the last 24 hours though the part
+ * before was dropped.
+ */
+function awaitingMovedAside(parts: ReadonlyMap<string, LogPart>): boolean {
+  const all = [...parts.values()];
+  return !all.some(part => part.name === MOVED_ASIDE_FILE) && all.some(part => part.name !== MOVED_ON && part.startedAt !== undefined);
 }
 
 /**
