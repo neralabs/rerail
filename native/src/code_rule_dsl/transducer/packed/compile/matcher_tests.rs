@@ -679,7 +679,7 @@ fn ast_pattern_captures_are_pinned() {
     }
     let got: String = h.finalize().iter().take(16).map(|b| format!("{b:02x}")).collect();
     assert!(matched > 500, "{matched} matches");
-    assert_eq!(got, "ea71d4437b2c2ba12fc3b08d3c7f982c", "the captures moved ({matched} matches)");
+    assert_eq!(got, "2f1444d906c39b0c99a4e20b5b9a56cb", "the captures moved ({matched} matches)");
 }
 
 /// The verdict alone (`matches_ast_pattern`, into bindings reused from node to node) is

@@ -556,7 +556,7 @@
           "kind": "pattern",
           "dialect": "python",
           "producer_kind": "pattern",
-          "program_digest": "b4cb0e9a75db431af1cb26debd0f7f41eb143a1304081bca5b5ef1fdbe754667",
+          "program_digest": "c113bca851d1f9f6b1fecb2d786a5feed53184148f86740cef151a1ce5f4a3eb",
           "result_schema": [
             "producer_status",
             "terminal_match",
@@ -594,7 +594,7 @@
           "kind": "pattern",
           "dialect": "python",
           "producer_kind": "pattern",
-          "program_digest": "b4cb0e9a75db431af1cb26debd0f7f41eb143a1304081bca5b5ef1fdbe754667",
+          "program_digest": "c113bca851d1f9f6b1fecb2d786a5feed53184148f86740cef151a1ce5f4a3eb",
           "result_schema": [
             "producer_status",
             "terminal_match",
@@ -632,7 +632,7 @@
           "kind": "pattern",
           "dialect": "python",
           "producer_kind": "pattern",
-          "program_digest": "dd2eff587d4f8661a93251ad3268817b52ab365ee5dcd9df9bb5826d6cb08f96",
+          "program_digest": "7e6ccc7aec014d3f3064a9c5cf69c8ce7acdd455a5346044db02b10dbd680c2e",
           "result_schema": [
             "producer_status",
             "terminal_match",
@@ -1571,7 +1571,7 @@
           "kind": "pattern",
           "dialect": "python",
           "producer_kind": "pattern",
-          "program_digest": "7923c1b36f50348f3c77c1957d3111adb6e2bed956040d3a828fb79deba3e4b8",
+          "program_digest": "238f291c710c41503ad2d85cd1c7c3a3af1331ad1716eaa1a61a34b8b97bfda0",
           "result_schema": [
             "producer_status",
             "terminal_match",
