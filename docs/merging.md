@@ -64,7 +64,14 @@ ls ../*/docs/final-shape/decisions | grep -oE '^[0-9]{4}' | sort -n | tail -1
 ```
 
 Add a line "Numbered N where it was written" to the moved file. Update every reference to it, and
-its row in `docs/final-shape/decisions/README.md`.
+its row in `docs/final-shape/decisions/README.md`. A reference is a decision number in code
+comments, profile strings, rule files and docs, not only links. Decide which record each one means
+from the topic beside it, or from which record existed when the line was written (`git blame`).
+
+Only renumber a collision your merge creates. A collision that both sides already have (one
+inherited from the hub, the branch `final-shape-serverplan-quality`) is the hub's to fix. If a
+branch renumbers it too, the two renumberings conflict at the next merge. When a merge brings the
+hub's renumbering, take it, and move your branch's references to match.
 
 ## Before committing: audit what was dropped
 
