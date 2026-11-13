@@ -2548,11 +2548,13 @@ fn run_observed(
     if durable.is_some() {
         let (text, plan) = combined::named(&texts);
         memo::named_source(store, text, false, &late_sources);
+        // And its program's text (decision 0155), a source of its own.
+        combined::name_program(store, &texts, &late_sources);
         program_plans.push(plan);
     }
     // The plans' whole-program choices (inline or store, demand), kept under the prepared program across processes
     // (`plan::choices`, decision 0090 §5); the manifest names their entries too.
-    let _choices = durable.and(tape_cache_path()).map(|path| super::choices::Durable::start(&path, prepared_key));
+    let _choices = durable.and(tape_cache_path()).map(|path| super::choices::Durable::start(&path, prepared_key, Arc::clone(&late_sources)));
     if durable.is_some() {
         let (text, plan) = super::choices::named(&prepared_key);
         memo::named_source(store, text, true, &late_sources);

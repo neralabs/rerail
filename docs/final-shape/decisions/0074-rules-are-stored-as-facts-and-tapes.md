@@ -1,6 +1,6 @@
 # 0074: Rules are stored as facts, and as a tape of those facts
 
-Status: built (2026-11-07)
+Status: built (2026-11-07); §1–3 and §4's facts entry superseded by 0155 (a stored program is its `.rr` text)
 
 ## Intro
 
