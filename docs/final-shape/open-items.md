@@ -4087,6 +4087,24 @@ reached one does there). 52–58% of the packs' and data layer's clauses are dro
 257.8 G; dl1 over a store, cold 265 → 237.5 G, warm 112 → 88.5 G. `keeps::choose` (11% earlier) is under 1.5%
 now: no item.
 
+**What remained, cut (2026-11-12).** Reading was still 15.5% of a warm batch's main thread (850 of 5,500 samples):
+
+1. *A store a file.* Each rule file read off its tape (`stored_statements`) opened the tape cache and closed it,
+   and the close of its last handle closed every thread's connection to it (`ContentStore`'s drop,
+   `release_all`): 514 samples. A batch, and a program's reading, now hold one handle (`phases::Reading`,
+   `reading_store`). `read_file` also copies only the statements kept (`reached_statements`), not every library.
+2. *The token check's fixpoint.* `token_reads::refuse` brought the column kinds of every relation of the program to
+   a fixpoint, 16 rounds at most, though only a clause that reads a token (`READS`) consults them: now only the
+   relations of those clauses and what they derive from (141 → 9 samples).
+   `a_parent_kind_derived_through_rules_is_named` checks a kind derived through a rule is still named.
+3. *The cycle check's summaries.* `front::cycles::check` summarized every component, though only a recursive
+   component with a value cycle not keyed by constants reads them: now none past the last such component (166 →
+   60 samples).
+
+Warm dl1 batch, same tree and store: 94.8 → 91.3 G instructions and 32.2 → 28.8 G cycles for (1) (load 16–20);
+88.2 G and 27.1 G with (2) and (3) (load 4); 48 findings. Reading is 367 of 3,206 samples (11.4%): `lower::lower`
+269 (`clause` and `span_patterns`, the lowering itself), `front::finish` 70.
+
 ## O-prepared-decode. A warm batch decodes each policy's prepared program from the store
 
 **Seen (2026-11-12)**, after O-store-single-program and O-read-unreached-library: in a warm dl1 batch over a store,
