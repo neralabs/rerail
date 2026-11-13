@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -1263,7 +1263,9 @@ describe("code rule schema and engine agree on unsupported fields", () => {
 
   it("pins parse's grammars and kinds to the engine's", () => {
     const literal = (file: string) => readFileSync(new URL(`../../../native/src/code_rule_dsl/literal/${file}`, import.meta.url), "utf8");
-    const grammars = [...literal("mod.rs").matchAll(/^\s+"(\w+)" => Some\(Self::\w+\),$/gm)].map(match => match[1]).filter(name => name !== "testChars");
+    // Each grammar names itself (`LiteralGrammar::name`) in its own file; `testChars` is the tests' grammar.
+    const files = readdirSync(new URL("../../../native/src/code_rule_dsl/literal/", import.meta.url)).filter(file => file.endsWith(".rs"));
+    const grammars = files.flatMap(file => [...literal(file).matchAll(/fn name\(&self\) -> &'static str \{\s+"(\w+)"/g)].map(match => match[1])).filter(name => name !== "testChars");
     expect(grammars.sort()).toEqual([...CODE_RULE_PARSE_GRAMMARS].sort());
     const kinds = (file: string) => [...(literal(file).split("KINDS: &[&str] = &[")[1]!.split("];")[0]!.matchAll(/"(\w+)"/g))].map(match => match[1]);
     expect(kinds("percent.rs")).toEqual([...CODE_RULE_PARSE_KINDS.percentFormat]);
