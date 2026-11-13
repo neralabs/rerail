@@ -252,6 +252,14 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
     let mut refused = BTreeSet::new();
     for &ri in &readers {
         let rule = &prog.rules[ri];
+        // A reader with nothing but its demanded reads (`p :- !allow_status("plan_helpers", "valid")`), and no demand
+        // of its own: no `pre_<i>` binds it, so it would stay as written and demand nothing, while its reads' relations
+        // are computed only for their other readers' keys. Its keys would hold no rows, and each negation would hold
+        // (a constant finding reported where its status was valid). Its reads' relations are built whole.
+        if !candidates.contains(rule.head.rel.as_str()) && (0..rule.body.len()).all(|i| negated(rule, i)) {
+            refused.extend(rule.body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()));
+            continue;
+        }
         for (i, l) in rule.body.iter().enumerate() {
             let Literal::Atom(a) = l else { continue };
             if a.neg || !negated(rule, i) {
