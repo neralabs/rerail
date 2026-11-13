@@ -8,9 +8,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
-import { DAEMON_STATE_FILE, lookupDaemon, type DaemonState } from "../../src/runtime/daemon-control.js";
-import { engineCapabilityProof } from "../../src/runtime/engine-proof.js";
-import { removeFolder } from "../support/platform/remove-folder.js";
+import { DAEMON_STATE_FILE, lookupDaemon, type DaemonState } from "../../../src/runtime/daemon-control.js";
+import { engineCapabilityProof } from "../../../src/runtime/engine-proof.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 /** How far past its limit a proof may answer on a loaded test machine; the wait it must not take is 30 s. */
 const SLACK_MS = 2_000;
