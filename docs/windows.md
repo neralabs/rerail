@@ -300,7 +300,7 @@ its exact text, so `src/setup/harness-registration.ts` writes and reads those it
 
 | Agent | Hook command | Commands it runs |
 | --- | --- | --- |
-| Claude Code | Exec form, no shell: `node <hook launcher> <recorded node> <hook>` | Git Bash: `'<node>' '<cli.js>'`, and the status line with POSIX quoting |
+| Claude Code | Exec form, no shell: `node <hook launcher> <recorded node> <hook>` where `node` on PATH is the recorded node; elsewhere `cmd.exe` runs `<recorded node> <hook launcher> <recorded node> <hook>`, or `node.exe` from PATH once that node is gone | Git Bash: `'<node>' '<cli.js>'`, and the status line with POSIX quoting |
 | Codex | PowerShell: `$LASTEXITCODE = 1; if (Test-Path -LiteralPath '<node>') { & '<node>' '<hook>' } else { node '<hook>' }; exit $LASTEXITCODE` | PowerShell: `& '<node>' '<cli.js>'` |
 | Cursor | PowerShell, the event piped in: `Invoke-Command -ScriptBlock { if (Test-Path -LiteralPath '<node>') { $input \| & '<node>' '<hook>' } else { $input \| node '<hook>' } }` | PowerShell: `& '<node>' '<cli.js>'` |
 
@@ -382,8 +382,10 @@ On Windows every hook process exits once the process that started it is gone (`e
 the one node started.
 
 A coding agent that times out a hook kills the process it started. On macOS and Linux that is node, since the sh
-launcher `exec`s it. On Windows it is the parent node runs under: PowerShell for Codex and Cursor, the hook launcher
-for Claude Code. Windows never kills a child with its parent, so the hook ran on holding its session's lock, and the
+launcher `exec`s it. On Windows it is the parent node runs under: PowerShell for Codex and Cursor, `cmd.exe` for
+Claude Code where its entry starts `cmd.exe`, and the hook launcher where the `node` entry finds another node on PATH.
+Where that node is the recorded one, the launcher runs the hook in the process Claude Code ends, as on macOS and Linux.
+Windows never kills a child with its parent, so the hook ran on holding its session's lock, and the
 session's next hook waited up to 30 s for it. A hook that exits holding its session's lock now removes it as it exits,
 and a lock whose holder has stopped touching it for 10 s is taken by the next hook, even when Windows has given the
 holder's pid to another process. The watch checks the parent once a second. Since the watch does nothing
