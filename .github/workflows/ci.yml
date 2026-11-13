@@ -562,8 +562,9 @@ jobs:
         if: matrix.task == 'test'
         run: cargo build --manifest-path scripts/profiling/reachability/Cargo.toml --release --locked --target-dir target/reachability-spike
 
-      # The extension is bound to the bundled SQLite's API (modern_sqlite) and refuses an older host;
-      # the runner's Python has SQLite 3.45.1. Build the amalgamation the lock resolves for the tests.
+      # The extension is bound to the bundled SQLite's API (modern_sqlite) and refuses an older host. The runner's
+      # Python links the system SQLite 3.45.1 (the CPython 3.13 put on PATH above links its own, older one, statically):
+      # build the amalgamation the lock resolves and load it into the runner's Python for the tests.
       - name: Build the SQLite the reachability extension is bound to
         if: matrix.task == 'test'
         run: |
@@ -580,9 +581,9 @@ jobs:
           PYTHONDONTWRITEBYTECODE: "1"
           LD_LIBRARY_PATH: ${{ runner.temp }}/sqlite
         run: |
-          python3 test/scripts/test_reachability.py
-          python3 test/scripts/test_native_relations.py
-          python3 test/scripts/test_native_sql_plan.py
+          /usr/bin/python3 test/scripts/test_reachability.py
+          /usr/bin/python3 test/scripts/test_native_relations.py
+          /usr/bin/python3 test/scripts/test_native_sql_plan.py
 
       # P's producer-shape and SQL-budget gates measure P's SQL anchor engine, which this engine places test-only
       # (docs/final-shape/open-items.md O20; P's tests that need P's addon, O84). On this addon they find no anchor

@@ -9,6 +9,8 @@ publish = false
 [features]
 default = ["code-rule-profile"]
 code-rule-profile = []
+# The engine's feature that compiles its test helpers outside `cfg(test)`; the lab tests under `cfg(test)`.
+test-hooks = []
 
 [dependencies]
 rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "functions", "hooks", "vtab", "series", "modern_sqlite", "column_decltype"] }
