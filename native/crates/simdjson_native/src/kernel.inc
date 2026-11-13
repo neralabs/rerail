@@ -1,170 +1,45 @@
-// simdjson, and two ways to read a document with it:
+// The v9np kernel: simdjson's stage 1 with the source hashed in it, and our stage 2, which writes the
+// tape. Written once, included by `shim.cpp` inside each of simdjson's implementations
+// (`simdjson::<implementation>::{anonymous}`), in a target region with that implementation's
+// instructions and the CPU's SHA-256 ones: its names (`simd`, `stage1`, `numberparsing`, …) are that
+// implementation's. `RERAIL_IMPLEMENTATION` is its name.
 //
-// - `rerail_simdjson_structurals`: simdjson's DOM parser validates the document, and its structural
-//   index is given back: the start of each structural byte (`{ } [ ] : ,`) and of each scalar (a
-//   string's opening quote, a number's or a literal's first byte), in order.
-// - `rerail_simdjson_v9np`: the engine's tape in one pass of stage 1 and one of a stage 2 of ours:
-//   - stage 1 is simdjson's (its scanner, UTF-8 checker and indexer), each 64-byte block also
-//     hashed with the CPU's SHA-256 instructions: the source's digest comes out with the index;
-//   - stage 2 walks the index itself, its state in locals, checking the document as simdjson's
-//     stage 2 does (structure, depth, escapes, numbers, atoms), and writes the v9np tape at each
-//     node's preorder slot into the tape's own buffers (the caller's), at their stored widths, with
-//     the tape's code table. No DOM tape, no string buffer, no number values, nothing copied after.
-//
-// The amalgamation is compiled in this translation unit: stage 1's parts and the scalar checks are
-// internal to it.
-#include "simdjson.h"
-#include "simdjson.cpp"
+// The kernel is the same in every implementation but for the vectors' width (`backslash_quote`); a
+// kernel's SHA-256 is a template parameter (`H`: the CPU's instructions, or portable code).
 
-// A lambda inlined where it is called.
-#define simdjson_inline_lambda __attribute__((always_inline))
-
-#include <cstring>
-#include <memory>
-#include <string>
-#if SIMDJSON_IMPLEMENTATION_ARM64
-#include <arm_neon.h>
-#endif
-
-namespace {
-struct State {
-  simdjson::dom::parser parser;
-  // The source, copied with simdjson's padding after it.
-  std::unique_ptr<char[]> buffer;
-  size_t capacity = 0;
-};
-thread_local State state;
-
-// The source, copied with simdjson's padding (zeros) after it.
-const uint8_t* padded(std::unique_ptr<char[]>& buffer, size_t& capacity, const char* src, size_t len) {
-  if (capacity < len + simdjson::SIMDJSON_PADDING) {
-    capacity = len + simdjson::SIMDJSON_PADDING;
-    buffer.reset(new char[capacity]);
-  }
-  std::memcpy(buffer.get(), src, len);
-  std::memset(buffer.get() + len, 0, simdjson::SIMDJSON_PADDING);
-  return reinterpret_cast<const uint8_t*>(buffer.get());
-}
-}  // namespace
-
-// The tape's buffers, as the caller owns them: `code`, `size`, `off`, `tail` and `base`, each with
-// its bytes used (`len`) and allocated (`cap`). `grow` makes each buffer hold `need[i]` bytes, keeping
-// its first `len[i]`, and sets `col` and `cap` again.
-struct rerail_v9np_sink {
-  uint8_t* col[5];
-  size_t len[5];
-  size_t cap[5];
-  // `size`, `off` and `tail`'s widths: 2 or 4.
-  uint8_t width[3];
-  void* ctx;
-  void (*grow)(rerail_v9np_sink* sink, const size_t* need);
-  // The kind of each slot (document, pair, string_content, escape_sequence, object, array, string,
-  // number, true, false, null), and the `key` and `value` fields.
-  uint16_t kind[11];
-  uint16_t key_field;
-  uint16_t value_field;
-  // The tape's codes, in first-use order: kind, field, and whether in a value's place.
-  uint32_t codes;
-  uint16_t code_kind[33];
-  uint16_t code_field[33];
-  uint8_t code_value[33];
-  // The source's SHA-256.
-  uint8_t digest[32];
-};
-
-#if SIMDJSON_IMPLEMENTATION_ARM64
-namespace {
-
-// --- SHA-256, with the CPU's instructions -----------------------------------------------------------
-
-const uint32_t SHA_K[64] = {
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be,
-    0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa,
-    0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85,
-    0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
-    0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f,
-    0x682e6ff3, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
-
-struct sha256 {
-  uint32x4_t abcd, efgh;
-
-  sha256() {
-    const uint32_t h[8] = {0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19};
-    abcd = vld1q_u32(h);
-    efgh = vld1q_u32(h + 4);
-  }
-  // One 64-byte block: four rounds an instruction pair, the schedule four words at a time.
-  __attribute__((target("sha2"))) simdjson_inline void block(const uint8_t* p) {
-    uint32x4_t m0 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p)));
-    uint32x4_t m1 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p + 16)));
-    uint32x4_t m2 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p + 32)));
-    uint32x4_t m3 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(p + 48)));
-    uint32x4_t s0 = abcd, s1 = efgh;
-#define RERAIL_SHA_ROUNDS(M, I)                          \
-  {                                                      \
-    const uint32x4_t k = vaddq_u32(M, vld1q_u32(SHA_K + 4 * (I))); \
-    const uint32x4_t before = s0;                        \
-    s0 = vsha256hq_u32(s0, s1, k);                       \
-    s1 = vsha256h2q_u32(s1, before, k);                  \
-  }
-#define RERAIL_SHA_SCHEDULE(A, B, C, D) A = vsha256su1q_u32(vsha256su0q_u32(A, B), C, D)
-    for (int i = 0; i < 12; i += 4) {
-      RERAIL_SHA_ROUNDS(m0, i);
-      RERAIL_SHA_SCHEDULE(m0, m1, m2, m3);
-      RERAIL_SHA_ROUNDS(m1, i + 1);
-      RERAIL_SHA_SCHEDULE(m1, m2, m3, m0);
-      RERAIL_SHA_ROUNDS(m2, i + 2);
-      RERAIL_SHA_SCHEDULE(m2, m3, m0, m1);
-      RERAIL_SHA_ROUNDS(m3, i + 3);
-      RERAIL_SHA_SCHEDULE(m3, m0, m1, m2);
-    }
-    RERAIL_SHA_ROUNDS(m0, 12);
-    RERAIL_SHA_ROUNDS(m1, 13);
-    RERAIL_SHA_ROUNDS(m2, 14);
-    RERAIL_SHA_ROUNDS(m3, 15);
-#undef RERAIL_SHA_ROUNDS
-#undef RERAIL_SHA_SCHEDULE
-    abcd = vaddq_u32(s0, abcd);
-    efgh = vaddq_u32(s1, efgh);
-  }
-  // The last `rest` bytes at `p` (fewer than 64), the padding and the length; the digest.
-  void finish(const uint8_t* p, size_t rest, uint64_t total, uint8_t* out) {
-    uint8_t last[128] = {0};
-    std::memcpy(last, p, rest);
-    last[rest] = 0x80;
-    const size_t blocks = rest < 56 ? 1 : 2;
-    const uint64_t bits = total * 8;
-    for (int i = 0; i < 8; i++) { last[blocks * 64 - 1 - i] = uint8_t(bits >> (8 * i)); }
-    for (size_t b = 0; b < blocks; b++) { block(last + 64 * b); }
-    uint32_t words[8];
-    vst1q_u32(words, abcd);
-    vst1q_u32(words + 4, efgh);
-    for (int i = 0; i < 8; i++) {
-      for (int j = 0; j < 4; j++) { out[4 * i + j] = uint8_t(words[i] >> (24 - 8 * j)); }
-    }
-  }
-};
-
-}  // namespace
-
-namespace simdjson {
-namespace arm64 {
-namespace {
 namespace stage1 {
+
+// The last `rest` bytes at `p` (fewer than 64), the padding and the length; the digest.
+template <typename H>
+void sha_finish(H& sha, const uint8_t* p, size_t rest, uint64_t total, uint8_t* out) {
+  uint8_t last[128] = {0};
+  std::memcpy(last, p, rest);
+  last[rest] = 0x80;
+  const size_t blocks = rest < 56 ? 1 : 2;
+  const uint64_t bits = total * 8;
+  for (int i = 0; i < 8; i++) { last[blocks * 64 - 1 - i] = uint8_t(bits >> (8 * i)); }
+  for (size_t b = 0; b < blocks; b++) { sha.block(last + 64 * b); }
+  uint32_t words[8];
+  sha.words(words);
+  for (int i = 0; i < 8; i++) {
+    for (int j = 0; j < 4; j++) { out[4 * i + j] = uint8_t(words[i] >> (24 - 8 * j)); }
+  }
+}
 
 // simdjson's stage 1 (`json_structural_indexer::index<64>`, the whole-document mode), each block of
 // the source also hashed. `buf` and `len` are the document after a byte order mark; `src` and `total`
 // the whole source, which is hashed.
+template <typename H>
 simdjson_warn_unused error_code index_and_hash(dom_parser_implementation& parser, const uint8_t* buf, size_t len, const uint8_t* src, size_t total,
                                                uint8_t* digest) noexcept {
-  sha256 sha;
+  H sha;
   size_t hashed = 0;
   auto hash_rest = [&] {
     while (hashed + 64 <= total) {
       sha.block(src + hashed);
       hashed += 64;
     }
-    sha.finish(src + hashed, total - hashed, total, digest);
+    sha_finish(sha, src + hashed, total - hashed, total, digest);
   };
   if (simdjson_unlikely(len > parser.capacity())) { return CAPACITY; }
   parser.buf = buf;
@@ -226,13 +101,8 @@ enum : uint32_t { NO_FIELD = 0, KEY = 1, VALUE = 2 };
 enum : uint32_t { CODE = 0, SIZE = 1, OFF = 2, TAIL = 3, BASE = 4 };
 constexpr uint32_t STRIDE = 16;
 
-// A number checked as simdjson's `numberparsing::parse_number` checks it, its value not kept; and
-// where it ends.
-struct no_values {
-  simdjson_inline void append_s64(int64_t) noexcept {}
-  simdjson_inline void append_u64(uint64_t) noexcept {}
-  simdjson_inline void append_double(double) noexcept {}
-};
+// A number checked as simdjson's `numberparsing::parse_number` checks it, its value not kept
+// (`::no_values`); and where it ends.
 simdjson_warn_unused simdjson_inline error_code number_end(const uint8_t* const src, const uint8_t*& end) noexcept {
   using namespace numberparsing;
   const bool negative = (*src == '-');
@@ -258,7 +128,7 @@ simdjson_warn_unused simdjson_inline error_code number_end(const uint8_t* const 
   end = p;
   if (is_float) {
     const bool dirty_end = jsoncharutils::is_not_structural_or_whitespace(*p);
-    no_values w;
+    ::no_values w;
     SIMDJSON_TRY(write_float(src, negative, i, start_digits, digit_count, exponent, w));
     return dirty_end ? NUMBER_ERROR : SUCCESS;
   }
@@ -272,6 +142,23 @@ simdjson_warn_unused simdjson_inline error_code number_end(const uint8_t* const 
     }
   }
   return jsoncharutils::is_not_structural_or_whitespace(*p) ? NUMBER_ERROR : SUCCESS;
+}
+
+// The 32 bytes at `p`: a bit for each `\\` (low half) and each `"` (high half), in the vectors this
+// kernel has (`V`: 16, 32 or 64 bytes; `B`, their bits, a template's so that a branch not taken is not
+// compiled).
+template <typename V, typename B = simd::simd8x64<bool>>
+simdjson_inline uint64_t backslash_quote(const uint8_t* p) {
+  if constexpr (sizeof(V) == 16) {
+    const V v0(p), v1(p + 16);
+    return B(v0 == '\\', v1 == '\\', v0 == '"', v1 == '"').to_bitmask();
+  } else if constexpr (sizeof(V) == 32) {
+    const V v(p);
+    return B(v == '\\', v == '"').to_bitmask();
+  } else {
+    const simd::simd8x64<uint8_t> in(p);
+    return (in.eq('\\') & 0xffffffffu) | (in.eq('"') << 32);
+  }
 }
 
 // The bytes of `c` for `nodes` nodes, `size`, `off` and `tail` at `width`.
@@ -368,9 +255,7 @@ simdjson_never_inline int walk(const uint8_t* const buf, const uint32_t* const i
     const uint8_t* from = p;
     const uint8_t* low_checked = nullptr;
     while (true) {
-      simd::simd8<uint8_t> v0(p);
-      simd::simd8<uint8_t> v1(p + 16);
-      const uint64_t bits = simd::simd8x64<bool>(v0 == '\\', v1 == '\\', v0 == '"', v1 == '"').to_bitmask();
+      const uint64_t bits = backslash_quote<simd::simd8<uint8_t>>(p);
       const uint32_t bs = uint32_t(bits), quote = uint32_t(bits >> 32);
       if (((bs - 1) & quote) != 0) {
         const uint8_t* q = p + __builtin_ctz(quote);
@@ -409,9 +294,7 @@ simdjson_never_inline int walk(const uint8_t* const buf, const uint32_t* const i
   // two nodes at once (the string and its content), or one where it is empty.
   auto string = [&](const uint8_t* v, uint32_t field) simdjson_inline_lambda -> uint32_t {
     const uint32_t s = at(v);
-    simd::simd8<uint8_t> v0(v + 1);
-    simd::simd8<uint8_t> v1(v + 17);
-    const uint64_t bits = simd::simd8x64<bool>(v0 == '\\', v1 == '\\', v0 == '"', v1 == '"').to_bitmask();
+    const uint64_t bits = backslash_quote<simd::simd8<uint8_t>>(v + 1);
     const uint32_t bs = uint32_t(bits), quote = uint32_t(bits >> 32);
     if (simdjson_likely(((bs - 1) & quote) != 0)) {
       const uint32_t q = __builtin_ctz(quote);
@@ -633,27 +516,25 @@ document_end:
 }
 
 }  // namespace stage2
-}  // namespace
-}  // namespace arm64
-}  // namespace simdjson
 
-namespace {
-// A thread's v9np stage 2: stage 1's buffers (no DOM document) and the depth stacks.
-struct V9np {
+namespace rerail_v9np {
+
+// A thread's kernel: stage 1's buffers (no DOM document), the padded source and the depth stacks.
+struct Thread {
   std::unique_ptr<simdjson::internal::dom_parser_implementation> stage1;
   std::unique_ptr<char[]> buffer;
   size_t buffer_capacity = 0;
   std::unique_ptr<uint32_t[]> stacks;  // container and pair, by depth
   std::unique_ptr<bool[]> objects;
 };
-thread_local V9np v9np;
+thread_local Thread thread;
 // Walks made again at other widths, for a measurement.
 thread_local uint64_t rewalks = 0;
 
 // A walk at the widths `wide` names (bit 1 size, 2 off, 4 tail: 4 bytes).
 int walk_at(uint32_t wide, const uint8_t* buf, const uint32_t* index, uint32_t count, uint32_t shift, uint32_t len, rerail_v9np_sink* sink) {
-  using namespace simdjson::arm64::stage2;
-  V9np& s = v9np;
+  using namespace stage2;
+  Thread& s = thread;
   uint32_t* container = s.stacks.get();
   uint32_t* pair = s.stacks.get() + simdjson::DEFAULT_MAX_DEPTH + 1;
   bool* object = s.objects.get();
@@ -669,11 +550,13 @@ int walk_at(uint32_t wide, const uint8_t* buf, const uint32_t* index, uint32_t c
   }
 }
 
-// This thread's stage 1 parser, made to hold `body` bytes.
-simdjson::error_code ready(V9np& s, size_t body) {
+// This thread's stage 1 parser, this implementation's, made to hold `body` bytes.
+simdjson::error_code ready(Thread& s, size_t body) {
   if (!s.stage1 || s.stage1->capacity() < body) {
     s.stage1.reset();
-    auto error = simdjson::get_active_implementation()->create_dom_parser_implementation(body < 64 ? 64 : body, simdjson::DEFAULT_MAX_DEPTH, s.stage1);
+    const simdjson::implementation* impl = simdjson::get_available_implementations()[RERAIL_IMPLEMENTATION];
+    if (impl == nullptr) { return simdjson::UNSUPPORTED_ARCHITECTURE; }
+    auto error = impl->create_dom_parser_implementation(body < 64 ? 64 : body, simdjson::DEFAULT_MAX_DEPTH, s.stage1);
     if (error) { return error; }
   }
   if (!s.stacks) {
@@ -682,39 +565,18 @@ simdjson::error_code ready(V9np& s, size_t body) {
   }
   return simdjson::SUCCESS;
 }
-}  // namespace
-#endif
 
-extern "C" {
-
-// 0 and the index (valid until this thread's next call), or simdjson's error code.
-int rerail_simdjson_structurals(const char* src, size_t len, const uint32_t** indexes, uint32_t* count) {
-  State& s = state;
-  const uint8_t* buf = padded(s.buffer, s.capacity, src, len);
-  simdjson::dom::element root;
-  auto error = s.parser.parse(buf, len, false).get(root);
-  if (error) {
-    return int(error);
-  }
-  *indexes = s.parser.implementation->structural_indexes.get();
-  *count = s.parser.implementation->n_structural_indexes;
-  return 0;
-}
-
-// 0 and the tape and the source's digest written to `sink`, simdjson's error code, or -1 where this
-// build has no v9np stage 2 (not arm64).
-int rerail_simdjson_v9np(const char* src, size_t len, rerail_v9np_sink* sink) {
-#if SIMDJSON_IMPLEMENTATION_ARM64
-  static const bool arm64 = simdjson::get_active_implementation()->name() == "arm64";
-  if (!arm64 || len >= 0xffffffffu / 2) { return -1; }
-  V9np& s = v9np;
-  const uint8_t* buf = padded(s.buffer, s.buffer_capacity, src, len);
+// 0 and the tape and the source's digest written to `sink`, or simdjson's error code.
+template <typename H>
+int tape(const char* src, size_t len, rerail_v9np_sink* sink) {
+  Thread& s = thread;
+  const uint8_t* buf = ::padded(s.buffer, s.buffer_capacity, src, len);
   const uint32_t shift = (len >= 3 && std::memcmp(buf, "\xEF\xBB\xBF", 3) == 0) ? 3 : 0;
   const size_t body = len - shift;
   auto error = ready(s, body);
   if (error) { return int(error); }
-  auto& p = static_cast<simdjson::arm64::dom_parser_implementation&>(*s.stage1);
-  error = simdjson::arm64::stage1::index_and_hash(p, buf + shift, body, buf, len, sink->digest);
+  auto& p = static_cast<dom_parser_implementation&>(*s.stage1);
+  error = stage1::index_and_hash<H>(p, buf + shift, body, buf, len, sink->digest);
   if (error) { return int(error); }
   // `size` 4 bytes wide where the nodes, about one and a quarter a structural, pass 2 bytes; `off`
   // and `tail` 2. A prediction a walk shows wrong is walked again at the widths it showed (rare: a
@@ -729,71 +591,36 @@ int rerail_simdjson_v9np(const char* src, size_t len, rerail_v9np_sink* sink) {
     wide = (wide | uint32_t(r & 7)) & ~((r & 8) ? 1u : 0u);
   }
   return int(simdjson::UNEXPECTED_ERROR);
-#else
-  (void)src;
-  (void)len;
-  (void)sink;
-  return -1;
-#endif
 }
 
-// This thread's walks made again at other widths.
-uint64_t rerail_simdjson_v9np_rewalks() {
-#if SIMDJSON_IMPLEMENTATION_ARM64
-  return rewalks;
-#else
-  return 0;
-#endif
-}
-
-// Stage 1 alone (a measurement's), simdjson's or, `hashed`, ours with the digest: the structural
+// Stage 1 alone (a measurement's): simdjson's, or, `hashed`, ours with the digest. The structural
 // index's length, or simdjson's error code negated.
-int64_t rerail_simdjson_stage1(const char* src, size_t len, int hashed) {
-#if SIMDJSON_IMPLEMENTATION_ARM64
-  V9np& s = v9np;
-  const uint8_t* buf = padded(s.buffer, s.buffer_capacity, src, len);
+template <typename H>
+int64_t stage1_only(const char* src, size_t len, int hashed) {
+  Thread& s = thread;
+  const uint8_t* buf = ::padded(s.buffer, s.buffer_capacity, src, len);
   auto error = ready(s, len);
   if (error) { return -int64_t(error); }
   if (hashed) {
     uint8_t digest[32];
-    auto& p = static_cast<simdjson::arm64::dom_parser_implementation&>(*s.stage1);
-    error = simdjson::arm64::stage1::index_and_hash(p, buf, len, buf, len, digest);
+    auto& p = static_cast<dom_parser_implementation&>(*s.stage1);
+    error = stage1::index_and_hash<H>(p, buf, len, buf, len, digest);
   } else {
     error = s.stage1->stage1(buf, len, simdjson::stage1_mode::regular);
   }
   return error ? -int64_t(error) : int64_t(s.stage1->n_structural_indexes);
-#else
-  (void)src;
-  (void)len;
-  (void)hashed;
-  return -1;
-#endif
 }
 
-// Frees this thread's parsers and buffers when they hold more than `keep` bytes of source.
-void rerail_simdjson_release_above(size_t keep) {
-  State& s = state;
-  if (s.capacity > keep + simdjson::SIMDJSON_PADDING || s.parser.capacity() > keep) {
-    s.parser = simdjson::dom::parser();
+// Frees this thread's buffers when they hold more than `keep` bytes of source.
+void release_above(size_t keep) {
+  Thread& s = thread;
+  if (s.buffer_capacity > keep + simdjson::SIMDJSON_PADDING) {
+    s.stage1.reset();
     s.buffer.reset();
-    s.capacity = 0;
+    s.buffer_capacity = 0;
   }
-#if SIMDJSON_IMPLEMENTATION_ARM64
-  V9np& v = v9np;
-  if (v.buffer_capacity > keep + simdjson::SIMDJSON_PADDING) {
-    v.stage1.reset();
-    v.buffer.reset();
-    v.buffer_capacity = 0;
-  }
-#endif
 }
 
-const char* rerail_simdjson_error_message(int code) {
-  return simdjson::error_message(simdjson::error_code(code));
-}
+uint64_t walked_again() { return rewalks; }
 
-const char* rerail_simdjson_implementation() {
-  static const std::string name = simdjson::get_active_implementation()->name();
-  return name.c_str();
-}
-}
+}  // namespace rerail_v9np
