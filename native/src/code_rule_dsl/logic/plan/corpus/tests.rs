@@ -1017,3 +1017,26 @@ fn modules_are_named_from_their_package_roots_and_relative_imports_of_any_depth_
     assert_eq!(read("open_names"), "four\n");
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A request's context is every literal beside it (`rr::lower`'s `request_context`): `type_ctx(r) :- type_ctx(s),
+/// str_node(s), parsed(s, "annotation", r)` asks to parse the strings in a type context, not every string of the
+/// file. Its context was the inputs alone (`str_node`), and a module of 111k string pairs (netbox's `un_locode.py`)
+/// asked for every one: 297k parses, past 25 minutes and 33 GB.
+#[test]
+fn a_parse_request_asks_only_for_the_strings_its_rule_reads() {
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("request-context");
+    let _ = std::fs::remove_dir_all(&base);
+    let src = base.join("tree");
+    std::fs::create_dir_all(&src).unwrap();
+    let data: String = (0..50).map(|i| format!("    ('AD-{i:03}', 'Place {i}'),\n")).collect();
+    std::fs::write(src.join("data.py"), format!("CODES = (\n{data})\n")).unwrap();
+    std::fs::write(src.join("types.py"), "from typing import List\nx: \"List[int]\" = []\ny = \"not a type\"\n").unwrap();
+    let rule = base.join("typing.rr");
+    std::fs::write(&rule, ".language python\n.scope include \"**/*.py\"\n#include \"python/typing.rr\"\n.decl typed(n: node)\ntyped(n) :- type_ctx(n).\n.output typed\n").unwrap();
+    let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
+    let out = base.join("out");
+    super::run(&program, &src, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let asked = std::fs::read_to_string(out.join("rr_embed_req.csv")).unwrap_or_default();
+    assert_eq!(asked.lines().count(), 1, "only \"List[int]\" is asked for:\n{asked}");
+    let _ = std::fs::remove_dir_all(&base);
+}
