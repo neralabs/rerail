@@ -46,10 +46,18 @@ export class WalkReadBuffers {
     }
   }
 
+  /**
+   * Reads the file at `absolute` into a buffer of its own. A read that fails (`EISDIR` once the file is a folder, `EIO`)
+   * gives back the buffer it took, so the next read does not allocate one again.
+   */
   async #read(absolute: string, size: number): Promise<FilledBuffer> {
     const handle = await open(absolute);
+    const start = this.#take(Math.min(size + 1, this.#limit));
     try {
-      return await fill(handle, this.#take(Math.min(size + 1, this.#limit)), size, this.#limit);
+      return await fill(handle, start, size, this.#limit);
+    } catch (error) {
+      this.#free.push(start);
+      throw error;
     } finally {
       await handle.close();
     }

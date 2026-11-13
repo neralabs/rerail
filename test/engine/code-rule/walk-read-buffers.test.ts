@@ -98,6 +98,34 @@ describe("WalkReadBuffers", () => {
     expect(await buffers.lend(path, 1_000, async read => read.bytes.length)).toBe(101);
   });
 
+  it("grows a buffer to the limit and no further for a file past it, from any stamp", async () => {
+    const buffers = new WalkReadBuffers(150_000);
+    const bytes = Buffer.alloc(200_000);
+    for (let index = 0; index < bytes.length; index += 1) bytes[index] = index % 251;
+    const path = join(folder, "large.bin");
+    await writeFile(path, bytes);
+    // From the first buffer's 64 KiB, doubled until the limit stops it; and from a buffer the stamp sizes at the limit.
+    for (const stamp of [10, 200_000]) {
+      expect(await buffers.lend(path, stamp, async read => read.bytes.equals(bytes.subarray(0, 150_000))), `stamp ${stamp}`).toBe(true);
+    }
+  });
+
+  it("reads a file that fills the first buffer exactly whole, with the read after it that finds nothing", async () => {
+    const buffers = new WalkReadBuffers(1_000_001);
+    const contents = "y".repeat(64 * 1024);
+    const path = await file("full.py", contents);
+    for (const stamp of [0, 65_535, 65_536]) expect((await lent(buffers, path, stamp)).text, `stamp ${stamp}`).toBe(contents);
+  });
+
+  it("gives its buffer back when a read fails, so the read after it takes no new one", async () => {
+    const buffers = new WalkReadBuffers(1_000_001);
+    const first = await lent(buffers, await file("a.py", "a\n"), 2);
+    // A file swapped for a folder: where a folder opens, as on Linux and macOS, the read fails with EISDIR.
+    await expect(lent(buffers, folder, 2)).rejects.toThrow();
+    const next = await lent(buffers, await file("b.py", "b\n"), 2);
+    expect(next.memory).toBe(first.memory);
+  });
+
   it("gives the bytes readFile gives, cut at the limit, whatever the file's size, stamp and the reads before it", async () => {
     const differing: string[] = [];
     for (const limit of [1_000_001, 100_001]) {
