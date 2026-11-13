@@ -46,16 +46,20 @@ function provesChallenge(answer: Buffer, expected: string): boolean {
 
 /**
  * What the listener on a socket or pipe made of a challenge ({@link engineCapabilityProof}): it answered with the proof
- * (`proved`); it refused, answered anything else or hung up, or nothing listens (`refused`); or it said nothing for the
- * whole timeout (`silent`). An engine whose one event loop is inside an audit or a long garbage collection is silent as
- * well as a holder that never answers, so silence proves neither that the engine is this home's nor that it is not.
+ * (`proved`); it refused, answered anything else or hung up, or nothing listens (`refused`); or no whole answer came
+ * within the timeout, counted from the ask (`silent`). An engine whose one event loop is inside an audit or a long
+ * garbage collection is silent as well as a holder that never answers, so silence proves neither that the engine is
+ * this home's nor that it is not.
  */
 export type EngineProofAnswer = "proved" | "refused" | "silent";
 
 /**
  * Asks the process listening on `socketPath` (a Unix socket or a Windows named pipe) to prove it holds `accessToken`: it
  * answers a fresh challenge with {@link engineProof}. Only the challenge is sent; the capability never leaves this
- * process.
+ * process. The answer comes within `timeoutMs` of the ask, whatever the listener does: the limit is a timer of its own,
+ * since a request's timeout starts only once its socket has connected and restarts at each byte read. On Windows a
+ * connect to a pipe whose instances are all taken waits up to 30 s for a free one, and an engine whose event loop is
+ * stuck frees none.
  */
 export async function engineCapabilityProof(
   socketPath: string,
@@ -86,17 +90,21 @@ export async function engineCapabilityProof(
     response.on("close", () => resolve("refused"));
   });
   // The silence is the verdict, before the destroy below reports it as an error.
-  outgoing.setTimeout(timeoutMs, () => {
+  const limit = setTimeout(() => {
     resolve("silent");
     outgoing.destroy(new Error("Engine proof timed out"));
-  });
+  }, timeoutMs);
   outgoing.on("error", () => resolve("refused"));
   // Node can close the request before the response's `end`; only a request that never got a response is a refusal here.
   outgoing.on("close", () => {
     if (!answered) resolve("refused");
   });
   outgoing.end();
-  return await promise;
+  try {
+    return await promise;
+  } finally {
+    clearTimeout(limit);
+  }
 }
 
 /**
