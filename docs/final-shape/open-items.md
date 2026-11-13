@@ -4741,6 +4741,18 @@ sets them), and sessions (none of the 104 opens one). Not checked: whether the h
 **Closure:** the shared state is found and the test no longer depends on it, or the shared state goes; ten runs
 of the `tape` filter pass.
 
+## O-collector-busy-flake. The corpus collector beside three writers sometimes reports `Busy`
+
+**Seen (2026-11-13, once in 8 runs of the store crate's tests, load average 60-80).**
+`corpus_runs::tests::parallel_writers_and_a_collector_share_one_store`: `collect_corpus_pass` returned
+`StoreError::Busy` while writers recorded runs, though the test says no write fails. It passes alone. A write
+retries for `BUSY_DEADLINE` (10 s, longer than the whole test), so the `Busy` is likely one of the pass's reads
+(`orphaned_holds`, `corpus_due`, `corpus_decision_worth`), which run on the connection without the write retries
+and wait one `BUSY_TIMEOUT` (250 ms) inside SQLite.
+
+**Closure:** the call that reports it is known (a failure's message names it), and a busy read in a pass is
+retried or gives up without failing the pass; ten runs of the store crate pass.
+
 ## O-join-shape-directives. Fixing a join's shape by hand, in the rule source, without rebuilding the engine
 
 **Closed (2026-11-12) by [decision 0137](decisions/0137-join-shape-directives.md):** `.shape B after A` and `.shape B bound x` on a written rule shape it and every derived form; EXPLAIN marks a shaped plan; a profiled run reports a directive whose order is the planner's own; the DP takes no cross product priced from a default size. Test: `a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms`.

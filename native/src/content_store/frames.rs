@@ -1355,8 +1355,7 @@ mod tests {
         }
         unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),
             rusqlite::ffi::SQLITE_TRACE_STMT | rusqlite::ffi::SQLITE_TRACE_PROFILE, Some(trace), (&counters as *const [AtomicUsize;2]).cast_mut().cast()); }
-        let refs: Vec<_> = changed.iter().collect();
-        let result = store.keep_frame_refs(&[1;32], &refs, &[], &[], &[], &gone, Some((&used, 1, [0; 32])));
+        let result = store.keep_frames(&[1;32], &changed, &gone, Some((&used, 1, [0; 32])));
         unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),0,None,std::ptr::null_mut()); }
         result.unwrap();
         eprintln!("frame publication total: {} statements, {} VM",counters[0].load(Ordering::Relaxed),counters[1].load(Ordering::Relaxed));

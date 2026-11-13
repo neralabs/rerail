@@ -270,7 +270,7 @@ mod tests {
         }
         // Idle, a block of most of the budget: a buffer as large is still made, and the idle
         // block is what gave way.
-        let most = crate::runtime::METAL_BUFFER_LIMIT / 2 + SMALLEST;
+        let most = crate::runtime::metal_buffer_limit() / 2 + SMALLEST;
         drop(lease(most).unwrap());
         assert!(held() >= most);
         let other = MappedBuffer::slab(most).unwrap();
