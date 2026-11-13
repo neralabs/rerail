@@ -370,7 +370,7 @@ pub(crate) fn complex_repr(re: f64, im: f64) -> String {
 }
 
 /// `repr(f)` of a float: `float.__repr__`, `inf`, `-inf`, `nan`.
-pub(crate) fn float_text(f: f64) -> String {
+pub fn float_text(f: f64) -> String {
     if f.is_nan() {
         "nan".into()
     } else if f.is_infinite() {

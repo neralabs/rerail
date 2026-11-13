@@ -66,6 +66,7 @@ ENGINE_EXTENSION_BOUNDARIES = (
     'native/src/code_rule_dsl/logic/strings/functions.rs',
     # Register the language-owned native primitive formatter beside py_repr.
     'native/src/code_rule_dsl/mod.rs',
+    'native/src/code_rule_dsl/cpython/value.rs',
     # Public signature verification errors use the same generic decoder and verifier.
     # Explicit configuration signing is separate from rule evaluation.
     'native/src/code_rule_dsl/tools.rs',

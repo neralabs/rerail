@@ -6577,6 +6577,11 @@
       {
         "path": "native/src/content_store/observe.rs",
         "sha256": "223ebd05f0778bd329d56871093d4bd440c8bdaa37bbd7a336f6715a95c7ab7c"
+      },
+      {
+        "path": "native/src/code_rule_dsl/cpython/value.rs",
+        "sha256": "8bb5b1e37a14937bf419f79a2761a6647c690235aff4e3da7df8b541e3c915a6",
+        "reason": "Expose the existing native Python float formatter across the integrated crate boundary"
       }
     ],
     "previousUpstreamCommit": "64db9edc871058e5ba525213bcb2ed95751ff3e9",
