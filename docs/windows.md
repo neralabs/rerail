@@ -230,7 +230,9 @@ database, its `path-keys-as-stored` migration step (`src/engine/storage/path-key
 spelling this version looks it up by (`currentPathKey`), so a checkout keeps its start state, its rule settings, its
 audit settings and audit, and its presentation preferences. Audit settings are copied rather than moved: no list shows
 them, so the row under the old spelling stays for an earlier version that opens the database later. Where each audit
-ran moves with its key, so the list of repository audits shows each folder once. Two rows that come to one folder
+ran moves to its folder's key too, also where no key held that spelling (an earlier version wrote a Git checkout's
+audits under the session's spelling and its repository audit under Git's), so the list of repository audits shows each
+folder once. Two rows that come to one folder
 merge: the newer one stays (last seen, last saved, last started; of two presentation preferences, which keep no time,
 the one created later), and a start state either row held is kept. A folder that is gone keeps its key: the file system
 holds no spelling for it, and a session opened there as `c:\…` still finds its audit settings under that spelling. A

@@ -61,9 +61,10 @@ const PATH_KEYED_TABLES: readonly PathKeyedTable[] = [
 ];
 
 /**
- * Where an audit ran, which is no key: each value the keys above moved from moves too, with no merge. The list of
- * repository audits joins `audits.workspace_root` to `repository_audits` by its text, and a finished audit request
- * writes its `workspace_root` as a `repository_audits` key.
+ * Where an audit ran, which is no key: each value moves to the key this build gives its folder, with no merge, whether
+ * or not a key above held it. The list of repository audits joins `audits.workspace_root` to `repository_audits` by its
+ * text, a finished audit request writes its `workspace_root` as a `repository_audits` key, and an earlier build keyed a
+ * Git checkout and its repository audit by Git's spelling while it wrote the audits there under the session's.
  */
 const PATH_HISTORY: readonly PathColumn[] = [
   { table: "audits", key: "workspace_root" },
@@ -88,7 +89,8 @@ export function currentPathKey(stored: string, platform: NodeJS.Platform = proce
  * (it throws: a folder Rerail may not read) stays as it is, so the open never fails on one folder, and so does a key
  * the step does not look up ({@link looksUp}). `keyOf` runs once per distinct key, and must give back unchanged a key
  * it returned, as a realpath does: each table's keys are read once and moved in turn, so rows moved to a key that would
- * itself move could stay short of the last one. Then where an audit ran moves the same way ({@link PATH_HISTORY}).
+ * itself move could stay short of the last one. Then where an audit ran moves the same way ({@link PATH_HISTORY}),
+ * each distinct value looked up as a key is.
  */
 export function respellPathKeys(database: RerailDatabase, keyOf: (stored: string) => string): void {
   const keys = new Map<string, string>();
@@ -96,7 +98,20 @@ export function respellPathKeys(database: RerailDatabase, keyOf: (stored: string
   for (const keyed of PATH_KEYED_TABLES) {
     if (holdsTable(database.$client, keyed.table)) respellRows(database, keyed, respelled);
   }
+  lookUpHistory(database, respelled);
   respellHistory(database, new Map([...keys].filter(([stored, key]) => key !== stored)));
+}
+
+/**
+ * Looks each distinct value of a {@link PATH_HISTORY} column up through `respelled`, so a spelling that only the audit
+ * history holds moves too. One read of each table, which has no index on the column, once per file.
+ */
+function lookUpHistory(database: RerailDatabase, respelled: (stored: string) => string): void {
+  for (const history of PATH_HISTORY) {
+    if (!holdsTable(database.$client, history.table)) continue;
+    const values = database.all<{ value: string }>(sql`SELECT DISTINCT ${sql.raw(history.key)} AS value FROM ${sql.raw(history.table)}`);
+    for (const { value } of values) respelled(value);
+  }
 }
 
 function respellRows(database: RerailDatabase, keyed: PathKeyedTable, respelled: (stored: string) => string): void {

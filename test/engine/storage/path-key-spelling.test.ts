@@ -212,6 +212,27 @@ describe("path keys an earlier build stored under another spelling", () => {
     expect(recordsAt(folder, databasePath)).toEqual(kept(folder, stored, { status: "interrupted", auditId: "audit-2" }));
   });
 
+  it("list a folder once where only its audit history holds the earlier spelling", async () => {
+    const { folder, databasePath } = await checkoutFolder();
+    const stored = otherSpelling(folder);
+    earlierBuildRecorded(folder, databasePath, stored);
+    // The earlier build keyed the checkout and its repository audit by Git's spelling and its audit history by the
+    // spelling the session gave, and saved no audit settings or preference there: no key holds `stored`.
+    write(databasePath, [
+      ["UPDATE checkouts SET checkout_path = ?", folder],
+      ["UPDATE rule_settings SET owner_id = ? WHERE owner_kind = 'checkout'", folder],
+      ["UPDATE repository_audits SET workspace_root = ?", folder],
+      ["DELETE FROM audit_settings WHERE workspace_root = ?", stored],
+      ["DELETE FROM presentation_preferences WHERE repository = ?", stored],
+    ]);
+    vi.mocked(currentPathKey).mockImplementation(path => (path === stored ? folder : path));
+
+    expect(recordsAt(folder, databasePath)).toMatchObject({
+      repositoryAuditList: [{ workspaceRoot: folder, status: "completed", auditId: "audit-1" }],
+      auditHistory: [{ workspace_root: folder }],
+    });
+  });
+
   it("stay where the key cannot be resolved or is no whole path, and the database still opens", async () => {
     const { folder, databasePath } = await checkoutFolder();
     const stored = otherSpelling(folder);
