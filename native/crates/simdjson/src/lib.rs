@@ -46,6 +46,8 @@ pub struct Kinds {
     pub true_: u16,
     pub false_: u16,
     pub null: u16,
+    /// tree-sitter-json's `comment`: a JSONC file's (`tape_jsonc_with`).
+    pub comment: u16,
     pub key_field: u16,
     pub value_field: u16,
 }
@@ -127,6 +129,19 @@ impl std::fmt::Display for Refusal {
 ///
 /// The nodes are `tape_from_index`'s, byte for byte (`every_kernels_tape_is_the_index_writers`).
 pub fn tape_with(kernel: Kernel, src: &[u8], kinds: &Kinds) -> Result<Tape, Refusal> {
+    run(kernel, src, kinds, false)
+}
+
+/// `src`'s tape by `kernel`, read as JSONC: as `tape_with`, each comment (`//` to the line's end, its
+/// `\n` not included; `/* … */`) also a node, a `comment` leaf of the lowest node holding the tokens on
+/// either side of it, as tree-sitter-json places it (an extra). Stage 1 reads the source with its
+/// comments blanked; the digest is the source's as given. For a file the strict read refused: a
+/// strict file's tape is `tape_with`'s. A trailing comma is still refused.
+pub fn tape_jsonc_with(kernel: Kernel, src: &[u8], kinds: &Kinds) -> Result<Tape, Refusal> {
+    run(kernel, src, kinds, true)
+}
+
+fn run(kernel: Kernel, src: &[u8], kinds: &Kinds, jsonc: bool) -> Result<Tape, Refusal> {
     if src.len() >= u32::MAX as usize / 2 {
         return Err(Refusal::TooLarge);
     }
@@ -139,18 +154,18 @@ pub fn tape_with(kernel: Kernel, src: &[u8], kinds: &Kinds) -> Result<Tape, Refu
         width: [2; 3],
         ctx: (&raw mut columns).cast(),
         grow,
-        kind: [k.document, k.pair, k.string_content, k.escape_sequence, k.object, k.array, k.string, k.number, k.true_, k.false_, k.null],
+        kind: [k.document, k.pair, k.string_content, k.escape_sequence, k.object, k.array, k.string, k.number, k.true_, k.false_, k.null, k.comment],
         key_field: k.key_field,
         value_field: k.value_field,
         codes: 0,
-        code_kind: [0; 33],
-        code_field: [0; 33],
-        code_value: [0; 33],
+        code_kind: [0; 36],
+        code_field: [0; 36],
+        code_value: [0; 36],
         digest: [0; 32],
     };
     // SAFETY: the sink's buffers are `columns`, which `grow` grows; the shim writes them only within
     // what `grow` gave.
-    let code = unsafe { kernel.tape(src, &mut sink) };
+    let code = unsafe { if jsonc { kernel.tape_jsonc(src, &mut sink) } else { kernel.tape(src, &mut sink) } };
     if src.len() > KEEP {
         release_above(KEEP);
     }
@@ -444,16 +459,28 @@ mod tests {
                 }
             }
         }
-        files.retain(|f| structurals(f, |_| ()).is_ok());
+        // `RERAIL_TAPE_FILES`: a listing of files (one path a line) in place of the repository's; with
+        // `RERAIL_TAPE_RUN=jsonc`, the files the strict read refuses and the JSONC read takes.
+        if let Ok(list) = std::env::var("RERAIL_TAPE_FILES") {
+            files = std::fs::read_to_string(list).unwrap().lines().filter_map(|p| std::fs::read(p).ok()).collect();
+        }
+        let jsonc_run = std::env::var("RERAIL_TAPE_RUN").is_ok_and(|r| r.starts_with("jsonc"));
+        let kinds0 = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
+        if jsonc_run {
+            let k = kernel_under_test();
+            files.retain(|f| tape_with(k, f, &kinds0).is_err() && tape_jsonc_with(k, f, &kinds0).is_ok());
+        } else {
+            files.retain(|f| structurals(f, |_| ()).is_ok());
+        }
         // `RERAIL_TAPE_SIZES`: `small` (under 52,000 bytes) or `large`.
         match std::env::var("RERAIL_TAPE_SIZES").as_deref() {
             Ok("small") => files.retain(|f| f.len() < 52_000),
             Ok("large") => files.retain(|f| f.len() >= 52_000),
             _ => {}
         }
-        let nodes: usize = files.iter().map(|f| tape_from_index(f, &Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, key_field: 1, value_field: 2 }).unwrap().node_count()).sum();
+        let nodes: usize = files.iter().map(|f| if jsonc_run { tape_jsonc_with(kernel_under_test(), f, &kinds0).unwrap().node_count() } else { tape_from_index(f, &kinds0).unwrap().node_count() }).sum();
         eprintln!("{} bytes, {nodes} nodes", files.iter().map(Vec::len).sum::<usize>());
-        let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, key_field: 1, value_field: 2 };
+        let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
         let run = std::env::var("RERAIL_TAPE_RUN").unwrap_or_default();
         let kernel = kernel_under_test();
         let retired = || {
@@ -469,6 +496,9 @@ mod tests {
                 n += match run.as_str() {
                     "index" => structurals(f, <[u32]>::len).unwrap(),
                     "tape" => tape_with(kernel, f, &kinds).unwrap().node_count(),
+                    // As the product reads a JSONC file: the strict read, refused, then the JSONC one.
+                    "jsonc" => usize::from(tape_with(kernel, f, &kinds).is_err()) + tape_jsonc_with(kernel, f, &kinds).unwrap().node_count(),
+                    "jsonc-only" => tape_jsonc_with(kernel, f, &kinds).unwrap().node_count(),
                     "stage1" => kernel.stage1(f, false) as usize,
                     "stage1-hashed" => kernel.stage1(f, true) as usize,
                     "index-tape" => tape_from_index(f, &kinds).unwrap().node_count(),
@@ -490,7 +520,7 @@ mod tests {
     /// check, and the repository's `.json` files.
     #[test]
     fn every_kernels_tape_is_the_index_writers() {
-        let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, key_field: 1, value_field: 2 };
+        let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
         let kernels: Vec<Kernel> = Kernel::ALL.into_iter().filter(|k| k.runs()).collect();
         eprintln!("kernels checked: {:?}", kernels.iter().map(|k| k.name()).collect::<Vec<_>>());
         assert!(!kernels.is_empty());
@@ -498,6 +528,14 @@ mod tests {
             let b = tape_from_index(src, &kinds);
             let accepted = b.is_ok();
             for &kernel in &kernels {
+                // The JSONC read of a file with no comment is the strict read's.
+                if let Ok(strict) = tape_with(kernel, src, &kinds) {
+                    let jsonc = tape_jsonc_with(kernel, src, &kinds).unwrap_or_else(|e| panic!("{}: JSONC refused {:?}: {e}", kernel.name(), String::from_utf8_lossy(src)));
+                    let without_slash = !src.contains(&b'/') || src.windows(2).all(|w| w != b"//" && w != b"/*");
+                    if without_slash {
+                        assert_eq!((&jsonc.code, &jsonc.codes, &jsonc.size, &jsonc.off, &jsonc.tail, jsonc.digest), (&strict.code, &strict.codes, &strict.size, &strict.off, &strict.tail, strict.digest), "{}: JSONC {:?}", kernel.name(), String::from_utf8_lossy(src));
+                    }
+                }
                 match (tape_with(kernel, src, &kinds), &b) {
                     (Ok(a), Ok(b)) => {
                         use sha2::Digest;
@@ -580,7 +618,7 @@ mod tests {
             unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
             info.ri_instructions
         };
-        let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, key_field: 1, value_field: 2 };
+        let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
         let kernel = kernel_under_test();
         let n = 20_000;
         let join = |f: &dyn Fn(usize) -> String| (0..n).map(f).collect::<Vec<_>>().join(",");
@@ -615,6 +653,62 @@ mod tests {
                 dom - s1,
                 ours - hashed
             );
+        }
+    }
+
+    /// The JSONC read: comments as `comment` leaves of the lowest node holding the tokens on either side
+    /// (tree-sitter-json's placement, checked against tree-sitter-json in the engine's
+    /// `json_tapes_from_simdjson_are_tree_sitters`), the digest the source's as given, and what is not a
+    /// comment refused.
+    #[test]
+    fn jsonc_comments_are_leaves_where_tree_sitter_places_them() {
+        use sha2::Digest;
+        let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
+        for kernel in Kernel::ALL.into_iter().filter(|k| k.runs()) {
+            // (kind, start, end) of each node in preorder.
+            let nodes = |src: &str| -> Vec<(u16, u32, u32)> {
+                let t = tape_jsonc_with(kernel, src.as_bytes(), &kinds).unwrap_or_else(|e| panic!("{}: {src:?}: {e}", kernel.name()));
+                assert_eq!(t.digest, Some(<[u8; 32]>::from(sha2::Sha256::digest(src.as_bytes()))));
+                assert_eq!(t.widths, [2, 2, 2]);
+                let n = t.node_count();
+                let u16s = |v: &[u8], i: usize| u16::from_le_bytes([v[2 * i], v[2 * i + 1]]) as u32;
+                let base = |i: usize| u32::from_le_bytes(t.base[4 * (i / STRIDE)..4 * (i / STRIDE) + 4].try_into().unwrap());
+                (0..n)
+                    .map(|i| {
+                        let start = base(i) + u16s(&t.off, i);
+                        // A node's end: its last descendant's start plus its tail.
+                        let last = i + u16s(&t.size, i) as usize - 1;
+                        let end = base(last) + u16s(&t.off, last) + u16s(&t.tail, i);
+                        (t.codes[u16s(&t.code, i) as usize].0, start, end)
+                    })
+                    .collect()
+            };
+            // Before a key, after a key, after `:`, after a value, after `,`, in an array, around the document.
+            let src = "// a\n{ /*b*/ \"k\" /*c*/ : /*d*/ 1 /*e*/ , /*f*/ \"j\": [ /*g*/ 2 /*h*/ , 3 /*i*/ ] /*j*/ } // k\n";
+            let (doc, obj, pair, arr, string, content, num, com) = (1, 2, 3, 4, 5, 6, 8, 12);
+            assert_eq!(
+                nodes(src),
+                vec![
+                    (doc, 0, 93), (com, 0, 4), (obj, 5, 87), (com, 7, 12), (pair, 13, 32), (string, 13, 16), (content, 14, 15),
+                    (com, 17, 22), (com, 25, 30), (num, 31, 32), (com, 33, 38), (com, 41, 46), (pair, 47, 79), (string, 47, 50),
+                    (content, 48, 49), (arr, 52, 79), (com, 54, 59), (num, 60, 61), (com, 62, 67), (num, 70, 71), (com, 72, 77),
+                    (com, 80, 85), (com, 88, 92),
+                ],
+                "{}",
+                kernel.name()
+            );
+            // Comments in empty containers, a `\r` kept in a line comment, a byte order mark, `/*` in a string.
+            assert_eq!(nodes("[ /*y*/ ]"), vec![(doc, 0, 9), (arr, 0, 9), (com, 2, 7)]);
+            assert_eq!(nodes("{\"a\": 1 // c\r\n}")[6], (com, 8, 13));
+            assert_eq!(nodes("\u{feff}// x\n{}"), vec![(doc, 3, 10), (com, 3, 7), (obj, 8, 10)]);
+            assert_eq!(nodes("[\"/*x*/\", 1] /* a \" quote */"), vec![(doc, 0, 28), (arr, 0, 12), (string, 1, 8), (content, 2, 7), (num, 10, 11), (com, 13, 28)]);
+            // A comment past a block of 64 bytes, a quote in it, then a string.
+            let long = format!("[{}] // \"\n", "1,".repeat(40) + "\"//\"");
+            assert!(nodes(&long).iter().any(|&(k, _, _)| k == com));
+            // Not comments, or not JSONC this read takes: refused.
+            for bad in ["[1 / 2]", "/* open", "[1, /* open ]", "{\"a\": 1,}", "[1,]", "1 /", "// only a comment"] {
+                assert!(tape_jsonc_with(kernel, bad.as_bytes(), &kinds).is_err(), "{}: {bad:?}", kernel.name());
+            }
         }
     }
 

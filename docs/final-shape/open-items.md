@@ -4351,6 +4351,16 @@ In this repository 1 of 2,201 files is refused; JavaScript repositories have mor
 its stage 1) and placed as extras by tree-sitter's rule (the lowest node holding the tokens on either side), with
 the oracle extended to JSONC files; or the Bitlex parser, once it is ready for the product.
 
+**Comments closed (2026-11-13, 0158):** a file the strict read refuses that has `//` or `/*` is read again as
+JSONC, its comments blanked by stage 1 (simdjson's string scanner, a block at a time) and written by stage 2
+where tree-sitter-json places them; byte for byte tree-sitter-json's tapes (13 JSONC files of 2,099 in two
+`node_modules`, 0 differ), 523 instructions a node against tree-sitter-json's 18,000.
+
+**Still open: trailing commas** (O-jsonc-trailing-commas): 51 of those 2,099 files. tree-sitter-json recovers
+from one with a missing `number` or an `ERROR` node by context, so parity cannot be had. The user's choice:
+tree-sitter-json for them (now), or the tape of the file's JSONC meaning (the comma ignored, as TypeScript reads
+it), a departure from tree-sitter's error tree.
+
 ## O-texts-digest-twice. A run's texts were digested twice (closed)
 
 **Seen (2026-11-12).** About 6% of the batch (`texts_digest` → `rr::graph_digest`, twice per policy). `combine`

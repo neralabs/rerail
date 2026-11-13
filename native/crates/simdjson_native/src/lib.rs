@@ -15,6 +15,7 @@ unsafe extern "C" {
     fn rerail_simdjson_structurals(src: *const c_char, len: usize, indexes: *mut *const u32, count: *mut u32) -> i32;
     fn rerail_simdjson_kernel_runs(kernel: u32) -> i32;
     fn rerail_simdjson_v9np(kernel: u32, src: *const c_char, len: usize, sink: *mut Sink) -> i32;
+    fn rerail_simdjson_v9np_jsonc(kernel: u32, src: *const c_char, len: usize, sink: *mut Sink) -> i32;
     fn rerail_simdjson_stage1(kernel: u32, src: *const c_char, len: usize, hashed: i32) -> i64;
     fn rerail_simdjson_v9np_rewalks(kernel: u32) -> u64;
     fn rerail_simdjson_release_above(keep: usize);
@@ -32,13 +33,13 @@ pub struct Sink {
     pub width: [u8; 3],
     pub ctx: *mut std::ffi::c_void,
     pub grow: unsafe extern "C" fn(*mut Sink, *const usize),
-    pub kind: [u16; 11],
+    pub kind: [u16; 12],
     pub key_field: u16,
     pub value_field: u16,
     pub codes: u32,
-    pub code_kind: [u16; 33],
-    pub code_field: [u16; 33],
-    pub code_value: [u8; 33],
+    pub code_kind: [u16; 36],
+    pub code_field: [u16; 36],
+    pub code_value: [u8; 36],
     pub digest: [u8; 32],
 }
 
@@ -104,6 +105,17 @@ impl Kernel {
     pub unsafe fn tape(self, src: &[u8], sink: &mut Sink) -> i32 {
         // SAFETY: `src` is read for its length; the caller vouches for the sink.
         unsafe { rerail_simdjson_v9np(self as u32, src.as_ptr().cast(), src.len(), sink) }
+    }
+
+    /// As `tape`, `src` read as JSONC: each comment (`//` to the line's end, `/* */`) blanked for stage 1
+    /// and written to the tape as a leaf where tree-sitter-json places an extra. For a file `tape`
+    /// refused; a strict file gives `tape`'s tape.
+    ///
+    /// # Safety
+    /// As `tape`.
+    pub unsafe fn tape_jsonc(self, src: &[u8], sink: &mut Sink) -> i32 {
+        // SAFETY: as `tape`.
+        unsafe { rerail_simdjson_v9np_jsonc(self as u32, src.as_ptr().cast(), src.len(), sink) }
     }
 
     /// Stage 1 alone, for a measurement: the implementation's own, or with `hashed` ours (the source

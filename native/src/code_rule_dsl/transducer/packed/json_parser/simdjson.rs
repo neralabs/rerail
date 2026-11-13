@@ -9,8 +9,10 @@
 //! with the CPU's SHA-256 instructions and without; then simdjson's DOM parser and the index writer,
 //! which run on any CPU simdjson does.
 //!
-//! simdjson reads strict JSON. A file it refuses (comments, a trailing comma, a number past its range,
-//! nesting past 1,024, invalid JSON) goes to tree-sitter-json.
+//! simdjson reads strict JSON. A file the strict read refuses that has a `//` or `/*` is read again as
+//! JSONC (`rerail_simdjson::tape_jsonc_with`): its comments blanked for stage 1, and written to the tape
+//! as tree-sitter-json places them (extras). A file still refused (a trailing comma, a number past
+//! simdjson's range, nesting past 1,024, invalid JSON) goes to tree-sitter-json.
 use crate::code_rule_dsl::tape::{Code, FIELD_LIMIT, FileImage, Grammar, KIND_LIMIT, ParserImpl, TapeImage, TemplateError, TreeParser};
 pub use rerail_simdjson::Refusal;
 
@@ -36,6 +38,7 @@ pub fn kinds() -> Option<&'static (rerail_simdjson::Kinds, u16)> {
                 true_: kind("true")?,
                 false_: kind("false")?,
                 null: kind("null")?,
+                comment: kind("comment")?,
                 key_field: field("key")?,
                 value_field: field("value")?,
             };
@@ -50,12 +53,32 @@ pub fn encode_with(route: Option<rerail_simdjson::Kernel>, grammar: &Grammar, so
     let Some((kinds, value)) = kinds() else {
         return Ok(Err("tree-sitter-json lacks a kind or field simdjson's tape names".into()));
     };
+    let src = source.as_bytes();
     let t = match route {
-        Some(kernel) => rerail_simdjson::tape_with(kernel, source.as_bytes(), kinds)?,
-        None => rerail_simdjson::tape_from_index(source.as_bytes(), kinds)?,
+        Some(kernel) => match rerail_simdjson::tape_with(kernel, src, kinds) {
+            // A file with what may be a comment, read again as JSONC: a second read only of files the
+            // strict one refused.
+            Err(rerail_simdjson::Refusal::Simdjson(why)) if memchr::memmem::find(src, b"//").is_some() || memchr::memmem::find(src, b"/*").is_some() => {
+                let t = rerail_simdjson::tape_jsonc_with(kernel, src, kinds).map_err(|_| rerail_simdjson::Refusal::Simdjson(why))?;
+                crate::code_rule_dsl::logic::profile::decision("JSON parse", || "a file with comments: read as JSONC".into());
+                t
+            }
+            t => t?,
+        },
+        None => rerail_simdjson::tape_from_index(src, kinds)?,
     };
-    let codes: Result<Vec<Code>, String> =
-        t.codes.iter().map(|&(kind, field, in_value)| Code::plain(kind, field, if in_value { std::slice::from_ref(value) } else { &[] })).collect();
+    let codes: Result<Vec<Code>, String> = t
+        .codes
+        .iter()
+        .map(|&(kind, field, in_value)| {
+            let mut code = Code::plain(kind, field, if in_value { std::slice::from_ref(value) } else { &[] })?;
+            // A comment is an extra, as tree-sitter-json's are.
+            if kind == kinds.comment {
+                code.flags |= crate::code_rule_dsl::tape::CODE_EXTRA;
+            }
+            Ok(code)
+        })
+        .collect();
     Ok(codes.and_then(|codes| TapeImage::written(t.code, t.size, t.base, t.off, t.tail, t.widths, codes, t.digest, grammar, source, budget)))
 }
 
