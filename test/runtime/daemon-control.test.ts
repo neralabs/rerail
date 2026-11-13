@@ -392,6 +392,24 @@ describe("Rerail daemon control", () => {
     }
   }, 30_000);
 
+  it("leaves the autostart claim of another launcher to it, whether this start got the start lock or not", async () => {
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const failure = new Error("better-sqlite3 cannot load");
+    const failing = { home, packageRoot, ensureSqlite: async () => { throw failure; } };
+    const claim = join(home, AUTOSTART_CLAIM_FILE);
+    // The launcher an autostart started, which runs while its start does: here a process that runs, this one's parent.
+    const launcher = String(process.ppid);
+    await writeFile(claim, launcher);
+    // A start that waits out the start lock the launcher holds for its whole start, and gives up.
+    await withStartLock(home, async () => {
+      await expect(startDaemon(failing, { dev: true, port: 0 })).rejects.toThrow(/Another Rerail start/u);
+    });
+    expect(await readFile(claim, "utf8")).toBe(launcher);
+    // A `rerail daemon start` someone runs, which gets the start lock before the launcher does.
+    await expect(startDaemon(failing, { dev: true, port: 0 })).rejects.toBe(failure);
+    expect(await readFile(claim, "utf8")).toBe(launcher);
+  }, 40_000);
+
   it("shows only this start's output when the daemon exits before it is ready, not earlier runs' log", async () => {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
     await writeFile(join(home, DAEMON_LOG_FILE), "rerail daemon 0.0.0-earlier listening at http://127.0.0.1:1/ (pid 1)\n");
