@@ -1829,8 +1829,7 @@ fn stored_memberships_are_the_cursors_on_a_corpus() {
 /// parser refuses the file (`Some` of each tape's bytes otherwise).
 fn json_tapes(source: &str) -> Option<(Vec<u8>, Vec<u8>)> {
     let grammar = Grammar::new(GrammarDialect::Json).unwrap();
-    let written = crate::code_rule_dsl::transducer::packed::json_parser::written(source)?;
-    let ours = crate::code_rule_dsl::transducer::packed::json_parser::tape::encode_written(&grammar, source, &written, &|| false).unwrap().to_bytes().unwrap();
+    let ours = crate::code_rule_dsl::transducer::packed::json_parser::image(source)?;
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
     let tree = parser.parse(source, None).unwrap();
@@ -1920,7 +1919,7 @@ fn rr_parse_costs() {
     let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
         ("lean: rows", Box::new(|f| rerail_rr_syntax::tape(f).len())),
         ("lean: the tape (the engine's path)", Box::new(|f| usize::from(std::hint::black_box(TapeImage::encode_rr(&grammar, f, &|| false)).is_ok()))),
-        ("bitlex: the tape (tiers 1 and 2, JIT; decision 0140)", Box::new(|f| rr_parser::compiled_tape(f).unwrap().len())),
+        ("bitlex: rows (tiers 1 and 2, JIT)", Box::new(|f| rr_parser::compiled_tape(f).unwrap().len())),
         ("statement parser: tree", Box::new(|f| rerail_rr_syntax::engine_tape(f).len())),
         ("statement parser: the tape, packed (before)", Box::new(|f| packed_rr_tape(&grammar, f).len())),
     ];
@@ -1973,10 +1972,10 @@ fn json_tapes_from_the_bitlex_parser_are_tree_sitters() {
     }
     // JSON allows an exponent's sign; tree-sitter-json refuses `+`, so these tapes are the Bitlex parser's alone.
     for source in ["1e+2", "[1.5E+3]"] {
-        assert!(crate::code_rule_dsl::transducer::packed::json_parser::written(source).is_some(), "refused {source:?}");
+        assert!(crate::code_rule_dsl::transducer::packed::json_parser::image(source).is_some(), "refused {source:?}");
     }
     for invalid in ["{", "[1,]", "{\"a\" 1}", "tru", ""] {
-        assert!(crate::code_rule_dsl::transducer::packed::json_parser::written(invalid).is_none(), "accepted {invalid:?}");
+        assert!(crate::code_rule_dsl::transducer::packed::json_parser::image(invalid).is_none(), "accepted {invalid:?}");
     }
 }
 
@@ -2173,8 +2172,7 @@ fn json_tapes_from_simdjson_are_tree_sitters() {
             // allows: `1e+2`). The tape is then the Bitlex parser's, a reading of its own.
             Ok((ours, _)) => {
                 assert!(parser.parse(&source, None).is_some_and(|t| t.root_node().has_error()), "the tapes of {} differ", path.display());
-                let bitlex = crate::code_rule_dsl::transducer::packed::json_parser::written(&source)
-                    .map(|c| crate::code_rule_dsl::transducer::packed::json_parser::tape::encode_written(&grammar, &source, &c, &|| false).unwrap().to_bytes().unwrap());
+                let bitlex = crate::code_rule_dsl::transducer::packed::json_parser::image(&source);
                 assert!(bitlex.is_none_or(|b| b == ours), "{}: tree-sitter errs, and simdjson's tape is not the Bitlex parser's", path.display());
                 corrected += 1;
             }
@@ -2295,7 +2293,7 @@ fn json_parse_costs() {
         }
     }
     let all = files.len();
-    files.retain(|f| rerail_simdjson::structurals(f.as_bytes(), |_| ()).is_ok() && jp::written(f).is_some());
+    files.retain(|f| rerail_simdjson::structurals(f.as_bytes(), |_| ()).is_ok() && jp::image(f).is_some());
     let bytes: usize = files.iter().map(String::len).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || {
@@ -2318,7 +2316,7 @@ fn json_parse_costs() {
         ("simdjson: stage 1 (hashed), stage 2", Box::new(|f| rerail_simdjson::tape_with(kernel, f.as_bytes(), kinds).unwrap().node_count())),
         // Through the router's `TreeParser::parse`, as the product calls it (the tape's generic code is made in the parser's crate).
         ("simdjson: the tape", Box::new(|f| usize::from(std::hint::black_box(product.parse(&grammar, f, &|| false)).is_some_and(|t| t.is_ok())))),
-        ("bitlex: parse (tier 2's image)", Box::new(|f| jp::written(f).unwrap().image.len())),
+        ("bitlex: parse (the image)", Box::new(|f| jp::image(f).unwrap().len())),
         ("bitlex: the tape", Box::new(|f| usize::from(std::hint::black_box(jp::tape::Bitlex.parse(&grammar, f, &|| false)).is_some_and(|t| t.is_ok())))),
         ("tree-sitter-json: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
         ("tree-sitter-json: the tape", Box::new(|f| {

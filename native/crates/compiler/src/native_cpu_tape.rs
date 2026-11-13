@@ -12,7 +12,7 @@
 
 use cranelift_codegen::ir::{BlockArg, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::FunctionBuilder;
-use rerail_tape_format::{CHECKPOINT_STRIDE, CODE_EXTRA, FORMAT_VERSION, HEADER_BYTES, MAGIC, SENTINEL, TAIL_FROM_START, Widths, header};
+use rerail_tape_format::{CHECKPOINT_STRIDE, CODE_EXTRA, FORMAT_VERSION, HEADER_BYTES, MAGIC, SENTINEL, TAIL_FROM_START, Widths};
 
 use crate::native_cpu_shape::Step;
 
@@ -25,8 +25,13 @@ pub const AT_END: i32 = 8;
 
 /// No code for a key yet (`id_of`).
 pub const NO_CODE: i64 = 0xffff;
-/// The id table's slots: a key's kind (10 bits) and field (6).
-pub const ID_SLOTS: usize = 1 << 16;
+/// The id table's slots: a key's kind (10 bits) and field (6), then a bit for each supertype
+/// class the program names (`classes`, at most `MAX_CLASSES`).
+pub const fn id_slots(classes: usize) -> usize {
+    1 << (16 + classes)
+}
+/// The most supertype classes a program's codes carry (`NODE_SUPER`'s kinds).
+pub const MAX_CLASSES: usize = 4;
 /// Bytes past each column's cells that a word copy may read (`finish`).
 pub const SLACK: usize = 16;
 
@@ -142,28 +147,95 @@ pub fn blocks_from(f: &mut FunctionBuilder<'_>, p: &[Value], off_width: u8, head
     f.ins().return_(&[last, wide]);
 }
 
-/// `(rows, code, id_of, code_kf, code_first, from, to, codes)`: nodes `from..to` final, their
-/// codes written: each key's id, numbered by first use (a new id where none has it). Gives
-/// back the codes. A step a node.
-pub fn commit(f: &mut FunctionBuilder<'_>, p: &[Value], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
+/// `(rows, code, id_of, code_kf, code_first, from, to, codes, snode, skind, supers)`: nodes
+/// `from..to` final, their codes written: each key's id, numbered by first use (a new id where
+/// none has it). A key is a node's kind and field and, where the program names supertypes
+/// (`classes`), a bit for each it is in (the supertypes' records, in node order, from the
+/// first at `from` or after). Gives back the codes. A step a node.
+pub fn commit(f: &mut FunctionBuilder<'_>, p: &[Value], classes: &[u16], heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
     let flags = MemFlags::trusted();
     let (rows, code, id_of, code_kf, code_first, from, to, codes) = (p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]);
+    let (snode, skind, supers) = (p[8], p[9], p[10]);
     let (step, body, new, put_id, done) = (f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block());
-    f.append_block_param(step, types::I64);
-    f.append_block_param(step, types::I64);
+    // step(i, c, k): node i, the codes, the supertype record k (the first of node i or after).
+    for _ in 0..3 {
+        f.append_block_param(step, types::I64);
+    }
     f.append_block_param(put_id, types::I64);
     f.append_block_param(put_id, types::I64);
     f.append_block_param(done, types::I64);
     heads.push((step, Step::Node));
-    f.ins().jump(step, &[BlockArg::from(from), BlockArg::from(codes)]);
+    let k0 = if classes.is_empty() {
+        f.ins().iconst(types::I64, 0)
+    } else {
+        // The first supertype record of a node from `from` on: back from the last.
+        let (back, look, found) = (f.create_block(), f.create_block(), f.create_block());
+        f.append_block_param(back, types::I64);
+        f.append_block_param(found, types::I64);
+        heads.push((back, Step::Node));
+        f.ins().jump(back, &[BlockArg::from(supers)]);
+        f.switch_to_block(back);
+        let k = f.block_params(back)[0];
+        f.ins().brif(k, look, &[], found, &[BlockArg::from(k)]);
+        f.switch_to_block(look);
+        let k1 = f.ins().iadd_imm(k, -1);
+        let a = f.ins().ishl_imm(k1, 2);
+        let a = f.ins().iadd(snode, a);
+        let at = f.ins().uload32(flags, a, 0);
+        let later = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, at, from);
+        f.ins().brif(later, back, &[BlockArg::from(k1)], found, &[BlockArg::from(k)]);
+        f.switch_to_block(found);
+        f.block_params(found)[0]
+    };
+    f.ins().jump(step, &[BlockArg::from(from), BlockArg::from(codes), BlockArg::from(k0)]);
     f.switch_to_block(step);
-    let (i, c) = (f.block_params(step)[0], f.block_params(step)[1]);
+    let (i, c, k) = (f.block_params(step)[0], f.block_params(step)[1], f.block_params(step)[2]);
     let end = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, i, to);
     f.ins().brif(end, done, &[BlockArg::from(c)], body, &[]);
     f.switch_to_block(body);
     let r = row(f, rows, i);
     let key = f.ins().uload32(flags, r, AT_KIND);
-    let k = kf(f, key);
+    let k_f = kf(f, key);
+    let (k_f, k_next) = if classes.is_empty() {
+        (k_f, k)
+    } else {
+        // Node i's supertype records: a bit each, the class's place in `classes`.
+        let (sup, sbody, sdone) = (f.create_block(), f.create_block(), f.create_block());
+        f.append_block_param(sup, types::I64);
+        f.append_block_param(sup, types::I64);
+        f.append_block_param(sdone, types::I64);
+        f.append_block_param(sdone, types::I64);
+        heads.push((sup, Step::Node));
+        let zero = f.ins().iconst(types::I64, 0);
+        f.ins().jump(sup, &[BlockArg::from(k), BlockArg::from(zero)]);
+        f.switch_to_block(sup);
+        let (k, m) = (f.block_params(sup)[0], f.block_params(sup)[1]);
+        let more = f.ins().icmp(IntCC::UnsignedLessThan, k, supers);
+        let ka = f.ins().ishl_imm(k, 2);
+        let na = f.ins().iadd(snode, ka);
+        let safe = f.ins().select(more, na, snode);
+        let at = f.ins().uload32(flags, safe, 0);
+        let here = f.ins().icmp(IntCC::Equal, at, i);
+        let take = f.ins().band(more, here);
+        f.ins().brif(take, sbody, &[], sdone, &[BlockArg::from(k), BlockArg::from(m)]);
+        f.switch_to_block(sbody);
+        let sa = f.ins().iadd(skind, ka);
+        let class = f.ins().uload32(flags, sa, 0);
+        let mut bit = f.ins().iconst(types::I64, 0);
+        for (j, &cl) in classes.iter().enumerate() {
+            let is = f.ins().icmp_imm(IntCC::Equal, class, i64::from(cl));
+            let is = f.ins().uextend(types::I64, is);
+            let b = f.ins().ishl_imm(is, 16 + j as i64);
+            bit = f.ins().bor(bit, b);
+        }
+        let m1 = f.ins().bor(m, bit);
+        let k1 = f.ins().iadd_imm(k, 1);
+        f.ins().jump(sup, &[BlockArg::from(k1), BlockArg::from(m1)]);
+        f.switch_to_block(sdone);
+        let (k, m) = (f.block_params(sdone)[0], f.block_params(sdone)[1]);
+        (f.ins().bor(k_f, m), k)
+    };
+    let k = k_f;
     let slot = f.ins().ishl_imm(k, 1);
     let slot = f.ins().iadd(id_of, slot);
     let id = f.ins().uload16(types::I64, flags, slot, 0);
@@ -172,9 +244,9 @@ pub fn commit(f: &mut FunctionBuilder<'_>, p: &[Value], heads: &mut Vec<(craneli
     f.switch_to_block(new);
     f.set_cold_block(new);
     f.ins().istore16(flags, c, slot, 0);
-    let a = f.ins().ishl_imm(c, 1);
+    let a = f.ins().ishl_imm(c, 2);
     let a = f.ins().iadd(code_kf, a);
-    f.ins().istore16(flags, k, a, 0);
+    f.ins().istore32(flags, k, a, 0);
     let a = f.ins().ishl_imm(c, 2);
     let a = f.ins().iadd(code_first, a);
     f.ins().istore32(flags, i, a, 0);
@@ -186,7 +258,7 @@ pub fn commit(f: &mut FunctionBuilder<'_>, p: &[Value], heads: &mut Vec<(craneli
     let a = f.ins().iadd(code, a);
     f.ins().istore16(flags, id, a, 0);
     let i1 = f.ins().iadd_imm(i, 1);
-    f.ins().jump(step, &[BlockArg::from(i1), BlockArg::from(c)]);
+    f.ins().jump(step, &[BlockArg::from(i1), BlockArg::from(c), BlockArg::from(k_next)]);
     f.switch_to_block(done);
     let c = f.block_params(done)[0];
     f.ins().return_(&[c]);
@@ -214,9 +286,9 @@ pub fn uncode(f: &mut FunctionBuilder<'_>, p: &[Value], heads: &mut Vec<(craneli
     let later = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, first, node);
     f.ins().brif(later, back, &[], done, &[BlockArg::from(c)]);
     f.switch_to_block(back);
-    let a = f.ins().ishl_imm(c1, 1);
+    let a = f.ins().ishl_imm(c1, 2);
     let a = f.ins().iadd(code_kf, a);
-    let k = f.ins().uload16(types::I64, flags, a, 0);
+    let k = f.ins().uload32(flags, a, 0);
     let slot = f.ins().ishl_imm(k, 1);
     let slot = f.ins().iadd(id_of, slot);
     let none = f.ins().iconst(types::I64, NO_CODE);
@@ -270,13 +342,13 @@ pub struct Image<'a> {
     pub tag: u8,
     pub widths: Widths,
     pub extras: &'a [u16],
+    /// The supertype classes the codes carry (`commit`), ascending.
+    pub classes: &'a [u16],
 }
 
 /// `(image, size, base, off, tail, code_kf, id_of, n, codes, len)`: the image's end. The code
 /// column is in place (from `HEADER_BYTES`); the other columns are moved after it, each padded,
-/// then the code table (each code's `kf`, flags, no alias, no classes), and the header (format
-/// 15: no stored digest, `rerail_tape_format::header`'s offsets). The id table is cleared for the
-/// next file.
+/// then the code table (each code's `kf`, flags, no alias, no classes), and the header. The id table is cleared for the next file.
 /// Gives back the image's length.
 pub fn finish(f: &mut FunctionBuilder<'_>, p: &[Value], x: Image<'_>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
     let flags = MemFlags::trusted();
@@ -302,19 +374,23 @@ pub fn finish(f: &mut FunctionBuilder<'_>, p: &[Value], x: Image<'_>, heads: &mu
         let end = copy(f, at, col, bytes, heads);
         at = padded(f, image, end);
     }
-    // The code table, and the id table cleared: a step a code.
+    // The code table, and the id table cleared: a step a code. A code's entry is its `kf`, its
+    // flags, no alias, its classes' count and the classes (`commit`'s bits, ascending).
     let (step, body, done) = (f.create_block(), f.create_block(), f.create_block());
     f.append_block_param(step, types::I64);
+    f.append_block_param(step, types::I64);
+    f.append_block_param(done, types::I64);
     heads.push((step, Step::Node));
-    f.ins().jump(step, &[BlockArg::from(zero)]);
+    f.ins().jump(step, &[BlockArg::from(zero), BlockArg::from(at)]);
     f.switch_to_block(step);
-    let c = f.block_params(step)[0];
+    let (c, e) = (f.block_params(step)[0], f.block_params(step)[1]);
     let end = f.ins().icmp(IntCC::Equal, c, codes);
-    f.ins().brif(end, done, &[], body, &[]);
+    f.ins().brif(end, done, &[BlockArg::from(e)], body, &[]);
     f.switch_to_block(body);
-    let a = f.ins().ishl_imm(c, 1);
+    let a = f.ins().ishl_imm(c, 2);
     let a = f.ins().iadd(code_kf, a);
-    let k = f.ins().uload16(types::I64, flags, a, 0);
+    let slot_key = f.ins().uload32(flags, a, 0);
+    let k = f.ins().band_imm(slot_key, 0xffff);
     let kind = f.ins().band_imm(k, 0x3ff);
     let mut extra = f.ins().iconst(types::I8, 0);
     for &e in x.extras {
@@ -323,35 +399,45 @@ pub fn finish(f: &mut FunctionBuilder<'_>, p: &[Value], x: Image<'_>, heads: &mu
     }
     let extra = f.ins().uextend(types::I64, extra);
     let fl = f.ins().imul_imm(extra, i64::from(CODE_EXTRA));
-    let e = f.ins().imul_imm(c, 6);
-    let e = f.ins().iadd(at, e);
     f.ins().istore16(flags, k, e, 0);
     f.ins().istore8(flags, fl, e, 2);
     let s = f.ins().iconst(types::I64, i64::from(SENTINEL));
     f.ins().istore16(flags, s, e, 3);
-    f.ins().istore8(flags, zero, e, 5);
-    let slot = f.ins().ishl_imm(k, 1);
+    // The classes: each stored at the next place, which moves on where the code has it.
+    let mut place = f.ins().iadd_imm(e, 6);
+    let mut count = zero;
+    for (j, &cl) in x.classes.iter().enumerate() {
+        let has = f.ins().ushr_imm(slot_key, 16 + j as i64);
+        let has = f.ins().band_imm(has, 1);
+        let v = f.ins().iconst(types::I64, i64::from(cl));
+        f.ins().istore16(flags, v, place, 0);
+        let step2 = f.ins().ishl_imm(has, 1);
+        place = f.ins().iadd(place, step2);
+        count = f.ins().iadd(count, has);
+    }
+    f.ins().istore8(flags, count, e, 5);
+    let slot = f.ins().ishl_imm(slot_key, 1);
     let slot = f.ins().iadd(id_of, slot);
     let none = f.ins().iconst(types::I64, NO_CODE);
     f.ins().istore16(flags, none, slot, 0);
     let c1 = f.ins().iadd_imm(c, 1);
-    f.ins().jump(step, &[BlockArg::from(c1)]);
+    f.ins().jump(step, &[BlockArg::from(c1), BlockArg::from(place)]);
     f.switch_to_block(done);
-    let table = f.ins().imul_imm(codes, 6);
-    let total = f.ins().iadd(at, table);
-    let total = f.ins().isub(total, image);
-    // The header at `header`'s offsets: magic, tag, widths, version, the source's length; the
-    // lengths: nodes, codes, the code table's bytes, no aliases.
+    let table_end = f.block_params(done)[0];
+    let table = f.ins().isub(table_end, at);
+    let total = f.ins().isub(table_end, image);
+    // The header: magic, tag, widths, version, the source's length; the lengths: nodes, codes,
+    // the code table's bytes, no aliases.
     let magic = f.ins().iconst(types::I64, u64::from_le_bytes(*MAGIC) as i64);
-    f.ins().store(flags, magic, image, header::MAGIC as i32);
+    f.ins().store(flags, magic, image, 0);
     let head = u32::from(x.tag) | u32::from(w.size) << 8 | u32::from(w.off) << 16 | u32::from(w.tail | if w.from_start { TAIL_FROM_START } else { 0 }) << 24;
     let head = f.ins().iconst(types::I64, i64::from(head));
-    f.ins().istore32(flags, head, image, header::LANGUAGE as i32);
+    f.ins().istore32(flags, head, image, 8);
     let version = f.ins().iconst(types::I64, i64::from(FORMAT_VERSION));
-    f.ins().istore32(flags, version, image, header::VERSION as i32);
-    f.ins().store(flags, len, image, header::SOURCE_LEN as i32);
+    f.ins().istore32(flags, version, image, 12);
+    f.ins().store(flags, len, image, 16);
     for (k, v) in [n, codes, table, zero, zero].into_iter().enumerate() {
-        f.ins().store(flags, v, image, (header::NODES + 8 * k) as i32);
+        f.ins().store(flags, v, image, (rerail_tape_format::header::NODES + 8 * k) as i32);
     }
     f.ins().return_(&[total]);
 }

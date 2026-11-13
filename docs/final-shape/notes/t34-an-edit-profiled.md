@@ -245,6 +245,19 @@ Items 1–3 (texts read once, caches refused by construction, my statics by flow
     what holds the specs: an edit with it off costs 117.1 G and peaks at 2074 MB, with it on 115.5–119.1 G and
     2043–2089 MB; the 366 MB are the specs the run holds. Next: one form of the program where four are held (front,
     lowered, the split's local and cross); the specs' size.
+    Measured again (2026-11-13, after the hub merge and guns 8–10, 300 files × 317 rules, one-line edit): the peak
+    is 3.39–3.55 GB, at the run's end (the store's writer), and it is what the run **keeps**, not a transient. Net
+    bytes kept, by span: the parse of the 300 files 1.46 GB (memo decode of the 299 unchanged ones 575 MB, the memo
+    lookup 268 MB, the parse itself 617 MB), the kept part's rows read from the frames 610 MB (held to the end, not
+    released after their last read), the kept part's changes to the frames 190 MB, survivors 148 MB, the joins'
+    indexes 111 MB; then the writer's last writes +412 MB on top (frames queued to the end: 303 MB in 1,174 frames).
+    The footprint is 0.9 GB after the prepared program, 1.25 GB after the parse, and grows 1.4 → 2.7 GB through the
+    cross part. Done: a derived input's index is a sorted order on the key columns (decision 0112), not a hash table
+    (`Csr::build`, 18 bytes a row kept, 46 while built): its bytes 1,217 → 637 MB allocated, its rise of the
+    high-water mark 1,160 → 398 MB. The order of the next steps, by bytes: (a) the unchanged files' memo is not
+    decoded and held (no reads of unchanged: their rows are in the frames); (b) the kept part's rows released after
+    their last read, as derived relations are (`release`); (c) each stratum's frame queued when it finishes (item
+    11's direction), so nothing waits for the end; (d) the prepared program's four forms (above).
 11. **A cold run's frames write waits on the writer** (found 2026-11-12, run n48s169, load 26): the cross part's
     frames are one job of 289.6 MB, above the writer queue's cap (192 MB) alone, so it waits while the memo's
     entries (158.6 MB) are still written; `RERAIL_SQL_STRICT` ends the run at that wait (`hazards::wait_in_wave`).
@@ -256,3 +269,23 @@ Items 1–3 (texts read once, caches refused by construction, my statics by flow
     `WITHOUT ROWID` record with its rows in it): 2.9 s of a cold run's writer, now a row of `frame_part_used`. The
     WAL's checkpoints ran in the writer's commits (3.0 s): now beside it, `PASSIVE`, on a thread of its own. A cold
     run after a rebuild passed under the default cap with the queue never full (load 13). (see git log)
+
+## Findings against main (2026-11-13, full shape, cold)
+
+Datalog 615 findings, main 459. Keyed by (rule, path, line), main's 459 are 454 keys: five of its findings are a
+second column on a line Datalog reports once (the findings contract is by line). Every main key is in Datalog's.
+Datalog has 161 more:
+
+- **B002, 157 (Datalog wrong).** 156 are strings starting with `--` (`parser.add_argument("--host")`). With RUF041 in
+  the program, `typing.rr`'s `type_ctx(r) :- type_ctx(s), str_node(s), parsed(s, "annotation", r)` asks for
+  annotation guests. The demand's context keeps input relations only (`lower.rs`, `context`: "may hold more rows
+  than the rule"), so it is `str_node(s)`: every string is parsed as an annotation (17,997 requests on the full
+  shape). `"--host"` parses as `--host`. Decision 0058 makes every guest in the run's language visible to every
+  rule, so B002 fires inside it and the finding maps to the string's line. The repro is one line,
+  `p.add("--host")`, with B002 and RUF041 alone. Either fix stops it: an annotation guest is visible only through
+  `parsed`, or the demand keeps the rule's derived context. The first also matches Ruff, which runs no code
+  rules inside string annotations. The second also saves the parse of every string.
+- **B110, 2 (main's quirk).** The `pass` has a trailing comment. Main's rule wants the block to have exactly one
+  child, and tree-sitter counts the comment. Bandit reports both.
+- **PYI046, 2 (Datalog wrong).** The protocol is used only in a string (`cast("_TransactionWithConnection", t)`).
+  Ruff counts a string forward reference as a use; the `.rr` rule does not.

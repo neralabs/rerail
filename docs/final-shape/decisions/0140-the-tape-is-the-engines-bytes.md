@@ -121,12 +121,4 @@ Tier 2 writes the same bytes (docs/parser-generators/37): a working row a node
 Over the corpus, the interpreter's, the JIT's and the ahead-of-time tapes
 are the lean parser's, byte for byte.
 
-Next: wide files parsed again at their widths, not refused; Metal's own kernel.
-
-In the hub (2026-11-13), tier 2 writes format 15's header as the lean parser does: at
-`rerail_tape_format::header`'s offsets, with no digest (the Cranelift code, the ahead-of-time
-Rust, the harness). Its codes carry no supertype classes yet. The `.rr` grammar has none, but
-the Bitlex JSON parser (tree-sitter-json's `_value`) does: tier 2 records them beside the image
-(`Parser::image_supers`), and the engine reads the image back with its own readers
-(`tape::resident`) and makes the tape with them (`json_parser::tape::encode_written`). Writing
-the classes into the codes would make that one pass the image alone.
+Next: wide files parsed again at their widths, not refused; Metal's own kernel and digest.
