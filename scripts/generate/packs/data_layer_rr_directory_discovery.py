@@ -22,7 +22,14 @@ def main():
 pfd_root(p) :- dir_entry(".",p,1),(p="impl";p="data_layer";p="_internal").
 pfd_root(p) :- dir_entry(".",p,1),match('''+json.dumps(layer)+''',p).
 .violation DirectoryFile(at:span,path:symbol,path_order:symbol) code "PSE_DISCOVERY" "{path}"
-DirectoryFile(@place("",0),p,@replace_all(p,"/","\\u0000")) :- pfd_file(p).
+DirectoryFile(@place("",0),p,@replace_all(p,"/","\\u0000")) :- option("entryPoint","_directory_discovery"),pfd_file(p).
+.decl psp_root_order(path:symbol,ordinal:number)
+psp_root_order("impl",0) :- pfd_root("impl").
+psp_root_order("data_layer",1) :- pfd_root("data_layer").
+psp_root_order("_internal",2) :- pfd_root("_internal").
+psp_root_order(p,3+i) :- pfd_root(p),p!="impl",p!="data_layer",p!="_internal",i=count:{pfd_root(q),q!="impl",q!="data_layer",q!="_internal",@str_cmp(q,p)<0}.
+.violation PluginRoot(at:span,ordinal:number,path:symbol) code "PSE_PLUGIN_ROOT" "Production plugin root"
+PluginRoot(@place("",0),i,p) :- option("entryPoint","_pse_plugin_roots"),psp_root_order(p,i).
 '''
     path=DESTINATION/'plan-scope-directory-discovery.rr';(ROOT/path).write_text(text)
     m=read_json(ROOT/MANIFEST);row=dict(destination=str(path),sha256=sha(text.encode()),origin='authored',sourceCommit=PIN,upstreamPath='scripts/lint_plan_scope_side_effects.py')

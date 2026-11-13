@@ -3423,7 +3423,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-directory-discovery.rr",
-      "sha256": "33bf90e2bd108e46817869a464abbd412915a81fa3044131a5c0244df6e2af9f",
+      "sha256": "9d82841c0071f77a9f4db747950f53db9d9843234e6794d5cafde9e1eed6df5e",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_plan_scope_side_effects.py",
@@ -3480,6 +3480,34 @@
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-side-effects-events.rr",
       "sha256": "195bcf41eb76297772c9578b3ea70601d13f9048ec3348bbb874b90b8be7bdbd",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-side-effects-plugin.rr",
+      "sha256": "d7ca285956167b5265d3565275ce901661a7385bb73198b3f8eee62e0315b298",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/side-effects-plugin.rr",
+      "sha256": "643cc2a936acf7f277d5c39bff0438c024c67c035e4b85cee5527e235dc99c91",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/values.rr",
+      "sha256": "95043ed9b411931043059acbe20128f4c56ed066acce81a24bce4436a43239d7",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/python/paths.rr",
+      "sha256": "421bdb23b0f80c229a3b195618136e65bd534f3514f8fcf460e4e2dc333f1988",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
@@ -6537,6 +6565,16 @@
         "sha256": "9226a6b238517064e5b9905e6ef95dd8aebc711ea244a9bba2aa4b32537c1cf6"
       },
       {
+        "path": "native/src/code_rule_dsl/logic/strings/functions.rs",
+        "sha256": "81ab9d53868653c35577f9be5bebe3fbb249063fcedfe770f7e08141856b0731",
+        "reason": "Generic native primitive float formatting for typed caller value graphs"
+      },
+      {
+        "path": "native/src/code_rule_dsl/mod.rs",
+        "sha256": "e8d592e9aad6b32bcf4ddc018b3a78f187b0896691e61b200c9cfd0c66b3e1df",
+        "reason": "Generic native primitive float formatting for typed caller value graphs"
+      },
+      {
         "path": "native/src/content_store/observe.rs",
         "sha256": "223ebd05f0778bd329d56871093d4bd440c8bdaa37bbd7a336f6715a95c7ab7c"
       }
@@ -6853,40 +6891,27 @@
         "wallSeconds": 127.09,
         "userCpuSeconds": 893.85,
         "systemCpuSeconds": 33.2
-      }
-    ],
-    "adoptionAudit": {
-      "format": "rerail.engine-cohort-adoption/v1",
-      "upstreamCommit": "aab36c283f7d2f5d6c5370c386ebcdc02e3f416b",
-      "engineCommit": "b2104f85e8d29550215ba9ad74f2fde35ca4fc1f",
-      "sourceTrees": {
-        "native": "737ecc33c55fc770bb633f5208497d61500772af",
-        "accel": "3cb8f6402714a7826b8371db46f772344d58f102",
-        "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
-        "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
-        "Cargo.toml": "0e61a0cdd685ea9f6fc6cdc560b72e96e7c05dee",
-        "Cargo.lock": "65c90cc6d11dee06351f20226dd3a2a4a1e52e10"
-      }
-    },
-    "cliArtifact": {
-      "format": "rerail.root-engine-build/v1",
-      "engineCommit": "b2104f85e8d29550215ba9ad74f2fde35ca4fc1f",
-      "upstreamCommit": "aab36c283f7d2f5d6c5370c386ebcdc02e3f416b",
-      "sourceTrees": {
-        "native": "737ecc33c55fc770bb633f5208497d61500772af",
-        "accel": "3cb8f6402714a7826b8371db46f772344d58f102",
-        "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
-        "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
-        "Cargo.toml": "0e61a0cdd685ea9f6fc6cdc560b72e96e7c05dee",
-        "Cargo.lock": "65c90cc6d11dee06351f20226dd3a2a4a1e52e10"
       },
-      "path": ".rerail/modern-engine-alignment/cli-4d98231729cf7fd0",
-      "sha256": "4d98231729cf7fd06bf663bdf37ea5ef0a08c1d98719b964f6a6a989b0a3b550",
-      "command": "RUSTUP_TOOLCHAIN=1.97.1 timeout 110 nice -n 19 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling --locked",
-      "wallSeconds": 68.44,
-      "userCpuSeconds": 446.32,
-      "systemCpuSeconds": 24.07
-    }
+      {
+        "format": "rerail.root-engine-build/v1",
+        "engineCommit": "b2104f85e8d29550215ba9ad74f2fde35ca4fc1f",
+        "upstreamCommit": "aab36c283f7d2f5d6c5370c386ebcdc02e3f416b",
+        "sourceTrees": {
+          "native": "737ecc33c55fc770bb633f5208497d61500772af",
+          "accel": "3cb8f6402714a7826b8371db46f772344d58f102",
+          "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
+          "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
+          "Cargo.toml": "0e61a0cdd685ea9f6fc6cdc560b72e96e7c05dee",
+          "Cargo.lock": "65c90cc6d11dee06351f20226dd3a2a4a1e52e10"
+        },
+        "path": ".rerail/modern-engine-alignment/cli-4d98231729cf7fd0",
+        "sha256": "4d98231729cf7fd06bf663bdf37ea5ef0a08c1d98719b964f6a6a989b0a3b550",
+        "command": "RUSTUP_TOOLCHAIN=1.97.1 timeout 110 nice -n 19 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling --locked",
+        "wallSeconds": 68.44,
+        "userCpuSeconds": 446.32,
+        "systemCpuSeconds": 24.07
+      }
+    ]
   },
   "engineSourceSnapshots": [
     {

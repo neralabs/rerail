@@ -1,0 +1,39 @@
+#include "python/values.rr"
+#include "python/paths.rr"
+.decl psp_bundle(b:number,path:symbol,facts:number)
+psp_bundle(b,p,f) :- pv_child(0,_,b,n),pv_member(n,"path",pn),pv_text(pn,p),pv_member(n,"facts",f).
+.decl psp_row(b:number,i:number,n:number)
+psp_row(b,i,n) :- psp_bundle(b,_,facts),pv_member(facts,"plan_scope_side_effects.violations",rows),pv_kind(rows,"list"),pv_child(rows,_,i,n),pv_kind(n,"dict").
+.decl psp_severity(n:number,text:symbol)
+psp_severity(n,s) :- psp_row(_,_,n),pv_member(n,"severity",v),pv_str(v,s).
+psp_severity(n,"error") :- psp_row(_,_,n),!pv_member(n,"severity",_).
+pv_need(v) :- psp_row(_,_,n),pv_member(n,"severity",v).
+.decl psp_active(b:number,i:number,n:number)
+psp_active(b,i,n) :- psp_row(b,i,n),psp_severity(n,"error").
+pv_need(v) :- psp_active(_,_,n),pv_member(n,k,v),(k="code";k="message";k="file_path").
+.decl psp_value(n:number,key:symbol,text:symbol)
+psp_value(n,k,t) :- psp_active(_,_,n),pv_member(n,k,v),pv_str(v,t).
+psp_value(n,"code","PSE-000") :- psp_active(_,_,n),!pv_member(n,"code",_).
+psp_value(n,"message","Plan-scope side-effect violation") :- psp_active(_,_,n),!pv_member(n,"message",_).
+psp_value(n,"file_path",p) :- psp_active(b,_,n),psp_bundle(b,p,_),!pv_member(n,"file_path",_).
+.decl psp_line(n:number,text:symbol,json:symbol)
+psp_line(n,s,s) :- psp_active(_,_,n),pv_member(n,"line_number",v),pv_kind(v,"int"),pv_text(v,s).
+psp_line(n,"1","true") :- psp_active(_,_,n),pv_member(n,"line_number",v),pv_kind(v,"bool"),pv_text(v,"true").
+psp_line(n,"0","false") :- psp_active(_,_,n),pv_member(n,"line_number",v),pv_kind(v,"bool"),pv_text(v,"false").
+.decl psp_integer_line(n:number)
+psp_integer_line(n) :- psp_active(_,_,n),pv_member(n,"line_number",v),pv_kind(v,k),(k="int";k="bool").
+psp_line(n,"1","1") :- psp_active(_,_,n),!psp_integer_line(n).
+pyp_input(n,p) :- psp_value(n,"file_path",p),prefix("/",p).
+pyp_input(n,cat(root,"/",p)) :- psp_value(n,"file_path",p),!prefix("/",p),option("psePluginRoot",root).
+.decl psp_flip(digit:symbol,opposite:symbol)
+psp_flip("0","9").psp_flip("1","8").psp_flip("2","7").psp_flip("3","6").psp_flip("4","5").
+psp_flip("5","4").psp_flip("6","3").psp_flip("7","2").psp_flip("8","1").psp_flip("9","0").
+.decl psp_digit(value:symbol,ordinal:number,opposite:symbol)
+psp_digit(v,i,o) :- psp_line(_,v,_),prefix("-",v),match_all("(?<digit>[0-9])",v,i,_,_),psp_flip(digit,o).
+.decl psp_line_key(value:symbol,sign:number,length:number,digits:symbol)
+psp_line_key(v,1,strlen(v),v) :- psp_line(_,v,_),!prefix("-",v).
+psp_line_key(v,0,0-strlen(v),d) :- psp_line(_,v,_),prefix("-",v),d=join s by i sep "":{psp_digit(v,i,s)}.
+.violation SideEffectsPluginFinding(at:span,bundle:number,ordinal:number,source_code:symbol,path:symbol,line_json:symbol,source_message:symbol,path_key:symbol,line_sign:number,line_length:number,line_digits:symbol) code "PSE_PLUGIN_FINDING" "{source_message}"
+SideEffectsPluginFinding(@place("",0),b,i,c,p,j,m,key,sign,len,digits) :- option("entryPoint","_pse_plugin_report"),psp_active(b,i,n),psp_value(n,"code",c),psp_value(n,"message",m),pyp_path(n,p),pyp_key(n,key),psp_line(n,l,j),psp_line_key(l,sign,len,digits).
+.violation SideEffectsPluginMetadata(at:span,name:symbol,enforcement:symbol,description:symbol) code "PSE_PLUGIN_META" "Plugin metadata"
+SideEffectsPluginMetadata(@place("",0),"plan_scope_side_effects","hard-fail","Plan scopes contain only declarative planning work") :- option("entryPoint","_pse_plugin_metadata").

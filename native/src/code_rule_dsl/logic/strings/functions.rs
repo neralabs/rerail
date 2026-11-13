@@ -121,6 +121,8 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("semver_subset", &[Text, Text], Number),
     // Python's `repr` of a string (`cpython::value::str_repr`), and an Ed25519 signature's check (`crypto`).
     ("py_repr", &[Text], Text),
+    // Python's str/repr of an IEEE-754 binary64 transported as sixteen hex digits.
+    ("py_float_str", &[Text], Text),
     ("ed25519_ok", &[Text, Text, Text], Number),
 ];
 
@@ -235,6 +237,13 @@ pub fn install_py_repr(repr: fn(&str) -> String) {
     let _ = PY_REPR.set(repr);
 }
 
+static PY_FLOAT_STR: std::sync::OnceLock<fn(f64) -> String> = std::sync::OnceLock::new();
+
+/// The Python language installs its existing native formatter beside `py_repr`.
+pub fn install_py_float_str(format: fn(f64) -> String) {
+    let _ = PY_FLOAT_STR.set(format);
+}
+
 pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
     let t = |i: usize| text[i];
     let out = match name {
@@ -302,6 +311,10 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         }
         // No value where no language registered it (`install_py_repr`).
         "py_repr" => PY_REPR.get().map(|repr| repr(t(0))),
+        "py_float_str" => t(0).as_bytes().iter().all(u8::is_ascii_hexdigit)
+            .then_some(t(0)).filter(|s| s.len() == 16)
+            .and_then(|s| u64::from_str_radix(s, 16).ok())
+            .and_then(|bits| PY_FLOAT_STR.get().map(|format| format(f64::from_bits(bits)))),
         "ed25519_ok" => return Value::Integer(i64::from(crate::code_rule_dsl::logic::crypto::ed25519_ok(t(0), t(1), t(2)))),
         "to_float" => return t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan()).map_or(Value::Null, |f| Value::Integer(float_key(f))),
         "float_add" | "float_sub" | "float_mul" | "float_div" => {
@@ -653,6 +666,17 @@ mod tests {
         let (_, arguments, result) = native_call("py_float_str").expect("typed float transport needs native formatting");
         assert_eq!(arguments, &[Kind::Text]);
         assert_eq!(result, Kind::Text);
+    }
+
+    #[test]
+    fn transported_float_bits_reach_the_language_formatter_unchanged() {
+        install_py_float_str(|f| format!("{:016x}", f.to_bits()));
+        for bits in ["0000000000000000", "8000000000000000", "7ff0000000000000", "fff0000000000000", "7ff8000000000123"] {
+            assert_eq!(eval("py_float_str", &[bits], &[]), Value::Text(bits.to_owned()));
+        }
+        for invalid in ["", "0", "00000000000000000", "gggggggggggggggg", " 000000000000000"] {
+            assert_eq!(eval("py_float_str", &[invalid], &[]), Value::Null);
+        }
     }
 
     /// Smoking gun 6 (t34, 2026-11-13): a maintained stratum has no SQL fallback, and `@place` in a head (`spot(d,
