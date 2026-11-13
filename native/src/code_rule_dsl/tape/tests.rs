@@ -2164,8 +2164,10 @@ fn json_parse_costs() {
     let kinds = &jp::simdjson::kinds().unwrap().0;
     let nodes: usize = files.iter().map(|f| rerail_simdjson::tape(f.as_bytes(), kinds).unwrap().node_count()).sum();
     let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+        ("simdjson: stage 1 alone", Box::new(|f| rerail_simdjson::stage1_only(f.as_bytes()) as usize)),
         ("simdjson: parse and index", Box::new(|f| rerail_simdjson::structurals(f.as_bytes(), <[u32]>::len).unwrap())),
-        ("simdjson: parse, index and columns", Box::new(|f| rerail_simdjson::tape(f.as_bytes(), kinds).unwrap().node_count())),
+        ("simdjson: DOM parse, columns from index", Box::new(|f| rerail_simdjson::tape_from_index(f.as_bytes(), kinds).unwrap().node_count())),
+        ("simdjson: stage 1, v9np stage 2", Box::new(|f| rerail_simdjson::tape(f.as_bytes(), kinds).unwrap().node_count())),
         // Through `TreeParser::parse`, as the product calls it (the tape's generic code is made in the parser's crate).
         ("simdjson: the tape", Box::new(|f| usize::from(std::hint::black_box(jp::simdjson::Simdjson.parse(&grammar, f, &|| false)).is_some_and(|t| t.is_ok())))),
         ("bitlex: parse (node table)", Box::new(|f| jp::columns(f).unwrap().rows.len())),

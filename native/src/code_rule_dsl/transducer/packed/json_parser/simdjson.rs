@@ -1,5 +1,5 @@
-//! A JSON file's tape from simdjson (`rerail_simdjson`, the C++ library): its DOM parser validates the
-//! whole file, and the tape's columns are written straight from its structural index
+//! A JSON file's tape from simdjson (`rerail_simdjson`, the C++ library): simdjson's stage 1, and a
+//! stage 2 of ours that validates the file as simdjson's does and writes the tape's columns in place
 //! (`rerail_simdjson::tape`), tree-sitter-json's nodes in preorder. Nothing is packed again
 //! (`TapeImage::written`). The tape is the one tree-sitter-json's tree encodes to, byte for byte
 //! (`json_tapes_from_simdjson_are_tree_sitters`).
@@ -39,7 +39,7 @@ pub fn kinds() -> Option<&'static (rerail_simdjson::Kinds, u16)> {
         .as_ref()
 }
 
-/// `source`'s tape, as simdjson's writer wrote its columns (`rerail_simdjson::tape`): `Err` where simdjson
+/// `source`'s tape, as simdjson's stage 2 wrote its columns (`rerail_simdjson::tape`): `Err` where simdjson
 /// refuses the file; `Ok(Err)` where the tape cannot be made.
 pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, Refusal> {
     let Some((kinds, value)) = kinds() else {

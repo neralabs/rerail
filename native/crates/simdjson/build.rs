@@ -1,4 +1,5 @@
-//! Compiles simdjson's amalgamation and the shim, optimized in every profile: simdjson is a
+//! Compiles simdjson's amalgamation with the shim (one translation unit: the shim's stage 2 uses
+//! simdjson's internal walker), optimized in every profile: simdjson is a
 //! dependency's code, as the `[profile.dev.package."*"]` setting has the others (a workspace
 //! member is not covered by it).
 fn main() {
@@ -16,7 +17,6 @@ fn main() {
         // The shim reads errors as codes; nothing throws.
         .define("SIMDJSON_EXCEPTIONS", "0")
         .include(&vendor)
-        .file(vendor.join("simdjson.cpp"))
         .file(&shim)
         .warnings(false)
         .compile("rerail_simdjson");

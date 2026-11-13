@@ -97,3 +97,47 @@ Bitlex path still packs that way (O-bitlex-writes-tape); tree-sitter's trees do 
 (O-tape-pack-cost).
 
 The Bitlex parse is 85% generated code (tier 2 51%, tier 1 34%), the rest buffer set-up.
+
+## Amendment (2026-11-13): a stage 2 of our own
+
+Point 2 wrote the tape from the index *after* simdjson's DOM parser ran its own stage 2. That stage 2
+builds simdjson's tape, unescapes every string into its buffer, and converts every number. The engine
+uses none of it, and the index was then walked a second time to write our columns.
+
+Now the shim has a stage 2 of its own, and nothing is written twice:
+
+- simdjson's stage 1 finds the index, as before (its DOM document is never allocated);
+- simdjson's own stage 2 walker (`json_iterator::walk_document`, which checks the document's
+  structure) drives a visitor of ours, compiled in the same translation unit as the amalgamation;
+- the visitor checks each scalar as simdjson's tape builder does:
+  - escapes and surrogate pairs, without unescaping;
+  - numbers, with `parse_number` and a writer that keeps no value;
+  - `true`, `false` and `null`;
+- it writes the v9np columns at each node's preorder slot, into the `Tape`'s own `Vec`s (grown
+  through a callback), at their stored widths, with the tape's code table.
+
+The columns are 2 bytes wide unless a value needs 4. `size` is predicted from the structural count;
+`off` and `tail` start at 2. Each column's values are or-ed as they are written, and a prediction that
+proves wrong is walked again at the right widths: 7 of the 2,200 files, each walked twice. The old
+writer (`tape_from_index`) stays as the oracle: the two tapes are equal byte for byte, widths
+included, on every `.json` file of the repository and on documents made to reach each check
+(`the_stage_2_tape_is_the_index_writers`).
+
+| | instructions | a node | CPU |
+|---|---:|---:|---:|
+| simdjson: stage 1 alone | 0.20 G | 28 | 14 ms |
+| simdjson: DOM parse (stages 1 and 2) | 0.45 G | 62 | 27 ms |
+| simdjson: DOM parse, then columns from the index (before) | 1.63 G | 227 | 78 ms |
+| **simdjson: stage 1, our stage 2** | **0.74 G** | **102** | 41 ms |
+| simdjson: the tape (with the source's SHA-256) | 1.00 G | 138 | 67 ms |
+
+Our stage 2 costs 74 instructions a node; simdjson's own costs 34. Ablations of the corpus, a node:
+the walker 9 to 14, the scalar checks 22 to 25, the column writes the rest. The visitor's state is
+about twenty live values (five column pointers, the stacks, the counters), more than the
+callee-saved registers; a fifth of the walk's instructions are stack loads and stores. What is left
+to push, in the order it should pay:
+
+1. a walker of our own over the index, its state in registers, in place of `json_iterator`;
+2. a string with no escape written as its two nodes at once (string and content);
+3. a number's end from `parse_number` itself, not the next structural;
+4. the room check per node removed, with a bound reserved up front.
