@@ -130,6 +130,15 @@ async function owingSession(options: { reopened?: Promise<void> } = {}) {
   };
 }
 
+/**
+ * Waits for `checked` once the session's reopened evaluator is open: the check of a call the ledger held open runs
+ * after that (`#checkWhenOpen`), which on a loaded Windows host took past `vi.waitFor`'s 1 s.
+ */
+async function waitForCheck(owing: { runtime: RerailRuntime; session: { sessionId: string } }, checked: () => void): Promise<void> {
+  await owing.runtime.codeRulesOpened(owing.session.sessionId);
+  await vi.waitFor(checked, { timeout: 10_000, interval: 20 });
+}
+
 describe("what a session owes its agent while it is closed", () => {
   it("gives the agent the steer a session still owed when it was closed after a day, with its next event, once", async () => {
     const owing = await owingSession();
@@ -185,7 +194,7 @@ describe("what a session owes its agent while it is closed", () => {
       await writeFile(join(owing.root, "a.ts"), BAD);
       const result = await owing.runtime.ingest({ kind: "result", eventId: "result", sessionId: session.sessionId, session, toolCallId: "t1", toolName: "Write", output: "ok" });
       expect(result).toEqual([]);
-      await vi.waitFor(() => expect(owing.checked).toContain("a.ts"));
+      await waitForCheck(owing, () => expect(owing.checked).toContain("a.ts"));
       expect((await owing.prompt("next")).map(delivery => delivery.content)).toEqual([STEER]);
     } finally {
       await owing.runtime.dispose();
@@ -212,7 +221,7 @@ describe("what a session owes its agent while it is closed", () => {
       expect(await owing.runtime.closeIdleSession(session.sessionId, { evenIfOwing: true })).toMatchObject({ kind: "suspended" });
       await writeFile(join(owing.root, "a.ts"), BAD);
       expect(await result("t1")).toEqual([]);
-      await vi.waitFor(() => expect(owing.reads.some(read => read.bad)).toBe(true));
+      await waitForCheck(owing, () => expect(owing.reads.some(read => read.bad)).toBe(true));
       expect((await owing.prompt("next")).map(delivery => delivery.content)).toEqual([STEER]);
       expect(await owing.turnEnd("turn-2")).toEqual([]);
       expect(owing.reads.filter(read => read.bad)).toEqual([{ path: "a.ts", mode: "session", bad: true }]);
