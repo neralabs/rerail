@@ -73,7 +73,7 @@ pub(super) fn key(prog: &Program) -> [u8; 32] {
     // fields are named, not `..`: a field added to `Program` is a compile error here until it is digested.
     let Program {
         decls, nullary, lattice, facts, rules, inputs, outputs, kindsets, demand, demand_dropped, magic_extras, magic_report, gates, policies,
-        settings, natives, rx_spans, ast_patterns, doc_scopes, answers, text_globs, qualifiers, tapes, again, together,
+        settings, natives, rx_spans, ast_patterns, doc_scopes, answers, text_globs, qualifiers, tapes, again, together, shapes,
     } = prog;
     let rules_digest = super::super::derived::digest(|d| {
         let mut rules_of = |rules: &[super::super::front::Rule]| {
@@ -96,7 +96,7 @@ pub(super) fn key(prog: &Program) -> [u8; 32] {
     let _ = std::fmt::Write::write_fmt(
         &mut hash,
         format_args!(
-            "\0{decls:?}\0{nullary:?}\0{lattice:?}\0{facts:?}\0{inputs:?}\0{outputs:?}\0{kindsets:?}\0{demand:?}\0{demand_dropped:?}\0{magic_extras:?}\0{magic_report:?}\0{gates:?}\0{policies:?}\0{settings:?}\0{natives:?}\0{rx_spans:?}\0{ast_patterns:?}\0{doc_scopes:?}\0{answers:?}\0{text_globs:?}\0{qualifiers:?}\0{tapes:?}\0{again_names:?}\0{together:?}"
+            "\0{decls:?}\0{nullary:?}\0{lattice:?}\0{facts:?}\0{inputs:?}\0{outputs:?}\0{kindsets:?}\0{demand:?}\0{demand_dropped:?}\0{magic_extras:?}\0{magic_report:?}\0{gates:?}\0{policies:?}\0{settings:?}\0{natives:?}\0{rx_spans:?}\0{ast_patterns:?}\0{doc_scopes:?}\0{answers:?}\0{text_globs:?}\0{qualifiers:?}\0{tapes:?}\0{again_names:?}\0{together:?}\0{shapes:?}"
         ),
     );
     hash.0.finalize().into()

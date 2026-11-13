@@ -55,6 +55,46 @@ pub fn find(prog: &mut Program) -> Result<(usize, usize), Error> {
     Ok((reaches, throughs))
 }
 
+/// The reaches a later rewrite put in a cycle of other relations, made rows again. `find` takes a closure only when
+/// nothing it reads reads it back, but the rewrites after it (magic sets' demand, decision 0108) add readers: at
+/// O125, `magic_found_bbf` reads `anc` and feeds `found`, which `base`, `anc`'s edge, reads. A native operator's
+/// stratum has no maintained form (`plan`, decision 0119), so the 44 relations of that component were derived from
+/// scratch at every edit. Each such reach's rules are its own again, and a relation made through it is rows too.
+/// Returns those made rows, or an error for one declared `reach`.
+pub fn undo_in_cycles(prog: &mut Program) -> Result<Vec<String>, Error> {
+    let reaches: Vec<(String, String)> = prog.natives.iter().filter_map(|(r, n)| match n { Native::Reach { seed, .. } => Some((r.clone(), seed.clone())), _ => None }).collect();
+    let mut undone = Vec::new();
+    for (rel, seed) in reaches {
+        let Some(back) = cycle_through(prog, &rel) else { continue };
+        if prog.qualifiers.get(&rel).is_some_and(|w| w.contains(QUALIFIER)) {
+            return Err(Error::Syntax(format!(".decl {rel} reach: after demand, `{back}` reads it and it reads `{back}`")));
+        }
+        crate::code_rule_dsl::logic::profile::decision("reach index: cycles and connected graphs (decision 0119)", || {
+            format!("{rel}: made rows again, in a cycle a later rewrite made: `{back}` reads it and it reads `{back}`")
+        });
+        prog.natives.remove(&rel);
+        for r in &mut prog.rules {
+            if r.head.rel == seed {
+                r.head.rel = rel.clone().into();
+            } else if r.head.rel == rel {
+                for l in &mut r.body {
+                    if let Literal::Atom(a) = l && a.rel == seed {
+                        a.rel = rel.clone().into();
+                    }
+                }
+            }
+        }
+        prog.decls.remove(&seed);
+        let through: Vec<String> = prog.natives.iter().filter(|(_, n)| matches!(n, Native::ReachThrough { reach, .. } if *reach == rel)).map(|(r, _)| r.clone()).collect();
+        for t in through {
+            prog.natives.remove(&t);
+            undone.push(t);
+        }
+        undone.push(rel);
+    }
+    Ok(undone)
+}
+
 /// Whether `rel`'s rules could be a relation through a reach (its one rule reads one), for the directive's error.
 fn is_through(prog: &Program, rel: &str) -> bool {
     let rules: Vec<&Rule> = prog.rules.iter().filter(|r| r.head.rel == rel).collect();

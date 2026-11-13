@@ -1162,6 +1162,17 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
             }
         }
         all.policies.extend(prog.policies);
+        // Its join shape directives, on its relations as renamed (O-join-shape-directives).
+        for mut shape in prog.shapes {
+            shape.head = rename(&shape.head);
+            shape.lit = rename(&shape.lit);
+            if let front::ShapeWait::After(a) = &mut shape.wait {
+                *a = rename(a);
+            }
+            if !all.shapes.contains(&shape) {
+                all.shapes.push(shape);
+            }
+        }
         // What the batch makes for the program's rules: its regexes over spans, its AST patterns.
         all.rx_spans.extend(prog.rx_spans);
         all.ast_patterns.extend(prog.ast_patterns);
@@ -2138,8 +2149,10 @@ fn run_observed(
     // profiling on may have turned it off meanwhile.
     // A run nested in another on this thread (phase 0's, a phase's, the constants', a bridged program's) and phase
     // 0's own run hold it only when no run does: nested, the profile is the outer run's, and such a run neither
-    // resets nor writes it. Waiting for it would wait for the outer run, which waits for this one.
-    let nested = RUNS_UNDER_WAY.with(std::cell::Cell::get) > 0;
+    // resets nor writes it. Waiting for it would wait for the outer run, which waits for this one. So does a run
+    // behind the run on another thread (`profile::behind`: the test store's template, filled while a profiled test
+    // holds the profile and waits for it).
+    let nested = RUNS_UNDER_WAY.with(std::cell::Cell::get) > 0 || crate::code_rule_dsl::logic::profile::is_behind();
     let _under_way = UnderWay::enter();
     let _profile = if !crate::code_rule_dsl::logic::profile::on() {
         None
@@ -2452,6 +2465,17 @@ fn run_observed(
     let cross_mode = cross_memo::mode();
     // With requests answered inside the fixpoint too: the cone runs first, so every loaded document's exports, the
     // component rules' only reads, are in before the components are (decision 0065 §2a).
+    // The copies hiding made for guests in the run's own language, now that it is known (decision 0058).
+    if prog.decls.keys().any(|r| r.starts_with("rr_in_")) {
+        let _fold = crate::code_rule_dsl::logic::profile::span(|| "fold the copies of guests in the run's language".into());
+        let bound = hiding::bound(&prog);
+        let folded = hiding::fold_own(&mut prog, label, bound);
+        if folded > 0 {
+            let rules = prog.rules.len();
+            let (merged, _, repeated) = merge_to_fixpoint(&mut prog);
+            crate::code_rule_dsl::logic::profile::decision("copies of guests in the run's language folded (decision 0058)", || format!("{folded} copies and kind sets of {label} guests; then {repeated} repeated rules dropped and {merged} relations merged, {rules} -> {} rules", prog.rules.len()));
+        }
+    }
     let loading_run = world::wanted(&prog);
     let cross_declared = cross_memo::declared(&prog).filter(|_| cross_mode != cross_memo::Mode::Off && label == "python");
     // A program that reads the components' relations itself (`rr_cx_reach`: a closure-local lookup) has them with or
@@ -2598,6 +2622,11 @@ fn run_observed(
                     }
                     Err(e) => crate::code_rule_dsl::logic::profile::decision("the program's demand (decision 0108)", || format!("{listed}: not applied ({e}); computed in full")),
                 }
+            }
+            // A closure the demand put in a cycle of other relations is rows again (decision 0119).
+            let undone = crate::code_rule_dsl::logic::reach_form::undo_in_cycles(&mut prog).map_err(|e| Error::Plan(format!("{e:?}")))?;
+            if !undone.is_empty() {
+                crate::code_rule_dsl::logic::profile::decision("reach index (decision 0119)", || format!("{} made rows again after demand, in cycles: {}", undone.len(), undone.join(", ")));
             }
             drop(preparing);
             // The `ast` atoms become relations the transducer's matchers fill per chunk (decision 0106).
@@ -7470,6 +7499,14 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
                 let _ = super::input_stats(&mut model.stats, &mut model.ndv, &form, &name);
             }
             self.bound_olds.insert(of);
+        }
+        // The inputs' deltas this form reads (`r__plus`, `r__minus`): bound with the run, measured then, but the run's
+        // model was made from the base program, which reads none, so none had a size (each was priced as the
+        // default's 1,000 rows, and `pv__ins` crossed `pv` with `retparam` before its 15-row `posarg__plus`).
+        for r in form.rules.iter().flat_map(|r| &r.body).filter_map(front::Literal::atom).map(|a| a.rel.as_str()) {
+            if (r.ends_with("__plus") || r.ends_with("__minus")) && form.inputs.iter().any(|i| i == r) && !model.stats.card.contains_key(r) && !model.stats.lazy.0.contains_key(r) {
+                let _ = super::input_stats(&mut model.stats, &mut model.ndv, &form, r);
+            }
         }
         if m.maintained > 0 {
             self.maintains.extend(scc.iter().cloned());
