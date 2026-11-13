@@ -72,7 +72,7 @@ async function fill(handle: FileHandle, start: Buffer, size: number, limit: numb
   let length = 0;
   for (;;) {
     if (length === buffer.length) buffer = grown(buffer, length, limit);
-    const wanted = buffer.length - length;
+    const wanted = Math.min(buffer.length, limit) - length;
     const { bytesRead } = await handle.read(buffer, length, wanted, length);
     length += bytesRead;
     if (bytesRead === 0 || (bytesRead < wanted && length >= size)) return { buffer, length };
