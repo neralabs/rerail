@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request 529 report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request #529</div>
+  <h1>Engine: the node-builtins rule holds 87 MiB, not 500 MiB</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>Is one process-wide table of compiled regexes, swept when a compilation ends and when a rule drops, the right owner of a rule&#x27;s regexes?</p>
+  </div>
+  <p class="rec"><b>We recommend:</b> approve it once the automated reviewer has read the eight commits since its review, CI is green, and you accept the regex table, after reading the <a href="#look">three places marked read first</a>.</p>
+  <div class="big">
+    <div><b class="w">405 lines</b><span>in 13 files. 252 ship, 153 are tests and text.</span></div><div><b class="w">Fast lane</b><span>No high-risk path; the automated reviewer can approve.</span></div><div><b class="w">Waits on #634, a re-review</b><span><code>Dependency audit</code> is red; the review predates eight commits.</span></div><div><b class="w">5 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/529">GitHub</a> on 13 November 2026, at head 85e5f33e.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr><td class="k"><span class="lb">A</span><b>Regex terms</b></td><td class="in" data-l="Intended">One compiled regex per pattern. Main writes only that shared utilities &quot;compile once per document, grammar and <code>languageOptions</code>&quot;. <span class="tagx">our reading</span></td><td class="fo" data-l="Found">Each of the rule&#x27;s 108 tables built a regex for every term: 4,966 terms over 764 patterns. <span class="tagx">release builds</span></td><td class="now" data-l="Now"><b>Closes the gap</b> and builds each pattern&#x27;s regex once per process.</td></tr><tr><td class="k"><span class="lb">B</span><b>Utility tables</b></td><td class="in" data-l="Intended">A shared table fills &quot;the ones its queries reach, as they reach them&quot;. <span class="tagx">code comment</span></td><td class="fo" data-l="Found">Each table made room for all 3,053 utilities and copied their names: 66 MiB. <span class="tagx">release builds</span></td><td class="now" data-l="Now"><b>Closes the gap</b> and makes a utility&#x27;s state on first use. A define&#x27;s tables share one copy of the names.</td></tr></tbody></table>
+<figcaption>Release builds of main on a 32-core Linux machine. Issue #637 has the reproduction.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">A. Regex terms</td><td data-l="Where main states the intent"><code>native/src/code_rule_dsl/compile/shared.rs</code> lines 6 and 7, the module&#x27;s comment: &quot;so they compile once per document, grammar and `languageOptions`, into one table its queries share&quot;. Nothing at main says who owns a compiled regex: each term calls <code>Regex::new</code> (<code>compile/ast_rule.rs</code> line 465, <code>compile/parse.rs</code> line 425).</td><td data-l="The cause, and what was measured">The rule&#x27;s 932 clauses reach its 3,053 utilities under 36 <code>languageOptions</code> in three grammars, so it has 108 shared tables. Each table called <code>Regex::new</code> for every <code>regex</code> and <code>value.regex</code> term it compiled. One regex per pattern took the rule from 500 to 153 MiB: medians of three release-build runs at main&#x27;s merge base and at 75525064.</td></tr><tr><td class="k">B. Utility tables</td><td data-l="Where main states the intent"><code>native/src/code_rule_dsl/matcher/util.rs</code> lines 105 and 106, the comment on <code>UtilTable</code>: &quot;a document&#x27;s shared table the ones its queries reach, as they reach them (`compile::shared`).&quot; Lines 139 to 142 make four cells for every utility, and <code>compile/shared.rs</code> line 178 copies every name for each table.</td><td data-l="The cause, and what was measured"><code>UtilTable::new</code> made a scope, a memo identity, a rule and a draft cell for every utility of the define, about 250 bytes in all, in each of the 108 tables: about 80 MiB by that count. Measured: commit 2ea7b4b4 took the rule from 153 to 87 MiB, medians of three release-build runs, each row&#x27;s runs within 0.2 MiB.</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 279" role="img" aria-label="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, One regex per pattern, medium risk, 104 lines; B, Lean utility tables, medium risk, 148 lines. Read first: regexes/mod.rs, model.rs, matcher/util.rs. To skim: 152 lines of tests and 1 line of one release note." class="dg map"><text x="4" y="14" class="t b">Code to read</text><text x="336" y="14" text-anchor="end" class="t s">bar: changed lines</text><rect x="4.5" y="24.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="38" text-anchor="middle" class="t b">A</text><rect x="30" y="29" width="14" height="10" rx="2" class="rk med"/><text x="49" y="38" class="t s">Medium risk, 104 lines</text><text x="128" y="59" text-anchor="end" class="t s">regexes/mod.rs</text><g><title>regexes/mod.rs: 71 changed lines, medium risk</title><path d="M134 50h17.3a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-17.3z" class="rk med"/></g><text x="160.3" y="59" class="t n">71</text><text x="336" y="59" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="55" r="8.5" class="nc"/><text x="254" y="59" text-anchor="middle" class="t b inv">1</text><text x="128" y="76" text-anchor="end" class="t s">model.rs</text><g><title>model.rs: 9 changed lines, medium risk</title><path d="M134 67h0a2.7 2.7 0 0 1 2.7 2.7v5.6a2.7 2.7 0 0 1 -2.7 2.7h-0z" class="rk med"/></g><text x="141.7" y="76" class="t n">9</text><text x="336" y="76" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="72" r="8.5" class="nc"/><text x="254" y="76" text-anchor="middle" class="t b inv">2</text><text x="128" y="93" text-anchor="end" class="t s">7 other files</text><g><title>7 other files: 24 changed lines, medium risk</title><path d="M134 84h3.2a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-3.2z" class="rk med"/></g><text x="146.2" y="93" class="t n">24</text><rect x="4.5" y="107.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="121" text-anchor="middle" class="t b">B</text><rect x="30" y="112" width="14" height="10" rx="2" class="rk med"/><text x="49" y="121" class="t s">Medium risk, 148 lines</text><text x="128" y="142" text-anchor="end" class="t s">matcher/util.rs</text><g><title>matcher/util.rs: 106 changed lines, medium risk</title><path d="M134 133h27.8a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-27.8z" class="rk med"/></g><text x="170.8" y="142" class="t n">106</text><text x="336" y="142" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="138" r="8.5" class="nc"/><text x="254" y="142" text-anchor="middle" class="t b inv">3</text><text x="128" y="159" text-anchor="end" class="t s">compile/shared.rs</text><g><title>compile/shared.rs: 42 changed lines, medium risk</title><path d="M134 150h8.6a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-8.6z" class="rk med"/></g><text x="151.6" y="159" class="t n">42</text><line x1="4" y1="173" x2="336" y2="173" class="ar thin"/><text x="4" y="193" class="t b">Skim: tests and text</text><text x="128" y="213" text-anchor="end" class="t s">tests of A</text><g><title>Tests of change A: 75 changed lines, skim</title><path d="M134 204h18.5a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-18.5z" class="rk skim"/></g><text x="161.5" y="213" class="t n">75</text><text x="128" y="230" text-anchor="end" class="t s">tests of B</text><g><title>Tests of change B: 77 changed lines, skim</title><path d="M134 221h19.1a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-19.1z" class="rk skim"/></g><text x="162.1" y="230" class="t n">77</text><text x="128" y="247" text-anchor="end" class="t s">release note</text><g><title>One release note: 1 line</title><path d="M134 238h0a2 2 0 0 1 2 2v7a2 2 0 0 1 -2 2h0z" class="rk skim"/></g><text x="139.3" y="247" class="t n">1</text><rect x="4" y="263" width="14" height="10" rx="2" class="rk high"/><text x="22" y="272" class="t s">High</text><rect x="62.8" y="263" width="14" height="10" rx="2" class="rk med"/><text x="80.8" y="272" class="t s">Medium</text><rect x="133" y="263" width="14" height="10" rx="2" class="rk low"/><text x="151" y="272" class="t s">Low risk</text><rect x="214.6" y="263" width="14" height="10" rx="2" class="rk skim"/><text x="232.6" y="272" class="t s">Skim</text></svg>
+<figcaption>Step 3 is the longest bar.</figcaption></figure>
+<div><ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>regexes/mod.rs</code>: <code>Regex::new</code>, <code>sweep</code></b><span class="min">5 min</span><span class="x">Can <code>sweep</code> drop a regex that a compiled rule still holds?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>model.rs</code>: <code>Drop for CompiledCodeRule</code></b><span class="min">2 min</span><span class="x">A review found a leak here. Can a rule drop on a thread holding the table&#x27;s lock?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>matcher/util.rs</code>: <code>slot</code>, <code>slot_or_new</code>, <code>with_target</code>, <code>summary_key</code></b><span class="min">8 min</span><span class="x">Does a utility no query has compiled or read answer as at main?</span></div></li><li><div><b>A: <code>code_rule_dsl/mod.rs</code>, <code>violations.rs</code></b><span class="min">3 min</span><span class="x">Witness regexes compare by address at <code>violations.rs</code> lines 301 and 368, outside the diff.</span></div></li><li><div><b>B: <code>compile/shared.rs</code></b><span class="min">4 min</span><span class="x"><code>AddedByIndex</code> must index like the list it replaces.</span></div></li><li><div><b>A: <code>compile/ast_rule.rs</code>, <code>compile/parse.rs</code>, <code>matcher/anchors.rs</code>, <code>matcher/mod.rs</code>, <code>value/text_regex.rs</code></b><span class="min">2 min</span><span class="x">Each import makes <code>Regex::new</code> read the table, in <code>anchors/semantic.rs</code> too, outside the diff.</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">5 min</span><span class="x">No existing test changes. <code>regexes/tests.rs</code> is new; two memory tests end <code>compile/shared.rs</code>, left out on Windows.</span></div></div>
+</div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 191" role="img" aria-label="The changes by risk, high on top, against six checks. A, Shared regexes, medium risk: independent review holds with a limit, users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. B, Lean tables, medium risk: independent review holds with a limit, users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. CI at this head holds with a limit for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="82" rx="8" class="bx zone"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk med"/><text x="28" y="34" class="t s b">Medium risk</text><rect x="8.5" y="42.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="56" text-anchor="middle" class="t b">A</text><text x="34" y="56" class="t b">Shared regexes</text><g><title>Shared regexes, fails without the fix: The regex memory test&#x27;s document holds at least 84 MiB at main, against its bound of 16 MiB. The two-rules test fails with one regex per document, and again without the sweep as a rule drops.</title><circle cx="150" cy="52" r="8" class="mh"/><path d="M146 52l3 3l5 -6" class="mt"/></g><g><title>Shared regexes, independent review: The automated review read 2ea7b4b4, where regexes were shared per document, and traced the witness regexes. Our reviews of the process-wide table found regexes left after a rule drops; 34596066 fixed it with a test. No review outside ours has read the process-wide table, the sweep on drop or the `Regex` type.</title><circle cx="184" cy="52" r="7.4" class="ml"/><path d="M184 44.6A7.4 7.4 0 0 0 184 59.4Z" class="mlf"/></g><g><title>Shared regexes, users lose nothing: The engine&#x27;s output is byte for byte main&#x27;s: 281 rules over 99 files at this head, and 15,174 outputs by sha256 at 1e3c8127. After the rules drop, 3.80 MB stay allocated against 3.69 MB at main. Matching time was last measured at 1e3c8127, and the sweep is not timed on its own.</title><circle cx="218" cy="52" r="7.4" class="ml"/><path d="M218 44.6A7.4 7.4 0 0 0 218 59.4Z" class="mlf"/></g><g><title>Shared regexes, rules scan: nothing new: 0 new findings at e6baebd6, the code at this head, run as the automated reviewer runs it; 9 at the reviewed head. No function this change adds or edits is over 6.</title><circle cx="252" cy="52" r="8" class="mh"/><path d="M248 52l3 3l5 -6" class="mt"/></g><g><title>Shared regexes, Windows 11: no new failure: The three `regexes` tests pass. One anchors test fails in 4 of 10 runs here and in 4 of 10 at main, at the same assertion; `matcher/anchors.rs` changes by one import line. The lib tests build on Windows only with a one-line `#[cfg(unix)]` that is not committed, at main too.</title><circle cx="286" cy="52" r="7.4" class="ml"/><path d="M286 44.6A7.4 7.4 0 0 0 286 59.4Z" class="mlf"/></g><g><title>Shared regexes, CI at this head: 27 of 31 checks pass at 85e5f33e, the three Rust engine jobs and Conformance 1/8 to 8/8 among them. `Dependency audit` and the `CI result` that sums up fail until #634 merges; this pull request changes no dependency. 2 are skipped: they run on an approved commit.</title><circle cx="320" cy="52" r="7.4" class="ml"/><path d="M320 44.6A7.4 7.4 0 0 0 320 59.4Z" class="mlf"/></g><line x1="8" y1="68" x2="332" y2="68" class="ar thin"/><rect x="8.5" y="74.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="88" text-anchor="middle" class="t b">B</text><text x="34" y="88" class="t b">Lean tables</text><g><title>Lean tables, fails without the fix: The table memory test&#x27;s document, 72 tables of 2,000 utilities with no regex term, holds 33,647,400 bytes at main and 2,699,816 here, against its bound of 8 MiB.</title><circle cx="150" cy="84" r="8" class="mh"/><path d="M146 84l3 3l5 -6" class="mt"/></g><g><title>Lean tables, independent review: The automated review read the slots at 2ea7b4b4: `rule`, `with_target` and `summary_key` keep main&#x27;s answers. The record of only the utilities compiled (11d64327), its `AddedByIndex` type (bd4e7cfa) and the `UtilTable::new` and `sharing` pair (e6baebd6) came after, and no review outside ours has read them. Our review found that the memory tests counted the input they free; 4573e0a3 fixed the count.</title><circle cx="184" cy="84" r="7.4" class="ml"/><path d="M184 76.6A7.4 7.4 0 0 0 184 91.4Z" class="mlf"/></g><g><title>Lean tables, users lose nothing: The engine&#x27;s output is byte for byte main&#x27;s: 281 rules over 99 files at this head. Matching 109 rules over 656 files took a median of 14.8 s at main and 14.4 s at 1e3c8127, not measured at this head: `matcher/util.rs` differs from that commit only in its two constructors.</title><circle cx="218" cy="84" r="7.4" class="ml"/><path d="M218 76.6A7.4 7.4 0 0 0 218 91.4Z" class="mlf"/></g><g><title>Lean tables, rules scan: nothing new: 0 new findings at e6baebd6. `SharedTables::reach` and `Table::compile`, over the ceiling at main, keep main&#x27;s text: `AddedByIndex` indexes like the list it replaces.</title><circle cx="252" cy="84" r="8" class="mh"/><path d="M248 84l3 3l5 -6" class="mt"/></g><g><title>Lean tables, Windows 11: no new failure: The two memory tests read jemalloc&#x27;s counters and are left out on Windows. The other lib tests of `compile` and `matcher` pass there, apart from the anchors test that fails as often at main.</title><circle cx="286" cy="84" r="7.4" class="ml"/><path d="M286 76.6A7.4 7.4 0 0 0 286 91.4Z" class="mlf"/></g><g><title>Lean tables, CI at this head: 27 of 31 checks pass at 85e5f33e, the three Rust engine jobs and Conformance 1/8 to 8/8 among them. `Dependency audit` and the `CI result` that sums up fail until #634 merges; this pull request changes no dependency. 2 are skipped: they run on an approved commit.</title><circle cx="320" cy="84" r="7.4" class="ml"/><path d="M320 76.6A7.4 7.4 0 0 0 320 91.4Z" class="mlf"/></g><text x="8" y="121" class="t s">1  fails without the fix</text><text x="168" y="121" class="t s">2  independent review</text><text x="8" y="137" class="t s">3  users lose nothing</text><text x="168" y="137" class="t s">4  rules scan: nothing new</text><text x="8" y="153" class="t s">5  Windows 11: no new failure</text><text x="168" y="153" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="177" r="8" class="mh"/><path d="M10 177l3 3l5 -6" class="mt"/></g><text x="28" y="181" class="t s">holds</text><g><title>holds with a limit</title><circle cx="92" cy="177" r="7.4" class="ml"/><path d="M92 169.6A7.4 7.4 0 0 0 92 184.4Z" class="mlf"/></g><text x="106" y="181" class="t s">holds with a limit</text></svg>
+<figcaption>Start at A. No outside review has read either final design.</figcaption></figure>
+<details class="ev"><summary>Each half mark's limit</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>It holds with this limit</th></tr></thead><tbody><tr><td class="k">A. Shared regexes</td><td data-l="Check">independent review</td><td data-l="It holds with this limit">The automated review read 2ea7b4b4, where regexes were shared per document, and traced the witness regexes. Our reviews of the process-wide table found regexes left after a rule drops; 34596066 fixed it with a test. No review outside ours has read the process-wide table, the sweep on drop or the <code>Regex</code> type.</td></tr><tr><td class="k">A. Shared regexes</td><td data-l="Check">users lose nothing</td><td data-l="It holds with this limit">The engine&#x27;s output is byte for byte main&#x27;s: 281 rules over 99 files at this head, and 15,174 outputs by sha256 at 1e3c8127. After the rules drop, 3.80 MB stay allocated against 3.69 MB at main. Matching time was last measured at 1e3c8127, and the sweep is not timed on its own.</td></tr><tr><td class="k">A. Shared regexes</td><td data-l="Check">Windows 11: no new failure</td><td data-l="It holds with this limit">The three <code>regexes</code> tests pass. One anchors test fails in 4 of 10 runs here and in 4 of 10 at main, at the same assertion; <code>matcher/anchors.rs</code> changes by one import line. The lib tests build on Windows only with a one-line <code>#[cfg(unix)]</code> that is not committed, at main too.</td></tr><tr><td class="k">B. Lean tables</td><td data-l="Check">independent review</td><td data-l="It holds with this limit">The automated review read the slots at 2ea7b4b4: <code>rule</code>, <code>with_target</code> and <code>summary_key</code> keep main&#x27;s answers. The record of only the utilities compiled (11d64327), its <code>AddedByIndex</code> type (bd4e7cfa) and the <code>UtilTable::new</code> and <code>sharing</code> pair (e6baebd6) came after, and no review outside ours has read them. Our review found that the memory tests counted the input they free; 4573e0a3 fixed the count.</td></tr><tr><td class="k">B. Lean tables</td><td data-l="Check">users lose nothing</td><td data-l="It holds with this limit">The engine&#x27;s output is byte for byte main&#x27;s: 281 rules over 99 files at this head. Matching 109 rules over 656 files took a median of 14.8 s at main and 14.4 s at 1e3c8127, not measured at this head: <code>matcher/util.rs</code> differs from that commit only in its two constructors.</td></tr><tr><td class="k">B. Lean tables</td><td data-l="Check">Windows 11: no new failure</td><td data-l="It holds with this limit">The two memory tests read jemalloc&#x27;s counters and are left out on Windows. The other lib tests of <code>compile</code> and <code>matcher</code> pass there, apart from the anchors test that fails as often at main.</td></tr><tr><td class="k">A and B</td><td data-l="Check">CI at this head</td><td data-l="It holds with this limit">27 of 31 checks pass at 85e5f33e, the three Rust engine jobs and Conformance 1/8 to 8/8 among them. <code>Dependency audit</code> and the <code>CI result</code> that sums up fail until #634 merges; this pull request changes no dependency. 2 are skipped: they run on an approved commit.</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<p class="sub">Each line opens its card.</p>
+<details class="card"><summary><span class="lb">A</span><b>One regex per pattern</b><span class="chip medium"><i></i>Medium risk</span><span class="sx">The rule: 500 MiB at main, 153 MiB with shared regexes.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>With the Node.js pack on, the engine holds 500 MiB for one rule once compiled, and takes 2.6 s to compile it. Most of it is the same few hundred regexes, built again for every term in every table.</dd>
+<dt>Who meets it</dt><dd>Every process that compiles the Node.js pack, each time, for as long as its rules stay loaded. The five packs&#x27; 109 on-by-default rules hold 760 MiB at main and 149 MiB here (release builds, the median of three runs).</dd>
+<dt>What it does</dt><dd><code>Regex::new</code> in <code>regexes</code> returns a pattern&#x27;s one compiled regex, from a process-wide table behind a read-write lock. Five files import that type, not the <code>regex</code> crate&#x27;s; <code>anchors/semantic.rs</code>, outside the diff, takes it through <code>use super::*</code>. <code>sweep</code> drops each regex nothing outside the table holds: <code>CodeRuleDslRuntime::compile</code> calls it as a compilation ends, and <code>Drop for CompiledCodeRule</code> as a rule drops.</dd>
+<dt>Risk</dt><dd>Medium. Engine code that every rule&#x27;s regex terms go through, with new process-wide state behind a lock. The table is read at compile time, never at match time, and a regex is immutable.</dd>
+<dt>Check</dt><dd>Only <code>Regex::new</code> hands a regex out of the table, under its lock; a clone of a held <code>Regex</code> (<code>matcher/anchors.rs</code> line 378) takes no lock: its holder already counts. Can <code>sweep</code> drop one in flight? <code>CompiledCodeRule</code> derives <code>Clone</code>, and a workspace copies a rule it places (<code>Arc::make_mut</code> in <code>workspace/api.rs</code>), so each copy sweeps as it drops. Does anything but a rule&#x27;s clauses hold a <code>Regex</code> and drop after the rule? <code>violations.rs</code> compares witness regexes by address: through <code>Deref</code>, the shared regex&#x27;s.</dd>
+</dl><figure><svg viewBox="0 0 340 128" role="img" aria-label="Memory held once compiled. The node-builtins rule: 500 MiB at main, 153 MiB with one regex per pattern alone. All 281 rules of five packs: 940 MiB at main, 201 MiB with both changes." class="dg pic"><text x="4" y="17" class="t b">The rule, regexes shared</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>The rule, regexes shared, main: 500 MiB</title><path d="M80 24h72a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-72z" class="rk was"/></g><text x="162" y="34" class="t n">500 MiB</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>The rule, regexes shared, this change: 153 MiB</title><path d="M80 41h19.256a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-19.256z" class="rk now"/></g><text x="109.256" y="51" class="t n">153 MiB</text><text x="4" y="75" class="t b">All 281 rules, both changes</text><text x="74" y="92" text-anchor="end" class="t s">main</text><g><title>All 281 rules, both changes, main: 940 MiB</title><path d="M80 82h138.88a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-138.88z" class="rk was"/></g><text x="228.88" y="92" class="t n">940 MiB</text><text x="74" y="109" text-anchor="end" class="t s">this change</text><g><title>All 281 rules, both changes, this change: 201 MiB</title><path d="M80 99h26.552a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-26.552z" class="rk now"/></g><text x="116.552" y="109" class="t n">201 MiB</text></svg><figcaption>Method: release builds on a 32-core Linux machine, one fresh Node 24 process per run, three runs a row, the median; held is jemalloc&#x27;s allocated bytes after compiling. 153 MiB is the rule at 75525064, the first commit, which shared regexes per document. One regex per process then took the 281 rules from 212 to 201 MiB.</figcaption></figure></div></details><details class="card"><summary><span class="lb">B</span><b>Lean utility tables</b><span class="chip medium"><i></i>Medium risk</span><span class="sx">The rule: 153 MiB before, 87 MiB after.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>Each shared table of a define makes room for every utility of the define and copies every name, though its queries reach a few dozen to a few hundred utilities.</dd>
+<dt>Who meets it</dt><dd>The same processes as A. The cost grows with a define&#x27;s utilities times its tables: this rule has 3,053 utilities in 108 tables.</dd>
+<dt>What it does</dt><dd><code>UtilTable</code> keeps one slot per utility and makes the utility&#x27;s state when a query first compiles or reads it. A language&#x27;s tables share one copy of the names, parameter flags and origins through <code>UtilTable::sharing</code>. <code>AddedByIndex</code> records only the utilities a table compiled.</dd>
+<dt>Risk</dt><dd>Medium. Every utility lookup of every rule goes through a slot, behind one more pointer. A wrong answer for a utility not yet filled would change what a rule matches.</dd>
+<dt>Check</dt><dd>Do <code>rule</code>, <code>with_target</code> and <code>summary_key</code> answer for a utility with no slot as main does for an empty cell? <code>scope</code> and <code>memo_term</code> make the slot on first read. <code>fill</code> and <code>draft</code> still panic past the table&#x27;s utilities. <code>names</code> and <code>framed</code> come from <code>utils</code> in key order, the order <code>defs</code> has. <code>AddedByIndex</code> gives <code>None</code> for a utility not compiled, and its mutable index inserts an entry.</dd>
+</dl><figure><svg viewBox="0 0 340 128" role="img" aria-label="A test document of 72 tables with no regex term: it holds 33.6 MB at main and 2.7 MB with this change, and its compile peaks 46.6 MB and 8.5 MB above where the thread began." class="dg pic"><text x="4" y="17" class="t b">The test document, held</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>The test document, held, main: 33.6 MB</title><path d="M80 24h98.9677a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-98.9677z" class="rk was"/></g><text x="188.968" y="34" class="t n">33.6 MB</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>The test document, held, this change: 2.7 MB</title><path d="M80 41h4.27419a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-4.27419z" class="rk now"/></g><text x="94.2742" y="51" class="t n">2.7 MB</text><text x="4" y="75" class="t b">The same, compile peak</text><text x="74" y="92" text-anchor="end" class="t s">main</text><g><title>The same, compile peak, main: 46.6 MB</title><path d="M80 82h138.806a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-138.806z" class="rk was"/></g><text x="228.806" y="92" class="t n">46.6 MB</text><text x="74" y="109" text-anchor="end" class="t s">this change</text><g><title>The same, compile peak, this change: 8.5 MB</title><path d="M80 99h22.0484a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-22.0484z" class="rk now"/></g><text x="112.048" y="109" class="t n">8.5 MB</text></svg><figcaption>Method: the table memory test&#x27;s document, a lib test build on Linux, jemalloc&#x27;s per-thread counters, the same bytes in three runs; 1 MB is 10^6 bytes. For the rule, 153 and 87 MiB are release builds at 75525064 and at 2ea7b4b4, three fresh Node 24 processes each, the median, each row&#x27;s runs within 0.2 MiB.</figcaption></figure></div></details>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>One regex per pattern: per process, or per document? <span class="chip">ask 1</span></h3>
+<p><b>We chose</b> the process: sharing per document hung on a hidden thread-local scope.</p>
+<p><b>Would change our mind:</b> a profile of matching threads waiting on a shared regex&#x27;s cache pool.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">One per pattern, per process <span class='tag new'>chosen</span></td><td data-l="What a user gets">One regex for each of the 1,688 distinct patterns that the five packs&#x27; 281 rules write</td><td data-l="Cost">A global table behind a read-write lock, read at compile time and never at match time. Threads that match one pattern share its cache pool</td><td data-l="What it breaks">Nothing measured. Two terms that write one pattern count as one witness regex, and read the same named groups from the same node</td></tr><tr><td class="k">One per pattern, per document, as the first commit had it</td><td data-l="What a user gets">2,584 regexes, since each rule keeps its own: 268 patterns appear in more than one rule</td><td data-l="Cost">A thread-local scope that <code>compile_document</code> opened. Code that compiled outside it got regexes that were not shared. A table passed as a parameter instead would edit each long compile function</td><td data-l="What it breaks">Nothing. The 281 rules hold 11.5 MiB more</td></tr><tr><td class="k">Change the rule: one <code>languageOptions</code> for all its clauses</td><td data-l="What a user gets">Fewer tables for this one rule</td><td data-l="Cost">A pack data change and release, with its conformance data checked again</td><td data-l="What it breaks">Other rules keep the cost per term: the four other packs&#x27; on-by-default rules add 199 MiB at main and 49 MiB here</td></tr></tbody></table></div><div class="pns c2"><div class="pn before"><div class="pt">main: a regex term in a shared table</div><svg viewBox="0 0 340 122" role="img" aria-label="At main a shared table compiles a utility its queries reach, each regex term calls Regex::new, and the rule ends with a new regex per term in each of its 108 tables." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">a table compiles a utility its queries reach</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx "/><text x="170" y="65" text-anchor="middle" class="t s">each regex term calls Regex::new</text><line x1="170" y1="76" x2="170" y2="85" class="ar " marker-end="url(#ah)"/><rect x="20" y="86" width="300" height="28" rx="8" class="bx "/><text x="170" y="104" text-anchor="middle" class="t s">a new regex per term, in each of 108 tables</text></svg></div><div class="pn after"><div class="pt">this change</div><svg viewBox="0 0 340 131" role="img" aria-label="With this change each regex term asks the process-wide table. A known pattern gives the shared regex. A new pattern is compiled once and kept for every later term." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">a table compiles a utility its queries reach</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx acc"/><text x="170" y="65" text-anchor="middle" class="t s">each regex term asks the process-wide table</text><line x1="95" y1="76" x2="95" y2="92" class="ar " marker-end="url(#ah)"/><line x1="245" y1="76" x2="245" y2="92" class="ar " marker-end="url(#ah)"/><text x="101" y="88" class="t s">pattern known</text><text x="251" y="88" class="t s">new pattern</text><rect x="20" y="93" width="146" height="30" rx="8" class="bx good"/><text x="93" y="112" text-anchor="middle" class="t s">takes the shared regex</text><rect x="174" y="93" width="146" height="30" rx="8" class="bx "/><text x="247" y="112" text-anchor="middle" class="t s">compiles it once</text></svg></div></div><p><b>Evidence.</b> The two-rules test fails with one regex per document. Per process against per document saved 11.5 MiB for all 281 rules: 212.4 to 200.9 MiB, release builds, the median of three fresh processes. Matching 109 rules over 656 files took a median of 14.8 s at main and 14.4 s at 1e3c8127, six interleaved runs each, with one output digest on every run. <code>calls::names</code> at main is a process-wide table of the same shape.</p></details></div>
+<div class="dblock"><h3>When does the table let a regex go?</h3>
+<p><b>We chose</b> a sweep as each compilation ends and each rule drops.</p>
+<p><b>Would change our mind:</b> a profile that shows the scan when many rules drop at once.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Sweep as a compilation ends and as a rule drops <span class='tag new'>chosen</span></td><td data-l="What a user gets">A process that drops its last rule holds no regex, as at main</td><td data-l="Cost">Each compilation and each rule drop takes the write lock and scans the table: about 1,700 entries with the five packs loaded. Not timed on its own</td><td data-l="What it breaks">Nothing. A drop on another thread can sweep a regex that a compiling document validated; its terms compile it again</td></tr><tr><td class="k">Sweep only as the next document compiles, as an earlier commit had it</td><td data-l="What a user gets">Less sweeping</td><td data-l="Cost">Memory stays held after the rules drop, until the process compiles again</td><td data-l="What it breaks">A daemon whose last checkout closed kept that checkout&#x27;s regexes: 54.0 MB left against 7.9 MB at main</td></tr><tr><td class="k">Weak entries, or a sweep when the table doubles as <code>calls::names</code> does</td><td data-l="What a user gets">No scan at each drop</td><td data-l="Cost">A regex can go between a document&#x27;s validation and its terms, so its patterns compile twice</td><td data-l="What it breaks">Nothing known. Not built</td></tr></tbody></table></div><div class="pns c2"><div class="pn before"><div class="pt">main: a rule drops</div><svg viewBox="0 0 340 83" role="img" aria-label="At main a rule that drops lets go of its clauses, and each term drops the regex it owns." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">the rule&#x27;s clauses drop</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx "/><text x="170" y="65" text-anchor="middle" class="t s">each term drops the regex it owns</text></svg></div><div class="pn after"><div class="pt">this change</div><svg viewBox="0 0 340 131" role="img" aria-label="With this change a rule that drops lets go of its clauses first, then sweeps the table under its write lock. A regex nothing else holds goes. A regex another rule holds stays." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">the rule lets go of its clauses first</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx acc"/><text x="170" y="65" text-anchor="middle" class="t s">sweep: scan the table under its write lock</text><line x1="95" y1="76" x2="95" y2="92" class="ar " marker-end="url(#ah)"/><line x1="245" y1="76" x2="245" y2="92" class="ar " marker-end="url(#ah)"/><text x="101" y="88" class="t s">not held</text><text x="251" y="88" class="t s">still held</text><rect x="20" y="93" width="146" height="30" rx="8" class="bx good"/><text x="93" y="112" text-anchor="middle" class="t s">the regex goes</text><rect x="174" y="93" width="146" height="30" rx="8" class="bx "/><text x="247" y="112" text-anchor="middle" class="t s">the regex stays</text></svg></div></div><p><b>Evidence.</b> The two-rules test drops both rules with no compilation after: with the sweep only at the next compilation it fails at its last assertion. After all 281 rules are compiled, evaluated on 99 files and dropped, 3.69 MB stay allocated at main and 3.80 MB here: a lib-test probe on Linux, jemalloc, the same bytes in three runs.</p></details></div>
+<div class="dblock"><h3>The shared type: named <code>Regex</code>, or a refactor first? <span class="chip">ask 2</span></h3>
+<p><b>We chose</b> the name: the long functions keep main&#x27;s text, and the review&#x27;s findings clear.</p>
+<p><b>Would change our mind:</b> a maintainer who wants those functions under the ceiling first.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">A type named <code>Regex</code>, swapped in by import <span class='tag new'>chosen</span></td><td data-l="What a user gets">0 new findings. <code>ast_rule.rs</code>, <code>parse.rs</code> and <code>anchors.rs</code> differ from main by one import line</td><td data-l="Cost">In six files <code>Regex</code> is the shared type, not the crate&#x27;s: five by import and <code>anchors/semantic.rs</code> through <code>use super::*</code>. A doc comment on the module, on <code>AstMatcher::Regex</code> and on <code>TextRegex::Plain</code> says so</td><td data-l="What it breaks">Nothing: the same 631 tests pass with the same output</td></tr><tr><td class="k">Refactor the seven functions under the ceiling here</td><td data-l="What a user gets">The findings clear, and the functions get shorter</td><td data-l="Cost">About 1,250 lines moved inside a memory fix</td><td data-l="What it breaks"><code>CONTRIBUTING.md</code> line 398: &quot;keep refactoring and behavior changes in separate pull requests&quot;</td></tr><tr><td class="k">Call a function of another name inside each long function</td><td data-l="What a user gets">The call site says the regex is shared</td><td data-l="Cost">An edit inside each of six functions over the ceiling at main</td><td data-l="What it breaks">The rules scan reports an edited function over the ceiling as new: 6 of the 7 findings at bd4e7cfa, and the review stays at &quot;request changes&quot;</td></tr></tbody></table></div><p><b>Evidence.</b> The rules scan, run as the automated reviewer runs it, rules from main, against the merge base: 9 new findings at the reviewed head, 7 at bd4e7cfa, 0 at e6baebd6. The rule matches the whole text of a function over the ceiling, so an edit inside one makes its finding new though no count moved. The same 631 lib tests pass, by name, at bd4e7cfa and at this head.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 216" role="img" aria-label="Pull request #529 is based on main alone, with a clean trial merge. Its CI waits for #634. It fixes issue #637, and no pull request stands on it. In a trial merge at 29de931d it shares 10 files with the team&#x27;s draft #508, of which 4 conflict, and it shares no file with our five other open pull requests, which merge clean." class="dg fit"><rect x="4" y="4" width="160" height="50" rx="8" class="bx good"/><text x="14" y="23" class="t b">main at feef6b5f</text><text x="14" y="38" class="t s">a clean trial merge</text><rect x="176" y="4" width="160" height="50" rx="8" class="bx warn"/><text x="186" y="23" class="t b">#634, dependencies</text><text x="186" y="38" class="t s">not merged yet</text><line x1="84" y1="55" x2="84" y2="79" class="ar " marker-end="url(#ah)"/><line x1="256" y1="55" x2="256" y2="79" class="ar dash" marker-end="url(#ah)"/><text x="90" y="71" class="t s">based on</text><text x="250" y="71" text-anchor="end" class="t s">CI waits for</text><rect x="4" y="80" width="332" height="46" rx="8" class="bx acc"/><text x="170" y="100" text-anchor="middle" class="t b">#529 Engine memory</text><text x="170" y="116" text-anchor="middle" class="t s">fixes #637</text><text x="4" y="146" class="t b">Trial merges with open work</text><rect x="4" y="154" width="108" height="58" rx="8" class="bx warn"/><text x="12" y="171" class="t b">#508, a draft</text><text x="12" y="187" class="t s">10 files shared,</text><text x="12" y="201" class="t s">4 conflict</text><rect x="116" y="154" width="108" height="58" rx="8" class="bx good"/><text x="124" y="171" class="t b">5 of ours</text><text x="124" y="187" class="t s">no shared file,</text><text x="124" y="201" class="t s">clean</text></svg></figure>
+<div><p>It stands on main alone; no pull request needs it.</p>
+<p>The team&#x27;s draft #508 changes 10 of its 13 files at 29de931d; a trial merge conflicts in four.</p>
+<details class="ev"><summary>Shared files, issues, the tracking issue</summary><p>Whichever of this and #508 lands second resolves four files. <code>code_rule_dsl/mod.rs</code>: the <code>mod</code> list and the <code>compile_document</code> call, which must keep the sweep. <code>matcher/mod.rs</code> and <code>value/text_regex.rs</code>: the <code>use</code> lines, where the shared <code>Regex</code> import must stay, and a doc comment. <code>matcher/util.rs</code>: the <code>UtilTable</code> fields and <code>rule</code>. It shares no file with #503, #530, #635, #636 or #638, and a trial merge with each one&#x27;s head is clean. It fixes #637 and is part of #548, which stays open. <a href="https://github.com/neralabs/rerail/issues/632">Tracking issue #632</a> lists it among our open pull requests.</p></details>
+</div></div>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>The automated reviewer has not read the eight commits since its review.</b> Its change request stands.</li>
+<li><b>CI is not green</b> until #634 merges.</li>
+<li><b>The sweep alone is not timed:</b> it scans about 1,700 entries under the write lock.</li>
+<li><b>Matching time is not measured at this head,</b> only at 1e3c8127.</li>
+<li><b>Windows:</b> only the five touched modules&#x27; lib tests ran. macOS never ran.</li>
+</ul>
+<details class="ev"><summary>Six smaller gaps, seven limits that stay</summary><ul class="facts">
+<li><b>What the review has not read.</b> The process-wide table, the sweep as a rule drops, the <code>Regex</code> type, <code>AddedByIndex</code> and the <code>UtilTable::new</code> and <code>sharing</code> pair all came after the automated review of 2ea7b4b4.</li>
+<li><b>The follow-up thread.</b> Our reply to the review&#x27;s one inline finding is posted, and the thread is still open. Nobody has asked for a second review since the push: we ask for it once CI is green.</li>
+<li><b>A running daemon.</b> Every figure comes from fresh Node 24 processes that load the engine and compile the rules, not from a daemon&#x27;s own memory.</li>
+<li><b>Backreference patterns.</b> They run on another regex engine and are not shared. What they hold was not measured.</li>
+<li><b>Our own whole-suite runs.</b> They date from bd4e7cfa for the Rust workspace and from 2ea7b4b4 for the vitest suite, both without the pack test data. CI ran both with the data at this head, and they passed.</li>
+<li><b>The trial merge with #508.</b> It is a draft that still moves: the count is that of its head 29de931d, read on 13 November 2026.</li>
+</ul>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li>Regexes built elsewhere keep the <code>regex</code> crate&#x27;s type and are not shared: a clause&#x27;s regex query over file content or path, transforms, suppression comments, the module graph.</li>
+<li>A rule dropped on another thread while a document compiles can sweep a regex that document validated. Its terms compile it again: a second compile, not a wrong regex.</li>
+<li>The table&#x27;s key is the pattern alone. A term that needs its own regex options cannot use it.</li>
+<li>Threads that match one pattern share its cache pool. The engine matches on 4 worker threads, as at main.</li>
+<li>A table that fills every utility, as a query&#x27;s own table does, reads each utility&#x27;s state behind one more pointer.</li>
+<li>The define check&#x27;s validation tables keep copies of their own, as at main, and drop them when the check ends.</li>
+<li>The 1.4 s of compile time left is work per clause.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<ol class="lines">
+<li><div><b>Is a process-wide regex table, swept at each compilation&#x27;s end and each rule drop, an owner you accept?</b> We recommend yes: <code>calls::names</code> is such a table.</div></li>
+<li><div><b>May the shared type keep the name <code>Regex</code>?</b> We recommend yes: another name edits six long functions.</div></li>
+<li><div><b>Should the long compile functions come under the ceiling in their own pull request?</b> We recommend yes; we can open it.</div></li>
+</ol>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The description is the record: &quot;How you tested it&quot; holds the tests, runs and measurements.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">CI on GitHub</td><td data-l="What ran">The run at 85e5f33e, read on 13 November 2026</td><td data-l="Result">27 checks passed, among them the three Rust engine jobs, both unit test jobs, the integration tests and Conformance 1/8 to 8/8: 941 of 941 shipped rules, <code>node/eslint-plugin-n</code> 37 of 37. 2 failed: <code>Dependency audit</code> and the <code>CI result</code> that sums up. 2 were skipped: they run on an approved commit.</td></tr><tr><td class="k">Linux, Rust 1.95.0</td><td data-l="What ran">Lib tests of <code>regexes</code>, <code>compile</code>, <code>matcher</code>, <code>value</code> and <code>violations</code>, at e6baebd6, the code at this head</td><td data-l="Result">631 passed, 0 failed, 2 benchmarks ignored: the same test names as at bd4e7cfa.</td></tr><tr><td class="k">Linux, Rust 1.95.0</td><td data-l="What ran"><code>cargo fmt --all --check</code>, clippy over the workspace with warnings denied, and clippy with the profile feature</td><td data-l="Result">Exit 0, all three.</td></tr><tr><td class="k">Windows 11, MSVC</td><td data-l="What ran">The same five module filters, 10 runs here and 10 at main&#x27;s merge base in alternating order, each with a one-line <code>#[cfg(unix)]</code> on an ignored benchmark that is not committed</td><td data-l="Result">629 passed and 0 failed in 6 runs; 628 passed and 1 failed in 4. The one failure, an anchors test, fails in 4 of 10 runs at main too, at the same assertion. The two jemalloc memory tests are left out on Windows.</td></tr><tr><td class="k">Linux, 32 cores</td><td data-l="What ran">Release builds of main&#x27;s merge base and of e6baebd6: each rule set compiled in a fresh Node 24 process, three runs a row, the two builds in alternating order</td><td data-l="Result">The rule: 500 MiB and 2.6 s at main, 87 MiB and 1.4 s here. All 281 rules of five packs: 940 and 201 MiB. Medians; a row&#x27;s runs lie within 0.4 MiB and 0.3 s.</td></tr><tr><td class="k">Linux</td><td data-l="What ran">All 281 rules evaluated in report mode on 99 of the repository&#x27;s files, at main, at bd4e7cfa and at this head</td><td data-l="Result">The output, 6,479,886 bytes with 10,655 violations, is byte for byte the same at all three.</td></tr><tr><td class="k">Linux</td><td data-l="What ran">The rules scan as the automated reviewer runs it, rules from main, against the merge base</td><td data-l="Result">0 new findings and 44 existing at e6baebd6. 9 new at 2ea7b4b4, the review&#x27;s own.</td></tr><tr><td class="k">Trial merges</td><td data-l="What ran">This head with main and with the heads of open pull requests</td><td data-l="Result">Main clean. #508, a draft, at 29de931d: 10 files shared, 4 conflict (<code>code_rule_dsl/mod.rs</code>, <code>matcher/mod.rs</code>, <code>matcher/util.rs</code>, <code>value/text_regex.rs</code>). #503, #530, #635, #636 and #638: clean, no shared file.</td></tr></tbody></table></div></details>
+<details class="ev"><summary>What this report adds</summary><ul class="facts">
+<li><b>Brought into the description.</b> Writing this report found five things the description did not say: that CI has run at this head, which design the automated review read, that a compiled rule is copied and each copy sweeps, the two files the diff does not show at work, and that #508 had moved. The description now says each.</li>
+<li><b>The state of the review on GitHub.</b> The change request on 2ea7b4b4 stands, with 8 blockers and 1 follow-up, all functions over the complexity ceiling at main. Our comment of 13 November answers each, the follow-up&#x27;s thread is open, and issue #637 has no reply yet.</li>
+</ul></details>
+<details class="ev"><summary>Sources</summary><p>The pull request, its diff, its conversation, its reviews and its CI on GitHub, read on 13 November 2026. Rerail at main (feef6b5f) for each quoted intent. Issue #637 for the reproduction. Our run records and review records, and <a href="https://github.com/neralabs/rerail/issues/632">tracking issue #632</a>.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
