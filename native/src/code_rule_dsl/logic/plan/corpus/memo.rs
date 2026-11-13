@@ -347,7 +347,9 @@ impl Found {
     }
 
     /// The whole entry this was found for, when it is a frame of its outputs (`Memo::found_outputs_all`): its frame
-    /// of rows, by its content's digest, as the waves read frames (from memory). A held entry is whole already.
+    /// of rows, by its content's digest, read from the store. A held entry is whole already. It is asked only when the
+    /// kept inputs were not taken, inside the waves; the waves' snapshot holds no entry of a file looked up before
+    /// them (`admit_memo_entries`), so a read of the snapshot found none ("its memo entry is gone").
     pub(super) fn whole(&self, store: &ContentStore, program: &[u8; 32]) -> StoreResult<Option<Found>> {
         match self {
             Found::Held(e) => Ok(Some(Found::Held(std::sync::Arc::clone(e)))),

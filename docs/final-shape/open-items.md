@@ -4047,8 +4047,9 @@ without (206 G against 187 G instructions on dl1).
    (`public-api-triples.rr`: `xd_…_rr_diagnostic`'s rows kept by column 0, attributed by the memo by column 1; or
    no kept inputs), its whole entry was decoded inside the waves: from the snapshot, which holds no entry of a path
    looked up before the first wave (`admit_memo_entries`), so it was "gone"; from the store, a read inside the waves
-   (decision 0104). Both checks are now made before the first wave (`retain::kept_inputs_held`, the column check),
-   and a refused run decodes every hit whole as it finds it. The one policy fails on its second run without this.
+   (decision 0104). The check is now made before the first wave (`retain::kept_inputs_stored`; the column
+   mismatch no longer arises, since `retain::group_col` takes the split's locations first), and a refused run decodes
+   every hit whole as it finds it. The one policy fails on its second run without this.
 2. *Collection inside a batch.* Each policy records its own manifest; collection keeps the plans of a root's last two
    (`protected_runs`), so under a batch's later policies the last batch's plans of those still to run were dead and
    their memo spaces dropped (seen: a space present after batch 1, gone after batch 2). Under a batch, a run's
@@ -4150,6 +4151,16 @@ Warm dl1 batch, same tree and store: 94.8 → 91.3 G instructions and 32.2 → 2
 88.2 G and 27.1 G with (2) and (3) (load 4); 48 findings. Reading is 367 of 3,206 samples (11.4%): `lower::lower`
 269 (`clause` and `span_patterns`, the lowering itself), `front::finish` 70.
 
+**A library clause the engine reads was dropped (found and fixed 2026-11-13, 61e87d5be).** The dropping kept a
+clause only when the program read its heads, but two kinds the engine reads instead: heads a library derives for
+it (`LIBRARY_DERIVED`: `embed`, `embed_value`, `load`), and clauses whose bodies make requests when lowered (a read
+of `dir_entry`, `file_line`, `file_digest`, `parsed`, `sub_tape`, `parse_of`, `splice_of`), which the engine answers
+for every reader: `python/modules.rr`'s `py_listed` lists the directories other rules read entries of. A program
+including `python/modules.rr` listed no directory and loaded no library (the two cone tests in `corpus::tests`
+loaded nothing). The equivalence tests pruned from the program's own outputs only; they now prune as a run does,
+with the requests as outputs, and found both. Findings unchanged (48 on dl1 and dl10); a warm dl1 batch 82.5 →
+84.8 G instructions, for the clauses kept.
+
 ## O-prepared-decode. A warm batch decodes each policy's prepared program from the store
 
 **Seen (2026-11-12)**, after O-store-single-program and O-read-unreached-library: in a warm dl1 batch over a store,
@@ -4158,6 +4169,21 @@ its stored facts) and `document_facts`. The evaluation the batch exists for is 1
 prepared program is decoded once a process, so a batch of 44 decodes 44. **Closure:** a prepared program read
 by its rows as needed (the parts a run reads), or kept decoded across a session's runs; the warm batch's share
 measured under 5%.
+
+**Narrowed (2026-11-13, 7111c2886).** A warm dl1 batch decoded 1.49 M stored rows: front 425 k, lowered 459 k,
+and the split's local and cross programs 533 k (36%). Those two are the lowered program's rules, a part each, with
+its declarations: the split is now finding (`split_located`, `constant_relations`) and `file_local::assemble`
+(selecting), and a prepared program keeps the file-local and constant relations, not the parts. A part's bytes
+are read in place (`program_facts::Decoded`, rows of `Ref`s borrowing their strings), so only the strings a program
+keeps are copied. `prepared::lookup` 740 → 438 of the main thread's samples (15.4% → 9.4%), `assemble` 20; warm
+batch 83.7 → 82.5 G instructions, 27.6 → 25.9 G cycles (load 12–15); 48 findings. Borrowing alone was small (the
+decode is per-value work at `opt-level` 0 more than allocation).
+
+What is left (476 of 5,087 samples after the read fix): reading the front and lowered programs (`Reader::program`
+213, decoding their rows 121). Front and lowered share few rules (698 of a 1,830-rule front program in the lowered
+one), and a run reads both throughout (the front for the split's constants, the projection, cross-file references;
+the lowered for statistics, constants, the slice). Not closed: the closure's 5% needs a program read by the parts a
+run reads, or kept decoded across a session's runs.
 
 ## O-batch-typing-once. Each policy reruns the same typing program over the same files
 
@@ -4661,6 +4687,11 @@ same seed. It passed alone three times, and in eight more runs of its chunk (at 
 graph comes from `KEPT`, which other tests in the process fill. Suspects: a module's digest taken while another
 run had begun phase 0's observer (`observe::begin`), or a graph cut (`Graph::of`) from a run batched with other
 seeds. The message now prints each graph's module digests, so the next failure shows which.
+
+**Seen again (2026-11-13, after the roll-up of 473167aa5 and 128796c88):** once in seven runs of its chunk at four
+threads, under load (average 59); the same file and the same part (`kept includes` `python/env.rr`). The run kept
+only the first 200 characters of the message, so the digests were lost; the chunk runner now keeps each chunk's
+whole log.
 
 **Closure:** the field that differs is known from a failure's message, and the cause is fixed; or it does not
 recur in ten runs of the chunk.

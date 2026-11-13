@@ -1250,7 +1250,11 @@ impl TapeImage {
         if source.len() > u32::MAX as usize {
             return Err("source exceeds tape range".into());
         }
-        Self::read_image(&rerail_rr_syntax::tape(source), grammar)
+        // A parsed image carries its source's digest, as `finish`'s does (not stored since format 12): the
+        // documents and the memo are keyed by it.
+        let mut image = Self::read_image(&rerail_rr_syntax::tape(source), grammar)?;
+        image.source_digest = Some(source_digest(source, budget)?);
+        Ok(image)
     }
 
     /// The image of `nodes`, in preorder with their parents set.
@@ -1286,7 +1290,8 @@ impl TapeImage {
     /// An image from columns a parser wrote itself, in this format (codes numbered by first use, `base`
     /// per `CHECKPOINT_STRIDE` nodes, each of `size`, `off` and `tail` at its narrowest width): no node is
     /// packed again, and only the columns' lengths are checked (a code's range is the writer's: a node's code
-    /// is numbered as the node is written). Not generic, so it is compiled once, here.
+    /// is numbered as the node is written). `digest`: the source's SHA-256, where the parser's pass computed
+    /// it. Not generic, so it is compiled once, here.
     #[allow(clippy::too_many_arguments)]
     pub fn written(
         code: Vec<u8>,
@@ -1296,6 +1301,7 @@ impl TapeImage {
         tail: Vec<u8>,
         widths: [u8; 3],
         codes: Vec<Code>,
+        digest: Option<[u8; 32]>,
         grammar: &Grammar,
         source: &str,
         budget: &dyn Fn() -> bool,
@@ -1324,7 +1330,11 @@ impl TapeImage {
             kind_aliases: Vec::new(),
             language: grammar.lang,
             source_len: source.len(),
-            source_digest: Some(source_digest(source, &budget)?),
+            // The parser's pass hashed the source as it read it, or it is hashed here.
+            source_digest: Some(match digest {
+                Some(digest) => digest,
+                None => source_digest(source, &budget)?,
+            }),
         })
     }
 
