@@ -1,10 +1,11 @@
 //! Java, read from tree-sitter-java's syntax alone. Its files parse and its structural terms run
-//! (`kind`, `pattern`, `regex`, the relations, `count`, `layout`); no semantic capability is read
-//! yet: the registry marks each `not-supported-yet`, so a rule naming one compiles to
-//! `language-not-supported` (`gate`) before any hook below is asked. `Scope` and `Value` are
-//! implemented here, reading nothing, because `Refused` stands in only for the concerns a family
-//! may lack for good (arguments, calls, format arguments); each becomes Java's own module as its
-//! capability is proven.
+//! (`docs/language-packs.md`, "The Java adapter", lists them); no semantic capability is read yet.
+//! The registry marks each `not-supported-yet`, so a rule naming one, or a transform reading a
+//! value (`toPrecision`, a `value` source), compiles to `language-not-supported` before any hook
+//! below is asked; asked directly, the scope and value hooks answer the same. `Scope` and `Value`
+//! are implemented here, reading nothing, because `Refused` stands in only for the concerns a
+//! family may lack for good (arguments, calls, format arguments); each becomes Java's own module
+//! as its capability is proven.
 
 use super::QueryWhen;
 use super::{
@@ -79,6 +80,18 @@ impl Adapter for Java {
     ) -> bool {
         false
     }
+}
+
+/// The refusal reporting `message`.
+fn refused(message: impl Into<Cow<'static, str>>) -> Result<(), Refusal> {
+    Err(Refusal::Refused(message.into()))
+}
+
+/// What a hook of `capability`, which the registry marks `not-supported-yet`, answers.
+fn not_supported_yet(capability: &str) -> Result<(), Refusal> {
+    Err(Refusal::NotSupportedYet(Cow::Owned(format!(
+        "the `{capability}` capability is not supported yet for java policies"
+    ))))
 }
 
 /// Not read yet: a table binds and resolves nothing. The kinds are the ones the shared walks
@@ -183,7 +196,7 @@ impl ScopeRules for Java {
     }
 
     fn feature(_: ScopeFeature) -> Result<(), Refusal> {
-        Ok(())
+        not_supported_yet("scope")
     }
 }
 
@@ -235,16 +248,13 @@ impl ValueRules for Java {
         None
     }
 
-    fn string(text: &str) -> Value {
-        Value::Str(text.to_owned())
+    /// Which Java type a rule's literal is, the value capability decides.
+    fn string(_: &str) -> Value {
+        Value::Unknown
     }
 
-    fn number(number: &serde_json::Number) -> Value {
-        match (number.as_i64(), number.as_u64()) {
-            (Some(integer), _) => Value::int(integer),
-            (None, Some(integer)) => Value::int(integer),
-            (None, None) => Value::Float(number.as_f64().unwrap_or(f64::NAN)),
-        }
+    fn number(_: &serde_json::Number) -> Value {
+        Value::Unknown
     }
 
     fn spelled<D: Doc>(_: &Node<'_, D>) -> bool {
@@ -274,7 +284,7 @@ impl ValueRules for Java {
     }
 
     fn feature(_: ValueFeature<'_>) -> Result<(), Refusal> {
-        Ok(())
+        not_supported_yet("value")
     }
 }
 
@@ -284,14 +294,14 @@ impl SyntaxRules for Java {
     const DOLLAR_NAMES: bool = false;
 
     fn feature(feature: SyntaxFeature) -> Result<(), Refusal> {
-        Err(Refusal::Refused(match feature {
+        match feature {
             SyntaxFeature::LanguageOptions => {
-                Cow::Borrowed("`languageOptions` is not available for java policies")
+                refused("`languageOptions` is not available for java policies")
             }
             SyntaxFeature::Parse(grammar) => {
-                Cow::Owned(format!("`{}` parses {}", grammar.name(), grammar.host()))
+                refused(format!("`{}` parses {}", grammar.name(), grammar.host()))
             }
-        }))
+        }
     }
 
     fn compile_language_options(
@@ -320,21 +330,30 @@ mod tests {
     use crate::code_rule_dsl::test_support::*;
     use serde_json::{Value, json};
 
-    /// One Java code rule, `strict`, forbidding `rule`.
-    fn java(rule: Value) -> napi::Result<CompiledCodeRuleDsl> {
+    /// One Java code rule, `strict`, forbidding what the ast query `ast` (its language set to
+    /// Java) matches.
+    fn query(mut ast: Value) -> napi::Result<CompiledCodeRuleDsl> {
+        ast["language"] = json!("java");
         compile_document_with(
-            clause_document(json!({
-                "id": "c",
-                "forbid": { "ast": { "language": "java", "rule": rule } },
-                "violation": violation(),
-            })),
+            clause_document(
+                json!({ "id": "c", "forbid": { "ast": ast }, "violation": violation() }),
+            ),
             &serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities"),
         )
     }
 
-    fn evaluate(rule: Value, source: &str) -> Value {
-        let compiled = java(rule).unwrap_or_else(|error| panic!("{}", error.reason));
+    /// One Java code rule, `strict`, forbidding `rule`.
+    fn java(rule: Value) -> napi::Result<CompiledCodeRuleDsl> {
+        query(json!({ "rule": rule }))
+    }
+
+    fn evaluate_query(ast: Value, source: &str) -> Value {
+        let compiled = query(ast).unwrap_or_else(|error| panic!("{}", error.reason));
         evaluate_file(&compiled, "java", "src/A.java", source)
+    }
+
+    fn evaluate(rule: Value, source: &str) -> Value {
+        evaluate_query(json!({ "rule": rule }), source)
     }
 
     const CONTROLLER: &str = "@RestController\nclass InvoiceController {\n    private final InvoiceRepository invoices;\n    private final InvoiceService service;\n\n    void log() {\n        System.out.println(invoices);\n    }\n}\n";
@@ -370,6 +389,23 @@ mod tests {
             CONTROLLER,
         );
         assert_violations(&methods, 1);
+    }
+
+    #[test]
+    fn position_layout_and_utilities_match_java_syntax() {
+        let source = "class A {\n    // leading\n    void f(int a, int b) {} // trailing\n}\n";
+        let second = evaluate(json!({ "kind": "formal_parameter", "nthChild": 2 }), source);
+        assert_eq!(matched_texts(&second, source), ["int b"]);
+        let trailing = evaluate(
+            json!({ "kind": "line_comment", "layout": { "before": { "to": "token", "breaks": { "eq": 0 } } } }),
+            source,
+        );
+        assert_eq!(matched_texts(&trailing, source), ["// trailing"]);
+        let method = evaluate_query(
+            json!({ "utils": { "method": { "kind": "method_declaration" } }, "rule": { "matches": "method" } }),
+            source,
+        );
+        assert_eq!(matched_texts(&method, source), ["void f(int a, int b) {}"]);
     }
 
     /// The registry marks every capability `not-supported-yet`: a rule naming one is kept, inactive,
@@ -416,16 +452,107 @@ mod tests {
                 "{predicate}: {reason}"
             );
         }
+        let util = query(json!({
+            "utils": { "unbound": { "kind": "identifier", "resolves": { "unresolved": true } } },
+            "rule": { "matches": "unbound" },
+        }));
+        assert_eq!(
+            rejection(util),
+            "language-not-supported: /clauses/0/forbid/ast/utils/unbound/resolves: `resolves` is not supported yet for java policies"
+        );
     }
 
-    /// The registry lists no suppression for Java: no linter's comments are read.
+    /// A transform reading a value needs the value capability, as `value` and `compare` do:
+    /// `toPrecision`, and any transform with a `value` source. One reading text runs.
+    #[test]
+    fn a_transform_reading_a_value_is_not_supported_yet() {
+        let transformed = |trans: Value| {
+            query(json!({ "rule": { "pattern": "f($A)" }, "transform": { "T": trans } }))
+        };
+        for (trans, at, predicate) in [
+            (
+                json!({ "toPrecision": { "source": "$A", "digits": 3 } }),
+                "toPrecision",
+                "toPrecision",
+            ),
+            (
+                json!({ "substring": { "source": "$A", "value": true, "startChar": 1 } }),
+                "substring/value",
+                "value",
+            ),
+            (
+                json!({ "replace": { "source": "$A", "value": true, "replace": "a", "by": "b" } }),
+                "replace/value",
+                "value",
+            ),
+            (
+                json!({ "convert": { "source": "$A", "value": true, "toCase": "upperCase" } }),
+                "convert/value",
+                "value",
+            ),
+        ] {
+            assert_eq!(
+                rejection(transformed(trans)),
+                format!(
+                    "language-not-supported: /clauses/0/forbid/ast/transform/T/{at}: `{predicate}` is not supported yet for java policies"
+                )
+            );
+        }
+        for text in [
+            json!({ "substring": { "source": "$A", "startChar": 1 } }),
+            json!({ "substring": { "source": "$A", "value": false, "startChar": 1 } }),
+        ] {
+            assert!(transformed(text).is_ok());
+        }
+    }
+
+    /// The scope and value hooks are reached only through the registry's gate, which refuses
+    /// first; asked directly, they answer as the registry does.
+    #[test]
+    fn scope_and_value_hooks_are_not_supported_yet() {
+        use super::{Java, Refusal, ScopeFeature, ScopeRules, ValueFeature, ValueRules};
+        use crate::code_rule_dsl::matcher::SemanticText;
+        for feature in [
+            ScopeFeature::This,
+            ScopeFeature::Occurrence,
+            ScopeFeature::Every,
+        ] {
+            assert!(matches!(
+                <Java as ScopeRules>::feature(feature),
+                Err(Refusal::NotSupportedYet(_))
+            ));
+        }
+        for feature in [
+            ValueFeature::ToPrecision,
+            ValueFeature::Type("int"),
+            ValueFeature::Compare(SemanticText::Value, "value"),
+        ] {
+            assert!(matches!(
+                <Java as ValueRules>::feature(feature),
+                Err(Refusal::NotSupportedYet(_))
+            ));
+        }
+    }
+
+    /// The registry lists no suppression for Java: no linter's comments are read. A kind added
+    /// to the table needs its spec here.
     #[test]
     fn every_suppression_kind_is_refused() {
-        for (kind, spec) in [
-            ("eslint", json!({ "rules": ["x"] })),
-            ("noqa", json!({ "codes": ["X1"] })),
-            ("clippy", json!({ "lints": ["x"] })),
-        ] {
+        use crate::code_rule_dsl::suppress::Suppression;
+        for kind in Suppression::ALL.iter().map(|kind| kind.key()) {
+            let spec = match kind {
+                "eslint" => json!({ "rules": ["strict"] }),
+                "noqa" => json!({ "codes": ["F401"] }),
+                "nosec" => json!({ "codes": ["B101"] }),
+                "oxlint" => json!({ "rules": ["no-console"] }),
+                "biome" => json!({ "rules": ["lint/suspicious/noConsole"] }),
+                "phpstan" => json!({ "identifiers": ["variable.undefined"] }),
+                "psalm" => json!({ "issues": ["UndefinedVariable"] }),
+                "phpcs" => json!({ "sniffs": ["Squiz.PHP.DiscouragedFunctions"] }),
+                "clippy" => json!({ "lints": ["clippy::all"] }),
+                "sqlfluff" => json!({ "rules": ["CV08"] }),
+                other => panic!("no spec for the suppression kind {other}"),
+            };
             let mut suppressed = violation();
             suppressed["suppress"] = json!({ kind: spec });
             let reason = rejection(compile_document_with(
