@@ -31,15 +31,17 @@ const BAD = "export const a = 1;\nconst bad = 2;\n";
 /**
  * A Claude Code session in a checkout holding `a.ts`, whose rule check steers on an edit that writes `bad` into it, and
  * when the test asks (`steer`, `hold`), as a check that finishes after the boundary that waited for it does. `reopen`
- * makes the runtime a daemon would make after a restart, over the same records.
+ * makes the runtime a daemon would make after a restart, over the same records. An evaluator opened after the first
+ * opens once `reopened` settles, as one whose rules compile again does.
  */
-async function owingSession() {
+async function owingSession(options: { reopened?: Promise<void> } = {}) {
   // The real path: macOS's temporary folder is reached through a symlink, which would name the file twice.
   const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-session-owed-")));
   directories.push(root);
   await writeFile(join(root, "a.ts"), "export const a = 1;\n");
   let delivery: RuleSteerDelivery | undefined;
   const checked: string[] = [];
+  let evaluators = 0;
   const open = () => new RerailRuntime({
     autostart: false,
     workspaceRoot: root,
@@ -51,8 +53,10 @@ async function owingSession() {
     },
     createAuditor: ({ steerDelivery }) => {
       delivery = steerDelivery;
+      evaluators += 1;
+      const opening = evaluators > 1 ? options.reopened : undefined;
       return {
-        openWorkspace: async () => undefined,
+        openWorkspace: async () => await opening,
         acceptsPath: path => path.endsWith(".ts"),
         auditGeneratedEdits: async (sessionId, batch) => {
           const bad = batch.edits.filter(edit => edit.generatedText?.includes("bad")).map(edit => edit.path);
@@ -78,6 +82,10 @@ async function owingSession() {
     root, session, ledger, checked,
     get runtime() {
       return runtime;
+    },
+    /** How many evaluators the session has opened: one, unless it was closed and opened again. */
+    get evaluators() {
+      return evaluators;
     },
     /** A steer for `a.ts`, pending for the session's next answer. */
     steer: async (content = STEER) => await delivery!.requestSteer(session.sessionId, "steer", content, {
@@ -155,6 +163,33 @@ describe("what a session owes its agent while it is closed", () => {
       await vi.waitFor(() => expect(owing.checked).toContain("a.ts"));
       expect((await owing.prompt("next")).map(delivery => delivery.content)).toEqual([STEER]);
     } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  // A steer reaches the agent with the next event either way; a session closed and opened again would check the agent's
+  // next edit only at the turn end, while its rules compile again.
+  it("keeps a quiet session that owes a steer open at the idle limit, so the agent's next edit is checked at its own result", async () => {
+    const reopened = Promise.withResolvers<void>();
+    const owing = await owingSession({ reopened: reopened.promise });
+    const { session } = owing;
+    try {
+      await owing.steer("Fix a.py.");
+      expect(await owing.runtime.closeIdleSession(session.sessionId)).toEqual({ kind: "owing" });
+      expect((await owing.prompt("back")).map(delivery => delivery.content)).toEqual(["Fix a.py."]);
+      await owing.runtime.ingest({
+        kind: "call", eventId: "call", sessionId: session.sessionId, session, toolCallId: "t1", toolName: "Write",
+        input: { file_path: join(owing.root, "a.ts"), content: BAD },
+      });
+      await writeFile(join(owing.root, "a.ts"), BAD);
+      const result = await owing.runtime.ingest({ kind: "result", eventId: "result", sessionId: session.sessionId, session, toolCallId: "t1", toolName: "Write", output: "ok" });
+      expect(owing.checked).toEqual(["a.ts"]);
+      expect(result.map(delivery => delivery.content)).toEqual([STEER]);
+      reopened.resolve();
+      expect(await owing.turnEnd("turn")).toEqual([]);
+      expect(owing.evaluators).toBe(1);
+    } finally {
+      reopened.resolve();
       await owing.runtime.dispose();
     }
   });

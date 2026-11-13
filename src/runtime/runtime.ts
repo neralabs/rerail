@@ -1985,10 +1985,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * Suspends a session that sent no end and has gone quiet: frees all it holds in memory, as its end would, without
    * recording an event, and its host router forgets it too, so its next event opens it again from its ledger. Its agent
    * may still be open, so it stays open in the database and keeps its owner claim: it reads as live, and a scan asked for
-   * it queues for it (`SessionSuspension`). The steers it has not delivered and the findings it holds wait in its
-   * ledger, and go out as they would have (`#takeOwed`). A session that still owes its agent something that would arrive
-   * later once it opens again (`#owesAgent`) stays as it is, unless `evenIfOwing`: the engine service suspends it anyway
-   * once it has been quiet a day (`OWING_SESSION_IDLE_MS` in engine-service.ts).
+   * it queues for it (`SessionSuspension`). A session that still owes its agent something (`#owesAgent`) stays as it is,
+   * unless `evenIfOwing`: the engine service suspends it anyway once it has been quiet a day (`OWING_SESSION_IDLE_MS` in
+   * engine-service.ts). The steers it has not delivered and the findings it holds then wait in its ledger, and go out
+   * with its next event (`#takeOwed`).
    */
   closeIdleSession(sessionId: string, options: { evenIfOwing?: boolean } = {}): Promise<IdleClose> {
     return this.#ingestLanes.run(sessionId, async (): Promise<IdleClose> => {
@@ -2038,12 +2038,14 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /**
    * Whether the session still owes its agent something that would reach it later, or not at all, were it suspended and
    * opened again: a tool call of its turn waiting for its result (the result of a session opened again comes while its
-   * evaluator opens, so the call's edit is not checked at it), an edit check still running, a finding held for the
-   * yield's digest (which waits for the evaluator once the session opens again), or a scan (`#owesScan`). A steer not
-   * yet delivered is not among them: it waits in the ledger and goes out with the next answer as it would.
+   * evaluator opens, so the call's edit is not checked at it), an edit check still running, a steer not yet delivered
+   * or a finding held for the yield's digest, or a scan (`#owesScan`). A steer would reach the agent with the next event
+   * all the same, but the session that event opened again would hold the agent's next tool call while its rules compile
+   * again (`REOPENED_RULES_WAIT_MS`), or check its edit only at the turn end in a host that does not wait: a session left
+   * in memory checks it at once.
    */
   #owesAgent(state: RuntimeSessionState): boolean {
-    return state.callsAwaitingResult.size > 0 || state.overdueEditChecks !== undefined
+    return state.callsAwaitingResult.size > 0 || state.overdueEditChecks !== undefined || state.pendingSteers.length > 0
       || state.missedFindings.length > 0 || this.#owesScan(state);
   }
 

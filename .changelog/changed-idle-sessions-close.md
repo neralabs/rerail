@@ -1,1 +1,1 @@
-The daemon frees the memory of a session quiet for 30 minutes, or 24 hours while still owed a check or finding. The session stays open: it shows as live and a scan asked for it runs. Its next tool call waits up to 20 seconds for its rules, so that edit is still steered at its result.
+The daemon frees the memory of a session quiet for 30 minutes, or 24 hours while still owed a check, steer or finding. The session stays open: it shows as live and a scan asked for it runs. Its next tool call waits up to 20 seconds for its rules, so that edit is still steered at its result.

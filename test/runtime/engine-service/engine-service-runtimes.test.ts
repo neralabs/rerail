@@ -746,13 +746,14 @@ describe("the engine service's idle close", () => {
     expect((await prompt("a", "next morning")).map(delivery => delivery.content)).toEqual(["Fix a.py."]);
   });
 
-  it("suspends a quiet session that owes its agent only a steer at the idle limit, and its next event carries the steer", async () => {
+  // Suspended and opened again by its next event, the session would check the agent's next edit only at the turn end.
+  it("keeps a quiet session that owes its agent a steer in memory at the idle limit, and its next event carries the steer", async () => {
     const { clock, service, start, prompt, ended, steer } = await steeringService();
     await start("a");
     await steer("a", "Fix a.py.");
     clock.now += 60_000;
     await service.closeIdleSessions();
-    expect(service.openRuntimes()).toBe(0);
+    expect(service.openRuntimes()).toBe(1);
     expect(ended("a")).toBeNull();
     expect((await prompt("a", "back")).map(delivery => delivery.content)).toEqual(["Fix a.py."]);
   });

@@ -482,9 +482,9 @@ describe("Rerail tool results waiting for their edit's check", () => {
     }
   });
 
-  // An idle close opens the session again from its ledger, which holds no check still running; the agent may only have
-  // gone quiet behind a permission prompt or a long tool. A steer still to deliver waits in the ledger.
-  it("keeps a quiet session open while an edit's check runs, and once it closes, its next event carries the check's steer", async () => {
+  // An idle close opens the session again from its ledger, which holds neither a steer still to deliver nor a check
+  // still running; the agent may only have gone quiet behind a permission prompt or a long tool.
+  it("keeps a quiet session open while an edit's check runs or its steer waits for the next event, so the steer still reaches the agent", async () => {
     const { runtime, session, check, checking, steered, edit } = await hookSession();
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
@@ -497,15 +497,14 @@ describe("Rerail tool results waiting for their edit's check", () => {
       const kept = [await runtime.closeIdleSession(session.sessionId)];
       check.resolve();
       await steered.promise;
-      // The drained checks let go of the session first, so only the steer is left, and that waits in the ledger.
+      // The drained checks let go of the session first, so only the steer holds it now.
       await new Promise(resolve => setImmediate(resolve));
       kept.push(await runtime.closeIdleSession(session.sessionId));
       const next = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId: session.sessionId, session, text: "next" });
       expect(next.map(delivery => delivery.content)).toEqual([STEER]);
-      expect(kept.map(close => close.kind)).toEqual(["owing", "suspended"]);
-      // Delivered once.
+      expect(kept).toEqual([{ kind: "owing" }, { kind: "owing" }]);
+      // Delivered: nothing holds the session in memory any more.
       expect(await runtime.closeIdleSession(session.sessionId)).toMatchObject({ kind: "suspended" });
-      expect(await runtime.ingest({ kind: "user-prompt", eventId: "later", sessionId: session.sessionId, session, text: "later" })).toEqual([]);
     } finally {
       vi.useRealTimers();
       check.resolve();
