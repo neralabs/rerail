@@ -176,10 +176,18 @@ function sampleOwner(source: AdapterSample["source"]): "user" | "assistant" | "t
   return "tool";
 }
 
+/** A ledger line that says it is an `owed` entry, whether or not this build can read the rest of it. */
+const OwedTypeSchema = z.object({ type: z.literal("owed") });
+
 function validatedLedger(values: readonly unknown[]): LedgerEntry[] {
-  return values.flatMap((value) => {
+  return values.flatMap((value): LedgerEntry[] => {
     const parsed = LedgerEntrySchema.safeParse(value);
-    return parsed.success ? [compactValidated<LedgerEntry>(parsed.data)] : [];
+    if (parsed.success) return [compactValidated<LedgerEntry>(parsed.data)];
+    if (!OwedTypeSchema.safeParse(value).success) return [];
+    // An `owed` line this build cannot read (a later build's) may say that what an earlier one listed has gone out: the
+    // session owes nothing from either, rather than give it out again.
+    process.stderr.write("rerail: a session's ledger holds an owed entry this version cannot read; the session owes nothing from it\n");
+    return [{ type: "owed", steers: [], findings: [] }];
   });
 }
 
