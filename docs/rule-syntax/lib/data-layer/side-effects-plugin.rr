@@ -5,9 +5,10 @@ psp_bundle(b,p,f) :- pv_child(0,_,b,n),pv_member(n,"path",pn),pv_text(pn,p),pv_m
 .decl psp_row(b:number,i:number,n:number)
 psp_row(b,i,n) :- psp_bundle(b,_,facts),pv_member(facts,"plan_scope_side_effects.violations",rows),pv_kind(rows,"list"),pv_child(rows,_,i,n),pv_kind(n,"dict").
 .decl psp_severity(n:number,text:symbol)
-psp_severity(n,s) :- psp_row(_,_,n),pv_member(n,"severity",v),pv_str(v,s).
+// Among transported primitives, only a string can stringify to "error".
+// Push that test before formatting other fields; this also keeps demand stratified.
+psp_severity(n,s) :- psp_row(_,_,n),pv_member(n,"severity",v),pv_kind(v,"str"),pv_text(v,s).
 psp_severity(n,"error") :- psp_row(_,_,n),!pv_member(n,"severity",_).
-pv_need(v) :- psp_row(_,_,n),pv_member(n,"severity",v).
 .decl psp_active(b:number,i:number,n:number)
 psp_active(b,i,n) :- psp_row(b,i,n),psp_severity(n,"error").
 pv_need(v) :- psp_active(_,_,n),pv_member(n,k,v),(k="code";k="message";k="file_path").
@@ -34,6 +35,6 @@ psp_digit(v,i,o) :- psp_line(_,v,_),prefix("-",v),match_all("(?<digit>[0-9])",v,
 psp_line_key(v,1,strlen(v),v) :- psp_line(_,v,_),!prefix("-",v).
 psp_line_key(v,0,0-strlen(v),d) :- psp_line(_,v,_),prefix("-",v),d=join s by i sep "":{psp_digit(v,i,s)}.
 .violation SideEffectsPluginFinding(at:span,bundle:number,ordinal:number,source_code:symbol,path:symbol,line_json:symbol,source_message:symbol,path_key:symbol,line_sign:number,line_length:number,line_digits:symbol) code "PSE_PLUGIN_FINDING" "{source_message}"
-SideEffectsPluginFinding(@place("",0),b,i,c,p,j,m,key,sign,len,digits) :- option("entryPoint","_pse_plugin_report"),psp_active(b,i,n),psp_value(n,"code",c),psp_value(n,"message",m),pyp_path(n,p),pyp_key(n,key),psp_line(n,l,j),psp_line_key(l,sign,len,digits).
+SideEffectsPluginFinding(@place("",0),b,i,c,p,j,m,p,sign,len,digits) :- option("entryPoint","_pse_plugin_report"),psp_active(b,i,n),psp_value(n,"code",c),psp_value(n,"message",m),pyp_path(n,p),psp_line(n,l,j),psp_line_key(l,sign,len,digits).
 .violation SideEffectsPluginMetadata(at:span,name:symbol,enforcement:symbol,description:symbol) code "PSE_PLUGIN_META" "Plugin metadata"
 SideEffectsPluginMetadata(@place("",0),"plan_scope_side_effects","hard-fail","Plan scopes contain only declarative planning work") :- option("entryPoint","_pse_plugin_metadata").

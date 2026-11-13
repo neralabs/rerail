@@ -11,8 +11,3 @@ pyp_path(n,"/") :- pyp_clean(n,"/").
 pyp_path(n,"//") :- pyp_clean(n,"//").
 pyp_path(n,@replace_all(s,"/$","")) :- pyp_clean(n,s),s!="",s!="/",s!="//".
 pyp_path(n,".") :- pyp_clean(n,"").
-.decl pyp_key(n:number,text:symbol)
-pyp_key(n,"") :- pyp_path(n,".").
-pyp_key(n,cat("//","\u0000",@replace_all(@slice(p,2,strlen(p)),"/","\u0000"))) :- pyp_path(n,p),prefix("//",p).
-pyp_key(n,cat("/","\u0000",@replace_all(@slice(p,1,strlen(p)),"/","\u0000"))) :- pyp_path(n,p),prefix("/",p),!prefix("//",p).
-pyp_key(n,@replace_all(p,"/","\u0000")) :- pyp_path(n,p),p!=".",!prefix("/",p).
