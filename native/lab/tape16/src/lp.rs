@@ -26,12 +26,12 @@ pub enum Refs {
     Replay,
 }
 
-const MIN_MATCH: usize = 4;
-const MIN_RUN: usize = 8;
+pub(crate) const MIN_MATCH: usize = 4;
+pub(crate) const MIN_RUN: usize = 8;
 const HASH_BITS: u32 = 16;
-const CHAIN: usize = 16;
+pub(crate) const CHAIN: usize = 16;
 
-fn hash4(b: &[u8]) -> usize {
+pub(crate) fn hash4(b: &[u8]) -> usize {
     let v = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
     (v.wrapping_mul(2654435761) >> (32 - HASH_BITS)) as usize
 }
@@ -39,11 +39,11 @@ fn hash4(b: &[u8]) -> usize {
 /// A dictionary and its match index, built once and shared by every block (as on the device).
 pub struct Dict {
     pub bytes: Vec<u8>,
-    head: Vec<u32>,
-    prev: Vec<u32>,
+    pub(crate) head: Vec<u32>,
+    pub(crate) prev: Vec<u32>,
 }
 
-const NIL: u32 = u32::MAX;
+pub(crate) const NIL: u32 = u32::MAX;
 
 impl Dict {
     pub fn new(bytes: Vec<u8>) -> Self {
@@ -62,7 +62,7 @@ impl Dict {
     }
 }
 
-fn varint(out: &mut Vec<u8>, mut v: usize) {
+pub(crate) fn varint(out: &mut Vec<u8>, mut v: usize) {
     while v >= 0x80 {
         out.push(v as u8 | 0x80);
         v >>= 7;
@@ -70,7 +70,7 @@ fn varint(out: &mut Vec<u8>, mut v: usize) {
     out.push(v as u8);
 }
 
-fn read_varint(b: &[u8], at: &mut usize) -> usize {
+pub(crate) fn read_varint(b: &[u8], at: &mut usize) -> usize {
     let mut v = 0usize;
     let mut s = 0;
     loop {
@@ -86,7 +86,7 @@ fn read_varint(b: &[u8], at: &mut usize) -> usize {
 
 /// The pool's byte `i`: the dictionary's, then `tail`'s (literals or output).
 #[inline]
-fn pool_at(dict: &[u8], tail: &[u8], i: usize) -> u8 {
+pub(crate) fn pool_at(dict: &[u8], tail: &[u8], i: usize) -> u8 {
     if i < dict.len() { dict[i] } else { tail[i - dict.len()] }
 }
 

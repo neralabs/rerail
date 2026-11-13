@@ -2,16 +2,16 @@
 //!
 //! ```text
 //! tape16 grid  <cap> [--axis A] [--full] [--langs] [--no-check]   T1–T5, E1/E2/E6: bytes, codes, speed, random reads
-//!              (A: layout, cut, dict, k, extras; all by default)
+//!              (A: codec, layout, cut, dict, k, extras, dictcut; all = every one but codec and dictcut)
 //! tape16 text  <cap>                                    T6, E5: text levels against the stored source
 //! tape16 edits <pairs.cap>                              T7, E4: blocks and rows an edit changes, per identity
 //! tape16 keys  <cap>                                    E8: widths every key and count needs
 //! tape16 dicts <cap>                                    T4: the dictionary size training gives per size asked
-//! tape16 gpu   <cap> [--dict KB] [--k K]                E3: literal-pool LZ decoded on Metal
+//! tape16 gpu   <cap> [--dict KB] [--k K] [--cut N]      E3: the LZ codecs decoded on Metal
 //! ```
 
 use rerail_tape_lab::blocks::{self, Cut};
-use rerail_tape_lab::codec::Codec;
+use rerail_tape_lab::codec::{self, Codec};
 use rerail_tape_lab::layout::{Extras, Layout};
 use rerail_tape_lab::solution::{self, Corpus, Dicts, Solution};
 use rerail_tape_lab::{capture, edits, events, layout, report, text};
@@ -46,6 +46,13 @@ fn grid(full: bool, axis: &str) -> Vec<Solution> {
         return v;
     }
     let on = |a: &str| axis == "all" || axis == a;
+    if axis == "codec" {
+        for cut in [Cut::Whole, Cut::Target(256), Cut::Target(1024)] {
+            for codec in Codec::ALL.into_iter().filter(|c| *c != Codec::Raw) {
+                push(Solution { codec, cut, ..b }, &mut v);
+            }
+        }
+    }
     if on("layout") {
         for layout in Layout::ALL {
             for codec in Codec::ALL {
@@ -275,36 +282,52 @@ fn cmd_keys(path: &str) {
 }
 
 #[cfg(target_os = "macos")]
-fn cmd_gpu(path: &str, dict_kb: usize, k: usize) {
-    use rerail_tape_lab::codec::{self, Dictionary};
+fn cmd_gpu(path: &str, dict_kb: usize, k: usize, cut: Cut) {
     use rerail_tape_lab::lp::Refs;
     let corpus = load(path);
     let mut dicts = Dicts::default();
-    println!("| language | refs | threads | MB out | GPU µs | GB/s | CPU decode µs | correct |");
+    println!("Blocks: {}, dictionary {dict_kb} KB, K {k}\n", cut.name());
+    println!("| language | codec | threads | MB out | GPU µs | GB/s | CPU decode µs | correct |");
     println!("|---|---|---|---|---|---|---|---|");
     let tags: std::collections::BTreeSet<u8> = corpus.files.iter().map(|p| p.tag).collect();
+    let codecs = [
+        Codec::LpLz,
+        Codec::LpReplay,
+        Codec::LpSpan { depth: 1, cross: false },
+        Codec::LpSpan { depth: 4, cross: false },
+        Codec::LpSpan { depth: 4, cross: true },
+        Codec::LzOutput,
+    ];
     for tag in tags {
-        for (refs, c) in [(Refs::Literals, Codec::LpLz), (Refs::Replay, Codec::LpReplay), (Refs::Output, Codec::LzOutput)] {
-            let s = Solution { codec: c, dict: dict_kb * 1024, k, ..base() };
+        for c in codecs {
+            let s = Solution { codec: c, dict: dict_kb * 1024, k, cut, ..base() };
             let dict = dicts.get(&corpus, tag, &s);
-            let laid: Vec<Vec<u8>> = corpus
+            // Per file: its blocks laid out, and compressed as one file (a span may reach an earlier block).
+            let files: Vec<Vec<Vec<u8>>> = corpus
                 .files
                 .iter()
                 .filter(|p| p.test && p.tag == tag)
-                .flat_map(|p| blocks::split(&p.events, s.cut).0.into_iter().map(|b| layout::lay(&b, s.layout, s.extras, &[], &[])))
+                .map(|p| blocks::split(&p.events, s.cut).0.iter().map(|b| layout::lay(b, s.layout, s.extras, &[], &[])).collect())
                 .collect();
-            let comp: Vec<Vec<u8>> = laid.iter().map(|b| codec::compress(c, b, &dict, k)).collect();
+            let comp: Vec<Vec<Vec<u8>>> = files.iter().map(|f| codec::compress_file(c, f, &dict, k)).collect();
             let (_, cpu) = rerail_tape_lab::measure::cost(|| {
-                for (b, l) in comp.iter().zip(&laid) {
-                    std::hint::black_box(codec::decompress(c, b, &dict, l.len()));
+                for (cf, lf) in comp.iter().zip(&files) {
+                    for b in 0..cf.len() {
+                        std::hint::black_box(codec::decompress_in(c, cf, b, &dict, lf[b].len()));
+                    }
                 }
             });
-            let _: &Dictionary = &dict;
-            match rerail_tape_lab::gpu::decode(&comp, &dict.bytes, refs) {
+            let run = match c {
+                Codec::LpSpan { .. } => rerail_tape_lab::gpu::decode_span(&comp, &dict.bytes),
+                Codec::LpLz => rerail_tape_lab::gpu::decode(&comp.concat(), &dict.bytes, Refs::Literals),
+                Codec::LpReplay => rerail_tape_lab::gpu::decode(&comp.concat(), &dict.bytes, Refs::Replay),
+                _ => rerail_tape_lab::gpu::decode(&comp.concat(), &dict.bytes, Refs::Output),
+            };
+            match run {
                 Ok(g) => println!(
-                    "| {} | {:?} | {} | {:.2} | {:.0} | {:.2} | {:.0} | {} |",
+                    "| {} | {} | {} | {:.2} | {:.0} | {:.2} | {:.0} | {} |",
                     capture::language(tag),
-                    refs,
+                    c.name(),
                     g.threads,
                     g.bytes_out as f64 / 1e6,
                     g.gpu_seconds * 1e6,
@@ -312,7 +335,7 @@ fn cmd_gpu(path: &str, dict_kb: usize, k: usize) {
                     cpu.nanos as f64 / 1000.0,
                     g.correct
                 ),
-                Err(e) => println!("| {} | {refs:?} | error: {e} |", capture::language(tag)),
+                Err(e) => println!("| {} | {} | error: {e} |", capture::language(tag), c.name()),
             }
         }
     }
@@ -335,7 +358,10 @@ fn main() {
         "keys" => cmd_keys(path),
         "dicts" => cmd_dicts(path),
         #[cfg(target_os = "macos")]
-        "gpu" => cmd_gpu(path, opt("--dict", 64), opt("--k", 64)),
+        "gpu" => cmd_gpu(path, opt("--dict", 64), opt("--k", 64), match opt("--cut", 0) {
+            0 => Cut::Whole,
+            n => Cut::Target(n),
+        }),
         _ => die(&format!("unknown command {cmd}")),
     }
 }

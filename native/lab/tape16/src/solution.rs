@@ -106,7 +106,7 @@ pub struct Solution {
 impl Solution {
     pub fn name(&self) -> String {
         let mut s = format!("{}/{}/{}/d{}k", self.layout.name(), self.codec.name(), self.cut.name(), self.dict / 1024);
-        if matches!(self.codec, Codec::LpLz | Codec::LzOutput | Codec::LpReplay) {
+        if self.codec.has_k() {
             s += &format!("/k{}", self.k);
         }
         if self.extras.parent {
@@ -267,7 +267,7 @@ pub fn evaluate(corpus: &Corpus, s: &Solution, dicts: &mut Dicts, check: bool) -
         let ((bs, places, compressed, laid), c) = cost(|| {
             std::hint::black_box(events::encode(&tree, p.tag, &corpus.candidates));
             let (bs, places, laid) = lay_blocks(p, Some(&tree), s);
-            let compressed: Vec<Vec<u8>> = laid.iter().map(|b| codec::compress(s.codec, b, &dict, s.k)).collect();
+            let compressed = codec::compress_file(s.codec, &laid, &dict, s.k);
             (bs, places, compressed, laid)
         });
         row.encode += c;
@@ -277,7 +277,7 @@ pub fn evaluate(corpus: &Corpus, s: &Solution, dicts: &mut Dicts, check: bool) -
         if bs.len() > 1 {
             lang.placement += (places.len() * blocks::PLACEMENT_BYTES) as u64;
         }
-        if matches!(s.codec, Codec::LpLz | Codec::LzOutput | Codec::LpReplay) {
+        if s.codec.has_k() {
             lang.entropy += compressed.iter().map(|b| crate::lp::entropy_bytes(b)).sum::<f64>();
         } else {
             lang.entropy += compressed.iter().map(|b| b.len() as f64).sum::<f64>();
@@ -290,10 +290,8 @@ pub fn evaluate(corpus: &Corpus, s: &Solution, dicts: &mut Dicts, check: bool) -
         }
         // Decode: every block decompressed, read back, joined, and the tree derived.
         let (back, c) = cost(|| {
-            let back: Vec<Block> = compressed
-                .iter()
-                .zip(&laid)
-                .map(|(c, l)| layout::unlay(&codec::decompress(s.codec, c, &dict, l.len()), s.layout, s.extras))
+            let back: Vec<Block> = (0..compressed.len())
+                .map(|b| layout::unlay(&codec::decompress_in(s.codec, &compressed, b, &dict, laid[b].len()), s.layout, s.extras))
                 .collect();
             events::decode(&blocks::join(&back), p.tag, &corpus.candidates, tree.source_len)
         });
@@ -322,11 +320,11 @@ pub fn evaluate(corpus: &Corpus, s: &Solution, dicts: &mut Dicts, check: bool) -
                 let i = ((rng >> 20) % n as u64) as usize;
                 let reads = kind_reads(s.layout, n, i, s.extras);
                 if reads.is_empty() {
-                    let all = codec::decompress(s.codec, &compressed[k], &dict, laid[k].len());
+                    let all = codec::decompress_in(s.codec, &compressed, k, &dict, laid[k].len());
                     std::hint::black_box(layout::unlay(&all, s.layout, s.extras).opens[i].kind);
                 } else {
                     for (off, len) in reads {
-                        codec::read_at(s.codec, &compressed[k], &dict, laid[k].len(), off, len, &mut out);
+                        codec::read_at_in(s.codec, &compressed, k, &dict, laid[k].len(), off, len, &mut out);
                         std::hint::black_box(&out);
                     }
                 }

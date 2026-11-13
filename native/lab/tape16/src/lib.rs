@@ -24,6 +24,7 @@ pub mod lp;
 pub mod measure;
 pub mod report;
 pub mod solution;
+pub mod span;
 pub mod text;
 pub mod tree;
 pub mod v15;

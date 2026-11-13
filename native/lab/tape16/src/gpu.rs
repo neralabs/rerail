@@ -205,3 +205,150 @@ fn gpu_seconds(command: &metal::CommandBufferRef) -> f64 {
     let (start, end) = unsafe { (send(object, sel_registerName(c"GPUStartTime".as_ptr())), send(object, sel_registerName(c"GPUEndTime".as_ptr()))) };
     (end - start).max(0.0)
 }
+
+const SPAN_SOURCE: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+
+// One thread per checkpoint segment: its block (global index), output offset, body and literal offsets
+// within the block, and how many sequences it decodes.
+struct Task { uint out; uint block; uint at; uint li; uint nseq; };
+// Each block's first byte in the global sequence and literal buffers.
+struct Block { uint seq_base; uint lit_base; };
+struct Frame { uint block; uint at; uint li; uint left; };
+
+static inline uint varint(device const uchar* b, thread uint& at) {
+    uint v = 0, s = 0;
+    for (uint i = 0; i < 5; i++) {
+        uchar c = b[at++];
+        v |= uint(c & 0x7f) << s;
+        if (c < 0x80) break;
+        s += 7;
+    }
+    return v;
+}
+
+kernel void decode_span(device const Task* tasks [[buffer(0)]],
+                        device const uchar* seqs [[buffer(1)]],
+                        device const uchar* lits [[buffer(2)]],
+                        device const uchar* dict [[buffer(3)]],
+                        device uchar* out [[buffer(4)]],
+                        constant uint& ntasks [[buffer(5)]],
+                        constant uint& dict_len [[buffer(6)]],
+                        device const Block* blocks [[buffer(7)]],
+                        uint id [[thread_position_in_grid]]) {
+    if (id >= ntasks) return;
+    Task t = tasks[id];
+    uint o = t.out;
+    // The depth bound (4 in the lab) plus the segment itself.
+    Frame st[8];
+    int top = 0;
+    st[0] = Frame{t.block, t.at, t.li, t.nseq};
+    while (top >= 0) {
+        if (st[top].left == 0) { top--; continue; }
+        st[top].left--;
+        uint b = st[top].block;
+        device const uchar* s = seqs + blocks[b].seq_base;
+        device const uchar* l = lits + blocks[b].lit_base;
+        uint at = st[top].at, li = st[top].li;
+        uint here = at;
+        uchar tok = s[at++];
+        uint nl = tok >> 4;
+        if (nl == 15) nl += varint(s, at);
+        uint op = tok & 15;
+        for (uint j = 0; j < nl; j++) out[o + j] = l[li + j];
+        o += nl;
+        if (op == 1) {
+            uint len = varint(s, at) + 8;
+            uchar v = s[at++];
+            for (uint j = 0; j < len; j++) out[o + j] = v;
+            o += len;
+        } else if (op == 2) {
+            uint len = varint(s, at) + 4;
+            uint src = varint(s, at);
+            for (uint j = 0; j < len; j++) {
+                uint q = src + j;
+                out[o + j] = q < dict_len ? dict[q] : l[q - dict_len];
+            }
+            o += len;
+        }
+        uint span_block = 0, span_at = 0, span_li = 0, span_n = 0;
+        if (op == 4) {
+            uint back = varint(s, at);
+            span_n = varint(s, at) + 1;
+            uint body = varint(s, at), lit = varint(s, at);
+            varint(s, at); // the span's output length: a reader that skips uses it
+            span_block = b - back;
+            span_at = back == 0 ? here - body : body;
+            span_li = back == 0 ? li - lit : lit;
+        }
+        st[top].at = at;
+        st[top].li = li + nl;
+        if (op == 4 && top < 7) {
+            top++;
+            st[top] = Frame{span_block, span_at, span_li, span_n};
+        }
+    }
+}
+"#;
+
+/// Span LZ on the GPU: `files` are each file's compressed blocks (`codec::compress_file`), all decoded in one
+/// dispatch, one thread per checkpoint segment of every block.
+pub fn decode_span(files: &[Vec<Vec<u8>>], dict: &[u8]) -> Result<GpuRun, String> {
+    let device = Device::system_default().ok_or("no Metal device")?;
+    let lib = device.new_library_with_source(SPAN_SOURCE, &metal::CompileOptions::new()).map_err(|e| e.to_string())?;
+    let f = lib.get_function("decode_span", None).map_err(|e| e.to_string())?;
+    let pipe = device.new_compute_pipeline_state_with_function(&f).map_err(|e| e.to_string())?;
+    let pool = lp::Dict::new(dict.to_vec());
+    let (mut seqs, mut lits, mut tasks, mut table, mut expected) = (Vec::new(), Vec::new(), Vec::<[u32; 5]>::new(), Vec::<[u32; 2]>::new(), Vec::new());
+    for file in files {
+        for (b, c) in file.iter().enumerate() {
+            let p = lp::parts(c);
+            let g = table.len() as u32;
+            table.push([seqs.len() as u32, lits.len() as u32]);
+            seqs.extend_from_slice(p.seqs);
+            lits.extend_from_slice(p.lits);
+            let ob = expected.len() as u32;
+            for (i, ck) in p.checks.iter().enumerate() {
+                let nseq = (p.nseq - i * p.k).min(p.k) as u32;
+                tasks.push([ob + ck[0], g, ck[2], ck[1], nseq]);
+            }
+            expected.extend(crate::span::decompress(file, b, &pool));
+        }
+    }
+    if tasks.is_empty() {
+        return Ok(GpuRun { threads: 0, bytes_out: 0, gpu_seconds: 0.0, correct: true });
+    }
+    let opts = MTLResourceOptions::StorageModeShared;
+    let buf = |b: &[u8]| {
+        let b = if b.is_empty() { &[0u8][..] } else { b };
+        device.new_buffer_with_data(b.as_ptr().cast(), b.len() as u64, opts)
+    };
+    // SAFETY: arrays of u32s as bytes.
+    let as_bytes = |v: &[u32]| unsafe { std::slice::from_raw_parts(v.as_ptr().cast::<u8>(), v.len() * 4) };
+    let (bt, bs, bl, bd, bb) = (buf(as_bytes(tasks.as_flattened())), buf(&seqs), buf(&lits), buf(dict), buf(as_bytes(table.as_flattened())));
+    let bo = device.new_buffer(expected.len().max(1) as u64, opts);
+    let queue = device.new_command_queue();
+    let (n, dl) = (tasks.len() as u32, dict.len() as u32);
+    let mut secs = 0.0;
+    for _ in 0..2 {
+        let cmd = queue.new_command_buffer();
+        let enc = cmd.new_compute_command_encoder();
+        enc.set_compute_pipeline_state(&pipe);
+        for (i, b) in [&bt, &bs, &bl, &bd, &bo].iter().enumerate() {
+            enc.set_buffer(i as u64, Some(b), 0);
+        }
+        enc.set_bytes(5, 4, (&n as *const u32).cast());
+        enc.set_bytes(6, 4, (&dl as *const u32).cast());
+        enc.set_buffer(7, Some(&bb), 0);
+        let w = pipe.thread_execution_width().min(64);
+        enc.dispatch_threads(MTLSize::new(u64::from(n), 1, 1), MTLSize::new(w, 1, 1));
+        enc.end_encoding();
+        cmd.commit();
+        cmd.wait_until_completed();
+        secs = gpu_seconds(cmd);
+    }
+    // SAFETY: shared storage of `expected.len()` bytes; the GPU is done with it.
+    let got = unsafe { std::slice::from_raw_parts(bo.contents().cast::<u8>(), expected.len()) };
+    Ok(GpuRun { threads: tasks.len(), bytes_out: expected.len(), gpu_seconds: secs, correct: got == &expected[..] })
+}

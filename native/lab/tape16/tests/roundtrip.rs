@@ -180,3 +180,39 @@ fn a_source_past_4_gib_keeps_exact_positions() {
     assert!(places.iter().any(|p| p.base > u64::from(u32::MAX)), "no block placed past 4 GiB");
     assert_eq!(events::decode(&blocks::join(&bs), 1, &cand, t.source_len), t);
 }
+
+#[test]
+fn span_codecs_roundtrip_files_of_blocks() {
+    let mut rng = Rng(11);
+    let shared = data(&mut rng, 4000);
+    let samples: Vec<Vec<u8>> = (0..40).map(|_| data(&mut rng, 2000)).collect();
+    for dict in [Dictionary::none(), Dictionary::train(&samples, 4096)] {
+        // Blocks that repeat each other's content, as a file's blocks do.
+        let blocks: Vec<Vec<u8>> = (0..6)
+            .map(|i| {
+                let mut b = data(&mut rng, 500 + 700 * i);
+                b.extend_from_slice(&shared[..(1000 * i).min(shared.len())]);
+                b
+            })
+            .collect();
+        for codec in Codec::ALL {
+            for k in [1, 16, 64] {
+                let c = codec::compress_file(codec, &blocks, &dict, k);
+                for (b, d) in blocks.iter().enumerate() {
+                    assert_eq!(&codec::decompress_in(codec, &c, b, &dict, d.len()), d, "{} k{k} block {b}", codec.name());
+                    let mut out = Vec::new();
+                    for _ in 0..40 {
+                        let off = rng.below(d.len() as u64) as usize;
+                        let len = 1 + rng.below((d.len() - off).min(40) as u64) as usize;
+                        codec::read_at_in(codec, &c, b, &dict, d.len(), off, len, &mut out);
+                        assert_eq!(out, &d[off..off + len], "{} k{k} block {b} at {off}+{len}", codec.name());
+                    }
+                }
+            }
+        }
+        // Crossing blocks makes the later blocks smaller.
+        let alone: usize = codec::compress_file(Codec::LpSpan { depth: 4, cross: false }, &blocks, &dict, 64).iter().map(Vec::len).sum();
+        let cross: usize = codec::compress_file(Codec::LpSpan { depth: 4, cross: true }, &blocks, &dict, 64).iter().map(Vec::len).sum();
+        assert!(cross < alone, "cross {cross} not under alone {alone}");
+    }
+}
