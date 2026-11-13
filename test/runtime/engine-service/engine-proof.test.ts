@@ -4,18 +4,20 @@ import { existsSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { connect, type Socket } from "node:net";
+import { connect, createServer as createSocketServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { DAEMON_STATE_FILE, lookupDaemon, type DaemonState } from "../../../src/runtime/daemon-control.js";
-import { engineCapabilityProof } from "../../../src/runtime/engine-proof.js";
+import { engineCapabilityProof, engineHoldsCapability, engineProof } from "../../../src/runtime/engine-proof.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 /** How far past its limit a proof may answer on a loaded test machine; the wait it must not take is 30 s. */
 const SLACK_MS = 2_000;
+/** How long a test waits for a process that should have ended once it answered, before it reads it as held. */
+const HELD_MS = 25_000;
 
 /**
  * A listener whose process's one event loop stops once it listens, as a daemon's does while it is paused or inside a
@@ -26,6 +28,27 @@ const STUCK_LISTENER = `
 const server = require("node:net").createServer(() => {});
 server.listen(process.argv[1], () => {
   process.stdout.write("listening\\n", () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 120000));
+});`;
+
+/**
+ * An engine that answers proofs for "capability", whose process takes every instance of its own pipe and then stops its
+ * event loop for the milliseconds it is given, as a busy daemon's does while its pipe has no free instance: once its
+ * loop runs again it accepts those connections and sets up new instances, and a proof that asks again is answered.
+ */
+const BUSY_ENGINE = `
+const { engineProof, ENGINE_CHALLENGE_HEADER } = await import(process.argv[1]);
+const { openSync, writeSync } = await import("node:fs");
+const [path, stopMs] = process.argv.slice(2);
+const server = (await import("node:http")).createServer((request, response) => {
+  response.end(JSON.stringify({ proof: engineProof("capability", String(request.headers[ENGINE_CHALLENGE_HEADER])) }));
+});
+server.listen(path, () => {
+  const taken = [];
+  while (taken.length < 16) {
+    try { taken.push(openSync(path, "r+")); } catch { break; }
+  }
+  writeSync(1, "busy " + taken.length + "\\n");
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(stopMs));
 });`;
 
 /** A process that asks the engine on a pipe for one proof with a 1 s limit, prints the answer, and ends by itself. */
@@ -53,18 +76,77 @@ afterEach(async () => {
   await Promise.all(folders.splice(0).map(async folder => await removeFolder(folder)));
 });
 
+/** The name, as `\\.\pipe\` lists it, of a named pipe no other test or run uses. */
+function pipeName(name: string): string {
+  return `rerail-proof-${name}-${process.pid}-${Date.now().toString(16)}`;
+}
+
 /** A named pipe no other test or run uses. */
 function pipePath(name: string): string {
-  return String.raw`\\.\pipe\rerail-proof-${name}-${process.pid}-${Date.now().toString(16)}`;
+  return String.raw`\\.\pipe` + "\\" + pipeName(name);
+}
+
+/** The first output `child` prints; a child that ends first fails the test with its exit code and signal. */
+async function firstLine(child: ChildProcess): Promise<string> {
+  const printed = once(child.stdout!, "data").then(([chunk]: unknown[]) => ({ line: String(chunk) }));
+  const ended = once(child, "close").then(([code, signal]: unknown[]) => ({ ended: `exit ${String(code)}, signal ${String(signal)}` }));
+  const first = await Promise.race([printed, ended]);
+  if ("ended" in first) throw new Error(`the child process ended (${first.ended}) before it printed anything`);
+  return first.line;
+}
+
+/** Starts `script` under Node with `args`, its output read by the test; `tsx` loads the TypeScript it imports. */
+function startNode(script: string, args: readonly string[], typescript = false): ChildProcess {
+  const loader = typescript ? ["--import", TSX, "--input-type=module"] : [];
+  const child = spawn(process.execPath, [...loader, "-e", script, ...args], { stdio: ["ignore", "pipe", "inherit"], windowsHide: true });
+  children.push(child);
+  return child;
 }
 
 /** Starts {@link STUCK_LISTENER} on `path`, and returns once it listens and its event loop has stopped. */
 async function stuckListener(path: string): Promise<ChildProcess> {
-  const child = spawn(process.execPath, ["-e", STUCK_LISTENER, path], { stdio: ["ignore", "pipe", "inherit"], windowsHide: true });
-  children.push(child);
-  const [line] = await once(child.stdout!, "data") as [Buffer];
-  expect(String(line)).toBe("listening\n");
+  const child = startNode(STUCK_LISTENER, [path]);
+  expect(await firstLine(child)).toBe("listening\n");
   return child;
+}
+
+/** Starts {@link BUSY_ENGINE} on `path`, and returns once every instance of its pipe is taken and its loop has stopped. */
+async function busyEngine(path: string, stopMs: number): Promise<void> {
+  expect(await firstLine(startNode(BUSY_ENGINE, [PROOF_MODULE, path, String(stopMs)], true))).toMatch(/^busy [1-9]/u);
+}
+
+/**
+ * A holder of the pipe `name` that is not an engine, as any local user can create an engine pipe's name first: one
+ * instance with no input buffer, which takes one client and never reads, so a write to it waits until the holder ends,
+ * 20 s on. Returns once the instance exists.
+ */
+async function holderThatNeverReads(name: string): Promise<void> {
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "Add-Type -AssemblyName System.Core",
+    `$pipe = New-Object System.IO.Pipes.NamedPipeServerStream('${name}', [System.IO.Pipes.PipeDirection]::InOut, 1, [System.IO.Pipes.PipeTransmissionMode]::Byte, [System.IO.Pipes.PipeOptions]::None, 0, 0)`,
+    "[Console]::Out.WriteLine('listening'); [Console]::Out.Flush()",
+    "$pipe.WaitForConnection()",
+    "Start-Sleep -Seconds 20",
+  ].join("\n");
+  const holder = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+    stdio: ["ignore", "pipe", "inherit"], windowsHide: true,
+  });
+  children.push(holder);
+  expect(await firstLine(holder)).toMatch(/^listening/u);
+}
+
+/**
+ * Runs {@link PROBER} against `path`: its answer, and how long its process ran on after it answered, up to
+ * {@link HELD_MS}.
+ */
+async function proveInAnotherProcess(path: string): Promise<{ answer: unknown; ranOnMs: number }> {
+  const prober = startNode(PROBER, [PROOF_MODULE, path], true);
+  const closed = once(prober, "close");
+  const line = await firstLine(prober);
+  const answeredAt = Date.now();
+  await Promise.race([closed, delay(HELD_MS)]);
+  return { answer: (JSON.parse(line) as { answer: unknown }).answer, ranOnMs: Date.now() - answeredAt };
 }
 
 /**
@@ -135,17 +217,40 @@ describe.runIf(process.platform === "win32")("the engine proof, against an engin
     const path = pipePath("exit");
     await stuckListener(path);
     expect(await takeEveryInstance(path)).toBeGreaterThan(0);
-    const prober = spawn(process.execPath, ["--import", TSX, "--input-type=module", "-e", PROBER, PROOF_MODULE, path], {
-      stdio: ["ignore", "pipe", "inherit"], windowsHide: true,
-    });
-    children.push(prober);
-    const closed = once(prober, "close");
-    const [line] = await once(prober.stdout!, "data") as [Buffer];
-    const answeredAt = Date.now();
-    await closed;
-    const lingered = Date.now() - answeredAt;
-    expect(JSON.parse(String(line)), `the process ended ${lingered} ms after its answer`).toEqual({ answer: "silent" });
-    expect(lingered).toBeLessThan(SLACK_MS);
+    const { answer, ranOnMs } = await proveInAnotherProcess(path);
+    expect(answer, `the process ended ${ranOnMs} ms after its answer`).toBe("silent");
+    expect(ranOnMs).toBeLessThan(SLACK_MS);
+  }, 45_000);
+});
+
+describe.runIf(process.platform === "win32")("the engine proof, against a pipe's holder that takes the request and never reads it", () => {
+  // A write the holder never reads waits for as long as the holder lives, and a command or hook that asked would wait
+  // with it.
+  it("leaves its process free to end once it has answered", async () => {
+    const name = pipeName("unread");
+    await holderThatNeverReads(name);
+    const { answer, ranOnMs } = await proveInAnotherProcess(String.raw`\\.\pipe` + "\\" + name);
+    expect(answer, `the process ended ${ranOnMs} ms after its answer`).toBe("silent");
+    expect(ranOnMs).toBeLessThan(SLACK_MS);
+  }, 45_000);
+});
+
+describe.runIf(process.platform === "win32")("the engine proof, against a busy engine whose pipe has no free instance for a while", () => {
+  // Node sets up four instances of a pipe it listens on: a burst of hooks finds them all taken for a moment.
+  it("is answered once the engine frees an instance within the limit", async () => {
+    const path = pipePath("burst");
+    await busyEngine(path, 500);
+    const began = Date.now();
+    expect(await engineCapabilityProof(path, "capability", 2_000), `the proof answered after ${Date.now() - began} ms`).toBe("proved");
+  }, 45_000);
+
+  // The engine start asks before it listens beside a held pipe: a busy engine of this home read as another process
+  // would get a second daemon beside it.
+  it("lets the engine start find a busy engine of this home that frees an instance after a lookup's limit", async () => {
+    const path = pipePath("start");
+    await busyEngine(path, 3_000);
+    const began = Date.now();
+    expect(await engineHoldsCapability(path, "capability"), `the proof answered after ${Date.now() - began} ms`).toBe(true);
   }, 45_000);
 });
 
@@ -174,4 +279,29 @@ describe("the engine proof's limit", () => {
     expect(answer, `the proof answered after ${ms} ms`).toBe("silent");
     expect(ms).toBeLessThan(1_000 + SLACK_MS);
   }, 15_000);
+
+  // Once the proof has its verdict nothing of the exchange is left: a listener that answers and keeps the connection
+  // open must not keep a command or hook that asked.
+  it("leaves its process free to end once it has a verdict, also when the listener keeps the connection open", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-proof-"));
+    folders.push(root);
+    const path = process.platform === "win32" ? pipePath("open") : join(root, "engine.sock");
+    const listener = createSocketServer((socket) => {
+      sockets.push(socket);
+      let asked = "";
+      socket.on("data", (chunk: Buffer) => {
+        asked += chunk.toString("latin1");
+        const challenge = /x-rerail-challenge: ([0-9a-f]{64})/iu.exec(asked)?.[1];
+        if (challenge === undefined || !asked.includes("\r\n\r\n")) return;
+        const body = JSON.stringify({ proof: engineProof("capability", challenge) });
+        socket.write(`HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: ${body.length}\r\n\r\n${body}`);
+      });
+    });
+    closers.push(() => listener.close());
+    listener.listen(path);
+    await once(listener, "listening");
+    const { answer, ranOnMs } = await proveInAnotherProcess(path);
+    expect(answer, `the process ended ${ranOnMs} ms after its answer`).toBe("proved");
+    expect(ranOnMs).toBeLessThan(SLACK_MS);
+  }, 45_000);
 });
