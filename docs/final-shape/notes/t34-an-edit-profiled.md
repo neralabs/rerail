@@ -59,12 +59,12 @@ store's collection 0.2 s.
   `phase_files` and `texts_digest`. An edit: 118–121 G (was 122–131 G). (59c8204e9)
 - Caches refused by construction (item 2): `facts_only` green, in every targeted test run; a commit adding a
   static map or table it does not list, or a new entry in its lists of state, is refused before it is made
-  (`scripts/check/check-no-new-caches.py`, run by a hook before each of my commits). (this commit)
+  (`scripts/check/check-no-new-caches.py`, run by a hook before each of my commits). (07f7ff7f7)
 - My statics by flow (item 3): the frames' four tables are the store's schema (no lookups, no lazy creation);
   the confirmations and the admitted memo spaces live in the frames' snapshot; each run's report carries the plans
   it and its nested runs used (`Report::plans`, phase 0's on its graph), so the outermost run's record names them
   without `NESTED_PLANS`; the journal's volume per root is the observer's (`Observer::volumes`), not a process-wide
-  table. (this commit)
+  table. (07f7ff7f7)
 
 ## To do, in order
 
@@ -72,7 +72,8 @@ Items 1–3 (texts read once, caches refused by construction, my statics by flow
 
 4. **SQLite's I/O.** The checkpoint at the cost model's close (0.14 s), the commit `fsync`s on the writer (0.12 s),
    the vacuum every process (0.11 s), the main thread's page reads (`frames::newest_by_path`, `facts_memo`).
-5. **The cost model**: train when there are new samples worth a model, not every process (0.3 s CPU).
+5. **The cost model**: done. A process trains as a running one does: once 2,000 samples were written since the saved
+   model and it is 10 minutes old; else the saved model is put in place (0.3 s CPU an edit). (see git log)
 6. **Planning in an edit**: why `plan_search` runs (0.3 s on the workers) when the plans are kept (0116 step 2).
 7. **The joins** (2.0 s): `candidates`' binary searches per probe, `flush`'s sorts, `value`/`locate` per row.
 8. **The main thread's passes**: `bridge::facts`, strata computed more than once (`derived`, `cut`, `supports`),
