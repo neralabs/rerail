@@ -203,3 +203,26 @@ Ahead of time the whole parse went 917.0M to 911.1M (tier 1 469.9M to
 465.9M, tier 2 404.3M to 402.5M). Through the JIT it went 1,020.3M to 1,026.0M:
 tier 1 492.8M to 501.5M, from the mark's mask. The 4,928-word form ran tier 2
 in 372.1M ahead of time; why the calls were cheaper is open.
+
+## Carries: tried, not kept
+
+`uesc` and `two` held the registers by their carries: each `prev` of a word
+another block made is a word held through the loop. Three ways to make fewer,
+measured ahead of time and through the JIT (tier 1, from 465.9M AOT and
+501.5M JIT):
+
+- **An `&` or `|` chain lowered from its earliest delay to its latest**, so a
+  delay's terms are one word before a `prev` brings it later: JIT 491.5M, AOT
+  477.6M. The program grew (356 to 360 operations, 79 to 81 `prev`s): a
+  grouped word replaces `prev`s other masks had shared. Chosen per chain, by
+  the `prev`s and operations it adds, it was no better through the JIT.
+- **`two` by its second byte**, a class of first bytes each (four carries,
+  not six): 24 operations, from 30; JIT 505.2M, AOT 469.3M (with the next).
+  Its two new classes cost more than the carries saved.
+- **`uesc`'s and `json_bad`'s escape bytes one word** (`escaped & u`,
+  `escaped & ~jesc`) before their carry to the string's delay: JIT 500.2M,
+  AOT 468.0M. Noise.
+
+So the points over the registers that the profile blames on a statement do
+not price it. The diffs are in the worktree's `tmp/` (`fold-by-delay.diff`,
+`fold-by-delay-chosen.diff`, `uesc-carries.diff`).
