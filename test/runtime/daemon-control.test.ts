@@ -297,8 +297,9 @@ describe("Rerail daemon control", () => {
   // deleted: the uninstall stops the daemon, then removes `versions/`.
   it("asks the home's lock only of a recorded holder that runs, so a stop where no daemon runs loads no engine", async () => {
     const asked: string[] = [];
-    const machine = fakeMachine("win32", {
+    const machine = (platform: NodeJS.Platform, pipes: readonly string[] = []): DaemonMachine => fakeMachine(platform, {
       kill: (pid, signal) => process.kill(pid, signal),
+      pipes: () => pipes,
       homeDaemonLockHeld: asking => {
         asked.push(asking);
         return false;
@@ -307,15 +308,24 @@ describe("Rerail daemon control", () => {
     // What a home keeps once a daemon of this build has run there: the lock file, and no holder once it stopped.
     await mkdir(join(home, LOCKS_DIR), { recursive: true });
     await writeFile(join(home, LOCKS_DIR, "daemon.lock"), "");
-    expect(await stopDaemon(home, machine)).toBe("not-running");
+    expect(await stopDaemon(home, machine("win32"))).toBe("not-running");
     // A holder killed outright left its record, naming a pid that is gone.
     await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: DEAD_PID }));
-    expect(await stopDaemon(home, machine)).toBe("not-running");
-    expect(asked).toEqual([]);
-    // A recorded pid that runs may be the holder, or a process Windows gave that pid to since: the lock tells.
+    expect(await stopDaemon(home, machine("win32"))).toBe("not-running");
+    // A record Windows left at a logoff, a restart or a stop's kill, naming a pid it has given to another process since:
+    // no engine pipe of this home is there, and another home's daemon holds only its own.
     await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: process.pid }));
-    expect(await stopDaemon(home, machine)).toBe("not-running");
-    expect(asked).toEqual([home]);
+    expect(await stopDaemon(home, machine("win32"))).toBe("not-running");
+    const otherHomes = pipeNameOf(enginePipeName(join(home, "other", "rerail.sqlite")));
+    expect(await stopDaemon(home, machine("win32", [otherHomes]))).toBe("not-running");
+    expect(asked).toEqual([]);
+    // With this home's engine pipe there, or the fallback its daemon moves to, the recorded pid may be the holder or a
+    // process that took the pid since: the lock tells. On macOS and Linux a library loads and is deleted as any file.
+    const pipe = enginePipeName(join(home, "rerail.sqlite"));
+    expect(await stopDaemon(home, machine("win32", [pipeNameOf(pipe).toUpperCase()]))).toBe("not-running");
+    expect(await stopDaemon(home, machine("win32", [pipeNameOf(fallbackPipe(pipe))]))).toBe("not-running");
+    expect(await stopDaemon(home, machine("linux"))).toBe("not-running");
+    expect(asked).toEqual([home, home, home]);
   });
 
   it("repairs the SQLite binding before spawning, and surfaces an unrepairable binding instead of a daemon crash", async () => {
@@ -776,6 +786,27 @@ describe("a state file Windows left behind", () => {
     // A daemon Windows ends leaves its main-instance record naming a pid Windows soon reuses; the stop removes it.
     expect(forgotten).toEqual([DEAD_PID]);
     expect(existsSync(stateFile)).toBe(false);
+  });
+
+  it("forgets the home lock's record of the daemon a stop ended, which Windows ends with no exit handler", async () => {
+    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE })));
+    const holder = join(home, LOCKS_DIR, "daemon.json");
+    await mkdir(join(home, LOCKS_DIR), { recursive: true });
+    await writeFile(holder, JSON.stringify({ pid: DEAD_PID }));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "ok", pid: DEAD_PID })));
+    let running = true;
+    const machine = {
+      ...windows([PIPE_NAME]),
+      // No native token, so no shutdown request: SIGTERM is TerminateProcess on Windows.
+      kill: (_pid: number, signal?: string | number) => {
+        if (signal === "SIGTERM") running = false;
+        if (signal === 0 && !running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        return true;
+      },
+    };
+    expect(await stopDaemon(home, machine)).toBe("stopped");
+    // Left there, it names a pid Windows soon reuses, and a later stop would ask the lock, loading the engine.
+    expect(existsSync(holder)).toBe(false);
   });
 
   it("stops the daemon a lookup found without looking it up, or probing it, again", async () => {

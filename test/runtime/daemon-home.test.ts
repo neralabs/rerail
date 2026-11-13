@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DAEMON_PORT_FILE } from "../../src/daemon/index.js";
+import { LOCKS_DIR } from "../../src/engine/index.js";
 import {
   type DaemonState,
   DAEMON_STATE_FILE,
@@ -87,9 +88,10 @@ describe("the daemons of a Rerail home", () => {
     await removeFolder(home);
   });
 
+  const daemonControl = pathToFileURL(join(packageRoot, "src", "runtime", "daemon-control.ts")).href;
+
   /** A process of its own, as every hook is, that finds no daemon: on `go` it runs the real autostart and exits. */
   function hookFindingNoDaemon(): { ready: Promise<void>; go: () => void; exited: Promise<unknown> } {
-    const daemonControl = pathToFileURL(join(packageRoot, "src", "runtime", "daemon-control.ts")).href;
     const child = spawn(process.execPath, [
       "--import", "tsx", "--input-type=module", "-e",
       `const { autostartDaemon } = await import(${JSON.stringify(daemonControl)});
@@ -199,6 +201,48 @@ describe("the daemons of a Rerail home", () => {
     // A home whose daemon runs without its record makes a start wait up to 15 s; nothing runs here.
     expect(Date.now() - asked).toBeLessThan(10_000);
     expect(liveDaemons(home)).toEqual([next.daemon.state.pid]);
+  }, 60_000);
+
+  /**
+   * `rerail daemon stop` as the uninstall runs it, in a process of its own: what it answers, and the native addons it
+   * loaded, by file name. The uninstall stops the daemon, then removes `versions/`, and Windows keeps a loaded DLL from
+   * being deleted.
+   */
+  async function stopInItsOwnProcess(): Promise<{ result: string; loaded: string[] }> {
+    const child = spawn(process.execPath, [
+      "--import", "tsx", "--input-type=module", "-e",
+      `import { createRequire } from "node:module";
+       const cache = createRequire(import.meta.url).cache;
+       const addons = () => Object.keys(cache).filter(path => path.endsWith(".node"));
+       const { stopDaemon } = await import(${JSON.stringify(daemonControl)});
+       const before = addons();
+       const result = await stopDaemon(${JSON.stringify(home)});
+       const loaded = addons().filter(path => !before.includes(path)).map(path => path.split(/[\\\\/]/u).pop());
+       process.stdout.write(JSON.stringify({ result, loaded }));`,
+    ], { cwd: packageRoot, env: { ...env, RERAIL_HOME: home }, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    others.push(child);
+    let out = "";
+    let errors = "";
+    child.stdout!.setEncoding("utf8").on("data", (chunk: string) => { out += chunk; });
+    child.stderr!.setEncoding("utf8").on("data", (chunk: string) => { errors += chunk; });
+    await once(child, "close");
+    if (!out.startsWith("{")) throw new Error(`the stop printed no answer: ${out} ${errors}`.slice(0, 600));
+    return JSON.parse(out) as { result: string; loaded: string[] };
+  }
+
+  it("says no daemon runs, and loads no engine, once its killed daemon's pid went to another process", async () => {
+    const first = (await startDaemon(control(), options())).daemon.state;
+    process.kill(first.pid, "SIGKILL");
+    await until(() => !processAlive(first.pid));
+    // Windows gives a pid to another process soon after, and the record the killed holder left names it.
+    const other = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e9)"], { stdio: "ignore", windowsHide: true });
+    others.push(other);
+    await once(other, "spawn");
+    await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: other.pid }));
+    const stop = await stopInItsOwnProcess();
+    expect(stop.result).toBe("not-running");
+    // macOS and Linux delete a loaded library as any file.
+    if (process.platform === "win32") expect(stop.loaded).toEqual([]);
   }, 60_000);
 
   it("ends a stop and a start at the same moment with at most one daemon, and the next start finds or starts one", async () => {
