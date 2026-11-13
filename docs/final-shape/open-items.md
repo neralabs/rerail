@@ -3989,11 +3989,39 @@ demand there, so it was right; the session tests' oracle (both off) had the faul
 and asserts they agree, with no `PHA000` (it fails without the fix). The 44 policies give 48 findings over dl1 and
 over dl10, with a store and without; the 49th of the earlier measurements was this false one.
 
-## O-store-single-program. A single program's combined form cannot be kept in the store yet
+## O-store-single-program (closed 2026-11-12). Batches over one store lost memo entries and kept inputs
 
 **Seen (2026-11-12)** while trying O-combine-hiding-single: with `combine_stored` keeping one program too, the third
 batch of the 44 policies over one store failed: `leg-083-typed.rr: _internal/__init__.py: its memo entry is gone`.
-Not kept. **Closure:** three batches over one store, findings equal each time.
+Single program storing was not the cause: three store faults were, and the batch over a store cost more than one
+without (206 G against 187 G instructions on dl1).
+
+**Causes, and fixes.**
+1. *The kept route was refused at the waves' end.* A file counted unchanged is looked up for its outputs alone, before
+   the first wave, and its rows come from the kept inputs after. When those could not be taken
+   (`public-api-triples.rr`: `xd_…_rr_diagnostic`'s rows kept by column 0, attributed by the memo by column 1; or
+   no kept inputs), its whole entry was decoded inside the waves: from the snapshot, which holds no entry of a path
+   looked up before the first wave (`admit_memo_entries`), so it was "gone"; from the store, a read inside the waves
+   (decision 0104). Both checks are now made before the first wave (`retain::kept_inputs_held`, the column check),
+   and a refused run decodes every hit whole as it finds it. The one policy fails on its second run without this.
+2. *Collection inside a batch.* Each policy records its own manifest; collection keeps the plans of a root's last two
+   (`protected_runs`), so under a batch's later policies the last batch's plans of those still to run were dead and
+   their memo spaces dropped (seen: a space present after batch 1, gone after batch 2). Under a batch, a run's
+   manifest now names the batch's earlier plans (`phases::batch_plans`), and the batch collects at its first run
+   alone, when the last batch's final manifest names all its plans.
+3. *Each policy a run of the root's spaces.* The kept-strata space is the root's, shared by the policies, and counts
+   a run per run token: 44 a batch, so a policy's kept inputs, used once a batch, were collected after `frames::RUNS`
+   (4) others. The batch is one run now (`phases::Batch` holds the run token).
+4. Also: an outputs frame found marks its entry frame used with it (`MEMO_RUNS` aged the entry alone), and
+   `Found::whole` reads the store, not the snapshot.
+
+**Measured** (dl1, 44 policies, strict, CPU): five batches over one store give the 48 findings of a run without a
+store each time; a warm batch is 112 G instructions, 36 G cycles (no store: 188 G; before: 206 G). dl10: 141 G
+warm against 280 G. Keeping a single program's combined form in the store adds nothing on top (113.5 G warm, and a
+cold batch 291 G against 265 G): not kept. Still open: policies run one process each over one root share its
+kept-strata space, and age each other's kept inputs after 4 runs (`frames::RUNS`); a manifest per run token would
+make that per run too. `a_policy_refused_its_kept_inputs_runs_again_over_its_store` runs the one policy three times
+over a store (in one process, so it passed before the fix too).
 
 ## O-dl10-demand-computed-head (closed 2026-11-12, 6ec67d811)
 

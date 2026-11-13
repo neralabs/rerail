@@ -1455,9 +1455,15 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let (root, sources, also, relations) = (root.to_string_lossy().into_owned(), sources.to_vec(), also.to_vec(), relations.to_vec());
     let plan = memo::plan_digest(program);
+    let batch = phases::batch_plans(&root, plan, &also);
+    // A batch collects at its first run alone: the last batch's final manifest names all that batch's plans then. Later,
+    // the root's protected manifests (its last two) are this batch's, and name only the policies run so far: the last
+    // batch's plans of those still to run were dead, and collected under them (O-store-single-program).
+    let first_of_batch = batch.as_ref().is_none_or(Vec::is_empty);
+    let also: Vec<[u8; 32]> = also.into_iter().chain(batch.into_iter().flatten()).collect();
     // A run inside another (a phase's, as phase 1's while the outer run lists its files; the constants') leaves
     // collection to the outer run, which collects after its last wave: here it would run beside the outer run's waves.
-    let collect = !std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") && outer;
+    let collect = !std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") && outer && first_of_batch;
     let mut policy = crate::content_store::CorpusPolicy::default();
     if let Some(mb) = std::env::var("RERAIL_CORPUS_HISTORY_MB").ok().and_then(|v| v.parse::<u64>().ok()) {
         (policy.high_water, policy.low_water) = (mb << 20, (mb << 20) / 4 * 3);
@@ -3153,6 +3159,35 @@ fn run_observed(
         && keeper.is_some()
         && std::env::var("RERAIL_CROSS_K4").map_or(true, |v| v != "off")
         && std::env::var("RERAIL_KEPT_INPUTS").map_or(true, |v| v != "off");
+    // Whether the kept inputs can be taken, settled before the first wave (O-store-single-program): each export's rows
+    // attributed by its owners' column, and every kept input held. Refused at the waves' end instead, the hits read for
+    // their outputs alone had to be decoded whole there: a read of the store inside the waves (decision 0104), of
+    // entries the snapshot does not hold (`admit_memo_entries` leaves out the paths looked up before the first wave).
+    let mut maintained_before: Option<(lower::Lowered, Option<(usize, usize)>)> = None;
+    let kept_route = kept_route && {
+        let maintained = maintained_cross(&cross);
+        let prog = &maintained.0.program;
+        let refused = split.exports.iter().filter(|rel| !stored.iter().any(|(r, _)| r == *rel)).find_map(|rel| {
+            let (width, g) = (prog.decls.get(rel).map_or(0, Vec::len), retain::group_col(prog, rel));
+            (width > 0 && split.locations.get(rel).and_then(|l| l.first()) != Some(&g)).then(|| format!("{rel}: its rows are kept by column {g}, the memo attributes them by {:?}", split.locations.get(rel)))
+        });
+        let refused = match refused {
+            Some(why) => Some(why),
+            None => {
+                let rels: Vec<String> = split.exports.iter().cloned().chain(stored.iter().map(|(r, _)| r.clone())).collect();
+                let held = retain::kept_inputs_held(store, kept_strata::space(root), retain::key(&prepared_key, prog), prog, &rels)?;
+                (!held).then(|| "no kept inputs of this cross part".to_owned())
+            }
+        };
+        if let Some(why) = &refused {
+            crate::code_rule_dsl::logic::profile::decision("the kept inputs (decision 0117 steps 1, 2)", || format!("not taken ({why}): every hit decoded whole"));
+            if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+                eprintln!("rerail: the kept route not taken: {why}");
+            }
+        }
+        maintained_before = Some(maintained);
+        refused.is_none()
+    };
     // The files the keeper counted, with the content and key it counted each under: one the same now is unchanged.
     let counted_now: HashMap<String, (memo::Content, i64)> = match keeper.as_ref().filter(|_| kept_route) {
         Some(k) => k.counted_files().into_iter().map(|(p, c, key)| (p, (c, key))).collect(),
@@ -5363,7 +5398,7 @@ fn run_observed(
         if !kept_hits.is_empty() {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the kept inputs".into());
             let installed: std::result::Result<(usize, usize), String> = (|| {
-                let maintained = maintained_cross(&cross);
+                let maintained = maintained_before.take().unwrap_or_else(|| maintained_cross(&cross));
                 let ckey = retain::key(&prepared_key, &maintained.0.program);
                 let prog = &maintained.0.program;
                 let rels: Vec<String> = split.exports.iter().cloned().chain(stored.iter().map(|(r, _)| r.clone())).collect();

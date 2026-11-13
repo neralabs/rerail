@@ -212,7 +212,12 @@ pub(crate) fn is_phased(rel: &str) -> bool {
 /// A batch of policies run one after another over one tree (`tools::run_policies`): while it is held, phase 1's runs
 /// are kept by their inputs and taken again by a policy whose run has the same ones. Nothing is kept past it, so an
 /// edit between batches is never missed.
-pub struct Batch(());
+///
+/// The batch is one run of the frames' spaces too (O-store-single-program): its policies share one run token, as a
+/// run's nested programs do. Each policy counted as its own run of the root's cross-file space, so a policy's kept
+/// inputs, used once a batch, went unused for 43 of the space's runs and were collected (`frames::RUNS`) by another
+/// policy's write: the next batch found its kept inputs and its memo entries gone.
+pub struct Batch(#[allow(dead_code)] super::UnderWay);
 
 type BatchRuns = std::collections::HashMap<[u8; 32], (PhaseOne, Vec<(String, usize)>)>;
 
@@ -221,7 +226,7 @@ static BATCH: std::sync::Mutex<Option<BatchRuns>> = std::sync::Mutex::new(None);
 impl Batch {
     pub fn enter() -> Batch {
         *BATCH.lock().expect("the batch's phase runs") = Some(BatchRuns::new());
-        Batch(())
+        Batch(super::UnderWay::enter())
     }
 
     fn active() -> bool {
@@ -242,7 +247,31 @@ impl Batch {
 impl Drop for Batch {
     fn drop(&mut self) {
         *BATCH.lock().expect("the batch's phase runs") = None;
+        *BATCH_PLANS.lock().expect("the batch's plans") = None;
     }
+}
+
+/// The memo plans of the batch's runs so far, by root (O-store-single-program).
+static BATCH_PLANS: std::sync::Mutex<Option<std::collections::HashMap<String, Vec<[u8; 32]>>>> = std::sync::Mutex::new(None);
+
+/// The plans a run's manifest over `root` names besides its own (`plan`) and `also`: under a batch, its earlier runs'
+/// over the root, and this run's are added. Each policy recorded its own manifest, and collection keeps the plans of a
+/// root's last `protected_runs` (2): of a 44-policy batch, 42 plans were dead at the next decision, their memo spaces
+/// dropped, and the next batch found a hit's memo entry gone. The batch is one run of the root. `None` outside a
+/// batch.
+pub(super) fn batch_plans(root: &str, plan: [u8; 32], also: &[[u8; 32]]) -> Option<Vec<[u8; 32]>> {
+    let mut all = BATCH_PLANS.lock().expect("the batch's plans");
+    if !Batch::active() {
+        return None;
+    }
+    let plans = all.get_or_insert_with(Default::default).entry(root.to_owned()).or_default();
+    let earlier: Vec<[u8; 32]> = plans.iter().filter(|p| **p != plan && !also.contains(p)).copied().collect();
+    for p in std::iter::once(&plan).chain(also) {
+        if !plans.contains(p) {
+            plans.push(*p);
+        }
+    }
+    Some(earlier)
 }
 
 /// One phase's run, as the reader's run reports it.
