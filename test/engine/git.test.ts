@@ -266,8 +266,9 @@ type HeldFilter = "leaves-a-process" | "keeps-git-waiting";
 async function heldListing(filter: HeldFilter, waitMs: number, whileReading: () => void = () => undefined): Promise<unknown> {
   const root = await repository({ ".gitattributes": "a.py filter=held\n", "a.py": "print(1)\n" });
   const held = join(root, ".git", "held");
-  const wait = `(cd / && while [ -e '${held.replaceAll("\\", "/")}' ]; do sleep 0.2; done) </dev/null >/dev/null`;
-  git(root, "config", "filter.held.clean", filter === "leaves-a-process" ? `${wait} & cat` : `${wait}; cat`);
+  const loop = `while [ -e '${held.replaceAll("\\", "/")}' ]; do sleep 0.2; done`;
+  const clean = filter === "leaves-a-process" ? `(cd / && ${loop}) </dev/null >/dev/null & cat` : `cd / && (${loop}) </dev/null >/dev/null; cat`;
+  git(root, "config", "filter.held.clean", clean);
   await writeFile(held, "");
   await writeFile(join(root, "a.py"), "print(2)\n");
   let late: NodeJS.Timeout | undefined;
