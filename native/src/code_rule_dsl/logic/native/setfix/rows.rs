@@ -36,6 +36,12 @@ impl Rows {
         Rows { segs: Vec::new(), from: 0, tail: rows }
     }
 
+    /// `n` rows of a relation that does not grow (an `InRel` made of them): one frozen segment, shared by a
+    /// relation started from it without a copy.
+    pub(super) fn frozen(rows: Vec<i64>, n: usize) -> Rows {
+        Rows::from_vec(rows).freeze(n)
+    }
+
     /// The values held, every segment's and the tail's.
     pub(super) fn len(&self) -> usize {
         self.segs.iter().map(|(_, s)| s.len()).sum::<usize>() + self.tail.len()

@@ -149,6 +149,20 @@ Open, largest first (the edit after items 1–5: 12.85 s of span CPU):
    - Compaction, when dead rows pass the eighth, is a background rewrite of the kept segment, not a start's cost.
    About 36 row reads in `setfix.rs` and 28 elsewhere in `native/`, and the device uploads of a relation's rows,
    which take each segment as a buffer.
+
+   *Done (2026-11-13), two steps:* a relation's rows are `setfix::rows::Rows`, frozen segments shared through `Arc`
+   and a tail of the rows a run pushes; an `InRel` holds them frozen, and `close` freezes a run's tail into a
+   segment (moved), merging the newest past eight. The orders read rows through `runs::RowData` (generic: the flat
+   case is unchanged). `Rel::based` shares the kept segments; for a kept relation read from the frames, which has
+   no orders, it makes the dedup order by one sort of the ids and counts the sketches, instead of `compacted`
+   pushing every row again. Measured (profiling build, corpus0, second edit after a cold run): **7.20 → 4.93 s of
+   span CPU**; `open: survivors` 1.11 → 0.63 s, `open: indexes` 1.09 → 0.21 s; cold 29 → 20.4 s wall (with gun
+   10's cold case). Peak memory unchanged (3.75–4.04 GB): the kept relations are still read whole from the frames.
+
+   *Still open, a decision to make:* what is left of gun 8 (`survivors` 0.63 s, `index of a derived input`
+   0.52 s) is a new process ordering its kept relations again: each edit's process reads the rows from the frames
+   without their orders, and sorts them. The orders (4 bytes a row each, and the tags) belong in the frames with
+   the rows, read as they are, so an edit's process builds orders over its delta only.
 9. **Statistics of `__old` relations are counted from their rows** ("count run_scope__old from its rows", 0.05–0.07 s
    each, dozens per edit), although decision 0120 keeps statistics in the frames under the rows' digest.
    *Fixed:* `Retained::admit`, which reads a reached relation's rows from the frames mid-run, read its rows and
@@ -195,7 +209,8 @@ with the gun's reason until fixed):
 | 5 | `retain::frame_tests::a_relation_past_the_retain_budget_is_written_to_the_frames_and_let_go` | green |
 | 6 | `strings::functions::tests::a_place_is_native_and_encoded_as_sql_encodes_it`, `plan::tests::violations_at_places_are_found_at_their_path_and_line` | green |
 | 7 | `lanes::wave_tests::a_jobs_waves_are_credited_to_the_run_that_takes_it_back`, `plan::tests::closures_of_one_level_launch_in_one_wave` (the hub's fix, 4dde583e2, kept at the merge) | green |
-| 8 | `setfix::survivor_tests::a_maintained_relation_starts_from_its_kept_rows_without_copying_them` | red, ignored |
+| 8 | `setfix::survivor_tests::a_maintained_relation_starts_from_its_kept_rows_without_copying_them`, `…::a_start_from_a_relation_read_from_the_frames_shares_its_rows`, `setfix::rows::tests::started_rows_share_the_kept_segments_and_freeze_their_own` | green (rows shared; orders still built per process, below) |
+| 10, cold | `plan::tests::a_cross_product_after_a_relation_empty_when_planned_is_not_free` (red with the pricing undone) | green |
 | 9 | `retain::frame_tests::rows_read_where_reached_come_with_their_kept_statistics` | green (fixed at the hub merge) |
 | 10 | `plan::tests::a_constant_counted_none_when_planned_is_growth_when_it_has_rows` | green (fixed at the hub merge) |
 | 11 | none yet: located above (one gone; a rank lowering and the projection's demands wanted) | — |
