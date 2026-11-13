@@ -30,15 +30,16 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
-type Recorded = "runs" | "missing" | "cannot-run";
+type Recorded = "runs" | "missing" | "cannot-run" | "itself";
 
 async function launch(recorded: Recorded, hookSource = REPORTING_HOOK): Promise<{ status: number | null; stdout: string; stderr: string }> {
   const base = await mkdtemp(join(tmpdir(), "rerail-hook-launcher-"));
   temporaryDirectories.push(base);
   const hook = join(base, "claude-hook.mjs");
   await writeFile(hook, hookSource);
-  // A distinct "recorded node", so the test can tell it from the node that starts the launcher.
-  const node = join(base, RECORDED_NODE);
+  // A distinct "recorded node", so the test can tell it from the node that starts the launcher; or that node itself,
+  // which runs the hook in the launcher's own process.
+  const node = recorded === "itself" ? process.execPath : join(base, RECORDED_NODE);
   if (recorded === "runs") await recordedNode(node);
   // A file that is no program: without the execute bit, or on Windows (which has none) not an executable at all.
   if (recorded === "cannot-run") await (WINDOWS ? writeFile(node, "not a program\n") : writeFile(node, "#!/bin/sh\n", { mode: 0o644 }));
@@ -67,17 +68,19 @@ describe("hook launcher started by the recorded node", () => {
     expect(result.status).toBe(0);
   }, 30_000);
 
+  const ANSWER = '{"continue":true}';
   it.each([
-    ["ends the process itself", 'process.stdout.write("{}"); process.exit(3);'],
-    ["throws once it has loaded", 'setTimeout(() => { throw new Error("late failure"); }, 0);'],
-  ])("exits 0 for a hook that %s, as it does for a hook it runs as a child", async (_case, source) => {
-    const base = await mkdtemp(join(tmpdir(), "rerail-hook-launcher-"));
-    temporaryDirectories.push(base);
-    const hook = join(base, "claude-hook.mjs");
-    await writeFile(hook, source);
-    const result = spawnSync(process.execPath, ["--import", "tsx", LAUNCHER, process.execPath, hook], { input: "{}", encoding: "utf8" });
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stderr).toContain("rerail hook: exited");
+    ["ends the process before it answers", "process.exit(3);", "{}\n"],
+    ["throws once it has loaded, before it answers", 'setTimeout(() => { throw new Error("late failure"); }, 0);', "{}\n"],
+    ["leaves a failing exit code and answers nothing", "process.exitCode = 3;", "{}\n"],
+    ["answers, then ends the process", `process.stdout.write(${JSON.stringify(ANSWER)}); process.exit(3);`, ANSWER],
+    ["answers, then fails while loading", `process.stdout.write(${JSON.stringify(ANSWER)}); throw new Error("late failure");`, ANSWER],
+  ])("answers for a hook that %s as for one it runs as a child: exit 0, and {} only when it wrote nothing", async (_case, source, answer) => {
+    const child = await launch("runs", source);
+    expect(child, child.stderr).toMatchObject({ status: 0, stdout: answer });
+    const ownProcess = await launch("itself", source);
+    expect(ownProcess, ownProcess.stderr).toMatchObject({ status: 0, stdout: answer });
+    expect(ownProcess.stderr).toContain("rerail hook:");
   }, 30_000);
 });
 

@@ -26,6 +26,21 @@ function quiet(reason: string, answered: boolean): void {
   process.exitCode = 0;
 }
 
+/**
+ * Whether a hook run in this process has written to stdout since the call, as the answer collected from a hook run as a
+ * child tells: it counts what goes through `process.stdout.write`, which a hook's answer and `console.log` use.
+ */
+function watchAnswer(): () => boolean {
+  const write = process.stdout.write.bind(process.stdout);
+  let written = false;
+  // One signature stands in for the method's overloads: it passes their arguments on as they came.
+  process.stdout.write = ((...args: Parameters<typeof write>) => {
+    if (args[0].length > 0) written = true;
+    return write(...args);
+  }) as typeof process.stdout.write;
+  return () => written;
+}
+
 const [recordedNode, hookScript] = process.argv.slice(2);
 if (recordedNode === undefined || hookScript === undefined) {
   process.stderr.write("Usage: node hook-launcher.js <recorded node> <hook script>\n");
@@ -44,14 +59,15 @@ if (existsSync(recordedNode) && !sameFile(recordedNode, process.execPath)) {
   // Run in this process exactly as `node <hook>` would: a hook serves only when it is the launched script, argv[1].
   // The hook is chosen by the registration's argument, so it cannot be a static import.
   process.argv.splice(1, 3, hookScript);
-  // A hook that ends the process itself, or throws after it has loaded, exits 0 as well, as a hook run as a child does.
+  const answered = watchAnswer();
+  // A hook that fails here answers as a hook run as a child does: exit 0, and `{}` when it wrote nothing. Whether it
+  // ends the process itself, throws after it has loaded or leaves a failing exit code is known once the process ends.
   process.on("exit", code => {
-    if (code !== 0) quiet(`exited ${code}`, true);
+    if (code !== 0) quiet(`exited ${code}`, answered());
   });
   try {
     await import(pathToFileURL(hookScript).href);
-    if (process.exitCode !== undefined && process.exitCode !== 0) quiet(`exited ${process.exitCode}`, true);
   } catch (error) {
-    quiet(error instanceof Error ? error.message : String(error), false);
+    quiet(error instanceof Error ? error.message : String(error), answered());
   }
 }
