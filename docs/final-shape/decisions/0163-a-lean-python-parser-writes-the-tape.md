@@ -113,3 +113,23 @@ running the layout scanner: 643 instructions a node before those two changes.
   refused. They are rare (1 file in 3,917).
 - **Error recovery.** A file with a syntax error goes to tree-sitter-python, which is what a file being
   written mostly is. A permissive read (as 0158's trailing commas) is not built.
+
+## Amended (2026-11-13): every file with a syntax error is refused
+
+90a0357f2 had the parser recover a statement the text ends in (a file being written), as one `ERROR`
+meant to be tree-sitter's byte for byte. On the hub two tests found it was not:
+
+```
+// def broken(:        tree-sitter: function_definition, a missing `)`, an empty block
+//                      lean:        one ERROR over the statement (92% of the file)
+// def f(scope: PlanScope):
+//     return (         tree-sitter: the whole file one root ERROR
+//                      lean:        function_definition, the ERROR inside its block
+```
+
+The rules then saw other errors: a clause `source-incomplete` where it was `source-partial`, and W's
+`ERROR` at another span. Tree-sitter's recovery is its GLR search, so rules for each case would keep
+missing. The user decided: refuse any file with a syntax error. `recover_at_end` stays in the crate,
+unused, for the Bitlex parser's work. Only files with errors pay tree-sitter's cost. The parity test
+checks that each cut text is refused and that the engine's tape for it is tree-sitter-python's
+(`python_tapes_from_the_lean_parser_are_tree_sitters`).

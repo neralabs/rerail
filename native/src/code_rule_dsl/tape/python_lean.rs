@@ -3,10 +3,9 @@
 //! tree-sitter-python's tree encodes to, node for node (`python_tapes_from_the_lean_parser_are_tree_sitters`).
 //!
 //! The parser's keys name kinds, fields and supertypes by their names in tree-sitter-python
-//! (`rerail_python_lean::{KINDS, FIELDS, CLASSES}`); here they are its ids. A statement the text ends
-//! in is recovered as tree-sitter recovers it (an `ERROR`). A file the parser refuses (a syntax error
-//! elsewhere, which tree-sitter recovers from; a construct it does not read) goes to
-//! tree-sitter-python.
+//! (`rerail_python_lean::{KINDS, FIELDS, CLASSES}`); here they are its ids. A file the parser refuses
+//! (any syntax error, the text's end included, which tree-sitter recovers from; a construct it does
+//! not read) goes to tree-sitter-python (decision 0163, amended).
 
 use crate::code_rule_dsl::tape::{CODE_EXTRA, Code, ERROR_CODE, FIELD_LIMIT, FileImage, Grammar, KIND_LIMIT, TapeImage, TemplateError, TreeParser};
 

@@ -2616,8 +2616,9 @@ fn python_tapes_from_the_lean_parser_are_tree_sitters() {
         let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary;
         assert!(ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(), "the tapes of {source:?} differ:\n{}\n{}", python_tape_plain(&ours, &grammar), python_tape_plain(&theirs, &grammar));
     }
-    // A text that ends in a statement (a file being written): recovered as tree-sitter recovers it,
-    // its `ERROR` byte for byte.
+    // A text that ends in a statement (a file being written): refused, as every file with a syntax
+    // error is, for tree-sitter-python (0163 amended: the lean parser's recovery was not tree-sitter's
+    // for `def broken(:` or a block's first statement `return (`).
     for cut in [
         "x = (1,\n",
         "x = [1, 2\n",
@@ -2626,12 +2627,15 @@ fn python_tapes_from_the_lean_parser_are_tree_sitters() {
         "class A:\n    def f(self):\n        return 1\n\n    x = g(y.z",
         "# c\nif x:\n    y = 1\n    # d\n    z = [a for",
         "from os.path impor",
+        "def f(scope: PlanScope):\n    return (\n",
     ] {
         let tree = parser.parse(cut, None).unwrap();
         assert!(tree.root_node().has_error(), "{cut:?} reads without an error");
-        let ours = python_lean::encode(&grammar, cut, &|| false).unwrap_or_else(|why| panic!("refused {cut:?}: {why:?}")).unwrap();
+        assert!(python_lean::encode(&grammar, cut, &|| false).is_err(), "accepted {cut:?}");
+        // Through the engine's parse: tree-sitter-python's tape, its error with it.
+        let product = TapeImage::parse(&grammar, cut, &|| false).unwrap().unwrap().primary;
         let theirs = TapeImage::encode(tree.root_node(), &grammar, cut, &|| false).unwrap().primary;
-        assert!(ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(), "the tapes of {cut:?} differ:\n{}\n{}", python_tape_plain(&ours, &grammar), python_tape_plain(&theirs, &grammar));
+        assert!(product.to_bytes().unwrap() == theirs.to_bytes().unwrap(), "the engine's tape of {cut:?} is not tree-sitter's");
     }
     // An error before the end: refused, for tree-sitter-python.
     // `def broken(:` too: tree-sitter puts in the missing `)` before the `:` and reads on (the workspace's broken

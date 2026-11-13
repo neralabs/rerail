@@ -374,16 +374,15 @@ impl<'a> P<'a> {
         Ok(())
     }
 
-    /// A statement of a module or of `block`; one the text ends in, recovered as tree-sitter
-    /// recovers it (`recover_at_end`).
+    /// A statement of a module or of `block`. A syntax error anywhere, the text's end included, is
+    /// refused: tree-sitter-python reads the file (decision 0163, amended 2026-11-13). Tree-sitter's
+    /// recovery is its GLR search, and the end-of-text recovery here (`recover_at_end`) missed it
+    /// twice (`def broken(:`, a block's first statement `return (`): the rules saw other errors.
+    /// `recover_at_end` is kept, unused, for the Bitlex parser's work on recovery.
     #[inline(always)]
     fn statement_or_recovered(&mut self, block: Option<&mut N>) -> R<()> {
-        let mark = Mark { n: self.w.len(), i: self.i, depth: self.depth };
-        match self.statement() {
-            Ok(()) => Ok(()),
-            Err(Refusal::Parse(_)) => self.recover_at_end(mark, block),
-            Err(r) => Err(r),
-        }
+        let _ = block;
+        self.statement()
     }
 
     /// A statement the text ends in, as tree-sitter-python recovers it: one `ERROR`, an extra of the
@@ -400,6 +399,7 @@ impl<'a> P<'a> {
     ///
     /// Only where the statement failed for want of tokens: what is left is layout tokens and the
     /// end. A syntax error before the end is refused (tree-sitter-python reads the file).
+    #[allow(dead_code)]
     #[cold]
     #[inline(never)]
     fn recover_at_end(&mut self, mark: Mark, block: Option<&mut N>) -> R<()> {
@@ -487,6 +487,7 @@ impl<'a> P<'a> {
 
     /// The pieces of an `ERROR` by start: each kept subtree's nodes (key, start, size, end), and a
     /// leaf for each token not in one.
+    #[allow(dead_code)]
     fn pieces(&self, kept: &[(usize, usize, u32)], toks: &[Tok]) -> R<Vec<Vec<(u32, u32, u32, u32)>>> {
         let node = |w: &Writer<Widths>, n: usize| (w.key(n), w.start(n), w.size(n), w.end(n));
         let mut pieces: Vec<Vec<(u32, u32, u32, u32)>> = Vec::new();
@@ -524,6 +525,7 @@ impl<'a> P<'a> {
     }
 
     /// Nodes written again, in preorder: (key, start, size, end) each.
+    #[allow(dead_code)]
     fn replay(&mut self, nodes: &[(u32, u32, u32, u32)]) {
         let mut open: Vec<(usize, usize, u32)> = Vec::new();
         for (k, &(key, start, size, end)) in nodes.iter().enumerate() {
