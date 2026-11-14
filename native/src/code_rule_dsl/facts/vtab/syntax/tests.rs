@@ -1129,11 +1129,20 @@ fn long_text_twins_where_no_body_fixes_the_kind() {
 fn text_only_for_the_nodes_read() {
     let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
     let fun = |rule: &str| format!(r#"{{"language": "python", "syntax": "valid", "rule": {rule}}}"#);
-    let some = |kinds: &[&str], fields: &[&str]| Some(TextNodes { kinds: kinds.iter().map(|k| k.to_string()).collect(), fields: fields.iter().map(|k| k.to_string()).collect() });
+    let some = |kinds: &[&str], fields: &[&str]| Some(TextNodes { kinds: kinds.iter().map(|k| k.to_string()).collect(), fields: fields.iter().map(|k| k.to_string()).collect(), ..TextNodes::default() });
+    let valued = |values: &[&str]| Some(TextNodes { values: values.iter().map(|k| k.to_string()).collect(), ..TextNodes::default() });
     for (body, read) in [
         ("out(t) :- kind(n, \"call\"), text(n, t).".to_owned(), some(&["call"], &[])),
         ("out(t) :- field(_, \"name\", n), text(n, t).".to_owned(), some(&[], &["name"])),
         ("out(t) :- node(_, n, _, _, _), text(n, t).".to_owned(), None),
+        // Only compared with a constant: the nodes whose text it is (names.rr's `literal_str`).
+        ("out(l) :- kind(l, \"generic_type\"), child(l, v, 0), text(v, \"Literal\").".to_owned(), valued(&["Literal"])),
+        // A child of a node of a fixed kind: those children (imports.rr's `ribind`).
+        ("out(t) :- kind(n, \"dotted_name\"), child(n, c, 0), text(c, t).".to_owned(), Some(TextNodes { parents: BTreeSet::from(["dotted_name".to_owned()]), ..TextNodes::default() })),
+        // A child of a node in a field: the children of the nodes in it (imports.rr's `impmod`).
+        ("out(m) :- field(_, \"module_name\", mn), child(mn, dn, 1), text(dn, m).".to_owned(), Some(TextNodes { parent_fields: BTreeSet::from(["module_name".to_owned()]), ..TextNodes::default() })),
+        // A child of a node nothing narrows: every node.
+        ("out(t) :- child(n, c, 0), text(c, t).".to_owned(), None),
         (format!("out(t) :- ast(d, f, {}, NAME: n), text(n, t).", fun(r#"{"all": [{"kind": "function_definition"}, {"has": {"pattern": "$NAME", "field": "name"}}]}"#)), some(&[], &["name"])),
         (format!("out(t) :- ast(d, f, {}, N: n), text(n, t).", fun(r#"{"all": [{"kind": "call"}, {"has": {"all": [{"kind": "identifier"}, {"pattern": "$N"}]}}]}"#)), some(&["identifier"], &[])),
         (format!("out(t) :- ast(d, f, {}, N: n), text(n, t).", fun(r#"{"all": [{"kind": "call"}, {"inside": {"pattern": "$N", "field": "body"}}]}"#)), None),

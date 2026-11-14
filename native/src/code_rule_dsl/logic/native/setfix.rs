@@ -94,6 +94,11 @@ impl Interner {
     fn for_loading(shared: &RwLock<Self>) -> Self {
         Self { atoms: Arc::clone(&shared.read().unwrap().atoms), buf: String::new(), failed: None }
     }
+    /// The atom of `s` if there is one (`Atoms::get`): found as `id` finds it (in memory, or where interning reads
+    /// the store, there), but none is made.
+    fn held(&self, s: &str) -> Option<i64> {
+        self.atoms.get(s).map(i64::from)
+    }
     fn id(&mut self, s: &str) -> i64 {
         match self.atoms.intern(s) {
             Ok(atom) => i64::from(atom),
@@ -2400,6 +2405,21 @@ pub fn cat_symbols(conn: &Connection, a: i64, b: i64) -> i64 {
     cat(&mut syms, a, b)
 }
 
+/// `cat`'s text if it is an atom (`Interner::held`): none made.
+fn cat_held(syms: &mut Interner, a: i64, b: i64) -> Option<i64> {
+    if syms.name(a).is_empty() {
+        return Some(b);
+    }
+    let mut s = std::mem::take(&mut syms.buf);
+    s.clear();
+    syms.atoms.with_str(a as crate::content_store::atoms::Sym, |a| s.push_str(a));
+    s.push('.');
+    syms.atoms.with_str(b as crate::content_store::atoms::Sym, |b| s.push_str(b));
+    let id = syms.held(&s);
+    syms.buf = s;
+    id
+}
+
 fn cat(syms: &mut Interner, a: i64, b: i64) -> i64 {
     if syms.name(a).is_empty() {
         return b;
@@ -4561,12 +4581,75 @@ pub enum Step {
 /// `forms`: per step, its count-table form's state (`table`).
 /// `spec`: the digest of the spec it was read from, which a level's batch keeps its pairs by (`level`).
 pub struct JoinRule { pub steps: Vec<Step>, pub out: Vec<Term>, pub nslots: usize, multi: Vec<(usize, Vec<usize>)>, pub counts: Vec<[std::cell::Cell<u64>; 2]>,
+                      /// Per step, the texts it makes that are only looked up or not read (`probes`): `PROBE_*` and
+                      /// `UNREAD_*` of a `@dot`'s, a function's or a split's parts. None is interned.
+                      pub probes: Vec<u8>,
                       pub fused: Vec<Option<Box<rowcode::Fused>>>, forms: Vec<table::StepForm>, spec: u64,
                       /// Rows passed over by a factored step (`factored`): counted in `counts` as joined, not walked.
                       pub passed_over: std::cell::Cell<u64> }
 
 fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<JoinRule> {
     join_rule(conn, &JoinSpec::parse(spec).map_err(err)?, syms)
+}
+
+impl Step {
+    /// Whether the step reads slot `x`.
+    pub fn mentions(&self, x: usize) -> bool {
+        let k = |key: &Key| matches!(key, Key::Slot(s) if *s == x);
+        match self {
+            Step::Unused { .. } => false,
+            Step::Atom { keys, .. } | Step::Scalar { keys, .. } | Step::StrJoin { keys, .. } => keys.iter().any(|(_, key)| k(key)),
+            Step::Cat { a, b, .. } => k(a) || k(b),
+            Step::Split { whole, ka, kb, .. } => k(whole) || k(ka) || k(kb),
+            Step::Eq { a, b } | Step::Ne { a, b } | Step::Lt { a, b, .. } | Step::Doc { a, b, .. } => k(a) || k(b),
+            Step::Let { b, .. } => k(b),
+            Step::Func { args, .. } => args.iter().any(k),
+            Step::DocOf { out, n, bind } => k(n) || (!*bind && *out == x),
+            Step::Test { s, p, .. } => k(s) || k(p),
+            Step::In { a, .. } => k(a),
+        }
+    }
+}
+
+pub(crate) const PROBE_OUT: u8 = 1;
+pub(crate) const PROBE_A: u8 = 2;
+pub(crate) const PROBE_B: u8 = 4;
+/// Read by nothing (`UNREAD_OUT`, `_A`, `_B`): the text must exist (a function's NULL ends the branch) but needs no
+/// atom, nor a lookup: the slot holds 0. `match("(?<m>…): *(?<rest>.*)", l)` binds `rest` for no reader.
+pub(crate) const UNREAD_OUT: u8 = 8;
+pub(crate) const UNREAD_A: u8 = 16;
+pub(crate) const UNREAD_B: u8 = 32;
+
+/// Which texts the steps make only to look them up: a `@dot`, a text function's result or a split's part whose slot no
+/// head reads, and every later step reads only as a key of a positive atom. Such a text needs no atom of its own: one
+/// with no atom (`Interner::held`, found as interning finds one, none made) is in no row, and the join's branch ends
+/// there. Interned instead, every split of every qualified name and every `@dot` probe was a new atom (12.7 M
+/// over PostHog, 789 MB in the store). A step that tests its result against a bound slot (`bind: false`) probes
+/// whatever reads the slot: a text that is no atom is no bound slot's value.
+fn probes(steps: &[Step], out: &[Term]) -> Vec<u8> {
+    let in_head = |x: usize| out.iter().any(|t| match t { Term::Slot(s) => *s == x, Term::Cat(a, b) => *a == x || *b == x, Term::Const(_) => false });
+    // `unread`, `probe` or 0 by what reads slot `x` after step `from`. A positive atom reads a slot only as a key
+    // (`mentions`); any other reader (a test of its name, a negative atom, which must see a miss as "no row") needs it.
+    let use_of = |from: usize, x: usize, unread: u8, probe: u8| {
+        if in_head(x) {
+            return 0;
+        }
+        let mut readers = steps[from + 1..].iter().filter(|step| step.mentions(x)).peekable();
+        if readers.peek().is_none() {
+            return unread;
+        }
+        if readers.all(|step| matches!(step, Step::Atom { neg: false, .. })) { probe } else { 0 }
+    };
+    steps
+        .iter()
+        .enumerate()
+        .map(|(i, step)| match step {
+            Step::Cat { bind: false, .. } | Step::Func { bind: false, .. } => PROBE_OUT,
+            Step::Cat { out, bind: true, .. } | Step::Func { out, bind: true, .. } => use_of(i, *out, UNREAD_OUT, PROBE_OUT),
+            Step::Split { a, b, .. } => a.map_or(0, |x| use_of(i, x, UNREAD_A, PROBE_A)) | b.map_or(0, |x| use_of(i, x, UNREAD_B, PROBE_B)),
+            _ => 0,
+        })
+        .collect()
 }
 
 /// A native join's steps from its spec: each slot bound by its first step, tested by later ones.
@@ -4776,7 +4859,8 @@ fn join_rule_with(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, index
     let counts = steps.iter().map(|_| Default::default()).collect();
     let fused = if env_set!("RERAIL_NO_ROW_PROGRAMS") { steps.iter().map(|_| None).collect() } else { rowcode::fuse(&steps) };
     let forms = (0..steps.len()).map(|_| table::StepForm::default()).collect();
-    Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts, fused, forms, spec: level::digest(spec), passed_over: Default::default() })
+    let probes = probes(&steps, &out);
+    Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts, fused, forms, probes, spec: level::digest(spec), passed_over: Default::default() })
 }
 
 /// Runs a join probe over the store; its new head tuples go to `fresh`. Returns the tuples it derived.
@@ -5220,7 +5304,13 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 if x < y || (*or_eq && x == y) { go(cx, i + 1, slots) }
             }
             Step::Cat { out, a, b, bind } => {
-                let v = cat(cx.syms, val(slots, *a), val(slots, *b));
+                let v = if j.probes[i] & UNREAD_OUT != 0 {
+                    0
+                } else if j.probes[i] & PROBE_OUT != 0 {
+                    match cat_held(cx.syms, val(slots, *a), val(slots, *b)) { Some(v) => v, None => return }
+                } else {
+                    cat(cx.syms, val(slots, *a), val(slots, *b))
+                };
                 if *bind { slots[*out] = v } else if slots[*out] != v { return }
                 go(cx, i + 1, slots);
             }
@@ -5229,8 +5319,19 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let w = cx.syms.name(val(slots, *whole)).to_owned();
                 for p in std::iter::once(None).chain(w.match_indices('.').filter(|(p, _)| *p > 0).map(|(p, _)| Some(p))) {
                     let (x, y) = p.map_or(("", w.as_str()), |p| (&w[..p], &w[p + 1..]));
-                    match a { Some(s) => slots[*s] = cx.syms.id(x), None => if cx.syms.name(val(slots, *ka)) != x { continue } }
-                    match b { Some(s) => slots[*s] = cx.syms.id(y), None => if cx.syms.name(val(slots, *kb)) != y { continue } }
+                    let probe = j.probes[i];
+                    match a {
+                        Some(s) if probe & UNREAD_A != 0 => slots[*s] = 0,
+                        Some(s) if probe & PROBE_A != 0 => match cx.syms.held(x) { Some(v) => slots[*s] = v, None => continue },
+                        Some(s) => slots[*s] = cx.syms.id(x),
+                        None => if cx.syms.name(val(slots, *ka)) != x { continue },
+                    }
+                    match b {
+                        Some(s) if probe & UNREAD_B != 0 => slots[*s] = 0,
+                        Some(s) if probe & PROBE_B != 0 => match cx.syms.held(y) { Some(v) => slots[*s] = v, None => continue },
+                        Some(s) => slots[*s] = cx.syms.id(y),
+                        None => if cx.syms.name(val(slots, *kb)) != y { continue },
+                    }
                     go(cx, i + 1, slots);
                 }
             }
@@ -5249,6 +5350,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 };
                 let v = match value {
                     rusqlite::types::Value::Integer(n) => n,
+                    rusqlite::types::Value::Text(_) if j.probes[i] & UNREAD_OUT != 0 => 0,
+                    rusqlite::types::Value::Text(s) if j.probes[i] & PROBE_OUT != 0 => match cx.syms.held(&s) { Some(v) => v, None => return },
                     rusqlite::types::Value::Text(s) => cx.syms.id(&s),
                     _ => return,
                 };

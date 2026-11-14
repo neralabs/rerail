@@ -145,7 +145,10 @@ impl Projection {
         });
         crate::code_rule_dsl::logic::profile::decision("nodes with text", || match &read {
             None => format!("every node ({} reads the text of a node it does not narrow)", wide.as_deref().unwrap_or("a rule")),
-            Some(TextNodes { kinds, fields }) => format!("{} kinds ({}), and the nodes in {} fields ({})", kinds.len(), kinds.iter().take(8).cloned().collect::<Vec<_>>().join(", "), fields.len(), fields.iter().take(8).cloned().collect::<Vec<_>>().join(", ")),
+            Some(TextNodes { kinds, fields, parents, parent_fields, values }) => {
+                let some = |s: &BTreeSet<String>| s.iter().take(8).cloned().collect::<Vec<_>>().join(", ");
+                format!("{} kinds ({}), the nodes in {} fields ({}), the children of {} kinds ({}) and of the nodes in {} fields ({}), and those whose text is one of {} constants ({})", kinds.len(), some(kinds), fields.len(), some(fields), parents.len(), some(parents), parent_fields.len(), some(parent_fields), values.len(), some(values))
+            }
         });
         if !std::env::var("RERAIL_TEXT_NODES").is_ok_and(|v| v == "all") {
             self.text_nodes = read;
@@ -178,11 +181,18 @@ impl Projection {
     }
 }
 
-/// The nodes whose text a rule reads: those of `kinds`, and those in a field of `fields` of their parent.
+/// The nodes whose text a rule reads: those of `kinds`, those in a field of `fields` of their parent, the children of a
+/// node of `parents`' kinds or in one of `parent_fields`, and those whose text is one of `values`: a rule that only compares the text of a node it
+/// does not narrow with a constant (`text(v, "Literal")`) needs no other node's text, nor one that reads a child of a
+/// node it narrows (`kind(n, "dotted_name"), child(n, c, 0), text(c, t)`) any but those children's. Other texts are
+/// then not made, nor interned: every statement's, comment's and docstring's was half a file's atoms.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TextNodes {
     pub kinds: BTreeSet<String>,
     pub fields: BTreeSet<String>,
+    pub parents: BTreeSet<String>,
+    pub parent_fields: BTreeSet<String>,
+    pub values: BTreeSet<String>,
 }
 
 /// What the rules read of `text` (`text_kind_demand`).
@@ -473,6 +483,30 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
             _ => None,
         }).map(String::from).collect()
     };
+    // What narrows the nodes `v` is a child of (`child(p, v, _)`): each such parent's kinds, or the fields it is in;
+    // `None` when one is not narrowed, or `v` is no child.
+    let parents_of = |columns: &HashMap<(String, usize), Kinds>, body: &[Literal], v: &str| -> Option<(BTreeSet<String>, BTreeSet<String>)> {
+        let (mut kinds, mut fields) = (BTreeSet::new(), BTreeSet::new());
+        let mut any = false;
+        for a in body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel == "child") {
+            if let (Some(Term::Var(p)), Some(Term::Var(x))) = (a.args.first(), a.args.get(1))
+                && x == v
+            {
+                any = true;
+                // Its kinds, its fields, or a matcher capture's (a rewritten `kind`/`field` body, `rr_ast_…(i, mn)`).
+                match (of_var(columns, body, p), fields_of(body, p)) {
+                    (Some(k), _) => kinds.extend(k.iter().map(|k| bare(k))),
+                    (None, f) if !f.is_empty() => fields.extend(f),
+                    (None, _) => match captured(body, p) {
+                        (k, _) if !k.is_empty() => kinds.extend(k),
+                        (_, f) if !f.is_empty() => fields.extend(f),
+                        _ => return None,
+                    },
+                }
+            }
+        }
+        any.then_some((kinds, fields))
+    };
     let (mut kinds, mut any) = (BTreeSet::new(), Vec::new());
     let mut read = Some(TextNodes::default());
     let mut wide = None;
@@ -496,6 +530,17 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
                         (f, _) if !f.is_empty() => nodes.fields.extend(f),
                         (_, (k, _)) if !k.is_empty() => nodes.kinds.extend(k),
                         (_, (_, f)) if !f.is_empty() => nodes.fields.extend(f),
+                        // Compared with a constant within the bound: only a node whose text is that constant.
+                        _ if short_constant(text) => {
+                            if let Some(Term::Str(c)) = text.args.get(1) {
+                                nodes.values.insert(c.to_string());
+                            }
+                        }
+                        // A child of a node of known kinds: only such children.
+                        _ if let Some((kinds, fields)) = parents_of(&columns, &rule.body, v) => {
+                            nodes.parents.extend(kinds);
+                            nodes.parent_fields.extend(fields);
+                        }
                         _ => {
                             wide = Some(format!("{}, reading text({v}, …)", rule.head.rel).into());
                             read = None
@@ -2553,7 +2598,7 @@ impl Batch {
         let mut long_text_nodes = Vec::new();
         c.long_text = projection.long_text.clone();
         c.long_text_any = projection.long_text_any;
-        c.text_nodes = projection.text_nodes.as_ref().map(|t| (t.kinds.clone(), t.fields.clone()));
+        c.text_nodes = projection.text_nodes.clone();
         let wants_text = core && projection.wants("text");
         let wants_source_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Source);
         let wants_line_text = core && projection.wants_span_text(crate::code_rule_dsl::logic::front::ast::SpanIn::Line);
