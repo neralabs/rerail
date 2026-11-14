@@ -21,6 +21,13 @@ const PROOF = CHALLENGE;
 const MAX_ANSWER_BYTES = 1_024;
 /** How often a proof tries again for a free instance of a Windows pipe whose instances are all taken. */
 const PIPE_RETRY_MS = 50;
+/** How long a listener has to answer a proof, unless the caller gives its own limit. */
+const PROOF_TIMEOUT_MS = 2_000;
+/**
+ * How long `rerail daemon start` waits for the daemon it launched to answer, counted from the launch (`readyDaemon` in
+ * daemon-control.ts takes it from here).
+ */
+export const DAEMON_START_TIMEOUT_MS = 15_000;
 /**
  * How long the engine start waits for a free instance of a held Windows pipe: as long as Node's own connect waits for
  * one, so a busy engine of this home that frees one in that time proves itself, and no second daemon starts beside it.
@@ -175,7 +182,7 @@ async function askForProof(route: RequestOptions, accessToken: string, challenge
 export async function engineCapabilityProof(
   socketPath: string,
   accessToken: string,
-  timeoutMs = 2_000,
+  timeoutMs = PROOF_TIMEOUT_MS,
   challenge: string = randomBytes(32).toString("hex"),
 ): Promise<EngineProofAnswer> {
   const deadline = Date.now() + timeoutMs;
@@ -192,7 +199,7 @@ export async function engineCapabilityProof(
 export async function engineHoldsCapability(
   socketPath: string,
   accessToken: string,
-  timeoutMs = 2_000,
+  timeoutMs = PROOF_TIMEOUT_MS,
   challenge: string = randomBytes(32).toString("hex"),
 ): Promise<boolean> {
   const route = await proofRoute(socketPath, Date.now() + START_PIPE_WAIT_MS);
