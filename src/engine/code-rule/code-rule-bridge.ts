@@ -444,12 +444,15 @@ interface SourceDiscovery {
    */
   readonly late: Map<string, string>;
   /**
-   * The checkouts whose Git a listing asked again off the walks' path (`#listLateAgain`) is waiting for, each with the
-   * sources it may keep the first-sight text of, by path.
+   * The checkouts a listing asked again off the walks' path (`#listLateAgain`) is waiting for, running or queued, each
+   * with the sources it may keep the first-sight text of, by path.
    */
   readonly askingAgain: Map<string, Map<string, Source>>;
-  /** Each listing asked again that has not finished (`settleListingsAgain`). */
-  readonly listingsAgain: Set<Promise<void>>;
+  /**
+   * The listings asked again, one after another: each starts once the one before it has settled, so a session runs at
+   * most one at a time beside its walks (`settleListingsAgain`).
+   */
+  listingsAgain: Promise<void>;
   readonly worktrees: WorktreeDiscovery;
   error: string | undefined;
   /** A boundary answered while the current walk was running; closing before it finishes says so again. */
@@ -959,7 +962,7 @@ export class CodeRuleBridge {
         startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
         heads: new Map(), git, unmerged: new Map(), passedCheckouts: new Set(), readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
-        late: new Map(), askingAgain: new Map(), listingsAgain: new Set(),
+        late: new Map(), askingAgain: new Map(), listingsAgain: Promise.resolve(),
       };
       this.#unwatched = new ToolCallWindows();
       this.#discovery = discovery;
@@ -1704,9 +1707,10 @@ export class CodeRuleBridge {
   /**
    * Asks Git once more which files changed in each of `late`'s checkouts, whose listing ran past its time limit for the
    * walk just applied, off every walk's path: no walk or boundary waits for it, so what that walk and the next find is
-   * checked at the boundary each reaches. The next boundary reports each checkout (`newlyLate`). `late` holds the
-   * sources the walk saw first in each, whose first-sight text it could not keep; a listing asked again whose Git has
-   * not answered yet takes them on.
+   * checked at the boundary each reaches. The checkouts are listed one after another, behind any asked for before, as a
+   * walk lists its own: the load that made them late meets one more Git, not one per checkout. The next boundary
+   * reports each checkout (`newlyLate`). `late` holds the sources the walk saw first in each, whose first-sight text it
+   * could not keep; a listing asked again that has not answered yet, running or queued, takes them on.
    */
   #listLateAgain(discovery: SourceDiscovery, late: SourceScan["lateListings"]): void {
     for (const [checkout, seen] of late) {
@@ -1719,12 +1723,10 @@ export class CodeRuleBridge {
 
   #startListingAgain(discovery: SourceDiscovery, checkout: string, seen: Map<string, Source>): void {
     discovery.askingAgain.set(checkout, seen);
-    const done = this.#listAgain(discovery, checkout, seen)
-      .catch((error: unknown) => {
-        process.stderr.write(`rerail: cannot read the files ${checkout} listed again: ${errorMessage(error)}\n`);
-      })
-      .finally(() => discovery.listingsAgain.delete(done));
-    discovery.listingsAgain.add(done);
+    // Each link settles, so the next one always runs.
+    discovery.listingsAgain = discovery.listingsAgain.then(() => this.#listAgain(discovery, checkout, seen)).catch((error: unknown) => {
+      process.stderr.write(`rerail: cannot read the files ${checkout} listed again: ${errorMessage(error)}\n`);
+    });
   }
 
   /**
@@ -1757,7 +1759,11 @@ export class CodeRuleBridge {
   /** Waits for each listing asked again off the walks' path (`#listLateAgain`), and any asked for meanwhile. */
   async settleListingsAgain(): Promise<void> {
     const discovery = this.#discovery;
-    while (discovery !== undefined && discovery.listingsAgain.size > 0) await Promise.all(discovery.listingsAgain);
+    let settled: Promise<void> | undefined;
+    while (discovery !== undefined && discovery.listingsAgain !== settled) {
+      settled = discovery.listingsAgain;
+      await settled;
+    }
   }
 
   /** The changes the walk found; `uncaptured` receives the digest each changed source was observed with before. */

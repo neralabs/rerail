@@ -40,6 +40,8 @@ const asyncGitCalls = vi.hoisted(() => ({
   args: [] as string[][], failing: undefined as string | undefined, hanging: undefined as readonly string[] | undefined,
   throwsNext: undefined as string | undefined,
 }));
+/** How many Git listings of a checkout's changed files (`--modified`) run now, and the most that ran at once. */
+const runningListings = vi.hoisted(() => ({ now: 0, most: 0 }));
 /**
  * The listings of a checkout's changed files a test makes late: the next walk listing (`gitModifiedOrUntrackedPaths`) of
  * each checkout in `late`, and the next listing asked again (`gitModifiedOrUntrackedListing`) of each in `lateAgain`,
@@ -59,7 +61,14 @@ const readBuffers = vi.hoisted(() => ({ watching: false, seen: new Set<ArrayBuff
 vi.mock("node:child_process", async importOriginal => {
   const actual = await importOriginal<typeof ChildProcess>();
   const { promisify } = await import("node:util");
+  /** Counts `child`, a listing of changed files, in `runningListings` until it exits. */
+  const countListing = (child: ChildProcess.ChildProcess): void => {
+    runningListings.now += 1;
+    runningListings.most = Math.max(runningListings.most, runningListings.now);
+    child.once("exit", () => { runningListings.now -= 1; });
+  };
   const execFile = (...call: Parameters<typeof actual.execFile>) => {
+    const listing = Array.isArray(call[1]) && (call[1] as readonly string[]).includes("--modified");
     if (Array.isArray(call[1])) {
       const args = call[1] as readonly string[];
       if (asyncGitCalls.throwsNext !== undefined && args.includes(asyncGitCalls.throwsNext)) {
@@ -77,7 +86,9 @@ vi.mock("node:child_process", async importOriginal => {
         call[1] = ["-e", "setTimeout(() => {}, 30_000)", "--", ...forwarded];
       }
     }
-    return (actual.execFile as (...forwarded: unknown[]) => ReturnType<typeof actual.execFile>)(...call);
+    const child = (actual.execFile as (...forwarded: unknown[]) => ReturnType<typeof actual.execFile>)(...call);
+    if (listing) countListing(child);
+    return child;
   };
   // `promisify(execFile)` resolves to `{ stdout, stderr }` through this symbol: the wrapper keeps it.
   return { ...actual, execFile: Object.assign(execFile, { [promisify.custom]: (actual.execFile as unknown as Record<symbol, unknown>)[promisify.custom] }) };
@@ -211,6 +222,7 @@ afterEach(async () => {
   listings.lateAgain.length = 0;
   listings.held = undefined;
   listings.calls.length = 0;
+  runningListings.most = 0;
   releases.splice(0).forEach(release => release());
   discovery.reads.clear();
   discovery.directories.clear();
@@ -695,6 +707,35 @@ describe("CodeRuleBridge", () => {
     expect(afterThrow.failures).toEqual([expect.objectContaining({
       code: "source-incomplete", message: expect.stringContaining(".: Git could not list the checkout's changed files when asked again: "),
     })]);
+  });
+
+  it("asks Git again for the checkouts a walk found late one at a time, and keeps what it first saw in each", async () => {
+    const root = await workspace();
+    const nested = ["a", "b", "c"].map(name => join(root, name));
+    for (const checkout of [root, ...nested]) {
+      await mkdir(join(checkout, "src"), { recursive: true });
+      await writeFile(join(checkout, "src", "x.py"), "committed\n");
+      commitAll(checkout);
+      await writeFile(join(checkout, "src", "x.py"), "uncommitted\n");
+    }
+    const changed = [root, ...nested].map(checkout => join(checkout, "src", "x.py"));
+    await awaitClockAfter(...changed);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const sourceRoot = (path: string) => nested.find(checkout => resolve(root, path).startsWith(`${checkout}${sep}`)) ?? root;
+    const bridge = createBridge(root, { ...auditor(auditGeneratedEdits), sourceRoot });
+    // The baseline walk's listing of each of the four checkouts runs past its time limit; each listing asked again answers.
+    listings.late.push(root, ...nested);
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.settleListingsAgain();
+    // One Git listing ran at a time: the four asked again went one after another.
+    expect(listings.calls.filter(call => call.startsWith("again"))).toHaveLength(4);
+    expect(runningListings.most).toBe(1);
+    await shell(bridge, async () => { await Promise.all(changed.map(path => writeFile(path, "uncommitted\nmine\n"))); });
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      changed.map(path => ({ path: repositoryPath(root, path), language: "python", previousText: "uncommitted\n", generatedText: "uncommitted\nmine\n" }))
+        .sort((left, right) => left.path.localeCompare(right.path)),
+    ]);
   });
 
   it("keeps the first sight of a file a later walk saw first, whose listing ran late while the one asked again waited", async () => {
