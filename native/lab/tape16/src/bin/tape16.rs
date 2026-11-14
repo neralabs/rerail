@@ -1243,6 +1243,34 @@ fn cmd_inplace(path: &str, f11: bool) {
     }
 }
 
+/// E10 on Metal: the corpus as one forest, each candidate's image in one buffer, every question a kernel.
+fn cmd_inplace_gpu(path: &str) {
+    use rerail_tape_lab::inplace::{Codes, forest};
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let trees: Vec<_> = files.iter().map(|f| rerail_tape_lab::v15::read(&f.image).unwrap_or_else(|e| die(&e))).collect();
+    let tree = forest(&trees);
+    drop(trees);
+    let mut codes = Codes::default();
+    codes.learn(&tree);
+    let n = tree.len();
+    let mut rng = 0x9e37_79b9_7f4a_7c15u64;
+    let mut order: Vec<usize> = (0..n).collect();
+    for i in (1..n).rev() {
+        rng ^= rng << 13;
+        rng ^= rng >> 7;
+        rng ^= rng << 17;
+        order.swap(i, (rng % (i as u64 + 1)) as usize);
+    }
+    let rows = rerail_tape_lab::inplace_gpu::all(&tree, &codes, &order).unwrap_or_else(|e| die(&e));
+    println!("{path}: {} files as one forest, {n} nodes, one GPU thread a question, best of 4 warm dispatches\n", files.len());
+    println!("| GPU ns a question | {} |", rows.iter().map(|r| r.0).collect::<Vec<_>>().join(" | "));
+    println!("|---|{}", "---|".repeat(rows.len()));
+    println!("| image bytes a node | {} |", rows.iter().map(|r| format!("{:.2}", r.1.bytes as f64 / n as f64)).collect::<Vec<_>>().join(" | "));
+    for (q, name) in rerail_tape_lab::inplace_gpu::QUESTIONS.iter().enumerate() {
+        println!("| {name} | {} |", rows.iter().map(|r| format!("{:.3}{}", r.1.ns[q], if r.1.correct[q] { "" } else { " WRONG" })).collect::<Vec<_>>().join(" | "));
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flag = |f: &str| args.iter().any(|a| a == f);
@@ -1270,6 +1298,7 @@ fn main() {
         "scan" => cmd_scan(path),
         "textrel" => cmd_textrel(path),
         "inplace" => cmd_inplace(path, flag("--f11")),
+        "inplace-gpu" => cmd_inplace_gpu(path),
         "base" => cmd_base(path, args.iter().position(|a| a == "--dump").map(|i| args[i + 1].as_str())),
         #[cfg(target_os = "macos")]
         "columns" => {

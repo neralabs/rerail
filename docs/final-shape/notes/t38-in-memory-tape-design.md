@@ -320,3 +320,157 @@ over, and F11 holds 1.4–2.1× F15's bytes for the nodes rules ask about.
 
 E7's mixes, ns a node of F11's own (data-layer): median 2.6, 121 rules 14.6, schema-introspection
 2,099, heaviest 152.
+
+## E10, second round: positions, BH, loading, M1/M3, Metal (2026-11-14)
+
+New candidates, each built per file, every answer checked against the tree (0 wrong on every corpus):
+
+| | structure | start | end |
+|---|---|---|---|
+| X | explicit size + back distance | frame of reference | length |
+| M | as X | mldb's predictor + residual (a line a block, or slope 0 where smaller) | the gap to the start of the node past the subtree |
+| XE | as X | Elias–Fano | gap |
+| B | balanced parentheses | frame of reference | length |
+| BM | as B | predictor + residual | length |
+| BE | as B | Elias–Fano (preorder) | Elias–Fano (postorder, through `findclose` and rank) |
+| BH | as B, plus stored sizes for subtrees over 64 positions, and a branch-free 64-bit window search | predictor | length |
+
+Elias–Fano's select is Vigna's broadword select in a word, after a four-word window chosen by
+comparisons (a sample every 64 ones). Timings below are the best of three runs, on one thread. The
+machine was shared (load 50–70), and single runs varied 2–4×.
+
+**Bytes a node:**
+
+| | F15 | X | M | XE | B | BM | BE | BH |
+|---|---|---|---|---|---|---|---|---|
+| impl/sqlite | 8.66 | 5.49 | 4.69 | 4.27 | 4.13 | 3.76 | **2.86** | 4.21 |
+| data-layer | 9.00 | 4.88 | 3.96 | 3.56 | 3.61 | 3.20 | **2.43** | 3.60 |
+| rerail (5b) | 9.20 | 5.08 | 4.24 | 3.85 | 3.72 | 3.31 | **2.52** | 3.76 |
+
+By part (data-layer): code 0.70; structure 1.64 (X family) or 0.37 (B family; BH 0.77); start 1.48
+(frame of reference), 1.08 (predictor), 0.68 (Elias–Fano); end 1.05 (length), 0.53 (gap), 0.68
+(Elias–Fano).
+
+**ns a call** (data-layer, default build; instructions in brackets):
+
+| | F15 | X | M | XE | B | BM | BE | BH |
+|---|---|---|---|---|---|---|---|---|
+| sweep: code in a set | 0.8 (24) | 1.1 (29) | 1.1 (29) | 1.1 (29) | 2.2 (55) | 2.2 (55) | 2.2 (55) | 2.2 (55) |
+| code at random | 0.8 (20) | 1.0 (28) | 1.0 (28) | 1.0 (28) | 2.1 (52) | 2.1 (52) | 2.1 (52) | 2.1 (52) |
+| start | 1.1 (29) | 1.6 (43) | 1.9 (46) | 7.8 (130) | 3.0 (69) | 3.3 (75) | 11.3 (162) | 3.3 (75) |
+| end | 3.0 (59) | 3.4 (83) | 6.4 (139) | 15.7 (226) | 5.6 (112) | 5.8 (115) | 22.0 (276) | 5.8 (115) |
+| subtree end | 0.9 (25) | 2.1 (45) | 2.0 (45) | 2.0 (45) | 7.9 (87) | 8.2 (87) | 8.2 (87) | 19.6 (161) |
+| children of a node | 2.5 (51) | 5.9 (104) | 5.9 (104) | 6.0 (104) | 10.8 (191) | 10.6 (191) | 10.6 (191) | 21.7 (344) |
+| parent | 186 (5,230) | 3.3 (97) | 3.3 (97) | 3.4 (97) | 8.4 (159) | 7.9 (159) | 7.7 (159) | 7.9 (159) |
+
+**E7's mixes, ns a node** (data-layer; impl/sqlite and rerail in the same order):
+
+| | F15 | X | M | XE | B | BM | BE | BH |
+|---|---|---|---|---|---|---|---|---|
+| median rule | 1.8 | 2.6 | 2.6 | 2.8 | 5.3 | 5.3 | 5.5 | 5.9 |
+| 121 rules | 9.0 | 14.7 | 17.8 | 32.6 | 27.1 | 27.3 | 50.5 | 40.4 |
+| schema-introspection | 956 | 57.7 | 68.0 | 117 | 117 | 115 | 190 | 154 |
+| heaviest rule | 91 | 149 | 184 | 356 | 268 | 271 | 540 | 418 |
+
+### 1. Positions
+
+- **mldb's predictor saves 0.4 B a node on start (1.48 → 1.08), for 0.3 ns.** The gap form of end
+  saves another 0.5 B (1.05 → 0.53), but it reads the next node's start, so end costs 6.4 ns instead
+  of 3.4.
+- **Elias–Fano is the smallest (0.68 B each for start and end) and the slowest** (start 7.8–11.3 ns,
+  end 15.7–22 ns). Before the broadword select and the four-word window, start took 40 ns; the time
+  is mispredicted branches in the select, not instructions.
+- **BE is the smallest tape measured: 2.43–2.86 B a node,** 0.27–0.33× format 15. It costs 2–3.5×
+  X's time in the mixes.
+
+### 2. BH
+
+- **Stored sizes do not help.** BH's subtree end costs 19.6 ns, against B's 7.9. A long search was
+  not the cost: most subtrees are small, and B's cost is the search within a word.
+- **The branch-free window is slower than the branchy search** it replaces. Its eight table lookups
+  are independent (the start of each byte comes from broadword prefix popcounts), and it has no data
+  branch. It still runs at about 0.3 instructions a cycle, against F15's 4 or more. The stall has not
+  been traced: the M5's counter profiles are refused (memory: xctrace), so it would need another
+  route.
+- **The marks cost 0.4 B a node** (a bit per position). BH as built is dropped. What it shows is that
+  in the B family the price is `findclose` itself, at 8 ns a call.
+
+### 3. Loading
+
+| data-layer | F15 | X | M | XE | B | BM | BE | BH |
+|---|---|---|---|---|---|---|---|---|
+| shape 1: disk, zstd 3 of the in-memory bytes, B/node | 1.58 | 2.91 | 2.10 | 1.58 | 2.42 | 2.04 | 1.36 | 2.13 |
+| shape 1: load (zstd), ns/node | 5.8 | 3.9 | 3.2 | 2.8 | 2.4 | 2.3 | 2.0 | 2.7 |
+| shape 2: disk, zstd 3 of the events, B/node | 0.73 | | | | | | | |
+| shape 2: zstd + events to a tree, ns/node | 39.3 | | | | | | | |
+| shape 2: + the lab's build from the tree, ns/node | | 102 | 105 | 111 | 73 | 77 | 52 | 79 |
+
+On impl/sqlite, shape 1 takes 2.19 (BE) to 4.09 (X) B a node and shape 2 1.56. On rerail, 1.43 to
+3.03 and 0.93.
+
+- **Bit-packed tapes barely compress under zstd.** X goes from 4.88 to 2.91, and BE from 2.43 to
+  1.36. Format 15's byte columns go from 9.00 to 1.58, so zstd finds what the bit packing already
+  took. Shape 1 loads in 2–6 ns a node and costs 1.9–4× shape 2's disk.
+- **Shape 2's build here is an upper bound.** It goes through a tree, and the lab's builders allocate
+  a vector a field and hash every code. A writer that goes straight from events to the tape is one
+  pass: BP bits are the events themselves, codes are the opens' in order, and positions are a prefix
+  sum. So the 50–110 ns says nothing yet about shape 2's real cost. E10 needs that writer before
+  shape 2 can be judged.
+
+### 4. M1 and M3
+
+The default build of `aarch64-apple-darwin` targets apple-m1: popcount is the vector `CNT` + `ADDV`
+(168 sites in the lab). Built with `-C target-cpu=apple-m4 -C target-feature=+cssc`, the same sites
+are scalar `cnt x, x` (checked with `llvm-objdump --mattr=+cssc`). Rust lists no CSSC for any Apple
+CPU, so it has to be asked for.
+
+- **Scalar popcount changes nothing that measures.** The B family saves about 3 instructions a call
+  (rank 52 → 49), and the nanoseconds are within the noise. So popcount is not what B pays for.
+- **The default build is M1's instruction set, not M1's microarchitecture.** M1 and M3 numbers need
+  those machines. With no select instruction anywhere, and popcount not the cost, nothing here leans
+  on an instruction M1 lacks.
+
+### 5. Metal
+
+`tape16 inplace-gpu <cap>` builds each candidate over the corpus as one forest: the files under a
+root of kind 0, positions shifted so starts stay monotone, codes from one table for all languages.
+The image is one buffer with a table of offsets, and each kernel answers one question a thread, over
+every node at random (in order for the sweep). It takes the best of four warm dispatches, and every
+answer is checked against the CPU reader's. Kernels exist for X, M, B and BE. Because the forest
+merges languages, its codes are wider, so its images are 0.3–0.7 B a node larger than the per-file
+sums above.
+
+| GPU ns a question | X | M | B | BE |
+|---|---|---|---|---|
+| image bytes a node (data-layer) | 5.53 | 4.61 | 4.26 | 3.11 |
+| code, in order (a sweep) | 0.05 | 0.05 | 0.03 | 0.06 |
+| code at random | 0.12 | 0.12 | 0.12 | 0.38 |
+| start at random | 0.30 | 0.18 | 0.20 | 0.32 |
+| end at random | 0.42 | 0.36 | 0.29 | 0.35 |
+| subtree end at random | 0.12 | 0.07 | 0.25 | 0.23 |
+| parent at random | 0.13 | 0.08 | 0.46 | 0.46 |
+| children of a node, at random | 0.59 | 0.53 | 1.21 | 1.21 |
+
+Rerail (5.5M nodes) is within 2× of these, except children (4.6–5.0 ns): the forest's root has 1,698
+children, and wide nodes keep one thread walking while the rest of its group wait. impl/sqlite (0.47M
+nodes) is too small to fill the GPU.
+
+- **Every question runs on Metal at 0.03–1.2 ns a question,** 10–40× the CPU's single thread.
+- **On the GPU the B family's structure costs 2–6× X's** (subtree end 0.25 against 0.07–0.12, parent
+  0.46 against 0.08–0.13), the same order as on the CPU. Elias–Fano's select costs little there:
+  start 0.32 against 0.18–0.30.
+
+### What the second round says
+
+- **X-family positions are the cheap lever.** M saves 0.9 B a node over X (4.88 → 3.96) for 0–3 ns
+  a call. XE saves 1.3 B, but its Elias–Fano start and end cost 5–12 ns
+  more.
+- **B saves 1.3 B a node of structure, and pays 2–4× on every structure question,** on the CPU and on
+  Metal. BE is the smallest (2.43–2.86 B), at 2–3.5× X's mixes.
+- **Structure is now X's largest part** (1.64 B: size 0.68, back 0.96). The next lever for the X
+  family is the back distance, which grows with sibling subtrees.
+- **Still to measure:**
+  - shape 2's real cost, through a writer from events straight to each tape;
+  - M1, M3 and x86 hardware;
+  - BE's select on x86 with `PDEP`;
+  - the forest's children walk, given wide nodes, as a kernel one group a node.

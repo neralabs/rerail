@@ -1225,3 +1225,168 @@ impl<P: Pos> Reader for B<P> {
         self.is_open(j).then_some(j)
     }
 }
+
+// ---- The GPU's view: one buffer, a table of offsets and parameters ----------------------------------
+
+/// A candidate as the GPU reads it: every array in one byte buffer (each at an 8-byte boundary), and a list
+/// of parameters (offsets into the buffer, widths, counts) in the order the kernel reads them.
+#[derive(Default)]
+pub struct GpuImage {
+    pub bytes: Vec<u8>,
+    pub params: Vec<u32>,
+}
+
+impl GpuImage {
+    fn arr<T: Copy>(&mut self, v: &[T]) {
+        while self.bytes.len() % 8 != 0 {
+            self.bytes.push(0);
+        }
+        self.params.push(self.bytes.len() as u32);
+        raw(&mut self.bytes, v);
+        // Padding, so a two-word read past the end stays in the buffer.
+        self.bytes.extend_from_slice(&[0u8; 16]);
+    }
+    fn val(&mut self, v: u32) {
+        self.params.push(v);
+    }
+}
+
+pub trait Gpu {
+    fn gpu(&self, g: &mut GpuImage);
+}
+
+impl Gpu for Packed {
+    fn gpu(&self, g: &mut GpuImage) {
+        g.val(self.w);
+        g.arr(&self.words);
+    }
+}
+
+impl Gpu for PFor {
+    fn gpu(&self, g: &mut GpuImage) {
+        g.val(u32::from(self.with_base));
+        g.arr(&self.width);
+        g.arr(&self.bitoff);
+        if self.with_base { g.arr(&self.base) } else { g.val(0) }
+        g.arr(&self.words);
+        g.arr(&self.exc_at);
+        g.arr(&self.exc_idx);
+        g.arr(&self.exc_val);
+    }
+}
+
+impl Gpu for Pred {
+    fn gpu(&self, g: &mut GpuImage) {
+        g.arr(&self.slope);
+        g.arr(&self.base);
+        self.res.gpu(g);
+    }
+}
+
+impl Gpu for Ef {
+    fn gpu(&self, g: &mut GpuImage) {
+        g.val(self.l);
+        self.low.gpu(g);
+        g.arr(&self.high);
+        g.arr(&self.samples);
+    }
+}
+
+impl Gpu for ForLen {
+    fn gpu(&self, g: &mut GpuImage) {
+        self.start.gpu(g);
+        self.len.gpu(g);
+    }
+}
+
+impl Gpu for PredGap {
+    fn gpu(&self, g: &mut GpuImage) {
+        self.start.gpu(g);
+        self.gap.gpu(g);
+        g.val(self.start.n as u32);
+        g.val(self.source_len as u32);
+        g.val((self.source_len >> 32) as u32);
+    }
+}
+
+impl Gpu for EfEf {
+    fn gpu(&self, g: &mut GpuImage) {
+        self.start.gpu(g);
+        self.end.gpu(g);
+    }
+}
+
+impl<P: Pos + Gpu> X<P> {
+    pub fn gpu_image(&self) -> GpuImage {
+        let mut g = GpuImage::default();
+        g.val(self.n as u32);
+        self.code.gpu(&mut g);
+        self.size.gpu(&mut g);
+        self.back.gpu(&mut g);
+        self.pos.gpu(&mut g);
+        g
+    }
+}
+
+impl<P: Pos + Gpu> B<P> {
+    pub fn gpu_image(&self) -> GpuImage {
+        let mut g = GpuImage::default();
+        g.val(self.nbits as u32);
+        g.arr(&self.bits);
+        g.arr(&self.sb_abs);
+        g.arr(&self.sb_rel);
+        g.arr(&self.w_min);
+        g.arr(&self.w_max_suffix);
+        g.arr(&self.l2_min);
+        g.arr(&self.l2_max_suffix);
+        g.arr(&self.l2_total);
+        g.val(self.l2_min.len() as u32);
+        g.val(self.opens.len() as u32);
+        self.code.gpu(&mut g);
+        self.pos.gpu(&mut g);
+        g
+    }
+}
+
+/// The byte tables, for the GPU: `total` (256 i8), `fwd` and `bwd` (256 × 9 u8 each).
+pub fn byte_tables_bytes() -> Vec<u8> {
+    let mut out = Vec::with_capacity(256 * 19);
+    out.extend(TABLES.total.iter().map(|&v| v as u8));
+    for r in &TABLES.fwd {
+        out.extend_from_slice(r);
+    }
+    for r in &TABLES.bwd {
+        out.extend_from_slice(r);
+    }
+    out
+}
+
+/// All of a corpus's trees as one forest, under a root of kind 0, each file's positions after the last's:
+/// one tape a GPU dispatch can ask about.
+pub fn forest(trees: &[Tree]) -> Tree {
+    use crate::tree::Node;
+    let total: usize = trees.iter().map(Tree::len).sum::<usize>() + 1;
+    let mut nodes = Vec::with_capacity(total);
+    let mut size = Vec::with_capacity(total);
+    let mut parent = Vec::with_capacity(total);
+    let src: u64 = trees.iter().map(|t| t.source_len).sum();
+    nodes.push(Node { kind: 0, field: 0, flags: 0, classes: vec![], start: 0, end: src });
+    size.push(total as u32);
+    parent.push(NONE);
+    let mut shift = 0u64;
+    for t in trees {
+        let base = nodes.len() as u32;
+        for (i, n) in t.nodes.iter().enumerate() {
+            nodes.push(Node { start: n.start + shift, end: n.end + shift, ..n.clone() });
+            size.push(t.size[i]);
+            parent.push(if t.parent[i] == NONE { 0 } else { t.parent[i] + base });
+        }
+        shift += t.source_len;
+    }
+    Tree { nodes, size, parent, source_len: src }
+}
+
+/// The select table, for the GPU (256 × 8).
+pub fn select8_bytes() -> Vec<u8> {
+    SELECT8.iter().flatten().copied().collect()
+}

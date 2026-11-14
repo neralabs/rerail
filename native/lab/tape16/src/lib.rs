@@ -21,6 +21,7 @@ pub mod codec;
 pub mod edits;
 pub mod huff;
 pub mod inplace;
+pub mod inplace_gpu;
 pub mod events;
 pub mod layout;
 pub mod lp;
