@@ -2387,9 +2387,10 @@ pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, wanted: &[(us
 }
 
 /// A trial of an order (decision 0207): its work over the sample, the sample's rows, the rows it made, and whether it
-/// passed its budget (its work is then a lower bound).
+/// passed its budget (its work is then a lower bound). `done`: the sample's rows finished before a cut (all of them
+/// where it was not cut).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TrialRun { pub work: u64, pub rows: u64, pub made: u64, pub cut: bool }
+pub struct TrialRun { pub work: u64, pub rows: u64, pub done: u64, pub made: u64, pub cut: bool }
 
 /// Decision 0207: runs probe `probe`'s body, or `spec` in its place, over a sample of at most `sample` rows of its
 /// first atom (the rows its cut left, where it was cut; else every row its first step reads), under `budget` steps.
@@ -2486,7 +2487,7 @@ pub fn trial_over(conn: impl Scoped, name: &str, probe: usize, spec: Option<&Joi
     syms.check()?;
     drop(store);
     CUTS[3].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let run = spent.map(|s| TrialRun { work: s.work, rows: n, made: made_rows, cut: s.left.is_some() });
+    let run = spent.map(|s| TrialRun { work: s.work, rows: n, done: if s.left.is_some() { s.done.min(n) } else { n }, made: made_rows, cut: s.left.is_some() });
     // O169: the first trial to finish over the rows a cut left keeps its rows, to be the wave's (`keep_trial_rows`).
     if from_cut && run.is_some_and(|r| !r.cut) && comp.trial_rows.as_ref().is_none_or(|t| t.0 != probe) {
         comp.trial_rows = Some((probe, kept, out));
@@ -3965,6 +3966,49 @@ impl InRel {
             for r in v.find(ix.cols[ix.lead], key[ix.lead]) { give(RowRef::Source(v, r as usize).read()) }
         } else {
             for &id in ix.get(self, key) { if !is_dead(&self.dead, id) { give(self.at(id as usize).read()) } }
+        }
+    }
+
+    /// Decision 0236: `probe_each`, sampled where the index gives more than `limit` candidates: `limit` of them are
+    /// drawn by position (with replacement, from `draw`), and `f` sees those that match. The matches, estimated as the
+    /// candidates times the share drawn that match; exact, with `f` on every match, where there are `limit` or fewer
+    /// candidates, or the index cannot be read by position (a source's lookups: those are read whole).
+    pub fn probe_sample<'s>(&'s self, cols: &[usize], key: &[i64], limit: usize, draw: &mut dyn FnMut() -> u64, f: &mut dyn FnMut(&dyn Fn(usize) -> i64)) -> f64 {
+        let ix = self.index(cols);
+        let mut buf = [0i64; MAX_KEY];
+        for (j, c) in ix.cols.iter().enumerate() { buf[j] = key[cols.iter().position(|x| x == c).expect("a key column")]; }
+        let (icols, ikey) = (&ix.cols[..], &buf[..ix.cols.len()]);
+        // The candidates by position: their count, and the `i`th's row where it is live.
+        let mut run = |n: usize, row: &dyn Fn(usize) -> Option<RowRef<'s>>| -> f64 {
+            let mut m = 0u64;
+            let mut one = |i: usize| if let Some(r) = row(i) && icols.iter().zip(ikey).all(|(&c, &v)| r.at(c) == v) { m += 1; f(&|c| r.at(c)) };
+            if n <= limit {
+                (0..n).for_each(&mut one);
+                return m as f64;
+            }
+            for _ in 0..limit { one((draw() % n as u64) as usize) }
+            n as f64 * m as f64 / limit as f64
+        };
+        let live = |id: u32| (!is_dead(&self.dead, id)).then(|| self.at(id as usize).read());
+        if icols.is_empty() {
+            run(self.len(), &|i| live(i as u32))
+        } else if let Some(index) = ix.runs(self) {
+            let m = index.cols.iter().take_while(|c| ix.cols.contains(c)).count();
+            let mut pbuf = [0i64; MAX_KEY];
+            let at = |c: usize| ikey[ix.cols.iter().position(|&x| x == c).expect("a key column")];
+            let mut hints = [0u32; runs::HINTS];
+            let found = index.find_at(&self.rows, self.k, permuted(&index.cols[..m], at, &mut pbuf), None, &mut hints);
+            run(found.len(), &|i| live(found.nth(i)))
+        } else if !ix.composite && ix.sorted && let Some(v) = &self.view {
+            let rows = v.src.sorted_rows(v.cols[ix.cols[ix.lead]], ikey[ix.lead]).unwrap_or(&[]);
+            run(rows.len(), &|i| Some(RowRef::Source(v, rows[i] as usize).read()))
+        } else if !ix.composite && !ix.source || self.view.is_none() {
+            let ids = ix.get(self, ikey);
+            run(ids.len(), &|i| live(ids[i]))
+        } else {
+            let mut m = 0u64;
+            self.probe_each(cols, key, &mut |r| { m += 1; f(r) });
+            m as f64
         }
     }
 

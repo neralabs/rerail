@@ -65,6 +65,8 @@ passed at load 70.
 
 ## Open
 
+The first addressed by decision 0236 (2026-11-14): walks size the sample, and choose the orders tried.
+
 - **The trials on the 50 files are all cut**, so the walk is not measured at scale (0232's open item stands). The
   trial cap (`trial_share` of the line's work, split over the two parts) may be small for this repository.
 - **Comparisons and assignments are taken at 1** (0232).

@@ -323,4 +323,34 @@ fn an_orders_work_by_a_walk_is_its_run_through_a_triangle() {
     let walks = 400;
     let est = (0..walks).map(|_| narrow.work(&order, &[vec![1003, 2]])).sum::<f64>() / walks as f64;
     assert!((est / w1 - 1.0).abs() < 0.05, "{est} against {w1}");
+    // Decision 0236: narrower still (2 bindings a step, 32 before checks), the triangle's 90 edges pass the probes'
+    // limit and are drawn by position (`InRel::probe_sample`); the mean is still the work.
+    let thin = Walker::new(rule, 3, 2, &|n| rels.get(n).cloned(), &|_| None);
+    let est = (0..2000).map(|_| thin.work(&order, &[vec![1003, 2]])).sum::<f64>() / 2000.0;
+    assert!((est / w1 - 1.0).abs() < 0.05, "{est} against {w1}");
+}
+
+/// Decision 0236: a probe with more candidates than its limit reads that many, drawn by position, and estimates its
+/// matches from their share; with fewer, it reads them all and is exact.
+#[test]
+fn a_sampled_probe_reads_its_limit_and_estimates_its_matches() {
+    use crate::code_rule_dsl::logic::native::component::InRel;
+    // Key 7: 10,000 rows, every fourth of kind 1. Key 8: 50 rows, all kind 1.
+    let mut rows: Vec<i64> = Vec::new();
+    for i in 0..10_000i64 { rows.extend([7, i, (i % 4 == 0) as i64]) }
+    for i in 0..50i64 { rows.extend([8, i, 1]) }
+    let rel = InRel::from_flat(rows, 10_050, vec![b'i'; 3]);
+    let mut seed = 0x5eed_u64;
+    let mut draw = || { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; seed };
+    let mut seen = 0;
+    assert_eq!(rel.probe_sample(&[0], &[8], 64, &mut draw, &mut |_| seen += 1), 50.0);
+    assert_eq!(seen, 50, "all of a small probe's matches");
+    let (mut sum, mut seen) = (0.0, 0);
+    for _ in 0..200 { sum += rel.probe_sample(&[0], &[7], 64, &mut draw, &mut |_| seen += 1) }
+    assert_eq!(seen, 200 * 64, "the limit's rows, not the key's");
+    assert!((sum / 200.0 / 10_000.0 - 1.0).abs() < 0.01, "{}", sum / 200.0);
+    // Two columns: the index's candidates are the key's rows of kind 1; a quarter of key 7's.
+    let mut sum = 0.0;
+    for _ in 0..200 { sum += rel.probe_sample(&[2, 0], &[1, 7], 64, &mut draw, &mut |row| assert_eq!((row(0), row(2)), (7, 1))) }
+    assert!((sum / 200.0 / 2_500.0 - 1.0).abs() < 0.03, "{}", sum / 200.0);
 }

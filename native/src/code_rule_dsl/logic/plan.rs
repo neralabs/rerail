@@ -8211,16 +8211,6 @@ impl<'a> Run<'a, '_> {
                     let t_model = std::time::Instant::now();
                     let hp = self.heavy_parts(&name, line, r, lead)?.filter(|hp| !hp.hot.is_empty() && !hp.cold.is_empty());
                     let parts_s = t_model.elapsed().as_secs_f64();
-                    let parts = hp.as_ref().map(|hp| {
-                        // (the rows picked, the part's rows)
-                        let stride = |ids: &[u32], k: usize| -> (Vec<u32>, usize) {
-                            let st = ids.len().div_ceil(k.max(1)).max(1);
-                            (ids.iter().step_by(st).copied().collect(), ids.len())
-                        };
-                        let kh = (sample / 4).max(2).min(hp.hot.len());
-                        let kc = sample.saturating_sub(kh).max(1).min(hp.cold.len());
-                        [stride(&hp.hot, kh), stride(&hp.cold, kc)]
-                    });
                     let lead_src = match &r.body[lead] { Literal::Atom(a) if hp.is_some() => super::native::component::derived(self.db, &a.rel), _ => None };
                     let walker = lead_src.as_ref().map(|_| {
                         let db = self.db;
@@ -8240,16 +8230,68 @@ impl<'a> Run<'a, '_> {
                         };
                         [values(&pick(&hp.hot, 1)), values(&pick(&hp.cold, 2))]
                     });
+                    // The running order's first-phase walks, per part: they size each part's sample, and are its x1.
+                    let x1_run: Option<[f64; 2]> = walker.as_ref().zip(phase1.as_ref()).map(|(w, ph)| [w.work(&running, &ph[0]), w.work(&running, &ph[1])]);
+                    let parts = hp.as_ref().map(|hp| {
+                        // (the rows picked, the part's rows)
+                        let stride = |ids: &[u32], k: usize| -> (Vec<u32>, usize) {
+                            let st = ids.len().div_ceil(k.max(1)).max(1);
+                            (ids.iter().step_by(st).copied().collect(), ids.len())
+                        };
+                        let most = joins::trial_rows() as usize;
+                        let (kh, kc) = match x1_run {
+                            // Decision 0236: each part takes the rows that fit half its budget at the running order's
+                            // work per row there, its walk in the units of the line's work so far (the line's work
+                            // per row done, over the walks' mean). A quarter of a sample sized at the line's mean
+                            // work, drawn from rows of heavy keys, passed the budget on every order.
+                            Some(x) if c.done > 0 => {
+                                let (h, n) = (hp.hot.len() as f64, hp.cold.len() as f64);
+                                let mean = (h * x[0] + n * x[1]) / (h + n);
+                                let unit = c.work as f64 / c.done as f64 / mean.max(1e-9);
+                                let fit = |x: f64| (cap as f64 / 2.0 * 0.5 / (x * unit).max(1.0)) as usize;
+                                (fit(x[0]).min(most).max(2).min(hp.hot.len()), fit(x[1]).min(most).max(1).min(hp.cold.len()))
+                            }
+                            _ => {
+                                let kh = (sample / 4).max(2).min(hp.hot.len());
+                                (kh, sample.saturating_sub(kh).max(1).min(hp.cold.len()))
+                            }
+                        };
+                        [stride(&hp.hot, kh), stride(&hp.cold, kc)]
+                    });
                     let walk_s = std::cell::Cell::new(0.0f64);
+                    // Decision 0236: every candidate is walked over the first phase's rows, per part; an order whose
+                    // walked work over the line passes `trial_cutoff` times the least walked is not tried. The walks
+                    // cost probes, bounded by the sample; a trial of a poor order cost its whole cut budget (on the
+                    // data-layer files four such trials did as much work as the line).
+                    let t_walk = super::native::component::thread_cpu();
+                    let walked: Vec<Option<[f64; 2]>> = distinct.iter().map(|o| match (&walker, &phase1, x1_run) {
+                        (_, _, Some(x)) if same_order(o, &running) => Some(x),
+                        (Some(w), Some(ph), _) => Some([w.work(o, &ph[0]), w.work(o, &ph[1])]),
+                        _ => None,
+                    }).collect();
+                    walk_s.set(super::native::component::thread_cpu() - t_walk);
+                    let line_walk: Vec<Option<f64>> = walked.iter().map(|x| x.zip(hp.as_ref()).map(|(x, hp)| hp.hot.len() as f64 * x[0] + hp.cold.len() as f64 * x[1])).collect();
+                    let least_walk = line_walk.iter().flatten().copied().fold(f64::INFINITY, f64::min);
+                    let walked_out = |i: usize| i > 0 && line_walk[i].is_some_and(|w| w > joins::trial_cutoff() * least_walk);
+                    // The running order first (the others' specs lead from its cut), then the rest by walked work.
+                    let mut by_walk: Vec<usize> = (1..distinct.len()).filter(|&i| !walked_out(i)).collect();
+                    by_walk.sort_by(|&x, &y| line_walk[x].unwrap_or(f64::INFINITY).total_cmp(&line_walk[y].unwrap_or(f64::INFINITY)));
+                    // Where the walks leave only the running order, its trial would decide nothing: none runs (on 328
+                    // data-layer files the trial alone was cut after 8.6 s).
+                    let tried: Vec<usize> = if by_walk.is_empty() && line_walk[0].is_some() { Vec::new() } else { std::iter::once(0).chain(by_walk).collect() };
+                    if line_walk.iter().any(|w| w.is_some()) {
+                        joins::log(|| format!("walks {}: each order's walked work over the line: {}", r.head.rel, distinct.iter().zip(&line_walk).enumerate().map(|(i, (o, w))| format!("{}{} {:.0}{}", if same_order(o, &running) { "*" } else { "" }, o.iter().map(|s| s.at.to_string()).collect::<Vec<_>>().join("."), w.unwrap_or(f64::NAN), if walked_out(i) { " (not tried)" } else { "" })).collect::<Vec<_>>().join(", ")));
+                        if tried.is_empty() { joins::log(|| format!("walks {}: only the running order is within reach; no trial runs", r.head.rel)); }
+                    }
                     // An order's estimated work over part `p`, from its trial `run` over the rows `pick` (in order: a
-                    // cut trial ran their first `run.rows`): `None` without a walker.
+                    // cut trial ran their first `run.done`): `None` without a walker.
                     let two_phase = |o: &[Step], p: usize, run: &super::native::component::TrialRun, pick: &[u32], size: usize| -> Option<(f64, f64, f64)> {
                         let (w, ph) = (walker.as_ref()?, phase1.as_ref()?);
-                        let t = std::time::Instant::now();
-                        let ran = &pick[..(run.rows as usize).clamp(1, pick.len())];
-                        let x1 = w.work(o, &ph[p]);
+                        let t = super::native::component::thread_cpu();
+                        let ran = &pick[..(run.done as usize).clamp(1, pick.len())];
+                        let x1 = match distinct.iter().zip(&walked).find(|(d, _)| same_order(d, o)) { Some((_, Some(x))) => x[p], _ => w.work(o, &ph[p]) };
                         let x2 = w.work_at(o, &values(ran), 4 * joins::walk_width());
-                        walk_s.set(walk_s.get() + t.elapsed().as_secs_f64());
+                        walk_s.set(walk_s.get() + super::native::component::thread_cpu() - t);
                         let y = run.work as f64 / run.rows.max(1) as f64;
                         Some((size as f64 * y * if x2 > 0.0 { x1 / x2 } else { 1.0 }, x1, x2))
                     };
@@ -8258,7 +8300,8 @@ impl<'a> Run<'a, '_> {
                     let t_trials = std::time::Instant::now();
                     let mut measured: Vec<(Vec<Step>, super::native::component::TrialRun)> = Vec::new();
                     let mut least: [Option<u64>; 2] = [None; 2];
-                    for (i, o) in distinct.iter().enumerate() {
+                    for &i in &tried {
+                        let o = &distinct[i];
                         let spec = if i == 0 { None } else {
                             let at = first.map(|ai| o.iter().position(|s| s.at == ai));
                             if at == Some(None) { continue; }
@@ -8298,14 +8341,14 @@ impl<'a> Run<'a, '_> {
                                 }).sum();
                                 let per_row = total / all;
                                 let rows = got[0].rows + got[1].rows;
-                                super::native::component::TrialRun { work: (per_row * rows as f64).round() as u64, rows, made: got[0].made + got[1].made, cut: got[0].cut || got[1].cut }
+                                super::native::component::TrialRun { work: (per_row * rows as f64).round() as u64, rows, done: got[0].done + got[1].done, made: got[0].made + got[1].made, cut: got[0].cut || got[1].cut }
                             }
                         };
                         measured.push((o.clone(), run));
                     }
-                    if let Some(ps) = &parts {
+                    if let Some(ps) = parts.as_ref().filter(|_| !tried.is_empty()) {
                         let rs = ratios.borrow().iter().map(|(p, x1, x2)| format!("{} {x1:.0} / {x2:.0}", if *p == 0 { "heavy" } else { "rest" })).collect::<Vec<_>>().join(", ");
-                        joins::log(|| format!("trials {}: stratified, {} of {} rows of heavy keys and {} of {} of the rest; the running order's walks per row, a sample over the trial's rows: {} ({:.1} ms to split, {:.1} ms to walk; {} probes)", r.head.rel, ps[0].0.len(), ps[0].1, ps[1].0.len(), ps[1].1, if rs.is_empty() { "none (cut)".to_owned() } else { rs }, parts_s * 1e3, walk_s.get() * 1e3, walker.as_ref().map_or(0, |w| w.probes())));
+                        joins::log(|| format!("trials {}: stratified, {} of {} rows of heavy keys and {} of {} of the rest; the running order's walks per row, a sample over the trial's rows: {} ({:.1} ms to split, {:.1} ms CPU to walk; {} probes)", r.head.rel, ps[0].0.len(), ps[0].1, ps[1].0.len(), ps[1].1, if rs.is_empty() { "none (cut)".to_owned() } else { rs }, parts_s * 1e3, walk_s.get() * 1e3, walker.as_ref().map_or(0, |w| w.probes())));
                         if let Some(w) = &walker { joins::log(|| format!("walks {}: {}", r.head.rel, w.spent())); }
                     }
                     let rule = order_rules[line];
@@ -8334,7 +8377,7 @@ impl<'a> Run<'a, '_> {
                     // reads the rest.
                     let kept = super::native::component::keep_trial_rows(self.db, &name)?;
                     let trials_ms = t_trials.elapsed().as_secs_f64() * 1e3;
-                    joins::log(|| format!("trials {}{} over {} rows ({} rows of work in all, {trials_ms:.1} ms, {kept} rows kept): {}", if whole { "whole plan " } else { "" }, r.head.rel, measured.first().map_or(0, |m| m.1.rows), measured.iter().map(|m| m.1.work).sum::<u64>(), measured.iter().zip(&prices).enumerate().map(|(i, ((o, t), p))| { let sp = stat_prices.get(i).copied().unwrap_or(f64::NAN); format!("{}{} {}{} (priced {p:.0}, from statistics {sp:.0})", if same_order(o, &running) { "*" } else { "" }, o.iter().map(|s| s.at.to_string()).collect::<Vec<_>>().join("."), t.work, if t.cut { "+" } else { "" }) }).collect::<Vec<_>>().join(", ")));
+                    if !tried.is_empty() { joins::log(|| format!("trials {}{} over {} rows ({} rows of work in all, {trials_ms:.1} ms, {kept} rows kept): {}", if whole { "whole plan " } else { "" }, r.head.rel, measured.first().map_or(0, |m| m.1.rows), measured.iter().map(|m| m.1.work).sum::<u64>(), measured.iter().zip(&prices).enumerate().map(|(i, ((o, t), p))| { let sp = stat_prices.get(i).copied().unwrap_or(f64::NAN); format!("{}{} {}{} (priced {p:.0}, from statistics {sp:.0})", if same_order(o, &running) { "*" } else { "" }, o.iter().map(|s| s.at.to_string()).collect::<Vec<_>>().join("."), t.work, if t.cut { "+" } else { "" }) }).collect::<Vec<_>>().join(", "))); }
                     let mine = measured.iter().find(|(o, _)| same_order(o, &running)).map(|(_, t)| *t);
                     let best = measured.iter().filter(|(_, t)| !t.cut).min_by_key(|(_, t)| t.work);
                     if let (Some(mine), Some((best, won))) = (mine, best)
@@ -11753,7 +11796,7 @@ struct HeavyParts {
 
 /// Decision 0232: an order's work per lead row, sampled. The walk starts from lead rows (their bindings), and carries
 /// a sample of at most `width` bindings through the order's steps after the lead:
-/// - an atom binding new variables is probed with the bound ones (its relation's own index, `InRel::probe_each`); the
+/// - an atom binding new variables is probed with the bound ones (its relation's own index, `InRel::probe_sample`, drawn by position past the reservoir); the
 ///   bindings multiply by the sample's mean matches, and the matches are sampled again;
 /// - an atom whose variables are all bound (a filter, or the atom closing a cycle or a triangle) is tested on each
 ///   binding; the bindings multiply by the share that pass;
@@ -11773,8 +11816,8 @@ pub(super) struct Walker<'a> {
     probes: std::cell::Cell<u64>,
     /// The sampler's state: each thinning draws from it, so walks are unbiased and repeatable.
     seed: std::cell::Cell<u64>,
-    /// Per body literal: its probes and their seconds (the log's measure).
-    spent: std::cell::RefCell<HashMap<usize, (u64, f64)>>,
+    /// Per body literal: its probes, the candidate rows they read, and their CPU seconds (the log's measure).
+    spent: std::cell::RefCell<HashMap<usize, (u64, u64, f64)>>,
 }
 
 impl<'a> Walker<'a> {
@@ -11803,9 +11846,9 @@ impl<'a> Walker<'a> {
 
     /// Per body literal probed: its relation, probes and milliseconds.
     pub(super) fn spent(&self) -> String {
-        let mut v: Vec<_> = self.spent.borrow().iter().map(|(&d, &(n, t))| (d, n, t)).collect();
+        let mut v: Vec<_> = self.spent.borrow().iter().map(|(&d, &(n, r, t))| (d, n, r, t)).collect();
         v.sort_by_key(|x| x.0);
-        v.iter().map(|(d, n, t)| format!("{d} {}: {n} in {:.1} ms", match &self.rule.body[*d] { Literal::Atom(a) => a.rel.to_string(), _ => "?".into() }, t * 1e3)).collect::<Vec<_>>().join(", ")
+        v.iter().map(|(d, n, r, t)| format!("{d} {}: {n} probes reading {r} rows in {:.1} ms CPU", match &self.rule.body[*d] { Literal::Atom(a) => a.rel.to_string(), _ => "?".into() }, t * 1e3)).collect::<Vec<_>>().join(", ")
     }
 
     /// Order `o`'s work per lead row, from the lead rows `starts` (each its values by the lead's columns).
@@ -11868,23 +11911,29 @@ impl<'a> Walker<'a> {
                 if checked { 16 * width } else { width }
             } else { width };
             let mut ext: Vec<Vec<i64>> = Vec::new();
-            let (mut matched, mut kept) = (0u64, Vec::new());
-            let t_step = std::time::Instant::now();
+            let (mut matched, mut seen, mut kept) = (0f64, 0u64, Vec::new());
+            let t_step = super::native::component::thread_cpu();
             let n_step = sample.len() as u64;
+            let mut r_step = 0u64;
             for b in &sample {
                 let key: Vec<i64> = kfrom.iter().map(|k| match *k { Ok(v) => v, Err(i) => b[i] }).collect();
-                let mut found = false;
+                let (mut found, mut passed, mut read) = (false, 0u64, 0u64);
                 self.probes.set(self.probes.get() + 1);
-                rel.probe_each(&kcols, &key, &mut |row| {
+                // Decision 0236: a probe with more candidates than the reservoir reads that many of them, drawn by
+                // position, and its matches are estimated from their share (an order probing `kind` by its
+                // constant alone read every call).
+                let est = rel.probe_sample(&kcols, &key, reservoir, &mut || self.draw(), &mut |row| {
+                    read += 1;
                     let ok = repeat.iter().all(|&(c, i)| free.iter().find(|f| f.1 == i).is_some_and(|f| row(f.0) == row(c)));
                     if !ok { return }
                     found = true;
-                    matched += 1;
+                    passed += 1;
                     if !a.neg && !free.is_empty() {
                         // A reservoir of `width` of the matches, uniform without replacement: the rest are counted,
                         // not kept.
+                        seen += 1;
                         let at = if ext.len() < reservoir { Some(ext.len()) } else {
-                            let j = (self.draw() % matched) as usize;
+                            let j = (self.draw() % seen) as usize;
                             (j < reservoir).then_some(j)
                         };
                         if let Some(at) = at {
@@ -11894,15 +11943,18 @@ impl<'a> Walker<'a> {
                         }
                     }
                 });
+                // The matches that pass the repeats: the probe's estimate times their share of the rows read.
+                r_step += read;
+                matched += if read > 0 { est * passed as f64 / read as f64 } else { 0.0 };
                 if a.neg != found && (a.neg || free.is_empty()) { kept.push(b.clone()); }
             }
-            { let mut sp = self.spent.borrow_mut(); let e = sp.entry(s.at).or_default(); e.0 += n_step; e.1 += t_step.elapsed().as_secs_f64(); }
+            { let mut sp = self.spent.borrow_mut(); let e = sp.entry(s.at).or_default(); e.0 += n_step; e.1 += r_step; e.2 += super::native::component::thread_cpu() - t_step; }
             let len = sample.len() as f64;
             if a.neg || free.is_empty() {
                 mult *= kept.len() as f64 / len;
                 sample = kept;
             } else {
-                mult *= matched as f64 / len;
+                mult *= matched / len;
                 for &(_, i) in &free { bound[i] = true; }
                 sample = ext;
             }
