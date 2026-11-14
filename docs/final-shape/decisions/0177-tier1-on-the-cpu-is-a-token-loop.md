@@ -484,3 +484,36 @@ A token loads its first eight bytes and its entry. The rule's jump, the kind, wh
 look a word up and a pair's row are fields of the entry; a pair's next byte is the second
 of the eight. A pair loads its set's word, one load more.
 
+## Where the loop's instructions go (profiled 2026-11-14)
+
+Tier 1 ahead of time against the lean lexer, over every corpus file (2.25M tokens): 608M
+instructions, about 268 a token, against the lean lexer's 86. Measured by leaving one part of
+the loop out of a scratch compile at a time (its output wrong, its cost the difference), and
+by xctrace's CPU Profiler on the main function's machine code (`aot_profile_loop`).
+
+```text
+part left out          instructions   a token
+none                   608M           268
+the marks              475M           -59
+the token tests        504M           -46
+the word lookup        539M           -30
+all three, and stores  218M            96   (the core: refills, starts, end rules)
+```
+
+The core is about the lean lexer's whole. The gap is three things the lean lexer does not do
+a token, and the registers:
+
+- **The marks.** The loop sets the line marks at every grammar token: the mark words in the
+  refill's registers, the gap's bits, `unless after`. The lean lexer sets none: its parser
+  asks whether a token is on a line only in the statements that ask it, by the bytes since
+  it last asked (`on_line`).
+- **The token tests.** A count test, or a run test past eight bytes, calls its mask's window
+  function for each word of the token: a full 64-byte classification a test a word. A rule's
+  tests each classify again. The lean lexer tests a number's digits as it reads them.
+- **The word lookup.** A slot's key and its meta are two tables, two loads and a branch for
+  a long word. The lean lexer's slot is one 16-byte entry (key, length, code).
+- **The registers.** The main function's frame is 592 bytes; 192 of its 1,660 instructions
+  touch the stack, and 28% of its samples land on them (the lean lexer: 18.6%). The loop's
+  state, its column pointers and table bases are live across the calls in its body, more
+  than the callee-saved registers hold. The end rules' `match` is a chain of compares.
+
