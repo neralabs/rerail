@@ -8709,7 +8709,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             }
             if c.program.is_some() {
                 // The program run is the rewritten one: its analysis is that program's, made when asked.
-                model.analysis = std::sync::OnceLock::new();
+                crate::threads::drop_behind(std::mem::take(&mut model.analysis));
             }
             chosen = c.program;
             chosen.as_deref().unwrap_or(prog)
@@ -8735,7 +8735,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                         }
                     }
                     let _a = super::profile::span(|| "analysis of the inlined program".into());
-                    model.analysis = std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(&p)).into();
+                    crate::threads::drop_behind(std::mem::replace(&mut model.analysis, std::sync::Arc::new(super::analysis::ProgramAnalysis::analyze(&p)).into()));
                     inlined_names = done;
                     Some(p)
                 }
@@ -8754,7 +8754,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                         format!("{} relations computed only for the keys their readers reach: {}", demanded.len(), demanded.join(", "))
                     });
                     // The program run is the split one: its analysis is that program's, made when asked.
-                    model.analysis = std::sync::OnceLock::new();
+                    crate::threads::drop_behind(std::mem::take(&mut model.analysis));
                     demanded_names = demanded;
                     Some(p)
                 }
@@ -10256,6 +10256,8 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     outcome.handed = handed;
     outcome.inlined = inlined_rels;
     outcome.again += again_chosen.iter().filter(|c| **c == Some(true)).count();
+    // The program's analysis is freed on the pool: on a pack's program, its free was 3% of the main thread.
+    crate::threads::drop_behind(std::mem::take(&mut run.model.analysis));
     Ok(outcome)
 }
 

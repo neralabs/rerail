@@ -11,7 +11,9 @@ use super::{Error, Result};
 use crate::code_rule_dsl::facts::core::kind_atom;
 use crate::code_rule_dsl::facts::vtab::syntax::field_atom;
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog, tape_tag};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+// FxHash: lowering's variable maps are hot (std's SipHash showed in a cold batch's samples).
+use rustc_hash::FxHashMap as HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[derive(Hash)]
@@ -183,7 +185,7 @@ impl Vars<'_> {
 /// The domains of a rule's variables, given the columns'.
 fn rule_vars(prog: &Program, cols: &BTreeMap<String, Vec<Option<Domain>>>, rule: usize) -> Result<HashMap<String, Domain>> {
     let r = &prog.rules[rule];
-    let mut vars = Vars { head: &r.head, map: HashMap::new() };
+    let mut vars = Vars { head: &r.head, map: HashMap::default() };
     // Each atom's columns, looked up once (by name, in a map of every relation), not once per argument per pass.
     let atoms: Vec<(&Atom, Option<&Vec<Option<Domain>>>)> =
         std::iter::once(&r.head).chain(r.body.iter().flat_map(atoms)).map(|a| (a, cols.get(a.rel.as_str()))).collect();
@@ -253,7 +255,7 @@ pub fn domains(prog: &Program) -> Result<Domains> {
     }
     // To a fixpoint, by a worklist: a rule is read again only when a relation it names gained a column's domain. Every
     // rule in every round was quadratic in a combined pack (O111: 539 rules, a round per step of a chain).
-    let mut readers: HashMap<&str, Vec<usize>> = HashMap::new();
+    let mut readers: HashMap<&str, Vec<usize>> = HashMap::default();
     for (i, r) in prog.rules.iter().enumerate() {
         for a in std::iter::once(&r.head).chain(r.body.iter().flat_map(atoms)) {
             let list = readers.entry(a.rel.as_str()).or_default();

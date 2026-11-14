@@ -293,18 +293,19 @@ fn split_constants(
 }
 
 /// A program's rules by head, and by the relations their bodies read: what a fixpoint over relations re-checks when
-/// one changes, instead of every rule each round.
+/// one changes, instead of every rule each round. FxHash: built for every split, std's SipHash was 4% of a cold
+/// batch's main thread.
 pub(crate) struct RuleIndex<'p> {
     rules: &'p [crate::code_rule_dsl::logic::front::Rule],
-    by_head: std::collections::HashMap<&'p str, Vec<usize>>,
-    by_read: std::collections::HashMap<&'p str, Vec<usize>>,
+    by_head: rustc_hash::FxHashMap<&'p str, Vec<usize>>,
+    by_read: rustc_hash::FxHashMap<&'p str, Vec<usize>>,
 }
 
 impl<'p> RuleIndex<'p> {
     pub(crate) fn of(prog: &'p crate::code_rule_dsl::logic::front::Program) -> Self {
         use crate::code_rule_dsl::logic::front::Literal;
-        let mut by_head: std::collections::HashMap<&str, Vec<usize>> = Default::default();
-        let mut by_read: std::collections::HashMap<&str, Vec<usize>> = Default::default();
+        let mut by_head: rustc_hash::FxHashMap<&str, Vec<usize>> = Default::default();
+        let mut by_read: rustc_hash::FxHashMap<&str, Vec<usize>> = Default::default();
         for (i, r) in prog.rules.iter().enumerate() {
             by_head.entry(r.head.rel.as_str()).or_default().push(i);
             for l in &r.body {
@@ -337,7 +338,7 @@ impl<'p> RuleIndex<'p> {
     /// The heads of the rules reading any of `rels`, each once, in order. A head comes once per rule that reads
     /// one: gathered into a sorted set, a fixpoint's round sorted tens of thousands of names to keep a few thousand.
     pub(crate) fn heads_reading_any<'r>(&self, rels: impl Iterator<Item = &'r str>, keep: impl Fn(&str) -> bool) -> Vec<&'p str> {
-        let mut seen: std::collections::HashSet<&'p str> = std::collections::HashSet::new();
+        let mut seen: rustc_hash::FxHashSet<&'p str> = Default::default();
         for rel in rels {
             seen.extend(self.heads_reading(rel));
         }

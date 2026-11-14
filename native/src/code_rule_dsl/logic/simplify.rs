@@ -42,7 +42,10 @@
 //!   as they are.
 
 use super::front::{AggOp, Atom, Literal, Name, Program, Rule, Term, Value};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
+// FxHash: these maps are keyed by names and rule shapes in the whole-program passes, where std's SipHash was 5% of
+// a cold batch's main thread. Their order was already random (std's hasher is seeded per process).
+use rustc_hash::FxHashMap as HashMap;
 
 /// What was simplified.
 #[derive(Debug, Default, PartialEq)]
@@ -292,7 +295,7 @@ fn existential(rule: &mut Rule, name: &str, decls: &BTreeMap<Name, crate::code_r
             part[i] = r;
             r
         }
-        let mut first: HashMap<&str, usize> = HashMap::new();
+        let mut first: HashMap<&str, usize> = HashMap::default();
         for (i, vs) in vars.iter().enumerate() {
             for v in vs.iter().filter(|v| *v != d) {
                 match first.get(v.as_str()) {
@@ -461,7 +464,7 @@ fn ground_rules(prog: &mut Program) -> usize {
             continue;
         }
         // The body's bindings, or None when it is not equations of constants alone; Some(None) when two disagree.
-        let mut binds: HashMap<&str, Value> = HashMap::new();
+        let mut binds: HashMap<&str, Value> = HashMap::default();
         let mut consistent = true;
         let all_equations = rule.body.iter().all(|l| {
             let (v, c) = match l {
@@ -1205,7 +1208,7 @@ fn occurrences(rule: &Rule) -> HashMap<String, usize> {
             _ => {}
         }
     }
-    let mut n = HashMap::new();
+    let mut n = HashMap::default();
     rule.head.args.iter().for_each(|t| term(t, &mut n));
     for l in &rule.body {
         match l {
@@ -1324,7 +1327,7 @@ fn merge_keyed(rule: &mut Rule) -> usize {
 /// Drops the rules of derived relations that no kept relation (`kept`: outputs, demanded relations, gates, …)
 /// reads, directly or through others; returns those relations.
 fn drop_unread(prog: &mut Program) -> Vec<String> {
-    let mut reads: HashMap<&str, BTreeSet<&str>> = HashMap::new();
+    let mut reads: HashMap<&str, BTreeSet<&str>> = HashMap::default();
     for rule in &prog.rules {
         reads.entry(rule.head.rel.as_str()).or_default().extend(rule.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str()));
     }
@@ -1380,7 +1383,7 @@ fn project_unread_columns(prog: &mut Program) -> Vec<(String, Vec<usize>)> {
     let mut lost: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     loop {
         // Per relation: the columns a reader reads; `None` once something reads it whole.
-        let mut read: HashMap<String, Option<BTreeSet<usize>>> = HashMap::new();
+        let mut read: HashMap<String, Option<BTreeSet<usize>>> = HashMap::default();
         for rule in &prog.rules {
             let exists = existence_counts(rule);
             for l in &rule.body {
@@ -1579,7 +1582,7 @@ fn drop_kind_tests(rule: &mut Rule, kindsets: &BTreeMap<String, Vec<String>>, de
     let Some(cols) = decls.get("node") else { return 0 };
     let (Some(n), Some(k)) = (cols.iter().position(|(c, _)| c == "n"), cols.iter().position(|(c, _)| c == "kind")) else { return 0 };
     // The members of a single-kind set, by variable: `nearest`'s and `inside`'s ancestor, `has`'s descendant.
-    let mut member: HashMap<String, &str> = HashMap::new();
+    let mut member: HashMap<String, &str> = HashMap::default();
     for l in &rule.body {
         let (a, set) = match l {
             Literal::Nearest { a, kindset, .. } => (a.clone(), kindset.as_str()),
@@ -1617,7 +1620,7 @@ fn drop_kind_tests(rule: &mut Rule, kindsets: &BTreeMap<String, Vec<String>>, de
 
 /// A rule with every relation named by `label` and its variables numbered in order of first appearance.
 fn canonical(rule: &Rule, label: &dyn Fn(&str) -> String) -> String {
-    let mut names: HashMap<String, String> = HashMap::new();
+    let mut names: HashMap<String, String> = HashMap::default();
     let mut name = |v: &str| -> String {
         let k = names.len();
         names.entry(v.to_owned()).or_insert_with(|| format!("v{k}")).clone()
@@ -1688,7 +1691,7 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
     // Each relation's signatures are its own, made on the pool's threads; the numbering that follows them is in
     // `cands`' order, as one thread gives it, so the classes are the same whatever the threads.
     use rayon::prelude::*;
-    let mut class: HashMap<&str, usize> = HashMap::new();
+    let mut class: HashMap<&str, usize> = HashMap::default();
     {
         // A relation's rules are a set: a second copy of a rule derives nothing, so it is counted once (and
         // below, a relation's signature holds each rule once), and a repeated rule does not keep a relation
@@ -1710,7 +1713,7 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
                 (types(r), rules, facts(r))
             })
             .collect();
-        let mut ids: HashMap<(Vec<String>, usize, Vec<String>), usize> = HashMap::new();
+        let mut ids: HashMap<(Vec<String>, usize, Vec<String>), usize> = HashMap::default();
         for (&r, first) in cands.iter().zip(firsts) {
             let n = ids.len();
             class.insert(r, *ids.entry(first).or_insert(n));
@@ -1768,7 +1771,7 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
                 .collect()
         })
         .collect();
-    let mut templates: HashMap<String, usize> = HashMap::new();
+    let mut templates: HashMap<String, usize> = HashMap::default();
     let shapes: BTreeMap<&str, Vec<(usize, Vec<String>)>> = cands
         .iter()
         .zip(texts)
@@ -1802,8 +1805,8 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
                 sig
             })
             .collect();
-        let mut ids: HashMap<(usize, Vec<(usize, Vec<Label>)>), usize> = HashMap::new();
-        let mut next: HashMap<&str, usize> = HashMap::new();
+        let mut ids: HashMap<(usize, Vec<(usize, Vec<Label>)>), usize> = HashMap::default();
+        let mut next: HashMap<&str, usize> = HashMap::default();
         for (&r, sig) in cands.iter().zip(sigs) {
             let n = ids.len();
             next.insert(r, *ids.entry((class[r], sig)).or_insert(n));
@@ -1864,7 +1867,7 @@ fn climbs_as_axes(prog: &mut Program) -> Vec<String> {
     let mut done = Vec::new();
     // Each relation's rules, by place: made again only when a component is rewritten.
     let index = |prog: &Program| -> HashMap<String, Vec<usize>> {
-        let mut by: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut by: HashMap<String, Vec<usize>> = HashMap::default();
         for (i, r) in prog.rules.iter().enumerate() {
             by.entry(r.head.rel.to_string()).or_default().push(i);
         }
@@ -2168,8 +2171,8 @@ pub mod tests {
             }
             let cands: Vec<&str> = rules_of.keys().copied().filter(|r| !fixed(prog, r)).collect();
             let types = |rel: &str| -> Vec<String> { prog.decls.get(rel).map(|c| c.iter().map(|(_, t)| t.clone()).map(String::from).collect()).unwrap_or_default() };
-            let mut class: HashMap<&str, usize> = HashMap::new();
-            let mut ids: HashMap<(Vec<String>, usize), usize> = HashMap::new();
+            let mut class: HashMap<&str, usize> = HashMap::default();
+            let mut ids: HashMap<(Vec<String>, usize), usize> = HashMap::default();
             for &r in &cands {
                 let n = ids.len();
                 class.insert(r, *ids.entry((types(r), rules_of[r].len())).or_insert(n));
@@ -2177,8 +2180,8 @@ pub mod tests {
             let mut classes = class.values().collect::<BTreeSet<_>>().len();
             loop {
                 let label = |rel: &str| class.get(rel).map_or_else(|| rel.to_owned(), |c| format!("#{c}"));
-                let mut ids: HashMap<(usize, Vec<String>), usize> = HashMap::new();
-                let mut next: HashMap<&str, usize> = HashMap::new();
+                let mut ids: HashMap<(usize, Vec<String>), usize> = HashMap::default();
+                let mut next: HashMap<&str, usize> = HashMap::default();
                 for &r in &cands {
                     let mut sig: Vec<String> = rules_of[r].iter().map(|rule| canonical(rule, &label)).collect();
                     sig.sort();

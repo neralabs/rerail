@@ -16,7 +16,8 @@
 
 use super::{RuleIndex, Split, split_in};
 use crate::code_rule_dsl::logic::front::Program;
-use std::collections::{BTreeSet, HashMap};
+use rustc_hash::FxHashMap as HashMap;
+use std::collections::BTreeSet;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
@@ -64,8 +65,11 @@ fn kept_splits() -> Option<Splits> {
     SPLITS.with(|s| s.borrow().clone())
 }
 
-fn hasher() -> std::collections::hash_map::DefaultHasher {
-    std::collections::hash_map::DefaultHasher::new()
+/// The keys' hasher: foldhash's quality hasher with a fixed seed, so a key is the same on every thread of the run.
+/// std's SipHash, over every rule of a pack's program on every split, was 2% of a cold batch's main thread.
+fn hasher() -> impl Hasher {
+    use std::hash::BuildHasher;
+    foldhash::quality::FixedState::with_seed(0x5eed_5011_7000_0001).build_hasher()
 }
 
 fn keys(prog: &Program, index: &RuleIndex<'_>, derived: &BTreeSet<&str>) -> Keys {
