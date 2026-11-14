@@ -175,3 +175,4 @@ Numbers are tier 2's for `.rr`. Each step's commit is listed.
 | 0177 stage 1: end rules (`run`, `pair`), their meaning and the interpreter's lasts built; the CPU's rule in the record pass, the lasts' extract gone (kept: a step of the shape; the ends move into the block loop with the token loop) | | | |
 | 0177 stage 2a: the starts by the loop (`skip`'s words after the token before), no starts extract on the CPU; 329 operations from 334 | | | |
 | 0177 stage 2c: skip, runs and pair read no `code`: skip 1 op, runs 1 and 9, pair 31 (from 111); body 331, held by the fallback and the marks (stage 3) | | | |
+| 0177: the token loop in the block loop: a part after each block over the final blocks, waiting at a token past them; one pass, no per-file record pass for `.rr` | | | |

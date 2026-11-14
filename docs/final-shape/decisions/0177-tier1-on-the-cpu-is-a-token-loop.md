@@ -1,8 +1,8 @@
 # 0177: Tier 1 on the CPU is a token loop, as the lean lexer is
 
 Status: decided (2026-11-13); stage 1 landed (the rules, their meaning, the CPU's ends from
-them; see Stage 1); stage 2a and 2c landed (the starts by the loop; the rules read no `code`); 2b is
-stage 3's (see Stage 2c); stage 3 next.
+them; see Stage 1); the token loop runs in the block loop; the starts, ends and the
+loop's masks are the lean lexer's (see The shape); the marks and checks at the token next.
 Replaces 0139's way on the CPU (its constructs stay; its "take operations out of the one
 pass" does not). Metal keeps the bit-parallel form.
 The design: docs/parser-generators/36; the log: docs/parser-generators/35.
@@ -41,41 +41,26 @@ The form itself is the cost: **today's tier 1 on the CPU is a dead end.**
 Each is a construct of the block program with two lowerings: this token loop on the
 CPU, today's masks on Metal (0139's rule: one program, not a second module).
 
-## The stages
+## The shape
 
-Each stage's gate is its shape: what the CPU's code no longer has, and how near it is to
-the lean lexer's. The cost (tier 1 over the corpus, AOT and JIT, from 465.9M and 501.5M) is
-reported at each stage and judged when the shape is whole, not before.
+The lean lexer has no stages: one loop over a file's blocks, and in it, a block at a time,
+its few masks, then the loop over its tokens, each written where it is found, a rare one read
+by its own reader, its checks made at it. The CPU's tier 1 is generated to that one shape:
 
-1. **Tokens by their runs.** A token kind declared by its first bytes and its run
-   (`token identifier = start alpha run ident`) has its end from the run, at its start.
-   The run-ended tokens need no `last` mask and no `lasts` extract; the record pass
-   computes their ends. Punctuation's end is its start, or the byte after at a pair.
-   Gate: no `lasts` extract and no run-ended `last` mask on the CPU.
-2. **Rare tokens read at their start.** The walk gives each string, comment and backtick
-   literal its record, and the starts after it in its region are not starts. The other
-   masks stop reading `code` (the bytes outside regions) where a token loop needs it
-   not. Gate: the CPU body below 120 operations. Its steps, as the lean lexer's loop
-   (`cursor`, its starts cleared before it):
-   - **2a. The starts by the loop.** A token starts at the first byte after the last
-     token's end that `skip` does not hold; its end is its rule's. A region's token
-     (a string, a comment, a backtick literal) ends at its region's last byte, so the
-     loop never starts a token inside one. The interpreter first, with a test that
-     these starts are the starts mask's; then the CPU's record pass. Guard: no starts
-     extract on the CPU.
-   - **2b. The start masks go.** No CPU output reads a token's start mask; what
-     still needs one (a mark, a check) reads its own. Guard: the CPU computes no
-     token start mask.
-   - **2c. `code` read where it must be.** The runs and pairs stop masking by `code`:
-     the loop is never inside a region. A test shows the records unchanged.
-3. **Checks at the token.** A byte no token takes is a kind of its own (`BAD`) in the
-   first-byte table. A number's digits and `.`, a `\u` escape, JSON's rules, the
-   line marks (a newline between two tokens) are tested at the tokens they concern,
-   in tier 1's loop or in tier 2 (`CHECK`, 0133). Gate: the CPU body at most 40
-   operations, the lean lexer's few masks, with the token loop over the block's starts.
+| Part | The lean lexer | The CPU's tier 1 | Built |
+|---|---|---|---|
+| A block's masks | space, word, rare, pair | `skip`, the runs, the pair (1, 1 and 9, 31 operations) | yes (2c) |
+| The token loop | in the block loop | a part after each block, over the blocks whose outputs are final (`part_fn`) | yes |
+| A token's start | the first non-space after the one before | `skip`'s words after the token before (`records::walk`) | yes (2a) |
+| A token's end | its run, its pair | its first byte's rule (`run`, `pair`, `last`) | yes (1) |
+| A rare token | its reader, which moves the cursor | its region's last byte, by the walk's masks | masks for now |
+| The checks | at the token | the fallback and the marks, masks at every byte | no |
+| What tier 2 reads | the tokens | the records; the marks as bits at a token's start | marks as masks |
 
-After stage 3 the CPU lowering of today's masks is gone from the CPU path. The target
-then, measured: tier 1 AOT near the lean lexer (192.9M; at most 290M, 1.5 times it).
+What is left is the last three rows: the marks and checks made at the token (a byte no token
+takes a `BAD` kind; a mark a token's bit, from the bytes between it and the token before), and
+the rare tokens by their readers. With them the CPU makes no mask but the loop's, and the body
+is the lean lexer's.
 
 ## Governance
 

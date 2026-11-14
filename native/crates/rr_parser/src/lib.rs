@@ -1455,6 +1455,38 @@ pub mod tests {
         assert_eq!(c.native.records_made().len(), c.native.extracts.len(), "every extract the record pass's");
     }
 
+    /// The CPU's tier 1 (the JIT) makes the interpreter's records: each file's starts, lasts,
+    /// codes and totals, over the samples, a corpus sample and files cut at the blocks' edges.
+    #[test]
+    fn the_cpus_records_are_the_interpreters() {
+        let c = crate::compiled().expect("compiles");
+        let block = &c.program.block_programs[0];
+        let r = block.records.as_ref().expect("records");
+        let files = corpus();
+        let mut inputs: Vec<Vec<u8>> = crate::SAMPLES.iter().map(|s| s.as_bytes().to_vec()).collect();
+        inputs.extend(files.iter().step_by(5).map(|f| f.as_bytes().to_vec()));
+        for n in [1usize, 63, 64, 65, 127, 128, 129, 200] {
+            inputs.push(format!("r(x) :- a(x), {}.\n", "b".repeat(n)).into_bytes());
+            inputs.push(format!("{}\"open", " ".repeat(n)).into_bytes());
+        }
+        let refs: Vec<&[u8]> = inputs.iter().map(|f| f.as_slice()).collect();
+        let got = c.parser.tier1.run_files(&refs);
+        for (k, (f, g)) in refs.iter().zip(&got).enumerate() {
+            let want = block.run(f);
+            for (what, e) in [("starts", usize::from(r.starts)), ("lasts", usize::from(r.lasts))] {
+                let (x, y) = (&g.positions[e], &want.positions[e]);
+                if let Some(i) = (0..x.len().max(y.len())).find(|&i| x.get(i) != y.get(i)) {
+                    let at = y.get(i).or(x.get(i)).copied().unwrap_or(0) as usize;
+                    let text = String::from_utf8_lossy(&f[at.saturating_sub(8).min(f.len())..(at + 12).min(f.len())]).into_owned();
+                    let around = |v: &Vec<u32>, w: &Vec<u32>| (i.saturating_sub(2)..(i + 3).min(v.len())).map(|j| (v[j], w.get(j).copied())).collect::<Vec<_>>();
+                    panic!("file {k} ({} bytes): {what} {i} the CPU's {:?}, the interpreter's {:?} ({} and {} of them), near {text:?}; the CPU's (start, last) {:?}, the interpreter's {:?}", f.len(), x.get(i), y.get(i), x.len(), y.len(), around(&g.positions[usize::from(r.starts)], &g.positions[usize::from(r.lasts)]), around(&want.positions[usize::from(r.starts)], &want.positions[usize::from(r.lasts)]));
+                }
+            }
+            assert_eq!(g.codes, want.codes, "file {k}: the codes");
+            assert_eq!(g.totals, want.totals, "file {k}: the totals");
+        }
+    }
+
     /// Decision 0177's census of the CPU's form: each output, its label, the operations it
     /// reads and those only it reads (what its going would take out).
     #[test]
