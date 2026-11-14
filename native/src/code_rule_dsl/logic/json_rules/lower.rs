@@ -452,7 +452,11 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
             let o = vo.expect("an object");
             let r = vs.fresh("r");
             lits.push(format!("parsed({v}, {}, {r})", q_val(o.get("grammar").expect("grammar"))));
-            lits.extend(lower(px, prog, &Value::Obj(o.without(&["grammar"])), &r, vs, &[])?);
+            // A `host` inside reads the node parsed, not an embedded program's file node.
+            let outer = prog.embedded.take();
+            let inner = lower(px, prog, &Value::Obj(o.without(&["grammar"])), &r, vs, &[]);
+            prog.embedded = outer;
+            lits.extend(inner?);
         } else if k == "pattern" && vo.is_some_and(|o| o.has("context")) {
             let o = vo.expect("an object");
             let sel = o.get("selector").map_or(String::new(), |s| format!(" at {}", q_val(s)));
@@ -538,6 +542,11 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
             lits.extend(main_terms::arguments(prog, vo.expect("an object"), v, vs)?);
         } else if k == "resolves" && vo.is_some() {
             lits.extend(resolves(px, prog, vo.expect("an object"), v, vs)?);
+        } else if k == "host" && vo.is_some() && prog.embedded.is_some() {
+            lits.extend(super::embedded::host(px, prog, val, v, vs)?);
+            prog.host_reads.extend(host_reads(px, val));
+        } else if k == "embedded" && vo.is_some() {
+            lits.extend(super::embedded::term(px, prog, val, v)?);
         } else if k == "host" && vo.is_some() {
             // inside a `parse`: the host node the parse holds, matched by the host language's rule; a guest capture
             // it reads is the guest node, compared by its text

@@ -623,6 +623,11 @@ pub enum Placement {
     Mapped { pieces: Arc<[normalized::Piece]>, within: [u32; 2] },
     /// A decoded value with no map: every node stands at the host bytes `at`.
     At([u32; 2]),
+    /// A program an embedder wrote (`embed::Embedder`: a Vue component's view, a Blade view's PHP): copied stretches
+    /// and written tokens, each standing for the host bytes its segment names, in any order (`SegmentMap`, decision
+    /// 0202). A node is placed where its first segment stands (`FileRanges::primary`, as main reports one) and lies
+    /// in the host inside the least range holding all it stands for (`SegmentMap::bounds`, which `host_node` reads).
+    Segments(Arc<crate::code_rule_dsl::embed::segments::SegmentMap>),
 }
 
 impl Placement {
@@ -635,6 +640,23 @@ impl Placement {
                 if b <= a { [start, start] } else { [start, clamp(mapped_end(pieces, b), *within).max(start)] }
             }
             Placement::At(at) => *at,
+            Placement::Segments(map) => {
+                let r = map.file_ranges(a as usize..b.max(a) as usize).primary();
+                [r.start as u32, r.end as u32]
+            }
+        }
+    }
+
+    /// The least host range holding every byte the guest bytes `[a, b]` stand for: where a node lies in its host
+    /// (`host_node`). The bytes `host` gives, but for an embedder's program, whose node may stand for host ranges
+    /// apart (a `v-for` arrow: its element and its alias).
+    pub(crate) fn bounds(&self, [a, b]: [u32; 2]) -> [u32; 2] {
+        match self {
+            Placement::Segments(map) => {
+                let r = map.bounds(a as usize..b.max(a) as usize);
+                [r.start as u32, r.end as u32]
+            }
+            _ => self.host([a, b]),
         }
     }
 
@@ -643,7 +665,7 @@ impl Placement {
         match self {
             Placement::Copied { delta, .. } => Some(vec![normalized::Piece { d: 0, s: *delta, escape: false }]),
             Placement::Mapped { pieces, .. } => Some(pieces.to_vec()),
-            Placement::At(_) => None,
+            Placement::At(_) | Placement::Segments(_) => None,
         }
     }
 
@@ -652,6 +674,13 @@ impl Placement {
         match (self, &inner) {
             (Placement::At(at), _) => Placement::At(*at),
             (_, Placement::At(at)) => Placement::At(self.host(*at)),
+            // A document inside an embedder's program, or a program inside a guest, stands at the bytes it lies in
+            // as a whole: segments do not compose with a string's map (open in decision 0202).
+            (Placement::Segments(_), Placement::Copied { within, .. } | Placement::Mapped { within, .. }) => Placement::At(self.host(*within)),
+            (_, Placement::Segments(map)) => {
+                let r = map.bounds(0..u32::MAX as usize);
+                Placement::At(self.host([r.start as u32, r.end as u32]))
+            }
             (Placement::Copied { delta, .. }, Placement::Copied { delta: d, within }) => Placement::Copied { delta: delta + d, within: self.host(*within) },
             _ => {
                 let (Some(outer), Some(pieces), Placement::Copied { within, .. } | Placement::Mapped { within, .. }) = (self.pieces(), inner.pieces(), &inner) else {

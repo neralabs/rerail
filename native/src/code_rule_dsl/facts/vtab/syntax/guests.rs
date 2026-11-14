@@ -82,7 +82,7 @@ impl GuestRows {
             return;
         }
         for local in 0..p.len() {
-            let [a, b] = g.place.host(p.span(local));
+            let [a, b] = g.place.bounds(p.span(local));
             let mut over = at;
             while let Some(c) = host.children(over).find(|&c| {
                 let [x, y] = host.span(c);

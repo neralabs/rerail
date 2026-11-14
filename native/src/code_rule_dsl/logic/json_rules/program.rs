@@ -60,6 +60,9 @@ pub struct Program {
     pub arena: Vec<Entry>,
     /// The guest captures a `host` rule reads (`host_reads`), compared by text across documents.
     pub host_reads: BTreeSet<String>,
+    /// The embedding the clause being lowered reads (`ast.embedded`, or an `embedded` term in it): its `host` is the
+    /// file node a program node stands for (`embedded.rs`, decision 0202).
+    pub embedded: Option<String>,
 }
 
 impl Program {

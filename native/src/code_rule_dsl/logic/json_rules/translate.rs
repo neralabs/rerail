@@ -246,8 +246,14 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
 
     let mut body: Vec<Item> = Vec::new();
     let mut seen_rel = Set::new();
+    // The embedding the policy's clauses read (decision 0202): a shared util's `host` is a program node's.
+    let reads_program = super::embedded::reads_program(&lang, clauses);
     for c in clauses {
         let cid = c.get("id").map_or("clause".to_owned(), py_str);
+        prog.embedded = super::embedded::clause_via(&lang, c).or_else(|| c.has("define").then(|| reads_program.clone()).flatten());
+        if prog.embedded.is_some() {
+            prog.use_("view");
+        }
         if let Some(d) = c.get("define") {
             prog.scope = Default::default();
             let mut utils = Vec::new();
@@ -304,7 +310,7 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
         if !cols.is_empty() {
             note.push("// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.".to_owned());
         }
-        let opts = a.without(&["language", "rule", "utils", "constraints", "transform"]);
+        let opts = a.without(&["language", "rule", "utils", "constraints", "transform", "embedded"]);
         let mut vs = Vars::default();
         let tr_v = a.get("transform").filter(|t| t.is_obj() && t.truthy());
         let tlits = match tr_v {
@@ -367,8 +373,13 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
                 .collect(),
             _ => Vec::new(),
         };
+        let entry = match a.get("embedded").and_then(Value::as_str) {
+            Some(via) => Some(super::embedded::entry(&lang, via, "n", &mut vs)?),
+            None => None,
+        };
         for b in bodies {
             let mut lits = b;
+            lits.splice(0..0, entry.iter().cloned());
             lits.extend(cons.iter().cloned());
             if targets.is_empty() {
                 lits.extend(tlits.iter().cloned());
