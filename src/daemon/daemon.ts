@@ -217,8 +217,8 @@ async function readRememberedPort(portFile: string): Promise<number | undefined>
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
 /**
- * The whole error for the daemon log, as a failed request's is written there: its stack, which says where it was thrown,
- * else its message. An error a worker thread threw arrives with the stack it had in that thread.
+ * The whole error for the daemon log, as a failed request's is written there: its stack, which says where it was
+ * thrown, else its message. An error a worker thread threw arrives with the stack it had in that thread.
  */
 const errorStack = (error: unknown): string => (error instanceof Error ? error.stack ?? error.message : String(error));
 

@@ -99,10 +99,10 @@ function auditColumns(database: RerailDatabase) {
 
 /**
  * The id of `provenance` in `audit_rule_provenances`, stored first when no audit recorded it yet, so the audits of one
- * checkout's rules share one copy. Its key is the SHA-256 of its JSON text, as the daemon's move of older audits' inline
- * provenance keys it (`rule-provenance-move.ts`), so a later audit of the same rules names the copy the move stored; a
- * test of an upgraded file holds the two to that. For the caller's write transaction: no other writer can store the
- * same text between the lookup and the insert.
+ * checkout's rules share one copy. Its key is the SHA-256 of its JSON text, as the daemon's move of older audits'
+ * inline provenance keys it (`rule-provenance-move.ts`), so a later audit of the same rules names the copy the move
+ * stored; a test of an upgraded file holds the two to that. For the caller's write transaction: no other writer can
+ * store the same text between the lookup and the insert.
  */
 function storedRuleProvenanceId(database: RerailDatabase, provenance: readonly AuditRuleProvenance[]): number {
   const json = JSON.stringify(provenance);
@@ -667,8 +667,8 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
           ruleRevisions: input.ruleRevisions,
           paths: input.paths,
           ruleProvenance: [],
-          // Every audit names a stored copy, `[]` included (one row for all that ran no rules): an audit that names none
-          // is one a Rerail older than `audit-rule-provenance-once` wrote, and the daemon's move of older audits'
+          // Every audit names a stored copy, `[]` included (one row for all that ran no rules): an audit that names
+          // none is one a Rerail older than `audit-rule-provenance-once` wrote, and the daemon's move of older audits'
           // provenance waits while such audits come (`rule-provenance-move.ts`).
           ruleProvenanceId: storedRuleProvenanceId(this.#database, provenance),
           startedAt: Date.now(),

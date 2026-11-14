@@ -273,8 +273,8 @@ describe("audit rule provenance", () => {
       // One copy and twenty audits' own rows, not twenty copies.
       expect(bytesInUse(path) - empty).toBeLessThan(2 * size);
 
-      // Another checkout's provenance is its own copy. Audits that ran no rules name one stored copy of `[]`, so an audit
-      // that names none is one a Rerail older than this one wrote.
+      // Another checkout's provenance is its own copy. Audits that ran no rules name one stored copy of `[]`, so an
+      // audit that names none is one a Rerail older than this one wrote.
       const worktree = provenanceOf("/home/dev/app-worktree", 200);
       const other = store.start(auditInput("/home/dev/app-worktree", worktree));
       const none = store.start(auditInput("/home/dev/app", []));
@@ -469,8 +469,8 @@ describe("audit rule provenance", () => {
       // empty one included, so none of them holds the move back.
       for (const provenance of [app, [], []]) store.finish(store.start(auditInput("/home/dev/app", provenance)), { status: "completed" });
 
-      // An hour on, and a millisecond before the week since the last of them ends, the move takes nothing: a Rerail that
-      // recorded them may still run beside this one, and it reads each recorded audit's provenance in its row.
+      // An hour on, and a millisecond before the week since the last of them ends, the move takes nothing: a Rerail
+      // that recorded them may still run beside this one, and it reads each recorded audit's provenance in its row.
       for (const later of [3_600_000, 7 * day - 1]) expect(await move(path, { clock: () => last + later })).toBe(0);
       expect(provenanceTexts(readAsOlder(path, written.map(({ auditId }) => auditId)))).toEqual(written.map(({ text }) => text));
       expect(inlineAudits(path)).toBe(30);
@@ -528,8 +528,8 @@ describe("audit rule provenance", () => {
     openRerailDatabase(path).$client.close();
     const day = 24 * 3_600_000;
 
-    // The build before runs on beside this one, and records its next audit an hour after the upgrade, then six days, then
-    // six days and 23 hours after the one before. Each time, a millisecond before that audit comes, the move takes
+    // The build before runs on beside this one, and records its next audit an hour after the upgrade, then six days,
+    // then six days and 23 hours after the one before. Each time, a millisecond before that audit comes, the move takes
     // nothing, and the build before reads every recorded audit's provenance in its row.
     let previous = Date.now();
     for (const [index, gap] of [3_600_000, 6 * day, 7 * day - 3_600_000].entries()) {
@@ -720,8 +720,8 @@ describe("audit rule provenance", () => {
 
     expect(pageBytes(path).free).toBeGreaterThan(0);
     expect(statSync(`${path}-wal`).size).toBe(0);
-    // The stored copy's worth and less than a second copy: the 30 inline copies whose pages the move freed held 30 times
-    // as many.
+    // The stored copy's worth and less than a second copy: the 30 inline copies whose pages the move freed held 30
+    // times as many.
     const perCopy = occurrences(JSON.stringify(provenance));
     const inFile = occurrences(readFileSync(path).toString("latin1"));
     expect(inFile).toBeGreaterThanOrEqual(perCopy / 2);
@@ -751,7 +751,8 @@ describe("audit rule provenance", () => {
     }
     expect(statSync(path).size).toBe(moved);
 
-    // `rerail scrub` rewrites the file (`eraseFreedPages`): it shrinks to its pages in use, a small part of what it was.
+    // `rerail scrub` rewrites the file (`eraseFreedPages`): it shrinks to its pages in use, a small part of what it
+    // was.
     const scrub = openRerailDatabase(path);
     try {
       expect(eraseFreedPages(scrub)).toBe(true);

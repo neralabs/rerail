@@ -137,7 +137,8 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
     // (about 10 s for 4,000 audits), and other writers fail once they have waited 5 s. No floor, by choice: builds at
     // the baseline keep opening the file, so agent hosts on different installed versions keep sharing it. An older
     // build writes its audits' provenance inline as before, and this build reads it there; for the audits this build
-    // wrote or moved it reads `[]`, which only its audit API and remote sink show, as its dashboard reads no provenance.
+    // wrote or moved it reads `[]`, which only its audit API and remote sink show, as its dashboard reads no
+    // provenance.
     id: RULE_PROVENANCE_STEP,
     up(database) {
       if (database.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audits'`).length === 0) return;

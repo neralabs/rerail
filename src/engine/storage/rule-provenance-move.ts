@@ -70,8 +70,9 @@ export const OLDER_WRITE_WINDOW_MS = 7 * 24 * 3_600_000;
 
 /**
  * The longest the wait for an older Rerail sleeps before it reads the file and the clock again. Node fires a timer
- * longer than 2^31 - 1 ms (about 24.9 days) after 1 ms, which an audit dated weeks past the clock would ask for. A timer
- * counts only the time the machine is awake on Linux and macOS, so after a sleep the move starts at most this late.
+ * longer than 2^31 - 1 ms (about 24.9 days) after 1 ms, which an audit dated weeks past the clock would ask for. A
+ * timer counts only the time the machine is awake on Linux and macOS, so after a sleep the move starts at most this
+ * late.
  */
 const OLDER_WAIT_PASS_MS = 3_600_000;
 
@@ -86,7 +87,9 @@ export interface RuleProvenanceMoveOptions {
   readonly now?: () => number;
   /** Stops the move before its next batch, or before the next try of one another connection is in the way of. */
   readonly signal?: AbortSignal;
-  /** The time in epoch milliseconds, to which an older Rerail's last audit (`lastOlderWrite`) is compared; for tests. */
+  /**
+   * The time in epoch milliseconds, to which an older Rerail's last audit (`lastOlderWrite`) is compared; for tests.
+   */
   readonly clock?: () => number;
   /** How long after that audit began the move waits (`OLDER_WRITE_WINDOW_MS`); tests pass their own. */
   readonly olderWindowMs?: number;
@@ -182,12 +185,16 @@ export async function moveRuleProvenances(path: string, options: RuleProvenanceM
   }
 }
 
-/** The clock and window `options` give for an older Rerail's last audit, else the time now and `OLDER_WRITE_WINDOW_MS`. */
+/**
+ * The clock and window `options` give for an older Rerail's last audit, else the time now and `OLDER_WRITE_WINDOW_MS`.
+ */
 function olderWritesOf(options: Pick<RuleProvenanceMoveOptions, "clock" | "olderWindowMs">): OlderWrites {
   return { clock: options.clock ?? (() => Date.now()), windowMs: options.olderWindowMs ?? OLDER_WRITE_WINDOW_MS };
 }
 
-/** How the batches of a move run, from `options` and `postponed`, which says when an older Rerail's audit stops them. */
+/**
+ * How the batches of a move run, from `options` and `postponed`, which says when an older Rerail's audit stops them.
+ */
 function batchingOf(options: RuleProvenanceMoveOptions, postponed: () => boolean): Batching {
   const { signal } = options;
   const pause = options.pause ?? (() => sleep(PAUSE_MS, undefined, { signal }).catch(() => undefined));
@@ -198,9 +205,9 @@ function batchingOf(options: RuleProvenanceMoveOptions, postponed: () => boolean
 /**
  * Moves the audits that started no later than `upTo`, a batch per write transaction with a pause before each, until
  * none is left, or `signal` or an older Rerail's audit (`postponed`) stops it, `signal` also while a batch waits for
- * another connection (`whenFree`): how many it moved, and whether none is left. The first batch takes `FIRST_BATCH` audits, and each later one as many as the batch before moved in `BATCH_MS`
- * (`nextBatchSize`), so a batch holds the write lock about that long however loaded the machine and however large each
- * audit's provenance.
+ * another connection (`whenFree`): how many it moved, and whether none is left. The first batch takes `FIRST_BATCH`
+ * audits, and each later one as many as the batch before moved in `BATCH_MS` (`nextBatchSize`), so a batch holds the
+ * write lock about that long however loaded the machine and however large each audit's provenance.
  */
 async function moveInBatches(
   database: RerailDatabase,
@@ -391,9 +398,9 @@ function isBusy(error: unknown): boolean {
 }
 
 /**
- * Writes the WAL into the database file and empties it (`wal_checkpoint(TRUNCATE)`); throws `WalInUse` when it could not.
- * A TRUNCATE checkpoint holds the write lock while it copies the WAL into the file, so a PASSIVE one, which takes no
- * write lock, copies what it can first.
+ * Writes the WAL into the database file and empties it (`wal_checkpoint(TRUNCATE)`); throws `WalInUse` when it could
+ * not. A TRUNCATE checkpoint holds the write lock while it copies the WAL into the file, so a PASSIVE one, which takes
+ * no write lock, copies what it can first.
  */
 function emptyWal(client: Client): void {
   client.pragma("wal_checkpoint(PASSIVE)");
@@ -425,8 +432,8 @@ const TAKEN = "started_at <= ? AND rule_provenance_id IS NULL AND rule_provenanc
 
 /**
  * What the file asks of the move (`MoveState`), read on a read-only connection: once the move has ended, each later
- * daemon start finds nothing and opens no writer, so it takes no write lock. A read-only open runs a pending step through
- * a writable open first, as it does for any reader.
+ * daemon start finds nothing and opens no writer, so it takes no write lock. A read-only open runs a pending step
+ * through a writable open first, as it does for any reader.
  */
 function moveState(path: string, older: OlderWrites): MoveState {
   const database = openRerailDatabase(path, { readonly: true });
@@ -473,9 +480,9 @@ function lastOlderWrite(client: Client, { clock, windowMs }: OlderWrites): numbe
 }
 
 /**
- * Moves up to `limit` audits after rowid `after` that started no later than `upTo`, in one write transaction: each names
- * the stored copy of its JSON text instead, stored first when no audit had the same text, and keeps `[]` inline. The
- * text moves as it is, so every audit reads the same provenance after. Its key is the SHA-256 of the text, as the
+ * Moves up to `limit` audits after rowid `after` that started no later than `upTo`, in one write transaction: each
+ * names the stored copy of its JSON text instead, stored first when no audit had the same text, and keeps `[]` inline.
+ * The text moves as it is, so every audit reads the same provenance after. Its key is the SHA-256 of the text, as the
  * audit store keys the provenance it writes, so the store's later audits of the same rules name the copy moved here.
  * The last rowid it moved and how many, or undefined when none was left.
  */
