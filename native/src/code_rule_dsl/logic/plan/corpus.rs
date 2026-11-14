@@ -3207,8 +3207,8 @@ fn run_observed(
         .any(|l| matches!(l, front::Literal::Nearest { .. }));
     let memo_program = memo::with_tree_demand(memo_program, memo_tree_stats);
     let memo_program = memo::with_modules(memo_program, &renamed_modules);
-    // Its entries' symbol columns, for a store this process forks from (decision 0170).
-    memo::register_syms(&memo_program, &lowered.program.decls);
+    // Its entries' symbol columns, recorded in each entry's frame (decision 0170).
+    let memo_syms = memo::syms_of(&lowered.program.decls, &lowered.domains);
     // The run holds its memo plan and the sources it reads until its manifest names them (O95): a collector running
     // meanwhile would otherwise take the rows this run writes, or the sources they and its tapes are of.
     let _held = match memo {
@@ -4922,7 +4922,7 @@ fn run_observed(
             if let Some(memo) = memo {
                 let n = publish.len();
                 let _publish = crate::code_rule_dsl::logic::profile::span(|| format!("publish {n} documents' entries"));
-                memo.remember_all(&memo_program, publish).map_err(|e| Error::Plan(format!("memo publication of {n} documents: {e}")))?;
+                memo.remember_all(&memo_program, &memo_syms, publish).map_err(|e| Error::Plan(format!("memo publication of {n} documents: {e}")))?;
             }
         } else if memoised {
             memo_unattributed += 1;

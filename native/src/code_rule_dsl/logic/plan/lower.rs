@@ -215,6 +215,19 @@ fn rule_vars(prog: &Program, cols: &BTreeMap<String, Vec<Option<Domain>>>, rule:
     Ok(vars.map)
 }
 
+/// Relation `rel`'s column types as stored outside the run (a memo entry, a session's frames): `b's'` for a column of
+/// store atoms, `b'i'` for the rest. A kind or field atom (`node.kind`, `field.f`, and every derived column of their
+/// domain) is a grammar code in a `sym` column, not a store atom: mapped as one between processes (decision 0170), a
+/// field atom (`tag << 16 | code`) past the store's end read as another process's atom, inside the waves.
+pub fn stored_types(decls: &BTreeMap<String, Vec<(String, String)>>, domains: &Domains, rel: &str) -> Option<Vec<u8>> {
+    let cols = decls.get(rel)?;
+    let ds = domains.get(rel);
+    Some(cols.iter().enumerate().map(|(c, (_, t))| {
+        let code = matches!(ds.and_then(|d| d.get(c)), Some(Domain::Kind | Domain::Field));
+        if t == "sym" && !code { b's' } else { b'i' }
+    }).collect())
+}
+
 /// Every column's domain (see the module comment).
 pub fn domains(prog: &Program) -> Result<Domains> {
     let mut cols: BTreeMap<String, Vec<Option<Domain>>> = BTreeMap::new();

@@ -1239,9 +1239,9 @@ fn input_ident(rel: &str, prog: &front::Program, key: &[u8; 32]) -> [u8; 32] {
     h.finalize().into()
 }
 
-/// A relation's column types, as frames store them.
-fn types_of(prog: &front::Program, rel: &str) -> Vec<u8> {
-    prog.decls.get(rel).map(|cols| cols.iter().map(|(_, t)| if t == "sym" { b's' } else { b'i' }).collect()).unwrap_or_default()
+/// A relation's column types, as frames store them: a kind or field column is no store atom (`lower::stored_types`).
+fn types_of(prog: &front::Program, domains: &lower::Domains, rel: &str) -> Vec<u8> {
+    lower::stored_types(&prog.decls, domains, rel).unwrap_or_default()
 }
 
 /// Each relation's location columns, as the split found them (`Split::locations`).
@@ -1747,6 +1747,9 @@ impl Retained {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::code_rule_dsl) fn write_frames(&self, store: &ContentStore, was: &InFrames, prog: &front::Program, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, (Vec<i64>, Vec<i64>)>) -> Result<usize> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept part's changes, to the frames".into());
+        // Which symbol columns are store atoms (a kind or field column is not), once for the part.
+        let domains = lower::domains(prog).unwrap_or_default();
+        let stored_types = |rel: &str, held: &[u8]| lower::stored_types(&prog.decls, &domains, rel).filter(|t| t.len() == held.len()).unwrap_or_else(|| held.to_vec());
         // Literal-only leaves are part of the derived relation's identity (leaf_identity), not runtime
         // inputs requiring a frame digest. Without this, a read of gproto("Generic") or an env fact makes
         // publication skip its consumer and forces that consumer to run in every new process.
@@ -1793,7 +1796,7 @@ impl Retained {
                 let hit = self.input_docs.get(rel).is_some_and(|d| digest_of_docs(d) == digest);
                 eprintln!("rerail: input {rel} (group col {g} of {width}, {} rows, docs {}, phase {:?}, layered {}): {} granules, {} owners of {} differ, {gone_n} gone; {}", source.len(), if hit { "the run's" } else { "recomputed" }, super::phases::current(), source.as_any().and_then(|a| a.downcast_ref::<Layered>()).is_some(), changed.len(), differ_n, docs.len(), ex.join("; "));
             }
-            let types = types_of(prog, rel);
+            let types = types_of(prog, &domains, rel);
             // Each changed granule's rows, grouped by owner, owners ascending (`kept_inputs` reads each owner's
             // rows as one range). A maintained input (`Layered`) gives each owner's rows from its ranges; another
             // is read through once.
@@ -1883,7 +1886,7 @@ impl Retained {
                         now.insert(rel.clone(), d);
                         written += ng + na;
                         delta_rows += ng + na;
-                        delta_out.push(crate::content_store::FrameDelta { rel: name.clone(), digest: d, reads: rd.clone(), types: k.rel.types().to_vec(), gone: gone.clone(), added: added.clone() });
+                        delta_out.push(crate::content_store::FrameDelta { rel: name.clone(), digest: d, reads: rd.clone(), types: stored_types(rel, k.rel.types()), gone: gone.clone(), added: added.clone() });
                         continue;
                     }
                 }
@@ -1912,7 +1915,7 @@ impl Retained {
                 if let Some(level) = k.rel.live_levels() {
                     puts.push(FramePut { rel: name.clone(), part: LEVELS_PART, digest: d, reads: Vec::new(), rows: FrameRows { types: vec![b'i'], rows: level.into_iter().map(i64::from).collect(), n } });
                 }
-                puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest: d, reads: read_digests, rows: FrameRows { types: k.rel.types().to_vec(), rows, n } });
+                puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest: d, reads: read_digests, rows: FrameRows { types: stored_types(rel, k.rel.types()), rows, n } });
             }
         }
         if trace {
