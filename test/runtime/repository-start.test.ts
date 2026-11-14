@@ -6,6 +6,7 @@ import { basename, dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  defaultRerailDatabasePath,
   openRerailDatabase,
   loadRuleCatalog,
   repositoryIdentityLocation,
@@ -30,6 +31,8 @@ import {
 } from "../../src/runtime/repository-start.js";
 import { SqliteSessionStore } from "../../src/runtime/session-store.js";
 import { startRerail } from "../../src/cli/index.js";
+import { hookRerailStarted } from "../../src/harness/index.js";
+import { closeNativeTestDaemons, startNativeTestDaemon } from "../support/native-daemon.js";
 import { fakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
 import { testEmbedder } from "../support/hook-events.js";
@@ -493,7 +496,8 @@ describe("repository start state", () => {
 
 describe.runIf(process.platform === "win32")("On Windows, a folder outside Git that Rerail 0.1.4 stopped under the spelling it was reached by", () => {
   const letters: string[] = [];
-  afterEach(() => {
+  afterEach(async () => {
+    await closeNativeTestDaemons();
     for (const letter of letters.splice(0)) execFileSync("subst", [letter, "/d"], { stdio: "ignore" });
   });
 
@@ -518,9 +522,9 @@ describe.runIf(process.platform === "win32")("On Windows, a folder outside Git t
    * before 0.1.4 stopped it (a session there), so its own row under the stored spelling is there too, following the
    * repository.
    */
-  async function stoppedBy014(spell: (folder: string) => string, recordedHere: boolean) {
+  async function stoppedBy014(spell: (folder: string) => string, recordedHere: boolean, inDatabase = "") {
     const root = await temporary("rerail-start-earlier-");
-    const databasePath = join(root, "home", "rerail.sqlite");
+    const databasePath = inDatabase === "" ? join(root, "home", "rerail.sqlite") : inDatabase;
     const stored = join(realpathSync.native(root), "share", "Stopped");
     mkdirSync(stored, { recursive: true });
     const spelled = spell(stored);
@@ -573,6 +577,12 @@ describe.runIf(process.platform === "win32")("On Windows, a folder outside Git t
     const rows = checkoutRows(databasePath);
     expect(startChecks(spelled, databasePath)).toEqual(STOPPED);
     expect(checkoutRows(databasePath)).toEqual(rows);
+  });
+
+  it("reads the stop in a hook's start check that a daemon answers, so the hook tells the coding agent nothing", async () => {
+    const { spelled } = await stoppedBy014(throughLetter, false, defaultRerailDatabasePath());
+    await startNativeTestDaemon(dirname(spelled));
+    expect(await hookRerailStarted("claude-code", spelled)).toBe(false);
   });
 
   it("lets a start or stop made with this build decide there from then on, saved under the stored spelling, whatever 0.1.4 saves later", async () => {
