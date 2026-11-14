@@ -711,6 +711,8 @@ interface RuntimeSessionState {
   closed: boolean;
   /** Set as `closeIdleSession` lets the session go: its close keeps it open in the database, owned (`#markClosed`). */
   suspending?: true;
+  /** Set as `closeIdleSession` ends the session (`end`): when its record ends, by the caller's clock (`#markClosed`). */
+  endsAt?: number;
 }
 
 /**
@@ -2248,7 +2250,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * engine-service.ts). The steers it has not delivered and the findings it holds then wait in its ledger, and go out
    * with its next event while their files still hold what they spoke for (`#takeOwed`). `at` is the time by the
    * caller's clock, now by default: the time the session's record ends at if it never opens again
-   * (`SessionSuspension.suspendedAt`). With `end` the session is ended instead (`#endIdle`).
+   * (`SessionSuspension.suspendedAt`). With `end` the session is ended instead (`#endIdle`), its record at `at`.
    */
   closeIdleSession(sessionId: string, options: { evenIfOwing?: boolean; at?: number; end?: boolean } = {}): Promise<IdleClose> {
     return this.#ingestLanes.run(sessionId, async (): Promise<IdleClose> => {
@@ -2256,8 +2258,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       if (state === undefined) return { kind: "not-held" };
       const owing = (): boolean => options.evenIfOwing !== true && this.#owesAgent(state);
       if (owing()) return { kind: "owing" };
-      if (options.end === true) return await this.#endIdle(state);
-      const suspension = await this.#suspension(state, options.at ?? Date.now());
+      const at = options.at ?? Date.now();
+      if (options.end === true) return await this.#endIdle(state, at);
+      const suspension = await this.#suspension(state, at);
       // Asked again: the control timer may have claimed a scan while the walks were read, which the session now runs.
       if (owing()) return { kind: "owing" };
       await this.#suspend(state, suspension);
@@ -2270,10 +2273,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * released, so it reads as ended until its next event opens it again. For a runtime whose owner rows name no lock
    * (`end` of `closeIdleSession`): after a kill, a later start judges such a row only by its pid, which another process
    * can hold, so a session kept open would read as live and owned for good. What the session owes its agent waits in
-   * its ledger for that next event, as across its daemon's stop.
+   * its ledger for that next event, as across its daemon's stop. Its record ends at `at`, the idle close's time.
    */
-  async #endIdle(state: RuntimeSessionState): Promise<IdleClose> {
+  async #endIdle(state: RuntimeSessionState, at: number): Promise<IdleClose> {
     state.keepsOwed = true;
+    state.endsAt = at;
     await this.#router(state.descriptor.host).stop(state.descriptor.sessionId);
     return { kind: "ended" };
   }
@@ -2377,11 +2381,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   /**
    * Stops what `state`'s session delivers and what it runs, ends its ownership (`#endOwnership`) and returns the time its
-   * record ends at: null while it is being suspended (`closeIdleSession`), whose record stays open.
+   * record ends at: null while it is being suspended (`closeIdleSession`), whose record stays open; the idle close's
+   * time when that close ends it (`endsAt`); now otherwise.
    */
   #markClosed(sessionId: string, state: RuntimeSessionState): number | null {
     state.closed = true;
-    const endedAt = state.suspending ? null : Date.now();
+    const endedAt = state.suspending ? null : state.endsAt ?? Date.now();
     this.#closedSessions.set(sessionId, {
       descriptor: state.descriptor, startedAt: state.startedAt, endedAt, repositoryKey: this.#repositoryKey(state.checkout),
     });
