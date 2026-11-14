@@ -580,12 +580,13 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
   const partText = (startedAt: number, ...ats: number[]): string => [{ startedAt }, ...ats.map(at => failure(at))].map(line => `${JSON.stringify(line)}\n`).join("");
 
   // A hook on Windows can move `.1` on to its own name for a moment, and back. Here it does so as status lists the home:
-  // away just after the first listing, back just before the third, so the second finds it under the hook's name.
+  // away just after the first listing, back just before the third, so the second finds it under the hook's name. The
+  // hook still runs: this test's own process stands for it.
   it("says since when it counts when a hook holds .1 under its own name as status lists the home", async () => {
     const rerailHome = await home();
     writeFileSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`), partText(5_000, 5_000, 6_000));
     writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), partText(9_000, 9_000));
-    const [movedAside, held] = [join(rerailHome, `${HOOK_FAILURES_FILE}.1`), takenName(rerailHome, 1_000)];
+    const [movedAside, held] = [join(rerailHome, `${HOOK_FAILURES_FILE}.1`), takenName(rerailHome, process.pid)];
     const said = await statusWhileListing(rerailHome, `readdir => (...args) => {
       if (String(args[0]) !== HOME) return readdir(...args);
       globalThis.listings = (globalThis.listings ?? 0) + 1;
@@ -595,6 +596,16 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
       return names;
     }`);
     expect(said).toMatch(/^Hooks: 3 hook events could not be recorded since 1970-01-01T00:00:05\.000Z, as far back as the log goes; /u);
+  });
+
+  // A hook stopped while it held `.1` under its own name leaves no `.1`: nothing moves the log it left until the next
+  // move, so status does not wait for it.
+  it("reads the log at once when a hook that has ended holds what was .1", async () => {
+    const rerailHome = await home();
+    writeFileSync(join(rerailHome, `${HOOK_FAILURES_FILE}.${2 ** 31 - 1}.${randomUUID()}.old`), partText(5_000, 5_000, 6_000));
+    writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), partText(9_000, 9_000));
+    const { said, listings } = await statusWith(rerailHome, {});
+    expect({ count: countOf(said), listings }).toEqual({ count: 3, listings: 1 });
   });
 
   // Another program can hold `.1` open on Windows so that no other program can read it, as a backup can.

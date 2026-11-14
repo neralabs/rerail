@@ -438,7 +438,7 @@ function readPart(home: string, name: string, parts: Map<string, LogPart>): void
 /**
  * Lists the files of the log in `home`, reads each one `parts` has not met, and says whether a file moved under it: a
  * name gone by the time it looked or opened it, another file under the live name or `.1` than the one last found there,
- * or no file known as `.1` while a part says a hook moved one there.
+ * or no file known as `.1` while a part says a hook moved one there and a hook that still runs holds a log.
  */
 function readUnmet(home: string, parts: Map<string, LogPart>): boolean {
   const names = listLog(home);
@@ -498,14 +498,21 @@ function giveName(parts: ReadonlyMap<string, LogPart>, name: string, id: string)
 
 /**
  * Whether no file of the log is known as `.1` though a part holds a start ({@link PartStart}), which a hook writes only
- * once it has moved a full log to `.1`, where a log stays until the next replaces it, and a hook holds a log under its
- * own name: a hook on Windows moves `.1` on to its own name for a moment, and a read that stopped there would say it
- * counts the last 24 hours though the part before was dropped.
+ * once it has moved a full log to `.1`, where a log stays until the next replaces it, and a hook that still runs holds a
+ * log under its own name: a hook on Windows moves `.1` on to its own name for a moment, and a read that stopped there
+ * would say it counts the last 24 hours though the part before was dropped. A hook that has ended moves nothing, so a
+ * log it left is not waited for.
  */
 function awaitingMovedAside(parts: ReadonlyMap<string, LogPart>): boolean {
   const all = [...parts.values()];
   return !all.some(part => part.name === MOVED_ASIDE_FILE) && all.some(part => part.name !== MOVED_ON && part.startedAt !== undefined)
-    && all.some(part => TAKEN_LOG.test(part.name));
+    && all.some(part => heldByRunningHook(part.name));
+}
+
+/** Whether `name` is a log a hook took ({@link TAKEN_LOG}) and that hook still runs. */
+function heldByRunningHook(name: string): boolean {
+  const pid = TAKEN_LOG.exec(name)?.[1];
+  return pid !== undefined && processState(Number(pid)) !== "gone";
 }
 
 /**
