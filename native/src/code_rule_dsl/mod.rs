@@ -4882,6 +4882,15 @@ pub(crate) fn install_languages() {
             // The lean parser (`tape::python_lean`); a file it refuses goes to tree-sitter-python.
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Python, name: "lean Python parser", rank: 0, runs: true, parser: &tape::python_lean::Lean });
         }
+        // The lean ECMAScript parser (`tape::ecma_lean`, decision 0178); a file it refuses goes to
+        // the dialect's tree-sitter grammar.
+        if cfg!(feature = "lang-javascript") {
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::JavaScript, name: "lean JavaScript parser", rank: 0, runs: true, parser: &tape::ecma_lean::JAVASCRIPT });
+        }
+        if cfg!(feature = "lang-typescript") {
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::TypeScript, name: "lean TypeScript parser", rank: 0, runs: true, parser: &tape::ecma_lean::TYPESCRIPT });
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Tsx, name: "lean TSX parser", rank: 0, runs: true, parser: &tape::ecma_lean::TSX });
+        }
         if cfg!(feature = "lang-json") {
             // simdjson where it builds (not wasm: tree-sitter-json there); the Bitlex parser
             // (`json_parser::tape::Bitlex`) is not yet the product's.

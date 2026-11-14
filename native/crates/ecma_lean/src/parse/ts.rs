@@ -120,7 +120,6 @@ impl<'a> P<'a> {
         let t = self.tok();
         if t.kind == T::Name {
             let next = self.peek_at(1);
-            let operand = matches!(next.kind, T::Name | T::LParen | T::LBracket | T::LBrace | T::Str | T::Number | T::Backtick | T::Lt);
             match t.word {
                 w::INFER if next.kind == T::Name => {
                     let n = self.open_in(K::InferType, s);

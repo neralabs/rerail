@@ -51,6 +51,8 @@ pub mod validated;
 pub mod token_census;
 /// Python's tape from the lean parser (`rerail_python_lean`).
 pub mod python_lean;
+/// JavaScript's, TypeScript's and TSX's tapes from the lean parser (`rerail_ecma_lean`).
+pub mod ecma_lean;
 pub use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
 pub const ERROR_SYMBOL: u16 = u16::MAX;

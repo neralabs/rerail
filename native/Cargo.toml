@@ -190,6 +190,8 @@ rerail-metal = { path = "crates/metal", features = ["test-hooks"] }
 rerail-simdjson = { path = "crates/simdjson" }
 # Python's lean parser, measured directly (`tape::tests::python_parse_costs`).
 rerail-python-lean = { path = "crates/python_lean" }
+# The lean ECMAScript parser, measured directly (`tape::tests::ecma_parse_costs`).
+rerail-ecma-lean = { path = "crates/ecma_lean" }
 # Every test build of the engine turns on its crates' test hooks (`test-hooks`).
 rerail-engine = { path = ".", features = ["test-hooks"] }
 # Tier 1's test hooks (the relocations' recording) for the engine's tests.
