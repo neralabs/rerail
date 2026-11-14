@@ -103,3 +103,14 @@ inherits = "release"
 opt-level = "s"
 lto = false
 codegen-units = 16
+
+# Experiment (build-and-test-loop-time): the engine's crates at opt-level 1 for test runs.
+[profile.test-o1]
+inherits = "dev"
+opt-level = 1
+
+[profile.test-o1.package."*"]
+opt-level = 3
+
+[profile.test-o1.package.rerail-rr-aot]
+debug = false
