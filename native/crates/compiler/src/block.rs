@@ -1766,9 +1766,19 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         for (k, w) in &r.unless {
             let _ = writeln!(out, "  block {at} recunless {k} {w}");
         }
-        // `block N reccheck R count|run O N`: a token test of rule `R`'s tokens.
+        // `block N reccheck R count|run O N [at K|after K]`: a token test of rule `R`'s tokens,
+        // refusing the file, or a bit of mark `K` (`CheckThen`).
         for c in &r.checks {
-            let _ = writeln!(out, "  block {at} reccheck {} {} {} {}", c.rule, if c.count { "count" } else { "run" }, c.o, c.least);
+            let then = match c.then {
+                crate::records::CheckThen::Escape => String::new(),
+                crate::records::CheckThen::At(k) => format!(" at {k}"),
+                crate::records::CheckThen::After(k) => format!(" after {k}"),
+            };
+            let _ = writeln!(out, "  block {at} reccheck {} {} {} {}{then}", c.rule, if c.count { "count" } else { "run" }, c.o, c.least);
+        }
+        // `block N rectested T`: the gap marks made by token tests alone.
+        if r.tested_only != 0 {
+            let _ = writeln!(out, "  block {at} rectested {}", r.tested_only);
         }
         // `block N recunplaced U`: the gap marks whose bit past the last grammar token refuses.
         if r.unplaced != 0 {

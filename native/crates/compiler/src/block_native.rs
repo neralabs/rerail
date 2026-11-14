@@ -272,9 +272,19 @@ impl BlockNative {
         }
         let m = |v: u16| number[usize::from(v)];
         let place_of = |x: usize| usize::from(number[x]);
+        // The walks whose values are kept (none read: the CPU reads no region, decision 0177),
+        // renumbered.
+        let kept_walks: Vec<usize> = (0..self.walks.len()).filter(|&w| keep[usize::from(self.walks[w].hidden)]).collect();
+        let walk_at = |w: u16| kept_walks.iter().position(|&k| k == usize::from(w)).expect("a kept walk's call") as u16;
         BlockNative {
             tables: self.tables.clone(),
-            insts: order.iter().map(|&x| Self::renamed(insts[x], m)).collect(),
+            insts: order
+                .iter()
+                .map(|&x| match Self::renamed(insts[x], m) {
+                    BlockInst::Walk { walk, out, args } => BlockInst::Walk { walk: walk_at(walk), out, args },
+                    i => i,
+                })
+                .collect(),
             outputs: outputs.iter().map(|&v| m(v)).collect(),
             extracts: self.extracts.clone(),
             totals: self.totals.clone(),
@@ -293,7 +303,7 @@ impl BlockNative {
                     crate::block::Group { members, carries: g.carries.iter().map(|&(c, x)| (place_of(c), place_of(x))).collect() }
                 })
                 .collect(),
-            walks: self.walks.iter().map(|w| Self::walk_renamed(w, m)).collect(),
+            walks: kept_walks.iter().map(|&w| Self::walk_renamed(&self.walks[w], m)).collect(),
         }
     }
 

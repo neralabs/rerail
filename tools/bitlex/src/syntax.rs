@@ -59,6 +59,18 @@ pub enum TokenTest {
     Run,
 }
 
+/// A mark's token test (`Stmt::Mark`'s `at` and `after`): at tokens of `kind`, `test` over
+/// `expr` at least `least`; one that passes is a bit of the mark at its first byte, or (`after`)
+/// at the byte after its last.
+#[derive(Clone, Debug)]
+pub struct MarkCheck {
+    pub after: bool,
+    pub kind: String,
+    pub test: TokenTest,
+    pub expr: Expr,
+    pub least: u32,
+}
+
 /// How a token ends, told at its start (`Stmt::Token`'s `run` and `pair`).
 #[derive(Clone, Debug)]
 pub enum TokenRule {
@@ -421,7 +433,11 @@ pub enum Stmt {
     /// (the extras passed over) is one of these words is none, as lean's parser asks whether a
     /// `,` ends the line before (decision 0177). `, else escape "WHY"`: a bit with no grammar
     /// token at or after it (past the last one's start) sends the file to the fallback.
-    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String> },
+    ///
+    /// `, at KIND when TEST` and `, after KIND when TEST` (`MarkCheck`): a token of the kind
+    /// that passes the test (a token escape's, `TokenEscape`) is a bit of the mark at its first
+    /// byte (`at`) or at the byte after its last (`after`), as a lexer marks what it reads.
+    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck> },
     /// `mark KIND = tokens [after E] E …` (decision 0129): a mark before a token that begins a
     /// run of tokens, each one of an element's choices (`|`): a token kind (a name) or a word
     /// (a string), the extras between them skipped. `after`: the token before is one of
@@ -1126,6 +1142,26 @@ impl P {
         self.pair_sets.push((name_of.clone(), pairs));
         Ok(Stmt::Mask(name_of, mask))
     }
+    /// A token test: `count(E) at least N` or `run(E) at least N` (`TokenTest`).
+    fn token_test(&mut self) -> R<(TokenTest, Expr, u32)> {
+        let test = if self.eat_kw("count") {
+            TokenTest::Count
+        } else if self.eat_kw("run") {
+            TokenTest::Run
+        } else {
+            return self.err("`count` or `run`");
+        };
+        self.want_p("(")?;
+        let expr = self.expr()?;
+        self.want_p(")")?;
+        self.want_kw("at")?;
+        self.want_kw("least")?;
+        let least = u32::try_from(self.int()?).map_err(|_| "a token test's count past u32".to_string())?;
+        if least == 0 || (test == TokenTest::Run && least > 64) {
+            return self.err("a count from 1 (a run's at most 64)");
+        }
+        Ok((test, expr, least))
+    }
     fn class_items(&mut self) -> R<Vec<(u32, u32)>> {
         let mut v = vec![];
         loop {
@@ -1324,22 +1360,7 @@ impl P {
                 } else if self.eat_kw("at") {
                     let kind = self.ident()?;
                     self.want_kw("when")?;
-                    let test = if self.eat_kw("count") {
-                        TokenTest::Count
-                    } else if self.eat_kw("run") {
-                        TokenTest::Run
-                    } else {
-                        return self.err("`count` or `run`");
-                    };
-                    self.want_p("(")?;
-                    let expr = self.expr()?;
-                    self.want_p(")")?;
-                    self.want_kw("at")?;
-                    self.want_kw("least")?;
-                    let least = u32::try_from(self.int()?).map_err(|_| "a token test's count past u32".to_string())?;
-                    if least == 0 || (test == TokenTest::Run && least > 64) {
-                        return self.err("a count from 1 (a run's at most 64)");
-                    }
+                    let (test, expr, least) = self.token_test()?;
                     Stmt::TokenEscape { why: m, kind, test, expr, least }
                 } else {
                     self.want_kw("when")?;
@@ -1513,17 +1534,27 @@ impl P {
                         }
                     }
                 }
-                let (mut end, mut unplaced) = (false, None);
+                let (mut end, mut unplaced, mut checks) = (false, None, vec![]);
                 while self.eat_p(",") {
+                    self.nls();
                     if self.eat_kw("else") {
                         self.want_kw("escape")?;
                         unplaced = Some(String::from_utf8_lossy(&self.string()?).into_owned());
+                    } else if self.is_kw("at") || self.is_kw("after") {
+                        let after = self.eat_kw("after");
+                        if !after {
+                            self.want_kw("at")?;
+                        }
+                        let kind = self.ident()?;
+                        self.want_kw("when")?;
+                        let (test, expr, least) = self.token_test()?;
+                        checks.push(MarkCheck { after, kind, test, expr, least });
                     } else {
                         self.want_kw("end")?;
                         end = true;
                     }
                 }
-                Stmt::Mark { kind, at, end, unless, unplaced }
+                Stmt::Mark { kind, at, end, unless, unplaced, checks }
             }
             "token" => {
                 let kind = self.kind()?;

@@ -118,8 +118,9 @@ error "a block comment open at the end of the file" by tokens when f_block & las
 error "a backtick literal open at the end of the file" by tokens when (f_t1 | f_t3) & last_byte
 escape "a run of four backticks or more" by tokens when ttt & next(tick, 3) & ~hidden
 # A `\u` in a string: the forms that are code points by their bytes; any other goes to the
-# engine, which checks it. `h4`: four hex digits after the `u`.
-mask uesc       = f_str & ~o_str & escaped & u
+# engine, which checks it. `h4`: four hex digits after the `u`. An escaped `u` anywhere: the
+# check is at the string's token, so one in a comment is none.
+mask uesc       = escaped & u
 mask h4         = next(hex) & next(hex, 2) & next(hex, 3) & next(hex, 4)
 # `\uXXXX`, no surrogate: not `D8` to `DF` first.
 mask u_four     = h4 & ~(next(c_d) & next(upper_hex, 2))
@@ -132,7 +133,9 @@ mask b_five     = next(hex, 2) & next(hex, 3) & next(hex, 4) & next(hex, 5) & ne
 mask b_six      = next(hex, 2) & next(hex, 3) & next(hex, 4) & next(hex, 5) & next(hex, 6) & next(hex, 7) & next(rbrace, 8)
                 & next(one, 2) & next(zero, 3)
 mask u_ok       = (u_four & ~u_brace) | (u_brace & (b_short | b_four | b_five | b_six))
-escape "a \\u escape the engine checks" when uesc & ~u_ok
+# Checked at the string's token, as a lexer checks the escape it reads: tier 2's, at each `\u`
+# in it (a local check, `CHECK`), so tier 1 makes none of the digits' masks.
+escape "a \\u escape the engine checks" at string when count(uesc & ~u_ok) at least 1
 
 # --- Code --------------------------------------------------------------------------------------
 
@@ -156,10 +159,8 @@ mask num        = w & ~ident                    # the digits before it
 mask f_dot      = code & dot & prev(num) & next(digit)
 mask frac       = fill(prev(f_dot), ~digit)
 mask int        = num & ~frac                   # an integer's digits
-# A float is one token, as simdjson's number is one scalar. Its last digit marks the token
-# after it (`float_after`), and tier 2 makes the number it took a float there. A float the file
-# ends with, no token after it, goes to the engine.
-mask frac_last  = frac & ~next(frac)
+# A float is one token, as simdjson's number is one scalar: a number with a `.`. It marks the
+# token after it (`float_after`, below), and tier 2 makes the number it took a float there.
 # The engine reads an integer as an i64: one of 19 or more digits (leading zeros aside) is
 # checked by it. A float's digits are its text: no limit. A number of 19 digits or more goes to
 # the engine, with its leading zeros, or a fraction after it (the engine's tape either way).
@@ -220,8 +221,9 @@ skip ws
 # --- Line breaks -------------------------------------------------------------------------------
 
 # The token after a float: first of the marks, as tier 2 reads it right after the number. A
-# float the file ends with has none, and goes to the engine.
-mark float_after = frac_last, else escape "a float the file ends with"
+# number with a `.` is a float, as a lexer knows the number it read; a float the file ends
+# with has no token after it, and goes to the engine.
+mark float_after = empty, after number when count(dot) at least 1, else escape "a float the file ends with"
 # The file's end ends a line too: a setting ends there.
 mark line        = lf, end
 # The marks of tokens (decision 0129): each holds at a token the tokens after it (and the one
@@ -250,8 +252,17 @@ mark newline     = lf unless after ",", end
 mark end_on      = tokens "." "end"
 # What JSON refuses: in a string, a control byte or an escape it has not; a comment; a form
 # feed; a `-` not right before a digit; a leading zero. Only a JSON document's levels refuse it.
-mask in_str      = f_str & ~o_str
-mark json_bad    = (in_str & ctl) | (in_str & escaped & ~jesc) | (uesc & ~h4) | o_line | o_block | (code & ff) | (code & minus & ~next(digit)) | (int & zero & ~prev(int) & next(int))
+# Each at its token, as a lexer checks what it reads: a string's bytes (a control byte, an
+# escape JSON has not, a `\u` without four hex digits) mark the token after it; a comment, the
+# token after it; a `-` and a leading zero, their own tokens. A form feed between tokens marks
+# the next (one in a backtick literal too: no JSON document holds one).
+mask str_bad     = ctl | (escaped & ~jesc)
+mark json_bad    = ff,
+                   after string when count(str_bad) at least 1,
+                   after string when count(uesc & ~h4) at least 1,
+                   after comment when count(line_open | block_open) at least 1,
+                   at punct when run(minus & ~next(digit)) at least 1,
+                   at number when run(zero & next(digit)) at least 1
 
 # Token marks that refuse: the tokens after a token, comments between them skipped. Declared
 # last, a state tests each only in its switch's arms for its token's first byte.

@@ -264,5 +264,51 @@ second bytes (`EndRule::Next`, `Records::nexts`): one load of the byte after the
 inside the file, and a compare a byte. A run needs nothing more: the loop starts each token
 after the one before, so `:->` is `:-` and `>`. The pair mask goes from the CPU.
 
-What still reads the region walk and `code` on the CPU: the `json_bad` mark, `float_after`,
-and JSON's checks.
+## Marks from checks at the token
+
+A mark had its bits from a mask: `float_after` from a float's last digit, `json_bad` from
+string bytes, comments and numbers, each mask reading the regions. The lean lexer marks what
+it reads: a number with a `.` is a float, a string with a bad byte is not JSON. Here likewise:
+
+```text
+# a token that passes the test is a bit of the mark:
+# `after`, at the byte after its last (the next grammar token has it);
+# `at`, at its first (it has it, if a grammar token)
+mark float_after = empty, after number when count(dot) at least 1,
+                   else escape "a float the file ends with"
+mark json_bad    = ff,
+                   after string when count(str_bad) at least 1,
+                   after string when count(uesc & ~h4) at least 1,
+                   after comment when count(line_open | block_open) at least 1,
+                   at punct when run(minus & ~next(digit)) at least 1,
+                   at number when run(zero & next(digit)) at least 1
+```
+
+The tests are the token tests of `escape … at KIND` (`Records::checks`), each with what a
+pass does (`CheckThen`: refuse, `At`, `After`). As bits, they keep the gap marks' rules
+(`unless after`, `else escape`). On the CPU the token loop carries them: a grammar token takes
+its own `At` hits and the bits left before it; an extra's token leaves all of its own to the
+next (`pending`, a fourth word of the loop's state). Metal and the interpreter find the same
+in their look-back from each grammar token (`record_hits`, `gap_marks`). A mark of tests alone
+reads no mask (`Records::tested_only`).
+
+A test `count(A & L) at least 1` with `L` local look-ahead is tier 2's instead: a `CHECK` at
+the kind's tokens, at each bit of `A` in the token, as a lexer checks an escape it reads.
+A hidden mark only refused checks it in its refusing levels. So the `\u` checks stay tier 2's,
+none of the digits' masks tier 1's, and need no region: `uesc` is any escaped `u`, and one in a
+comment is no string's.
+
+```text
+escape "a \\u escape the engine checks" at string when count(uesc & ~u_ok) at least 1
+```
+
+The meaning moves in two places, neither inside a JSON document: a `-` that is a pair's second
+byte (`:-`) is no JSON minus, and a form feed in a backtick literal marks the token after it.
+`the_marks_tests_are_the_masks` compares the old form's tapes and refusals with the new
+(400 files and the cases' edges), and the CPU's and Metal's codes with the interpreter's.
+
+Nothing on the CPU reads the regions now: its form calls no walk (a walk no value of which is
+read goes, `cpu_form`). 57 operations, from 162.
+
+Open: `u_ok`'s look-ahead is tier 2's, but `str_bad` and the punctuation and number tests are
+tier 1 masks a block; the lean lexer reads them at the token's bytes alone.

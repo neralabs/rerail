@@ -1357,8 +1357,12 @@ pub mod tests {
             // The gap pass's clauses need the loop; this compares the starts and lasts alone.
             .replace("lf unless after \",\", end", "lf, end")
             .replace(", else escape \"a float the file ends with\"", "")
+            // The marks' token tests need the loop too: their masks alone.
+            .replace(", after number when count(dot) at least 1", "")
+            .replace("mark json_bad    = ff,", "mark json_bad    = ff")
             .lines()
             .filter(|l| !(l.starts_with("escape ") && l.contains(" at number when ")))
+            .filter(|l| !(l.starts_with("                   after ") || l.starts_with("                   at ")))
             .map(|l| format!("{l}\n"))
             .collect::<String>();
         assert!(old.lines().filter(|l| l.starts_with("token ")).all(|l| !l.contains(" run ") && !l.contains(" pair ") && !l.contains(" read ")), "every rule written back as its mask");
@@ -1544,6 +1548,12 @@ pub mod tests {
                         _ => {}
                     }
                 }
+                for t in r.checks.iter().filter(|t| usize::from(t.o) == o) {
+                    let l = format!("test {:?}", t.then);
+                    if !label.contains(&l) {
+                        label.push(l);
+                    }
+                }
                 if r.skip.map(usize::from) == Some(o) {
                     label.push("skip".into());
                 }
@@ -1625,6 +1635,92 @@ pub mod tests {
         assert!(r.unplaced != 0, "a float the file ends with is the gap pass's, not a mask's");
     }
 
+    /// The marks' token tests (decision 0177): `float_after` and `json_bad` from checks at their
+    /// tokens, as a lexer marks what it reads, are the masks they replace. The old form (the
+    /// masks, from the regions; a `-` a pair's second byte, as `:-`, none: the tests take a `-`
+    /// token) and the new give the same tape or refusal through tier 2; the CPU's and Metal's
+    /// codes are the interpreter's, over the corpus and each case's edges: a JSON string's bad
+    /// bytes, a comment, a `-`, a leading zero, a form feed, a float before a comment and at the
+    /// file's end.
+    #[test]
+    fn the_marks_tests_are_the_masks() {
+        let new = crate::compiled().expect("compiles");
+        let old_text = crate::GRAMMAR
+            .replace("mark float_after = empty, after number when count(dot) at least 1,", "mask frac_last  = frac & ~next(frac)\nmark float_after = frac_last,")
+            .lines()
+            .filter(|l| !(l.starts_with("                   after ") || l.starts_with("                   at ")))
+            .map(|l| if l.starts_with("mark json_bad ") { "mask in_str      = f_str & ~o_str\nmark json_bad    = (in_str & ctl) | (in_str & escaped & ~jesc) | (in_str & uesc & ~h4) | o_line | o_block | (code & ff) | (code & minus & ~next(digit) & ~second) | (int & zero & ~prev(int) & next(int))\n".to_string() } else { format!("{l}\n") })
+            .collect::<String>();
+        assert!(!old_text.contains(" after string when"), "the old form has the masks alone");
+        let old = crate::compile_text(&old_text, rerail_compiler::bitlex_masks::Shape::Rules).expect("the old form compiles");
+        let r = new.program.block_programs[0].records.as_ref().expect("records");
+        assert!(r.checks.iter().any(|c| matches!(c.then, rerail_compiler::records::CheckThen::After(_))), "a mark after its token");
+        assert!(r.checks.iter().any(|c| matches!(c.then, rerail_compiler::records::CheckThen::At(_))), "a mark at its token");
+        assert!(r.tested_only != 0, "float_after reads no mask");
+        // No region on the CPU: its form calls no walk (the readers read them, decision 0177).
+        assert!(new.native.cpu_form().walks.is_empty(), "the CPU walks the regions");
+        let mut inputs: Vec<Vec<u8>> = Vec::new();
+        let cases = [
+            "r(x) :- x = ps - fe.\n",
+            "r(x) :- x = ps - fe, y = \"\\\\s*\".\n",
+            "r(x) :- x = {\"a\": \"b\tc\"}.\n",
+            "r(x) :- x = {\"a\": \"b\\qc\"}.\n",
+            "r(x) :- x = {\"a\": \"\\u12\"}.\n",
+            "r(x) :- x = {\"a\": \"\\u12ab\", \"b\": 1}.\n",
+            "r(x) :- x = {\"a\": // c\n 1}.\n",
+            "r(x) :- x = {\"a\": /* c */ 1}.\n",
+            "r(x) :- x = {\"a\": -1, \"b\": - 1}.\n",
+            "r(x) :- x = {\"a\": 01, \"b\": 0.5, \"c\": 0}.\n",
+            "r(x) :- x = {\"a\":\x0c1}.\n",
+            "r(x) :- x = 1.5 /* c */ , y = 2.\n",
+            "r(x) :- x = 1.5",
+            "r(x) :- x = 1.5 // c",
+            "r(x) :- x = -0.25.\n",
+            "r(x) :- x = \"a-b\", y = \"0\\\\\".\n",
+            "r(x) :- x = 1. // \\u12\n",
+            "r(x) :- x = {\"a\": 1 /* \\u12 */}.\n",
+            "r(x) :- x = \"\\u12\".\n",
+        ];
+        for pad in [0usize, 40, 55, 60, 63] {
+            for c in cases {
+                inputs.push(format!("{}{c}", " ".repeat(pad)).into_bytes());
+            }
+        }
+        let files = corpus();
+        inputs.extend(files.iter().step_by(5).map(|f| f.as_bytes().to_vec()));
+        inputs.extend(crate::SAMPLES.iter().map(|s| s.as_bytes().to_vec()));
+        let refs: Vec<&[u8]> = inputs.iter().map(|f| f.as_slice()).collect();
+        let cpu = new.parser.tier1.run_files(&refs);
+        let mut taken = [0usize; 2];
+        for (k, f) in refs.iter().enumerate() {
+            let (a, b) = (new.program.block_programs[0].run(f), old.program.block_programs[0].run(f));
+            // Tier 2's result, the tape or the refusal: the old form checks some of `json_bad`'s
+            // alternatives in tier 2 (`CHECK`, a look-ahead), the new marks their tokens.
+            let (x, y) = (rerail_compiler::stream::run(&new.program, f, &a), rerail_compiler::stream::run(&old.program, f, &b));
+            assert_eq!(x.is_ok(), y.is_ok(), "file {k} {:?}: taken by the tests' marks as by the masks", String::from_utf8_lossy(&f[..f.len().min(80)]));
+            if let (Ok(x), Ok(y)) = (&x, &y) {
+                assert!(x == y, "file {k}: the same tape");
+            }
+            if k < 5 * cases.len() {
+                taken[usize::from(x.is_ok())] += 1;
+            }
+            assert_eq!(cpu[k].codes, a.codes, "file {k}: the CPU's codes");
+            assert_eq!(cpu[k].totals, a.totals, "file {k}: the CPU's refusals");
+        }
+        #[cfg(target_os = "macos")]
+        {
+            use rerail_metal::block_program::serial::{Segments, run_serial_split};
+            let batch: Vec<rerail_compiler::block::BatchFile<'_>> = refs.iter().map(|b| rerail_compiler::block::BatchFile { bytes: b, program: 0 }).collect();
+            let got = run_serial_split(&[&new.native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
+            for (k, m) in got.run.files.iter().enumerate() {
+                assert_eq!(m.codes, cpu[k].codes, "file {k}: Metal's codes");
+                assert_eq!(m.totals, cpu[k].totals, "file {k}: Metal's refusals");
+            }
+        }
+        assert!(taken[0] > 0 && taken[1] > 0, "the cases both refused and taken: {taken:?}");
+        eprintln!("{} files: the same marks; of the cases {} refused, {} taken", refs.len(), taken[0], taken[1]);
+    }
+
     /// A number's checks at its token (`escape … at number when …`, decision 0177): a second
     /// `.` and 19 digits from its first refuse the file, on the interpreter, the CPU and Metal
     /// alike, with the token across a block's edge and longer than a block.
@@ -1633,7 +1729,7 @@ pub mod tests {
         use rerail_compiler::block;
         let c = crate::compiled().expect("compiles");
         let r = c.native.records.as_ref().expect("records");
-        assert_eq!(r.checks.len(), 2, "a count and a run, the number rule's");
+        assert_eq!(r.checks.iter().filter(|c| c.then == rerail_compiler::records::CheckThen::Escape).count(), 2, "a count and a run, the number rule's");
         let mut cases: Vec<(String, bool)> = Vec::new();
         for pad in [0usize, 30, 40, 44, 50, 55, 58, 60, 63] {
             let head = format!(".decl a(x: number)\n// {}\n", "x".repeat(pad));

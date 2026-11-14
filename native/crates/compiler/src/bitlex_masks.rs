@@ -223,7 +223,16 @@ pub struct Lowering {
     pub unplaced: Vec<usize>,
     /// Each token test (`Stmt::TokenEscape`): its kind, whether a count, its mask and count
     /// (`Records::checks`).
-    pub token_escapes: Vec<(String, bool, Val, u32)>,
+    pub token_escapes: Vec<(String, bool, Val, u32, crate::records::CheckThen)>,
+    /// The marks with token tests and no mask (`Records::tested_only`).
+    pub tested_only: Vec<usize>,
+    /// The marks' token tests (`MarkCheck`), lowered once the tree says which marks are hidden
+    /// and refused: the mark, `after`, the kind, `count`, the least, the mask.
+    pub mark_tests: Vec<(usize, bool, String, bool, u32, Expr)>,
+    /// Token tests that are tier 2's (`CHECK` at the kind's tokens): `count(A & L) at least 1`,
+    /// `L` local, checked at each bit of `A` in the token, as a lexer checks an escape it reads.
+    /// The kind, the mark whose refusing levels alone check it (none: everywhere), `A`, `L`.
+    pub kind_checks: Vec<(String, Option<usize>, Val, Val)>,
     pub hidden: Vec<String>,
     /// Each `check`: a token kind and its grammar over the token's bytes.
     pub checks: Vec<(String, ::bitlex::syntax::Gram)>,
@@ -317,6 +326,9 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         unless: HashMap::new(),
         unplaced: Vec::new(),
         token_escapes: Vec::new(),
+        tested_only: Vec::new(),
+        mark_tests: Vec::new(),
+        kind_checks: Vec::new(),
         hidden: Vec::new(),
         checks: Vec::new(),
         toggles: Vec::new(),
@@ -553,8 +565,14 @@ impl Lowering {
                 }
                 // A token test (decision 0177): the token loop's, at its kind's end rule.
                 Stmt::TokenEscape { kind, test, expr, least, .. } => {
-                    let value = self.expr(expr)?;
-                    self.token_escapes.push((kind.clone(), *test == ::bitlex::syntax::TokenTest::Count, value, *least));
+                    let count = *test == ::bitlex::syntax::TokenTest::Count;
+                    match self.local_split(count, *least, expr)? {
+                        Some((a, l)) => self.kind_checks.push((kind.clone(), None, a, l)),
+                        None => {
+                            let value = self.expr(expr)?;
+                            self.token_escapes.push((kind.clone(), count, value, *least, crate::records::CheckThen::Escape));
+                        }
+                    }
                 }
                 // Both send the file to tree-sitter.
                 Stmt::Error(_, expr) | Stmt::Escape(_, expr) => {
@@ -648,7 +666,18 @@ impl Lowering {
                 Stmt::Check { kind, body } => self.checks.push((kind.clone(), body.clone())),
                 Stmt::Extra(kinds) => self.extra.extend(kinds.iter().cloned()),
                 Stmt::Hidden(kinds) => self.hidden.extend(kinds.iter().cloned()),
-                Stmt::Mark { kind, at, end, unless, unplaced } => {
+                Stmt::Mark { kind, at, end, unless, unplaced, checks } => {
+                    // Its token tests (decision 0177): the token loop's, each a bit of the mark.
+                    let k = self.marks.len();
+                    for c in checks {
+                        if !unless.is_empty() {
+                            return Err(format!("mark {kind}: token tests and `unless after`"));
+                        }
+                        self.mark_tests.push((k, c.after, c.kind.clone(), c.test == ::bitlex::syntax::TokenTest::Count, c.least, c.expr.clone()));
+                    }
+                    if !checks.is_empty() && matches!(at, Expr::Empty) {
+                        self.tested_only.push(k);
+                    }
                     if !unless.is_empty() {
                         self.unless.insert(self.marks.len(), unless.clone());
                     }
@@ -984,6 +1013,41 @@ impl Lowering {
 
     /// `x`'s operations as a local check's (`program::LocalOp`), when it is made of byte tests,
     /// constants and `prev`s alone: no carried value. Its last op is `x`.
+    /// A token test that is a local check (`kind_checks`): `count(A & L) at least 1`, `L` its
+    /// terms that are local look-ahead (`local_ops`), `A` the rest; none, a test of the loop.
+    pub fn local_split(&mut self, count: bool, least: u32, e: &Expr) -> Result<Option<(Val, Val)>, String> {
+        fn terms<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
+            match e {
+                Expr::And(a, b) => {
+                    terms(a, out);
+                    terms(b, out);
+                }
+                e => out.push(e),
+            }
+        }
+        if !count || least != 1 {
+            return Ok(None);
+        }
+        let mut ts = Vec::new();
+        terms(e, &mut ts);
+        if ts.len() < 2 {
+            return Ok(None);
+        }
+        let (mut a, mut l): (Option<Val>, Option<Val>) = (None, None);
+        for t in ts {
+            let x = self.expr(t)?;
+            let side = if x.d > 0 && self.local_ops(x).is_some() { &mut l } else { &mut a };
+            *side = Some(match *side {
+                Some(y) => self.and(y, x)?,
+                None => x,
+            });
+        }
+        Ok(match (a, l) {
+            (Some(a), Some(l)) if self.local_ops(l).is_some() => Some((a, l)),
+            _ => None,
+        })
+    }
+
     pub fn local_ops(&self, x: Val) -> Option<Vec<crate::program::LocalOp>> {
         use crate::program::LocalOp as L;
         fn walk(low: &Lowering, v: u16, at: &mut HashMap<u16, u16>, out: &mut Vec<L>) -> Option<u16> {
@@ -2151,6 +2215,21 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         // at the arms of the refusing levels that take those tokens (`CHECK`, gated). A bit in a
         // token lifts to the token or the next one, both inside the level (`grammar::refusing`).
         let refused = low.tree.iter().any(|s| matches!(s, Stmt::Refuse { mark, .. } if *mark == kind));
+        // Its token tests (decision 0177): a hidden mark only refused checks a local test in
+        // tier 2 at its kind's tokens, in its refusing levels (`kind_checks`); any other test is
+        // the token loop's, a bit of the mark.
+        for (_, after, tkind, count, least, e) in low.mark_tests.iter().filter(|t| t.0 == k).cloned().collect::<Vec<_>>() {
+            let split = if low.hidden.contains(&kind) && refused { low.local_split(count, least, &e)? } else { None };
+            match split {
+                Some((a, l)) => low.kind_checks.push((tkind, Some(k), a, l)),
+                None => {
+                    let value = low.expr(&e)?;
+                    let mark = u8::try_from(k).ok().filter(|&m| usize::from(m) < crate::records::MARKS).ok_or("a mark with token tests past the marks a code holds")?;
+                    let then = if after { crate::records::CheckThen::After(mark) } else { crate::records::CheckThen::At(mark) };
+                    low.token_escapes.push((tkind, count, value, least, then));
+                }
+            }
+        }
         if low.hidden.contains(&kind) && refused && !matches!(low.mark_exprs[k], Expr::Empty) {
             fn ors<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
                 match e {
@@ -2416,6 +2495,17 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // runs are the row's tokens (its start `s`, its last the run's next byte), each proved.
     // Tier 2 checks `L` at `A`'s bits in each such token it takes (`CHECK`), as the lean lexer
     // checks a string's `\u` escapes; tier 1 makes `A` alone, a mask.
+    // The token tests that are tier 2's: at their kind's rows.
+    for (kind, mark, a, l) in std::mem::take(&mut low.kind_checks) {
+        let mut kinds: Vec<u16> = (0..rows.len()).filter(|&r| token_rows[r].0 == kind).flat_map(|r| row_kinds(&rows[r])).collect();
+        kinds.sort_unstable();
+        kinds.dedup();
+        let ops = low.local_ops(l).ok_or("a local check's ops")?;
+        if kinds.is_empty() {
+            return Err(format!("a token test of `{kind}`: no token of the kind"));
+        }
+        checks.push((kinds, mark.map(|k| mark_kinds[k]), a, crate::program::LocalCheck { mask: 0, delay: l.d, ops }));
+    }
     for (a, l) in std::mem::take(&mut low.pending_checks) {
         match (token_row(low, a, &rows, token_rows)?, low.local_ops(l)) {
             (Some(r), Some(ops)) => checks.push((row_kinds(&rows[r]), None, a, crate::program::LocalCheck { mask: 0, delay: l.d, ops })),
@@ -2731,7 +2821,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let mut checks = Vec::new();
     for (k, tests) in rule_tests.iter().enumerate() {
         for &i in tests {
-            let (_, count, v, least) = low.token_escapes[i].clone();
+            let (_, count, v, least, then) = low.token_escapes[i].clone();
             let o = match mark_masks.iter().position(|m: &Val| m.v == v.v && m.d == v.d) {
                 Some(at) => at as u16,
                 None => {
@@ -2739,7 +2829,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     (mark_masks.len() - 1) as u16
                 }
             };
-            checks.push(crate::records::TokenCheck { rule: k as u8, count, o, least });
+            checks.push(crate::records::TokenCheck { rule: k as u8, count, o, least, then });
         }
     }
     // The readers' kinds by their rows' start masks, for the passes that read masks.
@@ -2749,8 +2839,16 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         let marks = if low.extra.contains(&token_rows[r].0) { extra_mark.map_or(0, |e| 1u32 << e) } else { 0 };
         retags.push(crate::records::Retag { o, kind: kinds[usize::from(f)], marks });
     }
-    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts };
+    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k) };
     crate::records::WordTable::new(&records.words)?;
+    // A mark's tests pass over an extra's token by its mark (`records::gap_marks`): the token
+    // loop knows it only where the reader gives it (`Reader::retag`).
+    if let Some(e) = records.extra {
+        let tested = records.checks.iter().any(|c| c.then != crate::records::CheckThen::Escape);
+        if tested && !records.readers.iter().any(|rd| rd.retag.is_some_and(|(_, m)| m >> e & 1 == 1)) {
+            return Err("a mark's token tests need the extra's mark from its reader".into());
+        }
+    }
     Ok((grammar::text(&states, &arms), lowered.text, takes_last, mark_masks, records))
 }
 

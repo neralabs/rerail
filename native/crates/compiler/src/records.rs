@@ -71,6 +71,8 @@ pub struct Records {
     pub retags: Vec<Retag>,
     /// The second bytes of each `EndRule::Next`'s pairs.
     pub nexts: Vec<Vec<u8>>,
+    /// The gap marks (bits of `marks`) made by token tests alone (`CheckThen`): no mask to read.
+    pub tested_only: u32,
 }
 
 /// A token test (`Records::checks`): over the tokens whose first byte's end rule is `rule`,
@@ -82,6 +84,30 @@ pub struct TokenCheck {
     pub count: bool,
     pub o: u16,
     pub least: u32,
+    pub then: CheckThen,
+}
+
+/// What a token that passes a test (`TokenCheck`) does: refuses the file (`escape … at KIND`),
+/// or is a bit of gap mark `k` at its first byte (`At`) or at the byte after its last (`After`):
+/// the mark of the grammar token at or after that byte (`mark … , at KIND when …`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CheckThen {
+    Escape,
+    At(u8),
+    After(u8),
+}
+
+/// A token's hits of the marks' tests (`CheckThen::At`, `After`): the `At` marks' bits, and the
+/// `After` marks' at `AFTER_SHIFT`.
+pub const AFTER_SHIFT: u32 = 16;
+
+/// The marks' tests' hits at token `s..=l` of rule `rule` (`AFTER_SHIFT`).
+pub fn check_hits(records: &Records, rule: u8, s: usize, l: usize, outputs: &[Vec<u64>]) -> u32 {
+    records.checks.iter().filter(|c| c.rule == rule && check_holds(c, s, l, outputs)).fold(0, |a, c| match c.then {
+        CheckThen::Escape => a,
+        CheckThen::At(k) => a | 1 << k,
+        CheckThen::After(k) => a | 1 << (AFTER_SHIFT + u32::from(k)),
+    })
 }
 
 /// Whether a token `s..=l` passes a test (`TokenCheck`), over the file's output words.
@@ -295,12 +321,12 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
                         s
                     }
                 };
-                checked |= records.checks.iter().any(|c| c.rule == k && check_holds(c, s, l, outputs));
+                checked |= records.checks.iter().any(|c| c.rule == k && c.then == CheckThen::Escape && check_holds(c, s, l, outputs));
                 l
             }
             Some(&rule) => {
                 let l = last_by_rule(records, rule, s, bytes, outputs).unwrap_or(s).max(s);
-                checked |= records.checks.iter().any(|c| c.rule == k && check_holds(c, s, l, outputs));
+                checked |= records.checks.iter().any(|c| c.rule == k && c.then == CheckThen::Escape && check_holds(c, s, l, outputs));
                 l
             }
             None => {
@@ -481,7 +507,7 @@ pub fn pass(records: &Records, table: &WordTable, bytes: &[u8], starts: &[u32], 
         }
         codes.push(kind | word << KIND_BITS | marks << MARK_SHIFT);
     }
-    let unplaced = gap_marks(records, starts, outputs, &mut codes);
+    let unplaced = gap_marks(records, bytes, starts, lasts, outputs, &mut codes);
     (codes, bad || unplaced)
 }
 
@@ -506,34 +532,53 @@ pub fn any_in(outputs: &[Vec<u64>], o: u16, a: usize, b: usize) -> bool {
 /// The gap marks (`Records::gaps`) into the codes: each grammar token's, from its mark's output
 /// after the grammar token before it up to its first byte. An extra's token has none. Whether
 /// a bit of an `else escape` mark has no grammar token to hold it (`Records::unplaced`).
-pub fn gap_marks(records: &Records, starts: &[u32], outputs: &[Vec<u64>], codes: &mut [u32]) -> bool {
+///
+/// The marks' token tests (`CheckThen`) are bits too: a token's `At` hits at its first byte, its
+/// `After` hits at the byte after its last. So a grammar token has its own `At` hits, and the
+/// grammar token before's and the extras' between `After` hits and the extras' `At` hits
+/// (`pending`), as a lexer carries what it read to the next token.
+pub fn gap_marks(records: &Records, bytes: &[u8], starts: &[u32], lasts: &[u32], outputs: &[Vec<u64>], codes: &mut [u32]) -> bool {
     if records.gaps == 0 {
         return false;
     }
     let extra = |c: u32| records.extra.is_some_and(|e| c >> (MARK_SHIFT + u32::from(e)) & 1 == 1);
+    let hits = |k: usize| -> u32 {
+        let s = starts[k] as usize;
+        let l = lasts.get(k).map_or(s, |&l| l as usize);
+        match bytes.get(s) {
+            Some(&b) if !records.checks.is_empty() => check_hits(records, records.ends[usize::from(b)], s, l, outputs),
+            _ => 0,
+        }
+    };
+    let low = (1u32 << AFTER_SHIFT) - 1;
     let mut from = 0usize;
     // The word of the grammar token before (0: none, or the file's first).
     let mut word_before = 0u32;
+    let mut pending = 0u32;
     for (k, &s) in starts.iter().enumerate().take(codes.len()) {
         let s = s as usize;
+        let h = hits(k);
         if extra(codes[k]) {
             codes[k] &= !(records.gaps << MARK_SHIFT);
+            pending |= h & low | h >> AFTER_SHIFT;
             continue;
         }
         let mut gap = 0u32;
         for (m, &(o, _)) in records.marks.iter().enumerate().filter(|&(m, _)| records.gaps >> m & 1 == 1) {
             let none = records.unless.iter().any(|&(u, w)| usize::from(u) == m && u32::from(w) == word_before);
-            if !none && any_in(outputs, o, from, s) {
+            let tested = (pending | h) >> m & 1 == 1;
+            if !none && (tested || records.tested_only >> m & 1 == 0 && any_in(outputs, o, from, s)) {
                 gap |= 1 << m;
             }
         }
         codes[k] = codes[k] & !(records.gaps << MARK_SHIFT) | gap << MARK_SHIFT;
         from = s + 1;
         word_before = codes[k] >> KIND_BITS & ((1 << (MARK_SHIFT - KIND_BITS)) - 1);
+        pending = h >> AFTER_SHIFT;
     }
     // The bits past the last grammar token's start.
-    records.marks.iter().enumerate().filter(|&(m, _)| records.unplaced >> m & 1 == 1).any(|(_, &(o, _))| {
+    records.marks.iter().enumerate().filter(|&(m, _)| records.unplaced >> m & 1 == 1).any(|(m, &(o, _))| {
         let words = outputs.get(usize::from(o)).map_or(0, Vec::len);
-        words > 0 && any_in(outputs, o, from, 64 * words - 1)
+        pending >> m & 1 == 1 || records.tested_only >> m & 1 == 0 && words > 0 && any_in(outputs, o, from, 64 * words - 1)
     })
 }
