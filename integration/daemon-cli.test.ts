@@ -250,7 +250,7 @@ describe("Rerail daemon CLI", () => {
       const starts: [string[], string][] = [
         [["--tls-cert", misspelled], notFound], [["--host", "0.0.0.0", "--allow-remote", "--tls-cert", misspelled], notFound],
         [["--tls-cert", keyFile], "The TLS certificate is not a PEM X\\.509 certificate: "],
-        [["--tls-cert", join(root, "other.pem")], "key values mismatch"],
+        [["--tls-cert", join(root, "other.pem")], "error:\\w+:x509 certificate routines::key values mismatch"],
       ];
       for (const [options, message] of starts) {
         const start = promisify(execFile)(process.execPath, [cli, "daemon", "start", "--dev", "--port", "0", ...options, "--tls-key", keyFile], { env });
