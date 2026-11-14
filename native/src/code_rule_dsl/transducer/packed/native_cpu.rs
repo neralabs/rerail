@@ -135,7 +135,7 @@ impl<T> Drop for DemandZeroRegion<T> {
 // Windows: committed VirtualAlloc pages are demand-zero, as an anonymous mapping's are.
 #[cfg(windows)]
 impl<T> DemandZeroRegion<T> {
-    fn new(count: usize) -> Result<Self, Error> {
+    pub fn new(count: usize) -> Result<Self, Error> {
         use windows_sys::Win32::System::Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_READWRITE, VirtualAlloc};
         let mapped_bytes = count
             .checked_mul(mem::size_of::<T>())

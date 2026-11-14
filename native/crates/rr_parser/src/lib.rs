@@ -813,11 +813,7 @@ pub mod tests {
 
     /// The process's CPU time so far, user and sys: the one thread runs alone.
     fn cpu() -> std::time::Duration {
-        // SAFETY: getrusage writes the zeroed structure.
-        let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
-        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
-        let time = |t: libc::timeval| std::time::Duration::from_secs(t.tv_sec as u64) + std::time::Duration::from_micros(t.tv_usec as u64);
-        time(usage.ru_utime) + time(usage.ru_stime)
+        rerail_prof::process_cpu()
     }
 
     /// Where a Metal run's wall time goes: two runs in a row over the corpus's first files.
@@ -1610,10 +1606,7 @@ pub mod tests {
 
     /// This thread's CPU time (user and sys), to the nanosecond.
     fn thread_cpu() -> std::time::Duration {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        // SAFETY: clock_gettime writes the structure.
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        std::time::Duration::new(t.tv_sec as u64, t.tv_nsec as u32)
+        rerail_prof::thread_cpu()
     }
 
     /// The repository's `.rr` files.

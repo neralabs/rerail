@@ -104,6 +104,7 @@ fn watch() {
     let mut seen: HashMap<(u64, String), Instant> = HashMap::new();
     // After `main` has started: Rust installs its own handlers there, which ours then hand on to.
     std::thread::sleep(Duration::from_millis(200));
+    #[cfg(unix)]
     faults::install();
     loop {
         std::thread::sleep(Duration::from_secs(1));
@@ -118,6 +119,7 @@ fn watch() {
                 allowed.remove(k);
             }
         }
+        #[cfg(unix)]
         faults::running(threads.iter().map(|(_, n)| n.as_str()).filter(|n| n.contains("::")));
         for k in threads {
             // A test's thread is named by its path; the engine's own threads (`rerail-cpu 3`) are not.
@@ -147,9 +149,17 @@ fn fail(name: &str, ran: Duration, limit: Duration) -> ! {
         ran.as_secs(),
         limit.as_secs()
     );
+    #[cfg(unix)]
     unsafe {
         libc::write(2, msg.as_ptr().cast(), msg.len());
         libc::_exit(124)
+    }
+    // No `_exit` here: the process ends at once all the same, its other threads with it.
+    #[cfg(not(unix))]
+    {
+        use std::io::Write as _;
+        let _ = std::io::stderr().write_all(msg.as_bytes());
+        std::process::exit(124)
     }
 }
 
@@ -252,7 +262,8 @@ mod tests {
     }
 
     /// A segmentation fault names its thread and the tests running, and still ends the process by the signal (a
-    /// child, as above).
+    /// child, as above). Unix only: Windows has no signals, and the handler is Unix's.
+    #[cfg(unix)]
     #[test]
     fn a_segmentation_fault_names_the_test() {
         if std::env::var_os("RERAIL_WATCHDOG_CHILD").is_some() {
@@ -278,7 +289,8 @@ mod tests {
 }
 
 /// The fault handler (module docs): the names it writes are kept in a fixed buffer the watchdog fills each second, so
-/// the handler only reads memory and writes to stderr.
+/// the handler only reads memory and writes to stderr. Unix only: a signal handler.
+#[cfg(unix)]
 mod faults {
     use std::cell::UnsafeCell;
     use std::sync::atomic::{AtomicUsize, Ordering};

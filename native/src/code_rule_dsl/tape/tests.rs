@@ -1912,11 +1912,7 @@ fn rr_parse_costs() {
     let bytes: usize = files.iter().map(String::len).sum();
     let nodes: usize = files.iter().map(|f| rerail_rr_syntax::tape(f).len()).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let cpu = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
+    let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     #[allow(clippy::type_complexity)]
     let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
         ("lean: rows", Box::new(|f| rerail_rr_syntax::tape(f).len())),
@@ -2154,11 +2150,7 @@ fn json_parse_costs() {
     files.retain(|f| rerail_simdjson::structurals(f.as_bytes(), |_| ()).is_ok() && jp::columns(f).is_some());
     let bytes: usize = files.iter().map(String::len).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let cpu = || {
-        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    };
+    let cpu = || rerail_prof::thread_cpu().as_secs_f64();
     let parser = std::cell::RefCell::new(tree_sitter::Parser::new());
     parser.borrow_mut().set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
     let grammar = Grammar::new(GrammarDialect::Json).unwrap();

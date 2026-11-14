@@ -150,10 +150,7 @@ fn an_edit_reruns_its_file_and_a_whitespace_edit_cuts_off() {
 
 /// The user and system CPU time this process has spent.
 fn cpu() -> std::time::Duration {
-    let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
-    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
-    let time = |t: libc::timeval| std::time::Duration::new(t.tv_sec as u64, t.tv_usec as u32 * 1000);
-    time(usage.ru_utime) + time(usage.ru_stime)
+    rerail_prof::process_cpu()
 }
 
 /// The slice's bench (06 S6; S8 measures on S7's sample): a cold audit of `RERAIL_S6_FILES`
@@ -608,6 +605,8 @@ fn the_slice_finds_ws_findings_on_real_files() {
                 crate::code_rule_dsl::transducer::packed::metal_backend::reserved_mb(),
                 crate::code_rule_dsl::transducer::packed::metal_backend::driver_mb()
             );
+            // jemalloc's counters; Windows builds use the system allocator, which keeps none.
+            #[cfg(not(windows))]
             let jemalloc = || {
                 let _ = tikv_jemalloc_ctl::epoch::advance();
                 format!(
@@ -617,6 +616,8 @@ fn the_slice_finds_ws_findings_on_real_files() {
                     tikv_jemalloc_ctl::stats::resident::read().unwrap_or(0) >> 20
                 )
             };
+            #[cfg(windows)]
+            let jemalloc = || String::from("none (the system allocator)");
             eprintln!("S7 jemalloc: {}", jemalloc());
             crate::code_rule_dsl::prof::purge_allocator_pages();
             eprintln!("S7 after purge: jemalloc {}; footprint {} MB", jemalloc(), footprint());
@@ -857,8 +858,13 @@ fn s8_measures_the_targets_on_s7s_sample() {
     let backends = std::env::var("RERAIL_S8_BACKENDS").unwrap_or_else(|_| "cpu,metal".to_owned());
     let passes = std::env::var("RERAIL_S8_PASSES").ok().and_then(|n| n.parse().ok()).unwrap_or(3_usize);
     let load = || {
+        // The one-minute load average; Windows keeps none (0).
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut loads = [0.0_f64; 3];
-        unsafe { libc::getloadavg(loads.as_mut_ptr(), 3) };
+        #[cfg(unix)]
+        unsafe {
+            libc::getloadavg(loads.as_mut_ptr(), 3)
+        };
         loads[0]
     };
     eprintln!("S8: {} files ({} from {repo}); edited {}", paths.len(), paths.iter().filter(|p| p.starts_with('r')).count(), first.display());

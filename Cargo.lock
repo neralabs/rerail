@@ -4146,9 +4146,9 @@ version = "0.1.0"
 dependencies = [
  "bitlex",
  "cranelift-codegen",
- "libc",
  "rerail-compiler",
  "rerail-metal",
+ "rerail-prof",
  "rerail-rr-syntax",
  "rerail-tape-format",
  "sha2 0.10.9",

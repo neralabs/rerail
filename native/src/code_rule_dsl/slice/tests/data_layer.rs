@@ -16,11 +16,18 @@ use crate::code_rule_dsl::matcher::gated_match_tree;
 use crate::code_rule_dsl::transducer::packed::LoweredMatcher;
 
 /// Peak resident set of the process, in MB (`ru_maxrss` is bytes on macOS, KB elsewhere).
+#[cfg(unix)]
 fn peak_rss_mb() -> u64 {
     let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
     unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
     let raw = usage.ru_maxrss as u64;
     if cfg!(target_os = "macos") { raw >> 20 } else { raw >> 10 }
+}
+
+/// Peak working set of the process, in MB (`rerail_prof::windows_peak_working_set`, bytes).
+#[cfg(windows)]
+fn peak_rss_mb() -> u64 {
+    rerail_prof::windows_peak_working_set() >> 20
 }
 
 /// Why a clause does not run on the slice's path, or `None` when it lowers.

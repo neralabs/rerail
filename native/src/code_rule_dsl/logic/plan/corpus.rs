@@ -1858,6 +1858,22 @@ pub fn build_store(dir: &str, key: Option<&str>) -> std::path::PathBuf {
     }
 }
 
+/// Whether no process `pid` exists on this host. Unix asks with signal 0; elsewhere a process is never known gone,
+/// so what it left is kept.
+#[cfg(any(test, feature = "test-hooks"))]
+pub(super) fn process_gone(pid: i32) -> bool {
+    #[cfg(unix)]
+    {
+        // SAFETY: signal 0 checks that the process exists and sends nothing.
+        (unsafe { libc::kill(pid, 0) }) != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
 /// The process's store, for what asks off a test's thread (a test's is its own, `test_store`): the machine's is
 /// written by every other run on it, so a test's writes could wait out its busy deadline behind them. Removed when
 /// the process exits; one a killed process left is removed by the next test process to start.
@@ -1870,8 +1886,7 @@ fn test_tape_cache() -> &'static std::path::PathBuf {
         for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
             let Some(pid) = name.strip_prefix(PREFIX).and_then(|rest| rest.split('.').next()).and_then(|p| p.parse::<i32>().ok()) else { continue };
-            // SAFETY: signal 0 checks that the process exists and sends nothing.
-            if pid != std::process::id() as i32 && unsafe { libc::kill(pid, 0) } != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+            if pid != std::process::id() as i32 && process_gone(pid) {
                 let _ = std::fs::remove_file(entry.path());
             }
         }
@@ -1883,8 +1898,14 @@ fn test_tape_cache() -> &'static std::path::PathBuf {
                 }
             }
         }
-        // SAFETY: `remove` is a plain function that runs once, at exit.
-        unsafe { libc::atexit(remove) };
+        // SAFETY: `remove` is a plain function that runs once, at exit. Windows has no `atexit` here (no libc): a
+        // process's store stays until the next test process finds it gone, which it does not on Windows either.
+        #[cfg(unix)]
+        unsafe {
+            libc::atexit(remove)
+        };
+        #[cfg(not(unix))]
+        let _ = remove;
         dir.join(format!("{PREFIX}{}.sqlite", std::process::id()))
     });
     &PATH

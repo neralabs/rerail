@@ -125,15 +125,8 @@ struct Run {
     metrics: Metrics,
 }
 fn cpu_ns() -> u64 {
-    let mut time = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: valid writable timespec; the process clock includes worker CPU.
-    unsafe {
-        libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut time);
-    }
-    time.tv_sec as u64 * 1_000_000_000 + time.tv_nsec as u64
+    // The process's CPU time, worker threads included, on every platform (`rerail_prof::process_cpu`).
+    rerail_prof::process_cpu().as_nanos() as u64
 }
 fn unparen<'t, D: Doc>(mut node: Node<'t, D>) -> Node<'t, D> {
     while node.kind() == "parenthesized_expression" {

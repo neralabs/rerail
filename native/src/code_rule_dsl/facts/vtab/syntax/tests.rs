@@ -1098,9 +1098,7 @@ fn definition_ids_census() {
 
 /// This thread's CPU seconds.
 fn cpu_now() -> f64 {
-    let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
-    t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    rerail_prof::thread_cpu().as_secs_f64()
 }
 
 /// A rule reading the text of a node whose kind no body fixes gets a twin reading `@rr_node_text` (decision 0109);

@@ -16,8 +16,11 @@ fn sweep() {
         let name = e.file_name();
         let Some(rest) = name.to_str().and_then(|n| n.strip_prefix("rerail-prefilter-")) else { continue };
         let Some(pid) = rest.split('-').next().and_then(|p| p.parse::<i32>().ok()) else { continue };
-        // SAFETY: signal 0 sends nothing; it only asks whether the process exists.
+        // SAFETY: signal 0 sends nothing; it only asks whether the process exists. Windows: never known gone.
+        #[cfg(unix)]
         let alive = pid as u32 == me || unsafe { libc::kill(pid, 0) } == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH);
+        #[cfg(not(unix))]
+        let alive = { let _ = (pid, me); true };
         if alive {
             continue;
         }

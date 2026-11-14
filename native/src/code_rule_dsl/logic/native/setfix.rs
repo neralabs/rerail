@@ -2309,7 +2309,7 @@ fn cat(syms: &mut Interner, a: i64, b: i64) -> i64 {
 
 /// This thread's CPU seconds (wasm32: `prof::single_thread_cpu`).
 #[cfg(target_family = "wasm")]
-fn thread_cpu() -> f64 {
+pub fn thread_cpu() -> f64 {
     crate::code_rule_dsl::prof::single_thread_cpu().as_secs_f64()
 }
 
@@ -2323,7 +2323,7 @@ pub fn thread_cpu() -> f64 {
 
 /// This thread's CPU seconds (user + kernel).
 #[cfg(windows)]
-fn thread_cpu() -> f64 {
+pub fn thread_cpu() -> f64 {
     let (user, kernel) = crate::code_rule_dsl::prof::windows_cpu(true);
     (user + kernel).as_secs_f64()
 }

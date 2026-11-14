@@ -163,7 +163,8 @@ mod watchman {
         Since::Changed { paths, cursor: clock }
     }
 
-    #[cfg(test)]
+    // The stand-in for Watchman is a `#!/bin/sh` script, which Windows does not start.
+    #[cfg(all(test, unix))]
     mod tests {
         use super::super::Since;
 

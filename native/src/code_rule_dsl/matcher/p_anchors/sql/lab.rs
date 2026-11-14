@@ -255,11 +255,6 @@ fn run(policy: &str) {
 }
 
 fn cpu_ns() -> u64 {
-    let mut now = libc::timespec {
-        tv_sec: 0,
-        tv_nsec: 0,
-    };
-    // SAFETY: `now` is a valid timespec for the call to fill.
-    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut now) };
-    now.tv_sec as u64 * 1_000_000_000 + now.tv_nsec as u64
+    // This thread's CPU time, on every platform (`rerail_prof::thread_cpu`).
+    rerail_prof::thread_cpu().as_nanos() as u64
 }
