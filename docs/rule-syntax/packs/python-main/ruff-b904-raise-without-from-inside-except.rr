@@ -5,7 +5,7 @@
 .mode steer
 .scope include "**/*.py", "**/*.pyi"
 .scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // B904(n): a finding at node n, from clause `raise-without-from-inside-except`.
 // Each rule below is one way the JSON `rule` can match.

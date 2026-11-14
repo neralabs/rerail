@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // PYI020(n): a finding at node n, from clause `quoted-annotation-in-stub`.
 // Each rule below is one way the JSON `rule` can match.
@@ -18,7 +18,7 @@ PYI020_raw(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation PYI020_nested_quoted_annotation_in_stub(at: node, q: node) code "PYI020" "Remove the quotes from this annotation and write the type directly; a stub resolves forward references, so quoting adds nothing."
+.violation PYI020_nested_quoted_annotation_in_stub(at: loc, q: node) code "PYI020" "Remove the quotes from this annotation and write the type directly; a stub resolves forward references, so quoting adds nothing."
     suppress noqa "PYI020"
 PYI020_nested_quoted_annotation_in_stub_raw(Q, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     pyi020_quoted_within(n, Q).
@@ -44,5 +44,5 @@ pyi020_demand_quoted_within(c5) :- pyi020_demand_quoted_within(n), parsed(n, "an
 PYI020(v0) :- PYI020_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl PYI020_nested_quoted_annotation_in_stub_raw(at: node, q: node)
+.decl PYI020_nested_quoted_annotation_in_stub_raw(at: loc, q: node)
 PYI020_nested_quoted_annotation_in_stub(v0, v1) :- PYI020_nested_quoted_annotation_in_stub_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

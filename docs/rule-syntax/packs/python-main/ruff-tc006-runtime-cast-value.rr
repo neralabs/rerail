@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 // ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
 
 #include "python/names.rr"
@@ -63,7 +63,7 @@ TC006_raw(n) :- tc006_unquoted_type(n).
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation TC006_unquoted_cast_type_in_string(at: node, t: node) code "TC006" "Quote the type expression passed to this `cast()` call, as in `cast(\"list[int]\", value)`."
+.violation TC006_unquoted_cast_type_in_string(at: loc, t: node) code "TC006" "Quote the type expression passed to this `cast()` call, as in `cast(\"list[int]\", value)`."
     suppress noqa "TC006"
 TC006_unquoted_cast_type_in_string_raw(T, n) :- tc006_cast_in_string(n, T).
 
@@ -71,7 +71,7 @@ TC006_unquoted_cast_type_in_string_raw(T, n) :- tc006_cast_in_string(n, T).
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation TC006_unquoted_cast_type_generator(at: node, type: node) code "TC006" "Quote the type expression passed to this `cast()` call, as in `cast(\"list[int]\", value)`."
+.violation TC006_unquoted_cast_type_generator(at: loc, type: node) code "TC006" "Quote the type expression passed to this `cast()` call, as in `cast(\"list[int]\", value)`."
     suppress noqa "TC006"
 TC006_unquoted_cast_type_generator_raw(TYPE, n) :- kind(n, "generator_expression"),
     match("(?s)\\((?:\\s*#[^\\n]*\\n)*\\s*(?P<TYPE>[^\\s#].*?)(?:\\s*#[^\\n\"']*\\n)*\\s*\\)", n),
@@ -104,9 +104,9 @@ tc006_alt_5(n, T) :- tc006_cast_in_string(n, T).
 TC006(v0) :- TC006_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).
 
 // main's file condition {"notRegex": "\\.pyi$"}
-.decl TC006_unquoted_cast_type_in_string_raw(at: node, t: node)
+.decl TC006_unquoted_cast_type_in_string_raw(at: loc, t: node)
 TC006_unquoted_cast_type_in_string(v0, v1) :- TC006_unquoted_cast_type_in_string_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).
 
 // main's file condition {"notRegex": "\\.pyi$"}
-.decl TC006_unquoted_cast_type_generator_raw(at: node, type: node)
+.decl TC006_unquoted_cast_type_generator_raw(at: loc, type: node)
 TC006_unquoted_cast_type_generator(v0, v1) :- TC006_unquoted_cast_type_generator_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // C418(n): a finding at node n, from clause `unnecessary-literal-within-dict-call`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C418(at: node, call: node) "Drop the outer `dict()` call and keep the inner dict literal or comprehension; it already builds a new dictionary."
+.violation C418(at: loc, call: node) "Drop the outer `dict()` call and keep the inner dict literal or comprehension; it already builds a new dictionary."
     suppress noqa "C418"
 C418(CALL, n) :- c418_target(n), node(_, n, _, _, _), CALL = n.
 C418(CALL, n) :- c418_in_annotation(n, CALL).

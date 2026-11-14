@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -12,7 +12,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes TV from other metavariables' text; its literals end each rule.
-.violation AIR001(at: node, name: node, tv: symbol) "Rename this task variable to `{tv}` so it matches its `task_id`, or change the `task_id` if this variable name is the one you want."
+.violation AIR001(at: loc, name: node, tv: symbol) "Rename this task variable to `{tv}` so it matches its `task_id`, or change the `task_id` if this variable name is the one you want."
     suppress noqa "AIR001"
 AIR001(NAME, n, TV) :- kind(n, "assignment"), child(p2, n, _),
     kind(p2, "expression_statement"),

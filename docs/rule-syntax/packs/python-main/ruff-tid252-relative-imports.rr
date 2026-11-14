@@ -4,12 +4,12 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // TID252(n): a finding at node n, from clause `parent-relative-import`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation TID252(at: node, s: node, m: loc) "Replace the relative module `{m}` in this import with its absolute dotted path; keep it relative only where the package layout makes an absolute path impractical."
+.violation TID252(at: loc, s: node, m: loc) "Replace the relative module `{m}` in this import with its absolute dotted path; keep it relative only where the package layout makes an absolute path impractical."
     suppress noqa "TID252"
 TID252(S, n, M) :- (kind(n, "dotted_name") ; kind(n, "aliased_import") ; kind(n, "wildcard_import")),
     child(p1, n, _), kind(p1, "import_from_statement"), node(_, p1, _, _, _), S = p1,

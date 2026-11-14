@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // YTT202(n): a finding at node n, from clause `six-py3`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation YTT202(at: node, c: node) "Replace `{c}` with `not six.PY2` (in a `case` pattern, test `not six.PY2` in a guard instead); `six.PY3` is false on Python 4 and later."
+.violation YTT202(at: loc, c: node) "Replace `{c}` with `not six.PY2` (in a `case` pattern, test `not six.PY2` in a guard instead); `six.PY3` is false on Python 4 and later."
     suppress noqa "YTT202"
 YTT202(C, n) :- ytt202_target(n), node(_, n, _, _, _), C = n.
 YTT202(C, n) :- ytt202_splat_target(n),

@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // YTT102(n): a finding at node n, from clause `sys-version2`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation YTT102(at: node, c: node) "Use `sys.version_info.minor` instead of `sys.version[2]`; the character is only the first digit of the minor version once it has two digits (3.10 gives \"1\")."
+.violation YTT102(at: loc, c: node) "Use `sys.version_info.minor` instead of `sys.version[2]`; the character is only the first digit of the minor version once it has two digits (3.10 gives \"1\")."
     suppress noqa "YTT102"
 YTT102(C, n) :- ytt102_target(n), node(_, n, _, _, _), C = n.
 YTT102(C, n) :- ytt102_splat_target(n),

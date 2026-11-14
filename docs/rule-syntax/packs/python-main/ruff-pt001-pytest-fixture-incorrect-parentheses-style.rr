@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // PT001(n): a finding at node n, from clause `fixture-empty-parentheses`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT001(at: node, span: node, f: loc) "Remove the empty parentheses: write the decorator as `@{f}` instead of `@{f}()`."
+.violation PT001(at: loc, span: node, f: loc) "Remove the empty parentheses: write the decorator as `@{f}` instead of `@{f}()`."
     suppress noqa "PT001"
 // SPAN: not bound by every branch, so empty (unset) where not bound, as in ast-grep.
 PT001(rr_at, SPAN, F) :- kind(n, "decorator"), child(n, c1, _), pt001_empty_call(c1, F),

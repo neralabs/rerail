@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 // ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
 
 #include "python/names.rr"

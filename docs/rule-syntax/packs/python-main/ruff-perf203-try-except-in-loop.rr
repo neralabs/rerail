@@ -4,13 +4,13 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // PERF203(n): a finding at node n, from clause `try-except-in-loop`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation PERF203(at: node, h: node) "Move the whole loop into one try block, or check the failing condition before the call, so no handler is set up per iteration. Keep it if the loop must carry on after each failure."
+.violation PERF203(at: loc, h: node) "Move the whole loop into one try block, or check the failing condition before the call, so no handler is set up per iteration. Keep it if the loop must carry on after each failure."
     suppress noqa "PERF203"
 PERF203(H, n) :- perf203_handler(n),
     match("(?:(?P<H>(?:(?s:.*?)\\n)?[ \\t]*(?:(?:[^\\s\"'#\\\\]|\\\\.|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*')[ \\t]*)*?(?:[^\\s\"'#\\\\]|\\\\.|\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*'))[ \\t\\r]*(?:#[^\\n]*)?(?:\\n[ \\t\\r]*(?:#[^\\n]*)?)*\\z)?(?s:.*)", n),

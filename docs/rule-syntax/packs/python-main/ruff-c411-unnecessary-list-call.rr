@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // C411(n): a finding at node n, from clause `unnecessary-list-call`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C411(at: node, call: node) "Remove the outer `list()` call and keep the list comprehension; it already builds a new list."
+.violation C411(at: loc, call: node) "Remove the outer `list()` call and keep the list comprehension; it already builds a new list."
     suppress noqa "C411"
 C411(CALL, n) :- c411_target(n), node(_, n, _, _, _), CALL = n.
 C411(CALL, n) :- c411_in_annotation(n, CALL).

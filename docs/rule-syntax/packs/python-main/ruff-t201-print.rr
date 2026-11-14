@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // T201(n): a finding at node n, from clause `print-call`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation T201(at: node, f: node) "Replace this `print` with a `logging` call (`logger.debug`, `logger.info`), or remove it if it was debug output; leave it where the program's job is to write to the terminal."
+.violation T201(at: loc, f: node) "Replace this `print` with a `logging` call (`logger.debug`, `logger.info`), or remove it if it was debug output; leave it where the program's job is to write to the terminal."
     suppress noqa "T201"
 T201(F, n) :- kind(n, "call"),
     ( field(n, "function", c1), t201_callee(c1, F)

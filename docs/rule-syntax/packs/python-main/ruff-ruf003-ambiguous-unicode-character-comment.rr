@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // symbol(n): the JSON util `symbol`, used where the JSON says `matches: "symbol"`
 //   CH: metavariable this relation binds for the calling rule
@@ -55,7 +55,7 @@ ruf003_without_unambiguous(n, CH) :- !ruf003_unambiguous(n), (ruf003_symbol(n, C
 // RUF003(n): findings from clauses `with-unambiguous`, `without-unambiguous`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF003(at: node, ch: node) "Replace the look-alike character `{ch}` in this comment with the ASCII character it imitates, unless the text is meant to hold it (for example a word in another language)."
+.violation RUF003(at: loc, ch: node) "Replace the look-alike character `{ch}` in this comment with the ASCII character it imitates, unless the text is meant to hold it (for example a word in another language)."
     suppress noqa "RUF003"
 RUF003(CH, n) :- kind(n, "comment"), ruf003_with_unambiguous(n, CH).
 RUF003(CH, n) :- kind(n, "comment"), ruf003_without_unambiguous(n, CH).

@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -192,7 +192,7 @@ air311_moved_11(n, N, ORIG) :- air311_moved_bare(n, N, ORIG), !air311_alt_16(n, 
 // AIR311(n): a finding at node n, from clause `name-1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR311(at: node, n: node, orig: loc) "Import `{orig}` from `airflow.sdk` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed later."
+.violation AIR311(at: loc, n: node, orig: loc) "Import `{orig}` from `airflow.sdk` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed later."
     suppress noqa "AIR311"
 AIR311(N, n, ORIG) :- (air311_old(n), air311_moved_1(n, N, ORIG) ; air311_quoted(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air311_airflow_name(c2), air311_seen_airflow(n).
@@ -210,7 +210,7 @@ air311_quoted(n, N, ORIG) :- air311_demand_quoted(n), air311_string_literal(n), 
 // AIR311_name_2(n, detail): findings from clauses `name-2`, `name-3`, `name-4`, `name-5` and 4 more. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR311_name_2(at: node, n: node, detail: symbol) code "AIR311" "{detail}; the old name still works in Airflow 3 but is expected to be removed later."
+.violation AIR311_name_2(at: loc, n: node, detail: symbol) code "AIR311" "{detail}; the old name still works in Airflow 3 but is expected to be removed later."
     suppress noqa "AIR311"
 AIR311_name_2(N, n, "Import `Asset` from `airflow.sdk` instead (needs apache-airflow-task-sdk>=1.0.0)") :- (air311_old_name_2(n), air311_moved_2(n, N) ; air311_quoted_name_2(n, N)),
     inside(n, p1, "module"), within(c2, p1), air311_airflow_name(c2), air311_seen_airflow(n).
@@ -260,7 +260,7 @@ air311_quoted_name_5(n, N) :- air311_demand_quoted_name_5(n), air311_string_lite
 // AIR311_name_6(n): a finding at node n, from clause `name-6`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR311_name_6(at: node, n: node, orig: loc) code "AIR311" "Import `{orig}` from `airflow.sdk.bases.decorator` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed later."
+.violation AIR311_name_6(at: loc, n: node, orig: loc) code "AIR311" "Import `{orig}` from `airflow.sdk.bases.decorator` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed later."
     suppress noqa "AIR311"
 AIR311_name_6(N, n, ORIG) :- (air311_old_name_6(n), air311_moved_6(n, N, ORIG) ; air311_quoted_name_6(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air311_airflow_name(c2), air311_seen_airflow(n).
@@ -308,7 +308,7 @@ air311_quoted_name_10(n, N) :- air311_demand_quoted_name_10(n), air311_string_li
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on ORIG are added to every rule.
-.violation AIR311_name_param(at: node, n: node, orig: loc) code "AIR311" "Import `{orig}` from `airflow.sdk.definitions.param` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed later."
+.violation AIR311_name_param(at: loc, n: node, orig: loc) code "AIR311" "Import `{orig}` from `airflow.sdk.definitions.param` instead (needs apache-airflow-task-sdk>=1.0.0); the old name still works in Airflow 3 but is expected to be removed later."
     suppress noqa "AIR311"
 AIR311_name_param(N, n, ORIG) :- (air311_old_name_param(n), air311_moved_11(n, N, ORIG) ; air311_quoted_name_param(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air311_airflow_name(c2), air311_seen_airflow(n),
@@ -327,7 +327,7 @@ air311_quoted_name_param(n, N, ORIG) :- air311_string_literal(n), parsed(n, "ann
 // AIR311_name_no_replacement(n): a finding at node n, from clause `name-no-replacement`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR311_name_no_replacement(at: node, n: node, orig: loc) code "AIR311" "`{orig}` has no replacement and is expected to be removed in a future Airflow version; stop relying on it where you can."
+.violation AIR311_name_no_replacement(at: loc, n: node, orig: loc) code "AIR311" "`{orig}` has no replacement and is expected to be removed in a future Airflow version; stop relying on it where you can."
     suppress noqa "AIR311"
 AIR311_name_no_replacement(N, n, ORIG) :-
     ( air311_old_name(n, "no_replacement"), air311_moved_bare(n, N, ORIG)
@@ -346,7 +346,7 @@ air311_quoted_name_no_replacement(n, N, ORIG) :- air311_demand_quoted_name_no_re
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on ORIG are added to every rule.
-.violation AIR311_dag_sla_miss_callback(at: node, k: node) code "AIR311" "`{k}` has no replacement and is expected to be removed in a future Airflow version; keep it only while the code must still support Airflow 2."
+.violation AIR311_dag_sla_miss_callback(at: loc, k: node) code "AIR311" "`{k}` has no replacement and is expected to be removed in a future Airflow version; keep it only while the code must still support Airflow 2."
     suppress noqa "AIR311"
 AIR311_dag_sla_miss_callback(K, n) :- kind(n, "keyword_argument"),
     field(n, "name", c1), glob("sla_miss_callback", c1), node(_, c1, _, _, _), K = c1,
@@ -366,7 +366,7 @@ air311_callee(n, ORIG) :- kind(n, "parenthesized_expression"), child(n, c2, _),
 // AIR311_timetable_datasets(n): a finding at node n, from clause `timetable-datasets`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR311_timetable_datasets(at: node, k: node) code "AIR311" "Rename the `{k}` argument to `assets`; the old name still works in Airflow 3 but is expected to be removed later."
+.violation AIR311_timetable_datasets(at: loc, k: node) code "AIR311" "Rename the `{k}` argument to `assets`; the old name still works in Airflow 3 but is expected to be removed later."
     suppress noqa "AIR311"
 AIR311_timetable_datasets(K, n) :- kind(n, "keyword_argument"), field(n, "name", c1),
     glob("datasets", c1), node(_, c1, _, _, _), K = c1,
@@ -386,7 +386,7 @@ air311_callee_timetable_datasets(n) :- kind(n, "parenthesized_expression"), chil
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on ORIG are added to every rule.
-.violation AIR311_builtin_operator_sla(at: node, k: node) code "AIR311" "`{k}` has no replacement and is expected to be removed in a future Airflow version; keep it only while the code must still support Airflow 2."
+.violation AIR311_builtin_operator_sla(at: loc, k: node) code "AIR311" "`{k}` has no replacement and is expected to be removed in a future Airflow version; keep it only while the code must still support Airflow 2."
     suppress noqa "AIR311"
 AIR311_builtin_operator_sla(K, n) :- kind(n, "keyword_argument"), field(n, "name", c1),
     glob("sla", c1), node(_, c1, _, _, _), K = c1,
@@ -408,7 +408,7 @@ air311_callee_builtin_operator_sla(n, ORIG) :- kind(n, "parenthesized_expression
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on ORIG are added to every rule.
-.violation AIR311_provider_operator_sla(at: node, k: node) code "AIR311" "`{k}` has no replacement and is expected to be removed in a future Airflow version; keep it only while the code must still support Airflow 2."
+.violation AIR311_provider_operator_sla(at: loc, k: node) code "AIR311" "`{k}` has no replacement and is expected to be removed in a future Airflow version; keep it only while the code must still support Airflow 2."
     suppress noqa "AIR311"
 AIR311_provider_operator_sla(K, n) :- kind(n, "keyword_argument"),
     field(n, "name", c1), glob("sla", c1), node(_, c1, _, _, _), K = c1,

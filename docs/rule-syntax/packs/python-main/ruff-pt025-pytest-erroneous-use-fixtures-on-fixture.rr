@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // PT025(n): a finding at node n, from clause `usefixtures-on-fixture`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT025(at: node, span: node) "Remove this `usefixtures` mark; it has no effect on a fixture. To make the fixture depend on other fixtures, list them as parameters of the fixture function."
+.violation PT025(at: loc, span: node) "Remove this `usefixtures` mark; it has no effect on a fixture. To make the fixture depend on other fixtures, list them as parameters of the fixture function."
     suppress noqa "PT025"
 // SPAN: not bound by every branch, so empty (unset) where not bound, as in ast-grep.
 PT025(rr_at, SPAN) :- kind(n, "decorator"), child(n, c1, _), pt025_uf_expr(c1), child(p2, n, _),

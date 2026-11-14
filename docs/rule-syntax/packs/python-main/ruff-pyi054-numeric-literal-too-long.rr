@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // PYI054(n): a finding at node n, from clause `numeric-literal-too-long`.
 // Each rule below is one way the JSON `rule` can match.
@@ -17,7 +17,7 @@ PYI054_raw(n) :- (kind(n, "integer") ; kind(n, "float")), match("[\\s\\S]{11,}",
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation PYI054_numeric_literal_too_long_in_string_annotation(at: node, long: node) code "PYI054" "Replace this long numeric literal with `...` in the stub; the exact value is an implementation detail that stubs should not pin."
+.violation PYI054_numeric_literal_too_long_in_string_annotation(at: loc, long: node) code "PYI054" "Replace this long numeric literal with `...` in the stub; the exact value is an implementation detail that stubs should not pin."
     suppress noqa "PYI054"
 PYI054_numeric_literal_too_long_in_string_annotation_raw(LONG, n) :- pyi054_long_in_annotation(n, LONG).
 
@@ -42,7 +42,7 @@ pyi054_long_in_annotation(n, LONG) :- pyi054_plain_annotation(n), parsed(n, "ann
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation PYI054_number_in_escaped_or_concatenated_string_annotation(at: node, num: node) code "PYI054" "Write this string annotation as one plain string without escapes, and replace any numeric literal in it longer than ten characters with `...`; stubs should not pin exact values."
+.violation PYI054_number_in_escaped_or_concatenated_string_annotation(at: loc, num: node) code "PYI054" "Write this string annotation as one plain string without escapes, and replace any numeric literal in it longer than ten characters with `...`; stubs should not pin exact values."
     suppress noqa "PYI054"
 PYI054_number_in_escaped_or_concatenated_string_annotation_raw(NUM, n) :- pyi054_long_escaped_or_concatenated(n, NUM).
 
@@ -102,9 +102,9 @@ pyi054_alt_2(n, NUM) :- pyi054_demand_alt_2(n), pyi054_any_number_in_annotation(
 PYI054(v0) :- PYI054_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl PYI054_numeric_literal_too_long_in_string_annotation_raw(at: node, long: node)
+.decl PYI054_numeric_literal_too_long_in_string_annotation_raw(at: loc, long: node)
 PYI054_numeric_literal_too_long_in_string_annotation(v0, v1) :- PYI054_numeric_literal_too_long_in_string_annotation_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl PYI054_number_in_escaped_or_concatenated_string_annotation_raw(at: node, num: node)
+.decl PYI054_number_in_escaped_or_concatenated_string_annotation_raw(at: loc, num: node)
 PYI054_number_in_escaped_or_concatenated_string_annotation(v0, v1) :- PYI054_number_in_escaped_or_concatenated_string_annotation_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

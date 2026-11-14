@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -41,7 +41,7 @@ pt016_empty_or_null(n) :- pt016_empty_or_null_u7(n).
 // PT016(n): a finding at node n, from clause `pytest-fail-without-message`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT016(at: node, f: node) "Add a message to `{f}(...)` that says why the test is failing, so the failure report explains itself."
+.violation PT016(at: loc, f: node) "Add a message to `{f}(...)` that says why the test is failing, so the failure report explains itself."
     suppress noqa "PT016"
 PT016(F, n) :- pt016_fail_call(n, F), kind(n, "call"), pt016_arg_no_reason_1(n), pt016_arg_no_msg_2(n).
 
@@ -49,7 +49,7 @@ PT016(F, n) :- pt016_fail_call(n, F), kind(n, "call"), pt016_arg_no_reason_1(n),
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on R are added to every rule.
-.violation PT016_pytest_fail_empty_reason(at: node, f: node) code "PT016" "Give `{f}(...)` a message that is not empty or `None`, saying why the test is failing."
+.violation PT016_pytest_fail_empty_reason(at: loc, f: node) code "PT016" "Give `{f}(...)` a message that is not empty or `None`, saying why the test is failing."
     suppress noqa "PT016"
 PT016_pytest_fail_empty_reason(F, n) :- pt016_fail_call(n, F), kind(n, "call"),
     pt016_arg_reason_1(n, a1), R = a1, pt016_empty_or_null(R).
@@ -58,7 +58,7 @@ PT016_pytest_fail_empty_reason(F, n) :- pt016_fail_call(n, F), kind(n, "call"),
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on M are added to every rule.
-.violation PT016_pytest_fail_empty_msg(at: node, f: node) code "PT016" "Give `{f}(...)` a `msg=` value that is not empty or `None`, saying why the test is failing."
+.violation PT016_pytest_fail_empty_msg(at: loc, f: node) code "PT016" "Give `{f}(...)` a `msg=` value that is not empty or `None`, saying why the test is failing."
     suppress noqa "PT016"
 PT016_pytest_fail_empty_msg(F, n) :- pt016_fail_call(n, F), kind(n, "call"),
     pt016_arg_no_reason_1(n), pt016_arg_msg_2(n, a1), M = a1, pt016_empty_or_null(M).

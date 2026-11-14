@@ -4,15 +4,17 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // E722(n): a finding at node n, from clause `bare-except`.
 // Each rule below is one way the JSON `rule` can match.
 .violation E722(at: node) "Name the exception types this bare except should catch; it also catches KeyboardInterrupt and SystemExit."
     suppress noqa "E722"
-E722(n) :- glob("except", n), child(p1, n, _), kind(p1, "except_clause"),
-    count : { child(p1, c2, _), kind(c2, "block"), child(c2, c3, _), kind(c3, "raise_statement"), glob("raise", c3) } = 0,
-    e722_tok_precedes_1(n).
+E722(n) :-
+    ( glob("except", n), child(p1, n, _), kind(p1, "except_clause"), count : { child(p1, c2, _), kind(c2, "block"), child(c2, c3, _), kind(c3, "raise_statement"), glob("raise", c3) } = 0, e722_tok_precedes_1(n)
+    ; kind(n, "except_clause"), count : { child(n, c13, _), kind(c13, "block"), child(c13, c14, _), kind(c14, "raise_statement"), glob("raise", c14) } = 0, e722_tok_lead_2(n)
+    ).
+
 
 // tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl e722_tok_precedes_1(n: node)
@@ -23,3 +25,12 @@ e722_tok_precedes_1(n) :- structural_after(n, g6), match("\\s*", g6), child(p7, 
     match(":", t5).
 e722_tok_precedes_1(n) :- structural_after(n, g6),
     match("(?s)^(?:\\s*(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+
+// tok_lead_2(n): n starts with the token "^except$": a token the tape stores, or one it leaves out, read from the source before n's first stored child
+.decl e722_tok_lead_2(n: node)
+.stored e722_tok_lead_2 "its token read is of the parent's first token where the tape stores it; one the tape leaves out is read from the source before the parent's first stored child, in its own rule"
+e722_tok_lead_2(n) :- token(n, 0, "except", _, _), token(n, 1, ":", _, _).
+e722_tok_lead_2(n) :- child(n, c11, 0), structural_before(c11, g12),
+    match("(?s)^\\s*except\\s*:.*$", g12).
+e722_tok_lead_2(n) :- !child(n, _, _), node_text(n, g12),
+    match("(?s)^\\s*except\\s*:.*$", g12).

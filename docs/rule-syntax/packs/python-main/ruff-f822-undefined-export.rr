@@ -5,7 +5,7 @@
 .mode steer
 .scope include "**/*"
 .scope exclude "**/__init__.py", "**/__init__.pyi", "__init__.py", "__init__.pyi"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 

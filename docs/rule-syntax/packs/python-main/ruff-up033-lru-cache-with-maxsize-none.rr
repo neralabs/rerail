@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -12,7 +12,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation UP033(at: node, r: node) "Replace `lru_cache(maxsize=None)` with `functools.cache` (importing `cache` from functools if needed); it is the same unbounded cache and takes no call."
+.violation UP033(at: loc, r: node) "Replace `lru_cache(maxsize=None)` with `functools.cache` (importing `cache` from functools if needed); it is the same unbounded cache and takes no call."
     suppress noqa "UP033"
 UP033(R, n) :- kind(n, "decorator"),
     match("(?s:.*)(?P<R>[\\s)\\\\]*(?:#[^\\n]*\\n[\\s)\\\\]*)*\\((?:\\s|#[^\\n]*)*maxsize\\s*=[\\s\\S]*?\\))\\s*(?:#[^\\n]*)?", n),

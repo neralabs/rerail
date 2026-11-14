@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // PYI030(n): a finding at node n, from clause `unnecessary-literal-union`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI030(at: node, u: node) "Merge the `Literal[...]` members of this union into one `Literal[...]`, keeping the other members, e.g. `Literal[1, 2] | str`; leave it alone if fewer than two members are `Literal[...]`."
+.violation PYI030(at: loc, u: node) "Merge the `Literal[...]` members of this union into one `Literal[...]`, keeping the other members, e.g. `Literal[1, 2] | str`; leave it alone if fewer than two members are `Literal[...]`."
     suppress noqa "PYI030"
 PYI030(U, n) :- pyi030_top_literal_union(n), node(_, n, _, _, _), U = n.
 PYI030(U, n) :- pyi030_string_union(n, U).

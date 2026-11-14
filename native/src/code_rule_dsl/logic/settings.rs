@@ -14,23 +14,37 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
         let (bytes, _) = observe(|o| o.read(path)).ok_or_else(|| format!("{}: cannot read the file", path.display()))?;
         String::from_utf8(bytes).map_err(|error| format!("{}: {error}", path.display()))
     };
-    let texts: Vec<String> = paths.iter().map(|p| read(p)).collect::<Result<_, _>>()?;
+    // A JSON policy (decision 0175) is its translation: a text whose `#include`s are library files, read as a text's.
+    let json: Vec<bool> = paths.iter().map(|p| crate::code_rule_dsl::logic::json_rules::is_policy_path(p)).collect();
+    let translator = json.iter().any(|j| *j).then(crate::code_rule_dsl::logic::json_rules::Translator::new);
+    let texts: Vec<String> = paths
+        .iter()
+        .zip(&json)
+        .map(|(p, j)| {
+            let text = read(p)?;
+            if !j {
+                return Ok(text);
+            }
+            let id = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+            translator.as_ref().expect("a translator").translate_text(&text, &id).map_err(|e| format!("{}: {e}", p.display()))
+        })
+        .collect::<Result<_, String>>()?;
     // A policy (`.policy`, `.language`) is read as `run-rr` reads it: its language's base relations are declared by
     // reading the file (O111), which a policy's text does not do itself.
     let policy = |text: &str| text.lines().map(str::trim_start).any(|l| l.starts_with(".policy") || l.starts_with(".language"));
     let includes = |text: &str| text.lines().any(|l| l.trim_start().starts_with("#include"));
     let mut seeds = Vec::new();
-    for (path, text) in paths.iter().zip(&texts) {
-        if includes(text) {
+    for ((path, text), j) in paths.iter().zip(&texts).zip(&json) {
+        if includes(text) && !j {
             seeds.push(phase0::Seed::File(path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?));
         }
     }
     let graphs = phase0::graphs(&seeds).map_err(|e| e.to_string())?;
     let mut graphs = graphs.into_iter();
     let mut out = Vec::with_capacity(texts.len());
-    for (path, text) in paths.iter().zip(texts) {
-        if !includes(&text) {
-            out.push(if policy(&text) { format!("#include \"core.rr\"\n{text}") } else { text });
+    for ((path, text), j) in paths.iter().zip(texts).zip(json) {
+        if j || !includes(&text) {
+            out.push(if policy(&text) && !includes(&text) { format!("#include \"core.rr\"\n{text}") } else { text });
             continue;
         }
         let graph = graphs.next().expect("a graph per seed");

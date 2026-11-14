@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // PYI051(n): a finding at node n, from clause `redundant-literal-union`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI051(at: node, e: node, b: loc) "Drop `{e}` from this `Literal`: the union already includes `{b}`, which covers it. Remove the whole `Literal` if no values are left."
+.violation PYI051(at: loc, e: node, b: loc) "Drop `{e}` from this `Literal`: the union already includes `{b}`, which covers it. Remove the whole `Literal` if no values are left."
     suppress noqa "PYI051"
 PYI051(E, n, B) :- pyi051_redundant(n, B, E).
 PYI051(E, n, B) :- pyi051_annotation_string(n), parsed(n, "annotation", r1), within(c2, r1),

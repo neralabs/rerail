@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -85,7 +85,7 @@ ruf061_deprecated_call_in_string(n, C) :- (kind(n, "string") ; kind(n, "concaten
 // RUF061(n, detail): findings from clauses `legacy-raises`, `legacy-warns`, `legacy-deprecated-call`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF061(at: node, c: node, detail: symbol) "Use `with {detail}."
+.violation RUF061(at: loc, c: node, detail: symbol) "Use `with {detail}."
     suppress noqa "RUF061"
 RUF061(C, n, "pytest.raises(Exc) as excinfo:` and call the function with its remaining arguments inside the block, instead of passing the callable to `pytest.raises`") :- ruf061_raises_call(n),
     node(_, n, _, _, _), C = n.

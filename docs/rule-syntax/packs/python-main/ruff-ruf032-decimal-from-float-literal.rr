@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -43,7 +43,7 @@ ruf032_first_arg(n) :- child(p7, n, _), kind(p7, "parenthesized_expression"), ru
 // RUF032_decimal_from_float_literal_in_string_annotation(n): a finding at node n, from clause `decimal-from-float-literal-in-string-annotation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF032_decimal_from_float_literal_in_string_annotation(at: node, arg: node) code "RUF032" "Pass the number as a string, such as `Decimal(\"1.2345\")`, so it keeps the exact decimal value; keep the float only if its exact binary value is intended."
+.violation RUF032_decimal_from_float_literal_in_string_annotation(at: loc, arg: node) code "RUF032" "Pass the number as a string, such as `Decimal(\"1.2345\")`, so it keeps the exact decimal value; keep the float only if its exact binary value is intended."
     suppress noqa "RUF032"
 RUF032_decimal_from_float_literal_in_string_annotation(ARG, n) :- ruf032_in_string(n, ARG).
 

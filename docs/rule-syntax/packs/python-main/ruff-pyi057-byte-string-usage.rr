@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -27,7 +27,7 @@ PYI057(n) :-
 // PYI057_byte_string_in_match_pattern(n): findings from clauses `byte-string-in-match-pattern`, `byte-string-in-string-annotation`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI057_byte_string_in_match_pattern(at: node, bs: node) code "PYI057" "Use `collections.abc.Buffer` (`typing_extensions.Buffer` before Python 3.12) or `bytes | bytearray | memoryview` instead of `ByteString`; it is deprecated and has unclear semantics."
+.violation PYI057_byte_string_in_match_pattern(at: loc, bs: node) code "PYI057" "Use `collections.abc.Buffer` (`typing_extensions.Buffer` before Python 3.12) or `bytes | bytearray | memoryview` instead of `ByteString`; it is deprecated and has unclear semantics."
     suppress noqa "PYI057"
 PYI057_byte_string_in_match_pattern(BS, n) :- kind(n, "dotted_name"),
     inside(n, p1, "case_pattern"),

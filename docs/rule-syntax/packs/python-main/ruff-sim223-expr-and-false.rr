@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -13,10 +13,7 @@
 .violation SIM223(at: node) "Drop the operands after the always-falsy value in this `and`; they never run, so the result is that value."
     suppress noqa "SIM223"
 SIM223(n) :- sim223_value(n), !sim223_skip(n), (sim223_tok_precedes_11(n) ; sim223_prev_skip(n)),
-    ( sim223_tok_precedes_11(n)
-    ; next_sibling(s1, n), glob("and", s1), next_sibling(s2, s1), sim223_clean(s2)
-    ),
-    sim223_run_has_trigger(n).
+    (sim223_tok_precedes_11(n) ; sim223_tok_follows_23(n, s1), sim223_clean(s1)), sim223_run_has_trigger(n).
 
 // and_op(n): the JSON util `and-op`, used where the JSON says `matches: "and-op"`
 .decl sim223_and_op(n: node)
@@ -183,9 +180,9 @@ sim223_has_next(n) :- sim223_tok_follows_12(n), child(p15, n, _), sim223_and_op(
 
 // next_short(n): the JSON util `next-short`, used where the JSON says `matches: "next-short"`
 .decl sim223_next_short(n: node)
-sim223_next_short(n) :- next_sibling(n, s1), glob("and", s1), next_sibling(s1, s2), sim223_short(s2).
-sim223_next_short(n) :- sim223_tok_follows_14(n), child(p10, n, _), sim223_and_op(p10),
-    next_sibling(p10, s11), glob("and", s11), next_sibling(s11, s12), sim223_short(s12).
+sim223_next_short(n) :- sim223_tok_precedes_14(n, s2), sim223_short(s2).
+sim223_next_short(n) :- sim223_tok_follows_15(n), child(p18, n, _), sim223_and_op(p18),
+    sim223_tok_precedes_16(p18, s20), sim223_short(s20).
 
 // trigger(n): the JSON util `trigger`, used where the JSON says `matches: "trigger"`
 .decl sim223_trigger(n: node)
@@ -198,9 +195,9 @@ sim223_clean(n) :- node(_, n, _, _, _), !sim223_trigger(n),
 
 // prev_skip(n): the JSON util `prev-skip`, used where the JSON says `matches: "prev-skip"`
 .decl sim223_prev_skip(n: node)
-sim223_prev_skip(n) :- next_sibling(s1, n), glob("and", s1), next_sibling(s2, s1),
+sim223_prev_skip(n) :- sim223_tok_follows_17(n, s2),
     ( !sim223_and_op(s2), sim223_skip(s2)
-    ; sim223_and_op(s2), child(s2, c1, _), sim223_tok_follows_16(c1), sim223_skip(c1)
+    ; sim223_and_op(s2), child(s2, c1, _), sim223_tok_follows_19(c1), sim223_skip(c1)
     ).
 
 
@@ -208,7 +205,7 @@ sim223_prev_skip(n) :- next_sibling(s1, n), glob("and", s1), next_sibling(s2, s1
 .decl sim223_run_has_trigger(n: node)
 sim223_run_has_trigger(n) :- sim223_trigger(n).
 sim223_run_has_trigger(n) :- within_stop(n, p1, sim223_stop_42), sim223_and_op(p1), child(p1, c2, _),
-    sim223_tok_follows_14(c2), sim223_trigger(c2).
+    sim223_tok_follows_20(c2), sim223_trigger(c2).
 
 // in_boolean_test(n): the JSON util `in-boolean-test`, used where the JSON says `matches: "in-boolean-test"`
 .decl sim223_in_boolean_test(n: node)
@@ -527,45 +524,106 @@ sim223_tok_precedes_13(n) :- structural_after(n, g18), match("\\s*", g18), child
 sim223_tok_precedes_13(n) :- structural_after(n, g18),
     match("(?s)^(?:\\s*(?:and)(?:\\W.*)?)$", g18).
 
-// tok_follows_14(n): an earlier sibling of n, a named node or an anonymous token, matches "^and$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl sim223_tok_follows_14(n: node)
-.stored sim223_tok_follows_14 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-sim223_tok_follows_14(n) :- next_sibling(s3, n), glob("and", s3).
-sim223_tok_follows_14(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
-    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
-    match("and", t4).
-sim223_tok_follows_14(n) :- structural_before(n, g5),
-    match("(?s)^(?:(?:.*\\W)?(?:and)\\s*)$", g5).
+// tok_precedes_14(n, m): m is the named node after n, with one token between them that matches "^and$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl sim223_tok_precedes_14(n: node, m: node)
+.stored sim223_tok_precedes_14 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+sim223_tok_precedes_14(n, m) :- next_sibling(n, m), structural_after(n, g3),
+    match("(?s)^\\s*(?:and)\\s*$", g3).
+sim223_tok_precedes_14(n, m) :- next_sibling(n, m), structural_after(n, g3),
+    match("\\s*", g3), child(p6, n, _), structural_before(m, g4), match("\\s*", g4),
+    node(_, n, _, _, en10), o7 = en10 + strlen(g3), token(p6, _, t5, o7, e8),
+    node(_, m, _, st9, _), st9 = e8 + strlen(g4), match("and", t5).
 
 // tok_follows_15(n): an earlier sibling of n, a named node or an anonymous token, matches "^and$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl sim223_tok_follows_15(n: node)
 .stored sim223_tok_follows_15 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-sim223_tok_follows_15(n) :- next_sibling(s4, n), glob("and", s4).
-sim223_tok_follows_15(n) :- structural_before(n, g6), match("\\s*", g6), child(p7, n, _),
-    node(_, n, _, st9, _), o8 = st9 - strlen(g6), token(p7, _, t5, _, o8),
-    match("and", t5).
-sim223_tok_follows_15(n) :- structural_before(n, g6),
-    match("(?s)^(?:(?:.*\\W)?(?:and)\\s*)$", g6).
+sim223_tok_follows_15(n) :- next_sibling(s11, n), glob("and", s11).
+sim223_tok_follows_15(n) :- structural_before(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, st16, _), o15 = st16 - strlen(g13), token(p14, _, t12, _, o15),
+    match("and", t12).
+sim223_tok_follows_15(n) :- structural_before(n, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:and)\\s*)$", g13).
 
-// tok_follows_16(n): an earlier sibling of n, a named node or an anonymous token, matches "^and$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl sim223_tok_follows_16(n: node)
-.stored sim223_tok_follows_16 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-sim223_tok_follows_16(n) :- next_sibling(s2, n), glob("and", s2).
-sim223_tok_follows_16(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+// tok_precedes_16(n, m): m is the named node after n, with one token between them that matches "^and$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl sim223_tok_precedes_16(n: node, m: node)
+.stored sim223_tok_precedes_16 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+sim223_tok_precedes_16(n, m) :- next_sibling(n, m), structural_after(n, g21),
+    match("(?s)^\\s*(?:and)\\s*$", g21).
+sim223_tok_precedes_16(n, m) :- next_sibling(n, m), structural_after(n, g21),
+    match("\\s*", g21), child(p24, n, _), structural_before(m, g22),
+    match("\\s*", g22), node(_, n, _, _, en28), o25 = en28 + strlen(g21),
+    token(p24, _, t23, o25, e26), node(_, m, _, st27, _), st27 = e26 + strlen(g22),
+    match("and", t23).
+
+// tok_follows_17(n, m): m is the named node before n, with one token between them that matches "^and$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl sim223_tok_follows_17(n: node, m: node)
+.stored sim223_tok_follows_17 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+sim223_tok_follows_17(n, m) :- next_sibling(m, n), structural_before(n, g3),
+    match("(?s)^\\s*(?:and)\\s*$", g3).
+sim223_tok_follows_17(n, m) :- next_sibling(m, n), structural_before(n, g3),
+    match("\\s*", g3), child(p6, n, _), structural_after(m, g4), match("\\s*", g4),
+    node(_, n, _, st9, _), o7 = st9 - strlen(g3), token(p6, _, t5, e8, o7),
+    node(_, m, _, _, en10), en10 = e8 - strlen(g4), match("and", t5).
+
+// tok_follows_18(n): an earlier sibling of n, a named node or an anonymous token, matches "^and$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim223_tok_follows_18(n: node)
+.stored sim223_tok_follows_18 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim223_tok_follows_18(n) :- next_sibling(s12, n), glob("and", s12).
+sim223_tok_follows_18(n) :- structural_before(n, g14), match("\\s*", g14), child(p15, n, _),
+    node(_, n, _, st17, _), o16 = st17 - strlen(g14), token(p15, _, t13, _, o16),
+    match("and", t13).
+sim223_tok_follows_18(n) :- structural_before(n, g14),
+    match("(?s)^(?:(?:.*\\W)?(?:and)\\s*)$", g14).
+
+// tok_follows_19(n): an earlier sibling of n, a named node or an anonymous token, matches "^and$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim223_tok_follows_19(n: node)
+.stored sim223_tok_follows_19 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim223_tok_follows_19(n) :- next_sibling(s2, n), glob("and", s2).
+sim223_tok_follows_19(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
     node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
     match("and", t3).
-sim223_tok_follows_16(n) :- structural_before(n, g4),
+sim223_tok_follows_19(n) :- structural_before(n, g4),
     match("(?s)^(?:(?:.*\\W)?(?:and)\\s*)$", g4).
 
-// tok_precedes_17(n): a later sibling of n, a named node or an anonymous token, matches "^and$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
-.decl sim223_tok_precedes_17(n: node)
-.stored sim223_tok_precedes_17 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
-sim223_tok_precedes_17(n) :- next_sibling(n, s8), glob("and", s8).
-sim223_tok_precedes_17(n) :- structural_after(n, g10), match("\\s*", g10), child(p11, n, _),
+// tok_follows_20(n): an earlier sibling of n, a named node or an anonymous token, matches "^and$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim223_tok_follows_20(n: node)
+.stored sim223_tok_follows_20 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim223_tok_follows_20(n) :- next_sibling(s3, n), glob("and", s3).
+sim223_tok_follows_20(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match("and", t4).
+sim223_tok_follows_20(n) :- structural_before(n, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:and)\\s*)$", g5).
+
+// tok_precedes_21(n): a later sibling of n, a named node or an anonymous token, matches "^and$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim223_tok_precedes_21(n: node)
+.stored sim223_tok_precedes_21 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim223_tok_precedes_21(n) :- next_sibling(n, s8), glob("and", s8).
+sim223_tok_precedes_21(n) :- structural_after(n, g10), match("\\s*", g10), child(p11, n, _),
     node(_, n, _, _, en14), o12 = en14 + strlen(g10), token(p11, _, t9, o12, _),
     match("and", t9).
-sim223_tok_precedes_17(n) :- structural_after(n, g10),
+sim223_tok_precedes_21(n) :- structural_after(n, g10),
     match("(?s)^(?:\\s*(?:and)(?:\\W.*)?)$", g10).
+
+// tok_follows_22(n, m): m is the named node before n, with one token between them that matches "^and$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl sim223_tok_follows_22(n: node, m: node)
+.stored sim223_tok_follows_22 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+sim223_tok_follows_22(n, m) :- next_sibling(m, n), structural_before(n, g17),
+    match("(?s)^\\s*(?:and)\\s*$", g17).
+sim223_tok_follows_22(n, m) :- next_sibling(m, n), structural_before(n, g17),
+    match("\\s*", g17), child(p20, n, _), structural_after(m, g18), match("\\s*", g18),
+    node(_, n, _, st23, _), o21 = st23 - strlen(g17), token(p20, _, t19, e22, o21),
+    node(_, m, _, _, en24), en24 = e22 - strlen(g18), match("and", t19).
+
+// tok_follows_23(n, m): m is the named node before n, with one token between them that matches "^and$": a token the tape stores, or one it leaves out, read from the source between the two
+.decl sim223_tok_follows_23(n: node, m: node)
+.stored sim223_tok_follows_23 "its token read is of a token the tape stores between two named siblings; one the tape leaves out is the source gap, in its own rule"
+sim223_tok_follows_23(n, m) :- next_sibling(m, n), structural_before(n, g10),
+    match("(?s)^\\s*(?:and)\\s*$", g10).
+sim223_tok_follows_23(n, m) :- next_sibling(m, n), structural_before(n, g10),
+    match("\\s*", g10), child(p13, n, _), structural_after(m, g11), match("\\s*", g11),
+    node(_, n, _, st16, _), o14 = st16 - strlen(g10), token(p13, _, t12, e15, o14),
+    node(_, m, _, _, en17), en17 = e15 - strlen(g11), match("and", t12).
 
 // alt_18_u0_empty: level -1 of an unrolled recursion, empty
 .decl sim223_alt_18_u0_empty(n: node)
@@ -737,7 +795,7 @@ sim223_stop_40(n) :- sim223_not_and_op(n).
 // stop_42(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl sim223_stop_42(n: node)
 sim223_stop_42(n) :- sim223_not_and_op(n).
-sim223_stop_42(n) :- sim223_and_op(n), child(n, c1, _), sim223_tok_follows_16(c1), sim223_skip(c1).
+sim223_stop_42(n) :- sim223_and_op(n), child(n, c1, _), sim223_tok_follows_19(c1), sim223_skip(c1).
 
 // stop_43(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl sim223_stop_43(n: node)

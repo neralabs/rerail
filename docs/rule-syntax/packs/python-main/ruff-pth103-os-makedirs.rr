@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // PTH103(n): a finding at node n, from clause `os-makedirs`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH103(at: node, f: node) "Use `Path(name).mkdir(parents=True)` instead of `os.makedirs(name)`, passing `mode`, `exist_ok` and any `parent_mode` on to `mkdir`; leave it where the path is bytes."
+.violation PTH103(at: loc, f: node) "Use `Path(name).mkdir(parents=True)` instead of `os.makedirs(name)`, passing `mode`, `exist_ok` and any `parent_mode` on to `mkdir`; leave it where the path is bytes."
     suppress noqa "PTH103"
 PTH103(F, n) :- kind(n, "call"), field(n, "function", c1), pth103_callee(c1, F).
 

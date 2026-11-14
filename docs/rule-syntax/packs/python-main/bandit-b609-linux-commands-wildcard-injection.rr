@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*.py"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -13,7 +13,7 @@
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on F, CMD are added to every rule.
 // The JSON `constraints` on F, CMD, SHELL are added to every rule.
-.violation B609(at: node, f: node) "List the files explicitly instead of using a wildcard in this chown, chmod, tar or rsync command; crafted file names can inject options."
+.violation B609(at: loc, f: node) "List the files explicitly instead of using a wildcard in this chown, chmod, tar or rsync command; crafted file names can inject options."
     suppress nosec "B609"
 B609(F, n) :- n ~ `$F($$$CALL_ARGS)`, kind(n, "call"), b609_arg_command_1(n, a1), CMD = a1,
     sym_of(F, q2), b609_set_1(q2), value(CMD, v3),

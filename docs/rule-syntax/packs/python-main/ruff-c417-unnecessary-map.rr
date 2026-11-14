@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -106,7 +106,7 @@ c417_fn(n, q1) :- c417_fn_case(q1, s1), kind(n, "list_splat"), child(n, c2, _), 
 // C417(n): a finding at node n, from clause `generator`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C417(at: node, m: node, b: loc, p: loc) "Replace this `map()` of a lambda with the generator expression `({b} for {p} in <iterable>)`; keep `map` if code resumes the iterator after the lambda raises."
+.violation C417(at: loc, m: node, b: loc, p: loc) "Replace this `map()` of a lambda with the generator expression `({b} for {p} in <iterable>)`; keep `map` if code resumes the iterator after the lambda raises."
     suppress noqa "C417"
 C417(M, n, B, P) :- c417_map_call(n, B, P), !c417_container_arg(n),
     match("(?s)(?:\\*\\s*)?(?P<M>.*)", n).
@@ -114,7 +114,7 @@ C417(M, n, B, P) :- c417_map_call(n, B, P), !c417_container_arg(n),
 // C417_list(n): a finding at node n, from clause `list`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C417_list(at: node, m: node, b: loc, p: loc) code "C417" "Replace this `list(map(...))` of a lambda with the list comprehension `[{b} for {p} in <iterable>]`, which avoids a function call per item."
+.violation C417_list(at: loc, m: node, b: loc, p: loc) code "C417" "Replace this `list(map(...))` of a lambda with the list comprehension `[{b} for {p} in <iterable>]`, which avoids a function call per item."
     suppress noqa "C417"
 C417_list(M, n, B, P) :- kind(n, "call"), field(n, "function", c1), c417_fn(c1, "list"),
     field(n, "arguments", c2), kind(c2, "argument_list"),
@@ -125,7 +125,7 @@ C417_list(M, n, B, P) :- kind(n, "call"), field(n, "function", c1), c417_fn(c1, 
 // C417_set(n): a finding at node n, from clause `set`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C417_set(at: node, m: node, b: loc, p: loc) code "C417" "Replace this `set(map(...))` of a lambda with the set comprehension `{{{b} for {p} in <iterable>}}`, which avoids a function call per item."
+.violation C417_set(at: loc, m: node, b: loc, p: loc) code "C417" "Replace this `set(map(...))` of a lambda with the set comprehension `{{{b} for {p} in <iterable>}}`, which avoids a function call per item."
     suppress noqa "C417"
 C417_set(M, n, B, P) :- kind(n, "call"), field(n, "function", c1), c417_fn(c1, "set"),
     field(n, "arguments", c2), kind(c2, "argument_list"),
@@ -136,7 +136,7 @@ C417_set(M, n, B, P) :- kind(n, "call"), field(n, "function", c1), c417_fn(c1, "
 // C417_dict(n): a finding at node n, from clause `dict`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C417_dict(at: node, m: node, p: loc) code "C417" "Replace this `dict(map(...))` of a lambda with a dict comprehension `{{key: value for {p} in <iterable>}}`, using the lambda's two items as key and value."
+.violation C417_dict(at: loc, m: node, p: loc) code "C417" "Replace this `dict(map(...))` of a lambda with a dict comprehension `{{key: value for {p} in <iterable>}}`, using the lambda's two items as key and value."
     suppress noqa "C417"
 C417_dict(M, n, P) :- kind(n, "call"), field(n, "function", c1), c417_fn(c1, "dict"),
     field(n, "arguments", c2), kind(c2, "argument_list"),

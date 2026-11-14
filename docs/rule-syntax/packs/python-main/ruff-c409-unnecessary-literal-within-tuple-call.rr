@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // C409(n, detail): findings from clauses `list-literal-within-tuple-call`, `tuple-literal-within-tuple-call`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C409(at: node, call: node, detail: symbol) "{detail}."
+.violation C409(at: loc, call: node, detail: symbol) "{detail}."
     suppress noqa "C409"
 C409(CALL, n, "Write the elements as a tuple literal `(...)` instead of `tuple([...])`; a single element needs a trailing comma, as in `(x,)`") :- c409_target(n),
     node(_, n, _, _, _), CALL = n.

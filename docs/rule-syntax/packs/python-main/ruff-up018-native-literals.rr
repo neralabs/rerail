@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -115,7 +115,7 @@ up018_literal_call(n) :- up018_unnested_call(n), field(n, "arguments", c1), up01
 // UP018(n, detail): findings from clauses `call-without-argument`, `call-on-literal`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP018(at: node, c: node, detail: symbol) "Replace this call with the {detail}."
+.violation UP018(at: loc, c: node, detail: symbol) "Replace this call with the {detail}."
     suppress noqa "UP018"
 UP018(C, n, "empty literal of its type: `\"\"` for str, `b\"\"` for bytes, `0` for int, `0.0` for float, `False` for bool, `0j` for complex") :- up018_empty_call(n),
     node(_, n, _, _, _), C = n.

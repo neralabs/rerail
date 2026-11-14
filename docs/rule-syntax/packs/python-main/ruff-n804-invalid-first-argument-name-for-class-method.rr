@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -51,7 +51,7 @@ n804_meta_class(n) :- n804_demand_meta_class(n), kind(n, "class_definition"), ch
 n804_local_meta(n) :- n804_demand_local_meta(n), kind(n, "identifier"), ref_site(n, b1),
     (st2 = b1 ; within(b1, st2)), n804_meta_class(st2), site_scope(b1, "module"),
     site_latest(b1).
-n804_local_meta(n) :- n804_demand_local_meta(n), n804_meta_attr(n, P).
+n804_local_meta(n) :- n804_demand_local_meta(n), n804_meta_attr(n).
 n804_local_meta(n) :- n804_demand_local_meta(n), kind(n, "subscript"), field(n, "value", c3),
     n804_local_meta(c3).
 n804_local_meta(n) :- n804_demand_local_meta(n), kind(n, "parenthesized_expression"),
@@ -67,7 +67,7 @@ n804_call_tainted_class(n) :- n804_demand_call_tainted_class(n), kind(n, "class_
 n804_call_tainted(n) :- n804_demand_call_tainted(n), kind(n, "identifier"), ref_site(n, b1),
     (st2 = b1 ; within(b1, st2)), n804_call_tainted_class(st2), site_scope(b1, "module"),
     site_latest(b1).
-n804_call_tainted(n) :- n804_demand_call_tainted(n), n804_tainted_attr(n, P).
+n804_call_tainted(n) :- n804_demand_call_tainted(n), n804_tainted_attr(n).
 n804_call_tainted(n) :- n804_demand_call_tainted(n), kind(n, "subscript"), field(n, "value", c3),
     n804_call_tainted(c3).
 n804_call_tainted(n) :- n804_demand_call_tainted(n), kind(n, "parenthesized_expression"),
@@ -104,24 +104,22 @@ n804_first_slot(n) :- n804_demand_first_slot(n), child(p1, n, _), n804_counted_1
     kind(p6, "function_definition"), n804_class_method(p6).
 
 // meta_attr(n, …): the JSON util `meta-attr`, called with `matches` and arguments P
-.decl n804_meta_attr(n: node, p: node)
-// P: not bound by this rule, so empty (unset) here, as in ast-grep.
-n804_meta_attr(n, P) :- n804_demand_meta_attr(n), kind(n, "attribute"),
-    field(n, "attribute", c1), node(_, c1, _, _, _), A = c1, field(n, "object", c2),
-    kind(c2, "identifier"), ref_site(c2, b3), site_scope(b3, "module"),
-    site_latest(b3), (st4 = b3 ; within(b3, st4)), kind(st4, "class_definition"),
-    field(st4, "body", c5), within_stop(c6, c5, n804_stop_11), kind(c6, "class_definition"),
-    n804_meta_class(c6), field(c6, "name", c7), node(_, c7, _, _, _), A = c7, unset(P).
+.decl n804_meta_attr(n: node)
+n804_meta_attr(n) :- n804_demand_meta_attr(n), kind(n, "attribute"), field(n, "attribute", c1),
+    node(_, c1, _, _, _), A = c1, field(n, "object", c2), kind(c2, "identifier"), ref_site(c2, b3),
+    site_scope(b3, "module"), site_latest(b3), (st4 = b3 ; within(b3, st4)),
+    kind(st4, "class_definition"), field(st4, "body", c5),
+    within_stop(c6, c5, n804_stop_11), kind(c6, "class_definition"), n804_meta_class(c6),
+    field(c6, "name", c7), node(_, c7, _, _, _), A = c7.
 
 // tainted_attr(n, …): the JSON util `tainted-attr`, called with `matches` and arguments P
-.decl n804_tainted_attr(n: node, p: node)
-// P: not bound by this rule, so empty (unset) here, as in ast-grep.
-n804_tainted_attr(n, P) :- n804_demand_tainted_attr(n), kind(n, "attribute"),
+.decl n804_tainted_attr(n: node)
+n804_tainted_attr(n) :- n804_demand_tainted_attr(n), kind(n, "attribute"),
     field(n, "attribute", c1), node(_, c1, _, _, _), A = c1, field(n, "object", c2),
     kind(c2, "identifier"), ref_site(c2, b3), site_scope(b3, "module"),
     site_latest(b3), (st4 = b3 ; within(b3, st4)), kind(st4, "class_definition"),
     field(st4, "body", c5), within_stop(c6, c5, n804_stop_11), kind(c6, "class_definition"),
-    n804_call_tainted_class(c6), field(c6, "name", c7), node(_, c7, _, _, _), A = c7, unset(P).
+    n804_call_tainted_class(c6), field(c6, "name", c7), node(_, c7, _, _, _), A = c7.
 
 // scope_node(n): the JSON util `scope-node`, used where the JSON says `matches: "scope-node"`
 .decl n804_scope_node(n: node)
@@ -140,7 +138,7 @@ N804(n) :- kind(n, "typed_parameter"), n804_first_slot(n), child(n, c2, _),
 // N804_invalid_first_argument_name_annotated_default(n): a finding at node n, from clause `invalid-first-argument-name-annotated-default`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation N804_invalid_first_argument_name_annotated_default(at: node, param: node) code "N804" "Rename this class method's first parameter to `cls` and update its uses in the body, unless another parameter already has that name; keep it if the project follows another convention."
+.violation N804_invalid_first_argument_name_annotated_default(at: loc, param: node) code "N804" "Rename this class method's first parameter to `cls` and update its uses in the body, unless another parameter already has that name; keep it if the project follows another convention."
     suppress noqa "N804"
 N804_invalid_first_argument_name_annotated_default(PARAM, n) :- kind(n, "typed_default_parameter"),
     n804_first_slot(n),

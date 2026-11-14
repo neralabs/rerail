@@ -7,9 +7,9 @@
 #
 # PACK_RULES holds main's <id>.json files (default: the pack's pinned copy, packs/python-main/source/rules, main's
 # Python pack 0.1.8); RERAIL_RR_LIB defaults to the repo's docs/rule-syntax/lib. The ids file (default: every JSON there) names the rules to
-# translate. Each rule goes through translate_rules.py (translate.py, then engine_dialect.py); a hand-written
-# overrides/<id>.rr then replaces the generated file. The reader check's verdicts go to reader-check.txt
-# ("<status> <id>", and the first line of the error), sorted by id.
+# translate. Each rule goes through the engine's translator (`rerail-engine translate-json`, decision 0175), the same
+# one that reads a JSON rule file at run time; nothing is edited by hand. The reader check's verdicts go to
+# reader-check.txt ("<status> <id>", and the first line of the error), sorted by id.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 out="$here/../packs/python-main"
@@ -19,16 +19,16 @@ out="$here/../packs/python-main"
 export RERAIL_RR_LIB
 ids=${1:--}
 
-# Old generated files move to a trash dir, so a rule dropped from the id list does not linger; overrides and the
-# README stay. (Nothing is deleted: the trash dir is under /tmp.)
+# Old generated files move to a trash dir, so a rule dropped from the id list does not linger; the README stays. (Nothing is deleted: the trash dir is under /tmp.)
 trash=$(mktemp -d /tmp/ai-trash.rerail-main-pack.XXXXXX)
 find "$out" -maxdepth 1 -name '*.rr' -exec mv {} "$trash"/ \;
-nice -n 19 python3 "$here/translate_rules.py" "$PACK_RULES" "$ids" "$out"
-for o in "$out"/overrides/*.rr; do
-    [ -e "$o" ] || continue
-    id=$(basename "$o" .rr)
-    if [ -e "$out/$id.rr" ]; then cp "$o" "$out/$id.rr"; fi
-done
+if [ "$ids" = - ]; then
+    set -- "$PACK_RULES"/*.json
+else
+    set --
+    for id in $(cat "$ids"); do set -- "$@" "$PACK_RULES/$id.json"; done
+fi
+nice -n 19 "$ENGINE" translate-json "$@" --out "$out"
 
 check="$trash/check.json"
 ls "$out"/*.rr | xargs nice -n 19 "$ENGINE" check-rr > "$check" 2>/dev/null || true
