@@ -650,10 +650,10 @@ capability.
      (`--allow-remote`, `--public-host`), with the refusal on stderr, and so does a later start that asks for them and
      finds this daemon running; the loopback daemon keeps running. `daemon.json` (`remoteRefused`), `daemon.log` and
      `rerail status` name the key and the command that makes it private.
-  3. A missing or unreadable key is still an error. Any other `--tls-key` stops the start with the exit code and
-     message it had before: a missing or misspelled path, a folder, a FIFO, a file this account may not read, one that
-     holds no private key (the certificate, when the two are swapped), or one whose readers cannot be read (`Get-Acl`
-     failing on Windows).
+  3. A missing or unreadable key is still an error. Any other `--tls-key` that was refused before stops the start
+     with the exit code and message it had: a missing or misspelled path, a folder, a FIFO, a file this account may
+     not read, one that holds no private key (the certificate, when the two are swapped), or one whose readers cannot
+     be read (`Get-Acl` failing on Windows).
 - A daemon other machines can reach (judged from its bind address or `--public-host`) refuses to start without TLS
   unless `--insecure-http` is passed.
 - `daemon.json` records the certificate's SHA-256. Rerail's clients (probe, MCP bridge, CLI, native session client)
