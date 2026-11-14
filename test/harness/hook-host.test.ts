@@ -1249,22 +1249,54 @@ function plantRows(folder: MiscasedFolder, rows: (typeof SPELLING_ROWS)[number])
 async function startChecksTypedOtherwise(host: StartCheckHost, daemon: CountingDaemon, folders: readonly MiscasedFolder[]): Promise<{
   wrong: string[]; askedThoughStopped: string[]; answeredItselfIn: string[];
 }> {
-  const found = { wrong: [] as string[], askedThoughStopped: [] as string[], answeredItselfIn: new Set<string>() };
+  const found: TypedChecksFound = { wrong: [], askedThoughStopped: [], answeredItselfIn: new Set<string>() };
   for (const folder of folders) {
-    for (const rows of SPELLING_ROWS) {
-      plantRows(folder, rows);
-      const proofsBefore = host.proofs.found.length;
-      host.proofs.nextCheck();
-      const started = await host.hookRerailStarted("claude-code", folder.workspace);
-      const reads = host.daemonReads(daemon.asked.at(-1)!);
-      const answeredItself = host.proofs.found.length > proofsBefore && host.proofs.found.at(-1) === true;
-      const name = `${folder.name}: stored ${String(rows.stored)}, typed ${String(rows.typed)}, repository ${String(rows.repository)}: ${reads}`;
-      if (answeredItself ? reads !== "stopped" : started !== (reads !== "stopped")) found.wrong.push(name);
-      if (!answeredItself && reads === "stopped") found.askedThoughStopped.push(name);
-      if (answeredItself) found.answeredItselfIn.add(folder.name);
-    }
+    for (const rows of SPELLING_ROWS) recordTypedCheck(found, folder, await startCheckTypedOtherwise(host, daemon, folder, rows));
   }
   return { ...found, answeredItselfIn: [...found.answeredItselfIn] };
+}
+
+/** What `startChecksTypedOtherwise` has found so far. */
+interface TypedChecksFound {
+  readonly wrong: string[];
+  readonly askedThoughStopped: string[];
+  readonly answeredItselfIn: Set<string>;
+}
+
+/** One start check in a folder typed in another case: its name, with what the daemon reads, and the hook's answer. */
+interface TypedCheck {
+  readonly name: string;
+  readonly reads: string;
+  readonly started: boolean;
+  readonly answeredItself: boolean;
+}
+
+/**
+ * The hook's start check in `folder` under `rows`, and what `daemon` reads of the folder this check asked it about.
+ * The daemon's last request is this check's only when the check sent it exactly one. Where the hook gave up before its
+ * request reached the daemon, the last request is an earlier check's, or none, so the check fails here rather than
+ * judge the hook's answer by another folder.
+ */
+async function startCheckTypedOtherwise(
+  host: StartCheckHost, daemon: CountingDaemon, folder: MiscasedFolder, rows: (typeof SPELLING_ROWS)[number],
+): Promise<TypedCheck> {
+  plantRows(folder, rows);
+  const name = `${folder.name}: stored ${String(rows.stored)}, typed ${String(rows.typed)}, repository ${String(rows.repository)}`;
+  const proofsBefore = host.proofs.found.length;
+  const askedBefore = daemon.asked.length;
+  host.proofs.nextCheck();
+  const started = await host.hookRerailStarted("claude-code", folder.workspace);
+  expect(daemon.asked.slice(askedBefore), `the folders the daemon was asked about by the start check in ${name}`).toHaveLength(1);
+  const reads = host.daemonReads(daemon.asked.at(-1)!);
+  const answeredItself = host.proofs.found.length > proofsBefore && host.proofs.found.at(-1) === true;
+  return { name: `${name}: ${reads}`, reads, started, answeredItself };
+}
+
+/** Adds `check`, made in `folder`, to each of `found`'s lists it belongs to. */
+function recordTypedCheck(found: TypedChecksFound, folder: MiscasedFolder, { name, reads, started, answeredItself }: TypedCheck): void {
+  if (answeredItself ? reads !== "stopped" : started !== (reads !== "stopped")) found.wrong.push(name);
+  if (!answeredItself && reads === "stopped") found.askedThoughStopped.push(name);
+  if (answeredItself) found.answeredItselfIn.add(folder.name);
 }
 
 /**
