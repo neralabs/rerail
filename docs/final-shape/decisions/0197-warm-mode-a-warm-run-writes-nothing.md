@@ -139,6 +139,23 @@ and takes 6.7 G instructions and 0.58 s user, against 8.0 G and 0.72 s over `dl1
 - **`forget` was quadratic**: it matched each named path against every answer kept, so a root that churns cost
   paths × answers on every ask. Fixed: the answers and canonical forms are sorted by path (`BTreeMap`), and what
   lies under a named path is one range from it (`forget_takes_what_is_under_a_path_and_no_sibling`).
-- **Choosing the widest stored root** for a path (`watch_above`) means one ask covers many reads, so there are fewer
-  cookie waits. But a read near the top (a work tree's `.git`) makes the whole tree a root. The deepest root would name
-  less, at the cost of more asks. Not measured.
+- **The widest stored root stays** (`watch_above`). The deepest was measured with a temporary switch, on the warm
+  44-policy batch, at load 64 to 95:
+
+  | Corpus | Root | Asks | Their wait | Paths named | Instructions |
+  |---|---|---|---|---|---|
+  | `dl10`, inside this work tree | widest | 13 | 3.86 s | 354 | 9.7 G |
+  | | deepest | 17 | 5.48 s | 314 | 9.9 G |
+  | `dl1g`, its own repository | widest | 22 | 6.02 s | 0 | 8.2 G |
+  | | deepest | 22 | 7.00 s | 0 | 8.2 G |
+
+  The deepest root names 11% fewer paths where the work tree is a root, and asks 30% more often. Each ask costs a
+  wait for its cookie, and now that `forget` is a range a path, a path named costs little. Where the corpus is its
+  own repository, the roots do not nest and the two are the same.
+- **The asks themselves are the warm batch's wall time**: 22 asks, about 6 s of waits for 0.8 s of CPU over `dl1g`.
+  Seen in them:
+  - one directory is asked as two roots: `/var/folders/…` and `/private/var/folders/…` (the phase-0 root), and
+    `native/crates/logic/../../src/…` is kept uncanonical;
+  - `dl1g/.git` is asked as a root of its own, beside `dl1g`;
+  - each root is asked again at each of the batch's runs (the 5 asks of `dl1g`);
+  - the phase-0 root's ask timed out twice ("the cookie's event did not arrive"), so it was not trusted.
