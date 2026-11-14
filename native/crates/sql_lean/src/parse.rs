@@ -92,7 +92,7 @@ struct Tok {
     w: u16,
 }
 
-/// The keyword switch (`rerail_simd8::words`) over every keyword word, case folded.
+// The keyword switch (`rerail_simd8::words`) over every keyword word, case folded.
 rerail_simd8::keyword_switch!(static KEYWORDS = kinds::WORD_TEXT, fold: true);
 
 #[inline(always)]
@@ -160,9 +160,14 @@ fn moves(s: u32) -> &'static [(u32, u32)] {
     &kinds::MOVES[kinds::MOVES_AT[s as usize] as usize..kinds::MOVES_AT[s as usize + 1] as usize]
 }
 
+/// The state after `l` from `s`: most states have one or two moves, read in order; a long list
+/// is searched.
 #[inline]
 fn step(s: u32, l: u32) -> Option<u32> {
     let m = moves(s);
+    if m.len() <= 8 {
+        return m.iter().find(|&&(x, _)| x == l).map(|&(_, to)| to);
+    }
     m.binary_search_by_key(&l, |&(x, _)| x).ok().map(|i| m[i].1)
 }
 
@@ -172,19 +177,19 @@ fn accepts(s: u32) -> bool {
 }
 
 /// The implied word from `s` to the named child `next` (`None`: to the end), where it holds a token
-/// the tape can leave out.
-fn implied(s: u32, next: Option<u32>) -> Option<&'static [u32]> {
-    let (at, n) = match next {
+/// the tape can leave out: packed (`kinds::IMPLIED`), 0 for none. The state's own rows, by index.
+#[inline]
+fn implied(s: u32, next: Option<u32>) -> u32 {
+    match next {
         Some(l) => {
-            let i = kinds::IMPLIED.binary_search_by(|&(a, b, _, _)| (a, b).cmp(&(s, l))).ok()?;
-            (kinds::IMPLIED[i].2, kinds::IMPLIED[i].3)
+            let rows = &kinds::IMPLIED[kinds::IMPLIED_AT[s as usize] as usize..kinds::IMPLIED_AT[s as usize + 1] as usize];
+            if rows.len() <= 8 {
+                return rows.iter().find(|&&(x, _)| x == l).map_or(0, |&(_, w)| w);
+            }
+            rows.binary_search_by_key(&l, |&(x, _)| x).map_or(0, |i| rows[i].1)
         }
-        None => {
-            let i = kinds::IMPLIED_END.binary_search_by_key(&s, |&(a, _, _)| a).ok()?;
-            (kinds::IMPLIED_END[i].1, kinds::IMPLIED_END[i].2)
-        }
-    };
-    Some(&kinds::WORD[at as usize..(at + n) as usize])
+        None => kinds::IMPLIED_END[s as usize],
+    }
 }
 
 impl Arena {
@@ -253,13 +258,38 @@ impl Arena {
         if a == 0 || n.n == 0 {
             return;
         }
-        let a = a - 1;
         let at = n.at as usize;
         let kids = &self.kids[at..at + n.n as usize];
-        // Only a token can be left out: with none among the children, nothing is.
-        if kids.iter().all(|&k| kinds::KINDS[self.nodes[k as usize].kind as usize].1) {
-            return;
+        // Most tokens' fates are the kind's alone (`kinds::FATE`): left out, or stored, in every gap
+        // they can stand in. Only a node holding a token that is not walks its automaton.
+        let fate = &kinds::FATE[a as usize - 1];
+        let mut walked = false;
+        for (i, &k) in kids.iter().enumerate() {
+            let t = self.nodes[k as usize].kind as usize;
+            let (word, bit) = (t / 64, 1u64 << (t % 64));
+            if fate[kinds::FATE_WORDS + word] & bit != 0 {
+                walked = true;
+                break;
+            }
+            dropped[at + i] = fate[word] & bit != 0;
         }
+        if walked {
+            dropped[at..at + kids.len()].fill(false);
+            self.walk_gaps(id, dropped);
+        } else {
+            // The kind's fates are the walk's, on a sequence the automaton takes.
+            #[cfg(test)]
+            self.check_fates(id, dropped);
+        }
+    }
+
+    /// `drop_gaps` by the automaton's walk: each gap's tokens left out where the gap is its implied
+    /// word and the token is not kept. None where the walk is refused.
+    fn walk_gaps(&self, id: u32, dropped: &mut [bool]) {
+        let n = self.nodes[id as usize];
+        let a = kinds::AUTOMATON[n.kind as usize];
+        let at = n.at as usize;
+        let kids = &self.kids[at..at + n.n as usize];
         let lab = |i: usize| label(&self.nodes[kids[i] as usize]);
         // The gap `from..to` before the named child `next` (`None`: the end), from `state`.
         let close = |state: u32, from: usize, to: usize, next: Option<u32>, dropped: &mut [bool]| -> Option<u32> {
@@ -272,21 +302,22 @@ impl Arena {
                 None if accepts(s) => s,
                 None => return None,
             };
-            if to > from
-                && let Some(word) = implied(state, next)
-                && word.len() == to - from
-                && word.iter().zip(from..to).all(|(&w, i)| w == lab(i))
-            {
-                for i in from..to {
-                    if kinds::KEPT.binary_search(&(a, lab(i))).is_err() {
-                        dropped[at + i] = true;
+            if to > from {
+                // The word, packed: its start in `WORD`, length, and the tokens it leaves out.
+                let w = implied(state, next);
+                if w != 0 && (w >> 3 & 3) as usize == to - from {
+                    let word = &kinds::WORD[(w >> 5) as usize..(w >> 5) as usize + (to - from)];
+                    if word.iter().zip(from..to).all(|(&l, i)| l == lab(i)) {
+                        for i in from..to {
+                            dropped[at + i] |= w >> (i - from) & 1 == 1;
+                        }
                     }
                 }
             }
             Some(after)
         };
         let walk = |dropped: &mut [bool]| -> Option<()> {
-            let mut state = kinds::START[a as usize];
+            let mut state = kinds::START[a as usize - 1];
             let mut from = 0;
             for (i, &k) in kids.iter().enumerate() {
                 let c = &self.nodes[k as usize];
@@ -301,6 +332,16 @@ impl Arena {
         if walk(dropped).is_none() {
             dropped[at..at + kids.len()].fill(false);
         }
+    }
+
+    /// The kind's fates (`kinds::FATE`) against the walk: the same tokens left out.
+    #[cfg(test)]
+    fn check_fates(&self, id: u32, dropped: &[bool]) {
+        let n = self.nodes[id as usize];
+        let (from, to) = (n.at as usize, (n.at + n.n) as usize);
+        let mut walked = vec![false; dropped.len()];
+        self.walk_gaps(id, &mut walked);
+        assert_eq!(&walked[from..to], &dropped[from..to], "{}: the kind's fates differ from the walk", kinds::KINDS[n.kind as usize].0);
     }
 
     /// Writes node `id` and its subtree, the extras from `x` on that fall between its children

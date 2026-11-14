@@ -184,43 +184,91 @@ for line in open(os.path.join(here, 'automata.tsv')):
     elif r[0] == 'P':
         autos[-1][4].add(lab(r[1]))
 auto_of = [0] * len(rows)
-starts, moves_at, moves, accept, implied_rows, end_rows, word_tbl, kept_rows = [], [0], [], [], [], [], [], []
-def word_at(w):
+starts, moves_at, moves, accept, implied_at, implied_rows, end_of, word_tbl = [], [0], [], [], [0], [], [], []
+# An implied word, packed: where it starts in `WORD` << 5 | its length << 3 | which of its tokens
+# the tape leaves out (bit i: token i; a token the automaton keeps wherever it stands is stored).
+# Never 0: a word kept here leaves a token out.
+def packed(w, kept):
+    assert 1 <= len(w) <= 3, w
     at = len(word_tbl)
     word_tbl.extend(w)
-    return at
+    return at << 5 | len(w) << 3 | sum(1 << i for i, l in enumerate(w) if l not in kept)
 for a, (kind, states, imp, end, kept) in enumerate(autos):
     auto_of[kind] = a + 1
     base = len(accept)
     starts.append(base)
-    for acc, ms in states:
+    drops = lambda w: any(l not in kept for l in w)
+    for st, (acc, ms) in enumerate(states):
         accept.append(acc)
         for l, to in sorted(ms):
             moves.append((l, base + to))
         moves_at.append(len(moves))
-    drops = lambda w: any(l not in kept for l in w)
-    for (st, l), w in sorted(imp.items()):
-        if drops(w):
-            implied_rows.append((base + st, l, word_at(w), len(w)))
-    for st, w in sorted(end.items()):
-        if drops(w):
-            end_rows.append((base + st, word_at(w), len(w)))
-    for l in sorted(kept):
-        kept_rows.append((a, l))
+        for l in sorted(l for (s2, l), w in imp.items() if s2 == st and drops(imp[(s2, l)])):
+            implied_rows.append((l, packed(imp[(st, l)], kept)))
+        implied_at.append(len(implied_rows))
+        w = end.get(st)
+        end_of.append(packed(w, kept) if w is not None and drops(w) else 0)
 def table(name, ty, vals, per=16, doc=''):
     o = [doc, f'pub static {name}: &[{ty}] = &[']
     for i in range(0, len(vals), per):
         o.append('    ' + ' '.join(f'{v},' for v in vals[i:i + per]))
     return o + ['];', '']
+# Each token's fate under each automaton, where the kind alone decides it: over every gap a token
+# can stand in (every path of tokens from a gap's first state to a named child or the end), left out
+# in all of them, or stored in all. A token whose gaps differ (`(` in `relation`: its own gap, or
+# part of a longer one), or that stands on a cycle of tokens, or that the automaton never takes, is
+# decided by the walk. `FATE[a]`: the dropped bits by kind, then the walk bits.
+W = (len(rows) + 63) // 64
+KINDS_NAMED = [r[2] for r in rows]
+fates = []
+for a, (kind, states, imp, end, kept) in enumerate(autos):
+    named = lambda l: KINDS_NAMED[l & 1023]
+    fate, walk = {}, set()
+    gap_starts = {0} | {to for _, ms in states for l, to in ms if named(l)}
+    for s0 in sorted(gap_starts):
+        stack = [(s0, [], frozenset([s0]))]
+        while stack:
+            q, path, seen = stack.pop()
+            acc, ms = states[q]
+            ends = [None] if acc else []
+            for l, to in ms:
+                if named(l):
+                    ends.append(l)
+                elif to in seen or len(path) >= 6:
+                    walk.update(t & 1023 for t in path + [l])
+                else:
+                    stack.append((to, path + [l], seen | {to}))
+            for nx in ends:
+                if not path:
+                    continue
+                w = end.get(s0) if nx is None else imp.get((s0, nx))
+                implied = w is not None and w == path
+                for t in path:
+                    fate.setdefault(t & 1023, set()).add(implied and t not in kept)
+    bits = [0] * (2 * W)
+    for k in range(len(rows)):
+        if KINDS_NAMED[k]:
+            continue
+        f = fate.get(k)
+        if f is None or len(f) > 1 or k in walk:
+            bits[W + k // 64] |= 1 << (k % 64)
+        elif True in f:
+            bits[k // 64] |= 1 << (k % 64)
+    fates.append(bits)
+out += [f'/// Per automaton: each token kind\'s fate where the kind decides it, a bit each: `[..{W}]` left',
+        f'/// out, `[{W}..]` decided by the walk (neither: stored).', f'pub static FATE: &[[u64; {2 * W}]] = &[']
+for bits in fates:
+    out.append('    [' + ', '.join(f'{x:#x}' for x in bits) + '],')
+out += ['];', '', f'/// The words of a kind bitset in `FATE`.', f'pub const FATE_WORDS: usize = {W};', '']
 out += table('AUTOMATON', 'u16', auto_of, 32, '/// Per kind: its automaton, plus one (0: none; its tokens are all stored).')
 out += table('START', 'u32', starts, 16, '/// Per automaton: its first state.')
 out += table('MOVES_AT', 'u32', moves_at, 16, '/// Per state: where its moves start in `MOVES`, and (the next one\'s) where they end.')
 out += table('MOVES', '(u32, u32)', [f'({l}, {t})' for l, t in moves], 8, '/// Moves, by state, sorted by label: (label, the state moved to).')
 out += table('ACCEPTS', 'u64', [sum(1 << b for b in range(64) if i + b < len(accept) and accept[i + b]) for i in range(0, len(accept), 64)], 8, '/// Per state: whether it accepts, a bit each.')
-out += table('IMPLIED', '(u32, u32, u32, u32)', [f'({a}, {b}, {c}, {d})' for a, b, c, d in implied_rows], 6, '/// The implied words before a named child: (state, the child\'s label, where the word starts in `WORD`, its length), sorted.')
-out += table('IMPLIED_END', '(u32, u32, u32)', [f'({a}, {b}, {c})' for a, b, c in end_rows], 6, '/// The implied words before the end: (state, where the word starts in `WORD`, its length), sorted.')
+out += table('IMPLIED_AT', 'u32', implied_at, 16, '/// Per state: where its implied words start in `IMPLIED`, and (the next one\'s) where they end.')
+out += table('IMPLIED', '(u32, u32)', [f'({l}, {w})' for l, w in implied_rows], 8, '/// The implied words from a gap\'s first state to a named child, by state, sorted by the child\'s label: (label, the word packed: `WORD` start << 5 | length << 3 | the tokens left out).')
+out += table('IMPLIED_END', 'u32', end_of, 16, '/// Per state: the implied word from it to the end, packed as in `IMPLIED` (0: none that leaves a token out).')
 out += table('WORD', 'u32', word_tbl, 16, '/// The implied words\' labels.')
-out += table('KEPT', '(u16, u32)', [f'({a}, {l})' for a, l in kept_rows], 8, '/// The tokens each automaton keeps wherever they stand: (automaton, label), sorted.')
 # FIRST sets: the keywords a rule can begin with (a keyword rule is a token here), for the parser's
 # choice between a keyword and an identifier where the grammar takes either (tree-sitter's keyword
 # lexing: a word is a keyword where the parse state takes it).
@@ -273,4 +321,4 @@ for rule in ['_expression', '_type']:
         out.append('    ' + ' '.join(f'K::{rows[index[(n, True)]][0]},' for n in ks[i:i + 6]))
     out += ['];', '']
 open(os.path.join(here, 'src', 'kinds.rs'), 'w').write('\n'.join(out))
-print(len(autos), 'automata,', len(accept), 'states,', len(implied_rows), 'implied,', len(end_rows), 'end,', len(rows), 'kinds,', len(fields), 'fields,', len(keys), 'dropped,', len(words), 'words,', len(phrases), 'phrases')
+print(len(autos), 'automata,', len(accept), 'states,', len(implied_rows), 'implied,', sum(1 for e in end_of if e), 'end,', len(rows), 'kinds,', len(fields), 'fields,', len(keys), 'dropped,', len(words), 'words,', len(phrases), 'phrases')
