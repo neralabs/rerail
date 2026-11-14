@@ -340,6 +340,70 @@ sqlite (0.47M nodes) is too small to fill the GPU: XF 0.11–0.15 there.
   node), the scan's summaries (144 bytes a group of 64, about 2.3 B a node, freed after) and the
   answers.
 
+### Step 5, finished: `has` from counts, and spans on the GPU
+
+- **`has` from counts, with no climb.** `has(a)` asks whether an S-node ranks after a and before
+  a's close. With S(r), the number of S-nodes ranked below r, it is `S(close rank) − S(a + 1) > 0`.
+  S comes from a scan of the groups' mask counts, up and down the same 64-ary levels.
+  - XF reads the close rank from its slot.
+  - BE's group walk has it free for nodes that close in the group (the opens so far). Only the few
+    still open at the walk's end search for their close.
+- **Spans on the GPU:**
+  - XF: start and length.
+  - MF: the starts first, then each end is the answer's start past the subtree, less the gap.
+  - BE: each close's postorder number is its position less the opens before it, which indexes the
+    ends.
+
+### Step 6: everything on the seven machines (2026-11-14)
+
+The pack (sqlite, data-layer, rerail captures) ran on:
+
+- the M1 Mac mini, the M3 Max and the M1 Max;
+- four GCP spot VMs: Zen 3 (EPYC 7B13), Zen 4 (EPYC 9B14), Sapphire Rapids (Xeon 8481C), and
+  an older n1 Xeon at 2.2 GHz.
+
+Each machine ran `inplace` (baseline and native builds, and Metal on the Macs) and `prim` (native).
+The Macs also ran `prim-gpu`. **Every answer is right on every machine, corpus and candidate,**
+and the VMs are deleted.
+
+Data-layer, native build, ns a node (bulk) or a call (point). Bulk is functions; rerail is within
+0.1–0.2 ns of these.
+
+| | M1 | M3 Max | M1 Max | Zen 3 | Zen 4 | SPR | n1 Xeon |
+|---|---|---|---|---|---|---|---|
+| 121 rules, XF / MF / BE | 18 / 24 / 72 | 15 / 19 / 52 | 18 / 23 / 72 | 25 / 37 / 66 | 25 / 36 / 64 | 25 / 33 / 79 | 48 / 68 / 133 |
+| code sweep, 64 at a time | 0.3 | 0.3 | 0.3 | 0.4 | 0.4 | 0.4 | 0.6 |
+| nearest, bulk, XF / BE | 0.4 / 0.5 | 0.3 / 0.4 | 0.4 / 0.5 | 0.5 / 0.5 | 0.5 / 0.6 | 0.6 / 0.7 | 0.9 / 1.0 |
+| has, bulk, XF / BE | 0.4 / 0.5 | 0.3 / 0.4 | 0.4 / 0.5 | 0.4 / 0.6 | 0.5 / 0.6 | 0.5 / 0.7 | 0.7 / 1.1 |
+| span, bulk, XF / MF / BE | 2.3 / 4.4 / 7.2 | 1.9 / 3.4 / 5.2 | 2.3 / 4.4 / 7.2 | 3.5 / 6.5 / 8.7 | 3.2 / 6.1 / 8.0 | 3.4 / 6.1 / 9.2 | 6.7 / 13.5 / 20.0 |
+| nearest, one node, XF / BE | 119 / 281 | 97 / 227 | 121 / 281 | 124 / 301 | 125 / 303 | 147 / 419 | 196 / 695 |
+| field `name`, one node, XF / BE | 14.5 / 20.5 | 9.3 / 14.1 | 14.4 / 20.2 | 18.9 / 26.2 | 17.2 / 23.1 | 19.7 / 32.0 | 35.6 / 59.2 |
+
+Bytes a node (the same everywhere): XF 4.15, MF 3.37, BE 2.43.
+
+GPU, data-layer Python, functions, ns a node, including the match (single runs, ±2× by clock
+state):
+
+| | M1 | M3 Max | M1 Max |
+|---|---|---|---|
+| nearest, XF / BE (scan) | 0.67 / 2.73 | 0.05 / 0.24 | 0.34 / 0.74 |
+| has, climbing, XF / BE | 0.39 / 1.63 | 0.10 / 0.49 | 0.27 / 0.89 |
+| has, from counts, XF / BE | 1.66 / 1.65 | 0.16 / 0.24 | 0.35 / 0.57 |
+| span, XF / MF / BE | 1.55 / 3.03 / 2.13 | 0.08 / 0.16 / 0.33 | 0.33 / 0.61 / 0.81 |
+
+- **The bulk axes are 0.3–0.7 ns a node on every recent machine, on all three candidates.** BE is
+  within 0.1–0.2 ns of XF in bulk, as on the M5. Only the old n1 Xeon is about 2× slower.
+- **The gap between the candidates is now point reads and spans:**
+  - BE's point climb is 2.3–3.5× XF's;
+  - BE's spans are 2.5–3× XF's, and MF's 1.8–2×;
+  - over the 121-rule mix (a per-read mix, not bulk), BE is 2.6–3.5× XF.
+- **On the GPU, the M3 Max is 5–10× the M1.** On the M1's small GPU, the scans (BE's `nearest`,
+  `has` from counts) cost more than climbing: few cores, and the levels' serial steps. `has` by
+  climbing stays the better form there. On the M3 Max the scans win for BE.
+- **x86 needs nothing special.** The sweep, the bulk axes and the spans run at about Apple's speed
+  on Zen 3/4 and Sapphire Rapids. Sapphire Rapids' point reads on BE are slower (`findclose`, as in
+  t38).
+
 ## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
@@ -420,5 +484,5 @@ In order. Each step is measured on all three corpora, every answer checked.
    already. A top level of the range min-max tree was priced from the searches it would serve
    (0.02–0.07% of nodes) and is not built.
 5. **Metal.** Done: match, nearest, outermost and has as kernels on XF, MF and BE, with BE's carry
-   as a scan (0.05–0.35 ns a node). Open: BE's `has` by the same scan, and spans on the GPU.
-6. **Rerun everything on the seven machines** (t38 sections 5 and 6).
+   as a scan (0.05–0.35 ns a node); `has` from counts, with no climb; spans.
+6. **Rerun everything on the seven machines.** Done (2026-11-14): every answer right everywhere.
