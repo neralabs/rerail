@@ -436,6 +436,8 @@ pub struct Placed {
     pub whole: bool,
     /// A maintained program's parts (decision 0215): `None` for every other program.
     pub maint: Option<Arc<Maint>>,
+    /// The version's other fields, read once at the first `Fields::of` and shared by every clone after it.
+    pub(super) fields: std::sync::OnceLock<Arc<super::fields::FieldsData>>,
 }
 
 /// A maintained program's parts beside its version (decision 0215): each stratum that may be derived again
@@ -505,7 +507,7 @@ impl Maint {
 impl Placed {
     /// `rules` made into a version of their own, in order.
     pub fn made(rules: &[Rule]) -> Result<Placed> {
-        Ok(Placed { v: made(rules)?, ids: None, whole: false, maint: None })
+        Ok(Placed { v: made(rules)?, ids: None, whole: false, maint: None, fields: Default::default() })
     }
     /// `prog`'s image (decision 0173): its rules in order, and its declarations, facts, inputs, outputs and other
     /// fields (`About`), which the passes read beside the rules; and a maintained program's parts beside it
@@ -516,7 +518,7 @@ impl Placed {
             return Placed::made(&prog.rules);
         };
         let maint = if prog.again.is_empty() && prog.together.is_empty() { None } else { Some(Arc::new(Maint::of(&v, prog)?)) };
-        Ok(Placed { v, ids: None, whole: true, maint })
+        Ok(Placed { v, ids: None, whole: true, maint, fields: Default::default() })
     }
     /// The run's version of the program whose image this is (t36 item 7, step 2): normalized for the SQL kernel
     /// (`passes::normalize`, a derivation), with its stated facts apart where `apart` (`passes::stated_apart`, an
@@ -528,15 +530,15 @@ impl Placed {
         }
         let (v, _) = passes::normalize(&self.v).map_err(Error::Plan)?;
         let v = if apart { passes::stated_apart(&v).map_err(Error::Plan)?.0 } else { v };
-        Ok(Placed { v, ids: None, whole: true, maint: self.maint.clone() })
+        Ok(Placed { v, ids: None, whole: true, maint: self.maint.clone(), fields: Default::default() })
     }
     /// A version whose rules are `v`'s in order (a program's image).
     pub fn whole(v: Arc<Version>) -> Placed {
-        Placed { v, ids: None, whole: true, maint: None }
+        Placed { v, ids: None, whole: true, maint: None, fields: Default::default() }
     }
     /// `v`, the program's rule `k` its rule `ids[k]`.
     pub fn new(v: Arc<Version>, ids: Vec<RuleId>, whole: bool) -> Placed {
-        Placed { v, ids: Some(ids.into()), whole, maint: None }
+        Placed { v, ids: Some(ids.into()), whole, maint: None, fields: Default::default() }
     }
     /// `rules` added to `parent` (an overlay that removes nothing), in order.
     pub fn over(parent: &Arc<Version>, parent_whole: bool, rules: &[Rule]) -> Result<Placed> {
@@ -641,6 +643,10 @@ impl Versions {
     /// `r`'s key, or an error naming it (a rule of no program the run holds).
     pub fn key_of(&self, r: &Rule) -> Result<RuleKey> {
         self.key(r).ok_or_else(|| Error::Plan(format!("{} :- …: a rule of no program the run holds", r.head)))
+    }
+    /// The fields of the run's `k`-th version (the program's is 0), read once: `None` where it is rules alone.
+    pub fn fields(&self, k: usize) -> Option<super::fields::Fields<'_>> {
+        self.0.get(k).and_then(|e| super::fields::Fields::of(&e.2))
     }
     /// The rule `k` names, as the planner reads it.
     pub fn at(&self, k: RuleKey) -> Body<'_> {

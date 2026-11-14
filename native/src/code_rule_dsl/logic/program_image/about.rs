@@ -49,12 +49,27 @@ pub enum NativeKind {
     ReachThrough,
 }
 
-/// A native relation: its kind and the relations it reads (`front::Native::reads`, in its order).
+/// A native relation: its kind, the relations it reads (`front::Native::reads`, in its order) and its every field.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativeRef {
     pub rel: RelId,
     pub kind: NativeKind,
     pub reads: Vec<RelId>,
+    pub spec: NativeSpec,
+}
+
+/// A native relation's fields (`front::Native`'s, variant by variant): each relation by its id, each other name by
+/// its atom.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NativeSpec {
+    DfsFirst { edge: RelId, target: RelId, roots: Option<RelId> },
+    /// Its groups in order.
+    MatchAll { input: RelId, pattern: AtomId, groups: Vec<AtomId>, positions: bool },
+    PythonCandidates { input: RelId, targets: RelId, context: AtomId, member: AtomId },
+    Python { kind: AtomId, input: RelId, targets: Option<RelId> },
+    Components { edge: RelId, own: RelId },
+    Reach { seed: RelId, edge: RelId },
+    ReachThrough { reach: RelId, map: RelId },
 }
 
 /// A lattice relation's declaration, as the analyses read it.
@@ -65,6 +80,10 @@ pub struct LatticeRef {
     pub keys: usize,
     /// `LatticeDecl::lattice`: the merge's name, else the value column's type.
     pub lattice: AtomId,
+    /// `LatticeDecl::ty`, `merge` and `widen`.
+    pub ty: AtomId,
+    pub merge: Option<AtomId>,
+    pub widen: Option<u32>,
 }
 
 /// A version's other fields, read once from its about rows.
@@ -84,6 +103,8 @@ pub struct About {
     pub qualifiers: Vec<(AtomId, AtomId)>,
     /// The demanded relations (`Program::demand`), by name, sorted.
     pub demand: Vec<AtomId>,
+    /// The demanded relations in the program's order (`Program::demand`, `*` among them).
+    pub demand_list: Vec<AtomId>,
     /// The gates' relations (`Program::gates`' keys), by name, sorted.
     pub gate_keys: Vec<AtomId>,
     /// Each gate in the program's order (`Program::gates`).
@@ -137,7 +158,10 @@ impl About {
             Cell::Int(_) => None,
         };
         let mut merges: Vec<(RelId, AtomId)> = Vec::new();
+        let mut widens: Vec<(RelId, u32)> = Vec::new();
         let mut roots: Vec<(RelId, RelId)> = Vec::new();
+        let mut groups: Vec<(RelId, i64, AtomId)> = Vec::new();
+        let mut demand: Vec<(i64, AtomId)> = Vec::new();
         let mut answers: Vec<(RelId, i64, RelId)> = Vec::new();
         let int = |c: Option<Cell>| match c {
             Some(Cell::Int(i)) => Some(i),
@@ -156,9 +180,12 @@ impl About {
             for row in f.rows() {
                 let row: Vec<Cell> = row.collect();
                 let r = |k: usize| row.get(k).copied().and_then(rel);
-                let native = |kind, cols: &[usize]| {
+                let a = |k: usize| row.get(k).copied().and_then(atom);
+                // A relation cell that may be empty (`Python`'s `targets`): an empty one names no relation.
+                let opt = |k: usize| r(k).filter(|&x| !v.rel_name(x).is_empty());
+                let native = |kind, cols: &[usize], spec: Option<NativeSpec>| {
                     let reads = cols.iter().filter_map(|&k| r(k)).collect();
-                    r(1).map(|rel| NativeRef { rel, kind, reads })
+                    r(1).zip(spec).map(|(rel, spec)| NativeRef { rel, kind, reads, spec })
                 };
                 match name {
                     "answer" => {
@@ -166,22 +193,39 @@ impl About {
                             answers.push((req, i, p));
                         }
                     }
-                    "native_dfs" => about.natives.extend(native(NativeKind::DfsFirst, &[2, 3])),
+                    "native_dfs" => about.natives.extend(native(NativeKind::DfsFirst, &[2, 3], r(2).zip(r(3)).map(|(edge, target)| NativeSpec::DfsFirst { edge, target, roots: None }))),
                     "native_roots" => roots.extend(r(1).zip(r(2))),
-                    "native_match" => about.natives.extend(native(NativeKind::MatchAll, &[2])),
-                    "native_python_candidates" => about.natives.extend(native(NativeKind::PythonCandidates, &[2, 3])),
+                    "native_match" => about.natives.extend(native(
+                        NativeKind::MatchAll,
+                        &[2],
+                        r(2).zip(a(3)).map(|(input, pattern)| NativeSpec::MatchAll { input, pattern, groups: Vec::new(), positions: int(row.get(4).copied()).is_some_and(|p| p != 0) }),
+                    )),
+                    "native_group" => {
+                        if let (Some(rel), Some(i), Some(g)) = (r(1), int(row.get(2).copied()), a(3)) {
+                            groups.push((rel, i, g));
+                        }
+                    }
+                    "native_python_candidates" => about.natives.extend(native(
+                        NativeKind::PythonCandidates,
+                        &[2, 3],
+                        match (r(2), r(3), a(4), a(5)) {
+                            (Some(input), Some(targets), Some(context), Some(member)) => Some(NativeSpec::PythonCandidates { input, targets, context, member }),
+                            _ => None,
+                        },
+                    )),
                     // An empty `targets` is none: it names no relation.
-                    "native_python" => about.natives.extend(native(NativeKind::Python, &[3, 4])),
-                    "native_components" => about.natives.extend(native(NativeKind::Components, &[2, 3])),
-                    "native_reach" => about.natives.extend(native(NativeKind::Reach, &[2, 3])),
-                    "native_reach_through" => about.natives.extend(native(NativeKind::ReachThrough, &[2, 3])),
+                    "native_python" => about.natives.extend(native(NativeKind::Python, &[3, 4], a(2).zip(r(3)).map(|(kind, input)| NativeSpec::Python { kind, input, targets: opt(4) }))),
+                    "native_components" => about.natives.extend(native(NativeKind::Components, &[2, 3], r(2).zip(r(3)).map(|(edge, own)| NativeSpec::Components { edge, own }))),
+                    "native_reach" => about.natives.extend(native(NativeKind::Reach, &[2, 3], r(2).zip(r(3)).map(|(seed, edge)| NativeSpec::Reach { seed, edge }))),
+                    "native_reach_through" => about.natives.extend(native(NativeKind::ReachThrough, &[2, 3], r(2).zip(r(3)).map(|(reach, map)| NativeSpec::ReachThrough { reach, map }))),
                     "lattice" => {
                         if let (Some(rel), Some(Cell::Int(keys)), Some(ty)) = (r(1), row.get(2).copied(), row.get(3).copied().and_then(atom)) {
-                            about.lattice.push(LatticeRef { rel, keys: keys as usize, lattice: ty });
+                            about.lattice.push(LatticeRef { rel, keys: keys as usize, lattice: ty, ty, merge: None, widen: None });
                         }
                     }
                     "nullary" => about.nullary.extend(r(1)),
                     "lattice_merge" => merges.extend(r(1).zip(row.get(2).copied().and_then(atom))),
+                    "lattice_widen" => widens.extend(r(1).zip(int(row.get(2).copied()).map(|k| k as u32))),
                     "gate" => {
                         about.gates += 1;
                         about.gate_keys.extend(row.get(2).copied().and_then(atom));
@@ -218,7 +262,10 @@ impl About {
                         }
                     }
                     "qualifier" => about.qualifiers.extend(row.get(1).copied().and_then(atom).zip(row.get(2).copied().and_then(atom))),
-                    "demand" => about.demand.extend(row.get(2).copied().and_then(atom)),
+                    "demand" => {
+                        about.demand.extend(row.get(2).copied().and_then(atom));
+                        demand.extend(int(row.get(1).copied()).zip(a(2)));
+                    }
                     _ => {}
                 }
             }
@@ -227,11 +274,28 @@ impl About {
         for (rel, root) in roots {
             if let Some(n) = about.natives.iter_mut().find(|n| n.rel == rel) {
                 n.reads.push(root);
+                if let NativeSpec::DfsFirst { roots, .. } = &mut n.spec {
+                    *roots = Some(root);
+                }
             }
         }
+        groups.sort_unstable_by_key(|&(rel, i, _)| (rel, i));
+        for (rel, _, g) in groups {
+            if let Some(NativeRef { spec: NativeSpec::MatchAll { groups, .. }, .. }) = about.natives.iter_mut().find(|n| n.rel == rel) {
+                groups.push(g);
+            }
+        }
+        demand.sort_unstable_by_key(|d| d.0);
+        about.demand_list = demand.into_iter().map(|d| d.1).collect();
         for (rel, merge) in merges {
             if let Some(l) = about.lattice.iter_mut().find(|l| l.rel == rel) {
                 l.lattice = merge;
+                l.merge = Some(merge);
+            }
+        }
+        for (rel, k) in widens {
+            if let Some(l) = about.lattice.iter_mut().find(|l| l.rel == rel) {
+                l.widen = Some(k);
             }
         }
         gates.sort_unstable_by_key(|g| g.0);

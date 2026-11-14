@@ -354,4 +354,20 @@ ported, over the targeted tests and dl1.
     choices. The callers' versions (step 9) remove it.
   - dl1 (images required, profiling build, a fresh store): the 48 findings are equal. Cold took 47.0, 49.1 and
     50.1 G over three runs (load about 50), within the spread of this session's runs (44 to 50 G). Warm took 1.7 G.
+- **Item 7, step 4 begun: the fields the run reads, from the version** (2026-11-14).
+  - A version's fields are read once and shared: `Placed` holds a `FieldsData` (its `About` and its inputs and
+    outputs) made at the first `Fields::of`, shared by its clones, and `Fields<'v>` borrows it.
+    `Versions::fields(k)` gives the run's `k`-th version's (the program's is 0).
+  - `About` keeps every native's fields (`NativeSpec`, one per `front::Native` variant), a lattice's `ty`, `merge`
+    and `widen`, and the demand in order. `Fields` answers by name every program field `run` and its helpers read of
+    the tree: inputs and outputs in order, declarations and their columns, facts, lattices, natives, answers in order,
+    gates, qualifiers, tapes, kind sets, nullary, demand and shapes. Not `again` and `together` (`Maint`).
+  - Not read yet: `run` still reads the tree. Left for its port: the digest over the fields (`plan.rs` near 3602) and
+    the keys made of the tree's text (near 7340, 7373), which need a version's form; `Stats`' input set, keyed by the
+    tree's address (near 1006); and the tree edits (`stated_apart`, an outputs reset near 9594), which the passes
+    already make on the version.
+  - Checked: `a_versions_fields_say_what_the_tree_says` (engine, `program_image::tests`) reads every field through
+    `Fields` from `Placed::of_program` and compares it by text with the tree, on the sampled pack programs and on
+    programs with a field of every kind (`every_field`: each native kind, merges and widenings, answers, gates,
+    qualifiers, tapes, demand in order). `fields_are_read_once_and_say_the_trees` (logic) checks the sharing.
 
