@@ -232,8 +232,27 @@ interface EngineRoutingState {
   runtimeOptions: Map<string, RerailRuntimeOptions>;
   /** The sessions the idle close suspended, by session id, until a runtime opens one again or the service closes. */
   suspended: Map<string, SuspendedEntry>;
-  /** The lock the service holds for its life, which its runtimes' owner rows name (`holdOwnerLock`); none without the engine. */
+  /**
+   * The lock the service holds for its life beside its own database (`holdOwnerLock`), which the owner rows of its
+   * runtimes over that database name (`ownerLockFor`); none where it could take none.
+   */
   ownerLockId: string | undefined;
+  /** The service's own database: the one its start and its idle sweeps end a dead daemon's sessions in. */
+  databasePath: string;
+}
+
+/**
+ * The lock the owner rows of a runtime over `databasePath` name: the service's, for its own database, beside which its
+ * file is and which its start and sweeps judge; none for another database, which no start of this service sweeps, so
+ * the runtime ends its quiet sessions at the idle close (`closeIdleSessions`) as a service with no lock does.
+ */
+function ownerLockFor(state: EngineRoutingState, databasePath: string | undefined): string | undefined {
+  return databasePath === state.databasePath ? state.ownerLockId : undefined;
+}
+
+/** Whether the runtime at `runtimeKey` ends a quiet session rather than suspending it: its owner rows name no lock. */
+function endsQuietSessions(state: EngineRoutingState, runtimeKey: string): boolean {
+  return ownerLockFor(state, state.runtimeOptions.get(runtimeKey)?.databasePath) === undefined;
 }
 
 /** A suspended session, with the runtime it was open in and what that runtime is made with. */
@@ -376,7 +395,8 @@ function runtimeFor(
   if (open !== undefined) return open;
   if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
   const runtime = new RerailRuntime({
-    ...runtimeOptions, autostart: false, startGate: true, suspendedSessions: suspendedSessions(state, runtimeKey), ownerLockId: state.ownerLockId,
+    ...runtimeOptions, autostart: false, startGate: true, suspendedSessions: suspendedSessions(state, runtimeKey),
+    ownerLockId: ownerLockFor(state, runtimeOptions.databasePath),
   });
   state.runtimes.set(runtimeKey, runtime);
   state.runtimeOptions.set(runtimeKey, runtimeOptions);
@@ -412,9 +432,10 @@ function releaseSessionRuntime(state: EngineRoutingState, sessionId: string, run
  * session's next open; then its runtime retires as after an end. The check runs again in the session's lane, so an
  * event that came in meanwhile keeps the session open. A session that still owes its agent a tool call's check, a
  * steer, a held finding or a scan stays as it is until it has been quiet for `OWING_SESSION_IDLE_MS`, and so does one
- * whose suspension fails, which is reported; the next sweep looks again. A service that holds no owner lock
- * (`holdOwnerLock` gave none) ends each quiet session instead: after a kill, its rows could be judged only by their
- * pid, and a session it kept open would read as live and owned for good.
+ * whose suspension fails, which is reported; the next sweep looks again. A runtime whose owner rows name no lock
+ * (`ownerLockFor`: the service could take none, or the runtime records in another database) ends each quiet session
+ * instead: after a kill, its rows could be judged only by their pid, and a session it kept open would read as live and
+ * owned for good.
  */
 async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now: () => number): Promise<void> {
   /** How long the session at `lane` has sent nothing; minus infinity once it has closed, so it is never idle. */
@@ -430,7 +451,7 @@ async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now:
       const evenIfOwing = quiet >= OWING_SESSION_IDLE_MS;
       // A suspended session's runtime has kept its suspension (`SuspendedSessions.keep`) before closing it, with the time
       // its record ends at if no runtime opens it again.
-      const end = state.ownerLockId === undefined;
+      const end = endsQuietSessions(state, runtimeKey);
       const idle = await state.runtimes.get(runtimeKey)?.closeIdleSession(sessionId, { evenIfOwing, at: now(), end });
       if (idle?.kind === "owing") return false;
       state.lastEventAt.delete(lane);
@@ -725,6 +746,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     runtimeOptions: new Map(),
     suspended: new Map(),
     ownerLockId: ownerLock.id,
+    databasePath,
   };
   const sweepIdleSessions = (): Promise<void> => sweepIdle(routing, options, databasePath);
   const server = createServer(async (incoming, response) => {
