@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, mkdirSync } from "node:fs";
+import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync } from "node:fs";
 import Database from "better-sqlite3";
 import { basename, dirname, join } from "node:path";
 import { sql } from "drizzle-orm";
@@ -27,12 +27,16 @@ export function defaultRerailDatabasePath(environment: NodeJS.ProcessEnv = proce
   return join(defaultRerailHome(environment), RERAIL_DATABASE_FILE);
 }
 
+/** How long a connection's statement waits for another connection's lock before SQLite gives up with `SQLITE_BUSY`. */
+const BUSY_TIMEOUT_MS = 5_000;
+
 /**
  * A connection that has changed nothing on disk yet; a writable one creates the directory and an absent file. A
  * writable open of a file this process cannot write throws before anything else touches it: SQLite would quietly open
- * it read-only, and the writer would then change its mode before failing.
+ * it read-only, and the writer would then change its mode before failing. Its statements wait `busyTimeoutMs` for
+ * another connection's lock.
  */
-function connectSqlite(path: string, readonly: boolean): RerailDatabase {
+function connectSqlite(path: string, readonly: boolean, busyTimeoutMs = BUSY_TIMEOUT_MS): RerailDatabase {
   if (!readonly) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     // The folder too: SQLite writes its journal and WAL beside the file.
@@ -41,7 +45,7 @@ function connectSqlite(path: string, readonly: boolean): RerailDatabase {
   const client = new Database(path, { readonly });
   try {
     const database = drizzle(client, { schema });
-    database.run(sql`PRAGMA busy_timeout = 5000`);
+    database.run(sql.raw(`PRAGMA busy_timeout = ${busyTimeoutMs}`));
     return database;
   } catch (error) {
     client.close();
@@ -206,15 +210,27 @@ export function openRerailDatabase(path: string, options: OpenRerailDatabaseOpti
   return openChecked(path, true, migrations, supported);
 }
 
+export interface AsIsOpenOptions {
+  /**
+   * False for a reader that has another place to ask, which then gives up at once where another process holds the
+   * file: its statements wait on no lock (`SQLITE_BUSY` at the first read that meets one), and on Windows a file that
+   * Windows refuses to open now is refused before SQLite opens it ({@link openableNow}). True, the default, waits as
+   * every connection does.
+   */
+  wait?: boolean;
+}
+
 /**
  * A read-only open that never changes the file: where `openRerailDatabase({ readonly: true })` would run this build's
  * schema steps first (a writable open), this refuses, saying so. For commands that only read the person's database
  * from another build or process (`rerail scan`), so a checkout build never migrates the installed Rerail's file. A
  * file newer than this build reads, or one this build cannot read at all, is refused as any open refuses it.
  */
-export function openRerailDatabaseAsIs(path: string): RerailDatabase {
+export function openRerailDatabaseAsIs(path: string, options: AsIsOpenOptions = {}): RerailDatabase {
   const migrations = RERAIL_MIGRATIONS;
-  const database = openChecked(path, true, migrations, schemaVersionOf(migrations));
+  const wait = options.wait !== false;
+  if (!wait) openableNow(path);
+  const database = openChecked(path, true, migrations, schemaVersionOf(migrations), wait ? BUSY_TIMEOUT_MS : 0);
   const upgrade = upgradeBeforeReading(path, database, migrations);
   if (upgrade === undefined) return database;
   database.$client.close();
@@ -222,6 +238,16 @@ export function openRerailDatabaseAsIs(path: string): RerailDatabase {
     `${path} needs ${upgrade} before this Rerail can read it, and this command never changes it. Run it with the Rerail `
       + "this computer runs (rerail), or start Rerail first (rerail daemon start), which upgrades it.",
   );
+}
+
+/**
+ * Throws at once where Windows refuses to open the file at `path` now: another program holds it without sharing, or
+ * this user may not read it. SQLite's own open retries such a refusal for about 1.4 s, which no busy timeout bounds.
+ * Elsewhere it does nothing: SQLite's open there fails at once, and on POSIX closing a descriptor of a database file
+ * would drop every lock SQLite holds on it in this process.
+ */
+function openableNow(path: string): void {
+  if (process.platform === "win32") closeSync(openSync(path, "r"));
 }
 
 /**
@@ -264,10 +290,10 @@ function missingSchemaObjects(database: RerailDatabase): string[] {
   return SCHEMA_OBJECTS.filter(name => !present.has(name));
 }
 
-function openChecked(path: string, readonly: boolean, migrations: readonly Migration[], supported: number): RerailDatabase {
+function openChecked(path: string, readonly: boolean, migrations: readonly Migration[], supported: number, busyTimeoutMs?: number): RerailDatabase {
   let database: RerailDatabase;
   try {
-    database = connectSqlite(path, readonly);
+    database = connectSqlite(path, readonly, busyTimeoutMs);
   } catch (error) {
     throw notADatabase(error) ? new Error(unreadableDatabase(path, "not an SQLite database", supported)) : error;
   }

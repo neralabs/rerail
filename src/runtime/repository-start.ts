@@ -99,14 +99,20 @@ export function readOnlyStartState(workspace: string, databasePath = defaultRera
  * the database reads stopped, without the checkout's remote, at each place Git's search can end there
  * (`gitSearchEnds`). False wherever that is not certain, so the caller asks the daemon: a search the filesystem leaves
  * open, a checkout only its remote could place, one that reads started, or a database this process cannot open as it
- * is. The database is opened as it is (`openRerailDatabaseAsIs`), so this never writes it and never waits on its write
- * lock: a file that needs this build's schema steps first is left to the daemon. SQLite's error for a database it
- * opened and cannot read, one without the start tables among them, is thrown.
+ * is. The database is opened as it is, without waiting (`openAsIsAtOnce`), so this never writes it and never waits on
+ * another process: a file that needs this build's schema steps first, or one another process holds, is left to the
+ * daemon. SQLite's error for a database it opened and cannot read, one without the start tables or one another process
+ * locked once it was open among them, is thrown.
  */
 export function stoppedWithoutGit(workspace: string, databasePath = defaultRerailDatabasePath()): boolean {
   const ends = gitSearchEnds(workspace);
   return ends !== undefined && !ends.some(placedByRemote)
-    && readOnly(databasePath, database => ends.every(end => statusWithoutRemote(database, end)?.started === false), openRerailDatabaseAsIs) === true;
+    && readOnly(databasePath, database => ends.every(end => statusWithoutRemote(database, end)?.started === false), openAsIsAtOnce) === true;
+}
+
+/** The database as it is, given up at once where another process holds it (`wait: false`): the daemon answers there. */
+function openAsIsAtOnce(databasePath: string): RerailDatabase {
+  return openRerailDatabaseAsIs(databasePath, { wait: false });
 }
 
 /**
