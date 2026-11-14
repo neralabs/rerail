@@ -478,9 +478,14 @@ function cmdLauncherArgs(words: readonly string[]): LauncherArgs | undefined {
   return JSON.stringify(cmdHookArgs(launched)) === JSON.stringify(words) ? launched : undefined;
 }
 
-/** cmd.exe at an absolute path, in any letter case, as `windowsSystemProgram` names it where a hook was registered. */
+/**
+ * cmd.exe in a folder named System32, in any letter case: the path `windowsSystemProgram` gives it from any SystemRoot.
+ * Registration reads such an entry as its own even where that path is not full, which it never writes
+ * (`isFullWindowsPath`), so that a refresh or removal takes out an entry written under such a SystemRoot.
+ */
 function isWindowsCmd(command: string): boolean {
-  return win32.isAbsolute(command) && win32.basename(command).toLowerCase() === "cmd.exe";
+  const name = (path: string) => win32.basename(path).toLowerCase();
+  return name(command) === "cmd.exe" && name(win32.dirname(command)) === "system32";
 }
 
 /**

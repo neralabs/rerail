@@ -430,6 +430,28 @@ describe("Claude Code settings.json", () => {
     expect(JSON.stringify(await readJson(path))).not.toContain("hook-launcher");
   });
 
+  it.each(["Windows", String.raw`\Windows`, "C:Windows"])("replaces and removes a cmd.exe hook entry that SystemRoot %j named, a path set-up does not write", async systemRoot => {
+    const { home, root } = await fixture();
+    const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
+    const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
+    const path = join(home, ".claude", "settings.json");
+    await windowsPathNode(home, "older-node");
+    const nodePath = await windowsNode(home, "newer-node");
+    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const };
+    vi.stubEnv("SystemRoot", systemRoot);
+    // Rerail's words through cmd.exe at `<SystemRoot>\System32\cmd.exe`: Rerail's entry, which runs whatever cmd.exe
+    // the hook's folder or drive holds there.
+    const named = cmdEntry(launcherPath, nodePath, hookPath);
+    const viaPath = { type: "command", command: "node", args: [launcherPath, nodePath, hookPath] };
+
+    await seed(path, { hooks: { SessionStart: [{ hooks: [named] }] } });
+    await registerHarnesses(windows);
+    expect(((await readJson(path)).hooks as Record<string, unknown[]>).SessionStart).toEqual([{ hooks: [viaPath] }]);
+    await seed(path, { hooks: { SessionStart: [{ hooks: [named] }] } });
+    await unregisterHarnesses(windows);
+    expect(JSON.stringify(await readJson(path))).not.toContain("hook-launcher");
+  });
+
   it("finds node on PATH for the Windows hooks as a spawn without a shell does", async () => {
     const { home, root } = await fixture();
     const path = join(home, ".claude", "settings.json");
