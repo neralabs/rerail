@@ -99,70 +99,82 @@ impl Packed {
     }
 }
 
-/// A block of `BLOCK` values at a time: a base (the block's least value), a width, and the values above
-/// the base; a value that does not fit is all ones, and its value is in the block's exceptions.
+/// A block of `BLOCK` values at a time: a base (the block's least value, if kept), a width `w`, and the values
+/// above the base at `w` bits. A block's top `e` codes are escapes: a slot at or above `2^w − e` names its
+/// exception directly (no search), and the exceptions follow the block's slots at the block's exception
+/// width. A block's header is one word: `w` (6 bits), the exception width (6), `e` (9), the bit offset (43).
 pub struct PFor {
-    width: Vec<u8>,
-    bitoff: Vec<u32>,
+    n: usize,
+    head: Vec<u64>,
     base: Vec<u64>,
     words: Vec<u64>,
-    exc_at: Vec<u32>,
-    exc_idx: Vec<u8>,
-    exc_val: Vec<u32>,
     with_base: bool,
 }
 
 impl Image for PFor {
     fn image(&self, out: &mut Vec<u8>) {
-        raw(out, &self.width);
-        raw(out, &self.bitoff);
+        raw(out, &self.head);
         if self.with_base {
             raw(out, &self.base);
         }
         raw(out, &self.words);
-        raw(out, &self.exc_at);
-        raw(out, &self.exc_idx);
-        raw(out, &self.exc_val);
     }
+}
+
+/// The cheapest (w, e, ew) for a block's values: `w` bits a slot, `e` escapes, exceptions at `ew` bits.
+fn esc_width(rel: &[u64]) -> (u32, u32, u32) {
+    let mut best = (u64::MAX, 0, 0, 0);
+    for w in 0..=40u32 {
+        let codes = 1u64 << w;
+        // The escapes needed: values at or above 2^w − e, to a fixpoint.
+        let mut e = 0u64;
+        loop {
+            let lim = codes.saturating_sub(e);
+            let ne = rel.iter().filter(|&&v| v >= lim).count() as u64;
+            if ne <= e || ne > codes {
+                e = ne;
+                break;
+            }
+            e = ne;
+        }
+        if e > codes || e > BLOCK as u64 {
+            continue;
+        }
+        let lim = codes - e;
+        let ew = rel.iter().filter(|&&v| v >= lim).map(|&v| bits_for(v)).max().unwrap_or(0);
+        let cost = rel.len() as u64 * u64::from(w) + e * u64::from(ew);
+        if cost < best.0 {
+            best = (cost, w, e as u32, ew);
+        }
+    }
+    (best.1, best.2, best.3)
 }
 
 impl PFor {
     pub fn new(vals: &[u64], with_base: bool) -> PFor {
-        let mut p = PFor { width: vec![], bitoff: vec![], base: vec![], words: vec![0; 2], exc_at: vec![0], exc_idx: vec![], exc_val: vec![], with_base };
+        let mut p = PFor { n: vals.len(), head: vec![], base: vec![], words: vec![0; 2], with_base };
         let mut bit = 0usize;
         for chunk in vals.chunks(BLOCK) {
             let b = if with_base { *chunk.iter().min().unwrap() } else { 0 };
             let rel: Vec<u64> = chunk.iter().map(|&v| v - b).collect();
-            // The width that costs least: values, plus 5 bytes an exception.
-            let mut best = (u64::MAX, 0u32);
-            for w in 0..=32u32 {
-                let lim = mask(w);
-                let exc = rel.iter().filter(|&&v| v >= lim).count() as u64;
-                // A width of 0 holds only zeros and has no escape.
-                if w == 0 && exc > 0 && rel.iter().any(|&v| v != 0) {
-                    continue;
-                }
-                let exc = if w == 0 { 0 } else { exc };
-                let cost = chunk.len() as u64 * w as u64 + exc * 40;
-                if cost < best.0 {
-                    best = (cost, w);
-                }
-            }
-            let w = best.1;
-            p.width.push(w as u8);
-            p.bitoff.push(bit as u32);
+            let (w, e, ew) = esc_width(&rel);
+            assert!(w < 64 && ew < 64 && (bit as u64) < 1 << 43);
+            p.head.push(u64::from(w) | u64::from(ew) << 6 | u64::from(e) << 12 | (bit as u64) << 21);
             p.base.push(b);
-            for (j, &v) in rel.iter().enumerate() {
-                if w > 0 && v >= mask(w) {
-                    put(&mut p.words, bit, w, mask(w));
-                    p.exc_idx.push(j as u8);
-                    p.exc_val.push(u32::try_from(v).expect("an exception within 32 bits"));
+            let lim = (1u64 << w) - u64::from(e);
+            let exc_at = bit + rel.len() * w as usize;
+            let mut k = 0u64;
+            for &v in &rel {
+                if v >= lim {
+                    put(&mut p.words, bit, w, lim + k);
+                    put(&mut p.words, exc_at + k as usize * ew as usize, ew, v);
+                    k += 1;
                 } else {
                     put(&mut p.words, bit, w, v);
                 }
                 bit += w as usize;
             }
-            p.exc_at.push(p.exc_idx.len() as u32);
+            bit = exc_at + k as usize * ew as usize;
         }
         put(&mut p.words, bit, 0, 0);
         p
@@ -171,19 +183,20 @@ impl PFor {
     pub fn get(&self, i: usize) -> u64 {
         let b = i / BLOCK;
         // SAFETY: i is within the array the reader was built over.
-        let (w, off) = unsafe { (*self.width.get_unchecked(b) as u32, *self.bitoff.get_unchecked(b) as usize) };
+        let h = unsafe { *self.head.get_unchecked(b) };
+        let (w, e, off) = ((h & 63) as u32, (h >> 12) & 511, (h >> 21) as usize);
         let v = extract(&self.words, off + (i % BLOCK) * w as usize, w);
         let base = if self.with_base { unsafe { *self.base.get_unchecked(b) } } else { 0 };
-        if w > 0 && v == mask(w) {
-            let (a, z) = (self.exc_at[b] as usize, self.exc_at[b + 1] as usize);
-            let j = (i % BLOCK) as u8;
-            let k = a + self.exc_idx[a..z].iter().position(|&x| x == j).unwrap();
-            return base + u64::from(self.exc_val[k]);
+        let lim = (1u64 << w) - e;
+        if v >= lim {
+            let ew = ((h >> 6) & 63) as u32;
+            let len = (self.n - b * BLOCK).min(BLOCK);
+            return base + extract(&self.words, off + len * w as usize + (v - lim) as usize * ew as usize, ew);
         }
         base + v
     }
     pub fn bytes(&self) -> usize {
-        self.width.len() * 5 + if self.with_base { self.base.len() * 8 } else { 0 } + self.words.len() * 8 + self.exc_at.len() * 4 + self.exc_idx.len() * 5
+        self.head.len() * 8 + if self.with_base { self.base.len() * 8 } else { 0 } + self.words.len() * 8 + 8
     }
 }
 
@@ -784,6 +797,101 @@ impl<P: Pos> Reader for X<P> {
     }
 }
 
+// ---- XF: explicit, folded ------------------------------------------------------------------------
+
+/// X with size and back folded into one array, a slot a node, tagged by its low bit:
+///
+/// - an inner node's slot is its subtree size (tag 0);
+/// - a leaf's slot is the back distance of the node just after it (tag 1), the one node whose parent a
+///   leaf can tell: the node after an inner node is its first child, so its parent is one back and needs
+///   nothing stored, and the node after a leaf is a later sibling of some ancestor.
+///
+/// So a leaf's size (always 1) and a first child's back (always 1) are never stored, and no rank is read.
+pub struct XF<P: Pos> {
+    n: usize,
+    code: Packed,
+    slot: PFor,
+    pos: P,
+}
+
+impl<P: Pos> XF<P> {
+    pub fn new(tree: &Tree, codes: &Codes) -> XF<P> {
+        let n = tree.len();
+        let slot: Vec<u64> = (0..n).map(|i| {
+            if tree.size[i] > 1 {
+                u64::from(tree.size[i]) << 1
+            } else if i + 1 < n {
+                (((i + 1 - tree.parent[i + 1] as usize) as u64) << 1) | 1
+            } else {
+                1
+            }
+        }).collect();
+        if std::env::var_os("XF_HIST").is_some() {
+            eprintln!("XFC {:?}", pack_costs(&slot));
+        }
+        XF { n, code: code_of(tree, codes), slot: PFor::new(&slot, false), pos: P::build(tree) }
+    }
+    pub fn parts(&self) -> [usize; 4] {
+        let [s, e] = self.pos.bytes();
+        [self.code.bytes(), self.slot.bytes(), s, e]
+    }
+    pub fn image(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        self.code.image(&mut out);
+        self.slot.image(&mut out);
+        self.pos.image(&mut out);
+        out
+    }
+}
+
+impl<P: Pos> Reader for XF<P> {
+    fn bytes(&self) -> usize {
+        self.parts().iter().sum()
+    }
+    fn id_of(&self, p: usize) -> usize {
+        p
+    }
+    #[inline(always)]
+    fn code(&self, i: usize) -> u32 {
+        self.code.get(i) as u32
+    }
+    #[inline(always)]
+    fn subtree_end(&self, i: usize) -> usize {
+        let v = self.slot.get(i);
+        // A leaf (tag 1) ends at the next node; an inner node at its size. Leaf or inner is a coin toss, so
+        // no branch: the tag masks the size away and stands for the 1.
+        let t = v & 1;
+        i + (((v >> 1) & t.wrapping_sub(1)) | t) as usize
+    }
+    #[inline(always)]
+    fn parent(&self, i: usize) -> Option<usize> {
+        if i == 0 {
+            return None;
+        }
+        let v = self.slot.get(i - 1);
+        // After an inner node (tag 0) the parent is one back; after a leaf, the stored distance.
+        let t = v & 1;
+        Some(i - (((v >> 1) & t.wrapping_neg()) | (t ^ 1)) as usize)
+    }
+    #[inline(always)]
+    fn start(&self, i: usize) -> u64 {
+        self.pos.start(i)
+    }
+    #[inline(always)]
+    fn end(&self, i: usize) -> u64 {
+        self.pos.end(i, || self.subtree_end(i), || unreachable!("XF has no postorder"))
+    }
+    #[inline(always)]
+    fn first_child(&self, i: usize) -> Option<usize> {
+        (self.slot.get(i) & 1 == 0).then_some(i + 1)
+    }
+    #[inline(always)]
+    fn next_sibling(&self, i: usize, pe: usize) -> Option<usize> {
+        let j = self.subtree_end(i);
+        (j < pe && j < self.n).then_some(j)
+    }
+}
+
 // ---- B: balanced parentheses ---------------------------------------------------------------------
 
 /// Per byte (bits from the low end): the excess after it, and where the running excess first reaches −k
@@ -1265,13 +1373,10 @@ impl Gpu for Packed {
 impl Gpu for PFor {
     fn gpu(&self, g: &mut GpuImage) {
         g.val(u32::from(self.with_base));
-        g.arr(&self.width);
-        g.arr(&self.bitoff);
+        g.val(self.n as u32);
+        g.arr(&self.head);
         if self.with_base { g.arr(&self.base) } else { g.val(0) }
         g.arr(&self.words);
-        g.arr(&self.exc_at);
-        g.arr(&self.exc_idx);
-        g.arr(&self.exc_val);
     }
 }
 
@@ -1323,6 +1428,17 @@ impl<P: Pos + Gpu> X<P> {
         self.code.gpu(&mut g);
         self.size.gpu(&mut g);
         self.back.gpu(&mut g);
+        self.pos.gpu(&mut g);
+        g
+    }
+}
+
+impl<P: Pos + Gpu> XF<P> {
+    pub fn gpu_image(&self) -> GpuImage {
+        let mut g = GpuImage::default();
+        g.val(self.n as u32);
+        self.code.gpu(&mut g);
+        self.slot.gpu(&mut g);
         self.pos.gpu(&mut g);
         g
     }
@@ -1389,4 +1505,57 @@ pub fn forest(trees: &[Tree]) -> Tree {
 /// The select table, for the GPU (256 × 8).
 pub fn select8_bytes() -> Vec<u8> {
     SELECT8.iter().flatten().copied().collect()
+}
+
+/// Bits to hold `vals` under each packing considered for XF's slots (E11): PFOR at blocks of 64, 128, 256
+/// (exceptions 40 bits, header 40 bits); escape-indexed exceptions (the top codes of a block's width name an
+/// exception, packed at the block's exception width; header 64 bits) at 64, 128, 256; and a block bitmap
+/// with a rank (w1 + 1 bit a value, exceptions at their width, header 64 bits) at 256.
+pub fn pack_costs(vals: &[u64]) -> Vec<u64> {
+    let mut out = Vec::new();
+    for blk in [64usize, 128, 256] {
+        let mut t = 0u64;
+        for c in vals.chunks(blk) {
+            let best = (0..=32u32).map(|w| {
+                let e = c.iter().filter(|&&v| v >= mask(w)).count() as u64;
+                if w == 0 && e > 0 { u64::MAX } else { c.len() as u64 * w as u64 + if w == 0 { 0 } else { e * 40 } }
+            }).min().unwrap();
+            t += best + 40;
+        }
+        out.push(t);
+    }
+    for blk in [64usize, 128, 256] {
+        let mut t = 0u64;
+        for c in vals.chunks(blk) {
+            let mut best = u64::MAX;
+            for w in 0..=32u32 {
+                let lim = |e: u64| (1u64 << w).saturating_sub(e);
+                // E exceptions take the top E codes; a value is literal below 2^w - E.
+                let mut e = 0u64;
+                loop {
+                    let ne = c.iter().filter(|&&v| v >= lim(e)).count() as u64;
+                    if ne <= e { break; }
+                    e = ne;
+                    if e > (1u64 << w) { break; }
+                }
+                if e > (1u64 << w) || (e > 0 && lim(e) == 0 && w == 0) { continue; }
+                let ew = c.iter().filter(|&&v| v >= lim(e)).map(|&v| bits_for(v)).max().unwrap_or(0) as u64;
+                best = best.min(c.len() as u64 * w as u64 + e * ew);
+            }
+            t += best + 64;
+        }
+        out.push(t);
+    }
+    let mut t = 0u64;
+    for c in vals.chunks(256) {
+        let best = (0..=32u32).map(|w| {
+            let big: Vec<u64> = c.iter().copied().filter(|&v| v > mask(w)).collect();
+            let ew = big.iter().map(|&v| bits_for(v)).max().unwrap_or(0) as u64;
+            c.len() as u64 * (w as u64 + 1) + big.len() as u64 * ew
+        }).min().unwrap();
+        t += best + 64;
+    }
+    out.push(t);
+    out.push(vals.len() as u64);
+    out
 }

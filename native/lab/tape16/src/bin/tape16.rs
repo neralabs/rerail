@@ -1074,7 +1074,7 @@ fn bench<R: rerail_tape_lab::inplace::Reader>(r: &R, tree: &rerail_tape_lab::tre
 /// E10 (0156 T9, t38): candidate in-memory tapes, every question answered in place on each, checked against
 /// the tree, and costed one thread at a time.
 fn cmd_inplace(path: &str, f11: bool) {
-    use rerail_tape_lab::inplace::{B, Codes, EfEf, EfGap, F15, ForLen, PredGap, PredLen, X};
+    use rerail_tape_lab::inplace::{B, Codes, EfEf, EfGap, F15, ForLen, PredGap, PredLen, X, XF};
     use rerail_tape_lab::measure::{Cost, cost};
     use rerail_tape_lab::inplace::Reader;
     let cap = std::path::Path::new(path);
@@ -1100,8 +1100,8 @@ fn cmd_inplace(path: &str, f11: bool) {
     const Q: [&str; 8] = ["sweep: code in a set", "code at random", "start at random", "subtree end at random", "children of every node", "parent at random (1 node in 16)", "check (every answer)", "end at random"];
     // `--f11`: a capture with every token (`capture-tapes --all-tokens`) read as format 11: format 15's columns
     // over every node, plus the 32-byte source digest format 11 stored (format 12 dropped it).
-    let names = [if f11 { "F11" } else { "F15" }, "X", "M", "XE", "B", "BM", "BE", "BH"];
-    const C: usize = 8;
+    let names = [if f11 { "F11" } else { "F15" }, "X", "M", "XE", "B", "BM", "BE", "BH", "XF", "MF"];
+    const C: usize = 10;
     let mut costs = vec![[Cost::default(); 8]; C];
     let mut counts = [[0u64; 8]; C];
     let mut bytes = [0usize; C];
@@ -1137,7 +1137,9 @@ fn cmd_inplace(path: &str, f11: bool) {
         let bm = B::<PredLen>::new(&tree, lang);
         let be = B::<EfEf>::new(&tree, lang);
         let bh = B::<PredLen>::with_big(&tree, lang);
-        for (c, p) in [x.parts(), m.parts(), xe.parts(), b.parts(), bm.parts(), be.parts(), bh.parts()].iter().enumerate() {
+        let xf = XF::<ForLen>::new(&tree, lang);
+        let mf = XF::<PredGap>::new(&tree, lang);
+        for (c, p) in [x.parts(), m.parts(), xe.parts(), b.parts(), bm.parts(), be.parts(), bh.parts(), xf.parts(), mf.parts()].iter().enumerate() {
             for k in 0..4 {
                 parts[c + 1][k] += p[k];
             }
@@ -1159,7 +1161,7 @@ fn cmd_inplace(path: &str, f11: bool) {
             }
         }
         // Shape 1: each candidate's bytes zstd'd, and decompressed; and each candidate's build from the tree.
-        let images: [Vec<u8>; C] = [f.image.clone(), x.image(), m.image(), xe.image(), b.image(), bm.image(), be.image(), bh.image()];
+        let images: [Vec<u8>; C] = [f.image.clone(), x.image(), m.image(), xe.image(), b.image(), bm.image(), be.image(), bh.image(), xf.image(), mf.image()];
         for (c, im) in images.iter().enumerate() {
             let z = zstd::bulk::compress(im, 3).unwrap();
             disk1[c] += z.len();
@@ -1181,6 +1183,10 @@ fn cmd_inplace(path: &str, f11: bool) {
         build[6] += k;
         let (_, k) = cost(|| std::hint::black_box(B::<PredLen>::with_big(&tree, lang).bytes()));
         build[7] += k;
+        let (_, k) = cost(|| std::hint::black_box(XF::<ForLen>::new(&tree, lang).bytes()));
+        build[8] += k;
+        let (_, k) = cost(|| std::hint::black_box(XF::<PredGap>::new(&tree, lang).bytes()));
+        build[9] += k;
         bench(&f15, &tree, &want, &order, set, &mut costs[0], &mut counts[0], &mut wrong[0], &mut bytes[0]);
         bench(&x, &tree, &want, &order, set, &mut costs[1], &mut counts[1], &mut wrong[1], &mut bytes[1]);
         bench(&m, &tree, &want, &order, set, &mut costs[2], &mut counts[2], &mut wrong[2], &mut bytes[2]);
@@ -1189,6 +1195,8 @@ fn cmd_inplace(path: &str, f11: bool) {
         bench(&bm, &tree, &want, &order, set, &mut costs[5], &mut counts[5], &mut wrong[5], &mut bytes[5]);
         bench(&be, &tree, &want, &order, set, &mut costs[6], &mut counts[6], &mut wrong[6], &mut bytes[6]);
         bench(&bh, &tree, &want, &order, set, &mut costs[7], &mut counts[7], &mut wrong[7], &mut bytes[7]);
+        bench(&xf, &tree, &want, &order, set, &mut costs[8], &mut counts[8], &mut wrong[8], &mut bytes[8]);
+        bench(&mf, &tree, &want, &order, set, &mut costs[9], &mut counts[9], &mut wrong[9], &mut bytes[9]);
         nodes += n;
         files += 1;
         if f11 {

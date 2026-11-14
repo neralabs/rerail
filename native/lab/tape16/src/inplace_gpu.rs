@@ -1,7 +1,7 @@
 //! E10 on Metal (0156, t38): the in-place questions as kernels, one thread a question, on each candidate's
 //! one-buffer image (`inplace::GpuImage`). Every answer is checked against the CPU reader's.
 
-use crate::inplace::{B, EfEf, ForLen, Gpu, GpuImage, Pos, PredGap, Reader, X};
+use crate::inplace::{B, EfEf, ForLen, Gpu, GpuImage, Pos, PredGap, Reader, X, XF};
 use metal::{Device, MTLResourceOptions, MTLSize};
 
 pub const SOURCE: &str = r#"
@@ -32,27 +32,29 @@ struct Packed {
 inline Packed rd_packed(thread Rd& r) { Packed x; x.w = r.val(); x.words = r.arr<ulong>(); return x; }
 
 struct PFor {
-    uint with_base; device const uchar* width; device const uint* bitoff; device const ulong* base;
-    device const ulong* words; device const uint* exc_at; device const uchar* exc_idx; device const uint* exc_val;
+    uint with_base, n; device const ulong* head; device const ulong* base; device const ulong* words;
     ulong get(uint i) const {
         uint b = i >> 8;
-        uint w = width[b];
-        ulong v = extract(words, ulong(bitoff[b]) + ulong(i & 255) * w, w);
+        ulong h = head[b];
+        uint w = uint(h & 63), e = uint((h >> 12) & 511);
+        ulong off = h >> 21;
+        ulong v = extract(words, off + ulong(i & 255) * w, w);
         ulong bs = with_base ? base[b] : 0;
-        if (w > 0 && v == mask(w)) {
-            uint a = exc_at[b], z = exc_at[b + 1];
-            uchar j = uchar(i & 255);
-            for (uint k = a; k < z; k++) { if (exc_idx[k] == j) { return bs + exc_val[k]; } }
+        ulong lim = (1ul << w) - e;
+        if (v >= lim) {
+            uint ew = uint((h >> 6) & 63);
+            uint len = min(256u, n - b * 256);
+            return bs + extract(words, off + ulong(len) * w + (v - lim) * ew, ew);
         }
         return bs + v;
     }
 };
 inline PFor rd_pfor(thread Rd& r) {
     PFor x;
-    x.with_base = r.val();
-    x.width = r.arr<uchar>(); x.bitoff = r.arr<uint>();
+    x.with_base = r.val(); x.n = r.val();
+    x.head = r.arr<ulong>();
     if (x.with_base) { x.base = r.arr<ulong>(); } else { r.val(); x.base = 0; }
-    x.words = r.arr<ulong>(); x.exc_at = r.arr<uint>(); x.exc_idx = r.arr<uchar>(); x.exc_val = r.arr<uint>();
+    x.words = r.arr<ulong>();
     return x;
 }
 
@@ -111,6 +113,15 @@ inline Ef rd_ef(thread Rd& r) { Ef x; x.l = r.val(); x.low = rd_packed(r); x.hig
 // ---- X ----
 struct XC { uint n; Packed code; PFor size, back; };
 inline XC rd_x(thread Rd& r) { XC x; x.n = r.val(); x.code = rd_packed(r); x.size = rd_pfor(r); x.back = rd_pfor(r); return x; }
+
+// ---- XF: one slot a node, tag 0 an inner node's size, tag 1 the back distance of the node after a leaf ----
+struct XFC {
+    uint n; Packed code; PFor slot;
+    uint end(uint i) const { ulong v = slot.get(i); ulong t = v & 1; return i + uint(((v >> 1) & (t - 1)) | t); }
+    // parent + 1; 0: none.
+    ulong parent1(uint i) const { if (i == 0) return 0; ulong v = slot.get(i - 1); ulong t = v & 1; return i - (((v >> 1) & (0 - t)) | (t ^ 1)) + 1; }
+};
+inline XFC rd_xf(thread Rd& r) { XFC x; x.n = r.val(); x.code = rd_packed(r); x.slot = rd_pfor(r); return x; }
 
 // ---- B ----
 struct BC {
@@ -224,6 +235,41 @@ kernel void x_predgap(ARGS) {
         case 4: v = i + x.size.get(i); break;
         case 5: { ulong b = x.back.get(i); v = b == 0 ? 0 : i - b + 1; break; }
         case 6: { uint pe = i + uint(x.size.get(i)); uint c = i + 1; uint k = 0; while (c < pe) { k++; c += uint(x.size.get(c)); } v = k; break; }
+    }
+    out[t] = v;
+}
+
+kernel void xf_forlen(ARGS) {
+    if (t >= nq) return;
+    Rd r = { buf, P, 0 };
+    XFC x = rd_xf(r); PFor st = rd_pfor(r); PFor ln = rd_pfor(r);
+    uint i = ids[t];
+    ulong v = 0;
+    switch (q) {
+        case 0: case 1: v = x.code.get(i); break;
+        case 2: v = st.get(i); break;
+        case 3: v = st.get(i) + ln.get(i); break;
+        case 4: v = x.end(i); break;
+        case 5: v = x.parent1(i); break;
+        case 6: { uint pe = x.end(i); uint c = i + 1; uint k = 0; while (c < pe) { k++; c = x.end(c); } v = k; break; }
+    }
+    out[t] = v;
+}
+
+kernel void xf_predgap(ARGS) {
+    if (t >= nq) return;
+    Rd r = { buf, P, 0 };
+    XFC x = rd_xf(r); Pred st = rd_pred(r); PFor gap = rd_pfor(r);
+    uint n = r.val(); ulong src = ulong(r.val()) | (ulong(r.val()) << 32);
+    uint i = ids[t];
+    ulong v = 0;
+    switch (q) {
+        case 0: case 1: v = x.code.get(i); break;
+        case 2: v = st.get(i); break;
+        case 3: { uint nx = x.end(i); ulong s = nx < n ? st.get(nx) : src; ulong z = gap.get(i); long d = long(z >> 1) ^ -long(z & 1); v = ulong(long(s) - d); break; }
+        case 4: v = x.end(i); break;
+        case 5: v = x.parent1(i); break;
+        case 6: { uint pe = x.end(i); uint c = i + 1; uint k = 0; while (c < pe) { k++; c = x.end(c); } v = k; break; }
     }
     out[t] = v;
 }
@@ -348,7 +394,7 @@ pub fn run(kernel: &str, image: &GpuImage, ids: &[usize], order: &[usize], want:
     Ok(GpuRow { bytes: image.bytes.len(), ns, correct })
 }
 
-/// The four candidates with kernels, on one forest: (name, row).
+/// The candidates with kernels, on one forest: (name, row).
 pub fn all(tree: &crate::tree::Tree, codes: &crate::inplace::Codes, order: &[usize]) -> Result<Vec<(&'static str, GpuRow)>, String> {
     fn one<R: Reader>(name: &'static str, kernel: &str, r: &R, image: GpuImage, order: &[usize], n: usize) -> Result<(&'static str, GpuRow), String> {
         let ids: Vec<usize> = (0..n).map(|p| r.id_of(p)).collect();
@@ -360,11 +406,15 @@ pub fn all(tree: &crate::tree::Tree, codes: &crate::inplace::Codes, order: &[usi
     let m = X::<PredGap>::new(tree, codes);
     let b = B::<ForLen>::new(tree, codes);
     let be = B::<EfEf>::new(tree, codes);
+    let xf = XF::<ForLen>::new(tree, codes);
+    let mf = XF::<PredGap>::new(tree, codes);
     Ok(vec![
         one("X", "x_forlen", &x, x.gpu_image(), order, n)?,
         one("M", "x_predgap", &m, m.gpu_image(), order, n)?,
         one("B", "b_forlen", &b, b.gpu_image(), order, n)?,
         one("BE", "b_efef", &be, be.gpu_image(), order, n)?,
+        one("XF", "xf_forlen", &xf, xf.gpu_image(), order, n)?,
+        one("MF", "xf_predgap", &mf, mf.gpu_image(), order, n)?,
     ])
 }
 
