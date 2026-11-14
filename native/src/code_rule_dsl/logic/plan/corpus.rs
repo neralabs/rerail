@@ -6843,6 +6843,29 @@ fn run_observed(
                         for (_, l) in lines.iter().take(25) {
                             eprintln!("O125 {l}");
                         }
+                        let reached = crate::code_rule_dsl::logic::plan::spike_reached();
+                        let mut by_read: BTreeMap<String, (usize, usize, usize)> = BTreeMap::new();
+                        let mut quiet_in = 0usize;
+                        for (_, changed, ins) in &reached {
+                            if ins.iter().all(|(_, n)| *n == 0) {
+                                quiet_in += 1;
+                            }
+                            for (r, n) in ins {
+                                let e = by_read.entry(r.clone()).or_default();
+                                e.0 += 1;
+                                if !changed { e.1 += 1; }
+                                if *n == usize::MAX { e.2 += 1; }
+                            }
+                        }
+                        let mut top: Vec<_> = by_read.into_iter().collect();
+                        top.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+                        eprintln!("O125 reached: {} strata, {} changed nothing, {quiet_in} with every changed read's delta empty", reached.len(), reached.iter().filter(|r| !r.1).count());
+                        for (r, (n, quiet, unheld)) in top.iter().take(15) {
+                            eprintln!("O125 reached by {r}: {n} strata, {quiet} of them changed nothing, {unheld} with its delta not held");
+                        }
+                        for (k, _, ins) in reached.iter().filter(|r| !r.1).take(12) {
+                            eprintln!("O125 changed nothing: {} <- {ins:?}", if k.len() > 60 { &k[..60] } else { k });
+                        }
                         eprintln!("O125 cutoff: {} relations maintained, {unchanged} changed nothing (no row gone, none new)", forms.len());
                         eprintln!("O125 total: overdeleted {}, gone {}, put back {}, inserted {}, new {}; strata {} of {} run, {} maintained ({} recursive), {} derived again", t[1], t[3], t[1].saturating_sub(t[3]), t[2], t[4], cut.strata.0, cut.strata.1, maintained.maintained, maintained.recursive, maintained.derived_again);
                     }

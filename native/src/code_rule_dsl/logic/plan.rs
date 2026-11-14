@@ -6642,7 +6642,9 @@ impl<'a> Run<'a, '_> {
             // Decision 0206: each join's budget (a seed's or a probe's), the work left before its line is next checked
             // against its price (`joins::next_due`), or before a replacement's own limit. A join that spends it is cut
             // at the row of its first atom it is at, and the run returns here (`5`).
-            if joins::on() && self.fx().direct {
+            // `RERAIL_JOIN_CUT_ONLY=<text>` (a measurement aid): only components whose name holds it are cut.
+            static CUT_ONLY: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| std::env::var("RERAIL_JOIN_CUT_ONLY").ok());
+            if joins::on() && self.fx().direct && CUT_ONLY.as_deref().is_none_or(|s| name.contains(s)) {
                 let budgets: Vec<(usize, Option<u64>)> = (0..nseeds + probes.len()).filter(|&line| line < nseeds || !sql_probe[line - nseeds] && !unplanned[line - nseeds]).map(|line| {
                     let work = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64;
                     let due = match &handoff[line] {
@@ -7704,6 +7706,13 @@ fn spike_delta() -> bool {
 /// The maintained relations' rows recorded since last taken (`SPIKE_FORMS`).
 pub fn spike_forms() -> Vec<(String, [usize; 6])> {
     std::mem::take(&mut *SPIKE_FORMS.lock())
+}
+/// `RERAIL_SPIKE_DELTA`: each maintained stratum's changed reads, with their deltas' rows (gone + new; `usize::MAX`
+/// where not held), and whether the stratum's own relations changed. Taken by the session's report (`spike_reached`).
+static SPIKE_REACHED: parking_lot::Mutex<Vec<(String, bool, Vec<(String, usize)>)>> = parking_lot::Mutex::new(Vec::new());
+/// The maintained strata's reads recorded since last taken (`SPIKE_REACHED`).
+pub fn spike_reached() -> Vec<(String, bool, Vec<(String, usize)>)> {
+    std::mem::take(&mut *SPIKE_REACHED.lock())
 }
 
 fn hold_quiet(run: &mut Run, prog: &Program, db: &Connection, rel: &String, o: Arc<super::native::component::InRel>) {
@@ -9300,6 +9309,14 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                         // The O125 spike (`RERAIL_SPIKE_DELTA`): each maintained relation's rows, before the form's own go.
                         if spike_delta() {
                             let rows = |r: String| super::native::component::held(db, &r).map_or(0, |h| h.rows());
+                            let rules: Vec<&Rule> = scc.iter().flat_map(|rel| rules_by.get(rel.as_str()).into_iter().flatten().copied()).collect();
+                            let ins: Vec<(String, usize)> = stratum_reads(prog, scc, &rules).into_iter().filter(|r| !scc.contains(r) && moved_rels.contains(r.as_str())).map(|r| {
+                                let n = |s: &str| super::native::component::held(db, &format!("{r}__{s}")).map(|h| h.rows());
+                                let rows = match (n("minus"), n("plus")) { (None, None) => usize::MAX, (a, b) => a.unwrap_or(0) + b.unwrap_or(0) };
+                                (r, rows)
+                            }).collect();
+                            let changed = scc.iter().any(|r| !outcome.unchanged.contains(r));
+                            SPIKE_REACHED.lock().push((key.clone(), changed, ins));
                             let mut got = SPIKE_FORMS.lock();
                             for r in scc {
                                 let n = |s: &str| rows(format!("{r}__{s}"));
