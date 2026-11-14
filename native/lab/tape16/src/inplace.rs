@@ -266,6 +266,13 @@ pub trait Reader {
     fn next(&self, id: usize) -> Option<usize>;
     /// The number of nodes.
     fn len(&self) -> usize;
+    /// The node before `id` in preorder, if any.
+    fn prev(&self, id: usize) -> Option<usize>;
+    /// A node's preorder number (its rank), and the code by rank: what a block summary is indexed by.
+    fn rank(&self, id: usize) -> usize;
+    fn code_by_rank(&self, r: usize) -> u32;
+    /// Ids are preorder numbers (rank is the identity), so a node is found from its rank.
+    const PREORDER_IDS: bool;
 }
 
 // ---- F15: format 15 in place ----------------------------------------------------------------------
@@ -381,6 +388,19 @@ impl Reader for F15<'_> {
     fn len(&self) -> usize {
         self.n
     }
+    #[inline(always)]
+    fn prev(&self, id: usize) -> Option<usize> {
+        id.checked_sub(1)
+    }
+    #[inline(always)]
+    fn rank(&self, id: usize) -> usize {
+        id
+    }
+    #[inline(always)]
+    fn code_by_rank(&self, r: usize) -> u32 {
+        self.code(r)
+    }
+    const PREORDER_IDS: bool = true;
 }
 
 // ---- X: explicit, bit-packed ---------------------------------------------------------------------
@@ -996,6 +1016,19 @@ impl<P: Pos> Reader for X<P> {
     fn len(&self) -> usize {
         self.n
     }
+    #[inline(always)]
+    fn prev(&self, id: usize) -> Option<usize> {
+        id.checked_sub(1)
+    }
+    #[inline(always)]
+    fn rank(&self, id: usize) -> usize {
+        id
+    }
+    #[inline(always)]
+    fn code_by_rank(&self, r: usize) -> u32 {
+        self.code(r)
+    }
+    const PREORDER_IDS: bool = true;
 }
 
 // ---- XF: explicit, folded ------------------------------------------------------------------------
@@ -1101,6 +1134,19 @@ impl<P: Pos> Reader for XF<P> {
     fn len(&self) -> usize {
         self.n
     }
+    #[inline(always)]
+    fn prev(&self, id: usize) -> Option<usize> {
+        id.checked_sub(1)
+    }
+    #[inline(always)]
+    fn rank(&self, id: usize) -> usize {
+        id
+    }
+    #[inline(always)]
+    fn code_by_rank(&self, r: usize) -> u32 {
+        self.code(r)
+    }
+    const PREORDER_IDS: bool = true;
 }
 
 // ---- B: balanced parentheses ---------------------------------------------------------------------
@@ -1572,6 +1618,34 @@ impl<P: Pos> Reader for B<P> {
     fn len(&self) -> usize {
         self.opens.len()
     }
+    #[inline(always)]
+    fn prev(&self, id: usize) -> Option<usize> {
+        // The last open before `id`.
+        if id == 0 {
+            return None;
+        }
+        let mut w = (id - 1) >> 6;
+        let mut word = self.bits[w] & (u64::MAX >> (63 - ((id - 1) & 63)));
+        loop {
+            if word != 0 {
+                return Some(w * 64 + 63 - word.leading_zeros() as usize);
+            }
+            if w == 0 {
+                return None;
+            }
+            w -= 1;
+            word = self.bits[w];
+        }
+    }
+    #[inline(always)]
+    fn rank(&self, id: usize) -> usize {
+        self.rank1(id)
+    }
+    #[inline(always)]
+    fn code_by_rank(&self, r: usize) -> u32 {
+        self.code.get(r) as u32
+    }
+    const PREORDER_IDS: bool = false;
 }
 
 // ---- The GPU's view: one buffer, a table of offsets and parameters ----------------------------------

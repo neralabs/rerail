@@ -17,7 +17,7 @@ mkdir -p "$out/native/lab" "$out/native/crates" "$out/cap"
 cp "$root/rust-toolchain.toml" "$out/"
 # The lab without its build outputs; `lean` (the engine's .rr parser) is left out, so its path need not exist.
 mkdir "$out/native/lab/tape16"
-cp -R "$lab/src" "$lab/Cargo.lock" "$out/native/lab/tape16/"
+cp -R "$lab/src" "$lab/Cargo.lock" "$lab/kinds.tsv" "$out/native/lab/tape16/"
 sed -e '/^rerail-rr-syntax/d' -e '/^lean = /d' -e '/^# E6: the lean/d' "$lab/Cargo.toml" > "$out/native/lab/tape16/Cargo.toml"
 cp -R "$root/native/crates/tape_format" "$out/native/crates/"
 rm -rf "$out/native/crates/tape_format/target"
@@ -27,24 +27,29 @@ done
 cat > "$out/run.sh" <<'EOF'
 #!/bin/sh
 # Two builds: the architecture's baseline, and this CPU's own features (`target-cpu=native`: on x86 with BMI2
-# the Elias–Fano select is PDEP). Each runs `tape16 inplace` on every capture, niced.
+# the Elias–Fano select is PDEP). Each runs `tape16 <command>` (default `inplace`; `prim` for the primitives)
+# on every capture, niced; `--native` runs the native build only.
 set -eu
+cmd=${1:-inplace}
+builds="base native"
+[ "${2:-}" = --native ] && builds=native
 here=$(cd "$(dirname "$0")" && pwd)
 cd "$here/native/lab/tape16"
 host=$(hostname -s 2>/dev/null || hostname)
 mkdir -p "$here/results"
-for build in base native; do
+for build in $builds; do
     flags=""
     [ "$build" = native ] && flags="-C target-cpu=native"
     RUSTFLAGS="$flags" CARGO_TARGET_DIR="target-$build" nice -n 19 cargo build --bin tape16
     for c in "$here"/cap/*.cap; do
         name=$(basename "$c" .cap)
-        nice -n 19 "target-$build/debug/tape16" inplace "$c" > "$here/results/$host-$build-$name.md" 2>&1
-        echo "$host $build $name: $(grep -c 'answers wrong | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0' "$here/results/$host-$build-$name.md") all-correct row"
+        res="$here/results/$host-$cmd-$build-$name.md"
+        nice -n 19 "target-$build/debug/tape16" "$cmd" "$c" > "$res" 2>&1
+        echo "$host $cmd $build $name: $(grep '^| answers wrong' "$res")"
     done
 done
 # On a Mac, the questions as Metal kernels too (one build is enough: the kernels are the GPU's code).
-if [ "$(uname -s)" = Darwin ]; then
+if [ "$(uname -s)" = Darwin ] && [ "$cmd" = inplace ]; then
     for c in "$here"/cap/*.cap; do
         name=$(basename "$c" .cap)
         nice -n 19 target-native/debug/tape16 inplace-gpu "$c" > "$here/results/$host-metal-$name.md" 2>&1

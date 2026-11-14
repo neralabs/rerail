@@ -95,14 +95,45 @@ marked "(noisy)".
 - **Point `has` and point `nearest` need to skip.** Both scan or climb across nodes that cannot
   match.
 
+### Second pass: reading `has` backwards, and a block summary (M3 Max, quiet; data-layer)
+
+The M5 was under load 80–160, so these timings come from the M3 Max (load 3, 94% idle,
+`target-cpu=native`). Every answer is right on all three corpora.
+
+| ns | F15 | XF | MF | BE |
+|---|---|---|---|---|
+| nearest, every node (fn) | 1.9 | 1.4 | 1.4 | 4.2 |
+| has, every node (fn), forward with a stack | 4.5 | 4.6 | 4.5 | 8.6 |
+| **has, every node (fn), backwards** | 1.5 | **2.6** | 2.7 | **7.5** |
+| has, one node (fn) | (noisy) | 14.1 | 14.1 | 47.5 |
+| **has, one node, skipping with a 64-bit filter a block** | (noisy) | **8.5** | 8.4 | **12.0** |
+| has, one node, skipping with an exact summary | (noisy) | 9.9 | 9.1 | 13.5 |
+| nearest, one node (fn), climbing | (noisy) | 92.7 | 91.4 | 221.8 |
+| field `name`, one node | (noisy) | 9.4 | 9.4 | 14.7 |
+| unparen, one node | (noisy) | 1.9 | 1.9 | 4.1 |
+
+- **Bulk `has` read backwards** ("the next S-node after a, against a's end") needs no stack: 2.6
+  ns a node on XF instead of 4.6.
+- **The block summary is 0.032 B a node as a 64-bit filter** (each code hashed to one bit, a word
+  every 256 nodes). It takes point `has` from 14.1 to 8.5 ns on XF, and from 47.5 to 12.0 on BE. On
+  BE the win is mostly that the scan reads codes by rank, so it never searches for a close. The
+  exact summary (0.09–0.23 B a node) does no better than the filter.
+- **Skipping backwards for point `nearest` was dropped.** Common sets (calls, strings) occur in
+  every block, so it read thousands of nodes a call: 0.5–10 µs, against 67–93 ns climbing.
+  Point `nearest` stays a climb, and the planner asks for it in bulk.
+- `within_stop(n, a, stop)` is bulk `nearest(n, stop)` plus one comparison per answer: a is an
+  ancestor of n, at or below the nearest stop node. `precedes` is "same parent, earlier id". Neither
+  needs a pass of its own.
+
 ## 4. The plan
 
 In order. Each step is measured on all three corpora, every answer checked.
 
 1. **Primitives, finished.**
-   - Bulk `has` read backwards.
-   - `within_stop`, `precedes`, `next_sibling` and `line`.
-   - A point form that skips. A block summary of which codes occur would let point `has` skip a
+   - Done: bulk `has` read backwards; the block filter for point `has`; `within_stop` and `precedes`
+     reduced to `nearest` and the parent.
+   - Still to do: `line`.
+   - The block summary, as first planned: A block summary of which codes occur would let point `has` skip a
      block without S, and point `nearest` skip backwards to the last S-node whose subtree covers
      the node. It costs 0.03 B a node as a 64-bit filter a block, or 0.2 B as an exact mask. It is
      generic, not tied to any set, so it can be part of the tape. The same summary lets a sweep

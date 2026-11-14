@@ -212,3 +212,101 @@ pub mod truth {
         (0..t.len()).map(|i| (i + 1..i + t.size[i] as usize).any(|j| inset[j])).collect()
     }
 }
+
+/// has for every node, read backwards: the next S-node after a, against a's subtree end. No stack.
+pub fn has_all_back<R: Reader>(r: &R, set: &[bool], out: &mut Vec<bool>) {
+    let n = r.len();
+    out.clear();
+    out.resize(n, false);
+    // Ids compare in preorder in every candidate (BE's are open positions), so "after a, before its end"
+    // is an id comparison.
+    let mut next_s = usize::MAX;
+    let mut id = r.id_of(n - 1);
+    let mut p = n;
+    loop {
+        p -= 1;
+        out[p] = next_s < r.subtree_end(id);
+        if set[r.code(id) as usize] {
+            next_s = id;
+        }
+        match r.prev(id) {
+            Some(q) => id = q,
+            None => break,
+        }
+    }
+}
+
+/// Which codes occur in each block of `SUM_BLOCK` nodes (by preorder rank): exact (a bit a code, `words`
+/// words a block) or a 64-bit filter (each code hashed to one bit). Part of the tape when used: its bytes
+/// are counted.
+pub const SUM_BLOCK: usize = 256;
+
+pub struct Summary {
+    pub words: usize,
+    pub exact: bool,
+    pub bits: Vec<u64>,
+}
+
+#[inline(always)]
+fn hash_bit(c: u32) -> u32 {
+    (c.wrapping_mul(0x9e37_79b9) >> 26) & 63
+}
+
+impl Summary {
+    pub fn new<R: Reader>(r: &R, codes: usize, exact: bool) -> Summary {
+        let words = if exact { codes.div_ceil(64) } else { 1 };
+        let n = r.len();
+        let mut bits = vec![0u64; n.div_ceil(SUM_BLOCK) * words];
+        for k in 0..n {
+            let c = r.code_by_rank(k);
+            let (w, b) = if exact { (c as usize / 64, c % 64) } else { (0, hash_bit(c)) };
+            bits[(k / SUM_BLOCK) * words + w] |= 1 << b;
+        }
+        Summary { words, exact, bits }
+    }
+    pub fn bytes(&self) -> usize {
+        self.bits.len() * 8
+    }
+    /// A set as the summary's mask.
+    pub fn mask(&self, set: &[bool]) -> Vec<u64> {
+        let mut m = vec![0u64; self.words];
+        for (c, _) in set.iter().enumerate().filter(|e| *e.1) {
+            if !self.exact {
+                m[0] |= 1 << hash_bit(c as u32);
+            } else {
+                m[c / 64] |= 1 << (c % 64);
+            }
+        }
+        m
+    }
+    /// Whether block `b` may hold a node of the set.
+    #[inline(always)]
+    pub fn may(&self, b: usize, mask: &[u64]) -> bool {
+        let w = &self.bits[b * self.words..(b + 1) * self.words];
+        w.iter().zip(mask).any(|(x, m)| x & m != 0)
+    }
+}
+
+/// has for one node, skipping the blocks the summary rules out: the subtree's codes by rank.
+#[inline(always)]
+pub fn has_one_skip<R: Reader>(r: &R, sum: &Summary, mask: &[u64], set: &[bool], id: usize) -> bool {
+    let lo = r.rank(id) + 1;
+    let end = r.subtree_end(id);
+    let hi = if R::PREORDER_IDS { end } else { r.rank(end) };
+    let mut k = lo;
+    while k < hi {
+        if k % SUM_BLOCK == 0 && !sum.may(k / SUM_BLOCK, mask) {
+            k += SUM_BLOCK;
+            continue;
+        }
+        if set[r.code_by_rank(k) as usize] {
+            return true;
+        }
+        k += 1;
+    }
+    false
+}
+
+// Measured and dropped (E12, t39): nearest for one node by scanning backwards with the block summary,
+// to the last S-node covering the node. Common sets (calls, strings) occur in every block, so it read
+// thousands of nodes a call (0.5–10 µs, against 45–150 ns climbing parents).
