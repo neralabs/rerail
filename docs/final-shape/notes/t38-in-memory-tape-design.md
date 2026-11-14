@@ -644,7 +644,9 @@ and on Metal.
   XF; BE is its worst case.
 - **On M1's GPU every question costs 1–4.5 ns,** 8–15× the M5's, and still at or above one CPU
   thread for the X family. B's parent is 4× X's there too.
-- **The M1 Max** (a second M1, larger GPU) waits for its machine to quieten after a restart.
+- **The M1 Max (32-core GPU; CPU 60% idle while measured) matches the M1 on the CPU** (MF median
+  3.1, 121 rules 24.7; BE 6.9 and 71.8). On its GPU: MF start 0.23, end 0.55, subtree end and parent
+  0.135, children 1.1; B's parent 1.18. That is 1.5–2× the M5's GPU, and about 9× the M1 Mac mini's.
 
 ### What the third round says
 
@@ -652,4 +654,4 @@ and on Metal.
   and BE's 2.43. Its median-rule mix is 2.3 ns a node (BE 4.6). On all 121 rules it is 16.7 (BE 41.1).
 - **The B family still costs 2–3× on structure questions** and saves only 0.65 B against XF's
   structure.
-- **Still to measure:** the M1 Max; the forest's children walk as a kernel one group a node.
+- **Still to measure:** the forest's children walk as a kernel one group a node.
