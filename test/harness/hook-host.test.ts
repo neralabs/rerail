@@ -762,14 +762,15 @@ function folderLink(target: string, path: string): void {
 }
 
 /**
- * A Git folder at `<app>/<name>/.git` Git passes over, as it lacks `part` (its HEAD, `objects` or `refs`), holding the
- * clone id of `stopped`, a repository stopped as a whole: Git looks further up and finds `app`.
+ * A Git folder at `<app>/<name>/.git` Git passes over, as it lacks `part` (its HEAD, a HEAD that names a ref as Git
+ * reads one, `objects` or `refs`), holding the clone id of `stopped`, a repository stopped as a whole: Git looks further
+ * up and finds `app`.
  */
-function passedOverGitFolder(app: string, name: string, part: "HEAD" | "objects" | "refs", stopped: string): string {
+function passedOverGitFolder(app: string, name: string, part: "HEAD" | "ref" | "objects" | "refs", stopped: string): string {
   const folder = join(app, name);
   const gitFolder = join(folder, ".git");
   mkdirSync(gitFolder, { recursive: true });
-  if (part !== "HEAD") writeFileSync(join(gitFolder, "HEAD"), "ref: refs/heads/main\n");
+  if (part !== "HEAD") writeFileSync(join(gitFolder, "HEAD"), part === "ref" ? "refs/heads/main\n" : "ref: refs/heads/main\n");
   for (const kept of ["objects", "refs"]) if (kept !== part) mkdirSync(join(gitFolder, kept));
   copyFileSync(join(stopped, ".git", "rerail-repository-id"), join(gitFolder, "rerail-repository-id"));
   return folder;
@@ -821,7 +822,7 @@ function generatedTrees(root: string): Array<[string, string]> {
   git(e, "config", "core.worktree", realpathSync.native(join(root, "b-own-started")));
   // Inside A, Git folders Git passes over that hold C's clone id. Inside B, a bare repository whose config puts its
   // checkout at A, and a folder recorded as outside Git (recorded while a ceiling hid B), then started.
-  const passedOver = (["HEAD", "objects", "refs"] as const).map(part => passedOverGitFolder(a, `no-${part}`, part, c));
+  const passedOver = (["HEAD", "ref", "objects", "refs"] as const).map(part => passedOverGitFolder(a, `no-${part}`, part, c));
   git(b, "init", "-q", "--bare", "mirror.git");
   git(join(b, "mirror.git"), "config", "core.bare", "false");
   git(join(b, "mirror.git"), "config", "core.worktree", realpathSync.native(a));
