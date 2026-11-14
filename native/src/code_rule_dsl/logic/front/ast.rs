@@ -395,6 +395,9 @@ pub enum SpanIn {
     Comment,
     /// Nodes of this kind.
     Kind(String),
+    /// The children of nodes of this kind: a node a rule reaches as such a child (`child(p, n, _), kind(p, "block")`),
+    /// whose own kinds it does not name.
+    ChildOf(String),
     /// The spans group `.1` of pattern `.0` captured.
     Capture(String, String),
 }

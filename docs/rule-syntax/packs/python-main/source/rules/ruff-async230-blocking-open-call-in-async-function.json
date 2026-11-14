@@ -1,0 +1,339 @@
+{
+ "format": "rerail.policy/v1",
+ "id": "ruff-async230-blocking-open-call-in-async-function",
+ "revision": 1,
+ "mode": "steer",
+ "description": "Don't open files with open(), io.open or Path.open() inside async functions; use an async file API so file I/O doesn't block the event loop.",
+ "scope": {
+  "include": [
+   "**/*"
+  ],
+  "exclude": []
+ },
+ "clauses": [
+  {
+   "id": "blocking-open",
+   "forbid": {
+    "ast": {
+     "language": "python",
+     "utils": {
+      "scope-body": {
+       "kind": "block",
+       "inside": {
+        "stopBy": "neighbor",
+        "any": [
+         {
+          "kind": "function_definition"
+         },
+         {
+          "kind": "class_definition"
+         }
+        ]
+       }
+      },
+      "lambda-body": {
+       "inside": {
+        "stopBy": "neighbor",
+        "kind": "lambda"
+       },
+       "follows": {
+        "stopBy": "end",
+        "regex": "^:$"
+       }
+      },
+      "callee-position": {
+       "any": [
+        {
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "call"
+         },
+         "precedes": {
+          "stopBy": "neighbor",
+          "any": [
+           {
+            "kind": "argument_list"
+           },
+           {
+            "kind": "generator_expression"
+           }
+          ]
+         }
+        },
+        {
+         "inside": {
+          "stopBy": "neighbor",
+          "kind": "parenthesized_expression",
+          "matches": "callee-position"
+         }
+        }
+       ]
+      },
+      "async-context": {
+       "inside": {
+        "stopBy": {
+         "any": [
+          {
+           "matches": "scope-body"
+          },
+          {
+           "matches": "lambda-body"
+          }
+         ]
+        },
+        "kind": "block",
+        "inside": {
+         "stopBy": "neighbor",
+         "kind": "function_definition",
+         "has": {
+          "stopBy": "neighbor",
+          "regex": "^async$"
+         }
+        }
+       }
+      },
+      "init": {
+       "any": [
+        {
+         "kind": "call",
+         "has": {
+          "stopBy": "neighbor",
+          "any": [
+           {
+            "kind": "identifier"
+           },
+           {
+            "kind": "attribute"
+           }
+          ],
+          "resolves": {
+           "import": [
+            "pathlib.Path"
+           ]
+          },
+          "precedes": {
+           "stopBy": "neighbor",
+           "kind": "argument_list"
+          }
+         }
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "init"
+         }
+        }
+       ]
+      },
+      "plain-target": {
+       "any": [
+        {
+         "kind": "identifier"
+        },
+        {
+         "kind": "parenthesized_expression",
+         "has": {
+          "stopBy": "neighbor",
+          "matches": "plain-target"
+         }
+        }
+       ]
+      },
+      "typed-name": {
+       "kind": "identifier",
+       "pattern": "$TN",
+       "any": [
+        {
+         "resolves": {
+          "binding": {
+           "value": {
+            "matches": "init"
+           }
+          }
+         }
+        },
+        {
+         "resolves": {
+          "binding": {
+           "site": {
+            "kind": "as_pattern",
+            "inside": {
+             "stopBy": "neighbor",
+             "kind": "with_item"
+            },
+            "all": [
+             {
+              "has": {
+               "stopBy": "neighbor",
+               "matches": "init",
+               "precedes": {
+                "stopBy": "end",
+                "regex": "^as$"
+               }
+              }
+             },
+             {
+              "has": {
+               "stopBy": "neighbor",
+               "kind": "as_pattern_target",
+               "has": {
+                "stopBy": "neighbor",
+                "matches": "plain-target"
+               }
+              }
+             }
+            ]
+           }
+          }
+         }
+        },
+        {
+         "resolves": {
+          "binding": {
+           "site": {
+            "kind": "assignment",
+            "all": [
+             {
+              "has": {
+               "field": "left",
+               "has": {
+                "stopBy": "neighbor",
+                "kind": "identifier",
+                "pattern": "$UT",
+                "compare": {
+                 "left": "UT",
+                 "op": "eq",
+                 "right": "TN",
+                 "text": "tokens"
+                },
+                "not": {
+                 "precedes": {
+                  "stopBy": "end",
+                  "kind": "identifier",
+                  "pattern": "$UU",
+                  "compare": {
+                   "left": "UU",
+                   "op": "eq",
+                   "right": "TN",
+                   "text": "tokens"
+                  }
+                 }
+                }
+               }
+              }
+             },
+             {
+              "has": {
+               "field": "right",
+               "has": {
+                "stopBy": "neighbor",
+                "matches": "init",
+                "pattern": "$UV"
+               }
+              }
+             },
+             {
+              "compare": {
+               "left": "UV",
+               "op": "eq",
+               "right": "UT",
+               "text": "index"
+              }
+             }
+            ]
+           }
+          }
+         }
+        }
+       ]
+      },
+      "target": {
+       "any": [
+        {
+         "any": [
+          {
+           "kind": "identifier"
+          },
+          {
+           "kind": "attribute"
+          }
+         ],
+         "resolves": {
+          "global": [
+           "open"
+          ],
+          "import": [
+           "builtins.open",
+           "io.open",
+           "io.open_code"
+          ]
+         }
+        },
+        {
+         "kind": "attribute",
+         "pattern": "$OBJ.$METH",
+         "has": {
+          "stopBy": "neighbor",
+          "pattern": "$OBJ",
+          "precedes": {
+           "stopBy": "end",
+           "regex": "^\\.$"
+          },
+          "any": [
+           {
+            "matches": "init"
+           },
+           {
+            "matches": "typed-name"
+           }
+          ]
+         },
+         "all": [
+          {
+           "has": {
+            "stopBy": "neighbor",
+            "kind": "identifier",
+            "pattern": "$METH",
+            "regex": "^open$",
+            "follows": {
+             "stopBy": "end",
+             "regex": "^\\.$"
+            }
+           }
+          }
+         ]
+        }
+       ]
+      }
+     },
+     "rule": {
+      "all": [
+       {
+        "matches": "callee-position"
+       },
+       {
+        "matches": "async-context"
+       },
+       {
+        "matches": "target"
+       }
+      ]
+     }
+    }
+   },
+   "violation": {
+    "anchor": "witness.span",
+    "code": "ASYNC230",
+    "message": "Open this file with an async file API, such as `anyio.open_file()`, `trio.open_file()` or `aiofiles.open()`.",
+    "suppress": {
+      "noqa": {
+        "codes": [
+          "ASYNC230"
+        ]
+      }
+    }
+   }
+  }
+ ]
+}

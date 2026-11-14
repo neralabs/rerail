@@ -773,10 +773,13 @@ fn span_text_demand(program: &crate::code_rule_dsl::logic::front::ast::Program) 
 /// `guest_policy("library", "on" | "off")`, `guest_policy("errors" | "errors:GRAMMAR", "skip" | "partial")`.
 pub const GUEST_POLICY: &str = "guest_policy";
 
-/// The first guest document's key: files take `1..GUEST_KEYS` (`corpus::memo::doc_keys`), guests in the run's
-/// language `GUEST_KEYS..HIDDEN_KEYS`, and every other document (a guest in another grammar, a value) `HIDDEN_KEYS..2^31`
-/// (decision 0058 §1: what a rule sees is a bound on these keys).
+/// The first guest document's key: files take `1..GUEST_KEYS` (`corpus::memo::doc_keys`), code guests in the run's
+/// language `GUEST_KEYS..ANNOTATION_KEYS`, annotations (type expressions, Python's in a Python run)
+/// `ANNOTATION_KEYS..HIDDEN_KEYS`, and every other document (a guest in another grammar, a value) `HIDDEN_KEYS..2^31`
+/// (decision 0058 §1: what a rule sees is a bound on these keys). A rule that does not name a guest sees files and code
+/// guests; a relation an annotation's rows reach (`corpus::hiding::fold_own`) sees annotations too.
 pub const GUEST_KEYS: u32 = 1 << 30;
+pub const ANNOTATION_KEYS: u32 = (1 << 30) + (1 << 28);
 pub const HIDDEN_KEYS: u32 = (1 << 30) + (1 << 29);
 
 /// A guest document's place (decision 0055): the host document and the node or span it stands at, its grammar and
@@ -2226,6 +2229,22 @@ impl Extra {
                 None => Vec::new(),
             }
         };
+        // The children of the nodes of one kind (`SpanIn::ChildOf`).
+        let children_of = |kind: &str| -> Vec<Container> {
+            match dialect {
+                Some(dialect) => (1..p.len())
+                    .filter(|&l| {
+                        let parent = p.parent(l as usize);
+                        parent != NONE && dialect.name(f, p.core[parent as usize]) == kind
+                    })
+                    .map(|l| {
+                        let [a, b] = p.span(l);
+                        (p.global(l), a as usize..b as usize, None)
+                    })
+                    .collect(),
+                None => Vec::new(),
+            }
+        };
         // Spans each (pattern, group) captured in this document: the containers of a `SpanIn::Capture`. A capture's
         // container is made by an earlier pattern: patterns run once theirs has; patterns whose containers wait on each
         // other (a cycle of captures) run in order, with what is made by then.
@@ -2257,6 +2276,7 @@ impl Extra {
                     SpanIn::Line => (made[lines_at.clone()].iter().map(line_of).collect(), true),
                     SpanIn::Comment => (nodes_of(&core_rr::is_comment), true),
                     SpanIn::Kind(k) => (nodes_of(&|name| name == k.as_str()), true),
+                    SpanIn::ChildOf(k) => (children_of(k.as_str()), true),
                     SpanIn::Capture(from, g) => (captured.get(&(from.as_str(), g.as_str())).cloned().unwrap_or_default(), true),
                 };
                 let pat = string(pattern) as i64;
@@ -2549,18 +2569,21 @@ impl Batch {
         // `rx_span`'s regexes, compiled once for the batch.
         // Over a document's source or its lines, each with its block program (decision 0081 §3): the bytes a match can
         // end after, chunk at a time, so the regex runs only where one can.
+        // Each on the pool's threads, a class of every character first written as any character (`unfolded`).
         let rx_spans: Vec<core_rr::SpanPattern> = if core {
+            use rayon::prelude::*;
             projection
                 .rx_spans
-                .iter()
+                .par_iter()
                 .map(|(within, re)| {
                     use crate::code_rule_dsl::logic::front::ast::SpanIn;
                     let on = std::env::var("RERAIL_SPAN_PREFILTER").map_or(true, |v| v != "off");
+                    let compiled = crate::code_rule_dsl::facts::span_prefilter::unfolded(re);
                     let prefilter = match within {
-                        SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::facts::span_prefilter::compile(re, *within == SpanIn::Line),
+                        SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::facts::span_prefilter::compile(&compiled, *within == SpanIn::Line),
                         _ => None,
                     };
-                    regex::Regex::new(re).map(|r| (within.clone(), re.as_str(), r, prefilter)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}")))
+                    regex::Regex::new(&compiled).map(|r| (within.clone(), re.as_str(), r, prefilter)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}")))
                 })
                 .collect::<StoreResult<_>>()?
         } else {
@@ -2659,7 +2682,7 @@ impl Batch {
                     projection
                         .ast_patterns
                         .iter()
-                        .filter_map(|t| crate::code_rule_dsl::language::rule_pattern(crate::code_rule_dsl::language::PatternSource::Plain(t), lang).ok().map(|p| (t.as_str(), p)))
+                        .filter_map(|t| crate::code_rule_dsl::language::rule_pattern(crate::code_rule_dsl::language::pattern_source(t), lang).ok().map(|p| (t.as_str(), p)))
                         .collect()
                 });
                 c.patterns(&p, d.tape.as_ref().map(|(t, _)| t), dialect, lang, compiled, &mut string);

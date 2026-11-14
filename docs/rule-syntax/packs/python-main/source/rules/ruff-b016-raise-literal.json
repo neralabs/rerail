@@ -1,0 +1,47 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b016-raise-literal",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Raise an exception instance instead of a literal like a string or number; raising a literal fails with a TypeError.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "raise-literal",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "plain-string": {
+              "kind": "string",
+              "not": { "has": { "stopBy": "neighbor", "kind": "string_start", "regex": "[fFtT]" } }
+            },
+            "raised": {
+              "any": [
+                {
+                  "follows": { "stopBy": "neighbor", "regex": "^raise$" },
+                  "inside": { "stopBy": "neighbor", "kind": "raise_statement" }
+                },
+                { "inside": { "stopBy": "neighbor", "kind": "parenthesized_expression", "matches": "raised" } }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "raised",
+            "any": [
+              { "matches": "plain-string" },
+              { "kind": "concatenated_string", "not": { "has": { "stopBy": "neighbor", "kind": "string", "not": { "matches": "plain-string" } } } },
+              { "kind": "integer" },
+              { "kind": "float" },
+              { "kind": "true" },
+              { "kind": "false" },
+              { "kind": "none" },
+              { "kind": "ellipsis" }
+            ]
+          }
+        }
+      },
+      "violation": { "anchor": "witness.span", "code": "B016", "message": "Cannot raise a literal. Did you intend to return it or raise an Exception?", "suppress": { "noqa": { "codes": ["B016"] } } }
+    }
+  ]
+}

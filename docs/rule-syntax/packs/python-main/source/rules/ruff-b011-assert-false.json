@@ -1,0 +1,62 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b011-assert-false",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Raise AssertionError instead of assert False; assertions are stripped when Python runs with optimizations enabled.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "assert-false",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "assert-test": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": "neighbor",
+                    "regex": "^assert$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "assert_statement"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "assert-test"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "false",
+            "matches": "assert-test"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B011",
+        "message": "Do not `assert False` (`python -O` removes these calls), raise `AssertionError()`",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B011"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

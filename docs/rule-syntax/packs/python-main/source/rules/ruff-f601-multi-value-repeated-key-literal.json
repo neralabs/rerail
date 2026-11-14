@@ -1,0 +1,302 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f601-multi-value-repeated-key-literal",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid repeating a literal key (or an equal one, like 1 and 1.0) in a Python dict literal; the later value silently overwrites the earlier one.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "multi-value-repeated-key-literal",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "complex": {
+              "any": [
+                {
+                  "kind": "integer"
+                },
+                {
+                  "kind": "float"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "complex"
+                  }
+                }
+              ],
+              "regex": "[jJ]\\)*$"
+            },
+            "literal-key": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "regex": "^[A-Za-z]*[tT]"
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "regex": "^[A-Za-z]*[tT]"
+                    }
+                  }
+                },
+                {
+                  "kind": "integer"
+                },
+                {
+                  "kind": "float"
+                },
+                {
+                  "kind": "true"
+                },
+                {
+                  "kind": "false"
+                },
+                {
+                  "kind": "none"
+                },
+                {
+                  "kind": "ellipsis"
+                },
+                {
+                  "kind": "tuple"
+                },
+                {
+                  "kind": "unary_operator",
+                  "regex": "^[-+]",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "signed-literal"
+                  }
+                },
+                {
+                  "kind": "binary_operator",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^[-+]$",
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "matches": "signed-literal",
+                      "not": {
+                        "regex": "[jJ]\\)*$"
+                      }
+                    },
+                    "precedes": {
+                      "stopBy": "neighbor",
+                      "matches": "complex"
+                    }
+                  }
+                }
+              ]
+            },
+            "signed-literal": {
+              "any": [
+                {
+                  "kind": "integer"
+                },
+                {
+                  "kind": "float"
+                },
+                {
+                  "kind": "unary_operator",
+                  "regex": "^[-+]",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "signed-literal"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "signed-literal"
+                  }
+                }
+              ]
+            },
+            "key-slot": {
+              "any": [
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "pair"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "key-slot"
+                  }
+                }
+              ]
+            },
+            "repeated-key": {
+              "pattern": "$KEY",
+              "not": {
+                "kind": "parenthesized_expression"
+              },
+              "all": [
+                {
+                  "matches": "literal-key"
+                },
+                {
+                  "matches": "key-slot"
+                }
+              ],
+              "inside": {
+                "stopBy": {
+                  "not": {
+                    "kind": "parenthesized_expression"
+                  }
+                },
+                "kind": "pair",
+                "count": {
+                  "follows": {
+                    "stopBy": "end",
+                    "kind": "pair",
+                    "has": {
+                      "stopBy": "neighbor",
+                      "not": {
+                        "follows": {
+                          "stopBy": "neighbor",
+                          "regex": "(?s)."
+                        }
+                      },
+                      "pattern": "$J"
+                    },
+                    "compare": {
+                      "left": "J",
+                      "op": "eq",
+                      "right": "KEY",
+                      "text": "structure-hash"
+                    }
+                  },
+                  "min": 1
+                }
+              }
+            },
+            "escaped-or-concatenated": {
+              "any": [
+                {
+                  "kind": "concatenated_string"
+                },
+                {
+                  "kind": "string",
+                  "regex": "^[uU]?['\"]+[\\s\\S]*\\\\([\\\\'\"abfnrtv0-7xNuU]|\\r|\\n)"
+                }
+              ]
+            },
+            "plain-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "not": {
+                "matches": "escaped-or-concatenated"
+              }
+            },
+            "in-annotation": {
+              "matches": "plain-annotation",
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "repeated-key",
+                      "capture": "KEYA"
+                    },
+                    {
+                      "matches": "in-annotation"
+                    }
+                  ]
+                }
+              }
+            },
+            "any-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "repeated-key"
+                    },
+                    {
+                      "matches": "any-annotation"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "pattern": "$KEYA",
+                "matches": "repeated-key"
+              },
+              {
+                "matches": "in-annotation"
+              },
+              {
+                "pattern": "$KEYA",
+                "matches": "escaped-or-concatenated",
+                "all": [
+                  {
+                    "matches": "any-annotation"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.KEYA",
+        "code": "F601",
+        "message": "Dictionary key literal `$KEYA` repeated",
+        "each": "KEYA",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F601"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

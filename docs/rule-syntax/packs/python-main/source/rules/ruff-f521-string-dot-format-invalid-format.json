@@ -1,0 +1,83 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f521-string-dot-format-invalid-format",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep str.format() strings well-formed, with balanced braces and valid fields and format specs; a malformed one raises ValueError at runtime.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "string-dot-format-invalid-format",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "plain-string": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "kind": "string",
+                      "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"
+                    }
+                  }
+                }
+              ]
+            },
+            "format-string": {
+              "any": [
+                {
+                  "matches": "plain-string",
+                  "parse": {
+                    "grammar": "braceFormat",
+                    "has": {
+                      "kind": "error"
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "format-string"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "pattern": "$S.format($$$A)"
+          },
+          "constraints": {
+            "S": {
+              "matches": "format-string"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F521",
+        "message": "`.format` call has invalid format string",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F521"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

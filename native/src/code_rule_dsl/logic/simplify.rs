@@ -90,10 +90,9 @@ pub fn simplify(prog: &mut Program) -> Report {
     report.constants += ground_rules(prog);
     report.constants += decided_fact_tests(prog);
     // `RERAIL_EXISTENCE_COUNTS=off`: existence counts stay counts, for comparison.
+    use rayon::prelude::*;
     if std::env::var("RERAIL_EXISTENCE_COUNTS").map_or(true, |v| v != "off") {
-        for rule in &mut prog.rules {
-            report.existence += existence_as_reads(rule);
-        }
+        report.existence += prog.rules.par_iter_mut().map(existence_as_reads).sum::<usize>();
     }
     report.inlined = inline_node_tests(prog);
     // `RERAIL_INLINE_FILTERS=off`: filters are built, for comparison.
@@ -102,18 +101,32 @@ pub fn simplify(prog: &mut Program) -> Report {
     }
     // `RERAIL_JOIN_KEYS=off`: no concatenation runs backwards and no relation is keyed by a function, for comparison.
     let join_keys = std::env::var("RERAIL_JOIN_KEYS").map_or(true, |v| v != "off");
-    for rule in &mut prog.rules {
-        if join_keys {
-            report.inverses += concat_inverses(rule);
-        }
-        cat_variables(rule);
-        report.constants += fold_constants(rule);
-        report.within += span_containment(rule);
-        report.keyed += merge_keyed(rule);
-        report.singletons += wild_singletons(rule);
-        report.kind_tests += drop_kind_tests(rule, &prog.kindsets, &prog.decls);
-        report.implied += drop_implied(rule);
-    }
+    // Each rule rewritten alone, on the pool's threads: each pass reads only its rule (and the kind sets and
+    // declarations, which none changes).
+    let (kindsets, decls) = (&prog.kindsets, &prog.decls);
+    let counts = prog
+        .rules
+        .par_iter_mut()
+        .map(|rule| {
+            let inverses = if join_keys { concat_inverses(rule) } else { 0 };
+            cat_variables(rule);
+            let constants = fold_constants(rule);
+            let within = span_containment(rule);
+            let keyed = merge_keyed(rule);
+            let singletons = wild_singletons(rule);
+            let kind_tests = drop_kind_tests(rule, kindsets, decls);
+            let implied = drop_implied(rule);
+            [inverses, constants, within, keyed, singletons, kind_tests, implied]
+        })
+        .reduce(|| [0; 7], |a, b| std::array::from_fn(|i| a[i] + b[i]));
+    let [inverses, constants, within, keyed, singletons, kind_tests, implied] = counts;
+    report.inverses += inverses;
+    report.constants += constants;
+    report.within += within;
+    report.keyed += keyed;
+    report.singletons += singletons;
+    report.kind_tests += kind_tests;
+    report.implied += implied;
     if report.within > 0 && !prog.decls.contains_key(SPAN_WITHIN) {
         prog.decls.insert(SPAN_WITHIN.to_owned().into(), [("inner".into(), "node".into()), ("outer".into(), "node".into())].into());
         prog.inputs.push(SPAN_WITHIN.to_owned());
@@ -125,8 +138,9 @@ pub fn simplify(prog: &mut Program) -> Report {
     report.climbs = climbs_as_axes(prog);
     if merge(prog, &mut report) {
         // A merge can leave a literal twice (`!m1($n), !m2($n)` became `!m1($n), !m1($n)`).
-        for rule in &mut prog.rules {
-            report.implied += drop_implied(rule);
+        report.implied += prog.rules.par_iter_mut().map(drop_implied).sum::<usize>();
+        if super::profile::on() {
+            similar_relations(prog, &mut report);
         }
     }
     report.unread = drop_unread(prog);
@@ -1671,26 +1685,35 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
         .filter(|r| !fixed(prog, r))
         .collect();
     let types = |rel: &str| -> Vec<String> { prog.decls.get(rel).map(|c| c.iter().map(|(_, t)| t.clone()).map(String::from).collect()).unwrap_or_default() };
+    // Each relation's signatures are its own, made on the pool's threads; the numbering that follows them is in
+    // `cands`' order, as one thread gives it, so the classes are the same whatever the threads.
+    use rayon::prelude::*;
     let mut class: HashMap<&str, usize> = HashMap::new();
     {
+        // A relation's rules are a set: a second copy of a rule derives nothing, so it is counted once (and
+        // below, a relation's signature holds each rule once), and a repeated rule does not keep a relation
+        // apart from its twin.
+        let firsts: Vec<(Vec<String>, usize, Vec<String>)> = cands
+            .par_iter()
+            .map(|&r| {
+                let rules = rules_of.get(r).map_or(0, |rs| {
+                    rs.iter()
+                        .map(|x| {
+                            use std::hash::{Hash, Hasher};
+                            let mut h = std::collections::hash_map::DefaultHasher::new();
+                            x.hash(&mut h);
+                            h.finish()
+                        })
+                        .collect::<std::collections::HashSet<u64>>()
+                        .len()
+                });
+                (types(r), rules, facts(r))
+            })
+            .collect();
         let mut ids: HashMap<(Vec<String>, usize, Vec<String>), usize> = HashMap::new();
-        for &r in &cands {
+        for (&r, first) in cands.iter().zip(firsts) {
             let n = ids.len();
-            // A relation's rules are a set: a second copy of a rule derives nothing, so it is counted once (and
-            // below, a relation's signature holds each rule once), and a repeated rule does not keep a relation
-            // apart from its twin.
-            let rules = rules_of.get(r).map_or(0, |rs| {
-                rs.iter()
-                    .map(|x| {
-                        use std::hash::{Hash, Hasher};
-                        let mut h = std::collections::hash_map::DefaultHasher::new();
-                        x.hash(&mut h);
-                        h.finish()
-                    })
-                    .collect::<std::collections::HashSet<u64>>()
-                    .len()
-            });
-            class.insert(r, *ids.entry((types(r), rules, facts(r))).or_insert(n));
+            class.insert(r, *ids.entry(first).or_insert(n));
         }
     }
     let abstracted = |rule: &Rule| -> Rule {
@@ -1719,17 +1742,17 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
                 .collect(),
         }
     };
-    let bodies: BTreeMap<&str, Vec<Rule>> = cands.iter().map(|&r| (r, rules_of.get(r).into_iter().flatten().map(|x| abstracted(x)).collect())).collect();
+    let bodies: BTreeMap<&str, Vec<Rule>> = cands.par_iter().map(|&r| (r, rules_of.get(r).into_iter().flatten().map(|x| abstracted(x)).collect())).collect();
     let mut classes = class.values().collect::<BTreeSet<_>>().len();
     // Each rule's canonical text is fixed but for the labels of the relations it reads: it is made once, with every
     // relation a placeholder (its template), and the relations read kept in the order it labels them. A round's
     // signature of a rule is its template and those relations' labels, equal exactly when the texts `canonical`
     // gives under the round's labels are (a relation's name has no character of the text around it).
-    let mut templates: HashMap<String, usize> = HashMap::new();
-    let shapes: BTreeMap<&str, Vec<(usize, Vec<String>)>> = cands
-        .iter()
+    // The texts made on the pool's threads, numbered in `cands`' order.
+    let texts: Vec<Vec<(String, Vec<String>)>> = cands
+        .par_iter()
         .map(|&r| {
-            let shaped = bodies[r]
+            bodies[r]
                 .iter()
                 .map(|rule| {
                     let read = std::cell::RefCell::new(Vec::new());
@@ -1737,10 +1760,23 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
                         read.borrow_mut().push(rel.to_owned());
                         "\u{1}".to_owned()
                     });
-                    let n = templates.len();
                     let mut read = read.into_inner();
                     // The head's label is replaced by `@`.
                     read.remove(0);
+                    (text, read)
+                })
+                .collect()
+        })
+        .collect();
+    let mut templates: HashMap<String, usize> = HashMap::new();
+    let shapes: BTreeMap<&str, Vec<(usize, Vec<String>)>> = cands
+        .iter()
+        .zip(texts)
+        .map(|(&r, texts)| {
+            let shaped = texts
+                .into_iter()
+                .map(|(text, read)| {
+                    let n = templates.len();
                     (*templates.entry(text).or_insert(n), read)
                 })
                 .collect();
@@ -1754,15 +1790,21 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
     }
     loop {
         let label = |rel: &'_ str| -> Option<usize> { class.get(rel).copied() };
+        let sigs: Vec<Vec<(usize, Vec<Label>)>> = cands
+            .par_iter()
+            .map(|&r| {
+                let mut sig: Vec<(usize, Vec<Label>)> = shapes[r]
+                    .iter()
+                    .map(|(t, read)| (*t, read.iter().map(|rel| label(rel).map_or(Label::Name(rel.as_str()), Label::Class)).collect()))
+                    .collect();
+                sig.sort();
+                sig.dedup();
+                sig
+            })
+            .collect();
         let mut ids: HashMap<(usize, Vec<(usize, Vec<Label>)>), usize> = HashMap::new();
         let mut next: HashMap<&str, usize> = HashMap::new();
-        for &r in &cands {
-            let mut sig: Vec<(usize, Vec<Label>)> = shapes[r]
-                .iter()
-                .map(|(t, read)| (*t, read.iter().map(|rel| label(rel).map_or(Label::Name(rel.as_str()), Label::Class)).collect()))
-                .collect();
-            sig.sort();
-            sig.dedup();
+        for (&r, sig) in cands.iter().zip(sigs) {
             let n = ids.len();
             next.insert(r, *ids.entry((class[r], sig)).or_insert(n));
         }
@@ -2068,12 +2110,16 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
         }
         report.merged.push((t.clone(), from.clone()));
     }
-    // Relations equal up to their constants (not merged: one relation keyed by the constant would serve them).
+    true
+}
+
+/// Relations equal up to their constants (not merged: one relation keyed by the constant would serve them), into
+/// the report a profiled run writes. A congruence of its own over the whole program, so made only when profiled.
+fn similar_relations(prog: &Program, report: &mut Report) {
     let similar = congruence(prog, true);
     report.similar = similar.iter().map(Vec::len).sum();
     report.similar_groups = similar.len();
     report.similar_examples = similar.iter().take(3).map(|g| g.iter().take(4).cloned().collect::<Vec<_>>().join(" ~ ")).collect();
-    true
 }
 
 #[cfg(test)]
@@ -2248,7 +2294,11 @@ pub mod tests {
             "#,
         )
         .unwrap();
-        let report = simplify(&mut prog);
+        // Unprofiled: held so no profile test turns the (process-wide) profile on meanwhile.
+        let report = {
+            let _run = super::super::profile::one_run();
+            simplify(&mut prog)
+        };
         let mut merged = report.merged.clone();
         merged.sort();
         assert_eq!(
@@ -2264,8 +2314,38 @@ pub mod tests {
         assert_eq!(prog.rules.iter().filter(|r| r.head.rel == "s_reach").count(), 2);
         assert_eq!(prog.facts["s_seed"].len(), 1);
         assert!(prog.decls.contains_key("p0_mine") && prog.decls.contains_key("p1_mine"));
-        // p0_mine and p1_mine differ only in their constant.
-        assert_eq!((report.similar, report.similar_groups), (2, 1));
+        // p0_mine and p1_mine differ only in their constant: reported in a profiled run only (below).
+        assert_eq!((report.similar, report.similar_groups), (0, 0));
+    }
+
+    /// Relations equal up to their constants are a profile's report (`relations equal up to their constants`), not
+    /// a part of the merge: an unprofiled simplify makes no second congruence for them (it was about half of each
+    /// merge's cost in a pack, decision 0168), and a profiled one reports them as before.
+    #[test]
+    fn relations_alike_but_for_their_constants_are_found_only_when_profiled() {
+        let text = r#"
+            .decl edge(a: number, b: number)
+            .input edge
+            .decl p0_reach(a: number)
+            p0_reach(b) :- edge(1, b).
+            .decl p1_reach(a: number)
+            p1_reach(b) :- edge(1, b).
+            .decl p0_mine(a: number)
+            p0_mine(b) :- edge(2, b), p0_reach(b).
+            .decl p1_mine(a: number)
+            p1_mine(b) :- edge(3, b), p1_reach(b).
+            .output p0_mine, p1_mine
+        "#;
+        // Held from the unprofiled run on: no other profile test turns the (process-wide) profile on meanwhile.
+        let _run = super::super::profile::one_run();
+        let quiet = simplify(&mut super::super::rr::parse(text).unwrap());
+        assert_eq!(quiet.merged.len(), 2, "{:?}", quiet.merged);
+        assert_eq!((quiet.similar, quiet.similar_groups), (0, 0));
+        super::super::profile::set(true);
+        let profiled = simplify(&mut super::super::rr::parse(text).unwrap());
+        super::super::profile::set(false);
+        assert_eq!(profiled.merged, quiet.merged);
+        assert_eq!((profiled.similar, profiled.similar_groups), (2, 1));
     }
 
     /// The converter's `has` with no stop: a node holding a match among its descendants, climbed one `child` edge a

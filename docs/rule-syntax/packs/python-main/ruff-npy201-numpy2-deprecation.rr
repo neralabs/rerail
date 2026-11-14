@@ -1,0 +1,1357 @@
+.policy "ruff-npy201-numpy2-deprecation" revision 1
+.guests off
+.description "Replace NumPy members that NumPy 2.0 removes from the main namespace with their supported replacements."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
+// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+#include "python/names.rr"
+
+// in_handler(n): the JSON util `in-handler`, used where the JSON says `matches: "in-handler"`
+.decl npy201_in_handler(n: node)
+npy201_in_handler(n) :- npy201_demand_in_handler(n), npy201_up_1(n, p1).
+
+// attribute_error(n): the JSON util `attribute-error`, used where the JSON says `matches: "attribute-error"`
+.decl npy201_attribute_error(n: node)
+npy201_attribute_error(n) :- npy201_handled_type(n),
+    ( kind(n, "identifier"), global_ref(n, "AttributeError")
+    ; kind(n, "attribute"), sym_of(n, "builtins.AttributeError")
+    ).
+
+
+// import_error(n): the JSON util `import-error`, used where the JSON says `matches: "import-error"`
+.decl npy201_import_error(n: node)
+npy201_import_error(n) :- npy201_handled_type(n),
+    ( kind(n, "identifier"), (global_ref(n, "ImportError") ; global_ref(n, "ModuleNotFoundError"))
+    ; kind(n, "attribute"), (sym_of(n, "builtins.ImportError") ; sym_of(n, "builtins.ModuleNotFoundError"))
+    ).
+
+
+// catches_attribute_error(n): the JSON util `catches-attribute-error`, used where the JSON says `matches: "catches-attribute-error"`
+.decl npy201_catches_attribute_error(n: node)
+npy201_catches_attribute_error(n) :- child(n, c1, _), kind(c1, "except_clause"),
+    within_stop(c2, c1, "block"), npy201_attribute_error(c2).
+
+// catches_import_error(n): the JSON util `catches-import-error`, used where the JSON says `matches: "catches-import-error"`
+.decl npy201_catches_import_error(n: node)
+npy201_catches_import_error(n) :- child(n, c1, _), kind(c1, "except_clause"),
+    within_stop(c2, c1, "block"), npy201_import_error(c2).
+
+// handled_root(n): the JSON util `handled-root`, used where the JSON says `matches: "handled-root"`
+.decl npy201_handled_root(n: node)
+npy201_handled_root(n) :- field(p1, "value", n), kind(p1, "except_clause").
+npy201_handled_root(n) :- child(p2, n, _), kind(p2, "as_pattern"), child(p3, p2, _),
+    kind(p3, "except_clause").
+npy201_handled_root(n) :- child(p4, n, _), kind(p4, "parenthesized_expression"),
+    npy201_handled_root(p4).
+
+// handled_type(n): the JSON util `handled-type`, used where the JSON says `matches: "handled-type"`
+.decl npy201_handled_type(n: node)
+npy201_handled_type(n) :- npy201_handled_root(n).
+npy201_handled_type(n) :- child(p1, n, _), kind(p1, "tuple"), npy201_handled_root(p1).
+npy201_handled_type(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"),
+    npy201_handled_type(p2).
+
+// NPY201(n): a finding at node n, from clause `add-docstring`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201(at: node, name: loc) "Use `numpy.lib.add_docstring` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.add_docstring"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_1, "try_statement"), kind(p1_1, "try_statement"), npy201_catches_attribute_error(p1_1), field(p1_1, "body", c2_1), has(c2_1, c3_1, "attribute"), sym_of(c3_1, q4_1), npy201_set_4(q4_1), field(c3_1, "attribute", c5_1), kind(c5_1, "identifier"), node(_, c5_1, _, _, _), TID = c5_1, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_2), (st9_2 = b8_2 ; within(b8_2, st9_2)), npy201_in_handler(st9_2), within_stop(st9_2, p10_2, "try_statement"), kind(p10_2, "try_statement"), npy201_catches_import_error(p10_2), field(p10_2, "body", c11_2), has(c11_2, c12_2, "import_from_statement"), has(c12_2, c13_2, "dotted_name"), npy201_statement_name(c13_2, q14_2), (q14_2 = "ast.literal_eval" ; q14_2 = "inspect.getsource" ; q14_2 = "numpy.all" ; q14_2 = "numpy.any" ; q14_2 = "numpy.asmatrix" ; q14_2 = "numpy.bytes_" ; q14_2 = "numpy.char.chararray" ; q14_2 = "numpy.char.compare_chararrays" ; q14_2 = "numpy.clongdouble" ; q14_2 = "numpy.complex128" ; q14_2 = "numpy.complex64" ; q14_2 = "numpy.cumprod" ; q14_2 = "numpy.exceptions.AxisError" ; q14_2 = "numpy.exceptions.ComplexWarning" ; q14_2 = "numpy.exceptions.DTypePromotionError" ; q14_2 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_2 = "numpy.exceptions.RankWarning" ; q14_2 = "numpy.exceptions.TooHardError" ; q14_2 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_2 = "numpy.float64" ; q14_2 = "numpy.inf" ; q14_2 = "numpy.issubdtype" ; q14_2 = "numpy.lib.add_docstring" ; q14_2 = "numpy.lib.add_newdoc" ; q14_2 = "numpy.lib.array_utils.byte_bounds" ; q14_2 = "numpy.lib.npyio.DataSource" ; q14_2 = "numpy.lib.tracemalloc_domain" ; q14_2 = "numpy.longdouble" ; q14_2 = "numpy.nan" ; q14_2 = "numpy.prod" ; q14_2 = "numpy.rec.format_parser" ; q14_2 = "numpy.round" ; q14_2 = "numpy.str_" ; q14_2 = "numpy.trapezoid" ; q14_2 = "numpy.vstack"), node(_, c13_2, _, _, _), IID = c13_2, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "add_docstring").
+
+// NPY201_add_newdoc(n): a finding at node n, from clause `add-newdoc`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_add_newdoc(at: node, name: loc) code "NPY201" "Use `numpy.lib.add_newdoc` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_add_newdoc(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.add_newdoc"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_3, "try_statement"), kind(p1_3, "try_statement"), npy201_catches_attribute_error(p1_3), field(p1_3, "body", c2_3), has(c2_3, c3_3, "attribute"), sym_of(c3_3, q4_3), npy201_set_4(q4_3), field(c3_3, "attribute", c5_3), kind(c5_3, "identifier"), node(_, c5_3, _, _, _), TID = c5_3, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_4), (st9_4 = b8_4 ; within(b8_4, st9_4)), npy201_in_handler(st9_4), within_stop(st9_4, p10_4, "try_statement"), kind(p10_4, "try_statement"), npy201_catches_import_error(p10_4), field(p10_4, "body", c11_4), has(c11_4, c12_4, "import_from_statement"), has(c12_4, c13_4, "dotted_name"), npy201_statement_name(c13_4, q14_4), (q14_4 = "ast.literal_eval" ; q14_4 = "inspect.getsource" ; q14_4 = "numpy.all" ; q14_4 = "numpy.any" ; q14_4 = "numpy.asmatrix" ; q14_4 = "numpy.bytes_" ; q14_4 = "numpy.char.chararray" ; q14_4 = "numpy.char.compare_chararrays" ; q14_4 = "numpy.clongdouble" ; q14_4 = "numpy.complex128" ; q14_4 = "numpy.complex64" ; q14_4 = "numpy.cumprod" ; q14_4 = "numpy.exceptions.AxisError" ; q14_4 = "numpy.exceptions.ComplexWarning" ; q14_4 = "numpy.exceptions.DTypePromotionError" ; q14_4 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_4 = "numpy.exceptions.RankWarning" ; q14_4 = "numpy.exceptions.TooHardError" ; q14_4 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_4 = "numpy.float64" ; q14_4 = "numpy.inf" ; q14_4 = "numpy.issubdtype" ; q14_4 = "numpy.lib.add_docstring" ; q14_4 = "numpy.lib.add_newdoc" ; q14_4 = "numpy.lib.array_utils.byte_bounds" ; q14_4 = "numpy.lib.npyio.DataSource" ; q14_4 = "numpy.lib.tracemalloc_domain" ; q14_4 = "numpy.longdouble" ; q14_4 = "numpy.nan" ; q14_4 = "numpy.prod" ; q14_4 = "numpy.rec.format_parser" ; q14_4 = "numpy.round" ; q14_4 = "numpy.str_" ; q14_4 = "numpy.trapezoid" ; q14_4 = "numpy.vstack"), node(_, c13_4, _, _, _), IID = c13_4, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "add_newdoc").
+
+// NPY201_add_newdoc_ufunc(n): a finding at node n, from clause `add-newdoc-ufunc`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_add_newdoc_ufunc(at: node, name: loc) code "NPY201" "NumPy 2.0 removes `{name}`, an internal function with no public replacement; drop the call or guard it behind a NumPy 1.x version check."
+    suppress noqa "NPY201"
+NPY201_add_newdoc_ufunc(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.add_newdoc_ufunc"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_alltrue(n): a finding at node n, from clause `alltrue`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_alltrue(at: node, name: loc) code "NPY201" "Use `numpy.all` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_alltrue(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.alltrue"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_5, "try_statement"), kind(p1_5, "try_statement"), npy201_catches_attribute_error(p1_5), field(p1_5, "body", c2_5), has(c2_5, c3_5, "attribute"), sym_of(c3_5, q4_5), npy201_set_4(q4_5), field(c3_5, "attribute", c5_5), kind(c5_5, "identifier"), node(_, c5_5, _, _, _), TID = c5_5, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_6), (st9_6 = b8_6 ; within(b8_6, st9_6)), npy201_in_handler(st9_6), within_stop(st9_6, p10_6, "try_statement"), kind(p10_6, "try_statement"), npy201_catches_import_error(p10_6), field(p10_6, "body", c11_6), has(c11_6, c12_6, "import_from_statement"), has(c12_6, c13_6, "dotted_name"), npy201_statement_name(c13_6, q14_6), (q14_6 = "ast.literal_eval" ; q14_6 = "inspect.getsource" ; q14_6 = "numpy.all" ; q14_6 = "numpy.any" ; q14_6 = "numpy.asmatrix" ; q14_6 = "numpy.bytes_" ; q14_6 = "numpy.char.chararray" ; q14_6 = "numpy.char.compare_chararrays" ; q14_6 = "numpy.clongdouble" ; q14_6 = "numpy.complex128" ; q14_6 = "numpy.complex64" ; q14_6 = "numpy.cumprod" ; q14_6 = "numpy.exceptions.AxisError" ; q14_6 = "numpy.exceptions.ComplexWarning" ; q14_6 = "numpy.exceptions.DTypePromotionError" ; q14_6 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_6 = "numpy.exceptions.RankWarning" ; q14_6 = "numpy.exceptions.TooHardError" ; q14_6 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_6 = "numpy.float64" ; q14_6 = "numpy.inf" ; q14_6 = "numpy.issubdtype" ; q14_6 = "numpy.lib.add_docstring" ; q14_6 = "numpy.lib.add_newdoc" ; q14_6 = "numpy.lib.array_utils.byte_bounds" ; q14_6 = "numpy.lib.npyio.DataSource" ; q14_6 = "numpy.lib.tracemalloc_domain" ; q14_6 = "numpy.longdouble" ; q14_6 = "numpy.nan" ; q14_6 = "numpy.prod" ; q14_6 = "numpy.rec.format_parser" ; q14_6 = "numpy.round" ; q14_6 = "numpy.str_" ; q14_6 = "numpy.trapezoid" ; q14_6 = "numpy.vstack"), node(_, c13_6, _, _, _), IID = c13_6, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "all").
+
+// NPY201_asfarray(n): a finding at node n, from clause `asfarray`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_asfarray(at: node, name: loc) code "NPY201" "Use `np.asarray` with a float dtype instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_asfarray(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.asfarray"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_byte_bounds(n): a finding at node n, from clause `byte-bounds`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_byte_bounds(at: node, name: loc) code "NPY201" "Use `numpy.lib.array_utils.byte_bounds` instead of `{name}` on NumPy 2.0; keep `{name}` while NumPy 1.x must still be supported."
+    suppress noqa "NPY201"
+NPY201_byte_bounds(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.byte_bounds"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_7, "try_statement"), kind(p1_7, "try_statement"), npy201_catches_attribute_error(p1_7), field(p1_7, "body", c2_7), has(c2_7, c3_7, "attribute"), sym_of(c3_7, q4_7), npy201_set_4(q4_7), field(c3_7, "attribute", c5_7), kind(c5_7, "identifier"), node(_, c5_7, _, _, _), TID = c5_7, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_8), (st9_8 = b8_8 ; within(b8_8, st9_8)), npy201_in_handler(st9_8), within_stop(st9_8, p10_8, "try_statement"), kind(p10_8, "try_statement"), npy201_catches_import_error(p10_8), field(p10_8, "body", c11_8), has(c11_8, c12_8, "import_from_statement"), has(c12_8, c13_8, "dotted_name"), npy201_statement_name(c13_8, q14_8), (q14_8 = "ast.literal_eval" ; q14_8 = "inspect.getsource" ; q14_8 = "numpy.all" ; q14_8 = "numpy.any" ; q14_8 = "numpy.asmatrix" ; q14_8 = "numpy.bytes_" ; q14_8 = "numpy.char.chararray" ; q14_8 = "numpy.char.compare_chararrays" ; q14_8 = "numpy.clongdouble" ; q14_8 = "numpy.complex128" ; q14_8 = "numpy.complex64" ; q14_8 = "numpy.cumprod" ; q14_8 = "numpy.exceptions.AxisError" ; q14_8 = "numpy.exceptions.ComplexWarning" ; q14_8 = "numpy.exceptions.DTypePromotionError" ; q14_8 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_8 = "numpy.exceptions.RankWarning" ; q14_8 = "numpy.exceptions.TooHardError" ; q14_8 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_8 = "numpy.float64" ; q14_8 = "numpy.inf" ; q14_8 = "numpy.issubdtype" ; q14_8 = "numpy.lib.add_docstring" ; q14_8 = "numpy.lib.add_newdoc" ; q14_8 = "numpy.lib.array_utils.byte_bounds" ; q14_8 = "numpy.lib.npyio.DataSource" ; q14_8 = "numpy.lib.tracemalloc_domain" ; q14_8 = "numpy.longdouble" ; q14_8 = "numpy.nan" ; q14_8 = "numpy.prod" ; q14_8 = "numpy.rec.format_parser" ; q14_8 = "numpy.round" ; q14_8 = "numpy.str_" ; q14_8 = "numpy.trapezoid" ; q14_8 = "numpy.vstack"), node(_, c13_8, _, _, _), IID = c13_8, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "byte_bounds").
+
+// NPY201_cast(n): a finding at node n, from clause `cast`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_cast(at: node, name: loc) code "NPY201" "Use `np.asarray(arr, dtype=dtype)` instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_cast(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.cast"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_complex128_aliases(n): a finding at node n, from clause `complex128-aliases`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_complex128_aliases(at: node, name: loc) code "NPY201" "Use `numpy.complex128` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_complex128_aliases(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "numpy.cfloat") ; sym_of(n, "numpy.complex_")), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_9, "try_statement"), kind(p1_9, "try_statement"), npy201_catches_attribute_error(p1_9), field(p1_9, "body", c2_9), has(c2_9, c3_9, "attribute"), sym_of(c3_9, q4_9), npy201_set_4(q4_9), field(c3_9, "attribute", c5_9), kind(c5_9, "identifier"), node(_, c5_9, _, _, _), TID = c5_9, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_10), (st9_10 = b8_10 ; within(b8_10, st9_10)), npy201_in_handler(st9_10), within_stop(st9_10, p10_10, "try_statement"), kind(p10_10, "try_statement"), npy201_catches_import_error(p10_10), field(p10_10, "body", c11_10), has(c11_10, c12_10, "import_from_statement"), has(c12_10, c13_10, "dotted_name"), npy201_statement_name(c13_10, q14_10), (q14_10 = "ast.literal_eval" ; q14_10 = "inspect.getsource" ; q14_10 = "numpy.all" ; q14_10 = "numpy.any" ; q14_10 = "numpy.asmatrix" ; q14_10 = "numpy.bytes_" ; q14_10 = "numpy.char.chararray" ; q14_10 = "numpy.char.compare_chararrays" ; q14_10 = "numpy.clongdouble" ; q14_10 = "numpy.complex128" ; q14_10 = "numpy.complex64" ; q14_10 = "numpy.cumprod" ; q14_10 = "numpy.exceptions.AxisError" ; q14_10 = "numpy.exceptions.ComplexWarning" ; q14_10 = "numpy.exceptions.DTypePromotionError" ; q14_10 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_10 = "numpy.exceptions.RankWarning" ; q14_10 = "numpy.exceptions.TooHardError" ; q14_10 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_10 = "numpy.float64" ; q14_10 = "numpy.inf" ; q14_10 = "numpy.issubdtype" ; q14_10 = "numpy.lib.add_docstring" ; q14_10 = "numpy.lib.add_newdoc" ; q14_10 = "numpy.lib.array_utils.byte_bounds" ; q14_10 = "numpy.lib.npyio.DataSource" ; q14_10 = "numpy.lib.tracemalloc_domain" ; q14_10 = "numpy.longdouble" ; q14_10 = "numpy.nan" ; q14_10 = "numpy.prod" ; q14_10 = "numpy.rec.format_parser" ; q14_10 = "numpy.round" ; q14_10 = "numpy.str_" ; q14_10 = "numpy.trapezoid" ; q14_10 = "numpy.vstack"), node(_, c13_10, _, _, _), IID = c13_10, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "complex128").
+
+// NPY201_clongdouble_aliases(n): a finding at node n, from clause `clongdouble-aliases`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_clongdouble_aliases(at: node, name: loc) code "NPY201" "Use `numpy.clongdouble` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_clongdouble_aliases(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "numpy.clongfloat") ; sym_of(n, "numpy.longcomplex")), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_11, "try_statement"), kind(p1_11, "try_statement"), npy201_catches_attribute_error(p1_11), field(p1_11, "body", c2_11), has(c2_11, c3_11, "attribute"), sym_of(c3_11, q4_11), npy201_set_4(q4_11), field(c3_11, "attribute", c5_11), kind(c5_11, "identifier"), node(_, c5_11, _, _, _), TID = c5_11, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_12), (st9_12 = b8_12 ; within(b8_12, st9_12)), npy201_in_handler(st9_12), within_stop(st9_12, p10_12, "try_statement"), kind(p10_12, "try_statement"), npy201_catches_import_error(p10_12), field(p10_12, "body", c11_12), has(c11_12, c12_12, "import_from_statement"), has(c12_12, c13_12, "dotted_name"), npy201_statement_name(c13_12, q14_12), (q14_12 = "ast.literal_eval" ; q14_12 = "inspect.getsource" ; q14_12 = "numpy.all" ; q14_12 = "numpy.any" ; q14_12 = "numpy.asmatrix" ; q14_12 = "numpy.bytes_" ; q14_12 = "numpy.char.chararray" ; q14_12 = "numpy.char.compare_chararrays" ; q14_12 = "numpy.clongdouble" ; q14_12 = "numpy.complex128" ; q14_12 = "numpy.complex64" ; q14_12 = "numpy.cumprod" ; q14_12 = "numpy.exceptions.AxisError" ; q14_12 = "numpy.exceptions.ComplexWarning" ; q14_12 = "numpy.exceptions.DTypePromotionError" ; q14_12 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_12 = "numpy.exceptions.RankWarning" ; q14_12 = "numpy.exceptions.TooHardError" ; q14_12 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_12 = "numpy.float64" ; q14_12 = "numpy.inf" ; q14_12 = "numpy.issubdtype" ; q14_12 = "numpy.lib.add_docstring" ; q14_12 = "numpy.lib.add_newdoc" ; q14_12 = "numpy.lib.array_utils.byte_bounds" ; q14_12 = "numpy.lib.npyio.DataSource" ; q14_12 = "numpy.lib.tracemalloc_domain" ; q14_12 = "numpy.longdouble" ; q14_12 = "numpy.nan" ; q14_12 = "numpy.prod" ; q14_12 = "numpy.rec.format_parser" ; q14_12 = "numpy.round" ; q14_12 = "numpy.str_" ; q14_12 = "numpy.trapezoid" ; q14_12 = "numpy.vstack"), node(_, c13_12, _, _, _), IID = c13_12, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "clongdouble").
+
+// NPY201_compat(n): a finding at node n, from clause `compat`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_compat(at: node, name: loc) code "NPY201" "Use the Python 3 builtin or standard library equivalent instead of `{name}`; NumPy 2.0 removes this Python 2 compatibility module."
+    suppress noqa "NPY201"
+NPY201_compat(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.compat"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_cumproduct(n): a finding at node n, from clause `cumproduct`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_cumproduct(at: node, name: loc) code "NPY201" "Use `numpy.cumprod` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_cumproduct(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.cumproduct"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_13, "try_statement"), kind(p1_13, "try_statement"), npy201_catches_attribute_error(p1_13), field(p1_13, "body", c2_13), has(c2_13, c3_13, "attribute"), sym_of(c3_13, q4_13), npy201_set_4(q4_13), field(c3_13, "attribute", c5_13), kind(c5_13, "identifier"), node(_, c5_13, _, _, _), TID = c5_13, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_14), (st9_14 = b8_14 ; within(b8_14, st9_14)), npy201_in_handler(st9_14), within_stop(st9_14, p10_14, "try_statement"), kind(p10_14, "try_statement"), npy201_catches_import_error(p10_14), field(p10_14, "body", c11_14), has(c11_14, c12_14, "import_from_statement"), has(c12_14, c13_14, "dotted_name"), npy201_statement_name(c13_14, q14_14), (q14_14 = "ast.literal_eval" ; q14_14 = "inspect.getsource" ; q14_14 = "numpy.all" ; q14_14 = "numpy.any" ; q14_14 = "numpy.asmatrix" ; q14_14 = "numpy.bytes_" ; q14_14 = "numpy.char.chararray" ; q14_14 = "numpy.char.compare_chararrays" ; q14_14 = "numpy.clongdouble" ; q14_14 = "numpy.complex128" ; q14_14 = "numpy.complex64" ; q14_14 = "numpy.cumprod" ; q14_14 = "numpy.exceptions.AxisError" ; q14_14 = "numpy.exceptions.ComplexWarning" ; q14_14 = "numpy.exceptions.DTypePromotionError" ; q14_14 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_14 = "numpy.exceptions.RankWarning" ; q14_14 = "numpy.exceptions.TooHardError" ; q14_14 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_14 = "numpy.float64" ; q14_14 = "numpy.inf" ; q14_14 = "numpy.issubdtype" ; q14_14 = "numpy.lib.add_docstring" ; q14_14 = "numpy.lib.add_newdoc" ; q14_14 = "numpy.lib.array_utils.byte_bounds" ; q14_14 = "numpy.lib.npyio.DataSource" ; q14_14 = "numpy.lib.tracemalloc_domain" ; q14_14 = "numpy.longdouble" ; q14_14 = "numpy.nan" ; q14_14 = "numpy.prod" ; q14_14 = "numpy.rec.format_parser" ; q14_14 = "numpy.round" ; q14_14 = "numpy.str_" ; q14_14 = "numpy.trapezoid" ; q14_14 = "numpy.vstack"), node(_, c13_14, _, _, _), IID = c13_14, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "cumprod").
+
+// NPY201_datasource(n): a finding at node n, from clause `datasource`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_datasource(at: node, name: loc) code "NPY201" "Use `numpy.lib.npyio.DataSource` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_datasource(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.DataSource"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_15, "try_statement"), kind(p1_15, "try_statement"), npy201_catches_attribute_error(p1_15), field(p1_15, "body", c2_15), has(c2_15, c3_15, "attribute"), sym_of(c3_15, q4_15), npy201_set_4(q4_15), field(c3_15, "attribute", c5_15), kind(c5_15, "identifier"), node(_, c5_15, _, _, _), TID = c5_15, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_16), (st9_16 = b8_16 ; within(b8_16, st9_16)), npy201_in_handler(st9_16), within_stop(st9_16, p10_16, "try_statement"), kind(p10_16, "try_statement"), npy201_catches_import_error(p10_16), field(p10_16, "body", c11_16), has(c11_16, c12_16, "import_from_statement"), has(c12_16, c13_16, "dotted_name"), npy201_statement_name(c13_16, q14_16), (q14_16 = "ast.literal_eval" ; q14_16 = "inspect.getsource" ; q14_16 = "numpy.all" ; q14_16 = "numpy.any" ; q14_16 = "numpy.asmatrix" ; q14_16 = "numpy.bytes_" ; q14_16 = "numpy.char.chararray" ; q14_16 = "numpy.char.compare_chararrays" ; q14_16 = "numpy.clongdouble" ; q14_16 = "numpy.complex128" ; q14_16 = "numpy.complex64" ; q14_16 = "numpy.cumprod" ; q14_16 = "numpy.exceptions.AxisError" ; q14_16 = "numpy.exceptions.ComplexWarning" ; q14_16 = "numpy.exceptions.DTypePromotionError" ; q14_16 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_16 = "numpy.exceptions.RankWarning" ; q14_16 = "numpy.exceptions.TooHardError" ; q14_16 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_16 = "numpy.float64" ; q14_16 = "numpy.inf" ; q14_16 = "numpy.issubdtype" ; q14_16 = "numpy.lib.add_docstring" ; q14_16 = "numpy.lib.add_newdoc" ; q14_16 = "numpy.lib.array_utils.byte_bounds" ; q14_16 = "numpy.lib.npyio.DataSource" ; q14_16 = "numpy.lib.tracemalloc_domain" ; q14_16 = "numpy.longdouble" ; q14_16 = "numpy.nan" ; q14_16 = "numpy.prod" ; q14_16 = "numpy.rec.format_parser" ; q14_16 = "numpy.round" ; q14_16 = "numpy.str_" ; q14_16 = "numpy.trapezoid" ; q14_16 = "numpy.vstack"), node(_, c13_16, _, _, _), IID = c13_16, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "DataSource").
+
+// NPY201_deprecate_and_deprecate_with_doc(n): a finding at node n, from clause `deprecate-and-deprecate-with-doc`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_deprecate_and_deprecate_with_doc(at: node, name: loc) code "NPY201" "Emit a `DeprecationWarning` with `warnings.warn`, or use `typing.deprecated`, instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_deprecate_and_deprecate_with_doc(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "numpy.deprecate") ; sym_of(n, "numpy.deprecate_with_doc")),
+    node(_, n, _, _, _), NAME = n.
+
+// NPY201_disp(n): a finding at node n, from clause `disp`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_disp(at: node, name: loc) code "NPY201" "Use a dedicated print function instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_disp(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.disp"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_fastcopyandtranspose(n): a finding at node n, from clause `fastcopyandtranspose`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_fastcopyandtranspose(at: node, name: loc) code "NPY201" "Use `arr.T.copy()` instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_fastcopyandtranspose(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.fastCopyAndTranspose"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_find_common_type(n): a finding at node n, from clause `find-common-type`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_find_common_type(at: node, name: loc) code "NPY201" "Use `numpy.promote_types` or `numpy.result_type` instead of `{name}`; for its scalar_types semantics pass `0`, `0.0` or `0j` to `result_type`."
+    suppress noqa "NPY201"
+NPY201_find_common_type(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.find_common_type"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_no_replacement(n): a finding at node n, from clause `no-replacement`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_no_replacement(at: node, name: loc) code "NPY201" "NumPy 2.0 removes `{name}` without a replacement; stop using it, or keep it behind a NumPy 1.x version check."
+    suppress noqa "NPY201"
+NPY201_no_replacement(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), npy201_set_5(q1), node(_, n, _, _, _), NAME = n.
+
+// NPY201_float_underscore(n): a finding at node n, from clause `float-underscore`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_float_underscore(at: node, name: loc) code "NPY201" "Use `numpy.float64` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_float_underscore(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.float_"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_17, "try_statement"), kind(p1_17, "try_statement"), npy201_catches_attribute_error(p1_17), field(p1_17, "body", c2_17), has(c2_17, c3_17, "attribute"), sym_of(c3_17, q4_17), npy201_set_4(q4_17), field(c3_17, "attribute", c5_17), kind(c5_17, "identifier"), node(_, c5_17, _, _, _), TID = c5_17, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_18), (st9_18 = b8_18 ; within(b8_18, st9_18)), npy201_in_handler(st9_18), within_stop(st9_18, p10_18, "try_statement"), kind(p10_18, "try_statement"), npy201_catches_import_error(p10_18), field(p10_18, "body", c11_18), has(c11_18, c12_18, "import_from_statement"), has(c12_18, c13_18, "dotted_name"), npy201_statement_name(c13_18, q14_18), (q14_18 = "ast.literal_eval" ; q14_18 = "inspect.getsource" ; q14_18 = "numpy.all" ; q14_18 = "numpy.any" ; q14_18 = "numpy.asmatrix" ; q14_18 = "numpy.bytes_" ; q14_18 = "numpy.char.chararray" ; q14_18 = "numpy.char.compare_chararrays" ; q14_18 = "numpy.clongdouble" ; q14_18 = "numpy.complex128" ; q14_18 = "numpy.complex64" ; q14_18 = "numpy.cumprod" ; q14_18 = "numpy.exceptions.AxisError" ; q14_18 = "numpy.exceptions.ComplexWarning" ; q14_18 = "numpy.exceptions.DTypePromotionError" ; q14_18 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_18 = "numpy.exceptions.RankWarning" ; q14_18 = "numpy.exceptions.TooHardError" ; q14_18 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_18 = "numpy.float64" ; q14_18 = "numpy.inf" ; q14_18 = "numpy.issubdtype" ; q14_18 = "numpy.lib.add_docstring" ; q14_18 = "numpy.lib.add_newdoc" ; q14_18 = "numpy.lib.array_utils.byte_bounds" ; q14_18 = "numpy.lib.npyio.DataSource" ; q14_18 = "numpy.lib.tracemalloc_domain" ; q14_18 = "numpy.longdouble" ; q14_18 = "numpy.nan" ; q14_18 = "numpy.prod" ; q14_18 = "numpy.rec.format_parser" ; q14_18 = "numpy.round" ; q14_18 = "numpy.str_" ; q14_18 = "numpy.trapezoid" ; q14_18 = "numpy.vstack"), node(_, c13_18, _, _, _), IID = c13_18, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "float64").
+
+// NPY201_geterrobj_and_seterrobj(n): a finding at node n, from clause `geterrobj-and-seterrobj`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_geterrobj_and_seterrobj(at: node, name: loc) code "NPY201" "Use the `np.errstate` context manager instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_geterrobj_and_seterrobj(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "numpy.geterrobj") ; sym_of(n, "numpy.seterrobj")), node(_, n, _, _, _), NAME = n.
+
+// NPY201_in1d(n): a finding at node n, from clause `in1d`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_in1d(at: node, name: loc) code "NPY201" "Use `np.isin` instead of `{name}`; it keeps the input's shape, so `np.in1d(a, b)` is `np.isin(a, b).ravel()`."
+    suppress noqa "NPY201"
+NPY201_in1d(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.in1d"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_inf_aliases(n): a finding at node n, from clause `inf-aliases`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_inf_aliases(at: node, name: loc) code "NPY201" "Use `numpy.inf` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_inf_aliases(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q2), npy201_set_6(q2), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_19, "try_statement"), kind(p1_19, "try_statement"), npy201_catches_attribute_error(p1_19), field(p1_19, "body", c2_19), has(c2_19, c3_19, "attribute"), sym_of(c3_19, q4_19), npy201_set_4(q4_19), field(c3_19, "attribute", c5_19), kind(c5_19, "identifier"), node(_, c5_19, _, _, _), TID = c5_19, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_20), (st9_20 = b8_20 ; within(b8_20, st9_20)), npy201_in_handler(st9_20), within_stop(st9_20, p10_20, "try_statement"), kind(p10_20, "try_statement"), npy201_catches_import_error(p10_20), field(p10_20, "body", c11_20), has(c11_20, c12_20, "import_from_statement"), has(c12_20, c13_20, "dotted_name"), npy201_statement_name(c13_20, q14_20), (q14_20 = "ast.literal_eval" ; q14_20 = "inspect.getsource" ; q14_20 = "numpy.all" ; q14_20 = "numpy.any" ; q14_20 = "numpy.asmatrix" ; q14_20 = "numpy.bytes_" ; q14_20 = "numpy.char.chararray" ; q14_20 = "numpy.char.compare_chararrays" ; q14_20 = "numpy.clongdouble" ; q14_20 = "numpy.complex128" ; q14_20 = "numpy.complex64" ; q14_20 = "numpy.cumprod" ; q14_20 = "numpy.exceptions.AxisError" ; q14_20 = "numpy.exceptions.ComplexWarning" ; q14_20 = "numpy.exceptions.DTypePromotionError" ; q14_20 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_20 = "numpy.exceptions.RankWarning" ; q14_20 = "numpy.exceptions.TooHardError" ; q14_20 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_20 = "numpy.float64" ; q14_20 = "numpy.inf" ; q14_20 = "numpy.issubdtype" ; q14_20 = "numpy.lib.add_docstring" ; q14_20 = "numpy.lib.add_newdoc" ; q14_20 = "numpy.lib.array_utils.byte_bounds" ; q14_20 = "numpy.lib.npyio.DataSource" ; q14_20 = "numpy.lib.tracemalloc_domain" ; q14_20 = "numpy.longdouble" ; q14_20 = "numpy.nan" ; q14_20 = "numpy.prod" ; q14_20 = "numpy.rec.format_parser" ; q14_20 = "numpy.round" ; q14_20 = "numpy.str_" ; q14_20 = "numpy.trapezoid" ; q14_20 = "numpy.vstack"), node(_, c13_20, _, _, _), IID = c13_20, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "inf").
+
+// NPY201_issubclass_underscore(n): a finding at node n, from clause `issubclass-underscore`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_issubclass_underscore(at: node, name: loc) code "NPY201" "Use `issubclass` instead of `{name}`; NumPy 2.0 removes the old name."
+    suppress noqa "NPY201"
+NPY201_issubclass_underscore(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.issubclass_"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_issubsctype(n): a finding at node n, from clause `issubsctype`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_issubsctype(at: node, name: loc) code "NPY201" "Use `numpy.issubdtype` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_issubsctype(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.issubsctype"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_21, "try_statement"), kind(p1_21, "try_statement"), npy201_catches_attribute_error(p1_21), field(p1_21, "body", c2_21), has(c2_21, c3_21, "attribute"), sym_of(c3_21, q4_21), npy201_set_4(q4_21), field(c3_21, "attribute", c5_21), kind(c5_21, "identifier"), node(_, c5_21, _, _, _), TID = c5_21, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_22), (st9_22 = b8_22 ; within(b8_22, st9_22)), npy201_in_handler(st9_22), within_stop(st9_22, p10_22, "try_statement"), kind(p10_22, "try_statement"), npy201_catches_import_error(p10_22), field(p10_22, "body", c11_22), has(c11_22, c12_22, "import_from_statement"), has(c12_22, c13_22, "dotted_name"), npy201_statement_name(c13_22, q14_22), (q14_22 = "ast.literal_eval" ; q14_22 = "inspect.getsource" ; q14_22 = "numpy.all" ; q14_22 = "numpy.any" ; q14_22 = "numpy.asmatrix" ; q14_22 = "numpy.bytes_" ; q14_22 = "numpy.char.chararray" ; q14_22 = "numpy.char.compare_chararrays" ; q14_22 = "numpy.clongdouble" ; q14_22 = "numpy.complex128" ; q14_22 = "numpy.complex64" ; q14_22 = "numpy.cumprod" ; q14_22 = "numpy.exceptions.AxisError" ; q14_22 = "numpy.exceptions.ComplexWarning" ; q14_22 = "numpy.exceptions.DTypePromotionError" ; q14_22 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_22 = "numpy.exceptions.RankWarning" ; q14_22 = "numpy.exceptions.TooHardError" ; q14_22 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_22 = "numpy.float64" ; q14_22 = "numpy.inf" ; q14_22 = "numpy.issubdtype" ; q14_22 = "numpy.lib.add_docstring" ; q14_22 = "numpy.lib.add_newdoc" ; q14_22 = "numpy.lib.array_utils.byte_bounds" ; q14_22 = "numpy.lib.npyio.DataSource" ; q14_22 = "numpy.lib.tracemalloc_domain" ; q14_22 = "numpy.longdouble" ; q14_22 = "numpy.nan" ; q14_22 = "numpy.prod" ; q14_22 = "numpy.rec.format_parser" ; q14_22 = "numpy.round" ; q14_22 = "numpy.str_" ; q14_22 = "numpy.trapezoid" ; q14_22 = "numpy.vstack"), node(_, c13_22, _, _, _), IID = c13_22, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "issubdtype").
+
+// NPY201_mat(n): a finding at node n, from clause `mat`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_mat(at: node, name: loc) code "NPY201" "Use `numpy.asmatrix` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_mat(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.mat"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_23, "try_statement"), kind(p1_23, "try_statement"), npy201_catches_attribute_error(p1_23), field(p1_23, "body", c2_23), has(c2_23, c3_23, "attribute"), sym_of(c3_23, q4_23), npy201_set_4(q4_23), field(c3_23, "attribute", c5_23), kind(c5_23, "identifier"), node(_, c5_23, _, _, _), TID = c5_23, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_24), (st9_24 = b8_24 ; within(b8_24, st9_24)), npy201_in_handler(st9_24), within_stop(st9_24, p10_24, "try_statement"), kind(p10_24, "try_statement"), npy201_catches_import_error(p10_24), field(p10_24, "body", c11_24), has(c11_24, c12_24, "import_from_statement"), has(c12_24, c13_24, "dotted_name"), npy201_statement_name(c13_24, q14_24), (q14_24 = "ast.literal_eval" ; q14_24 = "inspect.getsource" ; q14_24 = "numpy.all" ; q14_24 = "numpy.any" ; q14_24 = "numpy.asmatrix" ; q14_24 = "numpy.bytes_" ; q14_24 = "numpy.char.chararray" ; q14_24 = "numpy.char.compare_chararrays" ; q14_24 = "numpy.clongdouble" ; q14_24 = "numpy.complex128" ; q14_24 = "numpy.complex64" ; q14_24 = "numpy.cumprod" ; q14_24 = "numpy.exceptions.AxisError" ; q14_24 = "numpy.exceptions.ComplexWarning" ; q14_24 = "numpy.exceptions.DTypePromotionError" ; q14_24 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_24 = "numpy.exceptions.RankWarning" ; q14_24 = "numpy.exceptions.TooHardError" ; q14_24 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_24 = "numpy.float64" ; q14_24 = "numpy.inf" ; q14_24 = "numpy.issubdtype" ; q14_24 = "numpy.lib.add_docstring" ; q14_24 = "numpy.lib.add_newdoc" ; q14_24 = "numpy.lib.array_utils.byte_bounds" ; q14_24 = "numpy.lib.npyio.DataSource" ; q14_24 = "numpy.lib.tracemalloc_domain" ; q14_24 = "numpy.longdouble" ; q14_24 = "numpy.nan" ; q14_24 = "numpy.prod" ; q14_24 = "numpy.rec.format_parser" ; q14_24 = "numpy.round" ; q14_24 = "numpy.str_" ; q14_24 = "numpy.trapezoid" ; q14_24 = "numpy.vstack"), node(_, c13_24, _, _, _), IID = c13_24, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "asmatrix").
+
+// NPY201_nan_aliases(n): a finding at node n, from clause `nan-aliases`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_nan_aliases(at: node, name: loc) code "NPY201" "Use `numpy.nan` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_nan_aliases(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "numpy.NaN") ; sym_of(n, "numpy.NAN")), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_25, "try_statement"), kind(p1_25, "try_statement"), npy201_catches_attribute_error(p1_25), field(p1_25, "body", c2_25), has(c2_25, c3_25, "attribute"), sym_of(c3_25, q4_25), npy201_set_4(q4_25), field(c3_25, "attribute", c5_25), kind(c5_25, "identifier"), node(_, c5_25, _, _, _), TID = c5_25, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_26), (st9_26 = b8_26 ; within(b8_26, st9_26)), npy201_in_handler(st9_26), within_stop(st9_26, p10_26, "try_statement"), kind(p10_26, "try_statement"), npy201_catches_import_error(p10_26), field(p10_26, "body", c11_26), has(c11_26, c12_26, "import_from_statement"), has(c12_26, c13_26, "dotted_name"), npy201_statement_name(c13_26, q14_26), (q14_26 = "ast.literal_eval" ; q14_26 = "inspect.getsource" ; q14_26 = "numpy.all" ; q14_26 = "numpy.any" ; q14_26 = "numpy.asmatrix" ; q14_26 = "numpy.bytes_" ; q14_26 = "numpy.char.chararray" ; q14_26 = "numpy.char.compare_chararrays" ; q14_26 = "numpy.clongdouble" ; q14_26 = "numpy.complex128" ; q14_26 = "numpy.complex64" ; q14_26 = "numpy.cumprod" ; q14_26 = "numpy.exceptions.AxisError" ; q14_26 = "numpy.exceptions.ComplexWarning" ; q14_26 = "numpy.exceptions.DTypePromotionError" ; q14_26 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_26 = "numpy.exceptions.RankWarning" ; q14_26 = "numpy.exceptions.TooHardError" ; q14_26 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_26 = "numpy.float64" ; q14_26 = "numpy.inf" ; q14_26 = "numpy.issubdtype" ; q14_26 = "numpy.lib.add_docstring" ; q14_26 = "numpy.lib.add_newdoc" ; q14_26 = "numpy.lib.array_utils.byte_bounds" ; q14_26 = "numpy.lib.npyio.DataSource" ; q14_26 = "numpy.lib.tracemalloc_domain" ; q14_26 = "numpy.longdouble" ; q14_26 = "numpy.nan" ; q14_26 = "numpy.prod" ; q14_26 = "numpy.rec.format_parser" ; q14_26 = "numpy.round" ; q14_26 = "numpy.str_" ; q14_26 = "numpy.trapezoid" ; q14_26 = "numpy.vstack"), node(_, c13_26, _, _, _), IID = c13_26, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "nan").
+
+// NPY201_nbytes(n): a finding at node n, from clause `nbytes`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_nbytes(at: node, name: loc) code "NPY201" "Use `np.dtype(<dtype>).itemsize` instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_nbytes(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.nbytes"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_ninf(n): a finding at node n, from clause `ninf`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_ninf(at: node, name: loc) code "NPY201" "Use `-np.inf` instead of `{name}`; NumPy 2.0 removes the old name."
+    suppress noqa "NPY201"
+NPY201_ninf(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.NINF"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_nzero(n): a finding at node n, from clause `nzero`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_nzero(at: node, name: loc) code "NPY201" "Use `-0.0` instead of `{name}`; NumPy 2.0 removes the old name."
+    suppress noqa "NPY201"
+NPY201_nzero(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.NZERO"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_longfloat(n): a finding at node n, from clause `longfloat`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_longfloat(at: node, name: loc) code "NPY201" "Use `numpy.longdouble` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_longfloat(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.longfloat"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_27, "try_statement"), kind(p1_27, "try_statement"), npy201_catches_attribute_error(p1_27), field(p1_27, "body", c2_27), has(c2_27, c3_27, "attribute"), sym_of(c3_27, q4_27), npy201_set_4(q4_27), field(c3_27, "attribute", c5_27), kind(c5_27, "identifier"), node(_, c5_27, _, _, _), TID = c5_27, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_28), (st9_28 = b8_28 ; within(b8_28, st9_28)), npy201_in_handler(st9_28), within_stop(st9_28, p10_28, "try_statement"), kind(p10_28, "try_statement"), npy201_catches_import_error(p10_28), field(p10_28, "body", c11_28), has(c11_28, c12_28, "import_from_statement"), has(c12_28, c13_28, "dotted_name"), npy201_statement_name(c13_28, q14_28), (q14_28 = "ast.literal_eval" ; q14_28 = "inspect.getsource" ; q14_28 = "numpy.all" ; q14_28 = "numpy.any" ; q14_28 = "numpy.asmatrix" ; q14_28 = "numpy.bytes_" ; q14_28 = "numpy.char.chararray" ; q14_28 = "numpy.char.compare_chararrays" ; q14_28 = "numpy.clongdouble" ; q14_28 = "numpy.complex128" ; q14_28 = "numpy.complex64" ; q14_28 = "numpy.cumprod" ; q14_28 = "numpy.exceptions.AxisError" ; q14_28 = "numpy.exceptions.ComplexWarning" ; q14_28 = "numpy.exceptions.DTypePromotionError" ; q14_28 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_28 = "numpy.exceptions.RankWarning" ; q14_28 = "numpy.exceptions.TooHardError" ; q14_28 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_28 = "numpy.float64" ; q14_28 = "numpy.inf" ; q14_28 = "numpy.issubdtype" ; q14_28 = "numpy.lib.add_docstring" ; q14_28 = "numpy.lib.add_newdoc" ; q14_28 = "numpy.lib.array_utils.byte_bounds" ; q14_28 = "numpy.lib.npyio.DataSource" ; q14_28 = "numpy.lib.tracemalloc_domain" ; q14_28 = "numpy.longdouble" ; q14_28 = "numpy.nan" ; q14_28 = "numpy.prod" ; q14_28 = "numpy.rec.format_parser" ; q14_28 = "numpy.round" ; q14_28 = "numpy.str_" ; q14_28 = "numpy.trapezoid" ; q14_28 = "numpy.vstack"), node(_, c13_28, _, _, _), IID = c13_28, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "longdouble").
+
+// NPY201_lookfor(n): a finding at node n, from clause `lookfor`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_lookfor(at: node, name: loc) code "NPY201" "Search NumPy's documentation directly instead of calling `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_lookfor(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.lookfor"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_product(n): a finding at node n, from clause `product`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_product(at: node, name: loc) code "NPY201" "Use `numpy.prod` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_product(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.product"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_29, "try_statement"), kind(p1_29, "try_statement"), npy201_catches_attribute_error(p1_29), field(p1_29, "body", c2_29), has(c2_29, c3_29, "attribute"), sym_of(c3_29, q4_29), npy201_set_4(q4_29), field(c3_29, "attribute", c5_29), kind(c5_29, "identifier"), node(_, c5_29, _, _, _), TID = c5_29, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_30), (st9_30 = b8_30 ; within(b8_30, st9_30)), npy201_in_handler(st9_30), within_stop(st9_30, p10_30, "try_statement"), kind(p10_30, "try_statement"), npy201_catches_import_error(p10_30), field(p10_30, "body", c11_30), has(c11_30, c12_30, "import_from_statement"), has(c12_30, c13_30, "dotted_name"), npy201_statement_name(c13_30, q14_30), (q14_30 = "ast.literal_eval" ; q14_30 = "inspect.getsource" ; q14_30 = "numpy.all" ; q14_30 = "numpy.any" ; q14_30 = "numpy.asmatrix" ; q14_30 = "numpy.bytes_" ; q14_30 = "numpy.char.chararray" ; q14_30 = "numpy.char.compare_chararrays" ; q14_30 = "numpy.clongdouble" ; q14_30 = "numpy.complex128" ; q14_30 = "numpy.complex64" ; q14_30 = "numpy.cumprod" ; q14_30 = "numpy.exceptions.AxisError" ; q14_30 = "numpy.exceptions.ComplexWarning" ; q14_30 = "numpy.exceptions.DTypePromotionError" ; q14_30 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_30 = "numpy.exceptions.RankWarning" ; q14_30 = "numpy.exceptions.TooHardError" ; q14_30 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_30 = "numpy.float64" ; q14_30 = "numpy.inf" ; q14_30 = "numpy.issubdtype" ; q14_30 = "numpy.lib.add_docstring" ; q14_30 = "numpy.lib.add_newdoc" ; q14_30 = "numpy.lib.array_utils.byte_bounds" ; q14_30 = "numpy.lib.npyio.DataSource" ; q14_30 = "numpy.lib.tracemalloc_domain" ; q14_30 = "numpy.longdouble" ; q14_30 = "numpy.nan" ; q14_30 = "numpy.prod" ; q14_30 = "numpy.rec.format_parser" ; q14_30 = "numpy.round" ; q14_30 = "numpy.str_" ; q14_30 = "numpy.trapezoid" ; q14_30 = "numpy.vstack"), node(_, c13_30, _, _, _), IID = c13_30, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "prod").
+
+// NPY201_pzero(n): a finding at node n, from clause `pzero`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_pzero(at: node, name: loc) code "NPY201" "Use `0.0` instead of `{name}`; NumPy 2.0 removes the old name."
+    suppress noqa "NPY201"
+NPY201_pzero(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.PZERO"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_recfromcsv(n): a finding at node n, from clause `recfromcsv`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_recfromcsv(at: node, name: loc) code "NPY201" "Use `np.genfromtxt` with a comma delimiter instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_recfromcsv(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.recfromcsv"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_recfromtxt(n): a finding at node n, from clause `recfromtxt`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_recfromtxt(at: node, name: loc) code "NPY201" "Use `np.genfromtxt` instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_recfromtxt(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.recfromtxt"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_round_underscore(n): a finding at node n, from clause `round-underscore`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_round_underscore(at: node, name: loc) code "NPY201" "Use `numpy.round` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_round_underscore(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.round_"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_31, "try_statement"), kind(p1_31, "try_statement"), npy201_catches_attribute_error(p1_31), field(p1_31, "body", c2_31), has(c2_31, c3_31, "attribute"), sym_of(c3_31, q4_31), npy201_set_4(q4_31), field(c3_31, "attribute", c5_31), kind(c5_31, "identifier"), node(_, c5_31, _, _, _), TID = c5_31, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_32), (st9_32 = b8_32 ; within(b8_32, st9_32)), npy201_in_handler(st9_32), within_stop(st9_32, p10_32, "try_statement"), kind(p10_32, "try_statement"), npy201_catches_import_error(p10_32), field(p10_32, "body", c11_32), has(c11_32, c12_32, "import_from_statement"), has(c12_32, c13_32, "dotted_name"), npy201_statement_name(c13_32, q14_32), (q14_32 = "ast.literal_eval" ; q14_32 = "inspect.getsource" ; q14_32 = "numpy.all" ; q14_32 = "numpy.any" ; q14_32 = "numpy.asmatrix" ; q14_32 = "numpy.bytes_" ; q14_32 = "numpy.char.chararray" ; q14_32 = "numpy.char.compare_chararrays" ; q14_32 = "numpy.clongdouble" ; q14_32 = "numpy.complex128" ; q14_32 = "numpy.complex64" ; q14_32 = "numpy.cumprod" ; q14_32 = "numpy.exceptions.AxisError" ; q14_32 = "numpy.exceptions.ComplexWarning" ; q14_32 = "numpy.exceptions.DTypePromotionError" ; q14_32 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_32 = "numpy.exceptions.RankWarning" ; q14_32 = "numpy.exceptions.TooHardError" ; q14_32 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_32 = "numpy.float64" ; q14_32 = "numpy.inf" ; q14_32 = "numpy.issubdtype" ; q14_32 = "numpy.lib.add_docstring" ; q14_32 = "numpy.lib.add_newdoc" ; q14_32 = "numpy.lib.array_utils.byte_bounds" ; q14_32 = "numpy.lib.npyio.DataSource" ; q14_32 = "numpy.lib.tracemalloc_domain" ; q14_32 = "numpy.longdouble" ; q14_32 = "numpy.nan" ; q14_32 = "numpy.prod" ; q14_32 = "numpy.rec.format_parser" ; q14_32 = "numpy.round" ; q14_32 = "numpy.str_" ; q14_32 = "numpy.trapezoid" ; q14_32 = "numpy.vstack"), node(_, c13_32, _, _, _), IID = c13_32, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "round").
+
+// NPY201_safe_eval(n): a finding at node n, from clause `safe-eval`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_safe_eval(at: node, name: loc) code "NPY201" "Use `ast.literal_eval` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_safe_eval(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.safe_eval"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_33, "try_statement"), kind(p1_33, "try_statement"), npy201_catches_attribute_error(p1_33), field(p1_33, "body", c2_33), has(c2_33, c3_33, "attribute"), sym_of(c3_33, q4_33), npy201_set_4(q4_33), field(c3_33, "attribute", c5_33), kind(c5_33, "identifier"), node(_, c5_33, _, _, _), TID = c5_33, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_34), (st9_34 = b8_34 ; within(b8_34, st9_34)), npy201_in_handler(st9_34), within_stop(st9_34, p10_34, "try_statement"), kind(p10_34, "try_statement"), npy201_catches_import_error(p10_34), field(p10_34, "body", c11_34), has(c11_34, c12_34, "import_from_statement"), has(c12_34, c13_34, "dotted_name"), npy201_statement_name(c13_34, q14_34), (q14_34 = "ast.literal_eval" ; q14_34 = "inspect.getsource" ; q14_34 = "numpy.all" ; q14_34 = "numpy.any" ; q14_34 = "numpy.asmatrix" ; q14_34 = "numpy.bytes_" ; q14_34 = "numpy.char.chararray" ; q14_34 = "numpy.char.compare_chararrays" ; q14_34 = "numpy.clongdouble" ; q14_34 = "numpy.complex128" ; q14_34 = "numpy.complex64" ; q14_34 = "numpy.cumprod" ; q14_34 = "numpy.exceptions.AxisError" ; q14_34 = "numpy.exceptions.ComplexWarning" ; q14_34 = "numpy.exceptions.DTypePromotionError" ; q14_34 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_34 = "numpy.exceptions.RankWarning" ; q14_34 = "numpy.exceptions.TooHardError" ; q14_34 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_34 = "numpy.float64" ; q14_34 = "numpy.inf" ; q14_34 = "numpy.issubdtype" ; q14_34 = "numpy.lib.add_docstring" ; q14_34 = "numpy.lib.add_newdoc" ; q14_34 = "numpy.lib.array_utils.byte_bounds" ; q14_34 = "numpy.lib.npyio.DataSource" ; q14_34 = "numpy.lib.tracemalloc_domain" ; q14_34 = "numpy.longdouble" ; q14_34 = "numpy.nan" ; q14_34 = "numpy.prod" ; q14_34 = "numpy.rec.format_parser" ; q14_34 = "numpy.round" ; q14_34 = "numpy.str_" ; q14_34 = "numpy.trapezoid" ; q14_34 = "numpy.vstack"), node(_, c13_34, _, _, _), IID = c13_34, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "literal_eval").
+
+// NPY201_set_string_function(n): a finding at node n, from clause `set-string-function`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_set_string_function(at: node, name: loc) code "NPY201" "Use `np.set_printoptions` to customize how NumPy objects print instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_set_string_function(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.set_string_function"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_singlecomplex(n): a finding at node n, from clause `singlecomplex`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_singlecomplex(at: node, name: loc) code "NPY201" "Use `numpy.complex64` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_singlecomplex(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.singlecomplex"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_35, "try_statement"), kind(p1_35, "try_statement"), npy201_catches_attribute_error(p1_35), field(p1_35, "body", c2_35), has(c2_35, c3_35, "attribute"), sym_of(c3_35, q4_35), npy201_set_4(q4_35), field(c3_35, "attribute", c5_35), kind(c5_35, "identifier"), node(_, c5_35, _, _, _), TID = c5_35, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_36), (st9_36 = b8_36 ; within(b8_36, st9_36)), npy201_in_handler(st9_36), within_stop(st9_36, p10_36, "try_statement"), kind(p10_36, "try_statement"), npy201_catches_import_error(p10_36), field(p10_36, "body", c11_36), has(c11_36, c12_36, "import_from_statement"), has(c12_36, c13_36, "dotted_name"), npy201_statement_name(c13_36, q14_36), (q14_36 = "ast.literal_eval" ; q14_36 = "inspect.getsource" ; q14_36 = "numpy.all" ; q14_36 = "numpy.any" ; q14_36 = "numpy.asmatrix" ; q14_36 = "numpy.bytes_" ; q14_36 = "numpy.char.chararray" ; q14_36 = "numpy.char.compare_chararrays" ; q14_36 = "numpy.clongdouble" ; q14_36 = "numpy.complex128" ; q14_36 = "numpy.complex64" ; q14_36 = "numpy.cumprod" ; q14_36 = "numpy.exceptions.AxisError" ; q14_36 = "numpy.exceptions.ComplexWarning" ; q14_36 = "numpy.exceptions.DTypePromotionError" ; q14_36 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_36 = "numpy.exceptions.RankWarning" ; q14_36 = "numpy.exceptions.TooHardError" ; q14_36 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_36 = "numpy.float64" ; q14_36 = "numpy.inf" ; q14_36 = "numpy.issubdtype" ; q14_36 = "numpy.lib.add_docstring" ; q14_36 = "numpy.lib.add_newdoc" ; q14_36 = "numpy.lib.array_utils.byte_bounds" ; q14_36 = "numpy.lib.npyio.DataSource" ; q14_36 = "numpy.lib.tracemalloc_domain" ; q14_36 = "numpy.longdouble" ; q14_36 = "numpy.nan" ; q14_36 = "numpy.prod" ; q14_36 = "numpy.rec.format_parser" ; q14_36 = "numpy.round" ; q14_36 = "numpy.str_" ; q14_36 = "numpy.trapezoid" ; q14_36 = "numpy.vstack"), node(_, c13_36, _, _, _), IID = c13_36, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "complex64").
+
+// NPY201_string_underscore(n): a finding at node n, from clause `string-underscore`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_string_underscore(at: node, name: loc) code "NPY201" "Use `numpy.bytes_` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_string_underscore(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.string_"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_37, "try_statement"), kind(p1_37, "try_statement"), npy201_catches_attribute_error(p1_37), field(p1_37, "body", c2_37), has(c2_37, c3_37, "attribute"), sym_of(c3_37, q4_37), npy201_set_4(q4_37), field(c3_37, "attribute", c5_37), kind(c5_37, "identifier"), node(_, c5_37, _, _, _), TID = c5_37, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_38), (st9_38 = b8_38 ; within(b8_38, st9_38)), npy201_in_handler(st9_38), within_stop(st9_38, p10_38, "try_statement"), kind(p10_38, "try_statement"), npy201_catches_import_error(p10_38), field(p10_38, "body", c11_38), has(c11_38, c12_38, "import_from_statement"), has(c12_38, c13_38, "dotted_name"), npy201_statement_name(c13_38, q14_38), (q14_38 = "ast.literal_eval" ; q14_38 = "inspect.getsource" ; q14_38 = "numpy.all" ; q14_38 = "numpy.any" ; q14_38 = "numpy.asmatrix" ; q14_38 = "numpy.bytes_" ; q14_38 = "numpy.char.chararray" ; q14_38 = "numpy.char.compare_chararrays" ; q14_38 = "numpy.clongdouble" ; q14_38 = "numpy.complex128" ; q14_38 = "numpy.complex64" ; q14_38 = "numpy.cumprod" ; q14_38 = "numpy.exceptions.AxisError" ; q14_38 = "numpy.exceptions.ComplexWarning" ; q14_38 = "numpy.exceptions.DTypePromotionError" ; q14_38 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_38 = "numpy.exceptions.RankWarning" ; q14_38 = "numpy.exceptions.TooHardError" ; q14_38 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_38 = "numpy.float64" ; q14_38 = "numpy.inf" ; q14_38 = "numpy.issubdtype" ; q14_38 = "numpy.lib.add_docstring" ; q14_38 = "numpy.lib.add_newdoc" ; q14_38 = "numpy.lib.array_utils.byte_bounds" ; q14_38 = "numpy.lib.npyio.DataSource" ; q14_38 = "numpy.lib.tracemalloc_domain" ; q14_38 = "numpy.longdouble" ; q14_38 = "numpy.nan" ; q14_38 = "numpy.prod" ; q14_38 = "numpy.rec.format_parser" ; q14_38 = "numpy.round" ; q14_38 = "numpy.str_" ; q14_38 = "numpy.trapezoid" ; q14_38 = "numpy.vstack"), node(_, c13_38, _, _, _), IID = c13_38, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "bytes_").
+
+// NPY201_sometrue(n): a finding at node n, from clause `sometrue`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_sometrue(at: node, name: loc) code "NPY201" "Use `numpy.any` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_sometrue(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.sometrue"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_39, "try_statement"), kind(p1_39, "try_statement"), npy201_catches_attribute_error(p1_39), field(p1_39, "body", c2_39), has(c2_39, c3_39, "attribute"), sym_of(c3_39, q4_39), npy201_set_4(q4_39), field(c3_39, "attribute", c5_39), kind(c5_39, "identifier"), node(_, c5_39, _, _, _), TID = c5_39, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_40), (st9_40 = b8_40 ; within(b8_40, st9_40)), npy201_in_handler(st9_40), within_stop(st9_40, p10_40, "try_statement"), kind(p10_40, "try_statement"), npy201_catches_import_error(p10_40), field(p10_40, "body", c11_40), has(c11_40, c12_40, "import_from_statement"), has(c12_40, c13_40, "dotted_name"), npy201_statement_name(c13_40, q14_40), (q14_40 = "ast.literal_eval" ; q14_40 = "inspect.getsource" ; q14_40 = "numpy.all" ; q14_40 = "numpy.any" ; q14_40 = "numpy.asmatrix" ; q14_40 = "numpy.bytes_" ; q14_40 = "numpy.char.chararray" ; q14_40 = "numpy.char.compare_chararrays" ; q14_40 = "numpy.clongdouble" ; q14_40 = "numpy.complex128" ; q14_40 = "numpy.complex64" ; q14_40 = "numpy.cumprod" ; q14_40 = "numpy.exceptions.AxisError" ; q14_40 = "numpy.exceptions.ComplexWarning" ; q14_40 = "numpy.exceptions.DTypePromotionError" ; q14_40 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_40 = "numpy.exceptions.RankWarning" ; q14_40 = "numpy.exceptions.TooHardError" ; q14_40 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_40 = "numpy.float64" ; q14_40 = "numpy.inf" ; q14_40 = "numpy.issubdtype" ; q14_40 = "numpy.lib.add_docstring" ; q14_40 = "numpy.lib.add_newdoc" ; q14_40 = "numpy.lib.array_utils.byte_bounds" ; q14_40 = "numpy.lib.npyio.DataSource" ; q14_40 = "numpy.lib.tracemalloc_domain" ; q14_40 = "numpy.longdouble" ; q14_40 = "numpy.nan" ; q14_40 = "numpy.prod" ; q14_40 = "numpy.rec.format_parser" ; q14_40 = "numpy.round" ; q14_40 = "numpy.str_" ; q14_40 = "numpy.trapezoid" ; q14_40 = "numpy.vstack"), node(_, c13_40, _, _, _), IID = c13_40, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "any").
+
+// NPY201_source(n): a finding at node n, from clause `source`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_source(at: node, name: loc) code "NPY201" "Use `inspect.getsource` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_source(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.source"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_41, "try_statement"), kind(p1_41, "try_statement"), npy201_catches_attribute_error(p1_41), field(p1_41, "body", c2_41), has(c2_41, c3_41, "attribute"), sym_of(c3_41, q4_41), npy201_set_4(q4_41), field(c3_41, "attribute", c5_41), kind(c5_41, "identifier"), node(_, c5_41, _, _, _), TID = c5_41, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_42), (st9_42 = b8_42 ; within(b8_42, st9_42)), npy201_in_handler(st9_42), within_stop(st9_42, p10_42, "try_statement"), kind(p10_42, "try_statement"), npy201_catches_import_error(p10_42), field(p10_42, "body", c11_42), has(c11_42, c12_42, "import_from_statement"), has(c12_42, c13_42, "dotted_name"), npy201_statement_name(c13_42, q14_42), (q14_42 = "ast.literal_eval" ; q14_42 = "inspect.getsource" ; q14_42 = "numpy.all" ; q14_42 = "numpy.any" ; q14_42 = "numpy.asmatrix" ; q14_42 = "numpy.bytes_" ; q14_42 = "numpy.char.chararray" ; q14_42 = "numpy.char.compare_chararrays" ; q14_42 = "numpy.clongdouble" ; q14_42 = "numpy.complex128" ; q14_42 = "numpy.complex64" ; q14_42 = "numpy.cumprod" ; q14_42 = "numpy.exceptions.AxisError" ; q14_42 = "numpy.exceptions.ComplexWarning" ; q14_42 = "numpy.exceptions.DTypePromotionError" ; q14_42 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_42 = "numpy.exceptions.RankWarning" ; q14_42 = "numpy.exceptions.TooHardError" ; q14_42 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_42 = "numpy.float64" ; q14_42 = "numpy.inf" ; q14_42 = "numpy.issubdtype" ; q14_42 = "numpy.lib.add_docstring" ; q14_42 = "numpy.lib.add_newdoc" ; q14_42 = "numpy.lib.array_utils.byte_bounds" ; q14_42 = "numpy.lib.npyio.DataSource" ; q14_42 = "numpy.lib.tracemalloc_domain" ; q14_42 = "numpy.longdouble" ; q14_42 = "numpy.nan" ; q14_42 = "numpy.prod" ; q14_42 = "numpy.rec.format_parser" ; q14_42 = "numpy.round" ; q14_42 = "numpy.str_" ; q14_42 = "numpy.trapezoid" ; q14_42 = "numpy.vstack"), node(_, c13_42, _, _, _), IID = c13_42, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "getsource").
+
+// NPY201_tracemalloc_domain(n): a finding at node n, from clause `tracemalloc-domain`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_tracemalloc_domain(at: node, name: loc) code "NPY201" "Use `numpy.lib.tracemalloc_domain` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_tracemalloc_domain(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.tracemalloc_domain"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_43, "try_statement"), kind(p1_43, "try_statement"), npy201_catches_attribute_error(p1_43), field(p1_43, "body", c2_43), has(c2_43, c3_43, "attribute"), sym_of(c3_43, q4_43), npy201_set_4(q4_43), field(c3_43, "attribute", c5_43), kind(c5_43, "identifier"), node(_, c5_43, _, _, _), TID = c5_43, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_44), (st9_44 = b8_44 ; within(b8_44, st9_44)), npy201_in_handler(st9_44), within_stop(st9_44, p10_44, "try_statement"), kind(p10_44, "try_statement"), npy201_catches_import_error(p10_44), field(p10_44, "body", c11_44), has(c11_44, c12_44, "import_from_statement"), has(c12_44, c13_44, "dotted_name"), npy201_statement_name(c13_44, q14_44), (q14_44 = "ast.literal_eval" ; q14_44 = "inspect.getsource" ; q14_44 = "numpy.all" ; q14_44 = "numpy.any" ; q14_44 = "numpy.asmatrix" ; q14_44 = "numpy.bytes_" ; q14_44 = "numpy.char.chararray" ; q14_44 = "numpy.char.compare_chararrays" ; q14_44 = "numpy.clongdouble" ; q14_44 = "numpy.complex128" ; q14_44 = "numpy.complex64" ; q14_44 = "numpy.cumprod" ; q14_44 = "numpy.exceptions.AxisError" ; q14_44 = "numpy.exceptions.ComplexWarning" ; q14_44 = "numpy.exceptions.DTypePromotionError" ; q14_44 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_44 = "numpy.exceptions.RankWarning" ; q14_44 = "numpy.exceptions.TooHardError" ; q14_44 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_44 = "numpy.float64" ; q14_44 = "numpy.inf" ; q14_44 = "numpy.issubdtype" ; q14_44 = "numpy.lib.add_docstring" ; q14_44 = "numpy.lib.add_newdoc" ; q14_44 = "numpy.lib.array_utils.byte_bounds" ; q14_44 = "numpy.lib.npyio.DataSource" ; q14_44 = "numpy.lib.tracemalloc_domain" ; q14_44 = "numpy.longdouble" ; q14_44 = "numpy.nan" ; q14_44 = "numpy.prod" ; q14_44 = "numpy.rec.format_parser" ; q14_44 = "numpy.round" ; q14_44 = "numpy.str_" ; q14_44 = "numpy.trapezoid" ; q14_44 = "numpy.vstack"), node(_, c13_44, _, _, _), IID = c13_44, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "tracemalloc_domain").
+
+// NPY201_trapz(n): a finding at node n, from clause `trapz`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_trapz(at: node, name: loc) code "NPY201" "Use `numpy.trapezoid` instead of `{name}` on NumPy 2.0; keep `{name}` while NumPy 1.x must still be supported."
+    suppress noqa "NPY201"
+NPY201_trapz(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.trapz"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_45, "try_statement"), kind(p1_45, "try_statement"), npy201_catches_attribute_error(p1_45), field(p1_45, "body", c2_45), has(c2_45, c3_45, "attribute"), sym_of(c3_45, q4_45), npy201_set_4(q4_45), field(c3_45, "attribute", c5_45), kind(c5_45, "identifier"), node(_, c5_45, _, _, _), TID = c5_45, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_46), (st9_46 = b8_46 ; within(b8_46, st9_46)), npy201_in_handler(st9_46), within_stop(st9_46, p10_46, "try_statement"), kind(p10_46, "try_statement"), npy201_catches_import_error(p10_46), field(p10_46, "body", c11_46), has(c11_46, c12_46, "import_from_statement"), has(c12_46, c13_46, "dotted_name"), npy201_statement_name(c13_46, q14_46), (q14_46 = "ast.literal_eval" ; q14_46 = "inspect.getsource" ; q14_46 = "numpy.all" ; q14_46 = "numpy.any" ; q14_46 = "numpy.asmatrix" ; q14_46 = "numpy.bytes_" ; q14_46 = "numpy.char.chararray" ; q14_46 = "numpy.char.compare_chararrays" ; q14_46 = "numpy.clongdouble" ; q14_46 = "numpy.complex128" ; q14_46 = "numpy.complex64" ; q14_46 = "numpy.cumprod" ; q14_46 = "numpy.exceptions.AxisError" ; q14_46 = "numpy.exceptions.ComplexWarning" ; q14_46 = "numpy.exceptions.DTypePromotionError" ; q14_46 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_46 = "numpy.exceptions.RankWarning" ; q14_46 = "numpy.exceptions.TooHardError" ; q14_46 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_46 = "numpy.float64" ; q14_46 = "numpy.inf" ; q14_46 = "numpy.issubdtype" ; q14_46 = "numpy.lib.add_docstring" ; q14_46 = "numpy.lib.add_newdoc" ; q14_46 = "numpy.lib.array_utils.byte_bounds" ; q14_46 = "numpy.lib.npyio.DataSource" ; q14_46 = "numpy.lib.tracemalloc_domain" ; q14_46 = "numpy.longdouble" ; q14_46 = "numpy.nan" ; q14_46 = "numpy.prod" ; q14_46 = "numpy.rec.format_parser" ; q14_46 = "numpy.round" ; q14_46 = "numpy.str_" ; q14_46 = "numpy.trapezoid" ; q14_46 = "numpy.vstack"), node(_, c13_46, _, _, _), IID = c13_46, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "trapezoid").
+
+// NPY201_unicode_underscore(n): a finding at node n, from clause `unicode-underscore`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_unicode_underscore(at: node, name: loc) code "NPY201" "Use `numpy.str_` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_unicode_underscore(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.unicode_"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_47, "try_statement"), kind(p1_47, "try_statement"), npy201_catches_attribute_error(p1_47), field(p1_47, "body", c2_47), has(c2_47, c3_47, "attribute"), sym_of(c3_47, q4_47), npy201_set_4(q4_47), field(c3_47, "attribute", c5_47), kind(c5_47, "identifier"), node(_, c5_47, _, _, _), TID = c5_47, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_48), (st9_48 = b8_48 ; within(b8_48, st9_48)), npy201_in_handler(st9_48), within_stop(st9_48, p10_48, "try_statement"), kind(p10_48, "try_statement"), npy201_catches_import_error(p10_48), field(p10_48, "body", c11_48), has(c11_48, c12_48, "import_from_statement"), has(c12_48, c13_48, "dotted_name"), npy201_statement_name(c13_48, q14_48), (q14_48 = "ast.literal_eval" ; q14_48 = "inspect.getsource" ; q14_48 = "numpy.all" ; q14_48 = "numpy.any" ; q14_48 = "numpy.asmatrix" ; q14_48 = "numpy.bytes_" ; q14_48 = "numpy.char.chararray" ; q14_48 = "numpy.char.compare_chararrays" ; q14_48 = "numpy.clongdouble" ; q14_48 = "numpy.complex128" ; q14_48 = "numpy.complex64" ; q14_48 = "numpy.cumprod" ; q14_48 = "numpy.exceptions.AxisError" ; q14_48 = "numpy.exceptions.ComplexWarning" ; q14_48 = "numpy.exceptions.DTypePromotionError" ; q14_48 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_48 = "numpy.exceptions.RankWarning" ; q14_48 = "numpy.exceptions.TooHardError" ; q14_48 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_48 = "numpy.float64" ; q14_48 = "numpy.inf" ; q14_48 = "numpy.issubdtype" ; q14_48 = "numpy.lib.add_docstring" ; q14_48 = "numpy.lib.add_newdoc" ; q14_48 = "numpy.lib.array_utils.byte_bounds" ; q14_48 = "numpy.lib.npyio.DataSource" ; q14_48 = "numpy.lib.tracemalloc_domain" ; q14_48 = "numpy.longdouble" ; q14_48 = "numpy.nan" ; q14_48 = "numpy.prod" ; q14_48 = "numpy.rec.format_parser" ; q14_48 = "numpy.round" ; q14_48 = "numpy.str_" ; q14_48 = "numpy.trapezoid" ; q14_48 = "numpy.vstack"), node(_, c13_48, _, _, _), IID = c13_48, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "str_").
+
+// NPY201_who(n): a finding at node n, from clause `who`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_who(at: node, name: loc) code "NPY201" "Use an IDE variable explorer or `locals()` instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_who(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.who"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_row_stack(n): a finding at node n, from clause `row-stack`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_row_stack(at: node, name: loc) code "NPY201" "Use `numpy.vstack` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_row_stack(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.row_stack"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_49, "try_statement"), kind(p1_49, "try_statement"), npy201_catches_attribute_error(p1_49), field(p1_49, "body", c2_49), has(c2_49, c3_49, "attribute"), sym_of(c3_49, q4_49), npy201_set_4(q4_49), field(c3_49, "attribute", c5_49), kind(c5_49, "identifier"), node(_, c5_49, _, _, _), TID = c5_49, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_50), (st9_50 = b8_50 ; within(b8_50, st9_50)), npy201_in_handler(st9_50), within_stop(st9_50, p10_50, "try_statement"), kind(p10_50, "try_statement"), npy201_catches_import_error(p10_50), field(p10_50, "body", c11_50), has(c11_50, c12_50, "import_from_statement"), has(c12_50, c13_50, "dotted_name"), npy201_statement_name(c13_50, q14_50), (q14_50 = "ast.literal_eval" ; q14_50 = "inspect.getsource" ; q14_50 = "numpy.all" ; q14_50 = "numpy.any" ; q14_50 = "numpy.asmatrix" ; q14_50 = "numpy.bytes_" ; q14_50 = "numpy.char.chararray" ; q14_50 = "numpy.char.compare_chararrays" ; q14_50 = "numpy.clongdouble" ; q14_50 = "numpy.complex128" ; q14_50 = "numpy.complex64" ; q14_50 = "numpy.cumprod" ; q14_50 = "numpy.exceptions.AxisError" ; q14_50 = "numpy.exceptions.ComplexWarning" ; q14_50 = "numpy.exceptions.DTypePromotionError" ; q14_50 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_50 = "numpy.exceptions.RankWarning" ; q14_50 = "numpy.exceptions.TooHardError" ; q14_50 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_50 = "numpy.float64" ; q14_50 = "numpy.inf" ; q14_50 = "numpy.issubdtype" ; q14_50 = "numpy.lib.add_docstring" ; q14_50 = "numpy.lib.add_newdoc" ; q14_50 = "numpy.lib.array_utils.byte_bounds" ; q14_50 = "numpy.lib.npyio.DataSource" ; q14_50 = "numpy.lib.tracemalloc_domain" ; q14_50 = "numpy.longdouble" ; q14_50 = "numpy.nan" ; q14_50 = "numpy.prod" ; q14_50 = "numpy.rec.format_parser" ; q14_50 = "numpy.round" ; q14_50 = "numpy.str_" ; q14_50 = "numpy.trapezoid" ; q14_50 = "numpy.vstack"), node(_, c13_50, _, _, _), IID = c13_50, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "vstack").
+
+// NPY201_axiserror(n): a finding at node n, from clause `axiserror`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_axiserror(at: node, name: loc) code "NPY201" "Use `numpy.exceptions.AxisError` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_axiserror(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.AxisError"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_51, "try_statement"), kind(p1_51, "try_statement"), npy201_catches_attribute_error(p1_51), field(p1_51, "body", c2_51), has(c2_51, c3_51, "attribute"), sym_of(c3_51, q4_51), npy201_set_4(q4_51), field(c3_51, "attribute", c5_51), kind(c5_51, "identifier"), node(_, c5_51, _, _, _), TID = c5_51, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_52), (st9_52 = b8_52 ; within(b8_52, st9_52)), npy201_in_handler(st9_52), within_stop(st9_52, p10_52, "try_statement"), kind(p10_52, "try_statement"), npy201_catches_import_error(p10_52), field(p10_52, "body", c11_52), has(c11_52, c12_52, "import_from_statement"), has(c12_52, c13_52, "dotted_name"), npy201_statement_name(c13_52, q14_52), (q14_52 = "ast.literal_eval" ; q14_52 = "inspect.getsource" ; q14_52 = "numpy.all" ; q14_52 = "numpy.any" ; q14_52 = "numpy.asmatrix" ; q14_52 = "numpy.bytes_" ; q14_52 = "numpy.char.chararray" ; q14_52 = "numpy.char.compare_chararrays" ; q14_52 = "numpy.clongdouble" ; q14_52 = "numpy.complex128" ; q14_52 = "numpy.complex64" ; q14_52 = "numpy.cumprod" ; q14_52 = "numpy.exceptions.AxisError" ; q14_52 = "numpy.exceptions.ComplexWarning" ; q14_52 = "numpy.exceptions.DTypePromotionError" ; q14_52 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_52 = "numpy.exceptions.RankWarning" ; q14_52 = "numpy.exceptions.TooHardError" ; q14_52 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_52 = "numpy.float64" ; q14_52 = "numpy.inf" ; q14_52 = "numpy.issubdtype" ; q14_52 = "numpy.lib.add_docstring" ; q14_52 = "numpy.lib.add_newdoc" ; q14_52 = "numpy.lib.array_utils.byte_bounds" ; q14_52 = "numpy.lib.npyio.DataSource" ; q14_52 = "numpy.lib.tracemalloc_domain" ; q14_52 = "numpy.longdouble" ; q14_52 = "numpy.nan" ; q14_52 = "numpy.prod" ; q14_52 = "numpy.rec.format_parser" ; q14_52 = "numpy.round" ; q14_52 = "numpy.str_" ; q14_52 = "numpy.trapezoid" ; q14_52 = "numpy.vstack"), node(_, c13_52, _, _, _), IID = c13_52, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "AxisError").
+
+// NPY201_complexwarning(n): a finding at node n, from clause `complexwarning`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_complexwarning(at: node, name: loc) code "NPY201" "Use `numpy.exceptions.ComplexWarning` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_complexwarning(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.ComplexWarning"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_53, "try_statement"), kind(p1_53, "try_statement"), npy201_catches_attribute_error(p1_53), field(p1_53, "body", c2_53), has(c2_53, c3_53, "attribute"), sym_of(c3_53, q4_53), npy201_set_4(q4_53), field(c3_53, "attribute", c5_53), kind(c5_53, "identifier"), node(_, c5_53, _, _, _), TID = c5_53, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_54), (st9_54 = b8_54 ; within(b8_54, st9_54)), npy201_in_handler(st9_54), within_stop(st9_54, p10_54, "try_statement"), kind(p10_54, "try_statement"), npy201_catches_import_error(p10_54), field(p10_54, "body", c11_54), has(c11_54, c12_54, "import_from_statement"), has(c12_54, c13_54, "dotted_name"), npy201_statement_name(c13_54, q14_54), (q14_54 = "ast.literal_eval" ; q14_54 = "inspect.getsource" ; q14_54 = "numpy.all" ; q14_54 = "numpy.any" ; q14_54 = "numpy.asmatrix" ; q14_54 = "numpy.bytes_" ; q14_54 = "numpy.char.chararray" ; q14_54 = "numpy.char.compare_chararrays" ; q14_54 = "numpy.clongdouble" ; q14_54 = "numpy.complex128" ; q14_54 = "numpy.complex64" ; q14_54 = "numpy.cumprod" ; q14_54 = "numpy.exceptions.AxisError" ; q14_54 = "numpy.exceptions.ComplexWarning" ; q14_54 = "numpy.exceptions.DTypePromotionError" ; q14_54 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_54 = "numpy.exceptions.RankWarning" ; q14_54 = "numpy.exceptions.TooHardError" ; q14_54 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_54 = "numpy.float64" ; q14_54 = "numpy.inf" ; q14_54 = "numpy.issubdtype" ; q14_54 = "numpy.lib.add_docstring" ; q14_54 = "numpy.lib.add_newdoc" ; q14_54 = "numpy.lib.array_utils.byte_bounds" ; q14_54 = "numpy.lib.npyio.DataSource" ; q14_54 = "numpy.lib.tracemalloc_domain" ; q14_54 = "numpy.longdouble" ; q14_54 = "numpy.nan" ; q14_54 = "numpy.prod" ; q14_54 = "numpy.rec.format_parser" ; q14_54 = "numpy.round" ; q14_54 = "numpy.str_" ; q14_54 = "numpy.trapezoid" ; q14_54 = "numpy.vstack"), node(_, c13_54, _, _, _), IID = c13_54, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "ComplexWarning").
+
+// NPY201_dtypepromotionerror(n): a finding at node n, from clause `dtypepromotionerror`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_dtypepromotionerror(at: node, name: loc) code "NPY201" "Use `numpy.exceptions.DTypePromotionError` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_dtypepromotionerror(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.DTypePromotionError"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_55, "try_statement"), kind(p1_55, "try_statement"), npy201_catches_attribute_error(p1_55), field(p1_55, "body", c2_55), has(c2_55, c3_55, "attribute"), sym_of(c3_55, q4_55), npy201_set_4(q4_55), field(c3_55, "attribute", c5_55), kind(c5_55, "identifier"), node(_, c5_55, _, _, _), TID = c5_55, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_56), (st9_56 = b8_56 ; within(b8_56, st9_56)), npy201_in_handler(st9_56), within_stop(st9_56, p10_56, "try_statement"), kind(p10_56, "try_statement"), npy201_catches_import_error(p10_56), field(p10_56, "body", c11_56), has(c11_56, c12_56, "import_from_statement"), has(c12_56, c13_56, "dotted_name"), npy201_statement_name(c13_56, q14_56), (q14_56 = "ast.literal_eval" ; q14_56 = "inspect.getsource" ; q14_56 = "numpy.all" ; q14_56 = "numpy.any" ; q14_56 = "numpy.asmatrix" ; q14_56 = "numpy.bytes_" ; q14_56 = "numpy.char.chararray" ; q14_56 = "numpy.char.compare_chararrays" ; q14_56 = "numpy.clongdouble" ; q14_56 = "numpy.complex128" ; q14_56 = "numpy.complex64" ; q14_56 = "numpy.cumprod" ; q14_56 = "numpy.exceptions.AxisError" ; q14_56 = "numpy.exceptions.ComplexWarning" ; q14_56 = "numpy.exceptions.DTypePromotionError" ; q14_56 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_56 = "numpy.exceptions.RankWarning" ; q14_56 = "numpy.exceptions.TooHardError" ; q14_56 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_56 = "numpy.float64" ; q14_56 = "numpy.inf" ; q14_56 = "numpy.issubdtype" ; q14_56 = "numpy.lib.add_docstring" ; q14_56 = "numpy.lib.add_newdoc" ; q14_56 = "numpy.lib.array_utils.byte_bounds" ; q14_56 = "numpy.lib.npyio.DataSource" ; q14_56 = "numpy.lib.tracemalloc_domain" ; q14_56 = "numpy.longdouble" ; q14_56 = "numpy.nan" ; q14_56 = "numpy.prod" ; q14_56 = "numpy.rec.format_parser" ; q14_56 = "numpy.round" ; q14_56 = "numpy.str_" ; q14_56 = "numpy.trapezoid" ; q14_56 = "numpy.vstack"), node(_, c13_56, _, _, _), IID = c13_56, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "DTypePromotionError").
+
+// NPY201_moduledeprecationwarning(n): a finding at node n, from clause `moduledeprecationwarning`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_moduledeprecationwarning(at: node, name: loc) code "NPY201" "Use `numpy.exceptions.ModuleDeprecationWarning` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_moduledeprecationwarning(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.ModuleDeprecationWarning"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_57, "try_statement"), kind(p1_57, "try_statement"), npy201_catches_attribute_error(p1_57), field(p1_57, "body", c2_57), has(c2_57, c3_57, "attribute"), sym_of(c3_57, q4_57), npy201_set_4(q4_57), field(c3_57, "attribute", c5_57), kind(c5_57, "identifier"), node(_, c5_57, _, _, _), TID = c5_57, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_58), (st9_58 = b8_58 ; within(b8_58, st9_58)), npy201_in_handler(st9_58), within_stop(st9_58, p10_58, "try_statement"), kind(p10_58, "try_statement"), npy201_catches_import_error(p10_58), field(p10_58, "body", c11_58), has(c11_58, c12_58, "import_from_statement"), has(c12_58, c13_58, "dotted_name"), npy201_statement_name(c13_58, q14_58), (q14_58 = "ast.literal_eval" ; q14_58 = "inspect.getsource" ; q14_58 = "numpy.all" ; q14_58 = "numpy.any" ; q14_58 = "numpy.asmatrix" ; q14_58 = "numpy.bytes_" ; q14_58 = "numpy.char.chararray" ; q14_58 = "numpy.char.compare_chararrays" ; q14_58 = "numpy.clongdouble" ; q14_58 = "numpy.complex128" ; q14_58 = "numpy.complex64" ; q14_58 = "numpy.cumprod" ; q14_58 = "numpy.exceptions.AxisError" ; q14_58 = "numpy.exceptions.ComplexWarning" ; q14_58 = "numpy.exceptions.DTypePromotionError" ; q14_58 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_58 = "numpy.exceptions.RankWarning" ; q14_58 = "numpy.exceptions.TooHardError" ; q14_58 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_58 = "numpy.float64" ; q14_58 = "numpy.inf" ; q14_58 = "numpy.issubdtype" ; q14_58 = "numpy.lib.add_docstring" ; q14_58 = "numpy.lib.add_newdoc" ; q14_58 = "numpy.lib.array_utils.byte_bounds" ; q14_58 = "numpy.lib.npyio.DataSource" ; q14_58 = "numpy.lib.tracemalloc_domain" ; q14_58 = "numpy.longdouble" ; q14_58 = "numpy.nan" ; q14_58 = "numpy.prod" ; q14_58 = "numpy.rec.format_parser" ; q14_58 = "numpy.round" ; q14_58 = "numpy.str_" ; q14_58 = "numpy.trapezoid" ; q14_58 = "numpy.vstack"), node(_, c13_58, _, _, _), IID = c13_58, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "ModuleDeprecationWarning").
+
+// NPY201_rankwarning(n): a finding at node n, from clause `rankwarning`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_rankwarning(at: node, name: loc) code "NPY201" "Use `numpy.exceptions.RankWarning` instead of `{name}` on NumPy 2.0; keep `{name}` while NumPy 1.x must still be supported."
+    suppress noqa "NPY201"
+NPY201_rankwarning(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.RankWarning"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_59, "try_statement"), kind(p1_59, "try_statement"), npy201_catches_attribute_error(p1_59), field(p1_59, "body", c2_59), has(c2_59, c3_59, "attribute"), sym_of(c3_59, q4_59), npy201_set_4(q4_59), field(c3_59, "attribute", c5_59), kind(c5_59, "identifier"), node(_, c5_59, _, _, _), TID = c5_59, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_60), (st9_60 = b8_60 ; within(b8_60, st9_60)), npy201_in_handler(st9_60), within_stop(st9_60, p10_60, "try_statement"), kind(p10_60, "try_statement"), npy201_catches_import_error(p10_60), field(p10_60, "body", c11_60), has(c11_60, c12_60, "import_from_statement"), has(c12_60, c13_60, "dotted_name"), npy201_statement_name(c13_60, q14_60), (q14_60 = "ast.literal_eval" ; q14_60 = "inspect.getsource" ; q14_60 = "numpy.all" ; q14_60 = "numpy.any" ; q14_60 = "numpy.asmatrix" ; q14_60 = "numpy.bytes_" ; q14_60 = "numpy.char.chararray" ; q14_60 = "numpy.char.compare_chararrays" ; q14_60 = "numpy.clongdouble" ; q14_60 = "numpy.complex128" ; q14_60 = "numpy.complex64" ; q14_60 = "numpy.cumprod" ; q14_60 = "numpy.exceptions.AxisError" ; q14_60 = "numpy.exceptions.ComplexWarning" ; q14_60 = "numpy.exceptions.DTypePromotionError" ; q14_60 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_60 = "numpy.exceptions.RankWarning" ; q14_60 = "numpy.exceptions.TooHardError" ; q14_60 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_60 = "numpy.float64" ; q14_60 = "numpy.inf" ; q14_60 = "numpy.issubdtype" ; q14_60 = "numpy.lib.add_docstring" ; q14_60 = "numpy.lib.add_newdoc" ; q14_60 = "numpy.lib.array_utils.byte_bounds" ; q14_60 = "numpy.lib.npyio.DataSource" ; q14_60 = "numpy.lib.tracemalloc_domain" ; q14_60 = "numpy.longdouble" ; q14_60 = "numpy.nan" ; q14_60 = "numpy.prod" ; q14_60 = "numpy.rec.format_parser" ; q14_60 = "numpy.round" ; q14_60 = "numpy.str_" ; q14_60 = "numpy.trapezoid" ; q14_60 = "numpy.vstack"), node(_, c13_60, _, _, _), IID = c13_60, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "RankWarning").
+
+// NPY201_tooharderror(n): a finding at node n, from clause `tooharderror`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_tooharderror(at: node, name: loc) code "NPY201" "Use `numpy.exceptions.TooHardError` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_tooharderror(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.TooHardError"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_61, "try_statement"), kind(p1_61, "try_statement"), npy201_catches_attribute_error(p1_61), field(p1_61, "body", c2_61), has(c2_61, c3_61, "attribute"), sym_of(c3_61, q4_61), npy201_set_4(q4_61), field(c3_61, "attribute", c5_61), kind(c5_61, "identifier"), node(_, c5_61, _, _, _), TID = c5_61, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_62), (st9_62 = b8_62 ; within(b8_62, st9_62)), npy201_in_handler(st9_62), within_stop(st9_62, p10_62, "try_statement"), kind(p10_62, "try_statement"), npy201_catches_import_error(p10_62), field(p10_62, "body", c11_62), has(c11_62, c12_62, "import_from_statement"), has(c12_62, c13_62, "dotted_name"), npy201_statement_name(c13_62, q14_62), (q14_62 = "ast.literal_eval" ; q14_62 = "inspect.getsource" ; q14_62 = "numpy.all" ; q14_62 = "numpy.any" ; q14_62 = "numpy.asmatrix" ; q14_62 = "numpy.bytes_" ; q14_62 = "numpy.char.chararray" ; q14_62 = "numpy.char.compare_chararrays" ; q14_62 = "numpy.clongdouble" ; q14_62 = "numpy.complex128" ; q14_62 = "numpy.complex64" ; q14_62 = "numpy.cumprod" ; q14_62 = "numpy.exceptions.AxisError" ; q14_62 = "numpy.exceptions.ComplexWarning" ; q14_62 = "numpy.exceptions.DTypePromotionError" ; q14_62 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_62 = "numpy.exceptions.RankWarning" ; q14_62 = "numpy.exceptions.TooHardError" ; q14_62 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_62 = "numpy.float64" ; q14_62 = "numpy.inf" ; q14_62 = "numpy.issubdtype" ; q14_62 = "numpy.lib.add_docstring" ; q14_62 = "numpy.lib.add_newdoc" ; q14_62 = "numpy.lib.array_utils.byte_bounds" ; q14_62 = "numpy.lib.npyio.DataSource" ; q14_62 = "numpy.lib.tracemalloc_domain" ; q14_62 = "numpy.longdouble" ; q14_62 = "numpy.nan" ; q14_62 = "numpy.prod" ; q14_62 = "numpy.rec.format_parser" ; q14_62 = "numpy.round" ; q14_62 = "numpy.str_" ; q14_62 = "numpy.trapezoid" ; q14_62 = "numpy.vstack"), node(_, c13_62, _, _, _), IID = c13_62, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "TooHardError").
+
+// NPY201_visibledeprecationwarning(n): a finding at node n, from clause `visibledeprecationwarning`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_visibledeprecationwarning(at: node, name: loc) code "NPY201" "Use `numpy.exceptions.VisibleDeprecationWarning` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_visibledeprecationwarning(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.VisibleDeprecationWarning"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_63, "try_statement"), kind(p1_63, "try_statement"), npy201_catches_attribute_error(p1_63), field(p1_63, "body", c2_63), has(c2_63, c3_63, "attribute"), sym_of(c3_63, q4_63), npy201_set_4(q4_63), field(c3_63, "attribute", c5_63), kind(c5_63, "identifier"), node(_, c5_63, _, _, _), TID = c5_63, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_64), (st9_64 = b8_64 ; within(b8_64, st9_64)), npy201_in_handler(st9_64), within_stop(st9_64, p10_64, "try_statement"), kind(p10_64, "try_statement"), npy201_catches_import_error(p10_64), field(p10_64, "body", c11_64), has(c11_64, c12_64, "import_from_statement"), has(c12_64, c13_64, "dotted_name"), npy201_statement_name(c13_64, q14_64), (q14_64 = "ast.literal_eval" ; q14_64 = "inspect.getsource" ; q14_64 = "numpy.all" ; q14_64 = "numpy.any" ; q14_64 = "numpy.asmatrix" ; q14_64 = "numpy.bytes_" ; q14_64 = "numpy.char.chararray" ; q14_64 = "numpy.char.compare_chararrays" ; q14_64 = "numpy.clongdouble" ; q14_64 = "numpy.complex128" ; q14_64 = "numpy.complex64" ; q14_64 = "numpy.cumprod" ; q14_64 = "numpy.exceptions.AxisError" ; q14_64 = "numpy.exceptions.ComplexWarning" ; q14_64 = "numpy.exceptions.DTypePromotionError" ; q14_64 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_64 = "numpy.exceptions.RankWarning" ; q14_64 = "numpy.exceptions.TooHardError" ; q14_64 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_64 = "numpy.float64" ; q14_64 = "numpy.inf" ; q14_64 = "numpy.issubdtype" ; q14_64 = "numpy.lib.add_docstring" ; q14_64 = "numpy.lib.add_newdoc" ; q14_64 = "numpy.lib.array_utils.byte_bounds" ; q14_64 = "numpy.lib.npyio.DataSource" ; q14_64 = "numpy.lib.tracemalloc_domain" ; q14_64 = "numpy.longdouble" ; q14_64 = "numpy.nan" ; q14_64 = "numpy.prod" ; q14_64 = "numpy.rec.format_parser" ; q14_64 = "numpy.round" ; q14_64 = "numpy.str_" ; q14_64 = "numpy.trapezoid" ; q14_64 = "numpy.vstack"), node(_, c13_64, _, _, _), IID = c13_64, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "VisibleDeprecationWarning").
+
+// NPY201_compare_chararrays(n): a finding at node n, from clause `compare-chararrays`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_compare_chararrays(at: node, name: loc) code "NPY201" "Use `numpy.char.compare_chararrays` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_compare_chararrays(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.compare_chararrays"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_65, "try_statement"), kind(p1_65, "try_statement"), npy201_catches_attribute_error(p1_65), field(p1_65, "body", c2_65), has(c2_65, c3_65, "attribute"), sym_of(c3_65, q4_65), npy201_set_4(q4_65), field(c3_65, "attribute", c5_65), kind(c5_65, "identifier"), node(_, c5_65, _, _, _), TID = c5_65, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_66), (st9_66 = b8_66 ; within(b8_66, st9_66)), npy201_in_handler(st9_66), within_stop(st9_66, p10_66, "try_statement"), kind(p10_66, "try_statement"), npy201_catches_import_error(p10_66), field(p10_66, "body", c11_66), has(c11_66, c12_66, "import_from_statement"), has(c12_66, c13_66, "dotted_name"), npy201_statement_name(c13_66, q14_66), (q14_66 = "ast.literal_eval" ; q14_66 = "inspect.getsource" ; q14_66 = "numpy.all" ; q14_66 = "numpy.any" ; q14_66 = "numpy.asmatrix" ; q14_66 = "numpy.bytes_" ; q14_66 = "numpy.char.chararray" ; q14_66 = "numpy.char.compare_chararrays" ; q14_66 = "numpy.clongdouble" ; q14_66 = "numpy.complex128" ; q14_66 = "numpy.complex64" ; q14_66 = "numpy.cumprod" ; q14_66 = "numpy.exceptions.AxisError" ; q14_66 = "numpy.exceptions.ComplexWarning" ; q14_66 = "numpy.exceptions.DTypePromotionError" ; q14_66 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_66 = "numpy.exceptions.RankWarning" ; q14_66 = "numpy.exceptions.TooHardError" ; q14_66 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_66 = "numpy.float64" ; q14_66 = "numpy.inf" ; q14_66 = "numpy.issubdtype" ; q14_66 = "numpy.lib.add_docstring" ; q14_66 = "numpy.lib.add_newdoc" ; q14_66 = "numpy.lib.array_utils.byte_bounds" ; q14_66 = "numpy.lib.npyio.DataSource" ; q14_66 = "numpy.lib.tracemalloc_domain" ; q14_66 = "numpy.longdouble" ; q14_66 = "numpy.nan" ; q14_66 = "numpy.prod" ; q14_66 = "numpy.rec.format_parser" ; q14_66 = "numpy.round" ; q14_66 = "numpy.str_" ; q14_66 = "numpy.trapezoid" ; q14_66 = "numpy.vstack"), node(_, c13_66, _, _, _), IID = c13_66, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "compare_chararrays").
+
+// NPY201_chararray(n): a finding at node n, from clause `chararray`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_chararray(at: node, name: loc) code "NPY201" "Use `numpy.char.chararray` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_chararray(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.chararray"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_67, "try_statement"), kind(p1_67, "try_statement"), npy201_catches_attribute_error(p1_67), field(p1_67, "body", c2_67), has(c2_67, c3_67, "attribute"), sym_of(c3_67, q4_67), npy201_set_4(q4_67), field(c3_67, "attribute", c5_67), kind(c5_67, "identifier"), node(_, c5_67, _, _, _), TID = c5_67, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_68), (st9_68 = b8_68 ; within(b8_68, st9_68)), npy201_in_handler(st9_68), within_stop(st9_68, p10_68, "try_statement"), kind(p10_68, "try_statement"), npy201_catches_import_error(p10_68), field(p10_68, "body", c11_68), has(c11_68, c12_68, "import_from_statement"), has(c12_68, c13_68, "dotted_name"), npy201_statement_name(c13_68, q14_68), (q14_68 = "ast.literal_eval" ; q14_68 = "inspect.getsource" ; q14_68 = "numpy.all" ; q14_68 = "numpy.any" ; q14_68 = "numpy.asmatrix" ; q14_68 = "numpy.bytes_" ; q14_68 = "numpy.char.chararray" ; q14_68 = "numpy.char.compare_chararrays" ; q14_68 = "numpy.clongdouble" ; q14_68 = "numpy.complex128" ; q14_68 = "numpy.complex64" ; q14_68 = "numpy.cumprod" ; q14_68 = "numpy.exceptions.AxisError" ; q14_68 = "numpy.exceptions.ComplexWarning" ; q14_68 = "numpy.exceptions.DTypePromotionError" ; q14_68 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_68 = "numpy.exceptions.RankWarning" ; q14_68 = "numpy.exceptions.TooHardError" ; q14_68 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_68 = "numpy.float64" ; q14_68 = "numpy.inf" ; q14_68 = "numpy.issubdtype" ; q14_68 = "numpy.lib.add_docstring" ; q14_68 = "numpy.lib.add_newdoc" ; q14_68 = "numpy.lib.array_utils.byte_bounds" ; q14_68 = "numpy.lib.npyio.DataSource" ; q14_68 = "numpy.lib.tracemalloc_domain" ; q14_68 = "numpy.longdouble" ; q14_68 = "numpy.nan" ; q14_68 = "numpy.prod" ; q14_68 = "numpy.rec.format_parser" ; q14_68 = "numpy.round" ; q14_68 = "numpy.str_" ; q14_68 = "numpy.trapezoid" ; q14_68 = "numpy.vstack"), node(_, c13_68, _, _, _), IID = c13_68, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "chararray").
+
+// NPY201_format_parser(n): a finding at node n, from clause `format-parser`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_format_parser(at: node, name: loc) code "NPY201" "Use `numpy.rec.format_parser` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_format_parser(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.format_parser"), node(_, n, _, _, _), NAME = n,
+    count : { kind(n, "attribute"), npy201_in_handler(n), within_stop(n, p1_69, "try_statement"), kind(p1_69, "try_statement"), npy201_catches_attribute_error(p1_69), field(p1_69, "body", c2_69), has(c2_69, c3_69, "attribute"), sym_of(c3_69, q4_69), npy201_set_4(q4_69), field(c3_69, "attribute", c5_69), kind(c5_69, "identifier"), node(_, c5_69, _, _, _), TID = c5_69, value(TID, NEW) } = 0, count : { kind(n, "identifier"), ref_site(n, b8_70), (st9_70 = b8_70 ; within(b8_70, st9_70)), npy201_in_handler(st9_70), within_stop(st9_70, p10_70, "try_statement"), kind(p10_70, "try_statement"), npy201_catches_import_error(p10_70), field(p10_70, "body", c11_70), has(c11_70, c12_70, "import_from_statement"), has(c12_70, c13_70, "dotted_name"), npy201_statement_name(c13_70, q14_70), (q14_70 = "ast.literal_eval" ; q14_70 = "inspect.getsource" ; q14_70 = "numpy.all" ; q14_70 = "numpy.any" ; q14_70 = "numpy.asmatrix" ; q14_70 = "numpy.bytes_" ; q14_70 = "numpy.char.chararray" ; q14_70 = "numpy.char.compare_chararrays" ; q14_70 = "numpy.clongdouble" ; q14_70 = "numpy.complex128" ; q14_70 = "numpy.complex64" ; q14_70 = "numpy.cumprod" ; q14_70 = "numpy.exceptions.AxisError" ; q14_70 = "numpy.exceptions.ComplexWarning" ; q14_70 = "numpy.exceptions.DTypePromotionError" ; q14_70 = "numpy.exceptions.ModuleDeprecationWarning" ; q14_70 = "numpy.exceptions.RankWarning" ; q14_70 = "numpy.exceptions.TooHardError" ; q14_70 = "numpy.exceptions.VisibleDeprecationWarning" ; q14_70 = "numpy.float64" ; q14_70 = "numpy.inf" ; q14_70 = "numpy.issubdtype" ; q14_70 = "numpy.lib.add_docstring" ; q14_70 = "numpy.lib.add_newdoc" ; q14_70 = "numpy.lib.array_utils.byte_bounds" ; q14_70 = "numpy.lib.npyio.DataSource" ; q14_70 = "numpy.lib.tracemalloc_domain" ; q14_70 = "numpy.longdouble" ; q14_70 = "numpy.nan" ; q14_70 = "numpy.prod" ; q14_70 = "numpy.rec.format_parser" ; q14_70 = "numpy.round" ; q14_70 = "numpy.str_" ; q14_70 = "numpy.trapezoid" ; q14_70 = "numpy.vstack"), node(_, c13_70, _, _, _), IID = c13_70, value(IID, NEW) } = 0,
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "format_parser").
+
+// NPY201_string_annotation_or_pattern(n): a finding at node n, from clause `string-annotation-or-pattern`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_string_annotation_or_pattern(at: loc, name: node) code "NPY201" "NumPy 2.0 removes `{name}`; switch to the replacement NumPy's 2.0 migration guide gives for it (e.g. `np.float64` for `float_`, `np.inf` for `Inf`), or drop it if there is none."
+    suppress noqa "NPY201"
+NPY201_string_annotation_or_pattern(NAME, n) :- npy201_alt_10(n, NAME), !npy201_any_fallback(n).
+
+// reference(n): the JSON util `reference`, used where the JSON says `matches: "reference"`
+.decl npy201_reference(n: node)
+npy201_reference(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), npy201_set_7(q1).
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl npy201_in_string(n: node, name: loc)
+npy201_in_string(n, NAME) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), npy201_alt_8(c2, NAME).
+
+// pattern_name(n): the JSON util `pattern-name`, used where the JSON says `matches: "pattern-name"`
+.decl npy201_pattern_name(n: node)
+npy201_pattern_name(n) :- kind(n, "dotted_name"),
+    match("\\w+\\s*\\.\\s*(?:add_docstring|add_newdoc|add_newdoc_ufunc|alltrue|asfarray|byte_bounds|cast|cfloat|clongfloat|compat|complex_|cumproduct|DataSource|deprecate|deprecate_with_doc|disp|fastCopyAndTranspose|find_common_type|get_array_wrap|float_|geterrobj|in1d|INF|Inf|Infinity|infty|issctype|issubclass_|issubsctype|mat|maximum_sctype|NaN|NAN|nbytes|NINF|NZERO|longcomplex|longfloat|lookfor|obj2sctype|PINF|product|PZERO|recfromcsv|recfromtxt|round_|safe_eval|sctype2char|sctypes|seterrobj|set_string_function|singlecomplex|string_|sometrue|source|tracemalloc_domain|trapz|unicode_|who|row_stack|AxisError|ComplexWarning|DTypePromotionError|ModuleDeprecationWarning|RankWarning|TooHardError|VisibleDeprecationWarning|compare_chararrays|chararray|format_parser)", n),
+    inside(n, p1, "case_pattern"), child(n, c2, _), kind(c2, "identifier"),
+    sym_of(c2, "numpy").
+
+// any_fallback(n): the JSON util `any-fallback`, used where the JSON says `matches: "any-fallback"`
+.decl npy201_any_fallback(n: node)
+npy201_any_fallback(n) :- npy201_in_handler(n), npy201_up_2(n, p1), field(p1, "body", c2),
+    has(c2, c3, "attribute"), sym_of(c3, q4), npy201_set_4(q4).
+
+// from_module: the module text of from-import s, read as `relative: "text"` does (dots dropped)
+.decl npy201_from_module(s: node, m: symbol)
+npy201_from_module(s, m) :- kind(s, "future_import_statement"), m = "__future__".
+npy201_from_module(s, m) :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "dotted_name"), name(x, m).
+npy201_from_module(s, m) :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "relative_import"), child(x, y, _), kind(y, "dotted_name"), name(y, m).
+npy201_from_module(s, "") :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "relative_import"), count : { child(x, y, _), kind(y, "dotted_name") } = 0.
+
+// statement_name: dotted name n in an import statement imports q (relative modules by their text)
+.decl npy201_statement_name(n: node, q: symbol)
+npy201_statement_name(n, q) :- kind(n, "dotted_name"), child(s, n, _),
+    kind(s, "import_statement"), name(n, q).
+npy201_statement_name(n, q) :- kind(n, "dotted_name"), child(s, n, _),
+    kind(s, "relative_import"), name(n, q).
+npy201_statement_name(n, q) :- kind(n, "dotted_name"), field(a, "name", n),
+    kind(a, "aliased_import"), child(s, a, _), kind(s, "import_statement"), name(n, q).
+npy201_statement_name(n, q) :- kind(n, "dotted_name"), field(a, "name", n),
+    kind(a, "aliased_import"), child(s, a, _),
+    (kind(s, "import_from_statement") ; kind(s, "future_import_statement")),
+    npy201_from_module(s, m), name(n, x), q = @dot(m, x).
+npy201_statement_name(n, m) :- kind(n, "dotted_name"), field(s, "module_name", n),
+    (kind(s, "import_from_statement") ; kind(s, "future_import_statement")),
+    npy201_from_module(s, m).
+npy201_statement_name(n, q) :- kind(n, "dotted_name"), child(s, n, _),
+    (kind(s, "import_from_statement") ; kind(s, "future_import_statement")),
+    !field(s, "module_name", n), npy201_from_module(s, m), name(n, x), q = @dot(m, x).
+
+// demand_in_handler: the nodes in_handler is asked at (it looks at every ancestor of every node)
+.decl npy201_demand_in_handler(n: node)
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.add_docstring"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_1, "try_statement"), kind(p1_1, "try_statement"),
+    npy201_catches_attribute_error(p1_1), field(p1_1, "body", c2_1),
+    has(c2_1, c3_1, "attribute"), sym_of(c3_1, q4_1), npy201_set_4(q4_1),
+    field(c3_1, "attribute", c5_1), kind(c5_1, "identifier"), node(_, c5_1, _, _, _), TID = c5_1,
+    value(TID, t6_1), value(NEW, t6_1).
+npy201_demand_in_handler(st9_2) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.add_docstring"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_2),
+    (st9_2 = b8_2 ; within(b8_2, st9_2)), within_stop(st9_2, p10_2, "try_statement"),
+    kind(p10_2, "try_statement"), npy201_catches_import_error(p10_2),
+    field(p10_2, "body", c11_2), has(c11_2, c12_2, "import_from_statement"),
+    has(c12_2, c13_2, "dotted_name"), npy201_statement_name(c13_2, q14_2), node(_, c13_2, _, _, _), IID = c13_2,
+    value(IID, t15_2), value(NEW, t15_2).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.add_newdoc"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_3, "try_statement"), kind(p1_3, "try_statement"),
+    npy201_catches_attribute_error(p1_3), field(p1_3, "body", c2_3),
+    has(c2_3, c3_3, "attribute"), sym_of(c3_3, q4_3), npy201_set_4(q4_3),
+    field(c3_3, "attribute", c5_3), kind(c5_3, "identifier"), node(_, c5_3, _, _, _), TID = c5_3,
+    value(TID, t6_3), value(NEW, t6_3).
+npy201_demand_in_handler(st9_4) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.add_newdoc"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_4),
+    (st9_4 = b8_4 ; within(b8_4, st9_4)), within_stop(st9_4, p10_4, "try_statement"),
+    kind(p10_4, "try_statement"), npy201_catches_import_error(p10_4),
+    field(p10_4, "body", c11_4), has(c11_4, c12_4, "import_from_statement"),
+    has(c12_4, c13_4, "dotted_name"), npy201_statement_name(c13_4, q14_4), node(_, c13_4, _, _, _), IID = c13_4,
+    value(IID, t15_4), value(NEW, t15_4).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.alltrue"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_5, "try_statement"), kind(p1_5, "try_statement"),
+    npy201_catches_attribute_error(p1_5), field(p1_5, "body", c2_5),
+    has(c2_5, c3_5, "attribute"), sym_of(c3_5, q4_5), npy201_set_4(q4_5),
+    field(c3_5, "attribute", c5_5), kind(c5_5, "identifier"), node(_, c5_5, _, _, _), TID = c5_5,
+    value(TID, t6_5), value(NEW, t6_5).
+npy201_demand_in_handler(st9_6) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.alltrue"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_6),
+    (st9_6 = b8_6 ; within(b8_6, st9_6)), within_stop(st9_6, p10_6, "try_statement"),
+    kind(p10_6, "try_statement"), npy201_catches_import_error(p10_6),
+    field(p10_6, "body", c11_6), has(c11_6, c12_6, "import_from_statement"),
+    has(c12_6, c13_6, "dotted_name"), npy201_statement_name(c13_6, q14_6), node(_, c13_6, _, _, _), IID = c13_6,
+    value(IID, t15_6), value(NEW, t15_6).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.byte_bounds"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_7, "try_statement"), kind(p1_7, "try_statement"),
+    npy201_catches_attribute_error(p1_7), field(p1_7, "body", c2_7),
+    has(c2_7, c3_7, "attribute"), sym_of(c3_7, q4_7), npy201_set_4(q4_7),
+    field(c3_7, "attribute", c5_7), kind(c5_7, "identifier"), node(_, c5_7, _, _, _), TID = c5_7,
+    value(TID, t6_7), value(NEW, t6_7).
+npy201_demand_in_handler(st9_8) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.byte_bounds"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_8),
+    (st9_8 = b8_8 ; within(b8_8, st9_8)), within_stop(st9_8, p10_8, "try_statement"),
+    kind(p10_8, "try_statement"), npy201_catches_import_error(p10_8),
+    field(p10_8, "body", c11_8), has(c11_8, c12_8, "import_from_statement"),
+    has(c12_8, c13_8, "dotted_name"), npy201_statement_name(c13_8, q14_8), node(_, c13_8, _, _, _), IID = c13_8,
+    value(IID, t15_8), value(NEW, t15_8).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "numpy.cfloat") ; sym_of(n, "numpy.complex_")), node(_, n, _, _, _), NAME = n,
+    text(NAME, t1), kind(n, "attribute"), within_stop(n, p1_9, "try_statement"),
+    kind(p1_9, "try_statement"), npy201_catches_attribute_error(p1_9),
+    field(p1_9, "body", c2_9), has(c2_9, c3_9, "attribute"), sym_of(c3_9, q4_9),
+    npy201_set_4(q4_9), field(c3_9, "attribute", c5_9), kind(c5_9, "identifier"),
+    node(_, c5_9, _, _, _), TID = c5_9, value(TID, t6_9), value(NEW, t6_9).
+npy201_demand_in_handler(st9_10) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "numpy.cfloat") ; sym_of(n, "numpy.complex_")), node(_, n, _, _, _), NAME = n,
+    text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_10),
+    (st9_10 = b8_10 ; within(b8_10, st9_10)),
+    within_stop(st9_10, p10_10, "try_statement"), kind(p10_10, "try_statement"),
+    npy201_catches_import_error(p10_10), field(p10_10, "body", c11_10),
+    has(c11_10, c12_10, "import_from_statement"), has(c12_10, c13_10, "dotted_name"),
+    npy201_statement_name(c13_10, q14_10), node(_, c13_10, _, _, _), IID = c13_10, value(IID, t15_10),
+    value(NEW, t15_10).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "numpy.clongfloat") ; sym_of(n, "numpy.longcomplex")), node(_, n, _, _, _), NAME = n,
+    text(NAME, t1), kind(n, "attribute"), within_stop(n, p1_11, "try_statement"),
+    kind(p1_11, "try_statement"), npy201_catches_attribute_error(p1_11),
+    field(p1_11, "body", c2_11), has(c2_11, c3_11, "attribute"), sym_of(c3_11, q4_11),
+    npy201_set_4(q4_11), field(c3_11, "attribute", c5_11), kind(c5_11, "identifier"),
+    node(_, c5_11, _, _, _), TID = c5_11, value(TID, t6_11), value(NEW, t6_11).
+npy201_demand_in_handler(st9_12) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "numpy.clongfloat") ; sym_of(n, "numpy.longcomplex")), node(_, n, _, _, _), NAME = n,
+    text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_12),
+    (st9_12 = b8_12 ; within(b8_12, st9_12)),
+    within_stop(st9_12, p10_12, "try_statement"), kind(p10_12, "try_statement"),
+    npy201_catches_import_error(p10_12), field(p10_12, "body", c11_12),
+    has(c11_12, c12_12, "import_from_statement"), has(c12_12, c13_12, "dotted_name"),
+    npy201_statement_name(c13_12, q14_12), node(_, c13_12, _, _, _), IID = c13_12, value(IID, t15_12),
+    value(NEW, t15_12).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.cumproduct"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_13, "try_statement"), kind(p1_13, "try_statement"),
+    npy201_catches_attribute_error(p1_13), field(p1_13, "body", c2_13),
+    has(c2_13, c3_13, "attribute"), sym_of(c3_13, q4_13), npy201_set_4(q4_13),
+    field(c3_13, "attribute", c5_13), kind(c5_13, "identifier"), node(_, c5_13, _, _, _), TID = c5_13,
+    value(TID, t6_13), value(NEW, t6_13).
+npy201_demand_in_handler(st9_14) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.cumproduct"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_14),
+    (st9_14 = b8_14 ; within(b8_14, st9_14)),
+    within_stop(st9_14, p10_14, "try_statement"), kind(p10_14, "try_statement"),
+    npy201_catches_import_error(p10_14), field(p10_14, "body", c11_14),
+    has(c11_14, c12_14, "import_from_statement"), has(c12_14, c13_14, "dotted_name"),
+    npy201_statement_name(c13_14, q14_14), node(_, c13_14, _, _, _), IID = c13_14, value(IID, t15_14),
+    value(NEW, t15_14).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.DataSource"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_15, "try_statement"), kind(p1_15, "try_statement"),
+    npy201_catches_attribute_error(p1_15), field(p1_15, "body", c2_15),
+    has(c2_15, c3_15, "attribute"), sym_of(c3_15, q4_15), npy201_set_4(q4_15),
+    field(c3_15, "attribute", c5_15), kind(c5_15, "identifier"), node(_, c5_15, _, _, _), TID = c5_15,
+    value(TID, t6_15), value(NEW, t6_15).
+npy201_demand_in_handler(st9_16) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.DataSource"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_16),
+    (st9_16 = b8_16 ; within(b8_16, st9_16)),
+    within_stop(st9_16, p10_16, "try_statement"), kind(p10_16, "try_statement"),
+    npy201_catches_import_error(p10_16), field(p10_16, "body", c11_16),
+    has(c11_16, c12_16, "import_from_statement"), has(c12_16, c13_16, "dotted_name"),
+    npy201_statement_name(c13_16, q14_16), node(_, c13_16, _, _, _), IID = c13_16, value(IID, t15_16),
+    value(NEW, t15_16).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.float_"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_17, "try_statement"), kind(p1_17, "try_statement"),
+    npy201_catches_attribute_error(p1_17), field(p1_17, "body", c2_17),
+    has(c2_17, c3_17, "attribute"), sym_of(c3_17, q4_17), npy201_set_4(q4_17),
+    field(c3_17, "attribute", c5_17), kind(c5_17, "identifier"), node(_, c5_17, _, _, _), TID = c5_17,
+    value(TID, t6_17), value(NEW, t6_17).
+npy201_demand_in_handler(st9_18) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.float_"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_18),
+    (st9_18 = b8_18 ; within(b8_18, st9_18)),
+    within_stop(st9_18, p10_18, "try_statement"), kind(p10_18, "try_statement"),
+    npy201_catches_import_error(p10_18), field(p10_18, "body", c11_18),
+    has(c11_18, c12_18, "import_from_statement"), has(c12_18, c13_18, "dotted_name"),
+    npy201_statement_name(c13_18, q14_18), node(_, c13_18, _, _, _), IID = c13_18, value(IID, t15_18),
+    value(NEW, t15_18).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, q2), npy201_set_6(q2),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_19, "try_statement"), kind(p1_19, "try_statement"),
+    npy201_catches_attribute_error(p1_19), field(p1_19, "body", c2_19),
+    has(c2_19, c3_19, "attribute"), sym_of(c3_19, q4_19), npy201_set_4(q4_19),
+    field(c3_19, "attribute", c5_19), kind(c5_19, "identifier"), node(_, c5_19, _, _, _), TID = c5_19,
+    value(TID, t6_19), value(NEW, t6_19).
+npy201_demand_in_handler(st9_20) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, q2), npy201_set_6(q2),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_20),
+    (st9_20 = b8_20 ; within(b8_20, st9_20)),
+    within_stop(st9_20, p10_20, "try_statement"), kind(p10_20, "try_statement"),
+    npy201_catches_import_error(p10_20), field(p10_20, "body", c11_20),
+    has(c11_20, c12_20, "import_from_statement"), has(c12_20, c13_20, "dotted_name"),
+    npy201_statement_name(c13_20, q14_20), node(_, c13_20, _, _, _), IID = c13_20, value(IID, t15_20),
+    value(NEW, t15_20).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.issubsctype"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_21, "try_statement"), kind(p1_21, "try_statement"),
+    npy201_catches_attribute_error(p1_21), field(p1_21, "body", c2_21),
+    has(c2_21, c3_21, "attribute"), sym_of(c3_21, q4_21), npy201_set_4(q4_21),
+    field(c3_21, "attribute", c5_21), kind(c5_21, "identifier"), node(_, c5_21, _, _, _), TID = c5_21,
+    value(TID, t6_21), value(NEW, t6_21).
+npy201_demand_in_handler(st9_22) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.issubsctype"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_22),
+    (st9_22 = b8_22 ; within(b8_22, st9_22)),
+    within_stop(st9_22, p10_22, "try_statement"), kind(p10_22, "try_statement"),
+    npy201_catches_import_error(p10_22), field(p10_22, "body", c11_22),
+    has(c11_22, c12_22, "import_from_statement"), has(c12_22, c13_22, "dotted_name"),
+    npy201_statement_name(c13_22, q14_22), node(_, c13_22, _, _, _), IID = c13_22, value(IID, t15_22),
+    value(NEW, t15_22).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.mat"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_23, "try_statement"), kind(p1_23, "try_statement"),
+    npy201_catches_attribute_error(p1_23), field(p1_23, "body", c2_23),
+    has(c2_23, c3_23, "attribute"), sym_of(c3_23, q4_23), npy201_set_4(q4_23),
+    field(c3_23, "attribute", c5_23), kind(c5_23, "identifier"), node(_, c5_23, _, _, _), TID = c5_23,
+    value(TID, t6_23), value(NEW, t6_23).
+npy201_demand_in_handler(st9_24) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.mat"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_24),
+    (st9_24 = b8_24 ; within(b8_24, st9_24)),
+    within_stop(st9_24, p10_24, "try_statement"), kind(p10_24, "try_statement"),
+    npy201_catches_import_error(p10_24), field(p10_24, "body", c11_24),
+    has(c11_24, c12_24, "import_from_statement"), has(c12_24, c13_24, "dotted_name"),
+    npy201_statement_name(c13_24, q14_24), node(_, c13_24, _, _, _), IID = c13_24, value(IID, t15_24),
+    value(NEW, t15_24).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "numpy.NaN") ; sym_of(n, "numpy.NAN")), node(_, n, _, _, _), NAME = n, text(NAME, t1),
+    kind(n, "attribute"), within_stop(n, p1_25, "try_statement"),
+    kind(p1_25, "try_statement"), npy201_catches_attribute_error(p1_25),
+    field(p1_25, "body", c2_25), has(c2_25, c3_25, "attribute"), sym_of(c3_25, q4_25),
+    npy201_set_4(q4_25), field(c3_25, "attribute", c5_25), kind(c5_25, "identifier"),
+    node(_, c5_25, _, _, _), TID = c5_25, value(TID, t6_25), value(NEW, t6_25).
+npy201_demand_in_handler(st9_26) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "numpy.NaN") ; sym_of(n, "numpy.NAN")), node(_, n, _, _, _), NAME = n, text(NAME, t1),
+    kind(n, "identifier"), ref_site(n, b8_26),
+    (st9_26 = b8_26 ; within(b8_26, st9_26)),
+    within_stop(st9_26, p10_26, "try_statement"), kind(p10_26, "try_statement"),
+    npy201_catches_import_error(p10_26), field(p10_26, "body", c11_26),
+    has(c11_26, c12_26, "import_from_statement"), has(c12_26, c13_26, "dotted_name"),
+    npy201_statement_name(c13_26, q14_26), node(_, c13_26, _, _, _), IID = c13_26, value(IID, t15_26),
+    value(NEW, t15_26).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.longfloat"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_27, "try_statement"), kind(p1_27, "try_statement"),
+    npy201_catches_attribute_error(p1_27), field(p1_27, "body", c2_27),
+    has(c2_27, c3_27, "attribute"), sym_of(c3_27, q4_27), npy201_set_4(q4_27),
+    field(c3_27, "attribute", c5_27), kind(c5_27, "identifier"), node(_, c5_27, _, _, _), TID = c5_27,
+    value(TID, t6_27), value(NEW, t6_27).
+npy201_demand_in_handler(st9_28) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.longfloat"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_28),
+    (st9_28 = b8_28 ; within(b8_28, st9_28)),
+    within_stop(st9_28, p10_28, "try_statement"), kind(p10_28, "try_statement"),
+    npy201_catches_import_error(p10_28), field(p10_28, "body", c11_28),
+    has(c11_28, c12_28, "import_from_statement"), has(c12_28, c13_28, "dotted_name"),
+    npy201_statement_name(c13_28, q14_28), node(_, c13_28, _, _, _), IID = c13_28, value(IID, t15_28),
+    value(NEW, t15_28).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.product"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_29, "try_statement"), kind(p1_29, "try_statement"),
+    npy201_catches_attribute_error(p1_29), field(p1_29, "body", c2_29),
+    has(c2_29, c3_29, "attribute"), sym_of(c3_29, q4_29), npy201_set_4(q4_29),
+    field(c3_29, "attribute", c5_29), kind(c5_29, "identifier"), node(_, c5_29, _, _, _), TID = c5_29,
+    value(TID, t6_29), value(NEW, t6_29).
+npy201_demand_in_handler(st9_30) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.product"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_30),
+    (st9_30 = b8_30 ; within(b8_30, st9_30)),
+    within_stop(st9_30, p10_30, "try_statement"), kind(p10_30, "try_statement"),
+    npy201_catches_import_error(p10_30), field(p10_30, "body", c11_30),
+    has(c11_30, c12_30, "import_from_statement"), has(c12_30, c13_30, "dotted_name"),
+    npy201_statement_name(c13_30, q14_30), node(_, c13_30, _, _, _), IID = c13_30, value(IID, t15_30),
+    value(NEW, t15_30).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.round_"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_31, "try_statement"), kind(p1_31, "try_statement"),
+    npy201_catches_attribute_error(p1_31), field(p1_31, "body", c2_31),
+    has(c2_31, c3_31, "attribute"), sym_of(c3_31, q4_31), npy201_set_4(q4_31),
+    field(c3_31, "attribute", c5_31), kind(c5_31, "identifier"), node(_, c5_31, _, _, _), TID = c5_31,
+    value(TID, t6_31), value(NEW, t6_31).
+npy201_demand_in_handler(st9_32) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.round_"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_32),
+    (st9_32 = b8_32 ; within(b8_32, st9_32)),
+    within_stop(st9_32, p10_32, "try_statement"), kind(p10_32, "try_statement"),
+    npy201_catches_import_error(p10_32), field(p10_32, "body", c11_32),
+    has(c11_32, c12_32, "import_from_statement"), has(c12_32, c13_32, "dotted_name"),
+    npy201_statement_name(c13_32, q14_32), node(_, c13_32, _, _, _), IID = c13_32, value(IID, t15_32),
+    value(NEW, t15_32).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.safe_eval"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_33, "try_statement"), kind(p1_33, "try_statement"),
+    npy201_catches_attribute_error(p1_33), field(p1_33, "body", c2_33),
+    has(c2_33, c3_33, "attribute"), sym_of(c3_33, q4_33), npy201_set_4(q4_33),
+    field(c3_33, "attribute", c5_33), kind(c5_33, "identifier"), node(_, c5_33, _, _, _), TID = c5_33,
+    value(TID, t6_33), value(NEW, t6_33).
+npy201_demand_in_handler(st9_34) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.safe_eval"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_34),
+    (st9_34 = b8_34 ; within(b8_34, st9_34)),
+    within_stop(st9_34, p10_34, "try_statement"), kind(p10_34, "try_statement"),
+    npy201_catches_import_error(p10_34), field(p10_34, "body", c11_34),
+    has(c11_34, c12_34, "import_from_statement"), has(c12_34, c13_34, "dotted_name"),
+    npy201_statement_name(c13_34, q14_34), node(_, c13_34, _, _, _), IID = c13_34, value(IID, t15_34),
+    value(NEW, t15_34).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.singlecomplex"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_35, "try_statement"), kind(p1_35, "try_statement"),
+    npy201_catches_attribute_error(p1_35), field(p1_35, "body", c2_35),
+    has(c2_35, c3_35, "attribute"), sym_of(c3_35, q4_35), npy201_set_4(q4_35),
+    field(c3_35, "attribute", c5_35), kind(c5_35, "identifier"), node(_, c5_35, _, _, _), TID = c5_35,
+    value(TID, t6_35), value(NEW, t6_35).
+npy201_demand_in_handler(st9_36) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.singlecomplex"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_36),
+    (st9_36 = b8_36 ; within(b8_36, st9_36)),
+    within_stop(st9_36, p10_36, "try_statement"), kind(p10_36, "try_statement"),
+    npy201_catches_import_error(p10_36), field(p10_36, "body", c11_36),
+    has(c11_36, c12_36, "import_from_statement"), has(c12_36, c13_36, "dotted_name"),
+    npy201_statement_name(c13_36, q14_36), node(_, c13_36, _, _, _), IID = c13_36, value(IID, t15_36),
+    value(NEW, t15_36).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.string_"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_37, "try_statement"), kind(p1_37, "try_statement"),
+    npy201_catches_attribute_error(p1_37), field(p1_37, "body", c2_37),
+    has(c2_37, c3_37, "attribute"), sym_of(c3_37, q4_37), npy201_set_4(q4_37),
+    field(c3_37, "attribute", c5_37), kind(c5_37, "identifier"), node(_, c5_37, _, _, _), TID = c5_37,
+    value(TID, t6_37), value(NEW, t6_37).
+npy201_demand_in_handler(st9_38) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.string_"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_38),
+    (st9_38 = b8_38 ; within(b8_38, st9_38)),
+    within_stop(st9_38, p10_38, "try_statement"), kind(p10_38, "try_statement"),
+    npy201_catches_import_error(p10_38), field(p10_38, "body", c11_38),
+    has(c11_38, c12_38, "import_from_statement"), has(c12_38, c13_38, "dotted_name"),
+    npy201_statement_name(c13_38, q14_38), node(_, c13_38, _, _, _), IID = c13_38, value(IID, t15_38),
+    value(NEW, t15_38).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.sometrue"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_39, "try_statement"), kind(p1_39, "try_statement"),
+    npy201_catches_attribute_error(p1_39), field(p1_39, "body", c2_39),
+    has(c2_39, c3_39, "attribute"), sym_of(c3_39, q4_39), npy201_set_4(q4_39),
+    field(c3_39, "attribute", c5_39), kind(c5_39, "identifier"), node(_, c5_39, _, _, _), TID = c5_39,
+    value(TID, t6_39), value(NEW, t6_39).
+npy201_demand_in_handler(st9_40) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.sometrue"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_40),
+    (st9_40 = b8_40 ; within(b8_40, st9_40)),
+    within_stop(st9_40, p10_40, "try_statement"), kind(p10_40, "try_statement"),
+    npy201_catches_import_error(p10_40), field(p10_40, "body", c11_40),
+    has(c11_40, c12_40, "import_from_statement"), has(c12_40, c13_40, "dotted_name"),
+    npy201_statement_name(c13_40, q14_40), node(_, c13_40, _, _, _), IID = c13_40, value(IID, t15_40),
+    value(NEW, t15_40).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.source"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_41, "try_statement"), kind(p1_41, "try_statement"),
+    npy201_catches_attribute_error(p1_41), field(p1_41, "body", c2_41),
+    has(c2_41, c3_41, "attribute"), sym_of(c3_41, q4_41), npy201_set_4(q4_41),
+    field(c3_41, "attribute", c5_41), kind(c5_41, "identifier"), node(_, c5_41, _, _, _), TID = c5_41,
+    value(TID, t6_41), value(NEW, t6_41).
+npy201_demand_in_handler(st9_42) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.source"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_42),
+    (st9_42 = b8_42 ; within(b8_42, st9_42)),
+    within_stop(st9_42, p10_42, "try_statement"), kind(p10_42, "try_statement"),
+    npy201_catches_import_error(p10_42), field(p10_42, "body", c11_42),
+    has(c11_42, c12_42, "import_from_statement"), has(c12_42, c13_42, "dotted_name"),
+    npy201_statement_name(c13_42, q14_42), node(_, c13_42, _, _, _), IID = c13_42, value(IID, t15_42),
+    value(NEW, t15_42).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.tracemalloc_domain"), node(_, n, _, _, _), NAME = n, text(NAME, t1),
+    kind(n, "attribute"), within_stop(n, p1_43, "try_statement"),
+    kind(p1_43, "try_statement"), npy201_catches_attribute_error(p1_43),
+    field(p1_43, "body", c2_43), has(c2_43, c3_43, "attribute"), sym_of(c3_43, q4_43),
+    npy201_set_4(q4_43), field(c3_43, "attribute", c5_43), kind(c5_43, "identifier"),
+    node(_, c5_43, _, _, _), TID = c5_43, value(TID, t6_43), value(NEW, t6_43).
+npy201_demand_in_handler(st9_44) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.tracemalloc_domain"), node(_, n, _, _, _), NAME = n, text(NAME, t1),
+    kind(n, "identifier"), ref_site(n, b8_44),
+    (st9_44 = b8_44 ; within(b8_44, st9_44)),
+    within_stop(st9_44, p10_44, "try_statement"), kind(p10_44, "try_statement"),
+    npy201_catches_import_error(p10_44), field(p10_44, "body", c11_44),
+    has(c11_44, c12_44, "import_from_statement"), has(c12_44, c13_44, "dotted_name"),
+    npy201_statement_name(c13_44, q14_44), node(_, c13_44, _, _, _), IID = c13_44, value(IID, t15_44),
+    value(NEW, t15_44).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.trapz"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_45, "try_statement"), kind(p1_45, "try_statement"),
+    npy201_catches_attribute_error(p1_45), field(p1_45, "body", c2_45),
+    has(c2_45, c3_45, "attribute"), sym_of(c3_45, q4_45), npy201_set_4(q4_45),
+    field(c3_45, "attribute", c5_45), kind(c5_45, "identifier"), node(_, c5_45, _, _, _), TID = c5_45,
+    value(TID, t6_45), value(NEW, t6_45).
+npy201_demand_in_handler(st9_46) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.trapz"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_46),
+    (st9_46 = b8_46 ; within(b8_46, st9_46)),
+    within_stop(st9_46, p10_46, "try_statement"), kind(p10_46, "try_statement"),
+    npy201_catches_import_error(p10_46), field(p10_46, "body", c11_46),
+    has(c11_46, c12_46, "import_from_statement"), has(c12_46, c13_46, "dotted_name"),
+    npy201_statement_name(c13_46, q14_46), node(_, c13_46, _, _, _), IID = c13_46, value(IID, t15_46),
+    value(NEW, t15_46).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.unicode_"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_47, "try_statement"), kind(p1_47, "try_statement"),
+    npy201_catches_attribute_error(p1_47), field(p1_47, "body", c2_47),
+    has(c2_47, c3_47, "attribute"), sym_of(c3_47, q4_47), npy201_set_4(q4_47),
+    field(c3_47, "attribute", c5_47), kind(c5_47, "identifier"), node(_, c5_47, _, _, _), TID = c5_47,
+    value(TID, t6_47), value(NEW, t6_47).
+npy201_demand_in_handler(st9_48) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.unicode_"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_48),
+    (st9_48 = b8_48 ; within(b8_48, st9_48)),
+    within_stop(st9_48, p10_48, "try_statement"), kind(p10_48, "try_statement"),
+    npy201_catches_import_error(p10_48), field(p10_48, "body", c11_48),
+    has(c11_48, c12_48, "import_from_statement"), has(c12_48, c13_48, "dotted_name"),
+    npy201_statement_name(c13_48, q14_48), node(_, c13_48, _, _, _), IID = c13_48, value(IID, t15_48),
+    value(NEW, t15_48).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.row_stack"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_49, "try_statement"), kind(p1_49, "try_statement"),
+    npy201_catches_attribute_error(p1_49), field(p1_49, "body", c2_49),
+    has(c2_49, c3_49, "attribute"), sym_of(c3_49, q4_49), npy201_set_4(q4_49),
+    field(c3_49, "attribute", c5_49), kind(c5_49, "identifier"), node(_, c5_49, _, _, _), TID = c5_49,
+    value(TID, t6_49), value(NEW, t6_49).
+npy201_demand_in_handler(st9_50) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.row_stack"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_50),
+    (st9_50 = b8_50 ; within(b8_50, st9_50)),
+    within_stop(st9_50, p10_50, "try_statement"), kind(p10_50, "try_statement"),
+    npy201_catches_import_error(p10_50), field(p10_50, "body", c11_50),
+    has(c11_50, c12_50, "import_from_statement"), has(c12_50, c13_50, "dotted_name"),
+    npy201_statement_name(c13_50, q14_50), node(_, c13_50, _, _, _), IID = c13_50, value(IID, t15_50),
+    value(NEW, t15_50).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.AxisError"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_51, "try_statement"), kind(p1_51, "try_statement"),
+    npy201_catches_attribute_error(p1_51), field(p1_51, "body", c2_51),
+    has(c2_51, c3_51, "attribute"), sym_of(c3_51, q4_51), npy201_set_4(q4_51),
+    field(c3_51, "attribute", c5_51), kind(c5_51, "identifier"), node(_, c5_51, _, _, _), TID = c5_51,
+    value(TID, t6_51), value(NEW, t6_51).
+npy201_demand_in_handler(st9_52) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.AxisError"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_52),
+    (st9_52 = b8_52 ; within(b8_52, st9_52)),
+    within_stop(st9_52, p10_52, "try_statement"), kind(p10_52, "try_statement"),
+    npy201_catches_import_error(p10_52), field(p10_52, "body", c11_52),
+    has(c11_52, c12_52, "import_from_statement"), has(c12_52, c13_52, "dotted_name"),
+    npy201_statement_name(c13_52, q14_52), node(_, c13_52, _, _, _), IID = c13_52, value(IID, t15_52),
+    value(NEW, t15_52).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.ComplexWarning"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_53, "try_statement"), kind(p1_53, "try_statement"),
+    npy201_catches_attribute_error(p1_53), field(p1_53, "body", c2_53),
+    has(c2_53, c3_53, "attribute"), sym_of(c3_53, q4_53), npy201_set_4(q4_53),
+    field(c3_53, "attribute", c5_53), kind(c5_53, "identifier"), node(_, c5_53, _, _, _), TID = c5_53,
+    value(TID, t6_53), value(NEW, t6_53).
+npy201_demand_in_handler(st9_54) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.ComplexWarning"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_54),
+    (st9_54 = b8_54 ; within(b8_54, st9_54)),
+    within_stop(st9_54, p10_54, "try_statement"), kind(p10_54, "try_statement"),
+    npy201_catches_import_error(p10_54), field(p10_54, "body", c11_54),
+    has(c11_54, c12_54, "import_from_statement"), has(c12_54, c13_54, "dotted_name"),
+    npy201_statement_name(c13_54, q14_54), node(_, c13_54, _, _, _), IID = c13_54, value(IID, t15_54),
+    value(NEW, t15_54).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.DTypePromotionError"), node(_, n, _, _, _), NAME = n, text(NAME, t1),
+    kind(n, "attribute"), within_stop(n, p1_55, "try_statement"),
+    kind(p1_55, "try_statement"), npy201_catches_attribute_error(p1_55),
+    field(p1_55, "body", c2_55), has(c2_55, c3_55, "attribute"), sym_of(c3_55, q4_55),
+    npy201_set_4(q4_55), field(c3_55, "attribute", c5_55), kind(c5_55, "identifier"),
+    node(_, c5_55, _, _, _), TID = c5_55, value(TID, t6_55), value(NEW, t6_55).
+npy201_demand_in_handler(st9_56) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.DTypePromotionError"), node(_, n, _, _, _), NAME = n, text(NAME, t1),
+    kind(n, "identifier"), ref_site(n, b8_56),
+    (st9_56 = b8_56 ; within(b8_56, st9_56)),
+    within_stop(st9_56, p10_56, "try_statement"), kind(p10_56, "try_statement"),
+    npy201_catches_import_error(p10_56), field(p10_56, "body", c11_56),
+    has(c11_56, c12_56, "import_from_statement"), has(c12_56, c13_56, "dotted_name"),
+    npy201_statement_name(c13_56, q14_56), node(_, c13_56, _, _, _), IID = c13_56, value(IID, t15_56),
+    value(NEW, t15_56).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.ModuleDeprecationWarning"), node(_, n, _, _, _), NAME = n, text(NAME, t1),
+    kind(n, "attribute"), within_stop(n, p1_57, "try_statement"),
+    kind(p1_57, "try_statement"), npy201_catches_attribute_error(p1_57),
+    field(p1_57, "body", c2_57), has(c2_57, c3_57, "attribute"), sym_of(c3_57, q4_57),
+    npy201_set_4(q4_57), field(c3_57, "attribute", c5_57), kind(c5_57, "identifier"),
+    node(_, c5_57, _, _, _), TID = c5_57, value(TID, t6_57), value(NEW, t6_57).
+npy201_demand_in_handler(st9_58) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.ModuleDeprecationWarning"), node(_, n, _, _, _), NAME = n, text(NAME, t1),
+    kind(n, "identifier"), ref_site(n, b8_58),
+    (st9_58 = b8_58 ; within(b8_58, st9_58)),
+    within_stop(st9_58, p10_58, "try_statement"), kind(p10_58, "try_statement"),
+    npy201_catches_import_error(p10_58), field(p10_58, "body", c11_58),
+    has(c11_58, c12_58, "import_from_statement"), has(c12_58, c13_58, "dotted_name"),
+    npy201_statement_name(c13_58, q14_58), node(_, c13_58, _, _, _), IID = c13_58, value(IID, t15_58),
+    value(NEW, t15_58).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.RankWarning"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_59, "try_statement"), kind(p1_59, "try_statement"),
+    npy201_catches_attribute_error(p1_59), field(p1_59, "body", c2_59),
+    has(c2_59, c3_59, "attribute"), sym_of(c3_59, q4_59), npy201_set_4(q4_59),
+    field(c3_59, "attribute", c5_59), kind(c5_59, "identifier"), node(_, c5_59, _, _, _), TID = c5_59,
+    value(TID, t6_59), value(NEW, t6_59).
+npy201_demand_in_handler(st9_60) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.RankWarning"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_60),
+    (st9_60 = b8_60 ; within(b8_60, st9_60)),
+    within_stop(st9_60, p10_60, "try_statement"), kind(p10_60, "try_statement"),
+    npy201_catches_import_error(p10_60), field(p10_60, "body", c11_60),
+    has(c11_60, c12_60, "import_from_statement"), has(c12_60, c13_60, "dotted_name"),
+    npy201_statement_name(c13_60, q14_60), node(_, c13_60, _, _, _), IID = c13_60, value(IID, t15_60),
+    value(NEW, t15_60).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.TooHardError"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_61, "try_statement"), kind(p1_61, "try_statement"),
+    npy201_catches_attribute_error(p1_61), field(p1_61, "body", c2_61),
+    has(c2_61, c3_61, "attribute"), sym_of(c3_61, q4_61), npy201_set_4(q4_61),
+    field(c3_61, "attribute", c5_61), kind(c5_61, "identifier"), node(_, c5_61, _, _, _), TID = c5_61,
+    value(TID, t6_61), value(NEW, t6_61).
+npy201_demand_in_handler(st9_62) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.TooHardError"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_62),
+    (st9_62 = b8_62 ; within(b8_62, st9_62)),
+    within_stop(st9_62, p10_62, "try_statement"), kind(p10_62, "try_statement"),
+    npy201_catches_import_error(p10_62), field(p10_62, "body", c11_62),
+    has(c11_62, c12_62, "import_from_statement"), has(c12_62, c13_62, "dotted_name"),
+    npy201_statement_name(c13_62, q14_62), node(_, c13_62, _, _, _), IID = c13_62, value(IID, t15_62),
+    value(NEW, t15_62).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.VisibleDeprecationWarning"), node(_, n, _, _, _), NAME = n, text(NAME, t1),
+    kind(n, "attribute"), within_stop(n, p1_63, "try_statement"),
+    kind(p1_63, "try_statement"), npy201_catches_attribute_error(p1_63),
+    field(p1_63, "body", c2_63), has(c2_63, c3_63, "attribute"), sym_of(c3_63, q4_63),
+    npy201_set_4(q4_63), field(c3_63, "attribute", c5_63), kind(c5_63, "identifier"),
+    node(_, c5_63, _, _, _), TID = c5_63, value(TID, t6_63), value(NEW, t6_63).
+npy201_demand_in_handler(st9_64) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.VisibleDeprecationWarning"), node(_, n, _, _, _), NAME = n, text(NAME, t1),
+    kind(n, "identifier"), ref_site(n, b8_64),
+    (st9_64 = b8_64 ; within(b8_64, st9_64)),
+    within_stop(st9_64, p10_64, "try_statement"), kind(p10_64, "try_statement"),
+    npy201_catches_import_error(p10_64), field(p10_64, "body", c11_64),
+    has(c11_64, c12_64, "import_from_statement"), has(c12_64, c13_64, "dotted_name"),
+    npy201_statement_name(c13_64, q14_64), node(_, c13_64, _, _, _), IID = c13_64, value(IID, t15_64),
+    value(NEW, t15_64).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.compare_chararrays"), node(_, n, _, _, _), NAME = n, text(NAME, t1),
+    kind(n, "attribute"), within_stop(n, p1_65, "try_statement"),
+    kind(p1_65, "try_statement"), npy201_catches_attribute_error(p1_65),
+    field(p1_65, "body", c2_65), has(c2_65, c3_65, "attribute"), sym_of(c3_65, q4_65),
+    npy201_set_4(q4_65), field(c3_65, "attribute", c5_65), kind(c5_65, "identifier"),
+    node(_, c5_65, _, _, _), TID = c5_65, value(TID, t6_65), value(NEW, t6_65).
+npy201_demand_in_handler(st9_66) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.compare_chararrays"), node(_, n, _, _, _), NAME = n, text(NAME, t1),
+    kind(n, "identifier"), ref_site(n, b8_66),
+    (st9_66 = b8_66 ; within(b8_66, st9_66)),
+    within_stop(st9_66, p10_66, "try_statement"), kind(p10_66, "try_statement"),
+    npy201_catches_import_error(p10_66), field(p10_66, "body", c11_66),
+    has(c11_66, c12_66, "import_from_statement"), has(c12_66, c13_66, "dotted_name"),
+    npy201_statement_name(c13_66, q14_66), node(_, c13_66, _, _, _), IID = c13_66, value(IID, t15_66),
+    value(NEW, t15_66).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.chararray"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_67, "try_statement"), kind(p1_67, "try_statement"),
+    npy201_catches_attribute_error(p1_67), field(p1_67, "body", c2_67),
+    has(c2_67, c3_67, "attribute"), sym_of(c3_67, q4_67), npy201_set_4(q4_67),
+    field(c3_67, "attribute", c5_67), kind(c5_67, "identifier"), node(_, c5_67, _, _, _), TID = c5_67,
+    value(TID, t6_67), value(NEW, t6_67).
+npy201_demand_in_handler(st9_68) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.chararray"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_68),
+    (st9_68 = b8_68 ; within(b8_68, st9_68)),
+    within_stop(st9_68, p10_68, "try_statement"), kind(p10_68, "try_statement"),
+    npy201_catches_import_error(p10_68), field(p10_68, "body", c11_68),
+    has(c11_68, c12_68, "import_from_statement"), has(c12_68, c13_68, "dotted_name"),
+    npy201_statement_name(c13_68, q14_68), node(_, c13_68, _, _, _), IID = c13_68, value(IID, t15_68),
+    value(NEW, t15_68).
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.format_parser"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "attribute"),
+    within_stop(n, p1_69, "try_statement"), kind(p1_69, "try_statement"),
+    npy201_catches_attribute_error(p1_69), field(p1_69, "body", c2_69),
+    has(c2_69, c3_69, "attribute"), sym_of(c3_69, q4_69), npy201_set_4(q4_69),
+    field(c3_69, "attribute", c5_69), kind(c5_69, "identifier"), node(_, c5_69, _, _, _), TID = c5_69,
+    value(TID, t6_69), value(NEW, t6_69).
+npy201_demand_in_handler(st9_70) :- node(_, NEW, _, _, _),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "numpy.format_parser"),
+    node(_, n, _, _, _), NAME = n, text(NAME, t1), kind(n, "identifier"), ref_site(n, b8_70),
+    (st9_70 = b8_70 ; within(b8_70, st9_70)),
+    within_stop(st9_70, p10_70, "try_statement"), kind(p10_70, "try_statement"),
+    npy201_catches_import_error(p10_70), field(p10_70, "body", c11_70),
+    has(c11_70, c12_70, "import_from_statement"), has(c12_70, c13_70, "dotted_name"),
+    npy201_statement_name(c13_70, q14_70), node(_, c13_70, _, _, _), IID = c13_70, value(IID, t15_70),
+    value(NEW, t15_70).
+npy201_demand_in_handler(n) :- within_stop(n, p1, "try_statement"), kind(p1, "try_statement"),
+    npy201_catches_attribute_error(p1), field(p1, "body", c2), has(c2, c3, "attribute"),
+    sym_of(c3, q4), npy201_set_4(q4).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl npy201_up_1(n: node, p: node)
+npy201_up_1(n, p) :- npy201_demand_in_handler(n), within_stop(n, p, npy201_stop_1),
+    kind(p, "except_clause").
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl npy201_up_2(n: node, p: node)
+npy201_up_2(n, p) :- npy201_in_handler(n), within_stop(n, p, "try_statement"),
+    kind(p, "try_statement"), npy201_catches_attribute_error(p).
+
+// set_4: symbols from the JSON `resolves.import`
+.decl npy201_set_4(v: symbol)
+npy201_set_4("ast.literal_eval"). npy201_set_4("inspect.getsource"). npy201_set_4("numpy.all").
+npy201_set_4("numpy.any"). npy201_set_4("numpy.asmatrix"). npy201_set_4("numpy.bytes_").
+npy201_set_4("numpy.char.chararray"). npy201_set_4("numpy.char.compare_chararrays").
+npy201_set_4("numpy.clongdouble"). npy201_set_4("numpy.complex128"). npy201_set_4("numpy.complex64").
+npy201_set_4("numpy.cumprod"). npy201_set_4("numpy.exceptions.AxisError").
+npy201_set_4("numpy.exceptions.ComplexWarning"). npy201_set_4("numpy.exceptions.DTypePromotionError").
+npy201_set_4("numpy.exceptions.ModuleDeprecationWarning").
+npy201_set_4("numpy.exceptions.RankWarning"). npy201_set_4("numpy.exceptions.TooHardError").
+npy201_set_4("numpy.exceptions.VisibleDeprecationWarning"). npy201_set_4("numpy.float64").
+npy201_set_4("numpy.inf"). npy201_set_4("numpy.issubdtype"). npy201_set_4("numpy.lib.add_docstring").
+npy201_set_4("numpy.lib.add_newdoc"). npy201_set_4("numpy.lib.array_utils.byte_bounds").
+npy201_set_4("numpy.lib.npyio.DataSource"). npy201_set_4("numpy.lib.tracemalloc_domain").
+npy201_set_4("numpy.longdouble"). npy201_set_4("numpy.nan"). npy201_set_4("numpy.prod").
+npy201_set_4("numpy.rec.format_parser"). npy201_set_4("numpy.round"). npy201_set_4("numpy.str_").
+npy201_set_4("numpy.trapezoid"). npy201_set_4("numpy.vstack").
+
+// set_5: symbols from the JSON `resolves.import`
+.decl npy201_set_5(v: symbol)
+npy201_set_5("numpy.get_array_wrap"). npy201_set_5("numpy.issctype"). npy201_set_5("numpy.maximum_sctype").
+npy201_set_5("numpy.obj2sctype"). npy201_set_5("numpy.sctype2char"). npy201_set_5("numpy.sctypes").
+
+// set_6: symbols from the JSON `resolves.import`
+.decl npy201_set_6(v: symbol)
+npy201_set_6("numpy.INF"). npy201_set_6("numpy.Inf"). npy201_set_6("numpy.Infinity"). npy201_set_6("numpy.infty").
+npy201_set_6("numpy.PINF").
+
+// set_7: symbols from the JSON `resolves.import`
+.decl npy201_set_7(v: symbol)
+npy201_set_7("numpy.add_docstring"). npy201_set_7("numpy.add_newdoc").
+npy201_set_7("numpy.add_newdoc_ufunc"). npy201_set_7("numpy.alltrue"). npy201_set_7("numpy.asfarray").
+npy201_set_7("numpy.byte_bounds"). npy201_set_7("numpy.cast"). npy201_set_7("numpy.cfloat").
+npy201_set_7("numpy.clongfloat"). npy201_set_7("numpy.compat"). npy201_set_7("numpy.complex_").
+npy201_set_7("numpy.cumproduct"). npy201_set_7("numpy.DataSource"). npy201_set_7("numpy.deprecate").
+npy201_set_7("numpy.deprecate_with_doc"). npy201_set_7("numpy.disp").
+npy201_set_7("numpy.fastCopyAndTranspose"). npy201_set_7("numpy.find_common_type").
+npy201_set_7("numpy.get_array_wrap"). npy201_set_7("numpy.float_"). npy201_set_7("numpy.geterrobj").
+npy201_set_7("numpy.in1d"). npy201_set_7("numpy.INF"). npy201_set_7("numpy.Inf"). npy201_set_7("numpy.Infinity").
+npy201_set_7("numpy.infty"). npy201_set_7("numpy.issctype"). npy201_set_7("numpy.issubclass_").
+npy201_set_7("numpy.issubsctype"). npy201_set_7("numpy.mat"). npy201_set_7("numpy.maximum_sctype").
+npy201_set_7("numpy.NaN"). npy201_set_7("numpy.NAN"). npy201_set_7("numpy.nbytes"). npy201_set_7("numpy.NINF").
+npy201_set_7("numpy.NZERO"). npy201_set_7("numpy.longcomplex"). npy201_set_7("numpy.longfloat").
+npy201_set_7("numpy.lookfor"). npy201_set_7("numpy.obj2sctype"). npy201_set_7("numpy.PINF").
+npy201_set_7("numpy.product"). npy201_set_7("numpy.PZERO"). npy201_set_7("numpy.recfromcsv").
+npy201_set_7("numpy.recfromtxt"). npy201_set_7("numpy.round_"). npy201_set_7("numpy.safe_eval").
+npy201_set_7("numpy.sctype2char"). npy201_set_7("numpy.sctypes"). npy201_set_7("numpy.seterrobj").
+npy201_set_7("numpy.set_string_function"). npy201_set_7("numpy.singlecomplex").
+npy201_set_7("numpy.string_"). npy201_set_7("numpy.sometrue"). npy201_set_7("numpy.source").
+npy201_set_7("numpy.tracemalloc_domain"). npy201_set_7("numpy.trapz"). npy201_set_7("numpy.unicode_").
+npy201_set_7("numpy.who"). npy201_set_7("numpy.row_stack"). npy201_set_7("numpy.AxisError").
+npy201_set_7("numpy.ComplexWarning"). npy201_set_7("numpy.DTypePromotionError").
+npy201_set_7("numpy.ModuleDeprecationWarning"). npy201_set_7("numpy.RankWarning").
+npy201_set_7("numpy.TooHardError"). npy201_set_7("numpy.VisibleDeprecationWarning").
+npy201_set_7("numpy.compare_chararrays"). npy201_set_7("numpy.chararray").
+npy201_set_7("numpy.format_parser").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl npy201_stop_1(n: node)
+npy201_stop_1(n) :- kind(n, "block"), child(p1, n, _),
+    (kind(p1, "function_definition") ; kind(p1, "class_definition")).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+//   NAME: metavariable this relation binds for the calling rule
+.decl npy201_alt_8(n: node, name: loc)
+npy201_alt_8(n, NAME) :- npy201_reference(n), NAME = n.
+npy201_alt_8(n, NAME) :- npy201_in_string(n, NAME).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+//   NAME: metavariable this relation binds for the calling rule
+.decl npy201_alt_10(n: node, name: loc)
+npy201_alt_10(n, NAME) :- npy201_pattern_name(n), node(_, n, _, _, _), NAME = n.
+npy201_alt_10(n, NAME) :- npy201_in_string(n, NAME).

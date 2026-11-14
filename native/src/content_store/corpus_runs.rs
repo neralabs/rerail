@@ -97,9 +97,22 @@ impl CorpusPass {
 }
 
 /// The corpus memo's schemas before 4 (logic/plan/corpus/memo.rs): their rows were written before decision 0053, under
-/// plans no manifest names, so only a sweep collects them. Theirs alone: the slice's memo is schema 1 and a prepared
-/// program's entries 101 to 103, all under other numbers, and a content-pure row (empty path) is never the corpus's.
+/// plans no manifest names, so only a sweep collects them, by number alone (a content-pure row, empty path, is never
+/// the corpus's). So no other user of `facts_results` may take one: each declares its schema through
+/// `live_fact_schema`. The plan choices (3) and kept plans (2) once did, and a new store's first collection swept
+/// the first run's entries (O-kept-strata-flake).
 pub const RETIRED_CORPUS_MEMO_SCHEMAS: &[u32] = &[2, 3];
+
+/// `schema`, refused at compile time when the sweep of `RETIRED_CORPUS_MEMO_SCHEMAS` would delete its rows: every
+/// `facts_results` user's fact schema is declared through this.
+pub const fn live_fact_schema(schema: u32) -> u32 {
+    let mut i = 0;
+    while i < RETIRED_CORPUS_MEMO_SCHEMAS.len() {
+        assert!(RETIRED_CORPUS_MEMO_SCHEMAS[i] != schema, "a retired corpus memo schema: the collector sweeps its rows");
+        i += 1;
+    }
+    schema
+}
 
 fn lapsed_plan_hold(connection: &rusqlite::Connection, now: i64) -> StoreResult<bool> {
     Ok(connection

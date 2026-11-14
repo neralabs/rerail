@@ -1,0 +1,47 @@
+.policy "ruff-f523-string-dot-format-extra-positional-arguments" revision 1
+.guests off
+.description "Remove positional arguments to str.format() that no placeholder in the string uses; they are silently ignored."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
+
+#include "python/format-args.rr"
+
+// F523(n): a finding at node n, from clause `string-dot-format-extra-positional-arguments`.
+// Each rule below is one way the JSON `rule` can match.
+.violation F523(at: node) "`.format` call has unused arguments"
+    suppress noqa "F523"
+F523(n) :- n ~ `$S.format($$$A)`, fa_brace_tree(n, _, _), fa_brace_unused(n, a1),
+    !kind(a1, "keyword_argument").
+F523(n) :- kind(n, "call"), field(n, "arguments", c2),
+    kind(c2, "generator_expression"), field(n, "function", c3), kind(c3, "attribute"),
+    field(c3, "attribute", c4), glob("format", c4), field(n, "function", c5),
+    field(c5, "object", c6), f523_never_reads_first(c6).
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl f523_plain_string(n: node)
+f523_plain_string(n) :- kind(n, "string"), !match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", n).
+f523_plain_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", c1) } = 0.
+
+// never_reads_first(n): the JSON util `never-reads-first`, used where the JSON says `matches: "never-reads-first"`
+.decl f523_never_reads_first(n: node)
+f523_never_reads_first(n) :- f523_demand_never_reads_first(n), f523_plain_string(n),
+    parsed(n, "braceFormat", r1), count : { within(c2, r1), f523_alt_1(c2) } = 0.
+f523_never_reads_first(n) :- f523_demand_never_reads_first(n),
+    kind(n, "parenthesized_expression"), child(n, c3, _), f523_never_reads_first(c3).
+
+// demand_never_reads_first: the nodes never_reads_first is asked at (its recursion looks at every descendant)
+.decl f523_demand_never_reads_first(n: node)
+f523_demand_never_reads_first(c6) :- kind(n, "call"), field(n, "arguments", c2),
+    kind(c2, "generator_expression"), field(n, "function", c3), kind(c3, "attribute"),
+    field(c3, "attribute", c4), glob("format", c4), field(n, "function", c5),
+    field(c5, "object", c6).
+f523_demand_never_reads_first(c3) :- f523_demand_never_reads_first(n),
+    kind(n, "parenthesized_expression"), child(n, c3, _).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl f523_alt_1(n: node)
+f523_alt_1(n) :- kind(n, "error").
+f523_alt_1(n) :- kind(n, "field_name"), value(n, "0").

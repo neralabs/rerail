@@ -1,0 +1,46 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f522-string-dot-format-extra-named-arguments",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove keyword arguments to str.format() that no named placeholder in the string uses; they are silently ignored.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "string-dot-format-extra-named-arguments",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$S.format($$$A)",
+            "formatArgs": {
+              "style": "brace",
+              "string": "S",
+              "args": "A",
+              "unused": {
+                "kind": "keyword_argument"
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F522",
+        "message": "Remove the keyword arguments that no named placeholder in this str.format() string uses.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F522"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

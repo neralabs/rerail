@@ -1,0 +1,86 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f509-percent-format-unsupported-format-character",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use only valid conversion characters in Python %-format strings; an unsupported one raises ValueError at runtime.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "percent-format-unsupported-format-character",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "plain-string": {
+              "any": [
+                {
+                  "kind": "string",
+                  "not": {
+                    "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"
+                  }
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "kind": "string",
+                      "regex": "^[A-Za-z]*[fFbBtT][A-Za-z]*['\"]"
+                    }
+                  }
+                }
+              ]
+            },
+            "format-string": {
+              "any": [
+                {
+                  "matches": "plain-string",
+                  "parse": {
+                    "grammar": "percentFormat",
+                    "has": {
+                      "kind": "error",
+                      "value": {
+                        "regex": "^unsupported format character"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "matches": "format-string"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "pattern": "$S % $R"
+          },
+          "constraints": {
+            "S": {
+              "matches": "format-string"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F509",
+        "message": "Replace the unsupported conversion character in this %-format string with a valid one such as `s`, `d`, `r` or `f`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F509"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

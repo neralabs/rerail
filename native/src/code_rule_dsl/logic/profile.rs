@@ -269,6 +269,12 @@ impl Activity {
 /// Runs `blocking` (a receive, a send on a full channel, a join), recorded as a wait of this thread's span on
 /// `awaited`, and on what it was doing when it began (`doing`, an `Activity` of the awaited thread or a fixed name). The wall
 /// time is the wait; the CPU spent meanwhile is reported with it. Not profiling, it only runs `blocking`.
+/// The wall clock a timeline line carries (`RERAIL_TIMELINE`): seconds since the epoch, so the lines of nested
+/// runs and threads read on one axis.
+pub fn timeline_clock() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64())
+}
+
 pub fn wait<T>(awaited: &str, doing: &Activity, blocking: impl FnOnce() -> T) -> T {
     if !on() {
         return blocking();
@@ -638,8 +644,6 @@ pub fn here() -> Option<String> {
     STACK.with(|s| s.lock().opens.last().map(|o| o.path.clone()))
 }
 
-/// Opens span `name` under `under`, a path another thread's `here` gave: a pool job's span (`crate::threads`), at
-/// that path whichever thread runs it. Without `under`, under this thread's open span, as `span` opens one.
 /// `f` for a parallel iterator's items, each a sizeable piece of work (a file, a tape): on a thread with no span
 /// open (a pool thread that took the item), under `name` in the span open where `carried` was called; on a thread
 /// with one open (the caller's), as it is. Rayon's work taken by another thread is under no span of that thread's.
@@ -651,6 +655,8 @@ pub fn carried<A, R>(name: &'static str, f: impl Fn(A) -> R + Sync + Send) -> im
     }
 }
 
+/// Opens span `name` under `under`, a path another thread's `here` gave: a pool job's span (`crate::threads`), at
+/// that path whichever thread runs it. Without `under`, under this thread's open span, as `span` opens one.
 pub fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Span {
     match under {
         Some(p) => open(format!("{p}/{}", name())),
@@ -664,7 +670,7 @@ pub fn span(name: impl FnOnce() -> String) -> Span {
         // A timeline (dev, `RERAIL_TIMELINE`): the main thread's spans as they open, nothing measured.
         static TIMELINE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         if *TIMELINE.get_or_init(|| std::env::var_os("RERAIL_TIMELINE").is_some()) && std::thread::current().name() == Some("main") {
-            eprintln!("RERAIL_TIMELINE span {}", name());
+            eprintln!("RERAIL_TIMELINE span {} @{:.3}", name(), timeline_clock());
         }
         return Span(false);
     }

@@ -1,0 +1,87 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f405-undefined-local-with-import-star-usage",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Import names explicitly instead of relying on a star import to define them; names that may only come from a star import can't be checked.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "undefined-local-with-import-star-usage",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "star-in-string": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "kind": "identifier",
+                      "resolves": {
+                        "unresolved": "star"
+                      },
+                      "capture": "NAME"
+                    },
+                    {
+                      "matches": "star-in-string"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "string"
+                  }
+                ],
+                "pattern": "$NAME",
+                "resolves": {
+                  "unresolved": "star"
+                }
+              },
+              {
+                "matches": "star-in-string"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.NAME",
+        "code": "F405",
+        "message": "Import `$NAME` explicitly from its module; it may only be defined by a star import.",
+        "each": "NAME",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F405"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

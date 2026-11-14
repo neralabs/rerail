@@ -4,6 +4,84 @@ use crate::code_rule_dsl::logic::rr::parse;
 use crate::code_rule_dsl::logic::magic::{Options, magic_adorn, magic_sets};
 use crate::content_store::ContentStore;
 
+/// Stable order keys have gaps at nested granules. A SQL descent follows the tree,
+/// includes a nested scope itself, and excludes the nodes inside that scope.
+#[test]
+fn sql_descendant_walks_cross_sparse_order_keys_and_stop_at_nested_scopes() {
+    let p = parse(
+        r#"
+.decl roots(f:node)
+roots(100). roots(102). roots(101). roots(105). roots(106).
+.decl targets(n:node)
+targets(103). targets(104). targets(107).
+.decl scope(k:symbol)
+scope("function_definition").
+.decl seen(f:node,n:node)
+seen(f,n) :- roots(f), nearest(n,f,scope).
+.decl wanted(f:node,n:node)
+wanted(f,n) :- roots(f), targets(n), nearest(n,f,scope).
+.output seen,wanted
+"#,
+    )
+    .unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    db.execute_batch(
+        r#"
+CREATE TABLE roots(c0 INTEGER);
+INSERT INTO roots VALUES(100),(102),(101),(105),(106);
+CREATE TABLE targets(c0 INTEGER);
+INSERT INTO targets VALUES(103),(104),(107);
+CREATE TABLE node(n INTEGER PRIMARY KEY,kind TEXT);
+INSERT INTO node VALUES(100,'function_definition'),(101,'return_statement'),
+    (102,'function_definition'),(103,'return_statement'),(104,'return_statement'),
+    (105,'function_definition'),(106,'block'),(107,'return_statement');
+CREATE TABLE child(p INTEGER,c INTEGER,idx INTEGER);
+CREATE INDEX child_parent ON child(p);
+INSERT INTO child VALUES(100,101,0),(100,102,1),(102,103,0),(100,104,2),(106,107,0);
+CREATE TABLE tape(n INTEGER PRIMARY KEY,par INTEGER,size INTEGER,depth INTEGER);
+INSERT INTO tape VALUES(100,-1,4,0),(101,100,0,1),(102,100,1,1),(103,102,0,2),
+    (104,100,0,1),(105,-1,0,0),(106,-1,1,0),(107,106,0,1);
+CREATE TABLE node_order(n INTEGER PRIMARY KEY,k INTEGER UNIQUE);
+INSERT INTO node_order VALUES(100,0),(101,1),(102,262144),(103,262145),(104,524290),
+    (105,786432),(106,1048576),(107,1048577);
+"#,
+    )
+    .unwrap();
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(Stats::empty(&p));
+    let model = make_plan(&p, &db, inputs).unwrap();
+    for (name, expected) in [
+        ("seen", vec![(100, 101), (100, 102), (100, 104), (102, 103)]),
+        ("wanted", vec![(100, 104), (102, 103)]),
+    ] {
+        let rule = p.rules.iter().find(|r| r.head.rel == name).unwrap();
+        let order = rule
+            .body
+            .iter()
+            .enumerate()
+            .map(|(at, lit)| Step {
+                at,
+                mode: matches!(lit, Literal::Nearest { .. }).then_some(Mode::Descend),
+            })
+            .collect::<Vec<_>>();
+        let vs = body::Versions::of(&p).unwrap();
+        let query = model
+            .checked_query(&p, &vs.body(rule).unwrap(), &order, None, None)
+            .unwrap();
+        let sql = query.render();
+        let mut rows = db
+            .prepare(&sql)
+            .unwrap()
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        rows.sort();
+        assert_eq!(rows, expected, "{sql}");
+    }
+}
+
 #[test]
 fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters() {
     let p=parse(".decl event(k:number,id:number,g:number,v:number)\nevent(9,0,1,7).\nevent(9,1,1,7).\nevent(9,2,1,3).\nevent(8,3,1,90).\nevent(9,4,2,-2).\nevent(9,5,4,9223372036854775807).\nevent(9,6,4,1).\nevent(9,7,4,-1).\n.decl owner(g:number,v:number)\nowner(1,99).\nowner(2,99).\nowner(3,99).\nowner(4,99).\n.decl result(g:number,v:number,n:number,s:number,lo:number,hi:number)\nresult(g,v,n,s,lo,hi) :- owner(g,v), n=count : {event(9,_,g,_)}, s=sum v : {event(9,_,g,v)}, lo=min x : {event(9,_,g,x)}, hi=max y : {event(9,_,g,y)}, dead=sum z : {event(_,_,_,z)}, unused=dead.\n.decl repeated(g:number,s:number)\nrepeated(g,s) :- owner(g,_), s=sum x : {event(x,_,g,x)}.\n.output result,repeated\n").unwrap();
@@ -121,6 +199,95 @@ fn closures_of_one_level_launch_in_one_wave() {
     }
     assert_eq!(outputs[0], outputs[1]);
     assert_eq!(outputs[1].len(), 17 + 12 + 13, "{:?}", outputs[1]);
+}
+
+/// Device waves (decision 0095 §5) across components (decision 0113): a level of twenty closures is more than one
+/// component takes (its estimate reaches `k` fixed costs first), so the scoreboard issues it as several. Their bit
+/// rows' launches are still the level's one wave, not one wave per component.
+#[test]
+fn closures_of_a_level_wider_than_a_component_launch_in_one_wave() {
+    const N: usize = 20;
+    let mut src = String::new();
+    for k in 0..N {
+        let b = 100 * k as i64;
+        src += &format!(".decl e{k}(a: number, b: number)\n");
+        for (x, y) in [(1, 2), (1, 3), (2, 4), (3, 4), (4, 1)] {
+            src += &format!("e{k}({}, {}).\n", b + x, b + y);
+        }
+        src += &format!(".decl r{k}(a: number, b: number)\nr{k}(a, b) :- e{k}(a, b).\nr{k}(a, c) :- r{k}(a, b), e{k}(b, c).\n");
+    }
+    src += ".decl o(k: number, a: number, b: number)\n";
+    for k in 0..N {
+        src += &format!("o({k}, a, b) :- r{k}(a, b).\n");
+    }
+    src += ".output o\n";
+    let p = parse(&src).unwrap();
+    let mut outputs = Vec::new();
+    for modes in ["", "program"] {
+        let path = crate::code_rule_dsl::fixtures::temp();
+        let store = ContentStore::open(&path).unwrap();
+        let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let db = Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        let before = super::super::lanes::wave::flushed();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), modes).unwrap();
+        let after = super::super::lanes::wave::flushed();
+        if !modes.is_empty() {
+            for k in 0..N {
+                assert!(got.native.contains(&format!("r{k}")), "r{k} runs natively");
+            }
+            assert_eq!((after.0 - before.0, after.1 - before.1), (1, N as u64), "the level's closures in one wave of {N} launches");
+        }
+        let mut o = got.outputs["o"].clone();
+        o.sort();
+        outputs.push(o);
+    }
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[1].len(), 16 * N, "{:?}", outputs[1].len());
+}
+
+/// Decision 0123 §9: a probe with no kept plan is planned when its delta first has rows. In `{r, s, t}`, `s` never
+/// has a row (`g` is empty, though not to the program's prune: no edge is a loop), so `r`'s probe by `s` is never
+/// planned; the probes by `r` are planned when the first wave returns, and the run derives what the SQL run does.
+#[test]
+fn a_probe_is_planned_when_its_delta_first_has_rows() {
+    let src = ".decl e(a: number, b: number)\ne(1, 2).\ne(2, 3).\ne(3, 4).\ne(4, 1).\n\
+               .decl g(a: number)\ng(a) :- e(a, a).\n.decl h(a: number)\nh(3).\n\
+               .decl r(a: number, b: number)\n.decl s(a: number, b: number)\n.decl t(a: number, b: number)\n\
+               r(a, b) :- e(a, b).\nr(a, c) :- r(a, b), e(b, c).\nr(a, c) :- s(a, b), e(b, c).\nr(a, b) :- t(b, a).\n\
+               s(a, b) :- r(a, b), g(a).\nt(a, b) :- r(a, b), h(b).\n\
+               .decl o(k: number, a: number, b: number)\no(1, a, b) :- r(a, b).\no(2, a, b) :- t(a, b).\n.output o\n";
+    let p = parse(src).unwrap();
+    let mut outputs = Vec::new();
+    for modes in ["", "program"] {
+        let _plans = KeepPlans::start(None);
+        let path = crate::code_rule_dsl::fixtures::temp();
+        let store = ContentStore::open(&path).unwrap();
+        let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let db = Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        let before = super::lazy_probes_counted();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), modes).unwrap();
+        let after = super::lazy_probes_counted();
+        if !modes.is_empty() {
+            assert!(got.native.iter().any(|c| c.split('/').any(|r| r == "r")), "r's component runs natively: {:?}", got.native);
+            // The probes searched: r by r, r by s, s by r, t by r (`r(a, b) :- t(b, a)` is a copy, with no order to
+            // find). Other tests' runs only add to both counts, and never plan more probes than they left.
+            let (left, planned) = (after.0 - before.0, after.1 - before.1);
+            assert!(left >= 4 && planned >= 3, "left {left}, planned {planned}; native {:?}, inlined {:?}", got.native, got.inlined);
+            assert!(left - planned >= 1, "r's probe by s is never planned: left {left}, planned {planned}");
+        }
+        let mut o = got.outputs["o"].clone();
+        o.sort();
+        outputs.push(o);
+    }
+    assert_eq!(outputs[0], outputs[1]);
+    // r: the 4-cycle's closure (16) and t's reversals, all in it; t: r's rows into 3 (4).
+    assert_eq!(outputs[1].len(), 16 + 4, "{:?}", outputs[1]);
 }
 
 fn root() -> std::path::PathBuf {
@@ -1060,7 +1227,8 @@ PIN(s) :- spot(_, s).
     let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
     assert_eq!(
         read("violation"),
-        "t:places\tLONG\tFILE_LENGTH\ta.py\t0\nt:places\tLONG\tFILE_LENGTH\ta.py\t1\nt:places\tLONG\tFILE_LENGTH\ta.py\t3\nt:places\tLONG\tFILE_LENGTH\tmissing.json\t3\nt:places\tPIN\tPIN\ta.py\t7\n"
+        // The sixth column is the finding's (0165): a call's 0-based byte column, 0 for a place.
+        "t:places\tLONG\tFILE_LENGTH\ta.py\t0\t0\nt:places\tLONG\tFILE_LENGTH\ta.py\t1\t0\nt:places\tLONG\tFILE_LENGTH\ta.py\t3\t0\nt:places\tLONG\tFILE_LENGTH\tmissing.json\t3\t0\nt:places\tPIN\tPIN\ta.py\t7\t0\n"
     );
     // The violation's own rows show a place as one.
     assert_eq!(read("PIN"), "@place(\"a.py\", 7)\n");
@@ -2146,6 +2314,22 @@ fn statistics_versions_accumulate_drift_and_publish_changed_keys() {
     watch.delta(0,0);
     model.stats.card.insert("a".into(),1000.0); watch.record(0,0,&model,"a");
     assert!(!watch.take(0)); watch.delta(0,1); assert!(watch.take(0));
+}
+
+/// Decision 0123 §7: an order kept at a price under a search's cost (taken greedily, or found by a search) is searched
+/// again only when its line did a search's work when it last ran: the search then costs less than the line did.
+#[test]
+fn an_order_priced_under_a_search_is_searched_once_it_ran_over_one() {
+    let p = parse(".decl a(x:number,y:number)\n.decl b(y:number,z:number)\n.decl c(z:number,w:number)\n.decl d(w:number)\nd(w) :- a(x,y), b(y,z), c(z,w).\n").unwrap();
+    let alone = body::alone(&p.rules[0]).unwrap();
+    let (body, first) = (&body::nth(&alone, 0), Some(0));
+    let search = search_rows(body, first);
+    // Three joins led by the delta: a fixed 400 rows and five candidates.
+    assert_eq!(search, 405.0);
+    assert!(!mispriced(10.0, None, body, first), "a line that never ran");
+    assert!(!mispriced(10.0, Some(search.max(SEARCH_WORK) - 1.0), body, first), "it ran under a search's work");
+    assert!(mispriced(10.0, Some(search.max(SEARCH_WORK)), body, first), "it ran a search's work, priced at 10 rows");
+    assert!(!mispriced(search + 1.0, Some(1e9), body, first), "priced over a search: the re-price and replan rules hold it");
 }
 
 #[test]

@@ -178,6 +178,24 @@ impl Text {
         Some(Modules { files: files.iter().map(|(path, digest, statements)| (path.clone(), *digest, declares(statements))).collect(), heads, declared: declares(own) })
     }
 
+    /// The text's header: its program without a clause of its own or of its libraries (their declarations, its
+    /// directives, its findings' declarations), for what a batch reads of a policy before its run (decision 0168):
+    /// its settings, `.policy`, `.language` and outputs, as its whole program has them, less `.global library` (which
+    /// `read_file` writes) and the settings a clause makes. Lowering only that is a fraction of lowering its rules.
+    pub fn header(self) -> Result<Program, Error> {
+        let header = |statements: Vec<syntax::Statement>| -> Vec<syntax::Statement> {
+            statements.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { .. } | syntax::Item::Include(_))).collect()
+        };
+        match self.0 {
+            Read::Plain(statements) => lower::lower(header(statements)),
+            Read::Modular { files, own } => {
+                let mut statements: Vec<syntax::Statement> = files.iter().flat_map(|(_, _, s)| s.iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { .. } | syntax::Item::Include(_))).cloned()).collect();
+                statements.extend(header(own));
+                lower::lower(statements)
+            }
+        }
+    }
+
     /// The text's program, as `parse` (`clauses`) or `parse_own` reads it.
     pub fn lower(self, clauses: bool) -> Result<Program, Error> {
         let (files, own) = match self.0 {
@@ -818,6 +836,24 @@ pub(in crate::code_rule_dsl) fn recording<T>(f: impl FnOnce() -> T) -> (T, Vec<L
     (out, read.into_iter().filter(|f| seen.insert(f.path.clone())).collect())
 }
 
+/// `f` run on another thread for a caller inside `recording`: its result, and the library files it read, which
+/// `replay` notes on the caller's thread, in the order the caller's own reading would have noted them.
+pub(in crate::code_rule_dsl) fn recorded_on_worker<T>(f: impl FnOnce() -> T) -> (T, Vec<LibraryFile>) {
+    let outer = READS.with(|r| r.borrow_mut().replace(Vec::new()));
+    let out = f();
+    let read = READS.with(|r| std::mem::replace(&mut *r.borrow_mut(), outer)).unwrap_or_default();
+    (out, read)
+}
+
+/// The files a worker read (`recorded_on_worker`), noted on this thread as if it had read them.
+pub(in crate::code_rule_dsl) fn replay(files: Vec<LibraryFile>) {
+    READS.with(|r| {
+        if let Some(read) = r.borrow_mut().as_mut() {
+            read.extend(files);
+        }
+    });
+}
+
 fn noted(file: &LibraryFile) {
     READS.with(|r| {
         if let Some(read) = r.borrow_mut().as_mut() {
@@ -982,11 +1018,39 @@ fn program_shared(path: &Path) -> Result<(Shared, Vec<LibraryFile>), Error> {
         let (modules, files) = builtin_program(path)?;
         return Ok((Shared(modules.into_iter().map(|(p, s)| (p, std::sync::Arc::new(s))).collect()), files));
     }
+    if super::json_rules::is_policy_path(path) {
+        return json_program_shared(path);
+    }
     let (order, files) = program_order(path)?;
     // One handle on the tape cache for the files read (`phases::Reading`), not one each.
     let _reading = super::plan::corpus::phases::Reading::enter();
     let modules = order.into_iter().map(|p| Ok((p.clone(), read_shared(&p)?.0))).collect::<Result<Vec<_>, Error>>()?;
     Ok((Shared(modules), files))
+}
+
+/// A JSON policy (`rerail.policy/v1`, decision 0175), read as the `.rr` file it translates to: its text translated
+/// as it is read (`json_rules`), its `#include`s (library files only) resolved as a text's are (`resolve_shared`).
+/// The modules and the files read are in `program_shared`'s order: includes first and the file last; `core.rr`, the
+/// file (its JSON bytes' digest, so an edit reads it again), then the rest.
+fn json_program_shared(path: &Path) -> Result<(Shared, Vec<LibraryFile>), Error> {
+    let path = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let (bytes, digest) = super::plan::corpus::observe(|o| o.read(&path)).ok_or_else(|| Error::Syntax(format!("{}: cannot read the file", path.display())))?;
+    let file = LibraryFile { path: path.clone(), sha256: Some(digest) };
+    noted(&file);
+    let json = String::from_utf8(bytes).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let id = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let src = super::json_rules::Translator::new().translate_text(&json, &id).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let _reading = super::plan::corpus::phases::Reading::enter();
+    let statements = stored_statements(&path, src).map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
+    let (modules, own) = resolve_shared(statements)?;
+    let core = library().join("core.rr").canonicalize().ok();
+    let (first, rest): (Vec<_>, Vec<_>) = modules.iter().partition(|(p, _, _)| Some(p) == core.as_ref());
+    let mut files: Vec<LibraryFile> = first.iter().map(|(p, d, _)| LibraryFile { path: p.clone(), sha256: Some(*d) }).collect();
+    files.push(file);
+    files.extend(rest.iter().map(|(p, d, _)| LibraryFile { path: p.clone(), sha256: Some(*d) }));
+    let mut shared: Vec<(PathBuf, std::sync::Arc<Vec<syntax::Statement>>)> = modules.into_iter().map(|(p, _, s)| (p, s)).collect();
+    shared.push((path, std::sync::Arc::new(own)));
+    Ok((Shared(shared), files))
 }
 
 /// `path` and what it includes, each once, as phase 0 found them: the reading order of the builtin reader.

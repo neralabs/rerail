@@ -79,6 +79,7 @@ pub mod connections;
 pub mod reuse;
 pub mod phase0;
 pub mod cross_memo;
+pub mod switches;
 pub mod matchers;
 /// The prefix of an `ast` matcher's relation (decision 0106).
 pub(in crate::code_rule_dsl) const AST_MATCHES: &str = matchers::PREFIX;
@@ -875,8 +876,18 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
     };
     let parsing = crate::code_rule_dsl::logic::profile::span(|| format!("parse each program ({})", programs.len()));
     // Each text read once, for its modules and its program, when the two are of the same text (no `extra`).
+    let reading = crate::code_rule_dsl::logic::profile::span(|| "read each text (tape, statements, includes)".to_owned());
+    // Each program read and lowered on the pool's threads: what each read from the library is noted here after, in
+    // the programs' order (`rr::recording`, decision 0094 §6), and the first program's error in that order is the one
+    // returned, as one thread gives them.
+    use rayon::prelude::*;
+    use crate::code_rule_dsl::logic::rr::{recorded_on_worker, replay};
     let mut texts: Vec<Option<crate::code_rule_dsl::logic::rr::Text>> = if programs.len() > 1 && extra.is_empty() {
-        programs.iter().map(|text| crate::code_rule_dsl::logic::rr::read_text(text).map(Some).map_err(|e| in_policy(text, e))).collect::<std::result::Result<_, _>>()?
+        let each: Vec<_> = programs.par_iter().map(|text| recorded_on_worker(|| crate::code_rule_dsl::logic::rr::read_text(text).map(Some).map_err(|e| in_policy(text, e)))).collect();
+        each.into_iter().map(|(got, read)| {
+            replay(read);
+            got
+        }).collect::<std::result::Result<_, _>>()?
     } else {
         programs.iter().map(|_| None).collect()
     };
@@ -901,11 +912,13 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
         modules.heads.iter().any(|h| !core.contains(h) && modules.files.iter().any(|(_, _, names)| names.contains(h)))
     };
     let own_only: Vec<bool> = modular.iter().map(|m| !copied && m.as_ref().is_some_and(|m| !asks(m))).collect();
-    let mut parsed = programs
-        .iter()
+    drop(reading);
+    let lowering = crate::code_rule_dsl::logic::profile::span(|| "lower each program".to_owned());
+    let each: Vec<_> = programs
+        .par_iter()
         .zip(&own_only)
-        .zip(texts.iter_mut())
-        .map(|((text, &own_only), slot)| {
+        .zip(texts.par_iter_mut())
+        .map(|((text, &own_only), slot)| recorded_on_worker(|| -> Result<Program> {
             if let Some(read) = read.filter(|_| programs.len() == 1 && extra.is_empty()) {
                 front::declared(read)?;
                 return Ok(read.clone());
@@ -921,8 +934,16 @@ fn combine_read(programs: &[&str], extra: &str, read: Option<&front::Program>) -
             let prog = crate::code_rule_dsl::logic::rr::parse_own(&if extra.is_empty() { text.to_string() } else { format!("{text}\n{extra}") })?;
             front::declared(&prog)?;
             Ok(prog)
+        }))
+        .collect();
+    let mut parsed = each
+        .into_iter()
+        .map(|(got, read)| {
+            replay(read);
+            got
         })
         .collect::<std::result::Result<Vec<_>, Error>>()?;
+    drop(lowering);
     // `RERAIL_DUMP_PROGRAMS=<file>`: each program's prefix (`p<i>_`) and its first policy or line (a debugging aid).
     if let Ok(path) = std::env::var("RERAIL_DUMP_PROGRAMS") {
         let lines: String = programs
@@ -1908,6 +1929,8 @@ fn run_handed(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
+    // The `RERAIL_*` switches stay as they are until the run ends: a test sets them only while no run reads them.
+    let _switches = switches::reading();
     let lifecycle_start = usage();
     // Library and test callers do not pass through the CLI/Node pool setup.
     // Initialize before phase 0 or a parallel read can create rayon's default pool.
@@ -2119,7 +2142,7 @@ fn run_observed(
         let process_now = process_cpu();
         // A timeline (dev, `RERAIL_TIMELINE`): each section's end, as it ends, with the process's CPU it took.
         if timeline {
-            eprintln!("RERAIL_TIMELINE {} {name}: {:.3} s CPU", phases::current().unwrap_or_else(|| "main".into()), process_now - process_last);
+            eprintln!("RERAIL_TIMELINE {} {name}: {:.3} s CPU @{:.3}", phases::current().unwrap_or_else(|| "main".into()), process_now - process_last, crate::code_rule_dsl::logic::profile::timeline_clock());
         }
         process_phases.push((name, process_now - process_last));
         process_last = process_now;
@@ -2539,6 +2562,8 @@ fn run_observed(
     let mut program_plans: Vec<[u8; 32]> = if durable.is_some() { prepared::plans(&prepared_key) } else { Vec::new() };
     // The combined program's entry (`combined`), when the store keeps it: the manifest names it too.
     // Their sources found (or stored) by the store's writer: the manifest, queued after, reads them.
+    // The pins the combine made (`combined::remember`), released once the run's manifest names the entry.
+    let _combined_pins = durable.is_some().then(|| combined::Pins::new(store, &texts));
     if durable.is_some() {
         let (text, plan) = combined::named(&texts);
         memo::named_source(store, text, false, &late_sources);
@@ -8331,6 +8356,16 @@ impl CorpusFiles {
 
 /// The language a corpus run reads: the one its program names (`.language`: any dialect of the registry this build
 /// parses), else Rust or Python by `Typing::rust`, or by whichever has more files.
+/// The grammar a run of `prog` reads (`corpus_language`, as `run_observed` picks it): its `.language`'s, else the
+/// tree's own, of the files its scope selects. A batch's policies that read one grammar run as one pack (decision 0168).
+pub fn run_language(root: &Path, prog: &front::Program, options: &serde_json::Value) -> Result<&'static str> {
+    let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
+    if let Some(label) = language.as_deref().and_then(crate::code_rule_dsl::language::label_named) {
+        return Ok(label);
+    }
+    Ok(corpus_language(language.as_deref(), &Typing::default(), &scoped(corpus_files(root)?, prog, options)))
+}
+
 fn corpus_language(language: Option<&str>, typing: &Typing, found: &CorpusFiles) -> &'static str {
     match language {
         Some(name) if let Some(label) = crate::code_rule_dsl::language::label_named(name) => label,

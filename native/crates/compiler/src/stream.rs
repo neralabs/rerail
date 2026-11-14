@@ -429,6 +429,13 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 // goes on.
                 let m = mode & !TOKEN_EXTRAS;
                 live = if m == 0 || at_end || mask_bit(u16::from(m - 1), start) { u32::MAX } else { 0 };
+                // A token mark that refuses (`TokenMark::refuses`): at a token its bit names,
+                // its tokens following, the file is refused.
+                let extra_bit = u32::from(program.extras.first().map_or(0, |e| e.0));
+                let refused = !at_end && program.token_marks.iter().any(|t| t.refuses && code >> (crate::records::MARK_SHIFT + u32::from(t.order)) & 1 == 1 && token_mark_holds(t, &tier1.codes, next, extra_bit));
+                if refused {
+                    return refuse(pc - 1, "a token mark that refuses");
+                }
             }
             SPAN => {
                 // The token's bytes taken: its record's end, or a length (a one-byte token),
@@ -862,6 +869,9 @@ pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
     for (i, m) in program.token_marks.iter().enumerate() {
         let rising = i == 0 || program.token_marks[i - 1].order < m.order;
         let offsets = m.elems.windows(2).all(|w| w[0].offset < w[1].offset) && m.elems.iter().any(|e| e.offset == 0) && m.elems.first().is_some_and(|e| e.offset >= -1);
+        // A `not` or an `end` only after the mark's token; an `end` only last.
+        let after = m.elems.iter().all(|e| (!e.not && !e.end) || e.offset > 0) && m.elems.iter().rev().skip(1).all(|e| !e.end);
+        let offsets = offsets && after;
         let words = m.elems.iter().flat_map(|e| &e.words).all(|&s| usize::from(s) < program.strings.len());
         if !rising || !offsets || !words || usize::from(m.order) >= marks || program.extras.is_empty() {
             return Err(Error::InvalidOperand(i));
@@ -895,7 +905,7 @@ pub fn token_mark_holds(m: &TokenMark, codes: &[u32], next: usize, extra_bit: u3
             }
             _ => (0..here).rev().find(|&j| !is_extra(codes[j])),
         };
-        at.is_some_and(|j| e.takes(codes[j]))
+        e.holds(at.map(|j| codes[j]))
     })
 }
 
@@ -912,14 +922,15 @@ pub fn validate_extras(program: &Words) -> Result<(), Error> {
     Ok(())
 }
 
-/// The marks' words (`Words::mark_words`): rising by mark, each a mark a `MARK` tests and a
-/// string of the records' words.
+/// The marks' words (`Words::mark_words`): rising by mark, each a mark a `MARK` tests (or a
+/// token mark that refuses, which `TOKEN` tests) and a string of the records' words.
 pub fn validate_mark_words(program: &Words) -> Result<(), Error> {
     let records = program.block_programs.first().and_then(|b| b.records.as_ref());
     let tested: Vec<u8> = program.words.iter().map(|&w| split(w)).filter(|w| w.0 == MARK).map(|w| w.1 % 32).collect();
     for (i, &(k, s)) in program.mark_words.iter().enumerate() {
         let rising = i == 0 || program.mark_words[i - 1].0 < k;
-        let ok = rising && k < 32 && tested.contains(&k) && usize::from(s) < program.strings.len() && records.is_some_and(|r| r.words == program.strings);
+        let refusing = program.token_marks.iter().any(|m| m.refuses && m.order == k);
+        let ok = rising && k < 32 && (tested.contains(&k) || refusing) && usize::from(s) < program.strings.len() && records.is_some_and(|r| r.words == program.strings);
         if !ok {
             return Err(Error::InvalidOperand(i));
         }

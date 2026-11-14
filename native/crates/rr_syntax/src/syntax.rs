@@ -302,7 +302,9 @@ pub enum Term {
 pub enum Lit {
     Atom { rel: String, args: Vec<Term>, neg: bool },
     Cmp { l: Term, op: &'static str, r: Term },
-    Pattern { subject: Term, pattern: String, neg: bool },
+    /// `n ~ `pattern``, or `n ~ `context` at "kind"`: the pattern is the node of that kind in the parsed context
+    /// (ast-grep's `pattern: {context, selector}`), for a snippet that does not parse alone (`except: pass`).
+    Pattern { subject: Term, pattern: String, selector: Option<String>, neg: bool },
     /// `( a ; b )`: alternatives, each a conjunction.
     Group { alts: Vec<Vec<Lit>>, neg: bool },
 }
@@ -1229,7 +1231,7 @@ impl<'s> Parser<'s> {
             self.close();
             return Ok(match inner {
                 Lit::Atom { rel, args, neg } => Lit::Atom { rel, args, neg: !neg },
-                Lit::Pattern { subject, pattern, neg } => Lit::Pattern { subject, pattern, neg: !neg },
+                Lit::Pattern { subject, pattern, selector, neg } => Lit::Pattern { subject, pattern, selector, neg: !neg },
                 Lit::Group { alts, neg } => Lit::Group { alts, neg: !neg },
                 Lit::Cmp { .. } => return self.fail("an atom after !"),
             });
@@ -1264,8 +1266,17 @@ impl<'s> Parser<'s> {
             };
             self.bump_as(Kind::CodeLiteral);
             self.field(Field::Pattern);
+            let mut selector = None;
+            if self.is_id("at") && matches!(self.peek_at(1), Tok::Str(_)) {
+                self.implied();
+                if let Tok::Str(s) = self.peek().clone() {
+                    selector = Some(s.into_owned());
+                }
+                self.bump_as(Kind::String);
+                self.field(Field::Selector);
+            }
             self.close();
-            return Ok(Lit::Pattern { subject: l, pattern, neg: false });
+            return Ok(Lit::Pattern { subject: l, pattern, selector, neg: false });
         }
         let op = match self.peek() {
             Tok::P(p @ ("=" | "!=" | "<" | "<=" | ">" | ">=")) => *p,

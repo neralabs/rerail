@@ -1,0 +1,48 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b316-xml-bad-expatbuilder",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use defusedxml instead of xml.dom.expatbuilder to parse XML; the standard parser is open to entity-expansion and other XML attacks on untrusted input.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit:B316",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "xml.dom.expatbuilder.parse",
+                  "xml.dom.expatbuilder.parseString"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B316",
+        "anchor": "witness.span",
+        "message": "Using xml.dom.expatbuilder to parse untrusted XML may permit XML attacks; use defusedxml.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B316"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -479,13 +479,21 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 return Err(format!("tokenmark {order} out of order"));
             }
             let mut elems: Vec<crate::program::TokenElem> = Vec::new();
+            let refuses = line.peek_word().as_deref() == Some("refuses");
+            if refuses {
+                line.word()?;
+            }
             while let Some(w) = line.peek_word() {
                 line.word()?;
                 if let Some(o) = w.strip_prefix('o') {
                     let offset = o.parse().map_err(|_| format!("a bad offset `{w}`"))?;
                     let k = line.word()?;
                     let kinds = k.strip_prefix('k').and_then(|h| u64::from_str_radix(h, 16).ok()).ok_or_else(|| format!("a bad kind set `{k}`"))?;
-                    elems.push(crate::program::TokenElem { offset, kinds, words: Vec::new() });
+                    elems.push(crate::program::TokenElem { offset, kinds, words: Vec::new(), not: false, end: false });
+                } else if w == "not" {
+                    elems.last_mut().ok_or("a `not` before its element")?.not = true;
+                } else if w == "end" {
+                    elems.last_mut().ok_or("an `end` before its element")?.end = true;
                 } else if let Some(s) = w.strip_prefix('s') {
                     let s: u16 = s.parse().map_err(|_| format!("a bad word `{w}`"))?;
                     elems.last_mut().ok_or("a word before its element")?.words.push(s);
@@ -493,7 +501,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     return Err(format!("a bad token mark's part `{w}`"));
                 }
             }
-            parts.token_marks.push(crate::program::TokenMark { order, elems });
+            parts.token_marks.push(crate::program::TokenMark { order, elems, refuses });
         }
         "tokenextra" => {
             let b: u8 = line.number("b")?;
@@ -574,6 +582,32 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     return Err(format!("block {at} rounds with no carry"));
                 }
                 program.rounds.push(group);
+            } else if first == "region" {
+                // `block N region G %opener %closer %open %fill B [outside] [else %e M]`: a
+                // kind of a walk of rounds group G (`crate::block::Walk`), kinds in order.
+                let group: u16 = line.number("")?;
+                let (opener, closer, open, fill): (u16, u16, u16, u16) = (line.number("%")?, line.number("%")?, line.number("%")?, line.number("%")?);
+                let bytes: u8 = line.number("")?;
+                let (mut outside, mut empty) = (false, None);
+                while let Some(w) = line.peek_word() {
+                    if w == "outside" {
+                        line.word()?;
+                        outside = true;
+                    } else if w == "else" {
+                        line.word()?;
+                        empty = Some((line.number("%")?, line.number("")?));
+                    } else {
+                        return Err(format!("block {at} region: `outside` or `else %e M`, not {w}"));
+                    }
+                }
+                let kind = crate::block::WalkKind { opener, closer, open, fill, bytes, outside, empty };
+                match program.walks.last_mut() {
+                    Some(w) if w.group == group => w.kinds.push(kind),
+                    _ => {
+                        let hidden = program.rounds.get(usize::from(group)).and_then(|g| g.first()).ok_or(format!("block {at} region of no rounds group {group}"))?.0;
+                        program.walks.push(crate::block::Walk { group, hidden, kinds: vec![kind] })
+                    }
+                }
             } else if first == "extract" {
                 program.extracts.push(line.number("%")?);
             } else if first == "total" {
@@ -585,10 +619,33 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let kinds = line.word()?;
                 let hex = kinds.strip_prefix("kinds=").ok_or("`records S L kinds=…`")?;
                 let kinds: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().map_err(|_| "a bad kind")?;
-                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new() });
+                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None });
             } else if first == "word" {
                 let r = program.records.as_mut().ok_or(format!("block {at} word before its records"))?;
                 r.words.push(line.quoted()?);
+            } else if first == "recends" {
+                let r = program.records.as_mut().ok_or(format!("block {at} recends before its records"))?;
+                let hex = line.word()?;
+                r.ends = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().map_err(|_| "a bad end rule")?;
+            } else if first == "recrule" {
+                let r = program.records.as_mut().ok_or(format!("block {at} recrule before its records"))?;
+                let how = line.word()?;
+                let o: u16 = line.number("")?;
+                r.rules.push(match how.as_str() {
+                    "run" => crate::records::EndRule::Run(o),
+                    "pair" => crate::records::EndRule::Pair(o),
+                    "last" => crate::records::EndRule::Last(o),
+                    w => return Err(format!("block {at} recrule: `run`, `pair` or `last`, not {w}")),
+                });
+            } else if first == "recgaps" {
+                let r = program.records.as_mut().ok_or(format!("block {at} recgaps before its records"))?;
+                r.gaps = line.number("")?;
+            } else if first == "recextra" {
+                let r = program.records.as_mut().ok_or(format!("block {at} recextra before its records"))?;
+                r.extra = Some(line.number("")?);
+            } else if first == "recskip" {
+                let r = program.records.as_mut().ok_or(format!("block {at} recskip before its records"))?;
+                r.skip = Some(line.number("")?);
             } else if first == "recmark" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recmark before its records"))?;
                 let (o, w): (u16, u16) = (line.number("")?, line.number("")?);

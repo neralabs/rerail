@@ -218,16 +218,26 @@ fn slice_bench() {
 /// left out. The default repository is `python3`'s standard library (CPython, PSF licence), read in
 /// place and never vendored. Returns the paths and where the repository slice came from.
 fn sample(dir: &Path) -> (Vec<String>, String) {
+    sample_of(dir, 150, 100)
+}
+
+/// [`sample`] of `fixtures` pack files and `repository` files of the repository, unless `RERAIL_S7_FIXTURES` and
+/// `RERAIL_S7_FILES` say otherwise.
+fn sample_of(dir: &Path, fixtures: usize, repository: usize) -> (Vec<String>, String) {
     let number = |name: &str, default: usize| std::env::var(name).ok().and_then(|n| n.parse().ok()).unwrap_or(default);
     std::fs::create_dir_all(dir).unwrap();
     let mut sources = Vec::new();
     files(&pack().join("upstream"), "py", &mut sources);
     sources.sort();
     let mut paths = Vec::new();
-    for (n, source) in sources.iter().step_by(3).take(number("RERAIL_S7_FIXTURES", 150)).enumerate() {
+    for (n, source) in sources.iter().step_by(3).take(number("RERAIL_S7_FIXTURES", fixtures)).enumerate() {
         let path = format!("f{n:03}.py");
         std::fs::copy(source, dir.join(&path)).unwrap();
         paths.push(path);
+    }
+    let most = number("RERAIL_S7_FILES", repository);
+    if most == 0 {
+        return (paths, String::new());
     }
     let repo = std::env::var("RERAIL_S7_REPO").unwrap_or_else(|_| {
         let out = std::process::Command::new("python3")
@@ -245,7 +255,6 @@ fn sample(dir: &Path) -> (Vec<String>, String) {
         })
     });
     found.sort();
-    let most = number("RERAIL_S7_FILES", 100);
     assert!(found.len() >= most, "{repo} has {} Python files, fewer than {most}", found.len());
     let step = found.len() / most;
     let mut n = 0;
@@ -504,20 +513,29 @@ fn a_supertype_rule_finds_the_same_members_on_every_backend() {
 }
 
 /// Phase 4's check (list step 19): the interpreter, the JIT and (on macOS) Metal's interpreter and
-/// compiled kernel find the same finding keys and coverage over S7's sample of real files
-/// (`RERAIL_S7_FIXTURES`, default 150), each cold in its own store.
+/// compiled kernel find the same finding keys and coverage over real files, each cold in its own store.
+///
+/// Four pack fixtures by default (written to trigger the rules): every backend repeats the same host matching (each
+/// of the 491 clauses over every node, a few milliseconds a line), so S7's 250 files took four minutes and said no
+/// more about the backends' agreement. What is left is the pack's compiling (its regexes, the vocabulary's
+/// automata), once a process. `RERAIL_S7_FIXTURES` and `RERAIL_S7_FILES` run S7's sample (150 and 100).
+///
+/// The sample and the stores are removed after (every run left them in the temporary directory).
 #[test]
 fn the_backends_find_the_same_keys_on_real_files() {
     let policies = policies();
     let dir = temp("phase4");
-    let (paths, _) = sample(&dir);
-    assert!((100..=300).contains(&paths.len()) || std::env::var_os("RERAIL_S7_FIXTURES").is_some(), "{} files", paths.len());
+    let (paths, _) = sample_of(&dir, 4, 0);
+    assert!(paths.len() == 4 || std::env::var_os("RERAIL_S7_FIXTURES").is_some() || std::env::var_os("RERAIL_S7_FILES").is_some(), "{} files", paths.len());
+    let mut stores = vec![dir.clone()];
     let mut backends = vec![("interpreter", ExecutionBackend::CpuInterpreter), ("jit", ExecutionBackend::CpuJit)];
     #[cfg(target_os = "macos")]
     backends.extend([("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)]);
     let mut reference: Option<(Keys, BTreeMap<(String, String), Coverage>)> = None;
     for (name, backend) in backends {
-        let store = ContentStore::open(&temp(&format!("phase4-{name}")).with_extension("sqlite")).unwrap();
+        let path = temp(&format!("phase4-{name}")).with_extension("sqlite");
+        stores.push(path.clone());
+        let store = ContentStore::open(&path).unwrap();
         let mut rules = Rules::lower(&policies, backend).unwrap();
         let start = cpu();
         let root = directory_root(&store, &dir).unwrap();
@@ -539,6 +557,22 @@ fn the_backends_find_the_same_keys_on_real_files() {
                 let extra = found.difference(keys0).take(5).collect::<Vec<_>>();
                 assert!(missing.is_empty() && extra.is_empty(), "{name} differs from the interpreter: missing {missing:?}, extra {extra:?}");
                 assert_eq!(&covered, coverage0, "{name}: coverage differs from the interpreter");
+            }
+        }
+    }
+    remove_all(&stores);
+}
+
+/// Removes each of `paths` and what a store keeps beside one (`<path>-wal`, `<path>.overlay`, …).
+fn remove_all(paths: &[PathBuf]) {
+    for path in paths {
+        let (Some(parent), Some(name)) = (path.parent(), path.file_name().map(|n| n.to_string_lossy().into_owned())) else { continue };
+        for entry in std::fs::read_dir(parent).into_iter().flatten().flatten() {
+            let found = entry.file_name().to_string_lossy().into_owned();
+            let stem = name.strip_suffix(".sqlite").unwrap_or(&name);
+            if found == name || found.starts_with(&format!("{name}-")) || found.starts_with(&format!("{stem}.")) {
+                let at = entry.path();
+                let _ = if at.is_dir() { std::fs::remove_dir_all(&at) } else { std::fs::remove_file(&at) };
             }
         }
     }

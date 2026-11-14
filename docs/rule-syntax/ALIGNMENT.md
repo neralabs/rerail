@@ -60,7 +60,7 @@ the globs, the typed text relations and the execution, and keeps `match` for wha
 - Execution: each distinct string is tested once, for all rules together. Exact sets become hash sets of symbol
   ids, affix sets Aho-Corasick automata, other globs small DFAs; rules join on integers.
 - The translator prints a glob test wherever the source regex is exactly one, and `match` nowhere else
-  (`site/textglob.py`). It never guesses: a construct whose glob reading differs for some string, such as `\w*`,
+  (the engine's translator, `json_rules/textglob.rs`). It never guesses: a construct whose glob reading differs for some string, such as `\w*`,
   a negated class or `.+`, keeps `match`. Over this branch's 930 translated rules and hand ports there are 2,123
   distinct regexes:
 

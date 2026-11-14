@@ -71,8 +71,9 @@ named nodes only, no static memo map is added beside the facts, and one tape-for
 ### Still open
 
 - d0f1297e5 replaced the pre-wave memo lookup's document-key test (`keys.get(p) != Some(key)`)
-  with `b.found.is_none()`. This is probably equivalent; a strict-SQL session where a load
-  shifts document keys would settle it.
+  with `b.found.is_none()`. **Settled (293647a70):** the trunk's b01bb2ccc has the keeper find its
+  entries by its own test (`keptstats::same` on content and document key), and the merge keeps
+  both: a file is looked up when it was found and its keys are the same.
 
 ## What happened while fixing it
 
