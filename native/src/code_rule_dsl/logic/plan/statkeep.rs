@@ -76,6 +76,18 @@ fn names_doc(v: i64, first: i64) -> bool {
     (d != 0 && v >> 32 == d) || v == document_of(first)
 }
 
+/// `pairs` sorted by value, each value's counts summed into one pair.
+fn summed(pairs: &mut Vec<(i64, i64)>) {
+    pairs.sort_unstable_by_key(|p| p.0);
+    pairs.dedup_by(|b, a| {
+        let same = a.0 == b.0;
+        if same {
+            a.1 += b.1;
+        }
+        same
+    });
+}
+
 impl RelStats {
     /// No rows yet, of these columns.
     pub(in crate::code_rule_dsl) fn new(columns: Vec<String>) -> Self {
@@ -110,17 +122,25 @@ impl RelStats {
     /// Whole documents' rows in (`sign` 1) or out (−1): `flat` row-major, `width` values a row (columns past it, in
     /// a row narrower than the relation, are not counted). Every row of each document they name must be in `flat`.
     pub(in crate::code_rule_dsl) fn documents(&mut self, flat: &[i64], width: usize, sign: i64) {
-        self.rows_of(flat, width, sign, None)
+        self.rows_of(flat, width, sign, None, None)
+    }
+
+    /// `documents`, where this relation's columns are some of the rows' (`from[j]`: the row's column that is this
+    /// relation's `j`): a base relation counted at the columns its rules read. A row's document is still its own
+    /// first column's.
+    pub(in crate::code_rule_dsl) fn documents_at(&mut self, flat: &[i64], width: usize, from: &[usize], sign: i64) {
+        debug_assert_eq!(from.len(), self.cols.len());
+        self.rows_of(flat, width, sign, None, Some(from))
     }
 
     /// Rows in or out, as `documents`, where a row's document is the one its column `at` names (a node,
     /// `key << 32 | index`), or one document for all when `at` is `None`: as the chunks' totals read an export's
     /// rows (its first node column), whose first column may hold a value many documents share.
     pub(in crate::code_rule_dsl) fn rows_by(&mut self, flat: &[i64], width: usize, sign: i64, at: Option<usize>) {
-        self.rows_of(flat, width, sign, Some(at))
+        self.rows_of(flat, width, sign, Some(at), None)
     }
 
-    fn rows_of(&mut self, flat: &[i64], width: usize, sign: i64, at: Option<Option<usize>>) {
+    fn rows_of(&mut self, flat: &[i64], width: usize, sign: i64, at: Option<Option<usize>>, from: Option<&[usize]>) {
         if width == 0 || flat.is_empty() {
             return;
         }
@@ -138,61 +158,96 @@ impl RelStats {
         };
         let n = flat.len() / width;
         self.rows += sign * n as i64;
-        // One pass a column: each row's value counted in its document's map (a document's rows mostly come together,
-        // so its map is looked up once a run); the sums are read from the maps. A document is its row's
-        // `document_of`; a value's count is split by whether the row's `doc32` is 0, as `syntax::measured` groups
-        // sqd by `doc32` (all rows whose first column is a document key are one group there).
-        type Doc = (FxHashMap<i64, (i64, i64)>, bool);
-        let mut docs: FxHashMap<i64, Doc> = FxHashMap::default();
-        let mut values: FxHashMap<i64, i64> = FxHashMap::default();
-        let mut zero: FxHashMap<i64, i64> = FxHashMap::default();
-        for (c, col) in self.cols.iter_mut().enumerate().take(width) {
-            docs.clear();
+        // One pass a column: each row's (document, value, whether its `doc32` is 0) is listed; in order (node
+        // columns mostly are), each (document, value) is a run, else they are counted in one map kept across columns. `syntax::measured` groups sqd by `doc32`: every row whose first column is a document key is one
+        // group, so those rows' counts are summed by value across documents (`zero`). A map a document and one a
+        // value, an entry a row each, were most of a file's count (O125 cold: 0.15 s and 363 MB allocated).
+        let docs: Vec<(i64, i64)> = flat.chunks_exact(width).map(of).collect();
+        let mut keys: Vec<(i64, i64, bool)> = Vec::with_capacity(n);
+        let mut values: Vec<(i64, i64)> = Vec::new();
+        let mut zero: Vec<(i64, i64)> = Vec::new();
+        let mut crossed: FxHashMap<i64, bool> = FxHashMap::default();
+        let mut counts: FxHashMap<(i64, i64), (i64, i64)> = FxHashMap::default();
+        for (j, col) in self.cols.iter_mut().enumerate() {
+            let c = from.map_or(j, |f| f[j]);
+            if c >= width {
+                continue;
+            }
+            keys.clear();
             values.clear();
             zero.clear();
-            let mut at: Option<(i64, Doc)> = None;
-            for row in flat.chunks_exact(width) {
-                let (v, (d32, doc)) = (row[c], of(row));
-                if at.as_ref().is_none_or(|(d, _)| *d != doc) {
-                    if let Some((d, m)) = at.take() {
-                        docs.insert(d, m);
-                    }
-                    at = Some((doc, docs.remove(&doc).unwrap_or_default()));
-                }
-                let (_, (m, crosses)) = at.as_mut().expect("set");
-                let e = m.entry(v).or_default();
-                if d32 == 0 { e.0 += 1 } else { e.1 += 1 }
-                *crosses |= !names(v, row);
-            }
-            if let Some((d, m)) = at.take() {
-                docs.insert(d, m);
-            }
-            let (mut sqd, mut local, mut crossing) = (0i64, 0i64, 0i64);
-            for (&d, (m, crosses)) in &docs {
-                local += m.len() as i64;
-                crossing += i64::from(*crosses);
-                for (&v, &(small, large)) in m {
-                    *values.entry(v).or_default() += small + large;
-                    sqd += large * large;
-                    if large > 0
-                        && let Some(p) = &mut col.pairs
-                    {
-                        p.add(pair(d, v), sign * large);
-                    }
-                    if small > 0 {
-                        *zero.entry(v).or_default() += small;
+            crossed.clear();
+            // Whether a document holds a value naming another: its rows mostly come together, so it is looked up
+            // once a run of them.
+            let mut at: Option<(i64, bool)> = None;
+            for (row, &(d32, doc)) in flat.chunks_exact(width).zip(&docs) {
+                let v = row[c];
+                keys.push((doc, v, d32 == 0));
+                let crosses = !names(v, row);
+                match &mut at {
+                    Some((d, x)) if *d == doc => *x |= crosses,
+                    _ => {
+                        if let Some((d, x)) = at.take() {
+                            *crossed.entry(d).or_default() |= x;
+                        }
+                        at = Some((doc, crosses));
                     }
                 }
             }
-            sqd += zero.values().map(|k| k * k).sum::<i64>();
+            if let Some((d, x)) = at.take() {
+                *crossed.entry(d).or_default() |= x;
+            }
+            let (mut sqd, mut local) = (0i64, 0i64);
+            let mut each = |d: i64, v: i64, small: i64, large: i64| {
+                local += 1;
+                sqd += large * large;
+                if large > 0
+                    && let Some(p) = &mut col.pairs
+                {
+                    p.add(pair(d, v), sign * large);
+                }
+                values.push((v, small + large));
+                if small > 0 {
+                    zero.push((v, small));
+                }
+            };
+            if keys.is_sorted() {
+                // In order: each (document, value) is a run.
+                let mut i = 0;
+                while i < keys.len() {
+                    let (d, v, _) = keys[i];
+                    let (mut small, mut large) = (0i64, 0i64);
+                    while i < keys.len() && keys[i].0 == d && keys[i].1 == v {
+                        if keys[i].2 { small += 1 } else { large += 1 }
+                        i += 1;
+                    }
+                    each(d, v, small, large);
+                }
+            } else {
+                // Not in order: counted in one map, kept across the columns (a sort cost more than the map).
+                counts.clear();
+                for &(d, v, z) in &keys {
+                    let e = counts.entry((d, v)).or_default();
+                    if z { e.0 += 1 } else { e.1 += 1 }
+                }
+                for (&(d, v), &(small, large)) in &counts {
+                    each(d, v, small, large);
+                }
+            }
+            // By value across documents: within one document each value is one pair already.
+            if crossed.len() > 1 {
+                summed(&mut values);
+                summed(&mut zero);
+            }
+            sqd += zero.iter().map(|(_, k)| k * k).sum::<i64>();
             if let Some(p) = &mut col.pairs {
-                for (&v, &k) in &zero {
+                for &(v, k) in &zero {
                     p.add(pair(0, v), sign * k);
                 }
             }
             col.sqd += sign * sqd;
             col.local_ndv += sign * local;
-            col.crossing += sign * crossing;
+            col.crossing += sign * crossed.values().filter(|x| **x).count() as i64;
             Self::values(col, &values, sign);
         }
     }
@@ -297,12 +352,17 @@ impl RelStats {
         }
     }
 
-    fn values(col: &mut Column, values: &FxHashMap<i64, i64>, sign: i64) {
-        for (&v, &k) in values {
+    /// Each distinct value's count (`values`, one pair a value) into the sketch and the exact map.
+    fn values(col: &mut Column, values: &[(i64, i64)], sign: i64) {
+        for &(v, k) in values {
             col.sketch.add(v, sign * k);
         }
+        // Counted in, the map would hold every one of these values at least: past `EXACT`, it is given up unread.
+        if sign > 0 && values.len() > EXACT {
+            col.exact = None;
+        }
         if let Some(exact) = &mut col.exact {
-            for (&v, &k) in values {
+            for &(v, k) in values {
                 let e = exact.entry(v).or_default();
                 *e += sign * k;
                 if *e == 0 {
@@ -600,7 +660,22 @@ pub mod tests {
                 col.sqd += sign * counts.values().map(|k| k * k).sum::<i64>();
                 col.local_ndv += sign * per_doc.len() as i64;
                 col.crossing += sign * crossing.values().filter(|x| **x).count() as i64;
-                RelStats::values(col, &values, sign);
+                // A paired column's sketch of (document, value) counts: rows naming a document by its nodes by
+                // that document, rows whose first column is a document key summed by value.
+                if let Some(p) = &mut col.pairs {
+                    let (mut large, mut small) = (FxHashMap::<(i64, i64), i64>::default(), FxHashMap::<i64, i64>::default());
+                    for row in flat.chunks_exact(width) {
+                        let (v, (d32, dof)) = (row[c], of(row));
+                        if d32 == 0 { *small.entry(v).or_default() += 1 } else { *large.entry((dof, v)).or_default() += 1 }
+                    }
+                    for ((d, v), k) in large {
+                        p.add(super::pair(d, v), sign * k);
+                    }
+                    for (v, k) in small {
+                        p.add(super::pair(0, v), sign * k);
+                    }
+                }
+                RelStats::values(col, &values.into_iter().collect::<Vec<_>>(), sign);
             }
         }
         let mut flat = Vec::new();
@@ -610,14 +685,25 @@ pub mod tests {
             let other = if i % 11 == 0 { (d + 1) << 32 | i } else { d << 32 | (i / 3) };
             flat.extend([first, i % 4, other]);
         }
-        for at in [None, Some(None), Some(Some(0)), Some(Some(2))] {
-            let (mut a, mut b) = (RelStats::new(vec!["x".into(), "k".into(), "y".into()]), RelStats::new(vec!["x".into(), "k".into(), "y".into()]));
-            a.rows_of(&flat, 3, 1, at);
-            old(&mut b, &flat, 3, 1, at);
-            assert_eq!(a, b, "at {at:?}");
-            a.rows_of(&flat[..300], 3, -1, at);
-            old(&mut b, &flat[..300], 3, -1, at);
-            assert_eq!(a, b, "at {at:?}, counted out");
+        // One document's rows alone, in order (no sort), and its rows reversed (sorted).
+        let one: Vec<i64> = flat.chunks_exact(3).filter(|r| r[0] == 3 || r[0] >> 32 == 3).flatten().copied().collect();
+        let reversed: Vec<i64> = one.chunks_exact(3).rev().flatten().copied().collect();
+        // Many values in one column: past the exact map's bound.
+        let wide: Vec<i64> = (0..700i64).flat_map(|i| [5 << 32 | i, i % 3, i]).collect();
+        let names = || vec!["x".to_owned(), "k".into(), "y".into()];
+        for new in [RelStats::new as fn(Vec<String>) -> RelStats, RelStats::paired] {
+            for rows in [&flat, &one, &reversed, &wide] {
+                for at in [None, Some(None), Some(Some(0)), Some(Some(2))] {
+                    let (mut a, mut b) = (new(names()), new(names()));
+                    a.rows_of(rows, 3, 1, at, None);
+                    old(&mut b, rows, 3, 1, at);
+                    assert_eq!(a, b, "at {at:?}");
+                    let half = &rows[..rows.len() / 6 * 3];
+                    a.rows_of(half, 3, -1, at, None);
+                    old(&mut b, half, 3, -1, at);
+                    assert_eq!(a, b, "at {at:?}, counted out");
+                }
+            }
         }
     }
 }

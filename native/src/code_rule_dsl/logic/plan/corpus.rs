@@ -3490,7 +3490,7 @@ fn run_observed(
             // Its constants are the store's atoms: this process's, mapped (decision 0170), in one call.
             let atoms = store.atoms_handle();
             if atoms.holds_by_reading() {
-                if k.map_symbols(&|key, w| memo_plan.syms.columns(key, w), atoms.forked(), |v| atoms.to_local(crate::content_store::StoreIds::as_stored(v)).map(drop)).is_err() {
+                if k.map_symbols(&|key, names| memo_plan.syms.columns_named(key, names), atoms.forked(), |v| atoms.to_local(crate::content_store::StoreIds::as_stored(v)).map(drop)).is_err() {
                     k = keptstats::Keeper::default();
                 }
             }
@@ -3502,10 +3502,15 @@ fn run_observed(
     };
     if let Some(k) = keeper.as_mut() {
         // By the key their rows have in a memo entry: a base relation's (`base_key`), and an export's own name.
-        let rels: Vec<(String, Vec<String>)> = stored
+        // A base relation's statistics are read at the columns its rules read (`names`, held): counted at those only.
+        let rels: Vec<(String, Vec<String>, Option<Vec<usize>>)> = stored
             .iter()
-            .map(|(rel, _)| (memo::base_key(rel), super::super::sql::select::input_columns(rel).unwrap_or_default().iter().map(|c| (*c).to_owned()).collect()))
-            .chain(split.exports.iter().map(|rel| (rel.clone(), (0..lowered.program.decls[rel.as_str()].len()).map(|c| format!("c{c}")).collect())))
+            .map(|(rel, names)| {
+                let all = super::super::sql::select::input_columns(rel).unwrap_or_default();
+                let (from, columns): (Vec<usize>, Vec<String>) = all.iter().enumerate().filter(|(_, c)| names.iter().any(|n| n == *c)).map(|(i, c)| (i, (*c).to_owned())).unzip();
+                (memo::base_key(rel), columns, Some(from))
+            })
+            .chain(split.exports.iter().map(|rel| (rel.clone(), (0..lowered.program.decls[rel.as_str()].len()).map(|c| format!("c{c}")).collect(), None)))
             .collect();
         // An export's rows' document: its first node column's, as the chunks' totals read it (`Totals::add_rows`).
         let doc_at = split.exports.iter().map(|rel| (rel.clone(), lowered.program.decls[rel.as_str()].iter().position(|(_, t)| t == "node"))).collect();
@@ -6071,7 +6076,7 @@ fn run_observed(
                         return Ok(blob.to_vec());
                     }
                     let mut k = keptstats::Keeper::decode(blob).ok_or_else(|| crate::content_store::StoreError::Invalid("the kept statistics do not read back".into()))?;
-                    k.map_symbols(&|key, w| syms.columns(key, w), true, |v| store.symbols_to_store(crate::content_store::ProcessIds::of_process(v)).map(drop))?;
+                    k.map_symbols(&|key, names| syms.columns_named(key, names), true, |v| store.symbols_to_store(crate::content_store::ProcessIds::of_process(v)).map(drop))?;
                     Ok(k.encode())
                 }));
             }
@@ -6746,13 +6751,6 @@ fn run_observed(
                     keep.extend(derived.iter().filter(|rel| !part.program.outputs.contains(*rel)).cloned());
                     // The O125 spike (`RERAIL_SPIKE_DELTA`): each maintained relation's overdeleted and inserted rows.
                     let spike = std::env::var_os("RERAIL_SPIKE_DELTA").is_some();
-                    let probes: Vec<String> = if spike { part.program.decls.keys().filter(|r| r.ends_with("__del") || r.ends_with("__ins")).cloned().map(String::from).collect() } else { Vec::new() };
-                    keep.extend(probes.iter().cloned());
-                    // A delta made in the run: what a stratum's maintenance reads besides old rows.
-                    let in_run_delta = |r: &str| ["__plus", "__minus", "__del", "__ins", "__redo", "__lost", "__held"].iter().any(|x| r.ends_with(x)) || r.contains("__grp");
-                    if spike {
-                        keep.extend(part.program.decls.keys().filter(|r| in_run_delta(r)).map(|r| r.to_string()));
-                    }
                     step("bound; running");
                     if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() || std::env::var_os("RERAIL_CROSS_VERIFY").is_some() {
                         keep.extend(part.program.decls.keys().filter(|r| ["__del", "__ins", "__minus", "__plus", "__cand", "__chk", "__gone", "__held", "__redo"].iter().any(|x| r.ends_with(x))).map(|r| r.to_string()));
@@ -6826,64 +6824,25 @@ fn run_observed(
                         for (rel, why) in &maintained.again {
                             eprintln!("O125 derived-again {rel}: {why}");
                         }
-                        // The strata an early cutoff would skip: every delta a stratum reads (`__plus`, `__minus`, its
-                        // own `__del`, `__ins`, an aggregate's groups, …) came out empty. "Given": a delta bound as an
-                        // input (an earlier phase's, or found by its documents). "No delta": derived again.
-                        let delta_rows: HashMap<&str, Option<usize>> = part
-                            .program
-                            .decls
-                            .keys()
-                            .filter(|r| in_run_delta(r))
-                            .map(|r| (r.as_str(), got.kept.contains(r.as_str()).then(|| held_rows(&db, &got, r, part.program.decls[r].len()).map(|v| v.len()).unwrap_or(0))))
-                            .collect();
-                        if let Ok((sccs, _)) = crate::code_rule_dsl::logic::front::strata(&part.program) {
-                            let (mut quiet, mut moving, mut none, mut given) = (0, 0, 0, 0);
-                            let by_stratum = crate::code_rule_dsl::logic::front::rules_by_stratum(&part.program, &sccs);
-                            for (scc, rules) in sccs.iter().zip(&by_stratum) {
-                                let reads: BTreeSet<&str> = rules.iter().flat_map(|r| r.body.iter().filter_map(|l| match l {
-                                    crate::code_rule_dsl::logic::front::Literal::Atom(a) | crate::code_rule_dsl::logic::front::Literal::Agg { atom: a, .. } => Some(a.rel.as_str()),
-                                    _ => None,
-                                })).filter(|r| delta_rows.contains_key(r)).collect();
-                                if reads.is_empty() {
-                                    none += 1;
-                                } else if reads.iter().any(|r| delta_rows[r].is_none()) {
-                                    given += 1;
-                                } else if reads.iter().all(|r| delta_rows[r] == Some(0)) {
-                                    quiet += 1;
-                                } else {
-                                    moving += 1;
-                                }
+                        // Each maintained relation's rows as its stratum's form left them (`Outcome::spike_forms`; the forms are
+                        // made per stratum when reached, decision 0117 step 3, so the part's program has none of their
+                        // deltas). A relation whose form changed nothing (no row gone, none new) moves no reader: an
+                        // early cutoff's.
+                        let forms = std::mem::take(&mut got.spike_forms);
+                        let unchanged = forms.iter().filter(|(_, c)| c[3] + c[4] == 0).count();
+                        let (mut t, mut lines) = ([0usize; 6], Vec::new());
+                        for (rel, c) in &forms {
+                            for k in 0..6 {
+                                t[k] += c[k];
                             }
-                            let empty = delta_rows.values().filter(|n| **n == Some(0)).count();
-                            eprintln!("O125 cutoff: {} strata: {quiet} read only empty deltas, {moving} a non-empty one, {given} a given delta, {none} no delta; {empty} of {} deltas empty", sccs.len(), delta_rows.len());
-                        }
-                        let (mut tdel, mut tins, mut tgone, mut tnew) = (0usize, 0usize, 0usize, 0usize);
-                        let mut lines = Vec::new();
-                        for p in probes.iter().filter(|p| p.ends_with("__del")) {
-                            let rel = &p[..p.len() - 5];
-                            let width = part.program.decls[p.as_str()].len();
-                            let del = if got.kept.contains(p.as_str()) { held_rows(&db, &got, p, width)?.len() } else { 0 };
-                            let ins_name = format!("{rel}__ins");
-                            let ins = if got.kept.contains(ins_name.as_str()) { held_rows(&db, &got, &ins_name, width)?.len() } else { 0 };
-                            let new: std::collections::HashSet<Vec<i64>> = if got.kept.contains(rel) { held_rows(&db, &got, rel, width)?.into_iter().collect() } else { Default::default() };
-                            let old: std::collections::HashSet<Vec<i64>> = cell
-                                .as_ref()
-                                .and_then(|k| k.old_rows(rel))
-                                .map(|rows| rows.into_iter().collect())
-                                .unwrap_or_default();
-                            let gone = old.difference(&new).count();
-                            let fresh = new.difference(&old).count();
-                            tdel += del;
-                            tins += ins;
-                            tgone += gone;
-                            tnew += fresh;
-                            lines.push((del, format!("{rel}: old {} new {} overdeleted {del} (gone {gone}, so {} put back) inserted {ins} (new {fresh})", old.len(), new.len(), del.saturating_sub(gone))));
+                            lines.push((c[1], format!("{rel}: old {} new {} overdeleted {} (gone {}, so {} put back) inserted {} (new {})", c[0], c[5], c[1], c[3], c[1].saturating_sub(c[3]), c[2], c[4])));
                         }
                         lines.sort_by(|a, b| b.0.cmp(&a.0));
                         for (_, l) in lines.iter().take(25) {
                             eprintln!("O125 {l}");
                         }
-                        eprintln!("O125 total: overdeleted {tdel}, gone {tgone}, put back {}, inserted {tins}, new {tnew}; strata {} of {} run, {} maintained ({} recursive), {} derived again", tdel.saturating_sub(tgone), cut.strata.0, cut.strata.1, maintained.maintained, maintained.recursive, maintained.derived_again);
+                        eprintln!("O125 cutoff: {} relations maintained, {unchanged} changed nothing (no row gone, none new)", forms.len());
+                        eprintln!("O125 total: overdeleted {}, gone {}, put back {}, inserted {}, new {}; strata {} of {} run, {} maintained ({} recursive), {} derived again", t[1], t[3], t[1].saturating_sub(t[3]), t[2], t[4], cut.strata.0, cut.strata.1, maintained.maintained, maintained.recursive, maintained.derived_again);
                     }
                     let s = span("copy derived out");
                     if wanted.contains("returns") && got.kept.contains("returns") {

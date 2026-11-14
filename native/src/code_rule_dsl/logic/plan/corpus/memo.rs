@@ -259,6 +259,13 @@ impl Syms {
     /// atom, whatever the column is declared. Its value is no symbol, and is not mapped: a forked process's counts for
     /// a constant that is an atom are of its numbering (estimates, as the kept statistics' sketches are). Read as one,
     /// the posting's column was looked up by number, found none, and a forked run refused every entry holding one.
+    /// `columns`, for statistics kept at the columns `names` (a base relation's: some of its columns, by name).
+    pub(super) fn columns_named(&self, key: &str, names: &[String]) -> Option<Vec<bool>> {
+        let Some(rel) = key.strip_prefix("base:") else { return self.columns(key, names.len()) };
+        let (all, syms) = (crate::code_rule_dsl::logic::sql::select::input_columns(rel)?, self.0.get(rel)?);
+        names.iter().map(|n| all.iter().position(|c| c == n).and_then(|i| syms.get(i).copied())).collect()
+    }
+
     pub(super) fn columns(&self, key: &str, width: usize) -> Option<Vec<bool>> {
         if let Some(rel) = key.strip_prefix("base:") {
             return self.0.get(rel).cloned();

@@ -147,3 +147,28 @@ fn several_equalities_probe_once_and_agree_with_sqlite() -> Result<()> {
     assert!(plan.iter().any(|p| p.contains("VIRTUAL TABLE INDEX 4194304:c")), "{plan:?}");
     Ok(())
 }
+
+/// A relation's lookups and ranges through its fence (every `FENCE`th value) find what a search of every row finds:
+/// values repeated across fence spans, at their ends, absent, below and above every value.
+#[test]
+fn a_relations_fenced_search_finds_what_a_whole_search_finds() {
+    let mut r = Relation::new(&["k", "n"]);
+    // 1,000 rows, keys 0..300 step 3 with runs of up to 9 (a run spans fences), out of order.
+    let keys: Vec<i64> = (0..1000).map(|i| (i * 7919 % 1000) as i64 / 10 * 3).collect();
+    keys.iter().enumerate().for_each(|(i, &k)| r.push(&[k, i as i64]));
+    let whole = |lo: i64, hi: i64| -> Vec<usize> {
+        let mut rows: Vec<usize> = (0..1000).filter(|&i| (lo..=hi).contains(&keys[i])).collect();
+        rows.sort_unstable();
+        rows
+    };
+    for (lo, hi) in [(-5, -1), (0, 0), (1, 2), (3, 3), (0, 299), (150, 160), (297, 297), (298, 400), (i64::MIN, i64::MAX), (60, 59)] {
+        let mut got = r.range_lookup(0, Some((lo, true)), Some((hi, true))).unwrap();
+        got.sort_unstable();
+        assert_eq!(got, whole(lo, hi), "{lo}..={hi}");
+    }
+    for v in [-3, 0, 3, 4, 150, 297, 300] {
+        let mut got = r.lookup(0, &[v]).unwrap();
+        got.sort_unstable();
+        assert_eq!(got, whole(v, v), "lookup {v}");
+    }
+}

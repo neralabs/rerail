@@ -85,6 +85,11 @@ pub fn set(vars: &[(&str, &str)]) -> Set {
         d.get() == 1
     });
     if outermost {
+        // The tests' store template is made first, under no test's switches: made under these, its fill (a run on a
+        // thread of its own) waited for them to drop, and the test that holds them waited for the fill (the session
+        // tests hung at no CPU), and every test's store would start from this one's modes.
+        #[cfg(any(test, feature = "test-hooks"))]
+        super::test_store::template();
         let mut s = state();
         s.waiting += 1;
         while s.writer || s.readers > 0 {

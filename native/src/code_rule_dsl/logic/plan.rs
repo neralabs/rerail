@@ -3544,6 +3544,35 @@ impl Model {
             }
             Some((cell.work, cell.rows, order, bound, rest))
         };
+        // `RERAIL_PLAN_SHOW=<head>` (dev): the search's cells of one and two joins, and the full order's, as priced.
+        if std::env::var("RERAIL_PLAN_SHOW").is_ok_and(|r| r.split(',').any(|name| name == b.rel(b.head()))) {
+            eprintln!("plan show {} first {first:?} fixed {} no_size {no_size:b} no_rows {no_rows:b}", b.show_head(), fixed.is_some());
+            for &j in &joins {
+                let Some(a) = b.atom(j) else { continue };
+                let rel = b.rel(a);
+                let cols: Vec<String> = (0..b.args(j).len()).map(|c| format!("ndv {:?} fan {:?}", self.ndv.get(&(rel.to_owned(), c)), self.stats.fan.get(&(rel.to_owned(), c)))).collect();
+                let old = format!("{rel}__old");
+                eprintln!(
+                    "plan show   atom {}: card {:?} lazy {} solving {} prior_later {} old card {:?} old lazy {} col {:?} old col {:?} | {}",
+                    b.show_atom(a),
+                    self.stats.card.get(rel),
+                    self.stats.lazy.0.contains_key(rel),
+                    self.stats.solving.contains(rel),
+                    self.stats.prior_later.contains(rel),
+                    self.stats.card.get(&old),
+                    self.stats.lazy.0.contains_key(old.as_str()),
+                    self.stats.col.get(&(rel.to_owned(), sql_col(rel, 0))),
+                    self.stats.col.get(&(old.clone(), sql_col(&old, 0))),
+                    cols.join("; ")
+                );
+            }
+            for (m, c) in cells.iter().enumerate().filter_map(|(m, c)| c.as_ref().map(|c| (m as u64, c))) {
+                if m.count_ones() <= 5 || m == full_mask {
+                    let lits: Vec<String> = (0..joins.len()).filter(|&i| m >> i & 1 == 1).map(|i| b.atom(joins[i]).map_or_else(|| format!("#{}", joins[i]), |a| b.show_atom(a))).collect();
+                    eprintln!("plan show   {m:b} last {} work {:.1} rows {:.1} unfounded {}: {}", c.last, c.work, c.rows, c.unfounded, lits.join(" , "));
+                }
+            }
+        }
         let explain = std::env::var("RDL_EXPLAIN").is_ok_and(|r| r.split(',').any(|name| name == b.rel(b.head())));
         for mask in (0..cells.len() as u64).filter(|&m| cells[m as usize].is_some()) {
             if mask == full_mask || (explain && mask.count_ones() == 2) {
@@ -4141,6 +4170,10 @@ pub struct Outcome {
     /// A maintained run's relations whose rows are as they were (decision 0117 step 4): held as kept (no read of
     /// them moved), or maintained to an empty delta. Their kept frames are not written again.
     pub unchanged: BTreeSet<String>,
+    /// `RERAIL_SPIKE_DELTA` (the O125 spike): each maintained relation's rows as its form left them: [old,
+    /// over-deleted (`__del`, or a level's `__gone`), inserted (`__ins`, or rederived `__redo`), truly gone
+    /// (`__minus`), truly new (`__plus`), after]. Read by the session's report.
+    pub spike_forms: Vec<(String, [usize; 6])>,
 }
 
 /// The set engine's component calls. Over atoms they are made in process (`native::component`), with no statement
@@ -6279,8 +6312,7 @@ impl<'a> Run<'a, '_> {
             if let Some(quiet) = quiet {
                 for (r, o) in quiet {
                     // Its readers are planned from its rows, as an opened stratum's would be (`prior_stats`).
-                    let seeded = (o.rows() as f64).max(1.0);
-                    let card = prior_stats(&mut self.model, prog, r).map_or(seeded, |n| n.max(seeded));
+                    let card = quiet_card(&mut self.model, prog, r, &o);
                     self.model.stats.card.insert(r.clone(), card);
                     super::native::component::hold_as(self.db, r, o);
                 }
@@ -7874,12 +7906,49 @@ pub trait Maintain {
 }
 
 /// Holds `rel`'s kept rows `o` as the run's relation, with its cardinality (a quiet stratum's, decision 0117 step 3).
+/// Quiet relations held with their rows' count alone, no column measured (`hold_quiet`): each column then reads as
+/// one value, and every probe of it as all its rows. None should be (the guard in `a_session_passes_on_a_quiet_stratum`).
+static UNMEASURED_QUIET: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+pub fn unmeasured_quiet() -> u64 {
+    UNMEASURED_QUIET.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn spike_delta() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_SPIKE_DELTA").is_some());
+    *ON
+}
+
 fn hold_quiet(run: &mut Run, prog: &Program, db: &Connection, rel: &String, o: Arc<super::native::component::InRel>) {
-    let seeded = (o.rows() as f64).max(1.0);
-    let card = prior_stats(&mut run.model, prog, rel).map_or(seeded, |n| n.max(seeded));
+    let card = quiet_card(&mut run.model, prog, rel, &o);
     run.model.stats.card.insert(rel.clone(), card);
     super::native::component::hold_as(db, rel, o);
     run.native_rels.insert(rel.clone());
+}
+
+/// The rows a relation held as kept (`o`) is planned at, with its columns' statistics: its own or its old rows'
+/// where measured (`prior_stats`); else the statistics the engine kept of its rows as they came
+/// (`InRel::kept_stats`), read when a plan first prices it (decision 0101 §4). Without them each column read as one
+/// value, and every probe of it as all its rows: `aknown__sup4__del` scanned `aleaf` (12,779 rows) before its 3-row
+/// delta (t39). Only where every column's were kept: the planner reads a relation's columns all or none.
+fn quiet_card(model: &mut Model, prog: &Program, rel: &str, o: &Arc<super::native::component::InRel>) -> f64 {
+    let seeded = (o.rows() as f64).max(1.0);
+    if let Some(n) = prior_stats(model, prog, rel) {
+        return n.max(seeded);
+    }
+    if !model.stats.lazy.0.contains_key(rel)
+        && let Some(width) = prog.decls.get(rel).map(|c| c.len())
+        && let Some(kept) = o.kept_stats((0..width).map(|c| sql_col(rel, c)).collect())
+    {
+        let cols: Vec<(String, [i64; 4])> = kept.statistics(&|_| true).into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])).collect();
+        if cols.len() == width {
+            model.stats.lazily(rel, o.rows(), LazyStats::new(move || (cols, Vec::new(), ())));
+        }
+    }
+    if !model.stats.lazy.0.contains_key(rel) {
+        UNMEASURED_QUIET.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    seeded
 }
 
 /// Programs made while a run goes (a maintained stratum's form, decision 0117 step 3), each kept where it is until
@@ -9439,6 +9508,15 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                             } else {
                                 m.no_delta(r);
                                 moved_rels.insert(r.clone());
+                            }
+                        }
+                        // The O125 spike (`RERAIL_SPIKE_DELTA`): each maintained relation's rows, before the form's own go.
+                        if spike_delta() {
+                            let rows = |r: String| super::native::component::held(db, &r).map_or(0, |h| h.rows());
+                            for r in scc {
+                                let n = |s: &str| rows(format!("{r}__{s}"));
+                                let del = n("del") + n("gone");
+                                outcome.spike_forms.push((r.clone(), [n("old"), del, n("ins") + n("redo"), n("minus"), n("plus"), rows(r.clone())]));
                             }
                         }
                         // What the form made for itself goes; its relations, their deltas and old rows stay.

@@ -2081,6 +2081,11 @@ fn spike_o125_replay() {
         println!("{line}");
     }
     if std::env::var_os("RERAIL_SPIKE_PRESORTED").is_some() { println!("o125r all presorted: {}", crate::code_rule_dsl::logic::native::setfix::runs::presorted::report()); }
+    // The process's whole count (every run above, cold, sessions and full): cycles show what instructions do not
+    // (a cache miss costs cycles, no instructions).
+    if let Some((instructions, cycles)) = crate::code_rule_dsl::logic::settings::process_counters() {
+        println!("o125r process: {:.2} G instructions, {:.2} G cycles", instructions as f64 / 1e9, cycles as f64 / 1e9);
+    }
     session::stop();
     let _ = std::fs::remove_dir_all(&base);
 }
