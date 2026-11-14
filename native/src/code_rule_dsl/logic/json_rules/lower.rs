@@ -435,7 +435,7 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
         } else if k == "capture" && val.is_str() {
             lits.push(format!("{} = {v}", cap(val.as_str().expect("a string"))));
         } else if k == "compare" && vo.is_some_and(|o| o.has("left") && o.has("op") && o.has("right")) {
-            lits.extend(compare(vo.expect("an object"), vs));
+            lits.extend(compare(prog, vo.expect("an object"), vs));
         } else if k == "count" && vo.is_some() {
             lits.extend(count(px, prog, vo.expect("an object"), v, vs)?);
         } else if k == "layout" && vo.is_some() && main_terms::layout(prog, vo.expect("an object"), v, &mut Vars::default()).is_some() {
@@ -454,7 +454,7 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
             prog.use_("names");
             let s = vs.fresh("b");
             lits.push(format!("bind_name({v}, {s})"));
-            lits.extend(site_filters(px, prog, vo.expect("an object"), &s, vs)?);
+            lits.extend(site_filters(px, prog, vo.expect("an object"), &s, Some(v), vs)?);
         } else if k == "parse" && vo.is_some_and(|o| o.has("grammar")) {
             let o = vo.expect("an object");
             let r = vs.fresh("r");
@@ -570,7 +570,7 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
     Ok(lits)
 }
 
-fn compare(c: &Obj, vs: &mut Vars) -> Vec<String> {
+fn compare(prog: &mut Program, c: &Obj, vs: &mut Vars) -> Vec<String> {
     let op = c.get("op").expect("op");
     if !op.is_str() {
         return vec![format!("ast({}, {})", mv_v(c.get("left").expect("left")), compact(&Value::obj(vec![("compare", Value::Obj(c.clone()))])))];
@@ -578,7 +578,16 @@ fn compare(c: &Obj, vs: &mut Vars) -> Vec<String> {
     let (l, r, op) = (mv_v(c.get("left").expect("left")), mv_v(c.get("right").expect("right")), py_str(op));
     let (a, b) = (vs.fresh("t"), vs.fresh("t"));
     let text = c.get("text").cloned().unwrap_or(Value::Str("node".into()));
-    let reader = if matches!(text.as_str(), Some("node" | "text")) { "text" } else { "value" };
+    // `name` is the name the language resolves the node to. SQL's is PostgreSQL's (`ident_pg`: unquoted names fold
+    // to lower case); its identifiers have no `value`.
+    let reader = if matches!(text.as_str(), Some("node" | "text")) {
+        "text"
+    } else if text.as_str() == Some("name") && prog.lang == "sql" {
+        prog.use_("names");
+        "ident_pg"
+    } else {
+        "value"
+    };
     if op == "eq" {
         return vec![format!("{reader}({l}, {a}), {reader}({r}, {a})")];
     }
@@ -731,7 +740,19 @@ fn nth_child(px: &Patterns, prog: &mut Program, c: &Obj, v: &str, vs: &mut Vars)
     Ok(out)
 }
 
-fn site_filters(px: &Patterns, prog: &mut Program, filters: &Obj, s: &str, vs: &mut Vars) -> R<Vec<String>> {
+/// x is the name identifier n spells as a binding: its text, or in SQL the name PostgreSQL folds it to.
+/// Not in Python, where a bound identifier need not spell its name (`import a.b` binds `a`).
+fn name_tie(prog: &Program, n: &str, x: &str) -> Option<String> {
+    match prog.lang.as_str() {
+        "python" => None,
+        "sql" => Some(format!("ident_pg({n}, {x})")),
+        _ => Some(format!("text({n}, {x})")),
+    }
+}
+
+/// `name`: the identifier that names the binding, where the term is on it (`binds` on a node), which ties a site that
+/// binds several names (`let (a, b)`) to the one it names.
+fn site_filters(px: &Patterns, prog: &mut Program, filters: &Obj, s: &str, name: Option<&str>, vs: &mut Vars) -> R<Vec<String>> {
     let mut lits = Vec::new();
     // Main's `directives: "eslint"` is no filter of its own: `builtin` and `exported` also read ESLint's `/* global */`
     // and `/* exported */` comments (the names library's `site_builtin_directives`, `site_exported_directives`).
@@ -790,6 +811,7 @@ fn site_filters(px: &Patterns, prog: &mut Program, filters: &Obj, s: &str, vs: &
             let (sc, x, s2) = (vs.fresh("sc"), vs.fresh("x"), vs.fresh("s"));
             let form = bv.get("form");
             lits.push(format!("binding({sc}, {x}, {s}, _)"));
+            lits.extend(name.and_then(|n| name_tie(prog, n, &x)));
             match form {
                 Some(f @ Value::Str(_)) => lits.push(format!("binding({sc}, {x}, {s2}, _), main_form({s2}, {})", q_val(f))),
                 Some(Value::List(fs)) => {
@@ -808,10 +830,11 @@ fn site_filters(px: &Patterns, prog: &mut Program, filters: &Obj, s: &str, vs: &
             let every = o.get("every").is_some_and(Value::is_true);
             let accepts = prog.helper("redefined", "the definitions the JSON `binds.redefines` accepts");
             let mut body = vec!["binding(_, _, n, _)".to_owned()];
-            body.extend(site_filters(px, prog, &o.without(&["every"]), "n", &mut Vars::default())?);
+            body.extend(site_filters(px, prog, &o.without(&["every"]), "n", None, &mut Vars::default())?);
             prog.add_rule(format!("{accepts}(n)"), body);
             let (sc, x, s2) = (vs.fresh("sc"), vs.fresh("x"), vs.fresh("s"));
             lits.push(format!("binding({sc}, {x}, {s}, _)"));
+            lits.extend(name.and_then(|n| name_tie(prog, n, &x)));
             if every {
                 lits.push(format!("count : {{ binding({sc}, {x}, {s2}, _), {s2} != {s}, !{accepts}({s2}) }} = 0"));
             } else {
@@ -1409,7 +1432,7 @@ fn resolves(px: &Patterns, prog: &mut Program, r: &Obj, v: &str, vs: &mut Vars) 
             prog.use_("names");
             let s = vs.fresh("b");
             lits.push(format!("ref_site({v}, {s})"));
-            lits.extend(site_filters(px, prog, val.as_obj().expect("an object"), &s, vs)?);
+            lits.extend(site_filters(px, prog, val.as_obj().expect("an object"), &s, None, vs)?);
         } else {
             rest.insert(k, val.clone());
         }

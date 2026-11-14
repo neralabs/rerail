@@ -181,6 +181,9 @@ impl Demand<'_> {
                     if want.iter().any(|a| a == "_") {
                         return Ok(false);
                     }
+                    // The call's whole scope, before the literals that reach the group are dropped: a metavariable one
+                    // of those binds is bound at the call, so it is not unset below.
+                    let whole = scope.clone();
                     let mut lits: Vec<String> = scope.into_iter().filter(|l| !reaches(l)).collect();
                     lits.extend(unset_wild);
                     if gset.contains(&owner) {
@@ -193,12 +196,13 @@ impl Demand<'_> {
                     let head = format!("{dname}({})", want.join(", "));
                     // A metavariable the callee reads that this call site never binds, and its owner is not passed,
                     // is unset there (ast-grep's empty metavariable): main's `early-enough` holds of an unset `$LATE`.
+                    // One that a dropped literal binds is bound at the call: no demand then, not an unset one.
                     if ungrounded(px, &wrap(&head, &lits, None))? {
                         let own = self.inputs.get(&owner).cloned().unwrap_or_default();
                         let word = |x: &str| Regex::new(&format!(r"(^|[^\w]){x}([^\w]|$)")).expect("a word");
                         let unbound: Vec<String> = want
                             .iter()
-                            .filter(|x| is_full(UPPER, x) && !own.contains(*x) && !lits.iter().any(|l| matches(&word(x), l)))
+                            .filter(|x| is_full(UPPER, x) && !own.contains(*x) && !whole.iter().any(|l| matches(&word(x), l)))
                             .cloned()
                             .collect::<BTreeSet<_>>()
                             .into_iter()
