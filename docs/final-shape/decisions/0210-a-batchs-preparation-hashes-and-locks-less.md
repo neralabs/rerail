@@ -133,6 +133,9 @@ runs at its starter's depth (`switches::within`) and takes nothing.
 
 ## What remains
 
+This line of work ends at §12: decision 0225 (draft) replaces constant-factor work on the tree's passes with their
+move onto the program's image, as rules the engine maintains. The numberings above are stand-ins until then.
+
 These are open items (O-split-in-strings and the others in open-items.md):
 - A split still starts each relation outside its cone from the kept split's string sets, and gives its results as
   string sets and maps (`Split`), which `split_explained` copies. `RuleIndex` is keyed by text.

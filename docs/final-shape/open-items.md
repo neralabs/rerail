@@ -5061,7 +5061,7 @@ domain is then a function of the rules, not of their order), and then run the fi
 
 ## O-split-in-strings. The file-local split's analysis works on strings (2026-11-14, decision 0210)
 
-Status: the fixpoints are numbered (0210 §6: dl1 23.08 → 22.47 G). The strata run on numbers (0210 §7: 22.60 → 22.25 G); `lower::domains`, `text_kind_demand` and the keep factors are numbered (0210 §8: 22.64 → 21.96 G). The column statistics a strand forks are shared per relation (0210 §9, about −1%). Still on names: `keeps::choose`'s refusals, bounds and estimates, and `Model`'s cards, memo and delta rows (0173 stage 2 plans them by `RelId`, after t36 item 7). A body's numbering is kept with its digest for the run, and every fixpoint, `split_constants`'s included, runs on
+Status: superseded by decision 0225 (draft): the split's questions become rules over the image, after 0173 stage 2. the fixpoints are numbered (0210 §6: dl1 23.08 → 22.47 G). The strata run on numbers (0210 §7: 22.60 → 22.25 G); `lower::domains`, `text_kind_demand` and the keep factors are numbered (0210 §8: 22.64 → 21.96 G). The column statistics a strand forks are shared per relation (0210 §9, about −1%). Still on names: `keeps::choose`'s refusals, bounds and estimates, and `Model`'s cards, memo and delta rows (0173 stage 2 plans them by `RelId`, after t36 item 7). A body's numbering is kept with its digest for the run, and every fixpoint, `split_constants`'s included, runs on
 numbered relations (0210 §10: 21.61 → 21.24 G). Open: a split's boundary and results are string sets (`Split`), and
 `RuleIndex` is keyed by text.
 
