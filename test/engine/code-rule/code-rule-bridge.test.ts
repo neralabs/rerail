@@ -33,7 +33,11 @@ const discovery = vi.hoisted(() => ({
  * The arguments of every Git process Rerail started without blocking, for the tests that pin what a pass costs, and a
  * Git command (`failing`) that is made to fail, by an option Git does not know, while it is set.
  */
-const asyncGitCalls = vi.hoisted(() => ({ args: [] as string[][], failing: undefined as string | undefined }));
+const asyncGitCalls = vi.hoisted(() => ({
+  args: [] as string[][], failing: undefined as string | undefined,
+  /** Runs before each such Git process starts, with its arguments: what another process does to the checkout meanwhile. */
+  before: undefined as ((args: readonly string[]) => void) | undefined,
+}));
 /** How many of the next Git reads run, in Git's place, a program that stays until it is ended, as a Git still at work does. */
 const heldGit = vi.hoisted(() => ({ reads: 0 }));
 /** How many of the files a walk read were made into text (`LentBytes.text`), for the tests that pin what a walk keeps. */
@@ -50,6 +54,7 @@ vi.mock("node:child_process", async importOriginal => {
       const forwarded = fails ? [...args, "--no-such-option"] : [...args];
       call[1] = forwarded;
       asyncGitCalls.args.push(forwarded);
+      asyncGitCalls.before?.(forwarded);
       if (heldGit.reads > 0) {
         heldGit.reads -= 1;
         call[0] = process.execPath;
@@ -158,6 +163,7 @@ afterEach(async () => {
   discovery.reads.clear();
   discovery.directories.clear();
   heldGit.reads = 0;
+  asyncGitCalls.before = undefined;
   readBuffers.watching = false;
   readBuffers.seen.clear();
   await Promise.all(passes.splice(0));
@@ -1100,6 +1106,26 @@ describe("ledgerPreimage", () => {
 function git(cwd: string, ...args: string[]): void {
   execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd, stdio: "ignore" });
 }
+/** Whether a Git process reads a checkout's `HEAD` (`gitHead`). */
+function readsHead(args: readonly string[]): boolean {
+  return args.includes("--verify") && args.includes("HEAD");
+}
+/** Whether a Git process lists the tips of a checkout's branches (`gitBranchTips`). */
+function listsBranches(args: readonly string[]): boolean {
+  return args.includes("for-each-ref") && args.includes("--format=%(objectname)");
+}
+/**
+ * Has a command at work meanwhile run `acts` in turn as the next walk asks Git about its changes: each just before a Git
+ * process `at` names, once the walk's Git verdicts have read `HEAD` (the walk reads it as it starts, then its verdicts
+ * read it again).
+ */
+function whileVerdictsRead(at: (args: readonly string[]) => boolean, ...acts: Array<() => void>): void {
+  let heads = 0;
+  asyncGitCalls.before = args => {
+    if (readsHead(args)) heads += 1;
+    else if (heads >= 2 && at(args)) acts.shift()?.();
+  };
+}
 /** `path` relative to `root` as the bridge names a file, with `/` between its parts on every platform. */
 function repositoryPath(root: string, path: string): string {
   return relative(root, path).split(sep).join("/");
@@ -1919,6 +1945,47 @@ describe("CodeRuleBridge and Git's own writes", () => {
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
       [{ path: "src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\n" }],
     ]);
+  });
+
+  // A command that writes files and commits them can commit while a walk asks Git about them, which can happen on a busy
+  // machine: the walk read `HEAD` before the commit, and `HEAD`'s blobs or the branches after it. Each file then held
+  // the blob of the new commit, which `HEAD` and the branch both had, and was taken for one Git wrote or restored from
+  // that branch, so none of the command's edits was checked.
+  it.each([
+    ["just after the walk's Git verdicts read HEAD", () => true],
+    ["just before they list the branches", listsBranches],
+  ])("keeps auditing a file its command committed %s", async (_when, at) => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await shell(bridge, async () => {
+      await writeFile(join(root, "src", "mine.py"), "mine\n");
+      git(root, "add", "src/mine.py");
+      whileVerdictsRead(at, () => git(root, "commit", "--quiet", "-m", "mine"));
+    });
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/mine.py", language: "python", generatedText: "mine\n" }],
+    ]);
+  });
+
+  // A command that commits again as each reading of Git is made: no reading holds for one `HEAD`. The first reading then
+  // stands, as the walk's one reading did, so a file it found the command's own is still audited.
+  it("audits what its first reading of Git found the command's own when HEAD moves through every reading", async () => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await shell(bridge, async () => {
+      await writeFile(join(root, "src", "mine.py"), "mine\n");
+      await writeFile(join(root, "src", "late.py"), "late\n");
+      git(root, "add", "src/mine.py");
+      whileVerdictsRead(
+        listsBranches,
+        () => git(root, "commit", "--quiet", "-m", "mine"),
+        () => { git(root, "add", "src/late.py"); git(root, "commit", "--quiet", "-m", "late"); },
+        () => git(root, "commit", "--quiet", "--allow-empty", "-m", "more"),
+      );
+    });
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toContainEqual(
+      { path: "src/late.py", language: "python", generatedText: "late\n" },
+    );
   });
 
   it("measures a file written in the command that moved the checkout from what Git wrote", async () => {
