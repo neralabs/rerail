@@ -797,9 +797,12 @@ jobs:
         (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
       }}
     runs-on: windows-2025
-    # A shard takes about 9 minutes when the cache holds the engine and 18 when it builds it; its tests take 5 to 6. On
-    # a miss the second shard also makes a debug build of the engine for its Rust tests, which the limit leaves room for.
-    timeout-minutes: 45
+    # A shard takes about 9 minutes when the cache holds the engine; its tests take 5 to 6. On a miss each shard builds
+    # the split engine cold, release: 30 to 37 minutes on windows-2025 (bd25268a26's run). So the first shard needs about
+    # 2 minutes of set-up, up to 40 of build and 8 of tests, 50 in all: 60 leaves 10 to spare. On a miss the second
+    # shard also makes a cold debug build of rerail-engine's and rerail-lang-ecma's tests for the Windows-only Rust tests,
+    # which had run 11 minutes without finishing; up to 25 more with its tests, about 75 in all: 90 leaves 15.
+    timeout-minutes: ${{ matrix.shard == 2 && 90 || 60 }}
     permissions:
       contents: read
     strategy:
