@@ -598,6 +598,25 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     expect(said).toMatch(/^Hooks: 3 hook events could not be recorded since 1970-01-01T00:00:05\.000Z, as far back as the log goes; /u);
   });
 
+  // As above, with a `.1` last written 2.5 s before status reads, as a `.1` in use is: only the take's rename makes it
+  // a log that changed lately, so this fails if the wait reads the write time where it must read the change time.
+  it("says since when it counts when a hook holds a .1 last written seconds ago under its own name as status lists the home", async () => {
+    const rerailHome = await home();
+    writeFileSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`), partText(5_000, 5_000, 6_000));
+    writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), partText(9_000, 9_000));
+    await new Promise(resolveWait => { setTimeout(resolveWait, 2_500); });
+    const [movedAside, held] = [join(rerailHome, `${HOOK_FAILURES_FILE}.1`), takenName(rerailHome, process.pid)];
+    const said = await statusWhileListing(rerailHome, `readdir => (...args) => {
+      if (String(args[0]) !== HOME) return readdir(...args);
+      globalThis.listings = (globalThis.listings ?? 0) + 1;
+      if (globalThis.listings === 3) fs.renameSync(${JSON.stringify(held)}, ${JSON.stringify(movedAside)});
+      const names = readdir(...args);
+      if (globalThis.listings === 1) fs.renameSync(${JSON.stringify(movedAside)}, ${JSON.stringify(held)});
+      return names;
+    }`);
+    expect(said).toMatch(/^Hooks: 3 hook events could not be recorded since 1970-01-01T00:00:05\.000Z, as far back as the log goes; /u);
+  });
+
   // A hook stopped while it held `.1` under its own name leaves no `.1`: nothing moves the log it left until the next
   // move, so status does not wait for it.
   it("reads the log at once when a hook that has ended holds what was .1", async () => {
