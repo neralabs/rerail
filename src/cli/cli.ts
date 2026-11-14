@@ -235,14 +235,28 @@ async function runDaemonStartCommand(args: readonly string[], home: string): Pro
     { flags: ["--dev", "--open", "--allow-remote", ...DAEMON_TRANSPORT_FLAGS], options: ["--port", "--host", "--public-host", "--workspace-root", ...DAEMON_TRANSPORT_OPTIONS] },
     argument => `Unknown daemon start option: ${argument}\n\n${usage()}`,
   );
-  const result = await startDaemon({ home, packageRoot }, daemonStartLaunch(parsed));
+  const launch = daemonStartLaunch(parsed);
+  const result = await startDaemon({ home, packageRoot }, launch);
   if (!result.started) process.stdout.write("The Rerail daemon is already running.\n");
   printDaemon(result.daemon);
   process.stdout.write(`Logs: ${join(home, DAEMON_LOG_FILE)}\n`);
   const link = dashboardLink(result.daemon.state);
   printDashboardLink(home, result.daemon.state, link);
   if (parsed.flags.has("--open") && !openInBrowser(link)) process.stdout.write(`${BROWSER_OFF_NOTE}\n`);
-  return 0;
+  return remoteAccessExit(launch, result.daemon.state);
+}
+
+/**
+ * The exit code of a `rerail daemon start` whose daemon, started or found, runs: 1 when the start asked for other
+ * machines (`--allow-remote`, `--public-host`) and the daemon serves this computer alone (`remoteRefused`), as for a
+ * start that fails, so a script or a remote client never takes it for started as asked, with the refusal on stderr;
+ * the loopback daemon keeps running. 0 for every other start.
+ */
+function remoteAccessExit(launch: DaemonLaunchOptions, state: DaemonState): number {
+  const askedRemote = launch.allowRemote === true || launch.publicHosts !== undefined;
+  if (!askedRemote || state.remoteRefused === undefined) return 0;
+  process.stderr.write(`rerail: other machines cannot reach this daemon, though this start asked for them, until its TLS key is fixed: ${state.remoteRefused}. Then run rerail daemon stop and this start again.\n`);
+  return 1;
 }
 
 /** What `rerail daemon start`'s flags and options launch: where the daemon binds and answers, its port and its folder. */
