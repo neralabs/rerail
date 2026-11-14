@@ -101,13 +101,13 @@ export async function holdHomeDaemonLock(home: string): Promise<HomeDaemonLease 
 }
 
 /**
- * Writes this process's pid beside the lock, whole, since a refusal may read the record at any moment. Never fails the
- * daemon: a holder that could not record itself holds the home all the same, and the refusal then names no pid.
+ * Writes this process's pid beside the lock, whole, since a refusal may read the record at any moment: the replace is
+ * atomic, so a reader sees the record a holder killed outright left, or this one, never none. Never fails the daemon:
+ * a holder that could not record itself holds the home all the same, and the refusal then names no pid.
  */
 function recordHolder(home: string): void {
   const record = join(home, LOCKS_DIR, HOLDER_FILE);
   try {
-    rmSync(record, { force: true });
     replaceFileSync(record, `${JSON.stringify({ pid: process.pid })}\n`, { mode: 0o600 });
   } catch {
     // Unrecorded, the holder holds the home all the same.
