@@ -3631,11 +3631,15 @@ impl Model {
                         _ => r *= 0.5,
                     }
                     bound.extend(b.vars(s.at));
-                    steps.push(super::profile::StepPlan { literal: String::new(), access: String::new(), source: String::new(), rows: r, passed: Vec::new(), basis: String::new() });
+                    steps.push(super::profile::StepPlan { literal: String::new(), access: String::new(), source: String::new(), rows: r, all: r, passed: Vec::new(), basis: String::new() });
                 }
                 return super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone() };
             }
+            // The rows each step makes when every row is walked, past the bound head too (no witness cut, decision
+            // 0229): what the device's breadth-first stages make (decision 0233).
+            let mut r_all = 1.0;
             for s in &order {
+                let before = r;
                 // The joins the search could have taken here instead, each priced as it was: rows a binding. A probe's
                 // delta comes first by construction, not by choice: nothing was passed over for it.
                 let passed: Vec<(String, f64, String)> = if b.is_join(s.at) && first != Some(s.at) {
@@ -3709,8 +3713,14 @@ impl Model {
                         ("filter".to_owned(), String::new())
                     }
                 };
+                let walked = match b.view(s.at) {
+                    Lit::Atom(a) if !a.neg() => step_all(s.at, r_all, &bound).map(|x| x.1),
+                    Lit::Nearest { .. } => step_all(s.at, r_all, &bound).map(|x| x.1),
+                    _ => None,
+                };
+                r_all = walked.unwrap_or(if before > 0.0 { r_all * r / before } else { r_all });
                 bound.extend(b.vars(s.at));
-                steps.push(super::profile::StepPlan { literal: b.show(s.at), access, source: src, rows: r, passed, basis });
+                steps.push(super::profile::StepPlan { literal: b.show(s.at), access, source: src, rows: r, all: r_all.max(r), passed, basis });
             }
             super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone() }
         });

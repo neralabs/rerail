@@ -307,6 +307,9 @@ pub struct StepPlan {
     pub access: String,
     pub source: String,
     pub rows: f64,
+    /// Its rows when every row is walked: past the step that binds the head the walk keeps one witness (decision
+    /// 0229) and `rows` counts that; the device's stages make them all (decision 0233).
+    pub all: f64,
     pub passed: Vec<(String, f64, String)>,
     /// The rule the step's rows a binding were priced by (`plan_search`'s `atom_rows`): postings, observed,
     /// absence proof, membership, and the containment share applied, so a misprediction names its rule.

@@ -1693,7 +1693,6 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         store.rels[0].reserve(fresh[0].n);
         for i in 0..fresh[0].n { store.rels[0].push(&fresh[0].data.row(i as u32, k)); }
         let prep = closure::prepare(&cl, store, &mut syms);
-        drop(syms);
         match prep {
             None => closure_ran = Some(None),
             Some(mut prep) if !prep.launches.is_empty() && crate::code_rule_dsl::logic::lanes::wave::can_wait() => {
@@ -1883,7 +1882,6 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         };
         if tried && !on_device {
             // The seeds were parsed without the CPU's indexes: parse them again with them.
-            drop(syms);
             drop(guard);
             let specs = std::mem::take(&mut comp.seed_specs);
             {
@@ -2332,6 +2330,19 @@ pub fn step_counts(conn: impl Scoped, name: &str) -> Result<Vec<Vec<(i64, i64)>>
     }).collect())
 }
 
+/// Per probe of component `name`, the first step past the one that binds its head's slots (`tail`): from it on, the
+/// CPU's walk counts one witness (decision 0229) and the device's stages every row (decision 0233), so the two
+/// counts agree only before it. A probe that is not a join: 0.
+pub fn step_tails(conn: impl Scoped, name: &str) -> Result<Vec<usize>> {
+    let conn = conn.db();
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    Ok(comp.probes.iter().map(|p| match &p.body {
+        Body::Join(j) => tail(j),
+        Body::Sql(_) | Body::Unplanned => 0,
+    }).collect())
+}
+
 /// One step's histogram (`step_histograms`): its rows past its constants, and their counts by key.
 pub type Histogram = (u64, rustc_hash::FxHashMap<Vec<i64>, u64>);
 
@@ -2773,6 +2784,14 @@ pub struct InRel { pub k: usize, n: usize, rows: Rows, pub view: Option<View>, b
 /// rows passing the atom's constant filters otherwise). Nothing of the source is copied.
 pub struct View { pub src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, ids: Option<Vec<u32>>, eqs: Vec<(usize, i64)> }
 impl View {
+    /// Whether the view reads every row of its source (no constant filters chose its rows).
+    pub fn whole(&self) -> bool {
+        self.ids.is_none()
+    }
+    /// The source's column that view column `c` reads.
+    pub fn column(&self, c: usize) -> usize {
+        self.cols[c]
+    }
     /// The source's rows whose view column `c` is `v` and which pass the filters, through the source's own index.
     fn find(&self, c: usize, v: i64) -> Vec<u32> {
         let rows = self.src.lookup(self.cols[c], &[v]).unwrap_or_default();
@@ -5847,7 +5866,7 @@ fn bound_by(st: &Step) -> Vec<usize> {
 /// same head row, so the walk needs one witness, not all of them (a semi-join on the rest of the body). A factorized
 /// part's key, `fzk($d) :- demand($d), node($d, $v, …), line($v, $l)`, read every node of each document for one row
 /// a document (PostHog: 10.6 M rows for 7,086 keys at one step).
-fn tail(j: &JoinRule) -> usize {
+pub fn tail(j: &JoinRule) -> usize {
     let head: Vec<usize> = j.out.iter().flat_map(|t| match *t { Term::Slot(s) => vec![s], Term::Cat(a, b) => vec![a, b], Term::Const(_) => Vec::new() }).collect();
     j.steps.iter().enumerate().filter(|(_, st)| bound_by(st).iter().any(|s| head.contains(s))).map(|(i, _)| i + 1).max().unwrap_or(0)
 }

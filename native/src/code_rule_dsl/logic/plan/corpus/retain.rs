@@ -915,6 +915,9 @@ impl Source for Renamed {
     fn made_on_lookup(&self) -> bool {
         self.0.made_on_lookup()
     }
+    fn complete_rows(&self) -> bool {
+        self.0.complete_rows()
+    }
     fn expect_lookups(&self, column: usize, keys: f64) {
         self.0.expect_lookups(column, keys);
     }

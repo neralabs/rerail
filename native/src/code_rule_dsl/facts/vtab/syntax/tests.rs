@@ -497,6 +497,17 @@ fn within_holds_exactly_the_contained_pairs() {
         if mode == within::Mode::Tree {
             assert_eq!(within.len(), expected.len(), "the tree's rows are its estimate");
         }
+        // Read whole first (the device's keyed read, decision 0233): the tree by the batch's solve, every pair once,
+        // and the lookups after it read the same rows; spans have no solve.
+        let whole = within::Within::new(Arc::clone(&batch), mode);
+        assert_eq!(whole.complete_rows(), mode == within::Mode::Tree, "containment is solved for the batch, spans are not");
+        if mode == within::Mode::Tree {
+            let rows = |rows: Vec<usize>| -> BTreeSet<(i64, i64)> { rows.into_iter().map(|r| (whole.value(r, 0), whole.value(r, 1))).collect() };
+            assert_eq!(whole.len(), expected.len());
+            assert_eq!(rows((0..whole.len()).collect()), expected);
+            assert_eq!(rows(whole.lookup(0, &ids).unwrap()), expected);
+            assert_eq!(rows(whole.lookup(1, &ids).unwrap()), expected);
+        }
         relation_cpu += cpu() - before_relation;
     }
     eprintln!("CONTAINMENT CHECK: {nodes} nodes, reference {reference_cpu:.6} CPU s, relation and comparisons {relation_cpu:.6} CPU s");
