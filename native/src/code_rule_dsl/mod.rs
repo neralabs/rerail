@@ -4913,6 +4913,11 @@ pub(crate) fn install_languages() {
             // tree-sitter-c-sharp.
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::CSharp, name: "lean C# parser", rank: 0, runs: true, parser: &tape::csharp_lean::Lean });
         }
+        if cfg!(feature = "lang-php") {
+            // The lean PHP parser (`tape::php_lean`, decision 0197); a file it refuses goes to
+            // tree-sitter-php.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Php, name: "lean PHP parser", rank: 0, runs: true, parser: &tape::php_lean::Lean });
+        }
         if cfg!(feature = "lang-json") {
             // simdjson where it builds (not wasm: tree-sitter-json there); the Bitlex parser
             // (`json_parser::tape::Bitlex`) is not yet the product's.

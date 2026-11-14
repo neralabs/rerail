@@ -3323,6 +3323,7 @@ dependencies = [
  "rerail-logic",
  "rerail-metal",
  "rerail-parser-tests",
+ "rerail-php-lean",
  "rerail-prof",
  "rerail-python-lean",
  "rerail-rr",
@@ -3495,6 +3496,7 @@ dependencies = [
  "rerail-ecma-lean",
  "rerail-java-lean",
  "rerail-lang",
+ "rerail-php-lean",
  "rerail-prof",
  "rerail-python-lean",
  "rerail-rr-parser",
@@ -4043,6 +4045,14 @@ dependencies = [
  "rerail-rr-syntax",
  "tree-sitter",
  "tree-sitter-json",
+]
+
+[[package]]
+name = "rerail-php-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]

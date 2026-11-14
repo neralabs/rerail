@@ -59,6 +59,8 @@ pub mod rust_lean;
 pub mod java_lean;
 /// C#'s tape from the lean parser (`rerail_csharp_lean`).
 pub mod csharp_lean;
+/// PHP's tape from the lean parser (`rerail_php_lean`).
+pub mod php_lean;
 pub use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
 pub const ERROR_SYMBOL: u16 = u16::MAX;

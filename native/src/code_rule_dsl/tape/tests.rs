@@ -2529,6 +2529,7 @@ fn ecma_implied_tokens() {
         ("rust", GrammarDialect::Rust),
         ("java", GrammarDialect::Java),
         ("csharp", GrammarDialect::CSharp),
+        ("php", GrammarDialect::Php),
     ];
     let wanted = std::env::var("RERAIL_IMPLIED_DIALECTS").unwrap_or_else(|_| "javascript,typescript,tsx".into());
     for (name, dialect) in all.into_iter().filter(|(name, _)| wanted.split(',').any(|w| w == *name)) {
@@ -2548,9 +2549,30 @@ fn python_tape_expect() {
     let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
     let out = std::path::PathBuf::from(std::env::var("RERAIL_PY_OUT").expect("set RERAIL_PY_OUT"));
     std::fs::create_dir_all(&out).unwrap();
-    // With `RERAIL_PY_DIALECT` (`javascript`, `typescript`, `tsx`, `rust`, `java`, `csharp`), another
-    // dialect's tapes, for that lean parser's oracle (`rerail-ecma-lean`, ...).
+    // With `RERAIL_PY_DIALECT` (`javascript`, `typescript`, `tsx`, `rust`, `java`, `csharp`, `php`),
+    // another dialect's tapes, for that lean parser's oracle (`rerail-ecma-lean`, ...). PHP's are of
+    // each file's view (`parse_input`, the bytes tree-sitter-php parses), written to `views/` beside
+    // the tapes and named in them. `blade-views` writes, instead of tapes, each Blade template's
+    // compiled program (`blade::view`, the PHP its embedding parses) to `RERAIL_PY_OUT`, a file each.
+    if std::env::var("RERAIL_PY_DIALECT").as_deref() == Ok("blade-views") {
+        let mut n = 0;
+        for path in list.lines().filter(|l| !l.is_empty()) {
+            let Ok(source) = std::fs::read_to_string(path) else { continue };
+            let Ok(tree) = crate::code_rule_dsl::blade::forte::tree::parse_tree(source.as_bytes()) else { continue };
+            let Ok(read) = crate::code_rule_dsl::blade::view::View::read(&tree, &source, &|| false) else { continue };
+            if let Some(view) = read.view {
+                std::fs::write(out.join(format!("{n:05}.php")), view.text()).unwrap();
+                n += 1;
+            }
+        }
+        eprintln!("{n} compiled views");
+        return;
+    }
+    // `php-raw`: PHP's tapes of the files as they are (a Blade template's compiled program, which
+    // its embedding parses with no `<?php` tag).
+    let php = std::env::var("RERAIL_PY_DIALECT").as_deref() == Ok("php");
     let dialect = match std::env::var("RERAIL_PY_DIALECT").as_deref() {
+        Ok("php") | Ok("php-raw") => GrammarDialect::Php,
         Ok("javascript") => GrammarDialect::JavaScript,
         Ok("typescript") => GrammarDialect::TypeScript,
         Ok("tsx") => GrammarDialect::Tsx,
@@ -2570,6 +2592,16 @@ fn python_tape_expect() {
     let (mut written, mut errors) = (0usize, 0usize);
     for (n, path) in list.lines().filter(|l| !l.is_empty()).enumerate() {
         let Ok(source) = std::fs::read_to_string(path) else { continue };
+        let view_path;
+        let (source, path) = if php {
+            let view = crate::code_rule_dsl::php_view::view(&source).into_owned();
+            std::fs::create_dir_all(out.join("views")).unwrap();
+            view_path = out.join("views").join(format!("{n:05}.php")).to_string_lossy().into_owned();
+            std::fs::write(&view_path, &view).unwrap();
+            (view, view_path.as_str())
+        } else {
+            (source, path)
+        };
         let tree = parser.parse(&source, None).unwrap();
         if tree.root_node().has_error() {
             // Its tape with tree-sitter's recovery (`ERROR` nodes, missing tokens), after an
@@ -3240,6 +3272,127 @@ fn the_product_reads_csharp_with_the_lean_parser() {
     let invalid = "class A { void F( {\n";
     assert!(csharp_lean::encode(&grammar, invalid, &|| false).is_err());
     assert!(TapeImage::parse(&grammar, invalid, &|| false).unwrap().is_ok());
+}
+
+/// PHP's tapes from the lean parser (the product's parser for PHP, decision 0197) are
+/// tree-sitter-php's, byte for byte, on hand-written cases (of each file's view, `parse_input`, as
+/// the product parses it); a text tree-sitter reads with an error the lean parser refuses (its file
+/// goes to tree-sitter). The corpus comparison is `rerail-php-lean`'s `oracle`.
+#[test]
+fn php_tapes_from_the_lean_parser_are_tree_sitters() {
+    use crate::code_rule_dsl::tape::php_lean;
+    let sources = [
+        "",
+        "<?php\n",
+        "<?php\n// a comment\n# another\n/** doc */\nnamespace App\\Models;\nuse Foo\\{Bar, Baz as Q};\nuse function strlen;\n",
+        "<?php\ndeclare(strict_types=1);\nfinal class A extends B implements C, D {\n    use T { f as protected g; }\n    public const int X = 1, Y = 2;\n    private static ?array $p = null;\n    public function __construct(private readonly string $s = 'x', int ...$rest) {}\n    abstract protected function f(int|string $a, &$b): static;\n}\n",
+        "<?php\nenum Suit: string { case Hearts = 'H'; case Spades = 'S'; public function color(): string { return match ($this) { self::Hearts => 'Red', default => 'Black' }; } }\ninterface I { const C = 1; }\ntrait T { abstract public function t(): void; }\n",
+        "<?php\n$a = [1, 'b' => 2, ...$c, &$d];\n[$x, [$y, $z]] = $a;\nlist('k' => $v, , $w) = $b;\n$f = fn($x) => $x * 2;\n$g = static function () use (&$a, $b): int { return $a <=> $b; };\n$o = new class(1) extends B { public $p; };\n",
+        "<?php\n$s = 'it\\'s' . \"a $b {$c->d} ${e} $f[0] $g->h \\n\\x41\\u{1F600}\";\n$h = <<<EOT\n  Hello $name\n  {$x['y']}\n\n  EOT;\n$n = <<<'NOW'\nraw $text\nNOW;\n$c = `ls -l $dir`;\n",
+        "<?php\nif ($a): echo 1; elseif ($b): echo 2; else: echo 3; endif;\nforeach ($xs as $k => [$p, $q]): endforeach;\nwhile (true) { break 2; }\nfor ($i = 0, $j = 1; $i < 10; $i++, --$j);\nswitch ($x) { case 1: case 2: goto end; default: continue; }\nend:\ntry { throw new E(); } catch (A | B $e) { } finally { }\n",
+        "<?php\n$x = (int) $y + @f() ?? $z ?: -1 ** 2 instanceof Foo;\n$y = $a?->b?->c() ?? A::$b::C::d();\n$z = !$a = $b and $c or $d xor $e;\nprint clone $o;\nunset($a[1], $b->c);\nglobal $g;\nstatic $s = 1;\nexit(0);\n",
+        "<?php\n#[Attr(1, name: 'x')]\nfunction f(#[SensitiveParameter] $p): never { throw new \\Exception(); }\n$r = f(...);\n$v = strlen(string: 'x');\n",
+        "<html><?php echo $title; ?></html>\n",
+        "<?php\necho 1 ?>\n",
+    ];
+    let grammar = Grammar::new(GrammarDialect::Php).unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Php.get_ts_language()).unwrap();
+    let parse = |parser: &mut tree_sitter::Parser, source: &str| parser.parse(crate::code_rule_dsl::language::parse_input(GrammarDialect::Php, source).as_ref(), None).unwrap();
+    for source in sources {
+        let ours = php_lean::encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
+        let tree = parse(&mut parser, source);
+        assert!(!tree.root_node().has_error(), "tree-sitter's tree of {source:?} has an error");
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary;
+        assert!(
+            ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(),
+            "the tapes of {source:?} differ:\n{}\n{}",
+            python_tape_plain(&ours, &grammar),
+            python_tape_plain(&theirs, &grammar)
+        );
+    }
+    // Any syntax error: refused, for tree-sitter, which recovers as it recovers. The lean parser has
+    // one behavior: tree-sitter's tape, or a refusal.
+    for invalid in ["<?php\nfunction f( {\n", "<?php\n$a = [1,\n", "<?php\nclass A {\n", "<?php\n$a[$b->c\n\ncontinue;\n", "<?php\n$s = 'abc;\n", "<?php\nclass A { public const FALSE = 1; }\n"] {
+        assert!(parse(&mut parser, invalid).root_node().has_error(), "{invalid:?} reads without an error");
+        assert!(php_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
+    }
+}
+
+/// The product reads PHP with the lean parser: a file's image through the engine's parse
+/// (`TapeImage::parse`) is the lean parser's; a file it refuses goes to tree-sitter-php.
+#[test]
+fn the_product_reads_php_with_the_lean_parser() {
+    use crate::code_rule_dsl::tape::php_lean;
+    let grammar = Grammar::new(GrammarDialect::Php).unwrap();
+    assert!(tree_parser(GrammarDialect::Php).is_some(), "PHP's parser is installed");
+    let source = "<?php\nfunction f(int $x): int { return $x + 1; } // one\n";
+    let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+    let lean = php_lean::encode(&grammar, source, &|| false).unwrap().unwrap();
+    assert_eq!(product.primary.to_bytes().unwrap(), lean.to_bytes().unwrap());
+    // Refused (a syntax error): tree-sitter's tape, with its error.
+    let invalid = "<?php\nfunction f( {\n";
+    assert!(php_lean::encode(&grammar, invalid, &|| false).is_err());
+    assert!(TapeImage::parse(&grammar, invalid, &|| false).unwrap().is_ok());
+}
+
+/// What a PHP file's tape costs, by parser: the lean parser (`tape::php_lean`, the product's)
+/// against tree-sitter-php, over `RERAIL_PY_FILES` (a list of paths): instructions retired, cycles
+/// and CPU time a node, the best of three passes. Only the files both read. Both read each file's
+/// view (`parse_input`, made outside the measure).
+#[test]
+#[ignore = "a measurement; needs RERAIL_PY_FILES"]
+fn php_parse_costs() {
+    use crate::code_rule_dsl::tape::php_lean;
+    let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
+    let gd = GrammarDialect::Php;
+    let grammar = Grammar::new(gd).unwrap();
+    let parser = std::cell::RefCell::new(tree_sitter::Parser::new());
+    parser.borrow_mut().set_language(&gd.get_ts_language()).unwrap();
+    let mut files: Vec<String> = list.lines().filter(|l| !l.is_empty()).filter_map(|p| std::fs::read_to_string(p).ok()).collect();
+    let all = files.len();
+    files.retain(|f| php_lean::encode(&grammar, f, &|| false).is_ok_and(|t| t.is_ok()));
+    let views: Vec<String> = files.iter().map(|f| crate::code_rule_dsl::language::parse_input(gd, f).into_owned()).collect();
+    let bytes: usize = files.iter().map(String::len).sum();
+    let nodes: usize = files.iter().map(|f| php_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let cpu = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let steps: Vec<(&str, Box<dyn Fn(usize) -> usize>)> = vec![
+        ("lean: the parser's columns", Box::new(|i| rerail_php_lean::tape(views[i].as_bytes()).map_or(0, |t| t.code.len()))),
+        ("lean: the tape", Box::new(|i| usize::from(std::hint::black_box(php_lean::encode(&grammar, &files[i], &|| false)).is_ok()))),
+        ("tree-sitter: parse", Box::new(|i| parser.borrow_mut().parse(&views[i], None).unwrap().root_node().child_count() as usize)),
+        ("tree-sitter: the tape", Box::new(|i| {
+            let tree = parser.borrow_mut().parse(&views[i], None).unwrap();
+            usize::from(std::hint::black_box(TapeImage::encode(tree.root_node(), &grammar, &files[i], &|| false)).is_ok())
+        })),
+    ];
+    let mut best = vec![(f64::MAX, u64::MAX, u64::MAX); steps.len()];
+    for _ in 0..3 {
+        for (i, (_, step)) in steps.iter().enumerate() {
+            let (i0, c0) = retired();
+            let t0 = cpu();
+            let mut n = 0;
+            (0..files.len()).for_each(|f| n += step(f));
+            std::hint::black_box(n);
+            let (i1, c1) = retired();
+            let t = cpu() - t0;
+            best[i] = (best[i].0.min(t), best[i].1.min(i1 - i0), best[i].2.min(c1 - c0));
+        }
+    }
+    eprintln!("PHP: {} files of {all} the lean parser reads, {bytes} bytes, {nodes} nodes", files.len());
+    for ((name, _), (t, ins, cyc)) in steps.iter().zip(&best) {
+        eprintln!(
+            "{name:32} {:9.1} instructions a node, {:7.1} cycles a node, {:6.2} ns a byte, {:8.3} s",
+            *ins as f64 / nodes as f64,
+            *cyc as f64 / nodes as f64,
+            t * 1e9 / bytes as f64,
+            t
+        );
+    }
 }
 
 /// What a C# file's tape costs, by parser: the lean parser (`tape::csharp_lean`, the product's)

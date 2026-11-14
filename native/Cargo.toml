@@ -200,6 +200,8 @@ rerail-rust-lean = { path = "crates/rust_lean" }
 rerail-java-lean = { path = "crates/java_lean" }
 # The lean C# parser, measured directly (`tape::tests::csharp_parse_costs`).
 rerail-csharp-lean = { path = "crates/csharp_lean" }
+# The lean PHP parser, measured directly (`tape::tests::php_parse_costs`).
+rerail-php-lean = { path = "crates/php_lean" }
 # Every test build of the engine turns on its crates' test hooks (`test-hooks`).
 rerail-engine = { path = ".", features = ["test-hooks"] }
 # Tier 1's test hooks (the relocations' recording) for the engine's tests.
