@@ -12,9 +12,11 @@ import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
 import { listRepositoryRules, ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
-import { auditViolations, events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
+import { auditViolations, checkouts, events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents } from "./session-state.js";
+import { conflictFooter, type ConflictFooter } from "./merge-assist/notes.js";
+import { physicalPath, withinCheckout } from "../engine/catalog/checkout-control.js";
 
 /** The events that wait for the session's code-rule evaluator: a tool call, its result and a turn's end. */
 export type CodeRulesPendingBoundary = "call" | "result" | "turn-end";
@@ -108,6 +110,8 @@ export interface SessionHud {
   overlays: string[];
   /** While `activeRuleCount` is current, how many rules and packs that are on run in Log waiting for a person's approval. */
   awaitingApproval: number | null;
+  /** The footer's Merge Assist segment, present only while the session's checkout has an open conflict that is not quiet. */
+  mergeAssist?: ConflictFooter;
 }
 
 /** What a session's active-rule count was computed from, so the footer can tell whether it is still current. */
@@ -188,6 +192,28 @@ function listSessions(
 
 function listWorkLinks(database: RerailDatabase, sessionId: string): WorkLinkRecord[] {
   return database.select().from(workLinks).where(eq(workLinks.sessionId, sessionId)).orderBy(asc(workLinks.linkId)).all();
+}
+
+/**
+ * The HUD's Merge Assist segment for the session, absent when it has none: from the checkout it started in, as its
+ * coverage names it (`owners`), else the deepest recorded checkout holding its working folder read through symlinks,
+ * as checkouts are recorded.
+ */
+function sessionConflictFooter(database: RerailDatabase, sessionId: string, owners: readonly string[] | null): Pick<SessionHud, "mergeAssist"> {
+  const checkout = owners?.[0] ?? sessionCheckout(database, sessionId);
+  const mergeAssist = checkout === undefined ? undefined : conflictFooter(database, checkout);
+  return mergeAssist === undefined ? {} : { mergeAssist };
+}
+
+/** The deepest recorded checkout holding the session's working folder, read through symlinks. */
+function sessionCheckout(database: RerailDatabase, sessionId: string): string | undefined {
+  const session = database.select({ cwd: sessions.cwd }).from(sessions).where(eq(sessions.sessionId, sessionId)).get();
+  if (session === undefined) return undefined;
+  const real = physicalPath(session.cwd);
+  return database.select({ path: checkouts.checkoutPath }).from(checkouts).all()
+    .map(row => row.path)
+    .filter(path => withinCheckout(path, real))
+    .sort((left, right) => right.length - left.length)[0];
 }
 
 
@@ -452,6 +478,7 @@ export class SqliteSessionReader {
         steeringCount,
         overlays: current && isWorktreePack(catalog.packs.get(WORKTREE_PACK_ID)) ? [WORKTREE_PACK_ID] : [],
         awaitingApproval: current ? this.#awaitingApprovalIn(database, catalog, coverage.repositoryId!, owners, coverage.ruleSignature!) : null,
+        ...sessionConflictFooter(database, sessionId, owners),
       };
     });
   }

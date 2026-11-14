@@ -690,6 +690,13 @@ function underBaselineRoot(roots: ReadonlySet<string>, path: string): boolean {
   }
   return false;
 }
+/**
+ * Whether the session folder's own walk covers `path`: inside the folder, and in none of the other `worktrees`. A path
+ * that leads out of the folder is told apart by its first segment, before any worktree is looked up.
+ */
+function inSessionFolder(worktrees: ReadonlySet<string>, path: string): boolean {
+  return path !== ".." && !path.startsWith("../") && !underBaselineRoot(worktrees, path);
+}
 /** `absolute` relative to the walk's root (the session folder), `/`-separated, as the auditor names paths. */
 function sessionPath(root: string, absolute: string): string {
   return relative(root, absolute).split(sep).join("/");
@@ -1265,6 +1272,7 @@ export class CodeRuleBridge {
     if (sessionWalkAbandoned(discovery) || worktreeWalkAbandoned(discovery)) this.#reportDiscoveryPending("close");
     await this.#enqueue(async () => {
       if (this.#discovery !== discovery) return;
+      this.#shareOwnObservations(discovery);
       this.#sessionId = undefined;
       this.#pending.clear();
       this.#rewindable.clear();
@@ -1280,6 +1288,23 @@ export class CodeRuleBridge {
       await this.#auditor.close(options);
     });
   }
+
+  /**
+   * Keeps only the session folder's own sources in the observations later sessions there start from. The other
+   * worktrees' sources, and files tool calls wrote outside the folder, stay in them only while a session walks them:
+   * the runtime keeps a folder's observations as long as it serves the folder, so with them every folder a session had
+   * closed in held an observation of every file of every worktree, and the daemon's heap grew with those folders times
+   * the files of all the repository's worktrees.
+   */
+  #shareOwnObservations(discovery: SourceDiscovery): void {
+    const shared = this.#observations?.get(this.#cwd);
+    if (shared === undefined) return;
+    // On the event loop, which every session's hooks wait on: no copy of the whole map before the filter.
+    const own = new Map<string, ObservedSource>();
+    for (const [path, source] of shared) if (inSessionFolder(discovery.worktrees.roots, path)) own.set(path, source);
+    this.#observations?.set(this.#cwd, own);
+  }
+
   async #capturePreimages(paths: readonly string[]): Promise<ReadonlyMap<string, Preimage>> {
     const root = await realpath(this.#cwd);
     const preimages = new Map<string, Preimage>();

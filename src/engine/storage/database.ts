@@ -382,9 +382,10 @@ export function resetRepositoryHistory(path: string, repositoryId: string): Hist
 /**
  * Delete the execution history recorded under `repositoryIds` (one repository's key, aliases and clone ids) in ONE
  * write transaction. Events, work links, steer feedback notes, audits, audit requests, and repository audits of those
- * sessions go; ended sessions go with them. Still-running sessions keep their row and runtime ownership claim so live
- * processes carry on recording. Rules, other repositories' history, audit settings, and presentation preferences are
- * untouched. The file is never unlinked or rebuilt, so every connection holding it open keeps working.
+ * sessions go; ended sessions go with them, with Merge Assist's record of the conflict notes each was handed.
+ * Still-running sessions keep their row and runtime ownership claim so live processes carry on recording. Rules, other
+ * repositories' history, audit settings, and presentation preferences are untouched. The file is never unlinked or
+ * rebuilt, so every connection holding it open keeps working.
  */
 export function resetRepositoryHistoryIn(database: RerailDatabase, repositoryIds: readonly string[]): HistoryResetReport {
   return database.transaction(() => {
@@ -402,6 +403,8 @@ export function resetRepositoryHistoryIn(database: RerailDatabase, repositoryIds
       database.run(sql`DELETE FROM ${schema.steerFeedback} WHERE ${schema.steerFeedback.repositoryId} = ${repositoryId}`);
       const ended = schema.sessionsOfRepository(repositoryId, { ended: true });
       database.run(sql`DELETE FROM ${schema.policySessionOwners} WHERE ${schema.policySessionOwners.sessionId} IN (${ended})`);
+      // Merge Assist's record of the conflict notes each of those sessions was handed (`delivered:<session id>`).
+      database.run(sql`DELETE FROM ${schema.mergeAssistState} WHERE ${schema.mergeAssistState.key} IN (SELECT 'delivered:' || session_id FROM (${ended}))`);
       database.run(sql`DELETE FROM ${schema.sessions} WHERE ${schema.sessions.sessionId} IN (${ended})`);
       sessions += counts.ended;
       openSessions += counts.open;

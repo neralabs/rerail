@@ -26,6 +26,8 @@ export interface RepositoryRecord {
   readonly started: boolean;
   /** Whether audits leave out files Git ignores; true until turned off. */
   readonly followGitignore: boolean;
+  /** Whether Merge Assist is on for the repository's checkouts; off until a person turns it on. */
+  readonly mergeAssist: boolean;
   readonly createdAt: number;
   readonly updatedAt: number;
 }
