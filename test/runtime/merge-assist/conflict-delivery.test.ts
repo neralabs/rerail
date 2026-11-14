@@ -484,22 +484,31 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
           return suspension;
         },
       };
-      const session = { host: "claude-code" as const, sessionId, cwd: ws.repo };
-      const runtime = sessionRuntime(ws, service, { suspendedSessions });
-      await runtime.ingest({ kind: "session-start", eventId: "start", session });
-      // The session's open queues the note once its scan of the checkout has run.
-      await vi.waitFor(() => expect(handed.mock.results.some(result => (result.value as readonly unknown[]).length > 0)).toBe(true));
-      /** The notes the session's next two boundaries give, the second once Merge Assist has done its work. */
-      const notesGiven = async (target: RerailRuntime): Promise<AdapterDelivery[]> => {
-        const deliveries = [...await target.ingest({ kind: "user-prompt", eventId: "next", sessionId, session, text: "Go on." })];
-        await service.settled();
-        deliveries.push(...await target.ingest({ kind: "user-prompt", eventId: "later", sessionId, session, text: "And on." }));
-        return deliveries.filter(delivery => delivery.content.includes("overlaps open work"));
-      };
       /** Closes `target` and waits for the checkout scans each open of the session started, whose Git reads the folder. */
       const closed = async (target: RerailRuntime): Promise<void> => {
         await target.dispose();
         await Promise.allSettled(scans.mock.results.map(result => result.value as Promise<void>));
+      };
+      const session = { host: "claude-code" as const, sessionId, cwd: ws.repo };
+      const runtime = sessionRuntime(ws, service, { suspendedSessions });
+      try {
+        await runtime.ingest({ kind: "session-start", eventId: "start", session });
+        // The session's open queues the note once its scan of the checkout has run, which takes seconds on Windows.
+        const queued = () => expect(handed.mock.results.some(result => (result.value as readonly unknown[]).length > 0)).toBe(true);
+        await vi.waitFor(queued, { timeout: 20_000, interval: 20 });
+      } catch (error) {
+        await closed(runtime);
+        throw error;
+      }
+      /**
+       * The notes the session's next two boundaries give: a prompt, which opens it again, then the end of the agent's turn,
+       * which waits for the session's rules to open, so a note still waiting goes out by then.
+       */
+      const notesGiven = async (target: RerailRuntime): Promise<AdapterDelivery[]> => {
+        const deliveries = [...await target.ingest({ kind: "user-prompt", eventId: "next", sessionId, session, text: "Go on." })];
+        await service.settled();
+        deliveries.push(...await target.ingest({ kind: "turn-end", eventId: "stop", sessionId, session, text: "Done." }));
+        return deliveries.filter(delivery => delivery.content.includes("overlaps open work"));
       };
       return { ws, service, runtime, suspendedSessions, notesGiven, closed };
     }
