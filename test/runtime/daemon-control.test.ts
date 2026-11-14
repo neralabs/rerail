@@ -52,6 +52,19 @@ const DEAD_PID = 2 ** 22 - 1;
 
 const originalRerailHome = process.env.RERAIL_HOME;
 
+/**
+ * Ends a process a test started, unless it is gone. A stopped daemon the test launched detached is reaped by init at a
+ * moment of its own, so a liveness check before the kill can still find it and the kill then fail with `ESRCH`; thrown
+ * from a `finally`, that error would hide the one the test's body failed with.
+ */
+function killUnlessGone(pid: number): void {
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+  }
+}
+
 function stateFor(overrides: Partial<DaemonState>): DaemonState {
   return {
     pid: DEAD_PID,
@@ -208,7 +221,7 @@ describe("Rerail daemon control", () => {
       expect(processAlive(daemonPid)).toBe(false);
       expect(existsSync(stateFile)).toBe(false);
     } finally {
-      if (daemonPid !== undefined && processAlive(daemonPid)) process.kill(daemonPid, "SIGKILL");
+      if (daemonPid !== undefined) killUnlessGone(daemonPid);
     }
   }, 15_000);
 
