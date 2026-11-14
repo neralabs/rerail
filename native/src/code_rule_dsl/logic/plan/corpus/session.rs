@@ -109,7 +109,18 @@ pub(super) fn current() -> Held {
     if super::phase0::active() {
         return Held(None, true);
     }
-    let held = SESSION.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    // A run holds the session for all of it, so a run that starts beside it (a job's: the typing programs beside
+    // phase 1, decision 0192) waits for it to end. On a pool thread the wait helps the pool (decision 0100 §12):
+    // blocked, the thread held the stolen parts of the holder's own parallel work under it, and neither ended.
+    let held = if rerail_accel::exec::on_pool() {
+        rerail_accel::exec::help_until_as("the session, held by another run", || match SESSION.try_lock() {
+            Ok(g) => Some(g),
+            Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
+            Err(std::sync::TryLockError::WouldBlock) => None,
+        })
+    } else {
+        SESSION.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    };
     #[cfg(any(test, feature = "test-hooks"))]
     let skip = held.as_ref().is_some_and(|s| s.thread != std::thread::current().id());
     #[cfg(not(any(test, feature = "test-hooks")))]
