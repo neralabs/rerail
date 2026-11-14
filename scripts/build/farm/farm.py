@@ -224,6 +224,22 @@ def hot_marker(out_dir, crate, extra):
     return state("hot", key(out_dir), crate + (extra or ""))
 
 
+def same_in_every_checkout(args, out_dir, crate):
+    """Linker arguments that keep a proc macro's dylib free of its target directory's path. sccache never caches
+    a proc macro, but every crate that uses one hashes its dylib: with the checkout's path in it (its
+    install name, and the debug map's paths to the rlibs it links), each target directory's crates
+    above it had different keys."""
+    types = set()
+    for t in values(args, "--crate-type"):
+        types.update(t.split(","))
+    if "proc-macro" not in types or sys.platform != "darwin" or not out_dir:
+        return []
+    # `<target>/<profile>/deps`: the debug map's paths start at the profile's directory.
+    target = os.path.dirname(os.path.dirname(os.path.abspath(out_dir)))
+    name = f"lib{crate}{codegen(args, 'extra-filename') or ''}.dylib"
+    return ["-C", f"link-arg=-Wl,-install_name,@rpath/{name}", "-C", f"link-arg=-Wl,-oso_prefix,{target}/"]
+
+
 def wrapper(rustc, args):
     """cargo's RUSTC_WRAPPER."""
     env = dict(os.environ)
@@ -234,6 +250,7 @@ def wrapper(rustc, args):
     checkout = checkout_of(out_dir or os.getcwd()) or checkout_of(os.getcwd())
     if checkout:
         join(checkout)
+    args = args + same_in_every_checkout(args, out_dir, crate)
     stripped, inc = without_incremental(args)
     if inc is not None:
         marker = hot_marker(out_dir or "", crate, codegen(args, "extra-filename"))
@@ -247,6 +264,9 @@ def wrapper(rustc, args):
         env["RERAIL_FARM_INCREMENTAL"] = inc
         env["RERAIL_FARM_HOT"] = marker
         args = stripped
+    # sccache hashes every CARGO_ variable; rustc reads neither of these, and each names a place.
+    for k in ("CARGO_TARGET_DIR", "CARGO_BUILD_TARGET_DIR"):
+        env.pop(k, None)
     sccache_env(env)
     os.execve(SCCACHE, [SCCACHE, shim(rustc)] + args, env)
 
