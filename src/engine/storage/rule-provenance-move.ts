@@ -14,8 +14,9 @@
  *
  * A Rerail older than the step reads an audit's provenance only from the audit's own row, so it reads `[]` for each
  * audit the move took it from. The move therefore waits while such a Rerail may still be using the file: until
- * `OLDER_WRITE_WINDOW_MS` has passed since the last audit one recorded after the step (`lastOlderWrite`), checked before
- * the move starts and again before each batch.
+ * `OLDER_WRITE_WINDOW_MS` has passed since the last audit that holds its provenance in its own row began, those
+ * recorded before the step included (`lastOlderWrite`), checked before the move starts and again before each batch.
+ * With only this Rerail running, the move starts a week after the last audit recorded before the step.
  */
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -55,10 +56,11 @@ const PAUSE_MS = 150;
 const BUSY_TRIES = Math.ceil(5_000 / PAUSE_MS);
 
 /**
- * How long the move waits after a Rerail older than the step last recorded an audit in the file. Only such a Rerail
- * writes an audit's provenance in the audit's own row once the step has run, and it reads it only there: an audit moved
- * while it still runs beside this one reads `[]` in its `audits_list`, its support bundle and its remote sink. A week
- * covers an agent host that runs an older Rerail on some days of the week only.
+ * How long the move waits after the last audit that holds its provenance in its own row began. Rerail before the step
+ * wrote every audit so, and a Rerail older than the step that shares the file still does. Such a Rerail reads each
+ * audit's provenance only there: an audit moved while it still runs beside this one reads `[]` in its `audits_list`,
+ * its support bundle and its remote sink. A week covers an agent host that runs an older Rerail on some days of the
+ * week only.
  */
 export const OLDER_WRITE_WINDOW_MS = 7 * 24 * 3_600_000;
 
@@ -73,9 +75,9 @@ export interface RuleProvenanceMoveOptions {
   readonly now?: () => number;
   /** Stops the move before its next batch; what it moved stays moved. */
   readonly signal?: AbortSignal;
-  /** The time in epoch milliseconds, to which an older Rerail's last audit is compared; tests pass their own. */
+  /** The time in epoch milliseconds, to which the last audit holding its provenance in its row is compared; for tests. */
   readonly clock?: () => number;
-  /** How long after an older Rerail's last audit the move waits (`OLDER_WRITE_WINDOW_MS`); tests pass their own. */
+  /** How long after that audit began the move waits (`OLDER_WRITE_WINDOW_MS`); tests pass their own. */
   readonly olderWindowMs?: number;
 }
 
@@ -95,8 +97,8 @@ interface OlderWrites {
 }
 
 /**
- * What a file asks of the move: nothing; to move audits; or to wait until `until`, since a Rerail older than the step
- * recorded an audit at `at`, less than the window before.
+ * What a file asks of the move: nothing; to move audits; or to wait until `until`, since an audit that holds its
+ * provenance in its own row began at `at`, less than the window before.
  */
 type MoveState =
   | { readonly kind: "none" }
@@ -120,9 +122,10 @@ type Free = <T>(step: () => T) => Promise<T>;
 /**
  * Moves the provenance of every audit that held it inline when the file ran `audit-rule-provenance-once`, then empties
  * the WAL its batches filled into the file (`emptyWalAfterMove`). Audits that an older Rerail sharing the file writes
- * after that step keep theirs inline, where both versions read it, and while such a Rerail has recorded one within the
- * window the move takes nothing, or stops before its next batch (`lastOlderWrite`). A file that does not exist yet holds
- * nothing to move, and the move does not create it. Resolves to how many audits it moved.
+ * after that step keep theirs inline, where both versions read it. While an audit that holds its provenance inline has
+ * begun within the window, one recorded before the step included, the move takes nothing, or stops before its next
+ * batch (`lastOlderWrite`). A file that does not exist yet holds nothing to move, and the move does not create it.
+ * Resolves to how many audits it moved.
  */
 export async function moveRuleProvenances(path: string, options: RuleProvenanceMoveOptions = {}): Promise<number> {
   const older = olderWritesOf(options);
@@ -134,7 +137,7 @@ export async function moveRuleProvenances(path: string, options: RuleProvenanceM
     const upTo = stepAppliedAt(database);
     if (upTo === undefined) return 0;
     const client = database.$client;
-    const batching = batchingOf(options, () => takes(client, upTo) && lastOlderWrite(client, upTo, older) !== undefined);
+    const batching = batchingOf(options, () => takes(client, upTo) && lastOlderWrite(client, older) !== undefined);
     const free: Free = step => whenFree(step, batching.pause, options.signal);
     const done = await moveInBatches(database, upTo, free, batching);
     if (done.ended && done.moved > 0) await emptyWalAfterMove(client, free);
@@ -208,10 +211,11 @@ function nextBatchSize(size: number, took: number, most: number): number {
  * probe waits. `signal` stops the move before its next step. A file with nothing to move, read on the calling thread,
  * starts no thread.
  *
- * While a Rerail older than the step has recorded an audit within `olderWindowMs` (`OLDER_WRITE_WINDOW_MS` unless a test
- * passes its own), this thread starts no move: stderr says why and until when, it waits that long on a timer that holds
- * nothing open, and reads the file again. A move such an audit stopped before its next batch waits the same way; one
- * that ended with work left for any other reason goes on at the next start, as before.
+ * While an audit that holds its provenance in its own row has begun within `olderWindowMs` (`OLDER_WRITE_WINDOW_MS`
+ * unless a test passes its own), recorded before the step or by an older Rerail since, this thread starts no move:
+ * stderr says why and until when, it waits that long on a timer that holds nothing open, and reads the file again. A
+ * move such an audit stopped before its next batch waits the same way; one that ended with work left for any other
+ * reason goes on at the next start, as before.
  */
 export async function moveRuleProvenancesInWorker(
   path: string,
@@ -269,12 +273,15 @@ async function olderGone(
   }
 }
 
-/** The line for a move that waits for a Rerail older than the step, with when it starts. */
+/**
+ * The line for a move that waits for a Rerail older than the step, with when it starts. The audit it names can be one
+ * recorded before the step, by this Rerail before its upgrade.
+ */
 function sayWaitsForOlder(path: string, { at, until }: { at: number; until: number }, windowMs: number): void {
   process.stderr.write(`rerail: ${path}: moving the rule provenance of audits recorded before this Rerail's upgrade waits `
-    + `until ${new Date(until).toISOString()}: a Rerail older than this one recorded an audit at ${new Date(at).toISOString()}, `
-    + "and it reads each audit's rule provenance only from that audit's own row. The move starts once no older Rerail "
-    + `has recorded an audit for ${duration(windowMs)}.\n`);
+    + `until ${new Date(until).toISOString()}: the last audit that holds its rule provenance in its own row, as a Rerail `
+    + `older than this one writes it and reads it only there, began at ${new Date(at).toISOString()}. The move starts `
+    + `once no such audit has begun for ${duration(windowMs)}.\n`);
 }
 
 /**
@@ -379,12 +386,12 @@ function moveState(path: string, older: OlderWrites): MoveState {
 }
 
 /**
- * Nothing when no audit is left to take; a wait while audits are left to take and a Rerail older than the step recorded
- * one within the window (`lastOlderWrite`); else the move.
+ * Nothing when no audit is left to take; a wait while audits are left to take and an audit that holds its provenance in
+ * its own row began within the window (`lastOlderWrite`); else the move.
  */
 function stateAt(client: Client, upTo: number, older: OlderWrites): MoveState {
   if (!takes(client, upTo)) return NONE;
-  const at = lastOlderWrite(client, upTo, older);
+  const at = lastOlderWrite(client, older);
   return at === undefined ? MOVE : { kind: "wait", at, until: at + older.windowMs };
 }
 
@@ -394,16 +401,18 @@ function takes(client: Client, upTo: number): boolean {
 }
 
 /**
- * When the last audit began that a Rerail older than the step recorded after it (`upTo`) and within `older.windowMs` of
- * `older.clock()`; undefined when none did. Only such a Rerail writes an audit's provenance in the audit's own row once
- * the step has run. The audits that began in the window come from `audits_session_started`, which holds each one's
- * start, and only their rows are read, the latest first: a row that holds its provenance runs to hundreds of kilobytes
- * with the start after it, so reading the start of every recorded audit from its row would read the whole history.
+ * When the last audit began that holds its provenance in its own row, of those that began within `older.windowMs` of
+ * `older.clock()`; undefined when none did. Only a Rerail older than the step writes an audit so, and it reads each
+ * audit's provenance only there. The audits recorded before the step count as well: a Rerail that ran then may still
+ * run beside this one, and record its next audit days later. The audits that began in the window come from
+ * `audits_session_started`, which holds each one's start, and only their rows are read, the latest first: a row that
+ * holds its provenance runs to hundreds of kilobytes with the start after it, so reading the start of every recorded
+ * audit from its row would read the whole history.
  */
-function lastOlderWrite(client: Client, upTo: number, { clock, windowMs }: OlderWrites): number | undefined {
+function lastOlderWrite(client: Client, { clock, windowMs }: OlderWrites): number | undefined {
   const began = client.prepare<[number], { row: number; at: number }>(
     "SELECT rowid AS row, started_at AS at FROM audits INDEXED BY audits_session_started WHERE started_at > ?",
-  ).all(Math.max(upTo, clock() - windowMs));
+  ).all(clock() - windowMs);
   const inline = client.prepare<[number], number>(
     "SELECT 1 FROM audits WHERE rowid = ? AND rule_provenance_id IS NULL AND rule_provenance_json <> '[]'",
   ).pluck();

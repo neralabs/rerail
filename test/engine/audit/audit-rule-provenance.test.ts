@@ -94,14 +94,17 @@ const INLINE_AUDIT = `INSERT INTO audits (audit_id, session_id, workspace_root, 
   rule_revisions_json, rule_provenance_json, paths_json, started_at, finished_at, status, violations_json, failures_json)
   VALUES (?, ?, ?, 'touched-files', 'steer', 1, 'catalog', '[]', ?, '[]', ?, ?, 'completed', '[]', '[]')`;
 
-/** Writes one audit per provenance as an older Rerail does, provenance inline; each audit's id and provenance text. */
-function writeInlineAudits(path: string, provenances: readonly AuditRuleProvenance[][]): { auditId: string; text: string }[] {
+/**
+ * Writes one audit per provenance as an older Rerail does, provenance inline, the first beginning at `from` (epoch ms)
+ * and each later one a millisecond after the one before; each audit's id and provenance text.
+ */
+function writeInlineAudits(path: string, provenances: readonly AuditRuleProvenance[][], from = 0): { auditId: string; text: string }[] {
   const written = provenances.map((provenance, index) => ({ auditId: `older-${index}`, text: JSON.stringify(provenance) }));
   const older = new Database(path);
   try {
     // One transaction: one sync for hundreds of audits.
     older.transaction(() => {
-      written.forEach(({ auditId, text }, index) => older.prepare(INLINE_AUDIT).run(auditId, "session-a", "/home/dev/app", text, index, index + 1));
+      written.forEach(({ auditId, text }, index) => older.prepare(INLINE_AUDIT).run(auditId, "session-a", "/home/dev/app", text, from + index, from + index + 1));
     })();
   } finally {
     older.close();
@@ -119,11 +122,10 @@ function inlineAudits(path: string): number {
   }
 }
 
-/** An audit an older Rerail sharing the file records now, its provenance in its row; when it began. */
-function recordAsOlder(path: string, auditId: string, provenance: readonly AuditRuleProvenance[]): number {
+/** An audit an older Rerail sharing the file records at `now` (epoch ms), its provenance in its row; when it began. */
+function recordAsOlder(path: string, auditId: string, provenance: readonly AuditRuleProvenance[], now = Date.now()): number {
   const older = new Database(path);
   try {
-    const now = Date.now();
     older.prepare(INLINE_AUDIT).run(auditId, "session-a", "/home/dev/app", JSON.stringify(provenance), now, now + 1);
     return now;
   } finally {
@@ -425,6 +427,81 @@ describe("audit rule provenance", () => {
     }
   });
 
+  it("moves nothing until a week after the last audit recorded before the upgrade, with only this build running, and every audit reads in full meanwhile", async () => {
+    const path = await fileOfTheBuildBefore();
+    const app = provenanceOf("/home/dev/app", 200);
+    // The build before records 30 audits in the hour before this build upgrades the file, and runs no more.
+    const from = Date.now() - 3_600_000;
+    const written = writeInlineAudits(path, Array.from({ length: 30 }, () => app), from);
+    const last = from + written.length - 1;
+    openRerailDatabase(path).$client.close();
+    const day = 24 * 3_600_000;
+
+    // An hour on, and a millisecond before the week since the last of them ends, the move takes nothing: a Rerail that
+    // recorded them may still run beside this one, and it reads each recorded audit's provenance in its row.
+    for (const later of [3_600_000, 7 * day - 1]) expect(await move(path, { clock: () => last + later })).toBe(0);
+    expect(provenanceTexts(readAsOlder(path, written.map(({ auditId }) => auditId)))).toEqual(written.map(({ text }) => text));
+    expect(inlineAudits(path)).toBe(30);
+
+    // A week after the last of them, the move takes them all, and this build reads each in full.
+    expect(await move(path, { clock: () => last + 7 * day })).toBe(30);
+    expect(inlineAudits(path)).toBe(0);
+    const store = new SqliteAuditStore(path);
+    try {
+      for (const { auditId, text } of written) expect(JSON.stringify(store.get(auditId)?.ruleProvenance), auditId).toBe(text);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("moves nothing while a Rerail that ran before the upgrade records an audit at least once a week, whenever in the week it comes", async () => {
+    const path = await fileOfTheBuildBefore();
+    const app = provenanceOf("/home/dev/app", 200);
+    const from = Date.now() - 3_600_000;
+    const written = writeInlineAudits(path, Array.from({ length: 30 }, () => app), from);
+    const recorded = written.map(({ auditId }) => auditId);
+    openRerailDatabase(path).$client.close();
+    const day = 24 * 3_600_000;
+
+    // The build before runs on beside this one, and records its next audit an hour after the upgrade, then six days, then
+    // six days and 23 hours after the one before. Each time, a millisecond before that audit comes, the move takes
+    // nothing, and the build before reads every recorded audit's provenance in its row.
+    let previous = Date.now();
+    for (const [index, gap] of [3_600_000, 6 * day, 7 * day - 3_600_000].entries()) {
+      expect(await move(path, { clock: () => previous + gap - 1 })).toBe(0);
+      expect(provenanceTexts(readAsOlder(path, recorded))).toEqual(written.map(({ text }) => text));
+      previous = recordAsOlder(path, `beside-${index}`, app, previous + gap);
+    }
+    expect(await move(path, { clock: () => previous + 7 * day - 1 })).toBe(0);
+
+    // It records none for a week: the move takes the recorded audits and leaves its own three in their rows.
+    expect(await move(path, { clock: () => previous + 7 * day })).toBe(30);
+    expect(inlineAudits(path)).toBe(3);
+  });
+
+  it("says once in its log, naming the last audit recorded before the upgrade, why it waits and until when, then moves", async () => {
+    const path = await fileOfTheBuildBefore();
+    const from = Date.now();
+    const written = writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)), from);
+    const last = from + written.length - 1;
+    openRerailDatabase(path).$client.close();
+    const stderr = spyOnStderr();
+    let logged = "";
+    try {
+      // A window of 3 s: the move waits until 3 s after the last audit recorded before the upgrade.
+      expect(await moveRuleProvenancesInWorker(path, undefined, { olderWindowMs: 3_000 })).toBe(30);
+    } finally {
+      logged = stderr.logged();
+      stderr.restore();
+    }
+
+    const waits = logged.split("\n").filter(line => line.includes(WAITS_FOR_OLDER));
+    expect(waits).toEqual([`rerail: ${path}: ${WAITS_FOR_OLDER} ${new Date(last + 3_000).toISOString()}: the last audit that `
+      + "holds its rule provenance in its own row, as a Rerail older than this one writes it and reads it only there, began at "
+      + `${new Date(last).toISOString()}. The move starts once no such audit has begun for 3 s.`]);
+    expect(inlineAudits(path)).toBe(0);
+  }, 60_000);
+
   it("stops before its next batch once an older Rerail sharing the file records an audit, leaving the audits not yet moved where it reads them", async () => {
     const path = await fileOfTheBuildBefore();
     const written = writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
@@ -472,9 +549,10 @@ describe("audit rule provenance", () => {
 
     const waits = logged.split("\n").filter(line => line.includes(WAITS_FOR_OLDER));
     expect(waits).toHaveLength(2);
-    expect(waits[1]).toContain(`waits until ${new Date(second + 3_000).toISOString()}: a Rerail older than this one recorded an `
-      + `audit at ${new Date(second).toISOString()}`);
-    expect(waits[1]).toContain("The move starts once no older Rerail has recorded an audit for 3 s.");
+    expect(waits[1]).toContain(`waits until ${new Date(second + 3_000).toISOString()}: the last audit that holds its rule `
+      + `provenance in its own row, as a Rerail older than this one writes it and reads it only there, began at `
+      + `${new Date(second).toISOString()}.`);
+    expect(waits[1]).toContain("The move starts once no such audit has begun for 3 s.");
     // The older Rerail's two audits stay in their rows; the recorded ones moved.
     expect(inlineAudits(path)).toBe(2);
   }, 60_000);
