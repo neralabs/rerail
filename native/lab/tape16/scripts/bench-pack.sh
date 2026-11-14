@@ -43,6 +43,14 @@ for build in base native; do
         echo "$host $build $name: $(grep -c 'answers wrong | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0' "$here/results/$host-$build-$name.md") all-correct row"
     done
 done
+# On a Mac, the questions as Metal kernels too (one build is enough: the kernels are the GPU's code).
+if [ "$(uname -s)" = Darwin ]; then
+    for c in "$here"/cap/*.cap; do
+        name=$(basename "$c" .cap)
+        nice -n 19 target-native/debug/tape16 inplace-gpu "$c" > "$here/results/$host-metal-$name.md" 2>&1
+        echo "$host metal $name: $(grep -c WRONG "$here/results/$host-metal-$name.md") wrong"
+    done
+fi
 EOF
 chmod +x "$out/run.sh"
 du -sh "$out"
