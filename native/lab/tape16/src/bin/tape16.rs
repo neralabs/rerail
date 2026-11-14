@@ -988,10 +988,22 @@ fn cmd_textrel(path: &str) {
     println!("| the tape: the bytes compared | {:.2} |", eq_tape as f64 / lf);
 }
 
+/// The cheapest of three runs (the machine is shared: a run can be slowed 2–4× by other work).
+fn best3<T>(mut f: impl FnMut() -> T) -> (T, rerail_tape_lab::measure::Cost) {
+    let (mut v, mut best) = rerail_tape_lab::measure::cost(&mut f);
+    for _ in 0..2 {
+        let (w, c) = rerail_tape_lab::measure::cost(&mut f);
+        if c.nanos < best.nanos {
+            (v, best) = (w, c);
+        }
+    }
+    (v, best)
+}
+
 /// E10's questions on one reader, monomorphized so each accessor inlines as a real reader's would.
 #[allow(clippy::too_many_arguments)]
 fn bench<R: rerail_tape_lab::inplace::Reader>(r: &R, tree: &rerail_tape_lab::tree::Tree, want: &[u32], order: &[usize], set: &[bool],
-    costs: &mut [rerail_tape_lab::measure::Cost; 7], counts: &mut [u64; 7], wrong: &mut usize, bytes: &mut usize) {
+    costs: &mut [rerail_tape_lab::measure::Cost; 8], counts: &mut [u64; 8], wrong: &mut usize, bytes: &mut usize) {
     use rerail_tape_lab::measure::cost;
     use rerail_tape_lab::tree::NONE;
     let n = tree.len();
@@ -1018,23 +1030,27 @@ fn bench<R: rerail_tape_lab::inplace::Reader>(r: &R, tree: &rerail_tape_lab::tre
         });
         costs[6] += k;
         counts[6] += n as u64;
-        let (hits, k) = cost(|| ids.iter().filter(|&&id| set[r.code(id) as usize]).count());
+        let (hits, k) = best3(|| ids.iter().filter(|&&id| set[r.code(id) as usize]).count());
         std::hint::black_box(hits);
         costs[0] += k;
         counts[0] += n as u64;
-        let (s, k) = cost(|| rand.iter().map(|&id| u64::from(r.code(id))).sum::<u64>());
+        let (s, k) = best3(|| rand.iter().map(|&id| u64::from(r.code(id))).sum::<u64>());
         std::hint::black_box(s);
         costs[1] += k;
         counts[1] += n as u64;
-        let (s, k) = cost(|| rand.iter().map(|&id| r.start(id) ^ r.end(id)).fold(0, u64::wrapping_add));
+        let (s, k) = best3(|| rand.iter().map(|&id| r.start(id)).fold(0, u64::wrapping_add));
         std::hint::black_box(s);
         costs[2] += k;
         counts[2] += n as u64;
-        let (s, k) = cost(|| rand.iter().map(|&id| r.subtree_end(id)).sum::<usize>());
+        let (s, k) = best3(|| rand.iter().map(|&id| r.end(id)).fold(0, u64::wrapping_add));
+        std::hint::black_box(s);
+        costs[7] += k;
+        counts[7] += n as u64;
+        let (s, k) = best3(|| rand.iter().map(|&id| r.subtree_end(id)).sum::<usize>());
         std::hint::black_box(s);
         costs[3] += k;
         counts[3] += n as u64;
-        let (s, k) = cost(|| {
+        let (s, k) = best3(|| {
             let mut kids = 0usize;
             for &id in &ids {
                 let pe = r.subtree_end(id);
@@ -1049,7 +1065,7 @@ fn bench<R: rerail_tape_lab::inplace::Reader>(r: &R, tree: &rerail_tape_lab::tre
         std::hint::black_box(s);
         costs[4] += k;
         counts[4] += n as u64;
-        let (s, k) = cost(|| rand.iter().step_by(16).map(|&id| r.parent(id).unwrap_or(0)).sum::<usize>());
+        let (s, k) = best3(|| rand.iter().step_by(16).map(|&id| r.parent(id).unwrap_or(0)).sum::<usize>());
         std::hint::black_box(s);
         costs[5] += k;
         counts[5] += n.div_ceil(16) as u64;
@@ -1058,15 +1074,18 @@ fn bench<R: rerail_tape_lab::inplace::Reader>(r: &R, tree: &rerail_tape_lab::tre
 /// E10 (0156 T9, t38): candidate in-memory tapes, every question answered in place on each, checked against
 /// the tree, and costed one thread at a time.
 fn cmd_inplace(path: &str, f11: bool) {
-    use rerail_tape_lab::inplace::{B, Codes, F15, X};
-    use rerail_tape_lab::measure::Cost;
+    use rerail_tape_lab::inplace::{B, Codes, EfEf, EfGap, F15, ForLen, PredGap, PredLen, X};
+    use rerail_tape_lab::measure::{Cost, cost};
+    use rerail_tape_lab::inplace::Reader;
     let cap = std::path::Path::new(path);
     // Pass 1: each language's codes, as the grammar would number them, and its commonest kind.
     let mut codes: BTreeMap<u8, Codes> = BTreeMap::new();
     let mut kinds: BTreeMap<u8, HashMap<u16, usize>> = BTreeMap::new();
+    let mut cands = events::Candidates::default();
     capture::stream(cap, |f| {
         let tree = rerail_tape_lab::v15::read(&f.image)?;
         codes.entry(f.tag).or_default().learn(&tree);
+        cands.learn(f.tag, &tree);
         let k = kinds.entry(f.tag).or_default();
         for n in &tree.nodes {
             *k.entry(n.kind).or_default() += 1;
@@ -1078,15 +1097,20 @@ fn cmd_inplace(path: &str, f11: bool) {
         let top = kinds[&tag].iter().max_by_key(|e| e.1).map(|e| *e.0).unwrap_or(0);
         (tag, c.table.iter().map(|t| t.0 == top).collect())
     }).collect();
-    const Q: [&str; 7] = ["sweep: code in a set", "code at random", "start + end at random", "subtree end at random", "children of every node", "parent at random (1 node in 16)", "check (every answer)"];
+    const Q: [&str; 8] = ["sweep: code in a set", "code at random", "start at random", "subtree end at random", "children of every node", "parent at random (1 node in 16)", "check (every answer)", "end at random"];
     // `--f11`: a capture with every token (`capture-tapes --all-tokens`) read as format 11: format 15's columns
     // over every node, plus the 32-byte source digest format 11 stored (format 12 dropped it).
-    let names = [if f11 { "F11" } else { "F15" }, "X", "B"];
-    let mut costs = vec![[Cost::default(); 7]; 3];
-    let mut counts = [[0u64; 7]; 3];
-    let mut bytes = [0usize; 3];
-    let mut parts = [[0usize; 5]; 2];
-    let (mut nodes, mut files, mut wrong) = (0usize, 0usize, [0usize; 3]);
+    let names = [if f11 { "F11" } else { "F15" }, "X", "M", "XE", "B", "BM", "BE", "BH"];
+    const C: usize = 8;
+    let mut costs = vec![[Cost::default(); 8]; C];
+    let mut counts = [[0u64; 8]; C];
+    let mut bytes = [0usize; C];
+    let mut parts = [[0usize; 4]; C];
+    // Loading. Shape 1: zstd of the in-memory bytes on disk, loading is zstd alone. Shape 2: zstd of format 16's
+    // events on disk, loading is zstd, then a build pass (here: through a tree, an upper bound).
+    let (mut disk1, mut load1, mut build) = ([0usize; C], [Cost::default(); C], [Cost::default(); C]);
+    let (mut disk2, mut load2) = (0usize, Cost::default());
+    let (mut nodes, mut files, mut wrong) = (0usize, 0usize, [0usize; C]);
     let mut rng = 0x9e37_79b9_7f4a_7c15u64;
     capture::stream(cap, |f| {
         let tree = rerail_tape_lab::v15::read(&f.image)?;
@@ -1106,17 +1130,65 @@ fn cmd_inplace(path: &str, f11: bool) {
             order.swap(i, (rng % (i as u64 + 1)) as usize);
         }
         let f15 = F15::new(&f.image, lang);
-        let x = X::new(&tree, lang);
-        let b = B::new(&tree, lang);
-        for (k, (_, v)) in x.parts().iter().enumerate() {
-            parts[0][k] += v;
+        let x = X::<ForLen>::new(&tree, lang);
+        let m = X::<PredGap>::new(&tree, lang);
+        let xe = X::<EfGap>::new(&tree, lang);
+        let b = B::<ForLen>::new(&tree, lang);
+        let bm = B::<PredLen>::new(&tree, lang);
+        let be = B::<EfEf>::new(&tree, lang);
+        let bh = B::<PredLen>::with_big(&tree, lang);
+        for (c, p) in [x.parts(), m.parts(), xe.parts(), b.parts(), bm.parts(), be.parts(), bh.parts()].iter().enumerate() {
+            for k in 0..4 {
+                parts[c + 1][k] += p[k];
+            }
         }
-        for (k, (_, v)) in b.parts().iter().enumerate() {
-            parts[1][k] += v;
+        // Shape 2's common part: the events zstd'd as one block (byte planes), then back to a tree.
+        {
+            let ev = events::encode(&tree, f.tag, &cands);
+            let (bs, _) = blocks::split(&ev, Cut::Whole);
+            let laid: Vec<Vec<u8>> = bs.iter().map(|b| layout::lay(b, Layout::BytePlanes, Extras::default(), &[], &[])).collect();
+            let packed: Vec<Vec<u8>> = laid.iter().map(|l| zstd::bulk::compress(l, 3).unwrap()).collect();
+            disk2 += packed.iter().map(Vec::len).sum::<usize>();
+            let (back, k) = cost(|| {
+                let blocks: Vec<_> = packed.iter().zip(&laid).map(|(z, l)| layout::unlay(&zstd::bulk::decompress(z, l.len()).unwrap(), Layout::BytePlanes, Extras::default())).collect();
+                events::decode(&blocks::join(&blocks), f.tag, &cands, tree.source_len)
+            });
+            load2 += k;
+            if back != tree {
+                return Err(format!("{}: the events did not give the tree back", f.path));
+            }
         }
+        // Shape 1: each candidate's bytes zstd'd, and decompressed; and each candidate's build from the tree.
+        let images: [Vec<u8>; C] = [f.image.clone(), x.image(), m.image(), xe.image(), b.image(), bm.image(), be.image(), bh.image()];
+        for (c, im) in images.iter().enumerate() {
+            let z = zstd::bulk::compress(im, 3).unwrap();
+            disk1[c] += z.len();
+            let (back, k) = cost(|| zstd::bulk::decompress(&z, im.len()).unwrap());
+            load1[c] += k;
+            assert_eq!(&back, im);
+        }
+        let (_, k) = cost(|| std::hint::black_box(X::<ForLen>::new(&tree, lang).bytes()));
+        build[1] += k;
+        let (_, k) = cost(|| std::hint::black_box(X::<PredGap>::new(&tree, lang).bytes()));
+        build[2] += k;
+        let (_, k) = cost(|| std::hint::black_box(X::<EfGap>::new(&tree, lang).bytes()));
+        build[3] += k;
+        let (_, k) = cost(|| std::hint::black_box(B::<ForLen>::new(&tree, lang).bytes()));
+        build[4] += k;
+        let (_, k) = cost(|| std::hint::black_box(B::<PredLen>::new(&tree, lang).bytes()));
+        build[5] += k;
+        let (_, k) = cost(|| std::hint::black_box(B::<EfEf>::new(&tree, lang).bytes()));
+        build[6] += k;
+        let (_, k) = cost(|| std::hint::black_box(B::<PredLen>::with_big(&tree, lang).bytes()));
+        build[7] += k;
         bench(&f15, &tree, &want, &order, set, &mut costs[0], &mut counts[0], &mut wrong[0], &mut bytes[0]);
         bench(&x, &tree, &want, &order, set, &mut costs[1], &mut counts[1], &mut wrong[1], &mut bytes[1]);
-        bench(&b, &tree, &want, &order, set, &mut costs[2], &mut counts[2], &mut wrong[2], &mut bytes[2]);
+        bench(&m, &tree, &want, &order, set, &mut costs[2], &mut counts[2], &mut wrong[2], &mut bytes[2]);
+        bench(&xe, &tree, &want, &order, set, &mut costs[3], &mut counts[3], &mut wrong[3], &mut bytes[3]);
+        bench(&b, &tree, &want, &order, set, &mut costs[4], &mut counts[4], &mut wrong[4], &mut bytes[4]);
+        bench(&bm, &tree, &want, &order, set, &mut costs[5], &mut counts[5], &mut wrong[5], &mut bytes[5]);
+        bench(&be, &tree, &want, &order, set, &mut costs[6], &mut counts[6], &mut wrong[6], &mut bytes[6]);
+        bench(&bh, &tree, &want, &order, set, &mut costs[7], &mut counts[7], &mut wrong[7], &mut bytes[7]);
         nodes += n;
         files += 1;
         if f11 {
@@ -1136,12 +1208,20 @@ fn cmd_inplace(path: &str, f11: bool) {
         }).collect::<Vec<_>>().join(" | "));
     }
     println!();
-    let xn = ["code", "size", "back", "start", "length"];
-    let bn = ["parentheses", "rank + excess summaries", "code", "start", "length"];
-    println!("| X, B/node | {} |\n|---|---|---|---|---|---|", xn.join(" | "));
-    println!("| X | {} |", parts[0].iter().map(|&v| format!("{:.2}", v as f64 / nodes as f64)).collect::<Vec<_>>().join(" | "));
-    println!("\n| B, B/node | {} |\n|---|---|---|---|---|---|", bn.join(" | "));
-    println!("| B | {} |", parts[1].iter().map(|&v| format!("{:.2}", v as f64 / nodes as f64)).collect::<Vec<_>>().join(" | "));
+    println!("| B/node by part | {} |", names[1..].join(" | "));
+    println!("|---|{}", "---|".repeat(names.len() - 1));
+    for (k, part) in ["code", "structure", "start", "end"].iter().enumerate() {
+        println!("| {part} | {} |", parts[1..].iter().map(|p| format!("{:.2}", p[k] as f64 / nodes as f64)).collect::<Vec<_>>().join(" | "));
+    }
+    println!();
+    let nf = nodes as f64;
+    println!("| loading | {} |", names.join(" | "));
+    println!("|---|{}", "---|".repeat(names.len()));
+    println!("| shape 1: disk, zstd 3 of the in-memory bytes, B/node | {} |", disk1.iter().map(|&d| format!("{:.2}", d as f64 / nf)).collect::<Vec<_>>().join(" | "));
+    println!("| shape 1: load = zstd, ns/node | {} |", load1.iter().map(|l| format!("{:.1}", l.nanos as f64 / nf)).collect::<Vec<_>>().join(" | "));
+    println!("| shape 2: disk, zstd 3 of the events, B/node | {} |", names.iter().map(|_| format!("{:.2}", disk2 as f64 / nf)).collect::<Vec<_>>().join(" | "));
+    println!("| shape 2: load = zstd + events to a tree, ns/node | {} |", names.iter().map(|_| format!("{:.1}", load2.nanos as f64 / nf)).collect::<Vec<_>>().join(" | "));
+    println!("| shape 2: + the build from the tree, ns/node | | {} |", build[1..].iter().map(|l| format!("{:.1}", l.nanos as f64 / nf)).collect::<Vec<_>>().join(" | "));
     // E7's mixes (reads a node): kind, flags and named come with the two sweeps; the rest at random.
     // (sweeps, random code reads, spans, children walks a node, parents)
     let mixes: [(&str, [f64; 5]); 4] = [
@@ -1157,7 +1237,7 @@ fn cmd_inplace(path: &str, f11: bool) {
         println!("| {name} | {} |", (0..names.len()).map(|c| {
             let per = |q: usize| costs[c][q].nanos as f64 / counts[c][q].max(1) as f64;
             // A children walk a node: the children question's cost over the mean children a node (about 1).
-            let v = m[0] * per(0) + m[1] * per(1) + m[2] * per(2) + m[3] * per(4) + m[4] * per(5);
+            let v = m[0] * per(0) + m[1] * per(1) + m[2] * (per(2) + per(7)) + m[3] * per(4) + m[4] * per(5);
             format!("{v:.1}")
         }).collect::<Vec<_>>().join(" | "));
     }
