@@ -84,7 +84,7 @@ fn delta(to: u64, from: u64) -> u32 {
     d as u32 | back
 }
 
-fn apply(from: u64, d: u32) -> u64 {
+pub fn apply(from: u64, d: u32) -> u64 {
     if d & BACK != 0 { from - u64::from(d & !BACK) } else { from + u64::from(d) }
 }
 

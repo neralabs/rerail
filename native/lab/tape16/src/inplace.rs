@@ -56,6 +56,19 @@ fn put(words: &mut Vec<u64>, bit: usize, w: u32, v: u64) {
     }
 }
 
+/// `put` into words already long enough (one word past the value).
+#[inline(always)]
+fn or_in(words: &mut [u64], bit: usize, w: u32, v: u64) {
+    if w == 0 {
+        return;
+    }
+    let k = bit >> 6;
+    let o = bit & 63;
+    words[k] |= v << o;
+    // `(v >> 1) >> (63 - o)` is `v >> (64 - o)` without the shift by 64 when o is 0.
+    words[k + 1] |= (v >> 1) >> (63 - o);
+}
+
 fn bits_for(v: u64) -> u32 {
     64 - v.leading_zeros()
 }
@@ -121,33 +134,43 @@ impl Image for PFor {
     }
 }
 
-/// The cheapest (w, e, ew) for a block's values: `w` bits a slot, `e` escapes, exceptions at `ew` bits.
+/// A block's (w, e, ew): `w` bits a slot, `e` escapes, exceptions at `ew` bits. From a histogram of the
+/// values' widths, `w` is the one costing least if the escapes were just the values of more than `w` bits;
+/// then `e` is made exact for that `w` (the values at or above 2^w − e), one pass at a time.
 fn esc_width(rel: &[u64]) -> (u32, u32, u32) {
-    let mut best = (u64::MAX, 0, 0, 0);
-    for w in 0..=40u32 {
+    let mut hist = [0u32; 65];
+    for &v in rel {
+        hist[bits_for(v) as usize] += 1;
+    }
+    let top = (0..=64).rev().find(|&b| hist[b] > 0).unwrap_or(0) as u32;
+    let mut best = (u64::MAX, top);
+    let mut above = 0u64;
+    for w in (0..=top).rev() {
+        // `above`: the values of more than `w` bits.
+        let cost = rel.len() as u64 * u64::from(w) + above * u64::from(top);
+        if above <= (1u64 << w) && cost <= best.0 {
+            best = (cost, w);
+        }
+        above += u64::from(hist[w as usize]);
+    }
+    let mut w = best.1;
+    loop {
         let codes = 1u64 << w;
-        // The escapes needed: values at or above 2^w − e, to a fixpoint.
-        let mut e = 0u64;
+        let mut e = rel.iter().filter(|&&v| v >= codes).count() as u64;
         loop {
-            let lim = codes.saturating_sub(e);
-            let ne = rel.iter().filter(|&&v| v >= lim).count() as u64;
-            if ne <= e || ne > codes {
+            let ne = rel.iter().filter(|&&v| v >= codes.saturating_sub(e)).count() as u64;
+            if ne == e || ne > codes {
                 e = ne;
                 break;
             }
             e = ne;
         }
-        if e > codes || e > BLOCK as u64 {
-            continue;
+        if e <= codes && e <= BLOCK as u64 {
+            let ew = if e == 0 { 0 } else { top };
+            return (w, e as u32, ew);
         }
-        let lim = codes - e;
-        let ew = rel.iter().filter(|&&v| v >= lim).map(|&v| bits_for(v)).max().unwrap_or(0);
-        let cost = rel.len() as u64 * u64::from(w) + e * u64::from(ew);
-        if cost < best.0 {
-            best = (cost, w, e as u32, ew);
-        }
+        w += 1;
     }
-    (best.1, best.2, best.3)
 }
 
 impl PFor {
@@ -163,18 +186,20 @@ impl PFor {
             p.base.push(b);
             let lim = (1u64 << w) - u64::from(e);
             let exc_at = bit + rel.len() * w as usize;
+            let end = exc_at + e as usize * ew as usize;
+            p.words.resize(end / 64 + 2, 0);
             let mut k = 0u64;
             for &v in &rel {
                 if v >= lim {
-                    put(&mut p.words, bit, w, lim + k);
-                    put(&mut p.words, exc_at + k as usize * ew as usize, ew, v);
+                    or_in(&mut p.words, bit, w, lim + k);
+                    or_in(&mut p.words, exc_at + k as usize * ew as usize, ew, v);
                     k += 1;
                 } else {
-                    put(&mut p.words, bit, w, v);
+                    or_in(&mut p.words, bit, w, v);
                 }
                 bit += w as usize;
             }
-            bit = exc_at + k as usize * ew as usize;
+            bit = end;
         }
         put(&mut p.words, bit, 0, 0);
         p
@@ -350,16 +375,156 @@ impl Reader for F15<'_> {
 // ---- X: explicit, bit-packed ---------------------------------------------------------------------
 
 /// Each node's code at the language's width.
-pub fn code_of(tree: &Tree, codes: &Codes) -> Packed {
-    let code: Vec<u64> = tree.nodes.iter().map(|n| u64::from(codes.ids[&(n.kind, n.field, n.flags, n.classes.clone())])).collect();
-    Packed::new(&code)
+/// What every builder reads, in preorder: flat columns, filled from a tree (`of_tree`) or straight from
+/// format 16's events (`of_events`, shape 2's loading). Scratch for the build, dropped after it.
+#[derive(Default, PartialEq, Eq, Debug)]
+pub struct Cols {
+    pub code: Vec<u64>,
+    pub start: Vec<u64>,
+    pub end: Vec<u64>,
+    pub size: Vec<u32>,
+    pub parent: Vec<u32>,
+    pub source_len: u64,
+}
+
+impl Cols {
+    pub fn len(&self) -> usize {
+        self.code.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.code.is_empty()
+    }
+    pub fn of_tree(tree: &Tree, codes: &Codes) -> Cols {
+        Cols {
+            code: tree.nodes.iter().map(|n| u64::from(codes.ids[&(n.kind, n.field, n.flags, n.classes.clone())])).collect(),
+            start: tree.nodes.iter().map(|n| n.start).collect(),
+            end: tree.nodes.iter().map(|n| n.end).collect(),
+            size: tree.size.clone(),
+            parent: tree.parent.clone(),
+            source_len: tree.source_len,
+        }
+    }
+}
+
+/// The language's codes keyed as format 16's events carry them: (kind, field, flags, membership mask).
+pub struct CodeMap(std::collections::HashMap<u64, u32, std::hash::BuildHasherDefault<Mix>>);
+
+/// A one-multiply hash for the code map's u64 keys.
+#[derive(Default)]
+pub struct Mix(u64);
+
+impl std::hash::Hasher for Mix {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, _: &[u8]) {
+        unreachable!("only u64 keys")
+    }
+    fn write_u64(&mut self, k: u64) {
+        self.0 = (k ^ (k >> 29)).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+}
+
+fn event_key(kind: u16, field: u8, flags: u8, memb: u16) -> u64 {
+    u64::from(kind) | u64::from(field) << 16 | u64::from(flags) << 24 | u64::from(memb) << 32
+}
+
+impl CodeMap {
+    pub fn new(codes: &Codes, tag: u8, cands: &crate::events::Candidates) -> CodeMap {
+        let mut m = std::collections::HashMap::default();
+        for (id, (kind, field, flags, classes)) in codes.table.iter().enumerate() {
+            let node = crate::tree::Node { kind: *kind, field: *field, flags: *flags, classes: classes.clone(), start: 0, end: 0 };
+            m.insert(event_key(*kind, *field, *flags, cands.mask(tag, &node)), id as u32);
+        }
+        CodeMap(m)
+    }
+}
+
+impl Cols {
+    /// Shape 2's build input straight from the events: one pass with a stack of open nodes, no tree.
+    pub fn of_events(ev: &crate::events::Events, codes: &CodeMap, source_len: u64) -> Cols {
+        use crate::events::apply;
+        let n = ev.opens.len();
+        let mut c = Cols { code: Vec::with_capacity(n), start: Vec::with_capacity(n), end: vec![0; n], size: vec![0; n], parent: Vec::with_capacity(n), source_len };
+        let mut stack: Vec<u32> = Vec::with_capacity(64);
+        let (mut last, mut t) = (0u64, 0usize);
+        let trails = &ev.trails;
+        let mut close = |stack: &mut Vec<u32>, c: &mut Cols, last: &mut u64, at: usize| {
+            let j = stack.pop().expect("a close with a node open") as usize;
+            *last = apply(*last, trails[t]);
+            t += 1;
+            c.end[j] = *last;
+            c.size[j] = (at - j) as u32;
+        };
+        for (i, o) in ev.opens.iter().enumerate() {
+            for _ in 0..o.pops {
+                close(&mut stack, &mut c, &mut last, i);
+            }
+            last = apply(last, o.lead);
+            c.start.push(last);
+            c.parent.push(stack.last().copied().unwrap_or(NONE));
+            c.code.push(u64::from(codes.0[&event_key(o.kind, o.field, o.flags, o.memb)]));
+            stack.push(i as u32);
+        }
+        for _ in 0..ev.end_pops {
+            close(&mut stack, &mut c, &mut last, n);
+        }
+        c
+    }
+}
+
+impl Cols {
+    /// The same, read straight off format 16's byte planes (`layout::Layout::BytePlanes`, no extras) as
+    /// zstd gives them back: each field's bytes at its plane, no events built between.
+    pub fn of_planes(bytes: &[u8], codes: &CodeMap, source_len: u64) -> Cols {
+        use crate::events::apply;
+        let u32_at = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+        let (n, m, end_pops) = (u32_at(0) as usize, u32_at(4) as usize, u32_at(8));
+        // The planes: kind (2), field, flags, memb (2), lead (4), pops (4); then the trails (4).
+        let plane = |k: usize| &bytes[16 + k * n..16 + (k + 1) * n];
+        let (k0, k1, fld, flg, m0, m1) = (plane(0), plane(1), plane(2), plane(3), plane(4), plane(5));
+        let (l, p) = ([plane(6), plane(7), plane(8), plane(9)], [plane(10), plane(11), plane(12), plane(13)]);
+        let tr = |k: usize| &bytes[16 + 14 * n + k * m..16 + 14 * n + (k + 1) * m];
+        let t4 = [tr(0), tr(1), tr(2), tr(3)];
+        let le4 = |pl: &[&[u8]; 4], i: usize| u32::from(pl[0][i]) | u32::from(pl[1][i]) << 8 | u32::from(pl[2][i]) << 16 | u32::from(pl[3][i]) << 24;
+        let mut c = Cols { code: Vec::with_capacity(n), start: Vec::with_capacity(n), end: vec![0; n], size: vec![0; n], parent: Vec::with_capacity(n), source_len };
+        let mut stack: Vec<u32> = Vec::with_capacity(64);
+        let (mut last, mut t) = (0u64, 0usize);
+        let mut close = |stack: &mut Vec<u32>, c: &mut Cols, last: &mut u64, at: usize| {
+            let j = stack.pop().expect("a close with a node open") as usize;
+            *last = apply(*last, le4(&t4, t));
+            t += 1;
+            c.end[j] = *last;
+            c.size[j] = (at - j) as u32;
+        };
+        for i in 0..n {
+            for _ in 0..le4(&p, i) {
+                close(&mut stack, &mut c, &mut last, i);
+            }
+            last = apply(last, le4(&l, i));
+            c.start.push(last);
+            c.parent.push(stack.last().copied().unwrap_or(NONE));
+            let kind = u16::from(k0[i]) | u16::from(k1[i]) << 8;
+            let memb = u16::from(m0[i]) | u16::from(m1[i]) << 8;
+            c.code.push(u64::from(codes.0[&event_key(kind, fld[i], flg[i], memb)]));
+            stack.push(i as u32);
+        }
+        for _ in 0..end_pops {
+            close(&mut stack, &mut c, &mut last, n);
+        }
+        c
+    }
+}
+
+pub fn code_of(c: &Cols) -> Packed {
+    Packed::new(&c.code)
 }
 
 /// How a candidate stores start and end, by preorder number `r`. `next` gives the preorder number just past
 /// the node's subtree (n past the last), `post` its postorder number; each is asked only if the form needs it.
 pub trait Pos: Sized + Image {
     const NAME: &'static str;
-    fn build(tree: &Tree) -> Self;
+    fn build(c: &Cols) -> Self;
     fn bytes(&self) -> [usize; 2];
     fn start(&self, r: usize) -> u64;
     fn end(&self, r: usize, next: impl FnOnce() -> usize, post: impl FnOnce() -> usize) -> u64;
@@ -380,10 +545,10 @@ impl Image for ForLen {
 
 impl Pos for ForLen {
     const NAME: &'static str = "frame of reference + length";
-    fn build(tree: &Tree) -> Self {
-        let start: Vec<u64> = tree.nodes.iter().map(|n| n.start).collect();
-        let len: Vec<u64> = tree.nodes.iter().map(|n| n.end - n.start).collect();
-        ForLen { start: PFor::new(&start, true), len: PFor::new(&len, false) }
+    fn build(c: &Cols) -> Self {
+        let start = &c.start;
+        let len: Vec<u64> = c.start.iter().zip(&c.end).map(|(s, e)| e - s).collect();
+        ForLen { start: PFor::new(start, true), len: PFor::new(&len, false) }
     }
     fn bytes(&self) -> [usize; 2] {
         [self.start.bytes(), self.len.bytes()]
@@ -415,16 +580,16 @@ impl Image for PredGap {
 
 impl Pos for PredGap {
     const NAME: &'static str = "predictor + residual, end as the gap to the next start";
-    fn build(tree: &Tree) -> Self {
-        let n = tree.len();
-        let start: Vec<u64> = tree.nodes.iter().map(|x| x.start).collect();
+    fn build(c: &Cols) -> Self {
+        let n = c.len();
+        let start = &c.start;
         let gap: Vec<u64> = (0..n).map(|i| {
-            let next = i + tree.size[i] as usize;
-            let s = if next < n { start[next] } else { tree.source_len };
-            let d = s as i64 - tree.nodes[i].end as i64;
+            let next = i + c.size[i] as usize;
+            let s = if next < n { start[next] } else { c.source_len };
+            let d = s as i64 - c.end[i] as i64;
             ((d << 1) ^ (d >> 63)) as u64
         }).collect();
-        PredGap { start: Pred::new(&start), gap: PFor::new(&gap, false), source_len: tree.source_len }
+        PredGap { start: Pred::new(start), gap: PFor::new(&gap, false), source_len: c.source_len }
     }
     fn bytes(&self) -> [usize; 2] {
         [self.start.bytes(), self.gap.bytes() + 8]
@@ -458,10 +623,10 @@ impl Image for PredLen {
 
 impl Pos for PredLen {
     const NAME: &'static str = "predictor + residual, end as a length";
-    fn build(tree: &Tree) -> Self {
-        let start: Vec<u64> = tree.nodes.iter().map(|n| n.start).collect();
-        let len: Vec<u64> = tree.nodes.iter().map(|n| n.end - n.start).collect();
-        PredLen { start: Pred::new(&start), len: PFor::new(&len, false) }
+    fn build(c: &Cols) -> Self {
+        let start = &c.start;
+        let len: Vec<u64> = c.start.iter().zip(&c.end).map(|(s, e)| e - s).collect();
+        PredLen { start: Pred::new(start), len: PFor::new(&len, false) }
     }
     fn bytes(&self) -> [usize; 2] {
         [self.start.bytes(), self.len.bytes()]
@@ -493,10 +658,9 @@ impl Image for EfGap {
 
 impl Pos for EfGap {
     const NAME: &'static str = "Elias–Fano start, end as the gap to the next start";
-    fn build(tree: &Tree) -> Self {
-        let g = PredGap::build(tree);
-        let start: Vec<u64> = tree.nodes.iter().map(|x| x.start).collect();
-        EfGap { start: Ef::new(&start, tree.source_len), n: tree.len(), gap: g.gap, source_len: tree.source_len }
+    fn build(c: &Cols) -> Self {
+        let g = PredGap::build(c);
+        EfGap { start: Ef::new(&c.start, c.source_len), n: c.len(), gap: g.gap, source_len: c.source_len }
     }
     fn bytes(&self) -> [usize; 2] {
         [self.start.bytes(), self.gap.bytes() + 8]
@@ -529,16 +693,15 @@ impl Image for EfEf {
 
 impl Pos for EfEf {
     const NAME: &'static str = "Elias–Fano: start in preorder, end in postorder";
-    fn build(tree: &Tree) -> Self {
-        let n = tree.len();
-        let start: Vec<u64> = tree.nodes.iter().map(|x| x.start).collect();
+    fn build(c: &Cols) -> Self {
+        let n = c.len();
         // Postorder: a node after its subtree.
         let mut post = Vec::with_capacity(n);
         let mut stack: Vec<usize> = Vec::new();
         for i in 0..n {
             while let Some(&top) = stack.last() {
-                if top + tree.size[top] as usize <= i {
-                    post.push(tree.nodes[top].end);
+                if top + c.size[top] as usize <= i {
+                    post.push(c.end[top]);
                     stack.pop();
                 } else {
                     break;
@@ -547,9 +710,9 @@ impl Pos for EfEf {
             stack.push(i);
         }
         while let Some(top) = stack.pop() {
-            post.push(tree.nodes[top].end);
+            post.push(c.end[top]);
         }
-        EfEf { start: Ef::new(&start, tree.source_len), end: Ef::new(&post, tree.source_len) }
+        EfEf { start: Ef::new(&c.start, c.source_len), end: Ef::new(&post, c.source_len) }
     }
     fn bytes(&self) -> [usize; 2] {
         [self.start.bytes(), self.end.bytes()]
@@ -584,21 +747,28 @@ impl Image for Pred {
 impl Pred {
     pub fn new(vals: &[u64]) -> Pred {
         let (mut slope, mut base, mut res) = (Vec::new(), Vec::new(), Vec::new());
+        res.reserve(vals.len());
         for chunk in vals.chunks(BLOCK) {
-            let fit = |sl: u64| -> (u64, Vec<u64>) {
-                let r: Vec<i64> = chunk.iter().enumerate().map(|(j, &v)| v as i64 - ((j as u64 * sl) >> 16) as i64).collect();
-                let lo = *r.iter().min().unwrap();
-                (lo as u64, r.iter().map(|&x| (x - lo) as u64).collect())
+            let at = |j: usize, sl: u64| chunk[j] as i64 - ((j as u64 * sl) >> 16) as i64;
+            // The residuals' least value and the bits above it, for a slope.
+            let fit = |sl: u64| -> (i64, u32) {
+                let (mut lo, mut hi) = (i64::MAX, i64::MIN);
+                for j in 0..chunk.len() {
+                    let r = at(j, sl);
+                    lo = lo.min(r);
+                    hi = hi.max(r);
+                }
+                (lo, bits_for((hi - lo) as u64))
             };
             let span = chunk.last().unwrap() - chunk[0];
             let line = if chunk.len() > 1 { (span << 16) / (chunk.len() as u64 - 1) } else { 0 };
-            let cost = |r: &[u64]| -> u64 { r.iter().map(|&x| u64::from(bits_for(x))).max().unwrap_or(0) };
-            let (b0, r0) = fit(0);
-            let (b1, r1) = fit(line.min(u64::from(u32::MAX)));
-            let (sl, b, r) = if cost(&r1) < cost(&r0) { (line.min(u64::from(u32::MAX)), b1, r1) } else { (0, b0, r0) };
+            let line = line.min(u64::from(u32::MAX));
+            let (b0, c0) = fit(0);
+            let (b1, c1) = fit(line);
+            let (sl, b) = if c1 < c0 { (line, b1) } else { (0, b0) };
             slope.push(sl as u32);
-            base.push(b);
-            res.extend(r);
+            base.push(b as u64);
+            res.extend((0..chunk.len()).map(|j| (at(j, sl) - b) as u64));
         }
         Pred { n: vals.len(), slope, res: PFor::new(&res, false), base }
     }
@@ -736,9 +906,12 @@ pub struct X<P: Pos> {
 
 impl<P: Pos> X<P> {
     pub fn new(tree: &Tree, codes: &Codes) -> X<P> {
-        let size: Vec<u64> = tree.size.iter().map(|&s| u64::from(s)).collect();
-        let back: Vec<u64> = tree.parent.iter().enumerate().map(|(i, &p)| if p == NONE { 0 } else { (i - p as usize) as u64 }).collect();
-        X { n: tree.len(), code: code_of(tree, codes), size: PFor::new(&size, false), back: PFor::new(&back, false), pos: P::build(tree) }
+        X::of(&Cols::of_tree(tree, codes))
+    }
+    pub fn of(c: &Cols) -> X<P> {
+        let size: Vec<u64> = c.size.iter().map(|&s| u64::from(s)).collect();
+        let back: Vec<u64> = c.parent.iter().enumerate().map(|(i, &p)| if p == NONE { 0 } else { (i - p as usize) as u64 }).collect();
+        X { n: c.len(), code: code_of(c), size: PFor::new(&size, false), back: PFor::new(&back, false), pos: P::build(c) }
     }
     /// Bytes by part: code, structure, start, end.
     pub fn parts(&self) -> [usize; 4] {
@@ -816,12 +989,15 @@ pub struct XF<P: Pos> {
 
 impl<P: Pos> XF<P> {
     pub fn new(tree: &Tree, codes: &Codes) -> XF<P> {
-        let n = tree.len();
+        XF::of(&Cols::of_tree(tree, codes))
+    }
+    pub fn of(c: &Cols) -> XF<P> {
+        let n = c.len();
         let slot: Vec<u64> = (0..n).map(|i| {
-            if tree.size[i] > 1 {
-                u64::from(tree.size[i]) << 1
+            if c.size[i] > 1 {
+                u64::from(c.size[i]) << 1
             } else if i + 1 < n {
-                (((i + 1 - tree.parent[i + 1] as usize) as u64) << 1) | 1
+                (((i + 1 - c.parent[i + 1] as usize) as u64) << 1) | 1
             } else {
                 1
             }
@@ -829,7 +1005,7 @@ impl<P: Pos> XF<P> {
         if std::env::var_os("XF_HIST").is_some() {
             eprintln!("XFC {:?}", pack_costs(&slot));
         }
-        XF { n, code: code_of(tree, codes), slot: PFor::new(&slot, false), pos: P::build(tree) }
+        XF { n, code: code_of(c), slot: PFor::new(&slot, false), pos: P::build(c) }
     }
     pub fn parts(&self) -> [usize; 4] {
         let [s, e] = self.pos.bytes();
@@ -958,7 +1134,10 @@ pub struct B<P: Pos> {
 
 impl<P: Pos> B<P> {
     pub fn new(tree: &Tree, codes: &Codes) -> B<P> {
-        let n = tree.len();
+        B::of(&Cols::of_tree(tree, codes))
+    }
+    pub fn of(c: &Cols) -> B<P> {
+        let n = c.len();
         let mut bits = vec![0u64; (2 * n).div_ceil(64) + 2];
         let mut opens = Vec::with_capacity(n);
         let mut pos = 0usize;
@@ -971,7 +1150,7 @@ impl<P: Pos> B<P> {
             bits[pos >> 6] |= 1 << (pos & 63);
             opens.push(pos as u32);
             pos += 1;
-            stack.push(i + tree.size[i] as usize);
+            stack.push(i + c.size[i] as usize);
         }
         pos += stack.len();
         let nbits = pos;
@@ -1030,7 +1209,7 @@ impl<P: Pos> B<P> {
             }
             l2_max_suffix.push(m as i16);
         }
-        B { bits, nbits, sb_abs, sb_rel, w_min, w_max_suffix, l2_min, l2_max_suffix, l2_total, code: code_of(tree, codes), pos: P::build(tree), big: None, opens }
+        B { bits, nbits, sb_abs, sb_rel, w_min, w_max_suffix, l2_min, l2_max_suffix, l2_total, code: code_of(c), pos: P::build(c), big: None, opens }
     }
 
     /// Ones before position `p`: the preorder number of the open at `p`.
@@ -1197,7 +1376,11 @@ fn rank9(bits: &[u64]) -> (Vec<u32>, Vec<u64>) {
 impl<P: Pos> B<P> {
     /// BH: B with the sizes of subtrees spanning more than `BIG` positions.
     pub fn with_big(tree: &Tree, codes: &Codes) -> B<P> {
-        let mut b = B::new(tree, codes);
+        B::with_big_of(&Cols::of_tree(tree, codes))
+    }
+    pub fn with_big_of(c: &Cols) -> B<P> {
+        let tree = c;
+        let mut b = B::of(c);
         let mut bits = vec![0u64; b.nbits.div_ceil(64) + 2];
         let mut size = Vec::new();
         for (i, &s) in tree.size.iter().enumerate() {

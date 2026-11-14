@@ -1074,9 +1074,8 @@ fn bench<R: rerail_tape_lab::inplace::Reader>(r: &R, tree: &rerail_tape_lab::tre
 /// E10 (0156 T9, t38): candidate in-memory tapes, every question answered in place on each, checked against
 /// the tree, and costed one thread at a time.
 fn cmd_inplace(path: &str, f11: bool) {
-    use rerail_tape_lab::inplace::{B, Codes, EfEf, EfGap, F15, ForLen, PredGap, PredLen, X, XF};
+    use rerail_tape_lab::inplace::{B, CodeMap, Codes, Cols, EfEf, EfGap, F15, ForLen, PredGap, PredLen, X, XF};
     use rerail_tape_lab::measure::{Cost, cost};
-    use rerail_tape_lab::inplace::Reader;
     let cap = std::path::Path::new(path);
     // Pass 1: each language's codes, as the grammar would number them, and its commonest kind.
     let mut codes: BTreeMap<u8, Codes> = BTreeMap::new();
@@ -1092,6 +1091,8 @@ fn cmd_inplace(path: &str, f11: bool) {
         }
         Ok(())
     }).unwrap_or_else(|e| die(&e));
+    // Shape 2: the codes as the events carry them.
+    let maps: BTreeMap<u8, CodeMap> = codes.iter().map(|(&tag, c)| (tag, CodeMap::new(c, tag, &cands))).collect();
     // The sweep's target: the codes of each language's commonest kind.
     let target: BTreeMap<u8, Vec<bool>> = codes.iter().map(|(&tag, c)| {
         let top = kinds[&tag].iter().max_by_key(|e| e.1).map(|e| *e.0).unwrap_or(0);
@@ -1109,7 +1110,8 @@ fn cmd_inplace(path: &str, f11: bool) {
     // Loading. Shape 1: zstd of the in-memory bytes on disk, loading is zstd alone. Shape 2: zstd of format 16's
     // events on disk, loading is zstd, then a build pass (here: through a tree, an upper bound).
     let (mut disk1, mut load1, mut build) = ([0usize; C], [Cost::default(); C], [Cost::default(); C]);
-    let (mut disk2, mut load2) = (0usize, Cost::default());
+    let (mut disk2, mut load2, mut to_cols) = (0usize, Cost::default(), Cost::default());
+    let (mut planes_cols, mut zstd2) = (Cost::default(), Cost::default());
     let (mut nodes, mut files, mut wrong) = (0usize, 0usize, [0usize; C]);
     let mut rng = 0x9e37_79b9_7f4a_7c15u64;
     capture::stream(cap, |f| {
@@ -1144,22 +1146,38 @@ fn cmd_inplace(path: &str, f11: bool) {
                 parts[c + 1][k] += p[k];
             }
         }
-        // Shape 2's common part: the events zstd'd as one block (byte planes), then back to a tree.
-        {
+        // Shape 2's common part: the events zstd'd as one block (byte planes); loading inflates them to the
+        // events, then one stack pass gives the builders' columns (no tree).
+        let cols = {
             let ev = events::encode(&tree, f.tag, &cands);
             let (bs, _) = blocks::split(&ev, Cut::Whole);
             let laid: Vec<Vec<u8>> = bs.iter().map(|b| layout::lay(b, Layout::BytePlanes, Extras::default(), &[], &[])).collect();
             let packed: Vec<Vec<u8>> = laid.iter().map(|l| zstd::bulk::compress(l, 3).unwrap()).collect();
             disk2 += packed.iter().map(Vec::len).sum::<usize>();
-            let (back, k) = cost(|| {
+            let (back, k) = best3(|| {
                 let blocks: Vec<_> = packed.iter().zip(&laid).map(|(z, l)| layout::unlay(&zstd::bulk::decompress(z, l.len()).unwrap(), Layout::BytePlanes, Extras::default())).collect();
-                events::decode(&blocks::join(&blocks), f.tag, &cands, tree.source_len)
+                blocks::join(&blocks)
             });
             load2 += k;
-            if back != tree {
-                return Err(format!("{}: the events did not give the tree back", f.path));
+            if back != ev {
+                return Err(format!("{}: the byte planes did not give the events back", f.path));
             }
-        }
+            let (cols, k) = best3(|| Cols::of_events(&back, &maps[&f.tag], tree.source_len));
+            to_cols += k;
+            if cols != Cols::of_tree(&tree, lang) {
+                return Err(format!("{}: the events did not give the columns back", f.path));
+            }
+            // The writer's own path: zstd, then the columns read straight off the byte planes.
+            assert_eq!(packed.len(), 1, "one block (Cut::Whole)");
+            let (direct, k) = best3(|| Cols::of_planes(&zstd::bulk::decompress(&packed[0], laid[0].len()).unwrap(), &maps[&f.tag], tree.source_len));
+            planes_cols += k;
+            let (_, k) = best3(|| zstd::bulk::decompress(&packed[0], laid[0].len()).unwrap().len());
+            zstd2 += k;
+            if direct != cols {
+                return Err(format!("{}: the byte planes did not give the columns back", f.path));
+            }
+            cols
+        };
         // Shape 1: each candidate's bytes zstd'd, and decompressed; and each candidate's build from the tree.
         let images: [Vec<u8>; C] = [f.image.clone(), x.image(), m.image(), xe.image(), b.image(), bm.image(), be.image(), bh.image(), xf.image(), mf.image()];
         for (c, im) in images.iter().enumerate() {
@@ -1169,24 +1187,24 @@ fn cmd_inplace(path: &str, f11: bool) {
             load1[c] += k;
             assert_eq!(&back, im);
         }
-        let (_, k) = cost(|| std::hint::black_box(X::<ForLen>::new(&tree, lang).bytes()));
-        build[1] += k;
-        let (_, k) = cost(|| std::hint::black_box(X::<PredGap>::new(&tree, lang).bytes()));
-        build[2] += k;
-        let (_, k) = cost(|| std::hint::black_box(X::<EfGap>::new(&tree, lang).bytes()));
-        build[3] += k;
-        let (_, k) = cost(|| std::hint::black_box(B::<ForLen>::new(&tree, lang).bytes()));
-        build[4] += k;
-        let (_, k) = cost(|| std::hint::black_box(B::<PredLen>::new(&tree, lang).bytes()));
-        build[5] += k;
-        let (_, k) = cost(|| std::hint::black_box(B::<EfEf>::new(&tree, lang).bytes()));
-        build[6] += k;
-        let (_, k) = cost(|| std::hint::black_box(B::<PredLen>::with_big(&tree, lang).bytes()));
-        build[7] += k;
-        let (_, k) = cost(|| std::hint::black_box(XF::<ForLen>::new(&tree, lang).bytes()));
-        build[8] += k;
-        let (_, k) = cost(|| std::hint::black_box(XF::<PredGap>::new(&tree, lang).bytes()));
-        build[9] += k;
+        // Shape 2's build: each candidate from the columns, its image the tree-built one byte for byte.
+        let built: [(Vec<u8>, Cost); C - 1] = [
+            { let (v, k) = best3(|| X::<ForLen>::of(&cols)); (v.image(), k) },
+            { let (v, k) = best3(|| X::<PredGap>::of(&cols)); (v.image(), k) },
+            { let (v, k) = best3(|| X::<EfGap>::of(&cols)); (v.image(), k) },
+            { let (v, k) = best3(|| B::<ForLen>::of(&cols)); (v.image(), k) },
+            { let (v, k) = best3(|| B::<PredLen>::of(&cols)); (v.image(), k) },
+            { let (v, k) = best3(|| B::<EfEf>::of(&cols)); (v.image(), k) },
+            { let (v, k) = best3(|| B::<PredLen>::with_big_of(&cols)); (v.image(), k) },
+            { let (v, k) = best3(|| XF::<ForLen>::of(&cols)); (v.image(), k) },
+            { let (v, k) = best3(|| XF::<PredGap>::of(&cols)); (v.image(), k) },
+        ];
+        for (c, (im, k)) in built.iter().enumerate() {
+            if im != &images[c + 1] {
+                return Err(format!("{}: {} built from the events differs from the tree's", f.path, names[c + 1]));
+            }
+            build[c + 1] += *k;
+        }
         bench(&f15, &tree, &want, &order, set, &mut costs[0], &mut counts[0], &mut wrong[0], &mut bytes[0]);
         bench(&x, &tree, &want, &order, set, &mut costs[1], &mut counts[1], &mut wrong[1], &mut bytes[1]);
         bench(&m, &tree, &want, &order, set, &mut costs[2], &mut counts[2], &mut wrong[2], &mut bytes[2]);
@@ -1228,8 +1246,12 @@ fn cmd_inplace(path: &str, f11: bool) {
     println!("| shape 1: disk, zstd 3 of the in-memory bytes, B/node | {} |", disk1.iter().map(|&d| format!("{:.2}", d as f64 / nf)).collect::<Vec<_>>().join(" | "));
     println!("| shape 1: load = zstd, ns/node | {} |", load1.iter().map(|l| format!("{:.1}", l.nanos as f64 / nf)).collect::<Vec<_>>().join(" | "));
     println!("| shape 2: disk, zstd 3 of the events, B/node | {} |", names.iter().map(|_| format!("{:.2}", disk2 as f64 / nf)).collect::<Vec<_>>().join(" | "));
-    println!("| shape 2: load = zstd + events to a tree, ns/node | {} |", names.iter().map(|_| format!("{:.1}", load2.nanos as f64 / nf)).collect::<Vec<_>>().join(" | "));
-    println!("| shape 2: + the build from the tree, ns/node | | {} |", build[1..].iter().map(|l| format!("{:.1}", l.nanos as f64 / nf)).collect::<Vec<_>>().join(" | "));
+    println!("| shape 2: zstd + byte planes to events, ns/node | | {} |", names[1..].iter().map(|_| format!("{:.1}", load2.nanos as f64 / nf)).collect::<Vec<_>>().join(" | "));
+    println!("| shape 2: events to columns (one stack pass), ns/node | | {} |", names[1..].iter().map(|_| format!("{:.1}", to_cols.nanos as f64 / nf)).collect::<Vec<_>>().join(" | "));
+    println!("| shape 2: columns to the tape (the build), ns/node | | {} |", build[1..].iter().map(|l| format!("{:.1}", l.nanos as f64 / nf)).collect::<Vec<_>>().join(" | "));
+    println!("| shape 2: zstd alone, ns/node | | {} |", names[1..].iter().map(|_| format!("{:.1}", zstd2.nanos as f64 / nf)).collect::<Vec<_>>().join(" | "));
+    println!("| shape 2: zstd + columns read off the byte planes (no events), ns/node | | {} |", names[1..].iter().map(|_| format!("{:.1}", planes_cols.nanos as f64 / nf)).collect::<Vec<_>>().join(" | "));
+    println!("| shape 2: load, all (zstd, planes to columns, build), ns/node | | {} |", build[1..].iter().map(|l| format!("**{:.1}**", (planes_cols.nanos + l.nanos) as f64 / nf)).collect::<Vec<_>>().join(" | "));
     // E7's mixes (reads a node): kind, flags and named come with the two sweeps; the rest at random.
     // (sweeps, random code reads, spans, children walks a node, parents)
     let mixes: [(&str, [f64; 5]); 4] = [
