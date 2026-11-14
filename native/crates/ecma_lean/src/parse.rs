@@ -187,6 +187,37 @@ const V_EXPR: V = V_LOGICAL_OR | V_LBRACKET | V_LPAREN | V_STAR | V_PLUS | V_MIN
 
 const MAX_DEPTH: u32 = 300;
 
+/// `kinds::DROPPED` as open-addressed tables, built at compile time: a key's slot by one
+/// multiply-shift, then the next slots to an empty one. At a quarter full, a lookup is 1.2 probes
+/// on average, where the binary search was 8 dependent loads.
+const DROP_SLOTS: usize = 1024;
+const NO_DROP: u32 = u32::MAX;
+
+#[inline(always)]
+const fn drop_slot(key: u32) -> usize {
+    (key.wrapping_mul(0x9e37_79b1) >> 22) as usize
+}
+
+static DROP_TABLES: [[u32; DROP_SLOTS]; 3] = {
+    let mut t = [[NO_DROP; DROP_SLOTS]; 3];
+    let mut d = 0;
+    while d < 3 {
+        let keys = crate::kinds::DROPPED[d];
+        assert!(keys.len() * 2 < DROP_SLOTS, "DROPPED outgrew its table");
+        let mut i = 0;
+        while i < keys.len() {
+            let mut slot = drop_slot(keys[i]);
+            while t[d][slot] != NO_DROP {
+                slot = (slot + 1) & (DROP_SLOTS - 1);
+            }
+            t[d][slot] = keys[i];
+            i += 1;
+        }
+        d += 1;
+    }
+    t
+};
+
 /// A node written: its index and kind.
 #[derive(Clone, Copy, Debug)]
 struct N {
@@ -232,8 +263,8 @@ struct P<'a> {
     pieces: Vec<(u32, u32, bool)>,
     /// The furthest refusal (a speculation's included): where a refused file is reported.
     far: u32,
-    /// The tokens the dialect's tapes leave out (`kinds::DROPPED`).
-    dropped: &'static [u32],
+    /// The tokens the dialect's tapes leave out (`kinds::DROPPED`), as a hash table.
+    dropped: &'static [u32; DROP_SLOTS],
     /// TypeScript's grammar (`.ts` and `.tsx`).
     ts: bool,
     /// In a class's `extends` (TypeScript): a `<` after the value is its type arguments.
@@ -262,7 +293,7 @@ pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
             asi: false,
             pieces: Vec::new(),
             far: 0,
-            dropped: crate::kinds::DROPPED[dialect as usize],
+            dropped: &DROP_TABLES[dialect as usize],
             ts: dialect != Dialect::JavaScript,
             in_extends: false,
         };
@@ -468,7 +499,19 @@ impl<'a> P<'a> {
     /// caller tells apart.
     #[inline]
     fn stores(&self, parent: K, tok: K, field: u8) -> bool {
-        self.dropped.binary_search(&(parent as u32 | (tok as u32) << 9 | u32::from(field) << 18)).is_err()
+        let key = parent as u32 | (tok as u32) << 9 | u32::from(field) << 18;
+        let mut slot = drop_slot(key);
+        loop {
+            // SAFETY: `slot` is masked to the table's slots.
+            let k = unsafe { *self.dropped.get_unchecked(slot) };
+            if k == key {
+                return false;
+            }
+            if k == NO_DROP {
+                return true;
+            }
+            slot = (slot + 1) & (DROP_SLOTS - 1);
+        }
     }
 
     /// The next token, `tok`, under `parent`: a leaf where the tape stores it.
@@ -3503,4 +3546,32 @@ fn kind_of(k: u16) -> K {
     debug_assert!(k <= crate::kinds::LAST as u16);
     // SAFETY: `K` is `repr(u16)` with variants 0 to `KINDS.len() - 1`, and every key's kind is one.
     unsafe { std::mem::transmute::<u16, K>(k) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The hash tables hold `kinds::DROPPED`'s keys, and no other key.
+    #[test]
+    fn the_drop_tables_are_dropped() {
+        for d in 0..3 {
+            let keys = crate::kinds::DROPPED[d];
+            let table = &DROP_TABLES[d];
+            assert_eq!(table.iter().filter(|&&k| k != NO_DROP).count(), keys.len());
+            let find = |key: u32| {
+                let mut slot = drop_slot(key);
+                loop {
+                    match table[slot] {
+                        k if k == key => return true,
+                        NO_DROP => return false,
+                        _ => slot = (slot + 1) & (DROP_SLOTS - 1),
+                    }
+                }
+            };
+            for key in 0..1u32 << 24 {
+                assert_eq!(find(key), keys.binary_search(&key).is_ok(), "{key}");
+            }
+        }
+    }
 }
