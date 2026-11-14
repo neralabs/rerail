@@ -249,9 +249,11 @@ are not waited for further: that edit is checked by the first pass once they ope
   freed, the last the daemon heard of it, not when the daemon stopped.
 - A daemon that ends without being stopped (the machine restarts or shuts down, it is killed) ends no session. The next
   daemon to start ends each session it left open, at 30 minutes after the session's last event, or at that start when
-  sooner, also when another process now has the process id the stopped daemon had. A second daemon already running on
-  the same Rerail home does the same within a minute. The session's next event opens it again. A session that a daemon
-  still running holds is left as it is.
+  sooner. A second daemon already running on the same Rerail home does the same within a minute. The session's next
+  event opens it again. A session that a daemon still running holds is left as it is. A daemon tells that another has
+  stopped by a lock that daemon held, also when another process now has its process id. Where a session's record names
+  no such lock (a pi or OMP session, one of a daemon that could take no lock, or one an earlier version left), it goes
+  by that process id alone, and leaves the session open while a process has that id.
 - A daemon that could not take its owner lock (a file in `locks/owners/` beside its database, by which a later daemon
   tells whether it still runs; a file system can refuse it) ends a quiet session when it frees its memory, as earlier
   versions did: the session shows as ended, a scan asked for it is refused, and its next event opens it again.
