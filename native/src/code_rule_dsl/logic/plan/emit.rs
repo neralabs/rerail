@@ -119,6 +119,8 @@ const RDL_INT: &str = "CREATE TEMP TABLE rdl_int(i INTEGER PRIMARY KEY); INSERT 
 pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTreeMap<String,u64>>, inputs:Inputs)->Result<Emitted>{
     let atoms=inputs.atoms.is_some();
     let mut model = make_plan(prog, db, inputs)?;
+    // The program's rules, read by the planner by their handles (t36 item 2).
+    let vs = super::body::Versions::of(prog)?;
     let (sccs, _) = strata(prog)?;
     let mut rules_by: IndexMap<&str, Vec<&Rule>> = IndexMap::new();
     for r in &prog.rules {
@@ -142,10 +144,10 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
     }
     let relations: Vec<(String, usize)> = prog.decls.iter().filter(|(rel, _)| derived(rel)).map(|(rel, cols)| (rel.to_string(), cols.len())).collect();
     // The derived relations a rule body reads, in order.
-    let reads = |order: &[Step], keep: &dyn Fn(&str) -> bool| -> Vec<String> {
+    let reads = |order: Order<'_>, keep: &dyn Fn(&str) -> bool| -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
-        for s in order {
-            if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = &s.lit
+        for l in order.lits() {
+            if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
                 && derived(&a.rel)
                 && keep(&a.rel)
                 && !out.iter().any(|x| x == &a.rel)
@@ -204,17 +206,18 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
         let mut planned = Vec::new();
         for rule in &rules {
             let started = profile_key.as_ref().map(|_|super::super::profile::now());
-            let ((order, _, _), explain) = model.plan_rule_explained(prog, &rule.head, &rule.body, None)?;
+            let ((order, _, _), explain) = model.plan_rule_explained(prog, &vs.body(rule)?, None)?;
             record(rule,"full query",explain,started.map_or(0.0,|t|super::super::profile::now()-t));
             planned.push((rule, order));
         }
         let own = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg && scc.contains(a.rel.as_str()));
-        let recursive = scc.len() > 1 || planned.iter().flat_map(|(_, o)| o).any(|s| own(&s.lit));
+        let recursive = scc.len() > 1 || planned.iter().flat_map(|(r, o)| Order::new(&r.body, o).lits()).any(own);
         for (rule, order) in &planned {
+            let order = Order::new(&rule.body, order);
             let query = model.checked_query(prog, &rule.head, order, None, None)?;
             // Positive own atoms have delta variants. An aggregate needs the complete
             // current input, so wake the full query when that recursive input changes.
-            let aggregates=order.iter().filter_map(|s|match &s.lit {Literal::Agg{atom,..}=>Some(atom.rel.as_str()),_=>None}).collect::<BTreeSet<_>>();
+            let aggregates=order.lits().filter_map(|l|match l {Literal::Agg{atom,..}=>Some(atom.rel.as_str()),_=>None}).collect::<BTreeSet<_>>();
             let reads = reads(order, &|rel| !recursive || !scc.contains(rel) || aggregates.contains(rel));
             step(&rule.head.rel, stratum, reads, &query.render(), Some(query));
         }
@@ -226,10 +229,10 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
                         continue;
                     }
                     let started = profile_key.as_ref().map(|_|super::super::profile::now());
-                    let ((order, _, _), explain) = model.plan_rule_explained(prog, &rule.head, &rule.body, Some(i))?;
+                    let ((order, _, _), explain) = model.plan_rule_explained(prog, &vs.body(rule)?, Some(i))?;
                     record(rule,"delta query",explain,started.map_or(0.0,|t|super::super::profile::now()-t));
                     let at = order.iter().position(|s| s.at == i).ok_or_else(|| Error::Plan(format!("{}: no delta atom", rule.head)))?;
-                    let query = model.checked_query(prog, &rule.head, &order, Some(at), None)?;
+                    let query = model.checked_query(prog, &rule.head, Order::new(&rule.body, &order), Some(at), None)?;
                     let Literal::Atom(a) = l else { unreachable!("an own atom") };
                     step(&rule.head.rel, stratum, vec![a.rel.to_string()], &query.render(), Some(query));
                 }

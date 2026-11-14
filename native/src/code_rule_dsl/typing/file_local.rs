@@ -827,6 +827,8 @@ pub fn assemble(
     c.gates.retain(|(rel, _)| !is_local(rel));
     c.outputs.retain(|o| !is_local(o));
     c.inputs = base_read.into_iter().chain(exports.iter().cloned()).collect();
+    crate::code_rule_dsl::logic::version_trace::note("split.local", prog, &l);
+    crate::code_rule_dsl::logic::version_trace::note("split.cross", prog, &c);
     Programs { local: l, cross: c, exports, base, locations, same_doc, file_local: local, constants }
 }
 

@@ -385,9 +385,9 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDia
     let mut programs = Vec::new();
     for digest in [front, lowered] {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "read a program's text".into());
-        let Some((program, document)) = program_text::load(store, digest, lists)? else { return Ok(None) };
+        let Some((program, sources)) = program_text::load(store, digest, lists)? else { return Ok(None) };
         programs.push(program);
-        documents.push(document);
+        documents.extend(sources);
     }
     let read = start.elapsed();
     let at = std::time::Instant::now();
@@ -415,9 +415,9 @@ pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], p
     let mut facts = rest_of(prepared);
     let mut documents = Vec::new();
     for (name, prog) in [("front", &prepared.prog), ("lowered", &prepared.lowered.program)] {
-        let Some((digest, document)) = program_text::store(store, prog)? else { return Ok(None) };
+        let Some((digest, sources)) = program_text::store(store, prog)? else { return Ok(None) };
         facts.entry(PROGRAM.to_owned()).or_default().push([Value::Str(name.to_owned().into()), Value::Str(hex(&digest).into())].into());
-        documents.push(document);
+        documents.extend(sources);
     }
     let entry = program_facts::encode(&facts);
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, entry.len() as u64);

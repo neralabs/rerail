@@ -346,6 +346,7 @@ impl Cut {
             }
         }
         program.outputs.retain(|o| !self.clean.contains(o));
+        crate::code_rule_dsl::logic::version_trace::note("session.cut", &cross.program, &program);
         lower::Lowered { program, domains: cross.domains.clone(), ops: cross.ops, dialect: cross.dialect }
     }
 
