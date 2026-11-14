@@ -1187,7 +1187,27 @@ impl Lowerer {
             self.siblings = lits.iter().enumerate().filter(|(j, _)| *j != k).map(|(_, l)| l.clone()).chain(enclosing.iter().cloned()).collect();
             let alts = self.literal(lit, &outer.into_iter().collect());
             self.siblings = enclosing;
-            let alts = alts?;
+            let mut alts = alts?;
+            // Alternatives multiply: `(a ; b), (c ; d)` is four rules, and `within_stop` is two. Past OUTLINE_PAST of
+            // them, a literal's alternatives are a helper relation (`outline`), and `within_stop(n, a, S)` over a kind
+            // set is one atom of `rr_wstop_<S>`, S's relation (`within_stop_relation`). A nest of them was otherwise
+            // exponential: a Rust policy of 200 lines lowered to 101,423 rules. Below it, they stay in the rule, whose
+            // own literals narrow each.
+            if acc.len() * alts.len() > OUTLINE_PAST && alts.len() > 1 {
+                if let Lit::Atom { rel, args, neg: false } = lit
+                    && rel == "within_stop"
+                    && let [n, a, stop] = args.as_slice()
+                    && self.node_set(stop).is_none()
+                {
+                    let r = self.within_stop_relation(stop)?;
+                    alts = vec![vec![Literal::Atom(Atom { rel: r.into(), args: vec![self.term(n)?, self.term(a)?], neg: false, gated: false })]];
+                } else {
+                    let mut used: Vec<String> = context.iter().cloned().collect();
+                    lits.iter().enumerate().filter(|(j, _)| *j != k).for_each(|(_, l)| l.scope_vars(&mut used));
+                    let used: BTreeSet<String> = used.into_iter().collect();
+                    alts = self.outline(alts, &used);
+                }
+            }
             acc = acc.iter().flat_map(|a| alts.iter().map(move |b| a.iter().chain(b).cloned().collect::<Vec<_>>())).collect();
         }
         Ok(acc.into_iter().map(merge_negated_tests).collect())
@@ -1549,6 +1569,33 @@ impl Lowerer {
     /// `!(l, …)`: a helper relation of the conjunction, over the variables it shares with the rule (an aggregate's
     /// inside it too: `shared_vars`), bound inside it by a context relation where the conjunction only tests them,
     /// negated. A variable only the conjunction has is its own (Soufflé's scoping).
+    /// A literal's alternatives with those that ground the variables they share with `used` (the rest of the rule)
+    /// as one helper relation `rr_or<k>(shared)`, a rule each, and one atom in their place (as `!(…)` is
+    /// `rr_not<k>`). An alternative that leaves one unbound (it does not name it) stays as it is.
+    fn outline(&mut self, alts: Vec<Vec<Literal>>, used: &BTreeSet<String>) -> Vec<Vec<Literal>> {
+        let mut shared = BTreeSet::new();
+        for b in &alts {
+            for l in b {
+                shared.extend(l.vars().into_iter().filter(|v| used.contains(v)));
+            }
+        }
+        let shared: Vec<String> = shared.into_iter().collect();
+        // `unset(x)` is lowered in a rule's own body only (`unset`).
+        let unset = |b: &[Literal]| b.iter().any(|l| matches!(l, Literal::Atom(a) if &*a.rel == "unset"));
+        let (out, keep): (Vec<_>, Vec<_>) = alts.into_iter().partition(|b| !unset(b) && grounds(b, &shared));
+        if out.len() < 2 {
+            return keep.into_iter().chain(out).collect();
+        }
+        let name = self.fresh("or");
+        let cols = shared.iter().map(|c| (c.clone(), self.type_of(c, &out))).collect();
+        self.prog.decls.insert(name.clone(), cols);
+        let head = Atom { rel: name.into(), args: shared.iter().map(|c| Term::Var(c.clone())).collect(), neg: false, gated: false };
+        for body in out {
+            self.prog.rules.push(Rule { head: head.clone(), body: merge_negated_tests(body) });
+        }
+        keep.into_iter().chain([vec![Literal::Atom(head)]]).collect()
+    }
+
     fn negated_conjunction(&mut self, lits: &[Lit], outer: &BTreeSet<String>) -> Result<Literal, Error> {
         let shared: Vec<String> = shared_vars(lits).into_iter().filter(|v| outer.contains(v)).collect();
         let bound: BTreeSet<String> = body_vars(&lits.iter().filter(|l| binds_columns(l)).cloned().collect::<Vec<_>>());
@@ -1760,7 +1807,6 @@ impl Lowerer {
             self.prog.inputs.push(within.to_owned());
         }
         let below = |neg: bool| vec![Literal::Atom(Atom { rel: within.to_owned().into(), args: vec![n.clone(), a.clone()], neg, gated: false })];
-        let cmp = |l: &Term, op: &'static str, r: &Term| Literal::Cmp { l: l.clone(), op, r: r.clone() };
         let Some(stop) = stop else { return Ok(vec![below(neg)]) };
         let set = self.set_name("within_stop", stop)?;
         let Term::Var(nv) = &n else { return Err(Error::Syntax("within_stop: the node is a variable".to_owned())) };
@@ -1774,13 +1820,31 @@ impl Lowerer {
             return Ok(vec![below(true), below(false).into_iter().chain([nearest, between]).collect()]);
         }
         let none = Literal::Atom(Atom { rel: format!("{AXIS}{set}").into(), args: vec![n.clone(), Term::Wild], neg: true, gated: false });
-        // The nearest stop is a, or a is below it.
-        let above = Literal::Atom(Atom { rel: within.to_owned().into(), args: vec![a.clone(), Term::Var(s.clone())], neg: false, gated: false });
-        Ok(vec![
-            below(false).into_iter().chain([none]).collect(),
-            below(false).into_iter().chain([nearest.clone(), cmp(&Term::Var(s.clone()), "=", &a)]).collect(),
-            below(false).into_iter().chain([nearest, above]).collect(),
-        ])
+        // The nearest stop is a, or a is below it: it is not strictly below a (both are above n, so one of the three
+        // holds). One alternative, not two: a rule's alternatives multiply, and a policy of several `within_stop`s
+        // was exponential in them.
+        let not_below = Literal::Atom(Atom { rel: within.to_owned().into(), args: vec![Term::Var(s.clone()), a.clone()], neg: true, gated: false });
+        Ok(vec![below(false).into_iter().chain([none]).collect(), below(false).into_iter().chain([nearest, not_below]).collect()])
+    }
+
+    /// `within_stop(n, a, S)` as a relation `rr_wstop_<S>(n, a)`: n is below a, and no node of S is between them.
+    /// At most `within`'s rows, made once a set.
+    fn within_stop_relation(&mut self, stop: &STerm) -> Result<String, Error> {
+        let label = match stop {
+            STerm::Str(k) | STerm::Var(k) => k.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect::<String>(),
+            _ => "set".to_owned(),
+        };
+        let name = format!("{RESERVED}wstop_{label}");
+        if self.prog.decls.contains_key(&name) {
+            return Ok(name);
+        }
+        let bodies = self.within("within_stop", &[STerm::Var("n".to_owned()), STerm::Var("a".to_owned()), stop.clone()], false)?;
+        self.prog.decls.insert(name.clone(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
+        let head = Atom { rel: name.clone().into(), args: vec![Term::Var("n".to_owned()), Term::Var("a".to_owned())], neg: false, gated: false };
+        for body in bodies {
+            self.prog.rules.push(Rule { head: head.clone(), body });
+        }
+        Ok(name)
     }
 
     /// `name(s, g_…)`: the matches of `re` over the texts of `input` (a unary relation), each named group a column
@@ -2576,7 +2640,9 @@ impl Lowerer {
             siblings
                 .iter()
                 .filter(|l| match l {
-                    Lit::Atom { neg, .. } => !neg,
+                    // `unset(x)` is the empty value, lowered in a rule's own body only: a context leaves it out (and
+                    // holds more rows).
+                    Lit::Atom { neg, rel, .. } => !neg && rel != "unset",
                     Lit::Cmp { l, r, .. } => aggregates || !matches!(l, STerm::Agg { .. }) && !matches!(r, STerm::Agg { .. }),
                     // `(v = t ; within(v, t))`: it may be all that ties two asked variables (pyi047's unread_comp_var
                     // ties a comprehension c to its target v only so). `bound_context` keeps it once what it reads is bound.
@@ -2893,7 +2959,8 @@ impl Lowerer {
         !alts.is_empty()
             && alts.iter().all(|alt| {
                 alt.iter().all(|l| match l {
-                    Lit::Atom { rel, neg: false, .. } => test_of(rel).is_none() && rel != "earlier",
+                    // `unset(x)` is the empty value, lowered in a rule's own body only: no relation a context reads.
+                    Lit::Atom { rel, neg: false, .. } => test_of(rel).is_none() && rel != "earlier" && rel != "unset",
                     Lit::Cmp { l, r, .. } => !matches!(l, STerm::Agg { .. }) && !matches!(r, STerm::Agg { .. }),
                     _ => false,
                 })
@@ -3648,6 +3715,44 @@ fn shared_vars(lits: &[Lit]) -> BTreeSet<String> {
 /// Whether a literal binds every variable of its columns: a positive atom of a relation, not a text test nor a
 /// built-in the lowering writes out as tests or computations of variables bound elsewhere (`within`, `earlier`,
 /// `split_dot`, `nearest`, `precedes_stop`, …).
+/// How many alternatives a conjunction multiplies into before a disjunction in it is outlined (`conjunction`).
+const OUTLINE_PAST: usize = 16;
+
+/// Whether `body`, as a rule body of its own, binds each of `vars`: by a positive atom, `nearest` from a bound
+/// node, or an equality from bound ones, to a fixed point.
+fn grounds(body: &[Literal], vars: &[String]) -> bool {
+    let mut bound: BTreeSet<String> = BTreeSet::new();
+    for l in body {
+        if let Literal::Atom(a) = l
+            && !a.neg
+        {
+            bound.extend(a.vars());
+        }
+    }
+    loop {
+        let before = bound.len();
+        for l in body {
+            match l {
+                Literal::Cmp { l: Term::Var(a), op: "=", r } | Literal::Cmp { l: r, op: "=", r: Term::Var(a) } if !bound.contains(a) => {
+                    let mut vs = BTreeSet::new();
+                    r.vars(&mut vs);
+                    if vs.iter().all(|v| bound.contains(v)) {
+                        bound.insert(a.clone());
+                    }
+                }
+                Literal::Nearest { n, a, .. } if bound.contains(n) => {
+                    bound.insert(a.clone());
+                }
+                _ => {}
+            }
+        }
+        if bound.len() == before {
+            break;
+        }
+    }
+    vars.iter().all(|v| bound.contains(v))
+}
+
 fn binds_columns(l: &Lit) -> bool {
     matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none()
         && !matches!(rel.as_str(), "within" | "within_stop" | "earlier" | "split_dot" | "nearest" | "precedes_stop" | "dfs_first" | "dfs_first_memo" | "unset"))

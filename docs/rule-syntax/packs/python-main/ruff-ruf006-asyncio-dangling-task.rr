@@ -77,7 +77,7 @@ RUF006(n) :- kind(n, "call"), ruf006_task_call(n), ruf006_up_1(n, p1), !ruf006_t
 // RUF006_unread_task_variable(n): a finding at node n, from clause `unread-task-variable`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF006_unread_task_variable(at: node, n: loc) code "RUF006" "`{n}` is never read, so the task is only weakly referenced. Add it to a set and discard it in `add_done_callback`, or await it."
+.violation RUF006_unread_task_variable(at: node, n_mv: loc) code "RUF006" "`{n_mv}` is never read, so the task is only weakly referenced. Add it to a set and discard it in `add_done_callback`, or await it."
     suppress noqa "RUF006"
 RUF006_unread_task_variable(n, N) :- kind(n, "call"), ruf006_task_call(n), ruf006_up_2(n, p1),
     field(_, "right", n),

@@ -13,7 +13,7 @@
 ISC003(n) :- kind(n, "binary_operator"), field(n, "operator", c1), glob("+", c1),
     field(n, "left", c2), isc003_left_string(c2, L), field(n, "right", c3),
     isc003_right_string_on_later_line(c3, L),
-    ( field(n, "left", c4), isc003_text(c4), field(n, "right", c5), isc003_text(c5)
+    ( field(n, "left", c4), isc003_text_util(c4), field(n, "right", c5), isc003_text_util(c5)
     ; field(n, "left", c6), isc003_bytes(c6), field(n, "right", c7), isc003_bytes(c7)
     ; field(n, "left", c8), isc003_template(c8), field(n, "right", c9), isc003_template(c9)
     ).
@@ -52,16 +52,16 @@ isc003_template(n) :- kind(n, "string"), match("[^'\"]*[tT].*", n).
 isc003_template(n) :- kind(n, "concatenated_string"), child(n, c1, _), isc003_template(c1).
 isc003_template(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), isc003_template(c2).
 
-// text(n): the JSON util `text`, used where the JSON says `matches: "text"`
-.decl isc003_text(n: node)
-isc003_text(n) :- node(_, n, _, _, _), !isc003_alt_1(n).
+// text_util(n): the JSON util `text`, used where the JSON says `matches: "text"`
+.decl isc003_text_util(n: node)
+isc003_text_util(n) :- node(_, n, _, _, _), !isc003_alt_1(n).
 
 // demand_right_string_on_later_line: the rows of right_string_on_later_line its callers ask for (the metavariable columns they pass in)
 .decl isc003_demand_right_string_on_later_line(n: node, l: loc)
 isc003_demand_right_string_on_later_line(c3, L) :- kind(n, "binary_operator"),
     field(n, "operator", c1), glob("+", c1), field(n, "left", c2), isc003_left_string(c2, L),
     field(n, "right", c3),
-    ( field(n, "left", c4), isc003_text(c4), field(n, "right", c5), isc003_text(c5)
+    ( field(n, "left", c4), isc003_text_util(c4), field(n, "right", c5), isc003_text_util(c5)
     ; field(n, "left", c6), isc003_bytes(c6), field(n, "right", c7), isc003_bytes(c7)
     ; field(n, "left", c8), isc003_template(c8), field(n, "right", c9), isc003_template(c9)
     ).

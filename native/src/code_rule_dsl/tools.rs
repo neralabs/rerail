@@ -435,6 +435,65 @@ pub fn flatten(path: &std::path::Path) -> Result<String, String> {
 /// findings. T's facts reproduce one program's run only.
 /// `settings` are `--env key=value`s ([`settings`]).
 #[allow(clippy::too_many_arguments)]
+/// The runs `logic` makes of `programs`: those whose language has one dialect, or one with files in scope, run as
+/// written (the first run); a program of a language of several dialects with files (`run_dialects`) runs in each,
+/// its `.language` set to the dialect. The corpus is listed once for all of them.
+fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json::Value) -> Result<Vec<(Option<&'static str>, Vec<String>)>, String> {
+    use super::language::CodeRuleLanguage;
+    use super::logic::plan::corpus;
+    let listing: std::cell::OnceCell<corpus::CorpusFiles> = std::cell::OnceCell::new();
+    let files = || -> super::logic::plan::Result<corpus::CorpusFiles> {
+        if let Some(f) = listing.get() {
+            return Ok(f.clone());
+        }
+        let f = corpus::corpus_files(root)?;
+        let _ = listing.set(f.clone());
+        Ok(f)
+    };
+    let language_line = |text: &str| text.lines().position(|l| l.trim_start().starts_with(".language "));
+    let mut base: Vec<String> = Vec::new();
+    let mut by: Vec<(&'static str, Vec<String>)> = Vec::new();
+    for text in programs {
+        let line = language_line(text);
+        let named = line.and_then(|i| text.lines().nth(i)).map(|l| l.trim_start()[".language ".len()..].trim().trim_matches('"').to_owned());
+        let several = named.as_deref().is_some_and(|n| CodeRuleLanguage::ALL.into_iter().any(|l| l.name() == n && l.dialects().len() > 1));
+        let labels = if several {
+            let prog = super::logic::rr::parse_own(text).map_err(|e| e.to_string())?;
+            corpus::run_dialects_in(&files, &prog, options).map_err(|e| e.to_string())?
+        } else {
+            Vec::new()
+        };
+        if labels.is_empty() || labels == [named.as_deref().unwrap_or("")] {
+            base.push((*text).to_owned());
+            continue;
+        }
+        for label in labels {
+            let each = if Some(label) == named.as_deref() {
+                (*text).to_owned()
+            } else {
+                let i = line.expect("a .language line");
+                text.lines().enumerate().map(|(j, l)| if j == i { format!(".language {label}") } else { l.to_owned() }).collect::<Vec<_>>().join("\n") + "\n"
+            };
+            if Some(label) == named.as_deref() {
+                base.push(each);
+            } else if let Some((_, texts)) = by.iter_mut().find(|(l, _)| *l == label) {
+                texts.push(each);
+            } else {
+                by.push((label, vec![each]));
+            }
+        }
+    }
+    let mut runs: Vec<(Option<&'static str>, Vec<String>)> = Vec::new();
+    if !base.is_empty() {
+        runs.push((None, base));
+    }
+    runs.extend(by.into_iter().map(|(l, t)| (Some(l), t)));
+    if runs.is_empty() {
+        runs.push((None, Vec::new()));
+    }
+    Ok(runs)
+}
+
 pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::path::Path>, out: &std::path::Path, modes: &str, metal: bool, chunk_nodes: usize, settings: &[String]) -> Result<String, String> {
     use super::typing::file_local::Binding;
     let binding = if metal { Binding::Metal } else { Binding::Cpu };
@@ -443,8 +502,34 @@ pub fn logic(programs: &[String], root: &std::path::Path, t_facts: Option<&std::
     }
     let options = serde_json::json!({ "env": settings, "reuse": true });
     let programs: Vec<&str> = programs.iter().map(String::as_str).collect();
-    let report = super::logic::plan::corpus::run_with_options(&programs, root, t_facts, out, modes, binding, chunk_nodes, &super::logic::plan::corpus::Typing::default(), &options)
-        .map_err(|error| error.to_string())?;
+    // A program whose language has several dialects with files in its scope (`.language typescript` over `.ts`,
+    // `.tsx` and `.js` files, which main's TypeScript reads) runs once per dialect, lowered for each, as
+    // `run_program` runs one. The first run writes `out`; each other dialect's writes `out/<dialect>`, and its
+    // findings are added to `out`'s.
+    let runs = if t_facts.is_some() { vec![(None, programs.iter().map(|p| (*p).to_owned()).collect())] } else { dialect_runs(&programs, root, &options)? };
+    let mut report = None;
+    for (i, (label, texts)) in runs.iter().enumerate() {
+        let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+        let dir = if i == 0 { out.to_path_buf() } else { out.join(label.unwrap_or("other")) };
+        let each = super::logic::plan::corpus::run_with_options(&texts, root, t_facts, &dir, modes, binding, chunk_nodes, &super::logic::plan::corpus::Typing::default(), &options)
+            .map_err(|error| error.to_string())?;
+        match &mut report {
+            None => report = Some(each),
+            Some(first) => {
+                let r: &mut super::logic::plan::corpus::Report = first;
+                r.files += each.files;
+                r.nodes += each.nodes;
+                r.chunks += each.chunks;
+                let found = std::fs::read_to_string(dir.join("violation.csv")).unwrap_or_default();
+                if !found.is_empty() {
+                    use std::io::Write;
+                    let mut all = std::fs::OpenOptions::new().append(true).create(true).open(out.join("violation.csv")).map_err(|e| e.to_string())?;
+                    all.write_all(found.as_bytes()).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+    }
+    let report = report.ok_or("no programs")?;
     let execution = if modes.is_empty() { "sql" } else { modes };
     let mut text = format!(
         "{} programs; {} files, {} nodes in {} chunks, {} components native ({execution}, nearest on {binding:?})\n",

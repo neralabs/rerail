@@ -12,7 +12,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation D101(at: node, n: loc) "Add a docstring as the first statement of class `{n}`, explaining what it represents and how to use it."
+.violation D101(at: node, n_mv: loc) "Add a docstring as the first statement of class `{n_mv}`, explaining what it represents and how to use it."
     suppress noqa "D101"
 D101_raw(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, match("[^_].*", n),
     field(p1, "name", n), kind(p1, "class_definition"),
@@ -105,5 +105,5 @@ d101_alt_1(n) :- kind(n, "comment").
 d101_stop_3_within(x, y) :- within_stop(x, y, d101_stop_3).
 
 // main's file condition {"notRegex": "\\.pyi$"}
-.decl D101_raw(at: node, n: loc)
+.decl D101_raw(at: node, n_mv: loc)
 D101(v0, v1) :- D101_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).
