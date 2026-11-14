@@ -110,22 +110,27 @@ These were found by the oracle, and the parser keeps each as tree-sitter reads i
 
 ### Read
 
-`select` (with CTEs, set operations, joins and lateral joins, subqueries, `group by`, `having`, `window`, `order by`,
-`limit`, `offset`, `fetch`), `values`, `insert` (with `on conflict`), `update`, `delete` (with `using`),
+`select` (with CTEs, set operations, joins and lateral joins, subqueries, `group by` (with
+`rollup`, `cube`, `grouping sets`), `having`, `window`, `order by`,
+`limit`, `offset`, `fetch`, row locks: `for update … skip locked`), `values`, `insert` (with `on conflict`), `update`, `delete` (with `using`),
 `truncate`; `create table` (columns, column and table constraints, storage parameters),
 `create index` (columns and function fields), `create view`, `create materialized view`,
 `create function`, `create trigger`, `create sequence`, `create extension`, `create schema`,
-`create type`, `create role`; `drop` (tables, views, materialized views, indexes, functions,
+`create type`, `create domain`, `create role`; `drop` (tables, views, materialized views, indexes, functions,
 sequences); `refresh materialized view`; `alter table` (`only`; add and drop columns, `alter column`'s
 `set`/`drop not null`, `set`/`drop default` and `type`, add, drop and validate constraints, `rename
 [column] … to`, `rename to`, `owner to`, `set schema`, `set (…)` and `reset (…)`),
-`alter sequence`, `alter function`, `alter extension`; `grant`, `revoke`; transactions; `set`,
+`alter sequence`, `alter function`, `alter extension`, `alter type` (values, rename, owner,
+schema); `drop type`; `lock table`; `explain [analyze] [verbose]`; `grant`, `revoke`; transactions; `set`,
 `reset`; `comment on`; `call`; `do`; psql meta-commands. Constraints take their attributes (`[not]
 deferrable`, `initially deferred`, `not valid`, …). Expressions: literals, strings with
 continuations, dollar-quoted strings, string casts, parameters (`$1`, `?`, `:name`), casts, `case`, `exists`, `in`,
 `like`, `between`, `is` forms, `collate`, arrays, `interval`, subscripts, window functions (`over`
 a name or a specification: `partition by`, `order by`, `rows`/`range`/`groups` frames), `filter`, an
-aggregate's `distinct` and `order by`, `extract(unit from …)`.
+aggregate's `distinct` and `order by`, `extract(unit from …)`, `is [not] distinct from`, `at time
+zone`, `[not] similar to`, subscripts and slices, bit and hex strings. Columns: generated and
+identity columns; index fields with operator classes and `nulls first | last`; `update … set (a, b)
+= …`.
 
 pg_dump's output (a Rails `db/structure.sql`: `set` lines, extensions, tables with `character
 varying` and `timestamp(6) without time zone`, sequences and `owned by`, `alter table only … alter
@@ -138,10 +143,12 @@ A file is refused where the lean parser does not read the construct exactly:
 
 - any syntax error;
 - the statements not listed above: `create operator`, `operator class` and `family`, `aggregate`,
-  `foreign data wrapper`, `transform`, `access method`, `domain`; `alter operator`, `alter role`,
-  `alter index`; `copy`, `load`, `prepare`, `execute`, `explain`, `merge`, `vacuum`;
-- the clauses not listed above: a table's `partition by` and `inherits`, `tablesample`, index hints, nested joins in parentheses, `exclude` frames, `is json`, `escape`, a parenthesized
-  index field;
+  `foreign data wrapper`, `transform`, `access method`; `alter operator`, `alter role`,
+  `alter index`; `copy`, `load`, `prepare`, `execute`, `explain (…)` with options in parentheses, `merge`,
+  `vacuum`;
+- the clauses not listed above: a table's `partition by` and `inherits`, `tablesample`, index hints,
+  nested joins in parentheses, `exclude` frames, `is json`, `escape`, a parenthesized index field,
+  an operator class's parameters, identity options;
 - forms of other dialects that tree-sitter-sql reads (backticks, `!`, Delta and Spark SQL);
 - bytes that are not UTF-8;
 - quoted parameters (`:'name'`, psql's).
@@ -158,7 +165,7 @@ tree-sitter's, line by line, over the 600 files:
 
 | | same | differ | refused |
 |---|---|---|---|
-| clean texts (224) | 124 | 0 | 100 |
+| clean texts (224) | 128 | 0 | 96 |
 | texts with errors (376) | — | 0 | 376 |
 
 **Hand-written files** (scratch, not in the repository; their forms are in the engine test below):

@@ -106,7 +106,22 @@ impl P<'_> {
                         if prec::SUBSCRIPT < min {
                             break;
                         }
-                        return self.refuse();
+                        // `x[i]`, `x[i:j]`: `subscript`.
+                        self.a.set_field(self.a.stack[m], f::EXPRESSION);
+                        self.expect_punct(b"[", K::TLBracket)?;
+                        let i = self.expr(0, 0)?;
+                        let c = self.peek()?;
+                        if !(c.t == T::Punct && self.byte(c.s) == b':' && self.byte(c.s + 1) != b':') {
+                            self.a.set_field(i, f::SUBSCRIPT);
+                        } else {
+                            self.a.set_field(i, f::LOWER);
+                            self.take(Tok { e: c.s + 1, ..c });
+                            self.a.leaf(K::TColon, 0, c.s, c.s + 1);
+                            self.expr(0, f::UPPER)?;
+                        }
+                        self.expect_punct(b"]", K::TRBracket)?;
+                        self.a.node(K::Subscript, m);
+                        continue;
                     }
                     if matches!(c, b'(' | b')' | b',' | b';' | b']' | b'.' | b'{' | b'}') {
                         break;
@@ -188,6 +203,34 @@ impl P<'_> {
                         }
                         self.a.node(K::CollateExpression, m);
                         continue;
+                    } else if has(K::KeywordAt) && self.next_is(K::KeywordTime)? {
+                        if prec::AT_TIME_ZONE < min {
+                            break;
+                        }
+                        // `x at time zone y`: `at_time_zone`, a binary expression.
+                        self.a.set_field(self.a.stack[m], f::LEFT);
+                        let n = self.a.mark();
+                        self.expect(K::KeywordAt)?;
+                        self.expect(K::KeywordTime)?;
+                        self.expect(K::KeywordZone)?;
+                        let id = self.a.node(K::AtTimeZone, n);
+                        self.a.set_field(id, f::OPERATOR);
+                        self.expr(prec::AT_TIME_ZONE + 1, f::RIGHT)?;
+                        self.a.node(K::BinaryExpression, m);
+                        continue;
+                    } else if has(K::KeywordSimilar) && self.next_is(K::KeywordTo)? {
+                        if prec::PATTERN < min {
+                            break;
+                        }
+                        // `x similar to y`.
+                        self.a.set_field(self.a.stack[m], f::LEFT);
+                        let n = self.a.mark();
+                        self.expect(K::KeywordSimilar)?;
+                        self.expect(K::KeywordTo)?;
+                        let id = self.a.node(K::SimilarTo, n);
+                        self.a.set_field(id, f::OPERATOR);
+                        self.like_tail(m)?;
+                        continue;
                     } else if has(K::KeywordAt) || has(K::KeywordIsnull) || has(K::KeywordNotnull) || has(K::KeywordSimilar) {
                         return self.refuse();
                     } else {
@@ -250,7 +293,7 @@ impl P<'_> {
                             } else if nx(K::KeywordBetween) {
                                 prec::BETWEEN
                             } else if nx(K::KeywordSimilar) {
-                                return self.refuse();
+                                prec::PATTERN
                             } else {
                                 // No operator starts so: the expression ends (`default 0 not null`).
                                 break;
@@ -272,6 +315,14 @@ impl P<'_> {
                                 self.expect(K::KeywordNot)?;
                                 self.expect(K::KeywordLike)?;
                                 let id = self.a.node(K::NotLike, n);
+                                self.a.set_field(id, f::OPERATOR);
+                                self.like_tail(m)?;
+                            } else if nx(K::KeywordSimilar) {
+                                let n = self.a.mark();
+                                self.expect(K::KeywordNot)?;
+                                self.expect(K::KeywordSimilar)?;
+                                self.expect(K::KeywordTo)?;
+                                let id = self.a.node(K::NotSimilarTo, n);
                                 self.a.set_field(id, f::OPERATOR);
                                 self.like_tail(m)?;
                             } else {
@@ -307,6 +358,9 @@ impl P<'_> {
                 self.expect(K::KeywordFrom)?;
                 let id = self.a.node(K::NotDistinctFrom, n);
                 self.a.set_field(id, f::OPERATOR);
+                self.expr(prec::IS + 1, f::RIGHT)?;
+                self.a.node(K::BinaryExpression, m);
+                return Ok(());
             } else {
                 let id = self.a.node(K::IsNot, n);
                 self.a.set_field(id, f::OPERATOR);
@@ -318,6 +372,9 @@ impl P<'_> {
             self.expect(K::KeywordFrom)?;
             let id = self.a.node(K::DistinctFrom, n);
             self.a.set_field(id, f::OPERATOR);
+            self.expr(prec::IS + 1, f::RIGHT)?;
+            self.a.node(K::BinaryExpression, m);
+            return Ok(());
         } else if nx(K::KeywordNull) || nx(K::KeywordTrue) || nx(K::KeywordFalse) {
             self.kw_field(K::KeywordIs, f::OPERATOR)?;
         } else {
@@ -380,6 +437,14 @@ impl P<'_> {
             T::EStr => {
                 self.take(t);
                 self.a.leaf(K::Literal, 0, t.s, t.e);
+            }
+            T::Bits => {
+                self.take(t);
+                self.a.leaf(K::Literal, 0, t.s, t.e);
+                // `_bit_string`'s continuations (`B'01' '10'`) are refused.
+                if self.peek()?.t == T::Str {
+                    return self.refuse();
+                }
             }
             T::Dollar => {
                 let e = self.dollar_end(t.s)?;

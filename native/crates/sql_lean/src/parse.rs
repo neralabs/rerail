@@ -71,6 +71,8 @@ enum T {
     Str,
     /// `E'…'`: an escape string.
     EStr,
+    /// `B'…'`, `X'…'`: a bit or hex string (`_bit_string`).
+    Bits,
     /// `$tag$…$tag$`.
     Dollar,
     /// A number: an integer or a decimal one.
@@ -119,6 +121,7 @@ mod prec {
     pub const EXP: u8 = 13;
     pub const NOT: u8 = 14;
     pub const IS: u8 = 15;
+    pub const AT_TIME_ZONE: u8 = 16;
     pub const COLLATE: u8 = 17;
     pub const MINUS: u8 = 19;
     pub const SUBSCRIPT: u8 = 20;
@@ -543,6 +546,7 @@ impl<'s> P<'s> {
                 match c | 0x20 {
                     b'n' => tok(T::Str, self.quoted_end(e)?),
                     b'e' => tok(T::EStr, self.escape_end(e)?),
+                    b'b' | b'x' => tok(T::Bits, self.quoted_end(e)?),
                     _ => return self.refuse(),
                 }
             } else if self.byte(e) == b'&' && (c | 0x20) == b'u' && e - s == 1 {
