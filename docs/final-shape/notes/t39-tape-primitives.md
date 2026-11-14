@@ -280,6 +280,66 @@ The rightmost path ends with the file, so its few ends are read singly. Every an
   range min-max tree (step 4), or a sweep over the parentheses closing nodes as it goes, is needed
   before BE can serve `text` in bulk.
 
+### Step 4: BE, in bulk and at a point
+
+- **Sampled select was in already.** `Ef::get` reads a sample every 64 values.
+- **A top level of the range min-max tree would serve almost no search.** The second level
+  covers 2,048 positions, about 1,000 nodes, and files average 2,100–3,400 nodes. Close searches
+  that cross two or more second-level groups are 0.02% (sqlite), 0.07% (data-layer) of nodes,
+  5–9 groups each on average (474 at most, in a file of 486,000 nodes). So it is not built. BE's
+  point climb costs 2× XF's (data-layer: 266 against 131 ns) because of the near search inside each
+  step, which a tree above would not touch.
+- **Spans in bulk need no search at all.** One pass over the parentheses: an open pushes its node,
+  a close pops it, and BE's ends are Elias–Fano in postorder, so the k-th close takes the next
+  value of an in-order cursor over the ends. Starts come from a cursor over the starts. Every
+  answer is right.
+
+| span, every node, ns a node (M5, under load) | XF | MF | BE |
+|---|---|---|---|
+| a read a node | 3.1 | 6.5 | 26.2 |
+| **a block at a time (BE: the parenthesis pass)** | **1.7** | **3.2** | **5.0** |
+
+### Step 5: the bulk primitives on Metal (M3 Max, quiet)
+
+`tape16 prim-gpu <capture>` runs the kernels (`src/prim_gpu.rs`). They read each candidate's
+one-buffer image in place, with one thread a group of 64 nodes by preorder rank, on one language's
+files as one forest:
+
+- **match:** the group's 64-bit mask of S-nodes.
+- **nearest and outermost on XF and MF:** the thread climbs from its group's first node to the
+  S-ancestors open there (its carry), then sweeps its 64 nodes with that stack.
+- **nearest on BE:** a scan with block carries, since BE's climb is a search a level.
+  - Each group walks its parentheses from its first open, found by a select over the rank
+    directory. Its walk is a stack transformer: the lowest level it reaches, its net change, and
+    the S-nodes still open at its end.
+  - The transformers compose up and down a 64-ary tree, so each group gets the S-nodes open at its
+    start, and answers the nodes it could not answer alone.
+  - `outermost` follows each answer's chain of S-nodes.
+- **has:** from each S-node, a climb that sets each ancestor's flag by an atomic exchange and stops
+  at a flag already set, so the work is the number of nodes marked.
+
+Every answer is right on all three corpora. ns a node, including the match. GPU runs vary by
+about 2× between clock states (the match alone reads 0.021 or 0.056), so these are typical values
+of single runs. CPU is one thread, from the S-nodes.
+
+| data-layer Python (2.47M nodes) | GPU nearest | GPU has | CPU nearest | CPU has |
+|---|---|---|---|---|
+| XF, fn / call / string | 0.05–0.12 / 0.06 / 0.05 | 0.10 / 0.16 / 0.16 | 0.68 / 1.77 / 1.16 | 0.57 / 2.00 / 1.80 |
+| MF | the same as XF | the same | the same | the same |
+| BE, scan | 0.24 / 0.22 / 0.17 | 0.49 / 0.85 / 0.69 | 1.03 / 2.86 / 1.54 | 1.94 / 4.75 / 3.96 |
+| BE, carry by climbing (the first form) | 2.46 | | | |
+
+rerail (Rust, 1.41M nodes): XF and MF nearest 0.06–0.13, BE's scan 0.19–0.35, BE climbing 3.05.
+sqlite (0.47M nodes) is too small to fill the GPU: XF 0.11–0.15 there.
+
+- **On the GPU, the bulk axes cost 0.05–0.13 ns a node on XF and MF:** 5–30× one CPU thread.
+- **BE's scan is 10× its climbing carry,** and 2–4× XF. BE's `has` still climbs with a search a
+  level (0.3–0.85). The same scan would serve it: a node has one if an S-node opens before the
+  walk's level falls below the node's.
+- **Every kernel reads the tape in place.** The only other buffers are the match masks (one bit a
+  node), the scan's summaries (144 bytes a group of 64, about 2.3 B a node, freed after) and the
+  answers.
+
 ## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
@@ -356,8 +416,9 @@ In order. Each step is measured on all three corpora, every answer checked.
    - ~~Narrower codes a block~~: saves 0.08–0.13 B a node (2–3%) and breaks the one-width sweep;
      dropped.
    - Done: spans a block at a time (MF's end 12.7 → 6.1 ns a node, XF 5.8 → 3.3).
-4. **BE.** A two-level range min-max tree for `findclose` and `enclose` (Navarro–Sadakane), and
-   Elias–Fano select by sampling.
-5. **Metal.** The bulk primitives as kernels: the stack sweep as a scan over each block's depths,
-   with carries between blocks.
+4. **BE.** Done: spans by one pass over the parentheses (26 → 5 ns a node). Sampled select was in
+   already. A top level of the range min-max tree was priced from the searches it would serve
+   (0.02–0.07% of nodes) and is not built.
+5. **Metal.** Done: match, nearest, outermost and has as kernels on XF, MF and BE, with BE's carry
+   as a scan (0.05–0.35 ns a node). Open: BE's `has` by the same scan, and spans on the GPU.
 6. **Rerun everything on the seven machines** (t38 sections 5 and 6).

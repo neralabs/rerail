@@ -682,6 +682,19 @@ pub trait Pos: Sized + Image {
     fn scan_block(&self, _b: usize, _f: impl FnMut(usize, u64, u64)) -> bool {
         false
     }
+    /// Start in preorder and end in postorder, both Elias–Fano (BE): a sweep reads both in order.
+    fn ef_parts(&self) -> Option<(&Ef, &Ef)> {
+        None
+    }
+    /// All n nodes in order, `f(i, start, x)` as `scan_block` gives them; false if the form has no reader in order.
+    fn scan_all(&self, n: usize, mut f: impl FnMut(usize, u64, u64)) -> bool {
+        for b in 0..n.div_ceil(BLOCK) {
+            if !self.scan_block(b, |j, s, x| f(b * BLOCK + j, s, x)) {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 /// Start by frame of reference a block at a time, end as a length.
@@ -858,6 +871,17 @@ impl Pos for EfGap {
         let z = self.gap.get(r);
         Some((next_start as i64 - (((z >> 1) as i64) ^ -((z & 1) as i64))) as u64)
     }
+    const GAP_END: bool = true;
+    fn scan_all(&self, n: usize, mut f: impl FnMut(usize, u64, u64)) -> bool {
+        let mut gb = self.gap.block(0);
+        self.start.for_each(n, |i, v| {
+            if i % BLOCK == 0 {
+                gb = self.gap.block(i / BLOCK);
+            }
+            f(i, v, gb.get(i % BLOCK));
+        });
+        true
+    }
 }
 
 /// Start by Elias–Fano in preorder, end by Elias–Fano in postorder (ends never decrease there).
@@ -906,6 +930,9 @@ impl Pos for EfEf {
     #[inline(always)]
     fn end(&self, _: usize, _: impl FnOnce() -> usize, post: impl FnOnce() -> usize) -> u64 {
         self.end.get(post())
+    }
+    fn ef_parts(&self) -> Option<(&Ef, &Ef)> {
+        Some((&self.start, &self.end))
     }
 }
 
@@ -977,6 +1004,30 @@ pub struct Ef {
 
 pub const EF_SAMPLE: usize = 64;
 
+pub struct EfCursor<'a> {
+    ef: &'a Ef,
+    w: usize,
+    word: u64,
+    i: usize,
+}
+
+impl EfCursor<'_> {
+    /// The next value (the caller asks no more than the list holds).
+    #[inline(always)]
+    pub fn next(&mut self) -> u64 {
+        while self.word == 0 {
+            self.w += 1;
+            // SAFETY: the list holds another value, so another one bit lies ahead.
+            self.word = unsafe { *self.ef.high.get_unchecked(self.w) };
+        }
+        let p = self.w * 64 + self.word.trailing_zeros() as usize;
+        self.word &= self.word - 1;
+        let v = (((p - self.i) as u64) << self.ef.l) | self.ef.low.get(self.i);
+        self.i += 1;
+        v
+    }
+}
+
 static SELECT8: std::sync::LazyLock<[[u8; 8]; 256]> = std::sync::LazyLock::new(|| {
     let mut t = [[8u8; 8]; 256];
     for b in 0..256usize {
@@ -1046,6 +1097,27 @@ impl Ef {
         Ef { l, low: Packed::new_width(&low, l), high, samples }
     }
     #[inline(always)]
+    /// The values from the first, one at a time: the cursor's word of high bits, its ones taken by trailing
+/// zeros.
+    pub fn cursor(&self) -> EfCursor<'_> {
+        EfCursor { ef: self, w: 0, word: self.high[0], i: 0 }
+    }
+    /// The first n values in order: the high bits' ones walked a word at a time, each low part read in place.
+    pub fn for_each(&self, n: usize, mut f: impl FnMut(usize, u64)) {
+        let mut i = 0usize;
+        for (w, &h) in self.high.iter().enumerate() {
+            let mut word = h;
+            while word != 0 && i < n {
+                let p = w * 64 + word.trailing_zeros() as usize;
+                f(i, (((p - i) as u64) << self.l) | self.low.get(i));
+                i += 1;
+                word &= word - 1;
+            }
+            if i >= n {
+                break;
+            }
+        }
+    }
     pub fn get(&self, i: usize) -> u64 {
         // The (i % EF_SAMPLE)-th one after the sampled one: four words' counts at once, the word chosen by
         // comparisons (no branch), a loop only when the one lies further (a long gap in the values).
@@ -1835,6 +1907,62 @@ impl<P: Pos> Reader for B<P> {
     #[inline(always)]
     fn code_by_rank(&self, r: usize) -> u32 {
         self.code.get(r) as u32
+    }
+    /// Starts in order, then one pass over the parentheses: an open pushes its node, a close pops it, and its
+    /// end is the start of the next node to open (in the answer already) less its gap. No close is searched.
+    fn spans_bulk(&self, out: &mut Vec<(u64, u64)>) -> bool {
+        let n = self.len();
+        if let Some((st, en)) = self.pos.ef_parts() {
+            // Ends in postorder: the k-th close is the k-th end.
+            out.clear();
+            out.resize(n, (0, 0));
+            st.for_each(n, |i, v| out[i].0 = v);
+            let mut ends = en.cursor();
+            let mut stack: Vec<u32> = Vec::with_capacity(64);
+            let mut r = 0u32;
+            for (w, &word) in self.bits.iter().enumerate().take(self.nbits.div_ceil(64)) {
+                for k in 0..(self.nbits - w * 64).min(64) {
+                    if word >> k & 1 == 1 {
+                        stack.push(r);
+                        r += 1;
+                    } else {
+                        let q = stack.pop().unwrap();
+                        out[q as usize].1 = ends.next();
+                    }
+                }
+            }
+            return true;
+        }
+        if !P::GAP_END {
+            return false;
+        }
+        out.clear();
+        out.resize(n, (0, 0));
+        {
+            let o = out.as_mut_ptr();
+            // SAFETY: i < n.
+            if !self.pos.scan_all(n, |i, s, z| unsafe { *o.add(i) = (s, z) }) {
+                return false;
+            }
+        }
+        let mut stack: Vec<(u32, u32)> = Vec::with_capacity(64);
+        let mut r = 0u32;
+        for (w, &word) in self.bits.iter().enumerate().take(self.nbits.div_ceil(64)) {
+            let m = (self.nbits - w * 64).min(64);
+            for k in 0..m {
+                if word >> k & 1 == 1 {
+                    stack.push((r, (w * 64 + k) as u32));
+                    r += 1;
+                } else {
+                    let (q, p) = stack.pop().unwrap();
+                    let z = out[q as usize].1;
+                    let d = ((z >> 1) as i64) ^ -((z & 1) as i64);
+                    // The rightmost path ends with the file: its few ends are read as single ones.
+                    out[q as usize].1 = if (r as usize) < n { (out[r as usize].0 as i64 - d) as u64 } else { self.end(p as usize) };
+                }
+            }
+        }
+        true
     }
     #[inline(always)]
     fn end_from_next_start(&self, id: usize, next_start: u64) -> Option<u64> {

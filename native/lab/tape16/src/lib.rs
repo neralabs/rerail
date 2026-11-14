@@ -38,6 +38,8 @@ pub mod gpu;
 #[cfg(target_os = "macos")]
 pub mod inplace_gpu;
 #[cfg(target_os = "macos")]
+pub mod prim_gpu;
+#[cfg(target_os = "macos")]
 pub mod scan;
 #[cfg(target_os = "macos")]
 pub mod columns;

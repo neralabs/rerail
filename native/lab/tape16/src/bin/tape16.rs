@@ -1279,6 +1279,42 @@ fn cmd_inplace(path: &str, f11: bool) {
 
 /// E10 on Metal: the corpus as one forest, each candidate's image in one buffer, every question a kernel.
 #[cfg(target_os = "macos")]
+fn cmd_prim_gpu(path: &str) {
+    use rerail_tape_lab::inplace::{Codes, forest};
+    use rerail_tape_lab::prim::{Names, SETS};
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    // One language (the one with the most nodes), its files as one forest.
+    let trees: Vec<_> = files.iter().map(|f| (f.tag, rerail_tape_lab::v15::read(&f.image).unwrap_or_else(|e| die(&e)))).collect();
+    let mut by_tag: BTreeMap<u8, usize> = BTreeMap::new();
+    for (tag, t) in &trees {
+        *by_tag.entry(*tag).or_default() += t.len();
+    }
+    // The largest language that has functions (a data format has none of the sets but strings).
+    let names = Names::load();
+    let tag = *by_tag.iter().filter(|e| !names.kind_ids(*e.0, SETS[0].1).is_empty()).max_by_key(|e| e.1).unwrap().0;
+    let mine: Vec<_> = trees.into_iter().filter(|e| e.0 == tag).map(|e| e.1).collect();
+    let nfiles = mine.len();
+    let tree = forest(&mine);
+    drop(mine);
+    let mut codes = Codes::default();
+    codes.learn(&tree);
+    let n = tree.len();
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    println!("{path}: language {tag}, {nfiles} files as one forest, {n} nodes; GPU: one thread a group of 64 nodes, best of 8 warm dispatches; CPU: one thread, from the S-nodes, best of 3\n");
+    println!("| ns a node | set | share | wrong | GPU match | GPU nearest (with match) | GPU outermost | GPU has | BE nearest, carry by climbing | CPU nearest | CPU outermost | CPU has |");
+    println!("|---|---|---|---|---|---|---|---|---|---|---|---|");
+    for (s, kinds) in SETS {
+        let set = names.set(tag, &codes, kinds);
+        let share = tree.nodes.iter().filter(|x| set[codes.ids[&(x.kind, x.field, x.flags, x.classes.clone())] as usize]).count() as f64 / n as f64;
+        let rows = rerail_tape_lab::prim_gpu::all(&tree, &codes, &set).unwrap_or_else(|e| die(&e));
+        for (name, r, c) in rows {
+            println!("| {name} | {s} | {:.2}% | {} | {:.3} | {:.3} | {:.3} | {:.3} | {} | {:.2} | {:.2} | {:.2} |", 100.0 * share, r.wrong, r.ns[0], r.ns[1], r.ns[2], r.ns[3],
+                r.no_carry.map_or(String::new(), |v| format!("{v:.3}")), c[0], c[1], c[2]);
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn cmd_inplace_gpu(path: &str) {
     use rerail_tape_lab::inplace::{Codes, forest};
     let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
@@ -1351,6 +1387,9 @@ fn cmd_prim(path: &str) {
     let mut line_bytes = 0usize;
     // Codes' bits: the file's one width, and a table of each block's distinct codes (blocks of 64, 256, 1,024).
     let mut code_bits = [0usize; 4];
+    // BE's close searches: nodes whose close lies 2 or more second-level groups (2,048 positions) past the
+    // open, the groups so crossed, the most in one search, and the largest file.
+    let (mut far, mut far_groups, mut far_max, mut biggest) = (0usize, 0usize, 0usize, 0usize);
     let (mut nodes, mut files) = (0usize, 0usize);
     // Sets' share of nodes, for the table.
     let mut share = vec![0usize; SETS.len()];
@@ -1506,6 +1545,23 @@ fn cmd_prim(path: &str) {
         }
         let lines = prim::Lines::new(&f.source);
         line_bytes += lines.bytes();
+        {
+            let mut depth = vec![0usize; n];
+            for i in 1..n {
+                depth[i] = depth[tree.parent[i] as usize] + 1;
+            }
+            for i in 0..n {
+                let open = 2 * i - depth[i];
+                let close = open + 2 * tree.size[i] as usize - 1;
+                let g = (close >> 11) - (open >> 11);
+                if g >= 2 {
+                    far += 1;
+                    far_groups += g;
+                    far_max = far_max.max(g);
+                }
+            }
+            biggest = biggest.max(n);
+        }
         let wf = (32 - code.iter().max().unwrap().leading_zeros()).max(1) as usize;
         code_bits[0] += n * wf + 8;
         for (q, b) in [64usize, 256, 1024].into_iter().enumerate() {
@@ -1541,6 +1597,8 @@ fn cmd_prim(path: &str) {
     println!("{path}: {files} files, {nodes} nodes; sets' share of nodes: {}\n", SETS.iter().zip(&share).map(|((s, _), &k)| format!("{s} {:.2}%", 100.0 * k as f64 / nodes as f64)).collect::<Vec<_>>().join(", "));
     println!("\ncodes, bytes a node: one width a file {:.3}; a table a block of 64 {:.3}, of 256 {:.3}, of 1,024 {:.3}.\n",
         code_bits[0] as f64 / 8.0 / nodes as f64, code_bits[1] as f64 / 8.0 / nodes as f64, code_bits[2] as f64 / 8.0 / nodes as f64, code_bits[3] as f64 / 8.0 / nodes as f64);
+    println!("BE close searches crossing 2 or more second-level groups: {:.3}% of nodes, {:.1} groups each on average, at most {far_max}; the largest file {biggest} nodes.\n",
+        100.0 * far as f64 / nodes as f64, far_groups as f64 / far.max(1) as f64);
     println!("| ns a node (every node) or a call (one node, 1 in 16 at random; F15 1 in 1,024); instructions | {} |", C.join(" | "));
     println!("|---|{}", "---|".repeat(C.len()));
     println!("| answers wrong | {} |", wrong.iter().map(|w| w.to_string()).collect::<Vec<_>>().join(" | "));
@@ -1585,6 +1643,8 @@ fn main() {
         "prim" => cmd_prim(path),
         #[cfg(target_os = "macos")]
         "inplace-gpu" => cmd_inplace_gpu(path),
+        #[cfg(target_os = "macos")]
+        "prim-gpu" => cmd_prim_gpu(path),
         "base" => cmd_base(path, args.iter().position(|a| a == "--dump").map(|i| args[i + 1].as_str())),
         #[cfg(target_os = "macos")]
         "columns" => {
