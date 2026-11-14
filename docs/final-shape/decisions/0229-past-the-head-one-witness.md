@@ -58,4 +58,6 @@ looked alike, since each walked all of a document's nodes. The planner then star
 - Tests:
   - `atoms::tests::pending_atoms_are_written_in_segments_of_bounded_size` (a segment never past its write's end);
   - the logic crate's `native::` and `corpus::` tests;
-  - the engine's `plan::tests`. `dot_of_the_empty_name_is_the_name` fails there as it did before this change.
+  - the engine's `plan::tests` (60). `dot_of_the_empty_name_is_the_name` had failed before this change: its two runs
+    shared a store, so the second found the first's strata kept and the native set engine solved nothing. Each run
+    now has a store of its own (`run_both`).
