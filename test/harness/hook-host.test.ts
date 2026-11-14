@@ -1067,7 +1067,17 @@ function generatedTrees(root: string): Array<[string, string]> {
   return folders;
 }
 
+/** The Git variables the test setup sets (`setup-rerail-home.ts`); a shell's others reach no test of the start check. */
+const TEST_SETUP_GIT_VARIABLES = new Set(["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"]);
+
 describe("the hook start check", () => {
+  beforeEach(() => {
+    // A shell that runs the tests with its own GIT_DIR, GIT_TRACE or other Git variable would send the tests' Git and
+    // the hook's elsewhere.
+    for (const name of Object.keys(process.env)) {
+      if (name.toUpperCase().startsWith("GIT_") && !TEST_SETUP_GIT_VARIABLES.has(name.toUpperCase())) vi.stubEnv(name, undefined);
+    }
+  });
   afterEach(() => {
     vi.doUnmock("../../src/engine/git.js");
     vi.doUnmock("../../src/runtime/repository-start.js");
