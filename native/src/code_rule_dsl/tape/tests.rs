@@ -2510,15 +2510,42 @@ pub(crate) fn python_tape_text(image: &TapeImage, grammar: &Grammar, source: &st
 /// `RERAIL_PY_FILES` (a list of paths), its tape as `python_tape_plain` writes it, to
 /// `RERAIL_PY_OUT/<n>.txt` (the path on the first line; then an `ERROR` line where
 /// tree-sitter-python's tree has an error).
+/// The tokens the tapes of JavaScript, TypeScript and TSX leave out, per kind (the automata's
+/// `implied_tokens`): `rerail-ecma-lean`'s `gen_kinds.py` reads them into its tables, so the lean
+/// parser stores the tokens the tape does, by the grammar, not by hand.
+#[test]
+#[ignore = "writes the ECMAScript grammars' implied tokens to RERAIL_ECMA_IMPLIED"]
+fn ecma_implied_tokens() {
+    let out = std::env::var("RERAIL_ECMA_IMPLIED").expect("set RERAIL_ECMA_IMPLIED");
+    let mut text = String::new();
+    for (name, dialect) in [("javascript", GrammarDialect::JavaScript), ("typescript", GrammarDialect::TypeScript), ("tsx", GrammarDialect::Tsx)] {
+        let grammar = tokens::TokenGrammar::of_dialect(dialect).expect("a token grammar");
+        for (kind, dropped) in grammar.implied_tokens() {
+            for (token, field) in dropped {
+                text.push_str(&format!("{name}\t{kind}\t{token}\t{field}\n"));
+            }
+        }
+    }
+    std::fs::write(out, text).unwrap();
+}
+
 #[test]
 #[ignore = "writes the oracle's expected tapes; needs RERAIL_PY_FILES and RERAIL_PY_OUT"]
 fn python_tape_expect() {
     let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
     let out = std::path::PathBuf::from(std::env::var("RERAIL_PY_OUT").expect("set RERAIL_PY_OUT"));
     std::fs::create_dir_all(&out).unwrap();
-    let grammar = Grammar::new(GrammarDialect::Python).unwrap();
+    // With `RERAIL_PY_DIALECT` (`javascript`, `typescript`, `tsx`), another dialect's tapes, for the
+    // lean ECMAScript parser's oracle (`rerail-ecma-lean`).
+    let dialect = match std::env::var("RERAIL_PY_DIALECT").as_deref() {
+        Ok("javascript") => GrammarDialect::JavaScript,
+        Ok("typescript") => GrammarDialect::TypeScript,
+        Ok("tsx") => GrammarDialect::Tsx,
+        _ => GrammarDialect::Python,
+    };
+    let grammar = Grammar::new(dialect).unwrap();
     let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&GrammarDialect::Python.get_ts_language()).unwrap();
+    parser.set_language(&dialect.get_ts_language()).unwrap();
     // With `RERAIL_PY_CUTS=k`, also each file cut at `k` places, as a file is while it is written:
     // `<n>-<j>.txt`, the path and the cut on the first line, and an `ERROR` line before the tape
     // where tree-sitter-python's tree has an error.
@@ -2639,6 +2666,8 @@ fn python_tapes_from_the_lean_parser_are_tree_sitters() {
         "with a as _:\n    _ =\n    b = 1\n",
         "class A:\n    col:\n    message: str\n",
         "def f(x: a: b): pass\n",
+        // `:=` after a string is a format specifier.
+        "print(f\"{' a ':=^8}\")\n",
     ] {
         let ours = python_lean::encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
         let tree = parser.parse(source, None).unwrap();
@@ -2646,10 +2675,17 @@ fn python_tapes_from_the_lean_parser_are_tree_sitters() {
         let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary;
         assert!(ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(), "the tapes of {source:?} differ:\n{}\n{}", python_tape_plain(&ours, &grammar), python_tape_plain(&theirs, &grammar));
     }
-    // A text that ends in a statement (a file being written): refused, as every file with a syntax
-    // error is, for tree-sitter-python (0163 amended: the lean parser's recovery was not tree-sitter's
-    // for `def broken(:` or a block's first statement `return (`).
-    for cut in [
+    // Any syntax error: refused, for tree-sitter-python, which recovers as it recovers. The lean
+    // parser has one behavior: tree-sitter's tape, or a refusal.
+    for invalid in [
+        "if a\n    b\n",
+        "x = 'open\n",
+        "f(a b)\n",
+        "x = (1,\ny = 2\n",
+        // tree-sitter puts in the missing `)` before the `:` and reads on (the workspace's broken revision,
+        // `tape_workspace_matches_native_after_edit_noop_and_invalid_revision`).
+        "def broken(:\n",
+        // Texts that end in a statement (a file being written).
         "x = (1,\n",
         "x = [1, 2\n",
         "def f(x):\n    return foo(a, b",
@@ -2657,25 +2693,19 @@ fn python_tapes_from_the_lean_parser_are_tree_sitters() {
         "class A:\n    def f(self):\n        return 1\n\n    x = g(y.z",
         "# c\nif x:\n    y = 1\n    # d\n    z = [a for",
         "from os.path impor",
+        // A block's first statement left open.
         "def f(scope: PlanScope):\n    return (\n",
-        // An error at a line's end where the next line's first token is one no NEWLINE-less line
-        // takes (0169 recovers its `ERROR` as the line's; refused here).
         "@p.\ndef f():\n    pass\n",
+        // After a bare name, tree-sitter's lexer reads `:=` in an interpolation: a walrus.
+        "f\"{x:=}\"\n",
     ] {
-        let tree = parser.parse(cut, None).unwrap();
-        assert!(tree.root_node().has_error(), "{cut:?} reads without an error");
-        assert!(python_lean::encode(&grammar, cut, &|| false).is_err(), "accepted {cut:?}");
-        // Through the engine's parse: tree-sitter-python's tape, its error with it.
-        let product = TapeImage::parse(&grammar, cut, &|| false).unwrap().unwrap().primary;
-        let theirs = TapeImage::encode(tree.root_node(), &grammar, cut, &|| false).unwrap().primary;
-        assert!(product.to_bytes().unwrap() == theirs.to_bytes().unwrap(), "the engine's tape of {cut:?} is not tree-sitter's");
-    }
-    // An error before the end: refused, for tree-sitter-python.
-    // `def broken(:` too: tree-sitter puts in the missing `)` before the `:` and reads on (the workspace's broken
-    // revision, `tape_workspace_matches_native_after_edit_noop_and_invalid_revision`).
-    for invalid in ["if a\n    b\n", "x = 'open\n", "f(a b)\n", "x = (1,\ny = 2\n", "def broken(:\n"] {
-        assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
+        let tree = parser.parse(invalid, None).unwrap();
+        assert!(tree.root_node().has_error(), "{invalid:?} reads without an error");
         assert!(python_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
+        // Through the engine's parse: tree-sitter-python's tape, its error with it.
+        let product = TapeImage::parse(&grammar, invalid, &|| false).unwrap().unwrap().primary;
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, invalid, &|| false).unwrap().primary;
+        assert!(product.to_bytes().unwrap() == theirs.to_bytes().unwrap(), "the engine's tape of {invalid:?} is not tree-sitter's");
     }
 }
 
@@ -2744,6 +2774,160 @@ fn python_parse_costs() {
         }
     }
     eprintln!("{} files of {all} the lean parser reads, {bytes} bytes, {nodes} nodes", files.len());
+    for ((name, _), (t, ins, cyc)) in steps.iter().zip(&best) {
+        eprintln!(
+            "{name:32} {:9.1} instructions a node, {:7.1} cycles a node, {:6.2} ns a byte, {:8.3} s",
+            *ins as f64 / nodes as f64,
+            *cyc as f64 / nodes as f64,
+            t * 1e9 / bytes as f64,
+            t
+        );
+    }
+}
+
+/// JavaScript's, TypeScript's and TSX's tapes from the lean parser (the product's parser for the
+/// three, decision 0184) are tree-sitter's, byte for byte, on hand-written cases; a text tree-sitter
+/// reads with an error the lean parser refuses (its file goes to tree-sitter). The corpus comparison
+/// is `rerail-ecma-lean`'s `oracle`.
+#[test]
+fn ecma_tapes_from_the_lean_parser_are_tree_sitters() {
+    use crate::code_rule_dsl::tape::ecma_lean;
+    use rerail_ecma_lean::Dialect;
+    let common = [
+        "",
+        "// only a comment\n",
+        "import a, { b as c, d } from \"e\";\nexport { f as default };\nexport * from './g';\n",
+        "const x = { a, b: [1, , 2,], ...c, [d]: e, get f() { return 1 }, async *g() {} };\n",
+        "function f(a, { b = 1 }, ...c) {\n  if (a) return\n  b++\n  for (const k in o) {}\n  for await (x of y);\n}\n",
+        "class A extends B { static #x = 1; get y() { return this.#x } static { z() } }\n",
+        "label: while (a) { try { break label } catch { } finally { continue } }\n",
+        "x = a ? b : c ?? d || e && f | g ^ h & i == j < k << l + m * n ** o\n",
+        "let s = `a${b}c` + tag`d` + /re[/]g/.source; a = b\n(c)\n",
+        "x = async (a) => { await a }\ny = a => a?.b?.[c]?.(d)\n",
+        "a\n++b\nreturn\n",
+    ];
+    let jsx = ["const e = <A.B c=\"d\" {...e} f={1}>text &amp; {g}<h:i /><></></A.B>;\n"];
+    let ts = [
+        "let x: A | B & C[] = y as const;\nlet z = <T>w;\n",
+        "interface I<T extends U = V> extends J { a?: number; readonly b: string; (x: T): void; new (): I<T>; [k: string]: any }\n",
+        "type T<K> = { [P in keyof K]-?: K[P] } & (() => void) | typeof import('./a').B;\n",
+        "abstract class A<T> extends B<T> implements C { private readonly x!: T; abstract m(): void; constructor(public y?: number) { super() } }\n",
+        "enum E { A = 1, B, }\nconst enum F {}\ndeclare module 'm' { export function f(): void; }\nnamespace N.M { }\n",
+        "function f<T>(this: Window, a?: T, ...b: T[]): a is T;\nfunction f() {}\nexport = f;\n",
+        "const g = f<string>(x)!.y satisfies Z;\nimport q = require('q');\nimport type { R } from 'r' with { type: 'json' };\n",
+    ];
+    let tsx = ["const C = <T,>(p: T) => <Table<T> rows={p} />;\n"];
+    let cases: [(Dialect, Vec<&str>); 3] = [
+        (Dialect::JavaScript, common.iter().chain(&jsx).copied().collect()),
+        (Dialect::TypeScript, common.iter().chain(&ts).copied().collect()),
+        // `<T>w` is an element's start in TSX, not a type assertion.
+        (Dialect::Tsx, common.iter().chain(&ts[1..]).chain(&jsx).chain(&tsx).copied().collect()),
+    ];
+    for (dialect, sources) in cases {
+        let gd = match dialect {
+            Dialect::JavaScript => GrammarDialect::JavaScript,
+            Dialect::TypeScript => GrammarDialect::TypeScript,
+            Dialect::Tsx => GrammarDialect::Tsx,
+        };
+        let grammar = Grammar::new(gd).unwrap();
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&gd.get_ts_language()).unwrap();
+        for source in sources {
+            let ours = ecma_lean::encode(dialect, &grammar, source, &|| false).unwrap_or_else(|why| panic!("{dialect:?} refused {source:?}: {why:?}")).unwrap();
+            let tree = parser.parse(source, None).unwrap();
+            assert!(!tree.root_node().has_error(), "{dialect:?}: tree-sitter's tree of {source:?} has an error");
+            let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary;
+            assert!(
+                ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(),
+                "{dialect:?}: the tapes of {source:?} differ:\n{}\n{}",
+                python_tape_plain(&ours, &grammar),
+                python_tape_plain(&theirs, &grammar)
+            );
+        }
+        // Any syntax error: refused, for tree-sitter, which recovers as it recovers. The lean parser
+        // has one behavior: tree-sitter's tape, or a refusal.
+        for invalid in ["f(a b)\n", "x = (1,\n", "if (a {\n", "const s = 'open\n", "class A { m( }\n", "let x = [1, 2"] {
+            assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{dialect:?}: {invalid:?} reads without an error");
+            assert!(ecma_lean::encode(dialect, &grammar, invalid, &|| false).is_err(), "{dialect:?} accepted {invalid:?}");
+        }
+    }
+}
+
+/// The product reads JavaScript, TypeScript and TSX with the lean parser: a file's image through the
+/// engine's parse (`TapeImage::parse`) is the lean parser's; a file it refuses goes to tree-sitter.
+#[test]
+fn the_product_reads_ecma_with_the_lean_parser() {
+    use crate::code_rule_dsl::tape::ecma_lean;
+    use rerail_ecma_lean::Dialect;
+    for (dialect, gd, source) in [
+        (Dialect::JavaScript, GrammarDialect::JavaScript, "function f(x) {\n  return x + 1 // one\n}\n"),
+        (Dialect::TypeScript, GrammarDialect::TypeScript, "function f(x: number): number {\n  return x + 1 // one\n}\n"),
+        (Dialect::Tsx, GrammarDialect::Tsx, "const f = (x: number) => <b>{x}</b>;\n"),
+    ] {
+        let grammar = Grammar::new(gd).unwrap();
+        assert!(tree_parser(gd).is_some(), "{gd:?}'s parser is installed");
+        let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+        let lean = ecma_lean::encode(dialect, &grammar, source, &|| false).unwrap().unwrap();
+        assert_eq!(product.primary.to_bytes().unwrap(), lean.to_bytes().unwrap(), "{gd:?}");
+        // Refused (a syntax error): tree-sitter's tape, with its error.
+        let invalid = "function f( {\n";
+        assert!(ecma_lean::encode(dialect, &grammar, invalid, &|| false).is_err());
+        assert!(TapeImage::parse(&grammar, invalid, &|| false).unwrap().is_ok());
+    }
+}
+
+/// What a JavaScript, TypeScript or TSX file's tape costs, by parser: the lean parser
+/// (`tape::ecma_lean`, the product's) against tree-sitter, over `RERAIL_PY_FILES` (a list of paths)
+/// in `RERAIL_PY_DIALECT` (`javascript`, the default; `typescript`; `tsx`): instructions retired,
+/// cycles and CPU time a node, the best of three passes. Only the files both read.
+#[test]
+#[ignore = "a measurement; needs RERAIL_PY_FILES"]
+fn ecma_parse_costs() {
+    use crate::code_rule_dsl::tape::ecma_lean;
+    use rerail_ecma_lean::Dialect;
+    let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
+    let (dialect, gd) = match std::env::var("RERAIL_PY_DIALECT").as_deref() {
+        Ok("typescript") => (Dialect::TypeScript, GrammarDialect::TypeScript),
+        Ok("tsx") => (Dialect::Tsx, GrammarDialect::Tsx),
+        _ => (Dialect::JavaScript, GrammarDialect::JavaScript),
+    };
+    let grammar = Grammar::new(gd).unwrap();
+    let parser = std::cell::RefCell::new(tree_sitter::Parser::new());
+    parser.borrow_mut().set_language(&gd.get_ts_language()).unwrap();
+    let mut files: Vec<String> = list.lines().filter(|l| !l.is_empty()).filter_map(|p| std::fs::read_to_string(p).ok()).collect();
+    let all = files.len();
+    files.retain(|f| ecma_lean::encode(dialect, &grammar, f, &|| false).is_ok_and(|t| t.is_ok()));
+    let bytes: usize = files.iter().map(String::len).sum();
+    let nodes: usize = files.iter().map(|f| ecma_lean::encode(dialect, &grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let cpu = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+        ("lean: the parser's columns", Box::new(|f| rerail_ecma_lean::tape(f.as_bytes(), dialect).map_or(0, |t| t.code.len()))),
+        ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(ecma_lean::encode(dialect, &grammar, f, &|| false)).is_ok()))),
+        ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
+        ("tree-sitter: the tape", Box::new(|f| {
+            let tree = parser.borrow_mut().parse(f, None).unwrap();
+            usize::from(std::hint::black_box(TapeImage::encode(tree.root_node(), &grammar, f, &|| false)).is_ok())
+        })),
+    ];
+    let mut best = vec![(f64::MAX, u64::MAX, u64::MAX); steps.len()];
+    for _ in 0..3 {
+        for (i, (_, step)) in steps.iter().enumerate() {
+            let (i0, c0) = retired();
+            let t0 = cpu();
+            let mut n = 0;
+            files.iter().for_each(|f| n += step(f));
+            std::hint::black_box(n);
+            let (i1, c1) = retired();
+            let t = cpu() - t0;
+            best[i] = (best[i].0.min(t), best[i].1.min(i1 - i0), best[i].2.min(c1 - c0));
+        }
+    }
+    eprintln!("{dialect:?}: {} files of {all} the lean parser reads, {bytes} bytes, {nodes} nodes", files.len());
     for ((name, _), (t, ins, cyc)) in steps.iter().zip(&best) {
         eprintln!(
             "{name:32} {:9.1} instructions a node, {:7.1} cycles a node, {:6.2} ns a byte, {:8.3} s",

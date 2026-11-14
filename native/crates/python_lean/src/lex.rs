@@ -386,8 +386,10 @@ impl<'s> Lexer<'s> {
                     i += 1;
                 }
                 b' ' => {
-                    indent += 1;
-                    i += 1;
+                    // A run of spaces, a mask's step.
+                    let end = self.b.space_end(i);
+                    indent += (end - i) as u32;
+                    i = end;
                 }
                 b'\r' => {
                     if self.at(i + 1) != b'\n' {

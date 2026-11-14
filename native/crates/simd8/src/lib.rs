@@ -49,6 +49,14 @@ pub unsafe trait Simd8x64 {
     unsafe fn nonzero(a: Self::V) -> u64;
     /// Bit `i`: byte `i`'s high bit (of a compare's result: it is true).
     unsafe fn to_bitmask(a: Self::V) -> u64;
+    /// True where `a & b` is not zero (NEON's `vtst`): a class test kept as a vector, so tests
+    /// are combined before one `to_bitmask`.
+    unsafe fn test(a: Self::V, b: Self::V) -> Self::V;
+    /// True where a byte is `x` or above, unsigned.
+    unsafe fn ge(a: Self::V, x: u8) -> Self::V;
+    /// Bytes 1 to 63 of `a`, then `next`: each byte's next one (simdjson's `prev`, the other way),
+    /// for a pair of bytes tested at once.
+    unsafe fn shift_in(a: Self::V, next: u8) -> Self::V;
 
     /// Bit `i`: byte `i` is `x`.
     #[inline(always)]
@@ -131,11 +139,13 @@ pub fn best() -> Backend {
 /// gives `count_x(src, x)` on `best()`, and `count_x_on(backend, src, x)` on a given one (for
 /// tests; `None` where the CPU does not run it). The kernel must be `#[inline(always)]`: it is
 /// inlined into a function with the backend's features enabled, and its operations with it.
+/// Whether the dispatched function is inlined where it is called is the caller's: an attribute
+/// before it (`#[inline(always)]` for a loop's step, `#[inline(never)]` for a rare construct, so
+/// the loop's registers stay its own).
 #[macro_export]
 macro_rules! dispatch {
     ($(#[$m:meta])* $vis:vis fn $name:ident($($arg:ident: $ty:ty),* $(,)?) -> $ret:ty = $kernel:ident, on $on:ident;) => {
         $(#[$m])*
-        #[inline]
         $vis fn $name($($arg: $ty),*) -> $ret {
             #[cfg(target_arch = "aarch64")]
             {
@@ -242,6 +252,18 @@ mod arm64 {
         unsafe fn nonzero(a: Self::V) -> u64 {
             unsafe { Self::to_bitmask(std::array::from_fn(|i| vtstq_u8(a[i], a[i]))) }
         }
+        #[inline(always)]
+        unsafe fn test(a: Self::V, b: Self::V) -> Self::V {
+            unsafe { std::array::from_fn(|i| vtstq_u8(a[i], b[i])) }
+        }
+        #[inline(always)]
+        unsafe fn ge(a: Self::V, x: u8) -> Self::V {
+            unsafe { std::array::from_fn(|i| vcgeq_u8(a[i], vdupq_n_u8(x))) }
+        }
+        #[inline(always)]
+        unsafe fn shift_in(a: Self::V, next: u8) -> Self::V {
+            unsafe { [vextq_u8::<1>(a[0], a[1]), vextq_u8::<1>(a[1], a[2]), vextq_u8::<1>(a[2], a[3]), vextq_u8::<1>(a[3], vdupq_n_u8(next))] }
+        }
         /// simdjson's `to_bitmask`: each byte ANDed with its bit, then pairwise adds.
         #[inline(always)]
         unsafe fn to_bitmask(a: Self::V) -> u64 {
@@ -321,6 +343,31 @@ mod x86 {
         unsafe fn to_bitmask(a: Self::V) -> u64 {
             unsafe { u64::from(_mm256_movemask_epi8(a[0]) as u32) | u64::from(_mm256_movemask_epi8(a[1]) as u32) << 32 }
         }
+        /// `a & b` compared with zero, inverted.
+        #[inline(always)]
+        unsafe fn test(a: Self::V, b: Self::V) -> Self::V {
+            unsafe {
+                let (zero, ones) = (_mm256_setzero_si256(), _mm256_set1_epi8(-1));
+                std::array::from_fn(|i| _mm256_xor_si256(_mm256_cmpeq_epi8(_mm256_and_si256(a[i], b[i]), zero), ones))
+            }
+        }
+        /// As simdjson: `max(a, x) == a`.
+        #[inline(always)]
+        unsafe fn ge(a: Self::V, x: u8) -> Self::V {
+            unsafe {
+                let s = _mm256_set1_epi8(x as i8);
+                std::array::from_fn(|i| _mm256_cmpeq_epi8(_mm256_max_epu8(a[i], s), a[i]))
+            }
+        }
+        /// As simdjson's `prev`: `alignr` shifts within 16-byte lanes, so the lane after comes in
+        /// by a lane permute.
+        #[inline(always)]
+        unsafe fn shift_in(a: Self::V, next: u8) -> Self::V {
+            unsafe {
+                let after = [a[1], _mm256_set1_epi8(next as i8)];
+                std::array::from_fn(|i| _mm256_alignr_epi8::<1>(_mm256_permute2x128_si256::<0x21>(a[i], after[i]), a[i]))
+            }
+        }
     }
 
     pub struct Westmere;
@@ -375,6 +422,27 @@ mod x86 {
                 (0..4).fold(0, |m, i| m | u64::from(_mm_movemask_epi8(a[i]) as u16) << (16 * i))
             }
         }
+        #[inline(always)]
+        unsafe fn test(a: Self::V, b: Self::V) -> Self::V {
+            unsafe {
+                let (zero, ones) = (_mm_setzero_si128(), _mm_set1_epi8(-1));
+                std::array::from_fn(|i| _mm_xor_si128(_mm_cmpeq_epi8(_mm_and_si128(a[i], b[i]), zero), ones))
+            }
+        }
+        #[inline(always)]
+        unsafe fn ge(a: Self::V, x: u8) -> Self::V {
+            unsafe {
+                let s = _mm_set1_epi8(x as i8);
+                std::array::from_fn(|i| _mm_cmpeq_epi8(_mm_max_epu8(a[i], s), a[i]))
+            }
+        }
+        #[inline(always)]
+        unsafe fn shift_in(a: Self::V, next: u8) -> Self::V {
+            unsafe {
+                let n = _mm_set1_epi8(next as i8);
+                [_mm_alignr_epi8::<1>(a[1], a[0]), _mm_alignr_epi8::<1>(a[2], a[1]), _mm_alignr_epi8::<1>(a[3], a[2]), _mm_alignr_epi8::<1>(n, a[3])]
+            }
+        }
     }
 }
 
@@ -425,6 +493,18 @@ unsafe impl Simd8x64 for Fallback {
     unsafe fn to_bitmask(a: Self::V) -> u64 {
         a.iter().enumerate().fold(0, |m, (i, &b)| m | u64::from(b >> 7) << i)
     }
+    #[inline(always)]
+    unsafe fn test(a: Self::V, b: Self::V) -> Self::V {
+        std::array::from_fn(|i| if a[i] & b[i] != 0 { 0xff } else { 0 })
+    }
+    #[inline(always)]
+    unsafe fn ge(a: Self::V, x: u8) -> Self::V {
+        a.map(|b| if b >= x { 0xff } else { 0 })
+    }
+    #[inline(always)]
+    unsafe fn shift_in(a: Self::V, next: u8) -> Self::V {
+        std::array::from_fn(|i| if i < 63 { a[i + 1] } else { next })
+    }
     /// 8 bytes a word (SWAR): each equal byte's low bit, the 8 gathered into one byte by a
     /// multiply.
     #[inline(always)]
@@ -446,20 +526,28 @@ unsafe impl Simd8x64 for Fallback {
 mod tests {
     use super::*;
 
-    /// Per backend: the masks of `eq`, `classify` and `nonzero` over a block.
+    /// Per backend: the masks of `eq`, `classify`, `nonzero`, `test` and `ge` over a block.
     #[inline(always)]
-    unsafe fn masks<S: Simd8x64>(b: &[u8; 64]) -> [u64; 4] {
+    unsafe fn masks<S: Simd8x64>(b: &[u8; 64]) -> [u64; 7] {
         const LO: [u8; 16] = [1, 2, 4, 8, 16, 32, 64, 128, 3, 5, 9, 17, 33, 65, 129, 255];
         const HI: [u8; 16] = [255, 1, 2, 4, 8, 16, 32, 64, 128, 6, 10, 18, 34, 66, 130, 0];
         unsafe {
             let v = S::load(b);
             let c = S::classify(v, &LO, &HI);
-            [S::eq_mask(v, b'x'), S::nonzero(c), S::nonzero(S::and(c, S::splat(0x11))), S::to_bitmask(S::or(S::eq(v, S::splat(b'{')), S::eq(v, S::splat(0x80))))]
+            [
+                S::eq_mask(v, b'x'),
+                S::nonzero(c),
+                S::nonzero(S::and(c, S::splat(0x11))),
+                S::to_bitmask(S::or(S::eq(v, S::splat(b'{')), S::eq(v, S::splat(0x80)))),
+                S::to_bitmask(S::test(c, S::splat(0x11))),
+                S::to_bitmask(S::or(S::ge(v, 0x80), S::ge(v, 0x7b))),
+                S::eq_mask(S::shift_in(v, b'x'), b'x'),
+            ]
         }
     }
 
     dispatch! {
-        fn block_masks(b: &[u8; 64]) -> [u64; 4] = masks, on block_masks_on;
+        fn block_masks(b: &[u8; 64]) -> [u64; 7] = masks, on block_masks_on;
     }
 
     #[test]
@@ -481,6 +569,8 @@ mod tests {
                 assert_eq!(unsafe { Fallback::eq_mask(Fallback::load(&b), x) }, bytes);
             }
             let want = block_masks_on(Backend::Fallback, &b).unwrap();
+            assert_eq!(want[5], (0..64).fold(0u64, |m, i| m | u64::from(b[i] >= 0x7b) << i));
+            assert_eq!(want[6], (0..64).fold(0u64, |m, i| m | u64::from(b.get(i + 1).copied().unwrap_or(b'x') == b'x') << i));
             assert_eq!(block_masks(&b), want);
             for be in Backend::ALL {
                 if let Some(got) = block_masks_on(be, &b) {
