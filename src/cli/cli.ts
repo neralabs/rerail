@@ -38,6 +38,7 @@ import {
   parseDaemonTransport,
   parsePort,
   parsePublicHosts,
+  type ParsedArguments,
 } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import {
@@ -53,7 +54,9 @@ import {
   stopDaemon,
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
+  type DaemonLaunchOptions,
   type DaemonLookup,
+  type DaemonState,
   type PageOpening,
   type RunningDaemon,
 } from "../runtime/daemon-control.js";
@@ -227,44 +230,64 @@ function printDaemon(daemon: RunningDaemon): void {
 }
 
 async function runDaemonStartCommand(args: readonly string[], home: string): Promise<number> {
-  const { flags, options } = parseArguments(
+  const parsed = parseArguments(
     args,
     { flags: ["--dev", "--open", "--allow-remote", ...DAEMON_TRANSPORT_FLAGS], options: ["--port", "--host", "--public-host", "--workspace-root", ...DAEMON_TRANSPORT_OPTIONS] },
     argument => `Unknown daemon start option: ${argument}\n\n${usage()}`,
   );
-  const port = options.get("--port");
-  const host = options.get("--host");
-  // The folder the daemon serves and looks for Git from, when the launcher runs elsewhere (autostart runs it in the home).
-  const workspaceRoot = options.get("--workspace-root");
-  if (host !== undefined) assertHostBindable(host, flags.has("--allow-remote"));
-  const publicHosts = parsePublicHosts(options.get("--public-host"));
-  const transport = parseDaemonTransport({ flags, options }, host ?? DEFAULT_DAEMON_HOST, publicHosts);
-  const result = await startDaemon({ home, packageRoot }, {
-    dev: flags.has("--dev"),
-    ...(host === undefined ? {} : { host }),
-    ...(flags.has("--allow-remote") ? { allowRemote: true } : {}),
-    ...(publicHosts.length === 0 ? {} : { publicHosts }),
-    ...(port === undefined ? {} : { port: parsePort(port) }),
-    ...(workspaceRoot === undefined ? {} : { cwd: resolve(workspaceRoot) }),
-    ...transport,
-  });
+  const result = await startDaemon({ home, packageRoot }, daemonStartLaunch(parsed));
   if (!result.started) process.stdout.write("The Rerail daemon is already running.\n");
   printDaemon(result.daemon);
   process.stdout.write(`Logs: ${join(home, DAEMON_LOG_FILE)}\n`);
-  // The capability is shown to the person at a terminal, starting or finding the daemon; `rerail status` never
-  // prints it, and neither does a start whose output is piped, as a coding agent's shell would be: the link would
-  // land in its transcript and its provider's logs.
   const link = dashboardLink(result.daemon.state);
-  if (result.daemon.state.accessToken !== undefined) {
-    const lifetime = accessTokenKept(home, result.daemon.state)
-      ? `it is kept until you delete ${join(home, DAEMON_ACCESS_TOKEN_FILE)}`
-      : "it changes on every start";
-    process.stdout.write(process.stdout.isTTY
-      ? `Dashboard link (anyone holding it can read and change your rules; ${lifetime}): ${link}\n`
-      : "The dashboard needs its access link in a browser; rerail manage opens it, or run rerail daemon start in a terminal to see it.\n");
-  }
-  if (flags.has("--open") && !openInBrowser(link)) process.stdout.write(`${BROWSER_OFF_NOTE}\n`);
+  printDashboardLink(home, result.daemon.state, link);
+  if (parsed.flags.has("--open") && !openInBrowser(link)) process.stdout.write(`${BROWSER_OFF_NOTE}\n`);
   return 0;
+}
+
+/** What `rerail daemon start`'s flags and options launch: where the daemon binds and answers, its port and its folder. */
+function daemonStartLaunch(parsed: ParsedArguments): DaemonLaunchOptions {
+  const port = parsed.options.get("--port");
+  // The folder the daemon serves and looks for Git from, when the launcher runs elsewhere (autostart runs it in the home).
+  const workspaceRoot = parsed.options.get("--workspace-root");
+  return {
+    dev: parsed.flags.has("--dev"),
+    ...daemonStartReach(parsed),
+    ...(port === undefined ? {} : { port: parsePort(port) }),
+    ...(workspaceRoot === undefined ? {} : { cwd: resolve(workspaceRoot) }),
+  };
+}
+
+/**
+ * Where `rerail daemon start` asks the daemon to bind and answer, and how it serves, checked as the daemon checks them:
+ * `--host` (off loopback only with `--allow-remote`), `--public-host`, and https or plain http.
+ */
+function daemonStartReach({ flags, options }: ParsedArguments): Pick<DaemonLaunchOptions, "host" | "allowRemote" | "publicHosts" | "tls" | "insecureHttp"> {
+  const host = options.get("--host");
+  if (host !== undefined) assertHostBindable(host, flags.has("--allow-remote"));
+  const publicHosts = parsePublicHosts(options.get("--public-host"));
+  const transport = parseDaemonTransport({ flags, options }, host ?? DEFAULT_DAEMON_HOST, publicHosts);
+  return {
+    ...(host === undefined ? {} : { host }),
+    ...(flags.has("--allow-remote") ? { allowRemote: true } : {}),
+    ...(publicHosts.length === 0 ? {} : { publicHosts }),
+    ...transport,
+  };
+}
+
+/**
+ * The dashboard link, with how long it lasts, for the person at a terminal, starting or finding the daemon. `rerail
+ * status` never prints it, and neither does a start whose output is piped, as a coding agent's shell would be: the link
+ * would land in its transcript and its provider's logs.
+ */
+function printDashboardLink(home: string, state: DaemonState, link: string): void {
+  if (state.accessToken === undefined) return;
+  const lifetime = accessTokenKept(home, state)
+    ? `it is kept until you delete ${join(home, DAEMON_ACCESS_TOKEN_FILE)}`
+    : "it changes on every start";
+  process.stdout.write(process.stdout.isTTY
+    ? `Dashboard link (anyone holding it can read and change your rules; ${lifetime}): ${link}\n`
+    : "The dashboard needs its access link in a browser; rerail manage opens it, or run rerail daemon start in a terminal to see it.\n");
 }
 
 /** Whether a Git Rerail can run is installed, and where it looked when none is. */
