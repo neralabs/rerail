@@ -5062,3 +5062,9 @@ rounds on the pool, as decision 0178's greatest fixpoints do. It is about 20 ms 
 **Closure:** either show that no program gives a column two domains, or make such a program an error (a column's
 domain is then a function of the rules, not of their order), and then run the fixpoint in rounds. Measured on
 `dl1` and the Python pack's programs, with identical domains for every column.
+
+## O168. Whole plans are not cut (decision 0206)
+
+A probe run as its whole plan (its delta is all of its relation, in a component's first wave) has no budget, so a
+slow whole plan runs to its end. The driver plans whole plans apart from the delta probes (`take_whole`), and a
+handoff would need the whole plan's own replacement and its rows left. Open.

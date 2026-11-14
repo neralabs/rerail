@@ -2440,6 +2440,19 @@ impl Model {
 
     /// Decision 0203 §3: `order`'s price for the `delta` rows its delta atom (`first`) read, the delta's rows set to
     /// them while priced. A seed's (`first` none) is its price.
+    /// Decision 0206: the best order of `b` reading `rows` rows of atom `at` (the rows a cut join left), as a delta
+    /// is read.
+    pub(in crate::code_rule_dsl) fn plan_for_rows(&mut self, prog: &Program, b: &Body<'_>, at: usize, rows: f64) -> Option<Vec<Step>> {
+        let rel = b.atom(at).map(|a| b.rel(a).to_owned())?;
+        let was = self.stats.delta_rows.insert(rel.clone(), rows.max(1.0));
+        let got = self.plan_inner(prog, b, Some(at), None, false).ok().map(|((order, _, _), _)| order);
+        match was {
+            Some(v) => self.stats.delta_rows.insert(rel, v),
+            None => self.stats.delta_rows.remove(&rel),
+        };
+        got
+    }
+
     pub(in crate::code_rule_dsl) fn price_for_delta(&mut self, prog: &Program, b: &Body<'_>, first: Option<usize>, order: &[Step], delta: f64) -> Option<f64> {
         let rel = first.and_then(|f| b.atom(f)).map(|a| b.rel(a).to_owned());
         let was = rel.as_ref().map(|r| self.stats.delta_rows.insert(r.clone(), delta.max(1.0)));
@@ -4647,6 +4660,9 @@ struct Driving<'a> {
     not_taken: Option<&'static str>,
     /// Per probe: not planned yet, until its delta has rows (decision 0123 §9).
     unplanned: Vec<bool>,
+    /// Per line (seeds, then probes): a replacement running over the rows a slow order left at its cut (decision
+    /// 0206).
+    handoff: Vec<Option<joins::Handoff>>,
 }
 
 struct Run<'a, 'b> {
@@ -7469,6 +7485,7 @@ impl<'a> Run<'a, '_> {
             chunk: 1,
             replanned_at,
             searched: Vec::new(),
+            handoff: Vec::new(),
             keys,
             started,
             placed,
@@ -7510,7 +7527,7 @@ impl<'a> Run<'a, '_> {
     fn drive(&mut self, d: Box<Driving<'a>>, native_rels: &BTreeSet<String>, numbers: &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<Native<'a>> {
         let vs = Arc::clone(&self.versions);
         let prog = self.prog;
-        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken, mut unplanned } = *d;
+        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, mut orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken, mut unplanned, mut handoff } = *d;
         let scc = &scc_owned;
         let rels: Vec<&String> = rels_owned.iter().collect();
         let planning = |r: &Rule, what: &str| {
@@ -7522,12 +7539,31 @@ impl<'a> Run<'a, '_> {
         let profiling = super::profile::on();
         // This thread's CPU at the stratum's start, less what other strata spent while it waited.
         let cpu_at = if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_own } else { 0.0 };
+        handoff.resize_with(nseeds + probes.len(), || None);
         loop {
+            // Decision 0206: each join's budget (a seed's or a probe's), the work left before its line is next checked
+            // against its price (`joins::next_due`), or before a replacement's own limit. A join that spends it is cut
+            // at the row of its first atom it is at, and the run returns here (`5`).
+            if joins::on() && self.fx().direct {
+                let budgets: Vec<(usize, Option<u64>)> = (0..nseeds + probes.len()).filter(|&line| line < nseeds || !sql_probe[line - nseeds] && !unplanned[line - nseeds]).map(|line| {
+                    let work = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64;
+                    let due = match &handoff[line] {
+                        Some(h) => Some(h.limit),
+                        None => keys.get(line).copied().flatten().and_then(joins::next_due),
+                    };
+                    (line, due.map(|d| (d - work).max(1.0) as u64))
+                }).collect();
+                super::native::component::set_budgets(self.db, &name, &budgets)?;
+            }
             let f: String = {
                 let _wave = super::lanes::wave::suspendable();
                 self.fx().run(&name, chunk as u32)?
             };
             let f: Vec<&str> = f.split_whitespace().collect();
+            let cut = if f.last() == Some(&"5") { super::native::component::take_cut(self.db, &name)? } else { None };
+            if let Some(c) = &cut {
+                joins::log(|| format!("cut {name} line {}: {} rows of work, {} rows of its first atom done, {} left{}", c.probe, c.work, c.done, c.left, if c.led { "" } else { " (not known: all)" }));
+            }
             if let Some(per) = f.get(7).filter(|_| f.len() == 9 && super::profile::on()) {
                 for (k, item) in per.split(',').enumerate() {
                     if timed.len() <= k {
@@ -7541,7 +7577,7 @@ impl<'a> Run<'a, '_> {
                     drop(rels);
                     Box::new(Driving {
                         scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, probes, order_rules, nseeds, seeds, ngates,
-                        explained, counted, earlier, timed, chunk, replanned_at, searched, keys, started, placed, shape, lab, not_taken, unplanned,
+                        explained, counted, earlier, timed, chunk, replanned_at, searched, keys, started, placed, shape, lab, not_taken, unplanned, handoff,
                         cpu_own: if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_at } else { 0.0 },
                     })
                 }};
@@ -7658,9 +7694,11 @@ impl<'a> Run<'a, '_> {
                 }
                 continue;
             }
-            if f.last() == Some(&"1") || chunk == 0 {
+            if f.last() == Some(&"1") || (chunk == 0 && cut.is_none()) {
                 break;
             }
+            // A cut probe's order before this chunk's replans, to tell whether it was replaced.
+            let before: Option<Vec<Step>> = cut.as_ref().filter(|c| c.probe >= nseeds && c.probe < nseeds + probes.len()).map(|c| probes[c.probe - nseeds].2.clone());
             {
                 // The whole plans, planned from seed estimates (a derived relation empty, its columns without
                 // distinct counts), again from the live counts: once per rule, the same plan for each of its probes
@@ -7781,8 +7819,83 @@ impl<'a> Run<'a, '_> {
                 if ran.iter().any(|&(a, _)| a > 0) { earlier[line].push((std::mem::replace(&mut probes[k].2, new), ran)); }
                 else { probes[k].2 = new; }
             }
+            // Decision 0206, the handoff: a join cut at its check, then replaced, reads the rows of its first atom its
+            // old order left, under a limit of `slow_factor` times its price for them. Cut again, the order with the
+            // less work per row goes on from there, unlimited.
+            if let Some(c) = &cut && c.probe < nseeds + probes.len() {
+                let line = c.probe;
+                let seed = line < nseeds;
+                let (r, first) = if seed { (orders[line].0, None) } else { (probes[line - nseeds].0, Some(probes[line - nseeds].1)) };
+                let b = vs.body(r)?;
+                let order_now = |orders: &Vec<(&Rule, Vec<Step>)>, probes: &Vec<_>| -> Vec<Step> { if seed { orders[line].1.clone() } else { let p: &(&Rule, usize, Vec<Step>) = &probes[line - nseeds]; p.2.clone() } };
+                let mut old = if seed { Some(orders[line].1.clone()) } else { before.clone() };
+                // A seed is checked here, at its cut (a probe was, above), and planned again over the rows it left,
+                // leading with the atom it led with.
+                if seed && let Some(key) = keys.get(line).copied().flatten() && let Some(ran) = counted.get(line) {
+                    let work = super::profile::plan_work(ran) as f64;
+                    let at0 = orders[line].1[0].at;
+                    let est = if joins::check(key, work) { self.model.price_for_delta(prog, &b, Some(at0), &orders[line].1, c.done.max(1) as f64) } else { None };
+                    if let Some(est) = est && work > joins::slow_factor() * est.max(1.0) && r.body.iter().filter(|l| matches!(l, Literal::Atom(a) if !a.neg)).count() >= 2 {
+                        let rule = order_rules[line];
+                        joins::flag_slow(key, rule, est, work);
+                        super::profile::decision("slow joins (decision 0203)", || format!("seed {}: {work:.0} rows of work, priced {est:.0} for its {} rows read", r.head.rel, c.done));
+                        let exact = self.exact_statistics(&name, line, r, &orders[line].1);
+                        joins::log(|| format!("slow seed {}: {work:.0} rows of work, priced {est:.0} for its {} rows read; {} exact pair statistics", r.head.rel, c.done, exact.len()));
+                        joins::put_exact(key, rule, exact);
+                        joins::take_forced(&key);
+                        self.request_search(r, None, rule, key, work)?;
+                        if let Some(new) = self.model.plan_for_rows(prog, &b, at0, c.left.max(1) as f64)
+                            && !same_order(&new, &orders[line].1)
+                            && let Some(spec) = self.whole_join_spec(&r.head, Order::new(&r.body, &new), None, &ri, scc, native_rels)
+                        {
+                            self.fx().reprobe(&name, line, &Reprobe::Join(spec))?;
+                            if new[0].at == at0 { super::native::component::cut_step(self.db, &name, 0)?; }
+                            if earlier.len() <= line { earlier.resize_with(line + 1, Vec::new); }
+                            let ran = counted.get_mut(line).map(std::mem::take).unwrap_or_default();
+                            if ran.iter().any(|&(a, _)| a > 0) { earlier[line].push((std::mem::replace(&mut orders[line].1, new), ran)); }
+                            else { orders[line].1 = new; }
+                        }
+                    }
+                }
+                if !seed && old.as_ref().is_some_and(|o| same_order(o, &probes[line - nseeds].2)) { old = None; }
+                let now = order_now(&orders, &probes);
+                let per_row = |work: u64, done: u64| if done > 0 { work as f64 / done as f64 } else { f64::INFINITY };
+                match handoff[line].take() {
+                    None => {
+                        if let Some(old) = old.filter(|o| !same_order(o, &now)) {
+                            let left = if c.led { c.left } else { c.done + c.left };
+                            let est = self.model.price_for_delta(prog, &b, first.or(Some(old[0].at)), &now, left.max(1) as f64).unwrap_or(f64::MAX / 4.0);
+                            let limit = joins::slow_factor() * est.max(1.0);
+                            joins::log(|| format!("handoff {}: cut at {} of {} rows after {} rows of work; its replacement reads the {left} left, limit {limit:.0}", r.head.rel, c.done, c.done + c.left, c.work));
+                            super::profile::decision("join handoff (decision 0206)", || format!("{}: replaced at row {} of {}", r.head.rel, c.done, c.done + c.left));
+                            joins::count_handoff(false);
+                            handoff[line] = Some(joins::Handoff { old, per_row: per_row(c.work, c.done), limit });
+                        }
+                    }
+                    Some(h) => {
+                        let ran = per_row(c.work, c.done);
+                        let back = ran > h.per_row;
+                        joins::log(|| format!("handoff {}: the replacement was cut too, {ran:.1} rows of work per row against the old order's {:.1}: {} goes on", r.head.rel, h.per_row, if back { "the old order" } else { "the replacement" }));
+                        joins::count_handoff(back);
+                        if back {
+                            let at = first.map(|ai| h.old.iter().position(|s| s.at == ai).expect("the delta atom"));
+                            let spec = self
+                                .whole_join_spec(&r.head, Order::new(&r.body, &h.old), at, &ri, scc, native_rels)
+                                .ok_or_else(|| Error::Plan(format!("a join of {} has no native step", r.head)))?;
+                            self.fx().reprobe(&name, line, &Reprobe::Join(spec))?;
+                            if seed && h.old[0].at == now[0].at { super::native::component::cut_step(self.db, &name, 0)?; }
+                            if earlier.len() <= line { earlier.resize_with(line + 1, Vec::new); }
+                            let ran = counted.get_mut(line).map(std::mem::take).unwrap_or_default();
+                            let slot = if seed { &mut orders[line].1 } else { &mut probes[line - nseeds].2 };
+                            if ran.iter().any(|&(a, _)| a > 0) { earlier[line].push((std::mem::replace(slot, h.old), ran)); }
+                            else { *slot = h.old; }
+                        }
+                    }
+                }
+            }
             // Statistics can now end a chunk early. Bound its wave budget even in a long sequence of such
             // checkpoints; casting an overflowing budget to u32 would accidentally request an unbounded run.
+            if cut.is_some() { continue; }
             chunk = (chunk * 2).min(u32::MAX as i64);
         }
         // What each rule's steps produced and each relation holds, for a later chunk's choice of what a relation

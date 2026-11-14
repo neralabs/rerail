@@ -136,13 +136,17 @@ static MEMO: std::sync::LazyLock<RwLock<Memo>> = std::sync::LazyLock::new(Defaul
 /// Whether any line is noted, or any rule has exact statistics: the planner's fast paths read these alone.
 static NOTED: AtomicBool = AtomicBool::new(false);
 static EXACT: AtomicBool = AtomicBool::new(false);
-/// Counts for the profile and tests: flags, exact statistics measured, choices corrected, explored, proposals.
-pub(super) static COUNTS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
+/// Counts for the profile and tests: flags, exact statistics measured, choices corrected, explored, proposals,
+/// handoffs and handbacks (decision 0206), orders trialled (0206 §2).
+pub(super) static COUNTS: [AtomicU64; 8] = [const { AtomicU64::new(0) }; 8];
 pub(super) const FLAGS: usize = 0;
 pub(super) const MEASURED: usize = 1;
 pub(super) const CORRECTED: usize = 2;
 pub(super) const EXPLORED: usize = 3;
 pub(super) const PROPOSED: usize = 4;
+pub(super) const HANDOFFS: usize = 5;
+pub(super) const HANDBACKS: usize = 6;
+pub(super) const TRIALS: usize = 7;
 
 pub(super) fn steps(order: &[Step]) -> Vec<StoredStep> {
     order.iter().map(|s| (s.at as u16, s.mode)).collect()
@@ -226,6 +230,25 @@ pub(super) fn check(key: PlanKey, work: f64) -> bool {
     }
     *next = 2.0 * work;
     true
+}
+
+/// The work at which line `key` is next checked (`check`), so the engine cuts its probe there (decision 0206);
+/// none once flagged.
+pub(super) fn next_due(key: PlanKey) -> Option<f64> {
+    let m = MEMO.read();
+    if m.flagged.contains(&key) {
+        return None;
+    }
+    Some(m.next_check.get(&key).copied().unwrap_or(0.0).max(slow_rows()))
+}
+
+/// Decision 0206: a slow order replaced at its cut. `old`, its order; `per_row`, its work per delta row finished;
+/// `limit`, the work its replacement may do over the rows left before the two are compared.
+pub(in crate::code_rule_dsl::logic) struct Handoff { pub old: Vec<Step>, pub per_row: f64, pub limit: f64 }
+
+/// A handoff made, or ended with the old order going on (`back`).
+pub(super) fn count_handoff(back: bool) {
+    COUNTS[if back { HANDBACKS } else { HANDOFFS }].fetch_add(1, Relaxed);
 }
 
 /// A line ran slow: `ran` rows of work where its order was priced at `est`. Its next replan skips the budget.

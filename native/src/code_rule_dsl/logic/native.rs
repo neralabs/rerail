@@ -44,6 +44,7 @@ pub mod component {
     pub use super::setfix::spec;
     pub use super::setfix::{DeviceReport, device_report};
     pub use super::setfix::probed;
+    pub use super::setfix::{CutReport, cut_counts, cut_step, set_budgets, take_cut};
     pub use super::setfix::{InRel, add, cat_symbols, prime, adopt, adopted, close, carry_sorted, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, hold_as, hold_empty, hold_source, held_source, live, materialize, open_spec, pending, defer, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, step_histograms, unindex, hold_rows, kept_rows, table_source, tables_built, output_rows, source_rows, finding_rows};
 }
 use rusqlite::ffi;
