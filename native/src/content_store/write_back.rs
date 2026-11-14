@@ -324,14 +324,23 @@ impl ContentStore {
     }
 
     fn queue(&self, what: &'static str, bytes: usize, keys: Vec<(Key, Option<Held>)>, job: Job, run: Run, droppable: bool) -> bool {
+        // A truly warm run computes nothing it would keep (`RERAIL_WARM`): its caller's stack is here, not on the writer.
+        // Not a fault: the writes listed as allowed (locks, timestamps), and a wait for the writer, which writes nothing.
+        if run != Run::Commit && !super::hazards::warm_write_allowed(what) {
+            super::hazards::warm_fault("a write queued for the store", || format!("{what}, {bytes} bytes, {} keys", keys.len()));
+        }
         let mut job = job;
         let Some(w) = self.writer() else {
+            let _scope = super::hazards::warm_scope();
+            super::hazards::warm_job(what);
             if let Err(e) = retried(self, what, &mut job) {
                 eprintln!("rerail: the write failed: {e}");
             }
             return true;
         };
         let mut job: Job = Box::new(move |store| {
+            // In the writer's transaction (`warm_scope`): whether its commit is one a warm run may make.
+            super::hazards::warm_job(what);
             let t0 = thread_cpu();
             let out = retried(store, what, &mut job);
             let mut by = BY_KIND.lock().expect("the writer's account");
@@ -385,6 +394,7 @@ impl ContentStore {
         let holder = self.holder.lock().clone();
         // No threads in the browser build: written now, in order.
         if cfg!(target_family = "wasm") {
+            let _scope = super::hazards::warm_scope();
             let outcome = job(self);
             finish(&w.shared, bytes, &keys, outcome, 0.0, run != Run::Commit);
             return true;
@@ -393,6 +403,7 @@ impl ContentStore {
         let lane = lane.get_or_insert_with(|| self.start_writer(w));
         if let Err(mpsc::SendError((mut job, bytes, keys, _, _, _))) = lane.tx.send((job, bytes, keys, holder, run, what)) {
             // The writer is gone (it panicked): written here, in order, as the writer would have.
+            let _scope = super::hazards::warm_scope();
             let outcome = job(self);
             finish(&w.shared, bytes, &keys, outcome, 0.0, run != Run::Commit);
         }
@@ -436,6 +447,7 @@ impl ContentStore {
                         let (mut job, bytes, keys, holder, run, what) = first;
                         *store.holder.lock() = holder;
                         let _span = super::hazards::span(what);
+                        let _scope = super::hazards::warm_scope();
                         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
                             .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into())));
                         w.shared.state.lock().expect("the writer's state").by_what.entry(what).or_default().2 += thread_cpu() - before;
@@ -479,6 +491,8 @@ impl ContentStore {
                     };
                     // The batch's span holds its jobs' and its commit.
                     let batch_span = super::hazards::span("a batch, in one transaction");
+                    // The warm check's scope (decision 0197) holds the whole transaction, its runs again included.
+                    let warm_scope = super::hazards::warm_scope();
                     // A batch that finds the store busy (another process's writer held SQLite's write lock past this
                     // one's wait, at its start or its commit) rolled back whole: run again, as a busy job is
                     // (`run_job`), its jobs being a cache's writes. Failing them dropped every write of the batch.
@@ -503,6 +517,7 @@ impl ContentStore {
                             Err(e) => break batch.iter().map(|_| Err(StoreError::Invalid(format!("the batch's commit: {e}")))).collect(),
                         }
                     };
+                    drop(warm_scope);
                     drop(batch_span);
                     let _ = told.send(());
                     let cpu = (thread_cpu() - before) / batch.len() as f64;

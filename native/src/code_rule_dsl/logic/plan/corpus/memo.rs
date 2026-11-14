@@ -684,6 +684,10 @@ pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec
     }
     let _queue = crate::code_rule_dsl::logic::profile::span(|| "queue the entries to the store".into());
     let held: Vec<(Content, String, std::sync::Arc<Entry>)> = entries.into_iter().filter(|e| e.0.in_store()).map(|(content, path, key, entry)| (content, path, std::sync::Arc::new(Entry { key, ..entry }))).collect();
+    // Nothing to keep is no job: an empty one still takes the writer's transaction (`RERAIL_WARM`).
+    if held.is_empty() {
+        return Ok(());
+    }
     let bytes: usize = held.iter().map(|(_, _, e)| e.bytes()).sum();
     if bytes > 32 << 20 && crate::code_rule_dsl::logic::profile::on() {
         let mut by: BTreeMap<&str, (usize, usize)> = BTreeMap::new();

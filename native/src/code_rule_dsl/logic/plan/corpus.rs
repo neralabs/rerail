@@ -1636,7 +1636,14 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
             sources.extend(late.lock().expect("the late sources").iter().copied());
             let recorded = store
                 .record_corpus_run_lane(&root, &sources, crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION), plan, &also, lane, now)
-                .and_then(|_| store.record_corpus_relations(plan, &relations));
+                .and_then(|new| {
+                    // A warm run may move an identical manifest's timestamps (`profile::WARM_WRITES_ALLOWED`), never
+                    // record a new one.
+                    if new {
+                        crate::code_rule_dsl::logic::profile::warm_fault("a new manifest recorded", || format!("{root}, {} sources", sources.len()));
+                    }
+                    store.record_corpus_relations(plan, &relations)
+                });
             // The manifest now protects the sources. Release before collection, including warm runs
             // that must resume a pass deferred by another active reader.
             drop(reading.take());
@@ -3691,8 +3698,14 @@ fn run_observed(
             };
             for ((i, c), d) in rest.iter().zip(&contents).zip(&digests) {
                 digest[*i] = Some(*d);
+                // A file the index knew by this stat, read in the waves where the store is not asked, has its content
+                // named by its digest (`Unstored`): recording it again wrote the same stat on every warm run
+                // (`RERAIL_WARM`). It is trusted as the index's source, as a known file the memo finds is, unread. A
+                // known file found to be another stored source (a stat that lied) is recorded.
+                let known_unstored = known[*i].is_some() && matches!(c, Some(memo::Content::Unstored(_)));
                 if let (Some(stat), Some(c)) = (stats[*i], c)
                     && !matches!(c, memo::Content::Held(_))
+                    && !known_unstored
                     && known[*i].map(memo::Content::Stored) != Some(*c)
                 {
                     stats_read.lock().push((world::store_path(&window[*i].1).to_owned(), stat, *c));
@@ -4059,7 +4072,13 @@ fn run_observed(
         let (d, path, module) = &docs.asked[i];
         match outcome {
             Ok(entry) => Ok(Some((content, Ok(entry)))),
-            Err(u) => build_doc(d, path, module.clone(), u).map(|(c, doc)| Some((c, Err(doc)))),
+            Err(u) => {
+                // A memo miss: the document's file-local part is evaluated again (`RERAIL_WARM`).
+                if memoised {
+                    crate::code_rule_dsl::logic::profile::warm_fault("a document missed the memo", || path.clone());
+                }
+                build_doc(d, path, module.clone(), u).map(|(c, doc)| Some((c, Err(doc))))
+            }
         }
     };
     let project = |docs: Vec<syntax::Document>| -> (Result<Sources>, (f64, f64)) {
@@ -4581,11 +4600,18 @@ fn run_observed(
                 }
             }
         }
-        if sources.is_empty() {
+        // A chunk of memo hits alone builds no document: its sources are a projection of nothing, and its local program
+        // run over them derives nothing a hit does not already hold (`RERAIL_WARM` found it planned and run, its tree
+        // counts measured and written, on every warm run).
+        if sources.is_empty() || chunk_docs.is_empty() {
             phase("local", statements.count());
             statements.enter("wait");
             return Ok(());
         }
+        // A warm run's documents are all memo hits: a chunk evaluated is a file-local part computed again (`RERAIL_WARM`).
+        crate::code_rule_dsl::logic::profile::warm_fault("a chunk's file-local part evaluated", || {
+            format!("{} documents, {chunk_nodes_built} nodes: {}", chunk_docs.len(), chunk_docs.iter().take(4).map(|(_, p, ..)| p.as_str()).collect::<Vec<_>>().join(", "))
+        });
         nodes += chunk_nodes_built;
         chunks += 1;
         let mut stats = t_stats.clone();
@@ -5710,7 +5736,8 @@ fn run_observed(
     let mut run_sources = worker_cpu.2.clone();
     run_sources.extend(own_sources.iter().copied());
     run_sources.extend(program_sources.iter().copied());
-    if recording {
+    // A run that read no file anew (every one known by its stat) has no stat to record.
+    if recording && !worker_cpu.3.is_empty() {
         let _stats = crate::code_rule_dsl::logic::profile::span(|| "record stats".into());
         // Behind the run (decision 0104): a new content's source is written by then, by the tape's write queued before.
         let (root, read) = (canonical_root.clone(), worker_cpu.3.clone());
@@ -6928,6 +6955,27 @@ fn run_observed(
                             Ok((rel.clone(), width, held))
                         })
                         .collect::<Result<Vec<_>>>()?;
+                    // A warm run's deltas are empty (`RERAIL_WARM`): an input's or stratum's rows gone or new, a maintained
+                    // relation's overdeleted or inserted rows. Read from memory alone, so the check changes nothing a run
+                    // does: the outcome's net deltas, and the delta relations the engine holds. A delta relation a SQL
+                    // stratum left in a table is not read (a statement inside the waves, which the strict mode refuses).
+                    if crate::code_rule_dsl::logic::profile::warm() {
+                        for (rel, (gone, added)) in &got.deltas {
+                            if !gone.is_empty() || !added.is_empty() {
+                                crate::code_rule_dsl::logic::profile::warm_fault("a non-empty delta", || format!("{rel}: {} values gone, {} added", gone.len(), added.len()));
+                            }
+                        }
+                        let derived_here: BTreeSet<&str> = part.program.rules.iter().map(|r| r.head.rel.as_str()).collect();
+                        for (rel, cols) in &part.program.decls {
+                            if cols.is_empty() || !derived_here.contains(rel.as_str()) || !["__minus", "__plus", "__del", "__ins", "__gone"].iter().any(|x| rel.ends_with(x)) {
+                                continue;
+                            }
+                            let n = crate::code_rule_dsl::logic::native::component::derived(&db, rel).map_or(0, |h| h.len());
+                            if n > 0 {
+                                crate::code_rule_dsl::logic::profile::warm_fault("a non-empty delta", || format!("{rel}: {n} rows"));
+                            }
+                        }
+                    }
                     // `RERAIL_CROSS_DELTA_COUNTS`: the rows the maintained strata overdeleted (`__del`), inserted (`__ins`),
                     // and hold after the run, for measuring delete-and-rederive (spike O125).
                     if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() {

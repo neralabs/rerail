@@ -32,3 +32,33 @@ pub(crate) fn span(what: &'static str) -> Option<Box<dyn std::any::Any>> {
 pub(crate) fn behind_the_run() {
     profile::behind_the_run();
 }
+
+/// A recomputation in a warm run (`RERAIL_WARM`, `profile::warm_fault`): nothing without it.
+pub(crate) fn warm_fault(kind: &'static str, detail: impl FnOnce() -> String) {
+    profile::warm_fault(kind, detail);
+}
+
+/// A commit on `db` in a warm run (`profile::warm_commit`), for a connection whose commit hook is the store's own.
+///
+/// # Safety
+/// As `profile::warm_commit`: `db` is open, and this runs inside its commit hook.
+pub(crate) unsafe fn warm_commit(db: *mut rusqlite::ffi::sqlite3) {
+    // SAFETY: the caller's guarantee.
+    unsafe { profile::warm_commit(db) };
+}
+
+/// A transaction of the store's writer (`profile::warm_scope`): its commit is not a fault of the warm check if every
+/// job it ran is one of the writes a warm run may make (`profile::WARM_WRITES_ALLOWED`).
+pub(crate) fn warm_scope() -> profile::WarmScope {
+    profile::warm_scope()
+}
+
+/// The writer runs the job `what` in its open `warm_scope`.
+pub(crate) fn warm_job(what: &str) {
+    profile::warm_job(what);
+}
+
+/// Whether a warm run may queue the job `what` (`profile::WARM_WRITES_ALLOWED`).
+pub(crate) fn warm_write_allowed(what: &str) -> bool {
+    profile::warm_write_allowed(what)
+}

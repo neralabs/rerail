@@ -673,6 +673,9 @@ impl Atoms {
             flushed.store(false, Ordering::Relaxed);
             let (hook, held) = (Arc::clone(&flushed), Arc::clone(&atoms));
             connection.commit_hook(Some(move || {
+                // This hook replaces the one every connection is given for the warm check (`RERAIL_WARM`).
+                // SAFETY: called by SQLite on this connection's thread, inside its commit hook.
+                unsafe { super::hazards::warm_commit(handle as *mut ffi::sqlite3) };
                 let flushed = hook.swap(false, Ordering::AcqRel);
                 if flushed || !held.pending() {
                     return false;

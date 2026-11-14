@@ -35,7 +35,7 @@ pub(super) fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Opti
 /// The run's key: everything it is a function of besides what it consults.
 /// Switches that change how a run is measured or held, never what it outputs: left out of the key. A profile's path
 /// differs every run, so with it in the key no profiled run ever found the last run's record.
-const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE"];
+const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WARM", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE"];
 
 fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
     let mut h = Sha256::new();
@@ -206,6 +206,11 @@ fn miss(why: &str) {
     crate::code_rule_dsl::logic::profile::decision("whole-run cutoff (t23 §4)", || format!("not applied: {why}"));
     if std::env::var_os("RERAIL_REUSE_TRACE").is_some() {
         eprintln!("rerail: whole-run cutoff not applied: {why}");
+    }
+    // A warm run asked for the cutoff and evaluates again (`RERAIL_WARM`). One that did not ask (a session's, which
+    // maintains its strata instead) is checked by its deltas.
+    if !why.starts_with("not wanted") {
+        crate::code_rule_dsl::logic::profile::warm_fault("the whole-run cutoff did not apply", || why.to_owned());
     }
 }
 
