@@ -668,9 +668,11 @@ pub fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Span {
 pub fn span(name: impl FnOnce() -> String) -> Span {
     if !on() {
         // A timeline (dev, `RERAIL_TIMELINE`): the main thread's spans as they open, nothing measured.
-        static TIMELINE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        if *TIMELINE.get_or_init(|| std::env::var_os("RERAIL_TIMELINE").is_some()) && std::thread::current().name() == Some("main") {
-            eprintln!("RERAIL_TIMELINE span {} @{:.3}", name(), timeline_clock());
+        // `RERAIL_TIMELINE=all`: every thread's, named (a test runs on a thread of its own name).
+        static TIMELINE: std::sync::OnceLock<(bool, bool)> = std::sync::OnceLock::new();
+        let (on, all) = *TIMELINE.get_or_init(|| (std::env::var_os("RERAIL_TIMELINE").is_some(), std::env::var("RERAIL_TIMELINE").is_ok_and(|v| v == "all")));
+        if on && (all || std::thread::current().name() == Some("main")) {
+            eprintln!("RERAIL_TIMELINE span {} @{:.3} [{}]", name(), timeline_clock(), std::thread::current().name().unwrap_or("-"));
         }
         return Span(false);
     }
