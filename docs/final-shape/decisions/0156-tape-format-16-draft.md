@@ -538,8 +538,8 @@ keeps the same bits.
   offsets; an offset from the parent's start (a walk up); or a stored start every K nodes, with
   deltas between (a walk of at most K).
 - **Parent.** None (walkers come down from the parent and know it), a self-relative back distance,
-  or a back pointer in the close. The pack reads parent under 0.01 times a node, and the heaviest
-  rule 1.3 times (E7).
+  or a back pointer in the close. The pack reads the tape's parent under 0.01 times a node, and the
+  heaviest rule 1.3 times (E7); through the facts arrays, rules read it far more (E17, below).
 - **Line.** A line table in the tape, searched; or a line delta per node, with the same choice as
   start.
 - **Widths.** Fixed-width fields (simdjson's 8 B words), or block-local bit widths read with a shift
@@ -553,7 +553,12 @@ keeps the same bits.
   a language costs under 0.05 B a node, JSON included; a point parent costs 1.6–3.7× more. Start
   and end as a gap to the previous start, plus a length, with a start every 8 or 16 nodes in a
   side array, take 16–24% less memory and a third less on disk on code, at 2–4.5× a point span's
-  cost.
+  cost. Weighed by today's engine (E17, step 9): rules read a span at a point 0.47 times a
+  node at the median and 17.6 at the heaviest, a parent 0.58 and 13.7, mostly through the facts
+  arrays. At K = 8 both forms add 0.4–1.7% to a rule's CPU, provided the engine reads in order
+  through cursors (as points, 1.5–4.3%). **Proposed: the leaf slot by sibling and positions by gap,
+  both with K = 8**: about 4.19 B a node for codes, slots and positions on data-layer Python,
+  against XF's 4.60.
 - **Text.** A leaf's span into the source, or its id in the names stream (6). Comparison works on
   bytes, or on stream ids once a constant has been found in the pool.
 - **Measured by:** E10.

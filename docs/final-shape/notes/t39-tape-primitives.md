@@ -547,6 +547,74 @@ every K.
   code would do. The lab's dev profile keeps overflow and unsafe-precondition checks, for every
   form alike.
 
+### Step 9: how today's engine reads spans and parents (E17)
+
+Step 8 left one question: how often rules read a span or a parent at a point rather than in order.
+E17 counts it in today's engine. A build with `--features tape-reads` counts every read of a span
+or a parent, from the tape (`transducer_span`, `transducer_parent`, `TapeNode`) and from the facts
+arrays built from it (`start`, `end`, `parent`, `subtree_end` in `facts/core.rs`). Each read is
+classed by its distance from the previous read of the same part: the same node, the next one,
+near (within 16 nodes), or far. Reads made while the facts arrays are built are not counted: in
+format 16 those arrays would not exist, and every count here would be a read of the tape itself.
+
+Corpus: data-layer's `impl/sqlite` (221 files, 477,765 nodes). Each of the 168 candidate rules ran
+alone, cold for its own results, on tapes already stored. 160 gave counts; the other eight fail
+under `RERAIL_SQL_STRICT` or need inputs this corpus lacks.
+
+Reads per node, over every rule:
+
+| | same | next | near | far |
+|---|---|---|---|---|
+| tape span | 0.337 | 0.203 | 0.701 | 0.332 |
+| tape parent | 0 | 0 | 0.0006 | 0.0017 |
+| facts start | 0.307 | 1.786 | 1.023 | 0.289 |
+| facts end | 0.085 | 1.721 | 0.992 | 0.287 |
+| facts parent | 1.186 | 4.490 | 1.467 | 0.358 |
+| facts subtree_end | 0.044 | 0.001 | 0.001 | 0.001 |
+
+Point reads (near and far) per node, per rule: spans median 0.47, 90th percentile 4.9, heaviest
+17.6; parents median 0.58, 90th percentile 2.7, heaviest 13.7. E7's "parent under 0.01 a node"
+counted only the tape's parent; rules read the parent mostly through the facts arrays.
+
+To weigh that, eight rules were timed (CPU, user + sys) with the plain build, from the lightest
+to the heaviest by point reads. The extra cost is the point reads times step 8's Python deltas on
+the M3: a span +3.8 ns at K = 8 and +7.8 at K = 16, a parent +8.4 ns (sibling, K = 8). The last
+column also prices every "next" read as a point read, the case where the engine reads in order
+through a point API instead of a cursor.
+
+| rule | CPU, s | point spans, M | point parents, M | extra, K = 8 | K = 16 | next read as points, K = 8 |
+|---|---|---|---|---|---|---|
+| plan-scope-side-effects | 1.66 | 0.22 | 0.70 | 7 ms (0.4%) | 8 ms (0.5%) | 27 ms (1.6%) |
+| grammar-allowlist-burndown | 0.91 | 1.19 | 0.28 | 7 ms (0.8%) | 12 ms (1.3%) | 22 ms (2.4%) |
+| serverplan-dispatch-architecture | 1.43 | 2.34 | 0.69 | 15 ms (1.0%) | 24 ms (1.7%) | 35 ms (2.5%) |
+| eager-resolve | 3.92 | 3.75 | 2.76 | 37 ms (1.0%) | 52 ms (1.3%) | 70 ms (1.8%) |
+| schema-bootstrap-contracts | 1.69 | 5.62 | 0.93 | 29 ms (1.7%) | 52 ms (3.1%) | 73 ms (4.3%) |
+| matching-architecture | 4.71 | 6.30 | 5.28 | 68 ms (1.4%) | 93 ms (2.0%) | 116 ms (2.5%) |
+| bootstrap-engine-invariants | 5.27 | 7.56 | 5.47 | 75 ms (1.4%) | 105 ms (2.0%) | 125 ms (2.4%) |
+| serverplan-quality | 14.18 | 8.40 | 6.56 | 87 ms (0.6%) | 121 ms (0.9%) | 215 ms (1.5%) |
+
+(plan-scope-side-effects ran first and parsed the tapes; its CPU includes that.)
+
+- **The new forms' point cost is 0.4–1.7% of a rule's CPU at K = 8**, and 0.5–3.1% at K = 16.
+  Read in order through a cursor, gap positions are faster than today's (step 8), so most rules
+  lose less than that.
+- **The engine must read in order through a cursor.** Rules read the next node's span 2 times a
+  node and its parent 4.5 times; read as points, those would double the cost (1.5–4.3%). A cursor
+  over gaps is a running sum, and one over sibling slots keeps the parent of the run.
+- **Repeated reads of the same node are many**: the heaviest rule reads the same parent 21.9
+  times a node. They cost nothing in today's arrays, which the cache holds; read through format
+  16 they would each be a point read unless hoisted. Even then, the heaviest rule adds 88 ms (0.6%).
+  Where they come from is not yet traced.
+- **The choice: sibling slots and gap positions, both at K = 8.** K = 16 saves 0.13 B a node more
+  on positions (Python 2.07 → 1.94) and costs up to twice the point time. Together, at K = 8, data-layer
+  Python's codes, slots and positions take about 4.19 B a node against XF's 4.60, and every
+  structural repeat keeps its bits.
+- **Measurement notes.** The ns deltas are the quiet M3's. The rule times are the M5 Max's, at
+  load 39–53. CPU time runs long under load, which makes the percentages read low; the M5's
+  per-read deltas are smaller than the M3's, which makes them read high. Read counts do not depend on the machine. A full
+  pack run (`run-policies`) fails under strict mode on its first stratum ("a native fact operator
+  over input relations"), so each rule ran alone.
+
 ## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
@@ -697,3 +765,6 @@ In order. Each step is measured on all three corpora, every answer checked.
    Gaps with a start every 8 or 16 take 16–24% less memory on code and a third less on disk, at
    2–4.5× a point span's cost; read in order they are faster. Next: weigh both point costs by the
    bulk-form rule mix, and write the choice into 0156.
+9. **How today's engine reads spans and parents (E17).** Done: at today's mix the new forms cost
+   0.4–1.7% of a rule's CPU at K = 8, if the engine reads in order through cursors. Chosen: sibling
+   slots and gap positions at K = 8. Next: trace the repeated reads of the same node's parent.

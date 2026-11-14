@@ -1727,6 +1727,66 @@ pub mod reads {
         true
     }
 
+    /// E17 (t39 step 9): how each read of a span, a parent or a subtree end lies against the reader's
+    /// previous read of the same part on this thread: the same node, the next one, near (16 nodes or fewer
+    /// away), or far (a point read). A slice of a column read whole is in order ("bulk", its length).
+    pub const PATTERN_PARTS: [&str; 7] = [
+        "tape span", "tape parent", "tape size", "facts start", "facts end", "facts parent", "facts subtree_end",
+    ];
+    pub const CLASSES: [&str; 5] = ["same", "next", "near", "far", "bulk"];
+    static PATTERNS: [[AtomicU64; CLASSES.len()]; PATTERN_PARTS.len()] =
+        [const { [const { AtomicU64::new(0) }; CLASSES.len()] }; PATTERN_PARTS.len()];
+    thread_local! {
+        static LAST: [std::cell::Cell<u32>; PATTERN_PARTS.len()] = const { [const { std::cell::Cell::new(u32::MAX) }; PATTERN_PARTS.len()] };
+        /// Builders that decode (facts from a tape) are not readers: their reads are not counted.
+        static PAUSED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+
+    pub const fn pattern_part(name: &str) -> usize {
+        let mut i = 0;
+        while !eq(PATTERN_PARTS[i], name) {
+            i += 1;
+        }
+        i
+    }
+
+    #[inline]
+    pub fn at(part: usize, node: u32) {
+        if PAUSED.with(|p| p.get()) != 0 {
+            return;
+        }
+        let last = LAST.with(|l| l[part].replace(node));
+        let class = if node == last {
+            0
+        } else if last != u32::MAX && node == last.wrapping_add(1) {
+            1
+        } else if last != u32::MAX && node.abs_diff(last) <= 16 {
+            2
+        } else {
+            3
+        };
+        PATTERNS[part][class].fetch_add(1, Relaxed);
+    }
+
+    #[inline]
+    pub fn bulk(part: usize, n: usize) {
+        if PAUSED.with(|p| p.get()) == 0 {
+            PATTERNS[part][4].fetch_add(n as u64, Relaxed);
+        }
+    }
+
+    pub struct Paused;
+    impl Drop for Paused {
+        fn drop(&mut self) {
+            PAUSED.with(|p| p.set(p.get() - 1));
+        }
+    }
+    /// Reads are not counted until the guard drops (a builder decoding a tape into facts).
+    pub fn pause() -> Paused {
+        PAUSED.with(|p| p.set(p.get() + 1));
+        Paused
+    }
+
     pub fn report() {
         let nodes = COUNTS[part("nodes restored")].load(Relaxed).max(1) as f64;
         eprintln!("tape reads (E7):");
@@ -1734,7 +1794,28 @@ pub mod reads {
             let count = count.load(Relaxed);
             eprintln!("  {name:<16} {count:>14} {:>10.3} per restored node", count as f64 / nodes);
         }
+        let facts = COUNTS[part("facts nodes")].load(Relaxed).max(1) as f64;
+        eprintln!("read patterns (E17), per facts node ({} facts nodes):", facts as u64);
+        eprintln!("  {:<18} {}", "", CLASSES.iter().map(|c| format!("{c:>12}")).collect::<String>());
+        for (name, row) in PATTERN_PARTS.iter().zip(&PATTERNS) {
+            eprintln!("  {name:<18} {}", row.iter().map(|c| format!("{:>12.4}", c.load(Relaxed) as f64 / facts)).collect::<String>());
+        }
+        eprintln!("read patterns (E17), counts:");
+        for (name, row) in PATTERN_PARTS.iter().zip(&PATTERNS) {
+            eprintln!("  {name:<18} {}", row.iter().map(|c| format!("{:>12}", c.load(Relaxed))).collect::<String>());
+        }
     }
+}
+
+/// Counts a read of `$part` (`reads::PATTERN_PARTS`) of node `$node`, by where it lies (E17).
+macro_rules! read_at {
+    ($part:literal, $node:expr) => {
+        #[cfg(feature = "tape-reads")]
+        {
+            const PART: usize = reads::pattern_part($part);
+            reads::at(PART, $node as u32);
+        }
+    };
 }
 
 /// Counts a read of `$part` (`reads::PARTS`), `$n` times.
@@ -2299,6 +2380,7 @@ impl TapeDoc {
 
     pub fn transducer_span(&self, node: u32) -> Range<usize> {
         read!("span");
+        read_at!("tape span", node);
         let rec = &self.data[node as usize];
         rec.start as usize..rec.end as usize
     }
@@ -2317,6 +2399,7 @@ impl TapeDoc {
 
     pub fn transducer_parent(&self, node: u32) -> Option<u32> {
         read!("parent");
+        read_at!("tape parent", node);
         let parent = self.data[node as usize].parent;
         (parent != NONE).then_some(parent)
     }
@@ -2337,6 +2420,7 @@ impl TapeDoc {
 
     pub fn transducer_descendants(&self, node: u32) -> Range<u32> {
         read!("size");
+        read_at!("tape size", node);
         let rec = &self.data[node as usize];
         node + 1..node + rec.size
     }
@@ -2587,6 +2671,7 @@ impl ExactSizeIterator for Children<'_> {}
 impl<'a> SgNode<'a> for TapeNode<'a> {
     fn parent(&self) -> Option<Self> {
         read!("parent");
+        read_at!("tape parent", self.index);
         (self.rec().parent != NONE).then(|| self.at(self.rec().parent))
     }
     fn ancestors(&self, _root: Self) -> impl Iterator<Item = Self> {
@@ -2607,6 +2692,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     fn dfs(&self) -> impl Iterator<Item = Self> {
         let start = self.index;
         read!("size");
+        read_at!("tape size", self.index);
         let end = start + self.rec().size;
         (start..end).map(move |index| self.at(index))
     }
@@ -2665,6 +2751,7 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     }
     fn range(&self) -> Range<usize> {
         read!("span");
+        read_at!("tape span", self.index);
         self.rec().start as usize..self.rec().end as usize
     }
     fn start_pos(&self) -> Position {
