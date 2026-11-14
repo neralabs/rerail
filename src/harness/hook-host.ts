@@ -86,11 +86,14 @@ const DAEMON_ANSWER_GRACE_MS = 75;
  * show that it would say stopped (`stoppedWithoutGit`), the hook answers stopped itself and ends its request: no Git
  * runs, and a busy daemon does not hold it. Without a daemon that answers, the hook reads the database itself, which
  * never starts a daemon: with none recorded the daemon's read comes back empty at once, well inside the grace. An
- * explicit database path (tests, embedded hosts) is always read directly.
+ * explicit database path (tests, embedded hosts) is always read directly. `graceMs` is the grace; a test that needs the
+ * daemon's answer first, however slow its machine, holds it open longer.
  */
-export async function hookRerailStarted(host: RerailHost, workspace: string, databasePath?: string): Promise<boolean> {
+export async function hookRerailStarted(
+  host: RerailHost, workspace: string, databasePath?: string, graceMs = DAEMON_ANSWER_GRACE_MS,
+): Promise<boolean> {
   if (databasePath === undefined) {
-    const answered = await daemonAnswer(host, workspace);
+    const answered = await daemonAnswer(host, workspace, graceMs);
     if (answered !== null) return rerailRunsIn(answered);
   }
   return isRerailStarted(workspace, databasePath);
@@ -98,12 +101,12 @@ export async function hookRerailStarted(host: RerailHost, workspace: string, dat
 
 /**
  * The daemon's answer to the start check (`readRepositoryState`), null where none came; or `stopped` where the daemon
- * has not answered within the grace and `knownStopped` holds.
+ * has not answered within `graceMs` and `knownStopped` holds.
  */
-async function daemonAnswer(host: RerailHost, workspace: string): Promise<RepositoryStartState | null> {
+async function daemonAnswer(host: RerailHost, workspace: string, graceMs: number): Promise<RepositoryStartState | null> {
   const request = new AbortController();
   const answer = readRepositoryState(workspace, host, request.signal);
-  if (await settlesWithin(answer, DAEMON_ANSWER_GRACE_MS) || !stoppedEndingRequest(workspace, request)) return await answer;
+  if (await settlesWithin(answer, graceMs) || !stoppedEndingRequest(workspace, request)) return await answer;
   return "stopped";
 }
 

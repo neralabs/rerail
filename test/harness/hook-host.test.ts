@@ -1267,6 +1267,12 @@ async function startChecksTypedOtherwise(host: StartCheckHost, daemon: CountingD
   return { ...found, answeredItselfIn: [...found.answeredItselfIn] };
 }
 
+/**
+ * A grace for the start check that no answer of the daemon's misses, nor the empty read where none is recorded: a test
+ * of what the hook does when the daemon answers in time gives it, so a slow or busy machine cannot make that answer late.
+ */
+const GRACE_NO_ANSWER_MISSES = 60_000;
+
 /** The Git variables the test setup sets (`setup-rerail-home.ts`); a shell's others reach no test of the start check. */
 const TEST_SETUP_GIT_VARIABLES = new Set(["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"]);
 
@@ -1296,8 +1302,8 @@ describe("the hook start check", () => {
     const daemon = await countingDaemon(process.env.RERAIL_HOME!, daemonSays);
     try {
       expect({
-        started: await host.hookRerailStarted("claude-code", workspace), requests: daemon.requests, opened: host.opened, walked: host.walked,
-        proofs: host.proofs.found,
+        started: await host.hookRerailStarted("claude-code", workspace, undefined, GRACE_NO_ANSWER_MISSES),
+        requests: daemon.requests, opened: host.opened, walked: host.walked, proofs: host.proofs.found,
       }).toEqual({ started, requests: ["/api/presentation"], opened: [], walked: [], proofs: [] });
     } finally {
       await daemon.close();
@@ -1399,7 +1405,7 @@ describe("the hook start check", () => {
     const root = await temporaryDirectory({ started: false });
     const app = stoppedApp(root);
     const host = await startCheckHost();
-    expect({ started: await host.hookRerailStarted("claude-code", app), git: host.git, proofs: host.proofs.found })
+    expect({ started: await host.hookRerailStarted("claude-code", app, undefined, GRACE_NO_ANSWER_MISSES), git: host.git, proofs: host.proofs.found })
       .toEqual({ started: false, git: ["rev-parse"], proofs: [] });
   });
 
