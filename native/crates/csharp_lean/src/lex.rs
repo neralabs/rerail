@@ -337,6 +337,10 @@ impl<'s> Lexer<'s> {
     fn line_start(&self, at: usize) -> bool {
         let mut i = at;
         while i > 0 {
+            // The file's byte order mark is white space.
+            if i == 3 && self.src.starts_with(b"\xef\xbb\xbf") {
+                return true;
+            }
             match self.src[i - 1] {
                 b' ' | b'\t' | 0x0b | 0x0c => i -= 1,
                 b'\n' | b'\r' => return true,

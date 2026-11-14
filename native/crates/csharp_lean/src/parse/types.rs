@@ -39,6 +39,7 @@ impl<'a> P<'a> {
                 self.depth -= 1;
                 return Ok(n);
             }
+            T::Name if t.word == w::DELEGATE && self.kind_at(1) == T::Star => self.function_pointer_type(s)?,
             T::Name if t.word == w::VAR && !matches!(self.kind_at(1), T::Lt | T::Dot | T::ColonColon) => self.leaf_in(K::ImplicitType, s)?,
             T::Name if w::is_predefined(t.word) => self.leaf_in(K::PredefinedType, s)?,
             T::Name if !w::is_reserved(t.word) => self.name(s)?,
@@ -72,6 +73,49 @@ impl<'a> P<'a> {
             }
         }
         self.depth -= 1;
+        Ok(n)
+    }
+
+    /// `function_pointer_type`: `delegate*`, a calling convention, and `<` parameters (each with
+    /// `ref`, `out` or `in`) and the return type `>`.
+    fn function_pointer_type(&mut self, s: Slot) -> R<N> {
+        let n = self.open_in(K::FunctionPointerType, s)?;
+        self.tk(K::FunctionPointerType, K::TDelegate)?;
+        self.tk(K::FunctionPointerType, K::TStar)?;
+        if self.is_word(w::MANAGED) || self.is_word(w::UNMANAGED) {
+            let c = self.open(K::CallingConvention, f::NONE, C_NONE)?;
+            let k = if self.is_word(w::MANAGED) { K::TManaged } else { K::TUnmanaged };
+            self.leaf(k, f::NONE, C_NONE)?;
+            if self.peek() == T::LBracket {
+                return self.refuse();
+            }
+            self.close(c);
+        }
+        if self.peek() != T::Lt {
+            return self.refuse();
+        }
+        self.tk(K::FunctionPointerType, K::TLt)?;
+        loop {
+            let k = usize::from(matches!(self.word_at(0), w::REF | w::OUT | w::IN));
+            let Some(e) = self.scan_type_base(k) else { return self.refuse() };
+            if self.kind_at(e) != T::Comma {
+                break;
+            }
+            let p = self.open(K::FunctionPointerParameter, f::NONE, C_NONE)?;
+            if k == 1 {
+                let kw = keyword(self.tok().word).expect("a keyword");
+                self.leaf(kw, f::NONE, C_NONE)?;
+            }
+            self.ty(slot(f::TYPE, Ctx::Bare))?;
+            self.close(p);
+            self.tk(K::FunctionPointerType, K::TComma)?;
+        }
+        self.ty(slot(f::RETURNS, Ctx::Type))?;
+        if self.peek() != T::Gt {
+            return self.refuse();
+        }
+        self.tk(K::FunctionPointerType, K::TGt)?;
+        self.close(n);
         Ok(n)
     }
 
@@ -257,6 +301,32 @@ impl<'a> P<'a> {
                 return self.scan_type_owed(k, owed, ranks);
             }
             T::Name if t.word == w::SCOPED && self.kind_at(k + 1) == T::Name => return self.scan_type_owed(k + 1, owed, ranks),
+            T::Name if t.word == w::DELEGATE && self.kind_at(k + 1) == T::Star => {
+                // `delegate*`, a calling convention, `<` types between `,`s `>`.
+                let mut j = k + 2;
+                if matches!(self.word_at(j), w::MANAGED | w::UNMANAGED) {
+                    j += 1;
+                }
+                if self.kind_at(j) != T::Lt {
+                    return None;
+                }
+                j += 1;
+                loop {
+                    if matches!(self.word_at(j), w::REF | w::OUT | w::IN) {
+                        j += 1;
+                    }
+                    let mut inner = 0;
+                    j = self.scan_type_owed(j, &mut inner, true)?;
+                    if inner > 0 {
+                        return None;
+                    }
+                    match self.kind_at(j) {
+                        T::Comma => j += 1,
+                        T::Gt => break j + 1,
+                        _ => return None,
+                    }
+                }
+            }
             T::Name if w::is_predefined(t.word) => k + 1,
             T::Name if !w::is_reserved(t.word) => {
                 let e = self.scan_name(k, owed)?;

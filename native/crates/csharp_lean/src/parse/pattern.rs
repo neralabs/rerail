@@ -30,7 +30,7 @@ impl<'a> P<'a> {
         let n = self.wrap(left, K::IsPatternExpression, s, slot(f::EXPRESSION, Ctx::Expr));
         self.tk(K::IsPatternExpression, K::TIs)?;
         let cmode = self.cmode;
-        self.cmode = if start { Cmode::Start } else { Cmode::Inner(min) };
+        self.cmode = if start { Cmode::Start(min) } else { Cmode::Inner(min) };
         self.pattern(slot(f::PATTERN, Ctx::Pattern))?;
         self.cmode = cmode;
         self.close(n);
@@ -88,6 +88,9 @@ impl<'a> P<'a> {
         }
         // `is` and a plain constant (a literal, `null`, a dotted name, `-` a number), then the end.
         let mut c = j + 1;
+        if self.is_word_at(c, w::NOT) {
+            c += 1;
+        }
         if self.kind_at(c) == T::Minus {
             c += 1;
         }
@@ -280,8 +283,17 @@ impl<'a> P<'a> {
             Cmode::Plain => {
                 self.binary_expr(lit, P_CONST)?;
             }
-            Cmode::Start => {
+            Cmode::Start(min) => {
                 let Some(has_is) = self.constant_takes() else { return self.refuse() };
+                // Inside a chain, an `is` with others after it takes none of the operators.
+                if has_is && min > P_CONST {
+                    self.binary_expr(lit, u8::MAX)?;
+                    if binary_prec(self.peek()).is_some_and(|p| p >= min) {
+                        return self.refuse();
+                    }
+                    self.close(n);
+                    return Ok(n);
+                }
                 let (cmode, in_constant) = (self.cmode, self.in_constant);
                 (self.cmode, self.in_constant) = (Cmode::Plain, has_is);
                 self.binary_expr(lit, P_CONST)?;
@@ -364,6 +376,10 @@ impl<'a> P<'a> {
         let mut spread = false;
         for j in 1..close {
             if self.kind_at(j) == T::DotDot {
+                // `[a, ..]`: tree-sitter reads `..]` as a range and fails; not read.
+                if self.kind_at(j + 1) == T::RBracket {
+                    return self.refuse();
+                }
                 spread = true;
             }
         }

@@ -90,7 +90,7 @@ impl<'a> P<'a> {
     pub(super) fn toplevel_item(&mut self, in_if: bool) -> R<()> {
         let t = self.tok();
         match t.kind {
-            T::PpIf => {
+            T::PpIf if self.pp_attributes_end(0).is_none() => {
                 self.preproc_if(BARE, Items::TopLevel)?;
                 return Ok(());
             }
@@ -259,33 +259,130 @@ impl<'a> P<'a> {
     }
 
     /// `{_attribute_list}`: each `[` a target and attributes `]`.
-    fn attribute_lists(&mut self) -> R<()> {
-        while self.peek() == T::LBracket {
-            let n = self.open(K::AttributeList, f::NONE, C_NONE)?;
-            self.tk(K::AttributeList, K::TLBracket)?;
-            let t = self.tok();
-            if t.kind == T::Name && self.kind_at(1) == T::Colon {
-                let k = match t.word {
-                    w::FIELD | w::EVENT | w::METHOD | w::PARAM | w::PROPERTY | w::RETURN | w::TYPE | w::TYPEVAR => keyword(t.word).expect("a target"),
-                    _ => return self.refuse(),
-                };
-                let s = self.open(K::AttributeTargetSpecifier, f::NONE, C_NONE)?;
-                self.leaf(k, f::NONE, C_NONE)?;
-                self.leaf(K::TColon, f::NONE, C_NONE)?;
-                self.close(s);
+    pub(super) fn attribute_lists(&mut self) -> R<()> {
+        loop {
+            if self.peek() == T::LBracket {
+                self.attribute_list()?;
+            } else if self.pp_attributes_end(0).is_some() {
+                self.pp_attributes()?;
+            } else {
+                return Ok(());
             }
-            self.attributes_to_bracket(K::AttributeList)?;
-            self.close(n);
         }
+    }
+
+    fn attribute_list(&mut self) -> R<()> {
+        let n = self.open(K::AttributeList, f::NONE, C_NONE)?;
+        self.tk(K::AttributeList, K::TLBracket)?;
+        let t = self.tok();
+        if t.kind == T::Name && self.kind_at(1) == T::Colon {
+            let k = match t.word {
+                w::FIELD | w::EVENT | w::METHOD | w::PARAM | w::PROPERTY | w::RETURN | w::TYPE | w::TYPEVAR => keyword(t.word).expect("a target"),
+                _ => return self.refuse(),
+            };
+            let s = self.open(K::AttributeTargetSpecifier, f::NONE, C_NONE)?;
+            self.leaf(k, f::NONE, C_NONE)?;
+            self.leaf(K::TColon, f::NONE, C_NONE)?;
+            self.close(s);
+        }
+        self.attributes_to_bracket(K::AttributeList)?;
+        self.close(n);
         Ok(())
     }
 
     /// Where attribute lists starting `k` tokens ahead end.
-    fn skip_attributes(&mut self, mut k: usize) -> Option<usize> {
-        while self.kind_at(k) == T::LBracket {
-            k = self.matching(k)? + 1;
+    pub(super) fn skip_attributes(&mut self, mut k: usize) -> Option<usize> {
+        loop {
+            if self.kind_at(k) == T::LBracket {
+                k = self.matching(k)? + 1;
+            } else if let Some(e) = self.pp_attributes_end(k) {
+                k = e;
+            } else {
+                return Some(k);
+            }
         }
-        Some(k)
+    }
+
+    /// Where an `#if` at `k` that holds attribute lists alone (one at most in each branch, one at
+    /// least in all) ends: past its `#endif`. `None` where none starts there.
+    pub(super) fn pp_attributes_end(&mut self, k: usize) -> Option<usize> {
+        if self.kind_at(k) != T::PpIf {
+            return None;
+        }
+        let mut j = self.pp_line_end(k);
+        let mut lists = 0;
+        loop {
+            if self.kind_at(j) == T::LBracket {
+                // A global attribute (`[assembly: …]`) is the file's item, not a declaration's.
+                if (self.is_word_at(j + 1, w::ASSEMBLY) || self.is_word_at(j + 1, w::MODULE)) && self.kind_at(j + 2) == T::Colon {
+                    return None;
+                }
+                j = self.matching(j)? + 1;
+                lists += 1;
+            }
+            match self.kind_at(j) {
+                T::PpEndif => return (lists > 0).then_some(j + 1),
+                T::PpElse => j += 1,
+                T::PpElif => j = self.pp_line_end(j),
+                _ => return None,
+            }
+        }
+    }
+
+    /// The first token past the line of the directive token at `k`.
+    fn pp_line_end(&mut self, k: usize) -> usize {
+        let eol = self.lx.blocks.eol(self.peek_at(k).start as usize) as u32;
+        let mut j = k + 1;
+        while self.peek_at(j).start < eol && self.kind_at(j) != T::Eof {
+            j += 1;
+        }
+        j
+    }
+
+    /// `preproc_if_in_attribute_list`: `#if`, a condition, an attribute list, `#elif`s and an
+    /// `#else` (each with one), `#endif`.
+    fn pp_attributes(&mut self) -> R<()> {
+        let n = self.open(K::PreprocIfInAttributeList, f::NONE, C_NONE)?;
+        self.tk(K::PreprocIfInAttributeList, K::THashIf)?;
+        self.preproc_condition()?;
+        self.one_attribute_list()?;
+        loop {
+            match self.peek() {
+                T::PpElif => {
+                    let a = self.open(K::PreprocElif, f::ALTERNATIVE, C_NONE)?;
+                    self.tk(K::PreprocElifInAttributeList, K::THashElif)?;
+                    self.preproc_condition()?;
+                    self.one_attribute_list()?;
+                    self.close(a);
+                    // Further branches nest in this one: not read.
+                    if matches!(self.peek(), T::PpElif | T::PpElse) {
+                        return self.refuse();
+                    }
+                    break;
+                }
+                T::PpElse => {
+                    let a = self.open(K::PreprocElse, f::ALTERNATIVE, C_NONE)?;
+                    self.tk(K::PreprocElseInAttributeList, K::THashElse)?;
+                    self.one_attribute_list()?;
+                    self.close(a);
+                    break;
+                }
+                _ => break,
+            }
+        }
+        if self.peek() != T::PpEndif {
+            return self.refuse();
+        }
+        self.tk(K::PreprocIfInAttributeList, K::THashEndif)?;
+        self.close(n);
+        Ok(())
+    }
+
+    fn one_attribute_list(&mut self) -> R<()> {
+        if self.peek() == T::LBracket {
+            self.attribute_list()?;
+        }
+        Ok(())
     }
 
     // ---- Members.
@@ -384,7 +481,7 @@ impl<'a> P<'a> {
         loop {
             match self.peek() {
                 T::RBrace | T::PpElif | T::PpElse | T::PpEndif | T::Eof => return Ok(()),
-                T::PpIf => {
+                T::PpIf if self.pp_attributes_end(0).is_none() => {
                     self.preproc_if(DECL, Items::Declarations)?;
                 }
                 _ => self.member()?,

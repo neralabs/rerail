@@ -320,9 +320,9 @@ struct P<'a> {
 enum Cmode {
     /// All of precedence `??` and above (a `case` label, a switch arm).
     Plain,
-    /// After an `is` that starts its chain: all of `??` and above, where tree-sitter's reading is
-    /// known.
-    Start,
+    /// After an `is` outside a constant (an operand of an operator of precedence `min`): all of
+    /// `??` and above, where tree-sitter's reading is known.
+    Start(u8),
     /// After an `is` inside a chain (an operand of an operator of precedence `min`): none; an
     /// operator of `min` or above after it is refused.
     Inner(u8),
@@ -1011,12 +1011,19 @@ impl<'a> P<'a> {
             X::Region | X::Endregion | X::Define | X::Undef | X::Error | X::Warning => {
                 // `preproc_arg`: `\S([^/\n]|\/[^*]|\\\r?\n)*`, to the line's end.
                 let a = skip(at);
-                if a < end {
+                if a < end && src[a] == b'/' && src.get(a + 1) == Some(&b'/') && matches!(x.kind, X::Region | X::Endregion) {
+                    // `#endregion // …`: a comment (an extra inside the directive), no text.
+                    let e = self.lx.blocks.eol(a);
+                    let c = self.w.push(key(K::Comment, f::NONE, C_NONE, true), a as u32);
+                    self.w.close(c, e as u32);
+                } else if a < end {
                     if a == at && !matches!(x.kind, X::Region | X::Endregion) {
                         return refuse;
                     }
                     let line = &src[a..end];
-                    if line.windows(2).any(|p| p == b"/*") || line.last() == Some(&b'/') || line.contains(&b'\\') {
+                    // A `\` before the line end continues it; not read.
+                    let continued = line.ends_with(b"\\") || line.ends_with(b"\\\r");
+                    if line.windows(2).any(|p| p == b"/*") || line.last() == Some(&b'/') || continued {
                         return refuse;
                     }
                     let field = if matches!(x.kind, X::Region | X::Endregion) { f::CONTENT } else { f::NONE };

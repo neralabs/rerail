@@ -214,7 +214,16 @@ impl<'a> P<'a> {
 
     /// Whether a local declaration or function starts here (its modifiers, a type and a name).
     pub(super) fn local_ahead(&mut self) -> Option<Local> {
-        let mut k = 0;
+        // Attributes stand before a local function alone.
+        let mut k = self.skip_attributes(0)?;
+        if k > 0 {
+            while self.modifier_at(k) {
+                k += 1;
+            }
+            let e = self.scan_type(k)?;
+            let function = self.is_ident_at(e) && (self.kind_at(e + 1) == T::LParen || (self.kind_at(e + 1) == T::Lt && self.scan_type_args(e + 1).is_some_and(|c| self.kind_at(c) == T::LParen)));
+            return function.then_some(Local::Function);
+        }
         if self.is_word_at(k, w::AWAIT) && self.is_word_at(k + 1, w::USING) {
             k += 1;
         }
@@ -267,6 +276,7 @@ impl<'a> P<'a> {
             }
             Some(Local::Function) => {
                 let n = self.open_in(K::LocalFunctionStatement, s)?;
+                self.attribute_lists()?;
                 self.modifiers()?;
                 self.ty(slot(f::TYPE, Ctx::Type))?;
                 self.ident(slot(f::NAME, Ctx::Bare))?;
@@ -583,7 +593,7 @@ impl<'a> P<'a> {
     }
 
     /// An `#if`'s or `#elif`'s condition, to its line's end.
-    fn preproc_condition(&mut self) -> R<()> {
+    pub(super) fn preproc_condition(&mut self) -> R<()> {
         let eol = self.lx.blocks.eol(self.last_end as usize) as u32;
         self.pp_binary(slot(f::CONDITION, Ctx::Bare), 0, eol)?;
         if self.tok().start < eol && self.peek() != T::Eof {

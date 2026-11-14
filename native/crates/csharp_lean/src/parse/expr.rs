@@ -356,6 +356,15 @@ impl<'a> P<'a> {
                     Some(e) => j = e,
                     None => return false,
                 },
+                // A name's type arguments (as `simple_name` reads them): their `,`s are theirs.
+                T::Lt if j > from && self.is_ident_at(j - 1) => {
+                    if let Some(e) = self.scan_type_args(j) {
+                        if follows_type_args(self.kind_at(e)) {
+                            j = e;
+                            continue;
+                        }
+                    }
+                }
                 _ => {}
             }
             j += 1;
@@ -595,10 +604,45 @@ impl<'a> P<'a> {
 
     /// `argument_list`: `(` arguments `)`.
     pub(super) fn arguments(&mut self, field: u8) -> R<N> {
+        // A generic invocation's (`M<A, B>(`): its last token before the `(` is a `>`.
+        let generic = self.i > 0 && self.toks.get(self.i - 1).is_some_and(|t| t.kind == T::Gt && t.end == self.last_end);
         let n = self.open(K::ArgumentList, field, C_NONE)?;
-        self.list(K::ArgumentList, T::RParen, true, false, |p| p.argument())?;
+        self.list(K::ArgumentList, T::RParen, true, false, |p| {
+            if generic && p.split_generic_ahead() {
+                return p.refuse();
+            }
+            p.argument()
+        })?;
         self.close(n);
         Ok(n)
+    }
+
+    /// Whether the argument next is `N<A, B>(…)` (names alone as type arguments) and a binary
+    /// operator: in a generic invocation's arguments, tree-sitter's reading splits it at the `,`
+    /// at times (`N < A` and `B > (…) & x`); not read.
+    fn split_generic_ahead(&mut self) -> bool {
+        let mut k = 0;
+        while self.is_ident_at(k) && self.kind_at(k + 1) == T::Dot {
+            k += 2;
+        }
+        if !self.is_ident_at(k) || self.kind_at(k + 1) != T::Lt {
+            return false;
+        }
+        let mut j = k + 2;
+        let mut args = 0;
+        while self.is_ident_at(j) {
+            args += 1;
+            match self.kind_at(j + 1) {
+                T::Comma => j += 2,
+                T::Gt => break,
+                _ => return false,
+            }
+        }
+        if args < 2 || self.kind_at(j + 1) != T::Gt || self.kind_at(j + 2) != T::LParen {
+            return false;
+        }
+        let Some(close) = self.matching(j + 2) else { return false };
+        is_binary(self.kind_at(close + 1))
     }
 
     /// `bracketed_argument_list` (as `kind`: an element binding's too): `[` arguments `]`.
