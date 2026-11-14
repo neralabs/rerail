@@ -204,6 +204,20 @@ What the idle machines can do:
   which has `wasm32-wasip1`. The browser build checks and builds again (39a3a3cde; 161 s, after
   `source native/wasm/env.sh`, which still uses Homebrew's clang and lld for the C). Shells started
   before the fix keep the old PATH, and each worktree rebuilds once on 1.95.0.
+- **A newer Rust gains little for the edit loop.** Latest stable is 1.100.0 (2026-11-12); the pin
+  is 1.95.0. The engine builds on 1.99.1 with no errors. Measured on one worktree, each toolchain
+  with a target dir of its own, at load 40–80:
+
+  | Build of the CLI | 1.95.0 | 1.99.1 |
+  |---|---|---|
+  | cold | 244 s wall, 461 s CPU | 189 s wall, 377 s CPU |
+  | after a one-line edit in logic (three samples, CPU) | 29, 92, 23 s | 36, 84, 20 s |
+
+  A cold build costs about 18% less CPU on 1.99 (one sample). Rebuilds after an edit, the loop
+  that matters, are the same within the noise. An upgrade costs every worktree a cold rebuild
+  (about 460 CPU-seconds each, 20 worktrees) and a change of CI's pin. 1.100 also stabilises the
+  never type, which changes inference fallback, so it needs a check of its own. So upgrade for
+  the language or for cold builds, all at once at a hub step, not for the edit loop.
 - **One `target/` per worktree.** There are 20 of them, at 60–174 GB each, and each builds the
   same crates. On 2026-11-14 the disk filled to ENOSPC during this work, which stopped every tool.
 
@@ -218,6 +232,8 @@ Done on this branch:
   365 MB cdylib.
 - **One toolchain** (§5): rustup first, the pin holds, and wasm builds.
 - **The tests' template deadlock is fixed** (b038664e6, §3).
+- **The stack overflow is fixed** (9bea7b866): the lean JS parser's destructuring patterns now
+  count their depth, as its expressions do, so a deep pattern is refused, not recursed into.
 
 Still to do:
 
@@ -231,6 +247,5 @@ Still to do:
    - per-test times;
    - test groups;
    - a slow-test timeout.
-5. **Fix the stack overflow** in `syntax_detection_reads_a_deeply_nested_top_level`.
-6. **A shared sccache backend on the mac mini, and the gates on the idle Macs** (§4).
+5. **A shared sccache backend on the mac mini, and the gates on the idle Macs** (§4).
 
