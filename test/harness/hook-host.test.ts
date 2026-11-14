@@ -507,12 +507,14 @@ interface CountingDaemon {
  * holds each start check until the promise `answerWhen` gives for it settles, as a daemon busy with other checkouts
  * does, and `close` lets every held one go. On Windows a recorded daemon counts as alive only while its
  * engine pipe exists (`recordedDaemonAlive`), so it holds one. It keeps the Rerail database open where there is one, as
- * a running daemon does, so the database's WAL and the WAL's index stay beside it.
+ * a running daemon does, so the database's WAL and the WAL's index stay beside it, unless `holdsDatabase` is false: a
+ * test whose daemon's connection is another process's gives that.
  */
 async function countingDaemon(
   home: string,
   repositoryState: string | ((repository: string) => string) = "stopped",
   answerWhen?: () => Promise<unknown>,
+  holdsDatabase = true,
 ): Promise<CountingDaemon> {
   const requests: string[] = [];
   const asked: string[] = [];
@@ -551,7 +553,7 @@ async function countingDaemon(
     pid: process.pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "test",
     databasePath: join(home, "rerail.sqlite"), kernelSocketPath, ui: "bundled", startedAt: 1, packageRoot: home,
   }));
-  const database = heldOpen(join(home, "rerail.sqlite"));
+  const database = holdsDatabase ? heldOpen(join(home, "rerail.sqlite")) : undefined;
   return {
     requests,
     asked,
@@ -935,8 +937,10 @@ async function startCheckHost(proof?: (workspace: string) => boolean, spelling?:
  * as a daemon busy with other checkouts answers after the hook's grace: the hook's own answer, where it gives one,
  * comes first, and anywhere else it takes the daemon's.
  */
-async function daemonAnsweringAfterProof(host: StartCheckHost, repositoryState: string | ((repository: string) => string)): Promise<CountingDaemon> {
-  return await countingDaemon(process.env.RERAIL_HOME!, repositoryState, () => host.proofs.ran());
+async function daemonAnsweringAfterProof(
+  host: StartCheckHost, repositoryState: string | ((repository: string) => string), holdsDatabase = true,
+): Promise<CountingDaemon> {
+  return await countingDaemon(process.env.RERAIL_HOME!, repositoryState, () => host.proofs.ran(), holdsDatabase);
 }
 
 /** A Git repository at `<root>/app`, started and then stopped in its checkout, as `rerail stop` leaves it. */
@@ -1833,7 +1837,9 @@ describe("the hook start check", () => {
     const root = await temporaryDirectory({ started: false });
     const app = startedApp(root);
     const host = await startCheckHost();
-    const daemon = await daemonAnsweringAfterProof(host, "started");
+    // The writer is the daemon's connection. One in this process too would share its WAL index with the hook's read,
+    // which a hook's own process does not.
+    const daemon = await daemonAnsweringAfterProof(host, "started", false);
     const writer = await startedOnlyInTheWal();
     try {
       for (const companion of ["-wal", "-shm"]) rmSync(`${defaultRerailDatabasePath()}${companion}`);
