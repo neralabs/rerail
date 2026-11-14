@@ -419,8 +419,8 @@ function disposeRuntime(state: EngineRoutingState, runtimeKey: string): void {
 const STALLED_REQUEST_MS = 1_000;
 
 /**
- * While the service closes, cuts off each connection whose request has not all arrived (or carries no request yet) once
- * two looks `STALLED_REQUEST_MS` apart find it has sent nothing between them. A hook writes its whole request at once,
+ * While the service closes, cuts off each connection still sending a request ({@link awaitsRequest}) once two looks
+ * `STALLED_REQUEST_MS` apart find it has sent nothing between them. A hook writes its whole request at once,
  * so one still arriving has stalled, and waiting for it would hold the close with no limit: `server.close()` stops the
  * check that enforces the server's request and headers timeouts. A request whose body has arrived is never cut: its
  * event runs and its hook gets the whole answer. Idle connections are left to `server.close()`, which
@@ -429,12 +429,12 @@ const STALLED_REQUEST_MS = 1_000;
  * loop has read what arrived meanwhile (`setImmediate`), so a loop kept busy past the wait cuts off nothing that came
  * in time. Returns the function that stops the looks.
  */
-function cutStalledRequests(connections: ReadonlyMap<Socket, IncomingMessage | undefined>): () => void {
+function cutStalledRequests(connections: ReadonlyMap<Socket, ConnectionState>): () => void {
   let seen = new Map<Socket, number>();
   const look = (): void => {
     const now = new Map<Socket, number>();
-    for (const [socket, request] of connections) {
-      if (request?.complete === true) continue;
+    for (const [socket, state] of connections) {
+      if (!awaitsRequest(socket, state)) continue;
       if (seen.get(socket) === socket.bytesRead) socket.destroy();
       else now.set(socket, socket.bytesRead);
     }
@@ -446,21 +446,43 @@ function cutStalledRequests(connections: ReadonlyMap<Socket, IncomingMessage | u
 }
 
 /**
- * Each open connection of `server`, with the request it carries once that request's headers have arrived, the latest
- * one on a connection that carries several (`cutStalledRequests` reads it). A connection leaves it when it closes, so
- * a daemon does not keep every hook's socket for its life. A connection its client keeps open after an answer still
- * shows that request while only part of the next one's headers has come, so the close leaves it to Node's keep-alive
- * timeout, which ends it about 6 s after its last byte, as `server.close()` alone does. Clearing the entry once the
- * answer is written would cut it within two seconds, and with it a next request the client sends a few seconds later,
- * which `server.close()` answers. Rerail's own clients open a connection for each request.
+ * What the close knows of an open connection: `undefined` until a request's headers have arrived, then the latest such
+ * request, then, once that request's answer is written, how many bytes the connection had read by then.
  */
-export function trackConnections(server: Server): ReadonlyMap<Socket, IncomingMessage | undefined> {
-  const connections = new Map<Socket, IncomingMessage | undefined>();
+export type ConnectionState = IncomingMessage | number | undefined;
+
+/**
+ * Whether `socket` is still sending a request: it has sent none yet, or one whose body has not all arrived, or, after
+ * an answer on a connection its client keeps open, bytes of a next request whose headers have not all arrived. So a
+ * next request that stalls in its headers is cut off as a first one is. A kept connection that sends nothing after its
+ * answer is not, and Node's keep-alive timeout ends it about 6 s after its last byte, as when the close made no looks:
+ * a whole request its client sends there seconds later is answered. Bytes that came before the answer was written (a
+ * client that sends its next request without waiting for the answer) count with the answered request, as on such an
+ * idle connection.
+ */
+function awaitsRequest(socket: Socket, state: ConnectionState): boolean {
+  if (typeof state === "number") return socket.bytesRead > state;
+  return state?.complete !== true;
+}
+
+/**
+ * Each open connection of `server`, with its `ConnectionState`, which `cutStalledRequests` reads. A connection leaves it
+ * when it closes, so a daemon does not keep every hook's socket for its life.
+ */
+export function trackConnections(server: Server): ReadonlyMap<Socket, ConnectionState> {
+  const connections = new Map<Socket, ConnectionState>();
   server.on("connection", (socket: Socket) => {
     connections.set(socket, undefined);
     socket.once("close", () => connections.delete(socket));
   });
-  server.on("request", (incoming: IncomingMessage) => connections.set(incoming.socket, incoming));
+  server.on("request", (incoming: IncomingMessage, response: ServerResponse) => {
+    const { socket } = incoming;
+    connections.set(socket, incoming);
+    // Left as it is when a next request on the connection has replaced this one, or when the connection has closed.
+    response.once("finish", () => {
+      if (connections.get(socket) === incoming) connections.set(socket, socket.bytesRead);
+    });
+  });
   return connections;
 }
 

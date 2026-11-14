@@ -1,7 +1,7 @@
 import { subscribe, unsubscribe } from "node:diagnostics_channel";
 import { once } from "node:events";
 import { mkdtemp } from "node:fs/promises";
-import { createServer, IncomingMessage } from "node:http";
+import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { connect, Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -206,6 +206,63 @@ describe("engine service session concurrency", () => {
     }
   }, 20_000);
 
+  it("cuts off a next request that stalls in its headers on a connection its client keeps open when it closes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
+    const held = await holdingService(root);
+    try {
+      // A client that keeps its connection open after an answer (HTTP/1.1's default), then sends part of its next
+      // request's headers and nothing more.
+      const kept = await keptConnection(held.engine.socketPath);
+      const answered = nextAnswerWritten();
+      await kept.send(keptRequest({ kind: "user-prompt", eventId: "first", sessionId: "busy", text: "continue" }));
+      await answered;
+      await kept.send("POST /events HTTP/1.1\r\nHost: localhost\r\ncontent-ty");
+      const began = performance.now();
+      const closing = held.service.close();
+      try {
+        // Before, the close left it to Node's keep-alive timeout, which ends it about 6 s after its last byte: past the
+        // 10 s a stop gives when that byte comes 4 s or more into the close.
+        expect(await whenCut(kept.closed, began)).toBe("cut off 1 s in");
+      } finally {
+        kept.destroy();
+        held.release();
+        await closing;
+      }
+    } finally {
+      held.release();
+      await removeFolder(root);
+    }
+  }, 20_000);
+
+  it("answers a whole request sent seconds after an answer on a connection its client keeps open when it closes", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
+    const held = await holdingService(root);
+    try {
+      const kept = await keptConnection(held.engine.socketPath);
+      const answered = nextAnswerWritten();
+      await kept.send(keptRequest({ kind: "session-end", eventId: "end", sessionId: "busy" }));
+      await held.ending;
+      const closing = held.service.close();
+      try {
+        held.release();
+        await answered;
+        // The client sends its next request whole once two looks for stalled requests have found nothing sent since
+        // the answer, as Node's keep-alive timeout lets it.
+        await sleep(2_500);
+        await kept.send(keptRequest({ kind: "session-start", eventId: "restart", session: busySession(root) }));
+        await vi.waitFor(() => expect(kept.answers()).toEqual(["200", "200"]), { timeout: 5_000, interval: 20 });
+      } finally {
+        kept.destroy();
+        held.release();
+        await closing;
+      }
+      expect(recorded(held.databasePath)).toEqual(expect.arrayContaining(["end", "restart"]));
+    } finally {
+      held.release();
+      await removeFolder(root);
+    }
+  }, 20_000);
+
   it("lets an answer larger than a socket holds finish arriving when it closes", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
     const held = await holdingService(root);
@@ -327,6 +384,51 @@ async function handHook(socketPath: string, body: string, sent = body.length): P
       return Buffer.concat(chunks).toString("utf8");
     },
   };
+}
+
+/** A connection its client keeps open across requests, written by hand. */
+interface KeptConnection {
+  /** Writes `text` and resolves once the server has read all that was written on the connection. */
+  send(text: string): Promise<void>;
+  /** The status codes of the answers that have arrived. */
+  answers(): string[];
+  /** When the connection closed, a `performance.now()` time. */
+  closed: Promise<number>;
+  destroy(): void;
+}
+
+async function keptConnection(socketPath: string): Promise<KeptConnection> {
+  const accepted = nextConnection();
+  const socket = connect(socketPath);
+  socket.on("error", () => undefined);
+  let received = "";
+  socket.on("data", (chunk: Buffer) => (received += chunk.toString("utf8")));
+  const closed = new Promise<number>(done => socket.once("close", () => done(performance.now())));
+  await once(socket, "connect");
+  const server = await accepted;
+  let written = 0;
+  return {
+    send: async text => {
+      written += Buffer.byteLength(text);
+      socket.write(text);
+      await serverRead(server, written);
+    },
+    answers: () => [...received.matchAll(/HTTP\/1\.1 (\d+)/g)].map(match => match[1] ?? ""),
+    closed,
+    destroy: () => socket.destroy(),
+  };
+}
+
+/** A hook's whole request for `event`, with no `connection: close`, so its client keeps the connection open. */
+function keptRequest(event: unknown): string {
+  const body = JSON.stringify({ event });
+  return `POST /events HTTP/1.1\r\nHost: localhost\r\ncontent-type: application/json\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`;
+}
+
+/** Resolves once a server has written its answer to the next request it reads the headers of. */
+async function nextAnswerWritten(): Promise<void> {
+  const response = await nextMessage("http.server.request.start", message => field(message, "response", ServerResponse));
+  await once(response, "finish");
 }
 
 /**
