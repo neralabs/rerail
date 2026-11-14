@@ -29,9 +29,23 @@ async function home(): Promise<string> {
   return path;
 }
 
+// The processes tests started that still run: a test that ends early, as at its time limit, leaves its own, and they end
+// before the folders they use are removed.
+const running = new Set<ChildProcess>();
+function tracked<T extends ChildProcess>(child: T): T {
+  running.add(child);
+  child.once("exit", () => running.delete(child));
+  return child;
+}
+
 afterEach(async () => {
   vi.unstubAllEnvs();
   autostart.calls = 0;
+  await Promise.all([...running].map(child => {
+    const exited = once(child, "exit");
+    child.kill();
+    return exited;
+  }));
   await Promise.all(homes.splice(0).map(path => removeFolder(path)));
 });
 
@@ -83,7 +97,11 @@ describe("what rerail status says of hook failures", () => {
   });
 });
 
-describe("the hook failure log", () => {
+// Most tests below start Node processes with tsx, which takes seconds on a loaded machine, and one waits up to 20 s for
+// two of them to meet: past the 5 s a test gets on Linux and macOS.
+const PROCESS_TEST_TIMEOUT_MS = 60_000;
+
+describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
   it("keeps each failure with the agent's own name and version, and reads back only those since the given time", async () => {
     const rerailHome = await home();
     recordHookFailure({ host: "claude-code", event: "Stop", reason: "old" }, { home: rerailHome, now: 1_000, env: {} });
@@ -623,9 +641,9 @@ process.on("message", ({ home, at }) => {
 });
 process.send("ready");
 `;
-  const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", program], {
+  const child = tracked(spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", program], {
     cwd: join(import.meta.dirname, "..", ".."), stdio: ["ignore", "ignore", "inherit", "ipc"], windowsHide: true,
-  });
+  }));
   const reply = (): Promise<void> => new Promise((resolve, reject) => {
     const onExit = (code: number | null): void => reject(new Error(`the hook process exited (${code}) before it answered`));
     child.once("exit", onExit);
@@ -721,9 +739,9 @@ syncBuiltinESMExports();
 const hookFailures = await import(${JSON.stringify(sourceModule("src/harness/hook-failures.ts"))});
 ${code}
 `;
-  const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", program], {
+  const child = tracked(spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", program], {
     cwd: join(import.meta.dirname, "..", ".."), stdio: ["ignore", "pipe", "inherit"], windowsHide: true,
-  });
+  }));
   let output = "";
   child.stdout.setEncoding("utf8").on("data", (chunk: string) => { output += chunk; });
   await once(child, "close");
