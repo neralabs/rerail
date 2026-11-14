@@ -7448,41 +7448,82 @@ fn run_observed(
             }
         }
     }
-    for (rel, lines) in &outputs {
-        if let Some(n) = unchanged_outputs.get(rel) {
-            rows.insert(rel.clone(), *n);
-            continue;
+    // The outputs as one flat image (decision 0239): over the session's last image, an overlay of the outputs this
+    // run made again; otherwise a base of them all. Each `.csv` file is then its relation's lines as the image shows
+    // them (stage 1: every reader still reads the files).
+    {
+        use crate::code_rule_dsl::logic::plan::output;
+        let flags = if own { output::flags::OWN } else { 0 } | if syntax::definition_ids() { output::flags::DEFINITION_IDS } else { 0 };
+        // An unchanged output is read from the stack its file was written with; a stack past its depth is folded.
+        let old = if unchanged_outputs.is_empty() { Vec::new() } else { output::read(&out).unwrap_or_default() };
+        let inherit = !old.is_empty() && unchanged_outputs.keys().all(|r| output::find(&old, r).is_some());
+        let overlay = inherit && old.len() < output::MAX_DEPTH;
+        let mut image = output::Builder::new(flags, overlay);
+        if inherit && !overlay {
+            for rel in unchanged_outputs.keys() {
+                image.take(rel, output::find(&old, rel).expect("checked"));
+            }
+        } else if !inherit {
+            // No stack to read them from: the files that stand, read as text.
+            for rel in unchanged_outputs.keys() {
+                let text = std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap_or_default();
+                let lines: Vec<String> = text.lines().map(str::to_owned).collect();
+                image.lines(rel, &[], &[], &lines, &|_, v| v.to_owned());
+            }
         }
-        let node_columns = &node_columns[rel];
-        let mut decoded: Vec<String> = lines
-            .iter()
+        // A node column's value as the writer showed it, for a column the image holds as text (one holding a value
+        // that is no integer): by its document, or as it was.
+        let shown = |_: usize, v: &str| match v.parse::<i64>() {
+            Ok(v) if v < -1 => places.get(&v).cloned().unwrap_or_else(|| v.to_string()),
+            // A guest's node (decision 0055): its document is no file of the run.
+            Ok(v) if v >= 0 && !paths.contains_key(&(v >> 32)) && !first.contains_key(&(v >> 32)) => format!("guest{}:{}", v >> 32, v & 0xffff_ffff),
+            Ok(v) if (own || syntax::definition_ids()) && paths.contains_key(&(v >> 32)) => format!("{}:{}", paths[&(v >> 32)], syntax::shown_local(v & 0xffff_ffff)),
+            Ok(v) if !own && first.contains_key(&(v >> 32)) => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
+            _ => v.to_owned(),
+        };
+        let mut made: Vec<&str> = Vec::new();
+        for (rel, lines) in &outputs {
+            if let Some(n) = unchanged_outputs.get(rel) {
+                rows.insert(rel.clone(), *n);
+                continue;
+            }
+            let node_columns = &node_columns[rel];
             // A row about a loaded document (its first node is one) is not the corpus's; a corpus row may name a
             // loaded document's node (a call's target in a stub).
-            .filter(|row| loaded_keys.is_empty() || node_columns.first().is_none_or(|c| !row.split('\t').nth(*c).and_then(|v| v.parse::<i64>().ok()).is_some_and(|v| loaded_keys.contains(&(v >> 32)))))
-            .map(|row| {
-                row.split('\t')
-                    .enumerate()
-                    // A node column holding no document's node (`unset`'s -1) is written as it is.
-                    .map(|(i, v)| match v.parse::<i64>() {
-                        Ok(v) if node_columns.contains(&i) && v < -1 => places[&v].clone(),
-                        // A guest's node (decision 0055): its document is no file of the run.
-                        Ok(v) if node_columns.contains(&i) && v >= 0 && !paths.contains_key(&(v >> 32)) && !first.contains_key(&(v >> 32)) => format!("guest{}:{}", v >> 32, v & 0xffff_ffff),
-                        Ok(v) if node_columns.contains(&i) && (own || syntax::definition_ids()) && paths.contains_key(&(v >> 32)) => format!("{}:{}", paths[&(v >> 32)], syntax::shown_local(v & 0xffff_ffff)),
-                        Ok(v) if node_columns.contains(&i) && !own && first.contains_key(&(v >> 32)) => (first[&(v >> 32)] + (v & 0xffff_ffff)).to_string(),
-                        _ => v.to_owned(),
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\t")
-            })
-            .collect();
-        decoded.sort();
-        decoded.dedup();
-        let mut text = decoded.join("\n");
-        if !decoded.is_empty() {
-            text.push('\n');
+            let kept: Vec<String> = lines
+                .iter()
+                .filter(|row| loaded_keys.is_empty() || node_columns.first().is_none_or(|c| !row.split('\t').nth(*c).and_then(|v| v.parse::<i64>().ok()).is_some_and(|v| loaded_keys.contains(&(v >> 32)))))
+                .cloned()
+                .collect();
+            // The documents and places its node columns name.
+            for v in kept.iter().flat_map(|l| l.split('\t').enumerate().filter(|(c, _)| node_columns.contains(c)).map(|(_, v)| v)).filter_map(|v| v.parse::<i64>().ok()) {
+                if v < -1 {
+                    if let Some(p) = places.get(&v) {
+                        image.place(v, p);
+                    }
+                } else if v >= 0 {
+                    let d = v >> 32;
+                    if paths.contains_key(&d) || first.contains_key(&d) {
+                        image.doc(d, &output::Doc { path: paths.get(&d).cloned(), first: first.get(&d).copied() });
+                    }
+                }
+            }
+            let ints: Vec<usize> = prog.decls.get(rel.as_str()).map(|cols| cols.iter().enumerate().filter(|(_, (_, t))| t == "number" || t == "int").map(|(i, _)| i).collect()).unwrap_or_default();
+            image.lines(rel, node_columns, &ints, &kept, &shown);
+            made.push(rel);
         }
-        std::fs::write(out.join(format!("{rel}.csv")), text).map_err(|e| Error::Plan(e.to_string()))?;
-        rows.insert(rel.clone(), decoded.len());
+        let bytes = image.finish();
+        output::write(&out, &bytes).map_err(|e| Error::Plan(e.to_string()))?;
+        let made_image = output::Image::one(&bytes).map_err(Error::Plan)?;
+        for rel in made {
+            let lines = made_image.rel(rel).expect("made").lines();
+            let mut text = lines.join("\n");
+            if !lines.is_empty() {
+                text.push('\n');
+            }
+            std::fs::write(out.join(format!("{rel}.csv")), text).map_err(|e| Error::Plan(e.to_string()))?;
+            rows.insert(rel.to_owned(), lines.len());
+        }
     }
     // What a session's run of this program wrote, for its next (`unchanged_outputs`); any other run's writes forget it.
     if let Some(s) = session.as_ref() {

@@ -89,6 +89,7 @@ pub mod statkeep;
 pub mod lower;
 pub mod joins;
 pub mod table;
+pub mod output;
 
 /// Where a run reads its inputs and statistics, and how it holds symbols.
 #[derive(Clone, Debug)]
