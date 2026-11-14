@@ -874,14 +874,15 @@ jobs:
 
       # The engine's #[cfg(windows)] tests (process starts, Windows import roots) are compiled out on Linux, where the
       # rust job runs every other test; these filters select them and the Windows-neutral tests beside them: the process
-      # tests are the engine's, the import roots' rerail-lang-ecma's, which mounts `import_target`. A debug build, as in
-      # the rust job, so none of the release build above is reused.
+      # tests are the engine's, the import roots' rerail-lang-ecma's, which mounts `import_target`. The `.rr` library's
+      # canonical path is joined with `/` by `bootstrap.rr`, which only Windows' verbatim paths broke: its test runs here
+      # too. A debug build, as in the rust job, so none of the release build above is reused.
       - name: Engine Windows tests
         if: steps.native-cache.outputs.cache-hit != 'true' && matrix.shard == 2
         env:
           CARGO_PROFILE_DEV_DEBUG: line-tables-only
           CARGO_INCREMENTAL: "0"
-        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma --lib -- process:: code_rule_dsl::import_target::"
+        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma --lib -- process:: code_rule_dsl::import_target:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
 
       - name: Build the package
         run: npm run build:js
