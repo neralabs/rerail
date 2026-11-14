@@ -67,6 +67,24 @@ measuring will tell):
 So a portable design keeps select off the hot paths: sampled answers plus a popcount of a few
 words, or no select at all.
 
+**The targets** (the user, 2026-11-14):
+
+| tier | CPUs | GPUs | other |
+|---|---|---|---|
+| most important | Apple M5; AMD Zen 3+; Intel of the last 3 years | Metal | |
+| decent | Apple M3 | CUDA (important, not now) | |
+| works, not horrible | Apple M1; older Intel | OpenCL (results may vary a lot) | wasm (WebGPU later) |
+
+What follows from it:
+- **Every first-tier CPU has a fast scalar popcount**, and the x86 ones have a fast `PDEP`. So
+  select is cheap there, except on the M5, which has no `PDEP`: there select is broadword.
+- **M1 and M3 have no scalar popcount** (no FEAT_CSSC). Older Intel before Haswell has no BMI2, so
+  no `PDEP`. A design that leans on select or single popcounts must still be "decent" there, and
+  E10 measures that by building without them.
+- **Metal is first-tier**, so every question has a kernel form: 32-bit words, short bounded loops.
+- **The same Rust reader** serves every CPU. Where an instruction differs, the choice is made at
+  build time or when loading (feature detection), never once a read.
+
 ## 3. Structure: the families
 
 | | bits a node | first child, next sibling, subtree end | parent | depth | platform sensitivity | order |
