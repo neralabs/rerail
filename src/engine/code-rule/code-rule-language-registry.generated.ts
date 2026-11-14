@@ -378,17 +378,97 @@ export const LANGUAGE_REGISTRY = /* registry */ [
       "formatArgs": "not-supported-yet"
     },
     "suppressions": []
+  },
+  {
+    "format": "rerail.language/v1",
+    "id": "html",
+    "status": "supported",
+    "family": "html",
+    "dialects": [
+      {
+        "label": "html",
+        "variant": "Html",
+        "suffixes": [
+          ".html",
+          ".htm"
+        ],
+        "parser": "tree-sitter",
+        "grammar": "ast-grep:Html",
+        "tapeTag": 17
+      }
+    ],
+    "capabilities": {
+      "scope": "not-supported-yet",
+      "value": "not-supported-yet",
+      "arguments": "not-supported-yet",
+      "calls": "not-supported-yet",
+      "formatArgs": "not-supported-yet"
+    },
+    "suppressions": []
+  },
+  {
+    "format": "rerail.language/v1",
+    "id": "css",
+    "status": "supported",
+    "family": "css",
+    "dialects": [
+      {
+        "label": "css",
+        "variant": "Css",
+        "suffixes": [
+          ".css"
+        ],
+        "parser": "tree-sitter",
+        "grammar": "ast-grep:Css",
+        "tapeTag": 18
+      }
+    ],
+    "capabilities": {
+      "scope": "not-supported-yet",
+      "value": "not-supported-yet",
+      "arguments": "not-supported-yet",
+      "calls": "not-supported-yet",
+      "formatArgs": "not-supported-yet"
+    },
+    "suppressions": []
+  },
+  {
+    "format": "rerail.language/v1",
+    "id": "markdown",
+    "status": "supported",
+    "family": "markdown",
+    "dialects": [
+      {
+        "label": "markdown",
+        "variant": "Markdown",
+        "suffixes": [
+          ".md",
+          ".markdown"
+        ],
+        "parser": "tree-sitter",
+        "grammar": "vendored:markdown",
+        "tapeTag": 19
+      }
+    ],
+    "capabilities": {
+      "scope": "not-supported-yet",
+      "value": "not-supported-yet",
+      "arguments": "not-supported-yet",
+      "calls": "not-supported-yet",
+      "formatArgs": "not-supported-yet"
+    },
+    "suppressions": []
   }
 ] /* end registry */ as const;
 
 /** Every language a rule may name: supported, then planned. */
-export const CODE_RULE_LANGUAGE_IDS = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue", "rr", "json", "java", "csharp"] as const;
+export const CODE_RULE_LANGUAGE_IDS = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue", "rr", "json", "java", "csharp", "html", "css", "markdown"] as const;
 /** The languages the engine reads. */
-export const CODE_RULE_AST_LANGUAGES = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue", "rr", "json", "java", "csharp"] as const;
+export const CODE_RULE_AST_LANGUAGES = ["python", "typescript", "javascript", "php", "blade", "rust", "sql", "vue", "rr", "json", "java", "csharp", "html", "css", "markdown"] as const;
 /** The languages a rule may name that the engine does not read yet. */
 export const CODE_RULE_PLANNED_LANGUAGES = [] as const;
 /** The semantic families of the supported languages. */
-export const CODE_RULE_LANGUAGE_FAMILIES = ["python", "ecma", "php", "blade", "rust", "sql", "vue", "rr", "json", "java", "csharp"] as const;
+export const CODE_RULE_LANGUAGE_FAMILIES = ["python", "ecma", "php", "blade", "rust", "sql", "vue", "rr", "json", "java", "csharp", "html", "css", "markdown"] as const;
 /** The capabilities every entry declares support for. */
 export const CODE_RULE_SEMANTIC_CAPABILITIES = ["scope", "value", "arguments", "calls", "formatArgs"] as const;
 /** The suppression comments the supported languages honour. */

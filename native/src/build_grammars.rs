@@ -152,6 +152,21 @@ pub const GRAMMARS: &[VendoredGrammar] = &[
         ],
         committed_parser: false,
     },
+    // tree-sitter-md 0.5.4's block grammar (grammars/tree-sitter-markdown/LICENSE), unpatched.
+    VendoredGrammar {
+        name: "markdown",
+        source: "grammars/tree-sitter-markdown/markdown/src",
+        headers: "grammars/tree-sitter-markdown/markdown/src",
+        version: (0, 5, 4),
+        inputs: &[
+            "grammars/tree-sitter-markdown/markdown/src/grammar.json",
+            "grammars/tree-sitter-markdown/markdown/src/scanner.c",
+            "grammars/tree-sitter-markdown/markdown/src/tree_sitter/alloc.h",
+            "grammars/tree-sitter-markdown/markdown/src/tree_sitter/array.h",
+            "grammars/tree-sitter-markdown/markdown/src/tree_sitter/parser.h",
+        ],
+        committed_parser: false,
+    },
 ];
 
 /// The committed generated parser of a `committed_parser` grammar, in its source directory: gzip

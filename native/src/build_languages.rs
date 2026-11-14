@@ -178,7 +178,7 @@ fn read_directory(
 
 /// The vendored tree-sitter grammars (`native/grammars/`): the engine's build script compiles them (its `GRAMMARS`
 /// lists the same names, and checks it), and every registry is generated against them.
-pub const VENDORED: &[&str] = &["vue", "python", "sql", "typescript", "tsx", "javascript"];
+pub const VENDORED: &[&str] = &["vue", "python", "sql", "typescript", "tsx", "javascript", "markdown"];
 
 /// The registry's supported languages this build leaves out: each language `<id>` is built only with its feature
 /// `lang-<id>` (`CARGO_FEATURE_LANG_<ID>` in the build script running this). `languages` is `languages/`.
@@ -1184,7 +1184,7 @@ mod tests {
     #[test]
     fn a_language_left_out_of_the_build_keeps_its_tables_but_no_grammar() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let vendored = ["python", "sql", "typescript", "tsx", "javascript", "vue"];
+        let vendored = ["python", "sql", "typescript", "tsx", "javascript", "vue", "markdown"];
         let out = Registry::new("omitted", &[]);
         generate(&root.join("../languages"), None, &vendored, &["php".to_owned(), "sql".to_owned()], &out.0.join("out"));
         let generated = std::fs::read_to_string(out.0.join("out/language_registry.rs")).expect("generated");
@@ -1204,7 +1204,7 @@ mod tests {
     #[test]
     fn the_repository_registry_generates_the_engine_tables() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let vendored = ["python", "sql", "typescript", "tsx", "javascript", "vue"];
+        let vendored = ["python", "sql", "typescript", "tsx", "javascript", "vue", "markdown"];
         let planned_ids = planned_ids(&root.join("../languages"));
         let planned = quoted(&planned_ids);
         let tested_planned = quoted(&[planned_ids, vec!["exemplar".to_owned()]].concat());
@@ -1251,7 +1251,7 @@ mod tests {
             generate(
                 &root.join("../languages"),
                 test_directory,
-                &["python", "sql", "typescript", "tsx", "javascript", "vue"],
+                &["python", "sql", "typescript", "tsx", "javascript", "vue", "markdown"],
                 &[],
                 &out.0.join("out"),
             )

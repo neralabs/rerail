@@ -406,8 +406,7 @@ grammar_dialect! {
     Kotlin => SupportLang::Kotlin,
     Scala => SupportLang::Scala,
     Swift => SupportLang::Swift,
-    Html => SupportLang::Html,
-    Css => SupportLang::Css,
+    TestHtml => SupportLang::Html,
     Lua => SupportLang::Lua,
     Go => SupportLang::Go,
 }
@@ -432,7 +431,7 @@ const TEST_DIALECT_FAMILY: Family = Family::Ecma;
 const TEST_TAPE_TAGS: &[(GrammarDialect, u8)] = &[
     (GrammarDialect::Scala, 4),
     (GrammarDialect::Go, 5),
-    (GrammarDialect::Html, 250),
+    (GrammarDialect::TestHtml, 250),
 ];
 
 /// The embeddings of the test-only grammars (`GrammarDialect::embeds`): an HTML file's scripts and
@@ -441,7 +440,7 @@ const TEST_TAPE_TAGS: &[(GrammarDialect, u8)] = &[
 #[cfg(any(test, feature = "test-hooks"))]
 const fn test_embeds(dialect: GrammarDialect) -> &'static [(Via, GrammarDialect)] {
     match dialect {
-        GrammarDialect::Html => &[
+        GrammarDialect::TestHtml => &[
             (Via::TestScript, GrammarDialect::TypeScript),
             (Via::TestScript, GrammarDialect::Tsx),
             (Via::TestScript, GrammarDialect::JavaScript),

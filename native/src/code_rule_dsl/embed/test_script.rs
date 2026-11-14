@@ -18,7 +18,7 @@ use tree_sitter::Node as TsNode;
 /// The documents of the HTML file `source`, persisted as the store keeps them and restored: the
 /// file's tree and the program its scripts and handlers make.
 pub fn html(source: &str) -> AstGrep<TapeDoc> {
-    let grammar = Grammar::new(GrammarDialect::Html).expect("grammar");
+    let grammar = Grammar::new(GrammarDialect::TestHtml).expect("grammar");
     let image = TapeImage::parse(&grammar, source, &|| false)
         .expect("parses")
         .expect("encodes")

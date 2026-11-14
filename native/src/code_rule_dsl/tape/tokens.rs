@@ -808,11 +808,14 @@ pub fn grammar_json(lang: GrammarDialect) -> Option<&'static str> {
         GrammarDialect::Tsx => grammar!("tree-sitter-typescript/tsx/src"),
         GrammarDialect::Sql => grammar!("tree-sitter-sql/src"),
         GrammarDialect::Vue => grammar!("tree-sitter-vue/src"),
+        GrammarDialect::Markdown => grammar!("tree-sitter-markdown/markdown/src"),
         GrammarDialect::Rust => grammar!("token-grammars/rust"),
         GrammarDialect::Php => grammar!("token-grammars/php"),
         GrammarDialect::Json => grammar!("token-grammars/json"),
         GrammarDialect::Java => grammar!("token-grammars/java"),
         GrammarDialect::CSharp => grammar!("token-grammars/csharp"),
+        GrammarDialect::Html => grammar!("token-grammars/html"),
+        GrammarDialect::Css => grammar!("token-grammars/css"),
         _ => return None,
     })
 }

@@ -1,0 +1,27 @@
+{
+  "format": "rerail.language/v1",
+  "id": "markdown",
+  "status": "supported",
+  "family": "markdown",
+  "dialects": [
+    {
+      "label": "markdown",
+      "variant": "Markdown",
+      "suffixes": [
+        ".md",
+        ".markdown"
+      ],
+      "parser": "tree-sitter",
+      "grammar": "vendored:markdown",
+      "tapeTag": 19
+    }
+  ],
+  "capabilities": {
+    "scope": "not-supported-yet",
+    "value": "not-supported-yet",
+    "arguments": "not-supported-yet",
+    "calls": "not-supported-yet",
+    "formatArgs": "not-supported-yet"
+  },
+  "suppressions": []
+}

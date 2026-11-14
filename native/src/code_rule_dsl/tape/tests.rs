@@ -273,7 +273,7 @@ fn persisted_image_round_trips_without_parsing() {
 #[test]
 fn file_documents_persist_apart_and_are_checked() {
     let source = "<script lang=\"tsx\">let x = <a />;</script>\n";
-    let grammar = Grammar::new(GrammarDialect::Html).unwrap();
+    let grammar = Grammar::new(GrammarDialect::TestHtml).unwrap();
     let image = TapeImage::parse(&grammar, source, &|| false)
         .unwrap()
         .unwrap();
@@ -2530,6 +2530,9 @@ fn ecma_implied_tokens() {
         ("java", GrammarDialect::Java),
         ("csharp", GrammarDialect::CSharp),
         ("php", GrammarDialect::Php),
+        ("html", GrammarDialect::Html),
+        ("css", GrammarDialect::Css),
+        ("markdown", GrammarDialect::Markdown),
     ];
     let wanted = std::env::var("RERAIL_IMPLIED_DIALECTS").unwrap_or_else(|_| "javascript,typescript,tsx".into());
     for (name, dialect) in all.into_iter().filter(|(name, _)| wanted.split(',').any(|w| w == *name)) {
@@ -2579,6 +2582,9 @@ fn python_tape_expect() {
         Ok("rust") => GrammarDialect::Rust,
         Ok("java") => GrammarDialect::Java,
         Ok("csharp") => GrammarDialect::CSharp,
+        Ok("html") => GrammarDialect::Html,
+        Ok("css") => GrammarDialect::Css,
+        Ok("markdown") => GrammarDialect::Markdown,
         _ => GrammarDialect::Python,
     };
     let grammar = Grammar::new(dialect).unwrap();
@@ -3336,6 +3342,30 @@ fn the_product_reads_php_with_the_lean_parser() {
     assert!(TapeImage::parse(&grammar, invalid, &|| false).unwrap().is_ok());
 }
 
+/// HTML, CSS and Markdown files are product languages (`languages/html.json`, `css.json`,
+/// `markdown.json`): the registry selects each by its suffix, and its file is read by its grammar
+/// (tree-sitter-html, tree-sitter-css, tree-sitter-md's block grammar) into a tape that persists and
+/// restores.
+#[test]
+fn html_css_and_markdown_files_are_read_by_their_grammars() {
+    let cases = [
+        ("page.html", GrammarDialect::Html, "<!DOCTYPE html>\n<p class=\"a\">Hi &amp; bye<br></p>\n", "document", "element"),
+        ("site.css", GrammarDialect::Css, "a > b { color: red; }\n@media print { p { margin: 0 } }\n", "stylesheet", "rule_set"),
+        ("README.md", GrammarDialect::Markdown, "# Title\n\nSome *text*.\n\n```rust\nfn f() {}\n```\n", "document", "fenced_code_block"),
+    ];
+    for (path, dialect, source, root, inner) in cases {
+        let label = crate::code_rule_dsl::language::label_of_path(path);
+        assert_eq!(label.and_then(crate::code_rule_dsl::language::dialect_by_label), Some(dialect), "{path}");
+        let grammar = Grammar::new(dialect).unwrap();
+        let image = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap().round_trip(&grammar).unwrap();
+        let doc = TapeDoc::restore(Arc::new(source.to_owned()), Arc::clone(&grammar), &image, &|| false).unwrap();
+        let tree = AstGrep::doc(doc);
+        assert_eq!(tree.root().kind(), root, "{path}");
+        assert!(tree.root().dfs().any(|node| node.kind() == inner), "{path}: no {inner}");
+        assert!(!tree.root().dfs().any(|node| node.is_error()), "{path}: an error");
+    }
+}
+
 /// A Blade template's compiled program (its `compiled-view` document) is read by the lean PHP
 /// parser (decision 0198), and its derived image is the one tree-sitter-php's tree gives, byte for
 /// byte, its placeholders (`_`, `(0)`) left out the same. `RERAIL_BLADE_FILES` (a list of templates)
@@ -3497,6 +3527,118 @@ fn csharp_parse_costs() {
         }
     }
     eprintln!("C#: {} files of {all} the lean parser reads, {bytes} bytes, {nodes} nodes", files.len());
+    for ((name, _), (t, ins, cyc)) in steps.iter().zip(&best) {
+        eprintln!(
+            "{name:32} {:9.1} instructions a node, {:7.1} cycles a node, {:6.2} ns a byte, {:8.3} s",
+            *ins as f64 / nodes as f64,
+            *cyc as f64 / nodes as f64,
+            t * 1e9 / bytes as f64,
+            t
+        );
+    }
+}
+
+/// HTML's tapes from the lean parser (the product's parser for HTML, decision 0199) are
+/// tree-sitter-html's, byte for byte, on hand-written cases; a text tree-sitter reads with an error
+/// the lean parser refuses (its file goes to tree-sitter). The corpus comparison is
+/// `rerail-html-lean`'s `oracle`.
+#[test]
+fn html_tapes_from_the_lean_parser_are_tree_sitters() {
+    use crate::code_rule_dsl::tape::html_lean;
+    let sources = [
+        "",
+        "  \n",
+        "<!DOCTYPE html>\n<html lang=en>\n<head><meta charset=\"utf-8\"><title>T</title>\n<link rel=stylesheet href=a.css>\n</head>\n<body class='x y' hidden>\n<!-- a comment -->\n<p>One &amp; two &#169; &#x1F600;<br>three<p>four\n<ul><li>a<li>b</ul>\n<img src=\"a.png\" alt=\"\"/>\n<my-element data-x=1></my-element>\n</body>\n</html>\n",
+        "<script>if (a < b && c > d) { x = '</div>'; }</script>\n<style>p > a { color: red }</style>\n<script type=\"module\"></script>\n",
+        "<table><tr><td>a<td>b<tr><td>c</table>\n<dl><dt>t<dd>d<dt>u</dl>\n<select><optgroup label=a><option>1<option>2</optgroup></select>\n",
+        "<div><span>a</div>\n<p>x</span></p>\n",
+        "<html><body><p>html and body open at the end</p>\n",
+        "text alone &lt; &gt;\n",
+    ];
+    let grammar = Grammar::new(GrammarDialect::Html).unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Html.get_ts_language()).unwrap();
+    for source in sources {
+        let ours = html_lean::encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        assert!(!tree.root_node().has_error(), "tree-sitter's tree of {source:?} has an error");
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary;
+        assert!(
+            ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(),
+            "the tapes of {source:?} differ:\n{}\n{}",
+            python_tape_plain(&ours, &grammar),
+            python_tape_plain(&theirs, &grammar)
+        );
+    }
+    // Any syntax error: refused, for tree-sitter, which recovers as it recovers.
+    for invalid in ["<div>\n", "<p a=\"x>\n", "a > b\n", "<script>x\n", "<!DOCTYPE>\n", "<p>open at the end\n", "</div>\n"] {
+        assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
+        assert!(html_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
+    }
+}
+
+/// The product reads HTML with the lean parser: a file's image through the engine's parse
+/// (`TapeImage::parse`) is the lean parser's; a file it refuses goes to tree-sitter-html.
+#[test]
+fn the_product_reads_html_with_the_lean_parser() {
+    use crate::code_rule_dsl::tape::html_lean;
+    let grammar = Grammar::new(GrammarDialect::Html).unwrap();
+    assert!(tree_parser(GrammarDialect::Html).is_some(), "HTML's parser is installed");
+    let source = "<p class=a>Hi <b>there</b></p>\n";
+    let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+    let lean = html_lean::encode(&grammar, source, &|| false).unwrap().unwrap();
+    assert_eq!(product.primary.to_bytes().unwrap(), lean.to_bytes().unwrap());
+    let invalid = "<div>\n";
+    assert!(html_lean::encode(&grammar, invalid, &|| false).is_err());
+    assert!(TapeImage::parse(&grammar, invalid, &|| false).unwrap().is_ok());
+}
+
+/// What a HTML file's tape costs, by parser: the lean parser (`tape::html_lean`, the product's)
+/// against tree-sitter-html, over `RERAIL_PY_FILES` (a list of paths): instructions retired, cycles
+/// and CPU time a node, the best of three passes. Only the files both read.
+#[test]
+#[ignore = "a measurement; needs RERAIL_PY_FILES"]
+fn html_parse_costs() {
+    use crate::code_rule_dsl::tape::html_lean;
+    let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
+    let gd = GrammarDialect::Html;
+    let grammar = Grammar::new(gd).unwrap();
+    let parser = std::cell::RefCell::new(tree_sitter::Parser::new());
+    parser.borrow_mut().set_language(&gd.get_ts_language()).unwrap();
+    let mut files: Vec<String> = list.lines().filter(|l| !l.is_empty()).filter_map(|p| std::fs::read_to_string(p).ok()).collect();
+    let all = files.len();
+    files.retain(|f| html_lean::encode(&grammar, f, &|| false).is_ok_and(|t| t.is_ok()));
+    let bytes: usize = files.iter().map(String::len).sum();
+    let nodes: usize = files.iter().map(|f| html_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let cpu = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+        ("lean: the parser's columns", Box::new(|f| rerail_html_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
+        ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(html_lean::encode(&grammar, f, &|| false)).is_ok()))),
+        ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
+        ("tree-sitter: the tape", Box::new(|f| {
+            let tree = parser.borrow_mut().parse(f, None).unwrap();
+            usize::from(std::hint::black_box(TapeImage::encode(tree.root_node(), &grammar, f, &|| false)).is_ok())
+        })),
+    ];
+    let mut best = vec![(f64::MAX, u64::MAX, u64::MAX); steps.len()];
+    for _ in 0..3 {
+        for (i, (_, step)) in steps.iter().enumerate() {
+            let (i0, c0) = retired();
+            let t0 = cpu();
+            let mut n = 0;
+            files.iter().for_each(|f| n += step(f));
+            std::hint::black_box(n);
+            let (i1, c1) = retired();
+            let t = cpu() - t0;
+            best[i] = (best[i].0.min(t), best[i].1.min(i1 - i0), best[i].2.min(c1 - c0));
+        }
+    }
+    eprintln!("HTML: {} files of {all} the lean parser reads, {bytes} bytes, {nodes} nodes", files.len());
     for ((name, _), (t, ins, cyc)) in steps.iter().zip(&best) {
         eprintln!(
             "{name:32} {:9.1} instructions a node, {:7.1} cycles a node, {:6.2} ns a byte, {:8.3} s",

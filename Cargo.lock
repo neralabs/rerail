@@ -3312,6 +3312,7 @@ dependencies = [
  "rerail-ecma-lean",
  "rerail-engine",
  "rerail-facts",
+ "rerail-html-lean",
  "rerail-java-lean",
  "rerail-lang",
  "rerail-lang-ecma",
@@ -3442,6 +3443,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-html-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-java-lean"
 version = "0.1.0"
 dependencies = [
@@ -3494,6 +3503,7 @@ dependencies = [
  "rerail-compiler",
  "rerail-csharp-lean",
  "rerail-ecma-lean",
+ "rerail-html-lean",
  "rerail-java-lean",
  "rerail-lang",
  "rerail-php-lean",

@@ -1,0 +1,91 @@
+// Written by gen_kinds.py from the token grammar; do not edit.
+
+/// Node kinds, as the tape names them: tree-sitter-html's, named and anonymous.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u16)]
+pub enum K {
+    Document,
+    Doctype,
+    Element,
+    ScriptElement,
+    StartTag,
+    StyleElement,
+    TagName,
+    ScriptStartTag,
+    StyleStartTag,
+    SelfClosingTag,
+    EndTag,
+    ErroneousEndTag,
+    Attribute,
+    AttributeName,
+    AttributeValue,
+    Entity,
+    QuotedAttributeValue,
+    Text,
+    ErroneousEndTagName,
+    RawText,
+    Comment,
+    TLtBang,
+    TDoctype,
+    TGt,
+    TLt,
+    TSlashGt,
+    TLtSlash,
+    TEq,
+    TQuote,
+    TDQuote,
+}
+
+/// Each kind's name and whether it is named, in `K`'s order.
+pub const KINDS: &[(&str, bool)] = &[
+    ("document", true),
+    ("doctype", true),
+    ("element", true),
+    ("script_element", true),
+    ("start_tag", true),
+    ("style_element", true),
+    ("tag_name", true),
+    ("script_start_tag", true),
+    ("style_start_tag", true),
+    ("self_closing_tag", true),
+    ("end_tag", true),
+    ("erroneous_end_tag", true),
+    ("attribute", true),
+    ("attribute_name", true),
+    ("attribute_value", true),
+    ("entity", true),
+    ("quoted_attribute_value", true),
+    ("text", true),
+    ("erroneous_end_tag_name", true),
+    ("raw_text", true),
+    ("comment", true),
+    ("<!", false),
+    ("doctype", false),
+    (">", false),
+    ("<", false),
+    ("/>", false),
+    ("</", false),
+    ("=", false),
+    ("'", false),
+    ("\"", false),
+];
+
+/// The last kind.
+pub const LAST: K = K::TDQuote;
+
+/// Fields, as the tape names them; 0 is no field.
+pub const FIELDS: &[&str] = &[
+    "",
+];
+
+/// Field ids, in `FIELDS`' order.
+pub mod f {
+    pub const NONE: u8 = 0;
+}
+
+/// The tokens a tape leaves out: `kind | token << 9 | field << 18`, sorted (`implied.tsv`, the
+/// engine's automata).
+pub const DROPPED: &[u32] = &[
+    10753, 11265, 11777, 11780, 11783, 11784, 11786, 11787, 12292, 12295, 12296, 12297,
+    12809, 13322, 13323, 13836, 14352, 14864,
+];
