@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,6 +8,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { SqliteAuditControlStore, type AdapterEvent, type CodeRuleAuditor } from "../../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
+import { SqliteSessionStore } from "../../../src/runtime/session-store.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { startTestRepository } from "../../support/started-repository.js";
@@ -236,5 +237,48 @@ describe("the next daemon's start after a daemon that died", () => {
     await service(root, databasePath, Date.now);
     expect([recorded(databasePath, "earlier").endedAt === null, live(databasePath, "earlier")]).toEqual([false, false]);
     expect([recorded(databasePath, "later").endedAt, live(databasePath, "later")]).toEqual([null, true]);
+  });
+});
+
+describe("a daemon that runs on after another on the same records died", () => {
+  // Nothing starts after the death: the other daemon can run for days, and its idle sweep ends what the dead one left.
+  it("ends the dead daemon's quiet session at its next idle sweep, as that daemon's idle close did, whatever holds its pid", { timeout: 120_000 }, async () => {
+    const { root, databasePath, checkout } = await records();
+    const { start, prompt } = events(checkout);
+    const daemon = await daemonProcess(root, databasePath);
+    await daemon.send(start("q"));
+    await daemon.send(prompt("q", "last"));
+    const closedAt = await daemon.idleClose(IDLE_MS + 1_000);
+    const other = await service(root, databasePath, () => Date.now() + 3 * DAY);
+    await daemon.kill();
+    setOwner(databasePath, "q", { processId: await runningProcess() });
+    await other.closeIdleSessions();
+    const { endedAt, heardAt } = recorded(databasePath, "q");
+    expect(endedAt, "the record ended").not.toBeNull();
+    expect(endedAt).toBeGreaterThanOrEqual(heardAt + IDLE_MS);
+    expect(endedAt).toBeLessThanOrEqual(closedAt);
+    expect(live(databasePath, "q")).toBe(false);
+  });
+
+  // A runtime opens a session's record again, then claims it in a second write. Another daemon's sweep can end the record
+  // in between, judging the row the claim replaces, of a writer that ended.
+  it("keeps open a session whose record a sweep ended between its open and its owner's claim", async () => {
+    const { root, databasePath } = await records();
+    const sessions = new SqliteSessionStore(databasePath);
+    const controls = new SqliteAuditControlStore(databasePath);
+    try {
+      const session = { host: "claude-code" as const, sessionId: "x", cwd: root };
+      sessions.openSession(session);
+      controls.registerOwner("x", "next-event");
+      setOwner(databasePath, "x", { processId: spawnSync(process.execPath, ["-e", ""]).pid! });
+      sessions.closeSession("x");
+      sessions.openSession(session);
+      expect(controls.endSessionsOfEndedOwners(IDLE_MS, Date.now())).toBe(1);
+      controls.registerOwner("x", "next-event");
+      expect([recorded(databasePath, "x").endedAt, live(databasePath, "x")]).toEqual([null, true]);
+    } finally {
+      controls.close();
+      sessions.close();
+    }
   });
 });
