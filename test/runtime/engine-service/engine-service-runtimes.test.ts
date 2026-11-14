@@ -318,15 +318,18 @@ describe("the engine service's idle close", () => {
     expect(live("a")).toBe(true);
   });
 
-  it("ends a suspended session's record when the service stops, as stopping ends every open session", async () => {
+  // Ended at the stop, the record said the session ran for the days between its last event and the daemon's stop.
+  it("ends a suspended session's record when the service stops, at the time it went quiet, as stopping ends every open session", async () => {
     const { clock, service, start, ended, live } = await idleService();
     await start("a");
     clock.now += 60_000;
+    const quietAt = clock.now;
     await service.closeIdleSessions();
     expect(ended("a")).toBeNull();
+    clock.now += 3 * 24 * 60 * 60_000;
     services.splice(services.indexOf(service), 1);
     await service.close();
-    expect(ended("a")).not.toBeNull();
+    expect(ended("a")).toBe(quietAt);
     expect(live("a")).toBe(false);
   });
 
@@ -520,10 +523,12 @@ describe("the engine service's idle close", () => {
     await service.closeIdleSessions();
     // `a`'s end opens it again and closes it; `b`'s runtime records nothing once its repository stopped.
     stopTestRepository(second, databasePath);
+    const endsSentAt = Date.now();
     await send({ kind: "session-end", eventId: "a:end", sessionId: "a", session: session("a", first) });
     await send({ kind: "session-end", eventId: "b:end", sessionId: "b", session: session("b", second) });
-    expect(ended("a")).not.toBeNull();
-    expect(ended("b")).not.toBeNull();
+    // Each at the time its end came, not at the time it went quiet.
+    expect(ended("a")).toBeGreaterThanOrEqual(endsSentAt);
+    expect(ended("b")).toBeGreaterThanOrEqual(endsSentAt);
   });
 
   // The end opens the suspended session again to close it. An open that failed lost the end: the record stayed open and
