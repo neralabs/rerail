@@ -311,9 +311,14 @@ def capacity(host):
         except (OSError, ValueError):
             return 0
     try:
-        out = subprocess.run(ssh(host["name"], "ioreg -c IOHIDSystem -d 4 | awk '/HIDIdleTime/ {print $NF; exit}'"),
+        out = subprocess.run(ssh(host["name"], "ioreg -c IOHIDSystem -d 4 | awk '/HIDIdleTime/ {print $NF; exit}';"
+                                 " mount -t nfs | sed 's/.* on \\(.*\\) (.*/\\1/'"),
                              capture_output=True, text=True, timeout=5)
-        idle = int(out.stdout.split()[0]) / 1e9 if out.returncode == 0 else None
+        lines = out.stdout.splitlines() if out.returncode == 0 else []
+        idle = int(lines[0]) / 1e9 if lines else None
+        mounts = state("mounts", host["name"])
+        open(mounts + ".tmp", "w").write("\n".join(lines[1:]))
+        os.replace(mounts + ".tmp", mounts)
     except (subprocess.TimeoutExpired, ValueError, IndexError):
         idle = None
     finally:
@@ -364,9 +369,17 @@ def local_slot():
 
 
 def ship(host, root, names):
-    """Copies `names` (relative to `root`) to the same paths on `host`."""
+    """Copies `names` (relative to `root`) to the same paths on `host`. Never under a path the host
+    mounts over NFS: that may be this machine's own directory, and the copy would write over it."""
     if not names:
         return True
+    try:
+        mounted = [m for m in open(state("mounts", host)).read().splitlines() if m]
+    except OSError:
+        mounted = None
+    if mounted is None or any(root == m or root.startswith(m.rstrip("/") + "/") for m in mounted):
+        log(f"copy to {host} {root} refused: the host mounts it, or its mounts are unknown")
+        return False
     with tempfile.NamedTemporaryFile("w", delete=False) as f:
         f.write("\n".join(names) + "\n")
     try:
