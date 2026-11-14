@@ -1613,8 +1613,16 @@ impl<'a> P<'a> {
         Ok(())
     }
 
-    /// A pattern's target: a name, an object or array pattern. Its kind.
+    /// A pattern's target: a name, an object or array pattern. Its kind. Patterns nest through
+    /// here and `rest_pattern`, so both count the depth (`deeper`), as expressions do.
     fn open_pattern_target(&mut self, s: Slot) -> R<K> {
+        self.deeper()?;
+        let r = self.open_pattern_target_inner(s);
+        self.depth -= 1;
+        r
+    }
+
+    fn open_pattern_target_inner(&mut self, s: Slot) -> R<K> {
         match self.peek() {
             T::LBrace => {
                 self.object_pattern(s)?;
@@ -1643,6 +1651,13 @@ impl<'a> P<'a> {
     }
 
     fn rest_pattern(&mut self, s: Slot) -> R<()> {
+        self.deeper()?;
+        let r = self.rest_pattern_inner(s);
+        self.depth -= 1;
+        r
+    }
+
+    fn rest_pattern_inner(&mut self, s: Slot) -> R<()> {
         let n = self.open_in(K::RestPattern, s);
         self.bump()?;
         match self.peek() {
