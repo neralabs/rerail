@@ -190,9 +190,30 @@ fn split_at_pos(mut lo: usize, mut hi: usize, less: impl Fn(usize) -> bool) -> u
 #[derive(Clone, Default)]
 pub(super) struct Sorted(Vec<(u32, u32, Arc<[usize]>)>);
 
-/// Whether rows in the order on `have` are in the order on `want` (relation of `k` columns).
+/// Whether the sorts past a run's own use what is known sorted (decision 0184: a wave's batch, a scan for the next
+/// step's probes, an order sorted again). `RERAIL_KNOWN_SORTED=runs` (a measurement aid) keeps it to the runs
+/// (decision 0180); `off`, to nothing.
+pub(super) fn known_beyond_runs() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("RERAIL_KNOWN_SORTED").map_or(true, |v| v != "runs" && v != "off"))
+}
+
+/// Whether rows in the order on `have` (relation of `k` columns) are in the order on `want` of the same relation.
 fn implies(have: &[usize], want: &[usize], k: usize) -> bool {
-    have == want || (!tagged(have, k) && !tagged(want, k) && want.len() <= have.len() && have[..want.len()] == *want)
+    implies_key(have, k, tagged(want, k).then(|| want[0]), want)
+}
+
+/// Whether rows in the order on `have` (relation of `k` columns) are sorted by a key: the hash tag of column `tag`'s
+/// value first (when given; it is `cols[0]`), then the values of `cols` in turn. A tagged `have` sorts by its leading
+/// column's tag first, so only a tagged key on its prefix follows from it; an untagged one gives any untagged prefix.
+fn implies_key(have: &[usize], k: usize, tag: Option<usize>, cols: &[usize]) -> bool {
+    let prefix = cols.len() <= have.len() && have[..cols.len()] == *cols;
+    match (tagged(have, k), tag) {
+        _ if cols.is_empty() && tag.is_none() => true,
+        (true, Some(t)) => prefix && have[0] == t,
+        (false, None) => prefix,
+        _ => false,
+    }
 }
 
 impl Sorted {
@@ -221,6 +242,15 @@ impl Sorted {
             return Vec::new();
         }
         self.0.iter().filter(|(a, b, c)| *a < hi && *b > lo && implies(c, cols, k)).map(|&(a, b, _)| (a.max(lo), b.min(hi))).collect()
+    }
+    /// The parts of rows `lo..hi` known to be sorted by a key (`implies_key`: column `tag`'s hash tag first, when
+    /// given, then the values of `cols`), in row order.
+    pub(super) fn within_key(&self, k: usize, tag: Option<usize>, cols: &[usize], lo: u32, hi: u32) -> Vec<(u32, u32)> {
+        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *OFF.get_or_init(|| std::env::var("RERAIL_KNOWN_SORTED").is_ok_and(|v| v == "off")) {
+            return Vec::new();
+        }
+        self.0.iter().filter(|(a, b, c)| *a < hi && *b > lo && implies_key(c, k, tag, cols)).map(|&(a, b, _)| (a.max(lo), b.min(hi))).collect()
     }
     /// Rows known sorted, over every range.
     pub(super) fn rows(&self) -> u64 {
@@ -655,6 +685,65 @@ fn gallop<T>(v: &[T], start: usize, less: impl Fn(&T) -> bool) -> usize {
     }
 }
 
+/// `v`, sorted pieces one after another (`bounds`: each piece's start, then the end), merged into one sorted
+/// sequence: adjacent pieces two at a time, a pass at a time, through one buffer of `v`'s length, `le(a, b)` saying
+/// `a` may come before `b` (ties keep the left piece's first). Each item moves about log(pieces) times; one piece
+/// moves nothing (decision 0184: rows known sorted are merged, not sorted again).
+pub(super) fn merge_pieces(v: &mut Vec<u32>, mut bounds: Vec<usize>, le: impl Fn(u32, u32) -> bool) {
+    let mut buf: Vec<u32> = Vec::new();
+    while bounds.len() > 2 {
+        buf.clear();
+        buf.reserve(v.len());
+        let mut next = vec![0];
+        let mut p = 0;
+        while p + 1 < bounds.len() {
+            let (a, b) = (bounds[p], bounds[p + 1]);
+            let c = if p + 2 < bounds.len() { bounds[p + 2] } else { b };
+            let (mut i, mut j) = (a, b);
+            while i < b && j < c {
+                if le(v[i], v[j]) { buf.push(v[i]); i += 1 } else { buf.push(v[j]); j += 1 }
+            }
+            buf.extend_from_slice(&v[i..b]);
+            buf.extend_from_slice(&v[j..c]);
+            next.push(c);
+            p += 2;
+        }
+        std::mem::swap(v, &mut buf);
+        bounds = next;
+    }
+}
+
+/// `v` sorted, where the pieces `known` (position ranges, in order) are sorted already: the stretches between them
+/// sorted by `sort` (each alone), then every piece merged (`merge_pieces`). The positions taken as known.
+pub(super) fn sort_pieces(v: &mut Vec<u32>, known: &[(usize, usize)], mut sort: impl FnMut(&mut [u32]), le: impl Fn(u32, u32) -> bool) -> usize {
+    let n = v.len();
+    let mut bounds = vec![0];
+    let (mut at, mut taken) = (0, 0);
+    for &(a, b) in known {
+        let (a, b) = (a.max(at), b.min(n));
+        if a >= b {
+            continue;
+        }
+        if at < a {
+            sort(&mut v[at..a]);
+            bounds.push(a);
+        }
+        bounds.push(b);
+        taken += b - a;
+        at = b;
+    }
+    if at < n {
+        sort(&mut v[at..n]);
+        bounds.push(n);
+    }
+    bounds.dedup();
+    if bounds.last() != Some(&n) {
+        bounds.push(n);
+    }
+    merge_pieces(v, bounds, le);
+    taken
+}
+
 /// Runs an order's probes keep their place in (`Index::find_at`); past them, a run is searched from scratch.
 pub(super) const HINTS: usize = 8;
 
@@ -870,6 +959,12 @@ impl Index {
             return;
         }
         let _t = presorted::Timed::start(self.printed);
+        let run = self.run_over(data, k, lo, hi, known);
+        self.runs.push((Arc::new(run), wave));
+    }
+
+    /// One run of the rows `lo..hi`, those of `known` (in row order) taken in place, the rest sorted, the pieces merged.
+    fn run_over<D: RowData + ?Sized>(&self, data: &D, k: usize, lo: u32, hi: u32, known: &[(u32, u32)]) -> Run {
         let mut pieces: Vec<Arc<Run>> = Vec::new();
         let mut at = lo;
         for &(a, b) in known {
@@ -886,8 +981,7 @@ impl Index {
         if at < hi {
             pieces.push(Arc::new(self.run_of(data, k, at, hi)));
         }
-        let run = Self::merged(data, k, &self.cols, pieces);
-        self.runs.push((Arc::new(run), wave));
+        Self::merged(data, k, &self.cols, pieces)
     }
 
     /// At a wave's start (before its run is added): merges the runs older than wave `wave` into one when the rent
@@ -954,15 +1048,29 @@ impl Index {
     }
 
     /// The same rows ordered by `cols` instead, each run re-sorted (its wave kept).
-    pub(super) fn reorder<D: RowData + ?Sized>(&mut self, data: &D, k: usize, cols: Vec<usize>) {
+    pub(super) fn reorder<D: RowData + ?Sized>(&mut self, data: &D, k: usize, cols: Vec<usize>, sorted: &Sorted) {
         if cols == self.cols {
             return;
         }
         self.cols = cols;
-        for (r, _) in &mut self.runs {
+        let t = tagged(&self.cols, k);
+        let mut runs = std::mem::take(&mut self.runs);
+        for (r, _) in &mut runs {
+            let lo = r.ids.iter().min().unwrap_or(0);
+            // A run of rows `lo..hi` (a wave's, or runs of waves merged): the parts known sorted in the new order are
+            // taken in place (decision 0184), the rest sorted.
+            if r.ids.iter().max().is_some_and(|hi| (hi - lo) as usize + 1 == r.ids.len()) {
+                let hi = lo + r.ids.len() as u32;
+                presorted::site(presorted::REORDER, r.ids.len(), |i| cmp_vals(&self.cols, t, data.row(lo + i as u32 - 1, k), data.row(lo + i as u32, k)).is_gt());
+                let known = if known_beyond_runs() { sorted.within(&self.cols, k, lo, hi) } else { Vec::new() };
+                presorted::site_known(presorted::REORDER, known.iter().map(|&(a, b)| u64::from(b - a)).sum());
+                *r = Arc::new(self.run_over(data, k, lo, hi, &known));
+                continue;
+            }
             let run = Run::of(data, k, &self.cols, r.ids.to_vec());
             *r = Arc::new(if self.printed { run.printed(data, k, &self.cols) } else { run });
         }
+        self.runs = runs;
     }
 
     /// Every row is the delta of wave `wave` (a relation started from a kept one, all its rows new to the run).
@@ -1116,11 +1224,50 @@ pub mod presorted {
             c[i].fetch_add(v, Relaxed);
         }
     }
+    /// Other sorts: [a wave's batch (`Fresh::settle`), a scan for the next step's probes (`scan_order`), an order
+    /// sorted again on other columns (`reorder`)] × [sorts, rows, sorts wholly in order, rows in stretches of 64 or
+    /// more in order, rows taken as known sorted].
+    pub const FRESH: usize = 0;
+    pub const SCAN: usize = 1;
+    pub const REORDER: usize = 2;
+    static SITES: [[AtomicU64; 5]; 3] = [const { [const { AtomicU64::new(0) }; 5] }; 3];
+    fn counting() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var("RERAIL_SPIKE_PRESORTED").is_ok_and(|v| v != "time"))
+    }
+    /// A sort at `site` of `n` items, `descent(i)` telling item `i` is before item `i - 1` in the wanted order.
+    pub fn site(site: usize, n: usize, descent: impl Fn(usize) -> bool) {
+        if !counting() || n == 0 {
+            return;
+        }
+        let (mut start, mut long, mut whole) = (0usize, 0u64, true);
+        for i in 1..n {
+            if descent(i) {
+                if i - start >= 64 { long += (i - start) as u64; }
+                start = i;
+                whole = false;
+            }
+        }
+        if n - start >= 64 { long += (n - start) as u64; }
+        for (i, v) in [1, n as u64, u64::from(whole), long].into_iter().enumerate() {
+            SITES[site][i].fetch_add(v, Relaxed);
+        }
+    }
+    /// Rows a sort at `site` took as known sorted, not sorted.
+    pub fn site_known(site: usize, rows: u64) {
+        if counting() {
+            SITES[site][4].fetch_add(rows, Relaxed);
+        }
+    }
     pub fn report() -> String {
         let row = |i: usize| COUNTS[i].iter().map(|a| a.load(Relaxed)).collect::<Vec<_>>();
         let (d, o) = (row(0), row(1));
+        let sites = ["wave batches", "scans for the next probe", "orders sorted again"].iter().enumerate().map(|(i, name)| {
+            let v: Vec<u64> = SITES[i].iter().map(|a| a.load(Relaxed)).collect();
+            format!("; {name}: {} sorts ({} wholly in order), {} rows, {} in order in stretches of 64+ ({:.0}%), {} known sorted", v[0], v[2], v[1], v[3], v[3] as f64 * 100.0 / v[1].max(1) as f64, v[4])
+        }).collect::<String>();
         let f = |v: &[u64]| format!("{} runs ({} wholly in order), {} rows, {} in order in {} stretches of 64+ ({:.0}%); built in {:.1} ms; {} rows taken in place, known sorted", v[0], v[2], v[1], v[3], v[4], v[3] as f64 * 100.0 / v[1].max(1) as f64, v[5] as f64 / 1e6, v[6]);
-        format!("derived-input orders: {}; component orders: {}", f(&d), f(&o))
+        format!("derived-input orders: {}; component orders: {}{sites}", f(&d), f(&o))
     }
 }
 
@@ -1256,6 +1403,43 @@ pub mod tests {
         one.add_run_in(&rows[..], k, 2800, n as usize, 1, &[(2800, n)]);
         one.tier(&rows[..], k, 1);
         assert!(matches!(one.runs[0].0.ids, Ids::Rows(2600, 3000)), "joined in place");
+    }
+
+    /// Pieces known sorted, merged with the sorted stretches between them (`sort_pieces`), give the full sort's
+    /// order: no pieces, one piece covering all, pieces at either end, many short ones, ties between pieces (kept
+    /// left first), and stretches between them in any order.
+    #[test]
+    fn pieces_known_sorted_merge_into_the_sort() {
+        let mut x = 0x2545_F491_4F6C_DD1Du64;
+        let mut rand = move |m: u64| { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x % m };
+        for case in 0..40 {
+            let n = [0usize, 1, 7, 300, 2000][case % 5];
+            let vals: Vec<u64> = (0..n).map(|_| rand(50)).collect();
+            // Pieces: ranges sorted in place in `v` (positions), with unsorted stretches between.
+            let mut v: Vec<u32> = (0..n as u32).collect();
+            let mut known = Vec::new();
+            let mut at = 0;
+            while at < n {
+                let len = (1 + rand(if case % 3 == 0 { 400 } else { 40 }) as usize).min(n - at);
+                if rand(3) > 0 {
+                    v[at..at + len].sort_by_key(|&i| vals[i as usize]);
+                    known.push((at, at + len));
+                }
+                at += len;
+            }
+            if case == 4 {
+                v.sort_by_key(|&i| vals[i as usize]);
+                known = vec![(0, n)];
+            }
+            let mut want = v.clone();
+            want.sort_by_key(|&i| vals[i as usize]);
+            let taken = sort_pieces(&mut v, &known, |s| s.sort_by_key(|&i| vals[i as usize]), |a, b| vals[a as usize] <= vals[b as usize]);
+            assert_eq!(v.iter().map(|&i| vals[i as usize]).collect::<Vec<_>>(), want.iter().map(|&i| vals[i as usize]).collect::<Vec<_>>(), "case {case}");
+            let mut same = v.clone();
+            same.sort_unstable();
+            assert_eq!(same, (0..n as u32).collect::<Vec<_>>(), "case {case}: each item once");
+            assert_eq!(taken, known.iter().map(|&(a, b)| b - a).sum::<usize>());
+        }
     }
 
     /// Packed keys (decision 0179) sort as the 24-byte tuples do, ids and tags alike: values narrow (a u64), wide or

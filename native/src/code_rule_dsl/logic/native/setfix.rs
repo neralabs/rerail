@@ -634,7 +634,7 @@ impl Rel {
             self.serves[i].push(set);
             let cols = chained(&self.serves[i], k);
             charge(Unit::IndexEntry, self.idx[i].rows() as u64);
-            self.idx[i].reorder(data, k, cols);
+            self.idx[i].reorder(data, k, cols, &self.sorted);
         } else {
             let cols = chained(std::slice::from_ref(&set), k);
             let mut ix = Index::new(cols);
@@ -840,8 +840,15 @@ impl Cands<'_> {
 /// batch at a time). Rows `..settled` are distinct, not held by the relation, and sorted by its first order; the rest
 /// are as derived. `emitted`: every row a rule derived this wave, new or not (`RERAIL_SPIKE_DERIVATIONS`: the
 /// derivations a counting scheme would count).
+/// `breaks`: the rows past `settled` that come before the row derived just before them in the first order (decision
+/// 0184: the writer records what it knows), so `settle` sorts only the stretches out of order and merges the rest.
+/// `lost`: rows came that were not checked so (`add`), or so many breaks that the whole batch is sorted.
 #[derive(Clone, Default)]
-pub struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize }
+pub struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize, breaks: Vec<u32>, lost: bool }
+
+/// The shortest stretch of a wave's batch taken as in order (`Fresh::settle`): shorter ones are sorted with their
+/// neighbours, as merging them costs about what sorting them does.
+const IN_ORDER: usize = 64;
 
 /// Rows a wave's derived tuples hold before they are checked against their relation (`Fresh::offer`): a wave that
 /// derives many rows already held keeps at most about this many more.
@@ -850,11 +857,26 @@ const FRESH_BATCH: usize = 1 << 16;
 /// `RERAIL_SPIKE_DERIVATIONS`: rows derived (new or already held) and rows held new, by relation, over the process.
 pub static DERIVATIONS: std::sync::Mutex<std::collections::BTreeMap<String, (u64, u64)>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
 impl Fresh {
-    pub fn add(&mut self, row: &[i64]) { self.data.extend_from_slice(row); self.n += 1; }
-    /// A row a rule derived for `rel`: kept unchecked, the rows past `settled` checked a batch at a time.
+    /// A row in no known order (its batch is sorted whole).
+    pub fn add(&mut self, row: &[i64]) { self.data.extend_from_slice(row); self.n += 1; self.lost = true; }
+    /// A row a rule derived for `rel`: kept unchecked, the rows past `settled` checked a batch at a time. Whether it
+    /// comes before the last one in `rel`'s first order is noted (`breaks`): one comparison of two rows at hand.
     #[inline]
     fn offer(&mut self, row: &[i64], rel: &Rel) {
-        self.add(row);
+        let k = rel.k;
+        if !self.lost && self.n > self.settled && runs::known_beyond_runs() {
+            let cols = &rel.idx[0].cols;
+            if runs::cmp_vals(cols, runs::tagged(cols, k), &self.data[(self.n - 1) * k..self.n * k], row).is_gt() {
+                self.breaks.push(self.n as u32);
+                // Out of order throughout: sorted whole, the breaks no longer kept.
+                if self.breaks.len() * IN_ORDER > self.n - self.settled + IN_ORDER * IN_ORDER {
+                    self.lost = true;
+                    self.breaks = Vec::new();
+                }
+            }
+        }
+        self.data.extend_from_slice(row);
+        self.n += 1;
         if self.n - self.settled >= FRESH_BATCH.max(self.settled) {
             self.settle(rel);
         }
@@ -874,7 +896,28 @@ impl Fresh {
             runs::cmp_vals(cols, tagged, data.row(a, k), data.row(b, k))
         };
         let mut order: Vec<u32> = (settled as u32..n as u32).collect();
-        runs::sort_keyed(&mut order, tagged, cols.len(), |q, i| data.row(q, k)[cols[i]], &cmp);
+        runs::presorted::site(runs::presorted::FRESH, n - settled, |i| cmp((settled + i - 1) as u32, (settled + i) as u32).is_gt());
+        let sort = |v: &mut [u32]| {
+            runs::sort_keyed(v, tagged, cols.len(), |q, i| data.row(q, k)[cols[i]], &cmp);
+        };
+        if self.lost || !runs::known_beyond_runs() {
+            sort(&mut order);
+        } else {
+            // The stretches between breaks, as derived, are in order: the long ones merged, not sorted again.
+            let mut known: Vec<(usize, usize)> = Vec::new();
+            let mut start = 0;
+            for &b in self.breaks.iter().chain(std::iter::once(&(n as u32))) {
+                let b = b as usize - settled;
+                if b - start >= IN_ORDER {
+                    known.push((start, b));
+                }
+                start = b;
+            }
+            let taken = runs::sort_pieces(&mut order, &known, sort, |a, b| cmp(a, b).is_le());
+            runs::presorted::site_known(runs::presorted::FRESH, taken as u64);
+        }
+        self.breaks.clear();
+        self.lost = false;
         order.dedup_by(|a, b| cmp(*a, *b).is_eq());
         // The new rows' check: rows pushed since the last wave (in no order yet), then the first order.
         let mut held = vec![false; order.len()];
@@ -1718,6 +1761,8 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                     for (f, d) in fresh.iter_mut().zip(dev_fresh) {
                         f.data.extend_from_slice(&d.data);
                         f.n += d.n;
+                        // The device's rows, in no order known here.
+                        f.lost |= d.n > 0;
                     }
                     true
                 }
@@ -4882,15 +4927,39 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             });
         }
         let n = (hi - lo) as usize;
+        let tagged = index.is_tagged(k);
+        // The scan's rows known sorted by the probes' key (decision 0184): its columns in turn (constants hold no
+        // order), tagged by the first when the next order is.
+        let mut by: Vec<usize> = Vec::new();
+        for f in &from {
+            if let From::Col(c) = *f && !by.contains(&c) {
+                by.push(c);
+            }
+        }
+        let tag = if tagged && let From::Col(c) = from[0] { Some(c) } else { None };
+        let known: Vec<(usize, usize)> = if !runs::known_beyond_runs() { Vec::new() } else { match rows {
+            Rows::In(r) => r.sorted.within_key(r.k, tag, &by, lo, hi),
+            Rows::Comp(r) => r.sorted.within_key(r.k, tag, &by, lo, hi),
+            Rows::Source(_) => Vec::new(),
+        }.into_iter().map(|(a, b)| ((a - lo) as usize, (b - lo) as usize)).collect() };
+        if known == [(0, n)] {
+            // In the key's order already: the scan's rows as they are.
+            runs::presorted::site_known(runs::presorted::SCAN, n as u64);
+            return None;
+        }
         let mut vals = Vec::with_capacity(n * m);
         for id in lo..hi {
             let row = rows.row(id);
             vals.extend(from.iter().map(|f| match *f { From::Col(c) => row.at(c), From::Const(v) => v }));
         }
-        let tagged = index.is_tagged(k);
         let mut order: Vec<u32> = (0..n as u32).collect();
         let cmp = |a: u32, b: u32| vals[a as usize * m..][..m].cmp(&vals[b as usize * m..][..m]);
-        runs::sort_keyed(&mut order, tagged, m, |q, i| vals[q as usize * m + i], cmp);
+        let key_cmp = |a: u32, b: u32| (if tagged { runs::tag(vals[a as usize * m]).cmp(&runs::tag(vals[b as usize * m])) } else { std::cmp::Ordering::Equal }).then_with(|| cmp(a, b));
+        runs::presorted::site(runs::presorted::SCAN, n, |i| key_cmp(i as u32 - 1, i as u32).is_gt());
+        // The stretches not known sorted are sorted, then every piece merged (several in-order ranges are merged,
+        // not sorted again).
+        let taken = runs::sort_pieces(&mut order, &known, |v| { runs::sort_keyed(v, tagged, m, |q, i| vals[q as usize * m + i], cmp); }, |a, b| key_cmp(a, b).is_le());
+        runs::presorted::site_known(runs::presorted::SCAN, taken as u64);
         Some(order.into_iter().map(|q| lo + q).collect())
     }
     fn go<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
@@ -5341,6 +5410,68 @@ pub mod posted_tests {
             assert!(ix.shares(kept), "the maintained relation's order {:?} is a copy", ix.cols);
         }
         assert!(based.contains(&[3, 3, 93]) && !based.contains(&[3, 3, 94]));
+    }
+
+    /// A wave's derived rows partly in the first order already (decision 0184: the batch notes where its rows leave
+    /// it): stretches in order, rows out of order between them, repeats and rows held from earlier waves, checked in
+    /// batches as they come. The relation then holds the same rows in the same places as when every row was sorted
+    /// (`add`: in no known order), and an order re-sorted on other columns (`reorder`, its runs' ranges known
+    /// sorted) answers as the other's does.
+    #[test]
+    fn a_waves_rows_in_order_are_merged_not_sorted() {
+        let mut x: u64 = 5;
+        let mut next = |m: u64| {
+            x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((x >> 33) % m) as i64
+        };
+        let (mut known, mut plain) = (Rel::new("t", b"iii"), Rel::new("t", b"iii"));
+        for rel in [&mut known, &mut plain] {
+            rel.want(&[2]);
+        }
+        for w in 0..4 {
+            let (mut f, mut g) = (Fresh::default(), Fresh::default());
+            let rows = if w == 2 { 2 * FRESH_BATCH + 999 } else { 6000 };
+            let mut made = 0;
+            while made < rows {
+                // A stretch in the first order (tagged: the leading value's tag, then the columns), then a few rows
+                // as they come.
+                let mut stretch: Vec<Vec<i64>> = (0..100 + next(400)).map(|_| vec![next(60), next(30), next(25)]).collect();
+                let first = known.idx[0].cols.clone();
+                stretch.sort_by(|a, b| runs::cmp_vals(&first, true, a, b));
+                stretch.extend((0..next(4)).map(|_| vec![next(60), next(30), next(25)]));
+                for row in stretch.into_iter().take(rows - made) {
+                    f.offer(&row, &known);
+                    g.offer(&row, &plain);
+                    g.lost = true;
+                    made += 1;
+                }
+            }
+            assert!(!f.lost, "wave {w}: the batch kept its breaks");
+            assert!(f.breaks.len() * 20 < f.n - f.settled + 20, "wave {w}: few breaks");
+            known.push_fresh(f, false);
+            plain.push_fresh(g, false);
+            assert_eq!((known.n, known.data.to_vec(0, known.n, 3)), (plain.n, plain.data.to_vec(0, plain.n, 3)), "wave {w}: the same rows in the same places");
+            for rel in [&mut known, &mut plain] {
+                let (lo, hi) = (rel.indexed, rel.n);
+                rel.set_delta(lo, hi);
+            }
+        }
+        // An order re-sorted on other columns (a chain of key sets), its runs over ranges known sorted or not.
+        for rel in [&mut known, &mut plain] {
+            rel.want(&[2, 1]);
+        }
+        let ids = |rel: &Rel, key: &[i64]| {
+            let ix = rel.idx.iter().find(|ix| ix.cols[..2] == [2, 1]).expect("an order on (2, 1)");
+            let mut v: Vec<u32> = ix.find(&rel.data, 3, key, None).ids().collect();
+            v.sort_unstable();
+            v
+        };
+        assert!(known.idx.iter().zip(&plain.idx).all(|(a, b)| a.bytes() <= b.bytes()));
+        for a in 0..25 {
+            for b in 0..30 {
+                assert_eq!(ids(&known, &[a, b]), ids(&plain, &[a, b]), "key {a} {b}");
+            }
+        }
     }
 
     /// The dedup test a wave at a time (decision 0112): a wave's derived rows, in any order, repeated, and some
