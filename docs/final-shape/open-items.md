@@ -4972,6 +4972,16 @@ thread-local. The bridged typing run runs beside phase 1. Still open:
 - two pieces of run context are not carried yet (`plan::PLANNED_NOW`, `choices::DURABLE`), pinned;
 - the other nested runs (phase 0's, the constants') still run in order.
 
+**Closed (2026-11-14, decision 0197).**
+- The split memo is the run's own: a carried thread-local that each run opens as it begins (`split_memo::own`).
+- Both NotYet entries are carried. `PLANNED_NOW` is now `RunPlans::planned_now`, and `DURABLE` is carried as an
+  `Arc`. The NotYet count is pinned at 0.
+- Neither of the remaining nested runs has anything to overlap:
+  - the constants' run never starts on `dl1`, `struct.rr` or the Python pack, because `constants::foldable` is empty
+    there. An early start was built, then backed out unmeasured, because nothing ran.
+  - phase 0 is one batched `bootstrap.rr` run (about 0.2 s of CPU), and every later step needs its graphs. The nested
+    runs find their graphs kept (under 1 ms each).
+
 ## O-cone-kept-plans. A kept plan changes the cross-file cone's result
 
 **Seen (2026-11-13, decision 0192).** When the cone's job (`beside("the cone of requests")`, plan/corpus.rs) runs

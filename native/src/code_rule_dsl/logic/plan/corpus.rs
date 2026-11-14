@@ -2182,6 +2182,8 @@ fn run_observed(
     let nested = RUNS_UNDER_WAY.with(std::cell::Cell::get) > 0 || crate::code_rule_dsl::logic::profile::is_behind();
     let _under_way = UnderWay::enter();
     let _stage = crate::code_rule_dsl::logic::profile::run_begins();
+    // The run's own kept splits (`file_local::split_memo`), apart from any run it is nested in.
+    let _splits = crate::code_rule_dsl::typing::file_local::split_memo::own();
     let _profile = if !crate::code_rule_dsl::logic::profile::on() {
         None
     } else if phase0::active() || nested {

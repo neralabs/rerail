@@ -99,14 +99,13 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan.rs", "EXPLAIN_ALWAYS", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "NO_SHAPES", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "OWN_PLANS", Carried, ""),
-    ("src/code_rule_dsl/logic/plan.rs", "PLANNED_NOW", NotYet, "the profile's account of the keys planned in the run: a job's would be merged back into its caller's"),
     ("src/code_rule_dsl/logic/plan.rs", "PLANS", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "PLAN_SITE", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "SEED", Call, "the last priced body's cheapest start, read by the same pricing"),
     ("src/code_rule_dsl/logic/plan.rs", "SESSION_PLANS", Outermost, "a session's plans between its runs: taken and put back by the outermost run"),
     ("src/code_rule_dsl/logic/plan.rs", "SKEWING", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "STEP_ROWS", Carried, ""),
-    ("src/code_rule_dsl/logic/plan/choices.rs", "DURABLE", NotYet, "the durable side of the run (its store and its entries), held by the thread that opened it"),
+    ("src/code_rule_dsl/logic/plan/choices.rs", "DURABLE", Carried, ""),
     ("src/code_rule_dsl/logic/plan/compose.rs", "CACHE", Thread, "compiled compositions by digest: any thread's gives the same"),
     ("src/code_rule_dsl/logic/plan/corpus.rs", "PREPARED", Thread, "prepared programs by key: any thread's gives the same program"),
     ("src/code_rule_dsl/logic/plan/corpus.rs", "RUNS_UNDER_WAY", Carried, ""),
@@ -168,6 +167,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/sql_admission.rs", "CURRENT", Carried, ""),
     ("src/code_rule_dsl/sql_executor/runtime.rs", "LIMITED", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/tape/navigation.rs", "COUNTERS", Thread, "a count of this thread's tape steps, read by tests"),
+    ("src/code_rule_dsl/typing/file_local/split_memo.rs", "SPLITS", Carried, ""),
     ("src/code_rule_dsl/value/names.rs", "UNAVAILABLE", Call, "set by a lookup on this thread, taken by its caller (`take_unavailable`)"),
     ("src/code_rule_dsl/violations/projection.rs", "CURRENT", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/walks.rs", "WALKS", Thread, "a count of this thread's tree walks, read by tests"),
@@ -187,7 +187,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
 ];
 
 /// How many thread-locals are run context not carried yet ([`NotYet`]): lowered as each is carried, never raised.
-const NOT_YET_PINNED: usize = 2;
+const NOT_YET_PINNED: usize = 0;
 
 /// One carried piece of the run's context, taken on the caller's thread: entering it on another thread returns a
 /// guard that puts back what that thread had.
@@ -262,6 +262,8 @@ const CARRIERS: &[fn(&mut Capture)] = &[
     super::plan::corpus::phases::carried,
     super::plan::carried,
     super::plan::keeps::carried,
+    super::plan::choices::carried,
+    crate::code_rule_dsl::typing::file_local::split_memo::carried,
     super::derived::carried,
     super::plan::demand::carried,
     super::plan::placement::carried,
