@@ -530,9 +530,9 @@ pub(super) fn deferred(choice: &Choice) -> bool {
     })
 }
 
-/// One line as it ran: its stratum, key, rule, the order it ran last, its measured work, and its price for the
-/// rows it read (0 where not priced).
-#[derive(Clone, Debug)]
+/// One line as it ran: its stratum, key, rule, the order it ran last, its measured work, its price for the rows it
+/// read (0 where not priced), and the seconds its probes ran (decision 0208; 0 where not known).
+#[derive(Clone, Debug, Default)]
 pub struct LineRun {
     pub stratum: String,
     pub key: PlanKey,
@@ -540,23 +540,73 @@ pub struct LineRun {
     pub order: Vec<StoredStep>,
     pub work: f64,
     pub est: f64,
+    pub wall: f64,
 }
 
 /// What `critical` found, for the profile.
 #[derive(Debug, Default, PartialEq)]
 pub struct Path {
-    /// The strata on it, in order, and its work.
+    /// The strata on it, in order, and its work: the path the lines' work predicts.
     pub strata: Vec<usize>,
     pub work: f64,
-    /// Its lines noted, with their shares.
+    /// Its lines noted, with their shares (of the measured path where there is one).
     pub lines: Vec<(PlanKey, f64)>,
+    /// The path as the strata ran (decision 0208).
+    pub measured: Option<Measured>,
+}
+
+/// The run's measured critical path (decision 0208): from the stratum that ended last, back through what each
+/// waited for. Its strata in order; the seconds they ran, and those spent between them (each stratum's wait for what
+/// it waited for); from the first's start to the last's end; and how many are on the predicted path.
+#[derive(Debug, Default, PartialEq)]
+pub struct Measured {
+    pub strata: Vec<usize>,
+    pub busy: f64,
+    pub waited: f64,
+    pub span: f64,
+    pub shared: usize,
+}
+
+/// Decision 0208: the measured path over `timeline` (each stratum's start, end and where it ran: 0 the loop's
+/// thread). From the stratum that ended last, each step back is to what the stratum could not start before: the
+/// latest to end, before its start, of its producers and (on the loop's thread) the stratum the loop ran before it.
+pub fn measured_path(producers: &[Vec<usize>], timeline: &[Option<(f64, f64, u8)>]) -> Option<Measured> {
+    const EPS: f64 = 1e-6;
+    let end = (0..timeline.len()).filter(|&j| timeline[j].is_some()).max_by(|&a, &b| timeline[a].unwrap().1.total_cmp(&timeline[b].unwrap().1))?;
+    let mut path = vec![end];
+    let (mut busy, mut waited) = (0.0, 0.0);
+    let mut at = end;
+    loop {
+        let (start, stop, place) = timeline[at].expect("a stratum that ran");
+        busy += stop - start;
+        let before = |j: usize| timeline[j].filter(|t| t.1 <= start + EPS);
+        let by_data = producers.get(at).into_iter().flatten().copied().filter(|&p| p != at && before(p).is_some());
+        // The loop's thread runs its strata one after another: the one before on that thread, too.
+        let by_thread = (place == 0).then(|| (0..timeline.len()).filter(|&j| j != at && timeline[j].is_some_and(|t| t.2 == 0) && before(j).is_some()).max_by(|&a, &b| timeline[a].unwrap().1.total_cmp(&timeline[b].unwrap().1))).flatten();
+        let Some(prev) = by_data.chain(by_thread).filter(|p| !path.contains(p)).max_by(|&a, &b| timeline[a].unwrap().1.total_cmp(&timeline[b].unwrap().1)) else { break };
+        waited += (start - timeline[prev].unwrap().1).max(0.0);
+        path.push(prev);
+        at = prev;
+    }
+    path.reverse();
+    let span = timeline[end].unwrap().1 - timeline[path[0]].unwrap().0;
+    Some(Measured { strata: path, busy, waited, span, shared: 0 })
+}
+
+/// `critical_timed` with no times: the predicted path notes the lines.
+pub fn critical(strata: &[String], producers: &[Vec<usize>], runs: &[LineRun]) -> Path {
+    critical_timed(strata, producers, runs, None)
 }
 
 /// The run's critical path (decision 0203 §4): strata `producers` (each stratum's, by index; strata in dependency
 /// order, as a run takes them), weighted by the work of their lines `runs`. The longest chain is the path. Each of
 /// its lines with `critical_share` of it is noted: its share, its order tried, and a wider search asked for while
 /// its order measured over twice its price or none was made. Lines noted before have their order recorded too.
-pub fn critical(strata: &[String], producers: &[Vec<usize>], runs: &[LineRun]) -> Path {
+///
+/// Decision 0208: where the strata's times are given, the path as they ran (`measured_path`) notes the lines
+/// instead: a line's share is its seconds over the path's busy seconds (its work over the path's, where its seconds
+/// are not known).
+pub fn critical_timed(strata: &[String], producers: &[Vec<usize>], runs: &[LineRun], timeline: Option<&[Option<(f64, f64, u8)>]>) -> Path {
     let at: HashMap<&str, usize> = strata.iter().enumerate().map(|(j, s)| (s.as_str(), j)).collect();
     let mut weight = vec![0.0f64; strata.len()];
     for r in runs {
@@ -580,14 +630,23 @@ pub fn critical(strata: &[String], producers: &[Vec<usize>], runs: &[LineRun]) -
     }
     path.reverse();
     let total = dist[end];
-    let on: FxHashSet<usize> = path.iter().copied().collect();
+    let mut measured = timeline.and_then(|t| measured_path(producers, t));
+    if let Some(m) = &mut measured {
+        m.shared = m.strata.iter().filter(|j| path.contains(j)).count();
+    }
+    // The path that notes: the measured one where there is one, by seconds where they are known.
+    let on: FxHashSet<usize> = measured.as_ref().map_or(&path, |m| &m.strata).iter().copied().collect();
+    let on_path = |r: &LineRun| at.get(r.stratum.as_str()).is_some_and(|j| on.contains(j));
+    let walls: f64 = runs.iter().filter(|r| on_path(r)).map(|r| r.wall).sum();
+    let works: f64 = runs.iter().filter(|r| on_path(r)).map(|r| r.work).sum();
+    let by_wall = measured.is_some() && walls > 0.0;
     let mut lines = Vec::new();
     if total <= 0.0 {
-        return Path { strata: path, work: total, lines };
+        return Path { strata: path, work: total, lines, measured };
     }
     let mut m = MEMO.write();
     for r in runs {
-        let share = at.get(r.stratum.as_str()).filter(|j| on.contains(j)).map_or(0.0, |_| r.work / total);
+        let share = if !on_path(r) { 0.0 } else if by_wall { r.wall / walls } else if measured.is_some() { r.work / works.max(1.0) } else { r.work / total };
         let critical = share >= critical_share() && r.work >= slow_rows().min(1e4);
         if !critical && !m.notes.contains_key(&r.key) {
             continue;
@@ -610,7 +669,7 @@ pub fn critical(strata: &[String], producers: &[Vec<usize>], runs: &[LineRun]) -
     }
     drop(m);
     prioritize(&lines, total);
-    Path { strata: path, work: total, lines }
+    Path { strata: path, work: total, lines, measured }
 }
 
 /// Random connected orders of joins `vars` (each join's variables, as bits), from `start` where given, else from any

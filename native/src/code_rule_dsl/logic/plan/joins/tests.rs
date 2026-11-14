@@ -56,7 +56,7 @@ fn the_critical_path_is_the_heaviest_chain_and_its_heavy_lines_are_noted() {
     // s0 -> s1 -> s3 (work 10 + 200k + 10), s0 -> s2 -> s3 (10 + 50k + 10).
     let names: Vec<String> = ["s0", "s1", "s2", "s3"].map(String::from).to_vec();
     let producers = vec![vec![], vec![0], vec![0], vec![1, 2]];
-    let line = |stratum: &str, key: PlanKey, work: f64, est: f64| LineRun { stratum: stratum.into(), key, rule: key as u64, order: vec![(0, None), (1, None)], work, est };
+    let line = |stratum: &str, key: PlanKey, work: f64, est: f64| LineRun { stratum: stratum.into(), key, rule: key as u64, order: vec![(0, None), (1, None)], work, est, ..Default::default() };
     let runs = vec![line("s0", 100, 10.0, 10.0), line("s1", 101, 200_000.0, 1_000.0), line("s2", 102, 50_000.0, 50_000.0), line("s3", 103, 10.0, 10.0)];
     let path = critical(&names, &producers, &runs);
     assert_eq!(path.strata, vec![0, 1, 3]);
@@ -81,7 +81,7 @@ fn a_choice_is_corrected_by_what_its_order_measured_and_rounds_choose_together()
     choose(&mut round);
     assert_eq!(round[0].chosen, 0);
     // The best order measured 20 times its price: the other is cheaper, corrected.
-    critical(&["s".into()], &[vec![]], &[LineRun { stratum: "s".into(), key: 200, rule: 1, order: steps(&order(&[0, 1])), work: 2e6, est: 1e5 }]);
+    critical(&["s".into()], &[vec![]], &[LineRun { stratum: "s".into(), key: 200, rule: 1, order: steps(&order(&[0, 1])), work: 2e6, est: 1e5, ..Default::default() }]);
     let mut round = vec![Choice { key: 200, candidates: candidates.clone(), chosen: 0, why: "" }];
     choose(&mut round);
     assert_eq!(round[0].chosen, 1, "{}", round[0].why);
@@ -101,7 +101,7 @@ fn a_noted_line_explores_untried_orders_within_the_margin() {
     let _serial = SERIAL.lock();
     clear();
     let order = |at: &[usize]| at.iter().map(|&a| Step { at: a, mode: None }).collect::<Vec<_>>();
-    critical(&["s".into()], &[vec![]], &[LineRun { stratum: "s".into(), key: 300, rule: 1, order: steps(&order(&[0, 1, 2])), work: 1e6, est: 1e6 }]);
+    critical(&["s".into()], &[vec![]], &[LineRun { stratum: "s".into(), key: 300, rule: 1, order: steps(&order(&[0, 1, 2])), work: 1e6, est: 1e6, ..Default::default() }]);
     let candidates = vec![
         Candidate { order: order(&[0, 1, 2]), est: 100.0 },
         Candidate { order: order(&[1, 0, 2]), est: 150.0 },
@@ -155,7 +155,7 @@ fn exact_statistics_and_the_memo_change_the_plan() {
     let key = model.reused_key(&b, None);
     let ((best, _, _), _) = model.plan_rule_reused(&p, &b, None).unwrap();
     assert_eq!(lead(&best), "a");
-    critical(&["h".into()], &[vec![]], &[LineRun { stratum: "h".into(), key, rule: b.observed_key(), order: steps(&best), work: 1e6, est: 100.0 }]);
+    critical(&["h".into()], &[vec![]], &[LineRun { stratum: "h".into(), key, rule: b.observed_key(), order: steps(&best), work: 1e6, est: 100.0, ..Default::default() }]);
     assert!(pending(&key), "a wider search is wanted");
     let ((order, _, _), _) = model.plan_rule_reused(&p, &b, None).unwrap();
     assert_eq!(lead(&order), "b", "corrected by what `a` first measured");
@@ -200,5 +200,31 @@ fn trials_are_taken_once_and_their_ratios_kept() {
     let n = note(&500).unwrap();
     let t = n.tried.iter().find(|t| t.order == steps(&order)).expect("tried");
     assert!((t.ratio - 8.0).abs() < 1e-9 && t.runs == 2, "a geometric mean over trials: {t:?}");
+    clear();
+}
+
+/// Decision 0208: the path as the strata ran. s1 does the most work but ran as a job beside s2, which took longer:
+/// the measured path is s0, s2, s3 (s3 waited on s2, ending last), not the predicted s0, s1, s3; the loop's thread
+/// ran s0 then s2, so s2 also waited on s0 there. Its line is noted by its share of the path's seconds.
+#[test]
+fn the_measured_critical_path_follows_what_each_stratum_waited_for() {
+    let _serial = SERIAL.lock();
+    clear();
+    let names: Vec<String> = ["s0", "s1", "s2", "s3"].map(String::from).to_vec();
+    let producers = vec![vec![], vec![0], vec![0], vec![1, 2]];
+    let timeline = vec![Some((0.0, 0.1, 0)), Some((0.1, 0.3, 1)), Some((0.12, 0.9, 0)), Some((0.95, 1.0, 0))];
+    let m = measured_path(&producers, &timeline).unwrap();
+    assert_eq!(m.strata, vec![0, 2, 3]);
+    assert!((m.busy - (0.1 + 0.78 + 0.05)).abs() < 1e-9 && (m.waited - (0.02 + 0.05)).abs() < 1e-9 && (m.span - 1.0).abs() < 1e-9, "{m:?}");
+    let line = |stratum: &str, key: PlanKey, work: f64, wall: f64| LineRun { stratum: stratum.into(), key, rule: key as u64, order: vec![(0, None), (1, None)], work, est: work, wall };
+    let runs = vec![line("s1", 701, 500_000.0, 0.19), line("s2", 702, 20_000.0, 0.7), line("s3", 703, 20_000.0, 0.04)];
+    let path = critical_timed(&names, &producers, &runs, Some(&timeline));
+    assert_eq!(path.strata, vec![0, 1, 3], "predicted by work");
+    let measured = path.measured.as_ref().unwrap();
+    assert_eq!((measured.strata.clone(), measured.shared), (vec![0, 2, 3], 2));
+    let noted: Vec<PlanKey> = path.lines.iter().map(|l| l.0).collect();
+    assert_eq!(noted, vec![702, 703], "the lines on the measured path, by seconds: {:?}", path.lines);
+    assert!(note(&701).is_none(), "s1 is off the measured path");
+    assert!((path.lines[0].1 - 0.7 / 0.74).abs() < 1e-9);
     clear();
 }

@@ -4663,6 +4663,9 @@ struct Driving<'a> {
     /// Per line (seeds, then probes): a replacement running over the rows a slow order left at its cut (decision
     /// 0206).
     handoff: Vec<Option<joins::Handoff>>,
+    /// Per line, the seconds its probes ran (the engine's per-probe wall time), for the measured critical path
+    /// (decision 0208).
+    walled: Vec<f64>,
 }
 
 struct Run<'a, 'b> {
@@ -7486,6 +7489,7 @@ impl<'a> Run<'a, '_> {
             replanned_at,
             searched: Vec::new(),
             handoff: Vec::new(),
+            walled: Vec::new(),
             keys,
             started,
             placed,
@@ -7527,7 +7531,7 @@ impl<'a> Run<'a, '_> {
     fn drive(&mut self, d: Box<Driving<'a>>, native_rels: &BTreeSet<String>, numbers: &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<Native<'a>> {
         let vs = Arc::clone(&self.versions);
         let prog = self.prog;
-        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, mut orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken, mut unplanned, mut handoff } = *d;
+        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, mut orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken, mut unplanned, mut handoff, mut walled } = *d;
         let scc = &scc_owned;
         let rels: Vec<&String> = rels_owned.iter().collect();
         let planning = |r: &Rule, what: &str| {
@@ -7560,6 +7564,13 @@ impl<'a> Run<'a, '_> {
                 self.fx().run(&name, chunk as u32)?
             };
             let f: Vec<&str> = f.split_whitespace().collect();
+            // Each probe's milliseconds in this run, its first figure (always measured).
+            if let Some(per) = f.get(7).filter(|_| f.len() == 9) {
+                for (k, item) in per.split(',').enumerate() {
+                    if walled.len() <= k { walled.resize(k + 1, 0.0); }
+                    walled[k] += item.split(':').next().and_then(|t| t.parse::<f64>().ok()).unwrap_or(0.0) / 1e3;
+                }
+            }
             let cut = if f.last() == Some(&"5") { super::native::component::take_cut(self.db, &name)? } else { None };
             if let Some(c) = &cut {
                 joins::log(|| format!("cut {name} line {}: {} rows of work, {} rows of its first atom done, {} left{}", c.probe, c.work, c.done, c.left, if c.led { "" } else { " (not known: all)" }));
@@ -7577,7 +7588,7 @@ impl<'a> Run<'a, '_> {
                     drop(rels);
                     Box::new(Driving {
                         scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, probes, order_rules, nseeds, seeds, ngates,
-                        explained, counted, earlier, timed, chunk, replanned_at, searched, keys, started, placed, shape, lab, not_taken, unplanned, handoff,
+                        explained, counted, earlier, timed, chunk, replanned_at, searched, keys, started, placed, shape, lab, not_taken, unplanned, handoff, walled,
                         cpu_own: if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_at } else { 0.0 },
                     })
                 }};
@@ -8097,7 +8108,7 @@ impl<'a> Run<'a, '_> {
                     if w >= joins::slow_rows() && joins::wants_request(&key) {
                         self.request_search(r, first, rule, key, w)?;
                     }
-                    runs.push(joins::LineRun { stratum: stratum.clone(), key, rule, order: joins::steps(order), work: w, est });
+                    runs.push(joins::LineRun { stratum: stratum.clone(), key, rule, order: joins::steps(order), work: w, est, wall: walled.get(line).copied().unwrap_or(0.0) });
                 }
                 lines_push(runs);
             }
@@ -9682,8 +9693,19 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     }
     // What the strata suspended on their requests read: kept until they finish (their fixpoints read them again).
     let held_by_asked = |asked: &[Asked]| -> HashSet<String> { asked.iter().flat_map(|a| stratum_reads(prog, &sccs[a.at], &by_stratum[a.at])).collect() };
+    // Decision 0208: each stratum's start and end where no board traces them (every stratum then runs on the loop's
+    // thread), for the run's measured critical path.
+    let strata_t0 = std::time::Instant::now();
+    let mut loop_times: Vec<Option<(f64, f64, u8)>> = if board.is_none() { vec![None; sccs.len()] } else { Vec::new() };
+    let mut loop_open: Option<(usize, f64)> = None;
     super::lanes::executor().stream("strata", |stream| -> Result<()> {
     for (at, scc) in sccs.iter().enumerate() {
+        if let Some(b) = board.as_mut() {
+            b.close();
+        }
+        if let Some((p, a)) = loop_open.take() {
+            loop_times[p] = Some((a, strata_t0.elapsed().as_secs_f64(), 0));
+        }
         // Answers come as events: their strata resume. One that reads a stratum still asking waits for its answers
         // (helping nothing: the board's components go on, and are taken as they end).
         if !asked.is_empty() {
@@ -9711,6 +9733,8 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         }
         if let Some(b) = board.as_mut() {
             b.advance(at, &waiting.iter().map(|w| w.0).chain(asked.iter().map(|a| a.at)).collect::<Vec<_>>());
+        } else {
+            loop_open = Some((at, strata_t0.elapsed().as_secs_f64()));
         }
         super::lanes::prof::level(Some(level_of[at]));
         if let Some(ks) = strata_kept.as_deref_mut() {
@@ -10687,7 +10711,14 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     }
     Ok(())
     })?;
-    // Decision 0203 §4: the run's critical path by its lines' work, its heavy lines noted.
+    if let Some((p, a)) = loop_open.take() {
+        loop_times[p] = Some((a, strata_t0.elapsed().as_secs_f64(), 0));
+    }
+    if let Some(b) = board.as_mut() {
+        b.mark(sccs.len());
+    }
+    // Decision 0203 §4: the run's critical path by its lines' work, its heavy lines noted; decision 0208: the path as
+    // the strata ran, by their measured times, which notes the lines.
     if joins::on() {
         let lines = lines_take();
         if !lines.is_empty() {
@@ -10697,13 +10728,17 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                 from.into_iter().collect()
             }).collect();
             let names: Vec<String> = sccs.iter().map(|s| s.iter().next().cloned().unwrap_or_default()).collect();
-            let path = joins::critical(&names, &producers, &lines);
+            let timeline = board.as_ref().map_or_else(|| loop_times.clone(), |b| b.timeline());
+            let path = joins::critical_timed(&names, &producers, &lines, Some(&timeline));
             super::profile::decision("critical path (decision 0203)", || format!("{} strata, {:.0} rows of work; {} lines noted", path.strata.len(), path.work, path.lines.len()));
             joins::log(|| format!("critical path: {} of {} strata, {:.0} rows of work ({} lines, {:.0} in all); {} lines noted; {} searches waiting", path.strata.len(), sccs.len(), path.work, lines.len(), lines.iter().map(|l| l.work).sum::<f64>(), path.lines.len(), joins::requests()));
+            if let Some(m) = &path.measured {
+                super::profile::decision("measured critical path (decision 0208)", || format!("{} strata, {:.3} s busy, {:.3} s waiting; {} of them on the predicted path", m.strata.len(), m.busy, m.waited, m.shared));
+                joins::log(|| format!("measured critical path: {} strata, {:.3} s busy, {:.3} s waiting ({:.3} s from its first start to its end); {} of the {} predicted strata on it: {}", m.strata.len(), m.busy, m.waited, m.span, m.shared, path.strata.len(), m.strata.iter().map(|&j| names[j].as_str()).collect::<Vec<_>>().join(" > ")));
+            }
         }
     }
     if let Some(b) = board.as_mut() {
-        b.mark(sccs.len());
         b.dump(&level_of, &sccs);
     }
     if let Some(b) = &board {
