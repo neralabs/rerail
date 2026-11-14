@@ -123,6 +123,95 @@ fn closures_of_one_level_launch_in_one_wave() {
     assert_eq!(outputs[1].len(), 17 + 12 + 13, "{:?}", outputs[1]);
 }
 
+/// Device waves (decision 0095 §5) across components (decision 0113): a level of twenty closures is more than one
+/// component takes (its estimate reaches `k` fixed costs first), so the scoreboard issues it as several. Their bit
+/// rows' launches are still the level's one wave, not one wave per component.
+#[test]
+fn closures_of_a_level_wider_than_a_component_launch_in_one_wave() {
+    const N: usize = 20;
+    let mut src = String::new();
+    for k in 0..N {
+        let b = 100 * k as i64;
+        src += &format!(".decl e{k}(a: number, b: number)\n");
+        for (x, y) in [(1, 2), (1, 3), (2, 4), (3, 4), (4, 1)] {
+            src += &format!("e{k}({}, {}).\n", b + x, b + y);
+        }
+        src += &format!(".decl r{k}(a: number, b: number)\nr{k}(a, b) :- e{k}(a, b).\nr{k}(a, c) :- r{k}(a, b), e{k}(b, c).\n");
+    }
+    src += ".decl o(k: number, a: number, b: number)\n";
+    for k in 0..N {
+        src += &format!("o({k}, a, b) :- r{k}(a, b).\n");
+    }
+    src += ".output o\n";
+    let p = parse(&src).unwrap();
+    let mut outputs = Vec::new();
+    for modes in ["", "program"] {
+        let path = crate::code_rule_dsl::fixtures::temp();
+        let store = ContentStore::open(&path).unwrap();
+        let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let db = Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        let before = super::super::lanes::wave::flushed();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), modes).unwrap();
+        let after = super::super::lanes::wave::flushed();
+        if !modes.is_empty() {
+            for k in 0..N {
+                assert!(got.native.contains(&format!("r{k}")), "r{k} runs natively");
+            }
+            assert_eq!((after.0 - before.0, after.1 - before.1), (1, N as u64), "the level's closures in one wave of {N} launches");
+        }
+        let mut o = got.outputs["o"].clone();
+        o.sort();
+        outputs.push(o);
+    }
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(outputs[1].len(), 16 * N, "{:?}", outputs[1].len());
+}
+
+/// Decision 0123 §9: a probe with no kept plan is planned when its delta first has rows. In `{r, s, t}`, `s` never
+/// has a row (`g` is empty, though not to the program's prune: no edge is a loop), so `r`'s probe by `s` is never
+/// planned; the probes by `r` are planned when the first wave returns, and the run derives what the SQL run does.
+#[test]
+fn a_probe_is_planned_when_its_delta_first_has_rows() {
+    let src = ".decl e(a: number, b: number)\ne(1, 2).\ne(2, 3).\ne(3, 4).\ne(4, 1).\n\
+               .decl g(a: number)\ng(a) :- e(a, a).\n.decl h(a: number)\nh(3).\n\
+               .decl r(a: number, b: number)\n.decl s(a: number, b: number)\n.decl t(a: number, b: number)\n\
+               r(a, b) :- e(a, b).\nr(a, c) :- r(a, b), e(b, c).\nr(a, c) :- s(a, b), e(b, c).\nr(a, b) :- t(b, a).\n\
+               s(a, b) :- r(a, b), g(a).\nt(a, b) :- r(a, b), h(b).\n\
+               .decl o(k: number, a: number, b: number)\no(1, a, b) :- r(a, b).\no(2, a, b) :- t(a, b).\n.output o\n";
+    let p = parse(src).unwrap();
+    let mut outputs = Vec::new();
+    for modes in ["", "program"] {
+        let _plans = KeepPlans::start(None);
+        let path = crate::code_rule_dsl::fixtures::temp();
+        let store = ContentStore::open(&path).unwrap();
+        let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
+        let db = Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        let before = super::lazy_probes_counted();
+        let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty(&lowered.program), BTreeSet::new(), modes).unwrap();
+        let after = super::lazy_probes_counted();
+        if !modes.is_empty() {
+            assert!(got.native.iter().any(|c| c.split('/').any(|r| r == "r")), "r's component runs natively: {:?}", got.native);
+            // The probes searched: r by r, r by s, s by r, t by r (`r(a, b) :- t(b, a)` is a copy, with no order to
+            // find). Other tests' runs only add to both counts, and never plan more probes than they left.
+            let (left, planned) = (after.0 - before.0, after.1 - before.1);
+            assert!(left >= 4 && planned >= 3, "left {left}, planned {planned}; native {:?}, inlined {:?}", got.native, got.inlined);
+            assert!(left - planned >= 1, "r's probe by s is never planned: left {left}, planned {planned}");
+        }
+        let mut o = got.outputs["o"].clone();
+        o.sort();
+        outputs.push(o);
+    }
+    assert_eq!(outputs[0], outputs[1]);
+    // r: the 4-cycle's closure (16) and t's reversals, all in it; t: r's rows into 3 (4).
+    assert_eq!(outputs[1].len(), 16 + 4, "{:?}", outputs[1]);
+}
+
 fn root() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
 }
@@ -2146,6 +2235,22 @@ fn statistics_versions_accumulate_drift_and_publish_changed_keys() {
     watch.delta(0,0);
     model.stats.card.insert("a".into(),1000.0); watch.record(0,0,&model,"a");
     assert!(!watch.take(0)); watch.delta(0,1); assert!(watch.take(0));
+}
+
+/// Decision 0123 §7: an order kept at a price under a search's cost (taken greedily, or found by a search) is searched
+/// again only when its line did a search's work when it last ran: the search then costs less than the line did.
+#[test]
+fn an_order_priced_under_a_search_is_searched_once_it_ran_over_one() {
+    let p = parse(".decl a(x:number,y:number)\n.decl b(y:number,z:number)\n.decl c(z:number,w:number)\n.decl d(w:number)\nd(w) :- a(x,y), b(y,z), c(z,w).\n").unwrap();
+    let alone = body::alone(&p.rules[0]).unwrap();
+    let (body, first) = (&body::nth(&alone, 0), Some(0));
+    let search = search_rows(body, first);
+    // Three joins led by the delta: a fixed 400 rows and five candidates.
+    assert_eq!(search, 405.0);
+    assert!(!mispriced(10.0, None, body, first), "a line that never ran");
+    assert!(!mispriced(10.0, Some(search.max(SEARCH_WORK) - 1.0), body, first), "it ran under a search's work");
+    assert!(mispriced(10.0, Some(search.max(SEARCH_WORK)), body, first), "it ran a search's work, priced at 10 rows");
+    assert!(!mispriced(search + 1.0, Some(1e9), body, first), "priced over a search: the re-price and replan rules hold it");
 }
 
 #[test]

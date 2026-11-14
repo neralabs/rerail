@@ -644,8 +644,6 @@ pub fn here() -> Option<String> {
     STACK.with(|s| s.lock().opens.last().map(|o| o.path.clone()))
 }
 
-/// Opens span `name` under `under`, a path another thread's `here` gave: a pool job's span (`crate::threads`), at
-/// that path whichever thread runs it. Without `under`, under this thread's open span, as `span` opens one.
 /// `f` for a parallel iterator's items, each a sizeable piece of work (a file, a tape): on a thread with no span
 /// open (a pool thread that took the item), under `name` in the span open where `carried` was called; on a thread
 /// with one open (the caller's), as it is. Rayon's work taken by another thread is under no span of that thread's.
@@ -657,6 +655,8 @@ pub fn carried<A, R>(name: &'static str, f: impl Fn(A) -> R + Sync + Send) -> im
     }
 }
 
+/// Opens span `name` under `under`, a path another thread's `here` gave: a pool job's span (`crate::threads`), at
+/// that path whichever thread runs it. Without `under`, under this thread's open span, as `span` opens one.
 pub fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Span {
     match under {
         Some(p) => open(format!("{p}/{}", name())),
