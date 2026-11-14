@@ -14,7 +14,7 @@
 //! - Gated negations (`Options::gate`): a negation that demand puts inside its own component waits for its relation's
 //!   `done_` gate, which the native engine opens once what the relation reads is quiet.
 
-use super::front::{AggOp, Atom, Edges, Error, Literal, Program, Rule, Term, Value, cmp_binds, join, strata, tarjan};
+use super::front::{AggOp, Atom, Edges, Error, Literal, Program, Rule, Term, Value, cmp_binds, components_of, join, strata, tarjan};
 use std::collections::{BTreeMap, BTreeSet};
 pub use crate::code_rule_dsl::logic::front::ast::{Gate, Report};
 
@@ -251,7 +251,7 @@ fn magic_sets_once(mut prog: Program, options: &Options) -> Result<Program, Erro
     if prog.demand.is_empty() {
         return Ok(prog);
     }
-    let (sccs, _) = strata(&prog)?;
+    let sccs = components_of(&prog)?;
     let comp: BTreeMap<&str, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.as_str(), i))).collect();
     let demanded = |r: &str| prog.demand.iter().any(|d| d == r);
     let (mut rules, mut magic) = (Vec::new(), Vec::<(Atom, Vec<(Literal, bool)>)>::new());
@@ -343,7 +343,7 @@ fn magic_sets_once(mut prog: Program, options: &Options) -> Result<Program, Erro
     };
     // Greedy: start from no extras (always stratifiable) and keep each extra that leaves the program stratifiable.
     prog.rules = build(&keep)?;
-    strata(&prog)?;
+    components_of(&prog)?;
     for i in 0..magic.len() {
         for j in 0..magic[i].1.len() {
             if !magic[i].1[j].1 || options.coarse {
@@ -351,7 +351,7 @@ fn magic_sets_once(mut prog: Program, options: &Options) -> Result<Program, Erro
             }
             keep[i][j] = true;
             prog.rules = build(&keep)?;
-            match strata(&prog) {
+            match components_of(&prog) {
                 Ok(_) => {}
                 Err(e) if e.unstratified().is_some() => keep[i][j] = false,
                 Err(e) => return Err(e),
@@ -417,7 +417,7 @@ pub fn magic_adorn(prog: Program, options: &Options) -> Result<Program, Error> {
     let mut full: BTreeSet<String> = options.exclude.iter().cloned().collect();
     // A relation that aggregates is computed in full: guarded, its count would join its demand's recursive component.
     full.extend(prog.rules.iter().filter(|r| r.body.iter().any(|l| matches!(l, Literal::Agg { .. }))).map(|r| r.head.rel.to_string()));
-    let (sccs, _) = strata(&prog)?;
+    let sccs = components_of(&prog)?;
     let level: BTreeMap<String, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.clone(), i))).collect();
     let mut cyc = Vec::new();
     loop {

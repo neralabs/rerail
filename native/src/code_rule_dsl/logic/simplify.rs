@@ -1894,7 +1894,7 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
 /// 0050: read off the tree per node looked up), with no fixpoint: one wave a level of nesting otherwise.
 /// Rewritten so; the components rewritten, by their members.
 fn climbs_as_axes(prog: &mut Program) -> Vec<String> {
-    let Ok((sccs, _)) = super::front::strata(prog) else { return Vec::new() };
+    let Ok(sccs) = super::front::components_of(prog) else { return Vec::new() };
     let mut done = Vec::new();
     // Each relation's rules, by place: made again only when a component is rewritten.
     let index = |prog: &Program| -> HashMap<String, Vec<usize>> {

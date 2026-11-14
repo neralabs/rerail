@@ -41,6 +41,15 @@ and the split and magic self-checks pass.
    `BTreeSet<String>` closed by scanning again, relations looked up by name, and a `format!` per tape. The check by
    text still runs, once, for a rule the numbered check fails, to give its cause. Debug builds assert that the two
    checks agree on every rule.
+7. **The strata on numbers.** `front::strata`'s graph is built on numbers (`Graph`):
+   - the derived relations in their order, each one's dependencies sorted as `Edges` sorts them;
+   - the search (`tarjan_ids`), `together`'s rings and the stratification check run on it.
+
+   The edges by name, a sorted map of string pairs with a `to_string` per body atom, are made only for a caller that
+   reads them. The callers that read only the components (about twenty) call `front::components_of`. The public
+   `tarjan` numbers its nodes too. The components, their order and the errors are unchanged. The merged
+   Typing-support-final-shape work (t36 item 6) already gives `keeps` and the negation split strata by `RelId`;
+   this is the same cut for the passes that still hold a tree.
 
 ## Measured
 
@@ -54,6 +63,7 @@ dl1, `RERAIL_THREADS=4`, cold, `--profile profiling`, alternating A/B runs:
 | `canonical` | 23.3 → 22.78 G |
 | sharded names | ~22.95 → ~22.83 G; `Name::new` 872 of 13,605 samples → 2 of 13,269 |
 | numbered split | 23.08 → 22.47 G (load 52–65) |
+| strata on numbers (after the Typing merge) | 22.60 → 22.25 G (load 20–24) |
 
 The set as a whole, against the engine built just after the hub merge (one of the earlier steps was already in
 that engine), at load 76–84: instructions 23.64 → 22.90 G, CPU 2.99 → 2.83 s (medians). Walls at that load are

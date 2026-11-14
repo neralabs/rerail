@@ -21,7 +21,7 @@
 //! and profiles, with `timed_plan`, T's planning timer) and its 1 GB page caches (over the 500 MB budget; SQLite's
 //! defaults instead).
 
-use super::front::{AggOp, Atom, Literal, Program, Rule, Term, Value, cmp_binds, strata};
+use super::front::{AggOp, Atom, Literal, Program, Rule, Term, Value, cmp_binds, components_of, strata};
 use super::program_image::{AtomRef, CmpOp, Lit, Slot as VarSlot, TermRef};
 use body::{Body, VarSet};
 use super::native::TOP;
@@ -8393,7 +8393,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     run.native_rels.extend(adopted);
                     Arc::make_mut(&mut run.inputs).extend(form.inputs.iter().map(String::as_str));
                     Arc::make_mut(&mut run.projections).extend(projections(form));
-                    let (form_sccs, _) = strata(form)?;
+                    let form_sccs = components_of(form)?;
                     let mut by_head: HashMap<&str, Vec<&Rule>> = HashMap::new();
                     for r in &form.rules {
                         by_head.entry(r.head.rel.as_str()).or_default().push(r);

@@ -5061,7 +5061,7 @@ domain is then a function of the rules, not of their order), and then run the fi
 
 ## O-split-in-strings. The file-local split's analysis works on strings (2026-11-14, decision 0210)
 
-Status: the fixpoints are numbered (0210 §6: dl1 23.08 → 22.47 G). Open: a rule's numbering is made again at each
+Status: the fixpoints are numbered (0210 §6: dl1 23.08 → 22.47 G). The strata run on numbers (0210 §7: 22.60 → 22.25 G); still on names: `keeps.rs`'s maps, `Model::fork_with`, `lower::domains`, `text_kind_demand`, `Run::strand` (0173 stage 2 plans them by `RelId`). Open: a rule's numbering is made again at each
 split (keep it with the body's digest), and `split_constants` works on names.
 
 After decision 0210's first five steps, a cold dl1 batch's main thread still spent about 10% in `typing::file_local::split_in`.

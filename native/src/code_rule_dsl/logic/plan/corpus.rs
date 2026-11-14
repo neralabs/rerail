@@ -671,7 +671,7 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
     const ORDER: [&str; 10] = ["config", "same-unit", "union", "recursive-local", "lookup", "exists", "grouped", "total", "recursive", "-"];
     let rank = |c: &str| ORDER.iter().position(|o| *o == c).unwrap_or(0);
     let cross = &split.cross;
-    let Ok((sccs, _)) = front::strata(cross) else { return };
+    let Ok(sccs) = front::components_of(cross) else { return };
     let scc_of = |rel: &str| sccs.iter().find(|s| s.contains(rel));
     let derived: BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.to_string()).collect();
     // The columns of a relation that name a document or a node of one (a node id holds its document).
@@ -5226,7 +5226,7 @@ fn run_observed(
             let mut from_rounds = None;
             if let (Some(r), Some(store), Some(key)) = (&round, &cone_handle, rounds_key) {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "the cone's rounds, from the frames".into());
-                let (sccs, _) = front::strata(&r.program).map_err(|e| Error::Plan(e.to_string()))?;
+                let sccs = front::components_of(&r.program).map_err(|e| Error::Plan(e.to_string()))?;
                 let k = retain::Retained::from_frames(store, rounds_space, key, &r.program, &sccs, &rounds_in.constant_digests())?;
                 let missing = r.missing(&k);
                 if missing.is_empty() {
@@ -6411,7 +6411,7 @@ fn run_observed(
                     }
                     let cross = &maintained_part.0;
                     // Its strata, once for every pass below (the kept part's load, cut, frames and derived relations).
-                    let (cross_sccs, _) = front::strata(&cross.program).map_err(|e| Error::Plan(e.to_string()))?;
+                    let cross_sccs = front::components_of(&cross.program).map_err(|e| Error::Plan(e.to_string()))?;
                     // Each linear cost of a session's run is its own span (decision 0090, step 1).
                     let span = |name: &'static str| crate::code_rule_dsl::logic::profile::span(move || format!("session/{name}"));
                     let s = span("digest inputs");
@@ -6815,7 +6815,7 @@ fn run_observed(
                             .filter(|r| in_run_delta(r))
                             .map(|r| (r.as_str(), got.kept.contains(r.as_str()).then(|| held_rows(&db, &got, r, part.program.decls[r].len()).map(|v| v.len()).unwrap_or(0))))
                             .collect();
-                        if let Ok((sccs, _)) = crate::code_rule_dsl::logic::front::strata(&part.program) {
+                        if let Ok(sccs) = crate::code_rule_dsl::logic::front::components_of(&part.program) {
                             let (mut quiet, mut moving, mut none, mut given) = (0, 0, 0, 0);
                             let by_stratum = crate::code_rule_dsl::logic::front::rules_by_stratum(&part.program, &sccs);
                             for (scc, rules) in sccs.iter().zip(&by_stratum) {
@@ -7650,7 +7650,7 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
         let (has_delta, bound_olds) = (&self.has_delta, &self.bound_olds);
         let one = maintain::One { has_delta: &|r| has_delta.contains(r), has_old: &|r| bound_olds.contains(r) };
         let mut given = |_: &str| None;
-        let m = maintain::rewrite_with(&cut, Some(self.kept), &mini, &front::strata(&mini.program).map_err(|e| Error::Plan(e.to_string()))?.0, &mut given, Some(&one))?;
+        let m = maintain::rewrite_with(&cut, Some(self.kept), &mini, &front::components_of(&mini.program).map_err(|e| Error::Plan(e.to_string()))?, &mut given, Some(&one))?;
         // Its form derived again (decision 0090 §4) stays: the run chooses between the two by its input deltas.
         let mut form = m.program.program;
         if maintain::levels_wanted() {
