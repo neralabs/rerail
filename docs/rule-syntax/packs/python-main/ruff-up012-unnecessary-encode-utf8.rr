@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // plain_text(n): the JSON util `plain-text`, used where the JSON says `matches: "plain-text"`
 .decl up012_plain_text(n: node)
@@ -86,7 +86,7 @@ up012_default_encode(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
 // UP012(n, detail): findings from clauses `bytes-literal`, `default-encoding-argument`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP012(at: node, call: node, detail: symbol) "{detail}."
+.violation UP012(at: loc, call: node, detail: symbol) "{detail}."
     suppress noqa "UP012"
 UP012(CALL, n, "Write this ASCII string as a bytes literal (`b\"...\"`) instead of calling `.encode()` on it; the result is the same bytes") :- kind(n, "call"),
     node(_, n, _, _, _), CALL = n, up012_bytes_call(n).

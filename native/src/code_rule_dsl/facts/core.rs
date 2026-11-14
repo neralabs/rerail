@@ -280,7 +280,7 @@ pub fn build_in_wave_with_tape(
             // A cache's write: where the writer's queue is full it is dropped, not waited for, and the next run parses
             // the file again (decision 0104: no wave waits for the writer).
             cache.write_back_unless_full(
-                "a tape and its source",
+                crate::content_store::write_back::Syms::None, "a tape and its source",
                 bytes.len() + tape.len(),
                 vec![(key, Some(std::sync::Arc::clone(&tape) as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
                 Box::new(move |store| {
@@ -380,7 +380,7 @@ pub(crate) fn build_cached_with_tape(
             // A cache's write: where the writer's queue is full it is dropped, not waited for, and the next run parses
             // the file again (decision 0104: no wave waits for the writer).
             cache.write_back_unless_full(
-                "a tape and its source",
+                crate::content_store::write_back::Syms::None, "a tape and its source",
                 bytes.len() + tape.len(),
                 vec![(queued_tape(&digest, tag, gv, fv), Some(tape as std::sync::Arc<dyn std::any::Any + Send + Sync>))],
                 Box::new(move |store| store.put_source_and_tape(source.as_bytes(), HashKey::from_sha256_digest(digest), tag, gv, fv, &held).map(|_| ())),

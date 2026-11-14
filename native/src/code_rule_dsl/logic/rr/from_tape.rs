@@ -275,7 +275,7 @@ impl<'a> Tree<'a> {
             k if k == Kind::Atom as u16 => Lit::Atom { rel: self.name(l, Field::Relation)?, args: self.arguments(self.one(l, Field::Arguments)?)?, neg: false },
             k if k == Kind::Negation as u16 => match self.literal(self.one(l, Field::Operand)?)? {
                 Lit::Atom { rel, args, neg } => Lit::Atom { rel, args, neg: !neg },
-                Lit::Pattern { subject, pattern, neg } => Lit::Pattern { subject, pattern, neg: !neg },
+                Lit::Pattern { subject, pattern, selector, neg } => Lit::Pattern { subject, pattern, selector, neg: !neg },
                 Lit::Group { alts, neg } => Lit::Group { alts, neg: !neg },
                 Lit::Cmp { .. } => return bad("a negated comparison"),
             },
@@ -287,6 +287,7 @@ impl<'a> Tree<'a> {
             k if k == Kind::PatternMatch as u16 => Lit::Pattern {
                 subject: self.term(self.one(l, Field::Subject)?)?,
                 pattern: super::code_body(self.text(self.one(l, Field::Pattern)?)).to_owned(),
+                selector: self.get(l, Field::Selector).map(|s| self.string(s)).transpose()?,
                 neg: false,
             },
             k if k == Kind::Group as u16 => Lit::Group { alts: self.alternatives(self.one(l, Field::Body)?)?, neg: false },

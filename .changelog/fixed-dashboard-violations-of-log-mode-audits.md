@@ -1,1 +1,0 @@
-The dashboard now shows a violation that an audit in Log mode recorded as "Logged", and steered counts leave it out, even when its rule is on Steer: that audit never told the coding agent. Violations already recorded are corrected when you update.

@@ -3248,6 +3248,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-ecma-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-engine"
 version = "0.1.0"
 dependencies = [
@@ -3291,6 +3299,7 @@ dependencies = [
  "rerail-accel",
  "rerail-compiler",
  "rerail-device-metal",
+ "rerail-ecma-lean",
  "rerail-engine",
  "rerail-facts",
  "rerail-lang",
@@ -3461,6 +3470,7 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-compiler",
+ "rerail-ecma-lean",
  "rerail-lang",
  "rerail-prof",
  "rerail-python-lean",

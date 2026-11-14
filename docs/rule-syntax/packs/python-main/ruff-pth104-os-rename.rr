@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // PTH104(n): a finding at node n, from clause `os-rename`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH104(at: node, f: node) "Use `Path(src).rename(dst)` instead of `os.rename(src, dst)`; leave it where the paths are bytes or `src_dir_fd`/`dst_dir_fd` come through `**kwargs`."
+.violation PTH104(at: loc, f: node) "Use `Path(src).rename(dst)` instead of `os.rename(src, dst)`; leave it where the paths are bytes or `src_dir_fd`/`dst_dir_fd` come through `**kwargs`."
     suppress noqa "PTH104"
 PTH104(F, n) :- kind(n, "call"), field(n, "function", c1), pth104_callee(c1, F),
     count : { field(n, "arguments", c2), kind(c2, "argument_list"), child(c2, c3, _), kind(c3, "keyword_argument"), field(c3, "name", c4), glob("src_dir_fd", c4), field(c3, "value", c5), !pth104_none_literal(c5) } = 0,

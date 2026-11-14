@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // PT024(n): a finding at node n, from clause `asyncio-mark-on-fixture`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT024(at: node, span: node) "Remove this `pytest.mark.asyncio` decorator; marks have no effect on fixtures. If an async fixture needs pytest-asyncio strict mode, use `@pytest_asyncio.fixture` instead."
+.violation PT024(at: loc, span: node) "Remove this `pytest.mark.asyncio` decorator; marks have no effect on fixtures. If an async fixture needs pytest-asyncio strict mode, use `@pytest_asyncio.fixture` instead."
     suppress noqa "PT024"
 PT024(SPAN, n) :- kind(n, "decorator"), child(n, c1, _), pt024_asyncio_expr(c1),
     child(p2, n, _), kind(p2, "decorated_definition"), field(p2, "definition", c3),

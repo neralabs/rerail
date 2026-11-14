@@ -644,7 +644,9 @@ fn factorizable(prog: &Program, rules_of: &BTreeMap<&str, Vec<&Rule>>, estimates
                         let mut vars: BTreeSet<String> = BTreeSet::new();
                         part.iter().for_each(|l| vars.extend(l.vars()));
                         let head = Atom { rel: format!("{rel}_part").into(), args: vars.into_iter().map(|v| Term::Var(v.into())).collect(), neg: false, gated: false };
-                        let rows = model.plan_rule(prog, &head, part, None).map_or(f64::INFINITY, |p| p.2);
+                        let rows = super::body::alone(&Rule { head, body: part.to_vec().into() })
+                            .and_then(|made| model.plan_rule(prog, &super::body::nth(&made, 0), None))
+                            .map_or(f64::INFINITY, |p| p.2);
                         parts_rows += rows;
                         texts.push(format!("{} [{rows:.0}]", part.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")));
                     }
@@ -1130,21 +1132,21 @@ fn pattern(l: &Literal, bound: &BTreeSet<String>) -> Option<String> {
 }
 
 /// A native stratum's steps for one plan of `rule` (`order`), each with its rows (in, out): kept per pattern.
-pub(super) fn observe_steps(rule: u64, order: &[super::Step], counts: &[(i64, i64)]) {
+pub(super) fn observe_steps(rule: u64, order: super::Order<'_>, counts: &[(i64, i64)]) {
     observing_into(|o, _| {
         let mut bound = BTreeSet::new();
-        for (i, (s, &(n_in, n_out))) in order.iter().zip(counts).enumerate() {
+        for (i, ((_, l), &(n_in, n_out))) in order.iter().zip(counts).enumerate() {
             if i > 0
                 && n_in > 0
-                && let Some(p) = pattern(&s.lit, &bound)
+                && let Some(p) = pattern(l, &bound)
             {
                 for e in [o.steps.entry((rule, p.clone())).or_default(), o.pooled.entry(p).or_default()] {
                     e[0] += n_in as f64;
                     e[1] += n_out as f64;
                 }
             }
-            if !matches!(&s.lit, Literal::Atom(l) if l.neg) {
-                bound.extend(s.lit.vars());
+            if !matches!(l, Literal::Atom(l) if l.neg) {
+                bound.extend(l.vars());
             }
         }
     });
@@ -1174,7 +1176,8 @@ fn calibrated_rows(prog: &Program, model: &Model, rule: &Rule) -> Option<(f64, f
 
 /// `calibrated_rows`, with body literal `first` read first.
 fn calibrated_rows_at(prog: &Program, model: &Model, rule: &Rule, first: Option<usize>) -> Option<(f64, f64)> {
-    let ((order, _, out), step_rows) = model.plan_rule_step_rows(prog, &rule.head, &rule.body, first).ok()?;
+    let made = super::body::alone(rule).ok()?;
+    let ((order, _, out), step_rows) = model.plan_rule_step_rows(prog, &super::body::nth(&made, 0), first).ok()?;
     if step_rows.len() != order.len() {
         return None;
     }
@@ -1188,15 +1191,15 @@ fn calibrated_rows_at(prog: &Program, model: &Model, rule: &Rule, first: Option<
         };
         let mut bound = BTreeSet::new();
         let (mut rows, mut work, mut before) = (1.0f64, 0.0f64, 1.0f64);
-        for (i, (s, &st_rows)) in order.iter().zip(&step_rows).enumerate() {
+        for (i, (l, &st_rows)) in super::Order::new(&rule.body, &order).lits().zip(&step_rows).enumerate() {
             let estimated = if before > 0.0 { st_rows / before } else { 1.0 };
             before = st_rows;
-            let factor = if i == 0 { st_rows } else { pattern(&s.lit, &bound).and_then(|p| seen(&p)).unwrap_or(estimated) };
+            let factor = if i == 0 { st_rows } else { pattern(l, &bound).and_then(|p| seen(&p)).unwrap_or(estimated) };
             let out = rows * factor;
             work += rows + out;
             rows = out;
-            if !matches!(&s.lit, Literal::Atom(l) if l.neg) {
-                bound.extend(s.lit.vars());
+            if !matches!(l, Literal::Atom(l) if l.neg) {
+                bound.extend(l.vars());
             }
         }
         Some((work, out))
@@ -1683,15 +1686,15 @@ pub mod tests {
         // The stored side ran: the reader and the build, with the rows each step made.
         let nodes = model.stats.nodes;
         let ran = |rule: &Rule, factors: &dyn Fn(&Literal) -> f64| -> Vec<(u64, u64)> {
-            let (order, _, _) = model.plan_rule(&prog, &rule.head, &rule.body, None).unwrap();
+            let (order, _, _) = model.plan_rule(&prog, &super::super::body::nth(&super::super::body::alone(rule).unwrap(), 0), None).unwrap();
             let mut rows = 2_000.0;
             let mut counts = vec![(1u64, 2_000u64)];
             for s in &order[1..] {
-                let out = rows * factors(&s.lit);
+                let out = rows * factors(&rule.body[s.at]);
                 counts.push((rows as u64, out as u64));
                 rows = out;
             }
-            observe_steps(super::super::obs_rule(&rule.head, &rule.body), &order, &counts.iter().map(|&(a, b)| (a as i64, b as i64)).collect::<Vec<_>>());
+            observe_steps(super::super::obs_rule(&rule.head, &rule.body), super::super::Order::new(&rule.body, &order), &counts.iter().map(|&(a, b)| (a as i64, b as i64)).collect::<Vec<_>>());
             counts
         };
         // What the copy's steps did in other rules: `look` by name and scope 4 rows a binding, `x != 7` all of them.
@@ -1700,15 +1703,15 @@ pub mod tests {
             Literal::Atom(a) if a.rel == "binding" => 3.0,
             _ => 1.0,
         };
-        let (order, _, _) = model.plan_rule(&prog, &copy.head, &copy.body, None).unwrap();
+        let (order, _, _) = model.plan_rule(&prog, &super::super::body::nth(&super::super::body::alone(&copy).unwrap(), 0), None).unwrap();
         let mut rows = 2_000.0;
         let mut counts = vec![(1i64, 2_000i64)];
         for s in &order[1..] {
-            let out = rows * elsewhere(&s.lit);
+            let out = rows * elsewhere(&copy.body[s.at]);
             counts.push((rows as i64, out as i64));
             rows = out;
         }
-        observe_steps(0, &order, &counts);
+        observe_steps(0, super::super::Order::new(&copy.body, &order), &counts);
         let own = ran(reader, &|l| if matches!(l, Literal::Atom(a) if a.rel == "binding") { 3.0 } else { 0.75 });
         let build = ran(def, &|_| 1.0);
         observe(&[(super::super::obs_rule(&reader.head, &reader.body), &own), (super::super::obs_rule(&def.head, &def.body), &build)], &[Seen { rel: "ctx", rows: 2_000.0, cols: vec![(Some(2_000.0), Some(1.0)), (Some(300.0), Some(7.0)), (Some(250.0), Some(8.0))] }], nodes);

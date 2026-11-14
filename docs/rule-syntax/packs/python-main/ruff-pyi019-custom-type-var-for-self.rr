@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -251,7 +251,7 @@ pyi019_method(n, N) :- kind(n, "function_definition"), within_stop(n, p1, pyi019
 // PYI019(n): findings from clauses `custom-type-var-for-self`, `custom-type-var-for-self-parenthesized-return`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI019(at: node, r: node, n: loc) "Replace the custom type variable `{n}` with `Self` (from `typing`, or `typing_extensions` before 3.11): drop the first parameter's annotation and use `Self` for `{n}` here."
+.violation PYI019(at: loc, r: node, n: loc) "Replace the custom type variable `{n}` with `Self` (from `typing`, or `typing_extensions` before 3.11): drop the first parameter's annotation and use `Self` for `{n}` here."
     suppress noqa "PYI019"
 PYI019(R, n, N) :- kind(n, "function_definition"), pyi019_method(n, N),
     match("(?:async[ \\t]+)?def[ \\t]+\\w+(?P<R>(?:\"[^\"\\n]*\"|\\x27[^\\x27\\n]*\\x27|[^-]|-[^>])*?\\)|(?:\"[^\"\\n]*\"|\\x27[^\\x27\\n]*\\x27|[^-]|-[^>])*?\\)(?:[ \\t]|\\\\\\r?\\n)*->(?:[^:\\[\\]]|\\[(?:[^\\[\\]]|\\[[^\\]]*\\])*\\])*?|(?:\"[^\"\\n]*\"|\\x27[^\\x27\\n]*\\x27|[^-]|-[^>])*?\\)(?:[ \\t]|\\\\\\r?\\n)*->[^:]*?)[ \\t]*:(?s:.*)", n),

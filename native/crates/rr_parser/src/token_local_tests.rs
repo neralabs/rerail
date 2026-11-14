@@ -11,7 +11,8 @@ use rerail_compiler::token_local;
 fn rr_facts_hold_on_the_corpus() {
     let c = super::compiled().expect("compiles");
     let starts: Vec<&Named> = c.values.iter().filter(|v| v.name.starts_with("token ") && v.name.ends_with(" start")).collect();
-    assert!(starts.len() >= 8, "{starts:?}");
+    // Seven kinds: a float is its number's token (decision 0139), no `fraction` of its own.
+    assert!(starts.len() >= 7, "{starts:?}");
     let anchors: Vec<u16> = starts.iter().map(|v| v.op).collect();
     let facts = token_local::facts(&c.block, &anchors);
     let corpus = super::tests::corpus();

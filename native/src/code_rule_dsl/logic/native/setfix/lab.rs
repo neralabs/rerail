@@ -157,6 +157,7 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
                 rels.push((name.clone(), format!("r{}", rels.len()), types.as_bytes().to_vec(), empty));
             }
             Line::Request(_) => return Err("a `request` line".to_owned()),
+            Line::Unplanned { .. } => return Err("a probe not planned yet".to_owned()),
             Line::Produced(_) => return Err("a `produced` line".to_owned()),
             Line::Probe { .. } => return Err("a `probe` line".to_owned()),
             Line::Gate { .. } => return Err("a `gate` line".to_owned()),

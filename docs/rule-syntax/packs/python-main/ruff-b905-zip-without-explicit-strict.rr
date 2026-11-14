@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -12,7 +12,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation B905(at: node, call: node) "Pass `strict=` explicitly: `strict=True` when lengths must match, `strict=False` when truncation is intended."
+.violation B905(at: loc, call: node) "Pass `strict=` explicitly: `strict=True` when lengths must match, `strict=False` when truncation is intended."
     suppress noqa "B905"
 B905(CALL, n) :- kind(n, "call"), b905_arg_no_strict_1(n), b905_alt_4(n, CALL), child(n, c4, _),
     kind(c4, "argument_list"),

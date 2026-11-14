@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -78,7 +78,7 @@ pd002_in_string(n, KW) :- (kind(n, "string") ; kind(n, "concatenated_string")),
 // PD002(n): a finding at node n, from clause `pandas-use-of-inplace-argument`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PD002(at: node, kw: node) "Remove `inplace=True` and assign the returned object back, e.g. `df = df.sort_values(\"a\")`; leave it if this isn't a pandas object."
+.violation PD002(at: loc, kw: node) "Remove `inplace=True` and assign the returned object back, e.g. `df = df.sort_values(\"a\")`; leave it if this isn't a pandas object."
     suppress noqa "PD002"
 PD002(KW, n) :- pd002_hit(n), node(_, n, _, _, _), KW = n.
 PD002(KW, n) :- pd002_in_string(n, KW).
@@ -87,7 +87,7 @@ PD002(KW, n) :- pd002_in_string(n, KW).
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation PD002_stub_annotation(at: node, kw: node) code "PD002" "Remove `inplace=True` and assign the returned object back, e.g. `df = df.sort_values(\"a\")`; leave it if this isn't a pandas object."
+.violation PD002_stub_annotation(at: loc, kw: node) code "PD002" "Remove `inplace=True` and assign the returned object back, e.g. `df = df.sort_values(\"a\")`; leave it if this isn't a pandas object."
     suppress noqa "PD002"
 PD002_stub_annotation_raw(KW, n) :- pd002_inplace_keyword(n), node(_, n, _, _, _), KW = n, pd002_up_1(n, p1),
     pd002_up_2(n, p2), !pd002_pandas_gate(n).
@@ -117,5 +117,5 @@ pd002_alt_2(n, KW) :- pd002_hit(n), KW = n.
 pd002_alt_2(n, KW) :- pd002_in_string(n, KW).
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl PD002_stub_annotation_raw(at: node, kw: node)
+.decl PD002_stub_annotation_raw(at: loc, kw: node)
 PD002_stub_annotation(v0, v1) :- PD002_stub_annotation_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

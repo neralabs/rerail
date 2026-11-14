@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // AIR312(n): a finding at node n, from clause `airflow3-suggested-to-move-to-provider`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR312(at: node, attr: node) "`{attr}` moved to apache-airflow-providers-standard in Airflow 3.0; import it from its `airflow.providers.standard` module, keeping the old import only as an `except ImportError` fallback."
+.violation AIR312(at: loc, attr: node) "`{attr}` moved to apache-airflow-providers-standard in Airflow 3.0; import it from its `airflow.providers.standard` module, keeping the old import only as an `except ImportError` fallback."
     suppress noqa "AIR312"
 AIR312(ATTR, n) :- air312_alt_20(n, ATTR), inside(n, p4, "module"), within(c5, p4),
     air312_airflow_name(c5), air312_seen_airflow(n).

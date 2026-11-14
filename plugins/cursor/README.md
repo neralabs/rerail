@@ -9,7 +9,7 @@ This plugin installs Rerail. It holds one skill, `install`, and no hooks, MCP se
 In Cursor, in the repository you want Rerail in, ask the agent to install Rerail. You need Node.js 24 or later and Git. The skill runs Rerail's own installer, pinned to one version:
 
 ```sh
-npx --yes @neralabs/rerail@0.1.3 setup --relay
+npx --yes @neralabs/rerail@0.1.4 setup --relay
 ```
 
 Set-up asks you each of its questions in the session and changes nothing in a repository before you say yes.

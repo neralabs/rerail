@@ -4,12 +4,12 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // PGH003(n): findings from clauses `blanket-type-ignore`, `second-blanket-type-ignore`, `third-blanket-type-ignore`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PGH003(at: node, d: node) "Name the error in brackets after `ignore`, as in `# type: ignore[attr-defined]` or `# pyright: ignore[reportAttributeAccessIssue]`, so other errors on this line still surface."
+.violation PGH003(at: loc, d: node) "Name the error in brackets after `ignore`, as in `# type: ignore[attr-defined]` or `# pyright: ignore[reportAttributeAccessIssue]`, so other errors on this line still surface."
     suppress noqa "PGH003"
 PGH003(D, n) :- kind(n, "comment"),
     match(".*(?<D>#\\s*(?:type|pyright):\\s*ignore\\s*(?:#.*)?)", n).

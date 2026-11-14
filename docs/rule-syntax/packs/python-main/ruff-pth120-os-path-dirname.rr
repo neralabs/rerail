@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // PTH120(n): a finding at node n, from clause `os-path-dirname`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH120(at: node, f: node) "Use `Path(...).parent` instead of `os.path.dirname(...)`. It returns a `Path`, not a `str`, and normalizes the path; keep `dirname` where the exact string matters or the path is bytes."
+.violation PTH120(at: loc, f: node) "Use `Path(...).parent` instead of `os.path.dirname(...)`. It returns a `Path`, not a `str`, and normalizes the path; keep `dirname` where the exact string matters or the path is bytes."
     suppress noqa "PTH120"
 PTH120(F, n) :- pth120_target(n, F).
 PTH120(F, n) :- pth120_in_string(n, F).

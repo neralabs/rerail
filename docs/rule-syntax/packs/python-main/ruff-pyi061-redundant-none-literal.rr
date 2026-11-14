@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -162,7 +162,7 @@ pyi061_none_with_other(n, NONE) :- pyi061_leaf_slot(n), pyi061_none_expr(n, NONE
 // PYI061(n, detail): findings from clauses `none-only-literal`, `none-with-other-members`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI061(at: node, none: node, detail: symbol) "{detail}. Leave it if runtime code reads this annotation's arguments."
+.violation PYI061(at: loc, none: node, detail: symbol) "{detail}. Leave it if runtime code reads this annotation's arguments."
     suppress noqa "PYI061"
 PYI061(NONE, n, "This Literal holds only `None`; write plain `None` instead") :- pyi061_alt_14(n),
     pyi061_none_only(n, NONE).
@@ -172,7 +172,7 @@ PYI061(NONE, n, "Move `None` out of this Literal and write `Literal[...] | None`
 // PYI061_none_only_literal_in_string(n, detail): findings from clauses `none-only-literal-in-string`, `none-with-other-members-in-string`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI061_none_only_literal_in_string(at: node, n: node, detail: symbol) code "PYI061" "{detail}. Leave it if runtime code reads this annotation's arguments."
+.violation PYI061_none_only_literal_in_string(at: loc, n: node, detail: symbol) code "PYI061" "{detail}. Leave it if runtime code reads this annotation's arguments."
     suppress noqa "PYI061"
 PYI061_none_only_literal_in_string(N, n, "This Literal holds only `None`; write plain `None` instead") :- pyi061_string_none_only(n, N).
 PYI061_none_only_literal_in_string(N, n, "Move `None` out of this Literal and write `Literal[...] | None` (`Optional[Literal[...]]` before Python 3.10)") :- pyi061_string_none_with_other(n, N).

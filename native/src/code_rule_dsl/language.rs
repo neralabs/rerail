@@ -365,6 +365,20 @@ pub enum PatternSource<'a> {
     Contextual { context: &'a str, selector: &'a str },
 }
 
+/// The key a program's pattern goes by (`ast_match`'s first column, `Program::ast_patterns`): a plain pattern's text,
+/// or for `n ~ `context` at "kind"` the selector, a unit separator and the context.
+pub fn pattern_key(pattern: &str, selector: Option<&str>) -> String {
+    selector.map_or_else(|| pattern.to_owned(), |s| format!("{s}\u{1f}{pattern}"))
+}
+
+/// The pattern a key names ([`pattern_key`]).
+pub fn pattern_source(key: &str) -> PatternSource<'_> {
+    match key.split_once('\u{1f}') {
+        Some((selector, context)) => PatternSource::Contextual { context, selector },
+        None => PatternSource::Plain(key),
+    }
+}
+
 /// A rule's pattern compiled for `language`, the grammar of the document its clause reads (an
 /// embedded clause's is its program's: `ast.embedded`).
 pub fn rule_pattern(
@@ -466,13 +480,20 @@ pub fn fragment(name: &str) -> Option<(GrammarDialect, &'static str)> {
 /// Whether `name` is a grammar a rule may name in `embed`, `sub_tape` or `parsed`: a supported dialect's label, or
 /// a fragment (decision 0082). A dialect this build leaves out is still a name.
 pub fn is_grammar(name: &str) -> bool {
-    fragment(name).is_some() || DIALECTS.iter().any(|dialect| dialect.label == name)
+    fragment(name).is_some() || dialect_by_label(name).is_some()
 }
 
+/// A dialect by its label. A grammar named as main's rules name theirs, in camel case (`percentFormat`), is the
+/// dialect whose label is its dashed form (`percent-format`, decision 0176): a label is lowercase and dashes.
 pub fn dialect_by_label(label: &str) -> Option<GrammarDialect> {
+    let dashed: Cow<'_, str> = if label.chars().any(|c| c.is_ascii_uppercase()) {
+        Cow::Owned(label.chars().flat_map(|c| if c.is_ascii_uppercase() { vec!['-', c.to_ascii_lowercase()] } else { vec![c] }).collect())
+    } else {
+        Cow::Borrowed(label)
+    };
     DIALECTS
         .iter()
-        .find(|dialect| dialect.label == label)
+        .find(|dialect| dialect.label == dashed)
         .map(|dialect| dialect.lang)
 }
 

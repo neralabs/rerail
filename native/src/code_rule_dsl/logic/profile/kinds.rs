@@ -143,7 +143,7 @@ pub fn unexplained(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
 
 /// A native join plan's head relation: `seed r: …` and `join r(…) (delta at i): …` derive `r`. Lowering's copies
 /// count as the relation they copy.
-fn head(plan: &str) -> String {
+pub(super) fn head(plan: &str) -> String {
     let rest = plan.strip_prefix("seed ").or_else(|| plan.strip_prefix("join ")).unwrap_or(plan);
     let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
     let mut name = name.as_str();

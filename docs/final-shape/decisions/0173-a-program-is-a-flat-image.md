@@ -1,6 +1,6 @@
 # 0173: A program is a flat image, mapped and edited in place
 
-Status: draft (2026-11-13), for review. Would replace `front::Program`'s tree as the form a program is stored,
+Status: draft (2026-11-13), for review; stage 1 built (see "Built"). Would replace `front::Program`'s tree as the form a program is stored,
 read, planned and changed in. Builds on decisions 0074 (rules as facts), 0140 and 0161 (the tape image), 0032 (slabs
 read in place by the device), 0111, 0160 and 0170 (the store's atoms), 0155 and 0162 (a stored program and its
 reader), and 0166 and 0172 (names and shared lists).
@@ -23,8 +23,10 @@ This record makes a program a **program image**, in the shape the tape already h
 - **Keyed on ids.** Texts are atoms, relations are numbers, and variables are slots. Nothing is keyed by a string
   or an address.
 - **Linear.** The image is a fixed set of regions, and so are its string table and its indexes. Every reference is
-  an offset into a region, so the whole image can be mapped from a file, or bound to the device, as it is.
-- **Edited in place.** Rules and rows are appended, and are removed by a tombstone. An edit costs what it adds or
+  an index into a region, so the image's bytes are read in place wherever they are held, and bound to the device as
+  they are. They are kept in the store's database (§6).
+- **Edited by delta.** A stored image is never changed: an edit is a small image of what it adds and removes. An edit
+  costs what it adds or
   removes, never the size of the image it changes.
 
 ```
@@ -129,7 +131,7 @@ These are exactly `front::Literal`'s and `front::Term`'s cases. No case is lost,
 
 ### 3. An image is linear: a fixed set of regions
 
-An image is a file (or an anonymous mapping, for a run's own images) holding:
+An image is a run of bytes, kept in the store's database (§6) and held in memory, 16-byte aligned, when read. It is:
 
 - a **header** of fixed size;
 - a **fixed number of regions**, set by the image's kind. A program image has about twenty: `kind`, `size`, `val`,
@@ -145,27 +147,25 @@ item index, never an address, so the image means the same wherever it is mapped.
   length, at least one page).
 
 An item index is found in its extent with one compare and one count of leading zeros. Nothing is chased:
-the extent table is in the header, at most 32 offsets a region. An extent, once made, never moves, so a reader's
-mapping of it stays valid while the region grows.
+the extent table is at most 32 offsets a region. An extent, once made, never moves, so what a reader holds of it
+stays valid while the region grows.
 
 - A built or compacted image has one extent a region: each region is one contiguous array, as a tape's columns are.
 - An edited image gains extents as it grows: at most 32, and, by doubling, about log₂(growth) of them.
 
-Extents start at page offsets (16 KiB on Apple silicon). Each can be bound to Metal as a no-copy buffer over the
-mapping, the route decision 0032 takes for slabs. A kernel takes a region as its extent table and translates an
-index the same way. A one-extent region, the common case, is a plain array.
-
-A new extent is allocated at the file's end, at its full size. The file is sparse, so pages are used only as they
-are written.
-
-The header, per region:
+Extents live in memory only: they are how a region grows while an image is built, or while a run's pool grows. A
+stored image is always laid out as one extent a region, so its header is a fixed table:
 
 ```
-// per region:  item width, committed length (u64), extent count, extent offsets[32] (u64, page offsets)
-// and once:    magic, format, kind, generation, region count (fixed by kind), checksum
+// once:        magic (8 bytes), format (u32), region count (u32, fixed by the format)
+// per region:  item width (u32), item count (u64), byte offset (u64, a multiple of 16)
 ```
 
-That is under 8 KiB for 30 regions: one page.
+That is 856 bytes for the 35 regions of format 1 (`program_image::R`). Reading an image is checking that table and
+each reference against the region it names (`Image::open`), then reading regions as typed slices in place.
+
+On the device, an image's bytes are bound as they are held: one buffer, a region an offset into it, as decision
+0032's slabs are bound.
 
 ### 4. String tables and indexes are regions too
 
@@ -174,7 +174,7 @@ Every table that maps a key to rows, the string table included, is built from th
 **Dense arrays**, where the key is already a number (an id, a relation, a row):
 
 - the atoms' end offsets;
-- `rules`: each rule's first node, its `vars` range and its `dead` word (§6);
+- `rules`: each rule's first node, its `vars` range and its hash;
 - `relations`: its atom and its columns;
 - the planner's statistics by relation.
 
@@ -217,8 +217,8 @@ The image's own table, the store's atoms (stage 4) and a run's rule pool (§8) a
 The other parts of a program are small tables, each a set of regions:
 
 - **declarations:** per relation, a range of (name atom, type atom) columns;
-- **facts:** per relation, its rows column by column (`i64`, or `u32` atoms for symbol columns), with a `dead` word
-  a row (§6). These are already a relation's columns, as the native engine and Metal take them (decision 0095 §3);
+- **facts:** per relation, its rows column by column (`i64`, or `u32` atoms for symbol columns). These are
+  already a relation's columns, as the native engine and Metal take them (decision 0095 §3);
 - **inputs, outputs, nullary relations:** relation lists;
 - **natives, lattices, gates, kind sets, settings, scopes, shapes:** one small table each, as `program_facts`'
   schema already names them (`native_reach(rel, seed, edge)`, `lattice(rel, keys, ty)`, and so on).
@@ -228,51 +228,35 @@ the hot part (rules) is the node table, not `rule`, `body`, `lit_atom`, `arg` an
 
 ### 6. An edit costs its own size
 
-This section is for an image with **one line of history**: each version replaces the one before it, and no other
-version is made from it. Most programs in a run are not like that. §7 covers the ones with several versions alive
-at once.
+An image's bytes live in the store's database, never beside it. A program's image is a source of the content store
+(`source_objects`, zstd frames, as every source is), under a key made from its text's digest
+(`program_text::image_key`). So it is written and committed as any source is, and collected as any source is. The
+rows that name the program name both its text and its image.
 
-An image has one writer at a time (a lease, as the store's atoms have) and any number of readers, each reading the
-generation it opened. Every edit is one of three kinds.
+The database does not map a row's bytes: a blob spans SQLite's overflow pages. So a stored image is never edited
+in place. It is read whole into an aligned buffer when a run first needs it (`Image::open`), then read there in
+place. The simulation measured the cost of that copy (question 6 below): 0.5 M instructions for dl1's largest
+program, 4.8 M for its whole pool.
 
-**Append.** An edit writes rules, rows, atoms and index entries past the committed lengths, into the last extent of
-each region it grows, or a new one. Readers do not see them until the commit.
+What that settles:
 
-**Tombstone.** A removed rule or fact row has its `dead` word set to the generation that removed it (0 = live). A
-reader at generation `g` sees a row as removed when its `dead` is nonzero and at most `g`. Setting it is one aligned
-`u32` store, so a reader sees the old value or the new one, and either is right for its generation.
-
-Index entries are not removed. A reader skips those whose row is dead. Each removal is also appended to a
-`removed` log region, as (row, generation) pairs.
-
-**Change.** A change is a removal and an append: a changed rule is the old one tombstoned and the new one appended.
-A rule is the unit, so a change costs the rule, not the program. A rename is one row of `relations` (§1).
-
-**Commit.**
-
-- The writer flushes what it wrote, then writes the new header, generation `g + 1`, as one row of SQLite, in the
-  same transaction as the rows that depend on it. SQLite stays the source of truth (memory may run ahead, as
-  decided for the store).
-- The file holds the bytes; the header in SQLite says how many of them are committed.
-- After a crash, bytes past the committed lengths are ignored, and overwritten by the next edit. Tombstones written
-  for a generation that never committed are found in the `removed` log past its committed length, and cleared. That
-  costs the lost edit, not the image.
+- **A stored image is immutable.** It is written once, as one extent a region, and never changed.
+- **An edit is a new image: the delta (§7).** A delta holds what the edit adds, the ids of the parent's rules it
+  removes, and the parts it replaces. Writing it costs the edit: an overlay's delta for one added rule is the same
+  size under a parent ten times larger (`program_image::tests::a_delta_is_the_size_of_its_edit`).
+- **The commit is SQLite's.** A delta is one source, written in one transaction, with the rows that name it. A crash
+  loses the transaction whole, so there is no recovery of its own: no committed lengths to trim, and no removal log.
+- **There are no tombstones in place.** A removal is a delta's removed set, sorted `u32` ids (question 3 below).
+- **Folding is compaction.** When a delta reaches half its parent, the version is folded into a new base image,
+  which is written as a new source (§7, question 5 below). The old images are collected when nothing names them.
 
 So the cost of an edit:
 
 | step | cost |
 |---|---|
-| append k nodes, rows or entries | O(k), plus at most one new extent a region |
-| insert k strings or rules into a hash table | O(k), at most one bucket split each |
-| remove k rules or rows | O(k) |
-| commit | the header (one page), and one flush of what was written |
-
-**Compaction** is the one step that costs the image's size. It writes a new image of the live rows, each region one
-extent, each index pure CSR, and readers move to it at their next generation. It is triggered geometrically: when
-the dead rows, or the tails, reach half the live size. So its cost, spread over the edits that caused it, is O(1) an
-item. It runs off the edit's path: no edit waits for one.
-
-Atoms are never removed (0111: an atom keeps its id). Compaction keeps them, so ids are stable across it.
+| a delta of k added rules, r removed, p parts | O(k + r + p): its own image, one source |
+| reading an overlay | its parent's reading, plus the delta's |
+| folding | O(size), once the deltas reach half the parent: O(1) an edited item, spread over the edits |
 
 ### 7. Two versions at once: views, overlays and derivations
 
@@ -305,11 +289,11 @@ variants still read them. It cannot copy the base, because that costs the base. 
 
 **A view** is a subset of a base: ranges of its rules, and the relations they need. A view has no rules of its own.
 
-- The base is laid out by (part, stratum), so the views the engine makes are a few ranges each:
-  - the file-local and cross parts (E1);
-  - one stratum's form (E5);
-  - the cut that keeps only the dirty strata (E3).
-- A view costs its range list, where `clone` then `retain` costs the program today.
+- The views the engine makes are the file-local and cross parts (E1), one stratum's form (E5), and the cut that
+  keeps only the dirty strata (E3), wherever they add nothing.
+- A view costs its range list, where `clone` then `retain` costs the program today. A base needs no particular
+  layout for that: the simulation found the same cost in source order, by head relation, and in an oracle's order
+  (question 4).
 
 **An overlay** is a base (or a view) and a small delta. The delta has its own regions, in the same format:
 
@@ -347,8 +331,8 @@ overlay: pass(base ⊕ Δ) = pass(base) ⊕ pass(Δ).
 So the chain from the prepared program through split, run, normalized and lowered (E1, E2, E6) is a chain of
 overlays, each costing the change, and none a copy.
 
-**Linear history** (E7, E8, and a stored program edited by a file change) takes §6's edit in place when no variant
-is over the image. Otherwise it is an overlay, folded later.
+**Linear history** (E7, E8, and a stored program edited by a file change) is an overlay too, folded later: with the
+bytes in the database (§6), no image is changed in place.
 
 **Digests compose.** Five digests today hash a whole program's `Debug` text, so each costs the program and turns
 any edit into a whole miss:
@@ -382,7 +366,7 @@ programs can live in one pool image:
 - each program a key of a grouped index: program → its rule ids.
 
 This is decision 0172's `Lists` table, found by a hash of a byte range instead of by addresses. A pool can be the
-run's (an anonymous mapping, dropped when the run ends) or a store's (a file, kept). There is no process table.
+run's (in memory, dropped when the run ends) or a store's (a source in its database, kept). There is no process table.
 
 ### 9. Passes are edits, or rules, maintained by the edit
 
@@ -421,21 +405,81 @@ the regions (the tape vtabs' pattern), with no copy. Then the engine's own rules
 
 That is the "phases, not new evaluators" shape applied to the compiler itself.
 
+### 11. One way in, one way out
+
+An image is read and written only through the module's abstractions, so no caller hand-rolls access to regions.
+`R`, the region list, is public only so that tests can damage a chosen region. The typed slices are private to the
+module.
+
+**Ids hold through a whole stack.** A delta's atoms, relations and rules are numbered after its parent's
+(`atom_base`, `rel_base`, `rule_base`). A text is held once in a stack, by the first image that needs it. So an id
+means the same thing in every version of a stack, and a planner keyed on `RelId` reads a base, a view and an overlay
+alike.
+
+- A parent's atom that a delta makes a relation (a constant used as a relation's name) keeps its atom id. The delta's
+  `Promoted` region records its relation number.
+- A delta's indexes are keyed by the relations it touches (`HeadKeys`, `ReadKeys`). So a delta's index is the size
+  of its edit.
+- A fold lays its stack's string and relation tables end to end. So it keeps every atom and relation id, and
+  renumbers only the rules.
+
+**Reading** goes through `Version` and the handles:
+
+| | |
+|---|---|
+| names | `text(AtomId)`, `find(&str)`, `rel(&str)`, `rel_of(AtomId)`, `rel_name(RelId)` |
+| rules | `rules()`, `rule(RuleId)`, `heads(RelId)`, `readers(RelId)` (each with the atom that reads), `contains` |
+| a rule | `RuleRef`: `id`, `hash`, `head()`, `body()`, `var(Slot)`, `reads()` |
+| a literal | `LitRef`: `node`, `offset` (from its rule's first node, the same wherever the rule is copied), `atom()`, `view()` |
+| a literal's form | `Lit::Atom` / `Cmp` / `Agg` / `Nearest` / `Ast` |
+| a term | `TermRef::Var(Slot)` / `Wild` / `Top` / `Int` / `Str(AtomId)` / `Call(AtomId, args)` |
+| parts | `decl(AtomId)`, `decls()`, `facts(AtomId)`, `all_facts()`, `about_facts()`, `inputs()`, `outputs()` |
+| identity | `digest()`, kept as the version is made |
+| the tree | `program()` and `Tree::rule(RuleRef)`, for callers that have not moved yet |
+
+`Image::open` checks every rule's nodes against the grammar, so a handle never fails and never panics on a damaged
+image.
+
+**Writing** goes through `Builder`, the one way an image is made: a base, a delta, or a fold.
+
+```text
+let mut b = Builder::on(&parent);       // or Builder::base(), Builder::of_program(&tree)
+b.remove(rule.id());                    // or b.retain(|r| ...)
+b.add(&tree_rule)?;                     // from the tree
+b.copy(&other, other_rule);             // a rule of any version: its nodes where the ids are the same, else by text
+b.rule().head("p", &[T::Var("x")])      // term by term, names by text or by id
+        .atom(rel_id, &[T::Var("x"), T::Wild])
+        .lit(&other, rule, lit)         // a literal copied from another rule
+        .finish()?;
+b.declare("p", &[("x", "int")]);  b.set_facts(..);  b.set_inputs(..);  b.set_about(..);
+let (v, made) = b.finish()?;            // View, Overlay or Folded, by the edit's size
+```
+
+- The builder chooses the form:
+  - a view when the edit only removes rules of a base or a view, and few ranges are left;
+  - an overlay otherwise;
+  - a fold at half the parent.
+- It keeps the digest: the parent's, less what the edit removes or replaces, plus the delta's own sum.
+- A rule refused, or dropped unfinished, is not written.
+- `Version::diff(&tree)` states one program as an edit of another, for tests and the trace's replay. A pass states
+  its own edit instead.
+- Hashes are of texts, never of ids. So a rule written term by term, a rule from the tree, and a copy into an image of
+  other ids all hash the same, and digests agree across stacks.
+
 ## Stages
 
 Each stage leaves the engine whole, its tests green, and dl1's findings the same.
 
-1. **The container and the stored form.**
-   - Build the linear image: regions, extents, the three index forms and the commit, with its own tests:
+1. **The container and the stored form** (built; see "Built" below).
+   - The linear image: regions, extents, the three index forms, with its own tests:
      - growth across extents;
-     - a reader at an old generation;
-     - recovery from a lost commit;
-     - compaction;
+     - the string table's growth, one bucket at a time;
+     - a damaged image refused;
      - views, overlays and their stacking and folding (§7);
      - digests that compose (§7).
-   - `program_text::store` writes a program's image beside its `.rr` text. The text stays, for people and for the
-     converter's tests.
-   - `load` maps the image, and builds today's `front::Program` from it only where a caller still needs one.
+   - `program_text::store` keeps a program's image as a source beside its `.rr` text's, in the database. The text
+     stays, for people and for the converter's tests.
+   - `load` reads the image, and builds today's `front::Program` from it, which every caller still needs.
    - Measured: a warm run's reads.
 2. **The warm path, by id and by edit.** The planner takes an image, keyed on relation numbers, slots and node
    positions (`Model`, `JoinSpec`, `Step`; `Run.numbers` by `*const Rule` and the `Forms` arena go).
@@ -445,32 +489,474 @@ Each stage leaves the engine whole, its tests green, and dl1's findings the same
    - normalize, physical, `stated_apart` and lowering become derivations, maintained by `from`.
    The five whole-program digests become composed ones.
    - Measured: a warm run's program work, and a one-rule edit's, which should cost the rule.
+   - Its steps, below ("Stage 2, step by step").
 3. **The prepare passes.** Local passes move one at a time, each an edit, each checked against the tree pass it
    replaces on every pack program (as decision 0162's reader was checked against the statement reader). Non-local
    passes are written as rules (§9, §10).
-4. **The store's atoms.** The store's atom table becomes a string table of §4: a mapped file whose header is
-   committed through SQLite. A process maps it, and no longer rebuilds a hash table. This touches 0111, 0160 and
+4. **The store's atoms.** The store's atom table becomes a string table of §4, kept in the database as segment rows
+   are now, each segment's table read in place: a process no longer rebuilds a hash table of its own. This touches 0111, 0160 and
    0170's atoms, which other worktrees are changing, so it is planned with them.
 5. **The tree goes.** `front::Program` remains only as a debug printer's view, or not at all.
 
-## Open questions
+## Built
 
-1. **Extents or reserved space.** §3 grows a region by doubling extents, at most 32 of them, so a region is not
-   always one array. The other way is to reserve each region's whole virtual range in a sparse file at creation.
-   Then a region is always one array, but its capacity is fixed when the image is made. Extents are proposed. Is a
-   bounded extent table on the device acceptable?
-2. **Where an image's bytes live.** §6 keeps the bytes in a file beside the database and commits the header through
-   SQLite. A blob inside SQLite is not mappable (it spans overflow pages). Is a file beside the database, under the
-   store's reclamation, acceptable?
-3. **Tombstones as generations.** §6 spends a `u32` a row, so that old readers need no copy. A bitmap is 32 times
-   smaller, but readers would have to stop at each commit. Since §7, in-place tombstones are only for images with one
-   line of history; shared images are removed from by overlays. Is a word a row still worth it there?
-4. **Rule order.** §7's views need the base laid out by (part, stratum), not in source order. Does anything depend
-   on a program's rule order (plan determinism, the printer, `plan_key`)? The survey did not look for that; it
-   should be checked before stage 2.
-5. **How deep overlays stack, and when they fold.** §7 proposes a few deep, folded at half the base. The real
-   depths are a prepared program, a run's edits, a session's cut, and a retry's candidate, so four. Is folding at
-   half right, or should a run's overlay never fold, since it is dropped with the run?
+Stage 1, built 2026-11-13. Every number here is from the profiling build, on CPU, with strict SQL.
+
+### What there is
+
+- **The image.** `logic/program_image.rs` holds the regions, the header, the check made at open, the encoder and the
+  reader.
+  - `program_image/strings.rs` is the linear-hash string table (§4).
+  - `extents.rs` holds the doubling extents, in memory only (§3).
+  - `grouped.rs` is the CSR-plus-tail index (§4).
+  - `version.rs` holds bases, views and overlays: `edit`, `diff`, folding at half, and the digest (§7).
+- **Images in the database.** `program_text::store` keeps each program's image as a source in the store's database.
+  - The image is a zstd row of `source_objects`, keyed by its own bytes' sha256, beside the program's `.rr` text.
+  - Its alias is `image_key(text digest)`, so the program's identity stays the digest of its text.
+  - It is held as the text is (O95), and named among the sources a plan choice and a prepared program keep, so
+    collection keeps it.
+  - An image is kept only if it decodes back to the program, compared by `debug_digest`.
+- **Reading.** `program_text::texts` and `load` read a program's image first, by its alias, and fall back to its
+  text.
+  - Today the image is decoded into a `front::Program`, because every caller still needs the tree (stage 2 removes
+    that).
+  - `RERAIL_PROGRAM_IMAGE=off` keeps and reads texts only. `require` reads images only and refuses a program that
+    has only a text, which is how a run proves every read came from an image.
+
+### Tests
+
+These are engine tests, under `program_image::` and `program_text::`. All 18 pass, together with the choice and
+prepared-program tests whose callers changed.
+
+- A program reads back from its image. So does every seventh pack program.
+- An image refuses what it cannot keep, and refuses a damaged image.
+- The string table grows one bucket at a time.
+- Extents keep their items in place.
+- A grouped index appends to its tails.
+- Views, overlays, an overlay on a view, and a stack three deep are each the program they claim to be, by rule and by
+  head. Each one's digest is the digest of that program made whole.
+- An edit of half its parent folds.
+- A delta is the size of its edit: 1,792 bytes against parents of 1× and 6.4×.
+- A stored program is read from its image.
+
+### Validation over the trace
+
+`examples/versions.rs --validate` replays the traced dl1 runs through the real `Version::diff` and `Version::edit`.
+It checks every version against the program the trace recorded, and its digest against the whole program's.
+
+| Trace | Versions equal | Views | Overlays | Folded | Overlay deltas | Same programs whole |
+|---|---|---|---|---|---|---|
+| warm | 426 of 426 | 109 | 150 | 167 | 0.32 MB | 10.75 MB |
+| cold | 4,593 of 4,593 | 2,089 | 289 | 2,215 | 0.85 MB | 19.68 MB |
+
+The replay found two bugs, both now fixed, and the first now has a test:
+
+- A view gave its depth as 1, but its stack holds only its base image. So an overlay on a view read its rules from
+  past the end of its stack.
+- The open check tested removed fact relations without masking off their "about" bit. So a delta that removed an
+  about relation was refused as naming no string.
+
+The cold trace folds often, mainly at `plan.form` (1,996 times). There the trace's `diff` restates whole stratum
+programs as edits of the run's program. In stage 2 the planner states those forms directly, as views. The `diff`'s
+cost (17 G instructions cold) is a stand-in for a pass that states its own edit, and is not a cost the engine
+pays.
+
+### dl1, images against texts
+
+Each mode ran on a fresh store, cold and then warm, over all 44 data-layer policies in one batch. This was done
+twice: before and after the reader's scratch stacks (below). The table gives the second pair. The load average was
+100–120, so wall times are left out.
+
+| Run | Text only (`off`) | Images (`require`) |
+|---|---|---|
+| cold | 50.6 G insn, peak 214 MB | 52.4 G insn, peak 236 MB |
+| warm | 19.4 G insn, peak 213 MB | 18.9 G insn, peak 193 MB |
+| store | 9.0 MB, 367 sources | 13.0 MB, 508 sources (141 images) |
+
+- **Findings** are the same in all eight runs.
+- **Cold** costs 1.8 G more (+3.6%). That is each image's encode and its read-back check.
+- **Warm** costs 0.5 G less (−2.6%). That is the parse that each program no longer goes through. The first pair
+  gave −0.7 G.
+- **Peak memory** moves by ±20–30 MB in both directions between the pairs. That is within this load's noise.
+- **A rebuilt binary** reads an old store as half warm (37.7 G), because a plan choice is kept per build. Its
+  programs' images are found again, though.
+
+### Reads, per program
+
+`examples/versions.rs --reads` measures every distinct program in the traces, outside a run, so the store's query
+and its zstd are not counted. Those cost the same for a text and an image.
+
+| Programs (rules) | Text parsed | Image decoded to the tree | Image opened |
+|---|---|---|---|
+| warm: 276 (25,643) | 1,640 M insn, 283 MB, 183 k allocations | 648 M insn, 80 MB, 409 k allocations | 28 M insn, 17 MB, 276 allocations |
+| cold: 4,458 (63,553) | 4,707 M insn, 772 MB, 872 k allocations | 1,914 M insn, 235 MB, 1,433 k allocations | 87 M insn, 51 MB, 4,458 allocations |
+
+- **Decoding** to the tree takes 2.5× fewer instructions than parsing.
+  - It used to make a vector for each atom, call and rule body, and a copy of each rule's variable slots. It now
+    reads them through a scratch stack per reader instead: 743 M → 648 M instructions and 128 → 80 MB on the warm
+    trace.
+- **Opening** an image, which is all that stage 2's reader by id pays, takes 59× fewer instructions than parsing.
+- **Image size.** Images are 1.9× the size of their texts before compression: 17.3 MB against 9.3 MB warm. That is
+  about 680 bytes a rule, of which the nodes take 9 bytes each.
+
+### Left open by the build
+
+- **Image size.** A program's image is larger than its text. Possible ways to shrink it:
+  - narrower node columns (a `u16` size where rules allow it);
+  - tables that hold only the about facts the reader needs;
+  - dropping the text, once the converter's tests read images.
+- **Decode allocations.** Decoding to the tree still makes more allocations than parsing. They are the tree's own
+  `String` fields (aggregate variables, matchers, captures) and the fact rows. They go with the tree in stage 2,
+  and are not worth tuning before then.
+- **Peak memory.** Peak memory needs to be measured on an idle machine. The copy into the image's aligned buffer
+  at open (§3) can be released once the tree is built.
+
+### Stage 2, step 1: the access layer (§11)
+
+Built 2026-11-13: image format 2, ids stable through a stack, handles, and `Builder`.
+
+The module's files:
+
+| File | What it holds |
+|---|---|
+| `program_image.rs` | regions, ids, the open check |
+| `encoder.rs` | the only writer |
+| `handles.rs` | rules, atoms, literals, terms |
+| `version.rs` | lookups by id and by name |
+| `build.rs` | `Builder` and `RuleBuilder` |
+| `tree.rs` | the tree, read through the handles |
+| `csr.rs` | dense and keyed indexes |
+
+The tree reader and `diff` are rewritten on these. So is a fold, which now copies rule nodes as they are.
+
+- **Tests.** All 20 pass. Three are new:
+  - ids are the same through a stack and a fold (including a parent's constant that a delta makes a relation);
+  - the builder writes what the tree writes, hash for hash, including copies into a version of other ids and copied
+    literals; a refused or dropped rule is not written;
+  - the handles agree with the tree, by rule, by head and by reader, on every sampled pack program and on every
+    version in the stacking test.
+- **Trace replay.** All 426 warm and 4,593 cold versions equal their programs and digests. The cold replay's diff
+  and edit fell from 17.0 G to 8.8 G instructions, because folds now copy nodes instead of going through the tree.
+- **dl1** (images required, profiling build): findings are the same as the previous build's, cold (54.8 G insn)
+  and warm (19.8 G).
+- **Open.** An image's open now checks every node: 108 M instructions on the warm trace's 276 programs, against
+  28 M for the regions alone. That is still 15× cheaper than parsing. The check could run once when an image is
+  stored, with the store's sha256 guarding it after that.
+
+### Stage 2, step 2: the whole-program analyses
+
+Built 2026-11-13. Two modules, and image format 3.
+
+| File | What it holds |
+|---|---|
+| `about.rs` | `About`: the program's other fields, read by type from its about rows. These are the answers, the natives (each with its kind and the relations it reads), the lattices and the count of gates, each relation by `RelId`. |
+| `analyses.rs` | `strata`, `needed`, `projections` and `accepts` over a version and its `About`. `About::produced` is `answers::produced`. |
+
+**Every relation a program names has an id.** That now includes the relations its declarations, facts, inputs,
+outputs and about rows name, not only those its rules name.
+
+- `about::RELATION_COLUMNS` says which columns of which about relation name a relation. The builder gives each
+  of them an id.
+- Without that, a relation an answer produces, or a native reads, has no id when no rule names it. An analysis
+  keyed by id would then miss it.
+- Format 3 marks this: format-2 images are read again from their text.
+
+**The analyses run without building strings.** Each one:
+
+- reads rules by `heads` and `readers` and the other fields by `About`;
+- keeps relations in vectors indexed by id;
+- keeps the edges as one sorted list of (head, dependency, negative) triples;
+- computes components with an iterative Tarjan over ids.
+
+Names are made only for an error.
+
+**Strata come in an order of ids, not of names.** Either order puts dependencies first.
+
+- It matters only where a stratum's index is a key. Step 6 checks those sites: `choices` keys per-rule choices by
+  index.
+- The tree form's sort by name was itself an accident of `BTreeSet<String>`.
+
+**Tests.** All 18 image and text tests pass. One is new: the analyses over a version say what their tree forms say.
+It checks:
+
+- the strata as sets, and that the version's order puts every dependency first;
+- the edges, what the outputs need, the projections, what the answers produce, and whether `compose` accepts the
+  program;
+- on every sampled pack program;
+- on a program with answers, a lattice whose aggregate it is monotone in, a native, a gated negation and
+  projections with constants;
+- on a program that is not stratifiable (the same error);
+- on an overlay that adds a relation and a native, and on a view that drops one.
+
+**dl1** (images required, profiling build, a fresh store): the 48 findings are the same as step 1's, cold and warm.
+Nothing calls the analyses yet, so what moved is the images' writing: cold 57.6 G instructions against 54.8 G
+(+5%; the encoder makes a relation of each about cell that names one), warm 20.0 G against 19.8 G.
+
+The tree forms of `projections`, `compose::accepts` and `answers::produced` are now `pub`, so the engine's tests
+can compare against them.
+
+### Stage 2, step 3: the derivations
+
+Built 2026-11-13. Image format 4.
+
+**What a pass is written with.** A pass states what it changes. It never walks a rule's nodes, and it never writes an
+about row.
+
+| Tool | What it does |
+|---|---|
+| `Builder::derive(input)` | Starts a derivation: a new base under the input's atom and relation ids, holding all the input's parts and none of its rules. |
+| `Builder::rewrite(from, rule, &mut rw)` | Copies a rule node by node, steered by a `Rewrite`. It returns a `RuleBuilder`, so more literals can follow. `finish` records the source rule. |
+| `Rewrite` | Three hooks, each defaulting to "keep": `prefix` (terms before an atom's own arguments), `term` (a replacement for a term, given its `Site`: the head, a body atom, or a comparison) and `keep` (drop a body literal). |
+| `set_fact_cells` | States a relation's facts as cells of the builder's ids, without decoding them to values. |
+| `set_lattice_keys`, `add_nullary` (`about.rs`) | Typed edits of the about rows. The row layout is known only in `about.rs`. |
+
+**Sources (`from`, §9).**
+
+- Each rule of a derivation records the input rule it came from. The image keeps them in `R::From`, with a sorted
+  source→rule index in `R::FromIndex`.
+- `RuleRef::source` and `Version::derived(src)` read them, through views and overlays.
+- A fold keeps every source.
+- The open check refuses an index that does not match the column.
+
+**The passes** (`passes.rs`):
+
+- `normalize` is a derivation.
+  - It gives every relation of no columns, and every lattice of no keys, a leading presence column. That covers
+    their declarations, facts, lattice keys and the atoms that name them.
+  - When any lattice is not flat, it gives each `top` its domain's value, from the atom it is in or the variables
+    of its comparison.
+  - Under the same condition, it makes each ground rule a fact.
+  - It returns the sentinels, by id.
+- `stated_apart` is an overlay of the normalized version. Each relation with both rules and stated facts gets
+  `rel__stated` and one rule reading it.
+
+**`fact_rel` is no longer in the about rows.** The image holds each fact relation itself, so those rows only
+restated it. With them gone, a derivation that adds a fact relation has the same about rows, and so the same digest,
+as its result encoded whole.
+
+**Tests.** All 20 image and text tests pass; two are new. The prepared-program and choice tests pass (10).
+
+- The passes over a version are the tree's passes:
+  - on every sampled pack program, and on a program they change everywhere;
+  - as programs, and by digest (each equal to its result encoded whole);
+  - by sentinels and by stated pairs;
+  - by sources (each derived rule from one input rule; each input rule gives one rule, or a fact);
+  - with the analyses over the result agreeing with the tree's.
+  - A `top` of two domains is refused by both.
+- A rewrite keeps what it does not change: prefixes, a replaced comparison term, a dropped literal, a literal added
+  after, and each source, also through a fold.
+
+**dl1** (images required, profiling build, a fresh store): the 48 findings are the same, cold and warm. The run
+does not call the passes yet. Cold took 54.9 G instructions (57.6 G at step 2) and warm 19.8 G (20.0 G).
+
+## Stage 2, step by step
+
+### Where a warm run's program work is
+
+The 44-policy dl1 batch, warm, was sampled every millisecond on the profiling build (2026-11-13, images required).
+It took 2,426 samples over all threads, 832 of them on the main thread under `run_policies`. Inclusive:
+
+| Work | ms | Stage |
+|---|---|---|
+| parsing the policies' texts (`rr::read_file`) | 172 | none |
+| bridging their facts (`bridge::facts`) | 127 | none |
+| combining them (`combine_keyed`: `hiding::hide`, `same_relations`) | 113 | none |
+| the memo's content statistics | 57 | none |
+| the prepared program, read from the store (`prepared::lookup`: two images, decoded) | 45 | 2 (E1) |
+| `merge_and_drop_repeats` | 27 | 3 |
+| the split's constants (`constant_relations`, `split_constants`) | 25 | 2 (E1, E2) |
+| the plan choices, read and decoded (`choices::Durable`) | 23 | 2 (E6) |
+| the session's maintained cross part and its cut | 25 | 2 (E3) |
+| the five whole-program digests | 20 | 2 |
+| the planner's own work (`plan::run`, across threads) | 70 | 2 (E5, E6) |
+
+So on dl1 warm, stage 2's sites are about 150 ms of the main thread's 830. Most of the rest is the front end:
+reading, bridging and combining the policies. No stage of this decision covers that; it is reported here as the
+largest program cost of a warm run.
+
+Two findings from the code shape the steps:
+
+- **Copies of trees are already light.** Since decision 0172 a rule's lists and names are shared, so `clone` and
+  `retain` of a program cost reference counts and maps, not rules. That is why E1 and E2 are small in the sample.
+- **A version pays only where its reader reads it.** Every consumer on the warm path ends in
+  `plan::run(&Program)`. Making the split's parts views while their readers still want trees adds decodes: three
+  where today there is one decode and two cheap clones.
+
+So stage 2 is built from the planner outward, bottom up. Each helper `plan::run` uses gets a form over a
+version, checked against its tree form on every sampled pack program, as decision 0162's reader was. `plan::run`
+moves when all of its helpers have moved. Its callers then pass versions, and E1 to E3 become views and overlays
+with nothing left that wants their trees.
+
+### The steps
+
+1. **The access layer** (§11). Built.
+2. **The whole-program analyses over a version.** Built ("Stage 2, step 2"):
+   - `front::strata` (by `heads` and `readers`);
+   - `front::needed` (reachability from the outputs, by `heads`);
+   - `projections`;
+   - `answers::produced`;
+   - `compose::accepts`.
+
+   They are read-only, so this step is additive. Each is checked against its tree form.
+3. **The derivations.** Built ("Stage 2, step 3"). `sql_kernel::normalize` and `stated_apart`, as `Builder` edits of the input version, with
+   rules rewritten by `RuleBuilder`. Each output rule records the rule it came from (`from`). Checked against the
+   tree passes.
+4. **The model on handles** (decided 2026-11-13: handles end to end, not trees at the backends): `make_plan`, `plan_views` and `keeps::choose` read `RuleRef`s.
+   - `Run` is keyed by `RuleId`, and `Run.numbers` goes.
+   - The `Forms` arena's per-stratum programs become views of the run's version.
+5. **`plan::run` takes a version.** Its callers pass one:
+   - the split's parts as views with parts overlaid (E1);
+   - the run's edits as overlays (E2);
+   - the session's cut as an overlay (E3).
+
+   The trees on that path go.
+6. **Composed digests.** `memo::program_digest`, `retain::key`, `choices::key`, `prepared_key` and `cross_digest`
+   read `Version::digest`.
+   - The digest is a sum, so it does not see rule order.
+   - Each site is checked first for whether what it keys depends on order. `choices` keeps per-rule choices by
+     rule index today.
+
+- **Where the tree stops (decided 2026-11-13).** Nowhere on the run path. A planned step names its literal by id:
+  its rule's `RuleId` and the literal's offset in that rule. The SQL generator, the native set engine, emit and the
+  Metal steps read the literal through the version's handles. Decoding each rule to a tree once per run, for the
+  backends alone, was the other choice; it was not taken, because it keeps a second form of every rule alive in
+  every run.
+
+- **Measured at each step:** the warm batch's program work (this table), and a one-rule edit's (decision 0130's
+  edit profile, `notes/t34`).
+
+## The open questions, simulated
+
+Every making of one program from another in a dl1 run was traced, with both programs (`RERAIL_VERSION_TRACE=<dir>`,
+`logic/version_trace.rs`, hooked at the survey's sites E1 to E6). The trace was then replayed through each form a
+program could take, by `crates/logic/examples/versions.rs`. Each form is given the same delta for each making (which
+of `from`'s items are kept, and which of `to`'s are new), and the replay measures three things:
+
+- **make:** making `to` from `from`;
+- **read:** every node, then each head relation's rules by its index;
+- **digest:** the program's digest.
+
+The forms:
+
+| form | what it is |
+|---|---|
+| tree | today's `front::Program`: `clone`, then `retain` and `push`, as each traced site does |
+| flat | one flat image a program: copy it, tombstone, append, rebuild its index |
+| pool | a run's rule pool, each program a list of rule ids: copy the list, edit it, rebuild its index |
+| v | this record (§7): views, overlays and derivations over the pool, with layouts (source order, by head relation, an oracle that knows every later view), fold policies, and three kinds of removed set |
+
+The trace has 4,593 makings on a cold run (4,458 distinct programs) and 426 on a warm run. Items are rules and rows
+of a program's other parts (declarations, facts, inputs, outputs). Averages per making:
+
+| site | cold makings | `from` items | removed | added |
+|---|---|---|---|---|
+| `plan.form` (E5) | 1,996 | 1,102 | 1,095 | 0 |
+| `session.cut` (E3) | 2,049 | 21 | 0 | 0 |
+| `split.cross`, `split.local` (E1) | 99 each | 672 | 181, 53 | 21 |
+| `run.cross`, `run.local` (E2) | 50 each | 511, 598 | 5, 0 | 2, 0 |
+| `plan.normalize` (E6) | 124 | 517 | 1 | 1 |
+| `session.maintained` (E3) | 73 | 525 | 29 | 89 |
+| `plan.demand`, `plan.inline` (E6) | 43, 10 | 676, 1,068 | 33, 9 | 92, 7 |
+
+In 2,537 of the 4,593 cold makings, and 304 of the 426 warm ones, `from` is made from again later. So changing
+`from` in place would be wrong for most makings, which the survey said and the trace confirms. Another 2,211 cold
+makings change nothing at all.
+
+Release-equivalent build (`--profile profiling`), whole replay, in millions of instructions:
+
+| form | cold: make | read | warm: make | read | one-rule edit of the prepared program |
+|---|---|---|---|---|---|
+| tree (today) | 953.7 (279 MB allocated, 2.26 M allocations) | 142.7 | 77.5 | 67.0 | 0.24 |
+| flat, copy then edit | 201.4 (404 MB) | 53.1 | 49.4 | 20.5 | 0.41 (1.0 MB) |
+| pool, copy then edit | 95.6 (26 MB) | 38.0 | 40.1 | 20.2 | 0.65 (5.2 MB) |
+| v: fold at ½, sorted removed set | 75.5 (13 MB, 33 k allocations) | 18.3 | 26.9 | 9.9 | 0.014 |
+| v: never fold | 59.5 | 331.3 | 14.5 | 42.6 | |
+| v: fold at ¼ | 77.3 | 17.6 | 28.0 | 9.3 | |
+| v: fold at ½, at most 2 deep | 77.9 | 16.7 | 28.0 | 9.1 | |
+
+For scale, dl1's process is 50.7 G instructions cold and 23.3 G warm. Today's tree is about 2.2% of a cold run and
+0.6% of a warm one; the proposal is 0.2% of either. Of the tree's cold making, 791 M is `plan.form`: it clones a
+1,102-item program 1,996 times to keep 6 items each. A view or overlay makes the same thing in 19 M.
+
+Digests: today's `Debug`-text digest, taken once per making, costs 1,589 M cold. That overstates today's real cost,
+because the real digests are taken fewer times (`memo::program_digest` once a run, `retain::key` up to three times,
+`choices::key` once per `plan::run`, so 124 times cold). Each one is still a walk of the whole program. The composed
+digest (§7) costs 0.1 to 0.4 M for the whole replay.
+
+So:
+
+1. **Copy then edit loses, even in a flat form.** A flat image copied per making costs less than the tree
+   (201 M against 954 M), but it allocates more (404 MB, against 279 MB), because a copy of flat columns copies
+   everything. The tree, after decision 0172, shares its lists, so its copy is mostly counts. The flat form's gain
+   comes from views and overlays, not from flatness alone.
+
+2. **Folding (question 5): fold at half, at any depth.**
+   - Never folding makes the cheapest versions (59.5 M) and the dearest reads (331 M). `plan.form`'s stacks reach
+     reads of 265 M alone.
+   - Folding at a quarter, at a half, or by a cap of two deep all land within 5% of each other.
+   - At half: 75.5 M to make, 18.3 M to read.
+   - A depth cap adds folds (the session cut doubles, 2.0 M to 6.0 M warm) and buys no reads.
+
+   So: fold when the delta reaches half its parent, with no depth cap. A run's overlays are folded the same way.
+   Whether to fold is a question of reads, not of lifetime.
+
+3. **Removed sets (question 3).** For an overlay's removed set:
+   - sorted `u32`s: 75.5 M to make;
+   - a hash set: 94.0 M;
+   - a bitmap over the pool's ids: 57.4 M.
+
+   The bitmap is the cheapest at dl1's size, but its size is the pool's, not the edit's: about 4 KB a making here,
+   zeroed each time, and 64 KB at sixteen times the pool. The sorted set's cost is its edit's, so the sorted set is
+   decided.
+
+   With the bytes in the database (§6), no image is changed in place, so there are no in-place tombstones at all:
+   every removal is a delta's sorted set.
+
+4. **Rule order (question 4): nothing depends on it.**
+   - **Findings.** `RERAIL_RULE_ORDER=reverse|shuffle|head` reorders the prepared program's rules before the split. dl1
+     gave the same findings under all three, cold, on fresh stores. Instructions were 50.7, 51.7 and 51.5 G, against
+     50.7 G as written (load 70 to 97).
+   - **Code.** The positional uses of rules in the code number them as ids (`numbers`, `rule_no`, `plan_key`'s
+     inputs). None chooses by position.
+   - **Cost.** Layout makes no difference: source order, by head and the oracle are within 2% on every site. Views
+     are chosen for 124 of 426 warm makings; the rest add rows (exports, inputs), so they are overlays whatever the
+     order.
+
+   So §7's requirement that the base be laid out by (part, stratum) is dropped. A base keeps its rules in any order.
+
+5. **Extents (question 1): extents.** The pool's growth over a cold run is 266 k nodes in 259 appends:
+
+   | | append | allocated | scan | 1 M random reads |
+   |---|---|---|---|---|
+   | one array, grown by realloc | 2.35 M | 12.6 MB (it moves) | 0.37 M | 8.0 M |
+   | doubling extents | 0.69 M | 6.2 MB (7 extents, never moved) | 0.37 M | 22.0 M |
+   | reserved in advance | 2.02 M | 3.2 MB | | |
+
+   Extents append for less than either, never move, and scan the same. Random access costs 2.75 times as much:
+   about 14 instructions a read, to find the extent. So:
+   - a reader walks by extent;
+   - a built, compacted or folded image is one extent a region, so its index lookups are plain array reads;
+   - reserving in advance would need the final size, which no append knows.
+
+6. **Where the bytes live (question 2): in the database.** Opening an image and reading 64 nodes:
+
+   | image | SQLite blob (read by copying) | mapped file |
+   |---|---|---|
+   | the largest program, 0.3 MB | 0.47–0.52 M, 0.3 MB copied | 0.27–0.29 M |
+   | the run's pool, 3.2 MB | 4.8 M, 3.2 MB copied | 0.6 M |
+   | sixteen pools, 51 MB | 75.5–76.4 M, 51 MB copied | 0.9 M |
+
+   A blob costs its whole size at every open; a mapping costs the pages read. The bytes stay in the database
+   anyway (decided 2026-11-13): one store, one commit, one collection. That costs the copy at open, which for
+   programs of this size is under 0.1% of a warm run. So §6 makes a stored image immutable, and every edit a delta.
+
+### Left open
+
+- The replay reads each version once. A real run reads some versions many times (the planner reads a form for each
+  plan it prices), which favours the forms with cheaper reads (v, folded) further. The simulation does not count
+  that.
+- The tree's added rules are rebuilt with new lists, as a pass makes them. The cost of a pass's own work (deciding
+  what to keep, computing new rules) is the same for every form and is not measured.
 
 ## Prior work consulted
 

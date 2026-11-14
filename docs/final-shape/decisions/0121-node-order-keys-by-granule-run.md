@@ -115,3 +115,21 @@ shadowed(st) :- rr_later(s, x, st, st2), sbinds(s, x, st), sbinds(s, x, st2), !o
 This belongs in the file-local split (`typing/file_local.rs`, which already pushes `fl563_sbinds`' join into
 the chunks), as a general rule for comparisons, not a rewrite of `calls.rr`. It is not built. Its prize on
 this replay is at most the 0.11 M a step of §1.
+
+## 5. SQL traversal consumes tree edges, not order-key distances
+
+A SQL consumer still treated these keys as dense preorder positions.
+Its descendant CTE added one to advance and added a subtree size to skip a nested scope.
+The keys preserve order, but their gaps do not preserve those distances.
+A nested granule therefore caused the CTE to miss valid descendants.
+
+SQL descent now starts from a matching scope's children.
+Each recursive step follows `child` edges while the current node is outside the stop set.
+The result includes a nested scope itself and excludes that scope's children.
+A bound target filters the visited nodes.
+An empty scope or a root outside the stop set produces no result.
+The stable order keys remain available for comparisons.
+
+`sql_descendant_walks_cross_sparse_order_keys_and_stop_at_nested_scopes` checks gaps, nested scopes, empty roots, nonmatching roots, and bound targets.
+`cpython_calls_returns_match_parent_walk_after_edit` compares return facts against a separate parent traversal after an edit.
+Comparing two SQL execution strategies alone did not expose this error because both used the same descendant CTE.

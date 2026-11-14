@@ -1,24 +1,17 @@
-// OVERRIDE (hand-written, not generated). Clause trailing-comma-on-bare-tuple: as generated, except that
-// The reader matches a regex with a capture only over a node whose kind the clause names, so the
-// statement's possible kinds (tree-sitter-python's statements) are named as a disjunction.
-// Clause trailing-comma-before-assignment-line: main matches the trailing `,` token of a pattern_list; the
-// tape's child relation holds no token, so the clause asks for a pattern_list whose source after its last
-// child is the comma (or whose stored token is), and the finding is at the pattern_list.
 .policy "ruff-com818-trailing-comma-on-bare-tuple" revision 1
 .guests off
 .description "Remove a stray comma at the end of a statement, or parenthesize the tuple; a trailing comma silently turns the value into a tuple."
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // COM818(n): findings from clauses `trailing-comma-on-bare-tuple`, `trailing-comma-at-end-of-file`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation COM818(at: node, comma: node) "Remove the trailing comma if a single value was meant; if a tuple is intended, parenthesize it as `(value,)`."
+.violation COM818(at: loc, comma: node) "Remove the trailing comma if a single value was meant; if a tuple is intended, parenthesize it as `(value,)`."
     suppress noqa "COM818"
-COM818(COMMA, n) :- (kind(n, "expression_statement") ; kind(n, "return_statement") ; kind(n, "delete_statement") ; kind(n, "raise_statement") ; kind(n, "pass_statement") ; kind(n, "break_statement") ; kind(n, "continue_statement") ; kind(n, "global_statement") ; kind(n, "nonlocal_statement") ; kind(n, "exec_statement") ; kind(n, "print_statement") ; kind(n, "assert_statement") ; kind(n, "import_statement") ; kind(n, "import_from_statement") ; kind(n, "future_import_statement") ; kind(n, "type_alias_statement") ; kind(n, "if_statement") ; kind(n, "for_statement") ; kind(n, "while_statement") ; kind(n, "try_statement") ; kind(n, "with_statement") ; kind(n, "function_definition") ; kind(n, "class_definition") ; kind(n, "decorated_definition") ; kind(n, "match_statement")),
-    match(".*(?P<COMMA>,)", n), !kind(n, "comment"), child(p1, n, _),
+COM818(COMMA, n) :- match(".*(?P<COMMA>,)", n), !kind(n, "comment"), child(p1, n, _),
     (kind(p1, "module") ; kind(p1, "block")),
     ( com818_line_ends_after(n), count : { has(n, c1, "block"), node(_, c1, _, _, _) } = 0
     ; next_sibling(n, s1), kind(s1, "line_continuation"), com818_ends_line(s1)
@@ -44,8 +37,9 @@ com818_ends_line(n) :- next_sibling(n, s1), kind(s1, "line_continuation"), com81
 // Each rule below is one way the JSON `rule` can match.
 .violation COM818_trailing_comma_before_assignment_line(at: node) code "COM818" "Remove the trailing comma if a single value was meant; if a tuple is intended, parenthesize it as `(value,)`."
     suppress noqa "COM818"
-COM818_trailing_comma_before_assignment_line(n) :- com818_trailing_comma(n),
-    com818_ends_line_trailing_comma_before_assignment_line(n), child(p2, n, _),
+COM818_trailing_comma_before_assignment_line(n) :- glob("\\,", n),
+    com818_ends_line_trailing_comma_before_assignment_line(n), child(p1, n, _),
+    kind(p1, "pattern_list"), child(p2, p1, _),
     (kind(p2, "assignment") ; kind(p2, "augmented_assignment")).
 
 // line_ends_after_trailing_comma_before_assignment_line(n): the JSON util `line-ends-after`, used where the JSON says `matches: "line-ends-after"`
@@ -81,12 +75,3 @@ com818_code_after_line(x, l) :- structural_after(x, g), match("\\s*", g), child(
 com818_code_after_line(x, l) :- structural_after(x, g), match("\\s*", g), child(p, x, _),
     node(_, x, _, _, e), o = e + strlen(g), child(p, c, _), node(_, c, _, o, _),
     comment(c, _), com818_code_after_line(c, l).
-
-// trailing_comma(p): p's last child is followed by a comma: in the source gap after it, or as a stored token
-// (a trailing comma is not the word the grammar implies there, so the tape may keep it).
-.decl com818_trailing_comma(p: node)
-.stored com818_trailing_comma "a comma after a pattern_list's last child is its trailing comma, which the grammar does not imply"
-com818_trailing_comma(p) :- kind(p, "pattern_list"), child(p, c, _), count : { child(p, c9, _), precedes(c, c9) } = 0,
-    structural_after(c, g), match("(?s)\\s*,\\s*", g).
-com818_trailing_comma(p) :- kind(p, "pattern_list"), child(p, c, _), count : { child(p, c9, _), precedes(c, c9) } = 0,
-    node(_, c, _, _, e), token(p, _, ",", st, _), st >= e.

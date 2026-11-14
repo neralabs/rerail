@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // F405(n): a finding at node n, from clause `undefined-local-with-import-star-usage`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation F405(at: node, name: node) "Import `{name}` explicitly from its module; it may only be defined by a star import."
+.violation F405(at: loc, name: node) "Import `{name}` explicitly from its module; it may only be defined by a star import."
     suppress noqa "F405"
 F405(NAME, n) :- (kind(n, "identifier") ; kind(n, "string")), node(_, n, _, _, _), NAME = n,
     docof(n, d2), modnode(d2, m3),

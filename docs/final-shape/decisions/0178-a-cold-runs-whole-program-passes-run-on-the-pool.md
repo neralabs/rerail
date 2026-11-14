@@ -1,6 +1,6 @@
 # 0178. A cold run's whole-program passes run on the pool
 
-Status: built (2026-11-13). Follows decision 0177. The pool is decision 0098's (`threads`, `rerail_accel::exec`).
+Status: built (2026-11-13). Follows decision 0183. The pool is decision 0098's (`threads`, `rerail_accel::exec`).
 
 ## Intro
 

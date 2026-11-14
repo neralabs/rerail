@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -13,7 +13,7 @@
 // SLF001(n): a finding at node n, from clause `private-member-access`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation SLF001(at: node, p: node) "Use the class's public interface instead of this private member; keep it only where the class is yours to change or the access is deliberate."
+.violation SLF001(at: loc, p: node) "Use the class's public interface instead of this private member; keep it only where the class is yours to change or the access is deliberate."
     suppress noqa "SLF001"
 SLF001(P, n) :- match("(?P<P>[\\w\\s]*(?:\\.[\\w\\s]*)*?\\.\\s*_\\w*|[\\s\\S]*)(?:\\s*\\.(?:[\\w\\s]*\\.)*\\s*[^\\W_]\\w*\\s*)?", n),
     !slf001_in_annotation(n), !slf001_in_dunder_operator(n), !sym_of(n, "os._exit"),

@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // LOG007(n): a finding at node n, from clause `exception-without-exc-info`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation LOG007(at: node, c: node) "Call `error` instead of `exception` and drop the falsy `exc_info` argument: the log output is the same and the intent is clearer."
+.violation LOG007(at: loc, c: node) "Call `error` instead of `exception` and drop the falsy `exc_info` argument: the log output is the same and the intent is clearer."
     suppress noqa "LOG007"
 LOG007(C, n) :- log007_bad_call(n), node(_, n, _, _, _), C = n.
 LOG007(C, n) :- log007_call_in_string(n, C).

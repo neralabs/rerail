@@ -1659,6 +1659,8 @@ pub struct RecordTables {
     /// The extracts of the first and last bytes.
     pub starts: u16,
     pub lasts: u16,
+    /// Where each byte's end rule is (`Records::ends`), a byte each.
+    pub ends: usize,
 }
 
 impl RecordTables {
@@ -1683,7 +1685,12 @@ impl RecordTables {
         for t in &table.tails {
             words.extend(t);
         }
-        Ok(RecordTables { words, keys, meta, tails, table, starts: r.starts, lasts: r.lasts })
+        // Each byte's end rule (decision 0177), a byte each.
+        let ends = 8 * words.len();
+        if !r.rules.is_empty() {
+            words.extend(r.ends.chunks(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 rules"))));
+        }
+        Ok(RecordTables { words, keys, meta, tails, ends, table, starts: r.starts, lasts: r.lasts })
     }
 }
 
@@ -1715,6 +1722,8 @@ struct FileCols {
     counts: Value,
     /// The file's blocks: its rows of output words.
     blocks: Value,
+    /// The file's bytes.
+    len: Value,
     /// The record tables (`RecordTables::words`) and the word hash's multiplier: values, not
     /// constants, so a loop over tokens keeps them in registers (Cranelift remakes a constant
     /// at each use).
@@ -1727,15 +1736,20 @@ struct FileCols {
 }
 
 /// The record function's parameters (`record_fn`): `FileCols`' fields, in order.
-const RECORD_PARAMS: usize = 13;
+const RECORD_PARAMS: usize = 14;
 
 impl FileCols {
+    /// The address of the file's byte `s`.
+    fn bytes_at(&self, f: &mut FunctionBuilder<'_>, s: Value) -> Value {
+        f.ins().iadd(self.bytes, s)
+    }
+
     fn values(&self) -> [Value; RECORD_PARAMS] {
-        [self.bytes, self.starts, self.lasts, self.codes, self.ns, self.nl, self.out, self.counts, self.blocks, self.tables, self.mult, self.keys, self.meta]
+        [self.bytes, self.starts, self.lasts, self.codes, self.ns, self.nl, self.out, self.counts, self.blocks, self.tables, self.mult, self.keys, self.meta, self.len]
     }
 
     fn of(p: &[Value]) -> Self {
-        FileCols { bytes: p[0], starts: p[1], lasts: p[2], codes: p[3], ns: p[4], nl: p[5], out: p[6], counts: p[7], blocks: p[8], tables: p[9], mult: p[10], keys: p[11], meta: p[12] }
+        FileCols { bytes: p[0], starts: p[1], lasts: p[2], codes: p[3], ns: p[4], nl: p[5], out: p[6], counts: p[7], blocks: p[8], tables: p[9], mult: p[10], keys: p[11], meta: p[12], len: p[13] }
     }
 }
 
@@ -1761,6 +1775,49 @@ fn record_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Rec
     let cols = FileCols::of(&p);
     let mut heads = vec![];
     record_file(&mut f, r, t, extracts, outputs, &cols, done, &mut heads);
+    f.switch_to_block(done);
+    f.ins().return_(&[]);
+    f.seal_all_blocks();
+    f.finalize();
+    crate::native_cpu_shape::check(func, &heads, &[]).map_err(|r| Error::RefusedShape(format!("{r:?}")))
+}
+
+/// A row's record slot (decision 0177): `FileCols`' values, then the token loop's state.
+const REC_SLOT: usize = RECORD_PARAMS + STATE_WORDS;
+
+/// A signature of `n` words.
+fn words_signature(module: &JITModule, n: usize) -> cranelift_codegen::ir::Signature {
+    let mut sig = module.make_signature();
+    for _ in 0..n {
+        sig.params.push(cranelift_codegen::ir::AbiParam::new(types::I64));
+    }
+    sig
+}
+
+/// A part of a file's token loop (`(slot, ready)`), or its end (`(slot)`), as functions of
+/// their own: the block loop calls a part after each block, over the blocks whose outputs are
+/// final, and the part and the end at the file's end. The slot holds the file's columns and
+/// the loop's state (`REC_SLOT`).
+fn part_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Records, t: &RecordTables, extracts: usize, outputs: usize, end: bool) -> Result<(), Error> {
+    let mut builder_context = FunctionBuilderContext::new();
+    let mut f = FunctionBuilder::new(func, &mut builder_context);
+    let (entry, done) = (f.create_block(), f.create_block());
+    f.append_block_params_for_function_params(entry);
+    f.switch_to_block(entry);
+    let p = f.block_params(entry).to_vec();
+    let fl = MemFlags::trusted();
+    let vals: Vec<Value> = (0..RECORD_PARAMS).map(|k| f.ins().load(types::I64, fl, p[0], 8 * k as i32)).collect();
+    let cols = FileCols::of(&vals);
+    let state = f.ins().iadd_imm(p[0], 8 * RECORD_PARAMS as i64);
+    let mut heads = vec![];
+    if end {
+        let n = f.ins().load(types::I64, fl, state, 0);
+        let bad = f.ins().load(types::I64, fl, state, 16);
+        let zero = f.ins().iconst(types::I64, 0);
+        record_end(&mut f, r, extracts, outputs, &cols, bad, n, zero, done, &mut heads);
+    } else {
+        record_tokens(&mut f, r, t, extracts, outputs, &cols, Some(RecPart { ready: p[1], state }), done, &mut heads);
+    }
     f.switch_to_block(done);
     f.ins().return_(&[]);
     f.seal_all_blocks();
@@ -1826,11 +1883,228 @@ fn file_cols(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     let ns = f.ins().load(types::I64, fl, counts, 8 * i32::from(r.starts));
     let nl = f.ins().load(types::I64, fl, counts, 8 * i32::from(r.lasts));
     let blocks = f.ins().load(types::I64, ro, at, 8);
+    let len = f.ins().load(types::I64, ro, at, 16);
     let tables = f.ins().iconst(types::I64, t.words.as_ptr() as i64);
     let mult = f.ins().iconst(types::I64, t.table.mult as i64);
     let keys = f.ins().iconst(types::I64, t.words.as_ptr() as i64 + t.keys as i64);
     let meta = f.ins().iconst(types::I64, t.words.as_ptr() as i64 + t.meta as i64);
-    FileCols { bytes, starts, lasts, codes, ns, nl, out, counts, blocks, tables, mult, keys, meta }
+    FileCols { bytes, starts, lasts, codes, ns, nl, out, counts, blocks, tables, mult, keys, meta, len }
+}
+
+/// Where the token loop runs a block at a time (decision 0177): the blocks whose outputs are
+/// final (`ready`), whether they are all the file's (`last`), and where the loop waits for more.
+#[derive(Clone, Copy)]
+struct Limit {
+    ready: Value,
+    last: Value,
+    wait: cranelift_codegen::ir::Block,
+}
+
+/// The words a search may read: the ready blocks', or the file's.
+fn bound(c: &FileCols, l: Option<Limit>) -> Value {
+    l.map_or(c.blocks, |l| l.ready)
+}
+
+/// A search past the words it may read: at the file's end, on to `end` with `args`; before it,
+/// the loop waits for the next block (`Limit::wait`).
+fn past(f: &mut FunctionBuilder<'_>, l: Option<Limit>, end: cranelift_codegen::ir::Block, args: &[BlockArg]) {
+    match l {
+        None => {
+            f.ins().jump(end, args);
+        }
+        Some(l) => {
+            f.ins().brif(l.last, end, args, l.wait, &[]);
+        }
+    }
+}
+
+/// A branch on `inside`: to `to`, or past the words (`past`).
+fn inside_or_past(f: &mut FunctionBuilder<'_>, inside: Value, to: cranelift_codegen::ir::Block, l: Option<Limit>, end: cranelift_codegen::ir::Block, args: &[BlockArg]) {
+    let out = f.create_block();
+    f.ins().brif(inside, to, &[], out, &[]);
+    f.switch_to_block(out);
+    f.set_cold_block(out);
+    past(f, l, end, args);
+}
+
+/// A token's last byte from its first, `s`, by its end rule (`records::last_by_rule`, decision
+/// 0177): the rule by one load of its first byte, then a block a rule, each straight-line in its
+/// first word; a run or a search past it goes on a word at a time, in a cold block. A search
+/// that finds no last gives `s - 1`, which the order check refuses.
+fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, outputs: usize, c: &FileCols, s: Value, limit: Option<Limit>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+    use crate::records::EndRule;
+    let ro = MemFlags::trusted().with_readonly();
+    let fl = MemFlags::trusted();
+    let ended = f.create_block();
+    f.append_block_param(ended, types::I64);
+    // Output `o`'s word `q` (`q` below the file's blocks).
+    let word_at = |f: &mut FunctionBuilder<'_>, q: Value, o: u16| {
+        let off = f.ins().imul_imm(q, 8 * outputs as i64);
+        let row = f.ins().iadd(c.out, off);
+        f.ins().load(types::I64, fl, row, 8 * i32::from(o))
+    };
+    let at = c.bytes_at(f, s);
+    let first = f.ins().uload8(types::I64, ro, at, 0);
+    let ea = f.ins().iadd(c.tables, first);
+    let rule = f.ins().uload8(types::I32, ro, ea, t.ends as i32);
+    let q0 = f.ins().ushr_imm(s, 6);
+    let sh = f.ins().band_imm(s, 63);
+    let blocks: Vec<cranelift_codegen::ir::Block> = r.rules.iter().map(|_| f.create_block()).collect();
+    // A compare a rule (the translation to Rust has no jump table); none, the byte alone
+    // (`records::NO_RULE`).
+    for (k, &b) in blocks.iter().enumerate() {
+        let is = f.ins().icmp_imm(IntCC::Equal, rule, k as i64);
+        let other = f.create_block();
+        f.ins().brif(is, b, &[], other, &[]);
+        f.switch_to_block(other);
+        if k + 1 == blocks.len() {
+            f.set_cold_block(other);
+            f.ins().jump(ended, &[s.into()]);
+        }
+    }
+    for (&rule, &b) in r.rules.iter().zip(&blocks) {
+        f.switch_to_block(b);
+        match rule {
+            EndRule::Pair(o) => {
+                let x = word_at(f, q0, o);
+                let bit = f.ins().ushr(x, sh);
+                let bit = f.ins().band_imm(bit, 1);
+                let l = f.ins().iadd(s, bit);
+                f.ins().jump(ended, &[l.into()]);
+            }
+            EndRule::Run(o) => {
+                // The run from `s + 1`: its first word's ones from there, then whole words.
+                let (more, whole) = (f.create_block(), f.create_block());
+                f.append_block_param(more, types::I64);
+                let i = f.ins().iadd_imm(s, 1);
+                let q = f.ins().ushr_imm(i, 6);
+                let inside = f.ins().icmp(IntCC::UnsignedLessThan, q, bound(c, limit));
+                let (first_word, next) = (f.create_block(), f.create_block());
+                inside_or_past(f, inside, first_word, limit, ended, &[s.into()]);
+                f.switch_to_block(first_word);
+                let x = word_at(f, q, o);
+                let isn = f.ins().band_imm(i, 63);
+                let y = f.ins().ushr(x, isn);
+                let y = f.ins().bnot(y);
+                let ones = f.ins().ctz(y);
+                let left = f.ins().irsub_imm(isn, 64);
+                let short = f.ins().icmp(IntCC::UnsignedLessThan, ones, left);
+                let l = f.ins().iadd(s, ones);
+                let w1 = f.ins().iadd_imm(q, 1);
+                f.ins().brif(short, ended, &[l.into()], next, &[]);
+                f.switch_to_block(next);
+                f.set_cold_block(next);
+                f.ins().jump(more, &[w1.into()]);
+                // A whole word of the run: on to the next, or the file's end.
+                f.switch_to_block(more);
+                f.set_cold_block(more);
+                heads.push((more, Step::Word));
+                let w = f.block_params(more)[0];
+                let inside = f.ins().icmp(IntCC::UnsignedLessThan, w, bound(c, limit));
+                let w64 = f.ins().ishl_imm(w, 6);
+                let at_end = f.ins().iadd_imm(w64, -1);
+                inside_or_past(f, inside, whole, limit, ended, &[at_end.into()]);
+                f.switch_to_block(whole);
+                f.set_cold_block(whole);
+                let x = word_at(f, w, o);
+                let y = f.ins().bnot(x);
+                let ones = f.ins().ctz(y);
+                let full = f.ins().icmp_imm(IntCC::Equal, ones, 64);
+                let l = f.ins().iadd(w64, ones);
+                let l = f.ins().iadd_imm(l, -1);
+                let w1 = f.ins().iadd_imm(w, 1);
+                f.ins().brif(full, more, &[w1.into()], ended, &[l.into()]);
+            }
+            EndRule::Last(o) => {
+                // The mask's first bit at or after `s`: in its word, then the words after.
+                let (more, look) = (f.create_block(), f.create_block());
+                f.append_block_param(more, types::I64);
+                let x = word_at(f, q0, o);
+                let ones = f.ins().iconst(types::I64, -1);
+                let from = f.ins().ishl(ones, sh);
+                let x = f.ins().band(x, from);
+                let base = f.ins().band_imm(s, !63);
+                let tz = f.ins().ctz(x);
+                let l = f.ins().iadd(base, tz);
+                let w1 = f.ins().iadd_imm(q0, 1);
+                let next = f.create_block();
+                f.ins().brif(x, ended, &[l.into()], next, &[]);
+                f.switch_to_block(next);
+                f.set_cold_block(next);
+                f.ins().jump(more, &[w1.into()]);
+                f.switch_to_block(more);
+                f.set_cold_block(more);
+                heads.push((more, Step::Word));
+                let w = f.block_params(more)[0];
+                let inside = f.ins().icmp(IntCC::UnsignedLessThan, w, bound(c, limit));
+                // None found: with the loop's starts (`records::walk`), the first byte alone;
+                // else `s - 1`, which the order check refuses.
+                let none = if r.skip.is_some() { s } else { f.ins().iadd_imm(s, -1) };
+                inside_or_past(f, inside, look, limit, ended, &[none.into()]);
+                f.switch_to_block(look);
+                f.set_cold_block(look);
+                let x = word_at(f, w, o);
+                let w64 = f.ins().ishl_imm(w, 6);
+                let tz = f.ins().ctz(x);
+                let l = f.ins().iadd(w64, tz);
+                let w1 = f.ins().iadd_imm(w, 1);
+                f.ins().brif(x, ended, &[l.into()], more, &[w1.into()]);
+            }
+        }
+    }
+    f.switch_to_block(ended);
+    f.block_params(ended)[0]
+}
+
+/// The next token's first byte from `after` (`records::walk`, stage 2a): the first bit at or
+/// after it that the skip's output `o` does not hold, in its word, then the words after, a word
+/// at a time in a cold block. Past the file's blocks, the blocks' end (no byte of the file).
+fn next_start(f: &mut FunctionBuilder<'_>, c: &FileCols, outputs: usize, o: u16, after: Value, limit: Option<Limit>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+    let fl = MemFlags::trusted();
+    let (found, more, look, next) = (f.create_block(), f.create_block(), f.create_block(), f.create_block());
+    f.append_block_param(found, types::I64);
+    f.append_block_param(more, types::I64);
+    let held = |f: &mut FunctionBuilder<'_>, q: Value| {
+        let off = f.ins().imul_imm(q, 8 * outputs as i64);
+        let row = f.ins().iadd(c.out, off);
+        let x = f.ins().load(types::I64, fl, row, 8 * i32::from(o));
+        f.ins().bnot(x)
+    };
+    let q0 = f.ins().ushr_imm(after, 6);
+    let inside = f.ins().icmp(IntCC::UnsignedLessThan, q0, bound(c, limit));
+    let end = f.ins().ishl_imm(c.blocks, 6);
+    let first = f.create_block();
+    inside_or_past(f, inside, first, limit, found, &[end.into()]);
+    f.switch_to_block(first);
+    let x = held(f, q0);
+    let ones = f.ins().iconst(types::I64, -1);
+    let sh = f.ins().band_imm(after, 63);
+    let from = f.ins().ishl(ones, sh);
+    let x = f.ins().band(x, from);
+    let base = f.ins().band_imm(after, !63);
+    let tz = f.ins().ctz(x);
+    let s = f.ins().iadd(base, tz);
+    let w1 = f.ins().iadd_imm(q0, 1);
+    f.ins().brif(x, found, &[s.into()], next, &[]);
+    f.switch_to_block(next);
+    f.set_cold_block(next);
+    f.ins().jump(more, &[w1.into()]);
+    f.switch_to_block(more);
+    f.set_cold_block(more);
+    heads.push((more, Step::Word));
+    let w = f.block_params(more)[0];
+    let inside = f.ins().icmp(IntCC::UnsignedLessThan, w, bound(c, limit));
+    inside_or_past(f, inside, look, limit, found, &[end.into()]);
+    f.switch_to_block(look);
+    f.set_cold_block(look);
+    let x = held(f, w);
+    let w64 = f.ins().ishl_imm(w, 6);
+    let tz = f.ins().ctz(x);
+    let s = f.ins().iadd(w64, tz);
+    let w1 = f.ins().iadd_imm(w, 1);
+    f.ins().brif(x, found, &[s.into()], more, &[w1.into()]);
+    f.switch_to_block(found);
+    f.block_params(found)[0]
 }
 
 /// A file's records (`records::pass`): per token, its code from its first and last bytes, stored
@@ -1839,6 +2113,25 @@ fn file_cols(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
 /// for a word past eight bytes, whose other words are compared in a block of their own.
 #[allow(clippy::too_many_arguments)]
 fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, extracts: usize, outputs: usize, c: &FileCols, then: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
+    record_tokens(f, r, t, extracts, outputs, c, None, then, heads);
+}
+
+/// The token loop's state between its parts (`RecPart`): the next token's index, the end of
+/// the token before, the refusal so far; three words.
+const STATE_WORDS: usize = 3;
+
+/// A part of a file's token loop (decision 0177): the tokens whose words are in the `ready`
+/// blocks, from the state at `state` and back to it.
+#[derive(Clone, Copy)]
+struct RecPart {
+    ready: Value,
+    state: Value,
+}
+
+/// A file's token loop: the whole file's (`part` none), then its end (`record_end`); or a
+/// part of it, which waits where a token reads past the ready blocks and stores its state.
+#[allow(clippy::too_many_arguments)]
+fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, extracts: usize, outputs: usize, c: &FileCols, part: Option<RecPart>, then: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
     let (head, token, long, coded, finish) = (f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block());
     // The loop's values: the token, the end of the token before, the refusal so far.
     for _ in 0..3 {
@@ -1847,23 +2140,69 @@ fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Rec
     }
     // At `coded`, the token's code too.
     f.append_block_param(coded, types::I64);
+    // At `finish`, the refusal and the tokens' count.
     f.append_block_param(finish, types::I64);
+    f.append_block_param(finish, types::I64);
+    // The tokens by the loop (stage 2a): each start found at the head.
+    let walked = r.skip;
+    if walked.is_some() {
+        f.append_block_param(token, types::I64);
+    }
     let ro = MemFlags::trusted().with_readonly();
     let fl = MemFlags::trusted();
     let stores = MemFlags::new().with_notrap();
     let zero = f.ins().iconst(types::I64, 0);
     let tables = c.tables;
-    let differ = f.ins().icmp(IntCC::NotEqual, c.ns, c.nl);
-    let differ = f.ins().uextend(types::I64, differ);
-    let n = f.ins().umin(c.ns, c.nl);
+    // With end rules (decision 0177) the lasts are this pass's: as many as the starts.
+    let ruled = !r.rules.is_empty();
+    let (differ, n) = if walked.is_some() {
+        (zero, zero)
+    } else if ruled {
+        (zero, c.ns)
+    } else {
+        let differ = f.ins().icmp(IntCC::NotEqual, c.ns, c.nl);
+        (f.ins().uextend(types::I64, differ), f.ins().umin(c.ns, c.nl))
+    };
     // The refusal so far: the differences that must not be negative, ORed (their sign bit).
-    f.ins().jump(head, &[zero.into(), zero.into(), zero.into()]);
+    // A part starts from the state the one before stored.
+    let wait = part.map(|_| f.create_block());
+    let limit = match (part, wait) {
+        (Some(p), Some(wait)) => {
+            let init: Vec<BlockArg> = (0..STATE_WORDS).map(|k| BlockArg::from(f.ins().load(types::I64, fl, p.state, 8 * k as i32))).collect();
+            let last = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, p.ready, c.blocks);
+            f.ins().jump(head, &init);
+            Some(Limit { ready: p.ready, last, wait })
+        }
+        _ => {
+            f.ins().jump(head, &[zero.into(), zero.into(), zero.into()]);
+            None
+        }
+    };
     heads.push((head, Step::Token));
 
     f.switch_to_block(head);
     let h = f.block_params(head).to_vec();
-    let more = f.ins().icmp(IntCC::UnsignedLessThan, h[0], n);
-    f.ins().brif(more, token, &[], finish, &[h[2].into()]);
+    // Waiting: the state as the head has it, for the next part.
+    if let (Some(p), Some(wait)) = (part, wait) {
+        f.switch_to_block(wait);
+        f.set_cold_block(wait);
+        for (k, &v) in h.iter().enumerate() {
+            f.ins().store(stores, v, p.state, 8 * k as i32);
+        }
+        f.ins().jump(then, &[]);
+        f.switch_to_block(head);
+    }
+    match walked {
+        Some(o) => {
+            let s = next_start(f, c, outputs, o, h[1], limit, heads);
+            let more = f.ins().icmp(IntCC::UnsignedLessThan, s, c.len);
+            f.ins().brif(more, token, &[s.into()], finish, &[h[2].into(), h[0].into()]);
+        }
+        None => {
+            let more = f.ins().icmp(IntCC::UnsignedLessThan, h[0], n);
+            f.ins().brif(more, token, &[], finish, &[h[2].into(), n.into()]);
+        }
+    }
 
     // A token: its first and last bytes, its kind and its word's slot.
     f.switch_to_block(token);
@@ -1871,15 +2210,34 @@ fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Rec
     let at = f.ins().ishl_imm(k, 2);
     let sa = f.ins().iadd(c.starts, at);
     let la = f.ins().iadd(c.lasts, at);
-    let s = f.ins().uload32(fl, sa, 0);
-    let l = f.ins().uload32(fl, la, 0);
+    let s = if walked.is_some() {
+        let s = f.block_params(token)[0];
+        f.ins().istore32(stores, s, sa, 0);
+        s
+    } else {
+        f.ins().uload32(fl, sa, 0)
+    };
+    let l = if ruled {
+        let l = rule_last(f, r, t, outputs, c, s, limit, heads);
+        f.ins().istore32(stores, l, la, 0);
+        l
+    } else {
+        f.ins().uload32(fl, la, 0)
+    };
     // Out of order (a last before its start, a start inside the token before): a difference
     // below zero. The columns are 32 bits wide, so a difference's sign is its 64th bit.
     let before = f.ins().isub(l, s);
     let inside = f.ins().isub(s, after);
     let wrong = f.ins().bor(before, inside);
     let bad = f.ins().bor(bad, wrong);
-    let next_after = f.ins().iadd_imm(l, 1);
+    // The loop goes on past the token's first byte at least, whatever its rule found: a
+    // search that found no last gives `s - 1`, below zero at `s = 0`, so the max is signed.
+    let next_after = if walked.is_some() {
+        let past = f.ins().smax(l, s);
+        f.ins().iadd_imm(past, 1)
+    } else {
+        f.ins().iadd_imm(l, 1)
+    };
     let len = f.ins().isub(next_after, s);
     let from = f.ins().iadd(c.bytes, s);
     let raw = f.ins().load(types::I64, fl, from, 0);
@@ -1974,21 +2332,58 @@ fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Rec
 
     // The file's end: a refusal sets the totals' flag, the count after the extracts'.
     f.switch_to_block(finish);
-    let bad = f.block_params(finish)[0];
+    let (bad, n) = (f.block_params(finish)[0], f.block_params(finish)[1]);
+    // A part at the file's end: its count and refusal stored, for the end.
+    if let Some(p) = part {
+        // The loop is past the file's last byte: a part after this one finds no token.
+        f.ins().store(stores, n, p.state, 0);
+        f.ins().store(stores, c.len, p.state, 8);
+        f.ins().store(stores, bad, p.state, 16);
+        f.ins().jump(then, &[]);
+        return;
+    }
+    record_end(f, r, extracts, outputs, c, bad, n, differ, then, heads);
+}
+
+/// A file's records' end (`record_tokens`): a refusal sets the totals' flag, the count after the
+/// extracts'; the loop's counts stored; then the marks of any word (`late_marks`).
+#[allow(clippy::too_many_arguments)]
+fn record_end(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts: usize, outputs: usize, c: &FileCols, bad: Value, n: Value, differ: Value, then: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
+    let fl = MemFlags::trusted();
+    let stores = MemFlags::new().with_notrap();
+    let (walked, ruled) = (r.skip, !r.rules.is_empty());
     let bad = f.ins().ushr_imm(bad, 63);
     let bad = f.ins().bor(bad, differ);
     let flag = f.ins().load(types::I64, fl, c.counts, 8 * extracts as i32);
     let flag = f.ins().bor(flag, bad);
     f.ins().store(stores, flag, c.counts, 8 * extracts as i32);
-    late_marks(f, r, outputs, c, n, then, heads);
+    if walked.is_some() {
+        f.ins().store(stores, n, c.counts, 8 * i32::from(r.starts));
+    }
+    if ruled {
+        f.ins().store(stores, n, c.counts, 8 * i32::from(r.lasts));
+    }
+    // The gap marks (decision 0177) after the others: they read the extra's mark.
+    if r.gaps == 0 {
+        late_marks(f, r, outputs, c, n, false, then, heads);
+    } else {
+        let gaps = f.create_block();
+        late_marks(f, r, outputs, c, n, false, gaps, heads);
+        f.switch_to_block(gaps);
+        late_marks(f, r, outputs, c, n, true, then, heads);
+    }
 }
 
 /// The marks of any word (`Records::marks` with no word): rare bits, so set after the tokens,
 /// not tested at each. Over the file's rows, the marks' words ORed; at each bit, its token by a
 /// binary search over the starts from the token before; where a token starts there, each
 /// mark's bit ORed into its code. Then on to `then`.
-fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, outputs: usize, c: &FileCols, n: Value, then: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
-    let late: Vec<(usize, u16)> = r.marks.iter().enumerate().filter(|(_, m)| m.0 != crate::records::WORD_ALONE && m.1 == 0).map(|(k, m)| (k, m.0)).collect();
+///
+/// The gap marks (`lift`, `Records::gaps`): each bit to the first grammar token that starts at
+/// it or after (an extra's token, by its mark, passed over), as `records::gap_marks`.
+#[allow(clippy::too_many_arguments)]
+fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, outputs: usize, c: &FileCols, n: Value, lift: bool, then: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
+    let late: Vec<(usize, u16)> = r.marks.iter().enumerate().filter(|&(k, m)| m.0 != crate::records::WORD_ALONE && m.1 == 0 && (r.gaps >> k & 1 == 1) == lift).map(|(k, m)| (k, m.0)).collect();
     if late.is_empty() {
         f.ins().jump(then, &[]);
         return;
@@ -2087,10 +2482,35 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, outputs:
     let ka = f.ins().ishl_imm(k, 2);
     let sa = f.ins().iadd(c.starts, ka);
     let sv = f.ins().uload32(fl, sa, 0);
-    let at_it = f.ins().icmp(IntCC::Equal, sv, place);
-    let hit = f.ins().band(inside, at_it);
     let qa: Vec<BlockArg> = q.iter().map(|&v| v.into()).collect();
-    f.ins().brif(hit, set, &qa, next, &qa);
+    if lift {
+        // On past the extras' tokens: the first grammar token from it.
+        let (over, test) = (f.create_block(), f.create_block());
+        for _ in 0..4 {
+            f.append_block_param(over, types::I64);
+        }
+        heads.push((over, Step::Token));
+        let _ = (sv, place, k);
+        f.ins().jump(over, &qa);
+        f.switch_to_block(over);
+        let q = f.block_params(over).to_vec();
+        let qa: Vec<BlockArg> = q.iter().map(|&v| v.into()).collect();
+        let inside = f.ins().icmp(IntCC::UnsignedLessThan, q[3], n);
+        f.ins().brif(inside, test, &[], next, &qa);
+        f.switch_to_block(test);
+        let ka = f.ins().ishl_imm(q[3], 2);
+        let ca = f.ins().iadd(c.codes, ka);
+        let code = f.ins().uload32(fl, ca, 0);
+        let e = i64::from(crate::records::MARK_SHIFT) + i64::from(r.extra.unwrap_or(0));
+        let is_extra = f.ins().ushr_imm(code, e);
+        let is_extra = f.ins().band_imm(is_extra, i64::from(r.extra.is_some()));
+        let k1 = f.ins().iadd_imm(q[3], 1);
+        f.ins().brif(is_extra, over, &[q[0].into(), q[1].into(), q[2].into(), k1.into()], set, &qa);
+    } else {
+        let at_it = f.ins().icmp(IntCC::Equal, sv, place);
+        let hit = f.ins().band(inside, at_it);
+        f.ins().brif(hit, set, &qa, next, &qa);
+    }
 
     f.switch_to_block(set);
     let q = f.block_params(set).to_vec();
@@ -2292,6 +2712,12 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
     let mut counts_out = Vec::with_capacity(counted.len());
     for (c, &k) in counted.iter().enumerate() {
         let n = counts_in[c];
+        // The lasts by the end rules, the starts by the loop (decision 0177): the record pass
+        // writes them.
+        if c < native.extracts.len() && native.records_made().contains(&k) {
+            counts_out.push(n);
+            continue;
+        }
         if c < native.extracts.len() {
             // `n` is where the next position goes.
             let start = f.ins().ishl_imm(i, 6);
@@ -2377,8 +2803,24 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         .map(|r| module.declare_function(&format!("{name}_region{r}"), Linkage::Local, &signature).map_err(|_| Error::BackendFailure))
         .collect::<Result<Vec<_>, _>>()?;
     let n_regions = state.plan.regions.len();
-    // The file's records: a function of its own (`record_fn`), called once a file.
+    // The file's records: a function of its own (`record_fn`), called once a file; or, where
+    // the loop finds the starts (decision 0177), a part after each block and the file's end.
+    let part_calls = match records {
+        Some((rec, t, outputs)) if rec.skip.is_some() => {
+            let mut made = Vec::new();
+            for (end, n, what) in [(false, 2, "part"), (true, 1, "end")] {
+                let sig = words_signature(module, n);
+                let id = module.declare_function(&format!("{name}_records_{what}"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;
+                let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), sig.clone());
+                part_fn(&mut func, rec, t, native.extracts.len(), outputs, end)?;
+                made.push((id, sig, func));
+            }
+            made
+        }
+        _ => Vec::new(),
+    };
     let record_call = match records {
+        Some(_) if !part_calls.is_empty() => None,
         Some((rec, t, outputs)) => {
             let sig = record_signature(module);
             let id = module.declare_function(&format!("{name}_records"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;
@@ -2483,6 +2925,36 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             .chain((0..counted.len()).map(|c| extract_base.get(c).copied().unwrap_or(zero).into()))
             .chain(rowed.then_some(scratch.into()))
             .collect();
+        // The row's record slot (`REC_SLOT`): its columns, and the token loop's state at zero.
+        let rec_slot = (!part_calls.is_empty()).then(|| f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * REC_SLOT as u32, 3)));
+        let callee_of = |f: &mut FunctionBuilder<'_>, k: usize| {
+            let (id, sig, _) = &part_calls[k];
+            let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
+            let signature = f.import_signature(sig.clone());
+            f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true })
+        };
+        let parts = rec_slot.map(|slot| (slot, callee_of(&mut f, 0), callee_of(&mut f, 1)));
+        if let (Some((slot, _, _)), Some((rec, t, _))) = (parts, records) {
+            let counts_all = reload(&mut f, 5);
+            let cols = file_cols(&mut f, rec, t, native.extracts.len(), r, rows, arena, out_all, pos_all, counts_all);
+            for (k, v) in cols.values().into_iter().enumerate() {
+                f.ins().stack_store(v, slot, 8 * k as i32);
+            }
+            let zero = f.ins().iconst(types::I64, 0);
+            for k in 0..STATE_WORDS {
+                f.ins().stack_store(zero, slot, 8 * (RECORD_PARAMS + k) as i32);
+            }
+        }
+        // A part of the token loop after a block (`next` the block after it): the blocks before
+        // it are final (an output's delayed bits go into the row before).
+        let call_part = |f: &mut FunctionBuilder<'_>, next: Value| {
+            if let Some((slot, part, _)) = parts {
+                let pointer = f.func.dfg.value_type(next);
+                let address = f.ins().stack_addr(pointer, slot, 0);
+                let ready = f.ins().iadd_imm(next, -1);
+                f.ins().call(part, &[address, ready]);
+            }
+        };
         // Blocks 1 .. len / 64 are full.
         let full_end = f.ins().ushr_imm(len, 6);
         f.ins().brif(none, finish, &first, head, &first);
@@ -2517,6 +2989,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             BlockArg::Value(v) => v,
             _ => unreachable!("a value"),
         };
+        call_part(&mut f, next);
         let more = f.ins().icmp(IntCC::UnsignedLessThan, next, full_end);
         f.ins().brif(more, body_block, &again, head, &again);
 
@@ -2534,6 +3007,9 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
         f.ins().call(callee, &[address, len]);
         let back: Vec<BlockArg> = (0..params).map(|k| BlockArg::from(f.ins().stack_load(types::I64, slot, 8 * k as i32))).collect();
+        if let Some(BlockArg::Value(next)) = back.first().copied() {
+            call_part(&mut f, next);
+        }
         f.ins().jump(head, &back);
 
         // The row's end: each delayed output's last word, and the counts.
@@ -2580,6 +3056,14 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         }
         // The file's records, in the same pass (the last forward one): its positions and mask
         // words just made, still in the cache.
+        // The token loop's last part, every block final, and its end.
+        if let Some((slot, part, end)) = parts {
+            let pointer = f.func.dfg.value_type(r);
+            let address = f.ins().stack_addr(pointer, slot, 0);
+            let blocks = f.ins().load(types::I64, MemFlags::trusted().with_readonly(), at, 8);
+            f.ins().call(part, &[address, blocks]);
+            f.ins().call(end, &[address]);
+        }
         if let (Some((rec, t, _)), Some((id, sig, _))) = (records, &record_call) {
             let (arena, out_all) = (reload(&mut f, 0), reload(&mut f, 3));
             let cols = file_cols(&mut f, rec, t, native.extracts.len(), r, rows, arena, out_all, pos_all, counts_all);
@@ -2603,7 +3087,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         let mut owns = vec![own.clone()];
         owns.extend(calls.ids.iter().map(|id| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())));
         owns.extend(walk_names(Some(&walks)));
-        owns.extend(record_call.iter().map(|(id, _, _)| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())));
+        owns.extend(record_call.iter().chain(&part_calls).map(|(id, _, _)| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())));
         shape = crate::native_cpu_shape::check(&context.func, &heads, &owns);
     }
     if round == n_regions || !worth_calling(&context.func, &calls) {
@@ -2628,6 +3112,9 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     }
     // The records' function, checked where it is built (`record_fn`).
     if let Some((id, _, func)) = record_call {
+        regions.push((id, func));
+    }
+    for (id, _, func) in part_calls {
         regions.push((id, func));
     }
     // The walks' functions, checked where they are built (`native_cpu_walk::build_walk`).

@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // PT002(n): a finding at node n, from clause `fixture-positional-args`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT002(at: node, span: node, f: loc) "Pass the arguments of `{f}(...)` by keyword: positional ones map, in order, to `scope`, `params`, `autouse`, `ids` and `name`."
+.violation PT002(at: loc, span: node, f: loc) "Pass the arguments of `{f}(...)` by keyword: positional ones map, in order, to `scope`, `params`, `autouse`, `ids` and `name`."
     suppress noqa "PT002"
 PT002(rr_at, SPAN, F) :- kind(n, "decorator"), child(n, c1, _), pt002_positional_call(c1, F),
     count : { precedes(s2, n), kind(s2, "decorator"), child(s2, c3, _), pt002_fixture_expr(c3) } = 0,

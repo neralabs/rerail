@@ -2,14 +2,12 @@
 //! tree-sitter's (`python_tape_expect`, to `RERAIL_PY_OUT`); this compares, and reports the files
 //! that differ (the first differing line, with the lines around it) and the ones refused.
 
-use crate::tape_text;
+use crate::{tape, tape_text};
 
 #[test]
 #[ignore = "needs RERAIL_PY_OUT, the engine's expected tapes (python_tape_expect)"]
 fn oracle() {
     let dir = std::env::var("RERAIL_PY_OUT").expect("set RERAIL_PY_OUT");
-    // The product's parse (error texts refused), or with `RERAIL_PY_RECOVER=1` decision 0169's recovery.
-    let tape = if std::env::var("RERAIL_PY_RECOVER").is_ok_and(|v| v == "1") { crate::tape_recovering } else { crate::tape };
     let show: usize = std::env::var("RERAIL_PY_SHOW").ok().and_then(|s| s.parse().ok()).unwrap_or(12);
     let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).collect();
     paths.sort();

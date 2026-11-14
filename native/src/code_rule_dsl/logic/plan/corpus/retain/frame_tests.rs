@@ -110,7 +110,7 @@ fn k4_retains_consumers_of_literal_facts_and_invalidates_them_when_the_literal_c
     let computed=Retained{key:KEY,rels:HashMap::from([("result".into(),Kept{
         rel:InRel::flat(&[vec![1]],vec![b'i']),width:1,output:None,
     })]),..Default::default()};
-    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&prog,&Locations::new(),&st(&prog),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new()).unwrap(),1);
+    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&prog,&Default::default(),&Locations::new(),&st(&prog),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new()).unwrap(),1);
     let restored=Retained::from_frames(&store,SPACE,KEY,&prog,&st(&prog),&HashMap::new()).unwrap();
     assert_eq!(cut(Some(&restored),KEY,&prog,&st(&prog),&HashMap::new()).unwrap().strata,(0,1));
     let changed=rr::parse(&text.replace("literal(1).","literal(2).")).unwrap();
@@ -119,7 +119,7 @@ fn k4_retains_consumers_of_literal_facts_and_invalidates_them_when_the_literal_c
     let external=rr::parse(&format!("{text}\n.input literal\n")).unwrap();
     let empty=Retained::from_frames(&store,[52;32],KEY,&external,&st(&external),&HashMap::new()).unwrap();
     let initial=cut(Some(&empty),KEY,&external,&st(&external),&HashMap::new()).unwrap();
-    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&external,&Locations::new(),&st(&external),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new()).unwrap(),0,
+    assert_eq!(computed.write_frames(&store,empty.frames().unwrap(),&external,&Default::default(),&Locations::new(),&st(&external),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new()).unwrap(),0,
         "a relation with literal rows AND external inputs still needs a runtime dependency digest");
 }
 
@@ -234,7 +234,7 @@ fn a_relation_past_the_retain_budget_is_written_to_the_frames_and_let_go() {
     let mut next = after(None, KEY, now.clone(), &cut, derived, &BTreeMap::new(), &[], HashMap::new(), HashMap::new(), HashMap::new(), Default::default(), HashMap::new(), 0);
     assert_eq!(next.bytes(), 0, "nothing past the budget is held for the next run");
     assert_eq!(next.parts().1.len(), 2, "both are this run's to write");
-    let written = next.write_frames(&store, &was, &prog, &Locations::new(), &st(&prog), &cut, &[], &now, &BTreeSet::new(), &HashMap::new()).unwrap();
+    let written = next.write_frames(&store, &was, &prog,&Default::default(), &Locations::new(), &st(&prog), &cut, &[], &now, &BTreeSet::new(), &HashMap::new()).unwrap();
     assert_eq!(written, 8, "the rows past the budget are written to the frames");
     next.let_go_past();
     assert!(next.parts().1.is_empty(), "and then let go");
@@ -262,4 +262,23 @@ fn rows_read_where_reached_come_with_their_kept_statistics() {
     assert_eq!(Arc::as_ptr(&held) as *const u8 as usize, at);
     assert!(kept.measured("result0", &held).is_some(), "its statistics come with its rows: not counted from them");
     assert!(kept.measured_all().contains_key(&("result0".to_owned(), at)), "and are carried to the next run");
+}
+
+/// A granule the store no longer holds (swept, or never written) is a miss its reader is told of, so the part is
+/// derived again: it was a failed run (`granule 9 of its stored rows is missing`, phase 0's rounds).
+#[test]
+fn an_inputs_missing_granule_is_a_miss_not_a_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("facts.sqlite");
+    let store = ContentStore::open(&path).unwrap();
+    let (prog, _, _) = fixture(&store, 1);
+    let kept = Retained::from_frames(&store, SPACE, KEY, &prog, &st(&prog), &HashMap::new()).unwrap();
+    let all = kept.read_input(&store, &prog, &Locations::new(), "input0", None).unwrap();
+    assert_eq!(all.unwrap().unwrap().len(), 3);
+    store.written().unwrap();
+    let gone = rusqlite::Connection::open(&path).unwrap().execute("DELETE FROM frames WHERE rel = 'input0' AND part = ?1", [granule(2)]).unwrap();
+    assert_eq!(gone, 1);
+    let kept = Retained::from_frames(&store, SPACE, KEY, &prog, &st(&prog), &HashMap::new()).unwrap();
+    let why = kept.read_input(&store, &prog, &Locations::new(), "input0", None).unwrap().unwrap_err();
+    assert!(why.contains(&format!("granule {} of its rows is not stored", granule(2))), "{why}");
 }

@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -12,7 +12,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on D are added to every rule.
-.violation PTH211(at: node, f: node) "Use `Path(dst).symlink_to(src)` instead of `os.symlink(src, dst)`, passing `target_is_directory` through; leave it where the paths are bytes."
+.violation PTH211(at: loc, f: node) "Use `Path(dst).symlink_to(src)` instead of `os.symlink(src, dst)`, passing `target_is_directory` through; leave it where the paths are bytes."
     suppress noqa "PTH211"
 PTH211(F, n) :- kind(n, "call"), field(n, "function", c1), pth211_callee(c1, F),
     ( kind(n, "call"), pth211_arg_no_dir_fd_1(n), unset(D)

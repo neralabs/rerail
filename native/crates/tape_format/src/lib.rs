@@ -203,16 +203,12 @@ pub struct Writer<L: Layout = Widths> {
     out: Vec<u8>,
     /// The columns, each `cap` cells at its width; the first `n` are the nodes'.
     size: Vec<u8>,
-    off: Vec<u8>,
     tail: Vec<u8>,
-    base: Vec<u32>,
     /// Each node's start and key: the parser's working state, what an edit recomputes from.
     starts: Vec<u32>,
     keys: Vec<u32>,
     /// The nodes, and the nodes the cells have room for.
     n: usize,
-    /// The last block's base: a push checks its start against it.
-    block_base: u32,
     cap: usize,
     /// The codes by id: each key and the node that first used it.
     codes: Vec<(u32, u32)>,
@@ -227,14 +223,14 @@ pub struct Writer<L: Layout = Widths> {
     /// An offset or tail from which a push or close takes the long way: 0x10000, or 0 once a
     /// node is marked (then every node does, and its marks are kept exact).
     wide_from: u32,
-    /// The nodes whose offset or tail needs 4 bytes, or that end before their last descendant
-    /// starts (`OFF_WIDE`, `TAIL_WIDE`, `EARLY`): few, kept exact through every edit, so that
-    /// `finish` knows the narrowest widths without reading the columns.
+    /// The nodes whose tail needs 4 bytes, or that end before their last descendant starts
+    /// (`TAIL_WIDE`, `EARLY`): few, kept exact through every edit, so that `finish` knows the
+    /// narrowest widths without reading the tail column. (Offsets and bases are not kept as the
+    /// parse goes: `finish` computes them from the starts in one pass, `offsets`.)
     marks: Vec<(u32, u8)>,
     tag: u8,
 }
 
-const OFF_WIDE: u8 = 0;
 const TAIL_WIDE: u8 = 1;
 const EARLY: u8 = 2;
 
@@ -272,13 +268,10 @@ impl<L: Layout> Writer<L> {
         Writer {
             out,
             size: cells(widths.size),
-            off: cells(widths.off),
             tail: cells(widths.tail),
-            base: Vec::with_capacity(cap / CHECKPOINT_STRIDE + 1),
             starts: vec![0; cap],
             keys: vec![0; cap],
             n: 0,
-            block_base: 0,
             cap,
             codes: Vec::new(),
             coded: 0,
@@ -317,7 +310,6 @@ impl<L: Layout> Writer<L> {
         self.out.reserve_exact(image_bytes(cap, w) - self.out.len());
         self.out.resize(HEADER_BYTES + 2 * cap, 0);
         self.size.resize(cap * usize::from(w.size), 0);
-        self.off.resize(cap * usize::from(w.off), 0);
         self.tail.resize(cap * usize::from(w.tail), 0);
         self.starts.resize(cap, 0);
         self.keys.resize(cap, 0);
@@ -434,30 +426,6 @@ impl<L: Layout> Writer<L> {
         self.coded = to;
     }
 
-    /// Block `b`'s base and its nodes' offsets, from their starts.
-    #[cold]
-    #[inline(never)]
-    fn block(&mut self, b: usize) {
-        let from = b * CHECKPOINT_STRIDE;
-        let to = (from + CHECKPOINT_STRIDE).min(self.n);
-        let base = self.starts[from..to].iter().copied().min().expect("a node in the block");
-        if b == self.base.len() {
-            self.base.push(base);
-        } else {
-            self.base[b] = base;
-        }
-        if b + 1 == self.base.len() {
-            self.block_base = base;
-        }
-        for n in from..to {
-            let off = self.starts[n] - base;
-            if off > 0xffff || !self.marks.is_empty() {
-                self.mark(n, OFF_WIDE, off > 0xffff);
-            }
-            Self::put(&mut self.off, n, self.layout.widths().off, off);
-        }
-    }
-
     /// A node at the end, in preorder: its key and start. Its size and tail are written at its
     /// close: every node is closed before `finish`. Its code is written when it is committed.
     #[inline(always)]
@@ -475,14 +443,6 @@ impl<L: Layout> Writer<L> {
         }
         // Size 0 until its close: an open node (`is_open`).
         Self::put(&mut self.size, node, self.layout.widths().size, 0);
-        // The block's base holds unless the node starts a block, or starts before its base
-        // (its offset wraps), or its offset needs 4 bytes, or nodes are marked.
-        let off = start.wrapping_sub(self.block_base);
-        if node % CHECKPOINT_STRIDE == 0 || off >= self.wide_from {
-            self.block(node / CHECKPOINT_STRIDE);
-        } else {
-            Self::put(&mut self.off, node, self.layout.widths().off, off);
-        }
         node
     }
 
@@ -549,10 +509,6 @@ impl<L: Layout> Writer<L> {
         for m in self.marks.iter_mut().filter(|m| m.0 as usize >= at) {
             m.0 += 1;
         }
-        // The blocks from `at`'s on.
-        for b in at / CHECKPOINT_STRIDE..self.n.div_ceil(CHECKPOINT_STRIDE) {
-            self.block(b);
-        }
     }
 
     /// The nodes from `len` on taken back (a parse that did not hold).
@@ -563,27 +519,55 @@ impl<L: Layout> Writer<L> {
         self.n = len;
         self.uncode_from(len);
         self.marks.retain(|m| (m.0 as usize) < len);
-        let blocks = len.div_ceil(CHECKPOINT_STRIDE);
-        self.base.truncate(blocks);
-        if len % CHECKPOINT_STRIDE != 0 {
-            self.block(blocks - 1);
-        } else {
-            // The next push starts a block.
-            self.block_base = 0;
-        }
+        self.wide_from = if self.marks.is_empty() { 0x10000 } else { 0 };
     }
 
-    /// The image of the source `src`: the columns moved into place after the code column, then
-    /// the code table, and the header. `Redo` when a column's values do not fit its width, or a
-    /// tail from its last descendant is negative: the widths to parse again at.
-    /// The widths the nodes need: `Redo` where the writer's do not hold them.
-    fn check_widths(&mut self) -> Result<(), Redo> {
+    /// Each block's base (its nodes' least start) and each node's offset from it, in one pass
+    /// over the starts at `width` bytes, and whether an offset needs 4 bytes. A block is 16
+    /// starts: a min and 16 subtractions, straight-line, which the compiler vectorizes.
+    fn offsets(&self, width: u8) -> (Vec<u32>, Vec<u8>, bool) {
+        let starts = &self.starts[..self.n];
+        let mut base = Vec::with_capacity(starts.len().div_ceil(CHECKPOINT_STRIDE));
+        let mut off = Vec::with_capacity(starts.len() * usize::from(width));
+        let mut high = 0u32;
+        for block in starts.chunks(CHECKPOINT_STRIDE) {
+            let b = block.iter().copied().fold(u32::MAX, u32::min);
+            base.push(b);
+            if width == 2 {
+                if let Ok(block) = <&[u32; CHECKPOINT_STRIDE]>::try_from(block) {
+                    let mut cells = [0u8; 2 * CHECKPOINT_STRIDE];
+                    for (cell, &s) in cells.chunks_exact_mut(2).zip(block) {
+                        let o = s - b;
+                        high |= o;
+                        cell.copy_from_slice(&(o as u16).to_le_bytes());
+                    }
+                    off.extend_from_slice(&cells);
+                    continue;
+                }
+                for &s in block {
+                    high |= s - b;
+                    off.extend_from_slice(&((s - b) as u16).to_le_bytes());
+                }
+            } else {
+                for &s in block {
+                    high |= s - b;
+                    off.extend_from_slice(&(s - b).to_le_bytes());
+                }
+            }
+        }
+        (base, off, high > 0xffff)
+    }
+
+    /// The widths the nodes need, and the bases and offsets (`offsets`): `Redo` where the
+    /// writer's widths do not hold them.
+    fn check_widths(&mut self) -> Result<(Vec<u32>, Vec<u8>), Redo> {
         self.commit();
+        let (base, off, wide) = self.offsets(self.layout.widths().off);
         let has = |what: u8| self.marks.iter().any(|m| m.1 == what);
         let from_start = has(EARLY);
         let want = Widths {
             size: width_for(self.n as u32),
-            off: if has(OFF_WIDE) { 4 } else { 2 },
+            off: if wide { 4 } else { 2 },
             // Tails measured from the other place say nothing of the width: 2, the guess.
             tail: if from_start == self.layout.widths().from_start && has(TAIL_WIDE) { 4 } else { 2 },
             from_start,
@@ -591,29 +575,38 @@ impl<L: Layout> Writer<L> {
         if want != self.layout.widths() {
             return Err(Redo(want));
         }
-        Ok(())
+        Ok((base, off))
     }
 
     /// The columns alone, for a parser whose codes the caller makes (a key is the parser's own, not
-    /// `kf | flags << 16`): each at its width, and the keys by code id. `Redo` as `finish`.
+    /// `kf | flags << 16`): each at its width, and the keys by code id. `Redo` as `finish`. The
+    /// size and tail columns are moved out, not copied.
     pub fn finish_columns(mut self) -> Result<Columns, Redo> {
-        self.check_widths()?;
+        let (base, off) = self.check_widths()?;
         let w = self.layout.widths();
         let n = self.n;
-        let base = self.base.iter().flat_map(|b| b.to_le_bytes()).collect();
+        let column = |c: &mut Vec<u8>, width: u8| {
+            let mut c = std::mem::take(c);
+            c.truncate(n * usize::from(width));
+            c.shrink_to_fit();
+            c
+        };
         Ok(Columns {
             code: self.out[HEADER_BYTES..HEADER_BYTES + 2 * n].to_vec(),
-            size: self.size[..n * usize::from(w.size)].to_vec(),
-            base,
-            off: self.off[..n * usize::from(w.off)].to_vec(),
-            tail: self.tail[..n * usize::from(w.tail)].to_vec(),
+            size: column(&mut self.size, w.size),
+            base: base.iter().flat_map(|b| b.to_le_bytes()).collect(),
+            off,
+            tail: column(&mut self.tail, w.tail),
             widths: [w.size, w.off, w.tail | if w.from_start { TAIL_FROM_START } else { 0 }],
             keys: self.codes.iter().map(|&(key, _)| key).collect(),
         })
     }
 
+    /// The image of the source `src`: the columns moved into place after the code column, then
+    /// the code table, and the header. `Redo` when a column's values do not fit its width, or a
+    /// tail from its last descendant is negative: the widths to parse again at.
     pub fn finish(mut self, src: &[u8]) -> Result<Vec<u8>, Redo> {
-        self.check_widths()?;
+        let (base, off) = self.check_widths()?;
         let w = self.layout.widths();
         let nodes = self.n;
         let class_count = |key: u32| (key >> CLASS_SHIFT).count_ones() as usize;
@@ -626,11 +619,11 @@ impl<L: Layout> Writer<L> {
         pad(&mut out);
         out.extend_from_slice(&self.size[..nodes * usize::from(w.size)]);
         pad(&mut out);
-        for b in &self.base {
+        for b in &base {
             out.extend_from_slice(&b.to_le_bytes());
         }
         pad(&mut out);
-        out.extend_from_slice(&self.off[..nodes * usize::from(w.off)]);
+        out.extend_from_slice(&off);
         pad(&mut out);
         out.extend_from_slice(&self.tail[..nodes * usize::from(w.tail)]);
         pad(&mut out);
@@ -897,5 +890,32 @@ impl Iterator for Children<'_, '_> {
         let c = self.at;
         self.at += self.view.size(c);
         Some(c)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Offsets come from the starts at `finish` (`Writer::offsets`): a block's base is its least
+    /// start, and an offset past 0xffff writes the off column at 4 bytes (a `Redo`).
+    #[test]
+    fn offsets_and_bases_are_computed_at_finish() {
+        let src = vec![b' '; 200_000];
+        for far in [100u32, 70_000, 150_000] {
+            // A root over 40 leaves: the 20th starts `far` in, past its block's base.
+            let mut nodes = vec![(key(1, 0, 0), 0, 199_000, 41)];
+            for i in 0..40u32 {
+                let start = if i == 19 { far } else { i * 10 };
+                nodes.push((key(2, 0, 0), start, start + 5, 1));
+            }
+            let bytes = preorder_image(1, &src, &nodes);
+            assert_eq!(bytes[header::WIDTHS + 1], if far > 0xffff { 4 } else { 2 });
+            let decoded = decode(&bytes).unwrap();
+            let starts: Vec<u32> = decoded.iter().map(|d| d.start).collect();
+            let want: Vec<u32> = nodes.iter().map(|n| n.1).collect();
+            assert_eq!(starts, want);
+            assert_eq!(decoded[20].end, far + 5);
+        }
     }
 }

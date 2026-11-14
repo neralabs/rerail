@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -179,7 +179,7 @@ N805(n, NAME) :- kind(n, "typed_parameter"), child(p1, n, _), n805_counted_of(n)
 // N805_typed_default_first_parameter(n): a finding at node n, from clause `typed-default-first-parameter`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation N805_typed_default_first_parameter(at: node, n805_param: node, name: loc) code "N805" "Name the first parameter `self` instead of `{name}` and update its uses; if it should receive the class, add `@classmethod` and name it `cls`."
+.violation N805_typed_default_first_parameter(at: loc, n805_param: node, name: loc) code "N805" "Name the first parameter `self` instead of `{name}` and update its uses; if it should receive the class, add `@classmethod` and name it `cls`."
     suppress noqa "N805"
 N805_typed_default_first_parameter(PARAM, n, NAME) :- kind(n, "typed_default_parameter"),
     child(p1, n, _), n805_counted_of(n),

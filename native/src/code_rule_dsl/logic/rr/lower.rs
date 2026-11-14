@@ -195,6 +195,12 @@ struct Lowerer {
     /// A context for a `match_all` over a span (`aggregate`): made of the rule's literals, not inputs alone, so it
     /// binds the span where the rule does and `span_patterns` finds its containers (decision 0081).
     span_context: bool,
+    /// A context for a request (`demand`: a guest to parse, a value to make): made of every literal beside it, own
+    /// heads and derived relations included. A request's context is all that limits what is asked for, so the
+    /// narrowing an ordinary context may take (inputs alone, which the rule joins with its own literals again)
+    /// would ask for every row the inputs give: `type_ctx(r) :- type_ctx(s), str_node(s), parsed(s, …)` asked to
+    /// parse every string of a file.
+    request_context: bool,
     /// Whether the clause being lowered binds a variable named `top` (`path_part(d, top)`); otherwise `top` is a
     /// lattice's top value (`v != top`), as the translated programs write it.
     top_is_var: bool,
@@ -1278,7 +1284,7 @@ impl Lowerer {
                 }
                 out
             }
-            Lit::Pattern { subject, pattern, neg } => self.pattern(subject, pattern, *neg)?,
+            Lit::Pattern { subject, pattern, selector, neg } => self.pattern(subject, pattern, selector.as_deref(), *neg)?,
             Lit::Atom { rel, args, neg } if matches!(rel.as_str(), "nearest" | "inside" | "has" | "within_stop") && args.len() == 3 && self.node_set(&args[2]).is_some() => {
                 self.node_axis(rel, args, *neg, outer)?
             }
@@ -1472,7 +1478,9 @@ impl Lowerer {
         let all_bound = vars.iter().all(|v| binds(v, &self.siblings));
         // A demand of constants (`@parse("sql", "SELECT 1")`) is made where the rest of the rule holds (a nullary
         // context), or in every chunk when nothing else in the rule is independent of it.
+        self.request_context = true;
         let ctx = if all_bound && !(vars.is_empty() && self.siblings.is_empty()) { Some(self.context(&vars)) } else { None };
+        self.request_context = false;
         let every_chunk = every_chunk_doc || (all_bound && vars.is_empty() && ctx.is_none());
         self.siblings = saved;
         if !all_bound {
@@ -1990,6 +1998,20 @@ impl Lowerer {
                 ("kind", [Term::Var(y), Term::Str(k)]) if y == x && k == "comment" => Some([SpanIn::Comment].into()),
                 ("kind", [Term::Var(y), Term::Str(k)]) if y == x => Some([SpanIn::Kind(k.to_string())].into()),
                 ("rx_span", [Term::Str(p), _, _, Term::Str(g), Term::Var(y)]) if y == x => Some([SpanIn::Capture(p.to_string(), g.to_string())].into()),
+                // A child of a node whose kinds the body gives (a `kind` atom, or a column of nodes of known kinds):
+                // the children of nodes of those kinds.
+                ("child", [Term::Var(par), Term::Var(y), _]) if y == x && par != x => {
+                    let atoms: BTreeSet<SpanIn> = body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel == "kind").filter_map(|a| match a.args.as_slice() {
+                        [Term::Var(z), Term::Str(k)] if z == par => Some(SpanIn::ChildOf(k.to_string())),
+                        _ => None,
+                    }).collect();
+                    if !atoms.is_empty() {
+                        return Some(atoms);
+                    }
+                    body.iter().filter_map(Literal::atom).filter(|a| !a.neg && a.rel != "child").find_map(|a| {
+                        a.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(z) if z == par).then(|| columns.get(&(a.rel.to_string(), i))).flatten())
+                    }).and_then(|set| set.iter().map(|s| match s { SpanIn::Kind(k) => Some(SpanIn::ChildOf(k.to_string())), _ => None }).collect::<Option<BTreeSet<_>>>())
+                }
                 _ => b.args.iter().enumerate().find_map(|(i, t)| matches!(t, Term::Var(y) if y == x).then(|| columns.get(&(b.rel.to_string(), i)).cloned()).flatten()),
             })
         };
@@ -2144,7 +2166,8 @@ impl Lowerer {
     /// document (`core_rr::CoreRows::patterns`) and makes `ast_match(p, n, g, c)`: capture g of the match at n is
     /// node c, and capture "" is n itself. A negated pattern binds nothing: no match at n. A `$$$X` (a run of
     /// nodes) and a `$_X` capture nothing.
-    fn pattern(&mut self, subject: &STerm, pattern: &str, neg: bool) -> Result<Vec<Vec<Literal>>, Error> {
+    fn pattern(&mut self, subject: &STerm, pattern: &str, selector: Option<&str>, neg: bool) -> Result<Vec<Vec<Literal>>, Error> {
+        let key = crate::code_rule_dsl::language::pattern_key(pattern, selector);
         let STerm::Var(n) = subject else {
             return Err(Error::Syntax(format!("`{pattern}`: a pattern's subject is a variable")));
         };
@@ -2154,7 +2177,7 @@ impl Lowerer {
             self.prog.decls.insert("ast_match".to_owned().into(), cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
         }
         let atom = |g: &str, c: Term, neg: bool| {
-            Literal::Atom(Atom { rel: "ast_match".into(), args: [Term::Str(pattern.to_owned().into()), Term::Var(n.clone().into()), Term::Str(g.to_owned().into()), c].into(), neg, gated: false })
+            Literal::Atom(Atom { rel: "ast_match".into(), args: [Term::Str(key.clone().into()), Term::Var(n.clone().into()), Term::Str(g.to_owned().into()), c].into(), neg, gated: false })
         };
         if neg {
             return Ok(vec![vec![atom("", Term::Wild, true)]]);
@@ -2643,7 +2666,10 @@ impl Lowerer {
             }
             vars.iter().all(|v| reach.contains(v))
         };
-        let context = if !self.span_context && vars.iter().all(|v| base_bound.contains(v)) && joined(&base) {
+        let whole = if self.request_context { Some(Self::bound_context(context(false))) } else { None };
+        let context = if let Some((whole, _)) = whole.filter(|(_, b)| vars.iter().all(|v| b.contains(v))) {
+            whole
+        } else if !self.span_context && !self.request_context && vars.iter().all(|v| base_bound.contains(v)) && joined(&base) {
             base
         } else if vars.iter().all(|v| bound.contains(v)) {
             first

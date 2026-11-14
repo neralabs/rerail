@@ -1,1 +1,0 @@
-When no rule pack fits a repository, set-up and `rerail packs recommend` now say why: the files scanned, counted by ending, the folders not scanned, the packs whose excludes left out every file they look for, and what each pack looks for.

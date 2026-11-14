@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*.py"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // B103(n, detail): findings from clauses `world-writable-chmod`, `group-or-world-executable-chmod`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.

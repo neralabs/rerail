@@ -171,7 +171,8 @@ Open, largest first (the edit after items 1–5: 12.85 s of span CPU):
    the frames' write-back read it as they read the statistics admitted before the run.
 10. **`frag_str`'s `doc_role(d, 17505)` is planned from statistics made before its rows exist:** estimated at 1 row,
     2,455 found, 7.1 M rows, none kept. The floor (item 2) bounds this but does not fix it. The plan should be made
-    when the relation is known.
+    when the relation is known. (2026-11-13, django-bugs: `python/names.rr` no longer has this rule; `parsed_in`
+    reads `ann_str` alone, as what it binds is in a fragment already. The planner's fault stays open, and its test.)
     *Fixed:* the planning budget (`budget_takes`, decision 0122) took a kept order while the relations it reads
     grew by less than a search's work, by their rows alone. A literal with a constant reads that constant's rows:
     their counts (already in `live_sizes`) are now part of the growth, unknown counts left out. One row for 7 when

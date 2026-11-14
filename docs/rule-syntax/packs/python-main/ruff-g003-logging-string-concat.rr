@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -12,7 +12,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on M are added to every rule.
-.violation G003(at: node, x: node) "Use a `%s` format string and pass the values as logger arguments, e.g. `logger.info(\"x=%s\", x)`, doubling any literal `%`; leave it if `+` adds numbers or the logger is not from `logging`."
+.violation G003(at: loc, x: node) "Use a `%s` format string and pass the values as logger arguments, e.g. `logger.info(\"x=%s\", x)`, doubling any literal `%`; leave it if `+` adds numbers or the logger is not from `logging`."
     suppress noqa "G003"
 G003(X, n) :- kind(n, "call"), g003_alt_2(n, M), g003_msg(M, X).
 

@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -382,7 +382,7 @@ air302_moved_to_create_unique_id(n, N) :- air302_moved_bare(n, N, _), !air302_al
 // AIR302(n): a finding at node n, from clause `amazon-1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302(at: node, n: node, orig: loc) "Install `apache-airflow-providers-amazon>=1.0.0` and import `{orig}` from `airflow.providers.amazon.aws.hooks.s3` instead."
+.violation AIR302(at: loc, n: node, orig: loc) "Install `apache-airflow-providers-amazon>=1.0.0` and import `{orig}` from `airflow.providers.amazon.aws.hooks.s3` instead."
     suppress noqa "AIR302"
 AIR302(N, n, ORIG) :- (air302_old_of(n, "old"), air302_moved(n, N, ORIG) ; air302_quoted(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).
@@ -401,7 +401,7 @@ air302_quoted(n, N, ORIG) :- air302_demand_quoted(n), air302_string_literal(n), 
 // AIR302_fab_3(n, detail): findings from clauses `amazon-2`, `amazon-3`, `amazon-4`, `amazon-5` and 64 more. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_fab_3(at: node, n: node, detail: symbol) code "AIR302" "Install {detail} instead."
+.violation AIR302_fab_3(at: loc, n: node, detail: symbol) code "AIR302" "Install {detail} instead."
     suppress noqa "AIR302"
 AIR302_fab_3(N, n, "`apache-airflow-providers-amazon>=1.0.0` and import `GCSToS3Operator` from `airflow.providers.amazon.aws.transfers.gcs_to_s3`") :- (air302_old_of_of(n, "amazon_2"), air302_moved(n, N, ORIG) ; air302_quoted_amazon_2(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).
@@ -722,7 +722,7 @@ air302_quoted_celery_4(n, N, ORIG) :- air302_demand_quoted_celery_4(n), air302_s
 // AIR302_common_sql_1(n): a finding at node n, from clause `common-sql-1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_common_sql_1(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-common-sql>=1.0.0` and import `{orig}` from `airflow.providers.common.sql.hooks.sql` instead."
+.violation AIR302_common_sql_1(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-common-sql>=1.0.0` and import `{orig}` from `airflow.providers.common.sql.hooks.sql` instead."
     suppress noqa "AIR302"
 AIR302_common_sql_1(N, n, ORIG) :-
     ( air302_old_of_of_of_of(n, "common_sql_1"), air302_moved(n, N, ORIG)
@@ -739,7 +739,7 @@ air302_quoted_common_sql_1(n, N, ORIG) :- air302_demand_quoted_common_sql_1(n), 
 // AIR302_common_sql_2(n): a finding at node n, from clause `common-sql-2`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_common_sql_2(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-common-sql>=1.1.0` and import `{orig}` from `airflow.providers.common.sql.operators.sql` instead."
+.violation AIR302_common_sql_2(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-common-sql>=1.1.0` and import `{orig}` from `airflow.providers.common.sql.operators.sql` instead."
     suppress noqa "AIR302"
 AIR302_common_sql_2(N, n, ORIG) :-
     ( air302_old_of_of_of_of(n, "common_sql_2"), air302_moved(n, N, ORIG)
@@ -792,7 +792,7 @@ air302_quoted_common_sql_6(n, N) :- air302_demand_quoted_common_sql_6(n), air302
 // AIR302_common_sql_7(n): a finding at node n, from clause `common-sql-7`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_common_sql_7(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-common-sql>=1.0.0` and import `{orig}` from `airflow.providers.common.sql.operators.sql` instead."
+.violation AIR302_common_sql_7(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-common-sql>=1.0.0` and import `{orig}` from `airflow.providers.common.sql.operators.sql` instead."
     suppress noqa "AIR302"
 AIR302_common_sql_7(N, n, ORIG) :-
     ( air302_old_of_of_of_of(n, "common_sql_7"), air302_moved(n, N, ORIG)
@@ -844,7 +844,7 @@ air302_quoted_docker_2(n, N, ORIG) :- air302_demand_quoted_docker_2(n), air302_s
 // AIR302_apache_druid_1(n): a finding at node n, from clause `apache-druid-1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_apache_druid_1(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-apache-druid>=1.0.0` and import `{orig}` from `airflow.providers.apache.druid.hooks.druid` instead."
+.violation AIR302_apache_druid_1(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-apache-druid>=1.0.0` and import `{orig}` from `airflow.providers.apache.druid.hooks.druid` instead."
     suppress noqa "AIR302"
 AIR302_apache_druid_1(N, n, ORIG) :-
     ( air302_old_of(n, "old_apache_druid_1"), air302_moved(n, N, ORIG)
@@ -868,7 +868,7 @@ air302_quoted_apache_druid_2(n, N) :- air302_demand_quoted_apache_druid_2(n), ai
 // AIR302_fab_1(n): a finding at node n, from clause `fab-1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_fab_1(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-fab>=1.0.0` and import `{orig}` from `airflow.providers.fab.auth_manager.api.auth.backend.basic_auth` instead."
+.violation AIR302_fab_1(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-fab>=1.0.0` and import `{orig}` from `airflow.providers.fab.auth_manager.api.auth.backend.basic_auth` instead."
     suppress noqa "AIR302"
 AIR302_fab_1(N, n, ORIG) :- (air302_old_of_of_of(n, "fab_1"), air302_moved_in_1(n, N, ORIG) ; air302_quoted_fab_1(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).
@@ -882,7 +882,7 @@ air302_quoted_fab_1(n, N, ORIG) :- air302_demand_quoted_fab_1(n), air302_string_
 // AIR302_fab_2(n): a finding at node n, from clause `fab-2`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_fab_2(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-fab>=1.0.0` and import `{orig}` from `airflow.providers.fab.auth_manager.api.auth.backend.kerberos_auth` instead."
+.violation AIR302_fab_2(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-fab>=1.0.0` and import `{orig}` from `airflow.providers.fab.auth_manager.api.auth.backend.kerberos_auth` instead."
     suppress noqa "AIR302"
 AIR302_fab_2(N, n, ORIG) :- (air302_old_fab_2(n), air302_moved_in_2(n, N, ORIG) ; air302_quoted_fab_2(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).
@@ -906,7 +906,7 @@ air302_quoted_fab_3(n, N, ORIG) :- air302_demand_quoted_fab_3(n), air302_string_
 // AIR302_fab_4(n): a finding at node n, from clause `fab-4`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_fab_4(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-fab>=1.0.0` and import `{orig}` from `airflow.providers.fab.auth_manager.security_manager.override` instead."
+.violation AIR302_fab_4(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-fab>=1.0.0` and import `{orig}` from `airflow.providers.fab.auth_manager.security_manager.override` instead."
     suppress noqa "AIR302"
 AIR302_fab_4(N, n, ORIG) :- (air302_old_of_of_of_of(n, "fab_4"), air302_moved(n, N, ORIG) ; air302_quoted_fab_4(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).
@@ -932,7 +932,7 @@ air302_quoted_apache_hdfs_2(n, N, ORIG) :- air302_demand_quoted_apache_hdfs_2(n)
 // AIR302_apache_hive_1(n): a finding at node n, from clause `apache-hive-1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_apache_hive_1(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-apache-hive>=1.0.0` and import `{orig}` from `airflow.providers.apache.hive.hooks.hive` instead."
+.violation AIR302_apache_hive_1(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-apache-hive>=1.0.0` and import `{orig}` from `airflow.providers.apache.hive.hooks.hive` instead."
     suppress noqa "AIR302"
 AIR302_apache_hive_1(N, n, ORIG) :-
     ( air302_old_of_of_of(n, "apache_hive_1"), air302_moved(n, N, ORIG)
@@ -955,7 +955,7 @@ air302_quoted_apache_hive_1(n, N, ORIG) :- air302_demand_quoted_apache_hive_1(n)
 // AIR302_apache_hive_2(n): a finding at node n, from clause `apache-hive-2`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_apache_hive_2(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-apache-hive>=5.1.0` and import `{orig}` from `airflow.providers.apache.hive.macros.hive` instead."
+.violation AIR302_apache_hive_2(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-apache-hive>=5.1.0` and import `{orig}` from `airflow.providers.apache.hive.macros.hive` instead."
     suppress noqa "AIR302"
 AIR302_apache_hive_2(N, n, ORIG) :-
     ( air302_old_of(n, "old_apache_hive_2"), air302_moved(n, N, ORIG)
@@ -1053,7 +1053,7 @@ air302_quoted_http_3(n, N, ORIG) :- air302_demand_quoted_http_3(n), air302_strin
 // AIR302_jdbc_1(n): a finding at node n, from clause `jdbc-1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_jdbc_1(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-jdbc>=1.0.0` and import `{orig}` from `airflow.providers.jdbc.hooks.jdbc` instead."
+.violation AIR302_jdbc_1(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-jdbc>=1.0.0` and import `{orig}` from `airflow.providers.jdbc.hooks.jdbc` instead."
     suppress noqa "AIR302"
 AIR302_jdbc_1(N, n, ORIG) :- (air302_old_of(n, "old_jdbc_1"), air302_moved(n, N, ORIG) ; air302_quoted_jdbc_1(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).
@@ -1067,7 +1067,7 @@ air302_quoted_jdbc_1(n, N, ORIG) :- air302_demand_quoted_jdbc_1(n), air302_strin
 // AIR302_cncf_kubernetes_1(n): a finding at node n, from clause `cncf-kubernetes-1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_cncf_kubernetes_1(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.executors.kubernetes_executor_types` instead."
+.violation AIR302_cncf_kubernetes_1(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.executors.kubernetes_executor_types` instead."
     suppress noqa "AIR302"
 AIR302_cncf_kubernetes_1(N, n, ORIG) :-
     ( air302_old_of(n, "old_cncf_kubernetes_1"), air302_moved(n, N, ORIG)
@@ -1085,7 +1085,7 @@ air302_quoted_cncf_kubernetes_1(n, N, ORIG) :- air302_demand_quoted_cncf_kuberne
 // AIR302_cncf_kubernetes_2(n): a finding at node n, from clause `cncf-kubernetes-2`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_cncf_kubernetes_2(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.k8s_model` instead."
+.violation AIR302_cncf_kubernetes_2(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.k8s_model` instead."
     suppress noqa "AIR302"
 AIR302_cncf_kubernetes_2(N, n, ORIG) :-
     ( air302_old_of_of_of_of(n, "cncf_kubernetes_2"), air302_moved(n, N, ORIG)
@@ -1103,7 +1103,7 @@ air302_quoted_cncf_kubernetes_2(n, N, ORIG) :- air302_demand_quoted_cncf_kuberne
 // AIR302_cncf_kubernetes_3(n): a finding at node n, from clause `cncf-kubernetes-3`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_cncf_kubernetes_3(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.kube_client` instead."
+.violation AIR302_cncf_kubernetes_3(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.kube_client` instead."
     suppress noqa "AIR302"
 AIR302_cncf_kubernetes_3(N, n, ORIG) :-
     ( air302_old_of_of_of(n, "cncf_kubernetes_3"), air302_moved(n, N, ORIG)
@@ -1133,7 +1133,7 @@ air302_quoted_cncf_kubernetes_5(n, N) :- air302_demand_quoted_cncf_kubernetes_5(
 // AIR302_cncf_kubernetes_6(n): a finding at node n, from clause `cncf-kubernetes-6`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_cncf_kubernetes_6(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.kubernetes_helper_functions` instead."
+.violation AIR302_cncf_kubernetes_6(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.kubernetes_helper_functions` instead."
     suppress noqa "AIR302"
 AIR302_cncf_kubernetes_6(N, n, ORIG) :-
     ( air302_old_cncf_kubernetes_6(n), air302_moved(n, N, ORIG)
@@ -1185,7 +1185,7 @@ air302_quoted_cncf_kubernetes_11(n, N) :- air302_demand_quoted_cncf_kubernetes_1
 // AIR302_cncf_kubernetes_12(n): a finding at node n, from clause `cncf-kubernetes-12`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_cncf_kubernetes_12(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.pod_generator` instead."
+.violation AIR302_cncf_kubernetes_12(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-cncf-kubernetes>=7.4.0` and import `{orig}` from `airflow.providers.cncf.kubernetes.pod_generator` instead."
     suppress noqa "AIR302"
 AIR302_cncf_kubernetes_12(N, n, ORIG) :-
     ( air302_old_cncf_kubernetes_12(n), air302_moved(n, N, ORIG)
@@ -1313,7 +1313,7 @@ air302_quoted_slack_1(n, N, ORIG) :- air302_demand_quoted_slack_1(n), air302_str
 // AIR302_slack_2(n): a finding at node n, from clause `slack-2`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_slack_2(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-slack>=1.0.0` and import `{orig}` from `airflow.providers.slack.operators.slack` instead."
+.violation AIR302_slack_2(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-slack>=1.0.0` and import `{orig}` from `airflow.providers.slack.operators.slack` instead."
     suppress noqa "AIR302"
 AIR302_slack_2(N, n, ORIG) :- (air302_old_of(n, "old_slack_2"), air302_moved(n, N, ORIG) ; air302_quoted_slack_2(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).
@@ -1345,7 +1345,7 @@ air302_quoted_zendesk_1(n, N, ORIG) :- air302_demand_quoted_zendesk_1(n), air302
 // AIR302_standard_1(n): a finding at node n, from clause `standard-1`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_standard_1(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-standard>=0.0.3` and import `{orig}` from `airflow.providers.standard.hooks.subprocess` instead."
+.violation AIR302_standard_1(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-standard>=0.0.3` and import `{orig}` from `airflow.providers.standard.hooks.subprocess` instead."
     suppress noqa "AIR302"
 AIR302_standard_1(N, n, ORIG) :- (air302_old_of(n, "old_standard_1"), air302_moved(n, N, ORIG) ; air302_quoted_standard_1(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).
@@ -1365,7 +1365,7 @@ air302_quoted_standard_2(n, N, ORIG) :- air302_demand_quoted_standard_2(n), air3
 // AIR302_standard_3(n): a finding at node n, from clause `standard-3`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_standard_3(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-standard>=0.0.2` and import `{orig}` from `airflow.providers.standard.operators.trigger_dagrun` instead."
+.violation AIR302_standard_3(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-standard>=0.0.2` and import `{orig}` from `airflow.providers.standard.operators.trigger_dagrun` instead."
     suppress noqa "AIR302"
 AIR302_standard_3(N, n, ORIG) :-
     ( air302_old_of_of_of_of(n, "standard_3"), air302_moved(n, N, ORIG)
@@ -1400,7 +1400,7 @@ air302_quoted_standard_6(n, N, ORIG) :- air302_demand_quoted_standard_6(n), air3
 // AIR302_standard_7(n): a finding at node n, from clause `standard-7`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_standard_7(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-standard>=0.0.1` and import `{orig}` from `airflow.providers.standard.operators.python` instead."
+.violation AIR302_standard_7(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-standard>=0.0.1` and import `{orig}` from `airflow.providers.standard.operators.python` instead."
     suppress noqa "AIR302"
 AIR302_standard_7(N, n, ORIG) :- (air302_old_of_of_of(n, "standard_7"), air302_moved(n, N, ORIG) ; air302_quoted_standard_7(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).
@@ -1420,7 +1420,7 @@ air302_quoted_standard_8(n, N) :- air302_demand_quoted_standard_8(n), air302_str
 // AIR302_standard_9(n): a finding at node n, from clause `standard-9`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR302_standard_9(at: node, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-standard>=0.0.3` and import `{orig}` from `airflow.providers.standard.sensors.external_task` instead."
+.violation AIR302_standard_9(at: loc, n: node, orig: loc) code "AIR302" "Install `apache-airflow-providers-standard>=0.0.3` and import `{orig}` from `airflow.providers.standard.sensors.external_task` instead."
     suppress noqa "AIR302"
 AIR302_standard_9(N, n, ORIG) :- (air302_old_of(n, "old_standard_9"), air302_moved(n, N, ORIG) ; air302_quoted_standard_9(n, N, ORIG)),
     inside(n, p1, "module"), within(c2, p1), air302_airflow_name(c2), air302_seen_airflow(n).

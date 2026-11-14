@@ -140,6 +140,8 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         let mut edits: Vec<(usize, usize, Edit)> = Vec::new();
         let mut copies: Vec<(crate::code_rule_dsl::logic::front::Rule, BTreeMap<String, Fact>)> = Vec::new();
         let mut decls: Vec<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::List<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::Name)>)> = Vec::new();
+        // The axes over a guest grammar's kind set made this round: inputs the transducer makes, as the run's are.
+        let mut axes: Vec<String> = Vec::new();
         let mut kindsets: Vec<(String, Vec<String>)> = Vec::new();
         let mut changed = false;
         let mut by_head: Option<HashMap<&str, Vec<usize>>> = None;
@@ -189,6 +191,34 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                         edits.push((i, k, Edit::Kindset(name)));
                         changed = true;
                     }
+                    continue;
+                }
+                // `has(r, f, "field")` and `inside(n, p, "field")` over a guest's node: the axis's kind set is named in
+                // the guest's grammar, as `nearest`'s is (`rr_has_rr_in_<grammar>_<set>`). Unqualified, the kind is
+                // the run language's, and the axis finds no guest node.
+                if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
+                    && let Some((set, descendants)) = crate::code_rule_dsl::logic::front::axis(&a.rel)
+                    && !set.starts_with("rr_in_")
+                    && prog.kindsets.contains_key(set)
+                    && let Some(g) = a.args.iter().find_map(|t| match t {
+                        Term::Var(v) => grammar_of(v),
+                        _ => None,
+                    })
+                {
+                    let copy = format!("rr_in_{}_{set}", g.replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"));
+                    let prefix = if descendants { crate::code_rule_dsl::logic::front::DESCENDANTS } else { crate::code_rule_dsl::logic::front::AXIS };
+                    let name = format!("{prefix}{copy}");
+                    if made.insert(name.clone()) {
+                        let label = dialect_label(&g);
+                        let kinds = prog.kindsets.get(set).cloned().unwrap_or_default();
+                        kindsets.push((copy, kinds.into_iter().map(|k| if qualified(&k).is_some() { k } else { format!("{label}:{k}") }).collect()));
+                        if let Some(d) = prog.decls.get(a.rel.as_str()) {
+                            decls.push((name.clone().into(), d.clone()));
+                        }
+                        axes.push(name.clone());
+                    }
+                    edits.push((i, k, Edit::Rel(name)));
+                    changed = true;
                     continue;
                 }
                 let a = match l {
@@ -253,6 +283,11 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         }
         prog.decls.extend(decls);
         prog.kindsets.extend(kindsets);
+        for axis in axes {
+            if !prog.inputs.contains(&axis) {
+                prog.inputs.push(axis);
+            }
+        }
         if !changed {
             break;
         }
@@ -664,6 +699,9 @@ fn analyse<'r>(rule: &'r crate::code_rule_dsl::logic::front::Rule, base: &HashMa
             "doc_root" => PAIR,
             // A node's parent is in its document (`tape(n, par, size, depth)`, the climbs' walk).
             "tape" => PAIR,
+            // A tree axis's node and its ancestor (`rr_has_<set>(n, a)`, `rr_inside_<set>(n, a)`): `has(r, c, "field")`
+            // over a guest's root r makes c the guest's node.
+            r if crate::code_rule_dsl::logic::front::is_axis(r) => PAIR,
             r => base.get(r).map_or(&[], Vec::as_slice),
         };
         let vars: Vec<&'r str> = cols.iter().filter_map(|&c| var(a.args.get(c))).collect();

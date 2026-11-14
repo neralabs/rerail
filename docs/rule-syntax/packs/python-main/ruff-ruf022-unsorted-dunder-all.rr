@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // RUF022(n): a finding at node n, from clause `unsorted-dunder-all`.
 // Each rule below is one way the JSON `rule` can match.

@@ -4,12 +4,12 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // PYI056(n, detail): findings from clauses `add-to-all`, `remove-from-all`, `method-call-on-all-in-string-annotation`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI056(at: node, attr: node, detail: symbol) "{detail}."
+.violation PYI056(at: loc, attr: node, detail: symbol) "{detail}."
     suppress noqa "PYI056"
 PYI056(ATTR, n, "Add names with `__all__ += [...]` instead of calling `.append()` or `.extend()` on `__all__`; type checkers support `+=` reliably but not every method call") :- kind(n, "attribute"),
     pyi056_callee(n), field(n, "object", c1), pyi056_all_ref(c1), field(n, "attribute", c2),

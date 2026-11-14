@@ -945,6 +945,19 @@ impl BlockProgram {
                         extract::positions(words, count)
                     })
                     .collect();
+                let mut positions = positions;
+                // The tokens by the loop (decision 0177, stage 2a): its starts and lasts.
+                if let Some((r, skip)) = self.records.as_ref().and_then(|r| r.skip.map(|k| (r, k))) {
+                    let (s, l) = crate::records::walk(r, skip, bytes, &outputs);
+                    positions[usize::from(r.starts)] = s;
+                    positions[usize::from(r.lasts)] = l;
+                } else if let Some(r) = self.records.as_ref().filter(|r| !r.rules.is_empty()) {
+                    // The lasts by the end rules: each token's from its first byte.
+                    match crate::records::lasts(r, bytes, &positions[usize::from(r.starts)], &outputs) {
+                        Some(l) => positions[usize::from(r.lasts)] = l,
+                        None => any = true,
+                    }
+                }
                 let codes = match (&self.records, &table) {
                     (Some(r), Some(t)) => {
                         let (codes, bad) = crate::records::pass(r, t, bytes, &positions[usize::from(r.starts)], &positions[usize::from(r.lasts)], &outputs);
@@ -1697,6 +1710,30 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         // `block N recmark O W` a mark: its output, its word's code (0 for any).
         for &(o, w) in &r.marks {
             let _ = writeln!(out, "  block {at} recmark {o} {w}");
+        }
+        // `block N recends …` each byte's end rule, then `block N recrule run|pair|last O` each
+        // rule (decision 0177).
+        if !r.rules.is_empty() {
+            let _ = writeln!(out, "  block {at} recends {}", hex(&r.ends));
+            for rule in &r.rules {
+                let (how, o) = match *rule {
+                    crate::records::EndRule::Run(o) => ("run", o),
+                    crate::records::EndRule::Pair(o) => ("pair", o),
+                    crate::records::EndRule::Last(o) => ("last", o),
+                };
+                let _ = writeln!(out, "  block {at} recrule {how} {o}");
+            }
+        }
+        // `block N recgaps G` the gap marks' bits, `block N recextra K` an extra's mark.
+        if r.gaps != 0 {
+            let _ = writeln!(out, "  block {at} recgaps {}", r.gaps);
+        }
+        if let Some(k) = r.extra {
+            let _ = writeln!(out, "  block {at} recextra {k}");
+        }
+        // `block N recskip O`: the bytes between tokens, the loop's (stage 2a).
+        if let Some(o) = r.skip {
+            let _ = writeln!(out, "  block {at} recskip {o}");
         }
     }
 }

@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -89,7 +89,7 @@ c400_comprehension_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "conca
 // C400(n, detail): findings from clauses `generator-list-identity`, `generator-list`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C400(at: node, c400_call: node, detail: symbol) "{detail}."
+.violation C400(at: loc, c400_call: node, detail: symbol) "{detail}."
     suppress noqa "C400"
 C400(CALL, n, "Replace with `list(<iterable>)`; the generator passes each item through unchanged. Keep it if the target unpacks or assigns to an attribute or subscript, where the rewrite changes behavior") :- c400_identity_call(n, CALL).
 C400(CALL, n, "Replace with `list(<iterable>)`; the generator passes each item through unchanged. Keep it if the target unpacks or assigns to an attribute or subscript, where the rewrite changes behavior") :- c400_identity_in_annotation(n, CALL).

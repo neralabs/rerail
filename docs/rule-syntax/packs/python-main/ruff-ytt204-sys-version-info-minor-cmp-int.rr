@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // YTT204(n): a finding at node n, from clause `sys-version-info-minor-cmp-int`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation YTT204(at: node, c: node) "Compare `sys.version_info` to a tuple with the major and minor version, like `sys.version_info >= (3, 9)`, rather than testing `sys.version_info.minor` alone, which misjudges a new major version."
+.violation YTT204(at: loc, c: node) "Compare `sys.version_info` to a tuple with the major and minor version, like `sys.version_info >= (3, 9)`, rather than testing `sys.version_info.minor` alone, which misjudges a new major version."
     suppress noqa "YTT204"
 YTT204(C, n) :- ytt204_target(n), node(_, n, _, _, _), C = n.
 YTT204(C, n) :- ytt204_in_string(n, C).

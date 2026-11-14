@@ -405,6 +405,7 @@ impl Writer<'_> {
                 SpanIn::Line => "line".to_owned(),
                 SpanIn::Comment => "comment".to_owned(),
                 SpanIn::Kind(k) => format!("kind:{k}"),
+                SpanIn::ChildOf(k) => format!("child_of:{k}"),
                 SpanIn::Capture(p, g) => format!("capture:{g}:{p}"),
             };
             self.row("rx_span", vec![s(&span), s(text)]);
@@ -759,6 +760,7 @@ impl<'a, C: Cell> Reader<'a, C> {
                 None if named == "line" => SpanIn::Line,
                 None if named == "comment" => SpanIn::Comment,
                 Some(("kind", k)) => SpanIn::Kind(k.to_owned()),
+                Some(("child_of", k)) => SpanIn::ChildOf(k.to_owned()),
                 Some(("capture", rest)) => match rest.split_once(':') {
                     Some((g, p)) => SpanIn::Capture(p.to_owned(), g.to_owned()),
                     None => return Err(bad(format!("no span {named:?}"))),

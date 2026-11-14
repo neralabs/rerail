@@ -57,6 +57,8 @@ mod tree_pages;
 #[allow(dead_code)]
 mod tree_result_segments;
 #[cfg(test)]
+pub(crate) mod test_support;
+#[cfg(test)]
 mod tests;
 mod workspaces;
 pub mod working_set;
@@ -65,10 +67,10 @@ pub mod hazards;
 
 pub use compression::compress;
 pub use frames::forget_snapshot as forget_frames_snapshot;
-pub use frames::{Admitted as AdmittedFrame, Encoded as EncodedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
+pub use frames::{Admitted as AdmittedFrame, Encoded as EncodedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, SymbolReader as FrameSymbolReader, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;
-pub use atoms::Sym;
+pub use atoms::{ProcessIds, StoreIds, Sym};
 pub use derivation::{ABSENT, Binding, Derivation, DerivationInput, DerivationRecord, StoredDerivation};
 pub use facts_memo::{FactsCompletion, FactsFrame, FactsMemo, FactsMemoKey, FactsPlanSet, FactsResult};
 pub use schema::STORE_FILE_NAME;
@@ -668,7 +670,7 @@ impl Drop for ContentStore {
         // With a writer, the atoms are its to write: every handle shares them, and its batch's commit appends them (a
         // handle dropped inside a wave writes nothing). The queued writes first: they may name atoms this handle holds.
         if self.atoms.pending() && self.write_back.is_some() {
-            self.write_back("the atoms at a handle's close", 0, Vec::new(), Box::new(|store| store.flush_atoms()));
+            self.write_back_syms(crate::content_store::write_back::Syms::None, "the atoms at a handle's close", 0, Vec::new(), Box::new(|store| store.flush_atoms()));
             self.end_writer();
         } else {
             self.end_writer();

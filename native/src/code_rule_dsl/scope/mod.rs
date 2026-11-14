@@ -41,8 +41,11 @@ pub const TYPE: u8 = 2;
 
 /// Nesting deeper than this fails the build instead of risking the stack.
 pub const MAX_BUILD_DEPTH: u32 = 2_000;
-/// Stack the recursive build may use below its entry point.
+/// Stack the recursive build may use below its entry point, where the thread's stack bounds are unknown.
 pub const MAX_BUILD_STACK_BYTES: usize = 512 << 10;
+/// Stack the recursive build leaves free on its thread, where the bounds are known (`stack_floor`): for what runs
+/// after it fails, and for the deepest frame between two checks.
+pub const BUILD_STACK_RESERVE: usize = 256 << 10;
 /// Nodes between two reads of the evaluation deadline.
 pub const DEADLINE_INTERVAL: usize = 1_024;
 
@@ -644,6 +647,7 @@ impl ScopeTable {
             cap,
             depth: 0,
             stack_base: stack_address(),
+            stack_floor: stack_floor(),
             deadline,
             php_names,
         };
@@ -1243,6 +1247,47 @@ fn latest(bindings: &[Binding], keep: impl Fn(&Binding) -> bool) -> Option<usize
         .map(|(index, _)| index)
 }
 
+/// The lowest address a recursion on this thread may reach, keeping `BUILD_STACK_RESERVE` free below it; `None`
+/// where the thread's stack bounds are not known. Stacks grow down on every platform the engine runs on.
+pub fn stack_floor() -> Option<usize> {
+    let (top, size) = thread_stack()?;
+    let low = top.checked_sub(size)?;
+    let floor = low.checked_add(BUILD_STACK_RESERVE)?;
+    (floor < stack_address()).then_some(floor)
+}
+
+/// This thread's stack: its highest address and its size.
+#[cfg(target_os = "macos")]
+fn thread_stack() -> Option<(usize, usize)> {
+    // SAFETY: both read the calling thread's own attributes.
+    let (top, size) = unsafe {
+        let this = libc::pthread_self();
+        (libc::pthread_get_stackaddr_np(this) as usize, libc::pthread_get_stacksize_np(this))
+    };
+    (top != 0 && size != 0).then_some((top, size))
+}
+
+/// This thread's stack: its highest address and its size.
+#[cfg(target_os = "linux")]
+fn thread_stack() -> Option<(usize, usize)> {
+    // SAFETY: the attributes are initialized by `pthread_getattr_np` and destroyed once read.
+    unsafe {
+        let mut attr: libc::pthread_attr_t = std::mem::zeroed();
+        if libc::pthread_getattr_np(libc::pthread_self(), &mut attr) != 0 {
+            return None;
+        }
+        let (mut low, mut size) = (std::ptr::null_mut(), 0usize);
+        let got = libc::pthread_attr_getstack(&attr, &mut low, &mut size);
+        libc::pthread_attr_destroy(&mut attr);
+        (got == 0 && size != 0).then(|| (low as usize + size, size))
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn thread_stack() -> Option<(usize, usize)> {
+    None
+}
+
 /// An address in the current stack frame.
 #[inline(always)]
 pub fn stack_address() -> usize {
@@ -1307,6 +1352,8 @@ pub struct Builder<'d> {
     pub cap: usize,
     depth: u32,
     stack_base: usize,
+    /// The lowest address the build may reach on its thread's stack (`stack_floor`), when its bounds are known.
+    stack_floor: Option<usize>,
     pub deadline: &'d dyn Fn() -> bool,
     /// PHP: the file's resolved names, where the caller built them (and charged their cost); the
     /// flow builds them otherwise.
@@ -1325,7 +1372,13 @@ impl Builder<'_> {
         }
         self.depth += 1;
         if self.depth > MAX_BUILD_DEPTH
-            || self.stack_base.abs_diff(stack_address()) > MAX_BUILD_STACK_BYTES
+            || match self.stack_floor {
+                // The stack the thread has: a debug build's frames are several times a release build's, so a fixed
+                // budget from the entry failed files in one build that the other reads (posthog's schema.py, 118
+                // deep, failed every debug run).
+                Some(floor) => stack_address() < floor,
+                None => self.stack_base.abs_diff(stack_address()) > MAX_BUILD_STACK_BYTES,
+            }
         {
             return Err(BuildError::Depth);
         }

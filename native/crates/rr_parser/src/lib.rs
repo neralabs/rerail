@@ -94,7 +94,12 @@ fn compile() -> Result<Compiled, String> {
 
 /// The grammar compiled with tier 2 in `shape`.
 pub fn compile_with(shape: bitlex_compile::Shape) -> Result<Compiled, String> {
-    let stmts = ::bitlex::syntax::parse(GRAMMAR)?;
+    compile_text(GRAMMAR, shape)
+}
+
+/// `compile_with` of a grammar's text (a test's variant of the `.rr` grammar).
+pub fn compile_text(grammar: &str, shape: bitlex_compile::Shape) -> Result<Compiled, String> {
+    let stmts = ::bitlex::syntax::parse(grammar)?;
     let own: RefCell<HashMap<String, u16>> = RefCell::new(HashMap::new());
     let id = |names: &[&str], name: &str| -> u16 {
         if let Some(at) = names.iter().position(|n| *n == name).filter(|&at| at > 0) {
@@ -256,7 +261,8 @@ pub mod tests {
         // the token, 0133): 3,932 words, the states and arms the same. The token marks the grammar
         // takes nowhere tested by `TOKEN`, once a token, not by each state (0139): 3,515. A
         // number's 19 digits checked at its token (`CHECK`, 0133) in the arms that take one: 3,563.
-        assert!(states <= 413 && arms <= 3004 && c.program.words.len() <= 3563, "{states} states, {arms} arms, {} words", c.program.words.len());
+        // A float one token, made a float by the mark after it (`relabel _ as float`): 3,322.
+        assert!(states <= 413 && arms <= 3004 && c.program.words.len() <= 3322, "{states} states, {arms} arms, {} words", c.program.words.len());
         let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
         let cut = native_cpu_clusters::by_rules(&native);
         assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");
@@ -453,8 +459,10 @@ pub mod tests {
     }
 
     /// Tier 1 of the grammar on Metal (the forward carry: its fixed points, its passes for the
-    /// `back_fill`s, its position planes) equals Cranelift's over the corpus as one batch: every
-    /// output word, every position, every total. Prints the GPU time.
+    /// `back_fill`s, its position planes) equals Cranelift's over the corpus as one batch: the
+    /// records (every position, every code), every total, and every output word but the last-byte
+    /// mask the CPU does not make (its lasts are by the end rules, decision 0177: the contract
+    /// between the tiers is the records). Prints the GPU time.
     #[test]
     #[cfg(target_os = "macos")]
     #[ignore = "the corpus on Metal: run by hand"]
@@ -469,11 +477,14 @@ pub mod tests {
         let native = &c.native;
         let got = run_serial_split(&[native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
         let mut differ = 0;
+        // The CPU's form leaves out the masks its record pass makes (`BlockNative::records_made`).
+        let unmade = native.records_made();
+        let same_outputs = |g: &[Vec<u64>], w: &[Vec<u64>]| g.len() == w.len() && (0..w.len()).all(|o| unmade.contains(&o) || g[o] == w[o]);
         for (k, (g, w)) in got.run.files.iter().zip(&want).enumerate() {
-            if g.outputs != w.outputs || g.positions != w.positions || g.totals != w.totals || g.codes != w.codes {
+            if !same_outputs(&g.outputs, &w.outputs) || g.positions != w.positions || g.totals != w.totals || g.codes != w.codes {
                 differ += 1;
                 if differ < 4 {
-                    let o = (0..w.outputs.len()).find(|&o| g.outputs.get(o) != w.outputs.get(o));
+                    let o = (0..w.outputs.len()).find(|&o| !unmade.contains(&o) && g.outputs.get(o) != w.outputs.get(o));
                     eprintln!("file {k} ({} bytes) differs: output {o:?}, positions equal {}, totals {:?} / {:?}", refs[k].len(), g.positions == w.positions, g.totals, w.totals);
                 }
             }
@@ -1282,7 +1293,7 @@ pub mod tests {
         ];
         for (src, taken) in &cases {
             let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
-            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter");
+            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter {:?}", interp.as_ref().err());
             for p in [&c.parser, &machine.parser] {
                 match p.image(src.as_bytes()) {
                     Ok(t) => {
@@ -1317,7 +1328,7 @@ pub mod tests {
         }
         for (src, taken) in &cases {
             let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
-            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter");
+            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter {:?}", interp.as_ref().err());
             for p in [&c.parser, &machine.parser] {
                 match p.image(src.as_bytes()) {
                     Ok(t) => {
@@ -1328,6 +1339,220 @@ pub mod tests {
                 }
             }
         }
+    }
+
+    /// A token's end by its rule (`run`, `pair`, decision 0177) is the last-byte mask it was
+    /// written as before: the same positions, every token's, over a corpus sample and the
+    /// samples, from the grammar both ways.
+    #[test]
+    fn token_rules_are_their_last_masks() {
+        let old = crate::GRAMMAR
+            .replace("start hash & directive run word", "start hash & directive last hashword & ~next(hashword & ~directive)")
+            .replace("start alpha & ident & ~prev(ident) run word", "start alpha & ident & ~prev(ident) last ident & ~next(ident)")
+            .replace("start digit & int & ~prev(int) run num_run", "start digit & int & ~prev(int) last numeral & ~next(numeral)")
+            .replace("start punct & p_start pair two_start", "start punct & p_start last p_last");
+        assert!(old.lines().filter(|l| l.starts_with("token ")).all(|l| !l.contains(" run ") && !l.contains(" pair ")), "every rule written back as its mask");
+        let (a, b) = (crate::compiled().expect("compiles"), crate::compile_text(&old, rerail_compiler::bitlex_masks::Shape::Rules).expect("the old form compiles"));
+        let files = corpus();
+        let mut inputs: Vec<&[u8]> = files.iter().step_by(7).map(|f| f.as_bytes()).collect();
+        inputs.extend(crate::SAMPLES.iter().map(|s| s.as_bytes()));
+        let (ra, rb) = (a.program.block_programs[0].records.as_ref().expect("records"), b.program.block_programs[0].records.as_ref().expect("records"));
+        for f in &inputs {
+            let (x, y) = (a.program.block_programs[0].run(f), b.program.block_programs[0].run(f));
+            assert_eq!(x.positions[usize::from(ra.starts)], y.positions[usize::from(rb.starts)], "the starts");
+            let (lx, ly) = (&x.positions[usize::from(ra.lasts)], &y.positions[usize::from(rb.lasts)]);
+            if let Some(k) = lx.iter().zip(ly).position(|(p, q)| p != q) {
+                let s0 = x.positions[usize::from(ra.starts)][k] as usize;
+                let text = String::from_utf8_lossy(&f[s0.saturating_sub(10)..(s0 + 30).min(f.len())]).into_owned();
+                panic!("token {k} at {s0}: the rule's last {}, the mask's {}: {text:?}", lx[k], ly[k]);
+            }
+            assert_eq!(lx.len(), ly.len(), "the lasts' count");
+        }
+        eprintln!("{} files: the same starts and lasts", inputs.len());
+    }
+
+    /// The end rules' lasts (decision 0177) are the lasts the masks give: every token's, over the
+    /// corpus and the samples. The interpreter takes its lasts from the rules; the extract of the
+    /// last-byte masks is the meaning they replace.
+    #[test]
+    fn end_rules_give_the_masks_lasts() {
+        let c = crate::compiled().expect("compiles");
+        let block = &c.program.block_programs[0];
+        let r = block.records.as_ref().expect("records");
+        assert!(!r.rules.is_empty(), "the grammar's tokens have end rules");
+        let lasts_out = block.extract_outputs()[usize::from(r.lasts)];
+        let files = corpus();
+        let mut inputs: Vec<&[u8]> = files.iter().map(|f| f.as_bytes()).collect();
+        inputs.extend(crate::SAMPLES.iter().map(|s| s.as_bytes()));
+        let mut tokens = 0;
+        for f in &inputs {
+            let run = block.run(f);
+            let words = &run.outputs[lasts_out];
+            let count = words.iter().map(|w| w.count_ones() as usize).sum();
+            let masks = rerail_compiler::block::extract::positions(words, count);
+            assert_eq!(run.positions[usize::from(r.lasts)], masks, "the rules' lasts");
+            tokens += masks.len();
+        }
+        eprintln!("{} files, {tokens} tokens: the rules' lasts are the masks'", inputs.len());
+    }
+
+    /// Decision 0177, stage 2a: the tokens by the loop, each at the first byte after the one
+    /// before that `skip` does not hold, are the starts' and lasts' masks, on every file the
+    /// masks take (a file they refuse, its totals' flag set, is the engine's either way).
+    #[test]
+    fn the_loops_tokens_are_the_masks() {
+        let c = crate::compiled().expect("compiles");
+        let block = &c.program.block_programs[0];
+        let r = block.records.as_ref().expect("records");
+        assert!(r.skip.is_some(), "the records have the bytes between tokens");
+        let outs = block.extract_outputs();
+        let (starts_out, lasts_out) = (outs[usize::from(r.starts)], outs[usize::from(r.lasts)]);
+        let files = corpus();
+        let mut inputs: Vec<&[u8]> = files.iter().map(|f| f.as_bytes()).collect();
+        inputs.extend(crate::SAMPLES.iter().map(|s| s.as_bytes()));
+        let (mut tokens, mut refused) = (0, 0);
+        for f in &inputs {
+            let run = block.run(f);
+            if run.totals.iter().any(|&t| t != 0) {
+                refused += 1;
+                continue;
+            }
+            let mask = |o: usize| {
+                let words = &run.outputs[o];
+                rerail_compiler::block::extract::positions(words, words.iter().map(|w| w.count_ones() as usize).sum())
+            };
+            let starts = mask(starts_out);
+            assert_eq!(run.positions[usize::from(r.starts)], starts, "the loop's starts");
+            assert_eq!(run.positions[usize::from(r.lasts)], mask(lasts_out), "the loop's lasts");
+            tokens += starts.len();
+        }
+        eprintln!("{} files ({refused} refused), {tokens} tokens: the loop's are the masks'", inputs.len());
+    }
+
+    /// Decision 0177's guard for stage 1: on the CPU, no token's last byte comes from a mask
+    /// extract. The records have end rules, and the CPU's form makes the lasts' output a zero
+    /// constant, so the last-byte masks only it read are not made.
+    #[test]
+    fn the_cpu_makes_no_lasts_mask() {
+        use rerail_compiler::block_native::BlockInst;
+        let c = crate::compiled().expect("compiles");
+        let k = c.native.ruled_lasts().expect("the records' lasts by end rules");
+        let cpu = c.native.cpu_form();
+        assert!(matches!(cpu.insts[usize::from(cpu.outputs[k])], BlockInst::Const(0)), "the CPU makes the lasts' mask");
+        assert!(cpu.insts.len() < c.native.insts.len(), "the last-byte masks pruned");
+        eprintln!("the CPU's form: {} operations, the bit-parallel form's {}", cpu.insts.len(), c.native.insts.len());
+    }
+
+    /// Decision 0177's guard for stage 2a: on the CPU, no token's first byte comes from a mask
+    /// extract. The loop finds each start, so the starts' output is the zero constant too.
+    #[test]
+    fn the_cpu_makes_no_starts_mask() {
+        use rerail_compiler::block_native::BlockInst;
+        let c = crate::compiled().expect("compiles");
+        let k = c.native.walked_starts().expect("the records' starts by the loop");
+        let cpu = c.native.cpu_form();
+        assert!(matches!(cpu.insts[usize::from(cpu.outputs[k])], BlockInst::Const(0)), "the CPU makes the starts' mask");
+        assert_eq!(c.native.records_made().len(), c.native.extracts.len(), "every extract the record pass's");
+    }
+
+    /// The CPU's tier 1 (the JIT) makes the interpreter's records: each file's starts, lasts,
+    /// codes and totals, over the samples, a corpus sample and files cut at the blocks' edges.
+    #[test]
+    fn the_cpus_records_are_the_interpreters() {
+        let c = crate::compiled().expect("compiles");
+        let block = &c.program.block_programs[0];
+        let r = block.records.as_ref().expect("records");
+        let files = corpus();
+        let mut inputs: Vec<Vec<u8>> = crate::SAMPLES.iter().map(|s| s.as_bytes().to_vec()).collect();
+        inputs.extend(files.iter().step_by(5).map(|f| f.as_bytes().to_vec()));
+        for n in [1usize, 63, 64, 65, 127, 128, 129, 200] {
+            inputs.push(format!("r(x) :- a(x), {}.\n", "b".repeat(n)).into_bytes());
+            inputs.push(format!("{}\"open", " ".repeat(n)).into_bytes());
+        }
+        let refs: Vec<&[u8]> = inputs.iter().map(|f| f.as_slice()).collect();
+        let got = c.parser.tier1.run_files(&refs);
+        for (k, (f, g)) in refs.iter().zip(&got).enumerate() {
+            let want = block.run(f);
+            for (what, e) in [("starts", usize::from(r.starts)), ("lasts", usize::from(r.lasts))] {
+                let (x, y) = (&g.positions[e], &want.positions[e]);
+                if let Some(i) = (0..x.len().max(y.len())).find(|&i| x.get(i) != y.get(i)) {
+                    let at = y.get(i).or(x.get(i)).copied().unwrap_or(0) as usize;
+                    let text = String::from_utf8_lossy(&f[at.saturating_sub(8).min(f.len())..(at + 12).min(f.len())]).into_owned();
+                    let around = |v: &Vec<u32>, w: &Vec<u32>| (i.saturating_sub(2)..(i + 3).min(v.len())).map(|j| (v[j], w.get(j).copied())).collect::<Vec<_>>();
+                    panic!("file {k} ({} bytes): {what} {i} the CPU's {:?}, the interpreter's {:?} ({} and {} of them), near {text:?}; the CPU's (start, last) {:?}, the interpreter's {:?}", f.len(), x.get(i), y.get(i), x.len(), y.len(), around(&g.positions[usize::from(r.starts)], &g.positions[usize::from(r.lasts)]), around(&want.positions[usize::from(r.starts)], &want.positions[usize::from(r.lasts)]));
+                }
+            }
+            assert_eq!(g.codes, want.codes, "file {k}: the codes");
+            assert_eq!(g.totals, want.totals, "file {k}: the totals");
+        }
+    }
+
+    /// Decision 0177's census of the CPU's form: each output, its label, the operations it
+    /// reads and those only it reads (what its going would take out).
+    #[test]
+    #[ignore = "a census: run by hand"]
+    fn cpu_outputs_by_operations() {
+        let c = crate::compiled().expect("compiles");
+        let cpu = c.native.cpu_form();
+        let n = cpu.insts.len();
+        let reach = |o: usize| {
+            let mut seen = vec![false; n];
+            let mut todo = vec![usize::from(cpu.outputs[o])];
+            while let Some(x) = todo.pop() {
+                if x < n && !seen[x] {
+                    seen[x] = true;
+                    todo.extend(cpu.insts[x].operands());
+                }
+            }
+            seen
+        };
+        let all: Vec<Vec<bool>> = (0..cpu.outputs.len()).map(reach).collect();
+        let mut rows = Vec::new();
+        for o in 0..cpu.outputs.len() {
+            let mine = all[o].iter().filter(|&&b| b).count();
+            let only = (0..n).filter(|&x| all[o][x] && (0..cpu.outputs.len()).all(|p| p == o || !all[p][x])).count();
+            let mut label: Vec<String> = c.labels.iter().filter(|(_, k)| usize::from(*k) == o).map(|(l, _)| l.clone()).collect();
+            label.dedup();
+            if let Some(r) = &c.native.records {
+                use rerail_compiler::records::EndRule;
+                for rule in &r.rules {
+                    match *rule {
+                        EndRule::Run(k) if usize::from(k) == o => label.push("run".into()),
+                        EndRule::Pair(k) if usize::from(k) == o => label.push("pair".into()),
+                        EndRule::Last(k) if usize::from(k) == o => label.push("last".into()),
+                        _ => {}
+                    }
+                }
+                if r.skip.map(usize::from) == Some(o) {
+                    label.push("skip".into());
+                }
+                for (m, &(k, w)) in r.marks.iter().enumerate() {
+                    if usize::from(k) == o {
+                        label.push(format!("recmark{m}(w{w})"));
+                    }
+                }
+            }
+            rows.push((only, mine, o, label.join(",")));
+        }
+        rows.sort_by(|a, b| b.cmp(a));
+        eprintln!("the CPU's form: {n} operations, {} outputs", cpu.outputs.len());
+        for (only, mine, o, label) in rows {
+            eprintln!("  output {o:3} {label:30} reads {mine:4}, only it {only:4}");
+        }
+    }
+
+    /// Decision 0177's guard for the marks: none is a start mask. The marks between tokens are
+    /// the records' gap marks, lifted by the record pass; the marks of one word and the token
+    /// marks are the word alone or their terms at the token; tier 2 reads no mask of any mark.
+    #[test]
+    fn the_marks_are_not_start_masks() {
+        let c = crate::compiled().expect("compiles");
+        let r = c.native.records.as_ref().expect("records");
+        assert!(r.gaps != 0, "gap marks");
+        assert!(r.extra.is_some(), "the extra's mark");
+        // `TOKEN m=1+k` would read mask `k` for any mark; `m=128` is the extras' alone.
+        let any_mark = |l: &&str| l.contains(" TOKEN m=") && !l.contains(" TOKEN m=128 ");
+        assert!(!c.words.lines().any(|l| any_mark(&l)), "tier 2 reads no mask of any mark");
     }
 
     /// A float read as simdjson reads one: digits, a `.`, digits, then a byte that is not
@@ -1344,10 +1569,17 @@ pub mod tests {
             cases.push((format!("{head}a(x) :- a(y), x = y - 0.125.\n"), true));
             cases.push((format!("{head}a(1.2.3).\n"), false));
             cases.push((format!("{head}a(x) :- a(y), x = 10.25.5.\n"), false));
+            cases.push((format!("{head}a(x) :- a(y), x = -1.5, y = -20.\n"), true));
+            cases.push((format!("{head}.limit 1.5\na(1).\n"), true));
+            cases.push((format!("{head}.options {{\"a\": 1.5, \"b\": -0.25, \"c\": 3}}\n"), true));
+            cases.push((format!("{head}a(1.5, 1234.5, 2)."), true));
         }
+        // A float the file ends with: no token after it to mark.
+        cases.push((".decl a(x: number)\n.limit 1.5".to_string(), false));
+        cases.push((".decl a(x: number)\n.limit 1.5 // a comment".to_string(), false));
         for (src, taken) in &cases {
             let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
-            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter");
+            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter {:?}", interp.as_ref().err());
             for p in [&c.parser, &machine.parser] {
                 match p.image(src.as_bytes()) {
                     Ok(t) => {

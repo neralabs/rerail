@@ -4,12 +4,12 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // PT008(n): a finding at node n, from clause `patch-with-lambda`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT008(at: node, f: node) "Pass the lambda's result to `{f}` as `return_value=` instead of a `lambda` that ignores its arguments; keep the lambda if its body must run on every call."
+.violation PT008(at: loc, f: node) "Pass the lambda's result to `{f}` as `return_value=` instead of a `lambda` that ignores its arguments; keep the lambda if its body must run on every call."
     suppress noqa "PT008"
 PT008(F, n) :- kind(n, "call"),
     ( field(n, "function", c1), pt008_fn_patch(c1, F), field(n, "arguments", c2), kind(c2, "argument_list"), pt008_alt_17(c2)

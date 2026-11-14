@@ -4,12 +4,12 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // C420(n): a finding at node n, from clause `unnecessary-dict-comprehension-for-iterable`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C420(at: node, comp: node) "Replace this comprehension with `dict.fromkeys(iterable, value)`, omitting the value when it is None; if the loop unpacks its items, do this only when they are already tuples."
+.violation C420(at: loc, comp: node) "Replace this comprehension with `dict.fromkeys(iterable, value)`, omitting the value when it is None; if the loop unpacks its items, do this only when they are already tuples."
     suppress noqa "C420"
 C420(COMP, n) :- c420_target(n), node(_, n, _, _, _), COMP = n.
 C420(COMP, n) :- c420_in_annotation(n, COMP).

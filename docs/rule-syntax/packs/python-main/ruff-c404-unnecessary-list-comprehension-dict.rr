@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // C404(n): a finding at node n, from clause `unnecessary-list-comprehension-dict`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C404(at: node, call: node) "Rewrite `dict([(k, v) for ...])` as the dict comprehension `{{k: v for ...}}`; leave it when the pair unpacks with `*`, as in `(k, *v)`."
+.violation C404(at: loc, call: node) "Rewrite `dict([(k, v) for ...])` as the dict comprehension `{{k: v for ...}}`; leave it when the pair unpacks with `*`, as in `(k, *v)`."
     suppress noqa "C404"
 C404(CALL, n) :- c404_target(n), node(_, n, _, _, _), CALL = n.
 C404(CALL, n) :- c404_in_annotation(n, CALL).

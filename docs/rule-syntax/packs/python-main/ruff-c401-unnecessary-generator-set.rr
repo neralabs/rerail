@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -89,7 +89,7 @@ c401_comprehension_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "conca
 // C401(n): a finding at node n, from clause `generator-set-identity`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C401(at: node, c401_call: node) "Replace with `set(<iterable>)`; the generator passes each item through unchanged. Keep it if the target unpacks or assigns to an attribute or subscript, where the rewrite changes behavior."
+.violation C401(at: loc, c401_call: node) "Replace with `set(<iterable>)`; the generator passes each item through unchanged. Keep it if the target unpacks or assigns to an attribute or subscript, where the rewrite changes behavior."
     suppress noqa "C401"
 C401(CALL, n) :- c401_identity_call(n, CALL).
 C401(CALL, n) :- c401_identity_in_annotation(n, CALL).
@@ -97,7 +97,7 @@ C401(CALL, n) :- c401_identity_in_annotation(n, CALL).
 // C401_generator_set(n): a finding at node n, from clause `generator-set`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C401_generator_set(at: node, c401_call: node) code "C401" "Rewrite `set(<generator>)` as a set comprehension: `{{expr for ...}}` instead of `set(expr for ...)`."
+.violation C401_generator_set(at: loc, c401_call: node) code "C401" "Rewrite `set(<generator>)` as a set comprehension: `{{expr for ...}}` instead of `set(expr for ...)`."
     suppress noqa "C401"
 C401_generator_set(CALL, n) :- c401_comprehension_call(n, CALL).
 C401_generator_set(CALL, n) :- c401_comprehension_in_annotation(n, CALL).

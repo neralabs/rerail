@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -59,7 +59,7 @@ ruf020_union_in_string(n, N) :- kind(n, "string"),
 // RUF020(n): a finding at node n, from clause `never-in-pep604-union`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF020(at: node, n: node) "Keep only the other members of this `|` union; `{n}` has no values, so it adds nothing. If that leaves `None | None`, write a single `None`."
+.violation RUF020(at: loc, n: node) "Keep only the other members of this `|` union; `{n}` has no values, so it adds nothing. If that leaves `None | None`, write a single `None`."
     suppress noqa "RUF020"
 RUF020(N, n) :- ruf020_pep604_operand(n), node(_, n, _, _, _), N = n.
 RUF020(N, n) :- ruf020_pep604_in_string(n, N).
@@ -67,7 +67,7 @@ RUF020(N, n) :- ruf020_pep604_in_string(n, N).
 // RUF020_never_in_typing_union(n): a finding at node n, from clause `never-in-typing-union`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF020_never_in_typing_union(at: node, n: node) code "RUF020" "Keep only the other members of this `Union[...]`; `{n}` has no values, so it adds nothing. If one member is left, use it directly without `Union`."
+.violation RUF020_never_in_typing_union(at: loc, n: node) code "RUF020" "Keep only the other members of this `Union[...]`; `{n}` has no values, so it adds nothing. If one member is left, use it directly without `Union`."
     suppress noqa "RUF020"
 RUF020_never_in_typing_union(N, n) :- ruf020_union_member(n), node(_, n, _, _, _), N = n.
 RUF020_never_in_typing_union(N, n) :- ruf020_union_in_string(n, N).

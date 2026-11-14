@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // RUF048(n): a finding at node n, from clause `map-int-version-parsing`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF048(at: node, r: node) "`int` fails on non-numeric version parts such as `post1`; parse with `packaging.version.parse(...)` instead, unless the version is known to be purely numeric."
+.violation RUF048(at: loc, r: node) "`int` fails on non-numeric version parts such as `post1`; parse with `packaging.version.parse(...)` instead, unless the version is known to be purely numeric."
     suppress noqa "RUF048"
 RUF048(R, n) :- ruf048_map_int_version(n),
     match("(?s)(?:\\*(?:[\\s\\\\]|#[^\\n]*)*)?(?P<R>.*)", n).

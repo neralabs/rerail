@@ -115,7 +115,8 @@ pub(super) fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile
     // a batch combined its pack again every time. Pinned under the entry's own owner until that run holds it
     // (`release`); a run that never names it leaves the pins to lapse.
     let lease = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64) + LEASE_SECS;
-    for kept in [source, text_source] {
+    // The entry, and every source its text was kept as (the text and its image, decision 0173).
+    for kept in std::iter::once(source).chain(text_source) {
         store.pin_source(kept, &owner(key), lease)?;
     }
     Ok(true)
@@ -155,8 +156,8 @@ impl Drop for Pins<'_> {
 /// write when this process queued one.
 pub(super) fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::sync::Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>) {
     let (key, late) = (*key, std::sync::Arc::clone(late));
-    cache.write_back(
-        "the combined program's text, named",
+    cache.write_back_syms(
+        crate::content_store::write_back::Syms::None, "the combined program's text, named",
         0,
         Vec::new(),
         Box::new(move |store| {
