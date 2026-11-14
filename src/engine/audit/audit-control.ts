@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { checkoutRealpath, earlierRealpath, physicalPath } from "../catalog/checkout-control.js";
 import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
@@ -83,6 +83,11 @@ function ancestors(path: string): string[] {
 function canonicalWorkspace(path: string): string { try { return checkoutRealpath(path); } catch { return resolve(path); } }
 /** {@link canonicalWorkspace} as Rerail 0.1.4 and earlier gave it, the key they saved a workspace's settings under. */
 function earlierWorkspace(path: string): string { try { return earlierRealpath(path); } catch { return resolve(path); } }
+/** The audit settings rows saved under either of two keys, `stored` and `earlier`, as a prepared statement. */
+function settingsUnderEither(database: RerailDatabase) {
+  return database.select().from(auditSettings)
+    .where(inArray(auditSettings.workspaceRoot, [sql.placeholder("stored"), sql.placeholder("earlier")])).prepare();
+}
 function controls(
   databasePath: string,
   row: { cwd: string; endedAt: number | null },
@@ -156,14 +161,18 @@ export class SqliteAuditControlStore {
    * The row saved under `workspaceRoot`, the canonical key, else the one Rerail 0.1.4 and earlier saved for the same
    * folder under the key `spelled` (the folder as the session or caller spelt it) gave it on Windows. An older Rerail
    * sharing the database goes on writing that row, so it is read where it is rather than copied. Both keys are read in
-   * one statement, so a folder with no row under either costs one read, as a read of the canonical key alone does.
+   * one statement, prepared once per store, so a folder with no row under either costs no more than a read of the
+   * canonical key alone.
    */
   #settingsRow(workspaceRoot: string, spelled: string): typeof auditSettings.$inferSelect | undefined {
     const earlier = this.#earlierKey(workspaceRoot, spelled);
     if (earlier === workspaceRoot) return this.#database.select().from(auditSettings).where(eq(auditSettings.workspaceRoot, workspaceRoot)).get();
-    const rows = this.#database.select().from(auditSettings).where(inArray(auditSettings.workspaceRoot, [workspaceRoot, earlier])).all();
+    this.#settingsUnderEither ??= settingsUnderEither(this.#database);
+    const rows = this.#settingsUnderEither.all({ stored: workspaceRoot, earlier });
     return rows.find(row => row.workspaceRoot === workspaceRoot) ?? rows[0];
   }
+
+  #settingsUnderEither: ReturnType<typeof settingsUnderEither> | undefined;
 
   /**
    * The keys Rerail 0.1.4 and earlier gave each folder spelling this store was asked about. The runtime reads a session's
