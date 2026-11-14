@@ -63,7 +63,7 @@ pub fn run(prog: &Program, db: &Connection, mut inputs: Inputs, lowered: Option<
     };
     for root in roots.iter().filter(|r|!clean.contains(*r)) {
         let got=component::kept_rows(db,root).zip(provenance.remove(root).flatten())
-            .map(|((types,flat,n),reads)|(rows_digest(types.len(),&flat,n),types,flat,n,reads));
+            .map(|((types,flat,n),reads)|(crate::code_rule_dsl::logic::plan::rows_digest(&crate::code_rule_dsl::logic::plan::Cells::new(&crate::content_store::atoms::Atoms::for_connection(db),&crate::code_rule_dsl::logic::plan::stored_types(prog,root,types.clone())),&flat,n),types,flat,n,reads));
         ks.ran(root,got);
     }
     ks.counted(ran,all);

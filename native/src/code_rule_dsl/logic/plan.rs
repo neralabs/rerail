@@ -8041,26 +8041,27 @@ fn answer_read(p: &str) -> String {
     format!("answer:{p}")
 }
 
-/// A set of answered rows' digest (`rows_digest`, of no rows when none).
-fn answers_digest(rows: Option<&BTreeSet<Vec<i64>>>) -> u64 {
-    let Some(rows) = rows.filter(|r| !r.is_empty()) else { return rows_digest(0, &[], 0) };
+/// A set of answered rows' digest (`rows_digest`, of no rows when none), of relation `p`'s content (`Cells`).
+fn answers_digest(prog: &Program, db: &Connection, p: &str, rows: Option<&BTreeSet<Vec<i64>>>) -> u64 {
+    let Some(rows) = rows.filter(|r| !r.is_empty()) else { return rows_digest(&Cells::plain(0), &[], 0) };
     let width = rows.iter().next().map_or(0, Vec::len);
     let flat: Vec<i64> = rows.iter().flatten().copied().collect();
-    rows_digest(width, &flat, rows.len())
+    let atoms = crate::content_store::atoms::Atoms::for_connection(db);
+    rows_digest(&Cells::new(&atoms, &stored_types(prog, p, vec![b'i'; width])), &flat, rows.len())
 }
 
 /// A stratum's reads with its native step's answers (`answer:<p>` for each relation its requests produce), when
 /// it makes requests of its own.
-fn with_answers(prog: &Program, scc: &BTreeSet<String>, reads: Option<Vec<(String, u64)>>, log: Option<BTreeMap<String, BTreeSet<Vec<i64>>>>) -> Option<Vec<(String, u64)>> {
+fn with_answers(prog: &Program, db: &Connection, scc: &BTreeSet<String>, reads: Option<Vec<(String, u64)>>, log: Option<BTreeMap<String, BTreeSet<Vec<i64>>>>) -> Option<Vec<(String, u64)>> {
     let mut reads = reads?;
     for req in scc.iter().filter(|r| prog.answers.get(r.as_str()).is_some_and(|ps| ps.iter().any(|p| scc.contains(p)))) {
         for p in &prog.answers[req.as_str()] {
-            reads.push((answer_read(p), answers_digest(log.as_ref().and_then(|l| l.get(p)))));
+            reads.push((answer_read(p), answers_digest(prog, db, p, log.as_ref().and_then(|l| l.get(p)))));
         }
     }
     let produced = super::answers::produced(prog);
     for p in scc.iter().filter(|p| produced.get(p.as_str()).is_some_and(|q| !scc.contains(*q))) {
-        reads.push((answer_read(p), answers_digest(log.as_ref().and_then(|l| l.get(p)))));
+        reads.push((answer_read(p), answers_digest(prog, db, p, log.as_ref().and_then(|l| l.get(p)))));
     }
     Some(reads)
 }
@@ -8079,7 +8080,8 @@ fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &BT
         } else {
             None
         };
-        let digest = got.as_ref().map(|(types, rows, n)| rows_digest(types.len(), rows, *n));
+        let atoms = crate::content_store::atoms::Atoms::for_connection(db);
+        let digest = got.as_ref().map(|(types, rows, n)| rows_digest(&Cells::new(&atoms, &stored_types(run.prog, r, types.clone())), rows, *n));
         fresh.insert(r.clone(), digest);
         members.push((r.clone(), digest));
         ks.ran(r, got.zip(reads).map(|((types, rows, n), reads)| (digest.expect("rows give a digest"), stored_types(run.prog, r, types), rows, n, reads.clone())));
@@ -8208,19 +8210,100 @@ fn kept_strata_hold(ks: &mut dyn KeptStrata, db: &Connection, run: &mut Run, rel
     Ok(n)
 }
 
-/// An order-independent digest of rows (a set), as `corpus::retain::digest` takes a source's.
-pub fn rows_digest(width: usize, rows: &[i64], n: usize) -> u64 {
-    let mut sum: u64 = 0;
-    if width > 0 {
-        for row in rows.chunks_exact(width) {
-            sum = sum.wrapping_add(row_digest(row));
+/// How a digest reads a relation's cells (decision 0212): an atom column (`b's'`, as frames type it) by its atoms'
+/// content keys (`Atoms::content_keys`: their strings' hashes), any other as it is. So a kept frame's digest, and the
+/// read digests its readers record, are of its rows' content: the same in every process, whichever ids it gave the
+/// strings. By id, a process whose atoms forked from the store's (decision 0170) digested the same rows otherwise, and
+/// its frames, keyed by its own numbering, could not be written at all: every next run derived them again.
+pub struct Cells<'a> {
+    atoms: Option<&'a crate::content_store::atoms::Atoms>,
+    atom: Vec<usize>,
+    width: usize,
+}
+
+impl<'a> Cells<'a> {
+    /// The cells of rows of column `types` (`b's'` an atom), whose atoms are `atoms`'.
+    pub fn new(atoms: &'a crate::content_store::atoms::Atoms, types: &[u8]) -> Self {
+        let atom: Vec<usize> = types.iter().enumerate().filter(|(_, t)| **t == b's').map(|(c, _)| c).collect();
+        Cells { atoms: (!atom.is_empty()).then_some(atoms), atom, width: types.len() }
+    }
+
+    /// The cells of rows of `width` columns that hold no atom.
+    pub fn plain(width: usize) -> Self {
+        Cells { atoms: None, atom: Vec::new(), width }
+    }
+
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
+    /// `rows` (whole rows) with each atom cell replaced by its content key.
+    pub fn key(&self, rows: &mut [i64]) {
+        let Some(atoms) = self.atoms else { return };
+        let w = self.width.max(1);
+        let mut cells: Vec<i64> = Vec::with_capacity(rows.len() / w * self.atom.len());
+        for row in rows.chunks_exact(w) {
+            cells.extend(self.atom.iter().map(|&c| row[c]));
+        }
+        atoms.content_keys(&mut cells);
+        let mut it = cells.into_iter();
+        for row in rows.chunks_exact_mut(w) {
+            for &c in &self.atom {
+                row[c] = it.next().expect("a key per atom cell");
+            }
         }
     }
-    sum ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd)
+
+    /// The sum of `rows`' row digests (`row_digest`), keyed (`key`) a chunk at a time: no copy of all of them.
+    fn sum(&self, rows: &[i64]) -> u64 {
+        let w = self.width;
+        if w == 0 {
+            return 0;
+        }
+        if self.atoms.is_none() {
+            return rows.chunks_exact(w).fold(0u64, |s, r| s.wrapping_add(row_digest(r)));
+        }
+        let mut sum = 0u64;
+        let mut buf: Vec<i64> = Vec::new();
+        for chunk in rows.chunks(w * 4096) {
+            buf.clear();
+            buf.extend_from_slice(&chunk[..chunk.len() / w * w]);
+            self.key(&mut buf);
+            sum = buf.chunks_exact(w).fold(sum, |s, r| s.wrapping_add(row_digest(r)));
+        }
+        sum
+    }
+
+    /// One row's digest (`row_digest`) of its content.
+    pub fn row(&self, row: &[i64]) -> u64 {
+        if self.atoms.is_none() {
+            return row_digest(row);
+        }
+        let mut r = row.to_vec();
+        self.key(&mut r);
+        row_digest(&r)
+    }
+
+    /// Each of `rows`' digests (`row`), keyed under one read of the atoms.
+    pub fn rows(&self, rows: &[i64]) -> Vec<u64> {
+        let w = self.width.max(1);
+        if self.atoms.is_none() {
+            return rows.chunks_exact(w).map(row_digest).collect();
+        }
+        let mut r = rows.to_vec();
+        self.key(&mut r);
+        r.chunks_exact(w).map(row_digest).collect()
+    }
+}
+
+/// An order-independent digest of rows (a set) of their content (`Cells`), as `corpus::retain::digest` takes a
+/// source's.
+pub fn rows_digest(cells: &Cells, rows: &[i64], n: usize) -> u64 {
+    cells.sum(rows) ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd)
 }
 
 /// One row's part of `rows_digest`, a sum of them: a relation's digest is patched by its rows gone and added.
-fn row_digest(row: &[i64]) -> u64 {
+pub(crate) fn row_digest(row: &[i64]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
     for v in row {
         h = (h ^ *v as u64).wrapping_mul(0x0000_0100_0000_01b3);
@@ -8231,16 +8314,10 @@ fn row_digest(row: &[i64]) -> u64 {
 
 /// `rows_digest` of a relation of `n` rows whose digest was `digest`, after its rows `gone` went and `added` came
 /// (decision 0117 step 4): its rows are not read.
-pub fn rows_digest_patched(digest: u64, width: usize, n: usize, gone: &[i64], added: &[i64]) -> u64 {
-    let w = width.max(1);
+pub fn rows_digest_patched(cells: &Cells, digest: u64, n: usize, gone: &[i64], added: &[i64]) -> u64 {
+    let w = cells.width().max(1);
     let (ng, na) = (gone.len() / w, added.len() / w);
-    let mut sum = digest ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd);
-    for row in gone.chunks_exact(w) {
-        sum = sum.wrapping_sub(row_digest(row));
-    }
-    for row in added.chunks_exact(w) {
-        sum = sum.wrapping_add(row_digest(row));
-    }
+    let sum = (digest ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd)).wrapping_sub(cells.sum(gone)).wrapping_add(cells.sum(added));
     sum ^ ((n + na - ng) as u64).wrapping_mul(0xff51_afd7_ed55_8ccd)
 }
 
@@ -9105,7 +9182,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             let (done, still): (Vec<usize>, Vec<usize>) = std::mem::take(&mut evaluated).into_iter().partition(|k| !waiting.iter().any(|w| w.0 == *k));
             evaluated = still;
             for k in done {
-                let reads = with_answers(prog, &sccs[k], stratum_read_digests.remove(&k).flatten(), run.answer_logs.remove(&k));
+                let reads = with_answers(prog, db, &sccs[k], stratum_read_digests.remove(&k).flatten(), run.answer_logs.remove(&k));
                 kept_strata_ran(ks, db, &run, &sccs[k], reads.as_ref(), &mut fresh);
             }
         }
@@ -9663,12 +9740,12 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                     }
                 }
                 for (p, _) in &above {
-                    let now = answers_digest(replayed.get(p.as_str()));
+                    let now = answers_digest(prog, db, p, replayed.get(p.as_str()));
                     clean = clean && ks.read_was(p, &answer_read(p)) == Some(now);
                 }
                 for req in &asks {
                     for p in &prog.answers[req.as_str()] {
-                        let now = answers_digest(replayed.get(p));
+                        let now = answers_digest(prog, db, p, replayed.get(p));
                         clean = clean && scc.iter().filter(|x| !run.views.contains(*x)).all(|x| ks.read_was(x, &answer_read(p)) == Some(now));
                     }
                 }
@@ -10137,7 +10214,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     }
     if let Some(ks) = strata_kept.as_deref_mut() {
         for k in std::mem::take(&mut evaluated) {
-            let reads = with_answers(prog, &sccs[k], stratum_read_digests.remove(&k).flatten(), run.answer_logs.remove(&k));
+            let reads = with_answers(prog, db, &sccs[k], stratum_read_digests.remove(&k).flatten(), run.answer_logs.remove(&k));
             kept_strata_ran(ks, db, &run, &sccs[k], reads.as_ref(), &mut fresh);
         }
         // What stays to the run's end (outputs, relations kept for the caller) is held again if it was clean.
