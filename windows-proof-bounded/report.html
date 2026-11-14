@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request 677 report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request #677</div>
+  <h1>Windows: a busy daemon&#x27;s lookup answers in time and keeps daemon.json</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>On Windows, does a busy daemon&#x27;s lookup answer within 2 s and keep <code>daemon.json</code>, with every start, stop and hook at <code>main</code>&#x27;s result or better?</p>
+  <ol><li><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>A busy daemon reads <code>alive but not answering</code> on every lookup, the fifth included.</li></ol></div>
+  <p class="rec"><b>We recommend:</b> rule on #663 whether 2 s is the right wait, then review the squashed diff, which the automated reviewer approved at ff322959c.</p>
+  <div class="big">
+    <div><b class="w">468 lines</b><span>in 4 files. 129 ship, 339 are tests and text.</span></div><div><b class="w">Fast lane</b><span>The automated reviewer approved ff322959c; no person has reviewed it.</span></div><div><b class="w">Waits on #663&#x27;s answer</b><span>CI passes; no maintainer has answered there.</span></div><div><b class="w">4 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/677">GitHub</a> on 14 November 2026, at head cf1a78a78.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr><td class="k"><b>A busy daemon&#x27;s record</b></td><td class="in" data-l="Intended">&quot;An engine that does not answer the proof in time is taken for a busy daemon: its state file is kept&quot;. <span class="tagx">docs</span></td><td class="fo" data-l="Found">From its fifth lookup, a suspended daemon read <code>not running</code> after 30.2 s and lost <code>daemon.json</code>; no later command found it. <span class="tagx">real daemon, suspended</span></td><td class="now" data-l="Now"><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Closes the gap, changes answer 1.</b> The limit counts from the ask and covers the connect. A pipe with no free instance reads <code>silent</code>, never <code>refused</code>, so the record stays.</td></tr><tr><td class="k"><b>One daemon per home</b></td><td class="in" data-l="Intended">&quot;A holder that proves it is this home&#x27;s engine stops the start: a second daemon must not run beside it.&quot; <span class="tagx">docs</span></td><td class="fo" data-l="Found">Beside the forgotten daemon, <code>rerail daemon start</code> (45.3 s) and a hook (60.2 s) each left a second daemon. <span class="tagx">the same daemon</span></td><td class="now" data-l="Now"><b>Closes the gap.</b> The start refuses in 2,241 ms and the hook gives up at 12.2 s: one daemon. The engine start keeps <code>main</code>&#x27;s wait.</td></tr></tbody></table>
+<figcaption>Reported in #663 on 13 November 2026, from a Windows 11 machine with a real daemon suspended.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">A busy daemon&#x27;s record</td><td data-l="Where main states the intent"><code>docs/windows.md</code> lines 439 and 440: &quot;An engine that does not answer the proof in time is taken for a busy daemon: its state file is kept and the lookup reports it unresponsive.&quot; <code>src/runtime/daemon-control.ts</code> line 645, a code comment: &quot;A busy daemon is waited for, not forgotten&quot;.</td><td data-l="The cause, and what was measured">Node listens on a pipe with four free instances, and a stuck engine frees none. The fifth connect waits up to 30 s for one. <code>src/runtime/engine-proof.ts</code> line 89 arms the limit with <code>outgoing.setTimeout</code>, an idle limit that starts once the socket has connected and starts again at each byte read. The connect fails, line 93 reads that as <code>refused</code>, and <code>lookupDaemon</code> deletes the record. Windows 11 at <code>main</code> f277c6e29: the fifth <code>rerail status</code> took 30,247 ms.</td></tr><tr><td class="k">One daemon per home</td><td data-l="Where main states the intent"><code>docs/windows.md</code> line 411: &quot;A holder that proves it is this home&#x27;s engine stops the start: a second daemon must not run beside it.&quot;</td><td data-l="The cause, and what was measured">Once the fifth lookup had deleted <code>daemon.json</code>, nothing named the running daemon, so a start, or a hook with autostart on, launched another, whose engine took the fallback pipe. Windows 11 at <code>main</code> f277c6e29: <code>rerail daemon start</code> exit 1 at 45,280 ms, a <code>PreToolUse</code> hook 60,188 ms, each with a second daemon alive 45 s later. At 424d5a55f, whose source this head keeps: 2,241 ms and 12,197 ms, no second daemon.</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>engine-proof.ts</code>: <code>connectPipe</code> with <code>pipeBusy</code>, <code>askForProof</code>, <code>engineHoldsCapability</code></b><span class="min">10 min</span><span class="x">Can an alive daemon read <code>refused</code>, or any holder keep the asking process past its limit?</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">5 min</span><span class="x">Seventeen commits: read the squashed diff; this head&#x27;s source is 424d5a55f&#x27;s. Nine new tests. <code>docs/windows.md</code> states the start&#x27;s wait: ask 2.</span></div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 159" role="img" aria-label="The changes by risk, high on top, against six checks. Bounded proof, medium risk: users lose nothing holds with a limit. CI at this head holds for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="50" rx="8" class="bx zone"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk med"/><text x="28" y="34" class="t s b">Medium risk</text><text x="12" y="56" class="t b">Bounded proof</text><g><title>Bounded proof, fails without the fix: At d3c33e631, `main` with the first tests, on Windows 11: two of six proofs asked at once of a stuck engine answer `refused` after 30,022 ms, and the lookup deletes `daemon.json`. At ff322959c each fix taken out fails its test: the start&#x27;s wait cut to 8 s, a busy engine left a free instance, the verdict&#x27;s destroy dropped.</title><circle cx="150" cy="52" r="8" class="mh"/><path d="M146 52l3 3l5 -6" class="mt"/></g><g><title>Bounded proof, independent review: Second runs from a separate checkout found two behaviour defects at e2124df8b and one at 0fa6edae7. 37bd79b0c, 424d5a55f and ff322959c fix them, each with a test. At ff322959c they found none. The automated reviewer approved ff322959c with 0 blockers, 0 follow-ups and 0 nits, and withdrew its one blocker.</title><circle cx="184" cy="52" r="8" class="mh"/><path d="M180 52l3 3l5 -6" class="mt"/></g><g><title>Bounded proof, users lose nothing: A real daemon on Windows 11, `main` at c89f068ed against ff322959c, one or two runs a row: beside a busy daemon freed after 1, 8 or 20 s, and beside a holder that keeps every instance taken, the same exit codes and one daemon in every row. The limit: a probe measured these rows, and no test holds them.</title><circle cx="218" cy="52" r="7.4" class="ml"/><path d="M218 44.6A7.4 7.4 0 0 0 218 59.4Z" class="mlf"/></g><g><title>Bounded proof, rules scan: nothing new: The automated reviewer&#x27;s rules scan over the diff against `main`, at ff322959c on Linux x64: no finding. The highest complexity of a function the change adds or edits is 5 (`connectPipe`).</title><circle cx="252" cy="52" r="8" class="mh"/><path d="M248 52l3 3l5 -6" class="mt"/></g><g><title>Bounded proof, Windows 11: no new failure: Windows 11 x64, Node 24.21.0, at ff322959c: the change&#x27;s test file and the 23 that test every caller of the proof and of `lookupDaemon`: 427 passed, 25 skipped, 0 failed, none outside `main`&#x27;s baseline. On a second Windows 11 machine the proof&#x27;s test file passed 9 of 9.</title><circle cx="286" cy="52" r="8" class="mh"/><path d="M282 52l3 3l5 -6" class="mt"/></g><g><title>Bounded proof, CI at this head: At cf1a78a78, read on 14 November 2026: 19 checks pass, none fails, 3 are skipped. `CI result` passed at 05:28 UTC. `Unit tests (Windows, 2/2)` passed on its second attempt: on the first, one test this change does not touch failed, in `test/runtime/merge-assist/runtime-notes.test.ts`, as in `main`&#x27;s own run at c89f068ed. Skipped: the Rust engine, the conformance job and its comment.</title><circle cx="320" cy="52" r="8" class="mh"/><path d="M316 52l3 3l5 -6" class="mt"/></g><text x="8" y="89" class="t s">1  fails without the fix</text><text x="168" y="89" class="t s">2  independent review</text><text x="8" y="105" class="t s">3  users lose nothing</text><text x="168" y="105" class="t s">4  rules scan: nothing new</text><text x="8" y="121" class="t s">5  Windows 11: no new failure</text><text x="168" y="121" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="145" r="8" class="mh"/><path d="M10 145l3 3l5 -6" class="mt"/></g><text x="28" y="149" class="t s">holds</text><g><title>holds with a limit</title><circle cx="92" cy="145" r="7.4" class="ml"/><path d="M92 137.6A7.4 7.4 0 0 0 92 152.4Z" class="mlf"/></g><text x="106" y="149" class="t s">holds with a limit</text></svg>
+<figcaption>One half mark: a probe, not a test, measured the commands beside a real daemon.</figcaption></figure>
+<details class="ev"><summary>Each half mark's limit</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>It holds with this limit</th></tr></thead><tbody><tr><td class="k">Bounded proof</td><td data-l="Check">users lose nothing</td><td data-l="It holds with this limit">A real daemon on Windows 11, <code>main</code> at c89f068ed against ff322959c, one or two runs a row: beside a busy daemon freed after 1, 8 or 20 s, and beside a holder that keeps every instance taken, the same exit codes and one daemon in every row. The limit: a probe measured these rows, and no test holds them.</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<ul class="lines"><li><span class="chip medium"><i></i>Medium risk</span> <b>Bounded engine proof on Windows</b>: Fifth lookup of a busy daemon: 30.2 s and <code>daemon.json</code> deleted at <code>main</code>; 2.2 s and kept here.</li></ul>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>How does the proof reach a pipe with no free instance?</h3>
+<p><b>We chose</b> Node&#x27;s pipe client on the <code>\\?\pipe\</code> spelling: a busy pipe fails at once, and a close cancels a write.</p>
+<p><b>Would change our mind:</b> a Windows or libuv change that brings Node&#x27;s wait back: a named test then fails.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Node&#x27;s connect to <code>\\?\pipe\&lt;name&gt;</code>, tried again every 50 ms <span class='tag new'>chosen</span></td><td data-l="What a user gets">A pipe with no free instance fails at once and reads <code>silent</code> at the limit. Closing the socket cancels a write a holder never reads: the process ends 6 ms after a 1 s limit.</td><td data-l="Cost">108 lines added and 21 removed, in one file. It rests on <code>WaitNamedPipe</code> taking only <code>\\.\pipe\</code> names.</td><td data-l="What it breaks">Nothing found. Each failed try lists the machine&#x27;s pipes to tell a busy pipe from a gone one.</td></tr><tr><td class="k">A timer of its own and nothing else (3e8451d59)</td><td data-l="What a user gets">The verdict comes at the limit.</td><td data-l="Cost">15 lines added and 7 removed in <code>engine-proof.ts</code>.</td><td data-l="What it breaks">Node&#x27;s wait for a free instance holds the process: <code>rerail status</code> answered at 2.2 s and ended at 30.1 s.</td></tr><tr><td class="k">The pipe opened as a file (the first design, up to e2124df8b)</td><td data-l="What a user gets">A busy pipe fails at once.</td><td data-l="Cost">A write on such a pipe cannot be cancelled. 37bd79b0c removed it.</td><td data-l="What it breaks">Beside a holder that takes the request and never reads it, the asking process lived 19 to 20 s.</td></tr><tr><td class="k">A native overlapped open</td><td data-l="What a user gets">A busy pipe fails at once, and a close cancels the write.</td><td data-l="Cost">Rust on the lookup path.</td><td data-l="What it breaks">Update and uninstall would load the engine&#x27;s binary, whose folder they delete. Not built.</td></tr></tbody></table></div><div class="pns c2"><div class="pn before"><div class="pt">main: the fifth lookup of a busy daemon</div><svg viewBox="0 0 340 161" role="img" aria-label="At main the fifth lookup of a busy daemon asks the proof, the connect finds no free instance and Node waits up to 30 s, the connect fails and reads as refused, and daemon.json is deleted." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">a lookup asks the proof</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx "/><text x="170" y="65" text-anchor="middle" class="t s">connect: no free instance, Node waits up to 30 s</text><line x1="170" y1="76" x2="170" y2="85" class="ar " marker-end="url(#ah)"/><rect x="20" y="86" width="300" height="28" rx="8" class="bx "/><text x="170" y="104" text-anchor="middle" class="t s">the connect fails: refused</text><line x1="170" y1="115" x2="170" y2="124" class="ar " marker-end="url(#ah)"/><rect x="20" y="125" width="300" height="28" rx="8" class="bx "/><text x="170" y="143" text-anchor="middle" class="t s">daemon.json deleted: not running</text></svg></div><div class="pn after"><div class="pt">this change</div><svg viewBox="0 0 340 161" role="img" aria-label="With this change the limit starts when the lookup asks the proof. The connect fails at once and is tried again every 50 ms. At the limit the proof reads silent, and daemon.json is kept: alive but not answering." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx acc"/><text x="170" y="26" text-anchor="middle" class="t s">a lookup asks the proof: the limit starts</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx acc"/><text x="170" y="65" text-anchor="middle" class="t s">connect fails at once, tried again every 50 ms</text><line x1="170" y1="76" x2="170" y2="85" class="ar " marker-end="url(#ah)"/><rect x="20" y="86" width="300" height="28" rx="8" class="bx "/><text x="170" y="104" text-anchor="middle" class="t s">the limit: silent</text><line x1="170" y1="115" x2="170" y2="124" class="ar " marker-end="url(#ah)"/><rect x="20" y="125" width="300" height="28" rx="8" class="bx "/><text x="170" y="143" text-anchor="middle" class="t s">daemon.json kept: alive but not answering</text></svg></div></div><p><b>Evidence.</b> A probe with Node 24.21.0 (libuv 1.52.1) on two Windows 11 builds. A pipe whose four instances are all taken: the <code>\\?\pipe\</code> connect fails with <code>ENOENT</code> in 0 to 1 ms on every try, and the process ends 6 to 8 ms after its last try. Spelled <code>\\.\pipe\</code>, the process ends at 30,070 and 30,047 ms. A pipe that does not exist gives <code>ENOENT</code> with either spelling, so a failed connect reads as busy only while the pipe is listed.</p></details></div>
+<div class="dblock"><h3>How long does the engine start wait beside a held pipe? <span class="chip">ask 2</span></h3>
+<p><b>We chose</b> 30 s, as <code>main</code>: 8 s gave a busy daemon of the same home a second daemon.</p>
+<p><b>Would change our mind:</b> #657 merging: its lock per home makes a shorter wait safe.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">30 s, as <code>main</code> (424d5a55f, kept by this head) <span class='tag new'>chosen</span></td><td data-l="What a user gets">Beside a busy daemon of this home with no <code>daemon.json</code> that frees an instance at 20 s: exit 1 at 15,252 ms, then refused at 20 s, one daemon. <code>main</code> at 6cf7e5663: 15,260 ms, one daemon.</td><td data-l="Cost">Beside a holder with no instance limit that keeps every instance taken: exit 1 at 15,617 ms, daemon up on the fallback pipe at 32.6 s. <code>main</code> at 6cf7e5663: 15,318 ms and 31.1 s.</td><td data-l="What it breaks">Nothing against <code>main</code>.</td></tr><tr><td class="k">8 s, inside the command&#x27;s 15 s (0fa6edae7)</td><td data-l="What a user gets">Beside that holder: exit 0 at 9,598 ms.</td><td data-l="Cost">It takes a busy daemon of this home for a holder of the name.</td><td data-l="What it breaks">Beside the busy daemon freed at 20 s: exit 0 at 8,961 ms and two daemons, where <code>main</code> keeps one.</td></tr><tr><td class="k">8 s after #657&#x27;s lock per home</td><td data-l="What a user gets">Beside the busy daemon: exit 1 at 15,539 ms, one daemon (0fa6edae7 merged with #657 at 50705c972).</td><td data-l="Cost">#657 merges first. Beside the holder it was not measured merged.</td><td data-l="What it breaks">Not built here.</td></tr></tbody></table></div><p><b>Evidence.</b> Windows 11, a real daemon from a checkout&#x27;s build, a probe test added, times from the command&#x27;s start. The rows ran again at ff322959c against <code>main</code> at c89f068ed. Beside the holder, two runs: exit 1 at 15,343 and 15,302 ms, daemon up at 31.5 and 31.3 s (<code>main</code>: 16,017 and 15,976 ms; 33.3 and 33.8 s). The busy-engine start test frees its instance at 20 s: with the wait at 8 s it answers false after 8,043 ms.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<p>It stands on <code>main</code> alone and merges clean at c89f068ed. Leaving draft waits on an answer to #663.</p>
+<p>Drafts #657 and #672 merge clean. The automated reviewer leaves a maintainer both asks.</p>
+<details class="ev"><summary>Trial merges and shared files</summary><p><code>git merge-tree</code> of cf1a78a78 with each head, on 14 November 2026: <code>main</code> at c89f068ed, #657 at 2cb75efa0, #672 at 98c2462b6, #676 at 0ed1ad013, #656 at eb88b0dee and #678 at b9088adf5 are clean. #657 (ours, a draft, fixes #626) shares no file; its lock per home stops a second daemon for one home. #672 and #676 (ours, drafts) and #656 and #678 (ours, open) also edit <code>docs/windows.md</code>, in other lines. Of the 28 open pull requests, no other edits <code>engine-proof.ts</code> or its test file. Any order works.</p></details>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>Unchanged from <code>main</code>:</b> beside a holder with no instance limit that keeps every instance taken, <code>rerail daemon start</code> fails at 15,318 ms; daemon up at 31.1 s (<code>main</code> 6cf7e5663). At 424d5a55f: 15,617 ms, 32.6 s.</li>
+<li><b><code>ingestEngineEvent</code>, other code, left alone:</b> it arms its timeout the same way, so an event can meet Node&#x27;s wait for a free instance.</li>
+<li><b>No test holds the real-daemon rows:</b> a probe measured them.</li>
+<li><b>macOS</b> never ran.</li>
+</ul>
+<details class="ev"><summary>Six smaller gaps, seven limits that stay</summary><ul class="facts">
+<li><b>Seventeen commits, one diff.</b> Four, d214e3493 to 424d5a55f, replace the first design, the pipe opened as a file. 77c980de6 and 0fa6edae7 cut the start&#x27;s wait to 8 s, ff322959c puts it back, and cf1a78a78 joins two release note sentences. The source and docs are 424d5a55f&#x27;s. Pushed commits are not rewritten.</li>
+<li><b>The limit itself is <code>main</code>&#x27;s.</b> This head keeps the 2 s default and counts the connect inside it. A longer limit would read a slow daemon as not answering less often, and hold every command beside a stuck daemon that much longer. Not built or measured: #663 asks.</li>
+<li><b>How often it happens.</b> No count of daemons that stay busy through four lookups. A long audit or a suspended process does it. No published version has the defect: #503 brought the proof.</li>
+<li><b>The lookup rows at ff322959c</b> ran on a second Windows 11 machine only: <code>rerail status</code> in 2,191 to 2,682 ms, the hook 12,316 ms. The first machine&#x27;s figures are at 424d5a55f, whose source this head keeps.</li>
+<li><b>The cost of telling busy from gone.</b> Each failed try lists the machine&#x27;s pipes, every 50 ms until the limit. It was not timed apart: <code>rerail status</code> beside a busy daemon took 2,229 to 2,278 ms at 424d5a55f.</li>
+<li><b>The release note</b> has two sentences and 58 words, as the changelog guide asks. No published version has the defect: #503 brought the proof, and the checklist says so. Say the note is not wanted, and it is dropped.</li>
+</ul>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li>A busy daemon whose pipe has a free instance, a dead daemon, a refused pipe and a missing state file read as at <code>main</code>. A daemon that is gone reads so in 144 to 157 ms at 424d5a55f.</li>
+<li>macOS and Linux are unchanged: no lookup there asks the proof, and a path spelled like a pipe is a Unix socket&#x27;s.</li>
+<li>A hook beside a busy daemon still waits out its own 12 s before it gives up, and logs its event as lost to a daemon that did not answer.</li>
+<li>The engine start can wait 30 s for a free instance and then 2 s for the answer, past the 15 s <code>rerail daemon start</code> gives the daemon, as at <code>main</code>.</li>
+<li>The fix rests on <code>WaitNamedPipe</code> refusing <code>\\?\pipe\</code> names. Should Windows or libuv change that, Node&#x27;s wait returns, and the test &quot;leaves its process free to end once it has answered, also when the engine&#x27;s pipe has no free instance&quot; fails.</li>
+<li>When the machine&#x27;s pipes cannot be listed, a failed connect counts as busy, so a gone pipe would read <code>silent</code> until the limit, not <code>refused</code>. Read from the code, not run.</li>
+<li>The busy-engine start test takes about 20 s on every Windows run of its file: 20,188 ms at ff322959c.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<p class="sub">Ask 1 rules on answer 1.</p>
+<ol class="lines">
+<li><div><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>On <a href="https://github.com/neralabs/rerail/issues/663#issuecomment-6869803910">#663</a>: is the proof&#x27;s limit, <code>main</code>&#x27;s default, the wait you want before a busy daemon reads as not answering?</b> We recommend yes: a longer one holds every command.</div></li>
+<li><div><b>Do you accept <code>main</code>&#x27;s 30 s engine start wait beside a holder that keeps every instance taken?</b> We recommend yes: 8 s gave a second daemon; shorter can follow #657.</div></li>
+</ol>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The description on GitHub is the record: &quot;How you tested it&quot; holds the runs and the real-daemon tables.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">CI on GitHub</td><td data-l="What ran">Every job at cf1a78a78, run 43559967096, read on 14 November 2026</td><td data-l="Result">19 checks pass, none fails, 3 are skipped: the Rust engine, the conformance job and its comment. <code>CI result</code> passed at 05:28 UTC. Among the 19: <code>Unit tests (1/2)</code>, <code>Unit tests (2/2)</code>, <code>Unit tests (Windows, 1/2)</code>, <code>Unit tests (Windows, 2/2)</code> and <code>Integration tests</code>. <code>Unit tests (Windows, 2/2)</code> first failed on one test this change does not touch, in <code>test/runtime/merge-assist/runtime-notes.test.ts</code>, as on <code>main</code> at c89f068ed; its second attempt passed.</td></tr><tr><td class="k">Windows 11 x64</td><td data-l="What ran">At ff322959c, Node 24.21.0: the change&#x27;s test file and the 23 that test every caller of the proof and of <code>lookupDaemon</code> (20 unit files, 4 integration files)</td><td data-l="Result">427 passed, 25 skipped, 0 failed, none outside <code>main</code>&#x27;s baseline. The busy-engine start test took 20,188 ms.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">At ff322959c: the 20 unit files, then the 4 integration files</td><td data-l="Result">429 passed, 9 skipped, no regression against <code>main</code>. The integration files: 14 passed. The proof&#x27;s seven Windows tests do not run there.</td></tr><tr><td class="k">A second Windows 11 machine</td><td data-l="What ran">At ff322959c: the proof&#x27;s test file, then two copies of that commit with fix lines changed</td><td data-l="Result">9 of 9 passed. With the wait at 8 s the start test fails at 8,041 ms. With a busy engine that takes two instances, both busy-engine tests fail on their check that every instance was taken. Without the destroy, the answer-before-read test takes 20,035 ms where 2,000 is allowed.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran">Failing first: d3c33e631, <code>main</code> with the first tests, and d214e3493, the first design with four new tests</td><td data-l="Result">d3c33e631: two of six proofs <code>refused</code> after 30,022 ms, the lookup <code>absent</code> at 30,020 ms with <code>daemon.json</code> deleted, and no verdict for the trickling listener in 15 s. d214e3493: 3 failed, 5 passed; a holder that never reads kept the asking process alive 19,012 ms after its answer.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran">A real daemon in a started repository, suspended, with no free pipe instance, at <code>main</code> f277c6e29 and at 424d5a55f, whose source this head keeps; a probe test added</td><td data-l="Result"><code>rerail status</code> six times: 2,229 to 2,278 ms, record kept (<code>main</code>: the fifth 30,247 ms, record deleted). A <code>PreToolUse</code> hook: 12,197 ms, no second daemon (<code>main</code>: 60,188 ms and a second daemon). <code>rerail daemon start</code> refuses in 2,241 ms (<code>main</code>: exit 1 at 45,280 ms, a second daemon). <code>rerail daemon stop</code> ends the daemon in 4,200 ms (<code>main</code>: finds nothing to stop).</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran"><code>rerail daemon start</code> beside a held pipe, a real daemon from a checkout&#x27;s build, at <code>main</code> c89f068ed and at ff322959c, two runs where two numbers are given</td><td data-l="Result">A busy daemon with no <code>daemon.json</code>, freed after 1, 8 and 20 s: exit 1 at 1,189 ms, 8,142 ms, and 15,798 and 15,368 ms at <code>main</code>; 1,149 ms, 8,121 ms, and 15,296 and 15,331 ms here. A holder that keeps every instance taken: 16,017 and 15,976 ms at <code>main</code>, 15,343 and 15,302 ms here. One daemon in every row.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The automated reviewer&#x27;s rules scan over the diff against <code>main</code>, at ff322959c</td><td data-l="Result">No finding. The highest complexity of a function the change adds or edits is 5 (<code>connectPipe</code>).</td></tr></tbody></table></div></details>
+<details class="ev"><summary>What this report adds</summary><ul class="facts">
+<li><b><code>main</code> writes the intent down.</b> The description cites <code>docs/windows.md</code> once, for the second daemon. Part 2 adds the lines for the record: lines 439 and 440 say an engine that does not answer in time &quot;is taken for a busy daemon: its state file is kept&quot;. So this closes a gap between the docs and the code, and changes no intent.</li>
+<li><b>Our answer to the read-first question.</b> A read of the diff: <code>connectPipe</code> answers <code>refused</code> only for a connect error other than <code>ENOENT</code>, or once the pipe is no longer listed. A busy pipe that stays listed reads <code>silent</code> at the deadline. After the connect, <code>askForProof</code> reads a hang-up as <code>refused</code>, as <code>main</code> does. Its <code>finally</code> clears the timer and destroys the request with its socket. Only the challenge is sent, as at <code>main</code>.</li>
+<li><b>A busy pipe is told from a gone one by a listing.</b> <code>pipeBusy</code> lists the machine&#x27;s named pipes after each failed try, every 50 ms until the limit. The description gives no cost for it, and none was timed apart. When the pipes cannot be listed, <code>pipeListed</code> counts the pipe as there, so a gone pipe would read <code>silent</code>, not <code>refused</code>. Read from the code, not run.</li>
+</ul></details>
+<details class="ev"><summary>Sources</summary><p>Pull request #677, its diff, checks and reviews, and issue #663, read on GitHub on 14 November 2026. Rerail at <code>main</code> (c89f068ed) for each quoted intent and its line. The description for the runs and the timings. The heads of #657, #672, #676, #656 and #678 for the trial merges, made again for this report. The automated reviewer&#x27;s review of ff322959c for its findings.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
