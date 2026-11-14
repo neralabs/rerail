@@ -225,19 +225,26 @@ def hot_marker(out_dir, crate, extra):
 
 
 def same_in_every_checkout(args, out_dir, crate):
-    """Linker arguments that keep a proc macro's dylib free of its target directory's path. sccache never caches
+    """Arguments that keep a proc macro's dylib free of its checkout's and target directory's paths. sccache never caches
     a proc macro, but every crate that uses one hashes its dylib: with the checkout's path in it (its
     install name, and the debug map's paths to the rlibs it links), each target directory's crates
     above it had different keys."""
     types = set()
     for t in values(args, "--crate-type"):
         types.update(t.split(","))
-    if "proc-macro" not in types or sys.platform != "darwin" or not out_dir:
+    if "proc-macro" not in types or not out_dir:
         return []
     # `<target>/<profile>/deps`: the debug map's paths start at the profile's directory.
     target = os.path.dirname(os.path.dirname(os.path.abspath(out_dir)))
-    name = f"lib{crate}{codegen(args, 'extra-filename') or ''}.dylib"
-    return ["-C", f"link-arg=-Wl,-install_name,@rpath/{name}", "-C", f"link-arg=-Wl,-oso_prefix,{target}/"]
+    # Paths in its metadata and its crate hash, such as a build script's OUT_DIR that it includes.
+    # rustc applies the last prefix that matches: the target directory may be inside the checkout.
+    checkout = checkout_of(os.getcwd())
+    out = ["--remap-path-prefix", f"{checkout}=/rerail-farm/checkout"] if checkout else []
+    out += ["--remap-path-prefix", f"{target}=/rerail-farm/target"]
+    if sys.platform == "darwin":
+        name = f"lib{crate}{codegen(args, 'extra-filename') or ''}.dylib"
+        out += ["-C", f"link-arg=-Wl,-install_name,@rpath/{name}", "-C", f"link-arg=-Wl,-oso_prefix,{target}/"]
+    return out
 
 
 def wrapper(rustc, args):
