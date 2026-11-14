@@ -355,7 +355,7 @@ describe("A scan requested while the session's evaluator is still opening", () =
       test.opening.resolve();
       const request = await test.settled();
       expect(request).toMatchObject({ status: "completed", auditIds: test.scans, error: null });
-      expect(kept).toBe(false);
+      expect(kept).toEqual({ kind: "owing" });
     } finally { await test.close(); }
   });
 
@@ -502,9 +502,9 @@ describe("Rerail tool results waiting for their edit's check", () => {
       kept.push(await runtime.closeIdleSession(session.sessionId));
       const next = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId: session.sessionId, session, text: "next" });
       expect(next.map(delivery => delivery.content)).toEqual([STEER]);
-      expect(kept).toEqual([false, false]);
-      // Delivered: nothing holds the session open any more.
-      expect(await runtime.closeIdleSession(session.sessionId)).toBe(true);
+      expect(kept).toEqual([{ kind: "owing" }, { kind: "owing" }]);
+      // Delivered: nothing holds the session in memory any more.
+      expect(await runtime.closeIdleSession(session.sessionId)).toMatchObject({ kind: "suspended" });
     } finally {
       vi.useRealTimers();
       check.resolve();
@@ -526,11 +526,11 @@ describe("Rerail tool results waiting for their edit's check", () => {
       await writeFile(join(root, "a.ts"), BAD);
       const answer = await runtime.ingest({ kind: "result", eventId: "result-t1", sessionId: session.sessionId, session, toolCallId: "t1", toolName: "Write", output: "ok" });
       expect(answer.map(delivery => delivery.content)).toEqual([STEER]);
-      expect(kept).toBe(false);
+      expect(kept).toEqual({ kind: "owing" });
       // A call the user refused gets no result: the end of its turn settles it.
       await call("t2");
       await turnEnd("turn");
-      expect(await runtime.closeIdleSession(session.sessionId)).toBe(true);
+      expect(await runtime.closeIdleSession(session.sessionId)).toMatchObject({ kind: "suspended" });
     } finally {
       check.resolve();
       await runtime.dispose();
@@ -642,7 +642,7 @@ describe("Rerail tool results waiting for their edit's check", () => {
 
       const kept = await runtime.closeIdleSession(session.sessionId);
       expect((await turnEnd("turn")).map(delivery => delivery.content)).toEqual([DIGEST]);
-      expect(kept).toBe(false);
+      expect(kept).toEqual({ kind: "owing" });
     } finally {
       vi.useRealTimers();
       check.resolve();
@@ -894,8 +894,8 @@ describe("A runtime's closed sessions", () => {
     }),
   });
 
-  // A checkout's runtime lives while any session in it does, and the idle close ends each killed session there too: after
-  // 30 quiet minutes, or after a day when the session still owed its agent a result, a steer or a held finding.
+  // A checkout's runtime lives while any session in it does, and the idle close lets each killed session there go too:
+  // after 30 quiet minutes, or after a day when the session still owed its agent a result, a steer or a held finding.
   it("are kept for late receipts only while they are among the last sixteen to close", { timeout: 20_000 }, async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-closed-sessions-")));
     directories.push(root);
@@ -937,6 +937,31 @@ describe("A runtime's closed sessions", () => {
     const sessionStore = new SqliteSessionStore(join(root, "rerail.sqlite"));
     try {
       expect(sessionIds.map(sessionId => sessionStore.session(sessionId)?.endedAt)).toEqual(sessionIds.map(() => 1_000_000));
+    } finally {
+      sessionStore.close();
+    }
+  });
+
+  it("stay open once suspended, though sixteen later suspensions push one out while it is still closing", { timeout: 20_000 }, async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-closed-sessions-")));
+    directories.push(root);
+    const runtime = runtimeIn(root);
+    const sessionIds = Array.from({ length: 17 }, (_, index) => `s${index}`);
+    try {
+      for (const sessionId of sessionIds) {
+        await runtime.ingest({ kind: "session-start", eventId: `${sessionId}:start`, session: { host: "claude-code", sessionId, cwd: root } });
+        await runtime.codeRulesOpened(sessionId);
+      }
+      // Every idle close begins at once; `s16`'s pushes `s0` out before `s0` finishes closing.
+      const closes = await Promise.all(sessionIds.map(sessionId => runtime.closeIdleSession(sessionId)));
+      expect(closes.map(close => close.kind)).toEqual(sessionIds.map(() => "suspended"));
+    } finally {
+      await runtime.dispose();
+    }
+
+    const sessionStore = new SqliteSessionStore(join(root, "rerail.sqlite"));
+    try {
+      expect(sessionIds.map(sessionId => sessionStore.session(sessionId)?.endedAt)).toEqual(sessionIds.map(() => null));
     } finally {
       sessionStore.close();
     }

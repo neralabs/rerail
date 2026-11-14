@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery, Conflict } from "../../../src/engine/index.js";
 import { claudeHookOutput } from "../../../src/hosts/claude/index.js";
 import { SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/index.js";
-import type { RerailRuntime } from "../../../src/runtime/runtime.js";
+import type { RerailRuntime, SessionSuspension, SuspendedSessions } from "../../../src/runtime/runtime.js";
 import type { MergeAssistRuntime } from "../../../src/runtime/merge-assist/service.js";
 import { commit, git, writeFiles } from "../../support/merge-assist/git.js";
 import { FakeGithub, mergeAssistWorkspaces, takeNotes, type Workspace } from "../../support/merge-assist/workspace.js";
@@ -458,6 +458,80 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       await service.setEnabled(ws.repo, false);
       await service.setEnabled(ws.repo, true);
       expect(open((await service.scan(ws.repo)).conflicts)).toEqual([expect.objectContaining({ id: conflict!.id, theirs: expect.objectContaining({ location: `${FILE}:23` }) })]);
+    });
+  });
+
+  // A note is recorded as given only once a delivery takes it, so the service hands it to the session's next open again.
+  // A session closed without its end kept it besides among the steers it owes its agent, and gave it twice; counted as
+  // owed, it kept the session in memory for a day.
+  describe("a session closed before a boundary takes its note", () => {
+    /** A Claude Code session in a checkout with one overlap, whose note waits for the session's next boundary. */
+    async function noted(sessionId: string) {
+      const { ws } = await overlap(FILE);
+      const service = ws.service();
+      await service.setEnabled(ws.repo, true);
+      await service.scan(ws.repo);
+      await service.settled();
+      const handed = vi.spyOn(service, "pendingNotes");
+      const scans = vi.spyOn(service, "openSession");
+      const suspended = new Map<string, SessionSuspension>();
+      const suspendedSessions: SuspendedSessions = {
+        keep: suspension => void suspended.set(suspension.descriptor.sessionId, suspension),
+        get: id => suspended.get(id),
+        take: id => {
+          const suspension = suspended.get(id);
+          suspended.delete(id);
+          return suspension;
+        },
+      };
+      /** Closes `target` and waits for the checkout scans each open of the session started, whose Git reads the folder. */
+      const closed = async (target: RerailRuntime): Promise<void> => {
+        await target.dispose();
+        await Promise.allSettled(scans.mock.results.map(result => result.value as Promise<void>));
+      };
+      const session = { host: "claude-code" as const, sessionId, cwd: ws.repo };
+      const runtime = sessionRuntime(ws, service, { suspendedSessions });
+      try {
+        await runtime.ingest({ kind: "session-start", eventId: "start", session });
+        // The session's open queues the note once its scan of the checkout has run, which takes seconds on Windows.
+        const queued = () => expect(handed.mock.results.some(result => (result.value as readonly unknown[]).length > 0)).toBe(true);
+        await vi.waitFor(queued, { timeout: 20_000, interval: 20 });
+      } catch (error) {
+        await closed(runtime);
+        throw error;
+      }
+      /**
+       * The notes the session's next two boundaries give: a prompt, which opens it again, then the end of the agent's turn,
+       * which waits for the session's rules to open, so a note still waiting goes out by then.
+       */
+      const notesGiven = async (target: RerailRuntime): Promise<AdapterDelivery[]> => {
+        const deliveries = [...await target.ingest({ kind: "user-prompt", eventId: "next", sessionId, session, text: "Go on." })];
+        await service.settled();
+        deliveries.push(...await target.ingest({ kind: "turn-end", eventId: "stop", sessionId, session, text: "Done." }));
+        return deliveries.filter(delivery => delivery.content.includes("overlaps open work"));
+      };
+      return { ws, service, runtime, suspendedSessions, notesGiven, closed };
+    }
+
+    it("gives the note once at the session's next event after the daemon restarts", async () => {
+      const { ws, service, runtime, suspendedSessions, notesGiven, closed } = await noted("restart-session");
+      await runtime.dispose();
+      const next = sessionRuntime(ws, service, { suspendedSessions });
+      try {
+        expect(await notesGiven(next)).toHaveLength(1);
+      } finally {
+        await closed(next);
+      }
+    });
+
+    it("lets the session go quiet while only its note waits, and gives the note once at its next event", async () => {
+      const { runtime, notesGiven, closed } = await noted("quiet-session");
+      try {
+        expect(await runtime.closeIdleSession("quiet-session")).toMatchObject({ kind: "suspended" });
+        expect(await notesGiven(runtime)).toHaveLength(1);
+      } finally {
+        await closed(runtime);
+      }
     });
   });
 });

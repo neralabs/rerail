@@ -1,0 +1,497 @@
+import { createHash } from "node:crypto";
+import { appendFile, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { CodeRuleBridge, renderSteer, type CodeRuleViolation, type RuleSteerDelivery } from "../../src/engine/index.js";
+import type { FileDigests } from "../../src/runtime/owed-ledger.js";
+import { RerailRuntime, type SessionSuspension, type SuspendedSessions } from "../../src/runtime/runtime.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
+
+/** The next look at whether an owed item's files changed (`changedFiles`), held while a test sets it (`holdNextLook`). */
+const looks = vi.hoisted(() => ({ hold: undefined as (() => Promise<void>) | undefined }));
+vi.mock("../../src/runtime/owed-ledger.js", async importOriginal => {
+  const actual = await importOriginal<{ changedFiles: (root: string, digests: FileDigests) => Promise<string[]> }>();
+  return {
+    ...actual,
+    changedFiles: async (root: string, digests: FileDigests) => {
+      const hold = looks.hold;
+      looks.hold = undefined;
+      await hold?.();
+      return await actual.changedFiles(root, digests);
+    },
+  };
+});
+
+/** Holds the next look at an owed item's files until `release`; `entered` settles once it has begun. */
+function holdNextLook() {
+  const entered = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
+  looks.hold = async () => {
+    entered.resolve();
+    await released.promise;
+  };
+  return { entered: entered.promise, release: () => released.resolve() };
+}
+
+/**
+ * Holds the reopened session's begin of each call its ledger held open (a begin given the call's captured preimages)
+ * until its first walk has run, that is until its walks stand past `since`, where they stood at the suspension: the
+ * order a loaded host can give, in which that walk reaches the call's file before the call claims it again.
+ */
+function beginAfterFirstWalk(since: number) {
+  const begin = CodeRuleBridge.prototype.begin;
+  return vi.spyOn(CodeRuleBridge.prototype, "begin").mockImplementation(async function (this: CodeRuleBridge, ...args: Parameters<CodeRuleBridge["begin"]>) {
+    if (args[3] !== undefined) {
+      await vi.waitFor(async () => expect((await this.walkResume())?.since).toBeGreaterThan(since), { timeout: 10_000, interval: 20 });
+    }
+    return await begin.apply(this, args);
+  });
+}
+
+/**
+ * The suspended sessions an engine service keeps for its runtimes (`suspendedSessions` in engine-service.ts): the idle
+ * close keeps a quiet session's owner claim there, and the session's next open in a runtime takes it back.
+ */
+function keptSuspensions(): SuspendedSessions {
+  const kept = new Map<string, SessionSuspension>();
+  return {
+    keep: (suspension) => {
+      kept.set(suspension.descriptor.sessionId, suspension);
+    },
+    get: sessionId => kept.get(sessionId),
+    take: sessionId => {
+      const suspension = kept.get(sessionId);
+      kept.delete(sessionId);
+      return suspension;
+    },
+  };
+}
+
+const directories: string[] = [];
+afterEach(async () => {
+  looks.hold = undefined;
+  vi.unstubAllEnvs();
+  await Promise.all(directories.splice(0).map(async path => await removeFolder(path)));
+});
+
+function finding(path: string): CodeRuleViolation {
+  return {
+    id: `no-bad:${path}`, ruleId: "test:no-bad", clauseId: "clause", code: "NO_BAD", mode: "steer", message: "Do not write bad.",
+    path, span: { startByte: 26, endByte: 29, startLine: 1, startColumn: 6, endLine: 1, endColumn: 9 }, captures: {}, variables: {},
+  };
+}
+const STEER = renderSteer([finding("a.ts")]);
+const DIGEST = renderSteer([finding("a.ts")], { kind: "late" });
+// Assembled from parts, so no secret scanner takes this file for one holding a key.
+const SECRET = ["glpat", "-x7Kq2mZ9vL4pR8tN1wB6"].join("");
+const REDACTED = `[redacted:gitlab-token:${createHash("sha256").update(SECRET).digest("hex").slice(0, 6)}]`;
+
+/** What `a.ts` holds once an edit writes `bad`, which its rule steers on. */
+const BAD = "export const a = 1;\nconst bad = 2;\n";
+
+/**
+ * A Claude Code session in a checkout holding `a.ts`, whose rule check steers on an edit that writes `bad` into it, and
+ * when the test asks (`steer`, `hold`), as a check that finishes after the boundary that waited for it does. `reopen`
+ * makes the runtime a daemon would make after a restart, over the same records. An evaluator opened after the first
+ * opens once `reopened` settles, as one whose rules compile again does, and fails to open when `failsToOpen` says so of
+ * its number (the first is 1). The session is Claude Code's unless `host` says otherwise.
+ */
+async function owingSession(options: { reopened?: Promise<void>; host?: "claude-code" | "omp"; failsToOpen?: (evaluator: number) => boolean } = {}) {
+  // The real path: macOS's temporary folder is reached through a symlink, which would name the file twice.
+  const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-session-owed-")));
+  directories.push(root);
+  await writeFile(join(root, "a.ts"), "export const a = 1;\n");
+  let delivery: RuleSteerDelivery | undefined;
+  const checked: string[] = [];
+  /** Each edit a rule check read, with the mode it read it in: Log for another writer's change. */
+  const reads: { path: string; mode: string; bad: boolean }[] = [];
+  let evaluators = 0;
+  // One for the session's whole life, as the engine service keeps one across the runtimes it makes.
+  const suspendedSessions = keptSuspensions();
+  const open = () => new RerailRuntime({
+    autostart: false,
+    suspendedSessions,
+    workspaceRoot: root,
+    storageRoot: join(root, "sessions"),
+    databasePath: join(root, "rerail.sqlite"),
+    embedder: {
+      fingerprint: () => ({ modelId: "test", revision: "1", dimensions: 2, weightsSha256: "test", tokenizerSha256: "test", kernelFormatVersion: 1 }),
+      embed: async texts => texts.map(() => new Float32Array([1, 0])),
+    },
+    createAuditor: ({ steerDelivery }) => {
+      delivery = steerDelivery;
+      evaluators += 1;
+      const opening = evaluators > 1 ? options.reopened : undefined;
+      const fails = options.failsToOpen?.(evaluators) === true;
+      return {
+        openWorkspace: async () => {
+          await opening;
+          if (fails) throw new Error("evaluator unavailable");
+        },
+        acceptsPath: path => path.endsWith(".ts"),
+        auditGeneratedEdits: async (sessionId, batch) => {
+          const bad = batch.edits.filter(edit => edit.generatedText?.includes("bad")).map(edit => edit.path);
+          if (bad.length > 0) {
+            await steerDelivery.requestSteer(sessionId, "steer", STEER, {
+              revision: batch.revision, scope: bad, ruleIds: ["test:no-bad"], rules: [{ id: "test:no-bad", state: "steered" }],
+            });
+          }
+          // Once the steer is placed, so a test that waits for the check finds it pending.
+          checked.push(...batch.edits.map(edit => edit.path));
+          reads.push(...batch.edits.map(edit => ({ path: edit.path, mode: batch.mode ?? "session", bad: edit.generatedText?.includes("bad") === true })));
+          return { revision: batch.revision, disposition: "continue", violations: [], failures: [] };
+        },
+        close: async () => undefined,
+      };
+    },
+  });
+  const session = { host: options.host ?? "claude-code", sessionId: "owing", cwd: root };
+  let runtime = open();
+  await runtime.ingest({ kind: "session-start", eventId: "start", session });
+  await runtime.codeRulesOpened(session.sessionId);
+  const ledger = join(root, "sessions", createHash("sha256").update(session.sessionId).digest("hex"), "events.jsonl");
+  return {
+    root, session, ledger, checked, reads,
+    get runtime() {
+      return runtime;
+    },
+    /** How many evaluators the session has opened: one, unless it was closed and opened again. */
+    get evaluators() {
+      return evaluators;
+    },
+    /** A steer for `a.ts`, pending for the session's next answer. */
+    steer: async (content = STEER) => await delivery!.requestSteer(session.sessionId, "steer", content, {
+      revision: 0, scope: ["a.ts"], ruleIds: ["test:no-bad"], rules: [{ id: "test:no-bad", state: "steered" }],
+    }),
+    /** `path`'s finding, held for the yield's digest (with the experimental digest on). */
+    hold: async (path = "a.ts") => await delivery!.requestSteer(session.sessionId, "steer", renderSteer([finding(path)]), {
+      revision: 0, scope: [path], ruleIds: ["test:no-bad"], rules: [{ id: "test:no-bad", state: "steered" }],
+      generatedEdit: { violations: [finding(path)], sourceOf: () => undefined },
+    }),
+    prompt: (eventId: string) => runtime.ingest({ kind: "user-prompt", eventId, sessionId: session.sessionId, session, text: eventId }),
+    turnEnd: (eventId: string) => runtime.ingest({ kind: "turn-end", eventId, sessionId: session.sessionId, session, text: "" }),
+    reopen: async () => {
+      await runtime.dispose();
+      runtime = open();
+    },
+  };
+}
+
+/**
+ * Where the steer for a call answered as a session opens again reaches the agent, by coding agent: Claude Code's result
+ * waits for the reopened session's rules and carries it; OMP's does not wait, and the next event carries it.
+ */
+const WAITS_FOR_RULES = [
+  { host: "claude-code", atResult: [STEER], atNext: [] },
+  { host: "omp", atResult: [], atNext: [STEER] },
+] as const;
+
+/**
+ * Waits for `checked` once the session's reopened evaluator is open: the check of a call the ledger held open runs
+ * after that (`#checkWhenOpen`), which on a loaded Windows host took past `vi.waitFor`'s 1 s.
+ */
+async function waitForCheck(owing: { runtime: RerailRuntime; session: { sessionId: string } }, checked: () => void): Promise<void> {
+  await owing.runtime.codeRulesOpened(owing.session.sessionId);
+  await vi.waitFor(checked, { timeout: 10_000, interval: 20 });
+}
+
+describe("what a session owes its agent while it is closed", () => {
+  it("gives the agent the steer a session still owed when it was closed after a day, with its next event, once", async () => {
+    const owing = await owingSession();
+    try {
+      await owing.steer();
+      // The engine service closes a session quiet for a day whatever it owes, as one left at a permission prompt overnight.
+      expect(await owing.runtime.closeIdleSession(owing.session.sessionId, { evenIfOwing: true })).toMatchObject({ kind: "suspended" });
+      expect((await owing.prompt("next-morning")).map(delivery => delivery.content)).toEqual([STEER]);
+      // Delivered: the session owes nothing now, closed again or not.
+      expect(await owing.runtime.closeIdleSession(owing.session.sessionId)).toMatchObject({ kind: "suspended" });
+      expect(await owing.prompt("later")).toEqual([]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  it("gives the agent a steer owed when its runtime closed, as at a daemon restart, with the session's next event under the next one", async () => {
+    const owing = await owingSession();
+    try {
+      await owing.steer();
+      await owing.reopen();
+      expect((await owing.prompt("after-restart")).map(delivery => delivery.content)).toEqual([STEER]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  it("keeps a finding held for the digest across a close, and lists it in the digest at the next end of the agent's run", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST", "1");
+    const owing = await owingSession();
+    try {
+      await owing.hold();
+      expect(await owing.runtime.closeIdleSession(owing.session.sessionId, { evenIfOwing: true })).toMatchObject({ kind: "suspended" });
+      expect(await owing.prompt("next-morning")).toEqual([]);
+      await owing.runtime.codeRulesOpened(owing.session.sessionId);
+      expect((await owing.turnEnd("turn")).map(delivery => delivery.content)).toEqual([DIGEST]);
+      expect(await owing.turnEnd("turn-2")).toEqual([]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  // Claude Code's result waits for the reopened session's rules (`REOPENED_RULES_WAIT_MS`), and the steer rides it. OMP's
+  // does not wait: it comes while the rules open, and the edit is checked once they are, its steer with the next event.
+  it.each(WAITS_FOR_RULES)("checks the edit of a call that waited across a close once the session's rules are open, its result in $host", async ({ host, atResult, atNext }) => {
+    const owing = await owingSession({ host });
+    const { session } = owing;
+    try {
+      await owing.runtime.ingest({
+        kind: "call", eventId: "call", sessionId: session.sessionId, session, toolCallId: "t1", toolName: "Write",
+        input: { file_path: join(owing.root, "a.ts"), content: BAD },
+      });
+      // Left at the permission prompt past the day, then allowed: the write lands, and its result opens the session again.
+      expect(await owing.runtime.closeIdleSession(session.sessionId, { evenIfOwing: true })).toMatchObject({ kind: "suspended" });
+      await writeFile(join(owing.root, "a.ts"), BAD);
+      const result = await owing.runtime.ingest({ kind: "result", eventId: "result", sessionId: session.sessionId, session, toolCallId: "t1", toolName: "Write", output: "ok" });
+      expect(result.map(delivery => delivery.content)).toEqual(atResult);
+      await waitForCheck(owing, () => expect(owing.checked).toContain("a.ts"));
+      expect((await owing.prompt("next")).map(delivery => delivery.content)).toEqual(atNext);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  // The suspension keeps where the session's walks stood, and the waiting call's check reads the file once the rules are
+  // open: the edit is the call's, read once in the session's mode, not again as another writer's change. The reopened
+  // session's first walk runs before the call is begun again, as on a loaded host: it must leave the call's file alone.
+  it.each(WAITS_FOR_RULES)("checks once, as the call's own, the edit a call that waited across the day's close made to a file the session had edited, its result in $host", async ({ host, atResult, atNext }) => {
+    const owing = await owingSession({ host });
+    const { session } = owing;
+    const tool = (toolCallId: string) => ({ sessionId: session.sessionId, session, toolCallId, toolName: "Write" }) as const;
+    const call = (toolCallId: string) => owing.runtime.ingest({
+      kind: "call", eventId: `${toolCallId}:call`, ...tool(toolCallId), input: { file_path: join(owing.root, "a.ts"), content: "" },
+    });
+    const result = (toolCallId: string) => owing.runtime.ingest({ kind: "result", eventId: `${toolCallId}:result`, ...tool(toolCallId), output: "ok" });
+    let begins: ReturnType<typeof beginAfterFirstWalk> | undefined;
+    try {
+      await call("t0");
+      await writeFile(join(owing.root, "a.ts"), "export const a = 1;\nconst ok = 1;\n");
+      await result("t0");
+      await owing.turnEnd("turn-1");
+      await call("t1");
+      // Left at the permission prompt past the day, then allowed: the write lands, and its result opens the session again.
+      const idle = await owing.runtime.closeIdleSession(session.sessionId, { evenIfOwing: true });
+      if (idle.kind !== "suspended" || idle.suspension.walk === undefined) throw new Error(`expected a suspension with its walks, got ${idle.kind}`);
+      begins = beginAfterFirstWalk(idle.suspension.walk.since);
+      await writeFile(join(owing.root, "a.ts"), BAD);
+      expect((await result("t1")).map(delivery => delivery.content)).toEqual(atResult);
+      await waitForCheck(owing, () => expect(owing.reads.some(read => read.bad)).toBe(true));
+      expect((await owing.prompt("next")).map(delivery => delivery.content)).toEqual(atNext);
+      expect(await owing.turnEnd("turn-2")).toEqual([]);
+      expect(owing.reads.filter(read => read.bad)).toEqual([{ path: "a.ts", mode: "session", bad: true }]);
+    } finally {
+      begins?.mockRestore();
+      await owing.runtime.dispose();
+    }
+  });
+
+  // A steer reaches the agent with the next event either way; a session closed and opened again would hold the agent's
+  // next tool call while its rules compile again, or check its edit only at the turn end where its host does not wait.
+  it("keeps a quiet session that owes a steer open at the idle limit, so the agent's next edit is checked at its own result", async () => {
+    const reopened = Promise.withResolvers<void>();
+    const owing = await owingSession({ reopened: reopened.promise });
+    const { session } = owing;
+    try {
+      await owing.steer("Fix a.py.");
+      expect(await owing.runtime.closeIdleSession(session.sessionId)).toEqual({ kind: "owing" });
+      expect((await owing.prompt("back")).map(delivery => delivery.content)).toEqual(["Fix a.py."]);
+      await owing.runtime.ingest({
+        kind: "call", eventId: "call", sessionId: session.sessionId, session, toolCallId: "t1", toolName: "Write",
+        input: { file_path: join(owing.root, "a.ts"), content: BAD },
+      });
+      await writeFile(join(owing.root, "a.ts"), BAD);
+      const result = await owing.runtime.ingest({ kind: "result", eventId: "result", sessionId: session.sessionId, session, toolCallId: "t1", toolName: "Write", output: "ok" });
+      expect(owing.checked).toEqual(["a.ts"]);
+      expect(result.map(delivery => delivery.content)).toEqual([STEER]);
+      reopened.resolve();
+      expect(await owing.turnEnd("turn")).toEqual([]);
+      expect(owing.evaluators).toBe(1);
+    } finally {
+      reopened.resolve();
+      await owing.runtime.dispose();
+    }
+  });
+
+  // A scan opens a suspended session with no event, so the steer its ledger gave back stays owed. The session was then
+  // suspended again at the next idle close, and the agent's next edit was checked only at the turn's end.
+  it("keeps a session a scan opened again in memory at the idle limit while it owes the steer its ledger gave back", async () => {
+    const owing = await owingSession();
+    try {
+      await owing.steer();
+      expect(await owing.runtime.closeIdleSession(owing.session.sessionId, { evenIfOwing: true })).toMatchObject({ kind: "suspended" });
+      await owing.runtime.resumeSession(owing.session);
+      await owing.runtime.codeRulesOpened(owing.session.sessionId);
+      expect(await owing.runtime.closeIdleSession(owing.session.sessionId)).toEqual({ kind: "owing" });
+      expect((await owing.prompt("back")).map(delivery => delivery.content)).toEqual([STEER]);
+      expect(owing.evaluators).toBe(2);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  it("does not give the agent a steer owed across a close once its file changed while the session was closed", async () => {
+    const owing = await owingSession();
+    try {
+      await owing.steer();
+      await owing.reopen();
+      // The person edits the file before the agent's next event opens the session again.
+      await writeFile(join(owing.root, "a.ts"), "export const a = 2;\n");
+      expect(await owing.turnEnd("stop")).toEqual([]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  it("leaves out of the digest a finding held across a close once its file changed while the session was closed", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST", "1");
+    const owing = await owingSession();
+    try {
+      await owing.hold();
+      expect(await owing.runtime.closeIdleSession(owing.session.sessionId, { evenIfOwing: true })).toMatchObject({ kind: "suspended" });
+      await writeFile(join(owing.root, "a.ts"), "export const a = 2;\n");
+      expect(await owing.prompt("next-morning")).toEqual([]);
+      await owing.runtime.codeRulesOpened(owing.session.sessionId);
+      expect(await owing.turnEnd("turn")).toEqual([]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  it("drops what a session owed once it ends, as its end always has", async () => {
+    const owing = await owingSession();
+    try {
+      await owing.steer();
+      await owing.reopen();
+      await owing.runtime.ingest({ kind: "session-end", eventId: "end", sessionId: owing.session.sessionId, session: owing.session });
+      // Claude Code resumes a session under its id.
+      expect(await owing.prompt("resumed")).toEqual([]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  it("keeps an owed steer in the ledger scrubbed of secrets, and a finding in a secret-like file without its message", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST", "1");
+    const owing = await owingSession();
+    try {
+      await owing.steer(`Move \`const key = "${SECRET}"\` to the environment.`);
+      await owing.hold("secrets.yaml");
+      await owing.reopen();
+      const ledger = await readFile(owing.ledger, "utf8");
+      expect(ledger).not.toContain(SECRET);
+      expect(ledger).not.toContain("Do not write bad.");
+      expect((await owing.prompt("after-restart")).map(delivery => delivery.content)).toEqual([`Move \`const key = "${REDACTED}"\` to the environment.`]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  // An evaluator that could not open as the session opened again can take none of the findings its ledger gave back.
+  // They counted as owed all the same, so each idle close kept the session in memory until the day's limit.
+  it("suspends at the idle limit a session whose evaluator failed as it opened again, and keeps the findings it owed for its next open", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST", "1");
+    const owing = await owingSession({ failsToOpen: evaluator => evaluator === 2 });
+    const { sessionId } = owing.session;
+    try {
+      await owing.hold();
+      expect(await owing.runtime.closeIdleSession(sessionId, { evenIfOwing: true })).toMatchObject({ kind: "suspended" });
+      expect(await owing.prompt("next-morning")).toEqual([]);
+      await owing.runtime.codeRulesOpened(sessionId);
+      expect(await owing.runtime.closeIdleSession(sessionId)).toMatchObject({ kind: "suspended" });
+      // The next open's evaluator opens, and the digest at the end of the agent's run lists the finding.
+      expect(await owing.prompt("later")).toEqual([]);
+      await owing.runtime.codeRulesOpened(sessionId);
+      expect((await owing.turnEnd("turn")).map(delivery => delivery.content)).toEqual([DIGEST]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  // The session took what it owed out of memory, then read each file it names: a close in between, as a daemon's stop,
+  // found nothing owed and kept nothing, and the answer dropped what the closed session could no longer give.
+  it("keeps what a session owed when its runtime closes while it is being given out", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST", "1");
+    const owing = await owingSession();
+    const { sessionId } = owing.session;
+    try {
+      await owing.steer();
+      await owing.hold();
+      expect(await owing.runtime.closeIdleSession(sessionId, { evenIfOwing: true })).toMatchObject({ kind: "suspended" });
+      // A scan opens the session with no event, so what its ledger gave back stays in memory, its evaluator open.
+      await owing.runtime.resumeSession(owing.session);
+      await owing.runtime.codeRulesOpened(sessionId);
+      const look = holdNextLook();
+      // A native host's poll collects it, and the runtime closes before the files are read.
+      const collecting = owing.runtime.collectDeliveries(sessionId);
+      await look.entered;
+      const closing = owing.reopen();
+      look.release();
+      const collected = await collecting;
+      await closing;
+      const next = await owing.prompt("after-restart");
+      expect([...collected, ...next].map(delivery => delivery.content)).toEqual([STEER]);
+      await owing.runtime.codeRulesOpened(sessionId);
+      expect((await owing.turnEnd("turn")).map(delivery => delivery.content)).toEqual([DIGEST]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  // A later build's `owed` entry this build cannot read was skipped, and the entry before it taken back: its steer went
+  // out again, though the later build had given it out.
+  it("owes nothing after an owed entry it cannot read, so no steer an earlier entry listed goes out again", async () => {
+    const owing = await owingSession();
+    try {
+      await owing.steer();
+      await owing.reopen();
+      await appendFile(owing.ledger, `${JSON.stringify({ type: "owed", steers: [{ delivery: { strategy: "later" } }], findings: [] })}\n`);
+      expect(await owing.prompt("after-downgrade")).toEqual([]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  // Two answers collecting at once each took the steer the session owed before either had read its file, and both gave
+  // it out.
+  it("gives a steer a session owed once when two answers collect what it owes at once", async () => {
+    const owing = await owingSession();
+    const { sessionId } = owing.session;
+    try {
+      await owing.steer();
+      expect(await owing.runtime.closeIdleSession(sessionId, { evenIfOwing: true })).toMatchObject({ kind: "suspended" });
+      // A scan opens the session with no event, so the steer its ledger gave back stays owed.
+      await owing.runtime.resumeSession(owing.session);
+      const collected = await Promise.all([owing.runtime.collectDeliveries(sessionId), owing.runtime.collectDeliveries(sessionId)]);
+      expect(collected.flat().map(delivery => delivery.content)).toEqual([STEER]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+
+  // The answer that gave out an owed steer left the ledger saying it was still owed until a close wrote it again, so a
+  // daemon that died in between gave the same steer again at the session's next open.
+  it("gives a steer owed across a close once, also when the daemon dies after giving it out", async () => {
+    const owing = await owingSession();
+    try {
+      await owing.steer();
+      await owing.reopen();
+      expect((await owing.prompt("after-restart")).map(delivery => delivery.content)).toEqual([STEER]);
+      // The ledger as a daemon that died here leaves it: the close of the runtime below would write it again.
+      const leftByCrash = await readFile(owing.ledger, "utf8");
+      await owing.reopen();
+      await writeFile(owing.ledger, leftByCrash);
+      expect(await owing.prompt("after-crash")).toEqual([]);
+    } finally {
+      await owing.runtime.dispose();
+    }
+  });
+});

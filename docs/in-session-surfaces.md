@@ -225,12 +225,41 @@ In a large repository, Rerail indexes at session start before code rules can run
 - OMP's footer shows ` · indexing` while it lasts, only if it takes over half a second.
 - The dashboard timeline says code rules were not yet running at those steps.
 
-The daemon closes a session that sends nothing for 30 minutes, and frees a checkout's compiled rules 15 minutes after
-its last session ends. The session's next event opens it again, and its rules may compile again (about 12 s of CPU for
-a TypeScript repository's five packs on a Windows laptop). In Claude Code, Codex and Cursor, a reopened session's tool
-calls and turn end wait up to 20 seconds for its rules, so its first edit is checked and steered at its own result as
-every later one is. A daemon restart or a resumed session reopens the same way. Rules still not open after 20 seconds
+The daemon frees what a session that sends nothing for 30 minutes holds in memory, and a checkout's compiled rules 15
+minutes after no session there holds them. The session stays open, since its agent may be too: the dashboard shows it
+live, a scan asked for it runs, and its next event opens it again. Its rules may then compile again (about 12 s of CPU
+for a TypeScript repository's five packs on a Windows laptop). In Claude Code, Codex and Cursor, a reopened session's
+tool calls and turn end wait up to 20 seconds for its rules, so its first edit is checked and steered at its own result
+as every later one is. A daemon restart or a resumed session reopens the same way. Rules still not open after 20 seconds
 are not waited for further: that edit is checked by the first pass once they open.
+
+- A command that rewrites a file the agent edited before the quiet is measured from the text the agent left there, so
+  a rule that judges only the agent's lines judges only those.
+- A change another program made while the session was quiet, to a file the session had edited, is recorded in Log
+  when the session opens again, as it is while a session is active.
+- A session waiting on a tool call (a permission prompt, a long command), owing a steer, holding a finding for the
+  digest, or still running a check keeps its memory for up to a day.
+- What a session still owes when its memory is freed after that day, or when the daemon stops or restarts, waits in the
+  session's records: a steer goes out with its next event, and a finding held for the missed-steer digest goes into the
+  next digest. One whose file has changed since the session last saw it is dropped, as an edit of that file would drop
+  it.
+- A session running a scan, or with one waiting to start, keeps its memory until the scan has run, for up to a day.
+- A scan asked for a quiet session that cannot be opened again (its folder gone, say) fails at once, saying why.
+- Stopping the daemon ends the session, as it ends every open one. Its history shows it ended when its memory was
+  freed, the last the daemon heard of it, not when the daemon stopped.
+- A daemon that ends without being stopped (the machine restarts or shuts down, it is killed) ends no session. The next
+  daemon to start on the same Rerail home ends each session it left open there, at 30 minutes after the session's last
+  event, or at that start when sooner. A second daemon already running on the same Rerail home does the same within a
+  minute. The session's next event opens it again. A session that a daemon still running holds is left as it is. A
+  daemon tells that another has stopped by a lock that daemon held, also when another process now has its process id.
+  Where a session's record names no such lock (a pi or OMP session, one a daemon recorded in another home or while it
+  could take no lock, or one an earlier version left), it goes by that process id alone: it leaves the session open
+  while another process has that id, and ends it when the id is its own but the session is not one it opened.
+- A daemon that could not take its owner lock (a file in `locks/owners/` beside its database, by which a later daemon
+  tells whether it still runs; a file system can refuse it) says why in its log and ends a quiet session when it frees
+  its memory, as earlier versions did: the session shows as ended, a scan asked for it is refused, and its next event
+  opens it again. Every daemon does the same for a session it records in another home's database, which its own start
+  never looks at.
 
 </details>
 

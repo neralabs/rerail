@@ -5,7 +5,6 @@ import { dirname, join, resolve } from "node:path";
 import { z } from "zod/v4";
 import {
   ADAPTER_CAPABILITIES,
-  STEER_STRATEGIES,
   type AdapterDelivery,
   type AdapterEvent,
   type AdapterSample,
@@ -16,9 +15,14 @@ import {
 } from "../engine/adapter-contract.js";
 import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState } from "./host-runtime.js";
 import { autostartDaemon } from "./daemon-control.js";
-import { ConflictNoticeSchema, InactiveSessionError, SteerRuleSchema } from "./event-protocol.js";
+import { InactiveSessionError } from "./event-protocol.js";
 import {
-  CodeRuleBridge, generatedEditPaths, ledgerPreimage, type Preimage, type RewoundEdit, type SourceObservationCache,
+  changedFiles, fileDigest, LedgerDeliverySchema, owedFinding, owedForDisk, OwedEntrySchema, restoredFinding,
+  type FileDigests, type OwedEntry, type OwedSteer,
+} from "./owed-ledger.js";
+import {
+  CodeRuleBridge, generatedEditPaths, ledgerPreimage, type HeldCall, type Preimage, type RewoundEdit, type SessionWalkResume,
+  type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import {
@@ -48,7 +52,6 @@ import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "../
 import { ConversationRuleRegistry, type RuleMatch } from "../engine/catalog/registry.js";
 import { LiveConversationRules } from "../engine/catalog/conversation-rule-sync.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-schema.js";
-import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { restorableRule, type DroppedEvents, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
 import { rewoundSteer, steerBlock, steerRules, steerShell, subagentSteer, type SteerShell } from "../engine/code-rule/rerail-steer.js";
@@ -175,10 +178,18 @@ function sampleOwner(source: AdapterSample["source"]): "user" | "assistant" | "t
   return "tool";
 }
 
+/** A ledger line that says it is an `owed` entry, whether or not this build can read the rest of it. */
+const OwedTypeSchema = z.object({ type: z.literal("owed") });
+
 function validatedLedger(values: readonly unknown[]): LedgerEntry[] {
-  return values.flatMap((value) => {
+  return values.flatMap((value): LedgerEntry[] => {
     const parsed = LedgerEntrySchema.safeParse(value);
-    return parsed.success ? [compactValidated<LedgerEntry>(parsed.data)] : [];
+    if (parsed.success) return [compactValidated<LedgerEntry>(parsed.data)];
+    if (!OwedTypeSchema.safeParse(value).success) return [];
+    // An `owed` line this build cannot read (a later build's) may say that what an earlier one listed has gone out: the
+    // session owes nothing from either, rather than give it out again.
+    process.stderr.write("rerail: a session's ledger holds an owed entry this version cannot read; the session owes nothing from it\n");
+    return [{ type: "owed", steers: [], findings: [] }];
   });
 }
 
@@ -273,6 +284,43 @@ function secretCallsOf(ledger: readonly LedgerEntry[]): { calls: Set<string>; re
   return { calls, results };
 }
 
+/**
+ * What the ledger says the session owed its agent when it last closed without its end, as the session takes it back
+ * when it opens: at revision 0, so the first revision this opening makes of a source drops what spoke for it, and with
+ * what each file it names held then, so a file changed while the session was closed drops it too (`#stillOwed`).
+ */
+function restoredOwed(ledger: readonly LedgerEntry[]): OwedState {
+  const owed = ledger.findLast((entry): entry is OwedEntry => entry.type === "owed");
+  if (owed === undefined) return { steers: [], findings: [], recorded: 0 };
+  return {
+    steers: owed.steers.map(steer => ({ delivery: steer.delivery, revision: 0, scope: [...steer.scope], digests: { ...steer.digests } })),
+    findings: owed.findings.map(finding => ({ ...restoredFinding(finding), revision: 0 })),
+    recorded: owed.steers.length + owed.findings.length,
+  };
+}
+
+/**
+ * How many of the steers and held findings the session's ledger gave back it can still give its agent while it stays
+ * open. Its findings join its evaluator's, so none once the evaluator could not open: they stay in its ledger for its
+ * next open, whose evaluator may.
+ */
+function owedNow(state: RuntimeSessionState): number {
+  return state.owed.steers.length + (state.codeRuleOffReason === undefined ? state.owed.findings.length : 0);
+}
+
+/**
+ * The steers of `steers` the session owes its agent itself: not a Merge Assist note, which records itself as given once
+ * a delivery takes it (`settled`) and which Merge Assist hands the session's next open again until one does.
+ */
+function ownSteers(steers: readonly PendingSteer[]): PendingSteer[] {
+  return steers.filter(steer => steer.settled === undefined);
+}
+
+/** Whether `item` is the steer of an edit Rerail rolled back: the agent's only word that its edit is gone. */
+function rollsBack(item: PendingSteer | MissedFinding): boolean {
+  return "delivery" in item && item.delivery.rewound !== undefined;
+}
+
 
 const PrimitiveSchema = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
 const ContentRefSchema = z
@@ -312,22 +360,7 @@ const LedgerEntrySchema = z.union([
   z.object({ type: z.literal("hud-tracking-start") }),
   z.object({ type: z.literal("sample"), item: ContentItemSchema }),
   z.object({ type: z.literal("turn"), eventId: z.string() }),
-  z.object({
-    type: z.literal("delivery"),
-    delivery: z.object({
-      sessionId: z.string(),
-      requested: z.enum(RULE_MODES),
-      mechanism: z.enum(["observe", "native-queue", "additional-context", "deferred-context"]),
-      content: z.string(),
-      ruleIds: z.array(z.string()),
-      // Absent in a ledger written before deliveries carried their rules.
-      rules: z.array(SteerRuleSchema).default([]),
-      strategy: z.enum(STEER_STRATEGIES).optional(),
-      toolCallId: z.string().optional(),
-      rewound: z.array(z.string()).optional(),
-      conflict: ConflictNoticeSchema.optional(),
-    }),
-  }),
+  z.object({ type: z.literal("delivery"), delivery: LedgerDeliverySchema }),
   z.object({ type: z.literal("rule-mutation"), mutation: z.unknown() }),
   z.object({ type: z.literal("rule-match"), ruleId: z.string(), turn: z.number().int().nonnegative() }),
   z.object({
@@ -343,6 +376,7 @@ const LedgerEntrySchema = z.union([
   z.object({ type: z.literal("policy-result"), toolCallId: z.string() }),
   z.object({ type: z.literal("secret-call"), toolCallId: z.string() }),
   z.object({ type: z.literal("secret-result"), toolCallId: z.string(), eventId: z.string() }),
+  OwedEntrySchema,
 ]);
 
 type LedgerEntry =
@@ -356,7 +390,8 @@ type LedgerEntry =
   | { type: "policy-call"; toolCallId: string; toolName: string; paths: string[]; preimages?: Readonly<Record<string, Preimage>>; agentId?: string }
   | { type: "policy-result"; toolCallId: string }
   | { type: "secret-call"; toolCallId: string }
-  | { type: "secret-result"; toolCallId: string; eventId: string };
+  | { type: "secret-result"; toolCallId: string; eventId: string }
+  | OwedEntry;
 
 export function compactValidated<T>(value: unknown): T {
   // Zod has already validated this value; the round-trip removes explicit undefined keys for exact optional types.
@@ -386,9 +421,14 @@ function ledgerEntryForDisk(entry: LedgerEntry): LedgerEntry {
   return entry;
 }
 
+/** A ledger entry as it is written to disk: `ledgerEntryForDisk`, or what a closed session owes in `owedForDisk`'s form. */
+function storedLedgerEntry(entry: LedgerEntry): LedgerEntry {
+  return entry.type === "owed" ? owedForDisk(entry) : ledgerEntryForDisk(entry);
+}
+
 /**
  * One line of an existing session ledger as `rerail scrub` rewrites it: an entry this build reads, in its disk form
- * (`ledgerEntryForDisk`); undefined when the line stays as it is (unchanged, or not an entry this build knows).
+ * (`storedLedgerEntry`); undefined when the line stays as it is (unchanged, or not an entry this build knows).
  */
 export function scrubbedLedgerLine(line: string): string | undefined {
   let value: unknown;
@@ -400,7 +440,7 @@ export function scrubbedLedgerLine(line: string): string | undefined {
   const parsed = LedgerEntrySchema.safeParse(value);
   if (!parsed.success) return undefined;
   const entry = compactValidated<LedgerEntry>(parsed.data);
-  const stored = ledgerEntryForDisk(entry);
+  const stored = storedLedgerEntry(entry);
   return stored === entry ? undefined : JSON.stringify(stored);
 }
 
@@ -543,6 +583,33 @@ interface MissedFinding {
   scope: string[];
 }
 
+/**
+ * A steer or held finding the session owes while it is closed, with what each file it names held as the session last
+ * saw it (`#withDigests`).
+ */
+type Kept<T extends PendingSteer | MissedFinding> = T & { digests: FileDigests };
+
+/** What a closing session owes its agent: what it took back from its ledger (`kept`), and what this opening found. */
+interface Owing {
+  kept: { steers: Kept<PendingSteer>[]; findings: Kept<MissedFinding>[] };
+  found: { steers: PendingSteer[]; findings: MissedFinding[] };
+}
+
+/**
+ * What the session owed its agent when it last closed without its end, taken back from its ledger (`restoredOwed`)
+ * until it goes out. Its steers go out with the session's next answer without waiting for its evaluator, which did not
+ * find them; its findings join the evaluator's once it is open, for the next yield's digest.
+ */
+interface OwedState {
+  steers: Kept<PendingSteer>[];
+  findings: Kept<MissedFinding>[];
+  /** How many steers and findings the ledger's last `owed` entry lists. */
+  recorded: number;
+}
+
+/** A tool call the ledger held open as the session opened: its call was recorded, its result not yet. */
+type RestoredCall = Extract<LedgerEntry, { type: "policy-call" }>;
+
 /** The checkout a session started in (physical root), the session folder relative to it, and that folder resolved once. */
 interface StartingCheckout {
   root: string;
@@ -601,6 +668,8 @@ interface RuntimeSessionState {
   /** The session's tool calls that edit files, until their results: each result finds the checkout's conflicts again. */
   mergeAssistEdits: Set<string>;
   repositoryAudit: Promise<void> | undefined;
+  /** Set while `repositoryAudit` runs: the idle close lets it finish (`#owesScan`). */
+  repositoryAuditRunning?: true;
   pendingCodeRuleCalls: PendingCodeRuleCall[];
   /**
    * The tool calls of the session's current turn still waiting for their result, which may come long after the call
@@ -621,6 +690,17 @@ interface RuntimeSessionState {
   yieldWaits: number;
   /** Generated-edit findings no boundary waited for, in the order they arrived, until the session's next yield. */
   missedFindings: MissedFinding[];
+  owed: OwedState;
+  /**
+   * Whether closing the session keeps what it owes its agent in its ledger: set for a close without its end, as when it
+   * has gone quiet or its runtime closes. Its end drops what it owes, as it always has.
+   */
+  keepsOwed: boolean;
+  /**
+   * The calls the ledger held open as the session opened, by id. One whose result arrives while the evaluator opens is
+   * checked against what the call captured once the evaluator is open (`#checkWhenOpen`).
+   */
+  restoredCalls: Map<string, RestoredCall>;
   /**
    * The session's tool calls whose input names a secret-like path (`callNamesSecretPath`), until their result is stored.
    * The ledger records both ends (`secret-call`, `secret-result`), so a session reopened between them still knows.
@@ -629,6 +709,115 @@ interface RuntimeSessionState {
   /** The results stored without their output (`withheldOutput`): their samples are recorded without text too. */
   withheldResults: Set<string>;
   closed: boolean;
+  /** Set as `closeIdleSession` lets the session go: its close keeps it open in the database, owned (`#markClosed`). */
+  suspending?: true;
+  /** Set as `closeIdleSession` ends the session (`end`): when its record ends, by the caller's clock (`#markClosed`). */
+  endsAt?: number;
+}
+
+/**
+ * What a session the engine service let go of while it was quiet (`closeIdleSession`) keeps until it opens again: the
+ * owner claim it still holds in the database, so it stays live, takes scan requests and reopens without interrupting
+ * them, and where its source walks stood, so its next walk records another writer's change made meanwhile.
+ */
+export interface SessionSuspension {
+  readonly descriptor: AdapterSession;
+  readonly ownerClaim: PolicyOwnerClaim | undefined;
+  /** Undefined when the session's evaluator had not opened, or could not. */
+  readonly walk: SessionWalkResume | undefined;
+  /** The database that records the session, whose record `endSuspendedSessions` ends if it never opens again. */
+  readonly databasePath: string;
+  /**
+   * When the idle close let the session go. A record no runtime opens again ends at this time when its daemon stops
+   * (`endSuspendedSessions`), not at the stop, which can come days after the session went quiet.
+   */
+  readonly suspendedAt: number;
+}
+
+/**
+ * The suspended sessions a runtime keeps and opens again, by session id: an engine service keeps them across its
+ * runtimes.
+ */
+export interface SuspendedSessions {
+  /**
+   * Keeps the suspension of a session `closeIdleSession` is letting go, before its close runs: a scan asked for it while
+   * it closes finds it suspended, and a close that fails leaves it suspended, not open in the database with nobody
+   * holding it.
+   */
+  keep(suspension: SessionSuspension): void;
+  get(sessionId: string): SessionSuspension | undefined;
+  /** Ends the session's suspension as a runtime claims it again, and returns it; undefined once another has taken it. */
+  take(sessionId: string): SessionSuspension | undefined;
+}
+
+/** What `closeIdleSession` did with a quiet session. */
+export type IdleClose =
+  /** It still owes its agent something its ledger does not hold, and stays open. */
+  | { readonly kind: "owing" }
+  /** This runtime does not hold it open. */
+  | { readonly kind: "not-held" }
+  /** Its memory is freed; it stays open in the database until it opens again or its daemon stops. */
+  | { readonly kind: "suspended"; readonly suspension: SessionSuspension }
+  /** Its memory is freed and its record ended, as its end would (`end`); its next event opens it again. */
+  | { readonly kind: "ended" };
+
+/** The bridge option that resumes the session's walks where `suspension` left them; none for a fresh open. */
+function walkResumeOption(suspension: SessionSuspension | undefined): { resume?: SessionWalkResume } {
+  return suspension?.walk === undefined ? {} : { resume: suspension.walk };
+}
+
+/**
+ * The calls the session's ledger holds open as it opens, with what each captured: the evaluator's first walk leaves
+ * their files to each call's own check (`CodeRuleBridge`'s `heldCalls`), begun once the evaluator is open, or at the
+ * call's result, or by `#checkWhenOpen` for a result that came while it opened.
+ */
+function heldCallsOf(restored: ReadonlyMap<string, RestoredCall>): HeldCall[] {
+  return [...restored.values()].map(call => ({ toolCallId: call.toolCallId, paths: call.paths, preimages: call.preimages ?? {} }));
+}
+
+/**
+ * Ends suspended sessions no runtime opened again, as `closeSession` ends an open one: their queued scans are
+ * interrupted, their owner released and their record ended at `endedAt`, the time their end came. Without one, as when
+ * the daemon stops, each record ends when its session was suspended (`suspendedAt`): nothing was heard from it after. One
+ * that fails is reported and the rest are still ended, as a runtime's close ends each of its sessions whatever another's
+ * does.
+ */
+export function endSuspendedSessions(databasePath: string, suspensions: readonly SessionSuspension[], endedAt?: number): void {
+  const sessions = new SqliteSessionStore(databasePath);
+  const controls = new SqliteAuditControlStore(databasePath);
+  try {
+    for (const { descriptor, ownerClaim, suspendedAt } of suspensions) {
+      try {
+        if (ownerClaim !== undefined) {
+          controls.interrupt(descriptor.sessionId);
+          controls.releaseOwner(descriptor.sessionId, ownerClaim);
+        }
+        sessions.closeSession(descriptor.sessionId, endedAt ?? suspendedAt);
+      } catch (error) {
+        process.stderr.write(`rerail: ending quiet session ${descriptor.sessionId} failed: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
+    }
+  } finally {
+    controls.close();
+    sessions.close();
+  }
+}
+
+/**
+ * Fails the scans queued for a suspended session that could not be opened again to run them, saying why, as an open
+ * session fails them when its evaluator cannot open. Its record and owner stay as they are, for its next event.
+ */
+export function failQueuedScans(suspension: SessionSuspension, reason: string): void {
+  const { descriptor: { sessionId }, ownerClaim, databasePath } = suspension;
+  if (ownerClaim === undefined) return;
+  const controls = new SqliteAuditControlStore(databasePath);
+  try {
+    for (let request = controls.claim(sessionId, ownerClaim); request !== undefined; request = controls.claim(sessionId, ownerClaim)) {
+      controls.finish(request.id, "failed", [], `The session could not be opened again to run the scan: ${reason}`);
+    }
+  } finally {
+    controls.close();
+  }
 }
 
 /** A session's ledger as read back when the session opens. */
@@ -835,6 +1024,13 @@ export interface RerailRuntimeOptions {
   discoveryWaitMs?: number;
   /** Receives the timing lines of session start and slow turn ends (the daemon passes its log); without it they are not written. */
   timingLog?: (line: string) => void;
+  /** The sessions an engine service suspended (`closeIdleSession`), which this runtime takes back as it opens one. */
+  suspendedSessions?: SuspendedSessions;
+  /**
+   * The lock the engine service this runtime runs in holds for its life (`owner-lock.ts`), which the owner rows of its
+   * sessions name: a later start tells from it whether their writer still runs, whatever process holds its pid then.
+   */
+  ownerLockId?: string | undefined;
   nativeSession?: {
     registry: ConversationRuleRegistry;
     ruleSync?: LiveConversationRules;
@@ -866,8 +1062,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #catalogs: CheckoutCatalogs;
   readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
   readonly #sessions = new Map<string, RuntimeSessionState>();
-  /** Kept past disposal for late receipts, with the repository each session was attributed to; the latest few only. */
-  readonly #closedSessions = new Map<string, { descriptor: AdapterSession; startedAt: number; endedAt: number; repositoryKey: string | null }>();
+  /**
+   * Kept past disposal for late receipts, with the repository each session was attributed to; the latest few only. A
+   * suspended session's `endedAt` is null: it is still open.
+   */
+  readonly #closedSessions = new Map<string, { descriptor: AdapterSession; startedAt: number; endedAt: number | null; repositoryKey: string | null }>();
   #sessionStoreClosed = false;
   readonly #routers = new Map<RerailHost, RerailHostRuntime>();
   readonly #nativeSession: RerailRuntimeOptions["nativeSession"];
@@ -883,6 +1082,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #discoveryWaitMs: number | undefined;
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #startWatch: RepositoryStartWatch | undefined;
+  readonly #suspendedSessions: SuspendedSessions | undefined;
+  readonly #ownerLockId: string | undefined;
   #mergeAssist: MergeAssistRuntime | undefined;
   /** Whether this runtime made its Merge Assist (none was passed in), so it stops it when it is disposed. */
   readonly #ownsMergeAssist: boolean;
@@ -892,6 +1093,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   constructor(options: RerailRuntimeOptions) {
     this.#storageRoot = options.storageRoot;
+    this.#suspendedSessions = options.suspendedSessions;
+    this.#ownerLockId = options.ownerLockId;
     this.#storageRootIsDefault = isDefaultStorageRoot(options.storageRoot, options.workspaceRoot);
     this.#modelPath = options.modelPath;
     this.#nativeSession = options.nativeSession;
@@ -969,16 +1172,53 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     return this.#ingestLanes.run(sessionId, async () => {
       // Checked again in the lane: an event accepted while started can run after a stop committed elsewhere.
       if (this.#stopped()) {
-        // A session that attached while started still ends, releasing its code-rule bridge and polling; nothing is recorded.
-        if (event.kind === "session-end" && this.#sessions.has(sessionId)) await this.closeSession(sessionId);
+        if (event.kind === "session-end") await this.#endWhileStopped(sessionId);
         return [];
       }
       const sourceSignature = this.#sessions.get(sessionId)?.ruleSync?.sourceSignature;
-      const deliveries = await this.#ingest(event);
+      const deliveries = await this.#ingestOrDropOwed(event);
       if (event.kind !== "assistant-delta" || event.final
           || sourceSignature !== this.#sessions.get(sessionId)?.ruleSync?.sourceSignature) this.recordRuleCoverage(sessionId);
       return deliveries;
     });
+  }
+
+  /**
+   * A session's end in a stopped repository records nothing, but ends what the session holds and drops what it owed its
+   * agent, as any end does. A session open here closes, releasing its code-rule bridge and polling. One that is not (a
+   * suspended one, which is not opened again for it and whose service ends its record, or one a runtime before a daemon
+   * restart held) has the `owed` entry its ledger keeps emptied: the session's next start under the same id would take
+   * it back. An empty entry records nothing.
+   */
+  async #endWhileStopped(sessionId: string): Promise<void> {
+    if (this.#sessions.has(sessionId)) await this.closeSession(sessionId);
+    else await this.#dropLedgerOwed(sessionId);
+  }
+
+  /**
+   * `#ingest`, and for a session's end that could not open the session (its folder gone, its evaluator failing), the
+   * `owed` entry its ledger keeps emptied before the failure goes on: an end drops what the session owed, as any end
+   * does, and the session's next start under the same id would take it back. Its engine service ends its record.
+   */
+  async #ingestOrDropOwed(event: AdapterEvent): Promise<readonly AdapterDelivery[]> {
+    try {
+      return await this.#ingest(event);
+    } catch (error) {
+      if (event.kind === "session-end" && !this.#sessions.has(event.sessionId)) await this.#dropLedgerOwed(event.sessionId);
+      throw error;
+    }
+  }
+
+  /** Writes an emptied `owed` entry to the ledger of a session not open here, when its last one owes something. */
+  async #dropLedgerOwed(sessionId: string): Promise<void> {
+    const path = join(sessionDirectory(this.#storageRoot, sessionId), "events.jsonl");
+    try {
+      const { values, appendState } = await readLines(path);
+      if (restoredOwed(validatedLedger(values)).recorded === 0) return;
+      await appendJsonLine(path, { type: "owed", steers: [], findings: [] } satisfies OwedEntry, appendState);
+    } catch (error) {
+      process.stderr.write(`rerail: could not drop what session ${sessionId} owed its agent: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
   }
 
   /** Branch navigation restores repeat/turn state without retiring the live stream or code-rule owner. */
@@ -1186,10 +1426,46 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     else if (event.kind === "turn-end") await state.codeRuleBridge?.unwatchedResult(TURN_WINDOW_ID);
   }
 
-  /** Finishes a tool call on the open evaluator; one answered while it opened only ends its window (`unwatchedResult`). */
+  /**
+   * Finishes a tool call on the open evaluator; one answered while it opened ends its window (`unwatchedResult`), and is
+   * checked once it is open when the ledger held it open (`#checkWhenOpen`).
+   */
   async #finishCall(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, toolCallId: string, failed: boolean): Promise<void> {
     if (bridge !== undefined) await bridge.finish(toolCallId, failed, { rewindable: true });
-    else await state.codeRuleBridge?.unwatchedResult(toolCallId);
+    else await this.#finishUnwatched(state, toolCallId, failed);
+  }
+
+  async #finishUnwatched(state: RuntimeSessionState, toolCallId: string, failed: boolean): Promise<void> {
+    await state.codeRuleBridge?.unwatchedResult(toolCallId);
+    const call = state.restoredCalls.get(toolCallId);
+    if (call !== undefined) this.#checkWhenOpen(state, call, failed);
+  }
+
+  /**
+   * Checks the edit of a call the ledger held open as the session opened, whose result came while the evaluator opened,
+   * against what the call captured before the session closed, once the evaluator is open: as `finishUnanswered` checks
+   * a call whose result will not come. The session reopened for that result (its agent was left at a permission prompt
+   * past the day the engine service holds such a session open, or the daemon restarted meanwhile), so the boundary
+   * itself went on without code rules, and the edit, made before the evaluator's first walk, would never be checked. The
+   * evaluator held the call's files from that walk (`heldCallsOf`), so the edit is read once, here, as the call's, not
+   * first as another writer's change. Its steer goes out with a later answer, or with the digest, as a check that
+   * outlasted its boundary does.
+   */
+  #checkWhenOpen(state: RuntimeSessionState, call: RestoredCall, failed: boolean): void {
+    state.restoredCalls.delete(call.toolCallId);
+    void state.codeRuleWorkspace.then(async bridge => {
+      if (bridge !== undefined && !state.closed) await this.#checkRestoredCall(state, bridge, call, failed);
+    });
+  }
+
+  async #checkRestoredCall(state: RuntimeSessionState, bridge: CodeRuleBridge, call: RestoredCall, failed: boolean): Promise<void> {
+    try {
+      await bridge.begin(call.toolCallId, call.toolName, { paths: call.paths }, call.preimages ?? {});
+      await bridge.finish(call.toolCallId, failed);
+    } catch (error) {
+      // A session closed meanwhile closed its evaluator too.
+      if (!state.closed) process.stderr.write(`rerail: could not check tool call ${call.toolCallId}: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
   }
 
   /**
@@ -1230,9 +1506,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * receiving `deliverBackground` pushes. Unknown or closed sessions have nothing pending. The findings held for the
    * yield digest are not among them.
    */
-  async collectDeliveries(sessionId: string): Promise<AdapterDelivery[]> {
-    const state = this.#sessions.get(sessionId);
-    return state === undefined || this.#stopped() ? [] : this.#collectPendingSteers(state);
+  collectDeliveries(sessionId: string): Promise<AdapterDelivery[]> {
+    // In the session's lane, as `yieldDeliveries`: one answer at a time takes what the session owes.
+    return this.#ingestLanes.run(sessionId, async () => {
+      const state = this.#sessions.get(sessionId);
+      return state === undefined || this.#stopped() ? [] : await this.#collectPendingSteers(state);
+    });
   }
 
   /**
@@ -1259,15 +1538,132 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   async #collectPendingSteers(state: RuntimeSessionState): Promise<AdapterDelivery[]> {
+    const deliveries = await this.#takeOwed(state);
     // An evaluator still opening may yet fail, and what it observed with it.
-    if (!state.codeRuleReady) return [];
+    if (!state.codeRuleReady) return deliveries;
     // Delivery removes entries from the list, so iterate a snapshot.
-    const deliveries: AdapterDelivery[] = [];
     for (const pending of state.pendingSteers.slice()) {
       const delivery = await this.#deliverSteer(state, pending, false);
       if (delivery !== undefined) deliveries.push(delivery);
     }
     return deliveries;
+  }
+
+  /**
+   * The steers the session owed its agent when it last closed, recorded as delivered, for the answer collecting them;
+   * one that no longer speaks for its files is dropped (`#stillOwed`). Its held findings join the evaluator's once it is
+   * open, checked the same way. The ledger's entry is written again with what is still owed. They are taken only once
+   * checked: a close meanwhile, as the runtime's own, finds them still owed and keeps them for the session's next open.
+   */
+  async #takeOwed(state: RuntimeSessionState): Promise<AdapterDelivery[]> {
+    const steers = [...state.owed.steers];
+    const findings = state.codeRuleReady ? [...state.owed.findings] : [];
+    if (steers.length + findings.length === 0) return [];
+    const [heldSteers, heldFindings] = await Promise.all([this.#stillOwedOf(state, steers), this.#stillOwedOf(state, findings)]);
+    if (state.closed) return [];
+    state.owed.steers = state.owed.steers.filter(steer => !steers.includes(steer));
+    state.owed.findings = state.owed.findings.filter(finding => !findings.includes(finding));
+    state.missedFindings.unshift(...heldFindings);
+    await this.#recordOwed(state, this.#owedEntry(state, [], state.owed.findings));
+    const deliveries: AdapterDelivery[] = [];
+    for (const steer of heldSteers) deliveries.push(await this.#recordedDelivery(steer.delivery));
+    return deliveries;
+  }
+
+  /** `owed` without what no longer speaks for its files (`#stillOwed`), in its order. */
+  async #stillOwedOf<T extends Kept<PendingSteer> | Kept<MissedFinding>>(state: RuntimeSessionState, owed: readonly T[]): Promise<T[]> {
+    const holds = await Promise.all(owed.map(async item => await this.#stillOwed(state, item)));
+    return owed.filter((_, index) => holds[index]);
+  }
+
+  /**
+   * Whether a steer or held finding taken back from the ledger still speaks for the files it names: no revision since
+   * the session opened again overtook it (`#isCurrentSteer`), and each holds what the session last saw in it before it
+   * closed. The opening's first walk takes files as it finds them, so a file the person or another session changed while
+   * this one was closed would otherwise leave it current. A rolled-back edit's steer goes all the same, as
+   * `#isCurrentSteer` says. One that does not is dropped as a revision drops it. One read per file it names.
+   */
+  async #stillOwed(state: RuntimeSessionState, item: Kept<PendingSteer> | Kept<MissedFinding>): Promise<boolean> {
+    const holds = this.#isCurrentSteer(state, item) && (rollsBack(item) || (await changedFiles(state.checkout.cwd, item.digests)).length === 0);
+    if (!holds) this.#recordUndelivered(state, item);
+    return holds;
+  }
+
+  /** `delivery`, recorded in its session's ledger; a failure to record it is reported and does not withhold it. */
+  async #recordedDelivery(delivery: AdapterDelivery): Promise<AdapterDelivery> {
+    try {
+      await this.persistDelivery(delivery);
+    } catch (error) {
+      process.stderr.write(`rerail: could not record policy delivery: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+    return delivery;
+  }
+
+  /**
+   * What the session owes its agent as it closes, taken from it: the steers and held findings no newer revision has
+   * overtaken, when the close keeps them (`keepsOwed`); none at its end. A Merge Assist note waits with Merge Assist
+   * instead (`ownSteers`).
+   */
+  #owedAtClose(state: RuntimeSessionState): Owing {
+    const current = <T extends PendingSteer | MissedFinding>(owed: T[]): T[] => owed.filter(item => this.#isCurrentSteer(state, item));
+    const owing: Owing = {
+      kept: { steers: current(state.owed.steers), findings: current(state.owed.findings) },
+      found: { steers: current(ownSteers(state.pendingSteers)), findings: current(state.missedFindings) },
+    };
+    state.owed.steers = [];
+    state.owed.findings = [];
+    state.pendingSteers = [];
+    state.missedFindings = [];
+    return state.keepsOwed ? owing : { kept: { steers: [], findings: [] }, found: { steers: [], findings: [] } };
+  }
+
+  #owedEntry(state: RuntimeSessionState, steers: readonly Kept<PendingSteer>[], findings: readonly Kept<MissedFinding>[]): OwedEntry {
+    // Judged as the digest judges them, so a file there that links to a secret is one.
+    const sensitive = findings.length === 0 ? () => false : checkoutPathBoundary(state.checkout.cwd).sensitive;
+    return {
+      type: "owed",
+      steers: steers.map((steer): OwedSteer => ({ delivery: steer.delivery, scope: [...steer.scope], digests: { ...steer.digests } })),
+      findings: findings.map(finding => owedFinding(finding.violation, finding.sourceOf(finding.violation.ruleId), finding, sensitive)),
+    };
+  }
+
+  /**
+   * Writes what the session owes as it closes (`#owedAtClose`) when it owes something, or its ledger says it did. Runs
+   * before the session's evaluator closes, which says what the files held as the session last saw them.
+   */
+  async #keepOwed(state: RuntimeSessionState, owed: Owing): Promise<void> {
+    const steers = [...owed.kept.steers, ...await this.#withDigests(state, owed.found.steers)];
+    const findings = [...owed.kept.findings, ...await this.#withDigests(state, owed.found.findings)];
+    if (steers.length + findings.length > 0 || state.owed.recorded > 0) await this.#recordOwed(state, this.#owedEntry(state, steers, findings));
+  }
+
+  /**
+   * `items` with what each file they name held as the session last saw it: as its evaluator last observed it, which a
+   * file changed outside the session since the evaluator's last walk has not changed, else as the file reads now.
+   */
+  async #withDigests<T extends PendingSteer | MissedFinding>(state: RuntimeSessionState, items: readonly T[]): Promise<Kept<T>[]> {
+    const seen = async (path: string): Promise<string | null> =>
+      state.codeRuleBridge?.observedDigest(path) ?? await fileDigest(join(state.checkout.cwd, path));
+    return await Promise.all(items.map(async item => {
+      const digests = await Promise.all(item.scope.map(async path => [path, await seen(path)] as const));
+      return { ...item, digests: Object.fromEntries(digests) };
+    }));
+  }
+
+  /**
+   * Writes `entry` to the session's ledger, whose last `owed` entry says what the session owes while it is closed. A
+   * stopped repository records nothing, but an empty entry, which drops what the ledger kept, is still written: a
+   * session that ends there owes nothing after. A failure is reported, never raised: it must not fail the close or the
+   * answer.
+   */
+  async #recordOwed(state: RuntimeSessionState, entry: OwedEntry): Promise<void> {
+    if (this.#stopped() && entry.steers.length + entry.findings.length > 0) return;
+    try {
+      await this.#append(state, entry);
+      state.owed.recorded = entry.steers.length + entry.findings.length;
+    } catch (error) {
+      process.stderr.write(`rerail: could not record what session ${state.descriptor.sessionId} owes its agent: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
   }
 
   /**
@@ -1476,6 +1872,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     clearInterval(this.#controlTimer);
     // No conflict change is offered to a session that is closing.
     this.#mergeAssistUnlisten?.();
+    // The sessions still open did not end: what each owes its agent waits in its ledger for its next event, as across
+    // the daemon's own restart at its heap ceiling.
+    for (const state of this.#sessions.values()) state.keepsOwed = true;
     await Promise.all([...this.#sessions.keys()].map(sessionId => this.closeSession(sessionId)));
     await Promise.allSettled(this.#evaluatorOpens);
     await Promise.allSettled(this.#steersInFlight);
@@ -1492,6 +1891,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async openSession(session: AdapterSession): Promise<HostRuntimeSessionState> {
     const existing = this.#sessions.get(session.sessionId);
     if (existing !== undefined) return { processedEventIds: [...existing.processed] };
+    // A session the engine service suspended goes on from where its walks stood (`SessionSuspension`).
+    const suspension = this.#suspendedSessions?.get(session.sessionId);
     const recordedSession = this.#sessionStore.session(session.sessionId);
     const startedAt = recordedSession?.startedAt ?? Date.now();
     const ledger = await this.#openLedger(session, recordedSession === undefined);
@@ -1571,6 +1972,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       });
       bridge = new CodeRuleBridge(checkout.cwd, auditor, {
         observations: this.#sourceObservations,
+        ...walkResumeOption(suspension),
+        heldCalls: heldCallsOf(opened.restoredCalls),
         ...(this.#discoveryWaitMs === undefined ? {} : { discoveryWaitMs: this.#discoveryWaitMs }),
         // A boundary that answered before its shell-write check finished leaves its session's history marked partial.
         onDiscoveryPending: boundary => this.#recordSessionFact(
@@ -1610,7 +2013,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       this.#sessionStore.openSession(session, startedAt, this.#repositoryKey(checkout));
       this.#closedSessions.delete(session.sessionId);
       this.#sessionStore.startHudTracking(session, ledger.completeTracking);
-      opened.ownerClaim = this.#controls.registerOwner(session.sessionId, this.#deliverBackground === undefined ? "next-event" : "background");
+      opened.ownerClaim = this.#registerOwner(session.sessionId);
     } catch (error) {
       await this.#abandonSession(session.sessionId, opened, auditor);
       throw error;
@@ -1651,7 +2054,26 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const released = (): void => { this.#evaluatorOpens.delete(workspace); };
     void workspace.then(released, released);
     this.#scanMergeAssist(opened);
+    // A suspended session's first event is answered once the text of the files its agent edited is read back, which
+    // waits for no rule to compile: the agent's next command may rewrite one, and is measured from that text.
+    await bridge.heldTextsRead();
     return { processedEventIds: [...opened.processed] };
+  }
+
+  /**
+   * Claims the session for this runtime, which delivers its steers in the background when it can, else at the next event.
+   * A suspended session takes back the claim it kept while this process still holds it, so the scans queued for it while
+   * it was suspended stay queued for it to run. Taking it ends the suspension, so a second runtime opening the session
+   * meanwhile registers as before, and is refused while this one owns it. It is taken only once the claim is made: an
+   * open that fails leaves the session suspended, so its end, or its daemon's stop, still ends its record.
+   */
+  #registerOwner(sessionId: string): PolicyOwnerClaim {
+    const kept = this.#suspendedSessions?.get(sessionId)?.ownerClaim;
+    const claim = kept !== undefined && this.#controls.holdsOwner(sessionId, kept)
+      ? kept
+      : this.#controls.registerOwner(sessionId, this.#deliverBackground === undefined ? "next-event" : "background", this.#ownerLockId);
+    this.#suspendedSessions?.take(sessionId);
+    return claim;
   }
 
   /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */
@@ -1678,6 +2100,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const items = ledger.entries.flatMap((entry) => (entry.type === "sample" ? [entry.item] : []));
     const source = new MutableContentSource(items, keepsSamples(session.host));
     const secrets = secretCallsOf(ledger.entries);
+    const openCalls = unresolvedCodeRuleCalls(ledger.entries);
     return {
       descriptor: session,
       checkout,
@@ -1711,7 +2134,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       mergeAssistEdits: new Set(),
       repositoryAudit: undefined,
       // Restored whether or not the evaluator opens, so their results still close them in the ledger.
-      pendingCodeRuleCalls: unresolvedCodeRuleCalls(ledger.entries).map(call => ({
+      pendingCodeRuleCalls: openCalls.map(call => ({
         id: call.toolCallId, toolName: call.toolName, ...(call.agentId === undefined ? {} : { agentId: call.agentId }),
       })),
       callsAwaitingResult: new Set(),
@@ -1719,6 +2142,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       editCheckWaits: 0,
       yieldWaits: 0,
       missedFindings: [],
+      owed: restoredOwed(ledger.entries),
+      keepsOwed: false,
+      restoredCalls: new Map(openCalls.map(call => [call.toolCallId, call])),
       secretCalls: secrets.calls,
       withheldResults: secrets.results,
       closed: false,
@@ -1816,51 +2242,115 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * Closes a session that sent no end and has gone quiet, as its end would, without recording an event: its host router
-   * forgets it too, so its next event opens it again from its ledger. A session that still owes its agent something the
-   * ledger does not hold (`#owesAgent`) stays open, false then, unless `evenIfOwing`: the engine service closes it anyway
-   * once it has been quiet a day (`OWING_SESSION_IDLE_MS` in engine-service.ts), and what it owed is lost.
+   * Suspends a session that sent no end and has gone quiet: frees all it holds in memory, as its end would, without
+   * recording an event, and its host router forgets it too, so its next event opens it again from its ledger. Its agent
+   * may still be open, so it stays open in the database and keeps its owner claim: it reads as live, and a scan asked for
+   * it queues for it (`SessionSuspension`). A session that still owes its agent something (`#owesAgent`) stays as it is,
+   * unless `evenIfOwing`: the engine service suspends it anyway once it has been quiet a day (`OWING_SESSION_IDLE_MS` in
+   * engine-service.ts). The steers it has not delivered and the findings it holds then wait in its ledger, and go out
+   * with its next event while their files still hold what they spoke for (`#takeOwed`). `at` is the time by the
+   * caller's clock, now by default: the time the session's record ends at if it never opens again
+   * (`SessionSuspension.suspendedAt`). With `end` the session is ended instead (`#endIdle`), its record at `at`.
    */
-  closeIdleSession(sessionId: string, options: { evenIfOwing?: boolean } = {}): Promise<boolean> {
-    return this.#ingestLanes.run(sessionId, async () => {
+  closeIdleSession(sessionId: string, options: { evenIfOwing?: boolean; at?: number; end?: boolean } = {}): Promise<IdleClose> {
+    return this.#ingestLanes.run(sessionId, async (): Promise<IdleClose> => {
       const state = this.#sessions.get(sessionId);
-      if (state === undefined) return true;
-      if (options.evenIfOwing !== true && this.#owesAgent(state)) return false;
-      await this.#router(state.descriptor.host).stop(sessionId);
-      return true;
+      if (state === undefined) return { kind: "not-held" };
+      const owing = (): boolean => options.evenIfOwing !== true && this.#owesAgent(state);
+      if (owing()) return { kind: "owing" };
+      const at = options.at ?? Date.now();
+      if (options.end === true) return await this.#endIdle(state, at);
+      const suspension = await this.#suspension(state, at);
+      // Asked again: the control timer may have claimed a scan while the walks were read, which the session now runs.
+      if (owing()) return { kind: "owing" };
+      await this.#suspend(state, suspension);
+      return { kind: "suspended", suspension };
     });
   }
 
   /**
-   * Whether the session still owes its agent something that closing it would lose, since its ledger does not hold it: a
-   * tool call of its turn waiting for its result (a session opened again checks no edit the call makes), an edit check
-   * still running, a steer or held finding not yet delivered, or a scan the dashboard asked for.
+   * Ends a quiet session as its end would: its memory freed, its record ended, its scans interrupted and its owner
+   * released, so it reads as ended until its next event opens it again. For a runtime whose owner rows name no lock
+   * (`end` of `closeIdleSession`): after a kill, a later start judges such a row only by its pid, which another process
+   * can hold, so a session kept open would read as live and owned for good. What the session owes its agent waits in
+   * its ledger for that next event, as across its daemon's stop. Its record ends at `at`, the idle close's time.
+   */
+  async #endIdle(state: RuntimeSessionState, at: number): Promise<IdleClose> {
+    state.keepsOwed = true;
+    state.endsAt = at;
+    await this.#router(state.descriptor.host).stop(state.descriptor.sessionId);
+    return { kind: "ended" };
+  }
+
+  /**
+   * Closes `state`'s session in memory and keeps it open in the database, owned. Its suspension is kept first
+   * (`SuspendedSessions.keep`), with no await from the last check of what it owes: a scan asked for it from now on queues
+   * for its next open, and a close that fails still leaves it suspended, ended when its daemon stops.
+   */
+  async #suspend(state: RuntimeSessionState, suspension: SessionSuspension): Promise<void> {
+    state.suspending = true;
+    state.keepsOwed = true;
+    this.#suspendedSessions?.keep(suspension);
+    await this.#router(state.descriptor.host).stop(state.descriptor.sessionId);
+  }
+
+  /**
+   * What `state`'s session keeps while suspended from `suspendedAt` on: its owner claim, and where its walks stand once its
+   * evaluator is open.
+   */
+  async #suspension(state: RuntimeSessionState, suspendedAt: number): Promise<SessionSuspension> {
+    const walk = state.codeRuleReady ? await state.codeRuleBridge?.walkResume() : undefined;
+    return { descriptor: state.descriptor, ownerClaim: state.ownerClaim, walk, databasePath: this.#sessionStore.path, suspendedAt };
+  }
+
+  /**
+   * Opens again a session the engine service suspended, as its next event would, so it claims the scans queued for it
+   * meanwhile; nothing is recorded. It opens in a repository stopped since too, as the open session it was would have
+   * run the scan there. A session already open is left as it is.
+   */
+  resumeSession(session: AdapterSession): Promise<void> {
+    return this.#ingestLanes.run(session.sessionId, async () => {
+      if (this.#sessions.has(session.sessionId)) return;
+      await this.#router(session.host).start(session);
+      this.#scheduleAuditRequests(session.sessionId);
+    });
+  }
+
+  /**
+   * Whether the session still owes its agent something that would reach it later, or not at all, were it suspended and
+   * opened again: a tool call of its turn waiting for its result (the result of a session opened again comes while its
+   * evaluator opens, so the call's edit is not checked at it), an edit check still running, a steer of its own not yet
+   * delivered (`ownSteers`) or a finding held for the yield's digest, among them those its ledger gave back as it opened
+   * again (`owedNow`: a scan opens a suspended session with no event to take them), or a scan (`#owesScan`). A steer
+   * would reach the agent with the next event all the same, but the session that event opened again would hold the
+   * agent's next tool call while its rules compile again (`REOPENED_RULES_WAIT_MS`), or check its edit only at the turn
+   * end in a host that does not wait: a session left in memory checks it at once.
    */
   #owesAgent(state: RuntimeSessionState): boolean {
-    return state.callsAwaitingResult.size > 0 || state.overdueEditChecks !== undefined || state.pendingSteers.length > 0
-      || state.missedFindings.length > 0 || state.auditRequestWork !== undefined;
+    return state.callsAwaitingResult.size > 0 || state.overdueEditChecks !== undefined
+      || ownSteers(state.pendingSteers).length > 0 || state.missedFindings.length > 0 || owedNow(state) > 0 || this.#owesScan(state);
+  }
+
+  /**
+   * Whether the session runs a scan or its checkout audit, which the evaluator's close would interrupt, or has a scan
+   * queued that its control timer has not claimed yet: the open session claims it within a tick, where a suspended one
+   * would leave it queued until its next open. The queue costs one indexed read, made only by the idle close.
+   */
+  #owesScan(state: RuntimeSessionState): boolean {
+    return state.auditRequestWork !== undefined || state.repositoryAuditRunning === true
+      || this.#controls.hasQueuedRequest(state.descriptor.sessionId);
   }
 
   async closeSession(sessionId: string): Promise<void> {
     const state = this.#sessions.get(sessionId);
     // Read or taken before any await: the cap may evict the closed entry while the close below awaits, which gave the
-    // session's row the time its close finished rather than its recorded end.
+    // session's row the time its close finished rather than its recorded end, and would end a suspended session's row.
     let endedAt = this.#closedSessions.get(sessionId)?.endedAt;
     if (state !== undefined) {
-      state.closed = true;
-      state.pendingSteers = [];
-      state.missedFindings = [];
-      endedAt = Date.now();
-      this.#closedSessions.set(sessionId, {
-        descriptor: state.descriptor, startedAt: state.startedAt, endedAt, repositoryKey: this.#repositoryKey(state.checkout),
-      });
-      // A map keeps insertion order, and a session that opens again leaves it: the first key closed longest ago.
-      if (this.#closedSessions.size > CLOSED_SESSIONS_KEPT) this.#closedSessions.delete(this.#closedSessions.keys().next().value!);
-      if (state.ownerClaim !== undefined) {
-        this.#controls.interrupt(sessionId);
-        this.#controls.interruptRepositoryAudit(sessionId);
-        this.#controls.releaseOwner(sessionId, state.ownerClaim);
-      }
+      // Taken first: closing empties what the session holds, and the close keeps what it owes before its evaluator goes.
+      const owed = this.#owedAtClose(state);
+      endedAt = this.#markClosed(sessionId, state);
+      await this.#keepOwed(state, owed);
     }
     let bridge: CodeRuleBridge | undefined;
     try {
@@ -1883,9 +2373,39 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         this.#sessions.delete(sessionId);
         // The runtime outlives its sessions, and their walks of the other worktrees looked up every folder of each.
         if (this.#sessions.size === 0) this.#owners.forgetFolders();
-        this.#sessionStore.closeSession(sessionId, endedAt);
+        // A suspended session's record stays open: its agent may still be at work.
+        if (endedAt !== null) this.#sessionStore.closeSession(sessionId, endedAt);
       }
     }
+  }
+
+  /**
+   * Stops what `state`'s session delivers and what it runs, ends its ownership (`#endOwnership`) and returns the time its
+   * record ends at: null while it is being suspended (`closeIdleSession`), whose record stays open; the idle close's
+   * time when that close ends it (`endsAt`); now otherwise.
+   */
+  #markClosed(sessionId: string, state: RuntimeSessionState): number | null {
+    state.closed = true;
+    const endedAt = state.suspending ? null : state.endsAt ?? Date.now();
+    this.#closedSessions.set(sessionId, {
+      descriptor: state.descriptor, startedAt: state.startedAt, endedAt, repositoryKey: this.#repositoryKey(state.checkout),
+    });
+    // A map keeps insertion order, and a session that opens again leaves it: the first key closed longest ago.
+    if (this.#closedSessions.size > CLOSED_SESSIONS_KEPT) this.#closedSessions.delete(this.#closedSessions.keys().next().value!);
+    this.#endOwnership(sessionId, state);
+    return endedAt;
+  }
+
+  /**
+   * Interrupts the session's queued and running scans and releases its owner, unless it is being suspended, which keeps
+   * both for its next open. Its checkout audit is interrupted either way: the evaluator running it closes.
+   */
+  #endOwnership(sessionId: string, state: RuntimeSessionState): void {
+    if (state.ownerClaim === undefined) return;
+    this.#controls.interruptRepositoryAudit(sessionId);
+    if (state.suspending) return;
+    this.#controls.interrupt(sessionId);
+    this.#controls.releaseOwner(sessionId, state.ownerClaim);
   }
 
   /**
@@ -1914,12 +2434,15 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         this.#controls.finishRepositoryAudit(sessionId, checkoutRoot, auditId ?? null, status, error);
       },
     };
+    state.repositoryAuditRunning = true;
     try {
       await state.codeRuleBridge!.audit({ scope: "repository", mode: "log", audit });
     } catch (error) {
       for (const checkoutRoot of claimed) {
         this.#controls.finishRepositoryAudit(sessionId, checkoutRoot, null, "failed", error instanceof Error ? error.message : String(error));
       }
+    } finally {
+      delete state.repositoryAuditRunning;
     }
   }
 
@@ -2472,6 +2995,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   async #append(state: RuntimeSessionState, entry: LedgerEntry): Promise<void> {
-    await appendJsonLine(state.ledgerPath, ledgerEntryForDisk(entry), state.ledgerAppendState);
+    await appendJsonLine(state.ledgerPath, storedLedgerEntry(entry), state.ledgerAppendState);
   }
 }

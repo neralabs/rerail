@@ -498,6 +498,7 @@ export class RerailDaemon {
     // The paths of a session whose host sends none.
     const { storageRoot, modelPath } = resolveSessionPaths(workspaceRoot);
     let daemon: RerailDaemon | undefined;
+    const started: StartedServices = {};
     // One Merge Assist for the API and every session this daemon runs, so a scan runs once per checkout and gh's
     // readiness is read once; its database opens with the stores', on first use.
     const sharedMergeAssist = daemonMergeAssist(() => stores.database());
@@ -507,9 +508,11 @@ export class RerailDaemon {
       health: () => daemon!.health(),
       origin: () => new URL(daemon!.url).origin,
       ...(options.codingAgents === undefined ? {} : { codingAgents: options.codingAgents }),
+      // The server listens only once the engine service runs, so a scan request always finds it. The engine service
+      // reports a failure itself, and its close waits for the open.
+      resumeSession: sessionId => void started.engineService?.resumeSession(sessionId),
       ...sharedMergeAssist,
     });
-    const started: StartedServices = {};
     try {
       const engineService = await startEngineService({
         socketPath: kernelSocketPath,

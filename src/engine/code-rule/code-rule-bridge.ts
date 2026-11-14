@@ -100,6 +100,31 @@ export type ObservedSource = Omit<Source, "text" | "deleted">;
 /** Baseline observations keyed by workspace directory, shared so later sessions reuse digests of unchanged sources. */
 export type SourceObservationCache = Map<string, ReadonlyMap<string, ObservedSource>>;
 /**
+ * Where a session's source walks stood when its runtime suspended it (`CodeRuleBridge.walkResume`), for the walks of the
+ * session's next open to go on from: what was written since `since` is judged as the open session's next walk would have
+ * judged it, so another writer's change made while the session was suspended is recorded, not taken as the baseline.
+ */
+export interface SessionWalkResume {
+  /** Filesystem-clock reading: the earlier start of the last finished walks of the session folder and of the other worktrees. */
+  readonly since: number;
+  /** Each source whose text the evaluator held as the session's (`HELD_BY_EVALUATOR`), as last observed; undefined when gone. */
+  readonly held: ReadonlyMap<string, ObservedSource | undefined>;
+  /**
+   * What the walks last saw of Git (`SourceDiscovery.heads`, `unmerged` and `passedCheckouts`): one `HEAD` and the
+   * unmerged entries per checkout, so the first walk's Git verdicts compare with what was there before the suspension,
+   * as the open session's next walk would.
+   */
+  readonly gitSeen: WalkedGit;
+}
+/** A walk's snapshot of Git, by checkout root (`SessionWalkResume.gitSeen`). */
+export interface WalkedGit {
+  readonly heads: ReadonlyMap<string, string>;
+  readonly unmerged: ReadonlyMap<string, ReadonlyMap<string, string>>;
+  readonly passedCheckouts: ReadonlySet<string>;
+}
+/** What a session opened fresh has seen of Git: nothing yet. */
+const NO_GIT_SEEN: WalkedGit = { heads: new Map(), unmerged: new Map(), passedCheckouts: new Set() };
+/**
  * A file the auditor may read: `unlisted` when no language lists it, so it is read as `UNLISTED_TEXT_LANGUAGE` and,
  * being binary (a NUL byte in its first bytes, `binaryPrefix`, tested before it is read whole) or no regular file, is
  * no source at all and skipped without a read error.
@@ -128,6 +153,13 @@ function observation(source: Source): ObservedSource {
 interface PendingEdit {
   readonly paths: readonly string[];
   readonly preimages: ReadonlyMap<string, Preimage>;
+}
+
+/** A tool call the session's ledger holds open as the session opens, with what it captured as it began. */
+export interface HeldCall {
+  readonly toolCallId: string;
+  readonly paths: readonly string[];
+  readonly preimages: Readonly<Record<string, Preimage>>;
 }
 /** A finished edit `rewind` may still roll back: the revision its finish audited, and each path's digest after it (none when absent). */
 interface RewindableEdit {
@@ -357,6 +389,33 @@ async function openSource(absolute: string): Promise<FileHandle | undefined> {
     throw error;
   }
 }
+/**
+ * The text of the file at `absolute` while its bytes have `digest`, else undefined: what a session held of a source
+ * before its runtime suspended it. Read as `openSource` opens a file, and only a regular file of a source's size; the
+ * digest proves the bytes are the ones a walk observed in place.
+ */
+async function textWithDigest(absolute: string, digest: string): Promise<string | undefined> {
+  const handle = await openedOrNone(absolute);
+  if (handle === undefined) return undefined;
+  try {
+    const info = await handle.stat();
+    if (!info.isFile() || info.size > MAX_SOURCE_BYTES) return undefined;
+    const bytes = await handle.readFile();
+    return sha256(bytes) === digest ? bytes.toString("utf8") : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    await handle.close();
+  }
+}
+/** `openSource`, undefined for a file it cannot open (gone, or no longer the session's to read). */
+async function openedOrNone(absolute: string): Promise<FileHandle | undefined> {
+  try {
+    return await openSource(absolute);
+  } catch {
+    return undefined;
+  }
+}
 /** The opened file as a source: none for an unlisted binary one, a read error for one too large or binary. */
 async function readOpenedSource(handle: FileHandle, location: SourceLocation, info: Stats): Promise<Source | undefined> {
   if (location.unlisted && await binaryPrefix(handle)) return undefined;
@@ -416,17 +475,25 @@ interface WorktreeDiscovery {
   error: string | undefined;
   /** The unlisted files the last walk found too large to read, as `SourceDiscovery.unread`. */
   unread: ReadonlyMap<string, { readonly stamp: string; readonly readError: string }>;
+  /** Filesystem-clock reading taken as the last finished walk began; undefined until one finishes. */
+  walkedFrom: number | undefined;
 }
 
 function worktreeDiscovery(): WorktreeDiscovery {
   return {
     roots: new Set(), fresh: new Set(), baselineRoots: new Set(), walk: undefined, requested: false, nextWalkAt: 0, error: undefined, unread: new Map(),
+    walkedFrom: undefined,
   };
 }
 
 interface SourceDiscovery {
-  /** Filesystem-clock reading taken before the walk; files stamped at or after it may hold this session's shell writes. */
+  /**
+   * Filesystem-clock reading taken before the walk; files stamped at or after it may hold this session's shell writes.
+   * A session opened again after its runtime suspended it starts where its walks stood then (`SessionWalkResume.since`).
+   */
   readonly startedAt: number;
+  /** Filesystem-clock reading taken as the session folder's last finished walk began; `startedAt` until one finishes. */
+  walkedFrom: number;
   readonly root: string;
   cancelled: boolean;
   /** Resolves once every requested pass has run; undefined while no walk is in flight. */
@@ -555,9 +622,12 @@ function walkAnswersFor(discovery: SourceDiscovery, walk: WalkStart, path: strin
   if (!walk.inSession) return walked && current;
   return !walked && !current && path !== ".." && !path.startsWith("../");
 }
-/** The digest a changed source was observed with before, when the walk found it changed and could not read what it was. */
-function uncapturedDigest(edit: CodeRuleEdit, before: ObservedSource | undefined, baseline: boolean): string | undefined {
-  if (baseline || edit.previousReadError === undefined || edit.generatedText === undefined) return undefined;
+/**
+ * The digest a changed source was observed with before, when the walk found it changed and could not read what it was;
+ * none for a source the walk takes as a baseline (`baselinePath`), which has no earlier observation to trust.
+ */
+function uncapturedDigest(edit: CodeRuleEdit, before: ObservedSource | undefined, baselinePath: boolean): string | undefined {
+  if (baselinePath || edit.previousReadError === undefined || edit.generatedText === undefined) return undefined;
   return before?.digest;
 }
 /** A first observation made after the session started may hold its shell writes, and is not a trustworthy preimage. */
@@ -828,6 +898,19 @@ export class CodeRuleBridge {
    */
   readonly #texts = new Map<string, { text: string; bytes: number; origin: TextOrigin }>();
   #textBytes = 0;
+  /**
+   * The sources the evaluator held as the session's before its runtime suspended it (`SessionWalkResume.held`), whose
+   * text the session's new evaluator never saw: the first walk compares each with what was observed of it then, though
+   * that walk is a baseline, and a change another writer makes to one is recorded as it was before the suspension, until
+   * the source's text is next kept or dropped. Their text, where it is unchanged, is kept too (`#restoreHeldTexts`).
+   */
+  readonly #resumedHeld = new Set<string>();
+  /** Where the first `openWorkspace` goes on from, for a session its runtime suspended; taken once. */
+  #resume: SessionWalkResume | undefined;
+  /** The calls the session's ledger held open as it opened, which the first `openWorkspace` claims (`#claimHeldCalls`). */
+  #heldCalls: readonly HeldCall[];
+  /** Settles once the first `openWorkspace` has read back the held sources' text (`#restoreHeldTexts`), or found none to. */
+  readonly #heldTexts = Promise.withResolvers<void>();
   /** The calls the runtime answered while the evaluator opened (`unwatchedCall`), until the workspace opens and takes them. */
   #unwatched = new ToolCallWindows();
   #lastResponse = emptyResponse(0);
@@ -850,6 +933,8 @@ export class CodeRuleBridge {
   /** The most of `#texts` first-sight text may take (`FIRST_SIGHT_TEXT_BYTES`), and how much it takes now. */
   readonly #firstSightTextBytes: number;
   #firstSightBytes = 0;
+  /** The most `#texts` may take (`MAX_SESSION_TEXT_BYTES`). */
+  readonly #sessionTextBytes: number;
 
   constructor(
     cwd: string,
@@ -869,18 +954,32 @@ export class CodeRuleBridge {
       worktreeWalkGapMs?: number;
       /** `FIRST_SIGHT_TEXT_BYTES` by default. */
       firstSightTextBytes?: number;
+      /** `MAX_SESSION_TEXT_BYTES` by default. */
+      sessionTextBytes?: number;
+      /** Where the session's walks stood when its runtime suspended it: its first walk goes on from there, not from a baseline. */
+      resume?: SessionWalkResume;
+      /**
+       * The calls the session's ledger holds open as it opens: the first walk leaves their files to each call's own check,
+       * as it leaves a begun call's, so an edit one made while the session was closed is not read as another writer's.
+       */
+      heldCalls?: readonly HeldCall[];
     } = {},
   ) {
     this.#cwd = resolve(cwd);
     this.#auditor = auditor;
     this.#onRevision = options.onRevision;
     this.#observations = options.observations;
+    this.#resume = options.resume;
+    this.#heldCalls = options.heldCalls ?? [];
+    // A session opened fresh has no text to read back before its first event is answered.
+    if (options.resume === undefined) this.#heldTexts.resolve();
     this.#discoveryWaitMs = options.discoveryWaitMs ?? BOUNDARY_DISCOVERY_WAIT_MS;
     this.#onDiscoveryPending = options.onDiscoveryPending;
     this.#onIgnoredEdit = options.onIgnoredEdit;
     this.#onIgnoreRulesChanged = options.onIgnoreRulesChanged;
     this.#worktreeWalkGapMs = options.worktreeWalkGapMs ?? WORKTREE_WALK_GAP_MS;
     this.#firstSightTextBytes = options.firstSightTextBytes ?? FIRST_SIGHT_TEXT_BYTES;
+    this.#sessionTextBytes = options.sessionTextBytes ?? MAX_SESSION_TEXT_BYTES;
   }
 
   /** Resolves once the evaluator is open; the baseline walk runs behind it and delays only the next checkpoint or command result. */
@@ -898,11 +997,14 @@ export class CodeRuleBridge {
       this.#commands.clear();
       this.#observed.clear();
       this.#texts.clear();
+      this.#resumedHeld.clear();
       this.#textBytes = 0;
       this.#firstSightBytes = 0;
       this.#discovery = undefined;
       await previous?.git.stop();
       const root = await realpath(this.#cwd);
+      // Before the evaluator opens, which takes seconds: a shell write the agent makes meanwhile finds the text it left.
+      const from = await this.#takeResume(root, startedAt);
       await this.#auditor.openWorkspace(sessionId);
       const git = new GitReads();
       // After the auditor opens, so it can name the checkouts whose ignore rules apply.
@@ -911,15 +1013,132 @@ export class CodeRuleBridge {
       this.#revision = 0;
       this.#lastResponse = emptyResponse(0);
       const discovery: SourceDiscovery = {
-        startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
+        startedAt: from.since, walkedFrom: from.since, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
-        heads: new Map(), git, unmerged: new Map(), passedCheckouts: new Set(), readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
+        heads: new Map(from.gitSeen.heads), git, unmerged: new Map(from.gitSeen.unmerged), passedCheckouts: new Set(from.gitSeen.passedCheckouts),
+        readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
       };
       this.#unwatched = new ToolCallWindows();
+      // Before the first walk can start, which would otherwise read a held call's edit as another writer's change.
+      this.#claimHeldCalls();
       this.#discovery = discovery;
       // The lowest priority: whichever boundary first waits on the baseline labels what it finds.
       void this.#requestDiscovery(discovery, "edit");
     });
+  }
+
+  /**
+   * Where the session's walks start: `now` with no Git seen, or for a session its runtime suspended, where they stood
+   * then and what they saw of Git, with each source the evaluator held kept as last observed, so the first walk compares
+   * it as the open session's next walk would have, and finds it changed or gone. The text of each such source still as
+   * observed is read back (`#restoreHeldTexts`), and `heldTextsRead` settles once it is.
+   */
+  async #takeResume(root: string, now: number): Promise<Pick<SessionWalkResume, "since" | "gitSeen">> {
+    const resume = this.#resume;
+    this.#resume = undefined;
+    try {
+      if (resume === undefined) return { since: now, gitSeen: NO_GIT_SEEN };
+      this.#holdResumed(resume.held);
+      await this.#restoreHeldTexts(root, resume.held);
+      return { since: Math.min(now, resume.since), gitSeen: resume.gitSeen };
+    } finally {
+      this.#heldTexts.resolve();
+    }
+  }
+
+  /**
+   * Holds the files each call the ledger held open captured as pending (`heldCalls`), as `begin` does, so walks leave
+   * them to the call's check: `begin` again with these preimages, then `finish`, which reads the edit once, as the
+   * call's. Taken once, by the first `openWorkspace`.
+   */
+  #claimHeldCalls(): void {
+    const calls = this.#heldCalls;
+    this.#heldCalls = [];
+    for (const call of calls) {
+      this.#pending.set(call.toolCallId, { paths: [...call.paths], preimages: new Map(Object.entries(call.preimages)) });
+    }
+  }
+
+  /** Counts each source of `held` as the evaluator's, observed as it was last (`#resumedHeld`). */
+  #holdResumed(held: SessionWalkResume["held"]): void {
+    for (const [path, observed] of held) {
+      this.#resumedHeld.add(path);
+      if (observed !== undefined) this.#observed.set(path, observed);
+    }
+  }
+
+  /**
+   * Settles once the first `openWorkspace` has read back the text of the sources the session held before its runtime
+   * suspended it (`#restoreHeldTexts`), which waits for no rule to compile; at once for a session opened fresh, and at
+   * the latest after `#discoveryWaitMs`. The runtime answers a reopened session's first event after it, so the agent's
+   * next command, which may rewrite such a source, is measured from the text the agent left there.
+   */
+  async heldTextsRead(): Promise<void> {
+    const bound = Promise.withResolvers<void>();
+    const timer = setTimeout(bound.resolve, this.#discoveryWaitMs);
+    try {
+      await Promise.race([this.#heldTexts.promise, bound.promise]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Keeps the text of each source the evaluator held before the suspension whose bytes still have the digest last
+   * observed: the text the open session kept, from which its next shell write to the source is measured. The suspension
+   * keeps no text, so a suspended session holds none in memory; one changed or gone meanwhile is left to the first walk,
+   * which records the change.
+   */
+  async #restoreHeldTexts(root: string, held: SessionWalkResume["held"]): Promise<void> {
+    const digests: [path: string, digest: string][] = [];
+    for (const [path, observed] of held) if (observed?.digest !== undefined) digests.push([path, observed.digest]);
+    while (digests.length > 0) {
+      const wave = digests.splice(0, OBSERVATION_CONCURRENCY);
+      const texts = await Promise.all(wave.map(([path, digest]) => textWithDigest(resolve(root, path), digest)));
+      wave.forEach(([path], index) => this.#keepHeldText(path, texts[index]));
+    }
+  }
+
+  /**
+   * Keeps `text` as the session's own text of `path`. The path stays among `#resumedHeld`, so the first walk compares the
+   * source with what was observed of it before the suspension, though that walk is a baseline.
+   */
+  #keepHeldText(path: string, text: string | undefined): void {
+    if (text === undefined) return;
+    this.#rememberText(path, text, "edit");
+    this.#resumedHeld.add(path);
+  }
+
+  /**
+   * Where the session's walks stand (`SessionWalkResume`), for its runtime to suspend it; undefined while the workspace is
+   * not open. Read in turn with the walks' changes, so none lands in it half applied.
+   */
+  walkResume(): Promise<SessionWalkResume | undefined> {
+    return this.#enqueue(() => Promise.resolve(this.#walkResumeNow()));
+  }
+
+  #walkResumeNow(): SessionWalkResume | undefined {
+    const discovery = this.#discovery;
+    if (discovery === undefined || discovery.cancelled) return undefined;
+    const held = new Map<string, ObservedSource | undefined>();
+    for (const path of this.#heldPaths()) held.set(path, this.#observed.get(path));
+    const { heads, unmerged, passedCheckouts } = discovery;
+    return {
+      since: Math.min(discovery.walkedFrom, discovery.worktrees.walkedFrom ?? discovery.walkedFrom),
+      held,
+      gitSeen: { heads: new Map(heads), unmerged: new Map(unmerged), passedCheckouts: new Set(passedCheckouts) },
+    };
+  }
+
+  /** The sources whose text the evaluator holds as the session's (`#heldByEvaluator`). */
+  #heldPaths(): string[] {
+    return [...this.#resumedHeld, ...[...this.#texts].filter(([, entry]) => HELD_BY_EVALUATOR[entry.origin]).map(([path]) => path)];
+  }
+
+  /** Whether the evaluator holds `path`'s text as the session's: one it audited, or one it held before a suspension. */
+  #heldByEvaluator(path: string): boolean {
+    const held = this.#texts.get(path);
+    return (held !== undefined && HELD_BY_EVALUATOR[held.origin]) || this.#resumedHeld.has(path);
   }
 
   async begin(
@@ -1017,6 +1236,14 @@ export class CodeRuleBridge {
     const rewindable = this.#rewindable.get(toolCallId);
     return rewindable !== undefined && rewindable.revision === revision
       && scope.length > 0 && scope.every(path => rewindable.preimages.has(path));
+  }
+
+  /**
+   * The SHA-256 of `path` (relative to the session's folder, `/`-separated) as this session last observed it, by a walk
+   * or a tool call's finish; undefined when it has observed no file there.
+   */
+  observedDigest(path: string): string | undefined {
+    return this.#observed.get(path)?.digest;
   }
 
   /**
@@ -1279,6 +1506,7 @@ export class CodeRuleBridge {
       this.#commands.clear();
       this.#observed.clear();
       this.#texts.clear();
+      this.#resumedHeld.clear();
       this.#textBytes = 0;
       this.#firstSightBytes = 0;
       this.#discovery = undefined;
@@ -1651,6 +1879,7 @@ export class CodeRuleBridge {
   }
 
   #finishSessionWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
+    discovery.walkedFrom = walk.observedAt;
     discovery.baselineComplete = true;
     discovery.baselineRoots = scan.failedRoots;
     discovery.error = scan.errors.length === 0 ? undefined : scan.errors.join("; ");
@@ -1662,6 +1891,7 @@ export class CodeRuleBridge {
 
   #finishWorktreeWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
     const worktrees = discovery.worktrees;
+    worktrees.walkedFrom = walk.observedAt;
     for (const worktree of walk.worktrees) worktrees.fresh.delete(worktree);
     worktrees.baselineRoots = scan.failedRoots;
     worktrees.error = scan.errors.length === 0 ? undefined : scan.errors.join("; ");
@@ -1674,10 +1904,12 @@ export class CodeRuleBridge {
     const edits: CodeRuleEdit[] = [];
     for (const path of [...new Set([...walk.previous.keys(), ...current.keys()])].sort(compareDeterministicStrings)) {
       if (!walkAnswersFor(discovery, walk, path) || this.#toolChanged(discovery, walk, path, pendingPaths)) continue;
-      const edit = this.#discoveredEdit(discovery, path, walk.previous.get(path), current.get(path), walk.baseline);
+      const previous = walk.previous.get(path);
+      const edit = this.#discoveredEdit(discovery, path, previous, current.get(path), walk.baseline);
       if (edit === undefined) continue;
       edits.push(edit);
-      const before = uncapturedDigest(edit, walk.previous.get(path), walk.baseline);
+      // A source held before a suspension was observed before this walk, though the walk is a baseline (`#baselinePath`).
+      const before = uncapturedDigest(edit, previous, this.#baselinePath(discovery, path, previous, walk.baseline));
       if (before !== undefined) uncaptured.set(path, before);
     }
     return edits;
@@ -1821,8 +2053,7 @@ export class CodeRuleBridge {
    * is kept for the session's next edit of the source.
    */
   #sortUnownedWrite(edit: CodeRuleEdit, keptAs: "git" | "other-writer" | undefined, notOwn: CodeRuleEdit[]): void {
-    const held = this.#texts.get(edit.path);
-    if (held !== undefined && HELD_BY_EVALUATOR[held.origin])
+    if (this.#heldByEvaluator(edit.path))
       notOwn.push(edit.generatedText === undefined ? edit : { ...withoutUncaptured(edit), previousText: edit.generatedText });
     // The next shell edit measures from the text left, which neither the index nor `HEAD` may hold.
     else if (keptAs !== undefined && edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText, keptAs);
@@ -1950,11 +2181,12 @@ export class CodeRuleBridge {
   }
 
   /**
-   * The walk is a baseline, or it first sees `path` under a subtree a walk could not read or in a worktree whose first walk
-   * is still to finish.
+   * The walk is a baseline, but for a source the evaluator held before a suspension (`#resumedHeld`), or it first sees
+   * `path` under a subtree a walk could not read or in a worktree whose first walk is still to finish.
    */
   #baselinePath(discovery: SourceDiscovery, path: string, before: ObservedSource | undefined, baseline: boolean): boolean {
-    if (baseline) return true;
+    // A source held before a suspension is compared with what was last observed of it, as a walk of the open session would.
+    if (baseline) return !this.#resumedHeld.has(path);
     return before === undefined
       && [discovery.baselineRoots, discovery.worktrees.baselineRoots, discovery.worktrees.fresh].some(roots => underBaselineRoot(roots, path));
   }
@@ -2293,13 +2525,14 @@ export class CodeRuleBridge {
     this.#texts.set(path, { text, bytes, origin });
     this.#textBytes += bytes;
     if (origin === "first-sight") this.#firstSightBytes += bytes;
-    for (const [oldest, entry] of this.#texts) {
-      if (this.#textBytes <= MAX_SESSION_TEXT_BYTES) break;
-      this.#dropText(oldest, entry);
+    for (const [oldest] of this.#texts) {
+      if (this.#textBytes <= this.#sessionTextBytes) break;
+      this.#forgetText(oldest);
     }
   }
 
   #forgetText(path: string): void {
+    this.#resumedHeld.delete(path);
     const entry = this.#texts.get(path);
     if (entry !== undefined) this.#dropText(path, entry);
   }

@@ -46,6 +46,12 @@ export interface RerailApiStores {
   health(): z.infer<typeof presentationDaemonSchema>;
   /** Every coding agent and whether Rerail is connected to it; undefined when this process cannot check. */
   codingAgents(): Promise<CodingAgentState[]> | undefined;
+  /**
+   * Starts opening again a session this daemon suspended while it was quiet, so a scan just queued for it runs now;
+   * nothing for any other session. Returns at once and never throws: a failure goes to the daemon's log, and the scan
+   * fails with why. A process that runs no sessions has none.
+   */
+  resumeSession?(sessionId: string): void;
   /** Merge Assist for one checkout at a time: its in-flight conflicts, settings, and the changes people make. */
   mergeAssist(): MergeAssistService;
 }
