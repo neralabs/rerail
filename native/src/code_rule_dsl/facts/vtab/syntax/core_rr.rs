@@ -97,7 +97,7 @@ impl Family {
             Some("php" | "blade") => Self::Php,
             Some("rust") => Self::Rust,
             Some("rr") => Self::Rr,
-            Some("percent-format" | "brace-format") => Self::Format,
+            Some("percent-format" | "brace-format" | "eslint-directive") => Self::Format,
             _ => Self::Other,
         }
     }

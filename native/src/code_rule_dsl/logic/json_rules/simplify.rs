@@ -371,7 +371,14 @@ fn drop_node_atoms(px: &Patterns, rs: &Rules, prog: &mut Program) {
         let mut keep = Vec::new();
         for (j, l) in lits.iter().enumerate() {
             if let Some(c) = super::pyre::find(&px.simplify_node_atom, l.trim()) {
-                let others = lits.iter().enumerate().filter(|(k, _)| *k != j).map(|(_, x)| code(px, x)).collect::<Vec<_>>().join(" ");
+                // Only a positive literal outside an aggregate grounds x.
+                let others = lits
+                    .iter()
+                    .enumerate()
+                    .filter(|(k, x)| *k != j && !x.trim_start().starts_with('!'))
+                    .map(|(_, x)| super::text::drop_aggregates(px, &code(px, x)))
+                    .collect::<Vec<_>>()
+                    .join(" ");
                 if super::pyre::search(&re(&format!(r"(?<![\w@$]){}\b", esc(g(&c, 1)))), &others) {
                     continue;
                 }

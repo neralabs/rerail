@@ -1931,12 +1931,15 @@ fn inside_or_past(f: &mut FunctionBuilder<'_>, inside: Value, to: cranelift_code
 /// 0177): the rule by one load of its first byte, then a block a rule, each straight-line in its
 /// first word; a run or a search past it goes on a word at a time, in a cold block. A search
 /// that finds no last gives `s - 1`, which the order check refuses.
-fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, outputs: usize, c: &FileCols, s: Value, limit: Option<Limit>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, outputs: usize, c: &FileCols, s: Value, limit: Option<Limit>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Value, Value) {
     use crate::records::EndRule;
     let ro = MemFlags::trusted().with_readonly();
     let fl = MemFlags::trusted();
-    let ended = f.create_block();
+    // The last, and a refusal (its sign bit): a byte with no rule, where errors by tokens refuse.
+    let (ended, done) = (f.create_block(), f.create_block());
     f.append_block_param(ended, types::I64);
+    f.append_block_param(done, types::I64);
+    f.append_block_param(done, types::I64);
     // Output `o`'s word `q` (`q` below the file's blocks).
     let word_at = |f: &mut FunctionBuilder<'_>, q: Value, o: u16| {
         let off = f.ins().imul_imm(q, 8 * outputs as i64);
@@ -1959,11 +1962,16 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         f.switch_to_block(other);
         if k + 1 == blocks.len() {
             f.set_cold_block(other);
-            f.ins().jump(ended, &[s.into()]);
+            let refuse = f.ins().iconst(types::I64, if r.untaken.is_empty() || r.skip.is_none() { 0 } else { -1 });
+            f.ins().jump(done, &[s.into(), refuse.into()]);
         }
     }
-    for (&rule, &b) in r.rules.iter().zip(&blocks) {
+    for (k, (&rule, &b)) in r.rules.iter().zip(&blocks).enumerate() {
         f.switch_to_block(b);
+        // A rule with token tests (`Records::checks`) ends at a block of its own, which tests
+        // the token, as a lexer checks the token it reads.
+        let tests: Vec<crate::records::TokenCheck> = r.checks.iter().filter(|c| usize::from(c.rule) == k).copied().collect();
+        let ended = if tests.is_empty() { ended } else { tested(f, &tests, outputs, c, s, done, heads) };
         match rule {
             EndRule::Pair(o) => {
                 let x = word_at(f, q0, o);
@@ -2015,6 +2023,88 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                 let w1 = f.ins().iadd_imm(w, 1);
                 f.ins().brif(full, more, &[w1.into()], ended, &[l.into()]);
             }
+            EndRule::Read(i) => {
+                // A reader (`records::read_last`): the first region whose opener holds at `s`,
+                // then its closer's first bit after `s`, in that word, then the words after; a
+                // lexer's reader of a string or a comment, from its start.
+                use crate::records::ReadNone;
+                let rd = &r.readers[usize::from(i)];
+                for a in &rd.arms {
+                    let (arm, not) = (f.create_block(), f.create_block());
+                    let x = word_at(f, q0, a.opener);
+                    let bit = f.ins().ushr(x, sh);
+                    let bit = f.ins().band_imm(bit, 1);
+                    f.ins().brif(bit, arm, &[], not, &[]);
+                    f.switch_to_block(arm);
+                    // No closer after the opener: what its region says.
+                    let none = f.create_block();
+                    f.set_cold_block(none);
+                    let (first_word, more, look, found) = (f.create_block(), f.create_block(), f.create_block(), f.create_block());
+                    f.append_block_param(more, types::I64);
+                    f.append_block_param(found, types::I64);
+                    let from = f.ins().iadd_imm(s, 1);
+                    let q = f.ins().ushr_imm(from, 6);
+                    let inside = f.ins().icmp(IntCC::UnsignedLessThan, q, bound(c, limit));
+                    inside_or_past(f, inside, first_word, limit, none, &[]);
+                    f.switch_to_block(first_word);
+                    let x = word_at(f, q, a.closer);
+                    let fb = f.ins().band_imm(from, 63);
+                    let ones = f.ins().iconst(types::I64, -1);
+                    let m = f.ins().ishl(ones, fb);
+                    let x = f.ins().band(x, m);
+                    let base = f.ins().ishl_imm(q, 6);
+                    let tz = f.ins().ctz(x);
+                    let at = f.ins().iadd(base, tz);
+                    let q1 = f.ins().iadd_imm(q, 1);
+                    f.ins().brif(x, found, &[at.into()], more, &[q1.into()]);
+                    // A word at a time past the first: a string or a comment over blocks.
+                    f.switch_to_block(more);
+                    f.set_cold_block(more);
+                    heads.push((more, Step::Word));
+                    let w = f.block_params(more)[0];
+                    let inside = f.ins().icmp(IntCC::UnsignedLessThan, w, bound(c, limit));
+                    inside_or_past(f, inside, look, limit, none, &[]);
+                    f.switch_to_block(look);
+                    f.set_cold_block(look);
+                    let x = word_at(f, w, a.closer);
+                    let w64 = f.ins().ishl_imm(w, 6);
+                    let tz = f.ins().ctz(x);
+                    let at = f.ins().iadd(w64, tz);
+                    let w1 = f.ins().iadd_imm(w, 1);
+                    f.ins().brif(x, found, &[at.into()], more, &[w1.into()]);
+                    // The closer's first byte: the last at its offset.
+                    f.switch_to_block(found);
+                    let at = f.block_params(found)[0];
+                    let l = f.ins().iadd_imm(at, i64::from(a.off));
+                    f.ins().jump(ended, &[l.into()]);
+                    f.switch_to_block(none);
+                    match a.none {
+                        ReadNone::Refuse => {
+                            let refuse = f.ins().iconst(types::I64, -1);
+                            f.ins().jump(done, &[s.into(), refuse.into()]);
+                        }
+                        ReadNone::End => {
+                            let l = f.ins().iadd_imm(c.len, -1);
+                            f.ins().jump(ended, &[l.into()]);
+                        }
+                        ReadNone::Bytes(m) => {
+                            let l = f.ins().iadd_imm(s, i64::from(m) - 1);
+                            f.ins().jump(ended, &[l.into()]);
+                        }
+                    }
+                    f.switch_to_block(not);
+                }
+                // No opener: the byte's other rule, or the file refused.
+                match blocks.get(usize::from(rd.other)) {
+                    Some(&b) => {
+                        f.ins().jump(b, &[]);
+                    }
+                    None => {
+                        let refuse = f.ins().iconst(types::I64, -1);
+                        f.ins().jump(done, &[s.into(), refuse.into()]);
+                    }
+                }
+            }
             EndRule::Last(o) => {
                 // The mask's first bit at or after `s`: in its word, then the words after.
                 let (more, look) = (f.create_block(), f.create_block());
@@ -2053,7 +2143,108 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         }
     }
     f.switch_to_block(ended);
-    f.block_params(ended)[0]
+    let l = f.block_params(ended)[0];
+    let zero = f.ins().iconst(types::I64, 0);
+    f.ins().jump(done, &[l.into(), zero.into()]);
+    f.switch_to_block(done);
+    (f.block_params(done)[0], f.block_params(done)[1])
+}
+
+/// A rule's end block that tests its token `s..=l` (`l` its parameter) by its token tests
+/// (`records::check_holds`), then on to `done` with the last and the refusal (a sign bit). A
+/// count is the mask's bits over the token's words, a word at a time; a run, the mask's first
+/// `least` bits from `s` compared at once, from one word or two.
+#[allow(clippy::too_many_arguments)]
+fn tested(f: &mut FunctionBuilder<'_>, tests: &[crate::records::TokenCheck], outputs: usize, c: &FileCols, s: Value, done: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> cranelift_codegen::ir::Block {
+    let fl = MemFlags::trusted();
+    let here = f.current_block().expect("a rule's block");
+    let ended = f.create_block();
+    f.append_block_param(ended, types::I64);
+    f.switch_to_block(ended);
+    let l = f.block_params(ended)[0];
+    let word_at = |f: &mut FunctionBuilder<'_>, q: Value, o: u16| {
+        let off = f.ins().imul_imm(q, 8 * outputs as i64);
+        let row = f.ins().iadd(c.out, off);
+        f.ins().load(types::I64, fl, row, 8 * i32::from(o))
+    };
+    let q0 = f.ins().ushr_imm(s, 6);
+    let sh = f.ins().band_imm(s, 63);
+    let ql = f.ins().ushr_imm(l, 6);
+    let len = f.ins().isub(l, s);
+    let len = f.ins().iadd_imm(len, 1);
+    let ones = f.ins().iconst(types::I64, -1);
+    let mut refuse = f.ins().iconst(types::I64, 0);
+    for t in tests {
+        let next = f.create_block();
+        f.append_block_param(next, types::I64);
+        if t.count {
+            // The mask's bits over the token's words: the first from `s`, the last to `l`.
+            let (head, body) = (f.create_block(), f.create_block());
+            f.append_block_param(head, types::I64);
+            f.append_block_param(head, types::I64);
+            heads.push((head, Step::Word));
+            let zero = f.ins().iconst(types::I64, 0);
+            f.ins().jump(head, &[q0.into(), zero.into()]);
+            f.switch_to_block(head);
+            let (q, acc) = (f.block_params(head)[0], f.block_params(head)[1]);
+            let x = word_at(f, q, t.o);
+            let first = f.ins().icmp(IntCC::Equal, q, q0);
+            let from = f.ins().ishl(ones, sh);
+            let from = f.ins().select(first, from, ones);
+            let x = f.ins().band(x, from);
+            let last = f.ins().icmp(IntCC::Equal, q, ql);
+            let lb = f.ins().band_imm(l, 63);
+            let lb = f.ins().irsub_imm(lb, 63);
+            let to = f.ins().ushr(ones, lb);
+            let to = f.ins().select(last, to, ones);
+            let x = f.ins().band(x, to);
+            let pc = f.ins().popcnt(x);
+            let acc = f.ins().iadd(acc, pc);
+            let q1 = f.ins().iadd_imm(q, 1);
+            f.ins().brif(last, body, &[], head, &[q1.into(), acc.into()]);
+            f.switch_to_block(body);
+            let hit = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, acc, i64::from(t.least));
+            let hit = f.ins().sextend(types::I64, hit);
+            let hit = f.ins().ineg(hit);
+            let hit = f.ins().bor(refuse, hit);
+            f.ins().jump(next, &[hit.into()]);
+        } else {
+            // The token `least` long at least, and the mask at each of its first `least`.
+            let (test, two, one) = (f.create_block(), f.create_block(), f.create_block());
+            f.append_block_param(one, types::I64);
+            let long = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, len, i64::from(t.least));
+            f.ins().brif(long, test, &[], next, &[refuse.into()]);
+            f.switch_to_block(test);
+            let x = word_at(f, q0, t.o);
+            let lo = f.ins().ushr(x, sh);
+            let end = f.ins().iadd_imm(sh, i64::from(t.least));
+            let past = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, end, 64);
+            f.ins().brif(past, two, &[], one, &[lo.into()]);
+            // Past the word: its next word's low bits after `lo`'s (in the token, so in the file).
+            f.switch_to_block(two);
+            f.set_cold_block(two);
+            let q1 = f.ins().iadd_imm(q0, 1);
+            let y = word_at(f, q1, t.o);
+            let back = f.ins().irsub_imm(sh, 64);
+            let hi = f.ins().ishl(y, back);
+            let win = f.ins().bor(lo, hi);
+            f.ins().jump(one, &[win.into()]);
+            f.switch_to_block(one);
+            let win = f.block_params(one)[0];
+            let need = (!0u64 >> (64 - t.least)) as i64;
+            let m = f.ins().band_imm(win, need);
+            let hit = f.ins().icmp_imm(IntCC::Equal, m, need);
+            let hit = f.ins().sextend(types::I64, hit);
+            let hit = f.ins().ineg(hit);
+            let hit = f.ins().bor(refuse, hit);
+            f.ins().jump(next, &[hit.into()]);
+        }
+        f.switch_to_block(next);
+        refuse = f.block_params(next)[0];
+    }
+    f.ins().jump(done, &[l.into(), refuse.into()]);
+    f.switch_to_block(here);
+    ended
 }
 
 /// The next token's first byte from `after` (`records::walk`, stage 2a): the first bit at or
@@ -2217,8 +2408,10 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     } else {
         f.ins().uload32(fl, sa, 0)
     };
+    let mut refused = None;
     let l = if ruled {
-        let l = rule_last(f, r, t, outputs, c, s, limit, heads);
+        let (l, refuse) = rule_last(f, r, t, outputs, c, s, limit, heads);
+        refused = Some(refuse);
         f.ins().istore32(stores, l, la, 0);
         l
     } else {
@@ -2229,6 +2422,10 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let before = f.ins().isub(l, s);
     let inside = f.ins().isub(s, after);
     let wrong = f.ins().bor(before, inside);
+    let wrong = match refused {
+        Some(x) => f.ins().bor(wrong, x),
+        None => wrong,
+    };
     let bad = f.ins().bor(bad, wrong);
     // The loop goes on past the token's first byte at least, whatever its rule found: a
     // search that found no last gives `s - 1`, below zero at `s = 0`, so the max is signed.
@@ -2365,12 +2562,12 @@ fn record_end(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
     }
     // The gap marks (decision 0177) after the others: they read the extra's mark.
     if r.gaps == 0 {
-        late_marks(f, r, outputs, c, n, false, then, heads);
+        late_marks(f, r, extracts, outputs, c, n, false, then, heads);
     } else {
         let gaps = f.create_block();
-        late_marks(f, r, outputs, c, n, false, gaps, heads);
+        late_marks(f, r, extracts, outputs, c, n, false, gaps, heads);
         f.switch_to_block(gaps);
-        late_marks(f, r, outputs, c, n, true, then, heads);
+        late_marks(f, r, extracts, outputs, c, n, true, then, heads);
     }
 }
 
@@ -2380,9 +2577,10 @@ fn record_end(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
 /// mark's bit ORed into its code. Then on to `then`.
 ///
 /// The gap marks (`lift`, `Records::gaps`): each bit to the first grammar token that starts at
-/// it or after (an extra's token, by its mark, passed over), as `records::gap_marks`.
+/// it or after (an extra's token, by its mark, passed over), as `records::gap_marks`; a bit
+/// with none, of a mark with `else escape` (`Records::unplaced`), sets the totals' flag.
 #[allow(clippy::too_many_arguments)]
-fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, outputs: usize, c: &FileCols, n: Value, lift: bool, then: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
+fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts: usize, outputs: usize, c: &FileCols, n: Value, lift: bool, then: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
     let late: Vec<(usize, u16)> = r.marks.iter().enumerate().filter(|&(k, m)| m.0 != crate::records::WORD_ALONE && m.1 == 0 && (r.gaps >> k & 1 == 1) == lift).map(|(k, m)| (k, m.0)).collect();
     if late.is_empty() {
         f.ins().jump(then, &[]);
@@ -2411,6 +2609,8 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, outputs:
             f.append_block_param(b, types::I64);
         }
     }
+    // `set`'s: the word of the grammar token before (`Records::unless`; 0 for none).
+    f.append_block_param(set, types::I64);
     heads.push((rows, Step::Block));
     heads.push((bits, Step::Bits));
     heads.push((search, Step::Token));
@@ -2496,7 +2696,32 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, outputs:
         let q = f.block_params(over).to_vec();
         let qa: Vec<BlockArg> = q.iter().map(|&v| v.into()).collect();
         let inside = f.ins().icmp(IntCC::UnsignedLessThan, q[3], n);
-        f.ins().brif(inside, test, &[], next, &qa);
+        let refusing: Vec<u16> = late.iter().filter(|&&(m, _)| r.unplaced >> m & 1 == 1).map(|&(_, o)| o).collect();
+        if refusing.is_empty() {
+            f.ins().brif(inside, test, &[], next, &qa);
+        } else {
+            // No grammar token at or after the bit: its `else escape` marks' bits there refuse.
+            let unplaced = f.create_block();
+            f.ins().brif(inside, test, &[], unplaced, &[]);
+            f.switch_to_block(unplaced);
+            let off = f.ins().imul_imm(q[0], 8 * outputs as i64);
+            let at = f.ins().iadd(c.out, off);
+            let b = f.ins().ctz(q[2]);
+            let mut any = None;
+            for o in refusing {
+                let w = f.ins().load(types::I64, fl, at, 8 * i32::from(o));
+                any = Some(match any {
+                    None => w,
+                    Some(a) => f.ins().bor(a, w),
+                });
+            }
+            let x = f.ins().ushr(any.expect("a mark"), b);
+            let x = f.ins().band_imm(x, 1);
+            let flag = f.ins().load(types::I64, fl, c.counts, 8 * extracts as i32);
+            let flag = f.ins().bor(flag, x);
+            f.ins().store(stores, flag, c.counts, 8 * extracts as i32);
+            f.ins().jump(next, &qa);
+        }
         f.switch_to_block(test);
         let ka = f.ins().ishl_imm(q[3], 2);
         let ca = f.ins().iadd(c.codes, ka);
@@ -2505,11 +2730,50 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, outputs:
         let is_extra = f.ins().ushr_imm(code, e);
         let is_extra = f.ins().band_imm(is_extra, i64::from(r.extra.is_some()));
         let k1 = f.ins().iadd_imm(q[3], 1);
-        f.ins().brif(is_extra, over, &[q[0].into(), q[1].into(), q[2].into(), k1.into()], set, &qa);
+        if r.unless.is_empty() {
+            let mut sa = qa.clone();
+            sa.push(zero.into());
+            f.ins().brif(is_extra, over, &[q[0].into(), q[1].into(), q[2].into(), k1.into()], set, &sa);
+        } else {
+            // Back over the extras' tokens before it to the grammar token before, for its word.
+            let (back, prior) = (f.create_block(), f.create_block());
+            for _ in 0..5 {
+                f.append_block_param(back, types::I64);
+                f.append_block_param(prior, types::I64);
+            }
+            heads.push((back, Step::Token));
+            let mut ba = qa.clone();
+            ba.push(q[3].into());
+            f.ins().brif(is_extra, over, &[q[0].into(), q[1].into(), q[2].into(), k1.into()], back, &ba);
+            // (block, cursor, bits, token, j): the grammar token before is the last before `j`.
+            f.switch_to_block(back);
+            let b = f.block_params(back).to_vec();
+            let ba: Vec<BlockArg> = b.iter().map(|&v| v.into()).collect();
+            let mut none = ba[..4].to_vec();
+            none.push(zero.into());
+            f.ins().brif(b[4], prior, &ba, set, &none);
+            f.switch_to_block(prior);
+            let b = f.block_params(prior).to_vec();
+            let j1 = f.ins().iadd_imm(b[4], -1);
+            let ka = f.ins().ishl_imm(j1, 2);
+            let ca = f.ins().iadd(c.codes, ka);
+            let code = f.ins().uload32(fl, ca, 0);
+            let is_extra = f.ins().ushr_imm(code, e);
+            let is_extra = f.ins().band_imm(is_extra, i64::from(r.extra.is_some()));
+            let word = f.ins().ushr_imm(code, i64::from(crate::records::KIND_BITS));
+            let word = f.ins().band_imm(word, 0xff);
+            let mut again: Vec<BlockArg> = b[..4].iter().map(|&v| v.into()).collect();
+            again.push(j1.into());
+            let mut done: Vec<BlockArg> = b[..4].iter().map(|&v| v.into()).collect();
+            done.push(word.into());
+            f.ins().brif(is_extra, back, &again, set, &done);
+        }
     } else {
         let at_it = f.ins().icmp(IntCC::Equal, sv, place);
         let hit = f.ins().band(inside, at_it);
-        f.ins().brif(hit, set, &qa, next, &qa);
+        let mut sa = qa.clone();
+        sa.push(zero.into());
+        f.ins().brif(hit, set, &sa, next, &qa);
     }
 
     f.switch_to_block(set);
@@ -2523,7 +2787,13 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, outputs:
     for &(m, o) in &late {
         let w = f.ins().load(types::I64, fl, at, 8 * i32::from(o));
         let x = f.ins().ushr(w, b);
-        let x = f.ins().band_imm(x, 1);
+        let mut x = f.ins().band_imm(x, 1);
+        // `unless after`: none after a grammar token of these words.
+        for &(_, word) in r.unless.iter().filter(|&&(u, _)| usize::from(u) == m) {
+            let other = f.ins().icmp_imm(IntCC::NotEqual, q[4], i64::from(word));
+            let other = f.ins().uextend(types::I64, other);
+            x = f.ins().band(x, other);
+        }
         let x = f.ins().ishl_imm(x, i64::from(crate::records::MARK_SHIFT) + m as i64);
         code = f.ins().bor(code, x);
     }

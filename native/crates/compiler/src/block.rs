@@ -948,7 +948,8 @@ impl BlockProgram {
                 let mut positions = positions;
                 // The tokens by the loop (decision 0177, stage 2a): its starts and lasts.
                 if let Some((r, skip)) = self.records.as_ref().and_then(|r| r.skip.map(|k| (r, k))) {
-                    let (s, l) = crate::records::walk(r, skip, bytes, &outputs);
+                    let (s, l, untaken, read, checked) = crate::records::walk(r, skip, bytes, &outputs);
+                    any |= untaken && !r.untaken.is_empty() || read || checked;
                     positions[usize::from(r.starts)] = s;
                     positions[usize::from(r.lasts)] = l;
                 } else if let Some(r) = self.records.as_ref().filter(|r| !r.rules.is_empty()) {
@@ -1720,8 +1721,22 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                     crate::records::EndRule::Run(o) => ("run", o),
                     crate::records::EndRule::Pair(o) => ("pair", o),
                     crate::records::EndRule::Last(o) => ("last", o),
+                    crate::records::EndRule::Read(o) => ("read", o),
                 };
                 let _ = writeln!(out, "  block {at} recrule {how} {o}");
+            }
+            // `block N recreader OTHER` each reader, then `block N recarm K OPENER CLOSER OFF
+            // refuse|end|bytesM` each of its regions (`Records::readers`).
+            for (k, rd) in r.readers.iter().enumerate() {
+                let _ = writeln!(out, "  block {at} recreader {}", rd.other);
+                for a in &rd.arms {
+                    let none = match a.none {
+                        crate::records::ReadNone::Refuse => "refuse".to_string(),
+                        crate::records::ReadNone::End => "end".to_string(),
+                        crate::records::ReadNone::Bytes(m) => format!("bytes{m}"),
+                    };
+                    let _ = writeln!(out, "  block {at} recarm {k} {} {} {} {none}", a.opener, a.closer, a.off);
+                }
             }
         }
         // `block N recgaps G` the gap marks' bits, `block N recextra K` an extra's mark.
@@ -1730,6 +1745,22 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         }
         if let Some(k) = r.extra {
             let _ = writeln!(out, "  block {at} recextra {k}");
+        }
+        // `block N recunless K W`: gap mark `K` is none after a grammar token of word `W`.
+        for (k, w) in &r.unless {
+            let _ = writeln!(out, "  block {at} recunless {k} {w}");
+        }
+        // `block N reccheck R count|run O N`: a token test of rule `R`'s tokens.
+        for c in &r.checks {
+            let _ = writeln!(out, "  block {at} reccheck {} {} {} {}", c.rule, if c.count { "count" } else { "run" }, c.o, c.least);
+        }
+        // `block N recunplaced U`: the gap marks whose bit past the last grammar token refuses.
+        if r.unplaced != 0 {
+            let _ = writeln!(out, "  block {at} recunplaced {}", r.unplaced);
+        }
+        // `block N recuntaken O` each error the token loop checks.
+        for o in &r.untaken {
+            let _ = writeln!(out, "  block {at} recuntaken {o}");
         }
         // `block N recskip O`: the bytes between tokens, the loop's (stage 2a).
         if let Some(o) = r.skip {

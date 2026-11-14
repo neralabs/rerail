@@ -4964,6 +4964,54 @@ the split memo with the run beside it.
 dependency on the step before it runs on the pool, beside that step. Measured: `dl1` cold, same findings, with the
 overlapped steps' wall shown by `RERAIL_TIMELINE`. See O-typing-run-overlap for the largest such step.
 
+**Progress (2026-11-13, decision 0192).** Every thread-local is listed with its class (`logic::run_state::STATE`),
+and every job the engine starts carries the run's context (`run_state::Carry`: `Jobs::spawn`, `beside`, the strata's
+`Ambient`). The strict mode's waves are per run (a carried stage). Tests and a commit check refuse an unlisted
+thread-local. The bridged typing run runs beside phase 1. Still open:
+- the split memo is process-wide (exact under two runs, but they can push out each other's entries);
+- two pieces of run context are not carried yet (`plan::PLANNED_NOW`, `choices::DURABLE`), pinned;
+- the other nested runs (phase 0's, the constants') still run in order.
+
+**Closed (2026-11-14, decision 0197).**
+- The split memo is the run's own: a carried thread-local that each run opens as it begins (`split_memo::own`).
+- Both NotYet entries are carried. `PLANNED_NOW` is now `RunPlans::planned_now`, and `DURABLE` is carried as an
+  `Arc`. The NotYet count is pinned at 0.
+- Neither of the remaining nested runs has anything to overlap:
+  - the constants' run never starts on `dl1`, `struct.rr` or the Python pack, because `constants::foldable` is empty
+    there. An early start was built, then backed out unmeasured, because nothing ran.
+  - phase 0 is one batched `bootstrap.rr` run (about 0.2 s of CPU), and every later step needs its graphs. The nested
+    runs find their graphs kept (under 1 ms each).
+
+## O-cone-kept-plans. A kept plan changes the cross-file cone's result
+
+**Seen (2026-11-13, decision 0192).** When the cone's job (`beside("the cone of requests")`, plan/corpus.rs) runs
+with the run's kept plans (`enter_plans`), one test fails:
+`phases::tests::phase_1_loads_the_libraries_the_imports_reach_and_a_reader_takes_them`. After `b.pyi` is edited to
+import `c`, the second run's `lib` rows are `a, b, builtins`, without `c`. Without the plans (as before decision
+0192), they are right. A plan is an order and a price; it should never change rows. So either a kept plan carries
+something that depends on the inputs, or its key misses an input of the cone's (its delta, its sources).
+
+The cone now enters no plans (`enter_plans(None)`), and plans every rule afresh.
+
+**Closure:** find what the kept plan carries into the cone's second run. Then the cone shares the run's plans like
+every other job, the `enter_plans(None)` goes, and the test passes with them.
+
+**Closed (2026-11-14).** Not the plans: whether a thread holds kept plans is also how a run knows it is a corpus run
+(`plan.rs`, `let corpus = PLANS…is_some()`), and a corpus run makes its planning choices. Testing each switch apart:
+- with the plans, the budget off: fails;
+- with the plans, the choices neither reused nor made: passes;
+- the choices made afresh each run: fails;
+- inlining off: fails, so the culprit is the negation split (`demand::split_negations`).
+
+The split computes a relation only for the keys its readers reach. The cone keeps its strata for the next run, so the
+next run's new key (`c`, imported by the edited `b.pyi`) had no rows and no delta to make them: spike O125's case,
+which the session's cross-file part already avoids with `demand::whole_relations`. The cone now does the same
+whenever it keeps its strata (`cone_kept`), and takes the run's plans. The phase-1 library test, the cone, session and
+kept-strata tests pass (115); `dl1`'s findings and instructions are unchanged, cold and warm.
+
+Left as a note: "holds kept plans" standing for "a corpus run" is a second meaning on one switch. That is how this
+bug stayed hidden.
+
 ## O-typing-run-overlap. The bridged typing run waits for the whole combined program
 
 **Seen (2026-11-13).** The bridged typing run (`bridge::facts` → `run_typed`) is about 0.3 s of the cold run's
@@ -4981,6 +5029,9 @@ The typing program's own text does not depend on the policies. Only the outputs 
 
 Measured as the typing run's wall overlapping the combine's on `dl1`, with findings unchanged. O-batch-typing-once
 is the same run's repetition across a batch's policies.
+
+**Progress (2026-11-13, decision 0192).** The typing run now runs beside phase 1, as a job that carries the run's
+context. It still starts after the combine; both options above remain.
 
 ## O-demand-negation-rounds. The negation split checks every reader again each round
 

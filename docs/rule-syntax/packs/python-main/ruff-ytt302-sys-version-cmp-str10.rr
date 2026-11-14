@@ -24,13 +24,6 @@ ytt302_one_byte_string(n) :- (kind(n, "string") ; kind(n, "concatenated_string")
 ytt302_one_byte_string(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
     ytt302_one_byte_string(c4).
 
-// sys_version(n): the JSON util `sys-version`, used where the JSON says `matches: "sys-version"`
-.decl ytt302_sys_version(n: node)
-ytt302_sys_version(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
-    sym_of(n, "sys.version").
-ytt302_sys_version(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
-    ytt302_sys_version(c1).
-
 // ordered_string_compare(n): the JSON util `ordered-string-compare`, used where the JSON says `matches: "ordered-string-compare"`
 .decl ytt302_ordered_string_compare(n: node)
 ytt302_ordered_string_compare(n) :- kind(n, "comparison_operator"), ytt302_tok_has_1(n),

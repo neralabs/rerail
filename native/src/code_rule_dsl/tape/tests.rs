@@ -2518,7 +2518,19 @@ pub(crate) fn python_tape_text(image: &TapeImage, grammar: &Grammar, source: &st
 fn ecma_implied_tokens() {
     let out = std::env::var("RERAIL_ECMA_IMPLIED").expect("set RERAIL_ECMA_IMPLIED");
     let mut text = String::new();
-    for (name, dialect) in [("javascript", GrammarDialect::JavaScript), ("typescript", GrammarDialect::TypeScript), ("tsx", GrammarDialect::Tsx)] {
+    // With `RERAIL_IMPLIED_DIALECTS` (comma-separated: `rust`, `java`, `csharp`, ...), those dialects'
+    // rows instead, for another lean parser's table.
+    let all = [
+        ("javascript", GrammarDialect::JavaScript),
+        ("typescript", GrammarDialect::TypeScript),
+        ("tsx", GrammarDialect::Tsx),
+        ("rust", GrammarDialect::Rust),
+        ("java", GrammarDialect::Java),
+        ("csharp", GrammarDialect::CSharp),
+        ("php", GrammarDialect::Php),
+    ];
+    let wanted = std::env::var("RERAIL_IMPLIED_DIALECTS").unwrap_or_else(|_| "javascript,typescript,tsx".into());
+    for (name, dialect) in all.into_iter().filter(|(name, _)| wanted.split(',').any(|w| w == *name)) {
         let grammar = tokens::TokenGrammar::of_dialect(dialect).expect("a token grammar");
         for (kind, dropped) in grammar.implied_tokens() {
             for (token, field) in dropped {
@@ -2535,12 +2547,36 @@ fn python_tape_expect() {
     let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
     let out = std::path::PathBuf::from(std::env::var("RERAIL_PY_OUT").expect("set RERAIL_PY_OUT"));
     std::fs::create_dir_all(&out).unwrap();
-    // With `RERAIL_PY_DIALECT` (`javascript`, `typescript`, `tsx`), another dialect's tapes, for the
-    // lean ECMAScript parser's oracle (`rerail-ecma-lean`).
+    // With `RERAIL_PY_DIALECT` (`javascript`, `typescript`, `tsx`, `rust`, `java`, `csharp`, `php`),
+    // another dialect's tapes, for that lean parser's oracle (`rerail-ecma-lean`, ...). PHP's are of
+    // each file's view (`parse_input`, the bytes tree-sitter-php parses), written to `views/` beside
+    // the tapes and named in them. `blade-views` writes, instead of tapes, each Blade template's
+    // compiled program (`blade::view`, the PHP its embedding parses) to `RERAIL_PY_OUT`, a file each.
+    if std::env::var("RERAIL_PY_DIALECT").as_deref() == Ok("blade-views") {
+        let mut n = 0;
+        for path in list.lines().filter(|l| !l.is_empty()) {
+            let Ok(source) = std::fs::read_to_string(path) else { continue };
+            let Ok(tree) = crate::code_rule_dsl::blade::forte::tree::parse_tree(source.as_bytes()) else { continue };
+            let Ok(read) = crate::code_rule_dsl::blade::view::View::read(&tree, &source, &|| false) else { continue };
+            if let Some(view) = read.view {
+                std::fs::write(out.join(format!("{n:05}.php")), view.text()).unwrap();
+                n += 1;
+            }
+        }
+        eprintln!("{n} compiled views");
+        return;
+    }
+    // `php-raw`: PHP's tapes of the files as they are (a Blade template's compiled program, which
+    // its embedding parses with no `<?php` tag).
+    let php = std::env::var("RERAIL_PY_DIALECT").as_deref() == Ok("php");
     let dialect = match std::env::var("RERAIL_PY_DIALECT").as_deref() {
+        Ok("php") | Ok("php-raw") => GrammarDialect::Php,
         Ok("javascript") => GrammarDialect::JavaScript,
         Ok("typescript") => GrammarDialect::TypeScript,
         Ok("tsx") => GrammarDialect::Tsx,
+        Ok("rust") => GrammarDialect::Rust,
+        Ok("java") => GrammarDialect::Java,
+        Ok("csharp") => GrammarDialect::CSharp,
         _ => GrammarDialect::Python,
     };
     let grammar = Grammar::new(dialect).unwrap();
@@ -2554,6 +2590,16 @@ fn python_tape_expect() {
     let (mut written, mut errors) = (0usize, 0usize);
     for (n, path) in list.lines().filter(|l| !l.is_empty()).enumerate() {
         let Ok(source) = std::fs::read_to_string(path) else { continue };
+        let view_path;
+        let (source, path) = if php {
+            let view = crate::code_rule_dsl::php_view::view(&source).into_owned();
+            std::fs::create_dir_all(out.join("views")).unwrap();
+            view_path = out.join("views").join(format!("{n:05}.php")).to_string_lossy().into_owned();
+            std::fs::write(&view_path, &view).unwrap();
+            (view, view_path.as_str())
+        } else {
+            (source, path)
+        };
         let tree = parser.parse(&source, None).unwrap();
         if tree.root_node().has_error() {
             // Its tape with tree-sitter's recovery (`ERROR` nodes, missing tokens), after an
@@ -2928,6 +2974,537 @@ fn ecma_parse_costs() {
         }
     }
     eprintln!("{dialect:?}: {} files of {all} the lean parser reads, {bytes} bytes, {nodes} nodes", files.len());
+    for ((name, _), (t, ins, cyc)) in steps.iter().zip(&best) {
+        eprintln!(
+            "{name:32} {:9.1} instructions a node, {:7.1} cycles a node, {:6.2} ns a byte, {:8.3} s",
+            *ins as f64 / nodes as f64,
+            *cyc as f64 / nodes as f64,
+            t * 1e9 / bytes as f64,
+            t
+        );
+    }
+}
+
+/// Rust's tapes from the lean parser (the product's parser for Rust, decision 0193) are
+/// tree-sitter-rust's, byte for byte, on hand-written cases; a text tree-sitter reads with an error
+/// the lean parser refuses (its file goes to tree-sitter). The corpus comparison is
+/// `rerail-rust-lean`'s `oracle`.
+#[test]
+fn rust_tapes_from_the_lean_parser_are_tree_sitters() {
+    use crate::code_rule_dsl::tape::rust_lean;
+    let sources = [
+        "",
+        "// only a comment\n//! inner doc\n/// outer doc\nfn f() {}\n",
+        "use a::{b as c, d::*, self};\nuse ::e;\npub(crate) mod m { pub(super) struct S; }\n",
+        "#[derive(Debug)]\npub struct P<'a, T: Clone + 'a, const N: usize> where T: Default { pub x: &'a [T; N], y: Option<Box<dyn Fn(u8) -> u8>> }\n",
+        "enum E { A, B(u8, String), C { x: i32 } = 3, }\nunion U { a: u32 }\n",
+        "impl<T> ::std::fmt::Debug for X<T> { fn fmt(&self, f: &mut Formatter<'_>) -> Result { Ok(()) } }\nimpl ! {}\n",
+        "trait T: Sized { type A: Iterator<Item = u8>; const C: u8 = 1; fn m(&mut self, _: u8) -> impl '_ + Iterator; }\n",
+        "fn f(x: u8) -> u8 {\n    let mut y = x as u16 + 1;\n    y <<= 2;\n    if a && let Some(z) = w { return z; }\n    match y { 0 | 1 => {} n if n > 2 => n, _ => unreachable!(), }\n}\n",
+        "fn g() { for c in a..*b {} x(..=100); loop { break (a, b); } let v: Vec<Vec<u8>> = vec![]; }\n",
+        "fn h() { let s = r#\" raw \"#; let c = 'c'; let b = b\"bytes\"; let l = |a, b: u8| -> u8 { a + b }; a.b::<T>().await?; }\n",
+        "macro_rules! m { ($x:expr, $($y:tt)*) => { $x + m!($($y)*) }; () => {} }\nmacro_rules! set( { $($k:expr),* } => {}; );\n",
+        "unsafe extern \"C\" fn v(n: i32, mut args: ...) {}\ntype F = for<'a> fn(&'a str, _) -> &'a str;\nstatic S: Option<&str> = None;\n",
+    ];
+    let grammar = Grammar::new(GrammarDialect::Rust).unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Rust.get_ts_language()).unwrap();
+    for source in sources {
+        let ours = rust_lean::encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        assert!(!tree.root_node().has_error(), "tree-sitter's tree of {source:?} has an error");
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary;
+        assert!(
+            ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(),
+            "the tapes of {source:?} differ:\n{}\n{}",
+            python_tape_plain(&ours, &grammar),
+            python_tape_plain(&theirs, &grammar)
+        );
+    }
+    // Any syntax error: refused, for tree-sitter, which recovers as it recovers. The lean parser has
+    // one behavior: tree-sitter's tape, or a refusal.
+    for invalid in ["fn f(a b) {}\n", "fn f() { let x = (1,\n", "struct S {\n", "fn f() { 'open }\n", "pub impl X {}\n", "fn f(_: fn(&_)) {}\n", "fn f() { x.1e0; }\n"] {
+        assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
+        assert!(rust_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
+    }
+}
+
+/// The product reads Rust with the lean parser: a file's image through the engine's parse
+/// (`TapeImage::parse`) is the lean parser's; a file it refuses goes to tree-sitter-rust.
+#[test]
+fn the_product_reads_rust_with_the_lean_parser() {
+    use crate::code_rule_dsl::tape::rust_lean;
+    let grammar = Grammar::new(GrammarDialect::Rust).unwrap();
+    assert!(tree_parser(GrammarDialect::Rust).is_some(), "Rust's parser is installed");
+    let source = "fn f(x: u8) -> u8 {\n    x + 1 // one\n}\n";
+    let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+    let lean = rust_lean::encode(&grammar, source, &|| false).unwrap().unwrap();
+    assert_eq!(product.primary.to_bytes().unwrap(), lean.to_bytes().unwrap());
+    // Refused (a syntax error): tree-sitter's tape, with its error.
+    let invalid = "fn f( {\n";
+    assert!(rust_lean::encode(&grammar, invalid, &|| false).is_err());
+    assert!(TapeImage::parse(&grammar, invalid, &|| false).unwrap().is_ok());
+}
+
+/// What a Rust file's tape costs, by parser: the lean parser (`tape::rust_lean`, the product's)
+/// against tree-sitter-rust, over `RERAIL_PY_FILES` (a list of paths): instructions retired, cycles
+/// and CPU time a node, the best of three passes. Only the files both read.
+#[test]
+#[ignore = "a measurement; needs RERAIL_PY_FILES"]
+fn rust_parse_costs() {
+    use crate::code_rule_dsl::tape::rust_lean;
+    let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
+    let gd = GrammarDialect::Rust;
+    let grammar = Grammar::new(gd).unwrap();
+    let parser = std::cell::RefCell::new(tree_sitter::Parser::new());
+    parser.borrow_mut().set_language(&gd.get_ts_language()).unwrap();
+    let mut files: Vec<String> = list.lines().filter(|l| !l.is_empty()).filter_map(|p| std::fs::read_to_string(p).ok()).collect();
+    let all = files.len();
+    files.retain(|f| rust_lean::encode(&grammar, f, &|| false).is_ok_and(|t| t.is_ok()));
+    let bytes: usize = files.iter().map(String::len).sum();
+    let nodes: usize = files.iter().map(|f| rust_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let cpu = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+        ("lean: the parser's columns", Box::new(|f| rerail_rust_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
+        ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(rust_lean::encode(&grammar, f, &|| false)).is_ok()))),
+        ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
+        ("tree-sitter: the tape", Box::new(|f| {
+            let tree = parser.borrow_mut().parse(f, None).unwrap();
+            usize::from(std::hint::black_box(TapeImage::encode(tree.root_node(), &grammar, f, &|| false)).is_ok())
+        })),
+    ];
+    let mut best = vec![(f64::MAX, u64::MAX, u64::MAX); steps.len()];
+    for _ in 0..3 {
+        for (i, (_, step)) in steps.iter().enumerate() {
+            let (i0, c0) = retired();
+            let t0 = cpu();
+            let mut n = 0;
+            files.iter().for_each(|f| n += step(f));
+            std::hint::black_box(n);
+            let (i1, c1) = retired();
+            let t = cpu() - t0;
+            best[i] = (best[i].0.min(t), best[i].1.min(i1 - i0), best[i].2.min(c1 - c0));
+        }
+    }
+    eprintln!("Rust: {} files of {all} the lean parser reads, {bytes} bytes, {nodes} nodes", files.len());
+    for ((name, _), (t, ins, cyc)) in steps.iter().zip(&best) {
+        eprintln!(
+            "{name:32} {:9.1} instructions a node, {:7.1} cycles a node, {:6.2} ns a byte, {:8.3} s",
+            *ins as f64 / nodes as f64,
+            *cyc as f64 / nodes as f64,
+            t * 1e9 / bytes as f64,
+            t
+        );
+    }
+}
+
+/// Java's tapes from the lean parser (the product's parser for Java, decision 0195) are
+/// tree-sitter-java's, byte for byte, on hand-written cases; a text tree-sitter reads with an error
+/// the lean parser refuses (its file goes to tree-sitter). The corpus comparison is
+/// `rerail-java-lean`'s `oracle`.
+#[test]
+fn java_tapes_from_the_lean_parser_are_tree_sitters() {
+    use crate::code_rule_dsl::tape::java_lean;
+    let sources = [
+        "",
+        "// only a comment\n/** doc */\nclass A {}\n",
+        "package a.b;\nimport java.util.*;\nimport static a.B.c;\n@A(x = 1, y = {2, 3}) public final class C<T extends D & E> extends F<T> implements G {}\n",
+        "class A { private int x = 1, y[] = {1, 2,}; A() { this(1); } <T> T f(T t) throws X { return t; } }\n",
+        "enum E { A, B(1), C { void f() {} }, ; void g() {} }\nrecord R(int a, String... b) implements I { R { } }\n@interface N { int x() default 1; }\n",
+        "class A { void f() { int[] a = new int[3]; var l = new ArrayList<String>(); x = (int) y; r = (a, b) -> a + b; m = List<String>::size; c = A.class; } }\n",
+        "class A { void f() { if (o instanceof String s && !s.isEmpty()) {} else ; for (int i = 0; i < n; i++) {} for (var e : m) {} l: while (x) break l; } }\n",
+        "class A { int f() { return switch (x) { case 1, 2 -> 3; case P(int a, _) when a > 0 -> { yield a; } default -> throw new E(); }; } }\n",
+        "class A { void f() { switch (x) { case 1: case 2: f(); break; default: g(); } try (var r = open()) {} catch (E | F e) {} finally {} } }\n",
+        "class A { String s = \"a\\n\\u0041\" + \"\" + \"\"\"\n  block \\\"\"\"\"; char c = '\\''; long n = 0x1FL + 017 + 0b1 + 1_000; double d = .5e-3 + 0x1.8p1; }\n",
+        "module m.n { requires transitive a.b; exports c to d, e; opens f; uses g.H; provides i.J with k.L, m.N; }\n",
+        "sealed interface S permits A {} non-sealed class A implements S { void f(A this) { a = b & c += 4; } }\n",
+    ];
+    let grammar = Grammar::new(GrammarDialect::Java).unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Java.get_ts_language()).unwrap();
+    for source in sources {
+        let ours = java_lean::encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        assert!(!tree.root_node().has_error(), "tree-sitter's tree of {source:?} has an error");
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary;
+        assert!(
+            ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(),
+            "the tapes of {source:?} differ:\n{}\n{}",
+            python_tape_plain(&ours, &grammar),
+            python_tape_plain(&theirs, &grammar)
+        );
+    }
+    // Any syntax error: refused, for tree-sitter, which recovers as it recovers. The lean parser has
+    // one behavior: tree-sitter's tape, or a refusal.
+    for invalid in ["class A { void f( }\n", "class A { int x = (1,\n", "class A {\n", "class A { void f() { a(b,); } }\n", "class A { char c = 'ab; }\n", "class A { void f() { x = 1 }\n"] {
+        assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
+        assert!(java_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
+    }
+}
+
+/// The product reads Java with the lean parser: a file's image through the engine's parse
+/// (`TapeImage::parse`) is the lean parser's; a file it refuses goes to tree-sitter-java.
+#[test]
+fn the_product_reads_java_with_the_lean_parser() {
+    use crate::code_rule_dsl::tape::java_lean;
+    let grammar = Grammar::new(GrammarDialect::Java).unwrap();
+    assert!(tree_parser(GrammarDialect::Java).is_some(), "Java's parser is installed");
+    let source = "class A {\n    int f(int x) { return x + 1; } // one\n}\n";
+    let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+    let lean = java_lean::encode(&grammar, source, &|| false).unwrap().unwrap();
+    assert_eq!(product.primary.to_bytes().unwrap(), lean.to_bytes().unwrap());
+    // Refused (a syntax error): tree-sitter's tape, with its error.
+    let invalid = "class A { void f( {\n";
+    assert!(java_lean::encode(&grammar, invalid, &|| false).is_err());
+    assert!(TapeImage::parse(&grammar, invalid, &|| false).unwrap().is_ok());
+}
+
+/// What a Java file's tape costs, by parser: the lean parser (`tape::java_lean`, the product's)
+/// against tree-sitter-java, over `RERAIL_PY_FILES` (a list of paths): instructions retired, cycles
+/// and CPU time a node, the best of three passes. Only the files both read.
+#[test]
+#[ignore = "a measurement; needs RERAIL_PY_FILES"]
+fn java_parse_costs() {
+    use crate::code_rule_dsl::tape::java_lean;
+    let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
+    let gd = GrammarDialect::Java;
+    let grammar = Grammar::new(gd).unwrap();
+    let parser = std::cell::RefCell::new(tree_sitter::Parser::new());
+    parser.borrow_mut().set_language(&gd.get_ts_language()).unwrap();
+    let mut files: Vec<String> = list.lines().filter(|l| !l.is_empty()).filter_map(|p| std::fs::read_to_string(p).ok()).collect();
+    let all = files.len();
+    files.retain(|f| java_lean::encode(&grammar, f, &|| false).is_ok_and(|t| t.is_ok()));
+    let bytes: usize = files.iter().map(String::len).sum();
+    let nodes: usize = files.iter().map(|f| java_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let cpu = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+        ("lean: the parser's columns", Box::new(|f| rerail_java_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
+        ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(java_lean::encode(&grammar, f, &|| false)).is_ok()))),
+        ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
+        ("tree-sitter: the tape", Box::new(|f| {
+            let tree = parser.borrow_mut().parse(f, None).unwrap();
+            usize::from(std::hint::black_box(TapeImage::encode(tree.root_node(), &grammar, f, &|| false)).is_ok())
+        })),
+    ];
+    let mut best = vec![(f64::MAX, u64::MAX, u64::MAX); steps.len()];
+    for _ in 0..3 {
+        for (i, (_, step)) in steps.iter().enumerate() {
+            let (i0, c0) = retired();
+            let t0 = cpu();
+            let mut n = 0;
+            files.iter().for_each(|f| n += step(f));
+            std::hint::black_box(n);
+            let (i1, c1) = retired();
+            let t = cpu() - t0;
+            best[i] = (best[i].0.min(t), best[i].1.min(i1 - i0), best[i].2.min(c1 - c0));
+        }
+    }
+    eprintln!("Java: {} files of {all} the lean parser reads, {bytes} bytes, {nodes} nodes", files.len());
+    for ((name, _), (t, ins, cyc)) in steps.iter().zip(&best) {
+        eprintln!(
+            "{name:32} {:9.1} instructions a node, {:7.1} cycles a node, {:6.2} ns a byte, {:8.3} s",
+            *ins as f64 / nodes as f64,
+            *cyc as f64 / nodes as f64,
+            t * 1e9 / bytes as f64,
+            t
+        );
+    }
+}
+
+/// C#'s tapes from the lean parser (the product's parser for C#, decision 0196) are
+/// tree-sitter-c-sharp's, byte for byte, on hand-written cases; a text tree-sitter reads with an error
+/// the lean parser refuses (its file goes to tree-sitter). The corpus comparison is
+/// `rerail-csharp-lean`'s `oracle`.
+#[test]
+fn csharp_tapes_from_the_lean_parser_are_tree_sitters() {
+    use crate::code_rule_dsl::tape::csharp_lean;
+    let sources = [
+        "",
+        "// only a comment\n/// <summary>doc</summary>\nclass A {}\n",
+        "using System;\nusing static System.Math;\nusing L = System.Collections.Generic.List<int>;\nnamespace N.M;\n[Serializable] public sealed partial class C<T> : B<T>, I where T : class, new() { }\n",
+        "class A { private int x = 1, y; public int P { get; private set; } = 2; A() : base(1) { } T F<T>(T t) where T : struct => t; ~A() { } }\n",
+        "enum E : byte { A, B = 2, }\nrecord R(int A, string B) : S(A);\nstruct S { public static S operator +(S a, S b) => a; public static implicit operator int(S s) => 0; }\ninterface I { void F(); int this[int i] { get; } event System.Action E; }\n",
+        "class A { void F() { var a = new int[3]; var l = new List<string> { \"a\" }; x = (int)y; Func<int, int> f = x => x + 1; var t = (1, \"b\"); var o = new { A = 1 }; c = typeof(A); s = a?.b ?? c; } }\n",
+        "class A { void F() { if (o is string s && s.Length > 0) { } else ; for (int i = 0; i < n; i++) { } foreach (var e in m) { } while (x) break; do { } while (y); using (var r = Open()) { } lock (o) { } } }\n",
+        "class A { int F(object x) => x switch { 1 or 2 => 3, int i when i > 0 => i, { Length: 0 } => 0, [1, .., _] => 1, _ => throw new E() }; }\n",
+        "class A { async Task F() { switch (x) { case 1: case 2: G(); break; default: return; } try { await H(); } catch (E e) when (e.X) { } finally { } yield return 1; } }\n",
+        "class A { string s = \"a\\n\" + @\"b\"\"c\" + $\"x{y,3:F2}z{{\" + \"\"\"\n  raw\n  \"\"\"; char c = '\\''; long n = 0x1FL + 1_000UL; double d = .5e-3 + 1.5m; }\n",
+        "#region R\n#if DEBUG\nclass A { }\n#elif X\nclass B { }\n#else\nclass C { }\n#endif\n#endregion\n#pragma warning disable CS1591\n",
+        "unsafe class A { void F(int* p, delegate*<int, void> g) { int* q = &x; fixed (byte* b = a) { } Span<int> s = stackalloc int[2]; } }\n",
+    ];
+    let grammar = Grammar::new(GrammarDialect::CSharp).unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::CSharp.get_ts_language()).unwrap();
+    for source in sources {
+        let ours = csharp_lean::encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        assert!(!tree.root_node().has_error(), "tree-sitter's tree of {source:?} has an error");
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary;
+        assert!(
+            ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(),
+            "the tapes of {source:?} differ:\n{}\n{}",
+            python_tape_plain(&ours, &grammar),
+            python_tape_plain(&theirs, &grammar)
+        );
+    }
+    // Any syntax error: refused, for tree-sitter, which recovers as it recovers. The lean parser has
+    // one behavior: tree-sitter's tape, or a refusal.
+    for invalid in ["class A { void F( }\n", "class A { int x = (1,\n", "class A {\n", "class A { void F() { G(a,); } }\n", "class A { char c = 'ab; }\n", "class A { void F() { x = 1 } }\n"] {
+        assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
+        assert!(csharp_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
+    }
+}
+
+/// The product reads C# with the lean parser: a file's image through the engine's parse
+/// (`TapeImage::parse`) is the lean parser's; a file it refuses goes to tree-sitter-c-sharp.
+#[test]
+fn the_product_reads_csharp_with_the_lean_parser() {
+    use crate::code_rule_dsl::tape::csharp_lean;
+    let grammar = Grammar::new(GrammarDialect::CSharp).unwrap();
+    assert!(tree_parser(GrammarDialect::CSharp).is_some(), "C#'s parser is installed");
+    let source = "class A {\n    int F(int x) { return x + 1; } // one\n}\n";
+    let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+    let lean = csharp_lean::encode(&grammar, source, &|| false).unwrap().unwrap();
+    assert_eq!(product.primary.to_bytes().unwrap(), lean.to_bytes().unwrap());
+    // Refused (a syntax error): tree-sitter's tape, with its error.
+    let invalid = "class A { void F( {\n";
+    assert!(csharp_lean::encode(&grammar, invalid, &|| false).is_err());
+    assert!(TapeImage::parse(&grammar, invalid, &|| false).unwrap().is_ok());
+}
+
+/// PHP's tapes from the lean parser (the product's parser for PHP, decision 0197) are
+/// tree-sitter-php's, byte for byte, on hand-written cases (of each file's view, `parse_input`, as
+/// the product parses it); a text tree-sitter reads with an error the lean parser refuses (its file
+/// goes to tree-sitter). The corpus comparison is `rerail-php-lean`'s `oracle`.
+#[test]
+fn php_tapes_from_the_lean_parser_are_tree_sitters() {
+    use crate::code_rule_dsl::tape::php_lean;
+    let sources = [
+        "",
+        "<?php\n",
+        "<?php\n// a comment\n# another\n/** doc */\nnamespace App\\Models;\nuse Foo\\{Bar, Baz as Q};\nuse function strlen;\n",
+        "<?php\ndeclare(strict_types=1);\nfinal class A extends B implements C, D {\n    use T { f as protected g; }\n    public const int X = 1, Y = 2;\n    private static ?array $p = null;\n    public function __construct(private readonly string $s = 'x', int ...$rest) {}\n    abstract protected function f(int|string $a, &$b): static;\n}\n",
+        "<?php\nenum Suit: string { case Hearts = 'H'; case Spades = 'S'; public function color(): string { return match ($this) { self::Hearts => 'Red', default => 'Black' }; } }\ninterface I { const C = 1; }\ntrait T { abstract public function t(): void; }\n",
+        "<?php\n$a = [1, 'b' => 2, ...$c, &$d];\n[$x, [$y, $z]] = $a;\nlist('k' => $v, , $w) = $b;\n$f = fn($x) => $x * 2;\n$g = static function () use (&$a, $b): int { return $a <=> $b; };\n$o = new class(1) extends B { public $p; };\n",
+        "<?php\n$s = 'it\\'s' . \"a $b {$c->d} ${e} $f[0] $g->h \\n\\x41\\u{1F600}\";\n$h = <<<EOT\n  Hello $name\n  {$x['y']}\n\n  EOT;\n$n = <<<'NOW'\nraw $text\nNOW;\n$c = `ls -l $dir`;\n",
+        "<?php\nif ($a): echo 1; elseif ($b): echo 2; else: echo 3; endif;\nforeach ($xs as $k => [$p, $q]): endforeach;\nwhile (true) { break 2; }\nfor ($i = 0, $j = 1; $i < 10; $i++, --$j);\nswitch ($x) { case 1: case 2: goto end; default: continue; }\nend:\ntry { throw new E(); } catch (A | B $e) { } finally { }\n",
+        "<?php\n$x = (int) $y + @f() ?? $z ?: -1 ** 2 instanceof Foo;\n$y = $a?->b?->c() ?? A::$b::C::d();\n$z = !$a = $b and $c or $d xor $e;\nprint clone $o;\nunset($a[1], $b->c);\nglobal $g;\nstatic $s = 1;\nexit(0);\n",
+        "<?php\n#[Attr(1, name: 'x')]\nfunction f(#[SensitiveParameter] $p): never { throw new \\Exception(); }\n$r = f(...);\n$v = strlen(string: 'x');\n",
+        "<html><?php echo $title; ?></html>\n",
+        "<?php\necho 1 ?>\n",
+    ];
+    let grammar = Grammar::new(GrammarDialect::Php).unwrap();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Php.get_ts_language()).unwrap();
+    let parse = |parser: &mut tree_sitter::Parser, source: &str| parser.parse(crate::code_rule_dsl::language::parse_input(GrammarDialect::Php, source).as_ref(), None).unwrap();
+    for source in sources {
+        let ours = php_lean::encode(&grammar, source, &|| false).unwrap_or_else(|why| panic!("refused {source:?}: {why:?}")).unwrap();
+        let tree = parse(&mut parser, source);
+        assert!(!tree.root_node().has_error(), "tree-sitter's tree of {source:?} has an error");
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary;
+        assert!(
+            ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(),
+            "the tapes of {source:?} differ:\n{}\n{}",
+            python_tape_plain(&ours, &grammar),
+            python_tape_plain(&theirs, &grammar)
+        );
+    }
+    // Any syntax error: refused, for tree-sitter, which recovers as it recovers. The lean parser has
+    // one behavior: tree-sitter's tape, or a refusal.
+    for invalid in ["<?php\nfunction f( {\n", "<?php\n$a = [1,\n", "<?php\nclass A {\n", "<?php\n$a[$b->c\n\ncontinue;\n", "<?php\n$s = 'abc;\n", "<?php\nclass A { public const FALSE = 1; }\n"] {
+        assert!(parse(&mut parser, invalid).root_node().has_error(), "{invalid:?} reads without an error");
+        assert!(php_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
+    }
+}
+
+/// The product reads PHP with the lean parser: a file's image through the engine's parse
+/// (`TapeImage::parse`) is the lean parser's; a file it refuses goes to tree-sitter-php.
+#[test]
+fn the_product_reads_php_with_the_lean_parser() {
+    use crate::code_rule_dsl::tape::php_lean;
+    let grammar = Grammar::new(GrammarDialect::Php).unwrap();
+    assert!(tree_parser(GrammarDialect::Php).is_some(), "PHP's parser is installed");
+    let source = "<?php\nfunction f(int $x): int { return $x + 1; } // one\n";
+    let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
+    let lean = php_lean::encode(&grammar, source, &|| false).unwrap().unwrap();
+    assert_eq!(product.primary.to_bytes().unwrap(), lean.to_bytes().unwrap());
+    // Refused (a syntax error): tree-sitter's tape, with its error.
+    let invalid = "<?php\nfunction f( {\n";
+    assert!(php_lean::encode(&grammar, invalid, &|| false).is_err());
+    assert!(TapeImage::parse(&grammar, invalid, &|| false).unwrap().is_ok());
+}
+
+/// A Blade template's compiled program (its `compiled-view` document) is read by the lean PHP
+/// parser (decision 0198), and its derived image is the one tree-sitter-php's tree gives, byte for
+/// byte, its placeholders (`_`, `(0)`) left out the same. `RERAIL_BLADE_FILES` (a list of templates)
+/// adds a corpus.
+fn blade_programs_agree(source: &str) -> Option<bool> {
+    use crate::code_rule_dsl::embed::{Parse, Program};
+    let tree = crate::code_rule_dsl::blade::forte::tree::parse_tree(source.as_bytes()).ok()?;
+    let view = crate::code_rule_dsl::blade::view::View::read(&tree, source, &|| false).ok()?.view?;
+    let lean = view.read_by_the_lean_parser();
+    let host = Grammar::new(GrammarDialect::Blade).unwrap();
+    let program = view.into_program();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&GrammarDialect::Php.get_ts_language()).unwrap();
+    let theirs = Program {
+        dialect: program.dialect,
+        parse: Parse::Tree(parser.parse(&program.text, None).unwrap()),
+        text: program.text.clone(),
+        segments: program.segments.clone(),
+        host_errors: program.host_errors.clone(),
+    };
+    let ours = DerivedImage::encode(Via::CompiledView, program, 0, &host, source, &|| false).unwrap();
+    let theirs = DerivedImage::encode(Via::CompiledView, theirs, 0, &host, source, &|| false).unwrap();
+    let php = Grammar::new(GrammarDialect::Php).unwrap();
+    assert!(
+        ours.tape.to_bytes().unwrap() == theirs.tape.to_bytes().unwrap(),
+        "the programs of {source:?} differ:\n{}\n{}",
+        python_tape_plain(&ours.tape, &php),
+        python_tape_plain(&theirs.tape, &php)
+    );
+    Some(lean)
+}
+
+#[test]
+fn blade_programs_from_the_lean_parser_are_tree_sitters() {
+    let templates = [
+        "{{ $a }}\n",
+        "<p>{{ $user->name }} {!! $html !!}</p>\n@if ($a > 1)\n  <b>{{ $a }}</b>\n@elseif ($b)\n  x\n@else\n  y\n@endif\n",
+        "@foreach ($items as $k => $item)\n  {{ $loop->index }}: {{ $item['name'] ?? 'none' }}\n@endforeach\n@forelse ($xs as $x) {{ $x }} @empty none @endforelse\n",
+        "@php\n  $color = match ($level) { 'error' => 'red', default => 'blue' };\n@endphp\n<x-alert :type=\"$color\" />\n@isset($title) {{ $title }} @endisset\n",
+        "@section('content')\n  @include('partials.nav', ['active' => 'home'])\n  {{ __('Hello :name', ['name' => $name]) }}\n@endsection\n@props(['size' => 'md'])\n",
+    ];
+    for template in templates {
+        assert_eq!(blade_programs_agree(template), Some(true), "{template:?}: the lean parser reads its program");
+    }
+    let Ok(list) = std::env::var("RERAIL_BLADE_FILES").map(|l| std::fs::read_to_string(l).unwrap()) else { return };
+    let (mut lean, mut all) = (0, 0);
+    for path in list.lines().filter(|l| !l.is_empty()) {
+        let Ok(source) = std::fs::read_to_string(path) else { continue };
+        if let Some(read) = blade_programs_agree(&source) {
+            all += 1;
+            lean += usize::from(read);
+        }
+    }
+    eprintln!("{lean} of {all} programs read by the lean parser, every one as tree-sitter-php's");
+}
+
+/// What a PHP file's tape costs, by parser: the lean parser (`tape::php_lean`, the product's)
+/// against tree-sitter-php, over `RERAIL_PY_FILES` (a list of paths): instructions retired, cycles
+/// and CPU time a node, the best of three passes. Only the files both read. Both read each file's
+/// view (`parse_input`, made outside the measure).
+#[test]
+#[ignore = "a measurement; needs RERAIL_PY_FILES"]
+fn php_parse_costs() {
+    use crate::code_rule_dsl::tape::php_lean;
+    let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
+    let gd = GrammarDialect::Php;
+    let grammar = Grammar::new(gd).unwrap();
+    let parser = std::cell::RefCell::new(tree_sitter::Parser::new());
+    parser.borrow_mut().set_language(&gd.get_ts_language()).unwrap();
+    let mut files: Vec<String> = list.lines().filter(|l| !l.is_empty()).filter_map(|p| std::fs::read_to_string(p).ok()).collect();
+    let all = files.len();
+    files.retain(|f| php_lean::encode(&grammar, f, &|| false).is_ok_and(|t| t.is_ok()));
+    let views: Vec<String> = files.iter().map(|f| crate::code_rule_dsl::language::parse_input(gd, f).into_owned()).collect();
+    let bytes: usize = files.iter().map(String::len).sum();
+    let nodes: usize = files.iter().map(|f| php_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let cpu = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let steps: Vec<(&str, Box<dyn Fn(usize) -> usize>)> = vec![
+        ("lean: the parser's columns", Box::new(|i| rerail_php_lean::tape(views[i].as_bytes()).map_or(0, |t| t.code.len()))),
+        ("lean: the tape", Box::new(|i| usize::from(std::hint::black_box(php_lean::encode(&grammar, &files[i], &|| false)).is_ok()))),
+        ("tree-sitter: parse", Box::new(|i| parser.borrow_mut().parse(&views[i], None).unwrap().root_node().child_count() as usize)),
+        ("tree-sitter: the tape", Box::new(|i| {
+            let tree = parser.borrow_mut().parse(&views[i], None).unwrap();
+            usize::from(std::hint::black_box(TapeImage::encode(tree.root_node(), &grammar, &files[i], &|| false)).is_ok())
+        })),
+    ];
+    let mut best = vec![(f64::MAX, u64::MAX, u64::MAX); steps.len()];
+    for _ in 0..3 {
+        for (i, (_, step)) in steps.iter().enumerate() {
+            let (i0, c0) = retired();
+            let t0 = cpu();
+            let mut n = 0;
+            (0..files.len()).for_each(|f| n += step(f));
+            std::hint::black_box(n);
+            let (i1, c1) = retired();
+            let t = cpu() - t0;
+            best[i] = (best[i].0.min(t), best[i].1.min(i1 - i0), best[i].2.min(c1 - c0));
+        }
+    }
+    eprintln!("PHP: {} files of {all} the lean parser reads, {bytes} bytes, {nodes} nodes", files.len());
+    for ((name, _), (t, ins, cyc)) in steps.iter().zip(&best) {
+        eprintln!(
+            "{name:32} {:9.1} instructions a node, {:7.1} cycles a node, {:6.2} ns a byte, {:8.3} s",
+            *ins as f64 / nodes as f64,
+            *cyc as f64 / nodes as f64,
+            t * 1e9 / bytes as f64,
+            t
+        );
+    }
+}
+
+/// What a C# file's tape costs, by parser: the lean parser (`tape::csharp_lean`, the product's)
+/// against tree-sitter-c-sharp, over `RERAIL_PY_FILES` (a list of paths): instructions retired, cycles
+/// and CPU time a node, the best of three passes. Only the files both read.
+#[test]
+#[ignore = "a measurement; needs RERAIL_PY_FILES"]
+fn csharp_parse_costs() {
+    use crate::code_rule_dsl::tape::csharp_lean;
+    let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
+    let gd = GrammarDialect::CSharp;
+    let grammar = Grammar::new(gd).unwrap();
+    let parser = std::cell::RefCell::new(tree_sitter::Parser::new());
+    parser.borrow_mut().set_language(&gd.get_ts_language()).unwrap();
+    let mut files: Vec<String> = list.lines().filter(|l| !l.is_empty()).filter_map(|p| std::fs::read_to_string(p).ok()).collect();
+    let all = files.len();
+    files.retain(|f| csharp_lean::encode(&grammar, f, &|| false).is_ok_and(|t| t.is_ok()));
+    let bytes: usize = files.iter().map(String::len).sum();
+    let nodes: usize = files.iter().map(|f| csharp_lean::encode(&grammar, f, &|| false).unwrap().unwrap().node_count()).sum();
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let cpu = || {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    };
+    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+        ("lean: the parser's columns", Box::new(|f| rerail_csharp_lean::tape(f.as_bytes()).map_or(0, |t| t.code.len()))),
+        ("lean: the tape", Box::new(|f| usize::from(std::hint::black_box(csharp_lean::encode(&grammar, f, &|| false)).is_ok()))),
+        ("tree-sitter: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
+        ("tree-sitter: the tape", Box::new(|f| {
+            let tree = parser.borrow_mut().parse(f, None).unwrap();
+            usize::from(std::hint::black_box(TapeImage::encode(tree.root_node(), &grammar, f, &|| false)).is_ok())
+        })),
+    ];
+    let mut best = vec![(f64::MAX, u64::MAX, u64::MAX); steps.len()];
+    for _ in 0..3 {
+        for (i, (_, step)) in steps.iter().enumerate() {
+            let (i0, c0) = retired();
+            let t0 = cpu();
+            let mut n = 0;
+            files.iter().for_each(|f| n += step(f));
+            std::hint::black_box(n);
+            let (i1, c1) = retired();
+            let t = cpu() - t0;
+            best[i] = (best[i].0.min(t), best[i].1.min(i1 - i0), best[i].2.min(c1 - c0));
+        }
+    }
+    eprintln!("C#: {} files of {all} the lean parser reads, {bytes} bytes, {nodes} nodes", files.len());
     for ((name, _), (t, ins, cyc)) in steps.iter().zip(&best) {
         eprintln!(
             "{name:32} {:9.1} instructions a node, {:7.1} cycles a node, {:6.2} ns a byte, {:8.3} s",

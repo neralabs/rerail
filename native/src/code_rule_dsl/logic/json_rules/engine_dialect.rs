@@ -4,7 +4,7 @@
 
 use super::lower::R;
 use super::patterns::Patterns;
-use super::pyre::{captures, find, findall, g, has, is_full, re, search, sub};
+use super::pyre::{captures, find, findall, g, has, is_full, re, search, split1, sub};
 use super::souffle::check_rule;
 use super::text::{Set, alternation, head_span_ok, split_top_text};
 use super::value::{Value, dumps, parse};
@@ -354,6 +354,41 @@ fn same_document_joins(px: &Patterns, text: String) -> String {
     })
 }
 
+/// `anchor start` and `anchor end` (main's `witness.start`, `witness.end`): a finding's key is its path and line, so
+/// a finding at the witness's start is the witness's own. One at its end sits on the witness's last line: the
+/// `at` column becomes a place there (`@place(path, end_line)`), in every rule of the relation.
+fn witness_anchor(px: &Patterns, mut text: String) -> String {
+    text = text.replace("    anchor start\n", "    // anchor start: the witness's start, on its first line, is the witness's key\n");
+    let found: Vec<(String, String, String, String)> =
+        captures(&px.engine_dialect_anchor, &text).iter().filter(|m| g(m, 4) == "end").map(|m| (g(m, 0).to_owned(), g(m, 1).to_owned(), g(m, 2).to_owned(), g(m, 3).to_owned())).collect();
+    for (whole, rel, cols, rest) in found {
+        let raw: Vec<&str> = cols.split(',').collect();
+        let names: Vec<String> = raw.iter().map(|c| c.split(':').next().unwrap_or("").trim().to_owned()).collect();
+        let new_cols = names.iter().zip(&raw).enumerate().map(|(i, (n, c))| if i == 0 { format!("{n}: loc") } else { c.trim().to_owned() }).collect::<Vec<_>>().join(", ");
+        text = text.replacen(&whole, &format!(".violation {rel}({new_cols}){rest}\n    // anchor end: the finding sits on the witness's last line\n"), 1);
+        let (mut out, mut pos) = (String::new(), 0usize);
+        let heads = captures(&re(&format!(r"(?m)^{rel}\(")), &text).iter().map(|h| h.get(0).expect("a match").end()).collect::<Vec<_>>();
+        for hend in heads {
+            let Some(end) = head_span(&text, hend - 1) else { panic!("unbalanced head") };
+            let mut args = split_args(&text[hend..end - 1]);
+            if args.len() != names.len() {
+                continue;
+            }
+            let stop = rule_end(&text, end);
+            let at = std::mem::replace(&mut args[0], "rr_end".into());
+            out.push_str(slice(&text, pos, hend));
+            out.push_str(&args.join(", "));
+            out.push(')');
+            out.push_str(slice(&text, end, stop));
+            out.push_str(&format!(",\n    docof({at}, rr_d), doc(rr_d, rr_f, _), end_line({at}, rr_l), rr_end = @place(rr_f, rr_l)"));
+            pos = stop;
+        }
+        out.push_str(slice(&text, pos, text.len()));
+        text = out;
+    }
+    text
+}
+
 /// `anchor file.start`: the finding is at the witness, the module.
 fn file_anchor(text: String) -> String {
     text.replace("    anchor file.start\n", "    // anchor file.start: at the witness, the module, which starts the file\n")
@@ -362,6 +397,43 @@ fn file_anchor(text: String) -> String {
 
 fn unbound(px: &Patterns, stmt: &str) -> R<Vec<String>> {
     check_rule(px, stmt, &BTreeSet::new(), &[]).map_err(|e| e.0)
+}
+
+/// The aggregate bodies (`count : { … }`, `sum v : { … }`, …) of `text`, each rewritten by `f`.
+fn in_aggregates(text: &str, mut f: impl FnMut(&str) -> String) -> String {
+    let open = re(r"\b(?:count|sum|min|max|mean)\b[^{}();,]*:\s*\{");
+    let (mut out, mut pos) = (String::new(), 0usize);
+    while let Some(m) = open.find_from_pos(text, pos).ok().flatten() {
+        let start = m.end();
+        let (mut depth, mut end) = (1usize, text.len());
+        let mut quote = None;
+        for (i, c) in text[start..].char_indices() {
+            match (quote, c) {
+                (Some(q), _) if c == q => quote = None,
+                (Some(_), _) => {}
+                (None, '"' | '`') => quote = Some(c),
+                (None, '{') => depth += 1,
+                (None, '}') => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = start + i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        out.push_str(&text[pos..start]);
+        out.push_str(&f(&text[start..end]));
+        pos = end;
+    }
+    out.push_str(&text[pos..]);
+    out
+}
+
+/// `text` with its aggregate bodies emptied.
+fn without_aggregates(text: &str) -> String {
+    in_aggregates(text, |_| String::new())
 }
 
 /// A branch that does not bind X gets `unset(X)`; a head column the body never names gets `unset(X)` at the end.
@@ -414,7 +486,27 @@ fn unset_unbound(px: &Patterns, text: String) -> R<String> {
                     break;
                 }
             }
-            if !done && !search(&re(&format!(r"(?<![\w$]){x}\b")), &sub(&px.engine_dialect_strings, body, |_| String::new())) {
+            if done {
+                continue;
+            }
+            // A capture named only inside an aggregate or a negated atom (main's `not`) does not leave it: in an
+            // aggregate it is the aggregate's own variable, in a negated atom any value (`_`), and outside it is unset.
+            let var = re(&format!(r"(?<![\w$]){x}\b"));
+            let negated = |l: &str| l.trim_start().starts_with('!');
+            let outside = |l: &str| !negated(l) && search(&var, &sub(&px.engine_dialect_strings, &without_aggregates(l), |_| String::new()));
+            if !lits.iter().any(|l| outside(l)) {
+                let local = format!("rr_in_{}", x.to_ascii_lowercase());
+                let rename = |a: &str, to: &str| -> String {
+                    split1(&px.text_pieces, a)
+                        .into_iter()
+                        .map(|p| if p.starts_with('"') || p.starts_with('`') { p } else { sub(&var, &p, |_| to.to_owned()) })
+                        .collect()
+                };
+                for l in lits.iter_mut() {
+                    if search(&var, l) {
+                        *l = if negated(l) { rename(l, "_") } else { in_aggregates(l, |a| rename(a, &local)) };
+                    }
+                }
                 lits.push(format!(" unset({x})"));
                 changed = true;
             }
@@ -488,6 +580,7 @@ fn stop_axes_in_aggregates(px: &Patterns, text: String) -> String {
 pub fn engine_text(px: &Patterns, text: String, base: &str) -> R<String> {
     let text = stop_axes_in_aggregates(px, text);
     let text = anchor_captures(px, text);
+    let text = witness_anchor(px, text);
     let text = file_anchor(text);
     let text = own_helpers(px, text, base);
     let text = message_braces(px, text);

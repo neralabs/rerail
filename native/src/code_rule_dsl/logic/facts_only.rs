@@ -268,6 +268,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
     // A test's own store, the template's path and the threads said to ask off a test's (`test_store`): which files
     // the tests' stores are, not results.
+    ("code_rule_dsl/logic/plan/corpus/test_store.rs", "HANDED"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "PATH"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "SAID"),
