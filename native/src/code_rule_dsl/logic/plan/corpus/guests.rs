@@ -16,6 +16,8 @@
 //!   host, so its nodes have the file's lines and columns; an escaped one, or a concatenation of strings, is its
 //!   decoded value, and every node stands at the string. A bytes literal or an f-string gives no guest, as Ruff
 //!   parses neither as a type;
+//! - a Markdown `inline` or `pipe_table_cell` node: its text without its `block_continuation`s, as tree-sitter-md
+//!   gives its inline grammar (decision 0208); each piece is a copied stretch, so its nodes have the file's places;
 //! - any other node: its text, copied;
 //! - `embed_value`'s text, standing at `at`.
 //!
@@ -166,6 +168,9 @@ fn host_text(host: &Document, ids: &[(u32, &'static str)], local: u32) -> Option
     if is_string(kind) {
         return string_text(label, kind, f.text(id), start, node);
     }
+    if label == "markdown" && matches!(kind, "inline" | "pipe_table_cell") {
+        return Some(markdown_inline_text(f, id));
+    }
     if kind == "concatenated_string" {
         let mut value = String::new();
         let mut pieces = Vec::new();
@@ -194,6 +199,36 @@ fn host_text(host: &Document, ids: &[(u32, &'static str)], local: u32) -> Option
         return Some((value, Placement::Mapped { pieces: pieces.into(), within: node }));
     }
     Some((f.text(id).to_owned(), Placement::Copied { delta: i64::from(start), within: node }))
+}
+
+/// The text of a Markdown `inline` or `pipe_table_cell` node, as tree-sitter-md's `MarkdownParser` gives its inline
+/// parser: the node's bytes without its named children after the first (its `block_continuation`s, a container's
+/// `> ` or indent on a continued line). The pieces are copied stretches of the host, so its nodes have the file's
+/// lines and columns.
+pub fn markdown_inline_text(f: &core::Facts, id: u32) -> (String, Placement) {
+    let (start, end) = (f.start[id as usize], f.end[id as usize]);
+    let src = f.source.as_bytes();
+    let mut text = Vec::new();
+    let mut pieces = Vec::new();
+    let mut from = start;
+    // tree-sitter-md leaves the first child in (its loop starts at the second), as here.
+    for &c in f.children(id).iter().skip(1) {
+        if syntax::kind_name(f, c) != "block_continuation" {
+            continue;
+        }
+        let (a, b) = (f.start[c as usize], f.end[c as usize]);
+        pieces.push(syntax::normalized::Piece { d: text.len() as u32, s: i64::from(from), escape: false });
+        text.extend_from_slice(&src[from as usize..a as usize]);
+        from = b;
+    }
+    pieces.push(syntax::normalized::Piece { d: text.len() as u32, s: i64::from(from), escape: false });
+    text.extend_from_slice(&src[from as usize..end as usize]);
+    pieces.push(syntax::normalized::Piece { d: text.len() as u32, s: i64::from(end), escape: false });
+    let text = String::from_utf8(text).expect("cut at node bounds, which are characters'");
+    if pieces.len() == 2 {
+        return (text, Placement::Copied { delta: i64::from(start), within: [start, end] });
+    }
+    (text, Placement::Mapped { pieces: pieces.into(), within: [start, end] })
 }
 
 /// The guests' makers' state for one chunk: the run's language and shape, the hosts' numberings, the guests made, and

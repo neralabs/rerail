@@ -448,6 +448,14 @@ export const LANGUAGE_REGISTRY = /* registry */ [
         "parser": "tree-sitter",
         "grammar": "vendored:markdown",
         "tapeTag": 19
+      },
+      {
+        "label": "markdown-inline",
+        "variant": "MarkdownInline",
+        "suffixes": [],
+        "parser": "tree-sitter",
+        "grammar": "vendored:markdown-inline",
+        "tapeTag": 20
       }
     ],
     "capabilities": {

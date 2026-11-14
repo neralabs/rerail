@@ -623,7 +623,7 @@ pub enum Placement {
 }
 
 impl Placement {
-    pub(crate) fn host(&self, [a, b]: [u32; 2]) -> [u32; 2] {
+    pub fn host(&self, [a, b]: [u32; 2]) -> [u32; 2] {
         let clamp = |x: i64, [lo, hi]: [u32; 2]| x.clamp(i64::from(lo), i64::from(hi)) as u32;
         match self {
             Placement::Copied { delta, within } => [clamp(i64::from(a) + delta, *within), clamp(i64::from(b) + delta, *within)],
@@ -826,6 +826,12 @@ pub fn numbering(doc: &Document, shape: Shape) -> StoreResult<Numbering> {
     // The ids the projection gives (`Projected::id`): per definition where it numbered the document so. A unit's own
     // nodes are numbered before its tokens, so the nodes' ids need no tokens.
     Ok(Numbering { nodes, back: p.defs.map(|d| d.back) })
+}
+
+/// Node `id`'s kind name in its facts' grammar (`""` where the facts' tag names no dialect).
+pub fn kind_name(f: &Facts, id: u32) -> &'static str {
+    let tag = crate::code_rule_dsl::facts::core::facts_tag(f);
+    Dialect::kept(tag).map_or("", |d| d.name(f, id))
 }
 
 /// A path's module: `a/b.py` is `a.b`, `a/__init__.py` is `a`; a Rust file's is its path from

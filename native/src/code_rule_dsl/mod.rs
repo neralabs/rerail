@@ -1793,6 +1793,9 @@ pub(crate) mod logic {
             // The corpus runner's tests: they parse files, so they run where the languages are registered.
             #[cfg(test)]
             pub mod tests;
+            // Markdown's inline guests against tree-sitter-md's inline trees: they parse files.
+            #[cfg(test)]
+            pub mod guests_tests;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::plan::{Error, Outcome, Result, lower};
             #[allow(unused_imports)]

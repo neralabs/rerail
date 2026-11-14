@@ -141,8 +141,8 @@ and tape.
 
 ## Open
 
-- **`script` and `style` contents** are `raw_text`; reading them as ECMAScript and CSS guest
-  documents (0055's embedding) is a later step.
-- **Markdown's inline content**, as guest documents of tree-sitter-md's inline grammar.
+- **`script` and `style` contents:** closed by 0208, which reads them as JavaScript, JSON and CSS
+  guest documents.
+- **Markdown's inline content:** closed by 0208 (guest documents of tree-sitter-md's inline grammar).
 - **The refusals listed above.** Each is a file tree-sitter reads instead; none is a wrong tape.
 - **CSS and Markdown lean parsers:** 0200 and 0201.

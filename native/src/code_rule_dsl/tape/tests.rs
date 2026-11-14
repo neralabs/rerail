@@ -2533,6 +2533,8 @@ fn ecma_implied_tokens() {
         ("html", GrammarDialect::Html),
         ("css", GrammarDialect::Css),
         ("markdown", GrammarDialect::Markdown),
+        ("markdown-inline", GrammarDialect::MarkdownInline),
+        ("sql", GrammarDialect::Sql),
     ];
     let wanted = std::env::var("RERAIL_IMPLIED_DIALECTS").unwrap_or_else(|_| "javascript,typescript,tsx".into());
     for (name, dialect) in all.into_iter().filter(|(name, _)| wanted.split(',').any(|w| w == *name)) {
@@ -2585,6 +2587,8 @@ fn python_tape_expect() {
         Ok("html") => GrammarDialect::Html,
         Ok("css") => GrammarDialect::Css,
         Ok("markdown") => GrammarDialect::Markdown,
+        Ok("markdown-inline") => GrammarDialect::MarkdownInline,
+        Ok("sql") => GrammarDialect::Sql,
         _ => GrammarDialect::Python,
     };
     let grammar = Grammar::new(dialect).unwrap();
@@ -3780,6 +3784,8 @@ fn markdown_tapes_from_the_lean_parser_are_tree_sitters() {
         "| a | b |\n|:--|--:|\n| c | `d` |\n\n<div>\nhtml\n</div>\n\n<!-- c -->\n",
         "[label]: https://x.y/z \"title\"\n[a-b]: <u>\n\n## Two ##\n",
         "---\ntitle: x\n---\n\n~~~ {.python}\ncode\n~~~\n",
+        "[`a`]:\n    https://x/y?a&b=c&amp;d\n[b]: u\n\"t\" x\n\n```c&#38;d\n```\n",
+        "> [a]:\n> <u> 'multi\n> line'\n",
     ];
     let grammar = Grammar::new(GrammarDialect::Markdown).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -3809,7 +3815,7 @@ fn markdown_tapes_from_the_lean_parser_are_tree_sitters() {
 fn the_product_reads_markdown_with_the_lean_parser() {
     use crate::code_rule_dsl::tape::markdown_lean;
     let grammar = Grammar::new(GrammarDialect::Markdown).unwrap();
-    assert!(tree_parser(GrammarDialect::Markdown).is_some(), "CSS's parser is installed");
+    assert!(tree_parser(GrammarDialect::Markdown).is_some(), "Markdown's parser is installed");
     let source = "# A\n\n- b\n";
     let product = TapeImage::parse(&grammar, source, &|| false).unwrap().unwrap();
     let lean = markdown_lean::encode(&grammar, source, &|| false).unwrap().unwrap();

@@ -26,7 +26,8 @@ const dialectSchema = z
   .object({
     label: name,
     variant: z.string().regex(/^[A-Z][A-Za-z0-9]*$/u, "Must be the engine's GrammarDialect variant (a Rust type name).").optional(),
-    suffixes: z.array(z.string().regex(/^\.[^/A-Z]+$/u, "Must be a lowercase `.suffix`.")).min(1),
+    /** None: a dialect read only as a guest grammar (decision 0208), never selected by a file. */
+    suffixes: z.array(z.string().regex(/^\.[^/A-Z]+$/u, "Must be a lowercase `.suffix`.")),
     parser: z.enum(LANGUAGE_PARSERS).optional(),
     grammar: z.string().regex(/^(?:vendored:[a-z][a-z0-9-]*|native:[a-z][a-z0-9-]*|ast-grep:[A-Z][A-Za-z0-9]*)$/u, "Must be vendored:<name>, native:<name> or ast-grep:<Language>.").optional(),
     tapeTag: z.number().int().min(1).max(255).optional(),
@@ -50,6 +51,7 @@ export const languageEntrySchema = z
   .strict()
   .superRefine((entry, context) => {
     const issue = (path: (string | number)[], message: string) => context.addIssue({ code: "custom", path, message });
+    if (!entry.dialects.some((dialect) => dialect.suffixes.length > 0)) issue(["dialects"], "A language has a dialect that lists a file suffix.");
     entry.dialects.forEach((dialect, index) => {
       if (entry.status !== "supported") return;
       for (const key of ["variant", "parser", "grammar", "tapeTag"] as const) {

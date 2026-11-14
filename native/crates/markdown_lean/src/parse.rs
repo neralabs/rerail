@@ -125,6 +125,9 @@ struct P<'a> {
     open: Vec<(usize, K)>,
     /// Where the link title being read starts (its opening quote).
     title_at: usize,
+    /// The tokens of the gap being read (`gap_token`): written when a node ends it (`flush_gap`),
+    /// a `block_continuation` among them (`next`).
+    gap: Vec<(K, usize, usize)>,
 }
 
 /// The parse's state, to go back to (`P::save`).
@@ -146,7 +149,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
     }
     let mut widths = Widths::guess(src.len());
     loop {
-        let mut p = P { src, sc: Scanner::new(src), at: 0, last: 0, w: Writer::new(0, widths, src.len() / 2 + 16), open: Vec::new(), title_at: usize::MAX };
+        let mut p = P { src, sc: Scanner::new(src), at: 0, last: 0, w: Writer::new(0, widths, src.len() / 2 + 16), open: Vec::new(), title_at: usize::MAX, gap: Vec::new() };
         p.document()?;
         if p.sc.unsure {
             return Err(Refusal::Parse(0));
@@ -222,6 +225,9 @@ impl<'a> P<'a> {
                 return Err(Refusal::Parse(start as u32));
             }
             if tok == BLOCK_CONTINUATION {
+                if !self.gap.is_empty() {
+                    self.flush_gap(self.top());
+                }
                 self.leaf(K::BlockContinuation, 0, start, end);
                 self.take(t);
                 continue;
@@ -264,9 +270,9 @@ impl<'a> P<'a> {
 
     /// A token into the gap `gap` under `parent` (a run of tokens between child nodes): the
     /// engine's automata drop a gap's implied tokens only where all of its tokens are implied.
-    fn gap_token(&mut self, gap: &mut Vec<(K, usize, usize)>, lexed: Lexed, end: usize) {
+    fn gap_token(&mut self, lexed: Lexed, end: usize) {
         if let Lexed::Punct(k) = lexed {
-            gap.push((k, self.at, end));
+            self.gap.push((k, self.at, end));
         }
         self.at = end;
         self.last = end;
@@ -275,14 +281,14 @@ impl<'a> P<'a> {
     /// The gap's tokens written under `parent`: all of them where one is stored, none where all
     /// are implied. A title's opening quote is always stored (the title's choice of quote), so the
     /// gap it starts is.
-    fn flush_gap(&mut self, gap: &mut Vec<(K, usize, usize)>, parent: K) {
+    fn flush_gap(&mut self, parent: K) {
+        let gap = std::mem::take(&mut self.gap);
         let opens_title = parent == K::LinkTitle && gap.first().is_some_and(|&(k, s, _)| s == self.title_at && matches!(k, K::TDQuote | K::TQuote | K::TLParen));
         if opens_title || gap.iter().any(|&(k, _, _)| stores(parent, k)) {
             for &(k, from, to) in gap.iter() {
                 self.leaf(k, 0, from, to);
             }
         }
-        gap.clear();
     }
 
     /// The character reference at `at` (an `&`), if one is there: `entity_reference` (`&name;`,
@@ -559,6 +565,8 @@ impl<'a> P<'a> {
         self.w.truncate(s.nodes);
         self.open.truncate(s.open);
         self.sc.restore(s.sc);
+        // A gap is within a node: the state saved has none of the tokens after it.
+        self.gap.clear();
     }
 
     /// A link reference definition from the parse: white space, the label, `:`, the
@@ -575,7 +583,7 @@ impl<'a> P<'a> {
         let mut depth = 0usize;
         let mut angle = false;
         let mut close_title = 0u8;
-        let mut gap = Vec::new();
+        debug_assert!(self.gap.is_empty());
         // A soft line break taken before the destination, and where the definition ends if a
         // title after a line break does not hold (the state before that break).
         let mut broken = false;
@@ -586,10 +594,10 @@ impl<'a> P<'a> {
                 let t = $t;
                 if part == 3 || part == 5 {
                     let parent = if part == 3 { K::LinkDestination } else { K::LinkTitle };
-                    self.flush_gap(&mut gap, parent);
+                    self.flush_gap(parent);
                     self.close();
                 }
-                self.flush_gap(&mut gap, K::LinkReferenceDefinition);
+                self.flush_gap(K::LinkReferenceDefinition);
                 self.take(t);
                 let n = self.next(V_BLOCK)?;
                 self.close();
@@ -604,11 +612,14 @@ impl<'a> P<'a> {
                     Some(s) => {
                         self.restore(s);
                         part = 4;
-                        gap.clear();
+                        self.gap.clear();
                         let t = self.next(V_PARAGRAPH)?.expect("the soft line break");
                         end!(t)
                     }
-                    None => return Ok(None),
+                    None => {
+                        self.gap.clear();
+                        return Ok(None);
+                    }
                 }
             }};
         }
@@ -632,10 +643,10 @@ impl<'a> P<'a> {
                             if depth > 0 {
                                 return Ok(None);
                             }
-                            self.flush_gap(&mut gap, K::LinkDestination);
+                            self.flush_gap(K::LinkDestination);
                             self.close();
                         }
-                        self.flush_gap(&mut gap, K::LinkReferenceDefinition);
+                        self.flush_gap(K::LinkReferenceDefinition);
                         part = 4;
                         let mut s = self.save();
                         s.at = at_line;
@@ -661,23 +672,26 @@ impl<'a> P<'a> {
                 0 if lexed == Lexed::Space => {}
                 0 => {
                     debug_assert_eq!(c, b'[');
-                    self.flush_gap(&mut gap, K::LinkReferenceDefinition);
+                    self.flush_gap(K::LinkReferenceDefinition);
                     self.open(K::LinkLabel, 0, self.at);
-                    self.gap_token(&mut gap, lexed, end);
+                    self.gap_token(lexed, end);
                     part = 1;
                     continue;
                 }
-                1 if c == b'[' => return Ok(None),
+                1 if c == b'[' => {
+                    self.gap.clear();
+                    return Ok(None);
+                }
                 1 if c == b']' => {
-                    let empty = self.w.len() == self.open.last().expect("the label").0 + 1 && gap.len() == 1 && gap[0].1 + 1 == self.at;
+                    let empty = self.w.len() == self.open.last().expect("the label").0 + 1 && self.gap.len() == 1 && self.gap[0].1 + 1 == self.at;
                     if empty || self.byte(self.at + 1) != b':' {
                         return Ok(None);
                     }
-                    self.gap_token(&mut gap, lexed, end);
-                    self.flush_gap(&mut gap, K::LinkLabel);
+                    self.gap_token(lexed, end);
+                    self.flush_gap(K::LinkLabel);
                     self.close();
                     let (colon, cend) = self.line_token().expect("a colon");
-                    self.gap_token(&mut gap, colon, cend);
+                    self.gap_token(colon, cend);
                     part = 2;
                     continue;
                 }
@@ -685,19 +699,19 @@ impl<'a> P<'a> {
                     if c == b')' {
                         return Ok(None);
                     }
-                    self.flush_gap(&mut gap, K::LinkReferenceDefinition);
+                    self.flush_gap(K::LinkReferenceDefinition);
                     self.open(K::LinkDestination, 0, self.at);
                     angle = c == b'<';
                     part = 3;
                     if angle {
-                        self.gap_token(&mut gap, lexed, end);
+                        self.gap_token(lexed, end);
                         continue;
                     }
                 }
                 3 if angle && c == b'<' => return Ok(None),
                 3 if angle && c == b'>' => {
-                    self.gap_token(&mut gap, lexed, end);
-                    self.flush_gap(&mut gap, K::LinkDestination);
+                    self.gap_token(lexed, end);
+                    self.flush_gap(K::LinkDestination);
                     self.close();
                     // White space or the line's end next.
                     if !matches!(self.byte(self.at), b' ' | b'\t' | b'\n' | b'\r') && self.at < self.src.len() {
@@ -710,7 +724,7 @@ impl<'a> P<'a> {
                     if depth > 0 {
                         return Ok(None);
                     }
-                    self.flush_gap(&mut gap, K::LinkDestination);
+                    self.flush_gap(K::LinkDestination);
                     self.close();
                     part = 4;
                 }
@@ -722,17 +736,17 @@ impl<'a> P<'a> {
                     if !spaced || !matches!(c, b'"' | b'\'' | b'(') {
                         fail!();
                     }
-                    self.flush_gap(&mut gap, K::LinkReferenceDefinition);
+                    self.flush_gap(K::LinkReferenceDefinition);
                     self.open(K::LinkTitle, 0, self.at);
                     self.title_at = self.at;
                     close_title = if c == b'(' { b')' } else { c };
-                    self.gap_token(&mut gap, lexed, end);
+                    self.gap_token(lexed, end);
                     part = 5;
                     continue;
                 }
                 5 if c == close_title => {
-                    self.gap_token(&mut gap, lexed, end);
-                    self.flush_gap(&mut gap, K::LinkTitle);
+                    self.gap_token(lexed, end);
+                    self.flush_gap(K::LinkTitle);
                     self.close();
                     part = 6;
                     continue;
@@ -756,20 +770,20 @@ impl<'a> P<'a> {
                 }
             }
             if c == b'\\' && punct(self.byte(self.at + 1)).is_some() {
-                self.flush_gap(&mut gap, parent);
+                self.flush_gap(parent);
                 self.leaf(K::BackslashEscape, 0, self.at, self.at + 2);
                 self.at += 2;
                 self.last = self.at;
                 continue;
             }
             if let Some((k, e)) = reference {
-                self.flush_gap(&mut gap, parent);
+                self.flush_gap(parent);
                 self.leaf(k, 0, self.at, e);
                 self.at = e;
                 self.last = e;
                 continue;
             }
-            self.gap_token(&mut gap, lexed, end);
+            self.gap_token(lexed, end);
         }
     }
 

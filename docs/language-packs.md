@@ -248,7 +248,10 @@ Each language is one file, `languages/<id>.json`, so changing one language touch
 Each dialect has:
 
 - **`label`**: the file language hosts and the store use.
-- **`suffixes`**: lowercase, with the dot. Compound ones such as `.blade.php` win over shorter ones.
+- **`suffixes`**: lowercase, with the dot. Compound ones such as `.blade.php` win over shorter ones. A dialect with
+  none is read only as a guest grammar, never selected by a file: Markdown's `markdown-inline`, the content of its
+  block grammar's `inline` nodes ([decision 0208](final-shape/decisions/0208-html-and-markdown-guests.md)). A
+  language has at least one dialect with a suffix.
 - **`variant`**, supported only: the engine's `GrammarDialect::<variant>`.
 - **`parser`**, supported only: `tree-sitter`; `forte`, Rerail's port of Forte ([docs/blade-parser.md](blade-parser.md));
   `rr`, the rule engine's own parser of `.rr` files (decision 0061); or `bitlex`, a Bitlex grammar the transducer

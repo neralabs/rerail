@@ -2,7 +2,7 @@
 
 Status: built (user, 2026-11-14: "next we need PHP (including Blade), Markdown, HTML and CSS").
 Markdown became a product language in 0199 (`languages/markdown.json`, `lang-markdown`, tape tag
-19), read by tree-sitter-md's block grammar until now. Its inline content stays open (0199).
+19), read by tree-sitter-md's block grammar until now. Its inline content is read as guests (0208).
 
 ## Intro
 
@@ -138,22 +138,22 @@ line), and definitions holding `&` (query strings in URLs). Both are read now (a
 - `the_product_reads_markdown_with_the_lean_parser`: the engine's parse route gives the lean tape,
   and a refused file gets tree-sitter's.
 
-**Cost** (`markdown_parse_costs`, profiling build, over the 787 corpus files the lean parser reads:
-4.99 MB, 784,047 nodes):
+**Cost** (`markdown_parse_costs`, profiling build, over the 798 corpus files the lean parser reads:
+5.53 MB, 851,317 nodes):
 
 | | instructions a node | cycles a node | ns a byte |
 |---|---|---|---|
-| lean: the parser's columns | 731 | 156 | 7.3 |
-| lean: the tape | 747 | 162 | 8.2 |
-| tree-sitter-md: parse | 13,961 | 2,817 | 128.5 |
-| tree-sitter-md: the tape | 16,767 | 3,556 | 151.3 |
+| lean: the parser's columns | 827 | 157 | 5.7 |
+| lean: the tape | 842 | 165 | 6.0 |
+| tree-sitter-md: parse | 14,273 | 2,615 | 99.5 |
+| tree-sitter-md: the tape | 17,095 | 3,332 | 124.3 |
 
-The lean tape costs about a twenty-second of tree-sitter's, in cycles.
+The lean tape costs about a twentieth of tree-sitter's, in cycles.
 
 ## Open
 
 - **The refusals listed above.** Each is a file tree-sitter reads instead; none is a wrong tape.
-- **Markdown's inline content** (tree-sitter-md's inline grammar, as guest documents of the
-  `inline` nodes): open, as in 0199.
+- **Markdown's inline content:** closed by 0208 (guest documents of the `inline` and
+  `pipe_table_cell` nodes, read by tree-sitter-md's inline grammar).
 - **The scanner's remaining byte loops** (a line's start, the table row count) run over a few bytes a
   line; the per-line rest is stage 1's.
