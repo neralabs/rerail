@@ -540,6 +540,8 @@ impl<'s> Lexer<'s> {
     pub fn string_end(&self, s: usize, block: bool) -> Option<usize> {
         let mut i = if block { s + 3 } else { s + 1 };
         loop {
+            // The next `"` or `\` (stage 1's stop mask), not a byte at a time.
+            i = self.blocks.string_stop(i);
             match self.src.get(i)? {
                 b'"' if !block => return Some(i + 1),
                 b'"' if self.src[i..].starts_with(b"\"\"\"") => return Some(i + 3),
