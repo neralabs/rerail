@@ -1051,11 +1051,12 @@ impl Rows0 {
 #[derive(Clone, Debug, PartialEq)]
 pub struct CutReport { pub probe: usize, pub work: u64, pub done: u64, pub left: u64, pub led: bool }
 
-/// Cuts made, and cut waves gone on reading only the rows left, or all (`restricted`), in this process.
-static CUTS: [std::sync::atomic::AtomicU64; 3] = [const { std::sync::atomic::AtomicU64::new(0) }; 3];
+/// Cuts made, cut waves gone on reading only the rows left or all (`restricted`), and trials run (decision 0207),
+/// in this process.
+static CUTS: [std::sync::atomic::AtomicU64; 4] = [const { std::sync::atomic::AtomicU64::new(0) }; 4];
 
-/// Decision 0206's counts: cuts, then waves gone on over the rows left only, and over all rows.
-pub fn cut_counts() -> [u64; 3] {
+/// Decision 0206's counts: cuts, then waves gone on over the rows left only, and over all rows; then trials run.
+pub fn cut_counts() -> [u64; 4] {
     CUTS.each_ref().map(|c| c.load(std::sync::atomic::Ordering::Relaxed))
 }
 
@@ -2372,6 +2373,68 @@ pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, wanted: &[(us
         }
         Some((passed * stride, counts))
     }).collect())
+}
+
+/// A trial of an order (decision 0207): its work over the sample, the sample's rows, the rows it made, and whether it
+/// passed its budget (its work is then a lower bound).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TrialRun { pub work: u64, pub rows: u64, pub made: u64, pub cut: bool }
+
+/// Decision 0207: runs probe `probe`'s body, or `spec` in its place, over a sample of at most `sample` rows of its
+/// first atom (the rows its cut left, where it was cut; else every row its first step reads), under `budget` steps.
+/// Nothing is added to any relation: the rows made are counted and dropped. The probe's own counts are as they were.
+/// `step`: where `spec` reads those rows (it leads with the same atom); else where known (`restricted`). `None` when
+/// the sample cannot be placed in `spec`, or the probe is no join.
+pub fn trial(conn: impl Scoped, name: &str, probe: usize, spec: Option<&JoinSpec>, step: Option<usize>, sample: usize, budget: u64) -> Result<Option<TrialRun>> {
+    let conn = conn.db();
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    let symbols = Arc::clone(&comp.store.read().unwrap().syms);
+    let mut syms = Interner::for_loading(&symbols);
+    let made = match spec {
+        Some(spec) => {
+            let j = join_rule(conn, spec, &mut syms)?;
+            let mut store = comp.store.write().unwrap();
+            for (r, cols) in &j.multi { store.rels[*r].want(cols); }
+            Some(j)
+        }
+        None => None,
+    };
+    let Some(Body::Join(own)) = comp.probes.get(probe).map(|p| &p.body) else { return Ok(None) };
+    let store = comp.store.read().unwrap();
+    // The rows: those the cut left, else all the first step reads; a sample at a stride.
+    let (of, ids): (RowsOf, Vec<u32>) = match comp.cut.as_ref().filter(|c| c.next == probe).and_then(|c| c.left.as_ref()) {
+        Some(left) => (left.of, (0..left.bits.len() * 64).filter(|&b| left.bits[b / 64] >> (b % 64) & 1 == 1).map(|b| left.lo + b as u32).collect()),
+        None => {
+            let Some(Step::Atom { src, .. }) = own.steps.first() else { return Ok(None) };
+            let range = match src {
+                Src::Delta(r) => store.rels[*r].lo as u32..store.rels[*r].hi as u32,
+                Src::Full(r) | Src::FullMulti(r, _) => 0..store.rels[*r].n as u32,
+                Src::In(r, _) => 0..r.len() as u32,
+            };
+            (RowsOf::of(src), range.collect())
+        }
+    };
+    if ids.is_empty() { return Ok(None) }
+    let stride = ids.len().div_ceil(sample.max(1)).max(1);
+    let picked: Vec<u32> = ids.iter().step_by(stride).copied().collect();
+    let rows = Rows0::of(of, &picked);
+    let j = made.as_ref().unwrap_or(own);
+    let named = if made.is_some() { step } else { Some(0) };
+    let Some(at) = restricted(j, of, named) else { return Ok(None) };
+    scalars::register(&j.steps, Some(&store));
+    let counts: Vec<[u64; 2]> = j.counts.iter().map(|[a, b]| [a.get(), b.get()]).collect();
+    let mut out = Vec::new();
+    let n = rows.n;
+    LIMIT.with(|l| *l.borrow_mut() = Some(Limit { budget, only: Some((at, rows)) }));
+    let got = run_join_in(j, 0, &store, &mut syms, &mut [], &[], Some(&mut out), None);
+    LIMIT.with(|l| l.borrow_mut().take());
+    let spent = SPENT.with(|s| s.borrow_mut().take());
+    for (c, [a, b]) in j.counts.iter().zip(counts) { c[0].set(a); c[1].set(b); }
+    let made = got?;
+    syms.check()?;
+    CUTS[3].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Ok(spent.map(|s| TrialRun { work: s.work, rows: n, made, cut: s.left.is_some() }))
 }
 
 /// A relation's live statistics (`stats`): rows, then per column its distinct values and sum of squared postings,

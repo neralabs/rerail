@@ -60,6 +60,19 @@ fn a_probe_cut_at_its_budget_hands_its_rows_left_to_another_order() {
     let report = run(&db, "cut", 0).unwrap();
     assert_eq!(report.split_whitespace().last(), Some("5"), "cut: {report}");
     assert!(take_cut(&db, "cut").unwrap().is_some_and(|c| c.left > 0));
+    // Decision 0207: trials over a sample of the rows the cut left. Both orders make the same rows from it, at their
+    // own work; a budget under that work cuts the trial. Nothing is added, and the probe's counts are as they were.
+    let other_spec = JoinSpec::parse(&edge_first).unwrap();
+    // Read (and so reset) the counts first: trials leave them at nothing.
+    step_counts(&db, "cut").unwrap();
+    let own = trial(&db, "cut", 0, None, None, 64, u64::MAX / 2).unwrap().expect("a trial of its own body");
+    let swapped = trial(&db, "cut", 0, Some(&other_spec), None, 64, u64::MAX / 2).unwrap().expect("the delta is placed in the other order");
+    assert!(!own.cut && !swapped.cut && own.rows == swapped.rows && own.rows <= 64 && own.rows > 0, "{own:?} {swapped:?}");
+    assert_eq!(own.made, swapped.made, "the same rows from the same sample: {own:?} {swapped:?}");
+    assert_ne!(own.work, swapped.work);
+    let short = trial(&db, "cut", 0, Some(&other_spec), None, 64, swapped.work / 2).unwrap().unwrap();
+    assert!(short.cut && short.work <= swapped.work / 2 + 1, "{short:?}");
+    assert!(step_counts(&db, "cut").unwrap()[0].iter().all(|&(a, b)| a == 0 && b == 0), "the probe's counts are as they were");
     let other = Reprobe::Join(std::sync::Arc::new(JoinSpec::parse(&edge_first).unwrap()));
     reprobe_spec(&db, "cut", 0, &other).unwrap();
     assert_eq!(run(&db, "cut", 0).unwrap().split_whitespace().last(), Some("1"));

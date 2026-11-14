@@ -62,6 +62,52 @@ cached!(critical_share, "RERAIL_JOIN_CRITICAL", 0.05);
 // The chance a noted line tries an untried order, and how far over the best's price that order may be.
 cached!(explore_rate, "RERAIL_JOIN_EXPLORE", 0.1);
 cached!(margin, "RERAIL_JOIN_MARGIN", 2.0);
+// Decision 0207's trials: the rows of a sample, an order's cutoff as a multiple of the best measured so far, the
+// share of the line's work so far each may spend, and by how much a trialled order must beat the one running.
+cached!(trial_rows, "RERAIL_JOIN_TRIAL_ROWS", 256.0);
+cached!(trial_cutoff, "RERAIL_JOIN_TRIAL_CUTOFF", 2.0);
+cached!(trial_share, "RERAIL_JOIN_TRIAL_SHARE", 0.1);
+cached!(trial_margin, "RERAIL_JOIN_TRIAL_MARGIN", 1.25);
+
+/// `RERAIL_JOIN_TRIALS=off`: a line's orders are never trialled (decision 0207).
+pub(super) fn trials_on() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_JOIN_TRIALS").map_or(true, |v| v != "off"));
+    on() && *ON
+}
+
+/// Whether line `key`'s orders are trialled at this check: the first time in this process, and once after it was
+/// flagged slow.
+pub(super) fn take_trial(key: PlanKey) -> bool {
+    MEMO.write().trialled.insert(key)
+}
+
+/// A trial measured `ratio` (work over price) for `order` of line `key`: kept as a run's is (`critical`).
+pub(super) fn put_tried(key: PlanKey, rule: u64, order: &[Step], ratio: f64) {
+    COUNTS[TRIALS].fetch_add(1, Relaxed);
+    let mut m = MEMO.write();
+    let n = noted_mut(&mut m, key, rule);
+    merge_tried(n, steps(order), ratio.clamp(1e-6, 1e9));
+}
+
+fn merge_tried(n: &mut Note, order: Vec<StoredStep>, ratio: f64) {
+    match n.tried.iter_mut().find(|t| t.order == order) {
+        Some(t) => {
+            t.ratio = (t.ratio * ratio).sqrt();
+            t.runs += 1;
+        }
+        None => {
+            if n.tried.len() >= TRIED {
+                n.tried.remove(0);
+            }
+            n.tried.push(Tried { order, ratio, runs: 1 });
+        }
+    }
+}
+
+/// Line `key`'s proposals from a wider search, as orders.
+pub(super) fn proposals(key: &PlanKey) -> Vec<Vec<Step>> {
+    MEMO.read().notes.get(key).map(|n| n.proposals.iter().map(|(o, _)| o.iter().map(|&(at, mode)| Step { at: at as usize, mode }).collect()).collect()).unwrap_or_default()
+}
 
 /// `RERAIL_JOINS=off`: no memo, no flags, no exploration (the planner as before).
 pub(super) fn on() -> bool {
@@ -129,6 +175,8 @@ struct Memo {
     next_check: FxHashMap<PlanKey, f64>,
     /// Lines whose next replan skips the planning budget (a flag's).
     forced: FxHashSet<PlanKey>,
+    /// Lines whose orders were trialled in this process (decision 0207): once, and once more after a flag.
+    trialled: FxHashSet<PlanKey>,
     dirty: bool,
 }
 
@@ -257,6 +305,7 @@ pub(super) fn flag_slow(key: PlanKey, rule: u64, est: f64, ran: f64) {
     let mut m = MEMO.write();
     m.flagged.insert(key);
     m.forced.insert(key);
+    m.trialled.remove(&key);
     let n = noted_mut(&mut m, key, rule);
     n.slow += 1;
     n.est = est;
@@ -550,18 +599,7 @@ pub fn critical(strata: &[String], producers: &[Vec<usize>], runs: &[LineRun]) -
         if r.est > 0.0 {
             n.est = r.est;
             let ratio = (r.work.max(1.0) / r.est.max(1.0)).clamp(1e-6, 1e9);
-            match n.tried.iter_mut().find(|t| t.order == r.order) {
-                Some(t) => {
-                    t.ratio = (t.ratio * ratio).sqrt();
-                    t.runs += 1;
-                }
-                None => {
-                    if n.tried.len() >= TRIED {
-                        n.tried.remove(0);
-                    }
-                    n.tried.push(Tried { order: r.order.clone(), ratio, runs: 1 });
-                }
-            }
+            merge_tried(n, r.order.clone(), ratio);
             if critical && (ratio > 2.0 || n.proposals.is_empty()) {
                 n.wants_search = true;
             }

@@ -184,3 +184,21 @@ fn a_requested_search_proposes_its_orders() {
     assert!(!n.wants_search);
     clear();
 }
+
+/// Decision 0207: a line's orders are trialled once in a process, and once more after a flag; each trial's ratio is
+/// kept as an order tried, as a run's is.
+#[test]
+fn trials_are_taken_once_and_their_ratios_kept() {
+    let _serial = SERIAL.lock();
+    clear();
+    assert!(take_trial(500) && !take_trial(500), "once");
+    flag_slow(500, 1, 10.0, 1e6);
+    assert!(take_trial(500), "again after a flag");
+    let order = vec![Step { at: 1, mode: None }, Step { at: 0, mode: None }];
+    put_tried(500, 1, &order, 4.0);
+    put_tried(500, 1, &order, 16.0);
+    let n = note(&500).unwrap();
+    let t = n.tried.iter().find(|t| t.order == steps(&order)).expect("tried");
+    assert!((t.ratio - 8.0).abs() < 1e-9 && t.runs == 2, "a geometric mean over trials: {t:?}");
+    clear();
+}

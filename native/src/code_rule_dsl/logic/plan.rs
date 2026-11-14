@@ -7844,7 +7844,8 @@ impl<'a> Run<'a, '_> {
                         joins::put_exact(key, rule, exact);
                         joins::take_forced(&key);
                         self.request_search(r, None, rule, key, work)?;
-                        if let Some(new) = self.model.plan_for_rows(prog, &b, at0, c.left.max(1) as f64)
+                        // With trials (decision 0207) the orders are measured below instead.
+                        if !joins::trials_on() && let Some(new) = self.model.plan_for_rows(prog, &b, at0, c.left.max(1) as f64)
                             && !same_order(&new, &orders[line].1)
                             && let Some(spec) = self.whole_join_spec(&r.head, Order::new(&r.body, &new), None, &ri, scc, native_rels)
                         {
@@ -7854,6 +7855,78 @@ impl<'a> Run<'a, '_> {
                             let ran = counted.get_mut(line).map(std::mem::take).unwrap_or_default();
                             if ran.iter().any(|&(a, _)| a > 0) { earlier[line].push((std::mem::replace(&mut orders[line].1, new), ran)); }
                             else { orders[line].1 = new; }
+                        }
+                    }
+                }
+                // Decision 0207, trials: at a line's first check in the process (and once more after a flag), its
+                // orders run over a sample of the rows left, each cut at `trial_cutoff` times the least work measured
+                // so far and at `trial_share` of the line's work. What each measured over its price is kept as an
+                // order tried; the least measured goes on where it beats the running order by `trial_margin`.
+                // The sample is what the share pays for at the running order's work per row, at most `trial_rows`;
+                // under `TRIAL_LEAST` rows, the trials wait for a later check.
+                let so_far = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64;
+                let cap = (joins::trial_share() * so_far).max(1_000.0) as u64;
+                let sample = if c.led && c.done > 0 { ((cap as f64 * c.done as f64 / c.work.max(1) as f64) as usize).min(joins::trial_rows() as usize) } else { 0 };
+                const TRIAL_LEAST: usize = 8;
+                let joined = r.body.iter().filter(|l| matches!(l, Literal::Atom(a) if !a.neg)).count() >= 2;
+                if let Some(key) = keys.get(line).copied().flatten() && joins::trials_on() && joined && sample >= TRIAL_LEAST && handoff[line].is_none() && joins::take_trial(key) {
+                    let running = order_now(&orders, &probes);
+                    let cut_order = old.clone().unwrap_or_else(|| running.clone());
+                    let lead = first.unwrap_or(cut_order[0].at);
+                    let left = if c.led { c.left } else { c.done + c.left };
+                    let mut cands: Vec<Vec<Step>> = vec![running.clone(), cut_order.clone()];
+                    joins::searched_take();
+                    if let Some(best) = self.model.plan_for_rows(prog, &b, lead, left.max(1) as f64) {
+                        cands.push(best);
+                        cands.extend(joins::searched_take().into_iter().map(|(o, _)| o));
+                    }
+                    cands.extend(joins::proposals(&key));
+                    let mut distinct: Vec<Vec<Step>> = Vec::new();
+                    for o in cands {
+                        if o.len() == r.body.len() && !distinct.iter().any(|d| same_order(d, &o)) { distinct.push(o); }
+                    }
+                    distinct.truncate(6);
+                    let mut measured: Vec<(Vec<Step>, super::native::component::TrialRun)> = Vec::new();
+                    let mut least: Option<u64> = None;
+                    for (i, o) in distinct.iter().enumerate() {
+                        let budget = least.map_or(cap, |w| ((joins::trial_cutoff() * w as f64) as u64).clamp(1, cap));
+                        let run = if i == 0 {
+                            super::native::component::trial(self.db, &name, line, None, None, sample, budget)?
+                        } else {
+                            let at = first.map(|ai| o.iter().position(|s| s.at == ai));
+                            if at == Some(None) { continue; }
+                            let Some(spec) = self.whole_join_spec(&r.head, Order::new(&r.body, o), at.flatten(), &ri, scc, native_rels) else { continue };
+                            let step = (o[0].at == cut_order[0].at).then_some(0);
+                            super::native::component::trial(self.db, &name, line, Some(&spec), step, sample, budget)?
+                        };
+                        let Some(run) = run else { continue };
+                        if !run.cut { least = Some(least.map_or(run.work, |w| w.min(run.work))); }
+                        measured.push((o.clone(), run));
+                    }
+                    let rule = order_rules[line];
+                    for (o, run) in &measured {
+                        if let Some(est) = self.model.price_for_delta(prog, &b, Some(lead), o, run.rows as f64) {
+                            joins::put_tried(key, rule, o, run.work as f64 / est.max(1.0));
+                        }
+                    }
+                    joins::log(|| format!("trials {} over {} rows ({} rows of work in all): {}", r.head.rel, measured.first().map_or(0, |m| m.1.rows), measured.iter().map(|m| m.1.work).sum::<u64>(), measured.iter().map(|(o, t)| format!("{}{} {}{}", if same_order(o, &running) { "*" } else { "" }, o.iter().map(|s| s.at.to_string()).collect::<Vec<_>>().join("."), t.work, if t.cut { "+" } else { "" })).collect::<Vec<_>>().join(", ")));
+                    let mine = measured.iter().find(|(o, _)| same_order(o, &running)).map(|(_, t)| *t);
+                    let best = measured.iter().filter(|(_, t)| !t.cut).min_by_key(|(_, t)| t.work);
+                    if let (Some(mine), Some((best, won))) = (mine, best)
+                        && !same_order(best, &running)
+                        && (mine.cut || won.work as f64 * joins::trial_margin() < mine.work as f64)
+                    {
+                        let at = first.map(|ai| best.iter().position(|s| s.at == ai).expect("trialled with the delta"));
+                        if let Some(spec) = self.whole_join_spec(&r.head, Order::new(&r.body, best), at, &ri, scc, native_rels) {
+                            super::profile::decision("join trials (decision 0207)", || format!("{}: {} rows of work over the sample, the running order {}{}", r.head.rel, won.work, mine.work, if mine.cut { " or more" } else { "" }));
+                            self.fx().reprobe(&name, line, &Reprobe::Join(spec))?;
+                            if best[0].at == cut_order[0].at { super::native::component::cut_step(self.db, &name, 0)?; }
+                            if earlier.len() <= line { earlier.resize_with(line + 1, Vec::new); }
+                            let ran = counted.get_mut(line).map(std::mem::take).unwrap_or_default();
+                            let slot = if seed { &mut orders[line].1 } else { &mut probes[line - nseeds].2 };
+                            if ran.iter().any(|&(a, _)| a > 0) { earlier[line].push((std::mem::replace(slot, best.clone()), ran)); }
+                            else { *slot = best.clone(); }
+                            if old.is_none() { old = Some(running); }
                         }
                     }
                 }

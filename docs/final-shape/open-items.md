@@ -5068,3 +5068,9 @@ domain is then a function of the rules, not of their order), and then run the fi
 A probe run as its whole plan (its delta is all of its relation, in a component's first wave) has no budget, so a
 slow whole plan runs to its end. The driver plans whole plans apart from the delta probes (`take_whole`), and a
 handoff would need the whole plan's own replacement and its rows left. Open.
+
+## O169. A trial's rows are made twice (decision 0207)
+
+A trial's rows are counted and dropped, then made again by the order that goes on. Over a sample that is most of
+the rows left, that work is done twice. The winner's rows could be kept (a component's relations are sets) and its
+sample's rows taken out of the rows left. Open.
