@@ -44,7 +44,10 @@
 
 use super::super::front::{Atom, Literal, Program, Rule, Term, strata};
 use super::Model;
+use super::body::Body;
+use super::super::program_image::{RuleId, Version};
 use std::cell::RefCell;
+use std::sync::Arc;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Inlined when the readers' added work is under this share of the relation's cost stored (decision 0099, "Built":
@@ -95,6 +98,16 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
         rules_of.entry(r.head.rel.as_str()).or_default().push(r);
     }
     let reasons = refusals(prog, &rules_of, &sccs);
+    // The rules as the planner reads them: the program's version (until the run's is passed in: t36 item 6, step 5),
+    // rule `k` the program's rule `k`.
+    let base = super::body::made(&prog.rules).map_err(|e| e.to_string())?;
+    let bodies: Vec<Body<'_>> = (0..prog.rules.len()).map(|k| super::body::nth(&base, k)).collect();
+    let mut ids_of: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (k, r) in prog.rules.iter().enumerate() {
+        ids_of.entry(r.head.rel.as_str()).or_default().push(k);
+    }
+    let bodies_of: BTreeMap<&str, Vec<&Body<'_>>> = ids_of.iter().map(|(rel, ks)| (*rel, ks.iter().map(|&k| &bodies[k]).collect())).collect();
+    let src = Read { base: &base, bodies: &bodies, ids_of: &ids_of };
     // Readers: (rule index, body position) of each read of a relation.
     let mut readers: BTreeMap<&str, Vec<(usize, usize)>> = BTreeMap::new();
     for (ri, r) in prog.rules.iter().enumerate() {
@@ -163,8 +176,8 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
     // readers' (the pricing below plans them).
     let read: Vec<&str> = need.iter().flat_map(|rel| rules_of.get(rel).into_iter().flatten()).flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.as_str()).collect();
     model.resolve(prog, read).map_err(|e| e.to_string())?;
-    let (estimates, inserted) = estimate(prog, model, &rules_of, &sccs, &need, &candidates);
-    let mut by_estimates = price_all(prog, model, &rules_of, &readers, &reasons, &estimates, &need, &sccs);
+    let (estimates, inserted) = estimate(prog, model, &rules_of, (&base, &ids_of), &sccs, &need, &candidates);
+    let mut by_estimates = price_all(prog, model, &src, &rules_of, &readers, &reasons, &estimates, &need, &sccs);
     for (rel, rows) in &bounded_small {
         by_estimates.insert((*rel).to_owned(), Priced::Small(*rows, *rows));
     }
@@ -185,8 +198,8 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
         for (rel, p) in &by_estimates {
             let inlined = matches!(p, Priced::Weighed(v) if v.inline);
             let reads = readers.get(rel.as_str()).map_or(&[][..], Vec::as_slice);
-            let stored_ran = !reads.is_empty() && reads.iter().all(|&(ri, _)| observed_rule(&prog.rules[ri], 1.0).is_some());
-            let copies_ran = reads.iter().all(|&(ri, _)| observed_copies(rel, &prog.rules[ri], 1.0).is_some());
+            let stored_ran = !reads.is_empty() && reads.iter().all(|&(ri, _)| observed_rule(&bodies[ri], 1.0).is_some());
+            let copies_ran = reads.iter().all(|&(ri, _)| observed_copies(rel, &bodies[ri], 1.0).is_some());
             if stored_ran && (inlined || copies_ran) {
                 again.insert(rules_of.get_key_value(rel.as_str()).map_or("", |(k, _)| *k));
             }
@@ -202,11 +215,11 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
             .iter()
             .filter_map(|rel| {
                 let (rows, work, planned) = estimates.get(*rel).copied()?;
-                let build = rules_of[rel].iter().map(|r| calibrated(prog, model, r)).sum::<Option<f64>>().unwrap_or(work);
+                let build = bodies_of[rel].iter().map(|b| calibrated(prog, model, b)).sum::<Option<f64>>().unwrap_or(work);
                 Some(((*rel).to_owned(), (observed_rows(rel, nodes).unwrap_or(rows), build, planned)))
             })
             .collect();
-        let got = price_all(prog, model, &rules_of, &readers, &reasons, &again_estimates, &again, &sccs);
+        let got = price_all(prog, model, &src, &rules_of, &readers, &reasons, &again_estimates, &again, &sccs);
         restore(model, saved);
         got
     };
@@ -237,7 +250,8 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
         if reads.is_empty() {
             continue;
         }
-        let Some(copies) = reads.iter().map(|&(ri, i)| copies(&prog.rules[ri], i, rules)).sum::<Option<usize>>() else {
+        let def_refs: Vec<_> = ids_of[rel].iter().map(|&k| base.rule(RuleId(k as u32)).expect("a def")).collect();
+        let Some(copies) = reads.iter().map(|&(ri, i)| inline::count(&base, base.rule(RuleId(ri as u32)).expect("a reader"), i, &def_refs)).sum::<Option<usize>>() else {
             if prog.qualified(rel, "inline") {
                 refused_inline.push(format!("{rel}: a negated read is not a negation of plain literals"));
             } else if only.is_some() {
@@ -281,7 +295,6 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
     // The inlining, an overlay of the program's version (`inline::inline`). Each rule's origin is the program's rule
     // it was unfolded from, and the relations unfolded into it, so what a copy does when it runs is the inlined side's
     // observation of that reader (`copied`).
-    let base = super::body::made(&prog.rules).map_err(|e| e.to_string())?;
     let got = inline::inline(&base, &inline)?;
     copied(got.rules.iter().filter(|(_, _, into)| !into.is_empty()).map(|(id, o, into)| (super::body::Body::of(&got.v, got.v.rule(*id).expect("a rule")).observed_key(), super::body::Body::of(&base, base.rule(*o).expect("a base rule")).observed_key(), into)));
     // The program as inlining left it, for the run (until the run reads the version: t36 item 6, step 5).
@@ -303,11 +316,20 @@ enum Priced {
     Weighed(Verdict),
 }
 
+/// The program's rules as the pricing reads them: its version, each rule's body by its index, and each relation's
+/// rules' indices.
+struct Read<'r, 'v> {
+    base: &'r Arc<Version>,
+    bodies: &'r [Body<'v>],
+    ids_of: &'r BTreeMap<&'r str, Vec<usize>>,
+}
+
 /// Prices every relation the choice may inline (`need`'s candidates), with the observations kept now (none while
 /// they are held aside): each reader term (the reader as it is, its copies), the build and the rows, weighed.
 fn price_all(
     prog: &Program,
     model: &Model,
+    read: &Read<'_, '_>,
     rules_of: &BTreeMap<&str, Vec<&Rule>>,
     readers: &BTreeMap<&str, Vec<(usize, usize)>>,
     reasons: &BTreeMap<String, &'static str>,
@@ -326,7 +348,9 @@ fn price_all(
             continue;
         }
         let Some(reads) = readers.get(rel) else { continue };
-        let Some(copies) = reads.iter().map(|&(ri, i)| copies(&prog.rules[ri], i, rules)).sum::<Option<usize>>() else { continue };
+        let defs: Vec<RuleId> = read.ids_of[rel].iter().map(|&k| RuleId(k as u32)).collect();
+        let def_refs: Vec<_> = defs.iter().map(|&d| read.base.rule(d).expect("a def")).collect();
+        let Some(copies) = reads.iter().map(|&(ri, i)| inline::count(read.base, read.base.rule(RuleId(ri as u32)).expect("a reader"), i, &def_refs)).sum::<Option<usize>>() else { continue };
         if copies > COPIES {
             continue;
         }
@@ -341,17 +365,22 @@ fn price_all(
         let mut own: Vec<(f64, Option<f64>)> = Vec::new();
         let mut inl: Vec<(f64, Option<f64>)> = Vec::new();
         let mut priced = true;
-        for &(ri, i) in reads {
-            let reader = &prog.rules[ri];
-            let copies = unfold(reader, i, rules, 0).unwrap_or_default();
+        // Every reader's copies, an overlay of the program's version made for the pricing alone.
+        let Ok((cv, made)) = inline::copies(read.base, &reads.iter().map(|&(ri, i)| (RuleId(ri as u32), i)).collect::<Vec<_>>(), &defs) else {
+            out.insert(rel.to_owned(), Priced::Unplanned);
+            continue;
+        };
+        for (&(ri, i), made) in reads.iter().zip(&made) {
+            let reader = &read.bodies[ri];
+            let copies: Vec<Body<'_>> = made.iter().map(|&id| Body::of(&cv, cv.rule(id).expect("a copy"))).collect();
             // A reader in a recursion runs as its delta plans, one per recursive atom read first, over each wave's
             // new rows: priced so, each copy with the same atom first. Its whole plan may start from the inlined
             // relation's own inputs, which no delta plan can: `rr_cx_reach(d, f) :- rr_cx_reach(d, e),
             // rr_cx_edge(e, f)` priced whole joined `rr_cx_edge`'s imports and modules first, and inlining it looked
             // 7.8 M work cheaper; run, each new reach row scanned every document's module (277 s of calls_cx).
-            let scc = sccs.iter().find(|s| s.contains(reader.head.rel.as_str()));
-            let deltas: Vec<usize> = (0..reader.body.len())
-                .filter(|&k| k != i && reader.body[k].atom().is_some_and(|a| !a.neg && scc.is_some_and(|s| s.contains(a.rel.as_str()))))
+            let scc = sccs.iter().find(|s| s.contains(reader.rel(reader.head())));
+            let deltas: Vec<usize> = (0..reader.len())
+                .filter(|&k| k != i && reader.plain_atom(k).is_some_and(|a| !a.neg() && scc.is_some_and(|s| s.contains(reader.rel(a)))))
                 .collect();
             let firsts: Vec<Option<usize>> = if deltas.is_empty() { vec![None] } else { deltas.iter().map(|&k| Some(k)).collect() };
             let (mut own_est, mut est) = (0.0, 0.0);
@@ -364,7 +393,7 @@ fn price_all(
                 for copy in &copies {
                     // The delta atom in the copy: the reader's literal, which unfolding leaves as it is.
                     let at = match first {
-                        Some(k) => match copy.body.iter().position(|l| *l == reader.body[k]) {
+                        Some(k) => match (0..copy.len()).position(|j| copy.show(j) == reader.show(k)) {
                             Some(at) => Some(at),
                             None => {
                                 priced = false;
@@ -390,7 +419,7 @@ fn price_all(
             continue;
         }
         // The build as `estimate` priced it (`calibrated`, before its rows were the planner's).
-        let build = (work, rules.iter().map(|r| observed_rule(r, nodes)).sum::<Option<f64>>());
+        let build = (work, read.ids_of[rel].iter().map(|&k| observed_rule(&read.bodies[k], nodes)).sum::<Option<f64>>());
         out.insert(rel.to_owned(), Priced::Weighed(weigh(&own, &inl, build, (rows, observed_rows(rel, nodes)))));
     }
     out
@@ -657,189 +686,6 @@ pub(in crate::code_rule_dsl) fn factors(rule: &Rule) -> Option<(String, Vec<Vec<
     None
 }
 
-/// `reader` with its read at `at` of a relation whose rules are `defs` unfolded (the module's "Unfolding"): the
-/// reader copies, or `None` where a negated read is not a negation of plain literals. `fresh` names the copies'
-/// variables apart.
-fn unfold(reader: &Rule, at: usize, defs: &[&Rule], fresh: usize) -> Option<Vec<Rule>> {
-    let Literal::Atom(read) = &reader.body[at] else { return None };
-    let mut n = 0usize;
-    let mut apart = |def: &Rule| -> BTreeMap<String, String> {
-        n += 1;
-        let mut local = BTreeSet::new();
-        def.body.iter().for_each(|l| local.extend(l.vars()));
-        def.head.args.iter().for_each(|t| t.vars(&mut local));
-        local.into_iter().map(|v| (v.clone(), format!("{v}_i{fresh}_{n}"))).collect()
-    };
-    if !read.neg {
-        let mut out = Vec::new();
-        for def in defs {
-            let mut to = apart(def);
-            let mut eqs: Vec<(&Term, &Term)> = Vec::new();
-            let mut matched: BTreeSet<String> = BTreeSet::new();
-            for (h, r) in def.head.args.iter().zip(&read.args) {
-                match (h, r) {
-                    (_, Term::Wild) => {}
-                    // A head variable read as a variable becomes it, once.
-                    (Term::Var(v), Term::Var(x)) if matched.insert(v.to_string()) => {
-                        to.insert(v.to_string(), x.to_string());
-                    }
-                    // A head variable named twice, or a head term against a read's: the head's equal to the read's.
-                    _ => eqs.push((h, r)),
-                }
-            }
-            let rename = |l: &Literal| rename_all(l, &to);
-            // Only the head's side is the rule's, renamed: the read's terms are the reader's own variables, which may
-            // share a name with one of the rule's (`expr_name(n, n, x)` read as `expr_name($t, $n, $x)`).
-            let mut body: Vec<Literal> = eqs
-                .iter()
-                .map(|&(h, r)| match rename(&Literal::Cmp { l: h.clone(), op: "=", r: Term::Wild }) {
-                    Literal::Cmp { l, op, .. } => Literal::Cmp { l, op, r: r.clone() },
-                    other => other,
-                })
-                .collect();
-            body.splice(0..0, def.body.iter().map(rename));
-            let mut copy = reader.clone();
-            copy.body.splice(at..=at, body);
-            out.push(copy);
-        }
-        return Some(out);
-    }
-    let alternatives = negated(read, defs)?;
-    let mut copies: Vec<Vec<Literal>> = vec![Vec::new()];
-    for alts in alternatives {
-        copies = copies.into_iter().flat_map(|c| alts.iter().map(move |a| {
-            let mut c = c.clone();
-            c.push(a.clone());
-            c
-        })).collect();
-        if copies.len() > COPIES * 4 {
-            return None;
-        }
-    }
-    Some(copies.into_iter().map(|lits| {
-        let mut copy = reader.clone();
-        copy.body.splice(at..=at, lits);
-        copy
-    }).collect())
-}
-
-/// How many copies `unfold` makes of the read at `at`, made or `None` where it makes none: a positive read one per
-/// rule, a negated one the product of its rules' alternatives.
-fn copies(reader: &Rule, at: usize, defs: &[&Rule]) -> Option<usize> {
-    let Literal::Atom(read) = &reader.body[at] else { return None };
-    if !read.neg {
-        return Some(defs.len());
-    }
-    let mut n = 1usize;
-    for alts in negated(read, defs)? {
-        n *= alts.len();
-        if n > COPIES * 4 {
-            return None;
-        }
-    }
-    Some(n)
-}
-
-/// A negated read's rules, each negated: a set of alternatives (one literal each), whose product is the copies.
-/// `None` where a rule's negation is no negation of plain literals.
-fn negated(read: &Atom, defs: &[&Rule]) -> Option<Vec<Vec<Literal>>> {
-    let mut alternatives: Vec<Vec<Literal>> = Vec::new();
-    let read_vars = read.vars();
-    for def in defs {
-        let heads: Vec<&str> = def.head.args.iter().map(|t| match t {
-            Term::Var(v) => Some(v.as_str()),
-            _ => None,
-        }).collect::<Option<_>>()?;
-        if heads.iter().collect::<BTreeSet<_>>().len() != heads.len() {
-            return None;
-        }
-        let mut to: BTreeMap<String, Term> = heads.iter().zip(&read.args).map(|(h, t)| ((*h).to_owned(), t.clone())).collect();
-        let mut count: BTreeMap<String, usize> = BTreeMap::new();
-        for l in &def.body {
-            if let Literal::Atom(a) = l {
-                for t in &a.args {
-                    if let Term::Var(v) = t {
-                        *count.entry(v.to_string()).or_default() += 1;
-                    }
-                }
-            }
-        }
-        match def.body.as_slice() {
-            [Literal::Atom(b)] if !b.neg => {
-                // Each variable not matched to a bound term (the rule's own, or read as `_`) appears once: `_`.
-                for t in &b.args {
-                    if let Term::Var(v) = t {
-                        let free = !matches!(to.get(v.as_str()), Some(Term::Var(_) | Term::Int(_) | Term::Str(_)));
-                        if free && count[v.as_str()] != 1 {
-                            return None;
-                        }
-                        if free {
-                            to.insert(v.to_string(), Term::Wild);
-                        }
-                    }
-                }
-                let args = b.args.iter().map(|t| subst(t, &to)).collect();
-                alternatives.push(vec![Literal::Atom(Atom { args, neg: true, ..b.clone() })]);
-            }
-            body => {
-                // Every literal over the head's variables, each bound by the read.
-                let bound = |v: &String| matches!(to.get(v), Some(Term::Var(x)) if read_vars.contains(x.as_str())) || matches!(to.get(v), Some(Term::Int(_) | Term::Str(_)));
-                let mut alts = Vec::new();
-                for l in body {
-                    if !l.vars().iter().all(bound) {
-                        return None;
-                    }
-                    alts.push(match l {
-                        Literal::Atom(a) => Literal::Atom(Atom { args: a.args.iter().map(|t| subst(t, &to)).collect(), neg: !a.neg, ..a.clone() }),
-                        Literal::Cmp { l, op, r } => Literal::Cmp { l: subst(l, &to), op: negate(op)?, r: subst(r, &to) },
-                        _ => return None,
-                    });
-                }
-                alternatives.push(alts);
-            }
-        }
-    }
-    Some(alternatives)
-}
-
-/// The comparison that holds where `op` does not.
-fn negate(op: &str) -> Option<&'static str> {
-    Some(match op {
-        "=" => "!=",
-        "!=" | "<>" => "=",
-        "<" => ">=",
-        ">=" => "<",
-        ">" => "<=",
-        "<=" => ">",
-        _ => return None,
-    })
-}
-
-fn subst(t: &Term, to: &BTreeMap<String, Term>) -> Term {
-    match t {
-        Term::Var(v) => to.get(v.as_str()).cloned().unwrap_or_else(|| t.clone()),
-        Term::Call(f, args) => Term::Call(f.clone().into(), args.iter().map(|a| subst(a, to)).collect()),
-        t => t.clone(),
-    }
-}
-
-/// `l` with each variable `to` names renamed at once.
-fn rename_all(l: &Literal, to: &BTreeMap<String, String>) -> Literal {
-    fn term(t: &Term, to: &BTreeMap<String, String>) -> Term {
-        match t {
-            Term::Var(v) => Term::Var(to.get(v.as_str()).cloned().unwrap_or_else(|| v.to_string()).into()),
-            Term::Call(f, args) => Term::Call(f.clone().into(), args.iter().map(|a| term(a, to)).collect()),
-            t => t.clone(),
-        }
-    }
-    let name = |v: &String| to.get(v).cloned().unwrap_or_else(|| v.clone());
-    match l {
-        Literal::Atom(a) => Literal::Atom(Atom { args: a.args.iter().map(|t| term(t, to)).collect(), ..a.clone() }),
-        Literal::Cmp { l, op, r } => Literal::Cmp { l: term(l, to), op: *op, r: term(r, to) },
-        Literal::Nearest { n, a, kindset } => Literal::Nearest { n: name(n), a: name(a), kindset: kindset.clone() },
-        other => other.clone(),
-    }
-}
 
 /// What the native strata observed during a corpus run (`observing`): kept across its chunks and parts, so a later
 /// chunk's choice prices each relation from the rows its join steps produced. The run's thread's, shared by the jobs
@@ -1101,29 +947,27 @@ const STEP_MIN: f64 = 32.0;
 /// planner makes for it, each step's selectivity observed where an earlier chunk or part ran a step of its pattern
 /// (in this rule first, else in any), else the plan's estimate. A copy never ran, but its steps' patterns mostly did:
 /// a probe of `look` by its name and scope, `$x != 8173` (decision 0099, "The regression").
-fn calibrated(prog: &Program, model: &Model, rule: &Rule) -> Option<f64> {
+fn calibrated(prog: &Program, model: &Model, rule: &Body<'_>) -> Option<f64> {
     calibrated_at(prog, model, rule, None)
 }
 
 /// `calibrated`, the plan read with body literal `first` first (a delta plan's), else whole.
-fn calibrated_at(prog: &Program, model: &Model, rule: &Rule, first: Option<usize>) -> Option<f64> {
+fn calibrated_at(prog: &Program, model: &Model, rule: &Body<'_>, first: Option<usize>) -> Option<f64> {
     calibrated_rows_at(prog, model, rule, first).map(|(w, _)| w)
 }
 
 /// `calibrated`, and the rows the plan expects.
-fn calibrated_rows(prog: &Program, model: &Model, rule: &Rule) -> Option<(f64, f64)> {
+fn calibrated_rows(prog: &Program, model: &Model, rule: &Body<'_>) -> Option<(f64, f64)> {
     calibrated_rows_at(prog, model, rule, None)
 }
 
 /// `calibrated_rows`, with body literal `first` read first.
-fn calibrated_rows_at(prog: &Program, model: &Model, rule: &Rule, first: Option<usize>) -> Option<(f64, f64)> {
-    let made = super::body::alone(rule).ok()?;
-    let b = super::body::nth(&made, 0);
-    let ((order, _, out), step_rows) = model.plan_rule_step_rows(prog, &b, first).ok()?;
+fn calibrated_rows_at(prog: &Program, model: &Model, b: &Body<'_>, first: Option<usize>) -> Option<(f64, f64)> {
+    let ((order, _, out), step_rows) = model.plan_rule_step_rows(prog, b, first).ok()?;
     if step_rows.len() != order.len() {
         return None;
     }
-    let key = super::obs_rule(&rule.head, &rule.body);
+    let key = b.observed_key();
     OBSERVED.with(|o| {
         let o = o.borrow();
         let seen = |p: &str| -> Option<f64> {
@@ -1136,7 +980,7 @@ fn calibrated_rows_at(prog: &Program, model: &Model, rule: &Rule, first: Option<
         for (i, (s, &st_rows)) in order.iter().zip(&step_rows).enumerate() {
             let estimated = if before > 0.0 { st_rows / before } else { 1.0 };
             before = st_rows;
-            let factor = if i == 0 { st_rows } else { pattern(&b, s.at, &bound).and_then(|p| seen(&p)).unwrap_or(estimated) };
+            let factor = if i == 0 { st_rows } else { pattern(b, s.at, &bound).and_then(|p| seen(&p)).unwrap_or(estimated) };
             let out = rows * factor;
             work += rows + out;
             rows = out;
@@ -1149,8 +993,8 @@ fn calibrated_rows_at(prog: &Program, model: &Model, rule: &Rule, first: Option<
 }
 
 /// `rule`'s observed work, scaled to a corpus of `nodes`.
-fn observed_rule(rule: &Rule, nodes: f64) -> Option<f64> {
-    let key = super::obs_rule(&rule.head, &rule.body);
+fn observed_rule(rule: &Body<'_>, nodes: f64) -> Option<f64> {
+    let key = rule.observed_key();
     OBSERVED.with(|o| o.borrow().as_ref()?.rules.get(&key).map(|(w, n)| w / n * nodes.max(1.0)))
 }
 
@@ -1165,8 +1009,8 @@ fn copied<'a>(made: impl Iterator<Item = (u64, u64, &'a BTreeSet<String>)>) {
 }
 
 /// What `reader`'s copies did with `rel` inlined, scaled to a corpus of `nodes`.
-fn observed_copies(rel: &str, reader: &Rule, nodes: f64) -> Option<f64> {
-    let key = (rel.to_owned(), super::obs_rule(&reader.head, &reader.body));
+fn observed_copies(rel: &str, reader: &Body<'_>, nodes: f64) -> Option<f64> {
+    let key = (rel.to_owned(), reader.observed_key());
     OBSERVED.with(|o| o.borrow().as_ref()?.inlined.get(&key).map(|(w, n)| w / n * nodes.max(1.0)))
 }
 
@@ -1337,7 +1181,7 @@ struct Inserted {
 /// keeps its measured rows, and its columns' measured distinct values and fanouts: a column's distinct values are
 /// otherwise guessed (the least of the body columns that bind it, or the rows), and a guess prices a probe of it
 /// wrongly in either direction (0099, "The regression").
-fn estimate(prog: &Program, model: &mut Model, rules_of: &BTreeMap<&str, Vec<&Rule>>, sccs: &[BTreeSet<String>], need: &BTreeSet<&str>, built: &BTreeSet<&str>) -> (BTreeMap<String, (f64, f64, f64)>, Inserted) {
+fn estimate(prog: &Program, model: &mut Model, rules_of: &BTreeMap<&str, Vec<&Rule>>, (base, ids_of): (&Version, &BTreeMap<&str, Vec<usize>>), sccs: &[BTreeSet<String>], need: &BTreeSet<&str>, built: &BTreeSet<&str>) -> (BTreeMap<String, (f64, f64, f64)>, Inserted) {
     let mut out = BTreeMap::new();
     let mut inserted = Inserted { card: Vec::new(), ndv: Vec::new(), fan: Vec::new() };
     // The relations estimated, in evaluation order. Each is planned with the estimates of those before it, so its
@@ -1373,8 +1217,8 @@ fn estimate(prog: &Program, model: &mut Model, rules_of: &BTreeMap<&str, Vec<&Ru
         let model_now: &Model = model;
         let sums: Vec<(f64, f64)> = each.par_iter().zip(&measured_only).map(|(&i, &measured_only)| {
             let (mut rows, mut work) = (0.0, 0.0);
-            for r in order[i].1.iter().filter(|_| !measured_only) {
-                if let Some((w, n)) = calibrated_rows(prog, model_now, r) {
+            for &k in ids_of[order[i].0.as_str()].iter().filter(|_| !measured_only) {
+                if let Some((w, n)) = calibrated_rows(prog, model_now, &super::body::nth(base, k)) {
                     rows += n;
                     work += w;
                 }
@@ -1454,6 +1298,12 @@ fn unestimate(model: &mut Model, inserted: Inserted) {
 pub mod tests {
     use super::*;
 
+    /// `calibrated` of a rule of no version: the rule alone.
+    fn calibrated_rule(prog: &Program, model: &Model, rule: &Rule) -> Option<f64> {
+        let made = super::super::body::alone(rule).unwrap();
+        calibrated(prog, model, &super::super::body::nth(&made, 0))
+    }
+
     fn rule(text: &str) -> Rule {
         let prog = super::super::super::rr::parse(&format!(
             ".decl a(x: node)\n.decl b(x: node, y: node)\n.decl c(x: node, y: node)\n.decl r(x: node)\n.decl o(x: node)\n.input a\n.input b\n.output o\n{text}"
@@ -1468,21 +1318,21 @@ pub mod tests {
     fn reads_unfold_into_their_readers() {
         let reader = rule("o(x) :- a(x), r(x).");
         let def = rule("r(z) :- b(z, w), a(w).");
-        let copies = unfold(&reader, 1, &[&def], 1).unwrap();
+        let copies = inline::unfold_rules(&reader, 1, &[&def], 1).unwrap();
         assert_eq!(copies.len(), 1);
         assert_eq!(copies[0].to_string(), "o($x) :- a($x), b($x, $w_i1_1), a($w_i1_1)");
         let negated = rule("o(x) :- a(x), !r(x).");
         let one = rule("r(z) :- b(z, w).");
-        assert_eq!(unfold(&negated, 1, &[&one], 1).unwrap()[0].to_string(), "o($x) :- a($x), !b($x, _)");
+        assert_eq!(inline::unfold_rules(&negated, 1, &[&one], 1).unwrap()[0].to_string(), "o($x) :- a($x), !b($x, _)");
         let over_head = rule("r(z) :- a(z), z != 3.");
-        let two: Vec<String> = unfold(&negated, 1, &[&over_head], 1).unwrap().iter().map(|r| r.to_string()).collect();
+        let two: Vec<String> = inline::unfold_rules(&negated, 1, &[&over_head], 1).unwrap().iter().map(|r| r.to_string()).collect();
         assert_eq!(two, vec!["o($x) :- a($x), !a($x)", "o($x) :- a($x), $x = 3"]);
-        assert!(unfold(&negated, 1, &[&def], 1).is_none());
+        assert!(inline::unfold_rules(&negated, 1, &[&def], 1).is_none());
         // A head variable named twice equates the read's terms, the reader's own variables as they are, though one of
         // them has the name of the rule's.
         let reader = rule("o(n) :- a(t), c(t, n).");
         let twice = rule("c(n, n) :- a(n).");
-        assert_eq!(unfold(&reader, 1, &[&twice], 1).unwrap()[0].to_string(), "o($n) :- a($t), a($t), $t = $n");
+        assert_eq!(inline::unfold_rules(&reader, 1, &[&twice], 1).unwrap()[0].to_string(), "o($n) :- a($t), a($t), $t = $n");
     }
 
     /// The copies a read unfolds into are counted without making them (`copies`): what `unfold` makes, or `None`
@@ -1504,11 +1354,11 @@ pub mod tests {
             let defs: Vec<Rule> = defs.into_iter().map(rule).collect();
             let defs: Vec<&Rule> = defs.iter().collect();
             let at = reader.body.len() - 1;
-            assert_eq!(copies(&reader, at, &defs), unfold(&reader, at, &defs, 0).map(|c| c.len()), "{reader}");
+            assert_eq!(inline::count_rules(&reader, at, &defs), inline::unfold_rules(&reader, at, &defs, 0).map(|c| c.len()), "{reader}");
         }
         // Not an atom: no copies.
         let reader = rule("o(x) :- a(x), x != 3.");
-        assert_eq!(copies(&reader, 1, &[]), None);
+        assert_eq!(inline::count_rules(&reader, 1, &[]), None);
     }
 
     /// A reader in a recursion is priced by its delta plans: inlined into `reach`'s recursive rule, `edge`'s join
@@ -1553,7 +1403,7 @@ pub mod tests {
     fn a_head_variable_named_twice_equates_the_readers_terms() {
         let reader = rule("o(t) :- a(t), b(t, n), r(n).");
         let def = rule("b(n, n) :- a(n).");
-        let copies = unfold(&reader, 1, &[&def], 1).unwrap();
+        let copies = inline::unfold_rules(&reader, 1, &[&def], 1).unwrap();
         assert_eq!(copies[0].to_string(), "o($t) :- a($t), a($t), $t = $n, r($n)");
     }
 
@@ -1611,15 +1461,17 @@ pub mod tests {
         let decided = |model: &mut Model| choose(&prog, model).unwrap().map(|(_, done)| done).unwrap_or_default();
         let reader = prog.rules.iter().find(|r| r.head.rel == "agg").unwrap();
         let def = prog.rules.iter().find(|r| r.head.rel == "ctx").unwrap();
-        let copy = &unfold(reader, 0, &[def], 0).unwrap()[0];
+        let copy = &inline::unfold_rules(reader, 0, &[def], 0).unwrap()[0];
         // Estimates alone: stored, as the steps' real selectivities say.
         observing(true);
         let priced = |model: &mut Model| {
             let mut rules_of: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
             rules_of.entry("ctx").or_default().push(def);
             let (sccs, _) = strata(&prog).unwrap();
-            let (e, ins) = estimate(&prog, model, &rules_of, &sccs, &BTreeSet::from(["ctx"]), &BTreeSet::from(["ctx"]));
-            let got = format!("cards {:?} ndv {:?}; ctx {:?}; reader {:?}, copy {:?}, build {:?}", ["load", "look", "binding"].map(|r| model.stats.card.get(r).copied()), model.ndv.get(&("look".to_owned(), 0)), e.get("ctx"), calibrated(&prog, model, reader), calibrated(&prog, model, copy), calibrated(&prog, model, def));
+            let def_v = super::super::body::alone(def).unwrap();
+            let ids = BTreeMap::from([("ctx", vec![0])]);
+            let (e, ins) = estimate(&prog, model, &rules_of, (&def_v, &ids), &sccs, &BTreeSet::from(["ctx"]), &BTreeSet::from(["ctx"]));
+            let got = format!("cards {:?} ndv {:?}; ctx {:?}; reader {:?}, copy {:?}, build {:?}", ["load", "look", "binding"].map(|r| model.stats.card.get(r).copied()), model.ndv.get(&("look".to_owned(), 0)), e.get("ctx"), calibrated_rule(&prog, model, reader), calibrated_rule(&prog, model, copy), calibrated_rule(&prog, model, def));
             unestimate(model, ins);
             got
         };
@@ -1777,7 +1629,8 @@ pub mod tests {
         .unwrap();
         let mut model = model_with(&prog, &[("a", 5.0, &[5.0]), ("b", 1_000_000.0, &[10.0, 1_000.0]), ("c", 1_000_000.0, &[1_000.0, 50.0])]);
         // The planner's own estimate of r is over SMALL: priced, it would be weighed, not stored small.
-        let (_, planned) = calibrated_rows(&prog, &model, &prog.rules[0]).unwrap();
+        let made = super::super::body::alone(&prog.rules[0]).unwrap();
+        let (_, planned) = calibrated_rows(&prog, &model, &super::super::body::nth(&made, 0)).unwrap();
         assert!(planned >= SMALL, "r planned at {planned} rows");
         let chosen = choose(&prog, &mut model).unwrap();
         assert!(chosen.is_none(), "r inlined: {:?}", chosen.map(|c| c.1));

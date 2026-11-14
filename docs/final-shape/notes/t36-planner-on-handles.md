@@ -204,3 +204,12 @@ the tree pass's program, over the planner's, corpus, session, `rr` and keeps tes
     `choose`'s pricing still reads trees (`unfold`, `copies`).
   - dl1 (images required, profiling build, a fresh store): the 48 findings are equal; cold 45.4 G, warm 1.8 G (46.0 G
     and 1.8 G after the hub merge).
+  - Step 2, the pricing: `choose` reads the program's version, its rules' bodies by index (`Read`), and the
+    estimates, `calibrated*`, `observed_rule` and `observed_copies` take a `Body`: no rule is encoded alone. A
+    relation's reader copies are one candidate overlay of the version (`inline::copies`, kept by no one), counted
+    without being made (`inline::count`); a delta atom is found in a copy by its literal. Checked while porting: each
+    copy's literals and price equalled the tree's (`unfold`) over the keeps, planner, corpus and session tests and
+    dl1; the check and the tree's `unfold`, `copies` and `negated` are gone (the tests read the version's,
+    `inline::unfold_rules`). dl1: the 48 findings are equal; cold 44.4 G, warm 1.8 G. Still to come in step 2: the
+    version is the run's, passed in, not made from the tree (step 5), and `refusals`, `bounds` and `factorizable`
+    read trees.

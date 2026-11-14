@@ -96,21 +96,66 @@ pub(super) fn inline(base: &Arc<Version>, inline: &BTreeSet<String>) -> Result<I
     Ok(Inlined { v: cur, rules: seq, unfinished })
 }
 
+/// How many copies `unfold` makes of `reader`'s read at `at` of a relation whose rules are `defs`, or `None` where
+/// it makes none (`keeps::copies`): a positive read one per rule, a negated one the product of its rules'
+/// alternatives.
+pub(super) fn count(v: &Version, reader: RuleRef<'_>, at: usize, defs: &[RuleRef<'_>]) -> Option<usize> {
+    let Lit::Atom(read) = reader.body().nth(at)?.view() else { return None };
+    if !read.neg() {
+        return Some(defs.len());
+    }
+    let mut n = 1usize;
+    for alts in negated(v, reader, read, defs)? {
+        n *= alts.len();
+        if n > COPIES * 4 {
+            return None;
+        }
+    }
+    Some(n)
+}
+
+/// The copies `unfold` makes of each read in `reads` (a reader and the read's place) of a relation whose rules are
+/// `defs`, named as a first pass names them: an overlay of `base` that adds them (a candidate the pricing plans, kept
+/// by no one), and each read's copies by their ids in it.
+pub(super) fn copies(base: &Arc<Version>, reads: &[(RuleId, usize)], defs: &[RuleId]) -> Result<(Arc<Version>, Vec<Vec<RuleId>>), String> {
+    let ds: Vec<RuleRef<'_>> = defs.iter().map(|&d| base.rule(d).expect("a def")).collect();
+    let mut b = Builder::on(base);
+    let mut out = Vec::new();
+    let mut added = Vec::new();
+    for &(id, at) in reads {
+        let reader = base.rule(id).expect("a reader");
+        let read = reader.body().nth(at).and_then(|l| l.atom()).expect("a read");
+        let made = unfold(&mut b, base, reader, at, read, &ds, 0)?.unwrap_or_default();
+        added.extend(made.iter().copied());
+        out.push(made);
+    }
+    let (v, made) = b.finish()?;
+    if let Some(order) = renumbered(base, &[], &added, made) {
+        out.iter_mut().flatten().for_each(|id| *id = order[id]);
+    }
+    Ok((v, out))
+}
+
 /// The ids of `seq`'s rules after an edit of `parent` (`removed` gone, `added` added) was folded (`Builder::finish`
 /// folds an edit of half its parent or more): a fold numbers the rules from 0, in the overlay's order (the parent's
 /// left, then the added).
 fn renumber(parent: &Version, removed: &[RuleId], added: &[RuleId], made: Made, seq: &mut [(RuleId, RuleId, BTreeSet<String>)]) {
+    if let Some(order) = renumbered(parent, removed, added, made) {
+        for e in seq.iter_mut() {
+            e.0 = order[&e.0];
+        }
+    }
+}
+
+/// Each rule's id after a fold of the edit (`renumber`), or `None` where it was not folded.
+fn renumbered(parent: &Version, removed: &[RuleId], added: &[RuleId], made: Made) -> Option<BTreeMap<RuleId, RuleId>> {
     if !matches!(made, Made::Folded) {
-        return;
+        return None;
     }
     let gone: BTreeSet<RuleId> = removed.iter().copied().collect();
     let mut added = added.to_vec();
     added.sort_unstable();
-    let order: BTreeMap<RuleId, RuleId> =
-        parent.rules().map(|r| r.id()).filter(|id| !gone.contains(id)).chain(added).enumerate().map(|(k, id)| (id, RuleId(k as u32))).collect();
-    for e in seq.iter_mut() {
-        e.0 = order[&e.0];
-    }
+    Some(parent.rules().map(|r| r.id()).filter(|id| !gone.contains(id)).chain(added).enumerate().map(|(k, id)| (id, RuleId(k as u32))).collect())
 }
 
 /// Rule `id`'s first read of an inlined relation: its place in the body, and the atom.
@@ -160,7 +205,7 @@ fn unfold(b: &mut Builder<'_>, v: &Version, reader: RuleRef<'_>, at: usize, read
         }
         return Ok(Some(out));
     }
-    let Some(alternatives) = negated(b, v, reader, read, defs) else { return Ok(None) };
+    let Some(alternatives) = negated(v, reader, read, defs) else { return Ok(None) };
     let mut copies: Vec<Vec<usize>> = vec![Vec::new()];
     for alts in &alternatives {
         copies = copies.into_iter().flat_map(|c| (0..alts.len()).map(move |k| {
@@ -197,10 +242,10 @@ enum Alt<'v> {
 }
 
 /// `keeps::negated` over the version: each def negated, a set of alternatives whose product is the copies.
-fn negated<'v>(b: &mut Builder<'_>, v: &'v Version, reader: RuleRef<'_>, read: AtomRef<'_>, defs: &[RuleRef<'_>]) -> Option<Vec<Vec<Alt<'v>>>> {
+fn negated<'v>(v: &'v Version, reader: RuleRef<'_>, read: AtomRef<'_>, defs: &[RuleRef<'_>]) -> Option<Vec<Vec<Alt<'v>>>> {
     let read_args: Vec<TermRef<'_>> = read.args().collect();
     let read_vars: BTreeSet<Slot> = read_args.iter().filter_map(|t| t.var()).collect();
-    let reader_vars: Vec<AtomId> = (0..reader.var_count() as u32).map(|s| b.atom(v.text(reader.var(Slot(s))))).collect();
+    let reader_vars: Vec<&'v str> = (0..reader.var_count() as u32).map(|s| v.text(reader.var(Slot(s)))).collect();
     let mut alternatives = Vec::new();
     for def in defs {
         let heads: Vec<Slot> = def.head().args().map(|t| t.var()).collect::<Option<_>>()?;
@@ -299,15 +344,24 @@ fn negate(op: CmpOp) -> CmpOp {
 
 /// Term `t` of a def, each variable `to` names replaced (`keeps::subst`). `None` for a variable it does not name,
 /// which `negated`'s checks leave none of (every variable is the read's, or `_`).
-fn subst<'v>(v: &'v Version, t: TermRef<'_>, to: &BTreeMap<Slot, Sub<'_>>, reader_vars: &[AtomId]) -> Option<T<'v>> {
+fn subst<'v>(v: &'v Version, t: TermRef<'_>, to: &BTreeMap<Slot, Sub<'_>>, reader_vars: &[&'v str]) -> Option<T<'v>> {
     Some(match t {
         TermRef::Var(s) => match to.get(&s)? {
             Sub::Wild => T::Wild,
-            Sub::Read(r) => term(v, *r, &|x| reader_vars[x.0 as usize]),
+            Sub::Read(r) => named(v, *r, &|x| reader_vars[x.0 as usize]),
         },
         TermRef::Call(f, args) => T::Call(v.text(f), args.map(|a| subst(v, a, to, reader_vars)).collect::<Option<_>>()?),
         other => term(v, other, &|_| unreachable!("no variable")),
     })
+}
+
+/// Term `t` as the builder writes it, each variable by its name `var` gives.
+fn named<'v>(v: &'v Version, t: TermRef<'_>, var: &dyn Fn(Slot) -> &'v str) -> T<'v> {
+    match t {
+        TermRef::Var(s) => T::Var(var(s)),
+        TermRef::Call(f, args) => T::Call(v.text(f), args.map(|a| named(v, a, var)).collect()),
+        other => term(v, other, &|_| unreachable!("no variable")),
+    }
 }
 
 /// Term `t` as the builder writes it, each variable by the atom `var` names.
@@ -347,4 +401,31 @@ impl Rewrite for Renamed<'_> {
     fn var(&mut self, s: Slot) -> Option<AtomId> {
         self.to.get(&s).copied()
     }
+}
+
+/// The copies `unfold` makes of `reader`'s read at `at` of a relation whose rules are `defs`, decoded: for tests of
+/// rules of no program. `None` where it makes none.
+#[cfg(test)]
+pub(super) fn unfold_rules(reader: &crate::code_rule_dsl::logic::front::Rule, at: usize, defs: &[&crate::code_rule_dsl::logic::front::Rule], fresh: usize) -> Option<Vec<crate::code_rule_dsl::logic::front::Rule>> {
+    let rules: Vec<_> = std::iter::once(reader).chain(defs.iter().copied()).cloned().collect();
+    let v = super::super::body::made(&rules).ok()?;
+    let ds: Vec<RuleRef<'_>> = (1..rules.len()).map(|k| v.rule(RuleId(k as u32)).expect("a def")).collect();
+    let r = v.rule(RuleId(0)).expect("the reader");
+    let Lit::Atom(read) = r.body().nth(at)?.view() else { return None };
+    let mut b = Builder::on(&v);
+    let made = unfold(&mut b, &v, r, at, read, &ds, fresh).ok()??;
+    let (out, m) = b.finish().ok()?;
+    let order = renumbered(&v, &[], &made, m);
+    let lists = crate::code_rule_dsl::logic::front::Lists::default();
+    let mut tree = crate::code_rule_dsl::logic::program_image::Tree::new(&out, &lists);
+    Some(made.iter().map(|id| tree.rule(out.rule(order.as_ref().map_or(*id, |o| o[id])).expect("a copy"))).collect())
+}
+
+/// `count` of rules of no program, as `unfold_rules` reads them.
+#[cfg(test)]
+pub(super) fn count_rules(reader: &crate::code_rule_dsl::logic::front::Rule, at: usize, defs: &[&crate::code_rule_dsl::logic::front::Rule]) -> Option<usize> {
+    let rules: Vec<_> = std::iter::once(reader).chain(defs.iter().copied()).cloned().collect();
+    let v = super::super::body::made(&rules).ok()?;
+    let ds: Vec<RuleRef<'_>> = (1..rules.len()).map(|k| v.rule(RuleId(k as u32)).expect("a def")).collect();
+    count(&v, v.rule(RuleId(0)).expect("the reader"), at, &ds)
 }
