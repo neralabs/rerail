@@ -18,6 +18,7 @@ import {
   unregisterHarnesses,
   type Harness,
   type RegistrationChange,
+  type RegistrationOptions,
 } from "./harness-registration.js";
 
 /** The names people see for each coding agent `--agents` takes. */
@@ -48,9 +49,12 @@ export function registrationRoot(rerailHome: string, packageRoot: string): strin
 
 /** Where `codingAgentStates` looks for what keeps a coding agent out of Rerail's data; defaults are this computer's. */
 export interface DataAccessOptions {
+  /** The platform whose registration counts as connected, and whose rules keep a coding agent out of Rerail's data. */
   platform?: NodeJS.Platform;
   /** Claude Code's managed settings file (`claudeManagedSettingsPath`); null for none. */
   claudeManagedSettings?: string | null;
+  /** Whether a file is at a path, as the registration that counts as connected reads it (`RegistrationOptions.fileExists`). */
+  fileExists?: (path: string) => boolean;
 }
 
 /**
@@ -65,15 +69,19 @@ export async function codingAgentStates(root: string, home: string, options: Dat
   const states: CodingAgentState[] = [];
   for (const id of HARNESSES) {
     const base = { id, name: CODING_AGENT_NAMES[id], found: found.has(id) };
-    const state = base.found ? await connection(root, home, id) : { connected: false, problem: null };
+    const state = base.found ? await connection(root, home, id, { platform, fileExists: options.fileExists }) : { connected: false, problem: null };
     states.push({ ...base, ...state, rerailData: rerailDataAccess(id, state.connected, home, platform, managed) });
   }
   return states;
 }
 
-async function connection(root: string, home: string, id: Harness): Promise<Pick<CodingAgentState, "connected" | "problem">> {
+/** What a registration reads of this computer that a check of whether Rerail is connected can name. */
+type ConnectionFacts = Pick<RegistrationOptions, "platform" | "fileExists">;
+
+async function connection(root: string, home: string, id: Harness, facts: ConnectionFacts): Promise<Pick<CodingAgentState, "connected" | "problem">> {
   try {
-    const plan = await registerHarnesses({ root, home, harnesses: [id], dryRun: true });
+    // Either form a Claude Code hook entry on Windows can take counts as connected, whatever this process's PATH.
+    const plan = await registerHarnesses({ root, home, harnesses: [id], dryRun: true, keepHookCommand: true, ...facts });
     return { connected: plan.changes.every(change => change.harness !== id || change.action === "unchanged"), problem: null };
   } catch (error) {
     return { connected: false, problem: errorMessage(error) };

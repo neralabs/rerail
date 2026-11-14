@@ -1,0 +1,1 @@
+On Windows, where `node` on PATH is not the Node that ran set-up, Claude Code's hooks start that Node through cmd.exe: one Node per event instead of two. Run `rerail install --remove` before going back to an older Rerail: older versions run each hook twice beside these entries, and their removal leaves them, which then fail on every event.

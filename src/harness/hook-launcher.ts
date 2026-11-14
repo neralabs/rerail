@@ -1,25 +1,20 @@
 /**
- * Entry point of the Windows Claude Code hooks: `node <dist>/hook-launcher.js <recorded node> <dist>/<hook>.js`.
+ * Entry point of the Windows Claude Code hooks: `<node> <dist>/hook-launcher.js <recorded node> <dist>/<hook>.js`.
  *
- * Claude Code spawns these exec-form hooks without a shell, so the `cmd` fallback the shell-form registrations use
- * is unavailable. Claude Code resolves `node` from PATH and starts this file. The launcher then runs the hook under the node
- * recorded at registration, falling back to this node once that binary is gone. A version-manager upgrade (nvm-windows,
- * Volta, fnm) removes it and would otherwise break every hook until `rerail setup` runs again. The recorded-first
- * order keeps the shell launchers' version guarantee, so the hook still loads the SQLite binding built for that node when
- * a project pins an older node on PATH. Kept free of dependencies, Node's built-ins and Rerail's child-process helper
- * aside, so whatever node PATH supplies can run it.
+ * Claude Code spawns these exec-form hooks without a shell, so the `cmd` command line the shell-form registrations use
+ * is unavailable. `<node>` is `node`, which Claude Code resolves from PATH, where set-up found the recorded node there.
+ * Elsewhere the entry starts cmd.exe with each word as an argument of its own, and cmd starts the recorded node itself
+ * as `<node>` while it exists and `node.exe` from PATH once it is gone. The launcher runs the hook under the node
+ * recorded at registration, in this process when that node started it, falling back to this node once that binary is
+ * gone. A version-manager upgrade (nvm-windows, Volta, fnm) removes it and would otherwise break every hook until
+ * `rerail setup` runs again. The recorded-first order keeps the shell launchers' version guarantee, so the hook still
+ * loads the SQLite binding built for that node when a project pins an older node on PATH. Kept free of dependencies,
+ * Node's built-ins, Rerail's child-process helper and `same-file.ts` aside, so whatever node PATH supplies can run it.
  */
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "../engine/child-process.js";
-
-function sameFile(left: string, right: string): boolean {
-  try {
-    return realpathSync.native(left) === realpathSync.native(right);
-  } catch {
-    return false;
-  }
-}
+import { sameFile } from "./same-file.js";
 
 /**
  * A hook that could not run, or failed, answers nothing rather than failing: an agent shows a failed hook as an error
@@ -29,6 +24,21 @@ function quiet(reason: string, answered: boolean): void {
   process.stderr.write(`rerail hook: ${reason}\n`);
   if (!answered) process.stdout.write("{}\n");
   process.exitCode = 0;
+}
+
+/**
+ * Whether a hook run in this process has written to stdout since the call, as the answer collected from a hook run as a
+ * child tells: it counts what goes through `process.stdout.write`, which a hook's answer and `console.log` use.
+ */
+function watchAnswer(): () => boolean {
+  const write = process.stdout.write.bind(process.stdout);
+  let written = false;
+  // One signature stands in for the method's overloads: it passes their arguments on as they came.
+  process.stdout.write = ((...args: Parameters<typeof write>) => {
+    if (args[0].length > 0) written = true;
+    return write(...args);
+  }) as typeof process.stdout.write;
+  return () => written;
 }
 
 const [recordedNode, hookScript] = process.argv.slice(2);
@@ -49,10 +59,15 @@ if (existsSync(recordedNode) && !sameFile(recordedNode, process.execPath)) {
   // Run in this process exactly as `node <hook>` would: a hook serves only when it is the launched script, argv[1].
   // The hook is chosen by the registration's argument, so it cannot be a static import.
   process.argv.splice(1, 3, hookScript);
+  const answered = watchAnswer();
+  // A hook that fails here answers as a hook run as a child does: exit 0, and `{}` when it wrote nothing. Whether it
+  // ends the process itself, throws after it has loaded or leaves a failing exit code is known once the process ends.
+  process.on("exit", code => {
+    if (code !== 0) quiet(`exited ${code}`, answered());
+  });
   try {
     await import(pathToFileURL(hookScript).href);
-    if (process.exitCode !== undefined && process.exitCode !== 0) quiet(`exited ${process.exitCode}`, true);
   } catch (error) {
-    quiet(error instanceof Error ? error.message : String(error), false);
+    quiet(error instanceof Error ? error.message : String(error), answered());
   }
 }

@@ -464,7 +464,10 @@ Rerail must not be presented as a control the agent cannot switch off.
 <summary>Fail-open paths</summary>
 
 - `serveHook` answers `{}` to any error (`src/harness/hook-adapter.ts`).
-- The launcher turns a non-zero exit into exit 0 and `{}` (`src/harness/hook-launcher.ts`).
+- The launcher turns a hook's non-zero exit, a thrown error or `process.exit` included, into exit 0, with `{}` when
+  the hook wrote nothing (`src/harness/hook-launcher.ts`), whether it runs the hook as a child or in its own process.
+  In its own process, a native crash or an out-of-memory abort ends the process before the launcher can answer, so
+  that exit code stays; Claude Code shows it as a hook error and does not block on it.
 - With no daemon running, every hook except `SessionStart` returns at once.
 - A repository that is not started gets `{}`.
 - A Node major below the requirement does nothing.
@@ -691,6 +694,11 @@ should not widen it.
   nested worktree or submodule are not skipped, nor is any repository's when the process started outside it. The
   daemon finds Git once, from the folder and `PATH` it started with, and keeps it.
 - If the recorded `node` is gone, the hook falls back to `node` on `PATH`, which a version manager or direnv can shim.
+  Where set-up found another `node` first on `PATH`, Claude Code's hooks on Windows run `cmd.exe /d /c` by its
+  System32 path, which looks for that fallback `node.exe` on `PATH` alone, never in the hook's working folder
+  (`src/setup/harness-registration.ts`). Set-up writes that path only when `SystemRoot` makes it a full path, from a
+  drive's root folder (`C:\`) or a UNC share, and `cmd.exe` is there at set-up, and `node` otherwise: Windows completes
+  any other path from a current folder or drive, and a hook's current folder is the repository it runs in.
 - The Claude status-line wrapper runs an inherited `statusLine` command, re-read from the working directory's
   `.claude/settings*.json`, with `shell: true` (`src/hosts/claude/claude-status.ts`, `src/setup/claude-status-store.ts`).
 - `hooks/cursor.json` uses the relative path `./dist/hosts/cursor/cursor-hook.js`. [INFERENCE: exposed only if Cursor

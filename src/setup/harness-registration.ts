@@ -28,6 +28,7 @@ import { readAddedSettingsEntries, writeAddedSettingsEntries, type AddedSettings
 import { commandFileText, MANAGED_SKILL_MARKER, type CommandFileContext } from "../harness/rerail-command-files.js";
 import { RERAIL_COMMANDS, type RerailCommandName } from "../harness/rerail-commands.js";
 import { andList } from "../harness/setup-screens.js";
+import { sameFile } from "../harness/same-file.js";
 import { commandLine, POWERSHELL_SAFE, powershellLiteral, shellWord } from "../engine/command-line.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
@@ -36,6 +37,7 @@ import { mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import { runGit } from "../engine/git.js";
 import { replaceFile } from "../engine/file-replace.js";
 import { pinnedNodePath } from "./node-path.js";
+import { programOnPath, windowsSystemProgram } from "../engine/system-programs.js";
 import { ACTIVE_PROFILE_FILE, PROFILES_DIR } from "../activation/customer-profile.js";
 import { DEVICE_SECRETS_DIR } from "../activation/device-keystore.js";
 import { RERAIL_HOSTS, type RerailHost } from "../engine/adapter-contract.js";
@@ -56,6 +58,19 @@ export interface RegistrationOptions {
   dryRun?: boolean;
   /** Test seam for platform-specific command quoting and directory links. */
   platform?: NodeJS.Platform;
+  /**
+   * Keep a Claude Code hook entry on Windows that already runs the same launcher, recorded Node and hook, in either form
+   * registration writes: `node` from PATH or cmd.exe. Which of the two it writes depends on the PATH of the process that
+   * plans it (`hookExecEntry`), so a check of whether Rerail is connected, run with another PATH, would otherwise read a
+   * current registration as out of date. Set-up and `rerail update` leave it off and write the form their PATH calls
+   * for.
+   */
+  keepHookCommand?: boolean;
+  /**
+   * Test seam: whether a file is at a path. Set-up asks it of cmd.exe's System32 path before it writes a Windows hook
+   * entry that starts cmd.exe (`execHookEntries`). This computer's file system by default.
+   */
+  fileExists?: ((path: string) => boolean) | undefined;
   /**
    * Removal only: whether `root` is the managed install, whose removal takes Pi's gallery entry (`npm:@neralabs/rerail`)
    * out too. `rerail install --remove` sets it when it removes the install itself, which before any set-up is the running
@@ -89,6 +104,10 @@ interface Context {
   nodePath: string;
   dryRun: boolean;
   platform: NodeJS.Platform;
+  /** `RegistrationOptions.keepHookCommand`. */
+  keepHookCommand: boolean;
+  /** `RegistrationOptions.fileExists`. */
+  fileExists: (path: string) => boolean;
 }
 
 interface TextFile {
@@ -432,16 +451,50 @@ function isNodeExecutable(path: string): boolean {
   return /^node(?:\.exe)?$/iu.test(path.split(/[\\/]/u).at(-1)!);
 }
 
-/** The arguments of a generated exec-form entry: the hook launcher, the recorded node and the hook. */
+/** The arguments of a generated `node` exec-form entry: the hook launcher, the recorded node and the hook. */
 const execHookArgs = z.tuple([z.string(), z.string(), z.string()]);
 
-/** Node and hook script of a generated exec-form entry: `node <root>/<hook launcher> <recorded node> <root>/<hook>`. */
+/** The words of a generated cmd.exe exec-form entry (`cmdHookArgs`), which end with the launcher's arguments and `)`. */
+const cmdHookWords = z.array(z.string()).min(4);
+
+/**
+ * Node and hook script of a generated exec-form entry: `node <root>/<hook launcher> <recorded node> <root>/<hook>`, or
+ * the same launcher run through cmd.exe (`cmdHookArgs`).
+ */
 function execHookTarget(context: Pick<Context, "platform">, command: string, args: unknown, executable: string): HookTarget | undefined {
-  const parsed = execHookArgs.safeParse(args);
-  if (command !== "node" || !parsed.success) return undefined;
-  const [launcher, nodePath, script] = parsed.data;
+  const launched = launcherArgs(command, args);
+  if (launched === undefined) return undefined;
+  const [launcher, nodePath, script] = launched;
   const root = registeredRoot(script, executable, context.platform);
   return root !== undefined && launcher === pathsOf(context.platform).join(root, ENTRY_POINTS.hookLauncher) ? { nodePath, script } : undefined;
+}
+
+/** The hook launcher and its two arguments, the recorded node and the hook, as an exec-form entry runs them. */
+type LauncherArgs = readonly [launcher: string, nodePath: string, script: string];
+
+/** The launcher's arguments of an entry in either form `hookExecEntry` writes; undefined for any other entry. */
+function launcherArgs(command: string, args: unknown): LauncherArgs | undefined {
+  if (command === "node") return execHookArgs.safeParse(args).data;
+  const words = cmdHookWords.safeParse(args).data;
+  return words !== undefined && isWindowsCmd(command) ? cmdLauncherArgs(words) : undefined;
+}
+
+/** The launcher's arguments of a cmd.exe entry's words: the last command's, before the `)` that closes `cmdHookArgs`. */
+function cmdLauncherArgs(words: readonly string[]): LauncherArgs | undefined {
+  const launched = words.slice(-4, -1) as [string, string, string];
+  return JSON.stringify(cmdHookArgs(launched)) === JSON.stringify(words) ? launched : undefined;
+}
+
+/**
+ * cmd.exe in a folder named System32, in any letter case: the path `windowsSystemProgram` gives it from any SystemRoot.
+ * Registration reads such an entry as its own even where that path is not full, which it never writes
+ * (`isFullWindowsPath`), so that a refresh or removal takes out an entry written under such a SystemRoot. It never asks
+ * whether a file is at that path, so an entry whose cmd.exe has gone since set-up wrote it is still Rerail's to replace
+ * and remove.
+ */
+function isWindowsCmd(command: string): boolean {
+  const name = (path: string) => win32.basename(path).toLowerCase();
+  return name(command) === "cmd.exe" && name(win32.dirname(command)) === "system32";
 }
 
 /**
@@ -516,15 +569,98 @@ function cursorPowershellHookCommand(context: HookCommandContext, executable: st
 }
 
 /**
- * The same recorded-first, PATH-fallback order without a shell, for hosts that spawn exec-form hooks directly:
- * `node` from PATH starts the hook launcher, which hands the hook to the recorded node while that binary exists.
+ * The same recorded-first order without a shell, for hosts that spawn exec-form hooks directly: the hook launcher runs
+ * the hook under the recorded node, or under the node that started it once the recorded one is gone. Where `node` on
+ * PATH is the recorded node, the host starts the launcher with it, and the launcher runs the hook in its own process.
+ * Elsewhere `node` would start the launcher on another node, which would start the recorded one as a second process on
+ * every hook event, so the hook starts through cmd.exe (`cmdHookArgs`): cmd starts the recorded node itself while it
+ * exists and `node.exe` from PATH once it is gone, one node either way. With `keepHookCommand`, an entry in either
+ * form that the settings already hold stays as it is (`keptHookEntry`).
  */
 function hookExecEntry(context: Context, executable: string): JsonObject {
-  return {
-    type: "command",
-    command: "node",
-    args: [hookScript(context, ENTRY_POINTS.hookLauncher), context.nodePath, hookScript(context, executable)],
-  };
+  const [viaPath, viaCmd] = execHookEntries(context, [hookScript(context, ENTRY_POINTS.hookLauncher), context.nodePath, hookScript(context, executable)]);
+  return pathFindsNode(context.nodePath, context.platform) ? viaPath : viaCmd;
+}
+
+/**
+ * The two exec-form entries that can run the hook launcher with `launched`: `node` from PATH, and cmd.exe
+ * (`cmdHookArgs`). Where cmd.exe would not read each path back as one word (`cmdReadsAsOneWord`), where SystemRoot
+ * does not give cmd.exe a full path (`isFullWindowsPath`), or where no file is at that path, the second is the first:
+ * that hook starts with `node`, in two processes when PATH finds another node. Windows completes any other path from a
+ * current folder or drive, and a hook's current folder is the repository it runs in. A full path with nothing at it,
+ * from a SystemRoot that names no Windows, would start nothing on every hook event. The path's form is tested first,
+ * since a path that is not full would be looked for from this process's current folder.
+ */
+function execHookEntries(context: Pick<Context, "fileExists">, launched: LauncherArgs): [viaPath: JsonObject, viaCmd: JsonObject] {
+  const viaPath = { type: "command", command: "node", args: [...launched] };
+  const cmd = windowsSystemProgram("cmd.exe");
+  if (!isFullWindowsPath(cmd) || !context.fileExists(cmd) || !launched.every(path => cmdReadsAsOneWord(path))) return [viaPath, viaPath];
+  return [viaPath, { type: "command", command: cmd, args: cmdHookArgs(launched) }];
+}
+
+/**
+ * Whether a Windows path is full: a drive and its root folder (`C:\`), or a UNC path (`\\server\share\`). Windows
+ * completes any other from a current folder or drive: `Windows\System32` from the current folder, `\Windows\System32`
+ * on the current drive, `C:Windows\System32` from the current folder of drive C.
+ */
+function isFullWindowsPath(path: string): boolean {
+  return /^(?:[a-z]:[\\/]|[\\/]{2}[^\\/])/iu.test(path);
+}
+
+/**
+ * The words of a cmd.exe line that runs the hook launcher under the recorded node while that file exists, and otherwise
+ * under `node.exe` from PATH: the order `hookCommand` gives a shell. Each path is a word of its own, which a spawn
+ * quotes when it holds a space and cmd reads back whole; put inside one long argument, a quoted path reaches cmd with
+ * its quotes escaped and is never found. `/d` skips the AutoRun commands a computer may give cmd, which could write
+ * onto the hook's answer. `NoDefaultCurrentDirectoryInExePath` keeps cmd from taking a `node.exe` in the hook's working
+ * folder, a repository, before PATH's. cmd stays node's parent, so a host that kills it on a timeout leaves node
+ * running; the hook then ends itself (`exitWhenParentGone`).
+ */
+function cmdHookArgs([launcher, node, hook]: LauncherArgs): string[] {
+  const fallback = ["set", "NoDefaultCurrentDirectoryInExePath=1", "&", "node.exe", launcher, node, hook];
+  return ["/d", "/c", "if", "exist", node, "(", node, launcher, node, hook, ")", "else", "(", ...fallback, ")"];
+}
+
+/**
+ * Whether cmd.exe reads `path` back as one word when a spawn without a shell passes it alone. The spawn puts a word that
+ * holds a space or tab in double quotes, inside which cmd takes every character as it is but `%`; it passes any other
+ * word bare, where cmd's operators and separators split it. `!` is out too, since a computer can turn on delayed
+ * expansion for every cmd.exe.
+ */
+function cmdReadsAsOneWord(path: string): boolean {
+  if (/[%!"]/u.test(path)) return false;
+  return /[ \t]/u.test(path) || !/[&()^|<>,;=]/u.test(path);
+}
+
+/**
+ * `entry`, or with `keepHookCommand` the entry of the other form for the same hook (`execHookEntries`) when `settings`
+ * already hold that one. Which form registration writes depends on the PATH of the process that plans it, so a check of
+ * whether Rerail is connected, run with another PATH, would otherwise read a current registration as out of date. A
+ * cmd.exe entry stays only while a file is at its path: one with nothing there starts no hook, so it reads as out of
+ * date.
+ */
+function keptHookEntry(context: Context, settings: JsonObject, entry: JsonObject): JsonObject {
+  const launched = context.keepHookCommand && typeof entry.command === "string" ? launcherArgs(entry.command, entry.args) : undefined;
+  if (launched === undefined) return entry;
+  return execHookEntries(context, launched).find(form => holdsHookEntry(settings, form)) ?? entry;
+}
+
+/** Whether `settings` hold `entry` among their hooks: the same command with the same arguments. */
+function holdsHookEntry(settings: JsonObject, entry: JsonObject): boolean {
+  const events = Object.values(isObject(settings.hooks) ? settings.hooks : {});
+  const groups = events.flatMap(event => (Array.isArray(event) ? event : []));
+  const entries = groups.flatMap(group => (isObject(group) && Array.isArray(group.hooks) ? group.hooks : []));
+  const wanted = JSON.stringify([entry.command, entry.args]);
+  return entries.some(found => isObject(found) && JSON.stringify([found.command, found.args]) === wanted);
+}
+
+/**
+ * Whether `node` on this process's PATH is the file at `nodePath`, found as a spawn without a shell finds it
+ * (`programOnPath`) and compared by the hook launcher's own test (`sameFile`).
+ */
+function pathFindsNode(nodePath: string, platform: NodeJS.Platform): boolean {
+  const found = programOnPath("node", { platform });
+  return found !== undefined && sameFile(found, nodePath);
 }
 
 
@@ -746,7 +882,7 @@ async function updateGroupedHooks(
   entry: JsonObject,
 ): Promise<JsonObject> {
   const hooks = await stripHookEvents(hooksObject(value, path), context, executable);
-  if (context.mode === "register") addHookGroups(hooks, events, toolEvents, entry, path);
+  if (context.mode === "register") addHookGroups(hooks, events, toolEvents, keptHookEntry(context, value, entry), path);
   return withHooks(value, hooks);
 }
 
@@ -1769,6 +1905,8 @@ function newContext(options: RegistrationOptions, mode: Mode): Context {
     nodePath: options.nodePath ?? pinnedNodePath(),
     dryRun: options.dryRun === true,
     platform: options.platform ?? process.platform,
+    keepHookCommand: options.keepHookCommand === true,
+    fileExists: options.fileExists ?? existsSync,
   };
 }
 
