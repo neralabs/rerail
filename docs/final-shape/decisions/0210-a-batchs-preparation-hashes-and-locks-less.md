@@ -31,6 +31,16 @@ and the split and magic self-checks pass.
 5. **Sharded names.** `front::Name`'s table is 64 shards, picked by the text's FxHash. One text always lands in
    the same shard, so a name is still one allocation and equality by address still holds. Each shard sweeps its
    own dead entries.
+6. **The split's fixpoints in numbers.** `split_in` numbers each rule in scope once (`file_local::shape`):
+   - variables by first appearance, each with its class under the rule's equalities (a closure under them is the
+     classes it touches);
+   - value tapes and binders after the variables;
+   - derived relations by number, with their location columns a vector by number.
+
+   Each round's location check and file-local check then works on bits and a union-find over a rule's ids, not on
+   `BTreeSet<String>` closed by scanning again, relations looked up by name, and a `format!` per tape. The check by
+   text still runs, once, for a rule the numbered check fails, to give its cause. Debug builds assert that the two
+   checks agree on every rule.
 
 ## Measured
 
@@ -43,6 +53,7 @@ dl1, `RERAIL_THREADS=4`, cold, `--profile profiling`, alternating A/B runs:
 | incremental split keys | 23.78 → 23.47 G; keys 4.6% → 0.6% of the main thread |
 | `canonical` | 23.3 → 22.78 G |
 | sharded names | ~22.95 → ~22.83 G; `Name::new` 872 of 13,605 samples → 2 of 13,269 |
+| numbered split | 23.08 → 22.47 G (load 52–65) |
 
 The set as a whole, against the engine built just after the hub merge (one of the earlier steps was already in
 that engine), at load 76–84: instructions 23.64 → 22.90 G, CPU 2.99 → 2.83 s (medians). Walls at that load are
@@ -58,6 +69,7 @@ runs at its starter's depth (`switches::within`) and takes nothing.
 ## What remains
 
 These are open items (O-split-in-strings and the others in open-items.md):
-- `split_in` is about 10% of the main thread, with string-keyed sets and a `format!` per tape.
+- `split_in`'s rule numbering runs for every rule in scope at each split; a rule's intrinsic part (its variables,
+  classes and tapes) could be kept with its body's digest across splits. `split_constants` still works on names.
 - `Board::finish` is 15% of the main thread, mostly waiting on the pool (`LockLatch`).
 - `memcmp` is 14.6%, spread over the string-keyed BTree lookups of many passes.

@@ -5061,7 +5061,10 @@ domain is then a function of the rules, not of their order), and then run the fi
 
 ## O-split-in-strings. The file-local split's analysis works on strings (2026-11-14, decision 0210)
 
-After decision 0210, a cold dl1 batch's main thread still spends about 10% in `typing::file_local::split_in`.
+Status: the fixpoints are numbered (0210 §6: dl1 23.08 → 22.47 G). Open: a rule's numbering is made again at each
+split (keep it with the body's digest), and `split_constants` works on names.
+
+After decision 0210's first five steps, a cold dl1 batch's main thread still spent about 10% in `typing::file_local::split_in`.
 Its location and filter fixpoints build a `BTreeSet<String>` of variables for each rule in each round, and
 `rule_local` makes a `format!("rr_value_tape:{v}")` for each value tape. A form numbered by variable (each rule's
 variables as small integers, made once per rule body and kept with the body's digest by the split memo) would

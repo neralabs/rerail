@@ -184,6 +184,7 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
 }
 
 pub mod split_memo;
+mod shape;
 pub mod export_demand;
 pub use export_demand::demand_exports;
 pub use split_memo::forget as forget_splits;
@@ -323,6 +324,11 @@ impl<'p> RuleIndex<'p> {
     /// `rel`'s rules, in program order.
     pub(crate) fn rules_of(&self, rel: &str) -> impl Iterator<Item = &'p crate::code_rule_dsl::logic::front::Rule> + '_ {
         self.by_head.get(rel).into_iter().flatten().map(|&i| &self.rules[i])
+    }
+
+    /// The indices of `rel`'s rules, in program order.
+    pub(crate) fn rule_ids_of(&self, rel: &str) -> &[usize] {
+        self.by_head.get(rel).map_or(&[], Vec::as_slice)
     }
 
     /// The indices of the rules whose bodies read `rel`, in program order.
@@ -535,61 +541,67 @@ fn split_in(
     let was = |rel: &str| prev.filter(|_| !scope.contains(rel));
     let base_locations = |rel: &str| base_locations(prog, rel);
     let constants = split_constants(prog, index, derived, scope, prev.map(|p| &p.constants));
-    // A derived relation's location columns: those every rule fills from a location.
-    let mut locations: BTreeMap<String, Vec<usize>> = BTreeMap::new();
-    let location_vars = |rule: &crate::code_rule_dsl::logic::front::Rule, locations: &BTreeMap<String, Vec<usize>>| -> BTreeSet<String> {
-        let mut out = BTreeSet::new();
-        // `v = v0` (a disjunction's branch, as lowering leaves it): v is a location where v0 is.
-        let equal = var_equalities(rule);
-        for literal in &rule.body {
-            if let Some(a) = literal.atom().filter(|a| !a.neg) {
-                let columns = if derived.contains(a.rel.as_str()) { locations.get(a.rel.as_str()).cloned().unwrap_or_default() } else { base_locations(&a.rel) };
-                for c in columns {
-                    if let Some(Term::Var(v)) = a.args.get(c) {
-                        out.insert(v.to_string());
-                    }
-                }
-            }
-        }
-        close_under(&mut out, &equal);
-        out
+    let text_columns = |rel: &str| crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(r, _)| *r == rel).map(|(_, c)| *c);
+    let test_relation = |rel: &str| rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION);
+    // A read that places no document whatever the round: a constant, a chunk's own value (a tape operation's rows,
+    // decision 0058 §4, made in the chunk that asked), a text test.
+    let placeless = |rel: &str| {
+        let base = !derived.contains(rel);
+        (base && prog.facts.contains_key(rel) && !prog.inputs.iter().any(|x| x == rel))
+            || constants.contains(rel)
+            || run_constant(prog, rel)
+            || (base && CHUNK_VALUES.contains(&rel))
+            || test_relation(rel)
     };
-    // Location columns to a fixpoint (a column is one if every rule's head fills it from a location variable).
-    for rel in derived {
-        let kept = was(rel).and_then(|p| p.locations.get(*rel).cloned());
-        let width = prog.decls.get(*rel).map_or(0, |c| c.len());
-        locations.insert((*rel).to_owned(), kept.unwrap_or_else(|| (0..width).collect()));
-    }
+    // The rules in scope numbered once (`shape`): the fixpoints below ask them in that form each round.
+    use rayon::prelude::*;
+    let numbered = shape::Derived::of(derived);
+    let shapes: Vec<Option<shape::Shape>> = prog
+        .rules
+        .par_iter()
+        .map(|r| scope.contains(r.head.rel.as_str()).then(|| shape::Shape::of(r, prog, &numbered, &placeless)))
+        .collect();
+    let shape_of = |i: usize| -> std::borrow::Cow<'_, shape::Shape> {
+        match &shapes[i] {
+            Some(s) => std::borrow::Cow::Borrowed(s),
+            None => std::borrow::Cow::Owned(shape::Shape::of(&prog.rules[i], prog, &numbered, &placeless)),
+        }
+    };
+    // A derived relation's location columns (by number): those every rule fills from a location.
+    let mut locs: Vec<Vec<usize>> = numbered
+        .names
+        .iter()
+        .map(|rel| {
+            let kept = was(rel).and_then(|p| p.locations.get(*rel).cloned());
+            let width = prog.decls.get(*rel).map_or(0, |c| c.len());
+            kept.unwrap_or_else(|| (0..width).collect())
+        })
+        .collect();
     // A greatest fixpoint (columns only leave), so any order reaches the same one: a relation is checked again only
     // when the locations of one its rules read changed (a pack's program has tens of thousands of rules). In rounds,
     // each round's relations checked on the pool's threads against the locations as the round began.
-    use rayon::prelude::*;
     let mut round: Vec<&str> = scope.iter().copied().collect();
     while !round.is_empty() {
         let changed: Vec<(&str, Vec<usize>)> = round
             .par_iter()
             .filter_map(|&rel| {
-                let rules: Vec<&crate::code_rule_dsl::logic::front::Rule> = index.rules_of(rel).collect();
-                let vars: Vec<BTreeSet<String>> = rules.iter().map(|r| location_vars(r, &locations)).collect();
-                let kept: Vec<usize> = locations[rel]
-                    .iter()
-                    .copied()
-                    .filter(|&c| rules.iter().zip(&vars).all(|(r, vs)| matches!(r.head.args.get(c), Some(Term::Var(v)) if vs.contains(v.as_str()))))
-                    .collect();
-                (kept != locations[rel]).then_some((rel, kept))
+                let d = numbered.id[rel] as usize;
+                let rules: Vec<_> = index.rule_ids_of(rel).iter().map(|&i| shape_of(i)).collect();
+                let placed: Vec<shape::Bits> = rules.iter().map(|r| r.placed_classes(&locs)).collect();
+                let kept: Vec<usize> = locs[d].iter().copied().filter(|&c| rules.iter().zip(&placed).all(|(r, p)| r.head_placed(c, p))).collect();
+                (kept != locs[d]).then_some((rel, kept))
             })
             .collect();
         let next = index.heads_reading_any(changed.iter().map(|(rel, _)| *rel), |_| true);
         for (rel, kept) in changed {
-            locations.insert(rel.to_owned(), kept);
+            locs[numbered.id[rel] as usize] = kept;
         }
         round = next;
     }
+    let locations: BTreeMap<String, Vec<usize>> = numbered.names.iter().map(|r| (*r).to_owned()).zip(locs.iter().cloned()).collect();
     // String filters (decision 0037): a text test's relation (`strtest_<k>`), and a derived relation whose every
     // rule reads only text relations and such filters, each head string from a text column. A chunk's rows hold
     // every string of the chunk that passes, so a rule that joins one on a string its chunk gave stays file-local.
-    let text_columns = |rel: &str| crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().find(|(r, _)| *r == rel).map(|(_, c)| *c);
-    let test_relation = |rel: &str| rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION);
     // To a fixpoint: a filter may read other filters.
     let mut filters: BTreeSet<String> = derived.iter().filter(|r| was(r).is_none_or(|p| p.filters.contains(**r))).map(|r| (*r).to_owned()).collect();
     // A greatest fixpoint: a relation is checked again only when one its rules read leaves. In rounds, as the
@@ -635,7 +647,11 @@ fn split_in(
         })
         .collect();
     let mut dirty: Option<BTreeSet<usize>> = None;
+    // The file-local relations and the filters by number, for the numbered check (`Shape::one_document`).
+    let mut local_now: Vec<bool> = numbered.names.iter().map(|r| local.contains(*r)).collect();
+    let filtering: Vec<bool> = numbered.names.iter().map(|r| filters.contains(*r)).collect();
     loop {
+        // Why a rule places more than one document, from its text: asked only of a rule the numbered check fails.
         let rule_local = |rule: &crate::code_rule_dsl::logic::front::Rule| -> Result<(), String> {
             // Each read relation's location variables; the rule's locations must form one component.
             let mut groups: Vec<BTreeSet<String>> = Vec::new();
@@ -718,12 +734,26 @@ fn split_in(
         // In rounds, as before, so the causes are the same: a rule can newly fail only by reading a relation that left
         // in the round before; the first round checks every rule in scope.
         // Each round's rules checked on the pool's threads, their failures kept in program order.
+        let check = |i: usize| -> Option<(String, String)> {
+            let r = &prog.rules[i];
+            if shape_of(i).one_document(&local_now, &filtering, &locs) {
+                debug_assert!(rule_local(r).is_ok(), "the numbered check and the text's agree on {}", r.head.rel);
+                return None;
+            }
+            let why = rule_local(r).err();
+            debug_assert!(why.is_some(), "the numbered check and the text's agree on {}", r.head.rel);
+            let why = why.unwrap_or_else(|| "places more than one document".to_owned());
+            Some((r.head.rel.to_string(), why))
+        };
         let failing: Vec<(String, String)> = match &dirty {
-            None => prog.rules.par_iter().filter(|r| scope.contains(r.head.rel.as_str()) && local.contains(r.head.rel.as_str())).filter_map(|r| rule_local(r).err().map(|why| (r.head.rel.to_string(), why))).collect(),
-            Some(rules) => rules.iter().copied().collect::<Vec<usize>>().par_iter().map(|&i| &prog.rules[i]).filter(|r| local.contains(r.head.rel.as_str())).filter_map(|r| rule_local(r).err().map(|why| (r.head.rel.to_string(), why))).collect(),
+            None => (0..prog.rules.len()).into_par_iter().filter(|&i| scope.contains(prog.rules[i].head.rel.as_str()) && local.contains(prog.rules[i].head.rel.as_str())).filter_map(check).collect(),
+            Some(rules) => rules.iter().copied().collect::<Vec<usize>>().par_iter().copied().filter(|&i| local.contains(prog.rules[i].head.rel.as_str())).filter_map(check).collect(),
         };
         let mut next: BTreeSet<usize> = BTreeSet::new();
         for (rel, why) in failing {
+            if let Some(&d) = numbered.id.get(rel.as_str()) {
+                local_now[d as usize] = false;
+            }
             if local.remove(&rel) {
                 next.extend(index.reading(&rel));
             }
