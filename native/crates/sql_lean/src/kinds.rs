@@ -2249,7 +2249,7 @@ pub static WORDS: &[(&str, K)] = &[
 ];
 
 /// Each keyword word once (`WORDS`' words), its code its index; 0 is no word.
-pub static WORD_TEXT: &[&[u8]] = &[
+pub const WORD_TEXT: &[&[u8]] = &[
     b"", b"abort", b"access", b"action", b"add", b"admin", b"after", b"aggregate",
     b"all", b"also", b"alter", b"always", b"analyse", b"analyze", b"and", b"any",
     b"array", b"as", b"asc", b"assignment", b"asymmetric", b"at", b"atomic", b"attach",

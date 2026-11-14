@@ -279,7 +279,7 @@ const WORD_LIST: [(&[u8], T, u8); 41] = [
 ];
 
 /// `WORD_LIST`'s words, the code of each its index plus one (0: none).
-static WORD_TEXT: [&[u8]; WORD_LIST.len() + 1] = {
+const WORD_TEXT: [&[u8]; WORD_LIST.len() + 1] = {
     let mut t: [&[u8]; WORD_LIST.len() + 1] = [b""; WORD_LIST.len() + 1];
     let mut i = 0;
     while i < WORD_LIST.len() {
@@ -290,8 +290,7 @@ static WORD_TEXT: [&[u8]; WORD_LIST.len() + 1] = {
 };
 
 /// The keyword switch (`rerail_simd8::words`) over `WORD_TEXT`.
-static WORDS: rerail_simd8::words::Words<{ rerail_simd8::words::slots_for(WORD_LIST.len() + 1) }, { rerail_simd8::words::buckets_for(WORD_LIST.len() + 1) }, false> =
-    rerail_simd8::words::Words::build(&WORD_TEXT);
+rerail_simd8::keyword_switch!(static WORDS = &WORD_TEXT, fold: false);
 
 /// The word `src[i..end]`'s kind and soft keyword: one probe of the keyword switch.
 #[inline(always)]

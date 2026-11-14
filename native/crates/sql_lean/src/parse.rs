@@ -93,8 +93,7 @@ struct Tok {
 }
 
 /// The keyword switch (`rerail_simd8::words`) over every keyword word, case folded.
-static KEYWORDS: rerail_simd8::words::Words<{ rerail_simd8::words::slots_for(kinds::WORD_TEXT.len()) }, { rerail_simd8::words::buckets_for(kinds::WORD_TEXT.len()) }, true> =
-    rerail_simd8::words::Words::build(kinds::WORD_TEXT);
+rerail_simd8::keyword_switch!(static KEYWORDS = kinds::WORD_TEXT, fold: true);
 
 #[inline(always)]
 fn is_blank(c: u8) -> bool {

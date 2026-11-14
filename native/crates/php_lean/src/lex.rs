@@ -194,8 +194,7 @@ pub mod w {
 }
 
 /// The keyword switch (`rerail_simd8::words`) over `w::TEXT`: a word's code is its index there.
-static WORDS: rerail_simd8::words::Words<{ rerail_simd8::words::slots_for(w::TEXT.len()) }, { rerail_simd8::words::buckets_for(w::TEXT.len()) }, true> =
-    rerail_simd8::words::Words::build(w::TEXT);
+rerail_simd8::keyword_switch!(static WORDS = w::TEXT, fold: true);
 
 /// The word `src[i..end]`'s code (0: none), in any case (ASCII case folded: a name's bytes are `[A-Za-z0-9_]` and bytes from 0x80, and
 /// folding maps no other name byte onto a keyword's): one probe of the keyword switch.

@@ -147,7 +147,7 @@ for i, ((w,), v) in enumerate(words):
         at.append((i, i + 1))
     else:
         at[-1] = (at[-1][0], i + 1)
-out += ['/// Each keyword word once (`WORDS`\' words), its code its index; 0 is no word.', 'pub static WORD_TEXT: &[&[u8]] = &[']
+out += ['/// Each keyword word once (`WORDS`\' words), its code its index; 0 is no word.', 'pub const WORD_TEXT: &[&[u8]] = &[']
 for i in range(0, len(distinct), 8):
     out.append('    ' + ' '.join(f'b"{w}",' for w in distinct[i:i + 8]))
 out += ['];', '', '/// Each code\'s keywords: its run of `WORDS`.', 'pub static WORD_AT: &[(u16, u16)] = &[']
