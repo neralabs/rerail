@@ -4,6 +4,14 @@ Every notable change to this rule pack, latest first. Each release says how many
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.
 
+## 0.1.8 (2026-11-14)
+
+23 rules, 21 of them on by default.
+
+### Changed
+
+- The pack now fits every Rerail from 0.1.0 on, not only 0.1.x, so updating Rerail past 0.1.x no longer leaves it out. Its rules are unchanged.
+
 ## 0.1.7 (2026-11-06)
 
 23 rules, 21 of them on by default.
