@@ -26,7 +26,7 @@ pub(crate) fn raw<T: Copy>(out: &mut Vec<u8>, v: &[T]) {
 }
 
 #[inline(always)]
-fn mask(w: u32) -> u64 {
+pub(crate) fn mask(w: u32) -> u64 {
     if w >= 64 { u64::MAX } else { (1u64 << w) - 1 }
 }
 

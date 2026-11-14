@@ -1613,6 +1613,26 @@ fn cmd_prim(path: &str) {
     }
 }
 
+/// E16 (t39 step 8): the leaf slot by sibling, and positions by gap with a start every K (`relative.rs`).
+fn cmd_relative(path: &str) {
+    use rerail_tape_lab::inplace::Codes;
+    let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
+    let mut by_tag: BTreeMap<u8, Vec<rerail_tape_lab::tree::Tree>> = BTreeMap::new();
+    for f in &files {
+        by_tag.entry(f.tag).or_default().push(rerail_tape_lab::v15::read(&f.image).unwrap_or_else(|e| die(&e)));
+    }
+    println!("{}\n", rerail_tape_lab::measure::machine());
+    for (tag, trees) in &by_tag {
+        let mut codes = Codes::default();
+        for t in trees {
+            codes.learn(t);
+        }
+        let r = rerail_tape_lab::relative::run(trees, &codes);
+        rerail_tape_lab::relative::print(&format!("{path}, {} ({tag})", capture::language(*tag)), &r);
+        println!();
+    }
+}
+
 /// E15 (t39 step 7): repeated structure as repeated bits, per slot encoding (`repeat.rs`).
 fn cmd_repeat(path: &str) {
     use rerail_tape_lab::inplace::Codes;
@@ -1662,6 +1682,7 @@ fn main() {
         "inplace" => cmd_inplace(path, flag("--f11")),
         "prim" => cmd_prim(path),
         "repeat" => cmd_repeat(path),
+        "relative" => cmd_relative(path),
         #[cfg(target_os = "macos")]
         "inplace-gpu" => cmd_inplace_gpu(path),
         #[cfg(target_os = "macos")]

@@ -42,6 +42,12 @@ pub struct Esc {
     start: Vec<u32>,
     off: Vec<u8>,
     val: Packed,
+    /// Constants of the width, not stored (generated code would hold them): the values a word holds, and
+    /// the masks that fold a word's fields into their sum (fields of w, 2w, 4w, … bits).
+    per: usize,
+    folds: Vec<(u32, u64)>,
+    /// Each field's low w − 1 bits, over a word's `per` fields (for the exact all-ones test).
+    low: u64,
 }
 
 impl Image for Esc {
@@ -95,7 +101,24 @@ impl Esc {
             start.push(off.len() as u32);
         }
         put(&mut words, vals.len() * w as usize, 0, 0);
-        Esc { w, words, start, off, val: Packed::new(&val) }
+        let per = (64 / w as usize).max(1);
+        let mut folds = Vec::new();
+        let mut fw = w;
+        while (fw as usize) < per * w as usize {
+            let mut m = 0u64;
+            let mut b = 0;
+            while b < 64 {
+                m |= (if fw >= 64 { u64::MAX } else { (1u64 << fw) - 1 }) << b;
+                b += 2 * fw;
+            }
+            folds.push((fw, m));
+            fw *= 2;
+        }
+        let mut low = 0u64;
+        for f in 0..per {
+            low |= ((1u64 << (w - 1)) - 1) << (f * w as usize);
+        }
+        Esc { w, words, start, off, val: Packed::new(&val), per, folds, low }
     }
     #[inline(always)]
     pub fn get(&self, i: usize) -> u64 {
@@ -122,6 +145,120 @@ impl Esc {
     }
     pub fn escapes(&self) -> usize {
         self.off.len()
+    }
+    /// The values one word holds.
+    pub fn per(&self) -> usize {
+        self.per
+    }
+    /// The sum of values `from..to`, all in one block, read in place a word at a time: each word's fields
+    /// are folded into their sum (as popcount folds bits), then each escape in the range adds its value in
+    /// place of the all-ones slot.
+    #[inline(always)]
+    pub fn sum(&self, from: usize, to: usize, chunks: usize) -> u64 {
+        // Compiled once per width, as generated code would be (the sweep's `match_w` likewise).
+        match self.w {
+            3 => self.sum_w::<3>(from, to, chunks),
+            4 => self.sum_w::<4>(from, to, chunks),
+            5 => self.sum_w::<5>(from, to, chunks),
+            6 => self.sum_w::<6>(from, to, chunks),
+            7 => self.sum_w::<7>(from, to, chunks),
+            8 => self.sum_w::<8>(from, to, chunks),
+            9 => self.sum_w::<9>(from, to, chunks),
+            10 => self.sum_w::<10>(from, to, chunks),
+            _ => self.sum_any(from, to, chunks),
+        }
+    }
+    #[inline(always)]
+    fn sum_w<const W: usize>(&self, from: usize, to: usize, chunks: usize) -> u64 {
+        let per = 64 / W;
+        let low = {
+            let mut m = 0u64;
+            let mut f = 0;
+            while f < per {
+                m |= ((1u64 << (W - 1)) - 1) << (f * W);
+                f += 1;
+            }
+            m
+        };
+        let mut left = to.saturating_sub(from);
+        let (mut s, mut any, mut f) = (0u64, 0u64, from);
+        for _ in 0..chunks {
+            let t = left.min(per);
+            let tw = (t * W) as u32;
+            let mut v = extract(&self.words, f * W, tw);
+            f += t;
+            left -= t;
+            let fm = crate::inplace::mask(tw);
+            let c = !v & fm;
+            any |= !((c & low).wrapping_add(low) | c | low) & fm;
+            // The fold, unrolled: fields of W, 2W, 4W, … bits summed pairwise until one is left.
+            let mut fw = W;
+            while fw < per * W {
+                let mut m = 0u64;
+                let mut b = 0;
+                while b < 64 {
+                    m |= ((1u64 << fw) - 1) << b;
+                    b += 2 * fw;
+                }
+                v = (v & m).wrapping_add((v >> fw) & m);
+                fw *= 2;
+            }
+            s = s.wrapping_add(v);
+        }
+        if any != 0 {
+            s = s.wrapping_add(self.escaped_in(from, to));
+        }
+        s
+    }
+    /// What the escapes in `from..to` (one block) add over their all-ones slots.
+    #[cold]
+    fn escaped_in(&self, from: usize, to: usize) -> u64 {
+        let b = from / BLOCK;
+        let (bs, be) = (self.start[b] as usize, self.start[b + 1] as usize);
+        let list = &self.off[bs..be];
+        let (lo, hi) = ((from % BLOCK) as u8, ((to - 1) % BLOCK) as u8);
+        let (a, z) = (list.partition_point(|&o| o < lo), list.partition_point(|&o| o <= hi));
+        let esc = (1u64 << self.w) - 1;
+        (a..z).map(|k| self.val.get(bs + k) - esc).sum()
+    }
+    fn sum_any(&self, from: usize, to: usize, chunks: usize) -> u64 {
+        // Wrapping arithmetic throughout: the lab's profile checks overflow, generated code would not.
+        let w = self.w as usize;
+        let mut left = to.saturating_sub(from);
+        debug_assert!(left <= chunks * self.per, "the range fits the chunks");
+        let folds = &self.folds[..];
+        // `chunks` words' worth of fields, a fixed count for the caller's range (a word of no fields reads 0).
+        let (mut s, mut esc, mut f) = (0u64, 0u32, from);
+        for _ in 0..chunks {
+            let t = left.min(self.per);
+            let tw = t.wrapping_mul(w);
+            let mut v = extract(&self.words, f.wrapping_mul(w), tw as u32);
+            f = f.wrapping_add(t);
+            left = left.wrapping_sub(t);
+            // Exact: a field's top bit is set when the field is all ones (complemented, all zeros).
+            let fm = crate::inplace::mask(tw as u32);
+            let c = !v & fm;
+            let y = !((c & self.low).wrapping_add(self.low) | c | self.low) & fm;
+            esc = esc.wrapping_add(y.count_ones());
+            for &(fw, m) in folds {
+                v = (v & m).wrapping_add((v >> fw) & m);
+            }
+            s = s.wrapping_add(v);
+        }
+        if esc > 0 {
+            let b = from / BLOCK;
+            let bs = self.start[b] as usize;
+            let be = self.start[b + 1] as usize;
+            let list = &self.off[bs..be];
+            let (lo, hi) = ((from % BLOCK) as u8, ((to - 1) % BLOCK) as u8);
+            let a = list.partition_point(|&o| o < lo);
+            let z = list.partition_point(|&o| o <= hi);
+            let esc = (1u64 << self.w) - 1;
+            for k in a..z {
+                s += self.val.get(bs + k) - esc;
+            }
+        }
+        s
     }
 }
 
@@ -421,4 +558,44 @@ pub fn print(path: &str, r: &Report) {
     println!("Positions relative (each start's gap to the previous start, and the length; not readable in place, a ceiling): zstd alone {:.3}{}.",
         r.rel[0] as f64 / n,
         if r.dict_nodes > 0 { format!(", with a dictionary {:.3}", r.rel[1] as f64 / r.dict_nodes as f64) } else { String::new() });
+}
+
+/// A repeat: the subtree at node `i` of file `f` (`size` nodes) has the codes and sizes of the one at node
+/// `k` of file `g`, its first occurrence. Maximal: a repeat's inside is not visited.
+#[derive(Clone, Copy)]
+pub struct Occ {
+    pub g: usize,
+    pub k: usize,
+    pub f: usize,
+    pub i: usize,
+    pub size: usize,
+}
+
+pub fn occurrences(cols: &[Cols]) -> Vec<Occ> {
+    let mut first: HashMap<u64, (usize, usize)> = HashMap::new();
+    let mut out = Vec::new();
+    for (f, c) in cols.iter().enumerate() {
+        let h = subtree_hashes(c);
+        let n = c.len();
+        let mut i = 0;
+        while i < n {
+            let size = c.size[i] as usize;
+            if size < MIN_NODES {
+                i += 1;
+                continue;
+            }
+            match first.get(&h[i]) {
+                Some(&(g, k)) if cols[g].code[k..k + size] == c.code[i..i + size] && cols[g].size[k..k + size] == c.size[i..i + size] => {
+                    out.push(Occ { g, k, f, i, size });
+                    i += size;
+                }
+                Some(_) => i += 1,
+                None => {
+                    first.insert(h[i], (f, i));
+                    i += 1;
+                }
+            }
+        }
+    }
+    out
 }

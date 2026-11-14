@@ -478,6 +478,75 @@ same.
   relative to the subtree's start, an offset from the parent's start, or a start every K nodes.
   They are the next tradeoff to price, alongside JSON's leaf slot.
 
+### Step 8: a leaf slot by sibling, and positions by gap (E16)
+
+Step 7 left two things to price: JSON's leaf slot, and positions in a relative form that is still
+read in place. `tape16 relative <capture>` (`src/relative.rs`) prices both at one width a
+language, with escapes that name nothing.
+
+**The leaf slot by sibling.** The node after a leaf always has a previous sibling, with the same
+parent. So the leaf slot can hold that sibling's size, which stays small in a flat array, instead
+of the distance back to the parent. A parent read then steps back from sibling to sibling until a
+first child, whose parent is the node before it. Every K-th sibling holds the parent distance
+itself, so a read takes at most K − 1 steps. The tags: an inner node's slot is `size << 1`; a
+leaf's is `size(sibling) << 2 | 1`, or `parent distance << 2 | 3`.
+
+**Positions by gap.** Each start is stored as its gap to the previous start (in preorder, starts
+never decrease), and each end as a length. The absolute start of every K-th node sits in a side
+array. A start is the checkpoint plus the sum of at most K − 1 gaps. The sum is read in place a
+word at a time: each word's fields are folded pairwise into their sum, as popcount folds bits, and
+an exact all-ones test finds escapes, which are rare. The code is compiled once per width, as
+the sweep's is. In order, a start is a running sum. Gaps and lengths are the same wherever the
+text is the same, so repeated text keeps its bits; the checkpoints sit apart.
+
+Results on the quiet M3, one thread. Every answer is right on every corpus, for both forms and
+every K.
+
+| | data-layer Python | data-layer JSON | rerail Rust | rerail TypeScript | rerail `.rr` | rerail JSON |
+|---|---|---|---|---|---|---|
+| slots, B a node: PFOR (XF now) / XF at one width / sibling K = 8 | 0.99 / 1.04 / 0.99 | 1.03 / 1.19 / 0.92 | 1.01 / 1.08 / 1.03 | 1.02 / 1.09 / 1.06 | 1.02 / 1.05 / 0.92 | 1.20 / 1.80 / 1.12 |
+| parent at random, ns: XF at one width / sibling K = 4 / K = 8 | 4.3 / 8.6 / 12.7 | 5.1 / 9.7 / 8.2 | 3.9 / 8.5 / 10.8 | 3.6 / 7.4 / 9.9 | 5.6 / 10.6 / 13.9 | 8.0 / 21.1 / 29.8 |
+| positions, B a node: FOR + length (now) / gap K = 8 / K = 16 | 2.48 / 2.07 / 1.94 | 2.41 / 2.14 / 1.99 | 2.40 / 1.97 / 1.85 | 2.42 / 1.96 / 1.84 | 2.35 / 1.97 / 1.85 | 2.48 / 2.25 / 2.09 |
+| positions on disk, zstd with a dictionary: now / gap K = 16 | 2.30 / 1.56 | 1.85 / 0.83 | 2.19 / 1.52 | 2.27 / 1.50 | 2.13 / 1.26 | 1.64 / 0.78 |
+| span at random, ns: now / gap K = 8 / K = 16 | 4.2 / 8.0 / 12.0 | 4.3 / 17.1 / 25.3 | 3.5 / 8.7 / 12.4 | 3.7 / 8.3 / 11.3 | 3.8 / 10.8 / 16.9 | 4.4 / 8.7 / 12.8 |
+| span, every node in order, ns: now / gap | 3.3 / 2.6 | 2.7 / 3.8 | 3.1 / 2.5 | 3.1 / 2.6 | 2.9 / 2.5 | 2.9 / 2.1 |
+| repeats whose positions are the same bits, within / across files (gap) | 24% / 5% | 4% / 3% | 31% / 12% | 28% / 8% | 26% / 3% | 12% / 13% |
+
+- **The sibling slot makes one width a language nearly free.** At K = 8 its slots are within
+  0.04 B a node of XF's PFOR blocks on code (0.92–1.06 against 0.99–1.02), and smaller on JSON
+  (0.92 against 1.03, and 1.12 against 1.20). So step 7's 2–3.5% shrinks to under 0.05 B a node,
+  and JSON's +0.71 goes. Every repeat keeps its bits, as in step 7.
+- **Its price is the point parent: 2.5–3× XF's on code at K = 8, 1.6× on data-layer JSON and 3.7×
+  on rerail's.** A read takes 0.9–1.0
+  sibling steps on average on code, and 1.8 on rerail's JSON. Each step is a dependent read and an
+  unpredictable branch. Rules ask for a parent fewer than 0.01 times a node, the heaviest rule
+  1.3 times (E7). Bulk `has` by climbing reads parents too, so it slows by about as much. `has`
+  from counts (step 5) and the axes driven by the S-nodes read no parent.
+- **Gap positions cost 16–24% less memory on code** (16–19% at K = 8, 21–24% at K = 16; Python
+  2.48 → 1.94 B a node), and 10–17% less on JSON. On disk they are a third smaller or more on code
+  and half the size on JSON. Read in order, they are 15–20% faster on code.
+- **Their price is the point span: 2–3× today's at K = 8, 3–4.5× at K = 16** (8–11 ns against
+  3.5–4.2 on code at K = 8). A point read takes a checkpoint, one or two words of gaps, and a
+  length. The fold is 16 ALU instructions a word. The rest is the lab profile's bounds and
+  overflow checks, which today's form pays too (177 instructions a read at K = 8 against 76).
+  Data-layer JSON is the outlier, at 4×; why is not yet measured.
+- **Positions keep their bits only where the text repeats.** Of the structurally repeated nodes,
+  24–31% have the same gaps and lengths within a file on code, and 3–12% across files. That is
+  the ceiling for any relative form: the rest differ in their text (names, literals, spacing). The
+  current form keeps none.
+- **Together, on data-layer Python:** codes, slots and positions take 4.60 B a node in XF now. At
+  one width a language, with the sibling slot (K = 8) and gaps (K = 16), they take 4.06, 12% less,
+  and every structural repeat keeps its bits. The cost is point reads: parent about 3×, span 3×. In bulk
+  the new form is as fast or faster.
+- **Whether that trade is right depends on how often rules read a span or a parent at a point,
+  rather than in bulk.** The bulk-form rule mix is the costing step 1 named. K = 8 is the middle
+  choice for both forms.
+- **Measurement notes.** The M5's load was 60–100 again, so every timing is from the M3 (load 3–8).
+  Getting the gap read right took three passes: replacing runtime divisions by K's shift, an
+  any-escape test in place of a popcount, and code compiled once per width. Each is what generated
+  code would do. The lab's dev profile keeps overflow and unsafe-precondition checks, for every
+  form alike.
+
 ## 4. What using the bulk primitives takes in the engine
 
 Surveyed in `native/src/code_rule_dsl` (2026-11-14).
@@ -623,3 +692,8 @@ In order. Each step is measured on all three corpora, every answer checked.
 7. **Same structure, same bits (E15).** Done: one width a language, with escapes that name
    nothing, keeps every repeat's bits for 2–3.5% more memory on code. Next: a leaf slot that stays
    small in JSON's flat arrays, and positions in a relative form that is still read in place.
+8. **The leaf slot by sibling, and positions by gap (E16).** Done: the sibling slot (K = 8) makes
+   one width a language nearly free in memory, JSON included, at 1.6–3.7× a point parent's cost.
+   Gaps with a start every 8 or 16 take 16–24% less memory on code and a third less on disk, at
+   2–4.5× a point span's cost; read in order they are faster. Next: weigh both point costs by the
+   bulk-form rule mix, and write the choice into 0156.

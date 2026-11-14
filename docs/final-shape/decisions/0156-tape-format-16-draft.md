@@ -549,7 +549,11 @@ keeps the same bits.
   Same bits, measured (E15, [t39](../notes/t39-tape-primitives.md) step 7): XF's per-block PFOR
   widths keep only 16–89% of repeated nodes' bits within a file; one width a language, with
   escapes that name nothing, keeps all of them, within and across files, for 2–3.5% more memory on
-  code. JSON's leaf slots are the exception.
+  code. JSON's leaf slots are the exception. With the leaf slot by sibling (E16, step 8) one width
+  a language costs under 0.05 B a node, JSON included; a point parent costs 1.6–3.7× more. Start
+  and end as a gap to the previous start, plus a length, with a start every 8 or 16 nodes in a
+  side array, take 16–24% less memory and a third less on disk on code, at 2–4.5× a point span's
+  cost.
 - **Text.** A leaf's span into the source, or its id in the names stream (6). Comparison works on
   bytes, or on stream ids once a constant has been found in the pool.
 - **Measured by:** E10.
