@@ -42,7 +42,8 @@ target/debug/tape16 gpu    <cap> [--dict KB] [--k K] [--cut N] [--lang L] [--cod
 target/debug/tape16 columns <cap> [--cut N] [--lang L]
 target/debug/tape16 scan   <cap>
 target/debug/tape16 writer <cap>             # --features lean adds the lean parse (E6 A)
-target/debug/tape16 base   <cap>
+target/debug/tape16 base   <cap> [--dump <dir>]
+target/debug/tape16 textrel <cap>
 ```
 
 With `--shards N`, `grid` streams a capture too large for the budget: every file feeds the
@@ -60,6 +61,7 @@ the test half is measured shard by shard, the rows summed.
 | `columns` | E7, E3, T5 | Format 16 (span LZ with sequence-index pointers, Huffman, byte planes) decoded on Metal straight into reader columns: kind, field, flags, membership, start, end, parent, subtree end. GPU µs per pass, against the same decode on one CPU thread into a tree, checked node by node. |
 | `scan` | T5, E3 | Positions, depth, parents and subtree ends derived on Metal from events and placements (a pass per block, per file, per node), per block size, against the CPU pass, checked. |
 | `base` | T8, E9 | The engine's base relations (`node`, `child`, `field`, `line`, `span_within`) as the store encodes them (`cross_rows`), a block per document and per corpus, against the tape; the cost to rebuild each side's probe form on one thread; ns a probe for each join pattern. |
+| `textrel` | T6, T8, E9 | `text` and `token` as copied rows with their atoms (bytes + the store's 22.6 B an atom), against the tape's names stream and the stored source; text read back from each; interning on demand; an atom compared against the bytes compared. `base --dump` writes the rows for the engine's probe test (`setfix/base_probe.rs`). |
 | `writer` | E6 | Instructions per node of format 15's writer, format 16's one-pass byte-plane writer (checked against the reference writer), and with `--features lean` the lean parse that feeds them. |
 
 `cargo test` runs the round trips: every codec whole and through `read_at` at random ranges, every

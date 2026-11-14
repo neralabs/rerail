@@ -9,6 +9,8 @@
 //! tape16 keys  <cap>                                    E8: widths every key and count needs
 //! tape16 scan  <cap>                                    T5 on Metal: positions, depth, parents, ends from events
 //! tape16 dicts <cap>                                    T4: the dictionary size training gives per size asked
+//! tape16 base  <cap> [--dump <dir>]                   E9: base relations as rows against the tape
+//! tape16 textrel <cap>                                  E9: text and token as rows with atoms, against the tape
 //! tape16 gpu   <cap> [--dict KB] [--k K] [--cut N]      E3: the LZ codecs decoded on Metal
 //! ```
 
@@ -692,7 +694,7 @@ fn cmd_writer(path: &str) {
 }
 
 /// E9 (T8): the engine's base relations as copied rows against the tape kept and rebuilt (`base`).
-fn cmd_base(path: &str) {
+fn cmd_base(path: &str, dump: Option<&str>) {
     use rerail_tape_lab::base::{self, NAMES, WIDTHS};
     use rerail_tape_lab::measure::Cost;
     use rerail_tape_lab::measure::cost;
@@ -714,6 +716,11 @@ fn cmd_base(path: &str) {
     let mut probes = [0usize; 5];
     let mut sink = 0i64;
     let mut got = [[0i64; 2]; 5];
+    // `--dump <dir>`: every relation's rows over the corpus, for the engine's own probes (`base_probe`).
+    let mut dumped: Option<Vec<std::io::BufWriter<std::fs::File>>> = dump.map(|d| {
+        std::fs::create_dir_all(d).expect("the dump directory");
+        NAMES.iter().map(|n| std::io::BufWriter::new(std::fs::File::create(std::path::Path::new(d).join(format!("{n}.rows"))).expect("a dump file"))).collect()
+    });
     let mut base_id = 0i64;
     let (mut line_search, mut line_table) = (0u128, 0usize);
     for (d, p) in corpus.files.iter().enumerate() {
@@ -728,6 +735,14 @@ fn cmd_base(path: &str) {
         let (cols, c) = cost(|| base::columns(&tree, &p.source));
         derive += c;
         let rels = base::rows(&tree, d as i64, base_id, &cols.line_starts);
+        if let Some(w) = dumped.as_mut() {
+            use std::io::Write as _;
+            for r in 0..5 {
+                for v in &rels[r] {
+                    w[r].write_all(&v.to_le_bytes()).expect("a dump write");
+                }
+            }
+        }
         let mut blocks: Vec<Vec<u8>> = Vec::new();
         for r in 0..5 {
             let w = WIDTHS[r];
@@ -824,6 +839,14 @@ fn cmd_base(path: &str) {
     }
     std::hint::black_box(sink);
     let same = got.iter().all(|g| g[0] == g[1]);
+    if let Some(d) = dump {
+        drop(dumped);
+        // Each relation's width and the rows a probe of each node finds, summed (what the engine's probes must find).
+        let found = [got[1][0], got[2][0], got[3][0], got[4][0], got[0][0]];
+        // A line: name, width, rows, the probed column, the rows the probes of every node find.
+        let meta = format!("node 5 {} 1 {}\nchild 3 {} 0 {}\nfield 3 {} 0 {}\nline 2 {} 0 {}\nspan_within 2 {} 0 {}\nspan_within 2 {} 1 {}\n", count[0], count[0], count[1], found[0], count[2], found[1], count[3], count[3], count[4], found[3], count[4], found[4]);
+        std::fs::write(std::path::Path::new(d).join("meta"), meta).expect("the dump's meta");
+    }
     let nf = nodes as f64;
     println!("{path}: {} files, {nodes} nodes\n", corpus.files.len());
     println!("| relation | rows | rows/node | B/row, a block per document | B/node | B/row, one block | B/node |");
@@ -856,6 +879,114 @@ fn cmd_base(path: &str) {
     println!("| line by node, the line table searched instead | | {:.1} |", line_search as f64 / probes[3] as f64);
 }
 
+/// E9's text part (T6, T8): `text` and `token` as copied rows with their atoms, against the tape's text.
+fn cmd_textrel(path: &str) {
+    use rerail_tape_lab::base;
+    use rerail_tape_lab::tree::NONE;
+    use rerail_tape_lab::measure::{Cost, cost};
+    let corpus = load(path);
+    let nodes: usize = corpus.files.iter().map(|p| p.nodes).sum();
+    // The store's cost of an atom beyond its bytes: its end (4 B) and its `atom_key` row (18.6 B on impl/sqlite).
+    const ATOM: f64 = 22.6;
+    let empty = text::Table::train(&HashMap::new(), 0);
+    // Atoms as the store numbers them (first seen), for the eager form (every node within the bound) and for
+    // leaves only; token rows name the leaf children's atoms.
+    let (mut eager, mut leaves): (HashMap<Vec<u8>, i64>, HashMap<Vec<u8>, i64>) = (HashMap::new(), HashMap::new());
+    let (mut eager_bytes, mut leaf_bytes) = (0usize, 0usize);
+    let (mut rows_eager, mut rows_leaf, mut rows_token) = (0usize, 0usize, 0usize);
+    let (mut b_eager, mut b_leaf, mut b_token) = (0usize, 0usize, 0usize);
+    let (mut names, mut src_stored, mut leaf_count) = (0usize, 0usize, 0usize);
+    let (mut unzstd, mut names_decode, mut intern) = (Cost::default(), Cost::default(), Cost::default());
+    let (mut eq_rows, mut eq_tape) = (0u128, 0u128);
+    let mut same = 0i64;
+    let mut base_id = 0i64;
+    for p in &corpus.files {
+        let tree = p.tree(&corpus);
+        let src = &p.source;
+        let text = |i: usize| &src[tree.nodes[i].start as usize..tree.nodes[i].end as usize];
+        let (mut te, mut tl, mut tk) = (Vec::new(), Vec::new(), Vec::new());
+        let mut index = vec![0i64; tree.len()];
+        let mut leaf_ids: Vec<(usize, i64)> = Vec::new();
+        for i in 0..tree.len() {
+            let t = text(i);
+            let id = base_id + i as i64;
+            if t.len() <= 256 {
+                let next = eager.len() as i64;
+                let a = *eager.entry(t.to_vec()).or_insert_with(|| { eager_bytes += t.len(); next });
+                te.extend([id, a]);
+            }
+            let pa = tree.parent[i];
+            if pa != NONE {
+                index[pa as usize] += 1;
+            }
+            if base::is_leaf(&tree, i) {
+                leaf_count += 1;
+                let next = leaves.len() as i64;
+                let a = *leaves.entry(t.to_vec()).or_insert_with(|| { leaf_bytes += t.len(); next });
+                tl.extend([id, a]);
+                leaf_ids.push((i, a));
+                if pa != NONE {
+                    tk.push([base_id + pa as i64, index[pa as usize] - 1, a, tree.nodes[i].start as i64, tree.nodes[i].end as i64]);
+                }
+            }
+        }
+        tk.sort_unstable();
+        let tk = tk.concat();
+        for (rows, w, b, v) in [(&mut rows_eager, 2, &mut b_eager, &te), (&mut rows_leaf, 2, &mut b_leaf, &tl), (&mut rows_token, 5, &mut b_token, &tk)] {
+            *rows += v.len() / w;
+            let mut out = Vec::new();
+            base::encode(w, v, &mut out);
+            *b += out.len();
+        }
+        // The tape's text: the names stream (no table), and the source as the store keeps it.
+        let s = text::stream(&text::pieces(&p.events, src), &empty, true);
+        names += zstd_len(&text::id_planes(&s.ids)) + zstd_len(&s.pool);
+        src_stored += p.source_stored;
+        // Text back from the tape: the source decompressed (zstd 3 here, as stored), or the names stream decoded.
+        let packed = zstd::bulk::compress(src, 3).unwrap();
+        let (_, c) = cost(|| std::hint::black_box(zstd::bulk::decompress(&packed, src.len() + 16).unwrap()));
+        unzstd += c;
+        let (_, c) = cost(|| { let texts = base::pool_texts(&s.pool); std::hint::black_box(s.ids.iter().map(|&id| texts[id as usize].len()).sum::<usize>()) });
+        names_decode += c;
+        // Interning on demand: each leaf's text hashed and found among the atoms (what a rows-less read pays where a
+        // rule needs an atom, not the bytes).
+        let (_, c) = cost(|| { for &(i, _) in &leaf_ids { std::hint::black_box(leaves.get(text(i))); std::hint::black_box(base::fx(text(i))); } });
+        intern += c;
+        // `text(n, "self")`-like tests: an atom id compared, against the bytes compared.
+        let k: &[u8] = b"self";
+        let ka = leaves.get(k).copied().unwrap_or(-1);
+        let t0 = std::time::Instant::now();
+        let a = tl.chunks_exact(2).filter(|r| r[1] == ka).count();
+        eq_rows += t0.elapsed().as_nanos();
+        let t0 = std::time::Instant::now();
+        let b = leaf_ids.iter().filter(|&&(i, _)| text(i) == k).count();
+        eq_tape += t0.elapsed().as_nanos();
+        same += (a == b) as i64 - 1;
+        base_id += tree.len() as i64;
+    }
+    let nf = nodes as f64;
+    let lf = leaf_count as f64;
+    println!("{path}: {} files, {nodes} nodes, {leaf_count} leaves; `text(n, \"self\")` found alike on both sides: {}\n", corpus.files.len(), if same == 0 { "yes" } else { "NO" });
+    println!("| copied | rows | rows/node | rows B/node | atoms | atoms B/node (bytes + {ATOM} B each) | total B/node |");
+    println!("|---|---|---|---|---|---|---|");
+    let at = |n: usize, b: usize| (n as f64 * ATOM + b as f64) / nf;
+    println!("| text, every node within 256 B (eager) | {rows_eager} | {:.2} | {:.2} | {} | {:.2} | **{:.2}** |", rows_eager as f64 / nf, b_eager as f64 / nf, eager.len(), at(eager.len(), eager_bytes), b_eager as f64 / nf + at(eager.len(), eager_bytes));
+    println!("| text, leaves | {rows_leaf} | {:.2} | {:.2} | {} | {:.2} | **{:.2}** |", rows_leaf as f64 / nf, b_leaf as f64 / nf, leaves.len(), at(leaves.len(), leaf_bytes), b_leaf as f64 / nf + at(leaves.len(), leaf_bytes));
+    println!("| token, leaf children (their atoms are the leaves') | {rows_token} | {:.2} | {:.2} | | | **{:.2}** |", rows_token as f64 / nf, b_token as f64 / nf, b_token as f64 / nf);
+    println!("| the tape: names stream, ids + pool, zstd, no table | | | | | | **{:.2}** |", names as f64 / nf);
+    println!("| the source as stored (kept today in any case) | | | | | | {:.2} |\n", src_stored as f64 / nf);
+    let per = |c: Cost, d: f64| format!("{:.1} ns, {:.0} instr", c.nanos as f64 / d, c.instructions as f64 / d);
+    println!("| text from the tape, one thread | per node | per leaf |");
+    println!("|---|---|---|");
+    println!("| the source decompressed (zstd 3) | {} | {} |", per(unzstd, nf), per(unzstd, lf));
+    println!("| the names stream decoded | {} | {} |", per(names_decode, nf), per(names_decode, lf));
+    println!("| each leaf's text interned on demand (hash + lookup) | {} | {} |\n", per(intern, nf), per(intern, lf));
+    println!("| `text(n, \"self\")` over every leaf | ns/leaf |");
+    println!("|---|---|");
+    println!("| rows: the atom compared | {:.2} |", eq_rows as f64 / lf);
+    println!("| the tape: the bytes compared | {:.2} |", eq_tape as f64 / lf);
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flag = |f: &str| args.iter().any(|a| a == f);
@@ -881,7 +1012,8 @@ fn main() {
         "dicts" => cmd_dicts(path),
         #[cfg(target_os = "macos")]
         "scan" => cmd_scan(path),
-        "base" => cmd_base(path),
+        "textrel" => cmd_textrel(path),
+        "base" => cmd_base(path, args.iter().position(|a| a == "--dump").map(|i| args[i + 1].as_str())),
         #[cfg(target_os = "macos")]
         "columns" => {
             let lang = args.iter().position(|a| a == "--lang").and_then(|i| args.get(i + 1)).map(String::as_str);

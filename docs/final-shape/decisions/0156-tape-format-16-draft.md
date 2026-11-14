@@ -555,6 +555,16 @@ T3–T5 sweeps. Its README says how to rerun them and add a candidate. The first
 - E9: the base rows the boundaries copy take 33–42 B/node, against 0.7–1.6 B/node for the tape. Rebuilt
   from the tape on one CPU thread, they cost 33–37 ns a node, against 312–498 ns to decode and index
   the rows. Probes on the tape's columns take 0.5–12 ns, against 35–77 ns on the rows.
+  The engine's own lookups do no better: key prints take 47–106 ns a probe, the old hash table
+  23–84 ns.
+- E9, text: `text` and `token` as rows with their atoms take 7–23 B/node (every text within 256 B:
+  15–19). The tape's names stream holds the text in 1.0–1.4 B/node and decodes at about 2 ns a leaf.
+  Atoms win only for comparisons (0.55 ns against 2.2 for bytes). So text is read from the tape and
+  interned only where a join needs it.
+- E9, partial decode: on the CPU a single node's read costs 5.8–15 µs, against 78–89 ns a node for the
+  whole document. A partial decode pays only below one read in 74–177 nodes. The median rule reads
+  about one part in 9 nodes beyond its kind and flags sweep. So format 16 is decoded whole, and
+  random reads serve only single lookups outside a run.
 
 ## Answered by the user (2026-11-13)
 

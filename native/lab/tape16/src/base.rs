@@ -170,3 +170,40 @@ pub fn range(col: &[i64], key: i64) -> std::ops::Range<usize> {
     let hi = lo + col[lo..].partition_point(|&v| v <= key);
     lo..hi
 }
+
+/// E9's text part: is node `i` a leaf (no node below it).
+pub fn is_leaf(tree: &Tree, i: usize) -> bool {
+    tree.size[i] == 1
+}
+
+/// FxHash's step (rustc's), as the engine's maps hash: a cheap stand-in for interning's hash.
+pub fn fx(bytes: &[u8]) -> u64 {
+    let mut h = 0u64;
+    for c in bytes.chunks(8) {
+        let mut w = [0u8; 8];
+        w[..c.len()].copy_from_slice(c);
+        h = (h.rotate_left(5) ^ u64::from_le_bytes(w)).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
+    h
+}
+
+/// The names stream's pool read back: each local id's text (`text::stream`'s pool, a varint length then bytes).
+pub fn pool_texts(pool: &[u8]) -> Vec<&[u8]> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    while at < pool.len() {
+        let (mut n, mut shift) = (0usize, 0);
+        loop {
+            let b = pool[at];
+            at += 1;
+            n |= usize::from(b & 0x7f) << shift;
+            if b < 0x80 {
+                break;
+            }
+            shift += 7;
+        }
+        out.push(&pool[at..at + n]);
+        at += n;
+    }
+    out
+}

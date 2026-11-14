@@ -70,6 +70,8 @@ pub mod lab;
 pub mod spec;
 #[cfg(test)]
 mod survivor_tests;
+#[cfg(test)]
+mod base_probe;
 use spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
 pub mod closure;
 pub mod table;

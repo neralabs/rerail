@@ -618,9 +618,104 @@ What it says:
 - **`line` needs a line column, not a search.** A merge of the nodes' starts with the line table
   makes it at decode, for 0.5 ns a probe, against 5–12 ns searching the table. The table costs
   0.07–0.17 B/node, so the tape can carry it (T6) and `line` needs no source.
-- **Not measured yet:** the engine's own probe structures, which may beat a binary search (0185's
-  key prints). Text and token relations (0174's requests). And a document decoded only for the few
-  nodes a reader asks (span LZ's random reads, 2–11 µs each), against decoding it whole.
+### E9 against the engine's own lookups
+
+The binary search above is the lab's stand-in. The engine's joins probe a kept input through
+`InRel::index` on the probed column. The first probe builds an order (`Csr::runs`, 0186), and key
+prints (0185) read it. `base_rows_probed_by_the_engine` (an ignored test in
+`logic/native/setfix/base_probe.rs`) loads the rows `tape16 base --dump <dir>` writes, keeps them as
+a frame does (`InRel::kept`), and probes each node once a relation. `RERAIL_KEY_PRINTS` picks the
+mode: `prints`, `off` (the order alone) or `hash` (the hash table before 0112). Both sides find the
+same rows for every pattern. The load average was about 115, so the nanoseconds are rough.
+
+| ns a probe | impl/sqlite | rerail, every 5th |
+|---|---|---|
+| prints | 47–74 | 67–106 |
+| off (order alone) | 75–152 | |
+| hash | 23–67 | 28–84 |
+| the lab's binary search | 35–56 | 45–77 |
+| the tape's columns | 0.5–12 | 0.5–12.5 |
+
+- **The rows side was not overstated.** Key prints are as slow as the lab's binary search, or slower.
+  The old hash table is up to 2× faster than either, but still 4–50× slower than the columns.
+- **The first probe pays a build.** It takes 7–20 ns a row on `impl/sqlite` (hash 21–45), on top of the
+  rows' decode. On rerail, ordering `span_within` takes 633 ms of CPU by inner and 1,801 ms by outer.
+  The peak was 3.8–5.0 GB.
+
+### E9's text part: `text` and `token` against the tape's text
+
+`tape16 textrel` builds the text relations 0174's requests make, as rows with their atoms:
+
+- `text(n, s)` for every node within the inline bound (256 B, `TEXT_INLINE`), as made when every text
+  is asked for, or for leaves only;
+- `token(p, i, s, start, end)` for each leaf child.
+
+The rows are encoded as the store does (`cross_rows::encode`), atoms numbered by first sight. Each
+distinct string costs its bytes plus 22.6 B. That is the store's per-atom overhead on `impl/sqlite`:
+628,202 atoms, an 11.17 MB `atom_key` and 4 B ends. The tape side is the names stream (ids and pool,
+zstd, no trained table) and the source as stored, which is kept in any case.
+
+| B/node | impl/sqlite | data-layer | rerail |
+|---|---|---|---|
+| `text`, every node within 256 B: rows + atoms | 3.07 + 16.18 = **19.26** | 3.35 + 11.88 = **15.23** | 3.33 + 13.77 = **17.10** |
+| `text`, leaves: rows + atoms | 1.59 + 2.49 = **4.08** | 1.65 + 1.94 = **3.59** | 1.93 + 2.72 = **4.64** |
+| `token`, leaf children (the leaves' atoms) | 3.25 | 3.06 | 3.67 |
+| the tape's names stream | **1.39** | **1.05** | **1.02** |
+| the source as stored | 1.51 | 1.14 | 1.10 |
+
+Reading text back, one thread (per leaf):
+
+| | impl/sqlite | data-layer | rerail |
+|---|---|---|---|
+| the source decompressed (zstd 3) | 12.3 ns, 129 instr | 11.1 ns, 106 instr | 9.2 ns, 86 instr |
+| the names stream decoded | 2.0 ns, 25 instr | 1.6 ns, 21 instr | 1.7 ns, 18 instr |
+| each leaf interned on demand | 40.9 ns, 407 instr | 52.1 ns, 436 instr | 51.3 ns, 409 instr |
+| `text(n, "self")`: an atom compared | 0.55 ns | 0.54 ns | 0.55 ns |
+| `text(n, "self")`: the bytes compared | 2.22 ns | 2.22 ns | 2.26 ns |
+
+"Interned on demand" is an upper bound: it is a std `HashMap` lookup (SipHash) plus an FxHash of the
+same bytes. Both sides find the same leaves for `text(n, "self")`.
+
+- **Text as rows costs 3–19× the tape.** Leaves alone take 3.6–4.6 B/node and tokens another 3.1–3.7.
+  Every text within the bound takes 15–19 B/node, mostly atoms: one node in 4–8 has a string of its
+  own. The names stream holds the same text in 1.0–1.4 B/node, and the source as stored is about the
+  same size.
+- **The tape gives text back faster than the store reads an atom.** Decoding the names stream costs
+  about 2 ns a leaf, and decompressing the source about 10.
+- **An atom is faster only for comparisons.** Comparing ids takes 0.55 ns, against 2.2 for the bytes. A
+  rule that compares with a constant can intern the constant once and compare bytes, or compare the
+  stream's local ids once the constant is found in the pool. A rule that needs atoms for a join pays
+  up to 40–52 ns a leaf to intern on demand. So text should be read from the tape and interned only
+  where a join needs it, never copied for every node.
+
+### Decoding the few nodes a reader asks, against the whole document
+
+Span LZ can decode only the checkpoint segments a read reaches (`span::Src`). The grid's `final`
+candidates on data-layer, every 10th file, give both costs in the same run: one node's kind read
+alone, and the whole file decoded into a tree. Same run, load about 95; one CPU thread.
+
+| | random read µs | whole decode ns/node | break-even: reads per node |
+|---|---|---|---|
+| span4x, CDC 1024, +huff | 5.83 | 78.3 | 1 in 74 (1.3%) |
+| span4x, CDC 256, +huff | 6.63 | 89.0 | 1 in 74 (1.3%) |
+| span4x-seq, CDC 1024, +huff | 15.35 | 86.5 | 1 in 177 (0.6%) |
+| span4x-seq, CDC 256, +huff | 10.23 | 82.4 | 1 in 124 (0.8%) |
+| lz-out, CDC 1024, +huff | 57.50 | 88.1 | 1 in 653 (0.2%) |
+| zstd, CDC 1024 | 19.05 | 55.0 | 1 in 346 (0.3%) |
+
+On Metal the whole decode into reader columns takes 2–4 ns a node, so there the break-even is one
+read in 1,500–3,000 nodes.
+
+E7's readers ask far more than that. Every reader sweeps kind and flags for every node. Beyond the
+sweep, the median rule reads about 0.11 parts a node (field 0.04, span 0.01, children 0.05, classes
+0.01): one read in 9 nodes, against a break-even of 1 in 74. At 5.8 µs a read that is about 640 ns a
+node, against 78 for the whole decode. Reads near each other would share segments, so this
+overstates them, but not by 8×.
+
+- **Decode whole documents.** A partial decode loses for the median rule, and the kind and flags
+  sweep needs every node anyway. Format 16 needs a fast whole-document decode on the CPU and on the
+  GPU, not random access to single nodes. Random reads stay useful only for a single lookup outside
+  a run, such as a finding's location.
 
 ## Open items found along the way
 
