@@ -281,15 +281,17 @@ CREATE TABLE IF NOT EXISTS observer_meta(key TEXT PRIMARY KEY, value INTEGER) WI
 CREATE TABLE IF NOT EXISTS run_record(key TEXT PRIMARY KEY, consulted TEXT NOT NULL, outputs BLOB NOT NULL) WITHOUT ROWID;";
 
 impl Observer {
-    /// An observer over the store at `path` (`<path>` is the P0 store itself), or over none. Everything the store
-    /// keeps is read here, at once (decision 0104: a run reads before its first wave); what changes is written behind
-    /// the run by the observer's writer, and never read back: the observer's memory is ahead of its file.
+    /// An observer over the store at `path` (`<path>` is the P0 store itself), or over none. What is read here is
+    /// the roots' cursors and the Git aliases; the answers and canonical forms are read a root at a time, as a run
+    /// first watches or reads under it (`ensure`), and a run's record by its key as it is asked (`run_record`). The
+    /// store is asked only outside the waves (decision 0104). What changes is written behind the run by the
+    /// observer's writer, and never read back: the observer's memory is ahead of its file.
     fn open(path: Option<&Path>) -> Observer {
-        let (mut entries, mut aliases, mut canon) = (BTreeMap::new(), HashMap::new(), BTreeMap::new());
+        let (entries, mut aliases, canon) = (BTreeMap::new(), HashMap::new(), BTreeMap::new());
         let db = path.map(|p| {
-            let (records, meta) = read_all(p, &mut entries, &mut aliases, &mut canon);
+            let (reader, meta) = read_open(p, &mut aliases);
             let stored = meta.iter().filter(|(k, _)| k.starts_with("journal:")).filter_map(|(k, v)| Some((k.clone(), text_cursor(v)?))).collect();
-            Kept { records, meta, stored, writer: Writer::open(p) }
+            Kept { records: HashMap::new(), meta, stored, writer: Writer::open(p), reader, loaded: Vec::new(), deleted: false, asked: HashSet::new() }
         });
         // Each process checks another slice of the trusted files, by the second it opened in: consecutive processes
         // take consecutive slices, as a stored counter's would, and no process writes to say which it took (a warm run
@@ -341,13 +343,85 @@ impl Observer {
         if path.is_absolute() { path.to_owned() } else { self.cwd.join(path) }
     }
 
-    /// The entry kept for `path`: everything kept was read as the observer opened (`open`).
+    /// The entry kept for `path` (its root's answers read from the store first, `ensure`).
     fn known(&mut self, path: &Path) -> Option<Entry> {
+        self.ensure(path);
         self.entries.get(path).cloned()
     }
 
-    /// Loads every kept entry under `dir` at once: nothing to do, as everything kept was read as the observer opened.
-    pub fn preload(&mut self, _dir: &Path) {}
+    /// Reads what the store keeps under `dir` now, before a walk of it reads it a path at a time (`ensure`).
+    pub fn preload(&mut self, dir: &Path) {
+        let dir = self.abs(dir);
+        self.ensure(&dir);
+    }
+
+    /// Reads the answers and canonical forms the store keeps for the part of the tree `path` is in, once a process:
+    /// under the widest root the store has a cursor for above it, else under its directory. Not inside the waves,
+    /// where no store is asked (decision 0104): there `path` is unknown, and read again.
+    fn ensure(&mut self, path: &Path) {
+        let Some(k) = self.db.as_ref() else { return };
+        if k.loaded.iter().any(|u| path.starts_with(u)) {
+            return;
+        }
+        let unit = match self.stored_roots.iter().filter(|r| path.starts_with(r)).min_by_key(|r| r.as_os_str().len()) {
+            Some(r) => r.clone(),
+            None => path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(path).to_path_buf(),
+        };
+        self.load_under(&unit);
+    }
+
+    /// Reads the answers and canonical forms the store keeps at and under `unit` (`ensure`). Memory is ahead of the
+    /// store, so what memory holds is kept as it is; and a part is read before anything under it is forgotten
+    /// (`watch` reads its root first), so nothing forgotten is read back before the writer deletes it.
+    fn load_under(&mut self, unit: &Path) {
+        let Some(k) = self.db.as_mut() else { return };
+        if k.loaded.iter().any(|u| unit.starts_with(u)) {
+            return;
+        }
+        if !super::hazards::may_read_store() {
+            super::hazards::warm_fault("the observer's store not asked inside the waves", || format!("{}: its answers unknown, read again", unit.display()));
+            return;
+        }
+        if std::mem::take(&mut k.deleted) {
+            k.writer.written();
+        }
+        let Some(reader) = k.reader.as_ref() else { return };
+        let at = unit.to_string_lossy();
+        // What is under `at`: `at/…`, or `/…` under the root itself (not `//…`).
+        let under = if at.ends_with('/') { at.to_string() } else { format!("{at}/") };
+        let (from, to) = (under.clone(), format!("{under}\u{10ffff}"));
+        if let Ok(mut st) = reader.prepare_cached("SELECT path, kind, dev, ino, size, mtime_ns, ctime_ns, digest, listing, recorded_ns FROM observed WHERE path = ?1 OR (path >= ?2 AND path < ?3)")
+            && let Ok(rows) = st.query_map(params![at, from, to], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, [r.get::<_, i64>(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?], r.get::<_, Option<Vec<u8>>>(7)?, r.get::<_, Option<Vec<u8>>>(8)?, r.get::<_, i64>(9)?))
+            })
+        {
+            for (path, kind, [dev, ino, size, mtime_ns, ctime_ns], digest, listing, recorded_ns) in rows.flatten() {
+                let listing = match listing.map(|b| decode_listing(&b)) {
+                    Some(None) => continue,
+                    Some(Some(l)) => Some(Arc::new(l)),
+                    None => None,
+                };
+                self.entries.entry(PathBuf::from(path)).or_insert(Entry { kind: Kind::of_code(kind), stat: Stat { dev, ino, size, mtime_ns, ctime_ns }, digest: digest.and_then(|d| d.try_into().ok()).unwrap_or_default(), listing, recorded_ns });
+            }
+        }
+        let key = format!("{CANONICAL}{at}");
+        let (from, to) = (format!("{CANONICAL}{under}"), format!("{CANONICAL}{under}\u{10ffff}"));
+        if let Ok(mut st) = reader.prepare_cached("SELECT key, consulted FROM run_record WHERE key = ?1 OR (key >= ?2 AND key < ?3)")
+            && let Ok(rows) = st.query_map(params![key, from, to], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+        {
+            for (key, consulted) in rows.flatten() {
+                if let Some(p) = key.strip_prefix(CANONICAL) {
+                    self.canon.entry(PathBuf::from(p)).or_insert_with(|| PathBuf::from(consulted));
+                }
+            }
+        }
+        if std::env::var_os("RERAIL_OBSERVE_TRACE").is_some() {
+            eprintln!("rerail: observer read {} ({} answers, {} forms held)", unit.display(), self.entries.len(), self.canon.len());
+        }
+        // A part read now holds those under it read before.
+        k.loaded.retain(|u| !u.starts_with(unit));
+        k.loaded.push(unit.to_path_buf());
+    }
 
     /// The answer kept for `path` when the journal says nothing changed there since it was recorded (decision 0105):
     /// used as it is. A write after the answer was recorded, even in the same tick, came after the cursor the
@@ -411,6 +485,7 @@ impl Observer {
     /// (decision 0105): the answer kept, or for a path its directory's kept listing does not hold, missing.
     pub fn kind(&mut self, path: &Path) -> Kind {
         let path = &self.abs(path);
+        self.ensure(path);
         self.stat(path).map_or(Kind::Missing, |(k, _)| k)
     }
 
@@ -448,6 +523,7 @@ impl Observer {
     /// moved or retargeted under the root is an event that forgets it. Elsewhere, one `realpath`, kept for the next run.
     pub fn canonical(&mut self, path: &Path) -> Option<PathBuf> {
         let path = self.abs(path);
+        self.ensure(&path);
         self.watch_above(&path);
         let asked = self.flushes;
         let trusted = |p: &Path, roots: &[Root]| roots.iter().any(|r| r.trusted && r.asked == asked && (p.starts_with(&r.path) || p.starts_with(&r.real)));
@@ -476,8 +552,9 @@ impl Observer {
         Some(c)
     }
 
-    /// The canonical form kept for `path` (read with everything kept, as the observer opened).
+    /// The canonical form kept for `path` (its root's read from the store first, `ensure`).
     fn kept_canonical(&mut self, path: &Path) -> Option<PathBuf> {
+        self.ensure(path);
         self.canon.get(path).cloned()
     }
 
@@ -489,6 +566,7 @@ impl Observer {
     /// The sha256 of the file at `path` (`None`: not a readable file), read only when its stat changed.
     pub fn digest(&mut self, path: &Path) -> Option<[u8; 32]> {
         let path = &self.abs(path);
+        self.ensure(path);
         if let Some(e) = self.trusted(path).filter(|e| e.kind == Kind::File) {
             self.counts.reused += 1;
             return Some(e.digest);
@@ -565,6 +643,9 @@ impl Observer {
             }
             // Asked for an earlier run: asked again (its pending cursor, if any, was settled at that run's end).
             self.roots.retain(|r| r.path != root);
+            // Its part of the store read first: what the journal names under it is then forgotten from memory, and
+            // none of it read back after (`load_under`).
+            self.ensure(&root);
             if !self.stored_roots.contains(&root) {
                 self.stored_roots.push(root.clone());
             }
@@ -754,6 +835,7 @@ impl Observer {
             super::hazards::warm_fault("the observer forgot answers the journal named changed", || {
                 format!("{}: {} paths named changed ({}), {forgotten} answers forgotten", root.display(), paths.len(), paths.iter().take(3).map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "))
             });
+            k.deleted = true;
             k.writer.send(move |db| {
                 let Ok(tx) = db.transaction() else { return };
                 {
@@ -796,6 +878,7 @@ impl Observer {
     /// The bytes of the file at `path` and their sha256 (`None`: not a readable file). Always reads.
     pub fn read(&mut self, path: &Path) -> Option<(Vec<u8>, [u8; 32])> {
         let path = &self.abs(path);
+        self.ensure(path);
         let started = now_ns();
         let (kind, now) = self.stat(path)?;
         if kind != Kind::File {
@@ -820,6 +903,7 @@ impl Observer {
     /// An entry is a directory when what it names is one, symlinks followed.
     pub fn listing(&mut self, dir: &Path) -> Option<Listing> {
         let dir = &self.abs(dir);
+        self.ensure(dir);
         if let Some(listing) = self.trusted(dir).filter(|e| e.kind == Kind::Dir).and_then(|e| e.listing) {
             self.counts.reused += 1;
             return Some(listing);
@@ -872,8 +956,22 @@ impl Observer {
     }
 
     /// The record of the last run under `key`: what it consulted, and its outputs (`corpus::reuse`).
-    pub fn run_record(&self, key: &str) -> Option<(String, Vec<u8>)> {
-        self.db.as_ref()?.records.get(key).cloned()
+    pub fn run_record(&mut self, key: &str) -> Option<(String, Vec<u8>)> {
+        let k = self.db.as_mut()?;
+        if let Some(r) = k.records.get(key) {
+            return Some(r.clone());
+        }
+        // Asked of the store once a process, outside the waves (decision 0104); inside, a record not asked before is
+        // absent, and its run made again.
+        if k.asked.contains(key) || !super::hazards::may_read_store() {
+            return None;
+        }
+        k.asked.insert(key.to_owned());
+        let found: Option<(String, Vec<u8>)> = k.reader.as_ref()?.prepare_cached("SELECT consulted, outputs FROM run_record WHERE key = ?1").ok()?.query_row([key], |r| Ok((r.get(0)?, r.get(1)?))).ok();
+        if let Some(r) = &found {
+            k.records.insert(key.to_owned(), r.clone());
+        }
+        found
     }
 
     /// Keeps a run's record under `key`, replacing the last: in memory now, in the store behind the run.
@@ -987,6 +1085,7 @@ impl Observer {
                 k.meta.insert(key.clone(), rusqlite::types::Value::Text(cursor.clone()));
                 k.stored.insert(key.clone(), cursor.clone());
             }
+            k.deleted = true;
             k.writer.send(move |db| {
                 let Ok(tx) = db.transaction() else { return };
                 {
@@ -1011,7 +1110,16 @@ impl Observer {
 /// What the store keeps of an observer beside its entries, aliases and canonical forms, as it opened: the run records
 /// and the observer's own settings (the epoch, each root's journal cursor); and the writer of what changes.
 struct Kept {
+    /// The runs' records asked so far (`run_record`) or kept this process, and the keys asked of the store.
     records: HashMap<String, (String, Vec<u8>)>,
+    asked: HashSet<String>,
+    /// The store, read only, for what is read as it is first needed (`ensure`, `run_record`).
+    reader: Option<Connection>,
+    /// The parts of the tree whose answers and canonical forms have been read (`load_under`), and whether a delete
+    /// was sent to the writer since the last read: a part read then waits for it, or would read back what was
+    /// forgotten.
+    loaded: Vec<PathBuf>,
+    deleted: bool,
     meta: HashMap<String, rusqlite::types::Value>,
     /// Each root's cursor as the store holds it (`meta` holds memory's, which moves on ahead of it): how far behind
     /// the journal the store's is (`CURSOR_AGE`).
@@ -1033,27 +1141,13 @@ fn text_cursor(v: &rusqlite::types::Value) -> Option<String> {
 /// cursor 2 million events old cost nothing measurable, from one 7 million old 0.6 to 2 s for its first ask.
 const CURSOR_AGE: u64 = 1 << 20;
 
-/// Reads everything the store at `path` keeps, at once: its entries, aliases and canonical forms into the maps given,
-/// its run records and settings returned. A store not made yet holds nothing.
-type Records = HashMap<String, (String, Vec<u8>)>;
+/// The store at `path` opened to read (`None`: not made yet), with what is read as the observer opens: its roots'
+/// cursors and settings, returned, and the Git aliases (blob to sha256), into `aliases`. The rest is read as it is
+/// first needed (`Observer::ensure`, `run_record`).
 type Meta = HashMap<String, rusqlite::types::Value>;
-fn read_all(path: &Path, entries: &mut BTreeMap<PathBuf, Entry>, aliases: &mut HashMap<Vec<u8>, [u8; 32]>, canon: &mut BTreeMap<PathBuf, PathBuf>) -> (Records, Meta) {
-    let (mut records, mut meta) = (HashMap::new(), HashMap::new());
-    let Ok(db) = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX) else { return (records, meta) };
-    if let Ok(mut st) = db.prepare("SELECT path, kind, dev, ino, size, mtime_ns, ctime_ns, digest, listing, recorded_ns FROM observed")
-        && let Ok(rows) = st.query_map([], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, [r.get::<_, i64>(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?], r.get::<_, Option<Vec<u8>>>(7)?, r.get::<_, Option<Vec<u8>>>(8)?, r.get::<_, i64>(9)?))
-        })
-    {
-        for (path, kind, [dev, ino, size, mtime_ns, ctime_ns], digest, listing, recorded_ns) in rows.flatten() {
-            let listing = match listing.map(|b| decode_listing(&b)) {
-                Some(None) => continue,
-                Some(Some(l)) => Some(Arc::new(l)),
-                None => None,
-            };
-            entries.insert(PathBuf::from(path), Entry { kind: Kind::of_code(kind), stat: Stat { dev, ino, size, mtime_ns, ctime_ns }, digest: digest.and_then(|d| d.try_into().ok()).unwrap_or_default(), listing, recorded_ns });
-        }
-    }
+fn read_open(path: &Path, aliases: &mut HashMap<Vec<u8>, [u8; 32]>) -> (Option<Connection>, Meta) {
+    let mut meta = HashMap::new();
+    let Ok(db) = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX) else { return (None, meta) };
     if let Ok(mut st) = db.prepare("SELECT blob, digest FROM git_alias")
         && let Ok(rows) = st.query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?)))
     {
@@ -1063,26 +1157,12 @@ fn read_all(path: &Path, entries: &mut BTreeMap<PathBuf, Entry>, aliases: &mut H
             }
         }
     }
-    if let Ok(mut st) = db.prepare("SELECT key, consulted, outputs FROM run_record")
-        && let Ok(rows) = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Vec<u8>>(2)?)))
-    {
-        for (key, consulted, outputs) in rows.flatten() {
-            match key.strip_prefix(CANONICAL) {
-                Some(p) => {
-                    canon.insert(PathBuf::from(p), PathBuf::from(consulted));
-                }
-                None => {
-                    records.insert(key, (consulted, outputs));
-                }
-            }
-        }
-    }
     if let Ok(mut st) = db.prepare("SELECT key, value FROM observer_meta")
         && let Ok(rows) = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, rusqlite::types::Value>(1)?)))
     {
         meta.extend(rows.flatten());
     }
-    (records, meta)
+    (Some(db), meta)
 }
 
 /// An observer's writer: a thread of its own with its own connection, behind the run (decision 0104), running each
@@ -1639,6 +1719,36 @@ mod tests {
         drop(o);
         assert_eq!(Observer::open(Some(&store)).run_record("git-files:/r"), Some(want));
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The store is read a part of the tree at a time, as it is first asked (`ensure`): an answer under one directory
+    /// reads that directory's and no other's; what memory holds wins over the store; and what is forgotten before its
+    /// part is read is not read back.
+    #[test]
+    fn the_store_is_read_a_part_at_a_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("p0.files");
+        let entry = |size| Entry { kind: Kind::File, stat: Stat { size, ..Stat::default() }, digest: [0; 32], listing: None, recorded_ns: 0 };
+        let paths = ["/x/a/f", "/x/a/g", "/y/b/f", "/y/b/g"].map(PathBuf::from);
+        let mut first = Observer::open(Some(&store));
+        for p in &paths {
+            first.entries.insert(p.clone(), entry(1));
+            first.dirty.push(p.clone());
+        }
+        first.flush();
+        first.written();
+        drop(first);
+        let mut o = Observer::open(Some(&store));
+        assert!(o.entries.is_empty(), "nothing read at open");
+        assert_eq!(o.known(&paths[0]).map(|e| e.stat.size), Some(1));
+        let held: Vec<&Path> = o.entries.keys().map(PathBuf::as_path).collect();
+        assert_eq!(held, [paths[0].as_path(), paths[1].as_path()], "only /x/a read");
+        // Memory ahead of the store: a part read later keeps what memory holds.
+        o.entries.insert(paths[3].clone(), entry(9));
+        // Forgotten before /y/b is read: the store's row is deleted first, not read back.
+        o.forget(Path::new("/y"), &[paths[2].clone()], None, "");
+        assert!(o.known(&paths[2]).is_none(), "forgotten, not read back");
+        assert_eq!(o.known(&paths[3]).map(|e| e.stat.size), Some(9), "memory wins");
     }
 
     /// `collect` drops what no run asks any more, and keeps the rest.

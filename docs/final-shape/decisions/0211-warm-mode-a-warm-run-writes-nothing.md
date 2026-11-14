@@ -202,6 +202,17 @@ and takes 6.7 G instructions and 0.58 s user, against 8.0 G and 0.72 s over `dl1
   - The journal's cookies are written in `<store>.cookies`, a directory holding nothing else. Beside the store, each
     stream was told every write there: 2,596 events in one warm batch's first ask, the harness's outputs and the
     store's own writes, all replayed and dropped.
-- **Loading the observer's store at open** (`read_all`) rather than by key as asked is left: a lookup in the waves is a
-  statement there, which the strict mode refuses, so it needs the keys known before the first wave.
+- **The observer's store is read as it is asked, not at open.**
+  - At open it reads the roots' cursors, its metadata and the Git aliases only.
+  - The answers and canonical forms are read a part of the tree at a time, the first time a run asks under it
+    (`ensure`): under the widest root the store keeps a cursor for, else the path's directory. One range query of
+    each table a part; a part read holds those under it.
+  - A run's record is read by its key as it is asked (`run_record`): one point lookup.
+  - The store is never asked inside the waves (`may_read_store`, decision 0104): there a part not yet read is
+    unknown, read again from the tree, and a warm run faults "the observer's store not asked inside the waves".
+    Every part a run reads is asked before its first wave (the roots are watched first), so none has faulted.
+  - Memory is ahead of the store: a part read later keeps what memory holds. A part forgotten before it is read
+    waits for the writer's delete first, so nothing forgotten is read back.
+  - On dl10, a run reads three parts (the work tree, the phase-0 root, the Git directory); the warm batch is as
+    before (6.4 G instructions, the same findings, no fault).
 

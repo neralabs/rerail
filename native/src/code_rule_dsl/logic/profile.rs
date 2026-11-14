@@ -834,6 +834,11 @@ pub fn run_begins() -> impl Drop {
     Begun(STAGE.with(|s| if s.get() == INSIDE { INSIDE } else { s.replace(BEFORE) }))
 }
 
+/// Whether a store may be asked here (decision 0104): not while waves are under way for this thread.
+pub fn may_read_store() -> bool {
+    !waves_here()
+}
+
 /// Whether waves are under way for this thread: its run's, or, with no run's context here, any run's.
 fn waves_here() -> bool {
     match STAGE.with(std::cell::Cell::get) {
