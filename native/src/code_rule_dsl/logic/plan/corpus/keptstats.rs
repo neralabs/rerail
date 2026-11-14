@@ -186,6 +186,27 @@ impl Keeper {
                             let set: std::collections::HashSet<&[i64]> = a.iter().copied().collect();
                             let kept = b.iter().filter(|r| set.contains(*r)).count();
                             eprintln!("statkeep diff {path} {rel}: old {} new {} rows, same at the ends {head}+{tail}, new rows also old {kept}", a.len(), b.len());
+                            // The rows that changed, paired by their node (`node`'s second column, else the first): which
+                            // of the other columns differ.
+                            let key = usize::from(rel == "base:node");
+                            let now: std::collections::HashSet<&[i64]> = b.iter().copied().collect();
+                            let gone: std::collections::HashMap<i64, &[i64]> = a.iter().filter(|r| !now.contains(*r)).filter_map(|r| r.get(key).map(|k| (*k, *r))).collect();
+                            let fresh: Vec<&[i64]> = b.iter().copied().filter(|r| !set.contains(r)).collect();
+                            let mut by_col = vec![0usize; *w];
+                            let mut paired = 0;
+                            for r in &fresh {
+                                let Some(o) = r.get(key).and_then(|k| gone.get(k)) else { continue };
+                                paired += 1;
+                                for c in (0..*w).filter(|&c| c != key) {
+                                    by_col[c] += usize::from(o[c] != r[c]);
+                                }
+                            }
+                            let names: Vec<String> = match rel.strip_prefix("base:").and_then(crate::code_rule_dsl::logic::sql::select::input_columns) {
+                                Some(cols) => cols.iter().map(|c| (*c).to_owned()).collect(),
+                                None => (0..*w).map(|c| format!("c{c}")).collect(),
+                            };
+                            let differ: Vec<String> = (0..*w).filter(|&c| by_col[c] > 0).map(|c| format!("{}={}", names.get(c).map_or("?", |n| n.as_str()), by_col[c])).collect();
+                            eprintln!("statkeep churn {rel}: gone {} new {} paired {paired}; columns differing: {}", a.len() - (b.len() - fresh.len()).min(a.len()), fresh.len(), differ.join(" "));
                         }
                     }
                     crate::code_rule_dsl::logic::profile::decision("statistics kept by file (decision 0096 §3)", || {
