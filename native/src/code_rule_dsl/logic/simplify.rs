@@ -2255,7 +2255,11 @@ pub mod tests {
             "#,
         )
         .unwrap();
-        let report = simplify(&mut prog);
+        // Unprofiled: held so no profile test turns the (process-wide) profile on meanwhile.
+        let report = {
+            let _run = super::super::profile::one_run();
+            simplify(&mut prog)
+        };
         let mut merged = report.merged.clone();
         merged.sort();
         assert_eq!(
@@ -2293,10 +2297,11 @@ pub mod tests {
             p1_mine(b) :- edge(3, b), p1_reach(b).
             .output p0_mine, p1_mine
         "#;
+        // Held from the unprofiled run on: no other profile test turns the (process-wide) profile on meanwhile.
+        let _run = super::super::profile::one_run();
         let quiet = simplify(&mut super::super::rr::parse(text).unwrap());
         assert_eq!(quiet.merged.len(), 2, "{:?}", quiet.merged);
         assert_eq!((quiet.similar, quiet.similar_groups), (0, 0));
-        let _run = super::super::profile::one_run();
         super::super::profile::set(true);
         let profiled = simplify(&mut super::super::rr::parse(text).unwrap());
         super::super::profile::set(false);
