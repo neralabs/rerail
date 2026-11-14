@@ -85,7 +85,7 @@ impl Patterns {
             text_bind_arg: re(r#""bind": \{([^}]*)\}"#),
             text_bind_key: re(r#""([A-Z_][A-Z0-9_]*)":"#),
             text_pattern: re(r"~\s*(`+)(.*?)\1"),
-            text_capture: re(r"(?<![\w$])([A-Z][A-Z0-9_]*)\s*=\s*[a-z0-9]"),
+            text_capture: re(r"(?<![\w$])([A-Z][A-Z0-9_]*)\s*=\s*[a-z0-9@]"),
             text_named_group: re(r"\(\?P?<([A-Za-z_]\w*)>"),
             text_agg_start: re(r"\b(?:count|sum|min|max|mean)\b[^:{}()]*:\s*\{"),
             text_pieces: re(r#"("(?:[^"\\]|\\.)*"|`+[^`]*`+)"#),

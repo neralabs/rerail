@@ -1,4 +1,4 @@
-//! `translate.py`'s demand passes (magic sets by hand) and the passes after them: `demand` (a helper that reads
+//! The translator's demand passes (magic sets by hand) and the passes after them: `demand` (a helper that reads
 //! metavariables its callers pass in), `node_demand` (a recursion that looks at every descendant),
 //! `hoist_ancestor_steps` and `unroll_negative` (a recursion through `!` as UNROLL levels).
 

@@ -1,28 +1,24 @@
 //! Main's JSON rules (`rerail.policy/v1`), read by the engine (decision 0175).
 //!
 //! A rule file whose top-level `format` is `rerail.policy/v1` is translated on read into `.rr` text, which then
-//! goes through the ordinary reader and lowering. The translator is a port of the Python one that made
-//! `packs/python-main` (`docs/rule-syntax/site/translate_rules.py`): `translate.translate(doc)` writes the display
-//! dialect, and `engine_dialect.engine_text(text, id)` rewrites it into the dialect the reader takes. Only what that
-//! path uses is ported, file by file:
+//! goes through the ordinary reader and lowering. The translator writes the display dialect, and the engine pass
+//! (engine_dialect.rs) rewrites it into the dialect the reader takes. It began as a port of a Python translator in
+//! the docs, retired in decision 0182; this is now the only one. Its parts:
 //!
-//! - `translate.py`: the clause loop and printing (translate.rs), the construct-by-construct lowering (lower.rs),
-//!   the shared metavariable passes (share.rs), the demand passes and recursion unrolling (demand.rs), and the
-//!   text helpers they share (text.rs, program.rs);
-//! - `main_terms.py` (main_terms.rs), `simplify.py` (simplify.rs), `fold.py` (fold.rs);
-//! - `souffle.py`'s `check_rule`, `whole` and `segments` (souffle.rs), `textglob.py`'s `text_test` (textglob.rs);
-//! - `engine_dialect.py` (engine_dialect.rs).
+//! - the clause loop and printing (translate.rs), the construct-by-construct lowering (lower.rs), the shared
+//!   metavariable passes (share.rs), the demand passes and recursion unrolling (demand.rs), and the text helpers
+//!   they share (text.rs, program.rs);
+//! - main's terms (main_terms.rs), the merge of copies (simplify.rs) and of families of them (fold.rs);
+//! - `check_rule`, `whole` and `segments` (souffle.rs), and a regex's glob reading (textglob.rs);
+//! - the engine dialect (engine_dialect.rs).
 //!
-//! Python's semantics are kept where the output depends on them: ordered dicts (`value::Obj`), `json.dumps`,
-//! `re.sub`/`re.split`/`findall` (pyre.rs, over `fancy-regex` for look-around and back references).
-//! Python's module-level `re.compile`s are one `Patterns` value (patterns.rs), compiled once for a batch of
-//! translations (`Translator`) and passed to each pass as `px`, not process-wide statics.
-//! The rules' manual overrides (`packs/python-main/overrides`) are not part of reading.
+//! The Python semantics the port kept are kept where the output depends on them: ordered dicts (`value::Obj`),
+//! `json.dumps`, `re.sub`/`re.split`/`findall` (pyre.rs, over `fancy-regex` for look-around and back references).
+//! The module-level regexes are one `Patterns` value (patterns.rs), compiled once for a batch of translations
+//! (`Translator`) and passed to each pass as `px`, not process-wide statics.
 //!
-//! The parity test (`json_rules::tests::json_rules_parity_with_python`) translates all 537 JSON rules of
-//! `docs/rule-syntax/packs/python-main/source/rules` and compares each with the Python output, byte for byte: the
-//! pack's `.rr` file, or for the 9 overridden rules the generated text kept in
-//! `packs/python-main/generated-before-override`.
+//! `docs/rule-syntax/packs/python-main` is this translator's output on main's 537 Python rules, with no hand-written
+//! overrides; the test `json_rules::tests::json_rules_pack_is_current` holds it current.
 
 mod demand;
 mod engine_dialect;
@@ -51,6 +47,13 @@ use std::path::Path;
 /// The JSON format the engine translates on read.
 pub const FORMAT: &str = "rerail.policy/v1";
 
+/// A policy's display translation and its two counts.
+pub struct Display {
+    pub text: String,
+    pub untranslated: usize,
+    pub ungrounded: usize,
+}
+
 /// What every translation reads, made once for a batch of them and passed to each: the names a folded family
 /// must not take (the library's relations and functors, and the built-ins), and the translator's patterns.
 pub struct Translator {
@@ -66,8 +69,17 @@ impl Translator {
     /// One JSON policy's text as engine `.rr` text. `id` names the rule (the file's stem), as the Python takes it.
     pub fn translate_text(&self, json: &str, id: &str) -> Result<String, String> {
         let doc = value::parse(json).map_err(|e| format!("{id}: not JSON: {e}"))?;
-        let rr = translate::translate(&self.px, &doc, &self.reserved).map_err(|e| format!("{id}: {e}"))?;
+        let (rr, _) = translate::translate(&self.px, &doc, &self.reserved).map_err(|e| format!("{id}: {e}"))?;
         engine_dialect::engine_text(&self.px, rr, id).map_err(|e| format!("{id}: {e}"))
+    }
+
+    /// One JSON policy's display translation (the rules docs' generated view: before the engine's dialect), with
+    /// the JSON terms it left as `ast(..)` atoms and its rules no positive atom grounds.
+    pub fn display_text(&self, json: &str, id: &str) -> Result<Display, String> {
+        let doc = value::parse(json).map_err(|e| format!("{id}: not JSON: {e}"))?;
+        let (text, untranslated) = translate::translate(&self.px, &doc, &self.reserved).map_err(|e| format!("{id}: {e}"))?;
+        let ungrounded = text.lines().filter(|l| l.starts_with("// Not grounded:")).count();
+        Ok(Display { text, untranslated, ungrounded })
     }
 
     /// The JSON policy at `path` as engine `.rr` text, named by the file's stem.

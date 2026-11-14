@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // coll_abc_family(n, key): 8 copies of one rule set (`coll-abc`, `te-typing-311`, `te-typing-312` and 5 more), folded into one: row `key` of
 // coll_abc_family_case gives the strings each copy had.

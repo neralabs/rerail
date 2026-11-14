@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // Guest captures a host rule reads, by text (another document): H1
 
@@ -114,7 +114,7 @@ UP032(n) :- up032_alt_13(n),
 // UP032_f_string_annotation(n): a finding at node n, from clause `f-string-annotation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP032_f_string_annotation(at: node, call: node) code "UP032" "Replace this `.format()` call with an f-string, putting each argument inside its `{{}}` placeholder; keep `.format()` when the string is passed to a translation function."
+.violation UP032_f_string_annotation(at: loc, call: node) code "UP032" "Replace this `.format()` call with an f-string, putting each argument inside its `{{}}` placeholder; keep `.format()` when the string is passed to a translation function."
     suppress noqa "UP032"
 UP032_f_string_annotation(CALL, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), has(r1, c2, "call"), CALL = c2, up032_alt_16(c2).

@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
 .decl up031_plain_string(n: node)
@@ -149,7 +149,7 @@ UP031(n) :- n ~ `$S % $R`,
 // UP031_printf_string_formatting_manual(n): findings from clauses `printf-string-formatting-manual`, `printf-string-formatting-annotation-manual`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP031_printf_string_formatting_manual(at: node, at: loc) code "UP031" "Rewrite this percent-format string as an f-string or `.format()` by hand: `%d`, `%i`, `%u`, `%c`, `*` widths and unusual dict keys need explicit conversion."
+.violation UP031_printf_string_formatting_manual(at: loc, at: loc) code "UP031" "Rewrite this percent-format string as an f-string or `.format()` by hand: `%d`, `%i`, `%u`, `%c`, `*` widths and unusual dict keys need explicit conversion."
     suppress noqa "UP031"
 UP031_printf_string_formatting_manual(n, AT) :- n ~ `$S % $R`,
     ( count : { field(n, "right", c1), up031_r_dict(c1) } = 0, field(n, "left", c2), up031_first_nonconv(c2, AT)
@@ -164,7 +164,7 @@ UP031_printf_string_formatting_manual(n, AT) :- (kind(n, "string") ; kind(n, "co
 // UP031_printf_string_formatting_annotation(n): a finding at node n, from clause `printf-string-formatting-annotation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP031_printf_string_formatting_annotation(at: node, bin: node) code "UP031" "Replace this percent-format with an f-string or `.format()`; if the right side is a name that may hold a tuple, leave it or unpack it explicitly."
+.violation UP031_printf_string_formatting_annotation(at: loc, bin: node) code "UP031" "Replace this percent-format with an f-string or `.format()`; if the right side is a name that may hold a tuple, leave it or unpack it explicitly."
     suppress noqa "UP031"
 UP031_printf_string_formatting_annotation(BIN, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), has(r1, c2, "binary_operator"), c2 ~ `$S % $R`,

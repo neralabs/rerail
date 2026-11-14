@@ -1,4 +1,4 @@
-//! Text helpers of `translate.py` that the passes share: masking strings and patterns, the variables a body
+//! Text helpers of the translator that the passes share: masking strings and patterns, the variables a body
 //! names or binds, calls of a relation, splitting at top-level separators, and `wrap` (a rule's lines).
 //! Offsets are byte offsets: a masked text keeps every byte's place.
 

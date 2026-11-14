@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -56,7 +56,7 @@ up021_drop_in_string(n, K) :- (kind(n, "string") ; kind(n, "concatenated_string"
 // UP021(n, detail): findings from clauses `rename-to-text`, `drop-duplicate`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP021(at: node, k: node, detail: symbol) "{detail}."
+.violation UP021(at: loc, k: node, detail: symbol) "{detail}."
     suppress noqa "UP021"
 UP021(K, n, "Rename the `universal_newlines` keyword to `text`; it is the same option under its current name") :- up021_rename_keyword(n),
     node(_, n, _, _, _), K = n.

@@ -365,6 +365,20 @@ pub enum PatternSource<'a> {
     Contextual { context: &'a str, selector: &'a str },
 }
 
+/// The key a program's pattern goes by (`ast_match`'s first column, `Program::ast_patterns`): a plain pattern's text,
+/// or for `n ~ `context` at "kind"` the selector, a unit separator and the context.
+pub fn pattern_key(pattern: &str, selector: Option<&str>) -> String {
+    selector.map_or_else(|| pattern.to_owned(), |s| format!("{s}\u{1f}{pattern}"))
+}
+
+/// The pattern a key names ([`pattern_key`]).
+pub fn pattern_source(key: &str) -> PatternSource<'_> {
+    match key.split_once('\u{1f}') {
+        Some((selector, context)) => PatternSource::Contextual { context, selector },
+        None => PatternSource::Plain(key),
+    }
+}
+
 /// A rule's pattern compiled for `language`, the grammar of the document its clause reads (an
 /// embedded clause's is its program's: `ast.embedded`).
 pub fn rule_pattern(

@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -12,7 +12,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on S are added to every rule.
-.violation PTH101(at: node, f: node) "Use `Path(path).chmod(mode)` instead of `os.chmod(path, mode)`; leave it where the path is a file descriptor or bytes, or `dir_fd` comes through `**kwargs`."
+.violation PTH101(at: loc, f: node) "Use `Path(path).chmod(mode)` instead of `os.chmod(path, mode)`; leave it where the path is a file descriptor or bytes, or `dir_fd` comes through `**kwargs`."
     suppress noqa "PTH101"
 PTH101(F, n) :- kind(n, "call"), field(n, "function", c1), pth101_callee(c1, F),
     ( kind(n, "call"), pth101_arg_no_path_1(n), unset(S)

@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -242,7 +242,7 @@ pyi034_in_final(n) :- pyi034_demand_in_final(n), pyi034_up_2(n, p1), child(p2, p
 // PYI034(n): a finding at node n, from clause `returns-class-name`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI034(at: node, m: node, c: loc) "Annotate the return type of `{m}` as `Self` (from typing, or typing_extensions before 3.11) instead of `{c}`. Leave it if the method does not return the receiver."
+.violation PYI034(at: loc, m: node, c: loc) "Annotate the return type of `{m}` as `Self` (from typing, or typing_extensions before 3.11) instead of `{c}`. Leave it if the method does not return the receiver."
     suppress noqa "PYI034"
 PYI034(M, n, C) :- kind(n, "function_definition"), pyi034_method(n, C),
     field(n, "return_type", c1), kind(c1, "type"), child(c1, c2, _),
@@ -255,7 +255,7 @@ PYI034(M, n, C) :- kind(n, "function_definition"), pyi034_method(n, C),
 // PYI034_iterator_returns_iterator(n): a finding at node n, from clause `iterator-returns-iterator`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI034_iterator_returns_iterator(at: node, m: node, c: loc) code "PYI034" "Annotate the return type of `{m}` as `Self` (from typing, or typing_extensions before 3.11) instead of an iterator type, since `{c}` is itself an iterator. Leave it if another object is returned."
+.violation PYI034_iterator_returns_iterator(at: loc, m: node, c: loc) code "PYI034" "Annotate the return type of `{m}` as `Self` (from typing, or typing_extensions before 3.11) instead of an iterator type, since `{c}` is itself an iterator. Leave it if another object is returned."
     suppress noqa "PYI034"
 PYI034_iterator_returns_iterator(M, n, C) :- kind(n, "function_definition"),
     pyi034_method(n, C), !match("async\\b.*", n),

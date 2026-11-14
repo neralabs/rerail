@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // PTH102(n): a finding at node n, from clause `os-mkdir`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH102(at: node, f: node) "Use `Path(path).mkdir(mode=mode)` instead of `os.mkdir(path, mode)`; leave it where the path is bytes or `dir_fd` comes through `**kwargs`."
+.violation PTH102(at: loc, f: node) "Use `Path(path).mkdir(mode=mode)` instead of `os.mkdir(path, mode)`; leave it where the path is bytes or `dir_fd` comes through `**kwargs`."
     suppress noqa "PTH102"
 PTH102(F, n) :- kind(n, "call"), field(n, "function", c1), pth102_callee(c1, F),
     count : { field(n, "arguments", c2), kind(c2, "argument_list"), child(c2, c3, _), kind(c3, "keyword_argument"), field(c3, "name", c4), glob("dir_fd", c4), field(c3, "value", c5), !pth102_none_literal(c5) } = 0.

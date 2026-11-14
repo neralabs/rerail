@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // LOG014(n): a finding at node n, from clause `exc-info-outside-except-handler`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation LOG014(at: node, k: node) "Remove this `exc_info` argument: outside an except block there is no exception to attach. Leave it if this code only ever runs while an exception is being handled."
+.violation LOG014(at: loc, k: node) "Remove this `exc_info` argument: outside an except block there is no exception to attach. Leave it if this code only ever runs while an exception is being handled."
     suppress noqa "LOG014"
 LOG014(K, n) :- count : { inside(n, p1, "except_clause"), node(_, p1, _, _, _) } = 0,
     log014_alt_5(n, K).

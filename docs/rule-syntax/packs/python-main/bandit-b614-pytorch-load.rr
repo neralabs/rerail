@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*.py"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -12,7 +12,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on F, WEIGHTS are added to every rule.
-.violation B614(at: node, f: node) "PyTorch loading permits unsafe deserialization; pass weights_only=True or use safetensors."
+.violation B614(at: loc, f: node) "PyTorch loading permits unsafe deserialization; pass weights_only=True or use safetensors."
     suppress nosec "B614"
 B614(F, n) :- node(_, WEIGHTS, _, _, _), n ~ `$F($$$ARGS)`,
     ( kind(n, "call"), b614_arg_no_weights_only_1(n), unset(WEIGHTS)

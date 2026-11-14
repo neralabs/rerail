@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -210,7 +210,7 @@ RUF046(n, "wrapper; this call already returns an int. Keep it if the operand's t
 // RUF046_int_of_integer_in_string_type(n, detail): findings from clauses `int-of-integer-in-string-type`, `int-of-rounding-in-string-type`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF046_int_of_integer_in_string_type(at: node, c: node, detail: symbol) code "RUF046" "Drop the `int(...)` {detail}."
+.violation RUF046_int_of_integer_in_string_type(at: loc, c: node, detail: symbol) code "RUF046" "Drop the `int(...)` {detail}."
     suppress noqa "RUF046"
 RUF046_int_of_integer_in_string_type(C, n, "wrapper and use its argument directly; the argument is already an integer") :- ruf046_cast_of_int_in_type(n, C).
 RUF046_int_of_integer_in_string_type(C, n, "wrapper; this call already returns an int. Keep it if the operand's type overrides `__round__`, `__ceil__`, `__floor__` or `__trunc__` to return a non-int") :- ruf046_cast_of_rounded_in_type(n, C).

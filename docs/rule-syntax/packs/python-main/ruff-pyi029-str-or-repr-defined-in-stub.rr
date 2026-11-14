@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -12,7 +12,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation PYI029(at: node, name: node) "Remove this `{name}` definition from the stub; a `{name}` returning `str` is inherited from `object`, so declaring it is almost always redundant."
+.violation PYI029(at: loc, name: node) "Remove this `{name}` definition from the stub; a `{name}` returning `str` is inherited from `object`, so declaring it is almost always redundant."
     suppress noqa "PYI029"
 PYI029_raw(NAME, n) :- kind(n, "function_definition"), field(n, "name", c1),
     glob("__{str,repr}__", c1), node(_, c1, _, _, _), NAME = c1, field(n, "return_type", c2),
@@ -65,5 +65,5 @@ pyi029_alt_1(n) :- precedes(s1, n), pyi029_arg_param(s1).
 pyi029_alt_1(n) :- precedes(s2, n), pyi029_star_marker(s2).
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl PYI029_raw(at: node, name: node)
+.decl PYI029_raw(at: loc, name: node)
 PYI029(v0, v1) :- PYI029_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

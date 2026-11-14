@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -56,7 +56,7 @@ pt020_fixture_expr(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
 // PT020_deprecated_yield_fixture_trailing_comment(n): a finding at node n, from clause `deprecated-yield-fixture-trailing-comment`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT020_deprecated_yield_fixture_trailing_comment(at: node, span: node) code "PT020" "Replace `yield_fixture` with `fixture` (`pytest.fixture`, or `fixture` imported from pytest); it is a deprecated alias of the same function, so nothing else changes."
+.violation PT020_deprecated_yield_fixture_trailing_comment(at: loc, span: node) code "PT020" "Replace `yield_fixture` with `fixture` (`pytest.fixture`, or `fixture` imported from pytest); it is a deprecated alias of the same function, so nothing else changes."
     suppress noqa "PT020"
 PT020_deprecated_yield_fixture_trailing_comment(SPAN, n) :- kind(n, "decorator"),
     child(n, c1, _), pt020_yield_expr_deprecated_yield_fixture_trailing_comment(c1),

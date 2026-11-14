@@ -1,4 +1,4 @@
-//! `main_terms.py`: main's Rerail-extension matcher terms (`arguments`, `value`, `resolves`, `layout`) lowered to
+//! Main's Rerail-extension matcher terms (`arguments`, `value`, `resolves`, `layout`) lowered to
 //! plain Datalog over the tape. Each returns body literals for one JSON term at node v and adds the relations it
 //! needs to the program's library part (`Program::lib`).
 

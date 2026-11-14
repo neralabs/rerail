@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 .options {"mccabe.max-complexity": {"type": "integer", "default": 10, "description": "The highest complexity a function may have: one, plus one for each decision point and nested function in its body."}}
 

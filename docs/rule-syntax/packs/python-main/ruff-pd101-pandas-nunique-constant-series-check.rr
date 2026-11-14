@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -105,7 +105,7 @@ pd101_hit_core(n) :- pd101_comparison(n), pd101_pandas_gate(n).
 // PD101(n, detail): findings from clauses `nunique-le-1`, `nunique-eq-1`, `nunique-ne-1`, `nunique-gt-1`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PD101(at: node, cmp: node, detail: symbol) "Check a NumPy array, not `nunique()`, which scans every value: `a = s.to_numpy()`, then `a.shape[0] {detail} (a[0] == a).all()`. Keep nunique if NaN handling matters or `s` isn't a pandas Series."
+.violation PD101(at: loc, cmp: node, detail: symbol) "Check a NumPy array, not `nunique()`, which scans every value: `a = s.to_numpy()`, then `a.shape[0] {detail} (a[0] == a).all()`. Keep nunique if NaN handling matters or `s` isn't a pandas Series."
     suppress noqa "PD101"
 PD101(CMP, n, "== 0 or") :- pd101_hit(n), node(_, n, _, _, _), CMP = n.
 PD101(CMP, n, "== 0 or") :- pd101_in_string(n, CMP).
@@ -160,7 +160,7 @@ pd101_in_string_nunique_gt_1(n, CMP) :- (kind(n, "string") ; kind(n, "concatenat
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation PD101_stub_annotation(at: node, cmp: node) code "PD101" "Check a NumPy array, not `nunique()`, which scans every value: with `a = s.to_numpy()`, `a.shape[0] == 0` tests empty and `(a[0] == a).all()` tests constant. Keep nunique if NaN handling matters."
+.violation PD101_stub_annotation(at: loc, cmp: node) code "PD101" "Check a NumPy array, not `nunique()`, which scans every value: with `a = s.to_numpy()`, `a.shape[0] == 0` tests empty and `(a[0] == a).all()` tests constant. Keep nunique if NaN handling matters."
     suppress noqa "PD101"
 PD101_stub_annotation_raw(CMP, n) :- pd101_comparison(n), node(_, n, _, _, _), CMP = n, pd101_up_1(n, p1), pd101_up_2(n, p2),
     !pd101_pandas_gate(n).
@@ -309,5 +309,5 @@ pd101_alt_10(n, CMP) :- pd101_hit_nunique_gt_1(n), CMP = n.
 pd101_alt_10(n, CMP) :- pd101_in_string_nunique_gt_1(n, CMP).
 
 // main's file condition {"regex": "\\.pyi$"}
-.decl PD101_stub_annotation_raw(at: node, cmp: node)
+.decl PD101_stub_annotation_raw(at: loc, cmp: node)
 PD101_stub_annotation(v0, v1) :- PD101_stub_annotation_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

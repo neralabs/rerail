@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -229,7 +229,7 @@ PYI055_unnecessary_type_union_raw(n) :- pyi055_bad_union(n),
 // PYI055_unnecessary_type_union_in_string(n): findings from clauses `unnecessary-type-union-in-string`, `unnecessary-type-union-in-escaped-or-concatenated-string`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI055_unnecessary_type_union_in_string(at: node, pyi055_union: node) code "PYI055" "Merge the `type[X]` members of this union into one `type[...]`, e.g. `type[int | str]` instead of `type[int] | type[str]`; the meaning is the same."
+.violation PYI055_unnecessary_type_union_in_string(at: loc, pyi055_union: node) code "PYI055" "Merge the `type[X]` members of this union into one `type[...]`, e.g. `type[int | str]` instead of `type[int] | type[str]`; the meaning is the same."
     suppress noqa "PYI055"
 PYI055_unnecessary_type_union_in_string(UNION, n) :- pyi055_in_string_annotation(n, UNION).
 PYI055_unnecessary_type_union_in_string(UNION, n) :- pyi055_in_escaped_or_concatenated_annotation(n, UNION).

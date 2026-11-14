@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // UP011(n): a finding at node n, from clause `lru-cache-without-parameters`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP011(at: node, parens: node) "Remove the empty parentheses after `lru_cache` in this decorator and write it bare; it defaults to the same cache size. Keep the call only if the code must support Python 3.7 or older."
+.violation UP011(at: loc, parens: node) "Remove the empty parentheses after `lru_cache` in this decorator and write it bare; it defaults to the same cache size. Keep the call only if the code must support Python 3.7 or older."
     suppress noqa "UP011"
 UP011(PARENS, n) :- kind(n, "decorator"),
     match("(?s)@.*?(?<PARENS>(?:[\\s)\\\\]|#[^\\n]*\\n)*\\((?:[\\s\\\\]|#[^\\n]*\\n)*\\)(?:(?:[\\s\\\\]|#[^\\n]*\\n)*\\))*)(?:[\\s\\\\]|#[^\\n]*)*", n),

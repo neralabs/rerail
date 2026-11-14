@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // RUF019(n): a finding at node n, from clause `unnecessary-key-check`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF019(at: node, c: node, d: loc, k: loc) "If `{d}` is a dict, use `{d}.get({k})` instead of testing `{k} in {d}` before reading `{d}[{k}]`; leave it if `{d}` is not a mapping."
+.violation RUF019(at: loc, c: node, d: loc, k: loc) "If `{d}` is a dict, use `{d}.get({k})` instead of testing `{k} in {d}` before reading `{d}[{k}]`; leave it if `{d}` is not a mapping."
     suppress noqa "RUF019"
 RUF019(C, n, D, K) :- ruf019_unnecessary_key_check(n, D, K), node(_, n, _, _, _), C = n.
 RUF019(C, n, D, K) :- ruf019_check_in_string(n, C, D, K).

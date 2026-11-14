@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // Guest captures a host rule reads, by text (another document): K
 
@@ -13,7 +13,7 @@
 // FAST003(n): a finding at node n, from clause `unused-path-parameter`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation FAST003(at: node, f: node, k: loc, fn: loc) "Declare `{k}` as a non-positional-only parameter of `{fn}` so FastAPI passes the `{{{k}}}` path value. Leave it if the handler reads `request.path_params`; else drop `{{{k}}}` from the path."
+.violation FAST003(at: loc, f: node, k: loc, fn: loc) "Declare `{k}` as a non-positional-only parameter of `{fn}` so FastAPI passes the `{{{k}}}` path value. Leave it if the handler reads `request.path_params`; else drop `{{{k}}}` from the path."
     suppress noqa "FAST003"
 FAST003(F, n, K, FN) :- fast003_plain_str(n), fast003_route_arg(n, FN), parsed(n, "braceFormat", r1),
     has(r1, c2, "field"),

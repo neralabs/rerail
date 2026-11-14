@@ -1,4 +1,4 @@
-//! The parts of `souffle.py` the translator uses: `whole` (a search regex as a whole-string one), the text's
+//! The Soufflé-text helpers the translator uses: `whole` (a search regex as a whole-string one), the text's
 //! segments, and `check_rule` (the variables a rule leaves unbound).
 
 use super::patterns::Patterns;

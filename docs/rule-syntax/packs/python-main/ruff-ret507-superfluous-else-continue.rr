@@ -1,15 +1,10 @@
-// OVERRIDE (hand-written, not generated): main's rule matches the `else` / `elif` keyword token itself
-// (`regex: ^(elif|else)$` inside an else_clause or elif_clause) and captures it as BRANCH. The tape leaves
-// that keyword out (the clause implies it), and the reader matches a capture regex only over a node of a
-// named kind. So the finding is at the clause, which starts with the keyword (same line), and BRANCH is
-// read from the source before the clause's first stored child. The rest is the generated translation.
 .policy "ruff-ret507-superfluous-else-continue" revision 1
 .guests off
 .description "Remove the else or elif after an if branch that continues the loop, and dedent its code; the branch already skips ahead."
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // RET507(n): a finding at node n, from clause `superfluous-else-continue`.
 // Each rule below is one way the JSON `rule` can match.
@@ -17,13 +12,12 @@
 .violation RET507(at: node, branch: symbol) "Unnecessary `{branch}` after `continue` statement"
     suppress noqa "RET507"
 RET507(n, BRANCH) :- (kind(n, "elif_clause") ; kind(n, "else_clause")),
-    child(n, c0, 0), structural_before(c0, g0), match("(?s)\\s*(?<BRANCH>elif|else)(?:\\W.*)?", g0),
-    count : { precedes(s2, n), (kind(s2, "elif_clause") ; kind(s2, "else_clause")) } = 0,
-    child(p3, n, _), kind(p3, "if_statement"), child(p3, c4, _), kind(c4, "block"),
-    child(c4, c5, _), kind(c5, "continue_statement"),
-    count : { precedes(s6, c5), (kind(s6, "return_statement") ; kind(s6, "raise_statement") ; kind(s6, "break_statement")) } = 0,
-    within_stop(p3, p7, ret507_stop_1), kind(p7, "function_definition"),
-    ret507_analysed_function(p7).
+    count : { precedes(s4, n), (kind(s4, "elif_clause") ; kind(s4, "else_clause")) } = 0,
+    child(p5, n, _), kind(p5, "if_statement"), child(p5, c6, _), kind(c6, "block"),
+    child(c6, c7, _), kind(c7, "continue_statement"),
+    count : { precedes(s8, c7), (kind(s8, "return_statement") ; kind(s8, "raise_statement") ; kind(s8, "break_statement")) } = 0,
+    within_stop(p5, p9, ret507_stop_1), kind(p9, "function_definition"),
+    ret507_analysed_function(p9), ret507_tok_lead_1(n, BRANCH).
 
 // analysed_function(n): the JSON util `analysed-function`, used where the JSON says `matches: "analysed-function"`
 .decl ret507_analysed_function(n: node)
@@ -49,6 +43,15 @@ ret507_own_return(n) :- kind(n, "return_statement").
 // has_result(n): the JSON util `has-result`, used where the JSON says `matches: "has-result"`
 .decl ret507_has_result(n: node)
 ret507_has_result(n) :- within_stop(c1, n, ret507_stop_1), ret507_value_return(c1).
+
+// tok_lead_1(n): n starts with the token "^(?<BRANCH>elif|else)$": a token the tape stores, or one it leaves out, read from the source before n's first stored child
+.decl ret507_tok_lead_1(n: node, branch: symbol)
+.stored ret507_tok_lead_1 "its token read is of the parent's first token where the tape stores it; one the tape leaves out is read from the source before the parent's first stored child, in its own rule"
+ret507_tok_lead_1(n, BRANCH) :- token(n, 0, t3, _, _), match("^(?<BRANCH>elif|else)$", t3).
+ret507_tok_lead_1(n, BRANCH) :- child(n, c1, 0), structural_before(c1, g2),
+    match("(?s)^\\s*(?<BRANCH>elif|else)(?:\\W.*)?$", g2).
+ret507_tok_lead_1(n, BRANCH) :- !child(n, _, _), node_text(n, g2),
+    match("(?s)^\\s*(?<BRANCH>elif|else)(?:\\W.*)?$", g2).
 
 // stop_1: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
 .decl ret507_stop_1(kind: symbol)

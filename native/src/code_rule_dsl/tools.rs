@@ -518,7 +518,7 @@ mod settings_tests {
 //   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json <rule.json>... --out <dir>";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -671,15 +671,20 @@ fn repeat_command(_: &str) -> Result<String, String> {
 }
 
 /// `logic`: a program over a corpus, its outputs as T's (list step 23).
-/// `translate-json <rule.json>... --out <dir>`: each JSON policy translated as the reader translates it, written to
-/// `<dir>/<stem>.rr`. A rule the translator cannot take is reported and the rest go on.
+/// `translate-json [--display] <rule.json>... --out <dir>`: each JSON policy translated as the reader translates it,
+/// written to `<dir>/<stem>.rr`. With `--display`, the display translation instead (the rules docs' generated view,
+/// before the engine's dialect), and `<dir>/counts.json`: each stem's JSON terms left as `ast(..)` atoms
+/// (`untranslated`) and rules no positive atom grounds (`ungrounded`). A rule the translator cannot take is reported
+/// and the rest go on.
 fn translate_json_command(args: &[String]) -> Result<String, String> {
     use crate::code_rule_dsl::logic::json_rules;
-    let usage = "usage: rerail-engine translate-json <rule.json>... --out <dir>";
-    let (mut files, mut out) = (Vec::new(), None);
+    let usage = "usage: rerail-engine translate-json [--display] <rule.json>... --out <dir>";
+    let (mut files, mut out, mut display) = (Vec::new(), None, false);
     let mut rest = args.iter();
     while let Some(a) = rest.next() {
-        if a == "--out" {
+        if a == "--display" {
+            display = true;
+        } else if a == "--out" {
             out = Some(std::path::PathBuf::from(rest.next().ok_or(usage)?));
         } else {
             files.push(std::path::PathBuf::from(a));
@@ -692,10 +697,19 @@ fn translate_json_command(args: &[String]) -> Result<String, String> {
     std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
     let translator = json_rules::Translator::new();
     let mut failed = 0;
+    let mut counts = serde_json::Map::new();
     for f in &files {
-        match translator.translate_file(f) {
+        let stem = f.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let made = if display {
+            std::fs::read_to_string(f).map_err(|e| format!("{}: {e}", f.display())).and_then(|json| translator.display_text(&json, &stem)).map(|d| {
+                counts.insert(stem.clone(), serde_json::json!({"untranslated": d.untranslated, "ungrounded": d.ungrounded}));
+                d.text
+            })
+        } else {
+            translator.translate_file(f)
+        };
+        match made {
             Ok(text) => {
-                let stem = f.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
                 let dest = out.join(format!("{stem}.rr"));
                 std::fs::write(&dest, text).map_err(|e| format!("{}: {e}", dest.display()))?;
             }
@@ -704,6 +718,10 @@ fn translate_json_command(args: &[String]) -> Result<String, String> {
                 eprintln!("FAIL {e}");
             }
         }
+    }
+    if display {
+        let dest = out.join("counts.json");
+        std::fs::write(&dest, serde_json::Value::Object(counts).to_string()).map_err(|e| format!("{}: {e}", dest.display()))?;
     }
     Ok(format!("{} translated, {failed} failed", files.len() - failed))
 }

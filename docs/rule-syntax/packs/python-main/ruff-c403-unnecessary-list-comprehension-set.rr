@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // C403(n): a finding at node n, from clause `list-comprehension-set`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation C403(at: node, c403_call: node) "Rewrite `set([expr for ...])` as a set comprehension `{{expr for ...}}`; the intermediate list is not needed."
+.violation C403(at: loc, c403_call: node) "Rewrite `set([expr for ...])` as a set comprehension `{{expr for ...}}`; the intermediate list is not needed."
     suppress noqa "C403"
 C403(CALL, n) :- c403_call(n, CALL).
 C403(CALL, n) :- c403_in_annotation(n, CALL).

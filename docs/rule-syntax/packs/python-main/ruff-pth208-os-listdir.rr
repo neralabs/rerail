@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -97,7 +97,7 @@ pth208_file_descriptor(n) :- pth208_int_attribute(n).
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on S are added to every rule.
-.violation PTH208(at: node, f: node, s: loc) "Use `Path({s}).iterdir()` instead of `os.listdir({s})`; it lazily yields `Path` objects, so take `.name` for plain names. Leave it for bytes paths and file descriptors."
+.violation PTH208(at: loc, f: node, s: loc) "Use `Path({s}).iterdir()` instead of `os.listdir({s})`; it lazily yields `Path` objects, so take `.name` for plain names. Leave it for bytes paths and file descriptors."
     suppress noqa "PTH208"
 PTH208(F, n, S) :- kind(n, "call"), field(n, "function", c1), pth208_callee(c1, F),
     pth208_arg_path_1(n, a2), S = a2, !pth208_file_descriptor(S).
@@ -105,7 +105,7 @@ PTH208(F, n, S) :- kind(n, "call"), field(n, "function", c1), pth208_callee(c1, 
 // PTH208_os_listdir_cwd(n, detail): findings from clauses `os-listdir-cwd`, `os-listdir-unpacked`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH208_os_listdir_cwd(at: node, f: node, detail: symbol) code "PTH208" "Use {detail}."
+.violation PTH208_os_listdir_cwd(at: loc, f: node, detail: symbol) code "PTH208" "Use {detail}."
     suppress noqa "PTH208"
 PTH208_os_listdir_cwd(F, n, "`Path().iterdir()` instead of `os.listdir()`; it lazily yields `Path` objects, so take `.name` for plain names") :- kind(n, "call"),
     field(n, "function", c1), pth208_callee(c1, F), field(n, "arguments", c2),

@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // PT023(n): a finding at node n, from clause `mark-with-empty-parentheses`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PT023(at: node, span: node) "Remove the empty `()` after this `pytest.mark` decorator; a marker without arguments is written bare. Keep any comments that sat inside the parentheses."
+.violation PT023(at: loc, span: node) "Remove the empty `()` after this `pytest.mark` decorator; a marker without arguments is written bare. Keep any comments that sat inside the parentheses."
     suppress noqa "PT023"
 PT023(SPAN, n) :- kind(n, "decorator"), child(n, c1, _), pt023_empty_mark_call(c1),
     match("(?P<SPAN>(?:\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:[ \\t]*#[^\\n]*)?", n).

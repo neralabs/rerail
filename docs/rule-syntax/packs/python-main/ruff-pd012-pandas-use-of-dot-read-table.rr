@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // PD012(n): a finding at node n, from clause `pandas-use-of-dot-read-table`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PD012(at: node, func: node) "Replace `read_table` with `read_csv` (import it if needed) and drop `sep=\",\"`; `read_csv` splits on commas by default and takes the same other arguments."
+.violation PD012(at: loc, func: node) "Replace `read_table` with `read_csv` (import it if needed) and drop `sep=\",\"`; `read_csv` splits on commas by default and takes the same other arguments."
     suppress noqa "PD012"
 PD012(FUNC, n) :- pd012_read_table(n), node(_, n, _, _, _), FUNC = n.
 PD012(FUNC, n) :- pd012_in_string(n, FUNC).

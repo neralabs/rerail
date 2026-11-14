@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // AIR303(n): a finding at node n, from clause `create-asset`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR303(at: node, m: node) "Pass the arguments to `{m}` by keyword, e.g. `{m}(uri=...)`; Airflow 3 no longer accepts positional arguments here."
+.violation AIR303(at: loc, m: node) "Pass the arguments to `{m}` by keyword, e.g. `{m}(uri=...)`; Airflow 3 no longer accepts positional arguments here."
     suppress noqa "AIR303"
 AIR303(M, n) :- kind(n, "call"), field(n, "function", c1), air303_collector_method(c1, M),
     field(n, "arguments", c2),
@@ -81,7 +81,7 @@ air303_assigned_chain(n) :- kind(n, "attribute"), air303_alt_1(n).
 // AIR303_dataset_extra(n): a finding at node n, from clause `dataset-extra`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR303_dataset_extra(at: node, f: node) code "AIR303" "Pass the dict to `{f}` as the `extra=` keyword argument instead of as the second positional argument; that signature changed in Airflow 3."
+.violation AIR303_dataset_extra(at: loc, f: node) code "AIR303" "Pass the dict to `{f}` as the `extra=` keyword argument instead of as the second positional argument; that signature changed in Airflow 3."
     suppress noqa "AIR303"
 AIR303_dataset_extra(F, n) :- kind(n, "call"), field(n, "function", c1),
     air303_dataset_callee(c1, F), field(n, "arguments", c2), kind(c2, "argument_list"),
@@ -155,7 +155,7 @@ air303_dict_arg(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), air3
 // AIR303_get_link(n): a finding at node n, from clause `get-link`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation AIR303_get_link(at: node, name: node) code "AIR303" "Use `def get_link(self, operator, *, ti_key)` or `def get_link(self, operator, ti_key)` as the method signature that Airflow 3 expects."
+.violation AIR303_get_link(at: loc, name: node) code "AIR303" "Use `def get_link(self, operator, *, ti_key)` or `def get_link(self, operator, ti_key)` as the method signature that Airflow 3 expects."
     suppress noqa "AIR303"
 AIR303_get_link(NAME, n) :- kind(n, "function_definition"), field(n, "name", c1),
     glob("get_link", c1), node(_, c1, _, _, _), NAME = c1, within_stop(n, p2, air303_stop_17),

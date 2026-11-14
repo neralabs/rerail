@@ -6,9 +6,9 @@ This directory holds main's 537 Python JSON rules (`rerail.policy/v1`), translat
 engine's `.rr` rules. It exists to test the Datalog engine against main on every rule, not only on the ones that
 translate easily. Because a program does the translation, nobody picks or tunes a rule to suit the engine.
 
-Each `<id>.rr` file is generated. Do not edit one by hand: the next regeneration overwrites it. A rule that the
-translator cannot handle gets a hand-written file in `overrides/<id>.rr`, and that file replaces the generated
-one. Each override starts with a comment that says why it exists.
+Each `<id>.rr` file is generated. Do not edit one by hand: the next regeneration overwrites it. There are no
+hand-written overrides: each file is what the engine itself reads from the JSON rule, so a rule that translates
+badly is fixed in the translator.
 
 Every rule keeps main's logic and regexes. Every rule says `.guests off`, because main matches only files and
 never the strings inside them. No rule includes a library beyond the core relations the translator emits.
@@ -20,16 +20,13 @@ PACK_RULES=<main's pack>/rules ENGINE=<rerail-engine> RERAIL_RR_LIB=<engine lib 
     docs/rule-syntax/site/regen_main_pack.sh [ids file]
 ```
 
-The script does three things:
+The script does two things:
 
 1. It runs the engine's translator over the JSON files: `rerail-engine translate-json <rule.json>... --out
-   <dir>`. The translator is part of the engine (decision 0175), so `logic`, `run-rr` and `check-rr` also read a
-   JSON rule directly. It is a port of `docs/rule-syntax/site/translate.py` and `engine_dialect.py`, which stay
-   as its reference: the test `json_rules_parity_with_python` holds the two byte-identical on all 537 rules, so a
-   change to the translator goes into both.
-2. It saves each overridden rule's generated text in `generated-before-override/`, for that test, and copies
-   the overrides over the generated files.
-3. It reader-checks every file with `rerail-engine check-rr`.
+   <dir>`. The translator is part of the engine (decisions 0175, 0182), so `logic`, `run-rr` and `check-rr` read
+   a JSON rule directly, to the same text. The test `json_rules_pack_is_current` holds this directory equal to
+   the translator's output on all 537 rules, so a change to the translator regenerates the pack.
+2. It reader-checks every file with `rerail-engine check-rr`.
 
 The verdicts go to `reader-check.txt`, one line per rule: its status and the first line of any error. Old
 generated files are moved to a directory under `/tmp`, not deleted.
@@ -65,15 +62,17 @@ A `layout` gap to the neighbouring token reads the line of the code next to the 
 climbs to the parent where the gap reaches the parent's edge, and steps past comments unless the rule says
 `comments: true`.
 
-## Overrides
+## The former overrides
 
-| Rule | Why |
-|---|---|
-| `bandit-b110-try-except-pass`, `bandit-b112-try-except-continue` | `pattern: {context, selector}` has no `.rr` form. The bare `except:` it selects is written as an except clause with no child but its block. |
-| `ruff-ret505` … `ruff-ret508` | Main matches the `else`/`elif` keyword token and captures it. The tape leaves the keyword out, so the finding is at the clause (same line), and BRANCH is read from the source before its first child. |
-| `ruff-com818-trailing-comma-on-bare-tuple` | A capture regex over a node of unknown kind: the statement kinds are named. The pattern_list trailing comma is read from the gap or the stored token. |
-| `ruff-pyi010-non-empty-stub-body` | A capture regex over a node of unknown kind: the statement kinds are named. |
-| `ruff-n806-non-lowercase-variable-in-function` | Main passes `NAME` in from the caller, and Datalog cannot, so the reader refuses it as ungrounded. Here `NAME` ranges over the nodes of the model's file, and the caller's join keeps its own. A stray `unset(MODEL)` is dropped. |
+Until decision 0182, 9 rules had hand-written overrides, because the translator could not say them. Each is now
+generated, and gives the same findings as its override did on a probe with known answers:
+
+| Rule | What the translator could not say | How it says it now |
+|---|---|---|
+| B110, B112 | `pattern: {context, selector}`: a snippet parsed in a context (`try: … except: pass`), matched at the node of the selector's kind. | A pattern with a selector, ``n ~ `try: …` at "except_clause"``: the engine parses the context and matches the selected node (decision 0182). |
+| RET505–RET508 | A capture of the `else`/`elif` keyword, which the tape leaves out. | The token that opens its parent (above): the finding is at the clause, and the capture is read from the source before the clause's first child. |
+| COM818, PYI010 | A regex with captures over a node whose kind the rule does not name. | The capture is precomputed over the children of the parent's kind (`SpanIn::ChildOf`, decision 0182). |
+| N806 | A util that reads the caller's metavariable (`NAME`). | The util's caller binds it: a helper that reads a transform's target gets the target's source column. |
 
 ## Rules that still fail, and the plan to run them all
 
@@ -81,14 +80,15 @@ The pinned source is `source/` (main's Python pack 0.1.8: `pack.json` and `rules
 rule's reader verdict, and `run-check.txt` (from `../../site/run_main_pack.sh`) each rule's verdict when run alone
 on one file, under the caps (2 minutes, 2 GB).
 
-### The 9 overrides: what makes each expressible
+### Binding sites: main's and the library's differ (open)
 
-| Rule | What the translator cannot say | The fix that makes it generated |
-|---|---|---|
-| B110, B112 | `pattern: {context, selector}`: a snippet parsed in a context (`try: … except: pass`), matched at the node of the selector's kind. | The translator parses the context itself and writes out the selected node's shape (its kind and children's kinds and texts), as it already does for a plain pattern. |
-| RET505–RET508 | A capture of an anonymous token (`else`, `elif`), which the tape does not store. | The translator already reads such tokens from the source gaps (`structural_before`) for tests; a capture of one becomes the gap's span, with the finding at the clause, which starts with the keyword. |
-| COM818, PYI010 | A regex with captures over a node whose kind the rule does not name. | The translator names the kinds the node can have, from the grammar's node types under its parent, as the overrides do by hand. |
-| N806 | A util that reads the caller's metavariable (`NAME`). | The translator's `demand()` pass already hands a caller's metavariable to a helper; it is extended to a util whose only binder is the caller's. |
+Found on an N806 probe. Main's `binds: {form: …}` holds at the bound name, with forms `assignment`, `annotated`,
+`augmented`, `named` (walrus), `definition`, `parameter` and so on. The library's `site_form` (`lib/python/names.rr`)
+puts a simple assignment's site on the assignment statement, a definition's on the `def`, and names its forms
+`assign`, `augassign`, `walrus`, `def`, `param`. So `x = 1` inside a function gives no `site_form(x,
+"assignment")`, and N806 misses `Bad = 1` (it finds the `for` and `with` targets, whose site is the name). About
+46 generated rules use `site_form`. The fix is a relation in main's terms, keyed by the name, that the translator
+writes.
 
 ### 14 refused by the reader: all fixed
 
@@ -143,7 +143,7 @@ them, its findings and UP032's on probes with known answers equal the hand-writt
   callees. That fix also changes C414, N802, N804, SLOT000 and UP008, which passed `unset` or grounded columns
   before.
 - **Translator: a guest capture read by the host.** Main compares a guest capture with a host node by text.
-  `engine_dialect.same_document_joins` added `@doc(K) = @doc(N)`, which never holds across a guest. The
+  The translator's same-document pass added `@doc(K) = @doc(N)`, which never holds across a guest. The
   translator now lists the captures a `host` rule reads (`// Guest captures a host rule reads …`), and the
   same-document constraint skips them.
 

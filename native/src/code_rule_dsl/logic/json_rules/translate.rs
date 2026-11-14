@@ -201,8 +201,9 @@ fn fold_messages(px: &Patterns, prog: &mut Program, body: Vec<Item>) -> Vec<Item
     out
 }
 
-/// The text of one translated policy.
-pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<String> {
+/// The text of one translated policy (the display form, before the engine's dialect), and how many JSON terms it
+/// left as `ast(..)` atoms.
+pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize)> {
     let empty_list = Vec::new();
     let clauses: &Vec<Value> = doc.get("clauses").and_then(Value::as_list).unwrap_or(&empty_list);
     let mut langs: Vec<Option<&Value>> = Vec::new();
@@ -354,7 +355,7 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<String> {
         }
     }
 
-    // simplify.py: duplicate helpers, helpers used once, grounding atoms something else provides
+    // simplify.rs: duplicate helpers, helpers used once, grounding atoms something else provides
     let mut entries: Vec<usize> = body.iter().filter_map(|i| if let Item::Rule(e) = i { Some(*e) } else { None }).collect();
     let mut protected = seen_rel.clone();
     for &e in &entries {
@@ -446,7 +447,7 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<String> {
     }
 
     let mut out: Vec<String> = head;
-    out.push("// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.".to_owned());
+    out.push("// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).".to_owned());
     out.push(String::new());
     if !prog.host_reads.is_empty() {
         // engine_dialect's same_document_joins reads this line: these are compared by text across documents
@@ -477,6 +478,11 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<String> {
                 for c in &prog.numeric {
                     let l = c.to_lowercase();
                     first = sub(&re(&format!(r"\b{l}: loc\b")), &first, |_| format!("{l}: number"));
+                }
+                // a capture found symbolic while the rules were lowered (a token's text): a symbol
+                for c in &prog.symbolic {
+                    let l = c.to_lowercase();
+                    first = sub(&re(&format!(r"\b{l}: loc\b")), &first, |_| format!("{l}: symbol"));
                 }
                 em.out.push(first);
                 em.out.extend(lines[1..].iter().cloned());
@@ -526,7 +532,7 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<String> {
         let i = out.iter().position(String::is_empty).unwrap_or(out.len());
         out.insert(i, "// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.".to_owned());
     }
-    Ok(format!("{}\n", out.join("\n").trim_end()))
+    Ok((format!("{}\n", out.join("\n").trim_end()), prog.untranslated))
 }
 
 struct Emit<'a> {

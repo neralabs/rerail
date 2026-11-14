@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // RUF018(n): a finding at node n, from clause `assignment-in-assert`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF018(at: node, w: node, name: loc) "Assign `{name}` in its own statement before the `assert` and assert on `{name}`; under `python -O` asserts are skipped, so code outside the assert would not see this assignment."
+.violation RUF018(at: loc, w: node, name: loc) "Assign `{name}` in its own statement before the `assert` and assert on `{name}`; under `python -O` asserts are skipped, so code outside the assert would not see this assignment."
     suppress noqa "RUF018"
 RUF018(W, n, NAME) :- kind(n, "named_expression"), node(_, n, _, _, _), W = n, ruf018_in_assert(n),
     field(n, "name", c1), node(_, c1, _, _, _), NAME = c1, ruf018_in_sc(n, SC),

@@ -4,12 +4,12 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // ISC004(n): a finding at node n, from clause `implicit-string-concatenation-in-collection-literal`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation ISC004(at: node, c: node) "Add the missing comma if these strings are separate items; if joining them is intended, wrap the concatenation in parentheses."
+.violation ISC004(at: loc, c: node) "Add the missing comma if these strings are separate items; if joining them is intended, wrap the concatenation in parentheses."
     suppress noqa "ISC004"
 ISC004(C, n) :- isc004_target(n), node(_, n, _, _, _), C = n.
 ISC004(C, n) :- isc004_in_string(n, C).

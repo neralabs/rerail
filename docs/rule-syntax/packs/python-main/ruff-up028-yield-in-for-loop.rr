@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // UP028(n): a finding at node n, from clause `yield-in-for-loop`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP028(at: node, loop: node, it: loc) "Replace this loop with `yield from {it}` (parenthesize a bare tuple). Keep the loop if its target is declared global or nonlocal, or if callers send values the iterable cannot accept."
+.violation UP028(at: loc, loop: node, it: loc) "Replace this loop with `yield from {it}` (parenthesize a bare tuple). Keep the loop if its target is declared global or nonlocal, or if callers send values the iterable cannot accept."
     suppress noqa "UP028"
 UP028(LOOP, n, IT) :- kind(n, "for_statement"),
     count : { field(n, "alternative", c1), kind(c1, "else_clause") } = 0,

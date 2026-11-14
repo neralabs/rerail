@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -57,7 +57,7 @@ c414_kw(n, N, V, S) :-
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on O, I are added to every rule.
-.violation C414(at: node, m: node, i: loc, o: loc) "Remove the inner `{i}()` call and pass its argument straight to `{o}()`, which accepts any iterable and gives the same result."
+.violation C414(at: loc, m: node, i: loc, o: loc) "Remove the inner `{i}()` call and pass its argument straight to `{o}()`, which accepts any iterable and gives the same result."
     suppress noqa "C414"
 C414(M, n, I, O) :- c414_nested_call(n, I, _, O, _), match("(?s)(?:\\*\\s*)?(?P<M>.*)", n),
     c414_fn(O, "set"),
@@ -67,7 +67,7 @@ C414(M, n, I, O) :- c414_nested_call(n, I, _, O, _), match("(?s)(?:\\*\\s*)?(?P<
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on O, I are added to every rule.
-.violation C414_list_or_tuple_inside(at: node, m: node, i: loc, o: loc) code "C414" "Remove the inner `{i}()` call and pass its argument straight to `{o}()`, which accepts any iterable and gives the same result."
+.violation C414_list_or_tuple_inside(at: loc, m: node, i: loc, o: loc) code "C414" "Remove the inner `{i}()` call and pass its argument straight to `{o}()`, which accepts any iterable and gives the same result."
     suppress noqa "C414"
 C414_list_or_tuple_inside(M, n, I, O) :- c414_nested_call(n, I, _, O, _),
     match("(?s)(?:\\*\\s*)?(?P<M>.*)", n), (c414_fn_list_tuple(O) ; c414_fn(O, "sorted")),
@@ -77,7 +77,7 @@ C414_list_or_tuple_inside(M, n, I, O) :- c414_nested_call(n, I, _, O, _),
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on O, I are added to every rule.
-.violation C414_sorted_inside_sorted(at: node, m: node, i: loc, o: loc) code "C414" "Remove the inner `{i}()` call and pass its argument straight to `{o}()`, which accepts any iterable and gives the same result."
+.violation C414_sorted_inside_sorted(at: loc, m: node, i: loc, o: loc) code "C414" "Remove the inner `{i}()` call and pass its argument straight to `{o}()`, which accepts any iterable and gives the same result."
     suppress noqa "C414"
 C414_sorted_inside_sorted(M, n, I, O) :- kind(n, "call"), c414_nested_call(n, I, IA, O, OA),
     count : { field(n, "arguments", c1), child(c1, c2, _), c414_kw(c2, KN, KV, KS), count : { inside(c2, p3, "call"), has(p3, c4, "argument_list"), node(_, c4, _, _, _), Y = c4, text(Y, t5), text(IA, t5), child(c4, c7, _), (kind(c7, "keyword_argument"), field(c7, "name", c1_3_5), node(_, c1_3_5, _, _, _), A = c1_3_5, text(A, t2_3_5), text(KN, t2_3_5), field(c7, "value", c4_3_5), node(_, c4_3_5, _, _, _), B = c4_3_5, value(B, t5_3_5), value(KV, t5_3_5), @doc(A) = @doc(KN) ; kind(c7, "dictionary_splat"), child(c7, c7_4_5, _), !c414_alt_2(c7_4_5), node(_, c7_4_5, _, _, _), C = c7_4_5, value(C, t8_4_5), value(KS, t8_4_5)), @doc(Y) = @doc(IA) } = 0 } = 0,
@@ -88,7 +88,7 @@ C414_sorted_inside_sorted(M, n, I, O) :- kind(n, "call"), c414_nested_call(n, I,
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on O, I are added to every rule.
-.violation C414_reversed_inside_sorted(at: node, m: node, i: loc, o: loc) code "C414" "Remove the inner `{i}()` call and pass its argument straight to `{o}()`; keep it only if items that sort equal must stay in reversed input order."
+.violation C414_reversed_inside_sorted(at: loc, m: node, i: loc, o: loc) code "C414" "Remove the inner `{i}()` call and pass its argument straight to `{o}()`; keep it only if items that sort equal must stay in reversed input order."
     suppress noqa "C414"
 C414_reversed_inside_sorted(M, n, I, O) :- c414_nested_call(n, I, _, O, _),
     match("(?s)(?:\\*\\s*)?(?P<M>.*)", n), c414_fn(O, "sorted"), c414_fn(I, "reversed").

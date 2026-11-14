@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -12,7 +12,7 @@
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on FI, CF, OP are added to every rule.
-.violation PTH123(at: node, f: node) "Use `Path(file).open(...)` instead of `open(file, ...)`; the other arguments carry over. Leave `open()` when the argument is a file descriptor, or when it needs `closefd=False` or an `opener`."
+.violation PTH123(at: loc, f: node) "Use `Path(file).open(...)` instead of `open(file, ...)`; the other arguments carry over. Leave `open()` when the argument is a file descriptor, or when it needs `closefd=False` or an `opener`."
     suppress noqa "PTH123"
 PTH123(F, n) :- kind(n, "call"), field(n, "function", c1), pth123_callee(c1, F),
     ( kind(n, "call"), pth123_arg_no_file_1(n), unset(FI)

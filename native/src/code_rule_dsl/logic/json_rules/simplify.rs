@@ -1,4 +1,4 @@
-//! `simplify.py`: the meaning-preserving clean-up of a translated rule, run before metavariable sharing: merge
+//! The meaning-preserving clean-up of a translated rule, run before metavariable sharing: merge
 //! helpers with the same rules, inline helpers used once, drop repeated literals and grounding atoms something
 //! else provides, and fold families of copies into one relation and a table (`fold`).
 

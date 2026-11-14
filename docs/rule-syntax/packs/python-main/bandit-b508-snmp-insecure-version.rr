@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*.py"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -12,7 +12,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on F, MODEL are added to every rule.
-.violation B508(at: node, f: node) "Switch to SNMPv3 with UsmUserData instead of this CommunityData; mpModel 0 or 1 sends the community string in clear text."
+.violation B508(at: loc, f: node) "Switch to SNMPv3 with UsmUserData instead of this CommunityData; mpModel 0 or 1 sends the community string in clear text."
     suppress nosec "B508"
 B508(F, n) :- n ~ `$F($$$ARGS)`, kind(n, "call"), b508_arg_mpmodel_1(n, a1), MODEL = a1,
     sym_of(F, "pysnmp.hlapi.CommunityData"), (value(MODEL, 0) ; value(MODEL, 1)).

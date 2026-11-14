@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // RUF017(n): a finding at node n, from clause `quadratic-list-summation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF017(at: node, c: node) "Replace `sum(lists, [])` with `list(itertools.chain.from_iterable(lists))`; summing onto a list copies it at every step (quadratic). Leave it when the input is only a few short lists."
+.violation RUF017(at: loc, c: node) "Replace `sum(lists, [])` with `list(itertools.chain.from_iterable(lists))`; summing onto a list copies it at every step (quadratic). Leave it when the input is only a few short lists."
     suppress noqa "RUF017"
 RUF017(C, n) :- ruf017_summation(n), node(_, n, _, _, _), C = n.
 RUF017(C, n) :- ruf017_in_annotation(n, C).

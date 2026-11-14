@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*.py"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -12,7 +12,7 @@
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on F are added to every rule.
-.violation B612(at: node, f: node) "logging.config.listen is used without a verify callback; verify or decrypt received configuration bytes."
+.violation B612(at: loc, f: node) "logging.config.listen is used without a verify callback; verify or decrypt received configuration bytes."
     suppress nosec "B612"
 B612(F, n) :- n ~ `$F($$$ARGS)`, kind(n, "call"), b612_arg_no_verify_1(n),
     sym_of(F, "logging.config.listen").

@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -81,7 +81,7 @@ up006_in_future_annotation(n) :- up006_future_annotations(n), up006_up_1(n, p1).
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation UP006(at: node, t: node) "Replace `{t}` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused."
+.violation UP006(at: loc, t: node) "Replace `{t}` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused."
     suppress noqa "UP006"
 UP006(T, n) :- up006_generic_ref(n), node(_, n, _, _, _), T = n.
 UP006(T, n) :- up006_direct_ref(n, T).
@@ -91,7 +91,7 @@ UP006(T, n) :- up006_nested_ref(n, T).
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation UP006_typing_alias_stub(at: node, t: node) code "UP006" "Replace `{t}` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused."
+.violation UP006_typing_alias_stub(at: loc, t: node) code "UP006" "Replace `{t}` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused."
     suppress noqa "UP006"
 UP006_typing_alias_stub_raw(T, n) :- up006_generic_ref(n), node(_, n, _, _, _), T = n.
 UP006_typing_alias_stub_raw(T, n) :- up006_direct_ref(n, T).
@@ -101,7 +101,7 @@ UP006_typing_alias_stub_raw(T, n) :- up006_nested_ref(n, T).
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // `options` carries JSON settings that have no .rr form yet.
-.violation UP006_typing_alias_future_annotations(at: node, t: node) code "UP006" "Replace `{t}` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused."
+.violation UP006_typing_alias_future_annotations(at: loc, t: node) code "UP006" "Replace `{t}` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused."
     suppress noqa "UP006"
 UP006_typing_alias_future_annotations_raw(T, n) :- up006_alt_4(n, T), up006_in_future_annotation(n).
 UP006_typing_alias_future_annotations_raw(T, n) :- up006_nested_ref(n, T),
@@ -135,7 +135,7 @@ up006_alt_4(n, T) :- up006_generic_ref(n), node(_, n, _, _, _), T = n.
 up006_alt_4(n, T) :- up006_direct_ref(n, T).
 
 // pythonVersion {"max": "3.8"} excludes Python 3.10, main's default: no findings.
-.decl UP006_typing_alias_stub_raw(at: node, t: node)
+.decl UP006_typing_alias_stub_raw(at: loc, t: node)
 
 // pythonVersion {"max": "3.8"} excludes Python 3.10, main's default: no findings.
-.decl UP006_typing_alias_future_annotations_raw(at: node, t: node)
+.decl UP006_typing_alias_future_annotations_raw(at: loc, t: node)

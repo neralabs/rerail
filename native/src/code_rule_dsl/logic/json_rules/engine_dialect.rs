@@ -103,7 +103,9 @@ fn slice(text: &str, a: usize, b: usize) -> &str {
 }
 
 
-/// `anchor x` (a capture): the finding is at x, so x takes the `at` column and the witness n takes x's column.
+/// `anchor x` (a capture): the finding is at x, so x takes the `at` column and the witness n takes x's column. The
+/// `at` column is a `loc`: a capture is a node (`$X` of a pattern) or a span (a regex group, `(?P<COMMA>,)`), and a
+/// span in a column typed `node` gives no finding.
 fn anchor_captures(px: &Patterns, mut text: String) -> String {
     let found: Vec<(String, String, String, String, String)> =
         captures(&px.engine_dialect_anchor, &text).iter().map(|m| (g(m, 0).to_owned(), g(m, 1).to_owned(), g(m, 2).to_owned(), g(m, 3).to_owned(), g(m, 4).to_owned())).collect();
@@ -111,7 +113,7 @@ fn anchor_captures(px: &Patterns, mut text: String) -> String {
         let raw_cols: Vec<&str> = cols.split(',').collect();
         let names: Vec<String> = raw_cols.iter().map(|c| c.split(':').next().unwrap_or("").trim().to_owned()).collect();
         let Some(k) = names.iter().position(|n| *n == anchor) else { continue };
-        let new_cols = names.iter().zip(&raw_cols).enumerate().map(|(i, (n, c))| if i == 0 || i == k { format!("{n}: node") } else { c.trim().to_owned() }).collect::<Vec<_>>().join(", ");
+        let new_cols = names.iter().zip(&raw_cols).enumerate().map(|(i, (n, c))| if i == 0 { format!("{n}: loc") } else if i == k { format!("{n}: node") } else { c.trim().to_owned() }).collect::<Vec<_>>().join(", ");
         text = text.replacen(&whole, &format!(".violation {rel}({new_cols}){rest}\n"), 1);
         let (mut out, mut pos) = (String::new(), 0usize);
         let heads = captures(&re(&format!(r"(?m)^{rel}\(")), &text).iter().map(|h| h.get(0).expect("a match").end()).collect::<Vec<_>>();

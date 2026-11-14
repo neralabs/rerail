@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // RUF049(n): a finding at node n, from clause `dataclass-enum`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF049(at: node, deco: node) "Don't decorate an Enum with `@dataclass`: the generated `__eq__` can make distinct members equal. Remove it, or move the fields into a dataclass mixin listed before `Enum`."
+.violation RUF049(at: loc, deco: node) "Don't decorate an Enum with `@dataclass`: the generated `__eq__` can make distinct members equal. Remove it, or move the fields into a dataclass mixin listed before `Enum`."
     suppress noqa "RUF049"
 RUF049(DECO, n) :- kind(n, "decorator"),
     match("(?s)(?P<DECO>@(?:\"(?:[^\"\\\\\\n]|\\\\.)*\"|'(?:[^'\\\\\\n]|\\\\.)*'|#[^\\n]*|[^#'\"])*?[\\w)])[ \\t]*(?:#[^\\n]*)?", n),

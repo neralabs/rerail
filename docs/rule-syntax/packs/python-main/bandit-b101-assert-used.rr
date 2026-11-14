@@ -5,7 +5,7 @@
 .mode steer
 .scope include "**/*"
 .scope exclude "**/tests/**", "**/test_*.py", "**/*_test.py", "**/conftest.py"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // B101(n): a finding at node n, from clause `assert-used`.
 // Each rule below is one way the JSON `rule` can match.

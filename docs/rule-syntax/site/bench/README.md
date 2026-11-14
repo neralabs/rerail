@@ -8,7 +8,6 @@ session; they live here so they are not lost.
 | `bench-shapes.sh <full\|one-file\|one-rule> <engine>` | Main 0.1.3 against the engine, step by step: cold, warm, and the incremental edits. |
 | `bench-steps.sh` | The older full-shape table that `bench-shapes.sh full` replaces. |
 | `rules-bisect.py <rules> <corpus> <always.rr> <pattern>` | The smallest set of other rules that, with one rule, still gives a finding (ddmin). |
-| `make_overrides.py` | Wrote the first `overrides/` files from the generated rules. Kept for reference. |
 | `corpus0.sha256` | The 300 Python files of the benchmark corpus, with their hashes. |
 
 The inputs are outside the repo. `SP` (default: the session's scratchpad) holds:

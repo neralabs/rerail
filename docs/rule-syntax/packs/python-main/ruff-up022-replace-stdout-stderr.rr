@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -68,7 +68,7 @@ up022_with_capture_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "conca
 // UP022(n, detail): findings from clauses `use-capture-output`, `merge-into-capture-output`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP022(at: node, call: node, detail: symbol) "{detail}."
+.violation UP022(at: loc, call: node, detail: symbol) "{detail}."
     suppress noqa "UP022"
 UP022(CALL, n, "Replace `stdout=subprocess.PIPE` and `stderr=subprocess.PIPE` with `capture_output=True`; it is equivalent. Keep them only if the code must still run on Python 3.6") :- up022_without_capture(n),
     node(_, n, _, _, _), CALL = n.

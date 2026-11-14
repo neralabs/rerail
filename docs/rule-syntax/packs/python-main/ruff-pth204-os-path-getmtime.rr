@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -23,7 +23,7 @@ pth204_single_filename_arg(n) :- child(n, c2, _), kind(c2, "argument_list"),
 // PTH204(n): a finding at node n, from clause `os-path-getmtime`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH204(at: node, f: node, s: loc) "Use `Path({s}).stat().st_mtime` instead of `os.path.getmtime({s})` (without the `Path(...)` wrapper if `{s}` is already a path); leave it where the argument is a bytes path or a file descriptor."
+.violation PTH204(at: loc, f: node, s: loc) "Use `Path({s}).stat().st_mtime` instead of `os.path.getmtime({s})` (without the `Path(...)` wrapper if `{s}` is already a path); leave it where the argument is a bytes path or a file descriptor."
     suppress noqa "PTH204"
 PTH204(F, n, S) :- kind(n, "call"), field(n, "function", c1), pth204_callee(c1, F),
     pth204_arg_filename_1(n, a2), S = a2,
@@ -41,7 +41,7 @@ pth204_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth
 // PTH204_os_path_getmtime_in_annotation(n): a finding at node n, from clause `os-path-getmtime-in-annotation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH204_os_path_getmtime_in_annotation(at: node, f: node) code "PTH204" "Use `Path(...).stat().st_mtime` instead of `os.path.getmtime(...)`; leave it where the argument is a bytes path or a file descriptor."
+.violation PTH204_os_path_getmtime_in_annotation(at: loc, f: node) code "PTH204" "Use `Path(...).stat().st_mtime` instead of `os.path.getmtime(...)`; leave it where the argument is a bytes path or a file descriptor."
     suppress noqa "PTH204"
 PTH204_os_path_getmtime_in_annotation(F, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), within(c2, r1),

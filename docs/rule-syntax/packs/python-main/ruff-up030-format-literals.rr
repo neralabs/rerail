@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/format-args.rr"
 
@@ -42,7 +42,7 @@ UP030(n) :- field(n, "function", c1), field(c1, "object", c2), up030_permuted(c2
 // UP030_format_literals_annotation(n): a finding at node n, from clause `format-literals-annotation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP030_format_literals_annotation(at: node, call: node) code "UP030" "Replace the explicit indices (`{{0}}`, `{{1}}`) with automatic `{{}}` fields; if they are out of order, also reorder the arguments to match, unless that would change the order of side effects."
+.violation UP030_format_literals_annotation(at: loc, call: node) code "UP030" "Replace the explicit indices (`{{0}}`, `{{1}}`) with automatic `{{}}` fields; if they are out of order, also reorder the arguments to match, unless that would change the order of side effects."
     suppress noqa "UP030"
 UP030_format_literals_annotation(CALL, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
     parsed(n, "annotation", r1), has(r1, c2, "call"), CALL = c2, child(c2, c3, _),

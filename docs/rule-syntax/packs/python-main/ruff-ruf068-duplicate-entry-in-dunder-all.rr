@@ -4,12 +4,12 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // RUF068(n): a finding at node n, from clause `duplicate-entry`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF068(at: node, ruf068_dup: node) "{{dup}} is already listed earlier in this `__all__` list; remove the repeat, or correct it if another name was meant."
+.violation RUF068(at: loc, ruf068_dup: node) "{{dup}} is already listed earlier in this `__all__` list; remove the repeat, or correct it if another name was meant."
     suppress noqa "RUF068"
 RUF068(DUP, n) :- ruf068_dup(n, DUP), child(p1, n, _), ruf068_sequence(p1).
 RUF068(DUP, n) :- ruf068_dup_in_string(n, DUP),

@@ -1,4 +1,4 @@
-//! `textglob.py`: a whole-string regex as the glob-family text test that matches exactly the same strings, or
+//! A whole-string regex as the glob-family text test that matches exactly the same strings, or
 //! none. Indices are over characters, as Python's are.
 
 const GLOB_SPECIAL: &str = "*?[]{},\\";

@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // INT001(n): a finding at node n, from clause `f-string-in-gettext-call`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation INT001(at: node, arg: node) "Translate a constant template, then format the result: `_(\"Hello, %s!\") % name`, not `_(f\"Hello, {{name}}!\")`. Leave it if the callee is not a translation function or the text is a computed catalog key."
+.violation INT001(at: loc, arg: node) "Translate a constant template, then format the result: `_(\"Hello, %s!\") % name`, not `_(f\"Hello, {{name}}!\")`. Leave it if the callee is not a translation function or the text is a computed catalog key."
     suppress noqa "INT001"
 INT001(ARG, n) :- int001_target(n), node(_, n, _, _, _), ARG = n.
 INT001(ARG, n) :- int001_in_annotation(n, ARG).

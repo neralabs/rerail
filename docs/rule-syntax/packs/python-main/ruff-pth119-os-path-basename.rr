@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // PTH119(n): a finding at node n, from clause `os-path-basename`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH119(at: node, f: node) "Use `Path(...).name` instead of `os.path.basename(...)`. Path normalizes the path first (trailing slashes, `.`) and rejects bytes, so keep `basename` where the exact result matters."
+.violation PTH119(at: loc, f: node) "Use `Path(...).name` instead of `os.path.basename(...)`. Path normalizes the path first (trailing slashes, `.`) and rejects bytes, so keep `basename` where the exact result matters."
     suppress noqa "PTH119"
 PTH119(F, n) :- pth119_target(n, F).
 PTH119(F, n) :- pth119_in_string(n, F).

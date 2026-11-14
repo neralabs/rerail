@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // PTH110(n): a finding at node n, from clause `os-path-exists`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH110(at: node, f: node, s: loc) "Use `Path({s}).exists()` from pathlib instead of `os.path.exists({s})`; leave it for bytes paths, file descriptors, or a value that can be an empty string (`Path('')` is `.`)."
+.violation PTH110(at: loc, f: node, s: loc) "Use `Path({s}).exists()` from pathlib instead of `os.path.exists({s})`; leave it for bytes paths, file descriptors, or a value that can be an empty string (`Path('')` is `.`)."
     suppress noqa "PTH110"
 PTH110(F, n, S) :- kind(n, "call"), field(n, "function", c1), pth110_callee(c1, F),
     pth110_arg_path_1(n, a2), S = a2,

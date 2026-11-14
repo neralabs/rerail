@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -138,7 +138,7 @@ N804(n) :- kind(n, "typed_parameter"), n804_first_slot(n), child(n, c2, _),
 // N804_invalid_first_argument_name_annotated_default(n): a finding at node n, from clause `invalid-first-argument-name-annotated-default`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation N804_invalid_first_argument_name_annotated_default(at: node, param: node) code "N804" "Rename this class method's first parameter to `cls` and update its uses in the body, unless another parameter already has that name; keep it if the project follows another convention."
+.violation N804_invalid_first_argument_name_annotated_default(at: loc, param: node) code "N804" "Rename this class method's first parameter to `cls` and update its uses in the body, unless another parameter already has that name; keep it if the project follows another convention."
     suppress noqa "N804"
 N804_invalid_first_argument_name_annotated_default(PARAM, n) :- kind(n, "typed_default_parameter"),
     n804_first_slot(n),

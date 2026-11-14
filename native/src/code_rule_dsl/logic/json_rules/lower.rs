@@ -1,4 +1,4 @@
-//! `translate.py`'s lowering of one JSON rule object at a time: `lower` gives the body literals that hold where a
+//! The translator's lowering of one JSON rule object at a time: `lower` gives the body literals that hold where a
 //! node matches the object, adding the helper relations it needs (alternatives, stop sets, `$option` cases) to
 //! the program. Also the clause-level pieces: utils, transforms, fixes and the violation's lines.
 
@@ -39,9 +39,10 @@ impl Lit<'_> {
     }
 }
 
-/// A backtick literal: fenced with one more backtick than the longest run inside.
+/// A backtick literal: fenced with one more backtick than the longest run inside. Newlines stay
+/// real newlines: the reader takes the body as written, so an escaped `\n` would be two characters
+/// of code and a multi-line pattern would never match.
 pub fn tick(s: &str) -> String {
-    let s = s.replace('\n', "\\n");
     let mut longest = 0;
     let mut run = 0;
     for ch in s.chars() {
@@ -241,61 +242,129 @@ fn sym_of(op: &str) -> &str {
 }
 
 /// Literals that hold when node v matches the rule object.
-/// A rule whose subject is an anonymous token that opens its parent (`{regex: "^except$", inside: {stopBy: neighbor,
-/// kind: except_clause, ..}, precedes: {stopBy: neighbor, regex: "^:$"}}`, E722's bare `except:`). A token the tape
-/// stores is the parent's first `token` child, the next one the rule names its second; one the tape leaves out
-/// (RER-131) is read at the start of the source before the parent's first stored child (the parent's whole text
-/// where it has none). The subject is the parent, which starts where the token does, so a finding sits on the
-/// token's line and column. A named node the regex matches is the first alternative. None when the rule is not of
-/// this shape.
+/// A rule whose subject is an anonymous token that opens its parent: `{regex: "^except$", inside: {stopBy: neighbor,
+/// kind: except_clause, ..}, precedes: {stopBy: neighbor, regex: "^:$"}}` (E722's bare `except:`), or a capture of
+/// one of several (`regex: "^(?<BRANCH>elif|else)$"` inside an elif or else clause, RET505). A token the tape stores
+/// is the parent's first `token` child, the next one the rule names its second; one the tape leaves out (RER-131) is
+/// read at the start of the source before the parent's first stored child (the parent's whole text where it has
+/// none). The subject is the parent, which starts where the token does, so a finding sits on the token's line and
+/// column, and a capture is the token's text. Uncaptured, a named node the regex matches (`self`) is the first
+/// alternative; a capture regex over a node of no named kind is refused by the reader, so a captured token has none.
+/// None when the rule is not of this shape (more keys, a regex that is not anchored literal tokens, a field, a
+/// parent of no named kind).
 fn leading_token(px: &Patterns, prog: &mut Program, rule: &Obj, v: &str, vs: &mut Vars) -> R<Option<Vec<String>>> {
     if !rule.keys_within(&["regex", "inside", "precedes"]) || !rule.has("inside") {
         return Ok(None);
     }
     let literal = re(r"^(?:[A-Za-z_]+|[^\w\s\\.^$*+?()\[\]{}|]+)$");
-    let lit = |rx: Option<&Value>| -> Option<String> {
+    let group = re(r"^\(\?P?<([A-Za-z_]\w*)>(.*)\)$");
+    // an anchored regex of literal tokens: (its capture, the tokens)
+    let tokens = |rx: Option<&Value>| -> Option<(Option<String>, Vec<String>)> {
         let rx = rx?.as_str()?;
-        if !(rx.starts_with('^') && rx.ends_with('$')) || rx.chars().count() < 2 {
+        if !(rx.starts_with('^') && rx.ends_with('$')) || rx.chars().count() < 3 {
             return None;
         }
         let body = super::text::chars_slice(rx, 1, 1);
-        literal.is_match(&body).unwrap_or(false).then_some(body)
+        let (cap, inner) = match super::pyre::find(&group, &body) {
+            Some(c) => (Some(g(&c, 1).to_owned()), g(&c, 2).to_owned()),
+            None => (None, body.clone()),
+        };
+        let alts: Vec<String> = inner.split('|').map(str::to_owned).collect();
+        alts.iter().all(|a| literal.is_match(a).unwrap_or(false)).then_some((cap, alts))
     };
     let neighbor = |o: &Obj| o.get("stopBy").is_none_or(|s| s.as_str() == Some("neighbor"));
-    let Some(tok) = lit(rule.get("regex")) else { return Ok(None) };
+    let Some((cap, toks)) = tokens(rule.get("regex")) else { return Ok(None) };
     let Some(inside) = rule.get("inside").and_then(Value::as_obj) else { return Ok(None) };
-    if !neighbor(inside) || !inside.get("kind").is_some_and(Value::is_str) || inside.has("field") {
+    let kind_alt = |a: &Value| a.as_obj().is_some_and(|o| o.key_set_is(&["kind"]) && o.get("kind").is_some_and(Value::is_str));
+    let named_kind = inside.get("kind").is_some_and(Value::is_str)
+        || inside.get("any").and_then(Value::as_list).is_some_and(|l| !l.is_empty() && l.iter().all(kind_alt));
+    if !neighbor(inside) || !named_kind || inside.has("field") {
         return Ok(None);
     }
     let after = match rule.get("precedes") {
         None => None,
         Some(nxt) => {
-            let a = nxt.as_obj().filter(|o| o.without(&["stopBy"]).key_set_is(&["regex"]) && neighbor(o)).and_then(|o| lit(o.get("regex")));
+            let a = nxt.as_obj().filter(|o| o.without(&["stopBy"]).key_set_is(&["regex"]) && neighbor(o)).and_then(|o| tokens(o.get("regex")));
             match a {
-                Some(a) => Some(a),
-                None => return Ok(None),
+                Some((None, a)) if a.len() == 1 => Some(a[0].clone()),
+                _ => return Ok(None),
             }
         }
     };
-    let named = lower(px, prog, &Value::Obj(rule.clone()), v, vs, &["__lead__"])?;
+    let named = if cap.is_none() { Some(lower(px, prog, &Value::Obj(rule.clone()), v, vs, &["__lead__"])?) } else { None };
     let (c, gv) = (vs.fresh("c"), vs.fresh("g"));
-    let last = tok.chars().last().expect("a token");
+    let word = toks.iter().all(|t| t.chars().last().is_some_and(|l| l.is_alphanumeric() || l == '_'));
     let tail = match &after {
         Some(a) => format!(r"\s*{}.*", py_escape(a)),
-        None if last.is_alphanumeric() || last == '_' => r"(?:\W.*)?".to_owned(),
+        None if word => r"(?:\W.*)?".to_owned(),
         None => ".*".to_owned(),
     };
-    let gap = q(&format!(r"(?s)^\s*{}{tail}$", py_escape(&tok)));
-    let mut stored = vec![format!("token({v}, 0, {}, _, _)", q(&tok))];
+    let alts = toks.iter().map(|t| py_escape(t)).collect::<Vec<_>>().join("|");
+    let head = match (&cap, toks.len()) {
+        (Some(x), _) => format!("(?<{x}>{alts})"),
+        (None, 1) => alts.clone(),
+        (None, _) => format!("(?:{alts})"),
+    };
+    let gap = q(&format!(r"(?s)^\s*{head}{tail}$"));
+    let mut stored = match (&cap, toks.len()) {
+        (None, 1) => vec![format!("token({v}, 0, {}, _, _)", q(&toks[0]))],
+        _ => {
+            let t = vs.fresh("t");
+            vec![format!("token({v}, 0, {t}, _, _)"), format!("match({}, {t})", q(&format!("^{head}$")))]
+        }
+    };
     if let Some(a) = &after {
         stored.push(format!("token({v}, 1, {}, _, _)", q(a)));
     }
+    // One relation of the parent (and the capture), a rule per form, so the stored-token read carries its reason.
+    let ren_re = re(&format!(r"(?<![\w$]){}\b", esc(v)));
+    let ren = |ls: &[String]| -> Vec<String> { ls.iter().map(|l| sub(&ren_re, l, |_| "n".to_owned())).collect() };
+    let rules = [
+        ren(&stored),
+        ren(&[format!("child({v}, {c}, 0)"), format!("structural_before({c}, {gv})"), format!("match({gap}, {gv})")]),
+        ren(&[format!("!child({v}, _, _)"), format!("node_text({v}, {gv})"), format!("match({gap}, {gv})")]),
+    ];
+    let head_args = match &cap {
+        Some(x) => format!("n, {x}"),
+        None => "n".to_owned(),
+    };
+    let sig = format!("({head_args})\u{2}{}", rules.iter().map(|r| r.join("\u{1}")).collect::<Vec<_>>().join("\u{2}"));
+    let name = match prog.token_rels.iter().find(|(s, _)| *s == sig) {
+        Some((_, n)) => n.clone(),
+        None => {
+            let name = format!("tok_lead_{}", prog.token_rels.len() + 1);
+            prog.token_rels.push((sig, name.clone()));
+            let cols = match &cap {
+                Some(x) => format!("n: node, {}: symbol", x.to_lowercase()),
+                None => "n: node".to_owned(),
+            };
+            prog.lib.insert(
+                name.clone(),
+                (
+                    format!(".decl {name}({cols})\n.stored {name} \"its token read is of the parent's first token where the tape stores it; one the tape leaves out is read from the source before the parent's first stored child, in its own rule\""),
+                    vec![format!(
+                        "// {name}(n): n starts with the token {}: a token the tape stores, or one it leaves out, read from the source before n's first stored child",
+                        dumps(rule.get("regex").expect("regex"), true, ", ", ": ", false)
+                    )],
+                    rules.into_iter().map(|b| (format!("{name}({head_args})"), b)).collect(),
+                ),
+            );
+            name
+        }
+    };
+    // the capture is the token's text, a symbol (`branch: symbol`), not a node or span
+    if let Some(x) = &cap {
+        prog.symbolic.insert(x.clone());
+    }
     let mut token = lower(px, prog, &Value::Obj(inside.clone()), v, vs, &["stopBy"])?;
-    token.push(format!(
-        "( {} ; child({v}, {c}, 0), structural_before({c}, {gv}), match({gap}, {gv}) ; !child({v}, _, _), node_text({v}, {gv}), match({gap}, {gv}) )",
-        stored.join(", ")
-    ));
-    Ok(Some(vec![format!("( {} ; {} )", named.join(", "), token.join(", "))]))
+    token.push(match &cap {
+        Some(x) => format!("{name}({v}, {x})"),
+        None => format!("{name}({v})"),
+    });
+    Ok(Some(match named {
+        Some(named) => vec![format!("( {} ; {} )", named.join(", "), token.join(", "))],
+        None => token,
+    }))
 }
 
 pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut Vars, skip: &[&str]) -> R<Vec<String>> {

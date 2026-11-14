@@ -4,12 +4,12 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // D406(n): a finding at node n, from clause `section-name-suffix`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation D406(at: node, name: node) "Remove the colon or trailing whitespace after the section name `{name}` so the line holds only the name."
+.violation D406(at: loc, name: node) "Remove the colon or trailing whitespace after the section name `{name}` so the line holds only the name."
     suppress noqa "D406"
 D406(NAME, n) :- kind(n, "string_content"), d406_numpy_style(n), child(p1, n, _),
     d406_docstring(p1),

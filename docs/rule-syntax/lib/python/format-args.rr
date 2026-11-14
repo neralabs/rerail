@@ -2,7 +2,7 @@
 // which arguments no field of the format string consumes ("unused"), and which fields no argument fills
 // ("missing"). It reads them as Ruff 0.16.9's Pyflakes rules do (F504, F505, F507, F522, F523, F524) and as main's
 // matcher does (native/src/code_rule_dsl/matcher/format_args/python.rs). The JSON translator writes a `formatArgs`
-// term as these relations (docs/rule-syntax/site/translate.py, `format_args`).
+// term as these relations (native/src/code_rule_dsl/logic/json_rules/lower.rs, `format_args`).
 //
 //   "{a}".format(a=1, b=2)        fa_brace_unused(n, b=2)              F522: a keyword no field names
 //   "{} {}".format(1)             fa_brace_missing(n, the second {})   F524: a field past the arguments

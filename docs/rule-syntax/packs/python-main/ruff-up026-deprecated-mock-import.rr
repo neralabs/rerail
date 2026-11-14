@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // UP026(n, detail): findings from clauses `import-mock`, `import-from-mock`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
@@ -21,7 +21,7 @@ UP026(n, "from `unittest.mock` instead of `mock`; `from mock import mock` become
 // UP026_mock_attribute(n): a finding at node n, from clause `mock-attribute`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP026_mock_attribute(at: node, m: node) code "UP026" "Drop the redundant `.mock`: write `mock.NAME` instead of `mock.mock.NAME`."
+.violation UP026_mock_attribute(at: loc, m: node) code "UP026" "Drop the redundant `.mock`: write `mock.NAME` instead of `mock.mock.NAME`."
     suppress noqa "UP026"
 UP026_mock_attribute(M, n) :- kind(n, "attribute"), node(_, n, _, _, _), M = n, up026_seen(n),
     field(n, "attribute", c1), glob("mock", c1), field(n, "object", c2),

@@ -1,4 +1,4 @@
-//! `translate.py`'s passes over helper relations' metavariables: `share_metavariables` (a column for each
+//! The translator's passes over helper relations' metavariables: `share_metavariables` (a column for each
 //! metavariable that crosses a helper's boundary), `passed_in_patterns`, `drop_dead_columns`,
 //! `stop_with_columns` and `inline_unsafe` (unfold a helper whose rule leaves a column unbound).
 
@@ -140,6 +140,25 @@ pub fn share_metavariables(px: &Patterns, prog: &mut Program, entries: &[usize],
             top_calls: sorted_in(findall(&px.share_top_call, &masked(px, &drop_aggregates(px, &text))), helpers),
             params: if helpers.contains(&owner) { upper_vars(px, head_tail(&en.head)) } else { Set::new() },
         });
+    }
+    // A JSON `transform` target is computed from its source's text by literals added to the end of every rule that
+    // reads it (`transform_defs_for`, at emission): a rule that reads the target binds it, and reads the source
+    // instead (a chain, `LAST` from `PATHTEXT` from `PATH`, to its first source), so a target is never passed in.
+    if let Some(defs) = prog.transform_defs.as_ref().filter(|d| !d.is_empty()) {
+        for r in &mut rules {
+            loop {
+                let found: Vec<(String, String)> =
+                    defs.iter().filter(|(t, (src, _))| r.up.contains(*t) && !r.binds.contains(*t) || r.up.contains(*t) && !r.up.contains(src)).map(|(t, (src, _))| (t.clone(), src.clone())).collect();
+                if found.is_empty() {
+                    break;
+                }
+                for (t, src) in found {
+                    r.binds.insert(t.clone());
+                    r.tbinds.insert(t);
+                    r.up.insert(src);
+                }
+            }
+        }
     }
     let mut by_owner: BTreeMap<String, Vec<usize>> = BTreeMap::new();
     for (i, r) in rules.iter().enumerate() {

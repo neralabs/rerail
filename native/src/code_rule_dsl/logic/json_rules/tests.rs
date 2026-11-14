@@ -1,5 +1,5 @@
-//! The JSON translator's tests (decision 0175): parity with the Python translator on main's 537 rules, and the
-//! Python semantics the port keeps.
+//! The JSON translator's tests (decisions 0175, 0182): the generated pack is the translator's output on main's 537
+//! rules, and the Python semantics the translator keeps.
 
 use super::{patterns, pyre, souffle, textglob, value};
 use std::collections::BTreeSet;
@@ -9,10 +9,10 @@ fn repo() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
 }
 
-/// Every JSON rule of main's pinned pack translates to the text the Python translator wrote, byte for byte: the
-/// pack's `<id>.rr`, or for a rule with a hand-written override, the generated text kept beside it.
+/// Every JSON rule of main's pinned pack translates to the pack's `<id>.rr`, byte for byte: the generated pack is
+/// what the engine reads from the JSON, so a translator change regenerates it (`site/regen_main_pack.sh`).
 #[test]
-fn json_rules_parity_with_python() {
+fn json_rules_pack_is_current() {
     let pack = repo().join("docs/rule-syntax/packs/python-main");
     let mut jsons: Vec<_> = std::fs::read_dir(pack.join("source/rules")).expect("the pinned rules").flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "json")).collect();
     jsons.sort();
@@ -21,8 +21,7 @@ fn json_rules_parity_with_python() {
     let mut differ = Vec::new();
     for json in &jsons {
         let id = json.file_stem().expect("a stem").to_string_lossy().into_owned();
-        let kept = pack.join("generated-before-override").join(format!("{id}.rr"));
-        let golden = if kept.exists() { kept } else { pack.join(format!("{id}.rr")) };
+        let golden = pack.join(format!("{id}.rr"));
         let want = std::fs::read_to_string(&golden).unwrap_or_else(|e| panic!("{}: {e}", golden.display()));
         match translator.translate_file(json) {
             Ok(got) if got == want => {}

@@ -1,4 +1,4 @@
-//! `fold.py`: families of copy-pasted relations (alike up to their strings and to which member of another family
+//! Folding: families of copy-pasted relations (alike up to their strings and to which member of another family
 //! they call) folded into one relation with a key column and a table of the strings that differed.
 
 use super::program::Program;

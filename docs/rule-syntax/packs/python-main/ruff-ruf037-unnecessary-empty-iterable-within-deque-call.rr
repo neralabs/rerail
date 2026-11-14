@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -114,7 +114,7 @@ RUF037(n, "Remove the empty iterable argument; `deque()`") :- kind(n, "call"),
 // RUF037_empty_iterable_in_annotation(n): a finding at node n, from clause `empty-iterable-in-annotation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF037_empty_iterable_in_annotation(at: node, call: node) code "RUF037" "Remove the empty iterable argument; a deque starts empty. Keep any `maxlen` as a keyword: `deque(maxlen=...)`."
+.violation RUF037_empty_iterable_in_annotation(at: loc, call: node) code "RUF037" "Remove the empty iterable argument; a deque starts empty. Keep any `maxlen` as a keyword: `deque(maxlen=...)`."
     suppress noqa "RUF037"
 RUF037_empty_iterable_in_annotation(CALL, n) :- ruf037_in_annotation(n, CALL).
 

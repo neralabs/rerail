@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -331,7 +331,7 @@ PYI036_third_argument_annotation(n, M) :- !pyi036_alt_17(n),
 // PYI036_unrecognized_overload(n): a finding at node n, from clause `unrecognized-overload`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PYI036_unrecognized_overload(at: node, params: node, name: loc) code "PYI036" "Annotate the three arguments after `self` of these `{name}` overloads as either `None, None, None` or `type[BaseException], BaseException, types.TracebackType`."
+.violation PYI036_unrecognized_overload(at: loc, params: node, name: loc) code "PYI036" "Annotate the three arguments after `self` of these `{name}` overloads as either `None, None, None` or `type[BaseException], BaseException, types.TracebackType`."
     suppress noqa "PYI036"
 PYI036_unrecognized_overload(PARAMS, n, NAME) :- kind(n, "function_definition"),
     pyi036_exit_kind(n), pyi036_overloaded(n), field(n, "name", c1), node(_, c1, _, _, _), NAME = c1, child(p2, n, _),

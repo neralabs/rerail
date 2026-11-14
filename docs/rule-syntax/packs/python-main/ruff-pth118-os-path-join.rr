@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // PTH118(n, detail): findings from clauses `os-path-join`, `os-path-join-unpacked`, `os-sep-join`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation PTH118(at: node, f: node, detail: symbol) "{detail}."
+.violation PTH118(at: loc, f: node, detail: symbol) "{detail}."
     suppress noqa "PTH118"
 PTH118(F, n, "Build the path with `Path(first) / second` instead of `os.path.join(first, second)`; wrap it in `str()` where a string is needed. Leave it for bytes paths, which `Path` rejects") :- pth118_target(n, F).
 PTH118(F, n, "Build the path with `Path(first) / second` instead of `os.path.join(first, second)`; wrap it in `str()` where a string is needed. Leave it for bytes paths, which `Path` rejects") :- pth118_in_string(n, F).

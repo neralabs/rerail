@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 // annotations_literal(n): the JSON util `annotations-literal`, used where the JSON says `matches: "annotations-literal"`
 .decl ruf063_annotations_literal(n: node)
@@ -63,7 +63,7 @@ ruf063_subscript_in_string(n, HIT) :- (kind(n, "string") ; kind(n, "concatenated
 // RUF063(n, detail): findings from clauses `annotations-from-dict-get`, `annotations-from-dict-subscript`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF063(at: node, hit: node, detail: symbol) "Use `annotationlib.get_annotations(obj)` (3.14+), `inspect.get_annotations(obj)` (3.10+) or `typing_extensions.get_annotations(obj)` instead of {detail}."
+.violation RUF063(at: loc, hit: node, detail: symbol) "Use `annotationlib.get_annotations(obj)` (3.14+), `inspect.get_annotations(obj)` (3.10+) or `typing_extensions.get_annotations(obj)` instead of {detail}."
     suppress noqa "RUF063"
 RUF063(HIT, n, "`__dict__.get(\"__annotations__\")`") :- ruf063_get_call(n), node(_, n, _, _, _), HIT = n.
 RUF063(HIT, n, "`__dict__.get(\"__annotations__\")`") :- ruf063_get_in_string(n, HIT).

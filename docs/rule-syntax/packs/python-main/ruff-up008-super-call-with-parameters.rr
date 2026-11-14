@@ -4,14 +4,14 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
 // UP008(n): a finding at node n, from clause `super-with-class-and-instance`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation UP008(at: node, args: node) "Drop the arguments and call `super()`; inside a method it already uses the enclosing class and the method's first parameter."
+.violation UP008(at: loc, args: node) "Drop the arguments and call `super()`; inside a method it already uses the enclosing class and the method's first parameter."
     suppress noqa "UP008"
 UP008(ARGS, n) :- kind(n, "call"), field(n, "function", c1), up008_any_super_p(c1),
     up008_arg_cls_slot_1(n, a2), A = a2, up008_arg_obj_slot_2(n, a3), B = a3,

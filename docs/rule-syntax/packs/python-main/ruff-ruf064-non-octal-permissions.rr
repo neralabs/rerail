@@ -4,7 +4,7 @@
 .language python
 .mode steer
 .scope include "**/*"
-// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
 #include "python/names.rr"
 
@@ -137,7 +137,7 @@ ruf064_mode_at_2(n, LIT) :- kind(n, "argument_list"),
 // RUF064(n): findings from clauses `non-octal-mode`, `non-octal-parent-mode`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-.violation RUF064(at: node, lit: node) "Write `{lit}` as an octal literal: if its digits read as a mode (644, 755), add the `0o` prefix; otherwise write the same value in octal (decimal 420 is `0o644`, `0x1ff` is `0o777`)."
+.violation RUF064(at: loc, lit: node) "Write `{lit}` as an octal literal: if its digits read as a mode (644, 755), add the `0o` prefix; otherwise write the same value in octal (decimal 420 is `0o644`, `0x1ff` is `0o777`)."
     suppress noqa "RUF064"
 RUF064(LIT, n) :- kind(n, "call"),
     ( within_stop(c1, n, ruf064_stop_1), ruf064_umask_fn(c1), child(n, c2, _), ruf064_mode_at_0(c2, LIT)
