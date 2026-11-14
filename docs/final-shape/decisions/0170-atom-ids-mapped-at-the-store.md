@@ -222,14 +222,84 @@ about every other warm trial). The replay that failed on a deleted granule gives
    same. Warm, the provisional runs never take the path the off runs mostly take, and parse and store every file's
    tape again (tree-sitter and zstd in a sample). The default stays off until that is found.
 
+## The sixth step: the warm runs' misses found, the ids branded
+
+The warm runs that parsed every file again (above) had two causes, neither of them the tapes: a miss of the memo
+parses the file, and its tape is the parse's.
+
+1. **The memo's entries aged out within one run.** A space counts runs (`frame_spaces.runs`) and forgets a frame no
+   run used in the last `MEMO_RUNS` (32). A run counts once, by its token (`run_token`), which is a thread-local of
+   the run's thread. The waves look entries up on the pool's threads, where it was unset (`0`), and `count_run`
+   counts a `0` as a run of its own: the phase's memo space counted 120 runs in five. The run's 116 windows each
+   counted one, so its last windows forgot the entries its first ones had used. The next run found no entry of
+   29,771 (`newest_by_path`: 0 rows), parsed every file and wrote them all back: one warm run fast, the next slow.
+   `threads::Jobs::spawn` now carries the run's token to the thread that runs the job (as it carries the profile's
+   span), and a wave that marks a frame used without one is refused, not counted. A run is one run of each space it
+   uses (checked: every space's count rises by one a run, three runs).
+2. **Forked, every entry with a posting was refused.** A posting (`own:postings:rel:col`) counts a program's integer
+   constant in a column, as the column's source encodes it, under the source's column name (`child`'s `idx`).
+   `key_syms` read the name as a column number, found none, and a forked process (every provisional run) refuses an
+   entry with a key of no known columns: 29,771 refused on reading, and again on writing. A posting now holds no
+   symbol: its value is a constant as the source encodes it (a field's is the grammar's code, 65555), and its counts
+   for a constant that is an atom are of the process's numbering (estimates, as the kept statistics' sketches). A
+   refusal names the key it could not map (`RERAIL_STATS_KEEP_TRACE` prints the first three, and each entry found
+   but unused for want of its base rows).
+3. **A `sym` column is not an atom column.** The memo registered as symbols the columns declared `sym`. A kind's and
+   a field's are `sym` and hold the grammar's code (`core::kind_atom`, `syntax::field_atom`: `node`'s `kind` 1132,
+   `field`'s `f` 65555), and so does a derived column the domains find holds one. The fifth step's check where an
+   entry is made refused them (`symbol 65555 is no atom of this process's (it holds 4448)`: 71 of the corpus tests),
+   and forked, they would have been mapped as atoms. The memo registers the columns whose domain is `Name`, by the
+   domains of the program as the run holds it (`lower::domains`, under 1 ms): the lowered program's own
+   (`Lowered::domains`) are of it before its policies' relations were renamed and combined, and lack them
+   (`fl256_P`), so a forked run refused every entry again (3.1 T instructions warm, a cold run's 4.1 T).
+
+The full PostHog run again (`len-_py.rr`, solo, strict, profiling build; warm runs each after one cold):
+
+| | cold | warm |
+|---|---|---|
+| off | 129.7 s, 4.09 T instructions, 4.5 GB | 8.3 s, 0.136 to 0.141 T, 2.5 GB (five of five, two builds) |
+| on | 111.5 s, 4.13 T, 4.5 GB | 8.3 to 9.4 s, 0.139 to 0.143 T, 2.8 to 3.1 GB (two of two) |
+
+Cold wall times are under the machine's other load (111 to 260 s across this step's cold runs); the instructions
+are the measure. The findings are the same (the four outputs sorted equal). Provisional ids now cost what off
+does, warm and cold (1 to 3% more instructions, within the runs' spread). With the first two fixes alone (the
+memo's columns still the declarations' `sym`), on ran warm at 0.151 T.
+
+**Branded ids.** A symbol id is a bare integer, so a value could not say which numbering it is in. The two
+boundaries that map them now take and return a brand:
+
+- `ProcessIds<'a>` and `StoreIds<'a>` (`content_store::atoms`), each a borrow of the values. `Atoms::to_store` and
+  `ContentStore::symbols_to_store` take only `ProcessIds` and return `StoreIds`; `Atoms::to_local` the reverse. Each
+  caller says where its values came from (`StoreIds::as_stored(read)`, `ProcessIds::of_process(made)`), so passing
+  a read's values to `to_store`, or a run's to `to_local`, is written as such and reads as wrong.
+- The memo's entries (`corpus/memo/numbering.rs`): a frame decodes only to a `Stored` (the store's ids), which
+  becomes an `Entry` (this process's) only by `Stored::to_process`; an `Entry` becomes a `Stored` only by
+  `numbering::to_store`, in the writer's transaction; and only a `Stored` is encoded. The frame's codec is in that
+  module alone. Writing an entry with this process's ids, or using one with the store's, does not type-check.
+  Not forked, `to_store` borrows (no copy); forked, it maps every entry in one call, as before.
+
+The rows of the frames, cross rows and derivations keep their typed columns (`map_columns`, `map_symbols`): their
+callers wrap the values in the brand at the call, so the claim is made where the values are.
+
 ## Departures and open points
 
-- A warm run with provisional ids parses every file again; one off does so sometimes (once in three). In both, the
-  profile names 26,271 tape cache misses of 29,773, and the writer stores 26,271 tapes the store holds already (one
-  grammar version and format, 27,411 sources with tapes). A profiled run takes the slow path either way.
+- Closed (sixth step): the warm runs' misses. A load's file looked up in the waves still reads no stored tape (the
+  tape read is before the first wave only), so a file whose memo entry is missing is parsed though its tape is
+  stored: now only after an edit or a new build, not every other run.
+- Whether provisional ids become the default: they now cost what off does on PostHog (above). The kept strata's
+  frame types (below) are mapped wrongly when forked, so not before those are the domains' too.
+- Every warm run rewrites one derived relation of 29,747 rows as changed (both modes): not looked at.
+- The kept strata's and maintained parts' frame types (`retain::types_of`, `corpus.rs` and `maintained.rs`'s held
+  rows) and the cross memo's symbol columns (`cross_memo::split`) are still the declarations' `sym`: forked, a kind's
+  or a field's code in them is mapped as an atom (a field's, 65,536 up, is past every fork's point). The memo's
+  columns are the domains' (`Name`); the others take the same, from the program's domains. Next.
+- A profiled run (`RERAIL_PROFILE`) took the slow path in both modes before the sixth step: not run again.
 - A cold run that forks in its first ids (`held 1`, another process storing 12 atoms meanwhile) failed phase 0 twice in
   170 concurrent runs: `no statistics for p0_file_t_shape.c0`. Not reproduced on demand.
-- The memo's foreign id: guarded (above); its cause, a second atom table of one store in a process, not found.
+- The memo's foreign id (fifth step, `symbol 4291 is no atom of this process's (it holds 2765)`): likely a kind's
+  code, not a second atom table. 4291 is `kind_atom(4, 195)` (`KIND_STRIDE` 1024), a kind of the grammar of tape
+  tag 4, and that trial (hogql) holds SQL guests; a `sym` column holding it was taken for an atom (the sixth step's
+  third fix). Not reproduced; the writer's check that the entries' table is its own stays.
 - A forked process's memo misses every entry whose relation has no registered symbol columns: a cost of the fork,
   not of correctness.
 - The kept statistics' sketches (estimated distinct counts) and the retained part's statistics by constant
