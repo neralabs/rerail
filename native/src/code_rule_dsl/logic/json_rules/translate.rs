@@ -517,8 +517,9 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
     passed_in_patterns(&mut prog, &all, &shared.inputs);
     drop_dead_columns(px, &mut prog, &all, &helpers, &shared);
     stop_with_columns(&mut prog, &all);
-    inline_unsafe(px, &mut prog, &all, &helpers);
+    inline_unsafe(px, &mut prog, &all, &helpers, &shared.inputs, false);
     let sites = demand(px, &mut prog, &all, &helpers, &shared.inputs)?;
+    inline_unsafe(px, &mut prog, &all, &helpers, &shared.inputs, true);
     node_demand(px, &mut prog, &all, &helpers)?;
     for (dname, owner, i) in sites {
         for &e in &all {

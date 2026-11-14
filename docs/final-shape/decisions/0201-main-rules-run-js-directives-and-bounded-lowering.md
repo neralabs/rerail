@@ -70,7 +70,22 @@ This decision fixes those, and the faults found on the way.
    - **Aggregate demand.** It no longer walks the dependency graph for every literal of every consumer: a
      target's reachers are found once.
    - Below the bound, a program lowers as it did. The 79 data-layer policies outline nothing.
-6. **The reader refuses a read of the wrong arity.** `front::rule_declared` checks each atom's column count
+6. **A helper called more than once stays one relation.**
+   - The translator unfolds a helper at each call when its rule leaves a metavariable column unbound
+     (`share::inline_unsafe`). It now does so in two passes, before and after the demand pass:
+     - Before: a column the callers pass in does not count for a helper with more than one call. The helper's
+       demand binds it. A helper called once is unfolded as before.
+     - After: a passed-in column counts only for a helper that got no demand. So does a column that an unfolding
+       in this pass left unbound.
+   - Before, explicit-module-boundary-types' reference utils were unfolded into each other, with variable names
+     nested eight deep.
+   - **An rr context may read the clause's demand** (`rr::lower`, `context`). A context binds variables that a
+     helper's negation or aggregate only tests. It was built from input relations alone. Now it may also read a
+     derived atom over the head's variables, or the clause's first literal, where the translator puts a helper's
+     demand. Neither may depend on the clause's heads, because the context would then sit in their recursion.
+   - Without the demand, up028's `read_elsewhere` context was every identifier pair of every scope: 9,032 nodes
+     gave 1.7 M rows.
+7. **The reader refuses a read of the wrong arity.** `front::rule_declared` checks each atom's column count
    against its declaration. Before, the planner panicked at run time.
 
 ## Consequences
@@ -83,6 +98,15 @@ This decision fixes those, and the faults found on the way.
   find nothing; three codes have no generated rule; the other 10 are equal. (0194 recorded these as "11 equal";
   the list it describes has 10.)
 - The ten Python rules whose translation changed in substance find the same as before on the one-file corpus.
+- **Helpers kept as relations:**
+  - explicit-module-boundary-types lowers to 1,038 components, not 46,904. On the nine-line probe that is 1.1 s CPU
+    and 146 MB, where it was 33 s and 2.3 GB, with the same findings.
+  - Of main's 31 rules, five translate differently, and all 31 pass the reader.
+  - Five Python rules change: C416, N806, NPY201, UP015 and UP028. On the 85 Ruff fixture files each finds what it
+    did. Each is as fast or faster: C416 5.6 s against 10.7 s, UP028 2.8 s against 4.7 s.
+  - The Ruff fixture comparison is as above.
+  - no-shadow over 10 React and TypeScript files takes 5.6 s CPU, against 4.0 s. Over 62 files the old
+    translation went past 3 GB; the new one stays under 700 MB.
 - Probes:
   - **no-shadow** flags the inner `const y` under a top-level `y`, and the inner `let x` under a parameter `x`.
   - **clippy-many-single-char-names** with the name tie flags lines 2–6 of `let a; let (a, b); c; d; e`, and
@@ -96,10 +120,11 @@ This decision fixes those, and the faults found on the way.
 
 Open:
 
-- explicit-module-boundary-types misses `export const d = () => 1` and `const e = …; export { e }`. Its program is
-  46,904 components, 2.3 GB on 109 nodes: the translator inlines the reference utils into each other (variable
-  names nested eight deep), and the outlining bound does not reach them. The translator should keep a util used
-  more than once as its relation.
+- explicit-module-boundary-types reports `export const d = () => 1` at column 0, not at the arrow. It still misses
+  `const e = …; export { e }`.
+- no-shadow is still slow: 61 s CPU over 62 small React and TypeScript files. Its `isval`, `tdz_ok` and
+  `type_or_value` have no demand, because a literal the demand drops binds their columns, so they are unfolded.
+  A demand that reads the recursive group itself would keep them as relations.
 - clippy-many-single-char-names is still 11 s on 106 nodes. Its compile, not its rows, is the cost.
 - `OUTLINE_PAST` is a bound, not a cost model. An outlined alternative reads all of its rows, where the rule's own
   literals narrowed it. 19 of the first 200 Python rules outline at 16.
