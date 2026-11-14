@@ -55,9 +55,13 @@ fa_unknown(n) :- fa_percent_string(n, s), (kind(s, "string") ; kind(s, "concaten
 
 // ---- str.format ------------------------------------------------------------------------------------------------
 // fa_brace_field(n, f, key, type): field f reads argument key, an index ("int": `{0}`, and `{}` numbered in order)
-// or a name ("str"). Fields nested in a format spec count (`{:{width}}`).
+// or a name ("str"). Fields nested in a format spec count (`{:{width}}`). The type is the field name's head (`auto`,
+// `index` or `name`), not value_type: that is keyed by the value's text, and "1" may be a str elsewhere in the file.
 .decl fa_brace_field(n: node, f: node, key: symbol, t: symbol)
-fa_brace_field(n, f, k, t) :- fa_brace_tree(n, _, r), within(f, r), kind(f, "field"), value(f, k), value_type(k, t).
+fa_brace_field(n, f, k, "int") :- fa_brace_tree(n, _, r), within(f, r), kind(f, "field"), value(f, k),
+    child(f, fn, _), kind(fn, "field_name"), child(fn, h, _), (kind(h, "auto") ; kind(h, "index")).
+fa_brace_field(n, f, k, "str") :- fa_brace_tree(n, _, r), within(f, r), kind(f, "field"), value(f, k),
+    child(f, fn, _), kind(fn, "field_name"), child(fn, h, _), kind(h, "name").
 .decl fa_brace_index(n: node, i: number)
 fa_brace_index(n, to_number(k)) :- fa_brace_field(n, _, k, "int").
 .decl fa_brace_name(n: node, x: symbol)
@@ -98,11 +102,14 @@ fa_brace_missing(n, f) :- fa_brace_field(n, f, x, "str"), !fa_kw(n, _, x), !fa_s
 fa_brace_missing_open(n) :- fa_brace_tree(n, _, _), (fa_star(n) ; fa_kwsplat(n)).
 
 // ---- % -----------------------------------------------------------------------------------------------------------
-// fa_percent_field(n, f, key, type): placeholder or `*` f reads key, a mapping key ("str") or a positional value
-// ("int", its position).
+// fa_percent_field(n, f, key, type): placeholder or `*` f reads key, a mapping key ("str", a placeholder with a
+// `mapping_key`) or a positional value ("int", its position). Typed by the tree, as brace fields are.
 .decl fa_percent_field(n: node, f: node, key: symbol, t: symbol)
-fa_percent_field(n, f, k, t) :- fa_percent_tree(n, _, r), within(f, r), (kind(f, "placeholder") ; kind(f, "star")),
-    value(f, k), value_type(k, t).
+fa_percent_field(n, f, k, "str") :- fa_percent_tree(n, _, r), within(f, r), kind(f, "placeholder"), value(f, k),
+    child(f, m, _), kind(m, "mapping_key").
+fa_percent_field(n, f, k, "int") :- fa_percent_tree(n, _, r), within(f, r), kind(f, "placeholder"), value(f, k),
+    count : { child(f, m, _), kind(m, "mapping_key") } = 0.
+fa_percent_field(n, f, k, "int") :- fa_percent_tree(n, _, r), within(f, r), kind(f, "star"), value(f, k).
 .decl fa_percent_name(n: node, x: symbol)
 fa_percent_name(n, x) :- fa_percent_field(n, _, x, "str").
 .decl fa_keyed(n: node)

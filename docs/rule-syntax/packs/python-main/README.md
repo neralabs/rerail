@@ -134,6 +134,30 @@ K (`fast003_param_eq`, `fast003_alt_2`) get no demand relation, so they are eval
 fix is the translator's demand pass (`demand()`), which gives up on a helper called from a util's parameter; it
 is the same item as ANN401's.
 
+### Against Ruff's own findings (Ruff's fixtures)
+
+Main pins Ruff 0.16.9's fixtures for 17 rules, with Ruff's findings (`packs/python/upstream/ruff` on main:
+`fixtures/`, `fixtures.expected.json`). `../../site/upstream_check.py` runs each generated rule alone over them,
+under the caps, and compares (path, line, column):
+
+    git archive main packs/python/upstream/ruff | tar -x -C tmp/ruff-fx
+    ENGINE=<rerail-engine> python3 docs/rule-syntax/site/upstream_check.py tmp/ruff-fx/packs/python/upstream/ruff
+
+Measured on 2026-11-13:
+
+| Rule | Ruff | Engine | Verdict, and the cause where known |
+|---|---|---|---|
+| B011, B028, B905, F523, F823 | 2, 4, 7, 21, 5 | the same | equal |
+| F507, F524 | 25, 9 | the same | equal, after a fix (below) |
+| F601 | 35 | 22 | 13 missing |
+| SIM222 | 59 | 24 | 35 missing |
+| E711, E722, F632, F722, PIE796 | 10, 7, 12, 10, 11 | 0 | none found. E711: a neighbour chain through an anonymous token (`precedes: {regex: "^==$", precedes: …}`) is lowered to `next_sibling`, which sees named nodes only. The translator's token reads cover a neighbour that is only a `regex`, not one with a further step |
+| F811, F821, F841 | | | not run: each has more than one generated file (`ruff-f811-*.rr`); the checker needs one |
+
+The fix to F507 and F524: `formatArgs` typed a field by `value_type`, which is keyed by the value's text, so in a
+file where `"1"` is also a str (`"{1.arg[1]}"`), field `{1}` read as both an index and a name. A field is now
+typed by its tree: the field name's `auto`, `index` or `name` head, or a `%` placeholder's `mapping_key`.
+
 ### 8 too heavy, or aborting, at scale
 
 Measured on 2026-11-13, each rule alone (`RERAIL_PROFILE`'s `heads.tsv` and `analysis.txt`).
