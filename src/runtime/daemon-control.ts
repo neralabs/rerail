@@ -727,19 +727,31 @@ async function repairSqlite(control: DaemonControl, machine: DaemonMachine): Pro
 }
 
 /**
- * Runs `start` under the start lock in `home`, then ends the autostart claim (`claimAutostart`) however the start ended:
- * the launch it held other processes off for is over, so the next process to find the daemon down launches again at
- * once, after a start that failed too. While the daemon cannot start, that is one launch after another, never one per
- * process that finds it down.
+ * Runs `start` under the start lock in `home`, then ends the autostart claim (`claimAutostart`) if it names this
+ * process, the launcher an autostart started, however the start ended: the launch it held other processes off for is
+ * over, so the next process to find the daemon down launches again at once, after a start that failed too. While the
+ * daemon cannot start, that is one launch after another, never one per process that finds it down. A claim naming
+ * another process is that launcher's, still running its start: a start that gave up waiting for the start lock it
+ * holds, or one a person ran beside it, leaves the claim to it.
  */
 async function startUnderLock(home: string, start: () => Promise<StartDaemonResult>): Promise<StartDaemonResult> {
   makeRerailHome(home);
   try {
     return await withStartLock(home, start);
   } finally {
-    // A claim that cannot be removed holds only while its launcher runs, and 30 s at most.
-    await rm(join(home, AUTOSTART_CLAIM_FILE), { force: true }).catch(() => undefined);
+    await endOwnClaim(home);
   }
+}
+
+/**
+ * Removes the autostart claim in `home` when it names this process. A launcher that hands its start to the active
+ * version's CLI leaves the claim to end with its own exit (`claimHolds`), and a claim that cannot be read or removed
+ * holds only while its launcher runs, and 30 s at most.
+ */
+async function endOwnClaim(home: string): Promise<void> {
+  const claim = join(home, AUTOSTART_CLAIM_FILE);
+  const named = await readFile(claim, "utf8").catch(() => "");
+  if (named.trim() === String(process.pid)) await rm(claim, { force: true }).catch(() => undefined);
 }
 
 /**
@@ -1162,7 +1174,7 @@ function claimHolds(path: string, kill: ProcessSignal): boolean {
  * Whether this process launches the autostart: it created the claim in `home`, or replaced one that no longer holds
  * (`claimHolds`), such as one whose launcher died before its start. Sessions and hooks each run in a process of their
  * own, and the ones that find the daemon gone arrive together; the claim is created exclusively, so one launches and the
- * rest leave the start to it. Every start under the lock ends the claim (`startUnderLock`). Two processes that both
+ * rest leave the start to it. The launcher's start ends the claim as it ends (`startUnderLock`). Two processes that both
  * replace a claim at once can both launch; the start lock still lets only one launcher start a daemon.
  */
 function claimAutostart(home: string, kill: ProcessSignal): boolean {
