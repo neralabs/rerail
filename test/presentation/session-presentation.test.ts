@@ -226,6 +226,26 @@ describe("installed session presentation", () => {
     expect((await read()).text).toBe("R E R A I L ● rules unavailable · steering unavailable");
   });
 
+  it("adds Merge Assist's segment: the newest conflict's line with the others counted, linked to its card", async () => {
+    const session = response.context!.session!;
+    const summary = { id: "conflict:overlap:abc:12345678", text: "PR #398 (jbarnes) shares compiled matchers you clone" };
+    session.hud = { activeRuleCount: 3, steeringCount: 2, mergeAssist: { conflicts: 3, summary } };
+    const overlaps = await read();
+    expect(overlaps.text).toBe("R E R A I L ● 3 rules · steered 2× · ◐ PR #398 (jbarnes) shares compiled matchers you clone (+2)");
+    expect(overlaps.parts.at(-1)!.url).toMatch(/#merge\?conflict=conflict:overlap:abc:12345678$/u);
+    session.hud = { activeRuleCount: 3, steeringCount: 2, mergeAssist: { conflicts: 1, summary } };
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · steered 2× · ◐ PR #398 (jbarnes) shares compiled matchers you clone");
+  });
+
+  it("cuts a long conflict line in Merge Assist's segment short, keeping the others' count", async () => {
+    const session = response.context!.session!;
+    const text = `origin/tbelanger/${"long-branch-".repeat(20)} (${"Someone ".repeat(10)}) is changing src/a/very/deep/path/to/a/file.ts`;
+    session.hud = { activeRuleCount: 3, steeringCount: 0, mergeAssist: { conflicts: 2, summary: { id: "conflict:a", text } } };
+    const segment = (await read()).parts.at(-1)!.text;
+    expect(segment).toMatch(/^◐ origin\/tbelanger\/long-branch-.*… \(\+1\)$/u);
+    expect([...segment.replace(/^◐ /u, "").replace(/ \(\+1\)$/u, "")]).toHaveLength(90);
+  });
+
   it("draws no footer where Rerail is stopped, says not on here on demand, and Not set up with the start command where no rules are configured", async () => {
     response.repositoryState = "stopped";
     // The ambient footer takes no space in a repository Rerail does not run in (#298).

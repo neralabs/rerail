@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -5,7 +6,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { type AdapterDelivery, defaultRerailDatabasePath, type RerailEventLoop, sessionStartNote } from "../../../src/engine/index.js";
+import { type AdapterDelivery, conflictNote, defaultRerailDatabasePath, type RerailEventLoop, sessionStartNote } from "../../../src/engine/index.js";
 import { claudeHookOutput, handleClaudeEvent } from "../../../src/hosts/claude/claude-hook-adapter.js";
 import { runClaudeHook } from "../../../src/hosts/claude/claude-hook.js";
 import { bindSteerReceipt, type HookInput, type HookOptions } from "../../../src/harness/index.js";
@@ -211,6 +212,51 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
   });
 });
 
+describe("Claude Code hook with a running daemon", () => {
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    await closeNativeTestDaemons();
+  });
+
+  const LedgerSample = z.object({
+    type: z.literal("sample"),
+    item: z.object({ text: z.string(), metadata: z.object({ fields: z.object({ eventId: z.string(), boundary: z.string() }) }) }),
+  });
+
+  /** Each sample of `sessionId` the session's ledger under `root` holds at `boundary`, with the event that made it. */
+  async function ledgerSamples(root: string, sessionId: string, boundary: string): Promise<Array<{ eventId: string; text: string }>> {
+    const folder = createHash("sha256").update(sessionId).digest("hex");
+    const lines = (await readFile(join(root, "sessions", folder, "events.jsonl"), "utf8")).split("\n").filter(Boolean);
+    return lines.flatMap(line => {
+      const entry = LedgerSample.safeParse(JSON.parse(line));
+      if (!entry.success || entry.data.item.metadata.fields.boundary !== boundary) return [];
+      return [{ eventId: entry.data.item.metadata.fields.eventId, text: entry.data.item.text }];
+    });
+  }
+
+  it("ends a reply at its empty last batch and stores the whole reply, blank line kept, as one message", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory();
+    startTestRepository(root);
+    vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+    await startNativeTestDaemon(root);
+    // Claude Code runs the hook once per batch, so only the daemon holds a reply from one batch to the next.
+    const daemonPath = daemonHookOptions(root, { keepDatabase: false });
+    const common = { session_id: "reply-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, daemonPath);
+
+    const reply = { ...common, hook_event_name: "MessageDisplay", turn_id: "turn-1", message_id: "m1" };
+    for (const [index, delta, final] of [[0, "Here is the plan:\n", false], [1, "\n", false], [2, "Fix the test.\n", false], [3, "", true]] as const) {
+      expect(await runClaudeHook({ ...reply, index, delta, final }, daemonPath)).toEqual({});
+    }
+
+    // The empty last batch ends the reply: the session's record gains it whole, once, as the message every conversation
+    // rule on a whole message checks.
+    expect(await ledgerSamples(root, "reply-session", "message")).toEqual([
+      { eventId: "reply-session:message:m1:3", text: "Here is the plan:\n\nFix the test." },
+    ]);
+  });
+});
+
 describe("Claude Code one-shot hook", () => {
   it("persists the documented hook lifecycle into the SQLite session store across separate hook processes", async () => {
     const root = await temporaryDirectory();
@@ -262,6 +308,30 @@ describe("Claude Code one-shot hook", () => {
       expect.stringMatching(/^claude-session:turn:p1:continued:/),
     ]);
     expect(new Set(turnEnds).size).toBe(3);
+  });
+
+  it("records each batch of a reply, a blank line and the empty last batch of a reply that ends on a newline included", async () => {
+    const root = await temporaryDirectory();
+    const options = hookOptions(root);
+    const common = { session_id: "claude-session", cwd: root };
+    await runClaudeHook({ ...common, hook_event_name: "SessionStart", source: "startup" }, options);
+
+    // Interactive Claude Code sends whole lines per batch, so a batch can be a blank line, and the last batch's delta
+    // is empty when the reply ends on a newline: `final` marks the end, not the text.
+    const reply = { ...common, hook_event_name: "MessageDisplay", turn_id: "turn-1", message_id: "m1" };
+    for (const [index, delta, final] of [[0, "Here is the plan:\n", false], [1, "\n", false], [2, "", true]] as const) {
+      expect(await runClaudeHook({ ...reply, index, delta, final }, options)).toEqual({});
+    }
+
+    const batches = sessionDatabaseQuery<{ eventId: string; payload: string }>(
+      root,
+      "SELECT event_id AS eventId, payload_json AS payload FROM events WHERE kind = 'assistant-delta' ORDER BY sequence",
+    );
+    expect(batches.map(({ eventId, payload }) => [eventId, JSON.parse(payload) as unknown])).toEqual([
+      ["claude-session:message:m1:0", expect.objectContaining({ delta: "Here is the plan:\n", final: false })],
+      ["claude-session:message:m1:1", expect.objectContaining({ delta: "\n", final: false })],
+      ["claude-session:message:m1:2", expect.objectContaining({ delta: "", final: true })],
+    ]);
   });
 
   it("ignores hook events the adapter does not model without touching storage", async () => {
@@ -420,6 +490,18 @@ describe("Claude Code one-shot hook", () => {
     const linked = delivery("steer", editSteer("a", "Fix a."), ["a"], steeredRules(["a"], "http://127.0.0.1:4791/"));
     expect(claudeHookOutput("PostToolUse", [linked], { links: "plain" })).toMatchObject({
       systemMessage: "◆ Rerail · a  steered  ·  why? → http://127.0.0.1:4791/#rule/a",
+    });
+  });
+
+  it("gives the agent a conflict note as context and the person its line, beside a rule's, with the card linked as open", () => {
+    const note = conflictNote({ file: "src/model.ts", peer: "PR #398", author: "Tim", summary: "Share compiled matchers", pullRequest: true });
+    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps PR #398 (Tim): model.ts", url: "http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678" };
+    const rule = delivery("steer", editSteer("a", "Fix a."), ["a"], steeredRules(["a"], "http://127.0.0.1:4791/"));
+    const output = claudeHookOutput("PostToolUse", [rule, { ...delivery("steer", note), conflict }], { links: "plain", mark: "RERAIL" });
+    expect(output).toEqual({
+      systemMessage: "\n◆ RERAIL · a  steered  ·  why? → http://127.0.0.1:4791/#rule/a"
+        + "\n◆ RERAIL · your edit overlaps PR #398 (Tim): model.ts  ·  open → http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678",
+      hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: `${editSteer("a", "Fix a.")}\n\n${note}` },
     });
   });
 
