@@ -287,8 +287,7 @@ fn split_constants(
         for rel in &leaving {
             constant.remove(*rel);
         }
-        let next: std::collections::BTreeSet<&str> = leaving.iter().flat_map(|rel| index.heads_reading(rel)).filter(|reader| constant.contains(*reader)).collect();
-        round = next.into_iter().collect();
+        round = index.heads_reading_any(leaving.iter().copied(), |reader| constant.contains(reader));
     }
     constant
 }
@@ -333,6 +332,18 @@ impl<'p> RuleIndex<'p> {
     /// The heads of the rules whose bodies read `rel`.
     pub(crate) fn heads_reading(&self, rel: &str) -> impl Iterator<Item = &'p str> + '_ {
         self.reading(rel).iter().map(|&i| self.rules[i].head.rel.as_str())
+    }
+
+    /// The heads of the rules reading any of `rels`, each once, in order. A head comes once per rule that reads
+    /// one: gathered into a sorted set, a fixpoint's round sorted tens of thousands of names to keep a few thousand.
+    pub(crate) fn heads_reading_any<'r>(&self, rels: impl Iterator<Item = &'r str>, keep: impl Fn(&str) -> bool) -> Vec<&'p str> {
+        let mut seen: std::collections::HashSet<&'p str> = std::collections::HashSet::new();
+        for rel in rels {
+            seen.extend(self.heads_reading(rel));
+        }
+        let mut out: Vec<&'p str> = seen.into_iter().filter(|r| keep(r)).collect();
+        out.sort_unstable();
+        out
     }
 }
 
@@ -567,11 +578,11 @@ fn split_in(
                 (kept != locations[rel]).then_some((rel, kept))
             })
             .collect();
-        let next: BTreeSet<&str> = changed.iter().flat_map(|(rel, _)| index.heads_reading(rel)).collect();
+        let next = index.heads_reading_any(changed.iter().map(|(rel, _)| *rel), |_| true);
         for (rel, kept) in changed {
             locations.insert(rel.to_owned(), kept);
         }
-        round = next.into_iter().collect();
+        round = next;
     }
     // String filters (decision 0037): a text test's relation (`strtest_<k>`), and a derived relation whose every
     // rule reads only text relations and such filters, each head string from a text column. A chunk's rows hold
@@ -604,8 +615,7 @@ fn split_in(
         for rel in &leaving {
             filters.remove(*rel);
         }
-        let next: BTreeSet<&str> = leaving.iter().flat_map(|rel| index.heads_reading(rel)).filter(|reader| filters.contains(*reader)).collect();
-        round = next.into_iter().collect();
+        round = index.heads_reading_any(leaving.iter().copied(), |reader| filters.contains(reader));
     }
     // Python fact operators preserve each demanded node's document. Their proof rules must still
     // pass the ordinary dependency/location checks below. Other native operators remain cross-file.
@@ -1180,6 +1190,11 @@ fn relation_keys(prog: &crate::code_rule_dsl::logic::front::Program) -> std::col
         }
     }
     // A key proven stays proven as more are found (each proof reads keys only positively), so the rounds rise.
+    // A column whose rules read no relation that gained a key since it was last tried fails again: it is passed
+    // over, in the same rounds and order, so the keys found are the same.
+    let mut step = 0usize;
+    let mut gained: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut tried: std::collections::HashMap<(&str, usize), usize> = std::collections::HashMap::new();
     for _ in 0..6 {
         let mut found = false;
         for (rel, rules) in &rules_of {
@@ -1188,6 +1203,12 @@ fn relation_keys(prog: &crate::code_rule_dsl::logic::front::Program) -> std::col
                 if keys.get(*rel).is_some_and(|ks| ks.contains(&vec![c])) {
                     continue;
                 }
+                if let Some(&at) = tried.get(&(*rel, c))
+                    && !rules.iter().flat_map(|r| &r.body).any(|l| matches!(l, Literal::Atom(a) if gained.get(a.rel.as_str()).is_some_and(|&g| g > at)))
+                {
+                    continue;
+                }
+                tried.insert((*rel, c), step);
                 let proven = rules.iter().all(|r| {
                     let mut head = std::collections::BTreeSet::new();
                     r.head.args.iter().for_each(|t| t.vars(&mut head));
@@ -1200,6 +1221,8 @@ fn relation_keys(prog: &crate::code_rule_dsl::logic::front::Program) -> std::col
                 if proven {
                     keys.entry((*rel).to_owned()).or_default().push(vec![c]);
                     found = true;
+                    step += 1;
+                    gained.insert((*rel).to_owned(), step);
                 }
             }
         }
