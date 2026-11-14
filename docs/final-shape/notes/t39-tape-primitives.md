@@ -392,11 +392,12 @@ state):
 | span, XF / MF / BE | 1.55 / 3.03 / 2.13 | 0.08 / 0.16 / 0.33 | 0.33 / 0.61 / 0.81 |
 
 - **The bulk axes are 0.3–0.7 ns a node on every recent machine, on all three candidates.** BE is
-  within 0.1–0.2 ns of XF in bulk, as on the M5. Only the old n1 Xeon is about 2× slower.
+  within 0.1–0.2 ns of XF in bulk (0.4 on the n1), as on the M5. Only the old n1 Xeon is about 2×
+  slower.
 - **The gap between the candidates is now point reads and spans:**
   - BE's point climb is 2.3–3.5× XF's;
   - BE's spans are 2.5–3× XF's, and MF's 1.8–2×;
-  - over the 121-rule mix (a per-read mix, not bulk), BE is 2.6–3.5× XF.
+  - over the 121-rule mix (a per-read mix, not bulk), BE is 2.6–4× XF.
 - **On the GPU, the M3 Max is 5–10× the M1.** On the M1's small GPU, the scans (BE's `nearest`,
   `has` from counts) cost more than climbing: few cores, and the levels' serial steps. `has` by
   climbing stays the better form there. On the M3 Max the scans win for BE.
