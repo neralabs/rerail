@@ -379,8 +379,9 @@ export function readHookFailures(home: string, since: number): HookFailureLog {
 }
 
 /**
- * The pauses, in ms, before each listing a status read makes after its first while files of the log move under it:
- * 255 ms in all at most, spent only while hooks keep moving the log.
+ * The pauses, in ms, before each listing a status read makes after its first while files of the log move under it,
+ * spent only while hooks keep moving the log: 255 ms in all, and on Windows about 360 ms, where each pause lasts at least
+ * one tick of the system timer (15.6 ms by default).
  */
 const RELISTING_PAUSES_MS = [1, 2, 4, 8, 16, 32, 64, 128];
 
