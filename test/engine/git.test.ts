@@ -313,16 +313,24 @@ function lastGits(count: number): ChildProcess[] {
 }
 
 /**
+ * How long a stall goes on once the Gits it waits for have exited, as a real stall goes on after Git finished. On Windows
+ * Node learns of an exit from a wait thread, which may tell it a moment later; on Linux the signal is in by then.
+ */
+const STALL_AFTER_EXIT_MS = process.platform === "win32" ? 500 : 0;
+
+/**
  * A stall of `ms` once the current pass of the event loop reaches its immediates: it blocks the event loop until each of
- * `gits` has exited (at most 5 s: on macOS an exited process this one has not reaped still answers as running), then
- * moves the clock and the faked timers `ms` on. Those timers come due before the event loop handles the exits, as after
- * a stall in which Git finished.
+ * `gits` has exited (at most 5 s: on macOS an exited process this one has not reaped still answers as running) and
+ * `STALL_AFTER_EXIT_MS` more, then moves the clock and the faked timers `ms` on. Those timers come due before the event
+ * loop handles the exits, as after a stall in which Git finished.
  */
 function stallUntilExited(gits: readonly ChildProcess[], ms: number): void {
   const exited = (child: ChildProcess) => child.pid === undefined || processState(child.pid) === "gone";
   setImmediate(() => {
     const until = Date.now() + 5_000;
-    while (!gits.every(exited) && Date.now() < until) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+    const blocked = new Int32Array(new SharedArrayBuffer(4));
+    while (!gits.every(exited) && Date.now() < until) Atomics.wait(blocked, 0, 0, 5);
+    Atomics.wait(blocked, 0, 0, STALL_AFTER_EXIT_MS);
     clockAhead(ms);
     vi.advanceTimersByTime(ms);
   });
