@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request 658 report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request #658</div>
+  <h1>Hook failures: <code>rerail status</code> counts every failure since the time it names</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>Does <code>rerail status</code> count every hook failure since the time it names, while the log moves and hooks record at once, as fast as <code>main</code>?</p>
+  <ol><li><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>The line leads with an outage on any failure after the last recorded event. <b>Changes the intent.</b></li><li><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>With older failures gone, the line names when its count starts.</li></ol></div>
+  <p class="rec"><b>We recommend:</b> rule on #577&#x27;s three questions first, then read <a href="#decisions">decision 1</a>: a lock around the whole move would be shorter, is not built, and would end the one state slower than <code>main</code>.</p>
+  <div class="big">
+    <div><b class="w">1,458 lines</b><span>in 5 files. 636 ship, 822 are tests and text.</span></div><div><b class="w">Standard lane</b><span>Medium risk; only the automated reviewer approved.</span></div><div><b class="w">Waits on #577&#x27;s three questions</b><span>No maintainer has answered.</span></div><div><b class="w">3 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/658">GitHub</a> on 14 November 2026, at head e53c23b66.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr><td class="k"><b>The count</b></td><td class="in" data-l="Intended">A full log moves to <code>.1</code>; the line counts failures &quot;in the last 24 hours&quot;. <span class="tagx">code comment, status line</span></td><td class="fo" data-l="Found">At 50 failures a minute, 20 of 24 readings were short. Hooks failing at once lost 1,253 lines in 20 bursts (Linux x64). <span class="tagx">#577, measured runs</span></td><td class="now" data-l="Now"><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Closes the gap, changes answer 2.</b> Status reads every part of the log once and names the time it counts from; a hook takes the log before moving it.</td></tr><tr class="intent"><td class="k"><b>The outage lead</b></td><td class="in" data-l="Intended">&quot;When every failure is newer than the last recorded event&quot;, the line leads with the outage. <span class="tagx">code comment, a test</span></td><td class="fo" data-l="Found">With <code>.1</code> counted, one failure before the last recorded event hides an outage. <span class="tagx">a failing test</span></td><td class="now" data-l="Now"><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Changes the intent: answer 1.</b> The line leads when any failure is newer, then gives the period&#x27;s total. A maintainer must agree.</td></tr></tbody></table>
+<figcaption>Reported in #577, 12 November 2026.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">The count</td><td data-l="Where main states the intent"><code>src/harness/hook-failures.ts</code> at <code>main</code>. Line 14: &quot;Past this size the file is moved to `&lt;name&gt;.1`, replacing the one before; a failing hook writes on every event.&quot; Line 88, the line&#x27;s text: &quot;could not be recorded in the last 24 hours&quot;. Line 91, above <code>readHookFailures</code>: &quot;The failures recorded since `since` (epoch ms), oldest first; none when the file is missing or unreadable.&quot; Line 46, above <code>recordHookFailure</code>: &quot;Appends one failure.&quot;</td><td data-l="The cause, and what was measured">Line 95 reads the live file alone, so the count falls to the failures since each move, every 1,100 to 1,300 failures: 370 where 6,000 were owed at minute 120, at 50 failures a minute read every 5 minutes, on both systems. Line 61 renames the log straight to <code>.1</code>: of 30 hooks at once, a later one fails on a file already gone and drops its own line, or renames the new log over the full <code>.1</code>.</td></tr><tr><td class="k">The outage lead</td><td data-l="Where main states the intent"><code>src/harness/hook-failures.ts</code> at <code>main</code>, lines 76 to 77, above <code>hookFailureLines</code>: &quot;When every failure is newer than the last recorded event, hooks run but nothing is recorded, and the line leads with that.&quot; <code>test/harness/hook-failures.test.ts</code> at <code>main</code>, line 46: &quot;names the failures without that lead when events were recorded after some of them, and says nothing without any&quot;.</td><td data-l="The cause, and what was measured">Line 85 at <code>main</code> leads only when <code>since.length === failures.length</code>. Without f8cf40dd6, the test &quot;leads with an outage that began after the last recorded event once older failures moved aside&quot; fails: the line reads <code>Hooks: 3 hook events could not be recorded in the last 24 hours</code>. With it: <code>Hooks run but nothing was recorded since &lt;time&gt;: 1 hook event failed, of 3 that could not be recorded in the last 24 hours</code>. The total that follows could go.</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>hook-failures.ts</code>: move (<code>moveAside</code>, <code>copyLines</code>, <code>removeStrandedLogs</code>), line (<code>hookFailureLines</code>), read (<code>readLogParts</code>, <code>keptSinceOf</code>), wait (<code>awaitingMovedAside</code>, <code>changedLately</code>)</b><span class="min">25 min</span><span class="x">Can a hook stopped or held up at any step lose a line, or status count one twice?</span></div></li><li><div><b><code>cli.ts</code>: <code>hookHealthLines</code>, one call site</b><span class="min">2 min</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">10 min</span><span class="x">One <code>main</code> test changes its case (answer 1); two get 60 s, up from 5 (30 on Windows); none is removed.</span></div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 159" role="img" aria-label="The changes by risk, high on top, against six checks. Failure count, medium risk: independent review holds with a limit, users lose nothing holds with a limit, rules scan: nothing new holds with a limit, Windows 11: no new failure holds with a limit. CI at this head holds with a limit for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="50" rx="8" class="bx zone"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk med"/><text x="28" y="34" class="t s b">Medium risk</text><text x="12" y="56" class="t b">Failure count</text><g><title>Failure count, fails without the fix: The five reproductions fail at `main` and pass at d2e27d773, on Linux x64 and Windows 11. Every one-line change to a fix line that was tried fails a test on Linux x64. The last is e53c23b66: with the wait reading the write time, its test fails on Linux x64 and Windows 11.</title><circle cx="150" cy="52" r="8" class="mh"/><path d="M146 52l3 3l5 -6" class="mt"/></g><g><title>Failure count, independent review: The automated reviewer approves e53c23b66 with 0 blockers, 0 follow-ups and 0 nits, and lists its five earlier findings as fixed. Second runs from a separate checkout found eight things at four commits, and a fix found a ninth; the description lists each with its fix. The limit: no person on the team has reviewed or commented.</title><circle cx="184" cy="52" r="7.4" class="ml"/><path d="M184 44.6A7.4 7.4 0 0 0 184 59.4Z" class="mlf"/></g><g><title>Failure count, users lose nothing: With both parts of the log full, `rerail status` takes 172.0 ms against `main`&#x27;s 171.5 on Linux x64 (median of 20, 6f563beed). Logs an older version wrote are read right, and `main` reads this version&#x27;s logs after a downgrade. The limit: one state costs more than `main` (decision 2), and five cases are left (part 8).</title><circle cx="218" cy="52" r="7.4" class="ml"/><path d="M218 44.6A7.4 7.4 0 0 0 218 59.4Z" class="mlf"/></g><g><title>Failure count, rules scan: nothing new: The automated reviewer&#x27;s rules, the repository&#x27;s pack and the complexity pack read at c89f068ed, over the diff against the merge base on Linux x64: no new finding, and 6 existing ones in `cli.ts` functions this change does not edit. The limit: run at 6f563beed. e53c23b66 adds one test and no source line.</title><circle cx="252" cy="52" r="7.4" class="ml"/><path d="M252 44.6A7.4 7.4 0 0 0 252 59.4Z" class="mlf"/></g><g><title>Failure count, Windows 11: no new failure: `test/harness/hook-failures.test.ts` at e53c23b66 on Windows 11: 44 of 44. CI&#x27;s two Windows unit jobs pass at e53c23b66. The limit: the 9 test files of the change and of the modules that import it ran at 6f563beed (199 passed, 9 skipped, 0 failed, none outside `main`&#x27;s baseline). e53c23b66 adds one test and no source line.</title><circle cx="286" cy="52" r="7.4" class="ml"/><path d="M286 44.6A7.4 7.4 0 0 0 286 59.4Z" class="mlf"/></g><g><title>Failure count, CI at this head: Run 43554075702 at e53c23b66, read on 14 November 2026: 24 checks on the pull request, 19 pass, 5 are skipped, none fails. The limit: it passes on its second attempt. The first failed one test of `main` that this change does not touch, in the Windows unit job (2 of 2): `test/runtime/merge-assist/runtime-notes.test.ts`.</title><circle cx="320" cy="52" r="7.4" class="ml"/><path d="M320 44.6A7.4 7.4 0 0 0 320 59.4Z" class="mlf"/></g><text x="8" y="89" class="t s">1  fails without the fix</text><text x="168" y="89" class="t s">2  independent review</text><text x="8" y="105" class="t s">3  users lose nothing</text><text x="168" y="105" class="t s">4  rules scan: nothing new</text><text x="8" y="121" class="t s">5  Windows 11: no new failure</text><text x="168" y="121" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="145" r="8" class="mh"/><path d="M10 145l3 3l5 -6" class="mt"/></g><text x="28" y="149" class="t s">holds</text><g><title>holds with a limit</title><circle cx="92" cy="145" r="7.4" class="ml"/><path d="M92 137.6A7.4 7.4 0 0 0 92 152.4Z" class="mlf"/></g><text x="106" y="149" class="t s">holds with a limit</text></svg>
+<figcaption>Start at check 3: one state slower than <code>main</code>, five cases left.</figcaption></figure>
+<details class="ev"><summary>Each half mark's limit</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>It holds with this limit</th></tr></thead><tbody><tr><td class="k">Failure count</td><td data-l="Check">independent review</td><td data-l="It holds with this limit">The automated reviewer approves e53c23b66 with 0 blockers, 0 follow-ups and 0 nits, and lists its five earlier findings as fixed. Second runs from a separate checkout found eight things at four commits, and a fix found a ninth; the description lists each with its fix. The limit: no person on the team has reviewed or commented.</td></tr><tr><td class="k">Failure count</td><td data-l="Check">users lose nothing</td><td data-l="It holds with this limit">With both parts of the log full, <code>rerail status</code> takes 172.0 ms against <code>main</code>&#x27;s 171.5 on Linux x64 (median of 20, 6f563beed). Logs an older version wrote are read right, and <code>main</code> reads this version&#x27;s logs after a downgrade. The limit: one state costs more than <code>main</code> (decision 2), and five cases are left (part 8).</td></tr><tr><td class="k">Failure count</td><td data-l="Check">rules scan: nothing new</td><td data-l="It holds with this limit">The automated reviewer&#x27;s rules, the repository&#x27;s pack and the complexity pack read at c89f068ed, over the diff against the merge base on Linux x64: no new finding, and 6 existing ones in <code>cli.ts</code> functions this change does not edit. The limit: run at 6f563beed. e53c23b66 adds one test and no source line.</td></tr><tr><td class="k">Failure count</td><td data-l="Check">Windows 11: no new failure</td><td data-l="It holds with this limit"><code>test/harness/hook-failures.test.ts</code> at e53c23b66 on Windows 11: 44 of 44. CI&#x27;s two Windows unit jobs pass at e53c23b66. The limit: the 9 test files of the change and of the modules that import it ran at 6f563beed (199 passed, 9 skipped, 0 failed, none outside <code>main</code>&#x27;s baseline). e53c23b66 adds one test and no source line.</td></tr><tr><td class="k">Failure count</td><td data-l="Check">CI at this head</td><td data-l="It holds with this limit">Run 43554075702 at e53c23b66, read on 14 November 2026: 24 checks on the pull request, 19 pass, 5 are skipped, none fails. The limit: it passes on its second attempt. The first failed one test of <code>main</code> that this change does not touch, in the Windows unit job (2 of 2): <code>test/runtime/merge-assist/runtime-notes.test.ts</code>.</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<ul class="lines"><li><span class="chip medium"><i></i>Medium risk</span> <b>The failure log and its count</b>: Reads short under load. Windows 11: <code>main</code> 1,722 of 1,911, cd0d87fe2 none of 1,392. Linux x64: cd0d87fe2 7 of 648.</li></ul>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>A take under each hook&#x27;s name, or a lock around the move? <span class="chip">ask 2</span></h3>
+<p><b>We chose</b> the take. <code>hook-failures.ts</code> grew from 112 to 668 lines.</p>
+<p><b>Would change our mind:</b> a maintainer who wants the lock: since #503, an OS lock frees itself when its holder ends.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Take under the hook&#x27;s own name, move on only when full, else give back <span class='tag new'>chosen</span></td><td data-l="What a user gets">Under load at cd0d87fe2, hooks lost no line and no status read missed a whole part. Built, with 44 tests in its file where <code>main</code> has 10.</td><td data-l="Cost">668 lines where <code>main</code> has 112. Two renames and a size check per move. The status read lists again and pauses while files move, and waits for a log a running hook holds (decision 2).</td><td data-l="What it breaks">Five cases stay (<a href="#gaps">part 8</a>). A hook stopped mid-move leaves a file until a later move removes it.</td></tr><tr><td class="k">An OS lock around the whole move, with the size check under it</td><td data-l="What a user gets">It would close three of the five cases (the give-back by copy, the held-up write after it, a log still moving after the last pause), end decision 2&#x27;s wait and shorten the module.</td><td data-l="Cost">Not built, so not measured. Every hook that finds the log full takes the lock. The copy lock here takes 0.04 to 0.30 ms, and loading the engine in a fresh process 1.2 to 1.8 ms (d2e27d773, both systems).</td><td data-l="What it breaks">It needs a rule for a hook whose engine does not load. The copy lock has one: the copy goes ahead without it.</td></tr><tr><td class="k"><code>main</code>&#x27;s single rename</td><td data-l="What a user gets">Nothing more.</td><td data-l="Cost">Nothing.</td><td data-l="What it breaks">Lines lost in 20 of 20 burst rounds on Linux x64, and the count short in 20 of 24 readings.</td></tr></tbody></table></div><div class="pns c2"><div class="pn before"><div class="pt">main: a hook finds the log past 256 KB</div><svg viewBox="0 0 340 122" role="img" aria-label="At main, a hook that finds the log past 256 KB renames it straight to .1. A hook a moment later fails on a log already gone and loses its own line, or renames the new log another hook began over the full .1." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">rename the log straight to .1</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx "/><text x="170" y="65" text-anchor="middle" class="t s">a later hook finds the log gone: its line is lost</text><line x1="170" y1="76" x2="170" y2="85" class="ar " marker-end="url(#ah)"/><rect x="20" y="86" width="300" height="28" rx="8" class="bx "/><text x="170" y="104" text-anchor="middle" class="t s">or it renames the new log over the full .1</text></svg></div><div class="pn after"><div class="pt">this change</div><svg viewBox="0 0 340 131" role="img" aria-label="With this change, a hook renames the log to a name of its own, then checks the size of what it took. Past 256 KB it moves the log to .1. If not, it gives the log back, by hard link or by copying its lines." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx acc"/><text x="170" y="26" text-anchor="middle" class="t s">rename the log to a name of the hook&#x27;s own</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx acc"/><text x="170" y="65" text-anchor="middle" class="t s">is what it took past 256 KB?</text><line x1="95" y1="76" x2="95" y2="92" class="ar " marker-end="url(#ah)"/><line x1="245" y1="76" x2="245" y2="92" class="ar " marker-end="url(#ah)"/><text x="101" y="88" class="t s">yes</text><text x="251" y="88" class="t s">no</text><rect x="20" y="93" width="146" height="30" rx="8" class="bx good"/><text x="93" y="112" text-anchor="middle" class="t s">move it to .1</text><rect x="174" y="93" width="146" height="30" rx="8" class="bx "/><text x="247" y="112" text-anchor="middle" class="t s">give it back</text></svg></div></div><p><b>Evidence.</b> The 30-hook burst and the 2-hour count under &quot;How you tested it&quot;. The copy lock already uses <code>tryLockExclusive</code>, the engine&#x27;s lock that #503 brought. #577&#x27;s first text, kept in its edit history, described the take and set a lock aside because a stopped hook leaves it held. Its text today describes the bug, and its one comment holds the two questions.</p></details></div>
+<div class="dblock"><h3>How long may status wait for a log a hook holds?</h3>
+<p><b>We chose</b> 2 s past the log&#x27;s last change. One state costs more than <code>main</code>: 420.0 against 162.4 ms, Linux x64.</p>
+<p><b>Would change our mind:</b> how often that state happens, not measured; or decision 1&#x27;s lock.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">The log&#x27;s change time within 2 s (6f563beed) <span class='tag new'>chosen</span></td><td data-l="What a user gets">From 2 s after the take, a stopped hook&#x27;s log whose process id another process has costs what <code>main</code> costs: 172.7 against 168.7 ms on Linux x64, 274.4 against 282.5 on Windows 11. A running hook is waited for.</td><td data-l="Cost">One process query and one stat per taken log. Inside the 2 s, each <code>rerail status</code> waits out its pauses: 420.0 against 162.4 ms on Linux x64, 549.9 against 200.0 ms on Windows 11 (medians of 20, real daemon).</td><td data-l="What it breaks">That one state, for 2 s after a hook is stopped while it holds <code>.1</code> under its own name. The count is right in it, where <code>main</code>&#x27;s is not. How often it happens was not measured.</td></tr><tr><td class="k">The process id alone (cd0d87fe2)</td><td data-l="What a user gets">A running hook that took <code>.1</code> is waited for.</td><td data-l="Cost">One process query per taken log.</td><td data-l="What it breaks">Every status waits out all 8 pauses for as long as that process runs: 431.6 against 168.7 ms on Linux x64, 617.1 against 282.5 on Windows 11.</td></tr><tr><td class="k">Wait only for a move seen during this read</td><td data-l="What a user gets">No wait for a log a stopped hook left.</td><td data-l="Cost">None.</td><td data-l="What it breaks">No wait for a running hook that took <code>.1</code> before the first listing: the line says &quot;in the last 24 hours&quot; though the part before was dropped.</td></tr><tr><td class="k">An OS lock the taking hook holds until it moves the log on</td><td data-l="What a user gets">No wait for a log a stopped hook left; a running hook is waited for.</td><td data-l="Cost">Not built. One lock per move for the hook, one try-lock per taken log for status.</td><td data-l="What it breaks">Not built, so not known. Like the lock of decision 1, it needs a rule for a hook whose engine does not load.</td></tr></tbody></table></div><p><b>Evidence.</b> A rename sets a file&#x27;s change time and leaves its write time, on Linux x64 and on NTFS: 1.5 s after the write, a rename moved the change time by 1,507.0 and 1,503.9 ms and the write time by 0. The test e53c23b66 adds fails on both systems when the wait reads the write time. A fifth way, the process&#x27;s start time against the take, costs more than the wait on Windows.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<p>It stands on <code>main</code> alone and merges clean with c89f068ed and the six open pull requests sharing a file.</p>
+<details class="ev"><summary>Shared files and trial merges</summary><p>#503, merged, brought the hook failure log and the OS locks. #578, closed, was the first pull request for #577. <code>git merge-tree --write-tree</code> of e53c23b66 is clean with <code>main</code> at c89f068ed and with each open pull request that shares a file. <code>src/cli/cli.ts</code>: #562 at ad7afa92b, #667 at 34dae62e9, #640 at 3a0233710, #672 at e3e22bd70. <code>docs/troubleshooting.md</code>: #562, #506 at 06c94a596, #673 at e5656482d. No other open pull request edits <code>hook-failures.ts</code> or its test file. Nothing waits on this one.</p></details>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>Two cases still lose lines,</b> in a give-back by copy: a write held up past its second read; a failed append or second read after it removed its name.</li>
+<li><b>Three cases make one status read wrong:</b> it overlaps a give-back by copy, a log still moves after the last pause, or another program keeps a file from being read.</li>
+<li><b>Not run:</b> macOS; the whole suite outside CI; the load runs and timings at e53c23b66.</li>
+</ul>
+<details class="ev"><summary>Six smaller gaps, eight limits that stay</summary><ul class="facts">
+<li><b>How often a user meets the bug is not known.</b> The counts come from 50 failures a minute and 30 hooks at once, as #577 reports from one Windows 11 machine with a busy daemon. How often hooks fail at those rates was not measured; #548 tracks the cause.</li>
+<li><b>How often decision 2&#x27;s slow state happens</b> was not measured: a hook stopped while it holds <code>.1</code> under its own name, its process id then taken by another process inside 2 s.</li>
+<li><b>A second load run from a separate checkout, 6f563beed:</b> 0 of 785 Windows 11 reads short; 15 of 734 on Linux x64, the worst by 38 lines, 1 counting lines twice. No whole part missed; 390 of 390 checks with no move in flight exact on each. No line lost.</li>
+<li><b>One lost line, seen once.</b> At 6b1e39b6f one 200-hook burst on Linux x64 lost 1 line: the first case of part 8, a held-up write that lands after a give-back&#x27;s second read. Hooks lost no line at cd0d87fe2 or 6f563beed.</li>
+<li><b>The time the line names starts 16 ms late.</b> On Windows 11, hook processes&#x27; clocks differ by up to one system tick (15 ms measured). Since b661c0880 a mover writes a start 17 ms past its own clock on every system, after every failure in the old part.</li>
+<li><b>A log a stopped hook left more than 24 hours ago</b> is kept for as long as any process has that hook&#x27;s process id, and each status then reads it: one more file of up to 256 KB.</li>
+</ul>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li>The Rerail home can hold new files: a log a hook took, <code>hook-failures.jsonl.&lt;pid&gt;.&lt;id&gt;.old</code>, and the lock file <code>locks/hook-failures.lock</code>. A later move removes a taken log once its hook has ended and the file is a day old.</li>
+<li>The log gains a line <code>{&quot;startedAt&quot;: &lt;ms&gt;}</code> per part. <code>main</code>&#x27;s reader skips it, so <code>main</code> reads this version&#x27;s logs after a downgrade, and logs an older version wrote are read right.</li>
+<li><code>readHookFailures</code> returns <code>{ failures, keptSince }</code> where it returned a list. Its one caller in <code>src/</code> is <code>hookHealthLines</code> in <code>src/cli/cli.ts</code>.</li>
+<li>The log still holds two parts of 256 KB, about 2,200 failures. At 50 failures a minute that is 45 minutes, and the line then says since when it counts.</li>
+<li>On a file system with no file numbers, each name of a log counts as a file of its own.</li>
+<li>A give-back by copy waits at most 1 s for its lock, then copies without it, as it does when the engine does not load.</li>
+<li><code>recordHookFailure</code> keeps its signature. What Rerail records, steers and blocks does not change, nor do the rule-file format, the API and installed packs.</li>
+<li>The release-note entry describes a fix to a log no published version has. The branch keeps it, and ask 1 holds the question.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<p class="sub">Ask 1 rules on answer 1.</p>
+<ol class="lines">
+<li><div><svg class="fl full" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>On <a href="https://github.com/neralabs/rerail/issues/577#issuecomment-6870428051">#577</a>: when should the line lead with an outage, and does the release note stay?</b> We recommend lead on any newer failure; drop the note with #503&#x27;s release.</div></li>
+<li><div><b>On <a href="https://github.com/neralabs/rerail/issues/577#issuecomment-6872364440">#577</a>: a lock around the move, not the take (<a href="#decisions">decision 1</a>)?</b> We recommend your ruling before the code is read.</div></li>
+<li><div><b>Keep 0b256407a, which goes past #577&#x27;s bug at the automated review&#x27;s request?</b> We recommend yes: non-text fields read <code>unknown</code>.</div></li>
+</ol>
+<p><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>Answer 2 asks no ruling. #577 expects it.</p>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The record is the description&#x27;s &quot;How you tested it&quot;.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">CI on GitHub</td><td data-l="What ran">Run 43554075702 at e53c23b66, read on 14 November 2026</td><td data-l="Result">24 checks on the pull request: 19 pass, 5 are skipped, none fails. The run passes every job on its second attempt. The first attempt failed one test of <code>main</code> that this change does not touch, in the Windows unit job (2 of 2): <code>test/runtime/merge-assist/runtime-notes.test.ts</code> (never rejects, nor fails the edit&#x27;s result, when reading the notes fails after a detection).</td></tr><tr><td class="k">Linux x64 and Windows 11</td><td data-l="What ran">The five reproductions at <code>main</code> and at d2e27d773: the count after the log moved aside, twenty hooks failing at once, a log under two names, a move during a write, a status read during a write</td><td data-l="Result">Each fails at <code>main</code> and passes at d2e27d773, on both systems.</td></tr><tr><td class="k">Linux x64 and Windows 11</td><td data-l="What ran">The 9 test files of the change and of the modules that import it, at 6f563beed. Then <code>test/harness/hook-failures.test.ts</code> at e53c23b66</td><td data-l="Result">Linux x64: 208 passed, 0 failed. Windows 11: 199 passed, 9 skipped, 0 failed, none outside <code>main</code>&#x27;s baseline. The changed test file at e53c23b66: 44 of 44 on each.</td></tr><tr><td class="k">Linux x64 and Windows 11</td><td data-l="What ran">2 hours at 50 failures a minute, read every 5 minutes, and 30 hooks into a full log at once, 20 rounds: <code>main</code> against d2e27d773</td><td data-l="Result">The count: <code>main</code> 20 of 24 readings short on both, d2e27d773 0 short and 0 over. The burst on Linux x64: <code>main</code> lost 1,253 lines and status was right in 0 of 20; d2e27d773 lost none and was right in 20 of 20. On Windows 11 <code>main</code> lost no line and printed 30 where 270 were owed in all 20; d2e27d773 was right in 20 of 20.</td></tr><tr><td class="k">Linux x64 and Windows 11</td><td data-l="What ran">Status reads under hook bursts at cd0d87fe2, and checks with no move in flight</td><td data-l="Result">Windows 11: 0 of 1,392 reads short. Linux x64: 7 of 648 short, the worst by 63 lines. No read missed a whole part. With no move in flight, 390 of 390 checks exact on each. <code>main</code> under the same load: 1,722 of 1,911 Windows 11 reads short, the worst by 5,600.</td></tr><tr><td class="k">Linux x64 and Windows 11</td><td data-l="What ran"><code>rerail status</code> in a home where a daemon runs, median of 20, 6f563beed against <code>main</code> at c89f068ed</td><td data-l="Result">Both parts full: 172.0 against 171.5 ms on Linux x64; on Windows 11, where end-to-end medians moved with the machine&#x27;s load, the Hooks line&#x27;s own work, 3.77 against 1.32 ms. A stopped hook&#x27;s log, its process id another process&#x27;s, past 2 s: 172.7 against 168.7 ms, and 274.4 against 282.5 ms. Within 2 s: 420.0 against 162.4 ms, and 549.9 against 200.0 ms.</td></tr><tr><td class="k">Linux x64 and Windows 11</td><td data-l="What ran">One-line changes to fix lines, each tried in turn</td><td data-l="Result">Every one tried fails a test on Linux x64. The last two: 3c4088212 (a <code>.1</code> that opens but cannot be read) and e53c23b66 (the wait reads the log&#x27;s change time; with the write time, its test fails on Linux x64 and Windows 11).</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The automated reviewer&#x27;s rules, the repository&#x27;s pack and the complexity pack read at c89f068ed, over the diff against the merge base at 6f563beed. Trial merges of e53c23b66</td><td data-l="Result">No new finding; 6 existing ones in <code>cli.ts</code> functions this change does not edit. <code>git merge-tree --write-tree</code>: clean with <code>main</code> at c89f068ed and with #562, #667, #640, #506, #673 and #672. #672&#x27;s head is now e3e22bd70, where the description names 98c2462b6: clean with both.</td></tr></tbody></table></div></details>
+<details class="ev"><summary>What this report adds</summary><ul class="facts">
+<li><b>The line&#x27;s lead is a change of intent.</b> The description lists it as one row of its changes and one question on #577. At <code>main</code> a code comment and a test&#x27;s name both say the line leads only when every failure is newer than the last recorded event. This pull request changes that rule and that test&#x27;s case, so part 2 marks it as a change of intent and ask 1 asks for the ruling.</li>
+<li><b>#577&#x27;s text no longer describes the approach.</b> The text on the draft says this change builds the approach #577 describes, and cites #577&#x27;s reason against a lock. Read on 14 November 2026, #577 describes the bug only: an edit on 13 November removed its approach and its alternatives, which stay in its edit history. The fuller description says so. The text on the draft should say it too.</li>
+<li><b>The question is shorter here than in the description.</b> The callout&#x27;s question holds 25 words. The description asks whether a status read costs what it costs on <code>main</code>; this report asks whether it is as fast as <code>main</code>. The answer is the same: yes, except in the one state of decision 2.</li>
+<li><b>Two figures for the same wait.</b> A comment on the pull request gives the wait inside the 2 s as 258 ms on Linux x64 and 358 ms on Windows 11. That is the Hooks line&#x27;s own work in that state. The description gives the whole <code>rerail status</code> there: 420.0 against 162.4 ms, and 549.9 against 200.0 ms.</li>
+<li><b>Our answer to the read-first question.</b> Yes, in the cases part 8 names. By a read of e53c23b66: a hook stopped after its take leaves the log under its own name, where status counts it. A hook held up through both reads of a give-back by copy loses its line. Status counts each file once by file id; a read that overlaps a give-back by copy can miss those lines or count them twice.</li>
+<li><b>Two asks are new here.</b> The description says it asks for no ruling and points at #577&#x27;s two questions. Part 9 also asks whether a lock should replace the take, and whether 0b256407a stays. Neither question is on #577. The description should carry both.</li>
+</ul></details>
+<details class="ev"><summary>Sources</summary><p>Pull request #658, its diff, checks and reviews, and issue #577 with its comment and edit history, read on 14 November 2026. Rerail at <code>main</code> (c89f068ed) for each quoted intent and its line. The description for the runs, the timings and the load figures, each at the commit named. Each open pull request&#x27;s files and head for the shared files and trial merges.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
