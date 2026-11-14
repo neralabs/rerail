@@ -69,7 +69,6 @@ uses(n, f) :- imp(n, q), def(f, q).
         crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap()
     };
     let out = dir.join("out");
-    let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let run = |text: &str| super::run(text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
     let uses = || std::fs::read_to_string(out.join("uses.csv")).unwrap();
@@ -150,7 +149,6 @@ outer(f, x) :- named(x), encl(f, p), bound(p, x).
     let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let store = dir.join("store.sqlite");
-    let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.clone()));
     let run = |on: bool| {
         let options = if on { Value::Null } else { json!({"factorize": "off"}) };
@@ -217,7 +215,6 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
     use crate::code_rule_dsl::typing::file_local::Binding;
     // It ran past its timeout once in 34 runs under load, with no output: a run past 60 s leaves its stacks.
     let _watchdog = watchdog("k4", std::time::Duration::from_secs(60));
-    let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let base = std::env::temp_dir().join(format!("rerail-k4-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
     let out = base.join("out");
@@ -368,7 +365,6 @@ pub(super) const REACH_EDITS: [(&str, &str, &str); 10] = [
 fn the_reach_index_is_derived_again_when_cycles_and_connections_change_in_a_new_process() {
     use crate::code_rule_dsl::typing::file_local::Binding;
     let _watchdog = watchdog("reach", std::time::Duration::from_secs(90));
-    let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let base = std::env::temp_dir().join(format!("rerail-reach-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&base);
     let (src, out) = (base.join("src"), base.join("out"));
@@ -467,7 +463,6 @@ unused(f) :- def(f, _), !used(f).
 "#).unwrap();
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let out = dir.join("out");
-    let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
         let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -516,7 +511,6 @@ fn the_cone_of_requests_is_kept_while_its_reads_and_answers_are() {
     std::fs::write(&rule, "#include \"python/modules.rr\"\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n").unwrap();
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let out = dir.join("out");
-    let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
         let report = super::run(&text, &ws, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -571,7 +565,6 @@ fn the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads() {
     std::fs::write(&rule, "#include \"python/modules.rr\"\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n").unwrap();
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let out = dir.join("out");
-    let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let fresh = std::cell::Cell::new(0);
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
@@ -633,7 +626,6 @@ unused(f) :- def(f, _), !used(f).
 "#).unwrap();
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let out = dir.join("out");
-    let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
         let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -688,17 +680,17 @@ lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
 "#).unwrap();
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let out = dir.join("out");
-    let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     use crate::code_rule_dsl::typing::file_local::Binding;
     let run_on = |store: &str, binding: Binding| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        let before = super::maintain::pieces_together();
         let report = super::run(&text, &dir, None, &out, "program", binding, 1 << 18).unwrap();
         let rows = ["unused", "lone"].map(|r| std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap());
-        (report.cross_maintained.0, rows)
+        (report.cross_maintained.0, rows, super::maintain::pieces_together() - before)
     };
     let run = |store: &str| run_on(store, Binding::Cpu);
     run("kept.sqlite");
-    let together = super::maintain::pieces_together();
+    let mut together = 0;
     let edits = [
         ("c.py", "def h():\n    pass\n"),
         ("b.py", "from a import f\nfrom a import k\ndef g():\n    pass\n"),
@@ -707,20 +699,20 @@ lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
     ];
     for (i, (file, body)) in edits.into_iter().enumerate() {
         write(file, body);
-        let (maintained, rows) = run("kept.sqlite");
-        let (_, fresh) = run(&format!("fresh{i}.sqlite"));
+        let (maintained, rows, pieces) = run("kept.sqlite");
+        together += pieces;
+        let (_, fresh, _) = run(&format!("fresh{i}.sqlite"));
         assert_eq!(rows, fresh, "after edit {i} ({file})");
         assert!(maintained > 0, "edit {i}: a changed stratum maintained from the kept rows");
     }
-    assert!(super::maintain::pieces_together() > together, "a stratum's pieces ran together");
+    assert!(together > 0, "a stratum's pieces ran together");
     // Under the device's binding the pieces stay apart: the device takes no gates. The outputs are the same.
-    let together = super::maintain::pieces_together();
     write("c.py", "from a import k\ndef h():\n    pass\n");
-    let (maintained, rows) = run_on("kept.sqlite", Binding::Metal);
-    let (_, fresh) = run("fresh-metal.sqlite");
+    let (maintained, rows, pieces) = run_on("kept.sqlite", Binding::Metal);
+    let (_, fresh, _) = run("fresh-metal.sqlite");
     assert_eq!(rows, fresh, "under the device's binding");
     assert!(maintained > 0, "under the device's binding: maintained");
-    assert_eq!(super::maintain::pieces_together(), together, "under the device's binding the pieces stay apart");
+    assert_eq!(pieces, 0, "under the device's binding the pieces stay apart");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -759,21 +751,20 @@ reach(a, a) :- side(a), never(a).
 "#).unwrap();
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let out = dir.join("out");
-    let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        let before = super::maintain::strata_by_levels();
         let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
         let rows = ["reach", "side"].map(|r| std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap());
-        (report.cross_maintained, rows)
+        (report.cross_maintained, rows, super::maintain::strata_by_levels() - before)
     };
     run("kept.sqlite");
-    let by_levels = super::maintain::strata_by_levels();
     write("b.py", "from a import f\nfrom a import k\ndef g():\n    pass\n");
-    let ((maintained, recursive, _), rows) = run("kept.sqlite");
-    let (_, fresh) = run("fresh.sqlite");
+    let ((maintained, recursive, _), rows, by_levels) = run("kept.sqlite");
+    let (_, fresh, _) = run("fresh.sqlite");
     assert_eq!(rows, fresh);
     assert!(maintained > 0 && recursive > 0, "the recursive stratum is maintained ({maintained}, {recursive})");
-    assert!(super::maintain::strata_by_levels() > by_levels, "and by levels: `side` kept its rows' levels");
+    assert!(by_levels > 0, "and by levels: `side` kept its rows' levels");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -800,7 +791,6 @@ uses(n, f) :- imp(n, q), def(f, q).
     let unused = ".decl used(f: node)\nused(f) :- uses(_, f).\n.decl unused(f: node)\nunused(f) :- def(f, _), !used(f).\n.output unused\n";
     let named = ".decl named(q: symbol)\nnamed(q) :- uses(_, f), def(f, q).\n.output named\n";
     let out = dir.join("out");
-    let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("kept.sqlite")));
     let run = |extra: &str| {
         let rule = dir.join("p.rr");

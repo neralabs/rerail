@@ -649,8 +649,14 @@ const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine du
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
-/// `RERAIL_SESSION` (a directory) keeps a corpus session across them (decision 0063).
+/// `RERAIL_SESSION` (a directory) keeps a corpus session across them (decision 0063): `cli_in`, with the session
+/// it keeps.
 pub fn cli(args: &[String]) -> Result<String, String> {
+    cli_in(args, &mut Default::default())
+}
+
+/// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`): the caller owns it.
+pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> Result<String, String> {
     let budgets = budget_options(args)?;
     let args = budgets.as_slice();
     // However the command ends, the cost samples it made are written (decision 0100 §14).
@@ -661,9 +667,7 @@ pub fn cli(args: &[String]) -> Result<String, String> {
         }
     }
     let _flush = Flush;
-    if let Some(dir) = std::env::var_os("RERAIL_SESSION") {
-        crate::code_rule_dsl::logic::plan::corpus::session::start(std::path::Path::new(&dir))?;
-    }
+    let _session = kept.bind_from_env()?;
     match args.first().map(String::as_str) {
         #[cfg(feature = "dump-cli")]
         Some("dump") => dump_command(&args[1..]),
@@ -750,6 +754,8 @@ fn repeat_command(script: &str) -> Result<String, String> {
         (time(usage.ru_utime), time(usage.ru_stime))
     };
     let mut out = String::new();
+    // The session the script's commands keep (`RERAIL_SESSION`), from its first command to its last.
+    let mut kept = crate::code_rule_dsl::logic::plan::corpus::session::Kept::default();
     for (n, line) in script.lines().enumerate().map(|(n, l)| (n + 1, l.trim())) {
         if line.is_empty() || line.starts_with('#') {
             continue;
@@ -776,7 +782,7 @@ fn repeat_command(script: &str) -> Result<String, String> {
             _ => {
                 let args: Vec<String> = line.split_whitespace().map(str::to_owned).collect();
                 let (u0, s0) = cpu();
-                let result = cli(&args);
+                let result = cli_in(&args, &mut kept);
                 let (u1, s1) = cpu();
                 eprintln!(
                     "repeat line {n}: {:.2} s CPU ({:.2} user + {:.2} sys); footprint {} MB, at most {} MB; {}",

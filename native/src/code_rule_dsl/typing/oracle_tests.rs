@@ -771,7 +771,6 @@ fn the_analysis_phase_binds_a_library_generics_type_variables_fits_overloads_and
     )
     .unwrap();
     let out = dir.join("out");
-    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
@@ -814,7 +813,6 @@ fn the_analysis_phase_fits_a_library_overload_by_its_keywords_and_its_literal_ar
     )
     .unwrap();
     let out = dir.join("out");
-    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     // The overloads each call fits (`lcfn`), by the call's line.
     let text = format!("{}\n{JEDI_SPANS}\n.decl t_fit(c: node, f: symbol)\nt_fit(c, f) :- lcfn(c, _, f), struct__flag(f, \"overload\").\n.output t_fit\n", program("calls_p3"));
@@ -855,7 +853,6 @@ fn the_analysis_phase_infers_a_library_constructors_type_variables_from_its_argu
     )
     .unwrap();
     let out = dir.join("out");
-    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
@@ -902,7 +899,6 @@ fn the_analysis_phase_binds_a_library_context_managers_type_variable_from_the_wr
     )
     .unwrap();
     let out = dir.join("out");
-    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
@@ -945,7 +941,6 @@ fn the_analysis_phase_rules_out_an_overload_whose_none_parameter_is_given_a_lite
     )
     .unwrap();
     let out = dir.join("out");
-    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
@@ -982,7 +977,6 @@ fn the_analysis_phase_reads_a_library_generic_base_as_known() {
     )
     .unwrap();
     let out = dir.join("out");
-    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
@@ -1010,7 +1004,6 @@ fn the_analysis_phase_gives_an_awaited_call_what_the_async_def_returns() {
     )
     .unwrap();
     let out = dir.join("out");
-    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
@@ -1048,7 +1041,6 @@ fn the_analysis_phase_awaits_an_async_loops_next_value_and_an_async_withs_entere
     )
     .unwrap();
     let out = dir.join("out");
-    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let text = format!("{}\n{JEDI_SPANS}", program("calls_p3"));
     corpus::run(&text, &ws, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
@@ -1098,7 +1090,6 @@ rtype(f, a, d) :- types__rtype(f, a, d).
 .output binds, anc, attr, rtype
 "#;
     let out = dir.join("out");
-    let _one = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let run = || corpus::run_with_options(&[reader], &ws, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({})).unwrap();
     let dump = || -> Vec<Vec<String>> {
@@ -1112,7 +1103,7 @@ rtype(f, a, d) :- types__rtype(f, a, d).
         let p = r.phase_runs.iter().find(|p| p.name == "types").expect("the typing phase ran");
         (p.report.cross_strata, p.report.cross_maintained)
     };
-    session::start(&dir.join("session")).unwrap();
+    let session = session::start(&dir.join("session")).unwrap();
     let cold = run();
     println!("P2 cold: {:?}", types(&cold));
     std::fs::write(ws.join("b.py"), "from a import A\nclass B(A):\n    def go(self) -> str: ...\nclass C(B): ...\n").unwrap();
@@ -1139,7 +1130,7 @@ rtype(f, a, d) :- types__rtype(f, a, d).
     assert!(run_ < all, "the edit runs the strata its delta reaches, {run_} of {all}");
     let types_local = edited.phase_runs.iter().find(|p| p.name == "types").unwrap().report.phases.iter().find(|p| p.0 == "local").map_or(0.0, |p| p.1 + p.2);
     assert!(types_local < 0.05, "a phase reading no document has no file-local part: {types_local:.2} s");
-    session::stop();
+    drop(session);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1626,9 +1617,7 @@ ats(s, p, l) :- struct__at(s, p, l).
     };
     // `RERAIL_SPIKE_SESSION`: the runs are a session's (decision 0063), as the explorer's are; the full runs are not.
     let session = std::env::var_os("RERAIL_SPIKE_SESSION").is_some();
-    if session {
-        crate::code_rule_dsl::logic::plan::corpus::session::start(&out.with_extension("session")).unwrap();
-    }
+    let bound = session.then(|| crate::code_rule_dsl::logic::plan::corpus::session::start(&out.with_extension("session")).unwrap());
     show("cold", &run());
     show("unchanged", &run());
     let edits = std::env::var("RERAIL_SPIKE_EDITS").unwrap_or_else(|_| "E1,E2,E3".to_owned());
@@ -1655,7 +1644,7 @@ ats(s, p, l) :- struct__at(s, p, l).
         println!("PHASE {edit}: maintained vs full: {}", if differ.is_empty() { "the same".to_owned() } else { format!("differ: {}", differ.join(", ")) });
     }
     if session {
-        crate::code_rule_dsl::logic::plan::corpus::session::stop();
+        drop(bound);
         let _ = std::fs::remove_dir_all(out.with_extension("session"));
     }
     let _ = std::fs::remove_dir_all(&out);
@@ -1707,9 +1696,7 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
     // `RERAIL_SPIKE_PROCESS`: no session; each run maintains from what the store kept, as a new process does
     // (t32 4.1; the process's own caches of programs and files stay warm).
     let in_session = std::env::var_os("RERAIL_SPIKE_PROCESS").is_none();
-    if in_session {
-        session::start(&base.join("session")).unwrap();
-    }
+    let bound = in_session.then(|| session::start(&base.join("session")).unwrap());
     // `RERAIL_PROFILE`: each run's profile in a directory of its own, named as its line is.
     let profile_as = |what: &str| {
         if let Some(d) = std::env::var_os("RERAIL_PROFILE") {
@@ -1757,9 +1744,7 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
         let differ: Vec<String> = exports.iter().filter(|e| kept[*e] != derived[*e]).map(|e| format!("{e} ({} kept, {} derived)", kept[e].len(), derived[e].len())).collect();
         println!("T28 {edit}: maintained vs full: {}", if differ.is_empty() { "the same".to_owned() } else { format!("differ: {}", differ.join(", ")) });
     }
-    if in_session {
-        session::stop();
-    }
+    drop(bound);
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -1794,7 +1779,7 @@ fn spike_o125_a_session_maintains_calls_rr() {
     let show = |what: &str, r: &corpus::Report| {
         println!("O125 {what}: {:.1} s CPU (main thread), cross {:.1} s, peak RSS {:.0} MB; strata {:?}, maintained {:?}", cpu(r, None), cpu(r, Some("cross")), rss(r), r.cross_strata, r.cross_maintained);
     };
-    session::start(&base.join("session")).unwrap();
+    let session = session::start(&base.join("session")).unwrap();
     let primed = run();
     show("prime (session, cold cross part)", &primed);
     let again = run();
@@ -1831,7 +1816,7 @@ fn spike_o125_a_session_maintains_calls_rr() {
             println!("O125 {edit} {k}: {} rows, {} only maintained, {} only derived; e.g. {:?} / {:?}", b.len(), only_kept.len(), only_derived.len(), only_kept.iter().take(3).collect::<Vec<_>>(), only_derived.iter().take(3).collect::<Vec<_>>());
         }
     }
-    session::stop();
+    drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -1859,7 +1844,7 @@ fn spike_o125_session_maintains_calls() {
         }).collect()
     };
     let cpu = |r: &corpus::Report| -> f64 { r.phases.iter().map(|p| p.1 + p.2).sum() };
-    session::start(&base.join("session")).unwrap();
+    let session = session::start(&base.join("session")).unwrap();
     let t = std::time::Instant::now();
     let first = run();
     println!("o125 cold session run: {:.1} s CPU (main), {:.1} s wall, strata {:?}", cpu(&first), t.elapsed().as_secs_f64(), first.cross_strata);
@@ -1917,7 +1902,7 @@ fn spike_o125_session_maintains_calls() {
             }
         }
     }
-    session::stop();
+    drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }
 
@@ -2022,7 +2007,7 @@ fn spike_o125_replay() {
             println!("o125s {step:02}   {t:>7.3} s  (sum) {name}");
         }
     };
-    session::start(&base.join("session")).unwrap();
+    let session = session::start(&base.join("session")).unwrap();
     // `O125_DERIVATIONS=<dir>` (with `RERAIL_SPIKE_DERIVATIONS`): each run's rows derived and rows new, by relation,
     // `<dir>/<step>-<run>.tsv`: the derivations a counting scheme would keep a count of.
     let derivations = |step: usize, what: &str| {
@@ -2081,7 +2066,7 @@ fn spike_o125_replay() {
         println!("{line}");
     }
     if std::env::var_os("RERAIL_SPIKE_PRESORTED").is_some() { println!("o125r all presorted: {}", crate::code_rule_dsl::logic::native::setfix::runs::presorted::report()); }
-    session::stop();
+    drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }
 

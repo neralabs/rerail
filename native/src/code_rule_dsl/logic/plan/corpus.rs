@@ -1697,10 +1697,6 @@ thread_local! {
     pub static TEST_TAPE_CACHE: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) };
 }
 
-/// Held by a test that starts the process's session (`session::start`) and by one whose runs must not see it: every
-/// run uses a live session's store.
-#[cfg(any(test, feature = "test-hooks"))]
-pub static SESSION_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// The store the corpus runner keeps tapes in: `RERAIL_TAPE_CACHE`, else one in the temporary
 /// directory; `RERAIL_TAPE_CACHE=off` keeps none.

@@ -110,7 +110,6 @@ fn steps(c: &mut Corpus, store: &str, fresh: &mut dyn FnMut(&Corpus, usize) -> V
 #[test]
 #[ignore = "open (decision 0128): parses rule files, whose language only the engine registers; to be hosted by rerail-engine"]
 fn a_cache_is_facts_and_a_version_bump_derives_it_again() {
-    let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let mut c = Corpus::new("cache-kept");
     steps(&mut c, "kept.sqlite", &mut |c, i| c.run(&format!("fresh-{i}.sqlite")));
 }
@@ -121,9 +120,8 @@ fn a_cache_is_facts_and_a_version_bump_derives_it_again() {
 #[ignore = "open (decision 0128): parses rule files, whose language only the engine registers; to be hosted by rerail-engine"]
 fn a_cache_in_a_session_is_facts_and_a_version_bump_derives_it_again() {
     use super::session;
-    let _one = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let mut c = Corpus::new("cache-session");
-    session::start(&c.dir.join("session")).unwrap();
+    let session = session::start(&c.dir.join("session")).unwrap();
     steps(&mut c, "session.sqlite", &mut |c, i| session::full(|| c.run(&format!("fresh-{i}.sqlite"))));
-    session::stop();
+    drop(session);
 }

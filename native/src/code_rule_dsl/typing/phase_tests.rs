@@ -19,7 +19,6 @@ fn types_resolves_names_bases_members_and_annotations_by_symbol() {
     std::fs::write(src.join("o.py"), "from pkg.listed import *\n").unwrap();
     std::fs::write(src.join("n.py"), "from pkg import Exported\nimport pkg.m\nfrom pkg.star import B\n\nlimit: int = 3\n\ndef f(c: Exported, d: pkg.m.B) -> None:\n    pass\n\ndef g(u: B | None) -> list[B] | None:\n    pass\n\ndef k(u: 'B | None') -> None:\n    pass\n").unwrap();
     let out = dir.join("out");
-    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let reader = r#"
 #include "core.rr"
@@ -100,7 +99,6 @@ fn struct_marks_async_and_overloads_with_their_positional_shapes() {
     )
     .unwrap();
     let out = dir.join("out");
-    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let reader = r#"
 #include "core.rr"
@@ -141,7 +139,6 @@ fn types_gives_type_parameters_their_map_through_bases_and_the_returns_naming_th
     )
     .unwrap();
     let out = dir.join("out");
-    let _no_session = corpus::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let reader = r#"
 #include "core.rr"
