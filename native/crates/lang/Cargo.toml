@@ -89,6 +89,8 @@ rerail-python-lean = { path = "../python_lean" }
 rerail-ecma-lean = { path = "../ecma_lean" }
 # Rust's lean parser: tree-sitter-rust's tape, written as the parse goes (`tape::rust_lean`).
 rerail-rust-lean = { path = "../rust_lean" }
+# Java's lean parser: tree-sitter-java's tape, written as the parse goes (`tape::java_lean`).
+rerail-java-lean = { path = "../java_lean" }
 rerail-store = { path = "../store" }
 rerail-accel = { path = "../../../accel" }
 rerail-compiler = { path = "../compiler" }

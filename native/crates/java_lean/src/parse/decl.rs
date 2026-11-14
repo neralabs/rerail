@@ -711,13 +711,16 @@ impl<'a> P<'a> {
 
     fn parameter(&mut self) -> R<()> {
         // A receiver: annotations, a type, names and `.`s, `this`.
+        // A receiver: tree-sitter reads `@A T this` as a parameter named `this` (an identifier: no
+        // keyword is valid there), and a receiver without annotations or with a qualified `this`.
         let receiver = (|| {
             let j = self.scan_annotations(0)?;
-            let mut k = self.scan_type(j, true)?;
+            let e = self.scan_type(j, true)?;
+            let mut k = e;
             while self.is_ident_at(k) && self.kind_at(k + 1) == T::Dot {
                 k += 2;
             }
-            self.is_word_at(k, w::THIS).then_some(())
+            (self.is_word_at(k, w::THIS) && (j == 0 || k > e)).then_some(())
         })()
         .is_some();
         if receiver {
@@ -750,7 +753,11 @@ impl<'a> P<'a> {
         let n = self.open(K::FormalParameter, f::NONE, C_NONE);
         self.modifiers()?;
         self.unannotated(slot(f::TYPE, Ctx::UType), true)?;
-        self.declarator_id()?;
+        if self.is_word(w::THIS) && matches!(self.kind_at(1), T::Comma | T::RParen) {
+            self.leaf(K::Identifier, f::NAME, C_NONE)?;
+        } else {
+            self.declarator_id()?;
+        }
         self.close(n);
         Ok(())
     }

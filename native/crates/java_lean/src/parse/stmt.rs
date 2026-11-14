@@ -9,7 +9,14 @@ impl<'a> P<'a> {
     /// (`parent`): an empty statement's `;` is a token in `parent`'s gap.
     pub(super) fn statement_in(&mut self, parent: K, s: Slot) -> R<()> {
         if self.peek() == T::Semi {
-            return self.tk_field(parent, K::TSemi, s.field);
+            // Left out where its gap is the kind's implied word. An `else`'s is never: the gap
+            // after the consequence implies nothing (`else` may be absent).
+            if (parent == K::IfStatement && s.field == f::ALTERNATIVE) || self.stores(parent, K::TSemi, s.field) {
+                self.leaf(K::TSemi, s.field, C_S)?;
+            } else {
+                self.bump()?;
+            }
+            return Ok(());
         }
         self.statement(s).map(|_| ())
     }
@@ -248,9 +255,9 @@ impl<'a> P<'a> {
         self.parenthesized(f::CONDITION)?;
         if self.peek() == T::Semi && self.is_word_at(1, w::ELSE) && self.kind_at(2) == T::Semi {
             // `if (c) ; else ;`: one gap, not its kind's implied word.
-            self.leaf(K::TSemi, f::CONSEQUENCE, C_NONE)?;
+            self.leaf(K::TSemi, f::CONSEQUENCE, C_S)?;
             self.leaf(K::TElse, f::NONE, C_NONE)?;
-            self.leaf(K::TSemi, f::ALTERNATIVE, C_NONE)?;
+            self.leaf(K::TSemi, f::ALTERNATIVE, C_S)?;
             self.close(n);
             return Ok(n);
         }

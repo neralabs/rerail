@@ -55,6 +55,8 @@ pub mod python_lean;
 pub mod ecma_lean;
 /// Rust's tape from the lean parser (`rerail_rust_lean`).
 pub mod rust_lean;
+/// Java's tape from the lean parser (`rerail_java_lean`).
+pub mod java_lean;
 pub use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
 pub const ERROR_SYMBOL: u16 = u16::MAX;

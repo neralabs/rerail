@@ -87,10 +87,13 @@ impl<'a> P<'a> {
         loop {
             let t = self.tok();
             if let Some(op) = assignment(t.kind) {
-                if min > P_ASSIGN {
-                    break;
-                }
+                // An assignable operand before an assignment's operator is the assignment's left at
+                // any precedence (`a & b += 4` is `a & (b += 4)`): no expression is followed by `=`,
+                // so tree-sitter's table only shifts it.
                 if !matches!(left.kind, K::Identifier | K::FieldAccess | K::ArrayAccess) {
+                    if min > P_ASSIGN {
+                        break;
+                    }
                     return self.refuse();
                 }
                 left = self.wrap(left, K::AssignmentExpression, s, slot(f::LEFT, Ctx::Bare));
@@ -253,14 +256,9 @@ impl<'a> P<'a> {
             }
             let t = self.peek_at(j);
             let end = self.scan_type(j, true)?;
-            if w::is_primitive(t.word) {
+            // A name alone (`(a) - b` is a difference; `(a.b) - c` is a cast).
+            if w::is_primitive(t.word) || end != j + 1 {
                 only_name = false;
-            } else {
-                for i in j..end {
-                    if !matches!(self.kind_at(i), T::Name | T::Dot) {
-                        only_name = false;
-                    }
-                }
             }
             types += 1;
             k = end;
@@ -275,12 +273,17 @@ impl<'a> P<'a> {
         }
         let next = self.peek_at(close);
         if only_name && types == 1 {
-            // A name alone: a cast before an operand that cannot be a binary operator's.
-            if !starts_operand(next) {
+            // A name alone: a cast before an operand that cannot be a binary operator's, or a
+            // prefix update (`(a) ++b`; `(a)++` is a postfix one).
+            let update = matches!(next.kind, T::PlusPlus | T::MinusMinus) && starts_operand(self.peek_at(close + 1));
+            if !starts_operand(next) && !update {
                 return None;
             }
-        } else if !(starts_operand(next) || matches!(next.kind, T::Plus | T::Minus | T::PlusPlus | T::MinusMinus)) {
-            return None;
+        } else {
+            let update = matches!(next.kind, T::PlusPlus | T::MinusMinus) && starts_operand(self.peek_at(close + 1));
+            if !(starts_operand(next) || matches!(next.kind, T::Plus | T::Minus) || update) {
+                return None;
+            }
         }
         Some(types > 1)
     }
