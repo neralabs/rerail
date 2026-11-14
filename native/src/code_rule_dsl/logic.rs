@@ -53,12 +53,6 @@ pub mod front {
     use std::collections::{BTreeMap, BTreeSet};
     #[allow(unused_imports)]
     use std::fmt;
-    #[allow(unused_imports)]
-    pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::name::Name;
-    #[allow(unused_imports)]
-    pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, Again, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
-    #[allow(unused_imports)]
-    pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;
 }
 pub mod costs;
 // The logic's device interface; the engine registers a device as it loads (`crate::install_devices`).
@@ -76,8 +70,6 @@ pub mod magic {
     use crate::code_rule_dsl::logic::front::{AggOp, Atom, Error, Literal, Program, Rule, Term, Value, cmp_binds, join, strata, tarjan};
     #[allow(unused_imports)]
     use std::collections::{BTreeMap, BTreeSet};
-    #[allow(unused_imports)]
-    pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{Gate, Report};
 }
 #[allow(dead_code)]
 pub mod native;
@@ -98,8 +90,6 @@ pub mod profile {
     use std::sync::atomic::{AtomicBool, Ordering};
     #[allow(unused_imports)]
     use std::sync::{LazyLock, Mutex};
-    #[allow(unused_imports)]
-    pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::profile::roofline::Unit;
 }
 pub mod program_facts;
 pub mod program_image;

@@ -179,7 +179,7 @@ impl Drop for WriteLockSection {
 
 /// Returns `(write sections entered, SHA-256 digests computed inside them)` on this thread
 /// since the last call, and resets both.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 pub(super) fn take_write_lock_hash_counts() -> (usize, usize) {
     (
         WRITE_LOCK_SECTIONS.with(|sections| sections.replace(0)),

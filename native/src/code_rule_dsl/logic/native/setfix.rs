@@ -1698,7 +1698,6 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         store.rels[0].reserve(fresh[0].n);
         for i in 0..fresh[0].n { store.rels[0].push(&fresh[0].data.row(i as u32, k)); }
         let prep = closure::prepare(&cl, store, &mut syms);
-        drop(syms);
         match prep {
             None => closure_ran = Some(None),
             Some(mut prep) if !prep.launches.is_empty() && crate::code_rule_dsl::logic::lanes::wave::can_wait() => {
@@ -1888,7 +1887,6 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         };
         if tried && !on_device {
             // The seeds were parsed without the CPU's indexes: parse them again with them.
-            drop(syms);
             drop(guard);
             let specs = std::mem::take(&mut comp.seed_specs);
             {

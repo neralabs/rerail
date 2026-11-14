@@ -1505,13 +1505,13 @@ pub fn stored_plans() -> Option<StoredPlans> {
 }
 
 /// This thread's kept plans, for a job on another thread to enter.
-pub fn share_plans() -> Option<SharedPlans> {
+fn share_plans() -> Option<SharedPlans> {
     PLANS.with(|p| p.borrow().clone())
 }
 
 /// While the guard lives, this thread plans with `plans` (another thread's, `share_plans`), into plans of its own
 /// (`OWN_PLANS`) taken into them as it ends.
-pub fn enter_plans(plans: Option<SharedPlans>) -> impl Drop {
+fn enter_plans(plans: Option<SharedPlans>) -> impl Drop {
     struct Entered(Option<SharedPlans>, Option<rustc_hash::FxHashMap<PlanKey, Kept>>);
     impl Drop for Entered {
         fn drop(&mut self) {
@@ -4743,7 +4743,7 @@ struct Driving<'a> {
     wholes: HashMap<usize, Vec<Step>>,
 }
 
-struct Run<'a, 'b> {
+pub struct Run<'a, 'b> {
     prog: &'a Program,
     /// The run's connection; only its scope in a stratum run off the run's thread (`strand`, decision 0113).
     db: crate::code_rule_dsl::facts::vtab::Db<'a>,
@@ -5940,7 +5940,10 @@ impl Ambient {
 
     /// While the guard lives, this thread works in the run's ambient.
     fn enter(&self) -> impl Drop {
-        struct Entered(placement::Binding, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>, super::profile::Span);
+        /// A guard held for its drop.
+        trait Held {}
+        impl<T> Held for T {}
+        struct Entered(placement::Binding, bool, Box<dyn Held>, Box<dyn Held>, Box<dyn Held>, super::profile::Span);
         impl Drop for Entered {
             fn drop(&mut self) {
                 placement::set_binding(self.0);
