@@ -936,19 +936,19 @@ export async function serveRerailDaemon(argv: readonly string[], services: Omit<
     await runRerailDaemon(argv, services);
   } catch (error) {
     if (!(error instanceof TlsKeyExposedError)) throw error;
-    process.stderr.write(`rerail daemon: ${loopbackOnlyNotice(error.message)}\n`);
     await serveLoopback(argv, error.message, services);
   }
 }
 
 /**
  * Runs the daemon for this computer alone, for `reason`: with `argv` less what reaches other machines
- * (`loopbackArguments`). The process takes the arguments of such a daemon (`loopbackCommandLine`) as if it had been
- * started with them, as the hook launcher runs a hook: a restart at the heap ceiling relaunches the daemon with this
- * process's arguments (`runRerailDaemon`), so the next daemon serves this computer alone too, saying why, even once the
- * key is fixed, until someone starts it again.
+ * (`loopbackArguments`), saying why on stderr, which is daemon.log, once for each start. The process takes the arguments
+ * of such a daemon (`loopbackCommandLine`) as if it had been started with them, as the hook launcher runs a hook: a
+ * restart at the heap ceiling relaunches the daemon with this process's arguments (`runRerailDaemon`), so the next
+ * daemon serves this computer alone too, saying why, even once the key is fixed, until someone starts it again.
  */
 async function serveLoopback(argv: readonly string[], reason: string, services: Omit<RerailDaemonServices, "remoteRefused">): Promise<void> {
+  process.stderr.write(`rerail daemon: ${loopbackOnlyNotice(reason)}\n`);
   process.argv.splice(2, process.argv.length - 2, ...loopbackCommandLine(argv, reason));
   await runRerailDaemon(loopbackArguments(argv), { ...services, remoteRefused: reason });
 }

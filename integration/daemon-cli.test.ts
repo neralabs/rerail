@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { existsSync } from "node:fs";
+import { closeSync, existsSync, openSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
 import { dirname, join } from "node:path";
@@ -150,8 +150,8 @@ describe("Rerail daemon CLI", () => {
   }, 90_000);
 
   // A restart at the heap ceiling launches the next daemon with this process's arguments (`process.argv`). A daemon that
-  // serves this computer alone comes back as that daemon, saying why, never with the arguments that asked for other
-  // machines, which would reach them once the key is fixed though no one started it so.
+  // serves this computer alone comes back as that daemon, saying why in its state file and in daemon.log, never with the
+  // arguments that asked for other machines, which would reach them once the key is fixed though no one started it so.
   test("comes back from a heap-ceiling restart on loopback, still saying why, once its TLS key is fixed", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-daemon-cli-"));
     const cli = join(process.cwd(), "dist", "cli", "cli.js");
@@ -159,6 +159,9 @@ describe("Rerail daemon CLI", () => {
     const keyFile = join(root, "key.pem");
     const stateFile = join(root, "daemon.json");
     const relaunchFile = join(root, "relaunch.json");
+    const log = join(root, "daemon.log");
+    const reasonLines = async (why: string): Promise<number> =>
+      (await readFile(log, "utf8")).split(`rerail daemon: This daemon serves this computer alone, over plain http on loopback, until its TLS key is fixed: ${why}`).length - 1;
     try {
       const { cert, key } = selfSignedCertificate();
       await writeFile(join(root, "cert.pem"), cert);
@@ -173,19 +176,22 @@ describe("Rerail daemon CLI", () => {
       ].join("\n"));
       const local = ["--dev", "--port", "0", "--state-file", stateFile];
       const remote = ["--host", "0.0.0.0", "--allow-remote", "--tls-cert", join(root, "cert.pem"), "--tls-key", keyFile];
-      spawn(process.execPath, [script, ...local, ...remote], { env, stdio: "ignore" });
+      launchLogged([script, ...local, ...remote], env, log);
       const relaunch = await vi.waitFor(async () => JSON.parse(await readFile(relaunchFile, "utf8")) as string[], { timeout: 30_000, interval: 100 });
       const why = String((JSON.parse(await readFile(stateFile, "utf8")) as { remoteRefused?: unknown }).remoteRefused);
       expect(relaunch).toEqual([...local, "--remote-refused", why]);
+      expect(await reasonLines(why)).toBe(1);
       expect((await rerail(cli, ["daemon", "stop"], env)).code).toBe(0);
-      // Launched with those arguments once the key is private, the next daemon still serves this computer alone.
+      // Launched with those arguments once the key is private, the next daemon still serves this computer alone, and
+      // daemon.log says why once more, for this start.
       await makePrivate(keyFile);
-      spawn(process.execPath, [join(process.cwd(), ENTRY_POINTS.daemon), ...relaunch], { env, stdio: "ignore" });
+      launchLogged([join(process.cwd(), ENTRY_POINTS.daemon), ...relaunch], env, log);
       const state = await vi.waitFor(
         async () => JSON.parse(await readFile(stateFile, "utf8")) as Pick<DaemonState, "url" | "accessToken"> & { remoteRefused?: unknown },
         { timeout: 30_000, interval: 100 },
       );
       expect(state).toMatchObject({ url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/$/u), remoteRefused: why });
+      expect(await reasonLines(why)).toBe(2);
       const health = await fetch(new URL("/healthz", state.url), { headers: { "x-rerail-access": state.accessToken! } });
       expect(health.status).toBe(200);
     } finally {
@@ -294,6 +300,16 @@ async function rerail(cli: string, args: readonly string[], env: NodeJS.ProcessE
   const { promise, resolve } = Promise.withResolvers<{ code: number | null; stdout: string; stderr: string }>();
   const child = execFile(process.execPath, [cli, ...args], { env }, (_error, stdout, stderr) => resolve({ code: child.exitCode, stdout, stderr }));
   return await promise;
+}
+
+/** Starts Node with `args`, its stdout and stderr appended to `logFile`, as a daemon's go to daemon.log. */
+function launchLogged(args: readonly string[], env: NodeJS.ProcessEnv, logFile: string): void {
+  const log = openSync(logFile, "a");
+  try {
+    spawn(process.execPath, [...args], { env, stdio: ["ignore", log, log] });
+  } finally {
+    closeSync(log);
+  }
 }
 
 /** `text` as a regular expression source that matches it alone. */
