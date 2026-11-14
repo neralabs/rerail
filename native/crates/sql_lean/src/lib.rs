@@ -9,10 +9,10 @@
 //! - **The parser** (`parse`) is recursive descent over tree-sitter-sql's grammar. A word is a
 //!   keyword where the grammar takes that keyword at that point, as tree-sitter's keyword lexing
 //!   does (its `word` token), else an identifier; where the parser cannot tell, it refuses.
-//! - **The writer** (`emit`): a statement's nodes are built as it is read, then written to the tape.
-//!   Each node's tokens are stored as the engine's token automata store them (`kinds::MOVES`, from
-//!   the engine's `TokenGrammar`), and each comment goes in the deepest node that has children on
-//!   both sides of it, as tree-sitter's reductions leave it.
+//! - **The tape** is written as the text is read, each node in preorder (`rerail_tape_format::Writer`,
+//!   decision 0226), with no tree built first. Each node's tokens are stored as the engine's token
+//!   automata store them (`kinds::MOVES`, from the engine's `TokenGrammar`), and each comment goes
+//!   in the node open when the next token or node is written, as tree-sitter's reductions leave it.
 //!
 //! A node's key is the parser's own (`key`): a kind from `KINDS`, a field from `FIELDS` and the extra
 //! flag. The engine maps each to its grammar's ids by name.

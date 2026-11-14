@@ -1,5 +1,5 @@
-//! The parser: recursive descent over tree-sitter-sql's grammar (`grammar.json`), a statement's
-//! nodes built as it reads them (`Arena`), then written to the tape (`emit`).
+//! The parser: recursive descent over tree-sitter-sql's grammar (`grammar.json`), each node
+//! written to the tape (`Writer`) in preorder as it is read (decision 0226).
 //!
 //! **Tokens** are read as tree-sitter's lexer reads them in the parse state: white space and
 //! comments skipped (the external scanner's comments, `--` and nested `/* */`, kept as extras), a
@@ -11,13 +11,18 @@
 //! an identifier. Where the parser does not know the state's keywords (after an expression, where
 //! everything that may follow it counts), a keyword word it does not read is refused.
 //!
-//! **The tape.** Each node's children are written in order, its tokens decided by its kind's token
-//! automaton (`kinds::MOVES`), exactly as the engine's `TokenGrammar::stored_children` decides them;
-//! each extra goes in the deepest node with children on both sides of it.
+//! **The tape.** A node is opened when its kind is known (`open`), or put before its first child
+//! when the kind is known only after it (`wrap`: an operator after its left operand). A frame for
+//! each node open, and for each mark where a node may still be put. Each token is decided by its
+//! parent's token automaton (`kinds::MOVES`), exactly as the engine's
+//! `TokenGrammar::stored_children` decides it: at once where the kind decides it (`kinds::FATE`),
+//! else held and decided when its parent closes (`claim`), by the walk over the children written.
+//! A comment goes into the node open when the next token or node is written.
 
 use crate::block::Blocks;
 use crate::kinds::{self, K, f};
 use crate::{Refusal, Tape, key};
+use rerail_simd8::swar::{first_of2, load8};
 use rerail_tape_format::{Redo, Widths, Writer};
 
 mod expr;
@@ -30,7 +35,9 @@ const MAX_DEPTH: u32 = 160;
 
 /// `src` parsed.
 pub fn parse(src: &[u8]) -> R<Tape> {
-    if let Some(at) = src.iter().position(|&c| c == 0) {
+    // Stage 1 once, for every width tried.
+    let mut blocks = Blocks::of(src);
+    if let Some(at) = blocks.first_nul() {
         return Err(Refusal::Lex(at as u32));
     }
     if std::str::from_utf8(src).is_err() {
@@ -38,21 +45,36 @@ pub fn parse(src: &[u8]) -> R<Tape> {
     }
     // A leading byte order mark is skipped (tree-sitter's lexer skips it): the text starts after.
     let start = if src.starts_with("\u{feff}".as_bytes()) { 3 } else { 0 };
-    let mut p = P { src, b: Blocks::of(src), at: start, last_end: start, look: None, a: Arena::sized(src.len()), extras: Vec::new(), depth: 0, memo: (usize::MAX, Tok { t: T::Eof, s: 0, e: 0, w: 0 }) };
-    let root = p.program()?;
     let mut widths = Widths::guess(src.len());
     loop {
-        let mut w = Writer::new(0, widths, p.a.nodes.len() + p.extras.len() + 1);
-        let mut x = 0usize;
-        let mut dropped = vec![false; p.a.kids.len()];
-        p.a.emit(&mut w, root, &p.extras, &mut x, true, src.len() as u32, &mut dropped)?;
-        match w.finish_columns() {
+        let mut p = P {
+            src,
+            b: blocks,
+            at: start,
+            last_end: start,
+            look: None,
+            w: Writer::new(0, widths, src.len() / 3 + 16),
+            frames: Vec::with_capacity(64),
+            held: Vec::with_capacity(64),
+            extras: Vec::with_capacity(16),
+            flushed: 0,
+            kids: Vec::with_capacity(64),
+            is_held: Vec::with_capacity(64),
+            out: Vec::with_capacity(64),
+            keep: Vec::with_capacity(64),
+            depth: 0,
+            memo: (usize::MAX, Tok { t: T::Eof, s: 0, e: 0, w: 0 }),
+        };
+        p.program()?;
+        match p.w.finish_columns() {
             Ok(columns) => return Ok(columns),
+            // A value past the guessed widths: read again at the wider ones.
             Err(Redo(nw)) => {
                 if nw == widths {
                     return Err(Refusal::TooLarge);
                 }
                 widths = nw;
+                blocks = p.b;
             }
         }
     }
@@ -98,11 +120,6 @@ rerail_simd8::keyword_switch!(
 );
 
 #[inline(always)]
-fn is_blank(c: u8) -> bool {
-    matches!(c, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
-}
-
-#[inline(always)]
 fn is_word_start(c: u8) -> bool {
     c.is_ascii_alphabetic() || c == b'_' || c >= 0x80
 }
@@ -129,32 +146,7 @@ mod prec {
     pub const TYPECAST: u8 = 21;
 }
 
-// ---- The arena: a statement's nodes as they are read, written to the tape after.
-
-#[derive(Clone, Copy)]
-struct N {
-    kind: K,
-    field: u8,
-    s: u32,
-    e: u32,
-    /// Its children: `kids[at..at + n]`.
-    at: u32,
-    n: u32,
-}
-
-#[derive(Default)]
-struct Arena {
-    nodes: Vec<N>,
-    kids: Vec<u32>,
-    /// The children of the nodes being read, in order.
-    stack: Vec<u32>,
-}
-
-/// A node's label in its parent's automaton: its kind and field.
-#[inline(always)]
-fn label(n: &N) -> u32 {
-    n.kind as u32 | u32::from(n.field) << 10
-}
+// ---- The tape as it is read: each node written at its place, its punctuation by its kind.
 
 /// The moves out of automaton state `s`.
 #[inline]
@@ -194,198 +186,100 @@ fn implied(s: u32, next: Option<u32>) -> u32 {
     }
 }
 
-impl Arena {
-    /// An arena for a text of `len` bytes: room for its nodes at the corpus's density (a node in
-    /// about every 3 bytes), so the parse does not grow it.
-    fn sized(len: usize) -> Arena {
-        let n = len / 3 + 16;
-        Arena { nodes: Vec::with_capacity(n), kids: Vec::with_capacity(n), stack: Vec::with_capacity(64) }
-    }
-
-    #[inline]
-    fn mark(&self) -> usize {
-        self.stack.len()
-    }
-
-    /// A leaf at `s..e`, pushed as the next child.
-    #[inline]
-    fn leaf(&mut self, kind: K, field: u8, s: usize, e: usize) -> u32 {
-        let id = self.nodes.len() as u32;
-        self.nodes.push(N { kind, field, s: s as u32, e: e as u32, at: 0, n: 0 });
-        self.stack.push(id);
-        id
-    }
-
-    /// A node of the children read since `mark`, pushed as the next child in their place.
-    fn node(&mut self, kind: K, mark: usize) -> u32 {
-        let at = self.kids.len() as u32;
-        let n = (self.stack.len() - mark) as u32;
-        let (s, e) = match (self.stack.get(mark), self.stack.last()) {
-            (Some(&a), Some(&b)) => (self.nodes[a as usize].s, self.nodes[b as usize].e),
-            _ => (0, 0),
+/// The tokens a node of automaton `a` leaves out, as the engine's `stored_children` decides them:
+/// `kids` its children's labels in order (`kind | field << 10`, and whether the child is named),
+/// `out[i]` set for each child left out. None where the walk is refused (the automaton does not
+/// take the children).
+fn walk(a: usize, kids: &[(u32, bool)], out: &mut [bool]) {
+    // The gap `from..to` before the named child `next` (`None`: the end), from `state`.
+    let close = |state: u32, from: usize, to: usize, next: Option<u32>, out: &mut [bool]| -> Option<u32> {
+        let mut s = state;
+        for k in &kids[from..to] {
+            s = step(s, k.0)?;
+        }
+        let after = match next {
+            Some(l) => step(s, l)?,
+            None if accepts(s) => s,
+            None => return None,
         };
-        self.kids.extend(self.stack.drain(mark..));
-        let id = self.nodes.len() as u32;
-        self.nodes.push(N { kind, field: 0, s, e, at, n });
-        self.stack.push(id);
-        id
-    }
-
-    /// Gives node `id` `field`, where it has none: a field given inside a hidden rule wins over
-    /// one given outside it, as tree-sitter's cursor looks for a node's field from its nearest
-    /// hidden parent out.
-    #[inline]
-    fn set_field(&mut self, id: u32, field: u8) {
-        let n = &mut self.nodes[id as usize];
-        if n.field == 0 {
-            n.field = field;
-        }
-    }
-
-    /// The children read since `mark` given `field` (a hidden rule's field falls on its nodes),
-    /// where they have none.
-    fn field_since(&mut self, mark: usize, field: u8) {
-        for i in mark..self.stack.len() {
-            let id = self.stack[i];
-            self.set_field(id, field);
-        }
-    }
-
-    /// Marks in `dropped` (indexed as `kids`) node `id`'s children the tape leaves out: its
-    /// automaton's gaps, as the engine's `stored_children` decides them. None where it has no
-    /// automaton, or the walk is refused.
-    fn drop_gaps(&self, id: u32, dropped: &mut [bool]) {
-        let n = self.nodes[id as usize];
-        let a = kinds::AUTOMATON[n.kind as usize];
-        if a == 0 || n.n == 0 {
-            return;
-        }
-        let at = n.at as usize;
-        let kids = &self.kids[at..at + n.n as usize];
-        // Most tokens' fates are the kind's alone (`kinds::FATE`): left out, or stored, in every gap
-        // they can stand in. Only a node holding a token that is not walks its automaton.
-        let fate = &kinds::FATE[a as usize - 1];
-        let mut walked = false;
-        for (i, &k) in kids.iter().enumerate() {
-            let t = self.nodes[k as usize].kind as usize;
-            let (word, bit) = (t / 64, 1u64 << (t % 64));
-            if fate[kinds::FATE_WORDS + word] & bit != 0 {
-                walked = true;
-                break;
-            }
-            dropped[at + i] = fate[word] & bit != 0;
-        }
-        if walked {
-            dropped[at..at + kids.len()].fill(false);
-            self.walk_gaps(id, dropped);
-        } else {
-            // The kind's fates are the walk's, on a sequence the automaton takes.
-            #[cfg(test)]
-            self.check_fates(id, dropped);
-        }
-    }
-
-    /// `drop_gaps` by the automaton's walk: each gap's tokens left out where the gap is its implied
-    /// word and the token is not kept. None where the walk is refused.
-    fn walk_gaps(&self, id: u32, dropped: &mut [bool]) {
-        let n = self.nodes[id as usize];
-        let a = kinds::AUTOMATON[n.kind as usize];
-        let at = n.at as usize;
-        let kids = &self.kids[at..at + n.n as usize];
-        let lab = |i: usize| label(&self.nodes[kids[i] as usize]);
-        // The gap `from..to` before the named child `next` (`None`: the end), from `state`.
-        let close = |state: u32, from: usize, to: usize, next: Option<u32>, dropped: &mut [bool]| -> Option<u32> {
-            let mut s = state;
-            for i in from..to {
-                s = step(s, lab(i))?;
-            }
-            let after = match next {
-                Some(l) => step(s, l)?,
-                None if accepts(s) => s,
-                None => return None,
-            };
-            if to > from {
-                // The word, packed: its start in `WORD`, length, and the tokens it leaves out.
-                let w = implied(state, next);
-                if w != 0 && (w >> 3 & 3) as usize == to - from {
-                    let word = &kinds::WORD[(w >> 5) as usize..(w >> 5) as usize + (to - from)];
-                    if word.iter().zip(from..to).all(|(&l, i)| l == lab(i)) {
-                        for i in from..to {
-                            dropped[at + i] |= w >> (i - from) & 1 == 1;
-                        }
+        if to > from {
+            // The word, packed: its start in `WORD`, length, and the tokens it leaves out.
+            let w = implied(state, next);
+            if w != 0 && (w >> 3 & 3) as usize == to - from {
+                let word = &kinds::WORD[(w >> 5) as usize..(w >> 5) as usize + (to - from)];
+                if word.iter().zip(&kids[from..to]).all(|(&l, k)| l == k.0) {
+                    for i in from..to {
+                        out[i] |= w >> (i - from) & 1 == 1;
                     }
                 }
             }
-            Some(after)
-        };
-        let walk = |dropped: &mut [bool]| -> Option<()> {
-            let mut state = kinds::START[a as usize - 1];
-            let mut from = 0;
-            for (i, &k) in kids.iter().enumerate() {
-                let c = &self.nodes[k as usize];
-                if kinds::KINDS[c.kind as usize].1 {
-                    state = close(state, from, i, Some(label(c)), dropped)?;
-                    from = i + 1;
-                }
-            }
-            close(state, from, kids.len(), None, dropped)?;
-            Some(())
-        };
-        if walk(dropped).is_none() {
-            dropped[at..at + kids.len()].fill(false);
         }
+        Some(after)
+    };
+    let mut go = || -> Option<()> {
+        let mut state = kinds::START[a];
+        let mut from = 0;
+        for (i, &(l, named)) in kids.iter().enumerate() {
+            if named {
+                state = close(state, from, i, Some(l), out)?;
+                from = i + 1;
+            }
+        }
+        close(state, from, kids.len(), None, out)?;
+        Some(())
+    };
+    if go().is_none() {
+        out.fill(false);
     }
+}
 
-    /// The kind's fates (`kinds::FATE`) against the walk: the same tokens left out.
-    #[cfg(test)]
-    fn check_fates(&self, id: u32, dropped: &[bool]) {
-        let n = self.nodes[id as usize];
-        let (from, to) = (n.at as usize, (n.at + n.n) as usize);
-        let mut walked = vec![false; dropped.len()];
-        self.walk_gaps(id, &mut walked);
-        assert_eq!(&walked[from..to], &dropped[from..to], "{}: the kind's fates differ from the walk", kinds::KINDS[n.kind as usize].0);
-    }
+/// Whether automaton `a` (its index) leaves token kind `t` out wherever it stands (`Some(true)`),
+/// stores it (`Some(false)`), or its walk decides (`None`).
+#[inline(always)]
+fn fate(a: usize, t: K) -> Option<bool> {
+    let fate = &kinds::FATE[a];
+    let (word, bit) = (t as usize / 64, 1u64 << (t as usize % 64));
+    if fate[kinds::FATE_WORDS + word] & bit != 0 { None } else { Some(fate[word] & bit != 0) }
+}
 
-    /// Writes node `id` and its subtree, the extras from `x` on that fall between its children
-    /// placed among them. `root`: the program, whose extras before its first child and after its
-    /// last are its own.
-    fn emit(&self, w: &mut Writer, id: u32, extras: &[(K, u32, u32)], x: &mut usize, root: bool, end: u32, dropped: &mut [bool]) -> R<()> {
-        let n = self.nodes[id as usize];
-        let start = if root {
-            let first = if n.n == 0 { end } else { n.s };
-            extras.first().map_or(first, |e| e.1.min(first))
-        } else {
-            n.s
-        };
-        let at = w.push(key(n.kind, n.field, false), start);
-        self.drop_gaps(id, dropped);
-        let kids = &self.kids[n.at as usize..(n.at + n.n) as usize];
-        for (i, &k) in kids.iter().enumerate() {
-            let c = self.nodes[k as usize];
-            if i > 0 || root {
-                while let Some(&(xk, xs, xe)) = extras.get(*x)
-                    && xs < c.s
-                {
-                    let e = w.push(key(xk, 0, true), xs);
-                    w.close(e, xe);
-                    *x += 1;
-                }
-            }
-            if dropped[n.at as usize + i] {
-                continue;
-            }
-            self.emit(w, k, extras, x, false, end, dropped)?;
-        }
-        if root {
-            while let Some(&(xk, xs, xe)) = extras.get(*x) {
-                let e = w.push(key(xk, 0, true), xs);
-                w.close(e, xe);
-                *x += 1;
-            }
-        }
-        w.close(at, if root { end } else { n.e });
-        Ok(())
-    }
+/// A node being read (written, open), or a mark: a place a node may still be put over what is read
+/// after it (`node`, `wrap`).
+#[derive(Clone, Copy)]
+struct Frame {
+    /// Its node's place in the writer; a mark's, where a node put there would go.
+    at: u32,
+    /// Its held tokens: `held[held..]`, less those of the frames above it.
+    held: u32,
+    /// Its node's kind; `None` for a mark.
+    kind: Option<K>,
+    /// Whether it has a child (a node or a token; a comment is not one).
+    any: bool,
+}
+
+/// A token whose fate waits for its parent (a mark's, a dynamic automaton's): its key, span, and
+/// its place in the writer (before the node there now).
+#[derive(Clone, Copy)]
+struct Held {
+    key: u32,
+    s: u32,
+    e: u32,
+    at: u32,
+}
+
+/// An open node: its frame.
+#[derive(Clone, Copy)]
+pub(crate) struct Node(u32);
+
+/// A mark: its frame.
+#[derive(Clone, Copy)]
+pub(crate) struct Mark(u32);
+
+/// A dotted name read (`dotted`): its parts' spans, the dot before each, how many.
+#[derive(Clone, Copy)]
+pub(crate) struct Dotted {
+    parts: [(usize, usize); 4],
+    dots: [usize; 4],
+    n: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -393,11 +287,97 @@ struct Saved {
     at: usize,
     last_end: usize,
     look: Option<Tok>,
-    nodes: usize,
-    kids: usize,
-    stack: usize,
-    extras: usize,
     depth: u32,
+    nodes: usize,
+    frames: usize,
+    top: Frame,
+    held: usize,
+    flushed: usize,
+    extras: usize,
+}
+
+/// An operator byte's classes (`operator_at`): 1 for `+-*/<>=` (A), 2 for `~!@#%^&|`` ` ``?` (B),
+/// 4 for `*/<>=` (C).
+static OP_CLASS: [u8; 256] = {
+    let mut t = [0u8; 256];
+    let (a, b, c) = (b"+-*/<>=", b"~!@#%^&|`?", b"*/<>=");
+    let mut i = 0;
+    while i < a.len() {
+        t[a[i] as usize] |= 1;
+        i += 1;
+    }
+    i = 0;
+    while i < b.len() {
+        t[b[i] as usize] |= 2;
+        i += 1;
+    }
+    i = 0;
+    while i < c.len() {
+        t[c[i] as usize] |= 4;
+        i += 1;
+    }
+    t
+};
+
+/// The classes of the 8 bytes at `i` (`OP_CLASS`), a byte a lane (byte `i` the lowest); none past
+/// the text's end. Straight-line: 8 lookups, no loop.
+#[inline(always)]
+fn op_classes(src: &[u8], i: usize) -> u64 {
+    let x = load8(src, i);
+    let lane = |k: u32| u64::from(OP_CLASS[(x >> (8 * k)) as u8 as usize]) << (8 * k);
+    lane(0) | lane(1) | lane(2) | lane(3) | lane(4) | lane(5) | lane(6) | lane(7)
+}
+
+/// The operator at `s` as the lexer reads it after an expression (`P::operator_at`).
+fn operator_at(src: &[u8], s: usize) -> (bool, usize) {
+    // Each 8 bytes' classes at once (`op_classes`): their lanes' A, B and C bits.
+    const LANES: u64 = 0x0101_0101_0101_0101;
+    // The run of operator bytes (A or B), and whether a B is in it.
+    let (mut run, mut has_b) = (s, false);
+    loop {
+        let m = op_classes(src, run);
+        let stop = (!(m | m >> 1) & LANES).trailing_zeros() as usize / 8;
+        has_b |= (m >> 1) & LANES & below(stop) != 0;
+        run += stop;
+        if stop < 8 {
+            break;
+        }
+    }
+    let p1 = if has_b { run - s } else { 0 };
+    // The run of A bytes, and the last C in it after its first byte (`op_other`'s second
+    // pattern ends in one).
+    let (mut a_run, mut last_c) = (s, 0);
+    loop {
+        let m = op_classes(src, a_run);
+        let stop = (!m & LANES).trailing_zeros() as usize / 8;
+        let c = (m >> 2) & LANES & below(stop);
+        if c != 0 {
+            last_c = a_run + (63 - c.leading_zeros() as usize) / 8 + 1;
+        }
+        a_run += stop;
+        if stop < 8 {
+            break;
+        }
+    }
+    let p2 = if last_c >= s + 2 { last_c - s } else { 0 };
+    let strings: &[&[u8]] = &[b"<=", b"!=", b">=", b"<>", b"::", b"+", b"-", b"*", b"/", b"%", b"^", b"=", b"<", b">"];
+    let st = strings.iter().filter(|x| src[s..].starts_with(x)).map(|x| x.len()).max().unwrap_or(0);
+    let pat = p1.max(p2);
+    if pat > st { (true, pat) } else { (false, st) }
+}
+
+/// The lanes below lane `n` of 8 (all 8 where `n` is 8).
+#[inline(always)]
+fn below(n: usize) -> u64 {
+    if n < 8 { (1u64 << (8 * n)) - 1 } else { !0 }
+}
+
+/// The kind of a key's kind bits.
+#[inline(always)]
+fn kind_of(k: usize) -> K {
+    assert!(k <= kinds::LAST as usize, "a kind");
+    // SAFETY: `K` is `repr(u16)`, its values every number from 0 to `LAST`.
+    unsafe { std::mem::transmute::<u16, K>(k as u16) }
 }
 
 /// Where the grammar takes an identifier, the keywords the parse state takes too: `Sure`, the
@@ -419,9 +399,20 @@ pub(crate) struct P<'s> {
     /// The last token's end.
     last_end: usize,
     look: Option<Tok>,
-    a: Arena,
-    /// Comments, in order: (kind, start, end).
+    /// The tape, written as the text is read.
+    w: Writer,
+    /// The nodes being read and the marks (`Frame`), the program's first.
+    frames: Vec<Frame>,
+    /// The tokens waiting for their parent (`Held`), in order.
+    held: Vec<Held>,
+    /// Comments, in order: (kind, start, end); those before `flushed` are written.
     extras: Vec<(K, u32, u32)>,
+    flushed: usize,
+    /// A closing node's children and its held tokens' fates (`claim`'s scratch).
+    kids: Vec<(u32, bool)>,
+    is_held: Vec<bool>,
+    out: Vec<bool>,
+    keep: Vec<bool>,
     depth: u32,
     /// The last token read (`lex`), and where its read started: read again from there, it is the
     /// same token. `restore` clears it (the extras it read may be gone).
@@ -440,22 +431,355 @@ impl<'s> P<'s> {
 
     /// The parser's state, to go back to (`restore`): where a reading tree-sitter's GLR prefers
     /// (a transaction over its first statement) may not hold.
+    /// What is read in a parse that may not hold changes only what is read after this: nodes
+    /// written after it, frames above it, the innermost frame's state.
     fn save(&self) -> Saved {
-        Saved { at: self.at, last_end: self.last_end, look: self.look, nodes: self.a.nodes.len(), kids: self.a.kids.len(), stack: self.a.stack.len(), extras: self.extras.len(), depth: self.depth }
+        Saved {
+            at: self.at,
+            last_end: self.last_end,
+            look: self.look,
+            depth: self.depth,
+            nodes: self.w.len(),
+            frames: self.frames.len(),
+            top: *self.frames.last().expect("the program's frame"),
+            held: self.held.len(),
+            flushed: self.flushed,
+            extras: self.extras.len(),
+        }
     }
 
     fn restore(&mut self, s: Saved) {
         (self.at, self.last_end, self.look, self.depth) = (s.at, s.last_end, s.look, s.depth);
         self.memo.0 = usize::MAX;
-        self.a.nodes.truncate(s.nodes);
-        self.a.kids.truncate(s.kids);
-        self.a.stack.truncate(s.stack);
+        self.w.truncate(s.nodes);
+        self.frames.truncate(s.frames);
+        *self.frames.last_mut().expect("the program's frame") = s.top;
+        self.held.truncate(s.held);
+        self.flushed = s.flushed;
         self.extras.truncate(s.extras);
     }
 
     fn deeper(&mut self) -> R<()> {
         self.depth += 1;
         if self.depth > MAX_DEPTH { self.refuse() } else { Ok(()) }
+    }
+
+    // ---- The tape: frames, nodes, tokens.
+
+    #[inline(always)]
+    fn top(&mut self) -> &mut Frame {
+        self.frames.last_mut().expect("the program's frame")
+    }
+
+    /// The comments before `before`, written into the node open (a comment before a node's first
+    /// child is its parent's).
+    #[inline(always)]
+    fn flush(&mut self, before: usize) {
+        while let Some(&(k, s, e)) = self.extras.get(self.flushed) {
+            if s as usize >= before {
+                break;
+            }
+            self.flushed += 1;
+            let at = self.w.push(key(k, 0, true), s);
+            self.w.close(at, e);
+        }
+    }
+
+    /// The program, the root: open before anything is read. Its span is from its first child or
+    /// comment (the text's end where it has none) to the text's end; the comments before its first
+    /// statement and after its last are its own.
+    pub(super) fn open_program(&mut self) -> Node {
+        let at = self.w.push(key(K::Program, 0, false), 0);
+        self.frames.push(Frame { at: at as u32, held: 0, kind: Some(K::Program), any: false });
+        Node(0)
+    }
+
+    pub(super) fn close_program(&mut self, n: Node) {
+        self.end_marks(n.0);
+        self.flush(usize::MAX);
+        let end = self.src.len();
+        let first = self.held.first().map(|h| h.s as usize);
+        let first = match (self.w.len() > 1, first) {
+            (true, Some(h)) => h.min(self.w.start(1) as usize),
+            (true, None) => self.w.start(1) as usize,
+            (false, Some(h)) => h,
+            (false, None) => end,
+        };
+        let f = self.frames.pop().expect("the program's frame");
+        self.claim(0, K::Program, f.held as usize);
+        self.w.set_start(0, first as u32);
+        self.w.close(0, end as u32);
+    }
+
+    /// A mark at the next token: a node may be put over what is read from here on (`node`,
+    /// `wrap`). It needs no end: the node below it closing ends it.
+    pub(super) fn mark(&mut self) -> R<Mark> {
+        let t = self.peek()?;
+        self.flush(t.s);
+        self.frames.push(Frame { at: self.w.len() as u32, held: self.held.len() as u32, kind: None, any: false });
+        Ok(Mark(self.frames.len() as u32 - 1))
+    }
+
+    /// A node of `kind` given `field`, open at the next token: what is read until its `close` is
+    /// its.
+    pub(super) fn open(&mut self, kind: K, field: u8) -> R<Node> {
+        let t = self.peek()?;
+        self.flush(t.s);
+        self.top().any = true;
+        let at = self.w.push(key(kind, field, false), t.s as u32);
+        self.frames.push(Frame { at: at as u32, held: self.held.len() as u32, kind: Some(kind), any: false });
+        Ok(Node(self.frames.len() as u32 - 1))
+    }
+
+    /// The marks above frame `i` ended: their children are frame `i`'s.
+    #[inline(always)]
+    fn end_marks(&mut self, i: u32) {
+        let mut any = false;
+        while self.frames.len() > i as usize + 1 {
+            let f = self.frames.pop().expect("a frame");
+            // A node left open would have no size, and a walk over its parent's children would
+            // not end: a parser bug stops here.
+            assert!(f.kind.is_none(), "a node left open");
+            any |= f.any;
+        }
+        self.frames[i as usize].any |= any;
+    }
+
+    /// A node of `kind` given `field` put at mark `m`, over what was read since (an operator's left
+    /// operand), left open: what is read until its `close` is its too. `m` stays, now holding it.
+    pub(super) fn wrap(&mut self, m: Mark, kind: K, field: u8) -> Node {
+        self.end_marks(m.0);
+        let f = self.frames[m.0 as usize];
+        let (at, held) = (f.at as usize, f.held as usize);
+        // Its start: its first child's, a held token's where one comes first.
+        let start = match self.held.get(held) {
+            Some(h) if h.at as usize == at => h.s,
+            _ if at < self.w.len() => self.w.start(at),
+            _ => 0,
+        };
+        self.w.insert(at, key(kind, field, false), start);
+        for h in &mut self.held[held..] {
+            h.at += 1;
+        }
+        self.frames[m.0 as usize] = Frame { any: true, ..f };
+        self.frames.push(Frame { at: at as u32, held: held as u32, kind: Some(kind), any: f.any });
+        Node(self.frames.len() as u32 - 1)
+    }
+
+    /// A node of `kind` over what was read since mark `m`, closed: its place. `m` stays (a node of
+    /// another kind may be put over this one: `a + b + c`).
+    pub(super) fn node(&mut self, kind: K, m: Mark) -> u32 {
+        let n = self.wrap(m, kind, 0);
+        self.close(n)
+    }
+
+    /// A node of `kind` over what was read since `m`, spanning `s..e` (a node whose last bytes are
+    /// hidden tokens: a signed number's digits).
+    pub(super) fn node_span(&mut self, kind: K, m: Mark, s: usize, e: usize) -> u32 {
+        let n = self.wrap(m, kind, 0);
+        self.close_span(n, Some((s, e)))
+    }
+
+    /// A node of `kind` over what was read since `m`, ending at `e` (its last bytes hidden tokens
+    /// read after its last child: an interval's string continuations).
+    pub(super) fn node_end(&mut self, kind: K, m: Mark, e: usize) -> u32 {
+        let n = self.wrap(m, kind, 0);
+        let s = self.w.start(self.frames[n.0 as usize].at as usize) as usize;
+        self.close_span(n, Some((s, e)))
+    }
+
+    /// Closes node `n` at `e` (a node whose last bytes are no child's: an interval's string).
+    pub(super) fn close_end(&mut self, n: Node, e: usize) -> u32 {
+        let s = self.w.start(self.frames[n.0 as usize].at as usize) as usize;
+        self.close_span(n, Some((s, e)))
+    }
+
+    /// Whether a child (a node or a token) was read since mark `m`.
+    pub(super) fn read_since(&self, m: Mark) -> bool {
+        self.frames[m.0 as usize..].iter().any(|f| f.any)
+    }
+
+    /// The first node read since mark `m` (its place): an operator's left operand.
+    #[inline]
+    pub(super) fn mark_child(&self, m: Mark) -> u32 {
+        self.frames[m.0 as usize].at
+    }
+
+    /// Closed node `id`'s end.
+    pub(super) fn end_at(&self, id: u32) -> usize {
+        self.w.end(id as usize) as usize
+    }
+
+    /// A child of `kind` at `s..e`: a named leaf (`leaf`) or a token (`token`), by the kind.
+    pub(super) fn child(&mut self, kind: K, field: u8, s: usize, e: usize) {
+        if kinds::KINDS[kind as usize].1 {
+            self.leaf(kind, field, s, e);
+        } else {
+            self.token(kind, field, s, e);
+        }
+    }
+
+    /// Closes node `n`: its held tokens decided and the stored ones written, its end the last
+    /// token's (an empty node's span `0..0`). Its place.
+    #[inline]
+    pub(super) fn close(&mut self, n: Node) -> u32 {
+        self.close_span(n, None)
+    }
+
+    pub(super) fn close_span(&mut self, n: Node, span: Option<(usize, usize)>) -> u32 {
+        self.end_marks(n.0);
+        let f = self.frames.pop().expect("its frame");
+        let at = f.at as usize;
+        self.claim(at, f.kind.expect("a node"), f.held as usize);
+        match span {
+            Some((s, e)) => {
+                self.w.set_start(at, s as u32);
+                self.w.close(at, e as u32);
+            }
+            None if !f.any => {
+                self.w.set_start(at, 0);
+                self.w.close(at, 0);
+            }
+            None => self.w.close(at, self.last_end as u32),
+        }
+        at as u32
+    }
+
+    /// The held tokens from `held[from]` on, children of the node at `at` of `kind`: each left out
+    /// or written at its place, by the kind (`FATE`) or by its automaton's walk over the node's
+    /// children.
+    fn claim(&mut self, at: usize, kind: K, from: usize) {
+        let n = self.held.len() - from;
+        if n == 0 {
+            return;
+        }
+        let a = kinds::AUTOMATON[kind as usize] as usize;
+        self.keep.clear();
+        if a == 0 {
+            self.keep.resize(n, true);
+        } else if kinds::DYNAMIC[a - 1] {
+            // The children in order: the nodes written (a node's subtree skipped by its size, a
+            // comment passed), each held token before the node at its place.
+            self.kids.clear();
+            self.is_held.clear();
+            let (mut h, mut i) = (from, at + 1);
+            loop {
+                while h < self.held.len() && self.held[h].at as usize <= i {
+                    self.kids.push((self.held[h].key & 0xffff, false));
+                    self.is_held.push(true);
+                    h += 1;
+                }
+                if i >= self.w.len() {
+                    break;
+                }
+                let k = self.w.key(i);
+                if k >> 16 & 1 == 0 {
+                    self.kids.push((k & 0xffff, kinds::KINDS[(k & 0x3ff) as usize].1));
+                    self.is_held.push(false);
+                }
+                i += self.w.size(i) as usize;
+            }
+            self.out.clear();
+            self.out.resize(self.kids.len(), false);
+            walk(a - 1, &self.kids, &mut self.out);
+            for (j, &held) in self.is_held.iter().enumerate() {
+                if held {
+                    self.keep.push(!self.out[j]);
+                }
+            }
+        } else {
+            // A token the kind decides (a mark's, held before its node was known); a token the
+            // automaton never takes is stored, as the walk's refusal stores it.
+            for h in &self.held[from..] {
+                let t = (h.key & 0x3ff) as usize;
+                self.keep.push(fate(a - 1, kind_of(t)) != Some(true));
+            }
+        }
+        let mut off = 0;
+        for (h, &keep) in self.held[from..].iter().zip(&self.keep) {
+            if keep {
+                self.w.insert_leaf(h.at as usize + off, h.key, h.s, h.e);
+                off += 1;
+            }
+        }
+        self.held.truncate(from);
+    }
+
+    /// A named leaf (a keyword, an identifier, a literal) at `s..e`, given `field`: its place.
+    #[inline]
+    pub(super) fn leaf(&mut self, kind: K, field: u8, s: usize, e: usize) -> u32 {
+        self.flush(s);
+        self.top().any = true;
+        let at = self.w.push(key(kind, field, false), s as u32);
+        self.w.close(at, e as u32);
+        at as u32
+    }
+
+    /// A token (punctuation, an anonymous kind) at `s..e`: written, left out, or held, by its
+    /// parent's kind (`FATE`). Held in a mark (its node is not known yet) and in a node whose walk
+    /// decides some token (its children all read first).
+    #[inline]
+    pub(super) fn token(&mut self, kind: K, field: u8, s: usize, e: usize) {
+        self.flush(s);
+        let f = self.top();
+        f.any = true;
+        let k = key(kind, field, false);
+        if let Some(p) = f.kind {
+            let a = kinds::AUTOMATON[p as usize] as usize;
+            let stored = if a == 0 {
+                Some(true)
+            } else if kinds::DYNAMIC[a - 1] {
+                None
+            } else {
+                fate(a - 1, kind).map(|dropped| !dropped)
+            };
+            match stored {
+                Some(true) => {
+                    let at = self.w.push(k, s as u32);
+                    self.w.close(at, e as u32);
+                    return;
+                }
+                Some(false) => return,
+                None => {}
+            }
+        }
+        self.held.push(Held { key: k, s: s as u32, e: e as u32, at: self.w.len() as u32 });
+    }
+
+    /// Node `id` given `field`, where it has none: a field given inside a hidden rule wins over one
+    /// given outside it, as tree-sitter's cursor looks for a node's field from its nearest hidden
+    /// parent out.
+    #[inline]
+    pub(super) fn set_field(&mut self, id: u32, field: u8) {
+        let k = self.w.key(id as usize);
+        if k >> 10 & 0x3f == 0 {
+            self.w.set_key(id as usize, k | u32::from(field) << 10);
+        }
+    }
+
+    /// Node `id`'s kind.
+    #[inline]
+    pub(super) fn kind_at(&self, id: u32) -> K {
+        kind_of((self.w.key(id as usize) & 0x3ff) as usize)
+    }
+
+    /// Node `id` given `kind` (a kind found after it closed whose tokens' fates are the same:
+    /// `(x)` a parenthesized expression read as a one-item list).
+    pub(super) fn retype(&mut self, id: u32, kind: K) {
+        let k = self.w.key(id as usize);
+        self.w.set_key(id as usize, k & !0x3ff | kind as u32);
+    }
+
+    /// The children of mark `m` given `field` (a hidden rule's field falls on its nodes), where
+    /// they have none.
+    pub(super) fn field_since(&mut self, m: Mark, field: u8) {
+        let mut i = self.frames[m.0 as usize].at as usize;
+        while i < self.w.len() {
+            if self.w.key(i) >> 16 & 1 == 0 {
+                self.set_field(i as u32, field);
+            }
+            i += (self.w.size(i) as usize).max(1);
+        }
     }
 
     // ---- The lexer.
@@ -494,13 +818,7 @@ impl<'s> P<'s> {
     /// extra; `None` for a command that sends the query buffer (`\\g`, `\\gset`, …), which the
     /// grammar's `_meta_command_send` token reads (`send_end`).
     fn meta_command(&self, at: usize) -> R<Option<usize>> {
-        let mut e = at + 1;
-        while let Some(&c) = self.src.get(e) {
-            if is_blank(c) || c == b'\\' {
-                break;
-            }
-            e += 1;
-        }
+        let e = self.meta_name_end(at);
         let name = &self.src[at + 1..e];
         if name.is_empty() {
             return Err(Refusal::Parse(at as u32));
@@ -508,43 +826,33 @@ impl<'s> P<'s> {
         if name.len() <= 16 && [&b"g"[..], b"gx", b"gset", b"gexec", b"gdesc", b"crosstabview", b"watch"].contains(&name) {
             return Ok(None);
         }
+        let line = self.b.line_end(e);
         if name == b"set" || name == b"copy" {
             if name == b"copy" {
-                let mut x = e;
-                while matches!(self.byte(x), b' ' | b'\t' | 0x0b | 0x0c) {
-                    x += 1;
-                }
-                if self.byte(x) == b'(' {
+                // `\copy (query)`: refused. The blanks before it are on the command's line.
+                let x = self.b.blank_end(e);
+                if self.byte(x) == b'(' && first_of2(self.src, e, x, b'\n', b'\r') == x {
                     return Err(Refusal::Parse(at as u32));
                 }
             }
-            let mut x = e;
-            while x < self.src.len() && !matches!(self.src[x], b'\n' | b'\r') {
-                x += 1;
-            }
-            return Ok(Some(x));
+            return Ok(Some(first_of2(self.src, e, line, b'\r', b'\r')));
         }
-        let mut x = e;
-        while x < self.src.len() && !matches!(self.src[x], b'\n' | b'\r') {
-            if self.src[x] == b'\\' {
-                return Ok(Some(if self.byte(x + 1) == b'\\' { x + 2 } else { x }));
-            }
-            x += 1;
-        }
-        Ok(Some(x))
+        let x = first_of2(self.src, e, line, b'\r', b'\\');
+        Ok(Some(if self.byte(x) == b'\\' && self.byte(x + 1) == b'\\' { x + 2 } else { x }))
+    }
+
+    /// The end of a meta-command's name after its `\\` at `at`: its first blank or `\\`.
+    #[inline]
+    fn meta_name_end(&self, at: usize) -> usize {
+        first_of2(self.src, at + 1, self.b.blank_stop(at + 1), b'\\', b'\\')
     }
 
     /// The end of the send command at `at` (`_meta_command_send`: `\\g`, its arguments after a
-    /// blank, and a closing `\\\\`).
+    /// blank, and a closing `\\\\`). Its name is one of `meta_command`'s send names, all letters.
     fn send_end(&self, at: usize) -> usize {
-        let mut e = at + 1;
-        while self.byte(e).is_ascii_alphabetic() {
-            e += 1;
-        }
+        let mut e = self.meta_name_end(at);
         if matches!(self.byte(e), b' ' | b'\t' | 0x0b | 0x0c) {
-            while e < self.src.len() && !matches!(self.src[e], b'\n' | b'\r' | b'\\') {
-                e += 1;
-            }
+            e = first_of2(self.src, e, self.b.line_end(e), b'\r', b'\\');
         }
         if self.byte(e) == b'\\' && self.byte(e + 1) == b'\\' {
             e += 2;
@@ -743,7 +1051,7 @@ impl<'s> P<'s> {
         }
         let t = self.peek()?;
         self.take(t);
-        Ok(Some(self.a.leaf(k, 0, t.s, t.e)))
+        Ok(Some(self.leaf(k, 0, t.s, t.e)))
     }
 
     fn expect(&mut self, k: K) -> R<u32> {
@@ -757,7 +1065,7 @@ impl<'s> P<'s> {
     fn kw_field(&mut self, k: K, field: u8) -> R<Option<u32>> {
         let id = self.kw(k)?;
         if let Some(id) = id {
-            self.a.set_field(id, field);
+            self.set_field(id, field);
         }
         Ok(id)
     }
@@ -779,20 +1087,21 @@ impl<'s> P<'s> {
         }
     }
 
-    /// Punctuation `p` as an anonymous token leaf, where it is next.
-    fn punct(&mut self, p: &[u8], kind: K) -> R<Option<u32>> {
+    /// Punctuation `p`, an anonymous token, where it is next (`token`).
+    fn punct(&mut self, p: &[u8], kind: K) -> R<Option<()>> {
         if !self.at_punct(p)? {
             return Ok(None);
         }
         let t = self.peek()?;
         let e = t.s + p.len();
         self.take(Tok { e, ..t });
-        Ok(Some(self.a.leaf(kind, 0, t.s, e)))
+        self.token(kind, 0, t.s, e);
+        Ok(Some(()))
     }
 
-    fn expect_punct(&mut self, p: &[u8], kind: K) -> R<u32> {
+    fn expect_punct(&mut self, p: &[u8], kind: K) -> R<()> {
         match self.punct(p, kind)? {
-            Some(id) => Ok(id),
+            Some(()) => Ok(()),
             None => self.refuse(),
         }
     }
@@ -801,47 +1110,14 @@ impl<'s> P<'s> {
     /// operators and `op_other`'s two patterns, a string winning a tie. (whether it is
     /// `op_other`, its length).
     fn operator_at(&self, s: usize) -> (bool, usize) {
-        const A: &[u8] = b"+-*/<>=";
-        const B: &[u8] = b"~!@#%^&|`?";
-        const C: &[u8] = b"*/<>=";
-        // The run of operator bytes.
-        let mut run = s;
-        let mut has_b = false;
-        while let Some(&c) = self.src.get(run) {
-            if A.contains(&c) {
-            } else if B.contains(&c) {
-                has_b = true;
-            } else {
-                break;
-            }
-            // A comment starts no operator's byte after the first (the scanner reads it first only at a
-            // token's start): `*/*` is one operator, as tree-sitter's lexer reads it.
-            run += 1;
-        }
-        let p1 = if has_b { run - s } else { 0 };
-        let mut a_run = s;
-        while self.src.get(a_run).is_some_and(|c| A.contains(c)) {
-            a_run += 1;
-        }
-        let mut p2 = 0;
-        let mut k = a_run;
-        while k >= s + 2 {
-            if C.contains(&self.src[k - 1]) {
-                p2 = k - s;
-                break;
-            }
-            k -= 1;
-        }
-        let strings: &[&[u8]] = &[b"<=", b"!=", b">=", b"<>", b"::", b"+", b"-", b"*", b"/", b"%", b"^", b"=", b"<", b">"];
-        let st = strings.iter().filter(|x| self.src[s..].starts_with(x)).map(|x| x.len()).max().unwrap_or(0);
-        let pat = p1.max(p2);
-        if pat > st { (true, pat) } else { (false, st) }
+        operator_at(self.src, s)
     }
 
     // ---- Identifiers.
 
-    /// An identifier, where the next token is one in `ctx` (see `Ctx`); `None` where it is not.
-    fn ident(&mut self, ctx: Ctx, field: u8) -> R<Option<u32>> {
+    /// An identifier, where the next token is one in `ctx` (see `Ctx`), read: its span; `None`
+    /// where it is not.
+    fn ident_span(&mut self, ctx: Ctx) -> R<Option<(usize, usize)>> {
         let t = self.peek()?;
         match t.t {
             T::Quoted => {}
@@ -863,7 +1139,12 @@ impl<'s> P<'s> {
             _ => return Ok(None),
         }
         self.take(t);
-        Ok(Some(self.a.leaf(K::Identifier, field, t.s, t.e)))
+        Ok(Some((t.s, t.e)))
+    }
+
+    /// An identifier in `ctx`, given `field`, written: its place; `None` where none is next.
+    fn ident(&mut self, ctx: Ctx, field: u8) -> R<Option<u32>> {
+        Ok(self.ident_span(ctx)?.map(|(s, e)| self.leaf(K::Identifier, field, s, e)))
     }
 
     fn expect_ident(&mut self, ctx: Ctx, field: u8) -> R<u32> {
@@ -873,69 +1154,111 @@ impl<'s> P<'s> {
         }
     }
 
-    /// `object_reference`: `name`, `schema.name` or `database.schema.name`, the first part an
-    /// identifier in `ctx`. `None` where the next token is no identifier.
-    fn object_reference(&mut self, ctx: Ctx, field: u8) -> R<Option<u32>> {
-        let m = self.a.mark();
-        let Some(first) = self.ident(ctx, f::NAME)? else { return Ok(None) };
-        let mut parts = [first; 4];
-        let mut n = 1;
+    /// The parts of a dotted name (`a`, `a.b`, …, at most `max`), the first an identifier in `ctx`,
+    /// read: each part's span and the dot before it (`dots[0]` unused); `None` where the next token
+    /// is no identifier. A dot followed by no identifier (`a.*`, `a.(`) is left unread.
+    fn dotted(&mut self, ctx: Ctx, max: usize) -> R<Option<Dotted>> {
+        let Some(first) = self.ident_span(ctx)? else { return Ok(None) };
+        let mut d = Dotted { parts: [first; 4], dots: [0; 4], n: 1 };
         while self.at_punct(b".")? {
             let t = self.peek()?;
             let save = (self.at, self.last_end, self.look);
             self.take(Tok { e: t.s + 1, ..t });
-            if let Some(id) = self.ident(NONE, f::NAME)? {
-                if n == 4 {
-                    return self.refuse();
-                }
-                parts[n] = id;
-                n += 1;
-            } else {
-                // `a.*`, `a.(`: not this object reference's.
+            let Some(part) = self.ident_span(NONE)? else {
                 (self.at, self.last_end, self.look) = save;
                 break;
-            }
-            if n > 3 {
+            };
+            if d.n == max {
                 return self.refuse();
             }
+            d.parts[d.n] = part;
+            d.dots[d.n] = t.s;
+            d.n += 1;
         }
-        // The dots between the parts are tokens: their places are known (each part ends where its dot
-        // starts, white space aside).
-        self.a.stack.truncate(m);
-        self.push_reference(&parts[..n], field);
-        Ok(Some(*self.a.stack.last().expect("pushed")))
+        Ok(Some(d))
     }
 
-    /// Pushes an `object_reference` of identifier leaves `parts` (already in the arena), with the
-    /// dots between them.
-    fn push_reference(&mut self, parts: &[u32], field: u8) {
-        let m = self.a.mark();
-        let fields: &[u8] = match parts.len() {
+    /// `object_reference`: `name`, `schema.name` or `database.schema.name`, the first part an
+    /// identifier in `ctx`. `None` where the next token is no identifier.
+    fn object_reference(&mut self, ctx: Ctx, field: u8) -> R<Option<u32>> {
+        let Some(d) = self.dotted(ctx, 3)? else { return Ok(None) };
+        Ok(Some(self.write_reference(&d, d.n, field)))
+    }
+
+    /// The `object_reference` of `d`'s first `n` parts given `field`, written: identifiers (`name`,
+    /// `schema`, `database` from the last back) and the dots between them.
+    fn write_reference(&mut self, d: &Dotted, n: usize, field: u8) -> u32 {
+        let (s, e) = (d.parts[0].0, d.parts[n - 1].1);
+        self.flush(s);
+        self.top().any = true;
+        let at = self.w.push(key(K::ObjectReference, field, false), s as u32);
+        self.frames.push(Frame { at: at as u32, held: self.held.len() as u32, kind: Some(K::ObjectReference), any: true });
+        let fields: &[u8] = match n {
             1 => &[f::NAME],
             2 => &[f::SCHEMA, f::NAME],
             _ => &[f::DATABASE, f::SCHEMA, f::NAME],
         };
-        for (i, &p) in parts.iter().enumerate() {
+        for i in 0..n {
             if i > 0 {
-                let d = self.dot_before(p);
-                self.a.leaf(K::TDot, 0, d, d + 1);
+                self.token(K::TDot, 0, d.dots[i], d.dots[i] + 1);
             }
-            self.a.nodes[p as usize].field = fields[i];
-            self.a.stack.push(p);
+            self.leaf(K::Identifier, fields[i], d.parts[i].0, d.parts[i].1);
         }
-        let id = self.a.node(K::ObjectReference, m);
-        self.a.set_field(id, field);
+        let node = Node(self.frames.len() as u32 - 1);
+        self.close_span(node, Some((s, e)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// `operator_at` a byte at a time, as it was before it read 8 bytes a step.
+    fn operator_by_bytes(src: &[u8], s: usize) -> (bool, usize) {
+        const A: &[u8] = b"+-*/<>=";
+        const B: &[u8] = b"~!@#%^&|`?";
+        const C: &[u8] = b"*/<>=";
+        let (mut run, mut has_b) = (s, false);
+        while let Some(&c) = src.get(run) {
+            if B.contains(&c) {
+                has_b = true;
+            } else if !A.contains(&c) {
+                break;
+            }
+            run += 1;
+        }
+        let p1 = if has_b { run - s } else { 0 };
+        let mut a_run = s;
+        while src.get(a_run).is_some_and(|c| A.contains(c)) {
+            a_run += 1;
+        }
+        let p2 = (s + 2..=a_run).rev().find(|&k| C.contains(&src[k - 1])).map_or(0, |k| k - s);
+        let strings: &[&[u8]] = &[b"<=", b"!=", b">=", b"<>", b"::", b"+", b"-", b"*", b"/", b"%", b"^", b"=", b"<", b">"];
+        let st = strings.iter().filter(|x| src[s..].starts_with(x)).map(|x| x.len()).max().unwrap_or(0);
+        let pat = p1.max(p2);
+        if pat > st { (true, pat) } else { (false, st) }
     }
 
-    /// The `.` before part `p`: the last one before its start.
-    fn dot_before(&self, p: u32) -> usize {
-        let mut at = self.a.nodes[p as usize].s as usize;
-        while at > 0 {
-            at -= 1;
-            if self.src[at] == b'.' {
-                return at;
+    #[test]
+    fn operators_8_bytes_a_step_as_a_byte_at_a_time() {
+        // Every text of up to 4 bytes from operator bytes and a stop, and long runs across the
+        // 8-byte steps, at each start.
+        let alphabet = b"+-*/<>=~!@#%^&|`?:a ";
+        let mut texts: Vec<Vec<u8>> = vec![Vec::new()];
+        for _ in 0..4 {
+            let more: Vec<Vec<u8>> = texts.iter().flat_map(|t| alphabet.iter().map(move |&c| [t.as_slice(), &[c]].concat())).collect();
+            texts.extend(more);
+        }
+        for n in [7, 8, 9, 15, 16, 17, 30] {
+            for (a, b) in [(b'-', b'-'), (b'<', b'='), (b'-', b'!'), (b'=', b'*'), (b'|', b'|')] {
+                let mut t: Vec<u8> = (0..n).map(|i| if i % 3 == 2 { b } else { a }).collect();
+                texts.push(t.clone());
+                t.push(b'x');
+                texts.push(t);
             }
         }
-        0
+        for t in &texts {
+            for s in 0..t.len() {
+                assert_eq!(super::operator_at(t, s), operator_by_bytes(t, s), "{:?} at {s}", String::from_utf8_lossy(t));
+            }
+        }
     }
 }

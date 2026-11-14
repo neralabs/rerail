@@ -481,6 +481,29 @@ impl<L: Layout> Writer<L> {
         }
     }
 
+    /// A closed leaf at `at`, before the nodes from there on, which move up one: a token whose
+    /// place is known before its parent knows whether the tape stores it (a held token, written at
+    /// its parent's close). The nodes before `at` that are closed do not contain it.
+    pub fn insert_leaf(&mut self, at: usize, key: u32, start: u32, end: u32) {
+        self.insert(at, key, start);
+        let ws = self.layout.widths();
+        // A leaf is its own last descendant: its tail is from its start either way.
+        let tail = end.wrapping_sub(start);
+        if tail >= self.wide_from {
+            self.close_marks(at, end, start, start, tail);
+        }
+        Self::put(&mut self.size, at, ws.size, 1);
+        Self::put(&mut self.tail, at, ws.tail, tail);
+    }
+
+    /// `node`'s start, given after it was pushed (a node put before its first child, whose start
+    /// it takes; an empty node's). `node` is open: no closed node's tail is measured from it.
+    #[inline]
+    pub fn set_start(&mut self, node: usize, start: u32) {
+        debug_assert!(self.is_open(node));
+        self.starts[node] = start;
+    }
+
     /// The nodes from `len` on taken back (a parse that did not hold).
     pub fn truncate(&mut self, len: usize) {
         if len >= self.n {
@@ -751,4 +774,42 @@ mod tests {
             assert_eq!(decoded[20].end, far + 5);
         }
     }
+
+    /// A leaf put in later, between closed nodes (`insert_leaf`), gives the tape written in order.
+    #[test]
+    fn a_leaf_inserted_later_is_the_tape_in_order() {
+        let src = vec![b' '; 100];
+        let w = Widths::guess(src.len());
+        // In order: root(a(x), ",", b(y)).
+        let mut o = Writer::new(1, w, 8);
+        let r = o.push(key(1, 0, 0), 0);
+        let a = o.push(key(2, 0, 0), 0);
+        let x = o.push(key(3, 0, 0), 0);
+        o.close(x, 3);
+        o.close(a, 3);
+        let c = o.push(key(4, 0, 0), 4);
+        o.close(c, 5);
+        let b = o.push(key(2, 0, 0), 6);
+        let y = o.push(key(3, 0, 0), 6);
+        o.close(y, 9);
+        o.close(b, 9);
+        o.close(r, 9);
+        o.commit();
+        // The comma held, then put in at its place before the root closes.
+        let mut l = Writer::new(1, w, 8);
+        let r = l.push(key(1, 0, 0), 0);
+        let a = l.push(key(2, 0, 0), 0);
+        let x = l.push(key(3, 0, 0), 0);
+        l.close(x, 3);
+        l.close(a, 3);
+        let b = l.push(key(2, 0, 0), 6);
+        let y = l.push(key(3, 0, 0), 6);
+        l.close(y, 9);
+        l.close(b, 9);
+        l.insert_leaf(3, key(4, 0, 0), 4, 5);
+        l.close(r, 9);
+        l.commit();
+        assert_eq!(decode(&o.finish(&src).unwrap()).unwrap(), decode(&l.finish(&src).unwrap()).unwrap());
+    }
+
 }

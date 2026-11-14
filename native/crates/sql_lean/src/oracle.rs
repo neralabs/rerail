@@ -27,6 +27,9 @@ fn oracle() {
         if only.as_ref().is_some_and(|o| !o.iter().any(|n| p.file_name().is_some_and(|f| f.to_string_lossy() == *n))) {
             continue;
         }
+        if std::env::var_os("RERAIL_SQL_TRACE").is_some() {
+            eprintln!("parsing {}", p.display());
+        }
         let expected = std::fs::read_to_string(p).unwrap();
         let (head, want) = expected.split_once('\n').unwrap();
         // A cut text: its file's first `cut` bytes; `ERROR` where tree-sitter's tree has an error.

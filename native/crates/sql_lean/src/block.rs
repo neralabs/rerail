@@ -15,7 +15,8 @@ const SLASH_STAR: usize = 2; // '*', '/': where a comment may end, or a nested o
 const LF: usize = 3; // '\n': a line comment's end
 const SQ: usize = 4; // a single-quoted string's stops: '\'', '\\'
 const DQ: usize = 5; // a double-quoted identifier's stop: '"'
-const MASKS: usize = 6;
+const NUL: usize = 6; // a NUL, which the parser does not read
+const MASKS: usize = 7;
 
 // The nibble tables' bits: each is the product of a set of high nibbles and a set of low ones.
 const C_AO: u8 = 1; // high 4 or 6, low 1..=15: A-O, a-o
@@ -83,8 +84,8 @@ unsafe fn masks<S: Simd8x64>(b: &[u8; 64]) -> Masks {
         let blank = S::to_bitmask(S::test(c, S::splat(C_BLANK)));
         let word = S::to_bitmask(S::test(c, S::splat(C_WORD))) | S::to_bitmask(S::ge(v, 0x80));
         let (star, slash, lf, bs) = (S::eq_mask(v, b'*'), S::eq_mask(v, b'/'), S::eq_mask(v, b'\n'), S::eq_mask(v, b'\\'));
-        let (q, dq) = (S::eq_mask(v, b'\''), S::eq_mask(v, b'"'));
-        [blank, word, star | slash, lf, q | bs, dq]
+        let (q, dq, nul) = (S::eq_mask(v, b'\''), S::eq_mask(v, b'"'), S::eq_mask(v, 0));
+        [blank, word, star | slash, lf, q | bs, dq, nul]
     }
 }
 
@@ -105,6 +106,7 @@ unsafe fn stage1<S: Simd8x64>(src: &[u8]) -> Vec<Masks> {
         let past = !0u64 << n;
         m[BLANK] &= !past;
         m[WORD] &= !past;
+        m[NUL] &= !past;
         for k in [SLASH_STAR, LF, SQ, DQ] {
             m[k] |= past;
         }
@@ -154,6 +156,19 @@ impl<'s> Blocks<'s> {
     #[inline]
     pub fn blank_end(&self, at: usize) -> usize {
         self.next(at, BLANK, false)
+    }
+
+    /// The first NUL in the text, if one is.
+    #[inline]
+    pub fn first_nul(&self) -> Option<usize> {
+        let at = self.next(0, NUL, true);
+        (at < self.src.len()).then_some(at)
+    }
+
+    /// The first ASCII white space byte from `at`, or the text's end.
+    #[inline]
+    pub fn blank_stop(&self, at: usize) -> usize {
+        self.next(at, BLANK, true)
     }
 
     /// The end of a run of a word's bytes from `at` (`[A-Za-z0-9_$]`, and any byte from 0x80 on).
@@ -231,6 +246,7 @@ mod tests {
                 o[LF] |= bit(c == b'\n');
                 o[SQ] |= bit(matches!(c, b'\'' | b'\\'));
                 o[DQ] |= bit(c == b'"');
+                o[NUL] |= bit(c == 0);
             }
         }
         out
@@ -258,6 +274,16 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_first_nul() {
+        let mut t = vec![b'a'; 200];
+        assert_eq!(Blocks::of(&t).first_nul(), None);
+        t[130] = 0;
+        t[199] = 0;
+        assert_eq!(Blocks::of(&t).first_nul(), Some(130));
+        assert_eq!(Blocks::of(&t[..100]).first_nul(), None);
     }
 
     #[test]

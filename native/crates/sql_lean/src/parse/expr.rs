@@ -72,30 +72,21 @@ pub(super) enum Atom {
 }
 
 impl P<'_> {
-    /// A node of the children since `m` spanning `s..e` (a node whose last bytes are hidden tokens:
-    /// a signed number's digits).
-    pub(super) fn node_span(&mut self, kind: K, m: usize, s: usize, e: usize) -> u32 {
-        let id = self.a.node(kind, m);
-        self.a.nodes[id as usize].s = s as u32;
-        self.a.nodes[id as usize].e = e as u32;
-        id
-    }
-
     /// An expression, its operators those of level `min` and above, given `field`.
     pub(super) fn expr(&mut self, min: u8, field: u8) -> R<u32> {
         let id = self.expr_or_all(min, false)?;
-        self.a.set_field(id, field);
+        self.set_field(id, field);
         Ok(id)
     }
 
     /// An expression, or (`all`) an `all_fields` where one stands alone.
     pub(super) fn expr_or_all(&mut self, min: u8, all: bool) -> R<u32> {
         self.deeper()?;
-        let m = self.a.mark();
+        let m = self.mark()?;
         let atom = self.atom(all)?;
         if atom == Atom::AllFields {
             self.depth -= 1;
-            return Ok(*self.a.stack.last().expect("an atom"));
+            return Ok(self.mark_child(m));
         }
         loop {
             let t = self.peek()?;
@@ -107,20 +98,20 @@ impl P<'_> {
                             break;
                         }
                         // `x[i]`, `x[i:j]`: `subscript`.
-                        self.a.set_field(self.a.stack[m], f::EXPRESSION);
+                        self.set_field(self.mark_child(m), f::EXPRESSION);
                         self.expect_punct(b"[", K::TLBracket)?;
                         let i = self.expr(0, 0)?;
                         let c = self.peek()?;
                         if !(c.t == T::Punct && self.byte(c.s) == b':' && self.byte(c.s + 1) != b':') {
-                            self.a.set_field(i, f::SUBSCRIPT);
+                            self.set_field(i, f::SUBSCRIPT);
                         } else {
-                            self.a.set_field(i, f::LOWER);
+                            self.set_field(i, f::LOWER);
                             self.take(Tok { e: c.s + 1, ..c });
-                            self.a.leaf(K::TColon, 0, c.s, c.s + 1);
+                            self.token(K::TColon, 0, c.s, c.s + 1);
                             self.expr(0, f::UPPER)?;
                         }
                         self.expect_punct(b"]", K::TRBracket)?;
-                        self.a.node(K::Subscript, m);
+                        self.node(K::Subscript, m);
                         continue;
                     }
                     if matches!(c, b'(' | b')' | b',' | b';' | b']' | b'.' | b'{' | b'}') {
@@ -131,12 +122,10 @@ impl P<'_> {
                             break;
                         }
                         // `x::type`: `implicit_cast`, aliased `cast`.
-                        let first = self.a.stack[m];
-                        let _ = first;
                         self.take(Tok { e: t.s + 2, ..t });
-                        self.a.leaf(K::TColonColon, 0, t.s, t.s + 2);
+                        self.token(K::TColonColon, 0, t.s, t.s + 2);
                         self.type_(0)?;
-                        self.a.node(K::Cast, m);
+                        self.node(K::Cast, m);
                         continue;
                     }
                     let (other, n) = self.operator_at(t.s);
@@ -168,10 +157,10 @@ impl P<'_> {
                         break;
                     }
                     self.take(Tok { e: t.s + n, ..t });
-                    self.a.set_field(self.a.stack[m], f::LEFT);
-                    self.a.leaf(kind, f::OPERATOR, t.s, t.s + n);
+                    self.set_field(self.mark_child(m), f::LEFT);
+                    self.child(kind, f::OPERATOR, t.s, t.s + n);
                     self.expr(level + 1, f::RIGHT)?;
-                    self.a.node(K::BinaryExpression, m);
+                    self.node(K::BinaryExpression, m);
                 }
                 T::Word => {
                     let ws = self.words()?;
@@ -200,39 +189,39 @@ impl P<'_> {
                             break;
                         }
                         // `collate_expression`: `x collate "C"`.
-                        self.a.set_field(self.a.stack[m], f::EXPRESSION);
+                        self.set_field(self.mark_child(m), f::EXPRESSION);
                         self.expect(K::KeywordCollate)?;
                         if self.object_reference(NONE, f::COLLATION)?.is_none() {
                             return self.refuse();
                         }
-                        self.a.node(K::CollateExpression, m);
+                        self.node(K::CollateExpression, m);
                         continue;
                     } else if has(K::KeywordAt) && self.next_is(K::KeywordTime)? {
                         if prec::AT_TIME_ZONE < min {
                             break;
                         }
                         // `x at time zone y`: `at_time_zone`, a binary expression.
-                        self.a.set_field(self.a.stack[m], f::LEFT);
-                        let n = self.a.mark();
+                        self.set_field(self.mark_child(m), f::LEFT);
+                        let n = self.open(K::AtTimeZone, 0)?;
                         self.expect(K::KeywordAt)?;
                         self.expect(K::KeywordTime)?;
                         self.expect(K::KeywordZone)?;
-                        let id = self.a.node(K::AtTimeZone, n);
-                        self.a.set_field(id, f::OPERATOR);
+                        let id = self.close(n);
+                        self.set_field(id, f::OPERATOR);
                         self.expr(prec::AT_TIME_ZONE + 1, f::RIGHT)?;
-                        self.a.node(K::BinaryExpression, m);
+                        self.node(K::BinaryExpression, m);
                         continue;
                     } else if has(K::KeywordSimilar) && self.next_is(K::KeywordTo)? {
                         if prec::PATTERN < min {
                             break;
                         }
                         // `x similar to y`.
-                        self.a.set_field(self.a.stack[m], f::LEFT);
-                        let n = self.a.mark();
+                        self.set_field(self.mark_child(m), f::LEFT);
+                        let n = self.open(K::SimilarTo, 0)?;
                         self.expect(K::KeywordSimilar)?;
                         self.expect(K::KeywordTo)?;
-                        let id = self.a.node(K::SimilarTo, n);
-                        self.a.set_field(id, f::OPERATOR);
+                        let id = self.close(n);
+                        self.set_field(id, f::OPERATOR);
                         self.like_tail(m)?;
                         continue;
                     } else if has(K::KeywordAt) || has(K::KeywordIsnull) || has(K::KeywordNotnull) || has(K::KeywordSimilar) {
@@ -245,11 +234,11 @@ impl P<'_> {
                             if level < min {
                                 break;
                             }
-                            self.a.set_field(self.a.stack[m], f::LEFT);
+                            self.set_field(self.mark_child(m), f::LEFT);
                             let k = if level == prec::AND { K::KeywordAnd } else { K::KeywordOr };
                             self.kw_field(k, f::OPERATOR)?;
                             self.expr(level + 1, f::RIGHT)?;
-                            self.a.node(K::BinaryExpression, m);
+                            self.node(K::BinaryExpression, m);
                         }
                         1 => {
                             if level < min {
@@ -261,16 +250,16 @@ impl P<'_> {
                             if level < min {
                                 break;
                             }
-                            self.a.set_field(self.a.stack[m], f::LEFT);
+                            self.set_field(self.mark_child(m), f::LEFT);
                             self.kw_field(K::KeywordIn, f::OPERATOR)?;
                             self.in_right()?;
-                            self.a.node(K::BinaryExpression, m);
+                            self.node(K::BinaryExpression, m);
                         }
                         3 => {
                             if level < min {
                                 break;
                             }
-                            self.a.set_field(self.a.stack[m], f::LEFT);
+                            self.set_field(self.mark_child(m), f::LEFT);
                             self.kw_field(K::KeywordLike, f::OPERATOR)?;
                             self.like_tail(m)?;
                         }
@@ -278,7 +267,7 @@ impl P<'_> {
                             if level < min {
                                 break;
                             }
-                            self.a.set_field(self.a.stack[m], f::LEFT);
+                            self.set_field(self.mark_child(m), f::LEFT);
                             self.kw_field(K::KeywordBetween, f::OPERATOR)?;
                             self.between_tail(m)?;
                         }
@@ -305,29 +294,29 @@ impl P<'_> {
                             if level < min {
                                 break;
                             }
-                            self.a.set_field(self.a.stack[m], f::LEFT);
+                            self.set_field(self.mark_child(m), f::LEFT);
                             if nx(K::KeywordIn) {
-                                let n = self.a.mark();
+                                let n = self.open(K::NotIn, 0)?;
                                 self.expect(K::KeywordNot)?;
                                 self.expect(K::KeywordIn)?;
-                                let id = self.a.node(K::NotIn, n);
-                                self.a.set_field(id, f::OPERATOR);
+                                let id = self.close(n);
+                                self.set_field(id, f::OPERATOR);
                                 self.in_right()?;
-                                self.a.node(K::BinaryExpression, m);
+                                self.node(K::BinaryExpression, m);
                             } else if nx(K::KeywordLike) {
-                                let n = self.a.mark();
+                                let n = self.open(K::NotLike, 0)?;
                                 self.expect(K::KeywordNot)?;
                                 self.expect(K::KeywordLike)?;
-                                let id = self.a.node(K::NotLike, n);
-                                self.a.set_field(id, f::OPERATOR);
+                                let id = self.close(n);
+                                self.set_field(id, f::OPERATOR);
                                 self.like_tail(m)?;
                             } else if nx(K::KeywordSimilar) {
-                                let n = self.a.mark();
+                                let n = self.open(K::NotSimilarTo, 0)?;
                                 self.expect(K::KeywordNot)?;
                                 self.expect(K::KeywordSimilar)?;
                                 self.expect(K::KeywordTo)?;
-                                let id = self.a.node(K::NotSimilarTo, n);
-                                self.a.set_field(id, f::OPERATOR);
+                                let id = self.close(n);
+                                self.set_field(id, f::OPERATOR);
                                 self.like_tail(m)?;
                             } else {
                                 self.kw_field(K::KeywordNot, f::OPERATOR)?;
@@ -341,12 +330,13 @@ impl P<'_> {
             }
         }
         self.depth -= 1;
-        Ok(*self.a.stack.last().expect("an expression"))
+        // The expression's node: the one at its mark (an operator's goes there, over its operand).
+        Ok(self.mark_child(m))
     }
 
     /// After `x is`: `is null`, `is not null`, `is true`, `is distinct from y`… (`binary_is`).
-    fn is_tail(&mut self, m: usize) -> R<()> {
-        self.a.set_field(self.a.stack[m], f::LEFT);
+    fn is_tail(&mut self, m: Mark) -> R<()> {
+        self.set_field(self.mark_child(m), f::LEFT);
         let save = (self.at, self.last_end, self.look);
         let t = self.peek()?;
         self.take(t);
@@ -354,30 +344,30 @@ impl P<'_> {
         (self.at, self.last_end, self.look) = save;
         let nx = |k: K| next.iter().any(|&(_, x)| x == k);
         if nx(K::KeywordNot) {
-            let n = self.a.mark();
+            let n = self.mark()?;
             self.expect(K::KeywordIs)?;
             self.expect(K::KeywordNot)?;
             if self.is(K::KeywordDistinct)? {
                 self.expect(K::KeywordDistinct)?;
                 self.expect(K::KeywordFrom)?;
-                let id = self.a.node(K::NotDistinctFrom, n);
-                self.a.set_field(id, f::OPERATOR);
+                let id = self.node(K::NotDistinctFrom, n);
+                self.set_field(id, f::OPERATOR);
                 self.expr(prec::IS + 1, f::RIGHT)?;
-                self.a.node(K::BinaryExpression, m);
+                self.node(K::BinaryExpression, m);
                 return Ok(());
             } else {
-                let id = self.a.node(K::IsNot, n);
-                self.a.set_field(id, f::OPERATOR);
+                let id = self.node(K::IsNot, n);
+                self.set_field(id, f::OPERATOR);
             }
         } else if nx(K::KeywordDistinct) {
-            let n = self.a.mark();
+            let n = self.open(K::DistinctFrom, 0)?;
             self.expect(K::KeywordIs)?;
             self.expect(K::KeywordDistinct)?;
             self.expect(K::KeywordFrom)?;
-            let id = self.a.node(K::DistinctFrom, n);
-            self.a.set_field(id, f::OPERATOR);
+            let id = self.close(n);
+            self.set_field(id, f::OPERATOR);
             self.expr(prec::IS + 1, f::RIGHT)?;
-            self.a.node(K::BinaryExpression, m);
+            self.node(K::BinaryExpression, m);
             return Ok(());
         } else if nx(K::KeywordNull) || nx(K::KeywordTrue) || nx(K::KeywordFalse) {
             self.kw_field(K::KeywordIs, f::OPERATOR)?;
@@ -388,7 +378,7 @@ impl P<'_> {
             return self.refuse();
         }
         self.expr(prec::IS + 1, f::RIGHT)?;
-        self.a.node(K::BinaryExpression, m);
+        self.node(K::BinaryExpression, m);
         Ok(())
     }
 
@@ -397,34 +387,34 @@ impl P<'_> {
         if !self.at_punct(b"(")? {
             return self.refuse();
         }
-        let id = self.paren(false)?;
-        let k = self.a.nodes[id as usize].kind;
+        let id = self.paren()?;
+        let k = self.kind_at(id);
         if k == K::ParenthesizedExpression {
             // `(x)` after `in` is a one-item list.
-            self.a.nodes[id as usize].kind = K::List;
+            self.retype(id, K::List);
         } else if k != K::List && k != K::Subquery {
             return self.refuse();
         }
-        self.a.set_field(id, f::RIGHT);
+        self.set_field(id, f::RIGHT);
         Ok(())
     }
 
     /// After `x like` (or `not like`): the pattern, and an escape.
-    fn like_tail(&mut self, m: usize) -> R<()> {
+    fn like_tail(&mut self, m: Mark) -> R<()> {
         self.expr(prec::PATTERN + 1, f::RIGHT)?;
         if self.is(K::KeywordEscape)? {
             return self.refuse();
         }
-        self.a.node(K::BinaryExpression, m);
+        self.node(K::BinaryExpression, m);
         Ok(())
     }
 
     /// After `x between` (or `not between`): `low and high`.
-    fn between_tail(&mut self, m: usize) -> R<()> {
+    fn between_tail(&mut self, m: Mark) -> R<()> {
         self.expr(prec::BETWEEN + 1, f::LOW)?;
         self.expect(K::KeywordAnd)?;
         self.expr(prec::BETWEEN + 1, f::HIGH)?;
-        self.a.node(K::BetweenExpression, m);
+        self.node(K::BetweenExpression, m);
         Ok(())
     }
 
@@ -435,16 +425,16 @@ impl P<'_> {
         match t.t {
             T::Num => {
                 self.take(t);
-                self.a.leaf(K::Literal, 0, t.s, t.e);
+                self.leaf(K::Literal, 0, t.s, t.e);
             }
             T::Str => self.string_literal(0)?,
             T::EStr => {
                 self.take(t);
-                self.a.leaf(K::Literal, 0, t.s, t.e);
+                self.leaf(K::Literal, 0, t.s, t.e);
             }
             T::Bits => {
                 self.take(t);
-                self.a.leaf(K::Literal, 0, t.s, t.e);
+                self.leaf(K::Literal, 0, t.s, t.e);
                 // `_bit_string`'s continuations (`B'01' '10'`) are refused.
                 if self.peek()?.t == T::Str {
                     return self.refuse();
@@ -453,20 +443,20 @@ impl P<'_> {
             T::Dollar => {
                 let e = self.dollar_end(t.s)?;
                 self.take(Tok { e, ..t });
-                self.a.leaf(K::Literal, 0, t.s, e);
+                self.leaf(K::Literal, 0, t.s, e);
             }
             T::Param => {
                 self.take(t);
-                self.a.leaf(K::Parameter, 0, t.s, t.e);
+                self.leaf(K::Parameter, 0, t.s, t.e);
             }
             T::Punct => {
                 let c = self.byte(t.s);
                 if c == b'(' {
-                    self.paren(all)?;
+                    self.paren()?;
                 } else if c == b'?' && self.op_len(t.s, 1) {
                     // `?` where an operand goes: a `parameter` (where an operator goes, `op_other`).
                     self.take(Tok { e: t.s + 1, ..t });
-                    self.a.leaf(K::Parameter, 0, t.s, t.s + 1);
+                    self.leaf(K::Parameter, 0, t.s, t.s + 1);
                 } else if c == b':' && (self.byte(t.s + 1).is_ascii_alphabetic() || self.byte(t.s + 1) == b'_') {
                     // `:name` where an operand goes: a `parameter` (`:[A-Za-z_][A-Za-z0-9_]*`). Its end
                     // is the word's, from stage 1; a word with `$` or bytes past ASCII is refused, as
@@ -476,14 +466,14 @@ impl P<'_> {
                         return self.refuse();
                     }
                     self.take(Tok { e, ..t });
-                    self.a.leaf(K::Parameter, 0, t.s, e);
+                    self.leaf(K::Parameter, 0, t.s, e);
                 } else if c == b'*' && self.op_len(t.s, 1) {
                     if !all {
                         return self.refuse();
                     }
-                    let m = self.a.mark();
+                    let m = self.open(K::AllFields, 0)?;
                     self.punct(b"*", K::TStar)?;
-                    self.a.node(K::AllFields, m);
+                    self.close(m);
                     return Ok(Atom::AllFields);
                 } else if c == b'-' || c == b'+' {
                     // A signed number is a literal (`_integer`, `_decimal_number`); any other operand
@@ -492,17 +482,20 @@ impl P<'_> {
                         return self.refuse();
                     }
                     let kind = if c == b'-' { K::TMinus } else { K::TPlus };
-                    let m = self.a.mark();
+                    let m = self.mark()?;
                     self.take(Tok { e: t.s + 1, ..t });
-                    let sign = self.a.leaf(kind, 0, t.s, t.s + 1);
                     let n = self.peek()?;
                     if n.t == T::Num {
+                        // `-1`: a literal, its sign a hidden token in it.
+                        self.token(kind, 0, t.s, t.s + 1);
                         self.take(n);
                         self.node_span(K::Literal, m, t.s, n.e);
                     } else {
-                        self.a.set_field(sign, f::OPERATOR);
+                        // The sign is held in the mark until the node is known, then the node's.
+                        self.token(kind, f::OPERATOR, t.s, t.s + 1);
+                        let u = self.wrap(m, K::UnaryExpression, 0);
                         self.expr(prec::MINUS + 1, f::OPERAND)?;
-                        self.a.node(K::UnaryExpression, m);
+                        self.close(u);
                     }
                 } else {
                     return self.refuse();
@@ -512,54 +505,63 @@ impl P<'_> {
                 let ws = self.words()?;
                 let has = |k: K| ws.iter().any(|&(_, x)| x == k);
                 if t.t == T::Word && ws.iter().any(|&(_, k)| kinds::FIRST_EXPRESSION.contains(&k)) {
-                    let m = self.a.mark();
+                    // Each form's node opened before its first token: its kind is the keyword's.
                     if has(K::KeywordNull) || has(K::KeywordTrue) || has(K::KeywordFalse) {
                         let k = ws.iter().find(|&&(_, k)| matches!(k, K::KeywordNull | K::KeywordTrue | K::KeywordFalse)).expect("one").1;
+                        let m = self.open(K::Literal, 0)?;
                         self.expect(k)?;
-                        self.a.node(K::Literal, m);
+                        self.close(m);
                     } else if has(K::KeywordNot) {
+                        let m = self.open(K::UnaryExpression, 0)?;
                         self.kw_field(K::KeywordNot, f::OPERATOR)?;
                         self.expr(prec::NOT + 1, f::OPERAND)?;
-                        self.a.node(K::UnaryExpression, m);
+                        self.close(m);
                     } else if has(K::KeywordAny) || has(K::KeywordSome) || has(K::KeywordAll) {
                         let k = ws.iter().find(|&&(_, k)| matches!(k, K::KeywordAny | K::KeywordSome | K::KeywordAll)).expect("one").1;
+                        let m = self.open(K::UnaryExpression, 0)?;
                         self.kw_field(k, f::OPERATOR)?;
                         self.expr(prec::NOT + 1, f::OPERAND)?;
-                        self.a.node(K::UnaryExpression, m);
+                        self.close(m);
                     } else if has(K::KeywordCase) {
                         self.case()?;
                     } else if has(K::KeywordCast) {
+                        let m = self.open(K::Cast, 0)?;
                         self.kw_field(K::KeywordCast, f::NAME)?;
                         self.expect_punct(b"(", K::TLParen)?;
                         self.expr(0, f::PARAMETER)?;
                         self.expect(K::KeywordAs)?;
                         self.type_(0)?;
                         self.expect_punct(b")", K::TRParen)?;
-                        self.a.node(K::Cast, m);
+                        self.close(m);
                     } else if has(K::KeywordExists) {
+                        let m = self.open(K::Exists, 0)?;
                         self.expect(K::KeywordExists)?;
                         if !self.at_punct(b"(")? {
                             return self.refuse();
                         }
-                        let id = self.paren(false)?;
-                        if self.a.nodes[id as usize].kind != K::Subquery {
+                        let id = self.paren()?;
+                        if self.kind_at(id) != K::Subquery {
                             return self.refuse();
                         }
-                        self.a.node(K::Exists, m);
+                        self.close(m);
                     } else if has(K::KeywordArray) {
+                        let m = self.open(K::Array, 0)?;
                         self.expect(K::KeywordArray)?;
                         if self.at_punct(b"(")? {
-                            let id = self.paren(false)?;
-                            if self.a.nodes[id as usize].kind != K::Subquery {
+                            // `array (select …)`: a query in the array's own parentheses (no
+                            // subquery node), so they are its tokens.
+                            self.expect_punct(b"(", K::TLParen)?;
+                            if !(self.is(K::KeywordSelect)? || self.is(K::KeywordWith)? || self.is(K::KeywordValues)?) {
                                 return self.refuse();
                             }
-                            // `array (select …)`: the subquery's parentheses are the array's.
-                            self.unwrap_last();
+                            self.dml_read()?;
+                            self.expect_punct(b")", K::TRParen)?;
                         } else {
                             self.array_elements()?;
                         }
-                        self.a.node(K::Array, m);
+                        self.close(m);
                     } else if has(K::KeywordInterval) {
+                        let m = self.open(K::Interval, 0)?;
                         self.expect(K::KeywordInterval)?;
                         let n = self.peek()?;
                         if n.t != T::Str || self.byte(n.s) != b'\'' {
@@ -570,12 +572,12 @@ impl P<'_> {
                         if self.words()?.iter().any(|&(_, k)| matches!(k, K::KeywordYear | K::KeywordMonth | K::KeywordDay | K::KeywordHour | K::KeywordMinute | K::KeywordSecond | K::KeywordTo)) {
                             return self.refuse();
                         }
-                        let id = self.a.node(K::Interval, m);
-                        self.a.nodes[id as usize].e = e as u32;
+                        self.close_end(m, e);
                     } else if has(K::KeywordTimestamp) || has(K::KeywordTime) {
                         // `_string_casting`: `timestamp [with time zone] '…'`, a literal of the type
                         // and the string.
                         let k = if has(K::KeywordTimestamp) { K::KeywordTimestamp } else { K::KeywordTime };
+                        let m = self.mark()?;
                         self.builtin_type(k)?;
                         self.string_cast(m)?;
                     } else {
@@ -588,16 +590,6 @@ impl P<'_> {
             T::Eof => return self.refuse(),
         }
         Ok(Atom::Expr)
-    }
-
-    /// The last child pushed, a node, replaced by its children (a hidden rule's place).
-    fn unwrap_last(&mut self) {
-        let id = self.a.stack.pop().expect("a node");
-        let n = self.a.nodes[id as usize];
-        for i in n.at..n.at + n.n {
-            let k = self.a.kids[i as usize];
-            self.a.stack.push(k);
-        }
     }
 
     /// `_array_elements`: `[a, b]`.
@@ -620,21 +612,20 @@ impl P<'_> {
 
     /// The end of the dollar-quoted string at `s` (`$tag$…$tag$`), as the scanner reads it.
     pub(super) fn dollar_end(&self, s: usize) -> R<usize> {
-        let mut e = s + 1;
-        while self.byte(e) != b'$' {
-            let c = self.byte(e);
-            let ok = if e == s + 1 { c.is_ascii_alphabetic() || c == b'_' || c >= 0x80 } else { c.is_ascii_alphanumeric() || c == b'_' || c >= 0x80 };
-            if !ok || e - s > 255 {
-                return self.refuse();
-            }
-            e += 1;
+        // The tag: word bytes up to its `$` (stage 1's word run holds `$`), not starting with a
+        // digit.
+        let run = self.b.word_end(s + 1);
+        let e = first_of2(self.src, s + 1, run, b'$', b'$');
+        if e == run || e - s > 256 || (e > s + 1 && self.src[s + 1].is_ascii_digit()) {
+            return self.refuse();
         }
         let tag = &self.src[s..=e];
-        let body = e + 1;
-        let mut at = body;
+        let mut at = e + 1;
         loop {
-            let Some(i) = self.src[at..].iter().position(|&c| c == b'$') else { return self.refuse() };
-            let d = at + i;
+            let d = first_of2(self.src, at, self.src.len(), b'$', b'$');
+            if d == self.src.len() {
+                return self.refuse();
+            }
             if self.src[d..].starts_with(tag) {
                 return Ok(d + tag.len());
             }
@@ -647,8 +638,7 @@ impl P<'_> {
         let t = self.peek()?;
         self.take(t);
         let e = self.continued(t.e)?;
-        let id = self.a.leaf(K::Literal, field, t.s, e);
-        let _ = id;
+        self.leaf(K::Literal, field, t.s, e);
         Ok(())
     }
 
@@ -666,41 +656,37 @@ impl P<'_> {
     }
 
     /// `(…)` in an expression: a subquery, a list, or a parenthesized expression; pushed, its id.
-    pub(super) fn paren(&mut self, all: bool) -> R<u32> {
-        let _ = all;
-        let m = self.a.mark();
+    pub(super) fn paren(&mut self) -> R<u32> {
+        let m = self.mark()?;
         self.expect_punct(b"(", K::TLParen)?;
         if self.is(K::KeywordSelect)? || self.is(K::KeywordWith)? || self.is(K::KeywordValues)? {
             self.dml_read()?;
             self.expect_punct(b")", K::TRParen)?;
-            return Ok(self.a.node(K::Subquery, m));
-        }
-        if self.at_punct(b"(")? {
-            // `((select …) union …)`, `((a))`: read as an expression first.
+            return Ok(self.node(K::Subquery, m));
         }
         if self.at_punct(b")")? {
             self.expect_punct(b")", K::TRParen)?;
-            return Ok(self.a.node(K::List, m));
+            return Ok(self.node(K::List, m));
         }
         let first = self.expr_or_all(0, true)?;
-        if self.a.nodes[first as usize].kind == K::AllFields {
+        if self.kind_at(first) == K::AllFields {
             self.expect_punct(b")", K::TRParen)?;
-            return Ok(self.a.node(K::ParenthesizedExpression, m));
+            return Ok(self.node(K::ParenthesizedExpression, m));
         }
         if self.at_punct(b",")? {
             while self.punct(b",", K::TComma)?.is_some() {
                 self.expr(0, 0)?;
             }
             self.expect_punct(b")", K::TRParen)?;
-            return Ok(self.a.node(K::List, m));
+            return Ok(self.node(K::List, m));
         }
         self.expect_punct(b")", K::TRParen)?;
-        Ok(self.a.node(K::ParenthesizedExpression, m))
+        Ok(self.node(K::ParenthesizedExpression, m))
     }
 
     /// `case … end`.
     fn case(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::Case, 0)?;
         self.expect(K::KeywordCase)?;
         if !self.is(K::KeywordWhen)? {
             self.expr(0, 0)?;
@@ -717,66 +703,56 @@ impl P<'_> {
             self.expr(0, 0)?;
         }
         self.expect(K::KeywordEnd)?;
-        self.a.node(K::Case, m);
+        self.close(m);
         Ok(())
     }
 
     /// A name in an expression: a field (`a`, `t.a`, `s.t.a`), an invocation (`f(…)`, `s.f(…)`), or
     /// `t.*`.
     fn name_atom(&mut self, all: bool) -> R<Atom> {
-        let m = self.a.mark();
-        let first = self.expect_ident(Ctx::Sure(&[kinds::FIRST_EXPRESSION]), f::NAME)?;
-        let mut parts = [first; 4];
-        let mut n = 1;
-        let mut star = false;
-        while self.at_punct(b".")? {
+        let m = self.mark()?;
+        let Some(d) = self.dotted(Ctx::Sure(&[kinds::FIRST_EXPRESSION]), 4)? else { return self.refuse() };
+        // `t.*`: the dot after the parts, then `*`.
+        let star = if self.at_punct(b".")? {
             let t = self.peek()?;
             self.take(Tok { e: t.s + 1, ..t });
-            if self.at_punct(b"*")? {
-                star = true;
-                break;
-            }
-            let Some(id) = self.ident(NONE, f::NAME)? else { return self.refuse() };
-            if n == 4 {
+            if !self.at_punct(b"*")? {
                 return self.refuse();
             }
-            parts[n] = id;
-            n += 1;
-        }
-        let parts = &parts[..n];
-        self.a.stack.truncate(m);
-        if star {
-            if !all || parts.len() > 3 {
+            Some(t.s)
+        } else {
+            None
+        };
+        let n = d.n;
+        if let Some(dot) = star {
+            if !all || n > 3 {
                 return self.refuse();
             }
-            self.push_reference(&parts, 0);
-            let d = self.peek()?.s;
-            let _ = d;
-            let dot = self.last_end - 1;
-            self.a.leaf(K::TDot, 0, dot, dot + 1);
+            self.write_reference(&d, n, 0);
+            self.token(K::TDot, 0, dot, dot + 1);
             self.punct(b"*", K::TStar)?;
-            self.a.node(K::AllFields, m);
+            self.node(K::AllFields, m);
             return Ok(Atom::AllFields);
         }
         if self.at_punct(b"(")? {
-            if parts.len() > 3 {
+            if n > 3 {
                 return self.refuse();
             }
-            self.push_reference(&parts, 0);
+            self.write_reference(&d, n, 0);
             self.arguments()?;
             if self.is(K::KeywordWithin)? {
                 return self.refuse();
             }
             if self.is(K::KeywordFilter)? {
                 // `filter_expression`: `f(x) filter (where p)`, the invocation's last child.
-                let fm = self.a.mark();
+                let fm = self.open(K::FilterExpression, 0)?;
                 self.expect(K::KeywordFilter)?;
                 self.expect_punct(b"(", K::TLParen)?;
                 self.where_()?;
                 self.expect_punct(b")", K::TRParen)?;
-                self.a.node(K::FilterExpression, fm);
+                self.close(fm);
             }
-            self.a.node(K::Invocation, m);
+            self.node(K::Invocation, m);
             if self.kw(K::KeywordOver)?.is_some() {
                 // `window_function`: `f(x) over w | (…)`.
                 if self.at_punct(b"(")? {
@@ -784,37 +760,35 @@ impl P<'_> {
                 } else {
                     self.expect_ident(Ctx::Unsure(&[]), 0)?;
                 }
-                self.a.node(K::WindowFunction, m);
+                self.node(K::WindowFunction, m);
             }
             return Ok(Atom::Expr);
         }
         if self.peek()?.t == T::Str {
             // `_string_casting`: `name '…'` (`date '2020-01-01'`), a literal of the identifier and
             // the string.
-            if parts.len() != 1 {
+            if n != 1 {
                 return self.refuse();
             }
-            self.a.nodes[parts[0] as usize].field = 0;
-            self.a.stack.push(parts[0]);
+            self.leaf(K::Identifier, 0, d.parts[0].0, d.parts[0].1);
             self.string_cast(m)?;
             return Ok(Atom::Expr);
         }
         // A field: `_qualified_field`, its last part the name, the parts before an object reference.
-        match parts.len() {
+        match n {
             1 => {
-                self.a.stack.push(parts[0]);
+                self.leaf(K::Identifier, f::NAME, d.parts[0].0, d.parts[0].1);
             }
             2 | 3 => {
-                let (head, name) = parts.split_at(parts.len() - 1);
-                self.push_reference(head, 0);
-                let d = self.dot_before(name[0]);
-                self.a.leaf(K::TDot, 0, d, d + 1);
-                self.a.nodes[name[0] as usize].field = f::NAME;
-                self.a.stack.push(name[0]);
+                self.write_reference(&d, n - 1, 0);
+                let dot = d.dots[n - 1];
+                self.token(K::TDot, 0, dot, dot + 1);
+                let (s, e) = d.parts[n - 1];
+                self.leaf(K::Identifier, f::NAME, s, e);
             }
             _ => return self.refuse(),
         }
-        self.a.node(K::Field, m);
+        self.node(K::Field, m);
         Ok(Atom::Expr)
     }
 
@@ -843,11 +817,11 @@ impl P<'_> {
             self.expect(k)?;
             if !self.is(K::KeywordFrom)? {
                 let id = self.term()?;
-                self.a.set_field(id, f::PARAMETER);
+                self.set_field(id, f::PARAMETER);
             }
             self.expect(K::KeywordFrom)?;
             let id = self.term()?;
-            self.a.set_field(id, f::PARAMETER);
+            self.set_field(id, f::PARAMETER);
             self.expect_punct(b")", K::TRParen)?;
             return Ok(());
         }
@@ -861,15 +835,15 @@ impl P<'_> {
                 let named = self.at_punct(b"=>")? || self.at_punct(b":=")?;
                 (self.at, self.last_end, self.look) = save;
                 if named {
-                    let m = self.a.mark();
+                    let m = self.open(K::NamedArgument, 0)?;
                     self.expect_ident(NONE, f::NAME)?;
                     let n = self.peek()?;
                     let k = if self.byte(n.s) == b'=' { K::TFatArrow } else { K::TColonEq };
                     self.take(Tok { e: n.s + 2, ..n });
-                    self.a.leaf(k, 0, n.s, n.s + 2);
+                    self.leaf(k, 0, n.s, n.s + 2);
                     self.expr(0, f::VALUE)?;
-                    let id = self.a.node(K::NamedArgument, m);
-                    self.a.set_field(id, f::PARAMETER);
+                    let id = self.close(m);
+                    self.set_field(id, f::PARAMETER);
                     if self.punct(b",", K::TComma)?.is_none() {
                         break;
                     }
@@ -883,31 +857,31 @@ impl P<'_> {
                 return self.refuse();
             }
             let id = self.term()?;
-            self.a.set_field(id, f::PARAMETER);
+            self.set_field(id, f::PARAMETER);
             if first && !distinct && (self.is(K::KeywordFrom)? || self.is(K::KeywordFor)? || self.is(K::KeywordIn)? || self.is(K::KeywordPlacing)?) {
                 // `substring(a [placing b] from i [for n])`, `substring(a for n [from i])`,
                 // `position(a in b)`.
                 if self.kw(K::KeywordIn)?.is_some() {
                     let id = self.term()?;
-                    self.a.set_field(id, f::PARAMETER);
+                    self.set_field(id, f::PARAMETER);
                 } else if self.kw(K::KeywordFor)?.is_some() {
                     let id = self.term()?;
-                    self.a.set_field(id, f::PARAMETER);
+                    self.set_field(id, f::PARAMETER);
                     if self.kw(K::KeywordFrom)?.is_some() {
                         let id = self.term()?;
-                        self.a.set_field(id, f::PARAMETER);
+                        self.set_field(id, f::PARAMETER);
                     }
                 } else {
                     if self.kw(K::KeywordPlacing)?.is_some() {
                         let id = self.term()?;
-                        self.a.set_field(id, f::PARAMETER);
+                        self.set_field(id, f::PARAMETER);
                     }
                     self.expect(K::KeywordFrom)?;
                     let id = self.term()?;
-                    self.a.set_field(id, f::PARAMETER);
+                    self.set_field(id, f::PARAMETER);
                     if self.kw(K::KeywordFor)?.is_some() {
                         let id = self.term()?;
-                        self.a.set_field(id, f::PARAMETER);
+                        self.set_field(id, f::PARAMETER);
                     }
                 }
                 break;
@@ -956,11 +930,11 @@ impl P<'_> {
 
     /// A term: an expression or `*` (`value:`), and its alias.
     pub(super) fn term(&mut self) -> R<u32> {
-        let m = self.a.mark();
+        let m = self.open(K::Term, 0)?;
         let v = self.expr_or_all(0, true)?;
-        self.a.set_field(v, f::VALUE);
+        self.set_field(v, f::VALUE);
         self.alias()?;
-        Ok(self.a.node(K::Term, m))
+        Ok(self.close(m))
     }
 
     /// `_alias`: `as name`, `as 'name'`, or a bare name where the next word is no keyword that may
@@ -970,7 +944,7 @@ impl P<'_> {
             let t = self.peek()?;
             if t.t == T::Str && self.byte(t.s) == b'\'' {
                 self.take(t);
-                self.a.leaf(K::Literal, f::ALIAS, t.s, t.e);
+                self.leaf(K::Literal, f::ALIAS, t.s, t.e);
                 return Ok(());
             }
             self.expect_ident(NONE, f::ALIAS)?;
@@ -984,15 +958,15 @@ impl P<'_> {
 
     /// `_type`, its nodes given `field`.
     pub(super) fn type_(&mut self, field: u8) -> R<()> {
-        let m = self.a.mark();
+        let m = self.mark()?;
         let t = self.peek()?;
         let ws = self.words()?;
         let k = ws.iter().map(|&(_, k)| k).find(|k| kinds::FIRST_TYPE.contains(k));
         if k.is_none() && t.t == T::Word && self.src[t.s..t.e].eq_ignore_ascii_case(b"float8") {
             // `double`'s own pattern (`/[fF][lL][oO][aA][tT][88]/`): a `double` with no keyword in it.
             self.take(t);
-            self.a.leaf(K::Double, 0, t.s, t.e);
-            self.a.field_since(m, field);
+            self.leaf(K::Double, 0, t.s, t.e);
+            self.field_since(m, field);
             return Ok(());
         }
         match k {
@@ -1007,27 +981,27 @@ impl P<'_> {
         }
         // `array_size_definition`: `[]`, `[n]`, `array`.
         if self.at_punct(b"[")? {
-            let n = self.a.mark();
+            let n = self.open(K::ArraySizeDefinition, 0)?;
             while self.punct(b"[", K::TLBracket)?.is_some() {
                 let t = self.peek()?;
                 if t.t == T::Num {
                     self.take(t);
-                    self.a.leaf(K::Literal, f::SIZE, t.s, t.e);
+                    self.leaf(K::Literal, f::SIZE, t.s, t.e);
                 }
                 self.expect_punct(b"]", K::TRBracket)?;
             }
-            self.a.node(K::ArraySizeDefinition, n);
+            self.close(n);
         } else if self.is(K::KeywordArray)? {
             return self.refuse();
         }
-        self.a.field_since(m, field);
+        self.field_since(m, field);
         Ok(())
     }
 
     /// A built-in type, its first keyword `k`.
     /// The string of a `_string_casting` (one `'…'`, no continuation), then the literal of the
     /// children since `m` and it.
-    fn string_cast(&mut self, m: usize) -> R<()> {
+    fn string_cast(&mut self, m: Mark) -> R<()> {
         let n = self.peek()?;
         if n.t != T::Str || self.byte(n.s) != b'\'' {
             return self.refuse();
@@ -1036,13 +1010,12 @@ impl P<'_> {
         if self.peek()?.t == T::Str {
             return self.refuse();
         }
-        let id = self.a.node(K::Literal, m);
-        self.a.nodes[id as usize].e = n.e as u32;
+        self.node_end(K::Literal, m, n.e);
         Ok(())
     }
 
     fn builtin_type(&mut self, k: K) -> R<()> {
-        let m = self.a.mark();
+        let m = self.mark()?;
         // A size in parentheses, as the type's field `name` (`size`, `precision`).
         let sized = |p: &mut Self, name: u8| -> R<bool> {
             if !p.at_punct(b"(")? {
@@ -1054,7 +1027,7 @@ impl P<'_> {
                 return p.refuse();
             }
             p.take(t);
-            p.a.leaf(K::Literal, name, t.s, t.e);
+            p.leaf(K::Literal, name, t.s, t.e);
             p.expect_punct(b")", K::TRParen)?;
             Ok(true)
         };
@@ -1083,14 +1056,14 @@ impl P<'_> {
                         return self.refuse();
                     }
                     self.take(t);
-                    self.a.leaf(K::Literal, f::PRECISION, t.s, t.e);
+                    self.leaf(K::Literal, f::PRECISION, t.s, t.e);
                     if self.punct(b",", K::TComma)?.is_some() {
                         let t = self.peek()?;
                         if t.t != T::Num {
                             return self.refuse();
                         }
                         self.take(t);
-                        self.a.leaf(K::Literal, f::SCALE, t.s, t.e);
+                        self.leaf(K::Literal, f::SCALE, t.s, t.e);
                     }
                     self.expect_punct(b")", K::TRParen)?;
                 }
@@ -1119,10 +1092,10 @@ impl P<'_> {
                 let varying = self.is(K::KeywordVarying)?;
                 (self.at, self.last_end, self.look) = save;
                 if varying {
-                    let w = self.a.mark();
+                    let w = self.mark()?;
                     self.take(t);
                     let v = self.expect(K::KeywordVarying)?;
-                    let e = self.a.nodes[v as usize].e as usize;
+                    let e = self.end_at(v);
                     self.node_span(K::KeywordVarchar, w, t.s, e);
                     sized(self, f::SIZE)?;
                     Some(K::Varchar)
@@ -1180,7 +1153,7 @@ impl P<'_> {
             }
         };
         if let Some(node) = node {
-            self.a.node(node, m);
+            self.node(node, m);
         }
         Ok(())
     }

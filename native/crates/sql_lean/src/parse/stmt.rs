@@ -42,8 +42,8 @@ const PARAM_NAMES: &[K] = &[
 
 impl P<'_> {
     /// `program`: statements, each but the last ended by `;`.
-    pub(super) fn program(&mut self) -> R<u32> {
-        let m = self.a.mark();
+    pub(super) fn program(&mut self) -> R<()> {
+        let root = self.open_program();
         loop {
             let t = self.peek()?;
             if t.t == T::Eof {
@@ -60,8 +60,8 @@ impl P<'_> {
                 break;
             }
         }
-        let id = self.a.node(K::Program, m);
-        Ok(id)
+        self.close_program(root);
+        Ok(())
     }
 
     /// A psql command that sends the query buffer (`\\gset`), where one is next: `program`'s
@@ -73,20 +73,30 @@ impl P<'_> {
         }
         let e = self.send_end(t.s);
         self.take(Tok { e, ..t });
-        self.a.leaf(K::MetaCommand, 0, t.s, e);
+        self.leaf(K::MetaCommand, 0, t.s, e);
         Ok(true)
     }
 
     /// `statement`.
     fn statement(&mut self) -> R<()> {
         self.depth = 0;
-        let m = self.a.mark();
         let t = self.peek()?;
         if t.t != T::Word {
             return self.refuse();
         }
         let mut ws = self.words()?;
-        if ws.first().is_some_and(|&(_, k)| k == K::KeywordExplain) && ws.len() == 1 {
+        if ws.len() == 1 && ws[0].1 == K::KeywordBegin {
+            // A transaction (`begin; …; commit`), which tree-sitter prefers where it holds
+            // (`prec_dynamic(1)`): not a statement. Else `begin` alone, a statement.
+            let saved = self.save();
+            if self.transaction().is_ok() {
+                return Ok(());
+            }
+            self.restore(saved);
+        }
+        let m = self.open(K::Statement, 0)?;
+        let explained = ws.first().is_some_and(|&(_, k)| k == K::KeywordExplain) && ws.len() == 1;
+        if explained {
             // `explain [analyze] [verbose]`: the statement's own keywords, before it.
             self.expect(K::KeywordExplain)?;
             self.kw(K::KeywordAnalyze)?;
@@ -120,31 +130,22 @@ impl P<'_> {
             K::KeywordTruncate => self.truncate()?,
             K::KeywordComment => self.comment_statement()?,
             K::KeywordGrant | K::KeywordRevoke => self.grant_or_revoke(k)?,
-            K::KeywordBegin => {
-                // A transaction (`begin; …; commit`), which tree-sitter prefers where it holds
-                // (`prec_dynamic(1)`), else `begin` alone.
-                let saved = self.save();
-                match self.transaction() {
-                    Ok(()) => return Ok(()),
-                    Err(_) => {
-                        self.restore(saved);
-                        self.transaction_statement()?;
-                    }
-                }
-            }
+            // `explain begin`: not read (a transaction is no statement to explain).
+            K::KeywordBegin if explained => return self.refuse(),
+            K::KeywordBegin => self.transaction_statement()?,
             K::KeywordLock => self.lock_table()?,
             K::KeywordCommit | K::KeywordRollback | K::KeywordEnd | K::KeywordAbort | K::KeywordSavepoint | K::KeywordRelease | K::KeywordStart => self.transaction_statement()?,
             K::KeywordCall => {
-                let c = self.a.mark();
+                let c = self.open(K::CallStatement, 0)?;
                 self.expect(K::KeywordCall)?;
-                self.expr(0, 0)?;
-                if self.a.nodes[*self.a.stack.last().expect("an expression") as usize].kind != K::Invocation {
+                let e = self.expr(0, 0)?;
+                if self.kind_at(e) != K::Invocation {
                     return self.refuse();
                 }
-                self.a.node(K::CallStatement, c);
+                self.close(c);
             }
             K::KeywordDo => {
-                let c = self.a.mark();
+                let c = self.open(K::DoStatement, 0)?;
                 self.expect(K::KeywordDo)?;
                 if self.is(K::KeywordLanguage)? {
                     self.function_option()?;
@@ -155,11 +156,11 @@ impl P<'_> {
                         self.function_option()?;
                     }
                 }
-                self.a.node(K::DoStatement, c);
+                self.close(c);
             }
             _ => return self.refuse(),
         }
-        self.a.node(K::Statement, m);
+        self.close(m);
         Ok(())
     }
 
@@ -178,7 +179,7 @@ impl P<'_> {
             self.expect(K::KeywordRecursive)?;
         }
         loop {
-            let m = self.a.mark();
+            let m = self.open(K::Cte, 0)?;
             self.expect_ident(NONE, 0)?;
             if self.at_punct(b"(")? {
                 self.expect_punct(b"(", K::TLParen)?;
@@ -195,18 +196,18 @@ impl P<'_> {
                 return self.refuse();
             }
             self.expect_punct(b"(", K::TLParen)?;
-            let s = self.a.mark();
+            let s = self.open(K::Statement, 0)?;
             if self.is(K::KeywordInsert)? || self.is(K::KeywordUpdate)? || self.is(K::KeywordDelete)? {
                 self.dml_write()?;
             } else {
                 self.dml_read()?;
             }
-            self.a.node(K::Statement, s);
+            self.close(s);
             self.expect_punct(b")", K::TRParen)?;
             if self.is(K::KeywordSearch)? || self.is(K::KeywordCycle)? {
                 return self.refuse();
             }
-            self.a.node(K::Cte, m);
+            self.close(m);
             if self.punct(b",", K::TComma)?.is_none() {
                 break;
             }
@@ -216,7 +217,7 @@ impl P<'_> {
 
     /// A query: a select statement, or a set operation of them.
     fn query(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.mark()?;
         self.select_statement()?;
         if self.is(K::KeywordUnion)? || self.is(K::KeywordExcept)? || self.is(K::KeywordIntersect)? {
             loop {
@@ -232,7 +233,7 @@ impl P<'_> {
                 self.select_statement()?;
             }
             self.tail()?;
-            self.a.node(K::SetOperation, m);
+            self.node(K::SetOperation, m);
         }
         Ok(())
     }
@@ -273,29 +274,29 @@ impl P<'_> {
 
     /// `values (…), (…)`.
     fn values(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::Values, 0)?;
         self.expect(K::KeywordValues)?;
         loop {
             if !self.at_punct(b"(")? {
                 return self.refuse();
             }
-            let id = self.paren(false)?;
-            match self.a.nodes[id as usize].kind {
+            let id = self.paren()?;
+            match self.kind_at(id) {
                 K::List => {}
-                K::ParenthesizedExpression => self.a.nodes[id as usize].kind = K::List,
+                K::ParenthesizedExpression => self.retype(id, K::List),
                 _ => return self.refuse(),
             }
             if self.punct(b",", K::TComma)?.is_none() {
                 break;
             }
         }
-        self.a.node(K::Values, m);
+        self.close(m);
         Ok(())
     }
 
     /// `select [all | distinct [on (…)]] terms`.
     fn select(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::Select, 0)?;
         self.expect(K::KeywordSelect)?;
         if self.kw(K::KeywordAll)?.is_none() && self.kw(K::KeywordDistinct)?.is_some() && self.kw(K::KeywordOn)?.is_some() {
             self.expect_punct(b"(", K::TLParen)?;
@@ -310,7 +311,7 @@ impl P<'_> {
         if !self.ends_select()? {
             self.select_expression()?;
         }
-        self.a.node(K::Select, m);
+        self.close(m);
         Ok(())
     }
 
@@ -330,19 +331,19 @@ impl P<'_> {
 
     /// `select_expression`: terms, `,` between them.
     pub(super) fn select_expression(&mut self) -> R<u32> {
-        let m = self.a.mark();
+        let m = self.open(K::SelectExpression, 0)?;
         loop {
             self.term()?;
             if self.punct(b",", K::TComma)?.is_none() {
                 break;
             }
         }
-        Ok(self.a.node(K::SelectExpression, m))
+        Ok(self.close(m))
     }
 
     /// `from`: relations and joins, then the clauses after them.
     fn from(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::From, 0)?;
         self.expect(K::KeywordFrom)?;
         self.relation()?;
         loop {
@@ -360,16 +361,16 @@ impl P<'_> {
             self.window_clause()?;
         }
         self.tail()?;
-        self.a.node(K::From, m);
+        self.close(m);
         Ok(())
     }
 
     /// `where predicate`.
     pub(super) fn where_(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::Where, 0)?;
         self.expect(K::KeywordWhere)?;
         self.expr(0, f::PREDICATE)?;
-        self.a.node(K::Where, m);
+        self.close(m);
         Ok(())
     }
 
@@ -377,7 +378,7 @@ impl P<'_> {
     /// (`cube_rollup_clause`), `grouping sets (…)` (`grouping_sets_clause`).
     fn group_by_items(&mut self) -> R<()> {
         loop {
-            let m = self.a.mark();
+            let m = self.mark()?;
             if (self.is(K::KeywordRollup)? || self.is(K::KeywordCube)?) && self.next_is_paren()? {
                 if self.kw(K::KeywordRollup)?.is_none() {
                     self.expect(K::KeywordCube)?;
@@ -390,14 +391,14 @@ impl P<'_> {
                     }
                 }
                 self.expect_punct(b")", K::TRParen)?;
-                self.a.node(K::CubeRollupClause, m);
+                self.node(K::CubeRollupClause, m);
             } else if self.is(K::KeywordGrouping)? && self.next_is(K::KeywordSets)? {
                 self.expect(K::KeywordGrouping)?;
                 self.expect(K::KeywordSets)?;
                 self.expect_punct(b"(", K::TLParen)?;
                 self.group_by_items()?;
                 self.expect_punct(b")", K::TRParen)?;
-                self.a.node(K::GroupingSetsClause, m);
+                self.node(K::GroupingSetsClause, m);
             } else {
                 self.expr(0, 0)?;
             }
@@ -410,7 +411,7 @@ impl P<'_> {
     /// `group by …` (with its `having`), or a `having` alone.
     fn group_or_having(&mut self) -> R<()> {
         if self.is(K::KeywordGroup)? {
-            let m = self.a.mark();
+            let m = self.open(K::GroupBy, 0)?;
             self.expect(K::KeywordGroup)?;
             self.expect(K::KeywordBy)?;
             if self.is(K::KeywordAll)? || self.is(K::KeywordDistinct)? {
@@ -420,7 +421,7 @@ impl P<'_> {
             if self.kw(K::KeywordHaving)?.is_some() {
                 self.expr(0, 0)?;
             }
-            self.a.node(K::GroupBy, m);
+            self.close(m);
         } else if self.kw(K::KeywordHaving)?.is_some() {
             self.expr(0, 0)?;
         }
@@ -437,7 +438,7 @@ impl P<'_> {
 
     /// `window w as (…), …`.
     fn window_clause(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::WindowClause, 0)?;
         self.expect(K::KeywordWindow)?;
         loop {
             self.expect_ident(NONE, 0)?;
@@ -447,20 +448,20 @@ impl P<'_> {
                 break;
             }
         }
-        self.a.node(K::WindowClause, m);
+        self.close(m);
         Ok(())
     }
 
     /// `(w partition by … order by … frame)`, each part optional.
     pub(super) fn window_specification(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::WindowSpecification, 0)?;
         self.expect_punct(b"(", K::TLParen)?;
         let t = self.peek()?;
         if matches!(t.t, T::Word | T::Quoted) && !self.is(K::KeywordPartition)? && !self.is(K::KeywordOrder)? && !self.is(K::KeywordRows)? && !self.is(K::KeywordRange)? && !self.is(K::KeywordGroups)? {
             self.expect_ident(Ctx::Unsure(&[]), 0)?;
         }
         if self.is(K::KeywordPartition)? {
-            let p = self.a.mark();
+            let p = self.open(K::PartitionBy, 0)?;
             self.expect(K::KeywordPartition)?;
             self.expect(K::KeywordBy)?;
             loop {
@@ -469,7 +470,7 @@ impl P<'_> {
                     break;
                 }
             }
-            self.a.node(K::PartitionBy, p);
+            self.close(p);
         }
         if self.is(K::KeywordOrder)? {
             self.order_by()?;
@@ -478,13 +479,13 @@ impl P<'_> {
             self.window_frame()?;
         }
         self.expect_punct(b")", K::TRParen)?;
-        self.a.node(K::WindowSpecification, m);
+        self.close(m);
         Ok(())
     }
 
     /// `rows | range | groups [between] frame [and frame]`; `exclude` is refused.
     fn window_frame(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::WindowFrame, 0)?;
         let k = self.words()?.first().map(|&(_, k)| k).unwrap_or(K::KeywordRows);
         self.expect(k)?;
         if self.kw(K::KeywordBetween)?.is_some() {
@@ -498,14 +499,14 @@ impl P<'_> {
         if self.is(K::KeywordExclude)? {
             return self.refuse();
         }
-        self.a.node(K::WindowFrame, m);
+        self.close(m);
         Ok(())
     }
 
     /// `unbounded preceding | following`, `current row`, `n preceding | following` (a number or a
     /// name; other expressions are refused).
     fn frame_definition(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::FrameDefinition, 0)?;
         if self.kw(K::KeywordUnbounded)?.is_some() {
             if self.kw(K::KeywordPreceding)?.is_none() {
                 self.expect(K::KeywordFollowing)?;
@@ -519,39 +520,48 @@ impl P<'_> {
             }
             self.take(t);
             let field = if self.is(K::KeywordPreceding)? { f::START } else { f::END };
-            self.a.leaf(K::Literal, field, t.s, t.e);
+            self.leaf(K::Literal, field, t.s, t.e);
             if self.kw(K::KeywordPreceding)?.is_none() {
                 self.expect(K::KeywordFollowing)?;
             }
         }
-        self.a.node(K::FrameDefinition, m);
+        self.close(m);
+        Ok(())
+    }
+
+    /// `direction`: `asc` or `desc`, next.
+    fn direction(&mut self) -> R<()> {
+        let d = self.open(K::Direction, 0)?;
+        if self.kw(K::KeywordAsc)?.is_none() {
+            self.expect(K::KeywordDesc)?;
+        }
+        self.close(d);
         Ok(())
     }
 
     /// `order by target, …`.
     pub(super) fn order_by(&mut self) -> R<()> {
         {
-            let m = self.a.mark();
+            let m = self.open(K::OrderBy, 0)?;
             self.expect(K::KeywordOrder)?;
             self.expect(K::KeywordBy)?;
             loop {
-                let t = self.a.mark();
+                let t = self.open(K::OrderTarget, 0)?;
                 self.expr(0, 0)?;
-                if self.kw(K::KeywordAsc)?.is_some() || self.kw(K::KeywordDesc)?.is_some() {
-                    let d = self.a.mark() - 1;
-                    self.a.node(K::Direction, d);
+                if self.is(K::KeywordAsc)? || self.is(K::KeywordDesc)? {
+                    self.direction()?;
                 } else if self.is(K::KeywordUsing)? {
                     return self.refuse();
                 }
                 if self.kw(K::KeywordNulls)?.is_some() && self.kw(K::KeywordFirst)?.is_none() {
                     self.expect(K::KeywordLast)?;
                 }
-                self.a.node(K::OrderTarget, t);
+                self.close(t);
                 if self.punct(b",", K::TComma)?.is_none() {
                     break;
                 }
             }
-            self.a.node(K::OrderBy, m);
+            self.close(m);
         }
         Ok(())
     }
@@ -559,7 +569,7 @@ impl P<'_> {
     /// `limit`, `offset` (and `fetch`, `for`, refused).
     fn limit_offset(&mut self) -> R<()> {
         if self.is(K::KeywordLimit)? {
-            let m = self.a.mark();
+            let m = self.open(K::Limit, 0)?;
             self.expect(K::KeywordLimit)?;
             if self.kw(K::KeywordAll)?.is_none() {
                 self.expr(0, 0)?;
@@ -567,7 +577,7 @@ impl P<'_> {
             if self.is(K::KeywordOffset)? {
                 self.offset()?;
             }
-            self.a.node(K::Limit, m);
+            self.close(m);
         } else if self.is(K::KeywordOffset)? {
             self.offset()?;
             if self.is(K::KeywordLimit)? {
@@ -576,7 +586,7 @@ impl P<'_> {
         }
         if self.is(K::KeywordFetch)? {
             // `fetch_clause`: `fetch first|next [n] row|rows only|with ties`.
-            let m = self.a.mark();
+            let m = self.open(K::FetchClause, 0)?;
             self.expect(K::KeywordFetch)?;
             if self.kw(K::KeywordFirst)?.is_none() {
                 self.expect(K::KeywordNext)?;
@@ -591,12 +601,12 @@ impl P<'_> {
                 self.expect(K::KeywordWith)?;
                 self.expect(K::KeywordTies)?;
             }
-            self.a.node(K::FetchClause, m);
+            self.close(m);
         }
         // `for_clause`s: `for update | no key update | share | key share [of t, …] [nowait | skip
         // locked]`. A `limit` after them is refused.
         while self.is(K::KeywordFor)? {
-            let m = self.a.mark();
+            let m = self.open(K::ForClause, 0)?;
             self.expect(K::KeywordFor)?;
             if self.kw(K::KeywordUpdate)?.is_none() && self.kw(K::KeywordShare)?.is_none() {
                 if self.kw(K::KeywordNo)?.is_some() {
@@ -620,7 +630,7 @@ impl P<'_> {
             if self.kw(K::KeywordNowait)?.is_none() && self.kw(K::KeywordSkip)?.is_some() {
                 self.expect(K::KeywordLocked)?;
             }
-            self.a.node(K::ForClause, m);
+            self.close(m);
             if self.is(K::KeywordLimit)? || self.is(K::KeywordOffset)? || self.is(K::KeywordFetch)? {
                 return self.refuse();
             }
@@ -630,7 +640,7 @@ impl P<'_> {
 
     /// `lock [table] [only] t [*], … [in mode mode] [nowait]`.
     fn lock_table(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::LockTableStatement, 0)?;
         self.expect(K::KeywordLock)?;
         self.kw(K::KeywordTable)?;
         loop {
@@ -669,24 +679,24 @@ impl P<'_> {
             self.expect(K::KeywordMode)?;
         }
         self.kw(K::KeywordNowait)?;
-        self.a.node(K::LockTableStatement, m);
+        self.close(m);
         Ok(())
     }
 
     fn offset(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::Offset, 0)?;
         self.expect(K::KeywordOffset)?;
         self.expr(0, 0)?;
         if self.kw(K::KeywordRow)?.is_none() {
             self.kw(K::KeywordRows)?;
         }
-        self.a.node(K::Offset, m);
+        self.close(m);
         Ok(())
     }
 
     /// `relation`: a table (with its alias), a subquery, or a function.
     fn relation(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.mark()?;
         if self.at_punct(b"(")? {
             let save = (self.at, self.last_end, self.look);
             let t = self.peek()?;
@@ -699,8 +709,8 @@ impl P<'_> {
                 self.values()?;
                 self.expect_punct(b")", K::TRParen)?;
             } else {
-                let id = self.paren(false)?;
-                if self.a.nodes[id as usize].kind != K::Subquery {
+                let id = self.paren()?;
+                if self.kind_at(id) != K::Subquery {
                     return self.refuse();
                 }
             }
@@ -714,7 +724,7 @@ impl P<'_> {
                 }
                 self.expect(K::KeywordLateral)?;
                 self.lateral_item(false)?;
-                self.a.node(K::Relation, m);
+                self.node(K::Relation, m);
                 return Ok(());
             }
             if self.is(K::KeywordOnly)? || self.is(K::KeywordRows)? {
@@ -723,7 +733,7 @@ impl P<'_> {
             // A function in `from` (`_func_table`: an invocation), or a table.
             if self.is_call()? {
                 self.func_table()?;
-                self.a.node(K::Relation, m);
+                self.node(K::Relation, m);
                 return Ok(());
             }
             if self.object_reference(Ctx::Sure(&[&[K::KeywordOnly, K::KeywordLateral, K::KeywordRows]]), 0)?.is_none() {
@@ -734,7 +744,7 @@ impl P<'_> {
             }
             self.relation_alias()?;
         }
-        self.a.node(K::Relation, m);
+        self.node(K::Relation, m);
         Ok(())
     }
 
@@ -773,23 +783,23 @@ impl P<'_> {
 
     /// `_func_table` and its `_func_alias`: an invocation, then an alias and its columns.
     fn func_table(&mut self) -> R<()> {
-        self.expr(prec::TYPECAST + 1, 0)?;
-        if self.a.nodes[*self.a.stack.last().expect("an expression") as usize].kind != K::Invocation {
+        let e = self.expr(prec::TYPECAST + 1, 0)?;
+        if self.kind_at(e) != K::Invocation {
             return self.refuse();
         }
         if self.is(K::KeywordWith)? {
             return self.refuse();
         }
-        let before = self.a.mark();
-        if self.kw(K::KeywordAs)?.is_some() {
+        let aliased = if self.kw(K::KeywordAs)?.is_some() {
             if self.at_punct(b"(")? {
                 return self.refuse();
             }
             self.expect_ident(NONE, f::ALIAS)?;
+            true
         } else {
-            self.ident(Ctx::Unsure(&[AFTER_RELATION]), f::ALIAS)?;
-        }
-        if self.a.mark() > before && self.at_punct(b"(")? {
+            self.ident(Ctx::Unsure(&[AFTER_RELATION]), f::ALIAS)?.is_some()
+        };
+        if aliased && self.at_punct(b"(")? {
             self.column_list()?;
         }
         Ok(())
@@ -799,8 +809,8 @@ impl P<'_> {
     /// (`on_next`), a bare alias is followed by `on`, so any other keyword is a name.
     fn lateral_item(&mut self, on_next: bool) -> R<()> {
         if self.at_punct(b"(")? {
-            let id = self.paren(false)?;
-            if self.a.nodes[id as usize].kind != K::Subquery {
+            let id = self.paren()?;
+            if self.kind_at(id) != K::Subquery {
                 return self.refuse();
             }
             if on_next && !self.is(K::KeywordAs)? && !self.is(K::KeywordOn)? {
@@ -820,17 +830,17 @@ impl P<'_> {
 
     /// `_relation_alias`: an alias and its column list.
     fn relation_alias(&mut self) -> R<()> {
-        let before = self.a.mark();
-        if self.kw(K::KeywordAs)?.is_some() {
+        let aliased = if self.kw(K::KeywordAs)?.is_some() {
             let t = self.peek()?;
             if t.t == T::Str && self.byte(t.s) == b'\'' {
                 return self.refuse();
             }
             self.expect_ident(NONE, f::ALIAS)?;
+            true
         } else {
-            self.ident(Ctx::Unsure(&[AFTER_RELATION]), f::ALIAS)?;
-        }
-        if self.a.mark() > before && self.at_punct(b"(")? {
+            self.ident(Ctx::Unsure(&[AFTER_RELATION]), f::ALIAS)?.is_some()
+        };
+        if aliased && self.at_punct(b"(")? {
             self.column_list()?;
         }
         Ok(())
@@ -838,22 +848,22 @@ impl P<'_> {
 
     /// `_column_list` as a `list`: `(a, b)`, each a `column`.
     fn column_list(&mut self) -> R<u32> {
-        let m = self.a.mark();
+        let m = self.open(K::List, 0)?;
         self.expect_punct(b"(", K::TLParen)?;
         loop {
-            let c = self.a.mark();
+            let c = self.open(K::Column, 0)?;
             let t = self.peek()?;
             if t.t == T::Str {
                 return self.refuse();
             }
             self.expect_ident(NONE, 0)?;
-            self.a.node(K::Column, c);
+            self.close(c);
             if self.punct(b",", K::TComma)?.is_none() {
                 break;
             }
         }
         self.expect_punct(b")", K::TRParen)?;
-        Ok(self.a.node(K::List, m))
+        Ok(self.close(m))
     }
 
     /// A join, where one is next: `[natural] [left|right|full [outer]|inner] join relation [on …|using (…)]`.
@@ -863,21 +873,21 @@ impl P<'_> {
         if !ws.iter().any(|&(_, k)| joins.contains(&k)) {
             return Ok(false);
         }
-        let m = self.a.mark();
+        let m = self.mark()?;
         if self.is(K::KeywordCross)? {
             self.expect(K::KeywordCross)?;
             self.expect(K::KeywordJoin)?;
             if self.is(K::KeywordLateral)? && (self.next_is_paren()? || self.next_is_call()?) {
                 self.expect(K::KeywordLateral)?;
                 self.lateral_item(false)?;
-                self.a.node(K::LateralCrossJoin, m);
+                self.node(K::LateralCrossJoin, m);
                 return Ok(true);
             }
             if self.is(K::KeywordLateral)? {
                 return self.refuse();
             }
             self.relation()?;
-            self.a.node(K::CrossJoin, m);
+            self.node(K::CrossJoin, m);
             return Ok(true);
         }
         // `lateral_join` takes `[left [outer] | inner] join lateral`; a natural, right or full join
@@ -897,7 +907,7 @@ impl P<'_> {
             self.lateral_item(true)?;
             self.expect(K::KeywordOn)?;
             self.expr(0, 0)?;
-            self.a.node(K::LateralJoin, m);
+            self.node(K::LateralJoin, m);
             return Ok(true);
         }
         if self.is(K::KeywordLateral)? {
@@ -919,7 +929,7 @@ impl P<'_> {
                 return self.refuse();
             }
         }
-        self.a.node(K::Join, m);
+        self.node(K::Join, m);
         Ok(true)
     }
 
@@ -935,10 +945,10 @@ impl P<'_> {
             self.delete()?;
         }
         if self.is(K::KeywordReturning)? {
-            let m = self.a.mark();
+            let m = self.open(K::Returning, 0)?;
             self.expect(K::KeywordReturning)?;
             self.select_expression()?;
-            self.a.node(K::Returning, m);
+            self.close(m);
         }
         Ok(())
     }
@@ -950,7 +960,7 @@ impl P<'_> {
 
     /// `insert into t [(columns)] values … | query`.
     fn insert(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.mark()?;
         self.expect(K::KeywordInsert)?;
         self.expect(K::KeywordInto)?;
         self.object_reference(NONE, 0)?.map_or_else(|| self.refuse(), |_| Ok(()))?;
@@ -963,7 +973,7 @@ impl P<'_> {
             if self.is(K::KeywordOn)? {
                 return self.refuse();
             }
-            self.a.node(K::Insert, m);
+            self.node(K::Insert, m);
             return Ok(());
         }
         if self.at_punct(b"(")? {
@@ -987,10 +997,10 @@ impl P<'_> {
                 if !self.at_punct(b"(")? {
                     return self.refuse();
                 }
-                let id = self.paren(false)?;
-                match self.a.nodes[id as usize].kind {
+                let id = self.paren()?;
+                match self.kind_at(id) {
                     K::List => {}
-                    K::ParenthesizedExpression => self.a.nodes[id as usize].kind = K::List,
+                    K::ParenthesizedExpression => self.retype(id, K::List),
                     _ => return self.refuse(),
                 }
                 if self.punct(b",", K::TComma)?.is_none() {
@@ -1005,13 +1015,13 @@ impl P<'_> {
         if self.is(K::KeywordOn)? {
             self.on_conflict()?;
         }
-        self.a.node(K::Insert, m);
+        self.node(K::Insert, m);
         Ok(())
     }
 
     /// `update t set a = …, … [from …] [where …]`.
     fn update(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::Update, 0)?;
         self.expect(K::KeywordUpdate)?;
         if self.is(K::KeywordOnly)? {
             return self.refuse();
@@ -1026,7 +1036,7 @@ impl P<'_> {
         } else if self.is(K::KeywordWhere)? {
             self.where_()?;
         }
-        self.a.node(K::Update, m);
+        self.close(m);
         Ok(())
     }
 
@@ -1067,33 +1077,24 @@ impl P<'_> {
 
     /// `_set_target`: a field (`a`, `t.a`, `s.t.a`). A subscript is refused.
     fn set_target(&mut self) -> R<u32> {
-        let n = self.a.mark();
-        let first = self.expect_ident(NONE, f::NAME)?;
-        let mut parts = [first; 4];
-        let mut k = 1;
-        while self.at_punct(b".")? {
-            let t = self.peek()?;
-            self.take(Tok { e: t.s + 1, ..t });
-            if k == 4 {
-                return self.refuse();
-            }
-            parts[k] = self.expect_ident(NONE, f::NAME)?;
-            k += 1;
+        let n = self.mark()?;
+        let Some(d) = self.dotted(NONE, 4)? else { return self.refuse() };
+        if self.at_punct(b".")? {
+            return self.refuse();
         }
-        let parts = &parts[..k];
-        self.a.stack.truncate(n);
-        match parts.len() {
-            1 => self.a.stack.push(parts[0]),
+        match d.n {
+            1 => {
+                self.leaf(K::Identifier, f::NAME, d.parts[0].0, d.parts[0].1);
+            }
             2 | 3 => {
-                let (head, name) = parts.split_at(parts.len() - 1);
-                self.push_reference(head, 0);
-                let d = self.dot_before(name[0]);
-                self.a.leaf(K::TDot, 0, d, d + 1);
-                self.a.stack.push(name[0]);
+                self.write_reference(&d, d.n - 1, 0);
+                let dot = d.dots[d.n - 1];
+                self.token(K::TDot, 0, dot, dot + 1);
+                self.leaf(K::Identifier, f::NAME, d.parts[d.n - 1].0, d.parts[d.n - 1].1);
             }
             _ => return self.refuse(),
         }
-        let id = self.a.node(K::Field, n);
+        let id = self.node(K::Field, n);
         if self.at_punct(b"[")? {
             return self.refuse();
         }
@@ -1103,10 +1104,10 @@ impl P<'_> {
     fn set_values(&mut self) -> R<()> {
         self.expect(K::KeywordSet)?;
         loop {
-            let m = self.a.mark();
+            let m = self.open(K::Assignment, 0)?;
             if self.at_punct(b"(")? {
                 // `(a, b) = e`: `_set_target_list`, aliased `list`.
-                let l = self.a.mark();
+                let l = self.open(K::List, 0)?;
                 self.expect_punct(b"(", K::TLParen)?;
                 loop {
                     self.set_target()?;
@@ -1115,15 +1116,15 @@ impl P<'_> {
                     }
                 }
                 self.expect_punct(b")", K::TRParen)?;
-                let id = self.a.node(K::List, l);
-                self.a.set_field(id, f::LEFT);
+                let id = self.close(l);
+                self.set_field(id, f::LEFT);
             } else {
                 let id = self.set_target()?;
-                self.a.set_field(id, f::LEFT);
+                self.set_field(id, f::LEFT);
             }
             self.expect_punct(b"=", K::TEq)?;
             self.expr(0, f::RIGHT)?;
-            self.a.node(K::Assignment, m);
+            self.close(m);
             if self.punct(b",", K::TComma)?.is_none() {
                 break;
             }
@@ -1133,10 +1134,10 @@ impl P<'_> {
 
     /// `delete from t [where …]`: `delete`, then `_delete_from` as a `from`.
     fn delete(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.mark()?;
         self.expect(K::KeywordDelete)?;
-        self.a.node(K::Delete, m);
-        let m = self.a.mark();
+        self.node(K::Delete, m);
+        let m = self.open(K::From, 0)?;
         self.expect(K::KeywordFrom)?;
         if self.is(K::KeywordOnly)? {
             return self.refuse();
@@ -1162,7 +1163,7 @@ impl P<'_> {
         if self.is(K::KeywordOrder)? || self.is(K::KeywordLimit)? {
             return self.refuse();
         }
-        self.a.node(K::From, m);
+        self.close(m);
         Ok(())
     }
 
@@ -1226,7 +1227,7 @@ impl P<'_> {
 
     /// `create [temporary | unlogged] table [if not exists] t (columns and constraints) | as query`.
     fn create_table(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::CreateTable, 0)?;
         self.expect(K::KeywordCreate)?;
         if self.kw(K::KeywordTemp)?.is_none() && self.kw(K::KeywordTemporary)?.is_none() {
             self.kw(K::KeywordUnlogged)?;
@@ -1261,12 +1262,12 @@ impl P<'_> {
             }
         } else if self.is(K::KeywordAs)? {
             self.expect(K::KeywordAs)?;
-            let q = self.a.mark();
+            let q = self.open(K::CreateQuery, 0)?;
             if !self.is(K::KeywordSelect)? && !self.is(K::KeywordWith)? && !self.is(K::KeywordValues)? {
                 return self.refuse();
             }
             self.dml_read()?;
-            self.a.node(K::CreateQuery, q);
+            self.close(q);
             if self.is(K::KeywordWith)? {
                 return self.refuse();
             }
@@ -1277,14 +1278,14 @@ impl P<'_> {
         if !ws.is_empty() {
             return self.refuse();
         }
-        self.a.node(K::CreateTable, m);
+        self.close(m);
         Ok(())
     }
 
     /// `table_partition`: `partition by range | hash | list (key, …)`, a key a name, an invocation or
     /// `(e)`, with an operator class. `collate` is refused.
     fn table_partition(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.mark()?;
         self.expect(K::KeywordPartition)?;
         self.expect(K::KeywordBy)?;
         if self.kw(K::KeywordRange)?.is_none() && self.kw(K::KeywordHash)?.is_none() {
@@ -1297,8 +1298,9 @@ impl P<'_> {
                 self.expr(0, 0)?;
                 self.expect_punct(b")", K::TRParen)?;
             } else if self.is_call()? {
+                let m = self.mark()?;
                 self.atom(false)?;
-                if self.a.nodes[*self.a.stack.last().expect("an atom") as usize].kind != K::Invocation {
+                if self.kind_at(self.mark_child(m)) != K::Invocation {
                     return self.refuse();
                 }
             } else {
@@ -1316,16 +1318,16 @@ impl P<'_> {
             }
         }
         self.expect_punct(b")", K::TRParen)?;
-        self.a.node(K::TablePartition, m);
+        self.node(K::TablePartition, m);
         Ok(())
     }
 
     /// `storage_parameters`: `with (name [= value], …)`.
     fn storage_parameters(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::StorageParameters, 0)?;
         self.expect(K::KeywordWith)?;
         self.storage_parameter_list()?;
-        self.a.node(K::StorageParameters, m);
+        self.close(m);
         Ok(())
     }
 
@@ -1384,7 +1386,7 @@ impl P<'_> {
 
     /// `_table_elements` as `column_definitions`: `(column definitions, constraints)`.
     fn table_elements(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::ColumnDefinitions, 0)?;
         self.expect_punct(b"(", K::TLParen)?;
         if !self.at_punct(b")")? {
             loop {
@@ -1392,7 +1394,7 @@ impl P<'_> {
                 let starts: &[K] = &[K::KeywordConstraint, K::KeywordPrimary, K::KeywordUnique, K::KeywordCheck, K::KeywordForeign, K::KeywordExclude, K::KeywordLike];
                 if ws.iter().any(|&(_, k)| k == K::KeywordLike) {
                     // `like t [including | excluding what]…`: `table_like_clause`.
-                    let c = self.a.mark();
+                    let c = self.open(K::TableLikeClause, 0)?;
                     self.expect(K::KeywordLike)?;
                     if self.object_reference(NONE, 0)?.is_none() {
                         return self.refuse();
@@ -1403,7 +1405,7 @@ impl P<'_> {
                         let Some(&(_, k)) = ws.iter().find(|&&(_, k)| what.contains(&k)) else { return self.refuse() };
                         self.expect(k)?;
                     }
-                    self.a.node(K::TableLikeClause, c);
+                    self.close(c);
                 } else if ws.iter().any(|&(_, k)| starts.contains(&k)) {
                     self.table_constraint()?;
                 } else {
@@ -1415,13 +1417,13 @@ impl P<'_> {
             }
         }
         self.expect_punct(b")", K::TRParen)?;
-        self.a.node(K::ColumnDefinitions, m);
+        self.close(m);
         Ok(())
     }
 
     /// `column_definition`: a name, a type, its constraints.
     fn column_definition(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::ColumnDefinition, 0)?;
         let t = self.peek()?;
         if t.t == T::Str {
             return self.refuse();
@@ -1430,7 +1432,7 @@ impl P<'_> {
         if ws.iter().any(|&(_, k)| matches!(k, K::KeywordKey | K::KeywordIndex)) {
             // `@identifier{keyword_key | keyword_index}`: an identifier.
             self.take(t);
-            self.a.leaf(K::Identifier, f::NAME, t.s, t.e);
+            self.leaf(K::Identifier, f::NAME, t.s, t.e);
         } else {
             self.expect_ident(Ctx::Sure(&[&[K::KeywordConstraint, K::KeywordPrimary, K::KeywordUnique, K::KeywordCheck, K::KeywordForeign, K::KeywordExclude, K::KeywordLike, K::KeywordNot]]), f::NAME)?;
         }
@@ -1440,7 +1442,7 @@ impl P<'_> {
                 break;
             }
         }
-        self.a.node(K::ColumnDefinition, m);
+        self.close(m);
         Ok(())
     }
 
@@ -1554,13 +1556,13 @@ impl P<'_> {
 
     /// A table's `constraint`: `[constraint name] primary key (…) | unique (…) | foreign key (…) references … | check (…)`.
     fn table_constraint(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::Constraint, 0)?;
         if self.kw(K::KeywordConstraint)?.is_some() {
             self.expect_ident(NONE, f::NAME)?;
         }
         self.constraint_body()?;
         self.constraint_attributes()?;
-        self.a.node(K::Constraint, m);
+        self.close(m);
         Ok(())
     }
 
@@ -1638,27 +1640,27 @@ impl P<'_> {
 
     /// `ordered_columns`: `(a, b)`, each an `ordered_column` aliased `column`.
     fn ordered_columns(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::OrderedColumns, 0)?;
         self.expect_punct(b"(", K::TLParen)?;
         loop {
-            let c = self.a.mark();
+            let c = self.open(K::Column, 0)?;
             self.expect_ident(NONE, f::NAME)?;
             if self.is(K::KeywordAsc)? || self.is(K::KeywordDesc)? || self.at_punct(b"(")? {
                 return self.refuse();
             }
-            self.a.node(K::Column, c);
+            self.close(c);
             if self.punct(b",", K::TComma)?.is_none() {
                 break;
             }
         }
         self.expect_punct(b")", K::TRParen)?;
-        self.a.node(K::OrderedColumns, m);
+        self.close(m);
         Ok(())
     }
 
     /// `create [unique] index [concurrently] [[if not exists] name] on t [using m] (fields)`.
     fn create_index(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.mark()?;
         self.expect(K::KeywordCreate)?;
         self.kw(K::KeywordUnique)?;
         self.expect(K::KeywordIndex)?;
@@ -1688,10 +1690,10 @@ impl P<'_> {
             }
         }
         // `index_fields`.
-        let n = self.a.mark();
+        let n = self.open(K::IndexFields, 0)?;
         self.expect_punct(b"(", K::TLParen)?;
         loop {
-            let fm = self.a.mark();
+            let fm = self.open(K::Field, 0)?;
             if self.at_punct(b"(")? {
                 return self.refuse();
             }
@@ -1706,12 +1708,13 @@ impl P<'_> {
             (self.at, self.last_end, self.look) = save;
             if call {
                 // `function:invocation` (`lower(email)`).
+                let m = self.mark()?;
                 self.atom(false)?;
-                let id = *self.a.stack.last().expect("an atom");
-                if self.a.nodes[id as usize].kind != K::Invocation {
+                let id = self.mark_child(m);
+                if self.kind_at(id) != K::Invocation {
                     return self.refuse();
                 }
-                self.a.set_field(id, f::FUNCTION);
+                self.set_field(id, f::FUNCTION);
             } else {
                 self.expect_ident(NONE, f::COLUMN)?;
             }
@@ -1727,34 +1730,33 @@ impl P<'_> {
                     return self.refuse();
                 }
             }
-            if self.kw(K::KeywordAsc)?.is_some() || self.kw(K::KeywordDesc)?.is_some() {
-                let d = self.a.mark() - 1;
-                self.a.node(K::Direction, d);
+            if self.is(K::KeywordAsc)? || self.is(K::KeywordDesc)? {
+                self.direction()?;
             }
             if self.kw(K::KeywordNulls)?.is_some() && self.kw(K::KeywordFirst)?.is_none() {
                 self.expect(K::KeywordLast)?;
             }
-            self.a.node(K::Field, fm);
+            self.close(fm);
             if self.punct(b",", K::TComma)?.is_none() {
                 break;
             }
         }
         self.expect_punct(b")", K::TRParen)?;
-        self.a.node(K::IndexFields, n);
+        self.close(n);
         if self.is(K::KeywordInclude)? || self.is(K::KeywordNulls)? || self.is(K::KeywordWith)? || self.is(K::KeywordTablespace)? {
             return self.refuse();
         }
         if self.is(K::KeywordWhere)? {
             self.where_()?;
         }
-        self.a.node(K::CreateIndex, m);
+        self.node(K::CreateIndex, m);
         Ok(())
     }
 
     /// `create domain d [as] type`, then `domain_constraint`s (`[constraint c] not null | null |
     /// check (e) [no inherit] | default e`) and `collate c`.
     fn create_domain(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::CreateDomain, 0)?;
         self.expect(K::KeywordCreate)?;
         self.expect(K::KeywordDomain)?;
         if self.object_reference(Ctx::Sure(&[&[K::KeywordAs]]), 0)?.is_none() {
@@ -1769,7 +1771,7 @@ impl P<'_> {
                 }
                 continue;
             }
-            let c = self.a.mark();
+            let c = self.mark()?;
             if self.kw(K::KeywordConstraint)?.is_some() {
                 self.expect_ident(NONE, 0)?;
             }
@@ -1786,20 +1788,20 @@ impl P<'_> {
                 }
             } else if self.kw(K::KeywordDefault)?.is_some() {
                 self.expr(0, 0)?;
-            } else if self.a.mark() > c {
+            } else if self.read_since(c) {
                 return self.refuse();
             } else {
                 break;
             }
-            self.a.node(K::DomainConstraint, c);
+            self.node(K::DomainConstraint, c);
         }
-        self.a.node(K::CreateDomain, m);
+        self.close(m);
         Ok(())
     }
 
     /// `create [or replace] function f(arguments) [returns type] options and body`.
     fn create_function(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::CreateFunction, 0)?;
         self.expect(K::KeywordCreate)?;
         if self.kw(K::KeywordOr)?.is_some() {
             self.expect(K::KeywordReplace)?;
@@ -1833,13 +1835,13 @@ impl P<'_> {
                 continue;
             }
             if !body && self.is(K::KeywordAs)? {
-                let b = self.a.mark();
+                let b = self.mark()?;
                 self.expect(K::KeywordAs)?;
                 self.function_string()?;
                 if self.punct(b",", K::TComma)?.is_some() {
                     self.function_string()?;
                 }
-                self.a.node(K::FunctionBody, b);
+                self.node(K::FunctionBody, b);
                 body = true;
                 continue;
             }
@@ -1851,7 +1853,7 @@ impl P<'_> {
         if !body {
             return self.refuse();
         }
-        self.a.node(K::CreateFunction, m);
+        self.close(m);
         Ok(())
     }
 
@@ -1870,11 +1872,11 @@ impl P<'_> {
 
     /// `function_arguments`: `(argument, …)`, each `[mode] [name] type [default x]`.
     fn function_arguments(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::FunctionArguments, 0)?;
         self.expect_punct(b"(", K::TLParen)?;
         if !self.at_punct(b")")? {
             loop {
-                let a = self.a.mark();
+                let a = self.mark()?;
                 // `_argmode`.
                 if self.kw(K::KeywordIn)?.is_some() {
                     self.kw(K::KeywordOut)?;
@@ -1900,7 +1902,7 @@ impl P<'_> {
                         }
                         if follows {
                             self.take(t);
-                            self.a.leaf(K::Identifier, 0, t.s, t.e);
+                            self.leaf(K::Identifier, 0, t.s, t.e);
                         }
                     }
                 }
@@ -1908,14 +1910,14 @@ impl P<'_> {
                 if self.kw(K::KeywordDefault)?.is_some() || self.punct(b"=", K::TEq)?.is_some() {
                     self.expr(0, 0)?;
                 }
-                self.a.node(K::FunctionArgument, a);
+                self.node(K::FunctionArgument, a);
                 if self.punct(b",", K::TComma)?.is_none() {
                     break;
                 }
             }
         }
         self.expect_punct(b")", K::TRParen)?;
-        self.a.node(K::FunctionArguments, m);
+        self.close(m);
         Ok(())
     }
 
@@ -1924,14 +1926,14 @@ impl P<'_> {
     fn function_option(&mut self) -> R<bool> {
         let ws = self.words()?;
         let Some(&(_, k)) = ws.first() else { return Ok(false) };
-        let m = self.a.mark();
+        let m = self.mark()?;
         let node = match k {
             K::KeywordLanguage => {
                 self.expect(k)?;
                 let t = self.peek()?;
                 if t.t == T::Str {
                     self.take(t);
-                    self.a.leaf(K::Literal, 0, t.s, t.e);
+                    self.leaf(K::Literal, 0, t.s, t.e);
                 } else {
                     self.expect_ident(NONE, 0)?;
                 }
@@ -1989,13 +1991,13 @@ impl P<'_> {
             K::KeywordWindow | K::KeywordSupport | K::KeywordSet | K::KeywordTransform => return self.refuse(),
             _ => return Ok(false),
         };
-        self.a.node(node, m);
+        self.node(node, m);
         Ok(true)
     }
 
     /// `create extension [if not exists] name [with] [schema s | version v | cascade]…`.
     fn create_extension(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::CreateExtension, 0)?;
         self.expect(K::KeywordCreate)?;
         self.expect(K::KeywordExtension)?;
         self.if_not_exists()?;
@@ -2008,7 +2010,7 @@ impl P<'_> {
                 let t = self.peek()?;
                 if t.t == T::Str {
                     self.take(t);
-                    self.a.leaf(K::Literal, 0, t.s, t.e);
+                    self.leaf(K::Literal, 0, t.s, t.e);
                 } else {
                     self.expect_ident(NONE, 0)?;
                 }
@@ -2016,13 +2018,13 @@ impl P<'_> {
                 break;
             }
         }
-        self.a.node(K::CreateExtension, m);
+        self.close(m);
         Ok(())
     }
 
     /// `create schema [if not exists] name [authorization role]`.
     fn create_schema(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::CreateSchema, 0)?;
         self.expect(K::KeywordCreate)?;
         self.expect(K::KeywordSchema)?;
         if self.kw(K::KeywordAuthorization)?.is_some() {
@@ -2037,13 +2039,13 @@ impl P<'_> {
         if self.is(K::KeywordCreate)? {
             return self.refuse();
         }
-        self.a.node(K::CreateSchema, m);
+        self.close(m);
         Ok(())
     }
 
     /// `create [or replace] [temporary] view v [(columns)] as query`.
     fn create_view(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::CreateView, 0)?;
         self.expect(K::KeywordCreate)?;
         if self.kw(K::KeywordOr)?.is_some() {
             self.expect(K::KeywordReplace)?;
@@ -2072,20 +2074,20 @@ impl P<'_> {
             return self.refuse();
         }
         self.expect(K::KeywordAs)?;
-        let q = self.a.mark();
+        let q = self.open(K::CreateQuery, 0)?;
         self.dml_read()?;
-        self.a.node(K::CreateQuery, q);
+        self.close(q);
         if self.is(K::KeywordWith)? {
             return self.refuse();
         }
-        self.a.node(K::CreateView, m);
+        self.close(m);
         Ok(())
     }
 
     /// `create [or replace] [unlogged] materialized view [if not exists] v [(columns)] [using m]
     /// [with (…)] [tablespace t] as query [with [no] data]`.
     fn create_materialized_view(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::CreateMaterializedView, 0)?;
         self.expect(K::KeywordCreate)?;
         if self.kw(K::KeywordOr)?.is_some() {
             self.expect(K::KeywordReplace)?;
@@ -2116,14 +2118,14 @@ impl P<'_> {
             self.expect_ident(NONE, f::TABLESPACE)?;
         }
         self.expect(K::KeywordAs)?;
-        let q = self.a.mark();
+        let q = self.open(K::CreateQuery, 0)?;
         self.dml_read()?;
-        self.a.node(K::CreateQuery, q);
+        self.close(q);
         if self.kw(K::KeywordWith)?.is_some() {
             self.kw(K::KeywordNo)?;
             self.expect(K::KeywordData)?;
         }
-        self.a.node(K::CreateMaterializedView, m);
+        self.close(m);
         Ok(())
     }
 
@@ -2131,7 +2133,7 @@ impl P<'_> {
     /// [for [each] row | statement] [when (e)] [from t] [deferrable …] execute function | procedure
     /// f(arguments)`. `referencing` and `follows`/`precedes` are refused.
     fn create_trigger(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::CreateTrigger, 0)?;
         self.expect(K::KeywordCreate)?;
         if self.kw(K::KeywordOr)?.is_some() {
             self.expect(K::KeywordReplace)?;
@@ -2223,20 +2225,20 @@ impl P<'_> {
         if !self.at_punct(b")")? {
             loop {
                 let id = self.term()?;
-                self.a.set_field(id, f::PARAMETER);
+                self.set_field(id, f::PARAMETER);
                 if self.punct(b",", K::TComma)?.is_none() {
                     break;
                 }
             }
         }
         self.expect_punct(b")", K::TRParen)?;
-        self.a.node(K::CreateTrigger, m);
+        self.close(m);
         Ok(())
     }
 
     /// `create [temporary | unlogged] sequence [if not exists] s options`.
     fn create_sequence(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::CreateSequence, 0)?;
         self.expect(K::KeywordCreate)?;
         if self.kw(K::KeywordTemp)?.is_none() && self.kw(K::KeywordTemporary)?.is_none() {
             self.kw(K::KeywordUnlogged)?;
@@ -2247,13 +2249,13 @@ impl P<'_> {
             return self.refuse();
         }
         self.sequence_options()?;
-        self.a.node(K::CreateSequence, m);
+        self.close(m);
         Ok(())
     }
 
     /// `alter sequence [if exists] s options` (at least one).
     fn alter_sequence(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::AlterSequence, 0)?;
         self.expect(K::KeywordAlter)?;
         self.expect(K::KeywordSequence)?;
         self.if_exists()?;
@@ -2263,7 +2265,7 @@ impl P<'_> {
         if self.sequence_options()? == 0 {
             return self.refuse();
         }
-        self.a.node(K::AlterSequence, m);
+        self.close(m);
         Ok(())
     }
 
@@ -2333,29 +2335,29 @@ impl P<'_> {
         let t = self.peek()?;
         if t.t == T::Num {
             self.take(t);
-            self.a.leaf(K::Literal, field, t.s, t.e);
+            self.leaf(K::Literal, field, t.s, t.e);
             return Ok(());
         }
         let c = self.byte(t.s);
         if t.t != T::Punct || !matches!(c, b'-' | b'+') || !self.op_len(t.s, 1) {
             return self.refuse();
         }
-        let m = self.a.mark();
+        let m = self.mark()?;
         self.take(Tok { e: t.s + 1, ..t });
-        self.a.leaf(if c == b'-' { K::TMinus } else { K::TPlus }, 0, t.s, t.s + 1);
+        self.leaf(if c == b'-' { K::TMinus } else { K::TPlus }, 0, t.s, t.s + 1);
         let n = self.peek()?;
         if n.t != T::Num {
             return self.refuse();
         }
         self.take(n);
         let id = self.node_span(K::Literal, m, t.s, n.e);
-        self.a.set_field(id, field);
+        self.set_field(id, field);
         Ok(())
     }
 
     /// `refresh materialized view [concurrently] v [with [no] data]`.
     fn refresh(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::RefreshStatement, 0)?;
         self.expect(K::KeywordRefresh)?;
         self.expect(K::KeywordMaterialized)?;
         self.expect(K::KeywordView)?;
@@ -2367,7 +2369,7 @@ impl P<'_> {
             self.kw(K::KeywordNo)?;
             self.expect(K::KeywordData)?;
         }
-        self.a.node(K::RefreshStatement, m);
+        self.close(m);
         Ok(())
     }
 
@@ -2395,7 +2397,6 @@ impl P<'_> {
 
     /// `drop table | view | index …`.
     fn drop(&mut self) -> R<()> {
-        let m = self.a.mark();
         let save = (self.at, self.last_end, self.look);
         let t = self.peek()?;
         self.take(t);
@@ -2418,6 +2419,7 @@ impl P<'_> {
         } else {
             return self.refuse();
         };
+        let m = self.open(node, 0)?;
         self.expect(K::KeywordDrop)?;
         self.expect(k)?;
         if node == K::DropMaterializedView {
@@ -2450,14 +2452,14 @@ impl P<'_> {
         if node == K::DropIndex && self.is(K::KeywordOn)? {
             return self.refuse();
         }
-        self.a.node(node, m);
+        self.close(m);
         Ok(())
     }
 
     /// `transaction`: `begin [work|transaction] [;] statement; … commit|rollback [work|transaction]`,
     /// pushed in the statement's place.
     fn transaction(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::Transaction, 0)?;
         self.expect(K::KeywordBegin)?;
         if self.kw(K::KeywordWork)?.is_none() {
             self.kw(K::KeywordTransaction)?;
@@ -2503,14 +2505,14 @@ impl P<'_> {
             self.statement()?;
             self.expect_punct(b";", K::TSemi)?;
         }
-        self.a.node(K::Transaction, m);
+        self.close(m);
         Ok(())
     }
 
     /// `transaction_statement`: `begin`, `commit`, `rollback [to savepoint] x`, `savepoint x`,
     /// `release [savepoint] x`, `start transaction`.
     fn transaction_statement(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::TransactionStatement, 0)?;
         let ws = self.words()?;
         let Some(&(_, k)) = ws.first() else { return self.refuse() };
         self.expect(k)?;
@@ -2563,13 +2565,13 @@ impl P<'_> {
             }
             _ => return self.refuse(),
         }
-        self.a.node(K::TransactionStatement, m);
+        self.close(m);
         Ok(())
     }
 
     /// `create type t [as (columns) | as enum (…)]`.
     fn create_type(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::CreateType, 0)?;
         self.expect(K::KeywordCreate)?;
         self.expect(K::KeywordType)?;
         if self.object_reference(NONE, 0)?.is_none() {
@@ -2577,7 +2579,7 @@ impl P<'_> {
         }
         if self.kw(K::KeywordAs)?.is_some() {
             if self.kw(K::KeywordEnum)?.is_some() {
-                let e = self.a.mark();
+                let e = self.open(K::EnumElements, 0)?;
                 self.expect_punct(b"(", K::TLParen)?;
                 if !self.at_punct(b")")? {
                     loop {
@@ -2592,7 +2594,7 @@ impl P<'_> {
                     }
                 }
                 self.expect_punct(b")", K::TRParen)?;
-                self.a.node(K::EnumElements, e);
+                self.close(e);
             } else if self.at_punct(b"(")? {
                 self.table_elements()?;
                 if self.is(K::KeywordCollate)? {
@@ -2604,13 +2606,13 @@ impl P<'_> {
         } else if self.at_punct(b"(")? {
             return self.refuse();
         }
-        self.a.node(K::CreateType, m);
+        self.close(m);
         Ok(())
     }
 
     /// `create role | user | group name [with] options`: options that are identifiers.
     fn create_role(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::CreateRole, 0)?;
         self.expect(K::KeywordCreate)?;
         if self.kw(K::KeywordRole)?.is_none() && self.kw(K::KeywordUser)?.is_none() {
             self.expect(K::KeywordGroup)?;
@@ -2628,13 +2630,13 @@ impl P<'_> {
             }
             self.expect_ident(Ctx::Sure(&[others]), f::OPTION)?;
         }
-        self.a.node(K::CreateRole, m);
+        self.close(m);
         Ok(())
     }
 
     /// `grant | revoke privileges on target to | from grantees`.
     fn grant_or_revoke(&mut self, k: K) -> R<()> {
-        let m = self.a.mark();
+        let m = self.mark()?;
         self.expect(k)?;
         if self.is(K::KeywordGrant)? || self.is(K::KeywordAdmin)? || self.is(K::KeywordInherit)? {
             return self.refuse();
@@ -2647,7 +2649,7 @@ impl P<'_> {
             }
         } else {
             loop {
-                let p = self.a.mark();
+                let p = self.open(K::Privilege, 0)?;
                 let ws = self.words()?;
                 let named = [K::KeywordSelect, K::KeywordInsert, K::KeywordUpdate, K::KeywordDelete, K::KeywordTruncate, K::KeywordReferences, K::KeywordTrigger, K::KeywordCreate, K::KeywordTemporary, K::KeywordTemp, K::KeywordExecute, K::KeywordSet];
                 if let Some(&(_, x)) = ws.iter().find(|&&(_, x)| named.contains(&x)) {
@@ -2660,7 +2662,7 @@ impl P<'_> {
                 if self.at_punct(b"(")? {
                     return self.refuse();
                 }
-                self.a.node(K::Privilege, p);
+                self.close(p);
                 if self.punct(b",", K::TComma)?.is_none() {
                     break;
                 }
@@ -2742,13 +2744,13 @@ impl P<'_> {
         if k == K::KeywordRevoke && self.kw(K::KeywordCascade)?.is_none() {
             self.kw(K::KeywordRestrict)?;
         }
-        self.a.node(if k == K::KeywordGrant { K::GrantStatement } else { K::RevokeStatement }, m);
+        self.node(if k == K::KeywordGrant { K::GrantStatement } else { K::RevokeStatement }, m);
         Ok(())
     }
 
     /// `alter function f(arguments) options`.
     fn alter_function(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::AlterFunction, 0)?;
         self.expect(K::KeywordAlter)?;
         self.expect(K::KeywordFunction)?;
         if self.object_reference(NONE, 0)?.is_none() {
@@ -2771,13 +2773,13 @@ impl P<'_> {
             return self.refuse();
         }
         self.kw(K::KeywordRestrict)?;
-        self.a.node(K::AlterFunction, m);
+        self.close(m);
         Ok(())
     }
 
     /// `alter extension e update [to v] | add|drop function f(arguments) | table t …`.
     fn alter_extension(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::AlterExtension, 0)?;
         self.expect(K::KeywordAlter)?;
         self.expect(K::KeywordExtension)?;
         self.expect_ident(NONE, 0)?;
@@ -2786,7 +2788,7 @@ impl P<'_> {
                 let t = self.peek()?;
                 if t.t == T::Str {
                     self.take(t);
-                    self.a.leaf(K::Literal, 0, t.s, t.e);
+                    self.leaf(K::Literal, 0, t.s, t.e);
                 } else {
                     self.expect_ident(NONE, 0)?;
                 }
@@ -2815,7 +2817,7 @@ impl P<'_> {
         } else {
             return self.refuse();
         }
-        self.a.node(K::AlterExtension, m);
+        self.close(m);
         Ok(())
     }
 
@@ -2841,7 +2843,7 @@ impl P<'_> {
         if extension {
             return self.alter_extension();
         }
-        let m = self.a.mark();
+        let m = self.open(K::AlterTable, 0)?;
         self.expect(K::KeywordAlter)?;
         if !self.is(K::KeywordTable)? {
             return self.refuse();
@@ -2855,7 +2857,7 @@ impl P<'_> {
             return self.refuse();
         }
         loop {
-            let s = self.a.mark();
+            let s = self.mark()?;
             if self.is(K::KeywordAdd)? {
                 self.expect(K::KeywordAdd)?;
                 let ws = self.words()?;
@@ -2864,11 +2866,11 @@ impl P<'_> {
                     if self.kw(K::KeywordConstraint)?.is_some() {
                         self.expect_ident(NONE, 0)?;
                     }
-                    let c = self.a.mark();
+                    let c = self.open(K::Constraint, 0)?;
                     self.constraint_body()?;
-                    self.a.node(K::Constraint, c);
+                    self.close(c);
                     self.constraint_attributes()?;
-                    self.a.node(K::AddConstraint, s);
+                    self.node(K::AddConstraint, s);
                     if self.punct(b",", K::TComma)?.is_none() {
                         break;
                     }
@@ -2880,7 +2882,7 @@ impl P<'_> {
                 if self.is(K::KeywordFirst)? || self.is(K::KeywordAfter)? {
                     return self.refuse();
                 }
-                self.a.node(K::AddColumn, s);
+                self.node(K::AddColumn, s);
             } else if self.is(K::KeywordRename)? {
                 self.expect(K::KeywordRename)?;
                 if self.kw(K::KeywordTo)?.is_some() {
@@ -2888,7 +2890,7 @@ impl P<'_> {
                     if self.object_reference(NONE, 0)?.is_none() {
                         return self.refuse();
                     }
-                    self.a.node(K::RenameObject, s);
+                    self.node(K::RenameObject, s);
                 } else {
                     // `rename [column] a to b`: `column` may be the old name (`rename column to b`).
                     if self.kw(K::KeywordColumn)?.is_some() && self.is(K::KeywordTo)? {
@@ -2897,23 +2899,23 @@ impl P<'_> {
                     self.expect_ident(Ctx::Sure(&[&[K::KeywordColumn, K::KeywordTo]]), f::OLD_NAME)?;
                     self.expect(K::KeywordTo)?;
                     self.expect_ident(NONE, f::NEW_NAME)?;
-                    self.a.node(K::RenameColumn, s);
+                    self.node(K::RenameColumn, s);
                 }
             } else if self.is(K::KeywordValidate)? {
                 self.expect(K::KeywordValidate)?;
                 self.expect(K::KeywordConstraint)?;
                 self.expect_ident(NONE, 0)?;
-                self.a.node(K::ValidateConstraint, s);
+                self.node(K::ValidateConstraint, s);
             } else if self.is(K::KeywordOwner)? {
                 self.expect(K::KeywordOwner)?;
                 self.expect(K::KeywordTo)?;
                 self.expect_ident(NONE, 0)?;
-                self.a.node(K::ChangeOwnership, s);
+                self.node(K::ChangeOwnership, s);
             } else if self.is(K::KeywordSet)? && self.next_is(K::KeywordSchema)? {
                 self.expect(K::KeywordSet)?;
                 self.expect(K::KeywordSchema)?;
                 self.expect_ident(NONE, f::SCHEMA)?;
-                self.a.node(K::SetSchema, s);
+                self.node(K::SetSchema, s);
             } else if self.is(K::KeywordDrop)? && self.next_is(K::KeywordConstraint)? {
                 self.expect(K::KeywordDrop)?;
                 self.expect(K::KeywordConstraint)?;
@@ -2922,7 +2924,7 @@ impl P<'_> {
                 if self.kw(K::KeywordCascade)?.is_none() {
                     self.kw(K::KeywordRestrict)?;
                 }
-                self.a.node(K::DropConstraint, s);
+                self.node(K::DropConstraint, s);
             } else if self.is(K::KeywordDrop)? {
                 self.expect(K::KeywordDrop)?;
                 if !self.is(K::KeywordColumn)? {
@@ -2934,15 +2936,15 @@ impl P<'_> {
                 if self.kw(K::KeywordCascade)?.is_none() {
                     self.kw(K::KeywordRestrict)?;
                 }
-                self.a.node(K::DropColumn, s);
+                self.node(K::DropColumn, s);
             } else if self.is(K::KeywordAlter)? {
                 self.alter_column()?;
-                self.a.node(K::AlterColumn, s);
+                self.node(K::AlterColumn, s);
             } else if (self.is(K::KeywordSet)? || self.is(K::KeywordReset)?) && self.next_is_paren()? {
                 // `set (…)`, `reset (…)`: storage parameters.
                 let kind = if self.kw(K::KeywordSet)?.is_some() { K::SetStorageParameters } else { self.expect(K::KeywordReset)?; K::ResetStorageParameters };
                 self.storage_parameter_list()?;
-                self.a.node(kind, s);
+                self.node(kind, s);
             } else {
                 return self.refuse();
             }
@@ -2950,7 +2952,7 @@ impl P<'_> {
                 break;
             }
         }
-        self.a.node(K::AlterTable, m);
+        self.close(m);
         Ok(())
     }
 
@@ -2958,17 +2960,17 @@ impl P<'_> {
     /// to 's'`, `rename to t`, `owner to r`, `set schema s`. The name is an identifier, or
     /// `schema.name` as an `object_reference`. Attribute actions are refused.
     fn alter_type(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::AlterType, 0)?;
         self.expect(K::KeywordAlter)?;
         self.expect(K::KeywordType)?;
-        let n = self.a.mark();
+        let n = self.mark()?;
         self.expect_ident(Ctx::Unsure(&[]), 0)?;
         if self.at_punct(b".")? {
             let t = self.peek()?;
             self.take(Tok { e: t.s + 1, ..t });
-            self.a.leaf(K::TDot, 0, t.s, t.s + 1);
+            self.token(K::TDot, 0, t.s, t.s + 1);
             self.expect_ident(NONE, 0)?;
-            self.a.node(K::ObjectReference, n);
+            self.node(K::ObjectReference, n);
             if self.at_punct(b".")? {
                 return self.refuse();
             }
@@ -2979,10 +2981,10 @@ impl P<'_> {
                 return p.refuse();
             }
             p.take(t);
-            p.a.leaf(K::Literal, 0, t.s, t.e);
+            p.leaf(K::Literal, 0, t.s, t.e);
             Ok(())
         };
-        let s = self.a.mark();
+        let s = self.mark()?;
         if self.kw(K::KeywordAdd)?.is_some() {
             if self.kw(K::KeywordValue)?.is_none() {
                 return self.refuse();
@@ -3001,22 +3003,22 @@ impl P<'_> {
                 if self.object_reference(NONE, 0)?.is_none() {
                     return self.refuse();
                 }
-                self.a.node(K::RenameObject, s);
+                self.node(K::RenameObject, s);
             } else {
                 return self.refuse();
             }
         } else if self.kw(K::KeywordOwner)?.is_some() {
             self.expect(K::KeywordTo)?;
             self.expect_ident(NONE, 0)?;
-            self.a.node(K::ChangeOwnership, s);
+            self.node(K::ChangeOwnership, s);
         } else if self.kw(K::KeywordSet)?.is_some() {
             self.expect(K::KeywordSchema)?;
             self.expect_ident(NONE, f::SCHEMA)?;
-            self.a.node(K::SetSchema, s);
+            self.node(K::SetSchema, s);
         } else {
             return self.refuse();
         }
-        self.a.node(K::AlterType, m);
+        self.close(m);
         Ok(())
     }
 
@@ -3091,7 +3093,7 @@ impl P<'_> {
 
     /// `set [session | local] name to | = value, …`, `set time zone …`.
     fn set_statement(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::SetStatement, 0)?;
         self.expect(K::KeywordSet)?;
         if self.kw(K::KeywordSession)?.is_none() {
             self.kw(K::KeywordLocal)?;
@@ -3127,7 +3129,7 @@ impl P<'_> {
             }
             break;
         }
-        self.a.node(K::SetStatement, m);
+        self.close(m);
         Ok(())
     }
 
@@ -3158,7 +3160,7 @@ impl P<'_> {
 
     /// `reset name | all`.
     fn reset_statement(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::ResetStatement, 0)?;
         self.expect(K::KeywordReset)?;
         if self.kw(K::KeywordAll)?.is_none() {
             if self.is(K::KeywordSession)? || self.is(K::KeywordRole)? {
@@ -3168,13 +3170,13 @@ impl P<'_> {
                 return self.refuse();
             }
         }
-        self.a.node(K::ResetStatement, m);
+        self.close(m);
         Ok(())
     }
 
     /// `comment on table | view | column | index | schema … is 'text' | null`.
     fn comment_statement(&mut self) -> R<()> {
-        let m = self.a.mark();
+        let m = self.open(K::CommentStatement, 0)?;
         self.expect(K::KeywordComment)?;
         self.expect(K::KeywordOn)?;
         let ws = self.words()?;
@@ -3193,26 +3195,21 @@ impl P<'_> {
             K::KeywordColumn => {
                 self.expect(K::KeywordColumn)?;
                 // `@object_reference{_qualified_field}`.
-                let n = self.a.mark();
-                let first = self.expect_ident(NONE, f::NAME)?;
-                let mut parts = vec![first];
-                while self.at_punct(b".")? {
-                    let t = self.peek()?;
-                    self.take(Tok { e: t.s + 1, ..t });
-                    parts.push(self.expect_ident(NONE, f::NAME)?);
+                let n = self.mark()?;
+                let Some(d) = self.dotted(NONE, 64)? else { return self.refuse() };
+                if self.at_punct(b".")? {
+                    return self.refuse();
                 }
-                self.a.stack.truncate(n);
-                match parts.len() {
+                match d.n {
                     2 | 3 => {
-                        let (head, name) = parts.split_at(parts.len() - 1);
-                        self.push_reference(head, 0);
-                        let d = self.dot_before(name[0]);
-                        self.a.leaf(K::TDot, 0, d, d + 1);
-                        self.a.stack.push(name[0]);
+                        self.write_reference(&d, d.n - 1, 0);
+                        let dot = d.dots[d.n - 1];
+                        self.token(K::TDot, 0, dot, dot + 1);
+                        self.leaf(K::Identifier, f::NAME, d.parts[d.n - 1].0, d.parts[d.n - 1].1);
                     }
                     _ => return self.refuse(),
                 }
-                self.a.node(K::ObjectReference, n);
+                self.node(K::ObjectReference, n);
             }
             _ => return self.refuse(),
         }
@@ -3228,7 +3225,7 @@ impl P<'_> {
                 self.atom(false)?;
             }
         }
-        self.a.node(K::CommentStatement, m);
+        self.close(m);
         Ok(())
     }
 }

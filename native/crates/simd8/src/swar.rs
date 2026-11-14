@@ -18,10 +18,7 @@ pub fn first_of2(src: &[u8], from: usize, to: usize, a: u8, b: u8) -> usize {
     let (sa, sb) = (u64::from_ne_bytes([a; 8]), u64::from_ne_bytes([b; 8]));
     let mut i = from;
     while i < to {
-        let x = match src.get(i..i + 8) {
-            Some(w) => u64::from_le_bytes(w.try_into().expect("8")),
-            None => tail(src, i),
-        };
+        let x = load8(src, i);
         let mut m = zero_bytes(x ^ sa) | zero_bytes(x ^ sb);
         // Bytes at or past `to` are not the range's.
         if to - i < 8 {
@@ -33,6 +30,15 @@ pub fn first_of2(src: &[u8], from: usize, to: usize, a: u8, b: u8) -> usize {
         i += 8;
     }
     to
+}
+
+/// The 8 bytes at `i` (little-endian: byte `i` the lowest), zeros past the text's end.
+#[inline(always)]
+pub fn load8(src: &[u8], i: usize) -> u64 {
+    match src.get(i..i + 8) {
+        Some(w) => u64::from_le_bytes(w.try_into().expect("8")),
+        None => tail(src, i),
+    }
 }
 
 /// The 8 bytes at `i` within 8 of the text's end, zeros past it.

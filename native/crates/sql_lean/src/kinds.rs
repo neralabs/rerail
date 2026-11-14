@@ -2540,6 +2540,19 @@ pub static FATE: &[[u64; 26]] = &[
 /// The words of a kind bitset in `FATE`.
 pub const FATE_WORDS: usize = 13;
 
+/// Per automaton: whether the walk decides some token it takes (a node of it holds its tokens to its close).
+pub static DYNAMIC: &[bool] = &[
+    false, false, true, false, false, false, false, false, true, false, false, true, true, true, false, false,
+    false, false, false, true, false, false, true, true, false, false, false, false, false, false, false, true,
+    false, false, true, false, true, true, false, true, true, true, false, false, false, false, false, false,
+    false, false, false, false, false, false, false, false, false, false, false, true, false, true, false, false,
+    false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, true,
+    false, false, false, true, true, false, true, false, false, false, false, false, false, false, false, false,
+    false, false, false, false, false, true, true, false, true, true, true, false, false, false, false, false,
+    false, false, true, true, true, false, false, true, true, false, false, false, true, false, false, false,
+    false, false, true, false, false, false, false, false, true, false, false, false,
+];
+
 /// Per kind: its automaton, plus one (0: none; its tokens are all stored).
 pub static AUTOMATON: &[u16] = &[
     102, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,

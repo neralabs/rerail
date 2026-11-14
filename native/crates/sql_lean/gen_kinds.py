@@ -220,7 +220,7 @@ def table(name, ty, vals, per=16, doc=''):
 # decided by the walk. `FATE[a]`: the dropped bits by kind, then the walk bits.
 W = (len(rows) + 63) // 64
 KINDS_NAMED = [r[2] for r in rows]
-fates = []
+fates, dynamic = [], []
 for a, (kind, states, imp, end, kept) in enumerate(autos):
     named = lambda l: KINDS_NAMED[l & 1023]
     fate, walk = {}, set()
@@ -245,6 +245,9 @@ for a, (kind, states, imp, end, kept) in enumerate(autos):
                 implied = w is not None and w == path
                 for t in path:
                     fate.setdefault(t & 1023, set()).add(implied and t not in kept)
+    # Dynamic: some token the automaton takes is decided by the walk, so a node of it holds all its
+    # tokens until it closes (the walk reads every child).
+    dynamic.append(any(len(v) > 1 or k in walk for k, v in fate.items()) or bool(walk))
     bits = [0] * (2 * W)
     for k in range(len(rows)):
         if KINDS_NAMED[k]:
@@ -260,6 +263,7 @@ out += [f'/// Per automaton: each token kind\'s fate where the kind decides it, 
 for bits in fates:
     out.append('    [' + ', '.join(f'{x:#x}' for x in bits) + '],')
 out += ['];', '', f'/// The words of a kind bitset in `FATE`.', f'pub const FATE_WORDS: usize = {W};', '']
+out += table('DYNAMIC', 'bool', ['true' if d else 'false' for d in dynamic], 16, '/// Per automaton: whether the walk decides some token it takes (a node of it holds its tokens to its close).')
 out += table('AUTOMATON', 'u16', auto_of, 32, '/// Per kind: its automaton, plus one (0: none; its tokens are all stored).')
 out += table('START', 'u32', starts, 16, '/// Per automaton: its first state.')
 out += table('MOVES_AT', 'u32', moves_at, 16, '/// Per state: where its moves start in `MOVES`, and (the next one\'s) where they end.')
