@@ -1,8 +1,5 @@
-import type * as ChildProcessModule from "node:child_process";
-import { spawn, type SpawnOptions } from "node:child_process";
 import { createHash } from "node:crypto";
-import { once } from "node:events";
-import { existsSync, readFileSync, statfsSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -12,44 +9,19 @@ import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import type {
   AuditInput, AuditRecord, AuditRuleProvenance, LegacyAuditRuleProvenance, RepositoryAuditRuleProvenance,
 } from "../../../src/engine/audit/audit.js";
-import { openRerailDatabase, resetRepositoryHistory } from "../../../src/engine/storage/database.js";
+import { eraseFreedPages, openRerailDatabase, resetRepositoryHistory } from "../../../src/engine/storage/database.js";
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/baseline-schema.js";
 import { RERAIL_BASELINE_SCHEMA_VERSION, RERAIL_MIGRATIONS, RULE_PROVENANCE_STEP } from "../../../src/engine/storage/migrations.js";
 import {
   moveRuleProvenances, moveRuleProvenancesInWorker, type RuleProvenanceMoveOptions,
 } from "../../../src/engine/storage/rule-provenance-move.js";
 import { tableColumns } from "../../../src/engine/storage/table-probe.js";
-import { type ThreadWatch, vacuumGivingWay } from "../../../src/engine/storage/vacuum-giving-way.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
-import { slowVacuumNext, untilExists } from "../../support/processes/slow-vacuum.js";
 import { SqliteAuditStore as MainAuditStore } from "../support/main-audit-store.js";
-
-// Every export calls the real one; a test that needs a disk with little free space overrides `statfsSync`.
-vi.mock("node:fs", { spy: true });
-
-/**
- * Runs, once, as the next process `vacuumGivingWay` starts on this thread is spawned, before it can take the write lock:
- * another connection that commits as an attempt begins. Every other spawn reaches the real child_process.
- */
-const vacuumStart = vi.hoisted(() => ({ before: undefined as (() => void) | undefined }));
-vi.mock("node:child_process", async () => {
-  const actual = await vi.importActual<typeof ChildProcessModule>("node:child_process");
-  return {
-    ...actual,
-    spawn: (command: string, args: readonly string[], options: SpawnOptions) => {
-      const before = vacuumStart.before;
-      vacuumStart.before = undefined;
-      before?.();
-      return actual.spawn(command, args, options);
-    },
-  };
-});
 
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
-  vi.mocked(statfsSync).mockReset();
-  vacuumStart.before = undefined;
   await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
@@ -147,97 +119,6 @@ function inlineAudits(path: string): number {
   }
 }
 
-/** Leaves `bytes` of free pages in the file, as deleting that much history does. */
-function freePages(path: string, bytes: number): void {
-  const database = new Database(path);
-  try {
-    database.exec(`CREATE TABLE filler (data); INSERT INTO filler VALUES (randomblob(${bytes})); DROP TABLE filler`);
-  } finally {
-    database.close();
-  }
-}
-
-/** Adds about `bytes` of pages in use to the file: a table of 1 MB random blobs that stays. */
-function fillPages(path: string, bytes: number): void {
-  const database = new Database(path);
-  try {
-    database.exec(`CREATE TABLE IF NOT EXISTS filler_kept (data);
-      WITH RECURSIVE blob(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM blob WHERE n < ${Math.ceil(bytes / 1_000_000)})
-      INSERT INTO filler_kept SELECT randomblob(1000000) FROM blob`);
-  } finally {
-    database.close();
-  }
-}
-
-/** `VACUUM` on a connection of its own, as `rerail scrub` and `rerail reset` run it. */
-function vacuumOn(path: string): void {
-  const other = new Database(path);
-  try {
-    other.exec("VACUUM");
-  } finally {
-    other.close();
-  }
-}
-
-/** One write on `database`: what it threw, if anything, and how long it took. */
-function timedWrite(database: Database.Database): { failure: string | undefined; waitedMs: number } {
-  const began = performance.now();
-  try {
-    database.exec("CREATE TABLE IF NOT EXISTS daemon_writes (at); INSERT INTO daemon_writes VALUES (1)");
-    return { failure: undefined, waitedMs: performance.now() - began };
-  } catch (error) {
-    return { failure: (error as { code?: string }).code ?? String(error), waitedMs: performance.now() - began };
-  }
-}
-
-/** A process that writes once to the database at its first argument, waiting 5 s at most, and prints how it went. */
-const ANOTHER_WRITE = `
-const Database = require("better-sqlite3");
-const database = new Database(process.argv[1], { timeout: 5000 });
-const began = performance.now();
-let failure = null;
-try {
-  database.exec("CREATE TABLE IF NOT EXISTS other_writes (at); INSERT INTO other_writes VALUES (1)");
-} catch (error) {
-  failure = error.code ?? String(error);
-}
-process.stdout.write(JSON.stringify({ failure, waitedMs: performance.now() - began }));
-database.close();
-`;
-
-/**
- * One write in a process of its own with the 5 s busy timeout every Rerail writer has, as a hook recording a steer it
- * delivered or a `rerail` command writes: what it threw, if anything, and how long it took. This thread keeps running
- * meanwhile.
- */
-async function writeInAnotherProcess(path: string): Promise<{ failure: string | null; waitedMs: number }> {
-  const child = spawn(process.execPath, ["-e", ANOTHER_WRITE, path], { cwd: process.cwd(), stdio: ["ignore", "pipe", "inherit"], windowsHide: true });
-  let said = "";
-  child.stdout?.setEncoding("utf8").on("data", (chunk: string) => {
-    said += chunk;
-  });
-  await once(child, "close");
-  return JSON.parse(said) as { failure: string | null; waitedMs: number };
-}
-
-/** The giving-way options of a `VACUUM` whose watched thread always answers, as an idle daemon's does. */
-const ALWAYS_ANSWERS = {
-  watch: (() => () => undefined) satisfies ThreadWatch, signal: undefined, blocked: () => undefined, waitedLong: () => undefined, noticeMs: 600_000,
-};
-
-/**
- * A process that runs `vacuumGivingWay` on the database at its first argument, from this checkout's source, its watched
- * thread always answering: the daemon's thread that runs the move, standing alone so a test can kill it.
- */
-const VACUUM_PARENT = `
-import Database from "better-sqlite3";
-import { vacuumGivingWay } from ${JSON.stringify(new URL("../../../src/engine/storage/vacuum-giving-way.ts", import.meta.url).href)};
-const path = process.argv[1];
-const client = new Database(path);
-client.pragma("busy_timeout = 0");
-await vacuumGivingWay(client, path, { watch: () => () => undefined, signal: undefined, blocked: () => undefined, waitedLong: () => undefined, noticeMs: 600000 });
-`;
-
 /** An audit an older Rerail sharing the file records now, its provenance in its row; when it began. */
 function recordAsOlder(path: string, auditId: string, provenance: readonly AuditRuleProvenance[]): number {
   const older = new Database(path);
@@ -252,28 +133,6 @@ function recordAsOlder(path: string, auditId: string, provenance: readonly Audit
 
 /** The start of the line a move writes while it waits for an older Rerail sharing the file. */
 const WAITS_FOR_OLDER = "moving the rule provenance of audits recorded before this Rerail's upgrade waits until";
-
-/**
- * A file with about 8 MB in use and 8 MB free, and a connection on it as the move's, which `vacuumGivingWay` runs on;
- * the VACUUMs of the processes it starts hold the write lock `holdMs` first, creating `held` (`slowVacuumNext`) as the
- * first takes it. `close` closes the connection and puts the environment back.
- */
-async function fileToVacuum(holdMs: number): Promise<{ path: string; held: string; client: Database.Database; close: () => void }> {
-  const path = await temporaryDatabase();
-  openRerailDatabase(path).$client.close();
-  fillPages(path, 8_000_000);
-  freePages(path, 8_000_000);
-  const held = join(dirname(path), "vacuum-held");
-  const restore = slowVacuumNext({ held, holdMs });
-  const client = openRerailDatabase(path).$client;
-  client.pragma("busy_timeout = 0");
-  return {
-    path, held, client, close: () => {
-      restore();
-      client.close();
-    },
-  };
-}
 
 /** The steps an older Rerail runs when it opens the file: this build's, without the one this change adds. */
 const OLDER_STEPS = RERAIL_MIGRATIONS.filter(step => step.id !== RULE_PROVENANCE_STEP);
@@ -305,45 +164,10 @@ function withoutProvenance(audits: readonly (AuditRecord | undefined)[]): (Omit<
   });
 }
 
-/** What this thread wrote to stderr while `run` ran, and what `run` resolved to. */
-async function stderrWhile<T>(run: () => Promise<T>): Promise<{ result: T; logged: string }> {
-  const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-  try {
-    const result = await run();
-    return { result, logged: stderr.mock.calls.map(([chunk]) => String(chunk)).join("") };
-  } finally {
-    stderr.mockRestore();
-  }
-}
-
 /** Spies on this thread's stderr: what it has written so far, read at any time, and how to put it back. */
 function spyOnStderr(): { logged: () => string; restore: () => void } {
   const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
   return { logged: () => stderr.mock.calls.map(([chunk]) => String(chunk)).join(""), restore: () => stderr.mockRestore() };
-}
-
-/** Resolves once `holds` returns true, read every 50 ms; throws after `timeoutMs`. */
-async function until(holds: () => boolean, timeoutMs: number): Promise<void> {
-  const deadline = performance.now() + timeoutMs;
-  while (!holds()) {
-    if (performance.now() > deadline) throw new Error(`still not so after ${timeoutMs} ms`);
-    await new Promise(resolve => setTimeout(resolve, 50));
-  }
-}
-
-/** The start of the line a `VACUUM` that gives way writes once it has waited its bound without committing. */
-const NOT_SHRUNK = "has not shrunk yet";
-
-/**
- * Makes every disk report `times` the bytes of the file's pages in use as free (`statfsSync`), read each time the move
- * asks; how to undo it.
- */
-function diskOfPagesInUse(path: string, times: number): () => void {
-  vi.mocked(statfsSync).mockImplementation(() => {
-    const bavail = Math.floor((times * bytesInUse(path)) / 4096);
-    return { type: 0, bsize: 4096, frsize: 4096, blocks: 1 << 20, bfree: bavail, bavail, files: 0, ffree: 0 };
-  });
-  return () => vi.mocked(statfsSync).mockReset();
 }
 
 /**
@@ -408,28 +232,6 @@ async function fileAtTheBaseline(): Promise<string> {
     database.close();
   }
   return path;
-}
-
-/**
- * Upgrades a file of the build before that holds 30 audits' provenance inline and moves it, with what `prepare` sets up
- * (it returns how to undo it) in place during the move: the file's size before, and what the move wrote to stderr.
- */
-async function moveLogging(
-  prepare: (path: string) => () => void,
-  pause?: () => Promise<void>,
-): Promise<{ path: string; size: number; logged: string }> {
-  const path = await fileOfTheBuildBefore();
-  writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
-  const size = statSync(path).size;
-  const release = prepare(path);
-  const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-  try {
-    expect(await move(path, pause === undefined ? {} : { pause })).toBe(30);
-    return { path, size, logged: stderr.mock.calls.map(([chunk]) => String(chunk)).join("") };
-  } finally {
-    stderr.mockRestore();
-    release();
-  }
 }
 
 describe("audit rule provenance", () => {
@@ -637,7 +439,7 @@ describe("audit rule provenance", () => {
       },
     });
 
-    // The first batch moved 10; the move stopped there and ran no VACUUM.
+    // The first batch moved 10; the move stopped there.
     expect(moved).toBe(10);
     expect(pauses).toBe(2);
     const older = provenanceTexts(readAsOlder(path, written.map(({ auditId }) => auditId)));
@@ -673,9 +475,8 @@ describe("audit rule provenance", () => {
     expect(waits[1]).toContain(`waits until ${new Date(second + 3_000).toISOString()}: a Rerail older than this one recorded an `
       + `audit at ${new Date(second).toISOString()}`);
     expect(waits[1]).toContain("The move starts once no older Rerail has recorded an audit for 3 s.");
-    // The older Rerail's two audits stay in their rows; the recorded ones moved, and the file gave the space back.
+    // The older Rerail's two audits stay in their rows; the recorded ones moved.
     expect(inlineAudits(path)).toBe(2);
-    expect(pageBytes(path).free).toBe(0);
   }, 60_000);
 
   it("sizes each batch from how long the one before held the write lock", async () => {
@@ -700,20 +501,15 @@ describe("audit rule provenance", () => {
     expect(await batchSizes(() => 0)).toEqual([10, 20]);
   });
 
-  it("zeroes the pages the move frees, so none keeps a copy of what it moved when no VACUUM follows", async () => {
+  it("zeroes the pages the move frees, so the file keeps no copy of what it moved", async () => {
     const path = await fileOfTheBuildBefore();
     const marker = "/home/dev/zeroed-by-the-move";
     const provenance = provenanceOf(marker, 200);
     writeInlineAudits(path, Array.from({ length: 30 }, () => provenance));
     const occurrences = (text: string): number => text.split(marker).length - 1;
-    // Too little disk for `VACUUM`: the move empties the WAL into the file and leaves the pages it freed there.
-    vi.mocked(statfsSync).mockImplementation(() => ({ type: 0, bsize: 4096, frsize: 4096, blocks: 1 << 20, bfree: 16, bavail: 16, files: 0, ffree: 0 }));
-    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    try {
-      expect(await move(path)).toBe(30);
-    } finally {
-      stderr.mockRestore();
-    }
+
+    // The move empties the WAL into the file and leaves the pages it freed there.
+    expect(await move(path)).toBe(30);
 
     expect(pageBytes(path).free).toBeGreaterThan(0);
     expect(statSync(`${path}-wal`).size).toBe(0);
@@ -725,30 +521,37 @@ describe("audit rule provenance", () => {
     expect(inFile).toBeLessThan(2 * perCopy);
   });
 
-  it("gives the space the move freed back to the disk once it ends, and no later move rewrites the file", async () => {
+  it("leaves the pages it frees in the file for new history, which rerail scrub's rewrite gives back to the disk", async () => {
     const path = await fileOfTheBuildBefore();
-    const written = writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
+    const app = provenanceOf("/home/dev/app", 200);
+    const written = writeInlineAudits(path, Array.from({ length: 30 }, () => app));
     const before = statSync(path).size;
 
     expect(await move(path)).toBe(30);
 
-    // The file is its pages in use, a small part of what it was, and every audit reads its provenance as before.
-    expect(pageBytes(path).free).toBe(0);
-    expect(statSync(path).size).toBe(bytesInUse(path));
-    expect(statSync(path).size).toBeLessThan(before / 5);
+    // No VACUUM: the file keeps its size, most of it free pages, and every audit reads its provenance as before.
+    expect(statSync(path).size).toBe(before);
+    expect(pageBytes(path).free).toBeGreaterThan(before / 2);
     const store = new SqliteAuditStore(path);
     try {
       for (const { auditId, text } of written) expect(JSON.stringify(store.get(auditId)?.ruleProvenance), auditId).toBe(text);
+      // New audits of the same rules fill the free pages before the file grows.
+      for (let index = 0; index < 30; index += 1) store.finish(store.start(auditInput("/home/dev/app", app)), { status: "completed" });
     } finally {
       store.close();
     }
+    expect(statSync(path).size).toBe(before);
 
-    // Space that deleted history frees later stays in the file for new history: no later move rewrites it.
-    freePages(path, 1_000_000);
-    const free = pageBytes(path).free;
-    expect(free).toBeGreaterThan(900_000);
-    expect(await move(path)).toBe(0);
-    expect(pageBytes(path).free).toBe(free);
+    // `rerail scrub` rewrites the file (`eraseFreedPages`): it shrinks to its pages in use, a small part of what it was.
+    const scrub = openRerailDatabase(path);
+    try {
+      expect(eraseFreedPages(scrub)).toBe(true);
+    } finally {
+      scrub.$client.close();
+    }
+    expect(pageBytes(path).free).toBe(0);
+    expect(statSync(path).size).toBe(bytesInUse(path));
+    expect(statSync(path).size).toBeLessThan(before / 5);
   });
 
   it("takes no write lock once nothing is left to move", async () => {
@@ -779,7 +582,6 @@ describe("audit rule provenance", () => {
 
     expect(await moveRuleProvenancesInWorker(path)).toBe(30);
     expect(inlineAudits(path)).toBe(0);
-    expect(pageBytes(path).free).toBe(0);
     const store = new SqliteAuditStore(path);
     try {
       for (const { auditId, text } of written) expect(JSON.stringify(store.get(auditId)?.ruleProvenance), auditId).toBe(text);
@@ -790,608 +592,28 @@ describe("audit rule provenance", () => {
     expect(await moveRuleProvenancesInWorker(path)).toBe(0);
   }, 60_000);
 
-  it("ends its VACUUM at once when stopped, leaves the file whole, and a later run finishes the shrink", async () => {
-    const path = await fileOfTheBuildBefore();
-    // About 80 MB of provenance, more than the 64 MB of free space a later run leaves to new history, beside 100 MB of
-    // other history: what the move frees can be a small part of a file that has recorded much else.
-    const written = writeInlineAudits(path, Array.from({ length: 800 }, () => provenanceOf("/home/dev/app", 200)));
-    fillPages(path, 100_000_000);
-    // A VACUUM that would hold the write lock 30 s, as one of a large file on a loaded machine does.
-    const held = join(dirname(path), "vacuum-held");
-    const stop = new AbortController();
-    const restore = slowVacuumNext({ held, holdMs: 30_000 });
-    let moving: Promise<number>;
-    try {
-      moving = moveRuleProvenancesInWorker(path, stop.signal);
-    } finally {
-      restore();
-    }
-    await untilExists(held, 60_000);
-
-    const asked = performance.now();
-    stop.abort();
-    expect(await moving).toBe(800);
-    // The daemon's close waits for this. Run on the move's thread, the VACUUM held it the whole 30 s.
-    expect(performance.now() - asked).toBeLessThan(2_000);
-
-    // SQLite dropped the VACUUM: the write lock is free, the file is whole, and every audit reads its provenance.
-    const writer = new Database(path);
-    try {
-      writer.pragma("busy_timeout = 0");
-      writer.exec("BEGIN IMMEDIATE; ROLLBACK");
-      expect(writer.pragma("integrity_check", { simple: true })).toBe("ok");
-    } finally {
-      writer.close();
-    }
-    expect(inlineAudits(path)).toBe(0);
-    const store = new SqliteAuditStore(path);
-    try {
-      for (const { auditId, text } of written) expect(JSON.stringify(store.get(auditId)?.ruleProvenance), auditId).toBe(text);
-    } finally {
-      store.close();
-    }
-
-    // The stop left the space the move freed in the file. The next daemon start, with nothing left to move, gives it
-    // back: its thread runs the VACUUM, giving way as before.
-    expect(pageBytes(path).free).toBeGreaterThan(64_000_000);
-    expect(await moveRuleProvenancesInWorker(path)).toBe(0);
-    expect(pageBytes(path).free).toBe(0);
-    expect(statSync(path).size).toBe(bytesInUse(path));
-  }, 180_000);
-
-  it("lets a VACUUM that has committed run to its end when the thread it gives way to stops answering", async () => {
-    const path = await temporaryDatabase();
-    openRerailDatabase(path).$client.close();
-    // 64 MB in use and 8 MB free: the WAL the VACUUM fills holds the 64 MB until its checkpoint.
-    fillPages(path, 64_000_000);
-    freePages(path, 8_000_000);
-    // The process creates `committed` once its VACUUM has committed, then waits 1 s before the checkpoint its commit
-    // runs: the moment a write the daemon's thread began during the VACUUM is still asleep in its busy handler.
-    const committed = join(dirname(path), "vacuum-committed");
-    const restore = slowVacuumNext({ committed, lingerMs: 1_000 });
-    const client = openRerailDatabase(path).$client;
-    client.pragma("busy_timeout = 0");
-    // The watched thread stops answering in that moment, once.
-    let stalledFor: number | undefined;
-    const watch: ThreadWatch = stalled => {
-      const poll = setInterval(() => {
-        if (stalledFor !== undefined || !existsSync(committed)) return;
-        const began = performance.now();
-        stalled();
-        stalledFor = performance.now() - began;
-      }, 5);
-      return () => clearInterval(poll);
-    };
-    let logged: string;
-    try {
-      ({ logged } = await stderrWhile(() => vacuumGivingWay(client, path, {
-        watch, signal: undefined, blocked: () => undefined, waitedLong: () => undefined, noticeMs: 600_000,
-      })));
-    } finally {
-      restore();
-      client.close();
-    }
-
-    // The process ran to its end, and no line says the VACUUM gave way. Ended there, the TRUNCATE checkpoint after it
-    // copied the 64 MB into the database file while it held the write lock, on the thread that had stopped answering.
-    const seen = { stalled: stalledFor !== undefined, ranToItsEnd: existsSync(`${committed}.done`), gaveWay: logged.includes("gave way") };
-    expect(seen, `the stall held the thread ${Math.round(stalledFor ?? -1)} ms`)
-      .toEqual({ stalled: true, ranToItsEnd: true, gaveWay: false });
-    expect(stalledFor).toBeLessThan(100);
-    expect(pageBytes(path).free).toBe(0);
-  }, 120_000);
-
-  it("ends its VACUUM when the thread it gives way to stalls, though another connection shrank the file as its process started", async () => {
-    // The first VACUUM an attempt's process runs holds the write lock 12 s before it runs, past the 5 s busy timeout of
-    // every Rerail writer.
-    const { path, held, client, close } = await fileToVacuum(12_000);
-    // As the attempt starts its process, before that process can take the lock, another connection gives the free pages
-    // back, as `rerail scrub` or `rerail reset` does, and history deleted since frees 1 MB: the file now has fewer pages
-    // than when the attempt began, and some free, so the attempt's process runs its VACUUM.
-    vacuumStart.before = () => {
-      vacuumOn(path);
-      freePages(path, 1_000_000);
-    };
-    // The watched thread stalls once that process holds the lock, as when a write of its own waits for it; that write
-    // then runs with the busy timeout the daemon's stores have.
-    const daemonWrite = new Database(path, { timeout: 5_000 });
-    let wrote: { failure: string | undefined; waitedMs: number } | undefined;
-    const watch: ThreadWatch = stalled => {
-      const poll = setInterval(() => {
-        if (wrote !== undefined || !existsSync(held)) return;
-        stalled();
-        wrote = timedWrite(daemonWrite);
-      }, 5);
-      return () => clearInterval(poll);
-    };
-    let logged: string;
-    try {
-      ({ logged } = await stderrWhile(() => vacuumGivingWay(client, path, {
-        watch, signal: undefined, blocked: () => undefined, waitedLong: () => undefined, noticeMs: 600_000,
-      })));
-    } finally {
-      daemonWrite.close();
-      close();
-    }
-
-    // The stall ended the attempt's process, which held the lock, and the write went through inside its busy timeout.
-    // Taking the other connection's shrink for its own commit, the attempt let the process hold the lock 12 s, and the
-    // write failed with SQLITE_BUSY after 5 s.
-    const seen = {
-      failure: wrote?.failure,
-      inBusyTimeout: (wrote?.waitedMs ?? Number.POSITIVE_INFINITY) < 5_000,
-      gaveWay: logged.includes("VACUUM gave way (the daemon's thread did not answer"),
-    };
-    expect(seen, `the write waited ${Math.round(wrote?.waitedMs ?? -1)} ms`).toEqual({ failure: undefined, inBusyTimeout: true, gaveWay: true });
-    expect(pageBytes(path).free).toBe(0);
-  }, 120_000);
-
-  it("runs no VACUUM when another connection gave the free pages back as its process started", async () => {
-    // A VACUUM the attempt's process runs creates `held` as it takes the write lock, and holds it 12 s.
-    const { path, held, client, close } = await fileToVacuum(12_000);
-    // As the attempt starts its process, another connection gives every free page back, as `rerail scrub` does.
-    vacuumStart.before = () => vacuumOn(path);
-    let logged: string;
-    try {
-      ({ logged } = await stderrWhile(() => vacuumGivingWay(client, path, {
-        watch: () => () => undefined, signal: undefined, blocked: () => undefined, waitedLong: () => undefined, noticeMs: 600_000,
-      })));
-    } finally {
-      close();
-    }
-
-    // The process found no free page once it held the lock, and ran no VACUUM. Before, it ran one, which rewrote the file
-    // a second time and held the lock throughout.
-    expect({ vacuumed: existsSync(held), logged }).toEqual({ vacuumed: false, logged: "" });
-    expect(pageBytes(path).free).toBe(0);
-  }, 60_000);
-
-  it("ends a try whose VACUUM has held the write lock 4 s, so a write of another process, which waits 5 s at most, goes through", async () => {
-    // The first VACUUM a try's process runs would hold the write lock 6 s, as one of a large file does. The watched
-    // thread always answers: the write comes from another process, which no watch sees.
-    const { path, held, client, close } = await fileToVacuum(6_000);
-    let wrote: { failure: string | null; waitedMs: number } | undefined;
-    let logged: string;
-    try {
-      ({ logged } = await stderrWhile(async () => {
-        const vacuuming = vacuumGivingWay(client, path, ALWAYS_ANSWERS);
-        await untilExists(held, 60_000);
-        wrote = await writeInAnotherProcess(path);
-        await vacuuming;
-      }));
-    } finally {
-      close();
-    }
-
-    // The try ended 4 s into its hold, and the write went through inside its 5 s. Before, the VACUUM held the lock the
-    // whole 6 s, and the write failed with SQLITE_BUSY after 5 s. The next try, held no longer, gave the space back.
-    expect({ failure: wrote?.failure, inBusyTimeout: (wrote?.waitedMs ?? Number.POSITIVE_INFINITY) < 5_000 }, `the write waited ${Math.round(wrote?.waitedMs ?? -1)} ms`)
-      .toEqual({ failure: null, inBusyTimeout: true });
-    expect(logged).toContain("VACUUM gave way (it held the write lock 4 s without finishing");
-    expect(pageBytes(path).free).toBe(0);
-  }, 60_000);
-
-  it("runs no checkpoint after ending a try until the ended process has let go of the write lock", async () => {
-    // The first VACUUM would hold the write lock 6 s; a write of another connection before it leaves frames in the WAL,
-    // which a checkpoint copies and syncs.
-    const { path, held, client, close } = await fileToVacuum(6_000);
-    const other = new Database(path);
-    other.exec("CREATE TABLE before_vacuum (at); INSERT INTO before_vacuum VALUES (1)");
-    other.close();
-    // Each write-lock probe and TRUNCATE checkpoint the move's connection runs, and whether the write lock was held as
-    // that checkpoint began, as another connection finds it.
-    const probe = new Database(path);
-    probe.pragma("busy_timeout = 0");
-    const lockHeld = (): boolean => {
-      try {
-        probe.exec("BEGIN IMMEDIATE; ROLLBACK");
-        return false;
-      } catch {
-        return true;
-      }
-    };
-    const steps: string[] = [];
-    const exec = client.exec.bind(client);
-    const pragma = client.pragma.bind(client);
-    const execs = vi.spyOn(client, "exec").mockImplementation(source => {
-      if (source === "BEGIN IMMEDIATE") steps.push("lock probe");
-      return exec(source);
-    });
-    const pragmas = vi.spyOn(client, "pragma").mockImplementation((source: string, options?: Database.PragmaOptions) => {
-      if (source === "wal_checkpoint(TRUNCATE)") steps.push(lockHeld() ? "checkpoint while held" : "checkpoint");
-      return pragma(source, options);
-    });
-    try {
-      await stderrWhile(async () => {
-        const vacuuming = vacuumGivingWay(client, path, ALWAYS_ANSWERS);
-        await untilExists(held, 60_000);
-        await vacuuming;
-      });
-    } finally {
-      execs.mockRestore();
-      pragmas.mockRestore();
-      probe.close();
-      close();
-    }
-
-    // The try ended 4 s in; its WAL was cut only once a probe found the lock free. Before, the first checkpoint ran as
-    // the process was being killed, found the lock held, and synced the database file meanwhile: on Windows that sync
-    // held the killed process's release of the lock back past another process's 5 s busy timeout.
-    const first = steps.findIndex(step => step.startsWith("checkpoint"));
-    expect(first, steps.join(", ")).toBeGreaterThan(0);
-    expect(steps.slice(0, first), steps.join(", ")).toContain("lock probe");
-    expect(steps, steps.join(", ")).not.toContain("checkpoint while held");
-    expect(pageBytes(path).free).toBe(0);
-  }, 60_000);
-
-  it("stops after three tries that each held the write lock 4 s, and says to run rerail scrub", async () => {
+  it("empties the WAL between tries while another connection reads, never waiting inside SQLite, so its thread keeps running", async () => {
     const path = await fileOfTheBuildBefore();
     writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
-    // Each of the first three VACUUMs would hold the write lock 6 s.
-    const held = join(dirname(path), "vacuum-held");
-    const restore = slowVacuumNext({ held, holdMs: 6_000, holds: 3 });
-    let logged: string;
+    // A read begun before the upgrade and held through the move: the checkpoint after the last batch finds it on every
+    // try, and leaves the WAL to SQLite's later checkpoints.
+    const reader = new Database(path, { readonly: true });
+    reader.exec("BEGIN");
+    reader.prepare("SELECT count(*) FROM audits").get();
+    let longest: number;
     try {
-      ({ logged } = await stderrWhile(async () => {
-        expect(await move(path, { watch: ALWAYS_ANSWERS.watch })).toBe(30);
-      }));
+      const stalled = await withLongestStall(() => move(path, { pause: () => new Promise(resolve => setTimeout(resolve, 20)) }));
+      expect(stalled.result).toBe(30);
+      longest = stalled.longest;
+      expect(statSync(`${path}-wal`).size).toBeGreaterThan(0);
     } finally {
-      restore();
+      reader.close();
     }
-
-    const lines = logged.split("\n");
-    expect(lines.filter(line => line.includes("VACUUM gave way (it held the write lock 4 s without finishing"))).toHaveLength(2);
-    const told = lines.filter(line => line.includes("rerail scrub"));
-    expect(told).toHaveLength(1);
-    expect(told[0]).toContain(`rerail: ${path} keeps its size`);
-    expect(told[0]).toContain("its VACUUM held the write lock 4 s without finishing 3 times");
-    expect([held, `${held}.2`, `${held}.3`].map(marker => existsSync(marker))).toEqual([true, true, true]);
-    // The audits stay moved; the space stays in the file for new history, or for `rerail scrub`.
-    expect(inlineAudits(path)).toBe(0);
-    expect(pageBytes(path).free).toBeGreaterThan(0);
-  }, 90_000);
-
-  it("ends its VACUUM's process when the process that started it is killed, so the next write does not wait for it", async () => {
-    // The VACUUM would hold the write lock 30 s.
-    const { path, held, close } = await fileToVacuum(30_000);
-    const parent = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", VACUUM_PARENT, path], {
-      cwd: process.cwd(), stdio: ["ignore", "ignore", "pipe"], windowsHide: true,
-    });
-    let said = "";
-    parent.stderr?.setEncoding("utf8").on("data", (chunk: string) => {
-      said += chunk;
-    });
-    let wrote: { failure: string | undefined; waitedMs: number };
-    try {
-      await untilExists(held, 60_000);
-      // Killed outright, as a crash or the system's out-of-memory killer ends a daemon: nothing of it runs after this.
-      const exited = once(parent, "exit");
-      parent.kill("SIGKILL");
-      await exited;
-      const writer = new Database(path, { timeout: 5_000 });
-      try {
-        wrote = timedWrite(writer);
-      } finally {
-        writer.close();
-      }
-    } finally {
-      close();
-    }
-
-    // The VACUUM process ended with its parent, and SQLite dropped its VACUUM. Before, on Linux, it ran on to its end,
-    // holding the lock, and the write failed with SQLITE_BUSY after 5 s.
-    expect({ failure: wrote.failure, quick: wrote.waitedMs < 2_000 }, `the write waited ${Math.round(wrote.waitedMs)} ms; ${said}`)
-      .toEqual({ failure: undefined, quick: true });
-  }, 60_000);
-
-  it("says once, naming rerail scrub, when writes keep its VACUUM from starting past its bound, and VACUUMs once they stop", async () => {
-    const path = await fileOfTheBuildBefore();
-    writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
-    // Another connection commits every 300 ms for 5 s, as a busy daemon does: the file is never quiet for 2 s meanwhile.
-    const writer = new Database(path);
-    writer.exec("CREATE TABLE steady (at)");
-    const steady = setInterval(() => writer.prepare("INSERT INTO steady VALUES (?)").run(performance.now()), 300);
-    const quiet = setTimeout(() => clearInterval(steady), 5_000);
-    let logged: string;
-    try {
-      ({ logged } = await stderrWhile(async () => {
-        // A thread that always answers: nothing gives way here, only the wait for a quiet file.
-        expect(await move(path, { watch: () => () => undefined, waitNotice: 2_500 })).toBe(30);
-      }));
-    } finally {
-      clearTimeout(quiet);
-      clearInterval(steady);
-      writer.close();
-    }
-
-    const told = logged.split("\n").filter(line => line.includes("rerail scrub"));
-    expect(told).toHaveLength(1);
-    expect(told[0]).toContain(`rerail: ${path} has not shrunk yet`);
-    expect(told[0]).toContain("in 2.5 s no other connection left the file alone for the 2 s its VACUUM waits for");
-    expect(pageBytes(path).free).toBe(0);
-  }, 60_000);
-
-  it("says how many times its VACUUM gave way when it says, past its bound, that the file has not shrunk", async () => {
-    const path = await fileOfTheBuildBefore();
-    writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
-    // The watched thread stops answering as each attempt starts, until the line is written: each attempt gives way before
-    // its process runs VACUUM, and the next waits for twice the quiet (2 s, then 4 s, then 8 s), so the bound of 10 s
-    // passes while the third waits. Once the line is written, the next attempt runs to its end.
-    const stderr = spyOnStderr();
-    const watch: ThreadWatch = stalled => {
-      if (!stderr.logged().includes(NOT_SHRUNK)) stalled();
-      return () => undefined;
-    };
-    let logged = "";
-    try {
-      expect(await move(path, { watch, waitNotice: 10_000 })).toBe(30);
-    } finally {
-      logged = stderr.logged();
-      stderr.restore();
-    }
-
-    const lines = logged.split("\n");
-    const toldAt = lines.findIndex(line => line.includes(NOT_SHRUNK));
-    const gaveWay = lines.slice(0, toldAt).filter(line => line.includes("VACUUM gave way (")).length;
-    expect(gaveWay).toBeGreaterThan(0);
-    expect(lines[toldAt]).toContain(`in 10 s its VACUUM gave way ${gaveWay === 1 ? "once" : `${gaveWay} times`}, and runs `
-      + `again once no other connection has written to the file for ${2 * 2 ** gaveWay} s. The daemon keeps trying; run `
-      + "`rerail scrub`");
-    expect(lines.filter(line => line.includes(NOT_SHRUNK))).toHaveLength(1);
-    expect(pageBytes(path).free).toBe(0);
-  }, 60_000);
-
-  it("says its VACUUM is running when an attempt runs as its bound passes, after one that gave way", async () => {
-    const path = await fileOfTheBuildBefore();
-    writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
-    // The first VACUUM a process runs holds the write lock 30 s before it runs, as one of a large file on a loaded
-    // machine does. The watched thread stops answering as the first attempt starts, which gives way before its process
-    // runs VACUUM, and answers through the second, which starts after 4 s of quiet and holds the lock past the bound of
-    // 10 s. A stop ends it once the line is written.
-    const held = join(dirname(path), "vacuum-held");
-    const restore = slowVacuumNext({ held, holdMs: 30_000 });
-    let attempts = 0;
-    const watch: ThreadWatch = stalled => {
-      if ((attempts += 1) === 1) stalled();
-      return () => undefined;
-    };
-    const stop = new AbortController();
-    const stderr = spyOnStderr();
-    let logged = "";
-    try {
-      const moving = move(path, { watch, waitNotice: 10_000, signal: stop.signal });
-      await until(() => stderr.logged().includes(NOT_SHRUNK), 60_000);
-      await untilExists(held, 60_000);
-      stop.abort();
-      expect(await moving).toBe(30);
-    } finally {
-      logged = stderr.logged();
-      stderr.restore();
-      restore();
-    }
-
-    const told = logged.split("\n").filter(line => line.includes(NOT_SHRUNK));
-    expect(told).toHaveLength(1);
-    expect(told[0]).toContain("in 10 s its VACUUM gave way once; it is running again now. The daemon keeps trying; run "
-      + "`rerail scrub`");
-    expect(attempts).toBe(2);
-    expect(logged).toContain("Rerail stopped before VACUUM finished");
-  }, 90_000);
-
-  it("reads the free disk space again before each attempt of a VACUUM that gives way", async () => {
-    const path = await fileOfTheBuildBefore();
-    writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
-    // Room when the move first asks (one read per disk); 64 KB from the next read on, as when the disk fills before the
-    // first quiet moment comes.
-    const disks = statSync(dirname(path)).dev === statSync(tmpdir()).dev ? 1 : 2;
-    let reads = 0;
-    vi.mocked(statfsSync).mockImplementation(() => {
-      const bavail = (reads += 1) <= disks ? 1 << 30 : 16;
-      return { type: 0, bsize: 4096, frsize: 4096, blocks: 1 << 30, bfree: bavail, bavail, files: 0, ffree: 0 };
-    });
-
-    const { logged } = await stderrWhile(async () => {
-      expect(await move(path, { watch: () => () => undefined })).toBe(30);
-    });
-    expect(logged).toContain(`rerail: ${path} keeps its size`);
-    expect(logged).toContain("of free disk space, less than the");
-    expect(pageBytes(path).free).toBeGreaterThan(0);
-  }, 30_000);
-
-  it.skipIf(!existsSync("/dev/shm"))("measures the disk of the folder SQLite writes VACUUM's copy to, when SQLITE_TMPDIR names one", async () => {
-    // A folder on a disk of its own (memory), as SQLite takes SQLITE_TMPDIR before TMPDIR.
-    const sqliteTemporary = await mkdtemp("/dev/shm/rerail-sqlite-temporary-");
-    temporaryDirectories.push(sqliteTemporary);
-    const before = process.env.SQLITE_TMPDIR;
-    process.env.SQLITE_TMPDIR = sqliteTemporary;
-    try {
-      const { logged } = await moveLogging(() => {
-        // That disk has 64 KB free; every other has plenty.
-        vi.mocked(statfsSync).mockImplementation(folder => {
-          const bavail = folder === sqliteTemporary ? 16 : 1 << 30;
-          return { type: 0, bsize: 4096, frsize: 4096, blocks: 1 << 30, bfree: bavail, bavail, files: 0, ffree: 0 };
-        });
-        return () => vi.mocked(statfsSync).mockReset();
-      });
-      expect(logged).toContain(`${sqliteTemporary} has 0.1 MB of free disk space`);
-    } finally {
-      if (before === undefined) delete process.env.SQLITE_TMPDIR;
-      else process.env.SQLITE_TMPDIR = before;
-    }
-  });
-
-  it("leaves the free space in the file when there is no provenance to move", async () => {
-    const path = await fileOfTheBuildBefore();
-    writeInlineAudits(path, [[], []]);
-    freePages(path, 1_000_000);
-    const free = pageBytes(path).free;
-
-    expect(await move(path)).toBe(0);
-
-    // The step's table and index take a few of the free pages; the rest stay.
-    expect(pageBytes(path).free).toBeGreaterThan(free - 64 * 1024);
-  });
-
-  it("keeps the file's size, and says why, when another connection reads the database through the move", async () => {
-    const { path, size, logged } = await moveLogging(path => {
-      // A read begun before the upgrade: the WAL the move fills cannot be emptied while it lasts.
-      const reader = new Database(path, { readonly: true });
-      reader.exec("BEGIN");
-      reader.prepare("SELECT count(*) FROM audits").get();
-      return () => reader.close();
-    });
-    expect(logged).toContain(`rerail: ${path} keeps its size`);
-    expect(logged).toContain("another connection was using it. Run `rerail scrub` to give the free space back.");
-    expect(statSync(path).size).toBeGreaterThanOrEqual(size);
-    expect(pageBytes(path).free).toBeGreaterThan(size / 2);
-  }, 30_000);
-
-  it("waits for another connection's read between tries, never inside SQLite, so its thread keeps running", async () => {
-    const { result: { logged }, longest } = await withLongestStall(() => moveLogging(path => {
-      // A read held through the move: the checkpoint before `VACUUM` finds it on every try.
-      const reader = new Database(path, { readonly: true });
-      reader.exec("BEGIN");
-      reader.prepare("SELECT count(*) FROM audits").get();
-      return () => reader.close();
-    }, () => new Promise(resolve => setTimeout(resolve, 20))));
-    expect(logged).toContain("another connection was using it");
     // The thread running the move takes a stop between two tries, and the daemon's close waits for that. Waiting inside
     // SQLite, the checkpoint held the thread for its 5 s busy timeout.
     expect(longest).toBeLessThan(2_000);
-  }, 30_000);
-
-  it("keeps the file's size, and says why, when the disk has less free space than the pages VACUUM copies", async () => {
-    const { path, size, logged } = await moveLogging(() => {
-      vi.mocked(statfsSync).mockImplementation(() => ({ type: 0, bsize: 4096, frsize: 4096, blocks: 1 << 20, bfree: 16, bavail: 16, files: 0, ffree: 0 }));
-      return () => vi.mocked(statfsSync).mockReset();
-    });
-    expect(logged).toContain(`rerail: ${path} keeps its size`);
-    expect(logged).toContain("free disk space");
-    expect(statSync(path).size).toBeGreaterThanOrEqual(size);
-    expect(pageBytes(path).free).toBeGreaterThan(size / 2);
-  });
-
-  it("runs VACUUM when the disk has room for the pages in use, though less than the file's size", async () => {
-    // Three times the pages in use: room for the copy in the temporary folder and the one through the WAL, on one disk.
-    const { path, size, logged } = await moveLogging(path => diskOfPagesInUse(path, 3));
-    expect(logged).not.toContain("keeps its size");
-    expect(pageBytes(path).free).toBe(0);
-    expect(statSync(path).size).toBe(bytesInUse(path));
-    expect(statSync(path).size).toBeLessThan(size / 5);
-  });
-
-  it("skips VACUUM when one disk holds the database's folder and the temporary folder and has room for one copy only", async () => {
-    const { path, size, logged } = await moveLogging(path => {
-      expect(statSync(dirname(path)).dev).toBe(statSync(tmpdir()).dev);
-      return diskOfPagesInUse(path, 1.5);
-    });
-    expect(logged).toContain(`rerail: ${path} keeps its size`);
-    expect(logged).toContain("free disk space");
-    expect(statSync(path).size).toBeGreaterThanOrEqual(size);
-  });
-
-  it.each([
-    ["before", 1, "keeps its size", "its WAL could not be emptied (disk I/O error)"],
-    ["after", 2, "shrinks to ", "emptying its WAL after VACUUM failed (disk I/O error)"],
-  ])("ends the move it committed, and says why, when emptying the WAL %s VACUUM fails", async (_, failing, line, reason) => {
-    const pragma = Database.prototype.pragma;
-    let checkpoints = 0;
-    const { path, logged } = await moveLogging(() => {
-      // A checkpoint that throws rather than reports busy, as one that cannot truncate the WAL on a full disk does.
-      const spy = vi.spyOn(Database.prototype, "pragma").mockImplementation(function (this: Database.Database, source: string, options?: Database.PragmaOptions) {
-        if (source === "wal_checkpoint(TRUNCATE)" && (checkpoints += 1) === failing) throw new Database.SqliteError("disk I/O error", "SQLITE_IOERR");
-        return pragma.call(this, source, options);
-      });
-      return () => spy.mockRestore();
-    });
-    expect(checkpoints).toBe(failing);
-    expect(logged).toContain(`rerail: ${path} ${line}`);
-    expect(logged).toContain(reason);
     expect(inlineAudits(path)).toBe(0);
-  });
-
-  it("says the file shrinks later when another connection reads it as the VACUUM ends", async () => {
-    const path = await fileOfTheBuildBefore();
-    writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
-    const readers: Database.Database[] = [];
-    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    let logged = "";
-    try {
-      const moved = await move(path, {
-        pause: () => {
-          // Before the batch that finds nothing left: a read that begins on an empty WAL lets the checkpoint before
-          // `VACUUM` run, and keeps the one after it from writing the rewritten file into the database file.
-          if (readers.length === 0 && inlineAudits(path) === 0) {
-            const checkpointer = new Database(path);
-            try {
-              checkpointer.pragma("wal_checkpoint(TRUNCATE)");
-            } finally {
-              checkpointer.close();
-            }
-            const reader = new Database(path, { readonly: true });
-            readers.push(reader);
-            reader.exec("BEGIN");
-            reader.prepare("SELECT count(*) FROM audits").get();
-          }
-          return Promise.resolve();
-        },
-      });
-      expect(moved).toBe(30);
-      logged = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
-    } finally {
-      stderr.mockRestore();
-      for (const reader of readers) reader.close();
-    }
-    expect(logged).toContain(`rerail: ${path} shrinks to `);
-    expect(logged).toContain("another connection was reading it as VACUUM ended");
-
-    // Once the read ends, a checkpoint writes the rewritten file into the database file, as the line says.
-    const later = new Database(path);
-    try {
-      later.pragma("wal_checkpoint(TRUNCATE)");
-    } finally {
-      later.close();
-    }
-    expect(pageBytes(path).free).toBe(0);
-    expect(statSync(path).size).toBe(bytesInUse(path));
   }, 30_000);
-
-  it("says the file has shrunk and only its WAL waits when another connection begins a read just after the VACUUM", async () => {
-    const path = await fileOfTheBuildBefore();
-    writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
-    const readers: Database.Database[] = [];
-    const exec = Database.prototype.exec;
-    // A read that begins once `VACUUM` has committed reads the rewritten file, so it lets the checkpoint after it write
-    // every frame into the database file, but not empty the WAL.
-    const vacuum = vi.spyOn(Database.prototype, "exec").mockImplementation(function (this: Database.Database, source: string) {
-      exec.call(this, source);
-      if (source === "VACUUM") {
-        const reader = new Database(path, { readonly: true });
-        readers.push(reader);
-        reader.exec("BEGIN");
-        reader.prepare("SELECT count(*) FROM audits").get();
-      }
-      return this;
-    });
-    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    let logged = "";
-    try {
-      expect(await move(path)).toBe(30);
-      logged = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
-      // While the read lasts: the file is its pages in use already, and the WAL still holds the rewritten file.
-      expect(readers).toHaveLength(1);
-      expect(pageBytes(path).free).toBe(0);
-      expect(statSync(path).size).toBe(bytesInUse(path));
-      expect(statSync(`${path}-wal`).size).toBeGreaterThan(statSync(path).size);
-    } finally {
-      stderr.mockRestore();
-      vacuum.mockRestore();
-      for (const reader of readers) reader.close();
-    }
-    expect(logged).toContain(`rerail: ${path} shrank to `);
-    expect(logged).toContain("but its WAL stays at ");
-    expect(logged).not.toContain("at a later checkpoint");
-  });
 
   it("leaves nothing of a repository's provenance in the file once its history is reset", async () => {
     const path = await temporaryDatabase();

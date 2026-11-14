@@ -574,45 +574,17 @@ the daemon moves the provenance once it starts, on a thread of its own, so it ke
 Each transaction moves as many audits as fit in about 100 ms, at most 100, with a pause between two, so the open that
 upgrades the file returns at once and other processes keep writing during the move. While another process holds the
 database, the move tries again for up to 5 s. A daemon stopped partway goes on at its next start, and a later start
-finds nothing left to move with one read and takes no write lock. Once the move ends, the daemon runs one `VACUUM`,
-which gives the space it freed back to the disk.
+finds nothing left to move with one read and takes no write lock.
+
+The pages that held each audit's own copy are zeroed, as every delete's are, and stay in the file: new history fills
+them before the file grows again. The daemon runs no `VACUUM`, since one holds the write lock until it commits, seconds
+on a large file, and another process's write fails once it has waited 5 s. `rerail scrub` gives the space back to the
+disk when you run it.
 
 A Rerail older than this one reads an audit's rule provenance only from the audit's own row, so the move waits while
 one may still be using the database: while an older Rerail has recorded an audit in the last 7 days, the daemon moves
 nothing, says in `daemon.log` until when it waits, and looks again then. A move that finds such an audit before its
 next batch stops there and waits the same way; the audits it has not reached keep their provenance in their row.
-
-`VACUUM` holds the database's write lock until it commits, which takes seconds on a large file, and the daemon's own
-writes wait for that lock on the thread that answers hooks. So the daemon runs `VACUUM` in a process of its own, once
-no process has written to the database for 2 s, and that process gives way to the daemon: when the daemon's thread
-has not answered for half a second before the `VACUUM` has committed, the daemon ends the process, SQLite drops the
-unfinished `VACUUM`, and the write that was waiting goes through. A `VACUUM` that has committed holds the lock no more,
-and runs to its end; the process tells the daemon when it holds the lock, so a `rerail scrub` or `rerail reset` that
-shrinks the file before then is not taken for that commit. One whose whole `VACUUM` falls in the instant between the
-process's read and its own `VACUUM` is: that `VACUUM` was short, and the process's own then holds the lock about as
-long without giving way. A try that finds the space already given back runs no `VACUUM`. The next try waits for a
-quiet spell twice as long, up to 30 s, and `daemon.log` says so. If no
-try has committed an hour after the first wait began, `daemon.log` says so once, with what the tries did (none could
-start, how many gave way, or one is running now), the free space and `rerail scrub`, and the daemon keeps trying.
-
-Another process that writes while a `VACUUM` runs (a hook recording a steer it delivered, a `rerail` command, or a
-daemon of another Rerail version sharing the database) waits for the write lock as for any write, and fails with
-`database is locked` after 5 s. So the daemon also ends a try whose `VACUUM` has held the lock 4 s without committing,
-and that write goes through. After three such tries the daemon stops, leaves the free space in the file, and says in
-`daemon.log` to run `rerail scrub`, which runs `VACUUM` once without that bound; the next daemon start tries again.
-Stopping the daemon ends a running `VACUUM` at once, and so does a daemon that ends any other way (killed, crashed): the
-`VACUUM` process reads a pipe from the daemon, and ends itself when the daemon's end of it closes.
-
-The daemon skips the `VACUUM`, and says why in `daemon.log` with `rerail scrub` as the way to give the space back, when
-another process is still using the database after the move's tries, when emptying the WAL into the file fails, when a
-disk has less free space than `VACUUM` writes to it (checked again before each try), after three tries that each held
-the lock 4 s, or when it stops before a `VACUUM` has finished. `VACUUM` writes a copy of the database's pages in use, not its free ones, to the folder SQLite uses for
-temporary files (on Linux and macOS the first of `SQLITE_TMPDIR`, `TMPDIR`, `/var/tmp`, `/usr/tmp` and `/tmp` it may
-write in; on Windows the system's temporary folder), and another through the WAL beside the database, so the disk of
-each folder needs room for one copy, and a disk that holds both folders room for two. The file then keeps its size,
-and new history reuses the free space. A later daemon start, finding audits the move moved and more than 64 MB of free
-pages, runs the `VACUUM` again; `rerail scrub` gives the space back at once. The audits stay moved whatever happens to
-the `VACUUM`.
 
 Most steps add a column or a table, which older versions read correctly: the floor stays, an older Rerail still opens
 the file, and a hook or the status line runs such steps itself. A step an older version would misread raises the
