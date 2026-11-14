@@ -51,6 +51,26 @@ Over 62 small React and TypeScript files, that one relation did 1.0 G rows of wo
    a scope that declares e as a value or a type, and `ref_site` joins either. Readers of value references
    (`free_ref`, `env_global`) do not see it, so a type-only `export { T }` is no free global.
 
+5. **A glob spans lines** (`text/source.rs`): globset's regex is read with `dot_matches_new_line`, as globset's own
+   matcher reads it. `glob("**", n)`, the translator's always-true test, failed on every node of more than one line.
+6. **Combined programs keep `has` over guests** (`plan/corpus.rs`): the merge renames `has`'s axis (`rr_has_<set>`)
+   to the shared kind set, as it did `inside`'s. Left on its old name, guest hiding could not name the set in the
+   guest's grammar, and `has` over a guest found nothing once two programs ran together.
+7. **The translator follows ast-grep where it enumerated**:
+   - `any` takes the first alternative that matches: a branch that binds a capture differently holds only where
+     no earlier one does (`count : { earlier } = 0`, its own variables renamed).
+   - `field` on an `inside`/`has` that is not a neighbor names the step at the ancestor: the child the path comes
+     through (`data: () => ({ … })`).
+   - `compare … text: "node"` between two captures is node identity, not equal text; a capture against itself stays
+     "is set". Main's default `text` is the source.
+   - A `binds.site` test that names no kind is the site itself, not any ancestor.
+   - A token `has`/`precedes` reads keywords beside `not: {kind: K}` when K fails the regex (a getter's `get`), a
+     field's token (`for…in`'s `in`), and a stop past comments (`)` after a call's last argument).
+   - A `binds` list may splice an option's cases (`vars: "all"` adds `global`).
+8. **`resolves.write: "last"` is `write_anchor(a, d)`** (`tsx/names.rr`): the variable's last write from its own
+   function scope, else its first definition's name, as main's `anchor`. `site_used` counts reads only: a plain
+   write and a discarded self-update (`x++;`) are no use, as in ESLint.
+
 ## Consequences
 
 - no-shadow over 62 React and TypeScript files: 3.4 s CPU, against 39 s, with the same findings. Over 10 files:
@@ -71,3 +91,11 @@ Over 62 small React and TypeScript files, that one relation did 1.0 G rows of wo
   pack's goldens are unchanged. Main's four Vue rules match 130 of 142 fixture findings, as before; no-shadow finds
   the same over the 62 files.
 
+
+- Main's Vue rules: no-dupe-keys finds 35 of 35 with no extras (was 30, 20 extra); no-unused-refs 7 of 7 (was 5
+  extra). no-template-shadow and no-unused-vars are as before.
+- no-shadow's type-parameter fixtures (typescript-eslint 034–042): 7 of 9 (was 0). With multi-line nodes now
+  matched, eight valid fixtures it exempts are flagged (module augmentation, a static method's type parameter,
+  `ignoreTypeValueShadow`): open. The 62 React/TS files give the same findings.
+- eslint-no-unused-vars (candidate) runs; on its probe it reports the 10 variables ESLint does, at ESLint's nodes.
+- 187 Python rules translate differently; all 537 pass the reader and the Ruff comparison is unchanged.

@@ -812,6 +812,22 @@ fn site_filters(px: &Patterns, prog: &mut Program, filters: &Obj, s: &str, name:
             let x = vs.fresh("o");
             lits.push(format!("site_{bk}({s}, {x})"));
             lits.extend(lower(px, prog, bv, &x, vs, &[])?);
+        } else if let Some(l) = bv.as_list().filter(|l| l.iter().any(|x| is_option(x) && x.has("cases")) && l.iter().all(|x| x.is_str() || (is_option(x) && x.has("cases"))))
+        {
+            // A list that splices in an option's cases (`scope: [..., {$option: vars, cases: {all: [global]},
+            // default: [], spread: true}]`): each case's items under `option(name, case)`, the default's under none.
+            let test = |x: &Value| format!("site_{}({s}, {})", snake(bk), q_val(x));
+            let mut alts: Vec<String> = l.iter().filter(|x| x.is_str()).map(test).collect();
+            for o in l.iter().filter(|x| is_option(x)) {
+                let name = q_val(o.get("$option").expect("$option"));
+                let cases = cases_of(o);
+                for (c, items) in &cases {
+                    alts.extend(items.as_list().into_iter().flatten().map(|x| format!("option({name}, {}), {}", q(c), test(x))));
+                }
+                let none = cases.iter().map(|(c, _)| format!("!option({name}, {})", q(c))).collect::<Vec<_>>().join(", ");
+                alts.extend(o.get("default").and_then(Value::as_list).into_iter().flatten().map(|x| if none.is_empty() { test(x) } else { format!("{none}, {}", test(x)) }));
+            }
+            lits.push(format!("({})", alts.join(" ; ")));
         } else if bv.as_list().is_some_and(|l| l.iter().all(Value::is_str)) {
             lits.push(one_of(prog, vs, &format!("site_{}({s}, {{}})", snake(bk)), bv.as_list().expect("a list"), "f", &format!("the JSON `binds.{bk}` list")));
         } else if bv.is_true() {
@@ -1434,6 +1450,17 @@ fn resolves(px: &Patterns, prog: &mut Program, r: &Obj, v: &str, vs: &mut Vars) 
         && let Some(Value::List(imported)) = r.get("imported")
     {
         return Ok(main_terms::statement_imported(prog, imported, v, vs, truthy(r.get("prefix"))));
+    }
+    // `write: "last"`: v is where ESLint reports its variable (the names library's `write_anchor`), and `binding`
+    // filters that variable's site. Main allows no other key beside them.
+    if r.get("write").and_then(Value::as_str) == Some("last") && prog.lang != "python" {
+        prog.use_("names");
+        let s = vs.fresh("b");
+        lits.push(format!("write_anchor({v}, {s})"));
+        if let Some(b) = r.get("binding").and_then(Value::as_obj) {
+            lits.extend(site_filters(px, prog, b, &s, None, vs)?);
+        }
+        return Ok(lits);
     }
     for (k, val) in r.iter() {
         if k == "import" && val.is_true() {
