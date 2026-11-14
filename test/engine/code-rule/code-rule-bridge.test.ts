@@ -1148,6 +1148,45 @@ describe("CodeRuleBridge", () => {
 
     expect([...(await second.walkResume())?.held.keys() ?? []]).toEqual([]);
   });
+
+  // Held on after the budget dropped its text, a source was compared at the next open with what was last observed of it,
+  // so that open's first walk read no text of it: the agent's next shell write there was measured from nothing, where
+  // a session opened fresh measures it from the text the agent left.
+  it("measures the agent's shell write to a source the budget let go of from the text it left there, at a later open too", async () => {
+    const root = await workspace();
+    const [held, other] = [join(root, "src", "a.py"), join(root, "src", "b.py")];
+    await writeFile(held, "before\n");
+    git(root, "init", "--quiet");
+    git(root, "config", "core.autocrlf", "false");
+    git(root, "add", ".");
+    git(root, "commit", "--quiet", "-m", "seed");
+    const first = createBridge(root, auditor(async (_sessionId, batch) => response(batch)));
+    await first.openWorkspace("session-1");
+    await first.checkpoint("turn");
+    await first.begin("edit-0", "write", { path: "src/a.py" });
+    await writeFile(held, "mine\n");
+    await first.finish("edit-0");
+    const quiet = await first.walkResume();
+    await first.close();
+    // Room for the five bytes of a.py's text or the nine of b.py's, not both: b.py's edit drops a.py's text.
+    const second = createBridge(root, auditor(async (_sessionId, batch) => response(batch)), { ...(quiet === undefined ? {} : { resume: quiet }), sessionTextBytes: 12 });
+    await second.openWorkspace("session-1");
+    await second.checkpoint("turn");
+    await second.begin("edit-1", "write", { path: "src/b.py" });
+    await writeFile(other, "mine too\n");
+    await second.finish("edit-1");
+    const quietAgain = await second.walkResume();
+    await second.close();
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const third = createBridge(root, auditor(auditGeneratedEdits), { ...(quietAgain === undefined ? {} : { resume: quietAgain }), sessionTextBytes: 12 });
+    await third.openWorkspace("session-1");
+    await third.checkpoint("turn");
+    await shell(third, async () => await writeFile(held, "mine\nmore\n"));
+
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => ({ mode: batch.mode ?? "session", ...edit })))).toEqual([
+      { mode: "session", path: "src/a.py", language: "python", previousText: "mine\n", generatedText: "mine\nmore\n" },
+    ]);
+  });
 });
 
 describe("ledgerPreimage", () => {
