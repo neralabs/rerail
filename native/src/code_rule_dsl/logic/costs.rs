@@ -97,7 +97,14 @@ fn write() {
         *w = open(&path).ok();
         // Past `KEPT`, the oldest of this machine's samples go.
         if let Some(db) = w.as_ref() {
-            let _ = db.execute("DELETE FROM samples WHERE machine = ?1 AND at < (SELECT at FROM samples WHERE machine = ?1 ORDER BY at DESC LIMIT 1 OFFSET ?2)", rusqlite::params![machine(), KEPT]);
+            // Only once past `KEPT` by an eighth, then back to `KEPT`: asked first, a read down the index. Cut to
+            // `KEPT` each time, every process that wrote samples deleted the last runs' few thousand (510,377 kept,
+            // a delete each run).
+            let over = db.query_row("SELECT 1 FROM samples WHERE machine = ?1 ORDER BY at DESC LIMIT 1 OFFSET ?2", rusqlite::params![machine(), KEPT + KEPT / 8], |_| Ok(())).is_ok();
+            let cut: Option<f64> = over.then(|| db.query_row("SELECT at FROM samples WHERE machine = ?1 ORDER BY at DESC LIMIT 1 OFFSET ?2", rusqlite::params![machine(), KEPT], |r| r.get(0)).ok()).flatten();
+            if let Some(cut) = cut {
+                let _ = db.execute("DELETE FROM samples WHERE machine = ?1 AND at < ?2", rusqlite::params![machine(), cut]);
+            }
         }
     }
     let Some(db) = w.as_mut() else {

@@ -208,7 +208,18 @@ pub(super) fn stored_source(store: &ContentStore, text: &str) -> StoreResult<Opt
 /// The source of `text` for the run's manifest (`late`, which the manifest reads as the writer runs it), all of it
 /// on the store's writer, behind the run (decision 0104): the source the store holds then, pinned, or, where `store`,
 /// one it stores. Queued after a write that stores it (FIFO), it finds that one.
-pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
+/// `by`: the queued write that would store it, when `store` is not set: not held and none queued, nothing is.
+pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, by: Option<crate::content_store::write_back::Key>, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
+    // Held already (a warm run's every source): read here, before the first wave, and only its pin queued, as
+    // `stored_source` does; the writer's job, which reads and stores, is for a source not held yet.
+    if let Ok(Some(id)) = cache.sources_by_hashes(&[HashKey::sha256(text.as_bytes())]).map(|mut f| f.pop().flatten()) {
+        late.lock().expect("the late sources").push(id);
+        cache.write_back_syms(crate::content_store::write_back::Syms::None, "a source's pin", 0, Vec::new(), Box::new(move |s| s.pin_held_sources(&[id])));
+        return;
+    }
+    if !store && by.is_some_and(|k| !cache.queued(&k)) {
+        return;
+    }
     let late = std::sync::Arc::clone(late);
     cache.write_back_syms(
         crate::content_store::write_back::Syms::None,

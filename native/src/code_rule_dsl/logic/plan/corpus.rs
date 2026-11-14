@@ -2657,7 +2657,7 @@ fn run_observed(
     let _combined_pins = durable.is_some().then(|| combined::Pins::new(store, &texts));
     if durable.is_some() {
         let (text, plan) = combined::named(&texts);
-        memo::named_source(store, text, false, &late_sources);
+        memo::named_source(store, text, false, Some(combined::queued(&texts)), &late_sources);
         // And its program's text (decision 0155), a source of its own.
         combined::name_program(store, &texts, &late_sources);
         program_plans.push(plan);
@@ -2667,7 +2667,7 @@ fn run_observed(
     let _choices = durable.and(tape_cache_path()).map(|path| super::choices::Durable::start(&path, prepared_key, Arc::clone(&late_sources), Arc::clone(&lists)));
     if durable.is_some() {
         let (text, plan) = super::choices::named(&prepared_key);
-        memo::named_source(store, text, true, &late_sources);
+        memo::named_source(store, text, true, None, &late_sources);
         program_plans.push(plan);
     }
     let (kept, from) = match (kept, durable) {
@@ -7530,7 +7530,10 @@ fn run_observed(
     // The run's atoms are written at its end (decision 0049 §4.3), behind the run as any write (decision 0102): every
     // queued write that names an atom appends the pending atoms before it commits, so this writes those no later
     // write did. The profile says how often they were.
-    store.write_back_syms(crate::content_store::write_back::Syms::None, "the run's atoms", 0, Vec::new(), Box::new(|store| store.flush_atoms()));
+    // None pending (a warm run's), none queued.
+    if store.atoms_handle().pending() {
+        store.write_back_syms(crate::content_store::write_back::Syms::None, "the run's atoms", 0, Vec::new(), Box::new(|store| store.flush_atoms()));
+    }
     let ((segments, atoms, bytes), pending) = store.atom_writes();
     crate::code_rule_dsl::logic::profile::decision("atoms", || {
         format!("{atoms} atoms appended in {segments} segments ({:.1} MB), {pending} pending at the end (decision 0049)", bytes as f64 / 1e6)
