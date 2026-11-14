@@ -18,6 +18,18 @@ describe("processState", () => {
     expect(processState(DEAD_PID, kill)).toBe(state);
   });
 
+  // Init reaps an exited daemon whenever it runs: signal 0 can still find the zombie, and by the read of its
+  // /proc/<pid>/stat the entry is gone with it.
+  it.runIf(process.platform === "linux")("reads a pid reaped between its signal and its /proc read as gone", () => {
+    let asked = 0;
+    const reapedAfterTheFirstSignal: ProcessSignal = () => {
+      asked += 1;
+      if (asked > 1) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+      return true;
+    };
+    expect(processState(DEAD_PID, reapedAfterTheFirstSignal)).toBe("gone");
+  });
+
   it("finds this process running and a pid no process holds gone", () => {
     expect(processState(process.pid)).toBe("running");
     expect(processState(DEAD_PID)).toBe("gone");

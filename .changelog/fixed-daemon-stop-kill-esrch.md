@@ -1,0 +1,1 @@
+On Linux, `rerail daemon stop`, and an uninstall or update that stops the daemon, no longer fail with `kill ESRCH` when the daemon ends at the moment Rerail checks it. Before, a daemon reaped in that moment read as still running, and the stop failed trying to kill it, leaving `daemon.json` behind.
