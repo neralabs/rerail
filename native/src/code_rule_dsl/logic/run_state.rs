@@ -175,6 +175,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/content_store/atoms.rs", "RESERVING", Thread, "this thread's store write in progress"),
     ("src/content_store/atoms/map.rs", "MAPPED", Call, "a write in progress whose symbols are mapped (`atoms::map::mapped`)"),
     ("src/content_store/atoms.rs", "SEGMENT_BYTES_TEST", Thread, "this thread's store write in progress"),
+    ("src/content_store/atoms/map.rs", "MAPPED", Call, "one write in progress on this thread declaring its symbols mapped (`mapped`), set and read within it"),
     ("src/content_store/compression.rs", "DECODERS", Thread, "this thread's codecs"),
     ("src/content_store/compression.rs", "DICT_ENCODERS", Thread, "this thread's codecs"),
     ("src/content_store/compression.rs", "ENCODER", Thread, "this thread's codecs"),

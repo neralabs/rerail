@@ -1629,9 +1629,9 @@ spt_flow_hit(d, "SPT-023", n) :- spt_flow_call(d, n, _, _), spt_flow_callee(n, "
 spt_flow_hit(d, "SPT-028", n) :- spt_flow_sps(1), spt_flow_planning(f), spt_flow_ps(d, f, "builder", n), !spt_flow_pk_sink(d, f, "semantic").
 spt_flow_pk_sink(d, f, k) :- spt_flow_ps(d, f, k, _).
 violation("data-layer-serverplan-state-tripwires", "state-flow-narrow", code, p, l) :- spt_flow_hit(d, code, n), spt_doc(d, p), line(n, l).
-rr_demand_agg_rr_agg12(p) :- spt_flow_jafter(p), rr_t11 = @add(p, 1).
+rr_demand_agg_rr_agg12(p) :- spt_flow_jafter(p), spt_flow_jws(rr_t11), rr_t11 = @add(p, 1).
 rr_demand_agg_rr_agg14(v) :- spt_flow_jkeyish(o), spt_flow_jdepth(o, 1), spt_flow_jstr(o, c), spt_flow_jnext(c, i), spt_flow_jnext(i, v), spt_flow_jopen(v).
-rr_demand_agg_rr_agg2(p) :- spt_flow_jb(p, _), rr_t1 = @sub(p, 1).
+rr_demand_agg_rr_agg2(p) :- spt_flow_jb(p, _), spt_flow_jb(rr_t1, 92), rr_t1 = @sub(p, 1).
 rr_demand_agg_rr_agg22(d, f, k) :- spt_flow_tcand(d, f, k, _, _, _).
 rr_demand_agg_rr_agg23(d, f, k, l, p) :- spt_flow_plprio(d, f, k, l, p), spt_flow_pl(d, f, k, l, p, n), node(d, n, _, s, _).
 rr_demand_agg_rr_agg4(q) :- spt_flow_juq(q).

@@ -519,6 +519,16 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         self.b.enc.copy_nodes(from, rule.image(), n..n + size, &vars, same);
         self
     }
+    /// A literal of `from`'s rule `rule`, copied through `rw` (its variables renamed, terms replaced): a literal of one
+    /// rule written into another (an unfolded read, a demand split's part).
+    pub fn lit_with(mut self, from: &Version, rule: RuleRef<'_>, lit: LitRef<'_>, rw: &mut impl Rewrite) -> Self {
+        self.body();
+        let same = self.b.same(rule);
+        let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
+        let mut w = Walk { enc: &mut self.b.enc, from, im: rule.image(), vars: &vars, same, prefix: Vec::new() };
+        w.lit(lit, rw);
+        self
+    }
     /// An atom of `from`'s rule `rule`, copied as this rule's head.
     pub fn head_from(mut self, from: &Version, rule: RuleRef<'_>, atom: super::AtomRef<'_>) -> Self {
         if self.head {
@@ -665,6 +675,11 @@ pub trait Rewrite {
     fn keep(&mut self, _l: LitRef<'_>) -> bool {
         true
     }
+    /// The variable (by the atom naming it, in the builder's ids) to write in place of variable `s` where no term is
+    /// asked for it (`nearest`'s variables), and where `term` keeps a variable term; `None` keeps its name.
+    fn var(&mut self, _s: Slot) -> Option<AtomId> {
+        None
+    }
 }
 
 /// The copy a `Rewrite` steers: a rule's nodes, from `im` (of version `from`) into `enc`.
@@ -686,6 +701,20 @@ impl Walk<'_, '_> {
     fn copy(&mut self, n: u32) {
         let size = self.im.node(n).1;
         self.enc.copy_nodes(self.from, self.im, n..n + size, self.vars, self.same);
+    }
+    /// `copy`, each variable leaf renamed where `rw.var` names it.
+    fn copy_renamed(&mut self, n: u32, rw: &mut impl Rewrite) {
+        let size = self.im.node(n).1;
+        for m in n..n + size {
+            let (kd, _, val) = self.im.node(m);
+            match (kd & kind::MASK == kind::VAR).then(|| rw.var(Slot(val))).flatten() {
+                Some(a) => {
+                    let s = self.enc.slot_of(a.0);
+                    self.enc.leaf(kind::VAR, s);
+                }
+                None => self.enc.copy_nodes(self.from, self.im, m..m + 1, self.vars, self.same),
+            }
+        }
     }
     fn atom(&mut self, a: AtomRef<'_>, site: Site<'_>, rw: &mut impl Rewrite) {
         let at = self.open_mapped(a.node());
@@ -719,7 +748,7 @@ impl Walk<'_, '_> {
             }
             self.enc.close(at);
         } else {
-            self.copy(n);
+            self.copy_renamed(n, rw);
         }
     }
     fn lit(&mut self, l: LitRef<'_>, rw: &mut impl Rewrite) {
@@ -754,7 +783,7 @@ impl Walk<'_, '_> {
                 }
                 self.enc.close(at);
             }
-            _ => self.copy(n),
+            _ => self.copy_renamed(n, rw),
         }
     }
 }

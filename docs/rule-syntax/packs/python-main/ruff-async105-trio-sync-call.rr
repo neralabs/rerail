@@ -17,27 +17,6 @@ ASYNC105(n, CALLEE) :- kind(n, "call"), child(n, c1, _), node(_, c1, _, _, _), C
     async105_callee_of_target(c1), next_sibling(c1, s2),
     (kind(s2, "argument_list") ; kind(s2, "generator_expression")), !async105_awaited(n).
 
-// scope_body(n): the JSON util `scope-body`, used where the JSON says `matches: "scope-body"`
-.decl async105_scope_body(n: node)
-async105_scope_body(n) :- kind(n, "block"), child(p1, n, _),
-    (kind(p1, "function_definition") ; kind(p1, "class_definition")).
-
-// lambda_body(n): the JSON util `lambda-body`, used where the JSON says `matches: "lambda-body"`
-.decl async105_lambda_body(n: node)
-async105_lambda_body(n) :- child(p1, n, _), kind(p1, "lambda"), async105_tok_follows_1(n).
-
-// callee_position(n): the JSON util `callee-position`, used where the JSON says `matches: "callee-position"`
-.decl async105_callee_position(n: node)
-async105_callee_position(n) :- child(p1, n, _), kind(p1, "call"), next_sibling(n, s2),
-    (kind(s2, "argument_list") ; kind(s2, "generator_expression")).
-async105_callee_position(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"),
-    async105_callee_position(p3).
-
-// async_context(n): the JSON util `async-context`, used where the JSON says `matches: "async-context"`
-.decl async105_async_context(n: node)
-async105_async_context(n) :- within_stop(n, p1, async105_stop_1), kind(p1, "block"), child(p2, p1, _),
-    kind(p2, "function_definition"), async105_tok_has_2(p2).
-
 // target(n): the JSON util `target`, used where the JSON says `matches: "target"`
 .decl async105_target(n: node)
 async105_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, q1), async105_set_2(q1).
@@ -90,11 +69,6 @@ async105_set_2("trio.lowlevel.reattach_detached_coroutine_object").
 async105_set_2("trio.lowlevel.temporarily_detach_coroutine_object").
 async105_set_2("trio.lowlevel.wait_readable"). async105_set_2("trio.lowlevel.wait_task_rescheduled").
 async105_set_2("trio.lowlevel.wait_writable").
-
-// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
-.decl async105_stop_1(n: node)
-async105_stop_1(n) :- async105_scope_body(n).
-async105_stop_1(n) :- async105_lambda_body(n).
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 .decl async105_alt_3(n: node)

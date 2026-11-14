@@ -330,7 +330,7 @@ impl<'v> Body<'v> {
         d.u64(a.args().count() as u64);
         a.args().for_each(|t| self.digest_term(d, t));
     }
-    fn digest_lit(&self, d: &mut super::super::derived::Inputs, l: LitRef<'_>) {
+    pub(in crate::code_rule_dsl) fn digest_lit(&self, d: &mut super::super::derived::Inputs, l: LitRef<'_>) {
         match l.view() {
             Lit::Atom(a) => {
                 d.u64(0);
@@ -404,7 +404,7 @@ impl std::fmt::Display for HeadText<'_, '_> {
 }
 
 /// An equality of a bound variable or constant with an unbound variable assigns the right side (`plan::binds_right`).
-fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &VarSet) -> Option<Slot> {
+pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &VarSet) -> Option<Slot> {
     static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *OFF.get_or_init(|| std::env::var("RERAIL_EQUALITY_BINDS").is_ok_and(|v| v == "off")) || op != CmpOp::Eq {
         return None;
@@ -423,14 +423,109 @@ fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &VarSet) -> Opt
 /// programs are trees, and this is how the planner reads their rules by handles. A program is added once it is
 /// final: its rules do not move after.
 #[derive(Clone, Default)]
-pub struct Versions(Vec<(usize, usize, Arc<Version>)>);
+pub struct Versions(Vec<(usize, usize, Placed)>);
+
+/// A program's version, and where its rules are in it: the program's rule `k` is the version's rule `ids[k]` (rule
+/// `k` where `ids` is `None`, a version made of the rules in order). A pass's overlay keeps its rules where its edits
+/// put them (a reader's copies after the rules it does not touch), and the program, decoded, in the tree pass's order.
+#[derive(Clone)]
+pub struct Placed {
+    pub v: Arc<Version>,
+    ids: Option<Arc<[RuleId]>>,
+    /// Whether `v` holds the program's other fields too (`of_program`), not its rules alone.
+    pub whole: bool,
+}
+
+impl Placed {
+    /// `rules` made into a version of their own, in order.
+    pub fn made(rules: &[Rule]) -> Result<Placed> {
+        Ok(Placed { v: made(rules)?, ids: None, whole: false })
+    }
+    /// `prog`'s image (decision 0173): its rules in order, and its declarations, facts, inputs, outputs and other
+    /// fields (`About`), which the passes read beside the rules. A program with maintenance's parts (`again`,
+    /// `together`, `shapes`: a session's maintained program) has no image; it is made of its rules alone, and
+    /// `whole` says so.
+    pub fn of_program(prog: &Program) -> Result<Placed> {
+        match Builder::of_program(prog) {
+            Ok(b) => Ok(Placed { v: b.finish().map_err(Error::Plan)?.0, ids: None, whole: true }),
+            Err(_) => Placed::made(&prog.rules),
+        }
+    }
+    /// A version whose rules are `v`'s in order (a program's image).
+    pub fn whole(v: Arc<Version>) -> Placed {
+        Placed { v, ids: None, whole: true }
+    }
+    /// `v`, the program's rule `k` its rule `ids[k]`.
+    pub fn new(v: Arc<Version>, ids: Vec<RuleId>, whole: bool) -> Placed {
+        Placed { v, ids: Some(ids.into()), whole }
+    }
+    /// `rules` added to `parent` (an overlay that removes nothing), in order.
+    pub fn over(parent: &Arc<Version>, parent_whole: bool, rules: &[Rule]) -> Result<Placed> {
+        let mut b = Builder::on(parent);
+        let mut ids = Vec::with_capacity(rules.len());
+        for r in rules {
+            ids.push(b.add(r).map_err(Error::Plan)?);
+        }
+        let (v, made) = b.finish().map_err(Error::Plan)?;
+        if let Some(order) = super::keeps::inline::renumbered(parent, &[], &ids, made) {
+            ids.iter_mut().for_each(|id| *id = order[id]);
+        }
+        Ok(Placed::new(v, ids, parent_whole))
+    }
+    /// How many rules the program has.
+    pub fn len(&self) -> usize {
+        self.ids.as_ref().map_or(self.v.size(), |ids| ids.len())
+    }
+    /// The id of the program's rule `k`.
+    pub fn id(&self, k: usize) -> RuleId {
+        self.ids.as_ref().map_or(RuleId(k as u32), |ids| ids[k])
+    }
+    /// The program's rules' ids, in its order.
+    pub fn order(&self) -> Vec<RuleId> {
+        match &self.ids {
+            Some(ids) => ids.to_vec(),
+            None => self.v.rules().map(|r| r.id()).collect(),
+        }
+    }
+    /// The program's rule `k`.
+    pub fn rule(&self, k: usize) -> RuleRef<'_> {
+        self.v.rule(self.id(k)).expect("a rule of its version")
+    }
+    /// The program's rule `k` as the planner reads it.
+    pub fn body(&self, k: usize) -> Body<'_> {
+        Body::of(&self.v, self.rule(k))
+    }
+}
+
+/// A rule of a run: the version it is a rule of (its place in the run's `Versions`; the program's is 0) and its id
+/// there. What the run holds of a rule across waves and suspensions, in place of the rule.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub struct RuleKey {
+    v: u32,
+    id: u32,
+}
+
+impl RuleKey {
+    /// Rule `k` of the program (version 0).
+    pub fn program(k: usize) -> RuleKey {
+        RuleKey { v: 0, id: k as u32 }
+    }
+    /// The rule's number in the program, a rule of the program's version (a maintained form's has none).
+    pub fn number(self) -> Option<usize> {
+        (self.v == 0).then_some(self.id as usize)
+    }
+}
 
 impl Versions {
-    /// The version of `prog` alone.
+    /// The version of `prog` alone, the run's version 0 (rule numbers are its ids).
     pub fn of(prog: &Program) -> Result<Versions> {
-        let mut vs = Versions::default();
-        vs.add(prog)?;
-        Ok(vs)
+        Ok(Versions::with(prog, Placed::made(&prog.rules)?))
+    }
+    /// `prog`'s version as a pass left it (`placed`), the run's version 0, taken as it is: no rule is encoded.
+    pub fn with(prog: &Program, placed: Placed) -> Versions {
+        let rules = &prog.rules;
+        let start = rules.as_ptr() as usize;
+        Versions(vec![(start, start + std::mem::size_of_val(rules.as_slice()), placed)])
     }
     /// Adds `prog`'s rules, encoded (the planner reads its rules alone; the rest of a program it reads from the tree
     /// until item 7, and a maintained form's parts have no image).
@@ -443,15 +538,34 @@ impl Versions {
         if rules.is_empty() || self.0.iter().any(|e| e.0 == start) {
             return Ok(());
         }
-        let v = made(rules)?;
+        // A maintained form's rules are an overlay of the run's version (decision 0173 §7, t36 item 6 step 6): the
+        // rules it adds over the program's atoms and relations, not a program image of their own.
+        let v = match self.0.first() {
+            Some((_, _, run)) => Placed::over(&run.v, run.whole, rules)?,
+            None => Placed::made(rules)?,
+        };
         self.0.push((start, start + std::mem::size_of_val(rules), v));
         Ok(())
     }
     /// The version `r` is a rule of, and its id there.
     pub fn find(&self, r: &Rule) -> Option<(&Arc<Version>, RuleId)> {
+        let k = self.key(r)?;
+        let p = &self.0[k.v as usize].2;
+        Some((&p.v, p.id(k.id as usize)))
+    }
+    /// `r`'s key, a rule of a program the run holds.
+    pub fn key(&self, r: &Rule) -> Option<RuleKey> {
         let at = r as *const Rule as usize;
-        let (start, _, v) = self.0.iter().find(|e| e.0 <= at && at < e.1)?;
-        Some((v, RuleId(((at - start) / std::mem::size_of::<Rule>()) as u32)))
+        let v = self.0.iter().position(|e| e.0 <= at && at < e.1)?;
+        Some(RuleKey { v: v as u32, id: ((at - self.0[v].0) / std::mem::size_of::<Rule>()) as u32 })
+    }
+    /// `r`'s key, or an error naming it (a rule of no program the run holds).
+    pub fn key_of(&self, r: &Rule) -> Result<RuleKey> {
+        self.key(r).ok_or_else(|| Error::Plan(format!("{} :- …: a rule of no program the run holds", r.head)))
+    }
+    /// The rule `k` names, as the planner reads it.
+    pub fn at(&self, k: RuleKey) -> Body<'_> {
+        self.0[k.v as usize].2.body(k.id as usize)
     }
     /// Rule `r` as the planner reads it.
     pub fn body(&self, r: &Rule) -> Result<Body<'_>> {

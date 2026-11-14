@@ -53,6 +53,14 @@ pub mod token_census;
 pub mod python_lean;
 /// JavaScript's, TypeScript's and TSX's tapes from the lean parser (`rerail_ecma_lean`).
 pub mod ecma_lean;
+/// Rust's tape from the lean parser (`rerail_rust_lean`).
+pub mod rust_lean;
+/// Java's tape from the lean parser (`rerail_java_lean`).
+pub mod java_lean;
+/// C#'s tape from the lean parser (`rerail_csharp_lean`).
+pub mod csharp_lean;
+/// PHP's tape from the lean parser (`rerail_php_lean`).
+pub mod php_lean;
 pub use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
 pub const ERROR_SYMBOL: u16 = u16::MAX;
@@ -180,7 +188,7 @@ impl Grammar {
     }
 
     /// The grammar of an embedded program's dialect, built once per process.
-    fn embedded(lang: GrammarDialect) -> Result<Arc<Self>, String> {
+    pub fn embedded(lang: GrammarDialect) -> Result<Arc<Self>, String> {
         static GRAMMARS: std::sync::LazyLock<
             std::sync::Mutex<std::collections::HashMap<GrammarDialect, Arc<Grammar>>>,
         > = std::sync::LazyLock::new(Default::default);
@@ -531,13 +539,16 @@ impl DerivedImage {
             );
         }
         let grammar = Grammar::embedded(program.dialect)?;
-        let tape = TapeImage::encode_tree_image(
-            program.root(),
-            &grammar,
-            &program.text,
-            Some(&program.segments),
-            budget,
-        )?;
+        let tape = match &program.parse {
+            crate::code_rule_dsl::embed::Parse::Tree(tree) => TapeImage::encode_tree_image(
+                tree.root_node(),
+                &grammar,
+                &program.text,
+                Some(&program.segments),
+                budget,
+            )?,
+            crate::code_rule_dsl::embed::Parse::Tape(tape) => tape.omitting(&program.segments, &grammar, &program.text, budget)?,
+        };
         Ok(Self {
             role: DocumentRole::derived(&program.text, &program.segments),
             via,
@@ -1353,6 +1364,61 @@ impl TapeImage {
             }
         }
         Self::pack(&nodes, std::mem::take(&mut supertypes), grammar, source, budget)
+    }
+
+    /// The image without the nodes, and their subtrees, whose spans `segments` omits (an embedded
+    /// program's placeholders): the image of the tree `encode_tree_image` walks with the same
+    /// `omitted`. The image itself where nothing is omitted.
+    pub fn omitting(&self, segments: &SegmentMap, grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
+        let count = self.node_count();
+        let from_start = self.widths[2] & TAIL_FROM_START != 0;
+        let end = |i: usize| {
+            let from = if from_start { self.start_at(i) } else { self.start_at(i + self.size_at(i) as usize - 1) };
+            from + self.tail_at(i)
+        };
+        let omitted = |i: usize| segments.omitted(self.start_at(i) as usize..end(i) as usize);
+        if !(0..count).any(omitted) {
+            return Ok(self.clone());
+        }
+        let mut nodes = Vec::<Pending>::with_capacity(count);
+        let mut supertypes = Vec::new();
+        // Per open ancestor: its index in `nodes`, and where its subtree ends in `self`.
+        let mut open: Vec<(u32, usize)> = Vec::new();
+        let mut i = 0;
+        while i < count {
+            if i % 256 == 0 {
+                checked(budget)?;
+            }
+            while open.last().is_some_and(|&(_, last)| last <= i) {
+                open.pop();
+            }
+            let size = self.size_at(i) as usize;
+            if omitted(i) {
+                i += size;
+                continue;
+            }
+            let code = &self.codes[usize::from(self.code_at(i))];
+            let index = u32::try_from(nodes.len()).map_err(|_| "rec6 node count overflow")?;
+            let start = self.start_at(i);
+            nodes.push(Pending {
+                kf: code.kf(),
+                parent: open.last().map(|&(at, _)| at),
+                start,
+                length: end(i) - start,
+                size: 1,
+                extra: code.flags & CODE_EXTRA != 0,
+                error: code.flags & CODE_ERROR != 0,
+                missing: code.flags & CODE_MISSING != 0,
+                kind_alias: None,
+            });
+            if code.alias != SENTINEL {
+                return Err("a written tape's contextual alias".into());
+            }
+            supertypes.extend(code.classes().iter().map(|&class| (index, class)));
+            open.push((index, i + size));
+            i += 1;
+        }
+        Self::finish(nodes, supertypes, grammar, source, budget)
     }
 
     /// An image from columns a parser wrote itself, in this format (codes numbered by first use, `base`

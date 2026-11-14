@@ -114,7 +114,12 @@ pub(super) fn current() -> Held {
     let skip = held.as_ref().is_some_and(|s| s.thread != std::thread::current().id());
     #[cfg(not(any(test, feature = "test-hooks")))]
     let skip = false;
-    Held(Some(held), skip || FULL.load(std::sync::atomic::Ordering::Relaxed))
+    // A run that is not the session's (none started, another thread's, a full run) holds nothing: held, the lock would
+    // make every corpus run in the process wait for the one before it to end.
+    if held.is_none() || skip || FULL.load(std::sync::atomic::Ordering::Relaxed) {
+        return Held(None, true);
+    }
+    Held(Some(held), false)
 }
 
 /// The session held for a run, unless the run is a full one.

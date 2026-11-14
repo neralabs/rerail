@@ -18,5 +18,5 @@ UP010(n) :-
     ),
     child(n, c2, _), kind(c2, "dotted_name"),
     glob("{nested_scopes,generators,with_statement,division,absolute_import,print_function,unicode_literals,generator_stop}", c2),
-    site_form(c2, "import"), (site_scope(c2, "module") ; site_scope(c2, "function")),
-    !site_used(c2).
+    bind_name(c2, b3), main_form(b3, "import"),
+    (site_scope(b3, "module") ; site_scope(b3, "function")), !site_used(b3).

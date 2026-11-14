@@ -89,21 +89,38 @@ fn components(v: &Version, about: &About) -> (Vec<RelId>, Edges, Vec<(RelId, Rel
 pub fn strata(v: &Version, about: &About) -> Result<Strata, Error> {
     let (derived, edges, aggs) = components(v, about);
     let sccs = tarjan(v.rel_end() as usize, &derived, &edges);
+    match first_unstratified(v, &sccs, &edges, &aggs, true).into_iter().next() {
+        Some(e) => Err(e),
+        None => Ok(Strata { sccs, edges }),
+    }
+}
+
+/// Every component that a negation or a non-monotone aggregate closes a cycle in, one error each
+/// (`front::unstratified`; `strata` stops at the first).
+pub fn unstratified(v: &Version, about: &About) -> Vec<Error> {
+    let (derived, edges, aggs) = components(v, about);
+    let sccs = tarjan(v.rel_end() as usize, &derived, &edges);
+    first_unstratified(v, &sccs, &edges, &aggs, false)
+}
+
+/// The first error of each component a negative edge closes a cycle in (`first`: only the first component's).
+fn first_unstratified(v: &Version, sccs: &[Vec<RelId>], edges: &Edges, aggs: &[(RelId, RelId)], first: bool) -> Vec<Error> {
     let mut at = vec![usize::MAX; v.rel_end() as usize];
     for (i, scc) in sccs.iter().enumerate() {
         for r in scc {
             at[r.index()] = i;
         }
     }
+    let mut out = Vec::new();
     for (i, scc) in sccs.iter().enumerate() {
-        for &h in scc {
+        'scc: for &h in scc {
             for (w, neg) in edges.of_head(h) {
                 if !neg || at[w.index()] != i {
                     continue;
                 }
                 let names = |s: &[RelId]| s.iter().map(|&r| v.rel_name(r).to_owned()).collect::<BTreeSet<_>>();
                 let (head, dep) = (v.rel_name(h).to_owned(), v.rel_name(w).to_owned());
-                return Err(if aggs.binary_search(&(h, w)).is_ok() {
+                out.push(if aggs.binary_search(&(h, w)).is_ok() {
                     Error::AggregationInRecursion { head, aggregated: dep, component: names(scc) }
                 } else {
                     Error::NotStratifiable {
@@ -112,10 +129,14 @@ pub fn strata(v: &Version, about: &About) -> Result<Strata, Error> {
                         negated: dep,
                     }
                 });
+                if first {
+                    return out;
+                }
+                break 'scc;
             }
         }
     }
-    Ok(Strata { sccs, edges })
+    out
 }
 
 /// Strongly connected components of `nodes` (sorted) under `edges`, dependencies first, each sorted. Iterative.

@@ -64,9 +64,9 @@ ruf006_scope(n) :- (kind(n, "function_definition") ; kind(n, "class_definition")
 // live_unused(n, …): the JSON util `live-unused`, called with `matches` and arguments N
 .decl ruf006_live_unused(n: node, n_mv: node)
 ruf006_live_unused(n, N) :- node(_, n, _, _, _), N = n, within_stop(n, p1, ruf006_stop_2), ruf006_scope(p1),
-    within_stop(c2, p1, ruf006_stop_3), kind(c2, "identifier"), node(_, c2, _, _, _), M = c2, site_latest(c2),
-    !site_used(c2), !site_outer(c2), site_form(c2, f3), ruf006_set_4(f3),
-    text(M, t4), text(N, t4), @doc(M) = @doc(N).
+    within_stop(c2, p1, ruf006_stop_3), kind(c2, "identifier"), node(_, c2, _, _, _), M = c2, bind_name(c2, b3),
+    site_latest(b3), !site_used(b3), !site_outer(b3), main_form(b3, f4), ruf006_set_4(f4),
+    text(M, t5), text(N, t5), @doc(M) = @doc(N).
 
 // RUF006(n): a finding at node n, from clause `dangling-task`.
 // Each rule below is one way the JSON `rule` can match.
@@ -93,7 +93,7 @@ RUF006_unused_comprehension_variable(n, C) :- kind(n, "call"), ruf006_task_call(
     ruf006_up_2(n, p1), field(_, "right", n),
     count : { field(p2, "right", p1), kind(p2, "assignment") } = 0,
     has(n, c3, "identifier"), node(_, c3, _, _, _), C = c3, within_stop(c3, p4, ruf006_stop_11),
-    field(_, "left", c3), kind(p4, "for_in_clause"), !site_used(c3).
+    field(_, "left", c3), kind(p4, "for_in_clause"), bind_name(c3, b5), !site_used(b5).
 
 // tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
 .decl ruf006_tok_has_1(n: node)

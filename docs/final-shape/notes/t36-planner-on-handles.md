@@ -61,6 +61,32 @@ Leaves first. Each item leaves every caller working.
 7. **`plan::run` takes a version** (step 5). Its callers pass the split's parts as views (E1), the run's edits as
    overlays (E2) and the session's cut as an overlay (E3). The trees on that path go.
 
+## Item 6, step by step
+
+The three passes in `plan::run` that rewrite the program (`keeps::choose`, `demand::split_negations`, a maintained
+stratum's form) each clone the tree and edit the clone. Under decision 0173 §7 each is an **overlay** of the run's
+version: the base rules it removes and the rules it adds, each added rule recording its source. A retry (the demand
+split's rounds, a refused inlining) is a candidate overlay, dropped when refused.
+
+1. **The edit tools.** `RuleBuilder::lit_with`: a literal of one rule copied into another through a `Rewrite`
+   (renamed variables, substituted terms, an atom negated, a comparison's operator turned), which unfolding and the
+   demand split need. Stratification over a version (`front::unstratified`'s check), for the split's refusal.
+2. **`keeps::choose` over the run's version.** Its readings (`rules_of`, `readers`, `refusals`, `bounds`, the
+   estimates and the pricing) read the version, and price program rules by their handles, not by `alone` encodes.
+   The copies it prices and the program it chooses are overlays: each reader copy written from the reader and the
+   inlined rules (`unfold`), the inlined relations' rules removed.
+3. **`split_negations` over a version.** Each round's split (`pre_<i>`, `demand_<r>`, the demanded rules' reads) is
+   an overlay of the version it was given, checked for strata over the version.
+4. **`choices` keeps versions.** A kept choice is the chosen overlay (its bytes over the run's base, which
+   `choices::key` names), in memory and in the store.
+5. **The run reads the chosen version.** `body::Versions` takes it as it is, with no encode; the tree the rest of
+   the run reads is decoded from it once (until item 7).
+6. **The maintained forms as views.** A stratum's form (`Driver::form`, the `Forms` arena) is a view of the run's
+   version with its rules overlaid, not a program of its own.
+
+Each pass is checked against its tree form while it is ported, as items 3 and 4 were: the overlay, decoded, equals
+the tree pass's program, over the planner's, corpus, session, `rr` and keeps tests and dl1. Then the tree form goes.
+
 ## Done
 
 - **Item 1, a step names its literal by position** (2026-11-13).
@@ -106,3 +132,147 @@ Leaves first. Each item leaves every caller working.
     instructions in two runs, warm 20.2, 20.0 and 20.15 G (item 1: 53.6 G and 19.3 G, one run each). Sampled, encoding
     is 0.5% of a cold run and 0.2% of a warm one, and the whole search 1.7% of a cold run, so most of the difference is
     the runs' own spread, not item 2's cost.
+- **Item 3, the SQL generator reads handles** (2026-11-13).
+  - `plan::select` makes a planned rule's SELECT from its `Body` and steps: `sql_select`, `checked_query` and
+    `sql_query` take `(prog, &Body, &[Step], delta_at, tables)`. Variables are bound by slot (`Env`); a walk's CTE
+    columns are still named by the variables, in name order, so the SQL text is unchanged.
+  - Every caller passes the rule it planned: a stratum's seeds and probes, the set fixpoint's seeds, probes, reprobes
+    and edge rests (each edge keeps its made version), the lattice parts, the views (`plan_views` takes the run's
+    `Versions`), `emit`, `compose` and `sql_kernel`.
+  - Checked while porting: each SQL request also ran the tree generator on the rule decoded from the version
+    (`program_image::Tree`) and asserted the same text or the same error. It never disagreed over the planner's,
+    corpus, emit, session, coverage, `rr` (127), native, image and text tests, the convert replay sample (268 events of
+    137 checks) and dl1 cold and warm. The check and the tree generator are gone. The tree `sql_term` stays for one
+    reader, the join specs' constant conditions (item 4).
+  - dl1 (images required, profiling build, a fresh store): the 48 findings are equal; cold 55.7 G instructions, warm
+    19.9 G (53.6 G and 19.3 G in the run with the check on: the runs' spread).
+  - The convert replay sample (`a_sample_of_the_replay_gives_the_recorded_findings`) took 345 s in the debug test
+    binary, past the 170 s watchdog. Two causes, both fixed (2026-11-13), and it now takes 33 s:
+    - `corpus::session::current` held the process's session lock for a whole corpus run even when the run was no
+      session's, so the sample's eight workers ran one at a time (one core busy, the workers in `__psynch_mutexwait`).
+      A run that is not the session's holds nothing now. The workers are named as a test's threads, so each has a
+      store of its own (`test_store::own`).
+    - One check (`serverplan_state_tripwires`) took 198 s alone: an aggregate's demand
+      (`rr::aggregate_demand::guards`) left out a guard that reaches the key only through a comparison
+      (`spt_flow_jb(rr_t1, 92)` with `rr_t1 = @sub(p, 1)`), so every byte of a 6 KB text was demanded and its helper
+      held every pair of bytes (17.9 M rows, indexed three times). Guards and comparisons now connect in one fixpoint;
+      the check takes 11 s. `RERAIL_REPLAY_CHECK` runs the checks whose group or name holds it.
+- **Item 4, the join-spec lowering reads handles** (2026-11-13).
+  - `plan::join_spec` lowers a planned rule (`Body` and steps) into a `JoinSpec`: `whole_join_spec`, `join_spec` (the
+    run's kept spec, under the same digest: `Body::digest_atom` and `digest_lit` write what the tree's did) and
+    `join_spec_made`. A spec's slots are keyed by what they hold (a rule's variable by slot, a made value by its
+    step), numbered as first met, so the specs are unchanged; a made value no longer shares a name space with the
+    rule's variables (`rr_fn<i>_<k>` could have been a variable's name).
+  - A prefix is probed with `bare` (the steps alone, a head of no terms) instead of a made head atom. The decline
+    messages (`missing`) read the body's text; `decline_class` still reads the tree literal (item 5 moves it).
+  - Every caller passes its rule's `Body`: a level's seed joins, a stratum's seeds, probes, whole plans and replans,
+    and the set fixpoint's probes and reprobes.
+  - Checked while porting, as item 3 was: each made spec was compared with the tree lowering's for the rule decoded
+    from the version, over the planner's, corpus, emit, session, coverage, `rr`, native and image tests and dl1 cold
+    and warm; they never differed. The check, the tree lowering and the tree `sql_term` are gone.
+  - dl1 (images required, profiling build, a fresh store): the 48 findings are equal; cold 55.1 G instructions, warm
+    19.8 G (56.8 G and 19.3 G with the check on).
+- **Item 5, the run holds rules by key** (2026-11-13).
+  - `body::RuleKey` names a rule of the run: its version (its place in the run's `Versions`; the program's is 0)
+    and its id there. A rule's number is its id in version 0 (`RuleKey::number`), so `Run::numbers` (a map by
+    address) and the position scans for rule numbers are gone.
+  - `Order` holds the rule's `Body` beside its steps. Its readers read handles: `ensure_indexes`, `observe`,
+    `observed_fans`, `delta_sources`, `shown`, keeps' `pattern` and `observe_steps`, the device placement's
+    `Shape::add` and `add_joins` (the head's terms read from the body), emit's reads and recursion test, and
+    `decline_class`.
+  - `Driving` holds keys (`orders`, `probes`, `seeds`), and its driver reads each line's body, found once when it
+    starts. `Driving`, `Native` and `Asked` no longer borrow the program. `replanning::Watch` is made from the
+    probes' bodies, `sql_kernel::component` takes the planned rules by key, and `emit` and `compose` read a
+    stratum's rules by key (`RuleKey::program`).
+  - Still trees, for items 6 and 7: the run's per-stratum rule lists (`rules_by`, the strands, the forms), the
+    stratum's filters before its plans (gates, survivors, empty reads), and the set fixpoint's probes, held only
+    within one call. A key is found from such a rule by address (`Versions::key`) until `run` takes a version.
+  - dl1 (images required, profiling build, a fresh store): the 48 findings are equal; cold 55.5 G and warm 20.2 G
+    after the `Order` step, 56.0 G and 20.0 G after the keys (the spread between runs is about ±1.5 G).
+- **Item 6, in progress** (2026-11-14).
+  - Step 1 in part: `RuleBuilder::lit_with` copies a literal of one rule into another through a `Rewrite`, and
+    `Rewrite::var` renames a variable where no term is asked for it (`nearest`'s). Stratification over a version is
+    still to come (step 3 needs it).
+  - Step 2 in part: the program `choose` gives is an overlay (`keeps::inline`): each pass an overlay of the one
+    before, a reader replaced by its copies (its literals before the read, the def's renamed, the head's equalities,
+    its literals after; a negated read by the product of its defs' negations), then the inlined relations' rules
+    removed. The copies keep the tree pass's order, names and origins, so their observations match. A fold
+    (`Builder::finish` folds an edit of half its parent) renumbers the rules; the pass maps them.
+  - Checked while porting: the overlay's rules, in order, and its origins and unfinished relations equalled the tree
+    pass's (`unfold_reads`) over the keeps, planner, corpus and session tests and dl1 (4,036 rules inlined across its
+    runs). The check and `unfold_reads` are gone. The run still reads a tree, decoded from the overlay (step 5), and
+    `choose`'s pricing still reads trees (`unfold`, `copies`).
+  - dl1 (images required, profiling build, a fresh store): the 48 findings are equal; cold 45.4 G, warm 1.8 G (46.0 G
+    and 1.8 G after the hub merge).
+  - Step 2, the pricing: `choose` reads the program's version, its rules' bodies by index (`Read`), and the
+    estimates, `calibrated*`, `observed_rule` and `observed_copies` take a `Body`: no rule is encoded alone. A
+    relation's reader copies are one candidate overlay of the version (`inline::copies`, kept by no one), counted
+    without being made (`inline::count`); a delta atom is found in a copy by its literal. Checked while porting: each
+    copy's literals and price equalled the tree's (`unfold`) over the keeps, planner, corpus and session tests and
+    dl1; the check and the tree's `unfold`, `copies` and `negated` are gone (the tests read the version's,
+    `inline::unfold_rules`). dl1: the 48 findings are equal; cold 44.4 G, warm 1.8 G. Still to come in step 2: the
+    version is the run's, passed in, not made from the tree (step 5), and `refusals`, `bounds` and `factorizable`
+    read trees.
+  - Step 3 in part: the split `split_negations` makes is an overlay of the program's version (`demand::overlaid`):
+    each reader removed and its `pre_<i>` and itself over that added, each demanded relation's rules rewritten to
+    read its demand first (its head's computed columns fresh variables, checked after), then the demands. The rules
+    keep the tree's order. The choice of candidates, the guards and the types still read the tree, and the strata
+    check is still `front::unstratified` over the decoded program (stratification over a version: step 1).
+    Checked while porting: the overlay, decoded, equalled the tree's split over the planner's, demand, corpus and
+    session tests and dl1; the check and the tree's split are gone. dl1: the 48 findings are equal; cold 43.6 G,
+    warm 1.8 G.
+  - Steps 4 and 5 (2026-11-14): the passes hand on versions, and the run reads the chosen one as it is.
+    `body::Placed` is a program's version and where its rules are in it (rule `k` of the program is the version's
+    `ids[k]`; in order where a version was made of the rules). `plan::run` makes the program's version once; `choose`
+    edits it and gives its overlay, `split_negations` edits that, and `Versions::with` takes the last as the run's
+    version 0: no rule is encoded after the first. A kept choice holds its version (`Chosen::version`): in memory the
+    passes' overlay; read back from the store, the program's image (decision 0173), opened as it is. A choice kept as
+    text alone has none, and the run makes its version (`Versions::of`). The decoded tree is still made, once per
+    pass, for the rest of the run (item 7).
+  - Checked while porting: the version taken, rule by rule, read as an encode of the chosen program (head, literals,
+    observation key) over the planner's, keeps, demand, choices, cone, phase0, corpus and session tests and dl1; the
+    check is gone. The choices test reads a kept choice back from the store and checks its image's rules likewise.
+    dl1: the 48 findings are equal; cold 46.2 G (twice; 49.6 G after the hub merge, load about 75), warm 1.7 G.
+  - Step 6 (2026-11-14): a maintained stratum's form, and its rules for deriving it again, are overlays of the run's
+    version (`Versions::add_rules`, `Placed::over`): the rules they add, written over the program's atoms and
+    relations, not a program image of their own. The form is still made by `maintain::rewrite_with` as a tree and
+    kept in the `Forms` arena for the run's tree readers (item 7); its rules are encoded into the overlay once.
+    Checked while porting: each form rule, read from the overlay, equalled the rules made alone (head, literals,
+    observation key) over the maintain, session, edit, again, retain, cone, phase and corpus tests; the check is
+    gone. dl1 (no maintained run): the 48 findings are equal; cold 46.5 G, warm 1.7 G.
+  - Item 6, where it stands (2026-11-14). Every pass's output is a version edit: the inlining and the negation split
+    are overlays of the program's version, the run reads the last one as it is, a kept choice holds its version, and
+    a maintained form's rules are an overlay of the run's version. What still reads or writes trees, and why it goes
+    with item 7 rather than here:
+    - The passes' readings of the program: done below (the readings, 2026-11-14).
+    - The maintained form's rules are written as trees (`maintain::rewrite_with`, over a one-stratum program cut from
+      the base) and encoded into the overlay once. The rewrite is also the session's (E3, `retain::Cut::program`),
+      which item 7 makes an overlay; it moves to `RuleBuilder` edits there, as `normalize` and `stated_apart` did
+      (0173 stage 2, step 3). The `Forms` arena keeps the form's tree for the run's tree readers until then.
+    - Each pass still decodes its result once for the rest of the run.
+  - Item 6, the readings (2026-11-14): the passes read the program's version whole, not the tree.
+    - The run's version is the program's image (`Placed::of_program`: `Builder::of_program`, its declarations and
+      `About` too), marked `whole`. A program with `again`, `together` or shapes (a maintained one) is still a version
+      of its rules alone (`Placed::made`), not `whole`; `choose` and `split_negations` give nothing for it, with a
+      decision line saying so; no targeted test or dl1 run changed. Making the whole image cost about 9 ms of CPU a dl1
+      batch.
+    - `plan::fields::Fields` reads the program's other fields from a whole version: outputs, inputs, qualifiers,
+      demand, gates, answers, natives, lattice, nullary, facts, arity. `About` holds the qualifiers, demand and gate
+      keys for it.
+    - `keeps::choose`: the strata (`program_image::analyses::strata`), `refusals`, `bounds`, the need, the estimates
+      (a relation's width from its declaration in the version) and `factorizable` (its parts planned as overlays)
+      read the version.
+    - `demand::split_negations`: the candidates and each round's guards, splits and types (`demand::over`) read the
+      version's rules by their handles, each variable by its name. The split's overlay declares each `pre_<i>` and
+      `demand_<r>` and the flags, so it stays whole, and its strata are checked over it
+      (`program_image::analyses::unstratified`, every failing component, as `front::unstratified`).
+    - Checked while porting: each reading equalled the tree's (the strata as sets, the refusals, the rules by head,
+      the bounds, the factors; the candidates, the refusals, the splits, the declarations and flags, the failing
+      components, and every declaration of the decoded split in its overlay). This was checked over the planner's,
+      keeps, inline, demand, negation, choices, cone, phase0, session and corpus tests and dl1, where 96 relations
+      are demanded. The checks and the tree forms are gone; `keeps::factors` stays for `typing::file_local`.
+    - dl1 (images required, profiling build, a fresh store): the 48 findings are equal; cold 44.1 G, warm 1.7 G
+      (load about 65).
+    - What reads trees in the passes now: nothing. They still take the tree too (`prog`): `choose` hands it to the
+      planner's `plan_rule`, and both passes give a decoded program for the rest of the run (item 7). The maintained
+      form's rewrite is item 7's (above).

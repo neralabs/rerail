@@ -32,11 +32,6 @@ up013_positional_arg(n) :- up013_arg_node(n), !up013_keyword_arg(n).
 up013_one_positional(n) :- kind(n, "argument_list"),
     k2 = count : { child(n, c1, _), up013_positional_arg(c1) }, k2 >= 1, k2 <= 1.
 
-// no_keywords(n): the JSON util `no-keywords`, used where the JSON says `matches: "no-keywords"`
-.decl up013_no_keywords(n: node)
-up013_no_keywords(n) :- kind(n, "argument_list"),
-    count : { child(n, c1, _), up013_keyword_arg(c1) } = 0.
-
 // no_splat_keywords(n): the JSON util `no-splat-keywords`, used where the JSON says `matches: "no-splat-keywords"`
 .decl up013_no_splat_keywords(n: node)
 up013_no_splat_keywords(n) :- kind(n, "argument_list"),
