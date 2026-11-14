@@ -343,22 +343,38 @@ impl<'a> P<'a> {
         }
     }
 
+    /// Tokens lexed into the buffer, a batch at a time (as simdjson's stage 2 runs over its
+    /// index): up to `BATCH` in one tight loop, stopping after a token where the parser may read
+    /// the next text in another mode (a regular expression after `/`, a template's text after
+    /// `` ` `` or `}`, JSX after `<` or `>`, a `>>` split in two) and cut the buffer there
+    /// (`relex_at`). A token lexed ahead and cut is only work lost: the buffer from a cut on is
+    /// lexed again.
     #[cold]
     fn lex_one(&mut self) {
+        const BATCH: usize = 16;
         if let Some(t) = self.toks.last().filter(|t| t.kind == T::Eof) {
             let t = *t;
             self.toks.push(t);
             return;
         }
-        let t = match self.lx.token(self.next, &mut self.extras) {
-            Ok(t) => t,
-            // A token the lexer refuses is refused where the parser reads it: a look ahead past
-            // a regular expression's start may read its text as tokens.
-            Err(Refusal::Lex(at)) | Err(Refusal::Parse(at)) => Tok { kind: T::Eof, word: u8::MAX, nl: false, start: at, end: at },
-            Err(Refusal::TooLarge) => Tok { kind: T::Eof, word: u8::MAX, nl: false, start: 0, end: 0 },
-        };
-        self.next = t.end as usize;
-        self.toks.push(t);
+        self.toks.reserve(BATCH);
+        for _ in 0..BATCH {
+            let t = match self.lx.token(self.next, &mut self.extras) {
+                Ok(t) => t,
+                // A token the lexer refuses is refused where the parser reads it: a look ahead past
+                // a regular expression's start may read its text as tokens.
+                Err(Refusal::Lex(at)) | Err(Refusal::Parse(at)) => Tok { kind: T::Eof, word: u8::MAX, nl: false, start: at, end: at },
+                Err(Refusal::TooLarge) => Tok { kind: T::Eof, word: u8::MAX, nl: false, start: 0, end: 0 },
+            };
+            self.next = t.end as usize;
+            self.toks.push(t);
+            if matches!(
+                t.kind,
+                T::Eof | T::Slash | T::SlashEq | T::Backtick | T::RBrace | T::Lt | T::Gt | T::GtGt | T::GtGtGt | T::Ge | T::GtGtEq | T::GtGtGtEq
+            ) {
+                return;
+            }
+        }
     }
 
     #[inline(always)]
