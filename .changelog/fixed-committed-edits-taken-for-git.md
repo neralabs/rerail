@@ -1,0 +1,1 @@
+Files an agent's command wrote and committed while Rerail was asking Git about them, which can happen on a busy machine, could be taken for files Git wrote, and were then not checked. They are now checked as the agent's edits.
