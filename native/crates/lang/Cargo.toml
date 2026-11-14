@@ -10,8 +10,10 @@ build = "build.rs"
 
 [features]
 default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache"]
-all-languages = ["lang-blade", "lang-javascript", "lang-json", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue"]
+all-languages = ["lang-blade", "lang-csharp", "lang-java", "lang-javascript", "lang-json", "lang-php", "lang-python", "lang-rr", "lang-rust", "lang-sql", "lang-typescript", "lang-vue"]
 lang-blade = []
+lang-csharp = ["ast-grep-language/tree-sitter-c-sharp"]
+lang-java = ["ast-grep-language/tree-sitter-java"]
 lang-javascript = []
 lang-json = ["ast-grep-language/tree-sitter-json"]
 lang-php = ["ast-grep-language/tree-sitter-php"]
@@ -85,6 +87,14 @@ rerail-python-lean = { path = "../python_lean" }
 # JavaScript's, TypeScript's and TSX's lean parser: their tree-sitter tapes, written as the parse
 # goes (`tape::ecma_lean`).
 rerail-ecma-lean = { path = "../ecma_lean" }
+# Rust's lean parser: tree-sitter-rust's tape, written as the parse goes (`tape::rust_lean`).
+rerail-rust-lean = { path = "../rust_lean" }
+# Java's lean parser: tree-sitter-java's tape, written as the parse goes (`tape::java_lean`).
+rerail-java-lean = { path = "../java_lean" }
+# C#'s lean parser: tree-sitter-c-sharp's tape, written as the parse goes (`tape::csharp_lean`).
+rerail-csharp-lean = { path = "../csharp_lean" }
+# PHP's lean parser: tree-sitter-php's tape, written as the parse goes (`tape::php_lean`).
+rerail-php-lean = { path = "../php_lean" }
 rerail-store = { path = "../store" }
 rerail-accel = { path = "../../../accel" }
 rerail-compiler = { path = "../compiler" }

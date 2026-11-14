@@ -1294,6 +1294,9 @@ mod language {
             #[allow(unused_imports)]
             use std::borrow::Cow;
         }
+        // Java's and C#'s families: syntax only so far, their tapes from the lean parsers.
+        pub mod csharp;
+        pub mod java;
         pub use rerail_lang_json::code_rule_dsl::language::adapter::json;
         #[cfg(test)]
         pub mod kit;
@@ -4753,7 +4756,7 @@ pub(crate) use rule_api::CodeRuleDslEditor;
 pub(crate) fn install_languages() {
     use language::Family;
     use language::adapter::pack::{Pack, pack, register};
-    use language::adapter::{blade::Blade, ecma::Ecma, format::Format, json::Json, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
+    use language::adapter::{blade::Blade, csharp::Csharp, ecma::Ecma, format::Format, java::Java, json::Json, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
     register(Family::Python, &Pack::<Python>::NEW);
     language::register_base(Family::Python, &Pack::<Python>::NEW);
     register(Family::Ecma, &Pack::<Ecma>::NEW);
@@ -4774,6 +4777,10 @@ pub(crate) fn install_languages() {
     language::register_base(Family::Json, &Pack::<Json>::NEW);
     register(Family::Format, &Pack::<Format>::NEW);
     language::register_base(Family::Format, &Pack::<Format>::NEW);
+    register(Family::Java, &Pack::<Java>::NEW);
+    language::register_base(Family::Java, &Pack::<Java>::NEW);
+    register(Family::Csharp, &Pack::<Csharp>::NEW);
+    language::register_base(Family::Csharp, &Pack::<Csharp>::NEW);
     // The linters' suppressions, in the order `suppress` is parsed and checked in.
     {
         use suppress::{eslint, noqa, nosec, oxlint, biome, phpstan, psalm, phpcs, clippy, sqlfluff, kind};
@@ -4931,6 +4938,26 @@ pub(crate) fn install_languages() {
         if cfg!(feature = "lang-typescript") {
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::TypeScript, name: "lean TypeScript parser", rank: 0, runs: true, parser: &tape::ecma_lean::TYPESCRIPT });
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Tsx, name: "lean TSX parser", rank: 0, runs: true, parser: &tape::ecma_lean::TSX });
+        }
+        if cfg!(feature = "lang-rust") {
+            // The lean Rust parser (`tape::rust_lean`, decision 0193); a file it refuses goes to
+            // tree-sitter-rust.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Rust, name: "lean Rust parser", rank: 0, runs: true, parser: &tape::rust_lean::Lean });
+        }
+        if cfg!(feature = "lang-java") {
+            // The lean Java parser (`tape::java_lean`, decision 0195); a file it refuses goes to
+            // tree-sitter-java.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Java, name: "lean Java parser", rank: 0, runs: true, parser: &tape::java_lean::Lean });
+        }
+        if cfg!(feature = "lang-csharp") {
+            // The lean C# parser (`tape::csharp_lean`, decision 0196); a file it refuses goes to
+            // tree-sitter-c-sharp.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::CSharp, name: "lean C# parser", rank: 0, runs: true, parser: &tape::csharp_lean::Lean });
+        }
+        if cfg!(feature = "lang-php") {
+            // The lean PHP parser (`tape::php_lean`, decision 0197); a file it refuses goes to
+            // tree-sitter-php.
+            parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Php, name: "lean PHP parser", rank: 0, runs: true, parser: &tape::php_lean::Lean });
         }
         if cfg!(feature = "lang-json") {
             // simdjson where it builds (not wasm: tree-sitter-json there); the Bitlex parser

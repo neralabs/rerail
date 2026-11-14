@@ -3174,6 +3174,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-csharp-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+ "unicode-ident",
+]
+
+[[package]]
 name = "rerail-device-metal"
 version = "0.1.0"
 dependencies = [
@@ -3298,10 +3307,12 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-compiler",
+ "rerail-csharp-lean",
  "rerail-device-metal",
  "rerail-ecma-lean",
  "rerail-engine",
  "rerail-facts",
+ "rerail-java-lean",
  "rerail-lang",
  "rerail-lang-ecma",
  "rerail-lang-json",
@@ -3312,11 +3323,13 @@ dependencies = [
  "rerail-logic",
  "rerail-metal",
  "rerail-parser-tests",
+ "rerail-php-lean",
  "rerail-prof",
  "rerail-python-lean",
  "rerail-rr",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-rust-lean",
  "rerail-sessions",
  "rerail-simdjson",
  "rerail-store",
@@ -3429,6 +3442,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-java-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+ "unicode-ident",
+]
+
+[[package]]
 name = "rerail-lang"
 version = "0.1.0"
 dependencies = [
@@ -3470,12 +3492,16 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-compiler",
+ "rerail-csharp-lean",
  "rerail-ecma-lean",
+ "rerail-java-lean",
  "rerail-lang",
+ "rerail-php-lean",
  "rerail-prof",
  "rerail-python-lean",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-rust-lean",
  "rerail-store",
  "rerail-tape-format",
  "ruff_python_ast",
@@ -4022,6 +4048,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-php-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-prof"
 version = "0.1.0"
 dependencies = [
@@ -4254,6 +4288,15 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-rust-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+ "unicode-ident",
 ]
 
 [[package]]
