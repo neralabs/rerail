@@ -453,6 +453,66 @@ Surveyed in `native/src/code_rule_dsl` (2026-11-14).
 - (1) and (2) carry over to (3) unchanged if they are written against a `Reader`-like interface
   over `Facts` from the start. So (1) should be written that way.
 
+## 4b. Against ast-index-spike's tape
+
+The spike's tape (prior-work design index, topic 1; DESIGN S012, S039, S045–S047, S071) is a fixed
+6-byte record a node:
+
+- `kf`, 2 B: kind (10 bits) and field (6 bits), local to the language;
+- `par`, 2 B: the distance back to the parent;
+- `size`, 2 B: the subtree's size.
+
+A value that does not fit in 2 B is a sentinel 0xFFFF and an entry in a side list (about 0.3%
+of parent distances). Spans are a separate stream of two varints a node (zigzag start delta, length), with a
+checkpoint every 16 nodes. Depth, child position and sibling order are recovered, not stored. Its
+speed was measured inside SQL, where row machinery, not the encoding, dominated (topic 19, S152:
+110 ns a node touched, of which decode is 38). So its numbers compare designs, not this lab's
+nanoseconds.
+
+The shape is the same as XF's: preorder, a subtree's extent, a node's id its preorder number.
+Descendant tests are intervals, children are `i + 1` then `+ size`, and nothing is recursive (topics
+2 and 7). The differences are in how each part is stored:
+
+| operation | spike's 6-byte record | XF / MF | BE |
+|---|---|---|---|
+| code of one node | one aligned 2-byte load: the cheapest form | one bit extract at the file's width: about the same | the same, by rank |
+| is a node in S | kind and field apart: a kind test and a field test | one bit: the code is kind, field, flags and memberships | the same |
+| every node of S (the sweep) | 2 bytes of every 6, strided: about 5× the bytes of XF's packed codes; no 64-at-a-time match without gathering | packed codes, 64 at a time: 0.3 ns a node | the same |
+| subtree end | one aligned load; a side list search past 65,535 | one PFOR read (a header and an extract); an escape names its exception, so no search | a close search: 2–3× XF |
+| parent | one aligned load (`par`) | one read: the slot of the node before | an enclose search: 2–3× XF |
+| children, siblings, depth | `i + 1`, `+ size`; depth recovered | the same | the same in bulk; a search a step at a point |
+| span of one node | the checkpoint, then up to 15 varints decoded in order, branchy | XF: two reads (start, length). MF: three (the gap needs the next start) | two Elias–Fano selects |
+| spans of every node | a varint stream, in order: cheap, byte-serial | a block at a time: 1.7–2.3 ns (XF), 3.2–4.4 (MF) | the parenthesis pass: 5–7 ns |
+| bulk nearest, outermost, has | not a primitive: recursive climbs or descents in SQL (130 µs a row as CTE steps; S037) | from the S-nodes: 0.3–0.5 ns a node | the same, 0.4–0.6 |
+| nodes of a kind | kidx postings beside the tape (1.6–2.4 B a node; the anchor index) | the sweep; per-kind lists priced (2.39 B a node) and left out | the same |
+| on the GPU | not designed (topic 19) | the kernels above, one thread a group of 64 | the same, with the carry as a scan |
+
+What the comparison says:
+
+- **The spike's record is the fastest single read.** Byte-aligned fixed fields need no header and
+  no extract. Its subtree end and parent are one load, like X's (t38), and somewhat cheaper than
+  XF's PFOR reads. Only its rare overflow, a side-list search, is slower than XF's indexed escape.
+- **XF is about half the size or less, and its sweep is the better bulk primitive.**
+  - The spike's code and structure take 6 B a node against XF's 1.7–2.1. With spans and flags its
+    logical tape was 8.66 B a node (topic 1, "Stored size"), against XF's 4.15 and MF's 3.37 on
+    data-layer, everything included.
+  - Its codes sit 2 bytes in every 6, so a code sweep pulls in whole records: for 64 nodes, 384
+    bytes against XF's 72, and no 64-at-a-time match. That is the layout XR measured: 1.3–1.7× slower (step 3).
+- **Its span read is the weak point:** a random span decodes up to 15 varints. XF reads two values
+  in place, and MF three. Read in order, both are cheap.
+- **Its record gives repeated bits for repeated structure.** `par` and `size` are relative and
+  `kf` is fixed. So two equal subtrees are equal bytes anywhere, which zstd and a second hash can
+  use. In XF and MF a block's widths and bases (and BE's Elias–Fano positions) differ from block to
+  block, so equal subtrees in different blocks can differ in their bits. Of format 16's
+  requirements, this is the one where the spike's choice is better.
+- **It assumes small files:** 2-byte fields with side lists. Format 16's PFOR widths grow with the
+  values, and positions above 4 GB fit.
+- **BE is the spike's "succinct BP, about 2 bits a node, needs rank/select, not built" (S039).**
+  Built here, it is the smallest tape (2.43 B a node). It matches XF in bulk, and is 2–4× slower
+  wherever a point read searches.
+- **The spike answered axes through kidx postings and recursive SQL.** Format 16 answers them in
+  bulk from the bare tape, which is why postings are not part of it (the decision at the top).
+
 ## 5. The plan
 
 In order. Each step is measured on all three corpora, every answer checked.
