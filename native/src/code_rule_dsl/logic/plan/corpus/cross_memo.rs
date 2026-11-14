@@ -14,7 +14,7 @@
 //!   node of a stored row lies in the closure of its first node's component.
 //! - With `RERAIL_CROSS_MEMO=verify` nothing is replayed, and the hits' stored rows are compared with what was
 //!   derived.
-use super::{Error, Result, front};
+use super::{Error, Result, front, lower};
 use crate::content_store::ContentStore;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -116,7 +116,7 @@ pub(super) struct Plan {
     pub(super) components: front::Program,
     /// The memoised relations: the column of each one's first node, and its width.
     pub(super) memo: BTreeMap<String, (usize, usize)>,
-    /// Each memoised relation's symbol columns (`sym`): stored as the store numbers its atoms (decision 0170).
+    /// Each memoised relation's atom columns (`lower::atom_columns`): stored as the store numbers its atoms (decision 0170).
     pub(super) syms: BTreeMap<String, Vec<bool>>,
     /// The digest every stored row is a function of besides its component's key.
     pub(super) digest: [u8; 32],
@@ -188,7 +188,7 @@ fn closed(cross: &front::Program, derived: &BTreeSet<String>) -> BTreeSet<String
     }
 }
 
-pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, local: &[u8; 32], same_doc: &BTreeMap<String, Vec<usize>>) -> Result<Option<Plan>> {
+pub(super) fn split(cross: &mut front::Program, domains: &lower::Domains, declared: &BTreeSet<String>, local: &[u8; 32], same_doc: &BTreeMap<String, Vec<usize>>) -> Result<Option<Plan>> {
     use front::{Atom, Literal, Rule, Term};
     let heads: BTreeSet<String> = cross.rules.iter().map(|r| r.head.rel.to_string()).collect();
     if !heads.contains(COMPONENT) {
@@ -289,7 +289,8 @@ pub(super) fn split(cross: &mut front::Program, declared: &BTreeSet<String>, loc
         let first = cols.iter().position(|(_, t)| t == "node").ok_or_else(|| Error::Plan(format!("{rel}: a `{PRAGMA}` relation needs a node column, the document its rows are about")))?;
         memo.insert(rel.to_string(), (first, cols.len()));
     }
-    let syms: BTreeMap<String, Vec<bool>> = memo.keys().map(|rel| (rel.clone(), cross.decls[rel.as_str()].iter().map(|(_, t)| t == "sym").collect())).collect();
+    // Those of its `sym` columns that hold names: a kind's or field's grammar code is no atom (`lower::atom_columns`).
+    let syms: BTreeMap<String, Vec<bool>> = memo.keys().map(|rel| (rel.clone(), lower::atom_columns(cross, domains, rel))).collect();
     for r in cross.rules.iter().filter(|r| memo.contains_key(r.head.rel.as_str())) {
         for a in r.body.iter().filter_map(|l| l.atom()) {
             if derived.contains(a.rel.as_str()) && !memo.contains_key(a.rel.as_str()) && !a.rel.starts_with(PREFIX) {

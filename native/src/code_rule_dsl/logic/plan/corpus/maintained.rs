@@ -134,7 +134,7 @@ pub(in crate::code_rule_dsl) fn run(
             let held = match held {
                 Some(h) => h,
                 None => {
-                    let types = part.program.decls[rel.as_str()].iter().map(|(_, t)| if t == "sym" { b's' } else { b'i' }).collect();
+                    let types = retain::types_of(&part.program, &part.domains, rel);
                     InRel::flat(&held_rows(db, &got, rel, width)?, types)
                 }
             };

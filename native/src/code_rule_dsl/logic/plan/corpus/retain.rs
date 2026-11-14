@@ -1926,6 +1926,15 @@ impl Retained {
                     let i = usize::from(was.derived.get(rel).is_some_and(|s| s.digest == d));
                     tally[i].0 += 1;
                     tally[i].1 += n;
+                    // Which relation, and its least rows: two runs' lines show the column whose values moved.
+                    let mut least: Vec<&[i64]> = rows.chunks(k.width.max(1)).take(n).collect();
+                    least.sort_unstable();
+                    least.truncate(3);
+                    eprintln!(
+                        "rerail: derived frame written ({}): {rel}, {n} rows, types {}, least rows {least:?}",
+                        if i == 0 { "rows changed" } else { "reads changed" },
+                        String::from_utf8_lossy(&frame_types(prog, domains, rel, k.rel.types()))
+                    );
                 }
                 written += n;
                 if let Some(level) = k.rel.live_levels() {

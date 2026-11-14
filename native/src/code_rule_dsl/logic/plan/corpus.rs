@@ -2775,6 +2775,11 @@ fn run_observed(
                     _ => {}
                 }
             }
+            // The domains of the program as it now is: those `lower` found are of the program before the rewrites above
+            // (pushed joins, factorized and demanded exports, merged rules), which rename and combine relations
+            // (`fl256_P`). Every part takes them from here: the split's, the frames' and the memo's symbol columns
+            // (`lower::atom_columns`, decision 0170).
+            lowered.domains = lower::domains(&lowered.program)?;
             let _step = crate::code_rule_dsl::logic::profile::span(|| "split the file-local and cross-file parts".into());
             let split = crate::code_rule_dsl::typing::file_local::programs(&lowered.program);
             drop(_step);
@@ -2922,7 +2927,7 @@ fn run_observed(
     // that changed.
     let cross_digest = under_phased(memo_program, &split.cross.rules);
     let cross_plan = match &cross_declared {
-        Some(declared) => cross_memo::split(&mut split.cross, declared, &cross_digest, &split.same_doc)?,
+        Some(declared) => cross_memo::split(&mut split.cross, &lowered.domains, declared, &cross_digest, &split.same_doc)?,
         None => None,
     };
     crate::code_rule_dsl::logic::profile::decision("cross-file memo (decision 0076)", || match (&cross_declared, &cross_plan) {
@@ -3289,16 +3294,8 @@ fn run_observed(
         );
     }
     // Its entries' symbol columns, for a store this process forks from (decision 0170): carried with its key.
-    let memo_plan = {
-        // The domains of the program as it is: `lowered.domains` are of the program as it was lowered, before its
-        // policies' relations were renamed and combined (`fl256_P` is in the one, not the other).
-        let at = std::time::Instant::now();
-        let domains = lower::domains(&lowered.program)?;
-        if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
-            eprintln!("rerail: the memo's symbol columns: the domains of {} relations, {:.3} s", domains.len(), at.elapsed().as_secs_f64());
-        }
-        memo::Program::new(memo_program, &domains)
-    };
+    // (`lowered.domains`: of the program as prepared, after its rewrites.)
+    let memo_plan = memo::Program::new(memo_program, &lowered.domains);
     // The run holds its memo plan and the sources it reads until its manifest names them (O95): a collector running
     // meanwhile would otherwise take the rows this run writes, or the sources they and its tapes are of.
     let _held = match memo {
@@ -3610,6 +3607,9 @@ fn run_observed(
         /// Whether `found` is the entry's outputs alone (decision 0117 step 1): the file is as the keeper counted it.
         outputs: bool,
     }
+    // The tapes of the files the run's waves will load (a phase's, its loads'), read before the first wave (decision
+    // 0104), by source: set below, once the memo's entries the waves may find are known.
+    let wave_tapes: std::sync::OnceLock<HashMap<crate::content_store::SourceId, crate::content_store::TapeFrame>> = std::sync::OnceLock::new();
     // Files looked up together: stat each, find the entries of those the stat index knows in one statement, read and
     // hash the others, find their contents in one statement and their entries in one more. A few statements for any
     // number of files, and nothing written: a source found is pinned by the store's writer, a new one is stored with
@@ -3736,6 +3736,12 @@ fn run_observed(
                     tape[i] = f;
                 }
             }
+        } else if let Some(held) = wave_tapes.get().filter(|_| !reading) {
+            // In a wave, from those read before the first: a file that misses the memo (a new plan's run over an
+            // older store) is decompressed, not parsed again.
+            for i in (0..window.len()).filter(|i| found[*i].is_none()) {
+                tape[i] = content[i].and_then(memo::Content::stored).and_then(|id| held.get(&id)).cloned();
+            }
         }
         let mut texts: HashMap<usize, String> = if keep { rest.into_iter().zip(texts).collect() } else { HashMap::new() };
         Ok(stats
@@ -3851,13 +3857,40 @@ fn run_observed(
         let preload_secs = preload_at.elapsed().as_secs_f64();
         // The run's memo entries its waves may look up (a load's files): each path's newest of its plan's space, but
         // the files looked up already (decision 0104: read before the first wave).
-        let (entries, entry_bytes) = match memo {
+        let (entries, entry_bytes, admitted) = match memo {
             Some(memo::Memo::Stored(_)) if memoised => {
                 let looked: std::collections::HashSet<&str> = docs.iter().map(|(_, p)| world::store_path(p)).collect();
                 store.admit_memo_entries(&crate::content_store::local_space(&memo::plan_digest(&memo_program)), &looked, &|f, out| memo_plan.syms.read(f, out)).map_err(|e| Error::Plan(e.to_string()))?
             }
-            _ => (0, 0),
+            _ => (0, 0, None),
         };
+        // The tapes of the files the waves will load and find no entry for: those the lane's last run read (whichever
+        // build ran it), but the run's own files (looked up above, their tapes read with them) and those whose
+        // entries were just admitted. One read; none when every load has its entry (a warm run).
+        if let (Some(admitted), Some(cache), Some(tag)) = (
+            admitted,
+            tapes.as_ref().filter(|_| cfg!(feature = "tape-cache")),
+            crate::code_rule_dsl::language::dialect_by_label(label).and_then(crate::code_rule_dsl::language::tape_tag),
+        ) {
+            let _tapes = crate::code_rule_dsl::logic::profile::span(|| "tapes of the waves' loads, by their sources".into());
+            let own: std::collections::HashSet<crate::content_store::SourceId> = before.lock().values().filter_map(|b| b.content.and_then(memo::Content::stored)).collect();
+            let found: std::collections::HashSet<crate::content_store::SourceId> = admitted.iter().filter_map(|p| stat_index.recorded(p)).collect();
+            let wanted: Vec<crate::content_store::SourceId> = store
+                .lane_sources(&canonical_root, &lane)
+                .map_err(|e| Error::Plan(e.to_string()))?
+                .into_iter()
+                .filter(|s| !own.contains(s) && !found.contains(s))
+                .collect();
+            let frames = cache
+                .tape_frames_for(&wanted, i64::from(tag), crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION))
+                .map_err(|e| Error::Plan(e.to_string()))?;
+            let asked = wanted.len();
+            let held: HashMap<_, _> = wanted.into_iter().zip(frames).filter_map(|(s, f)| f.map(|f| (s, f))).collect();
+            if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+                eprintln!("rerail: tapes before the first wave for its loads: {asked} sources asked, {} tapes, {:.1} MB", held.len(), held.values().map(crate::content_store::TapeFrame::len).sum::<usize>() as f64 / 1048576.0);
+            }
+            let _ = wave_tapes.set(held);
+        }
         if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() && frames + entries > 0 {
             eprintln!("rerail: frames read before the first wave: {frames} frames, {:.1} MB encoded, {preload_secs:.2} s; {entries} memo entries its waves may look up, {:.1} MB", bytes as f64 / 1048576.0, entry_bytes as f64 / 1048576.0);
         }
@@ -6888,7 +6921,7 @@ fn run_observed(
                             let held = match held {
                                 Some(h) => h,
                                 None => {
-                                    let types = part.program.decls[rel.as_str()].iter().map(|(_, t)| if t == "sym" { b's' } else { b'i' }).collect();
+                                    let types = retain::types_of(&part.program, &part.domains, rel);
                                     crate::code_rule_dsl::logic::native::component::InRel::flat(&held_rows(&db, &got, rel, width)?, types)
                                 }
                             };

@@ -388,3 +388,19 @@ fn each_lane_keeps_its_last_runs_plans() {
     }
     assert_eq!(plans[1..].iter().map(|p| live(*p)).collect::<Vec<_>>(), vec![Some(0), Some(0), Some(1), Some(1)]);
 }
+
+#[test]
+fn a_lanes_sources_are_its_newest_runs_whichever_build_ran_it() {
+    let (_path, store) = store("corpus-lane-sources");
+    let sources: Vec<SourceId> = (0..3u8).map(|i| store.put_source(&noise(80 + u64::from(i), 256), &[]).unwrap()).collect();
+    assert!(store.lane_sources("/repo", &[1; 32]).unwrap().is_empty(), "a lane with no run read nothing");
+    store.record_corpus_run_lane("/repo", &sources[..2], 7, 9, [10; 32], &[], Some([1; 32]), 1_000).unwrap();
+    store.record_corpus_run_lane("/repo", &sources[2..], 7, 9, [11; 32], &[], Some([2; 32]), 1_001).unwrap();
+    // The same lane under another build (another plan), reading one source more.
+    store.record_corpus_run_lane("/repo", &sources, 7, 9, [12; 32], &[], Some([1; 32]), 1_002).unwrap();
+    let mut got = store.lane_sources("/repo", &[1; 32]).unwrap();
+    got.sort_by_key(|s| s.0);
+    assert_eq!(got, sources, "lane 1's newest run");
+    assert_eq!(store.lane_sources("/repo", &[2; 32]).unwrap(), sources[2..].to_vec(), "lane 2's own");
+    assert!(store.lane_sources("/other", &[1; 32]).unwrap().is_empty(), "by root");
+}
