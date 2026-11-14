@@ -595,3 +595,23 @@ Guard: `a_tests_first_byte_filters_it` names the filtered tests (`-`, `0`).
 
 Measured (`jit_against_aot`, load average 119): tier 1 ahead of time 279 instructions a
 node, from 298; the JIT 362, from 409; tier 1 + 2 ahead of time 521, from 540.
+
+## A word's slot is one entry
+
+The lean lexer's word table is one array of 16-byte entries: the key, the length, the code.
+The loop had two tables, keys and metas, so two bases and two dependent loads after the
+hash, each from its own register.
+
+Now a slot is the key and its meta side by side (`RecordTables::slots`). The lookup is the
+lean lexer's:
+
+```text
+mul   x12, x12, x14          the hash
+lsr   x12, x12, #55          its slot
+add   x12, x13, x12, lsl #4  16 bytes a slot
+ldp   x13, x12, [x12]        key and meta, one load
+cmp / ccmp                   length, then key
+```
+
+The main function: 1,493 instructions, from 1,580; 173 stack accesses, from 224 (one base
+less live across the loop). Metal reads the word table itself and is unchanged.

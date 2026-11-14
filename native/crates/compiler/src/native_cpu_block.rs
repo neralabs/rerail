@@ -1656,8 +1656,9 @@ const LONG_WORD: u64 = 1 << 63;
 
 pub struct RecordTables {
     pub words: Vec<u64>,
-    pub keys: usize,
-    pub meta: usize,
+    /// The word slots, 16 bytes each: the key (the word's first eight bytes), then its meta.
+    /// A token takes both with one pair load, as the lean lexer's `WORDS` entry.
+    pub slots: usize,
     pub tails: usize,
     pub table: crate::records::WordTable,
     /// The extracts of the first and last bytes.
@@ -1701,20 +1702,21 @@ impl RecordTables {
     pub fn new(r: &crate::records::Records, made: &crate::block_native::BlockNative) -> Result<Self, Error> {
         let table = crate::records::WordTable::new(&r.words).map_err(|_| Error::InvalidTarget(0))?;
         let mut words: Vec<u64> = r.kinds.chunks(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 kinds"))).collect();
-        let keys = 8 * words.len();
-        words.extend(&table.keys);
+        let slots = 8 * words.len();
         // Each slot's length, then the code bits its word gives (`len | bits << 8`): the word at
         // `KIND_BITS`, and the marks of that word alone at `MARK_SHIFT` (`Records::marks`), so
         // that a token takes them with the slot's one load.
-        let meta = 8 * words.len();
-        words.extend(table.meta.iter().map(|&m| {
+        let metas: Vec<u64> = table.meta.iter().map(|&m| {
             let word = u64::from(m >> 8);
             let alone = r.marks.iter().enumerate().filter(|(_, x)| x.0 == crate::records::WORD_ALONE && u64::from(x.1) == word && word != 0).fold(0u64, |a, (k, _)| a | 1 << k);
             // A word past eight bytes: its top bit (`LONG_WORD`), whose other words a token
             // compares.
             let long = if (m & 0xff) > 8 { LONG_WORD } else { 0 };
             u64::from(m & 0xff) | (word << crate::records::KIND_BITS | alone << crate::records::MARK_SHIFT) << 8 | long
-        }));
+        }).collect();
+        for (&k, &m) in table.keys.iter().zip(&metas) {
+            words.extend([k, m]);
+        }
         let tails = 8 * words.len();
         for t in &table.tails {
             words.extend(t);
@@ -1754,7 +1756,7 @@ impl RecordTables {
             *e = u32::from(r.kinds[b]) | u32::from(rule) << TOKEN_RULE | u32::from(wordy) << TOKEN_WORDY | tests | u32::from(row) << TOKEN_PAIR_ROW;
         }
         words.extend(entries.chunks(2).map(|c| u64::from(c[0]) | u64::from(c[1]) << 32));
-        Ok(RecordTables { words, keys, meta, tails, table, starts: r.starts, lasts: r.lasts, pairs, token, filters })
+        Ok(RecordTables { words, slots, tails, table, starts: r.starts, lasts: r.lasts, pairs, token, filters })
     }
 }
 
@@ -1795,20 +1797,20 @@ struct FileCols {
     mult: Value,
     /// The slots' keys and meta (`RecordTables::keys`, `meta`): a slot's two loads, each one
     /// instruction.
-    keys: Value,
-    meta: Value,
+    /// The word slots (`RecordTables::slots`).
+    slots: Value,
 }
 
 /// The record function's parameters (`record_fn`): `FileCols`' fields, in order.
-const RECORD_PARAMS: usize = 14;
+const RECORD_PARAMS: usize = 13;
 
 impl FileCols {
     fn values(&self) -> [Value; RECORD_PARAMS] {
-        [self.bytes, self.starts, self.lasts, self.codes, self.ns, self.nl, self.out, self.counts, self.blocks, self.tables, self.mult, self.keys, self.meta, self.len]
+        [self.bytes, self.starts, self.lasts, self.codes, self.ns, self.nl, self.out, self.counts, self.blocks, self.tables, self.mult, self.slots, self.len]
     }
 
     fn of(p: &[Value]) -> Self {
-        FileCols { bytes: p[0], starts: p[1], lasts: p[2], codes: p[3], ns: p[4], nl: p[5], out: p[6], counts: p[7], blocks: p[8], tables: p[9], mult: p[10], keys: p[11], meta: p[12], len: p[13] }
+        FileCols { bytes: p[0], starts: p[1], lasts: p[2], codes: p[3], ns: p[4], nl: p[5], out: p[6], counts: p[7], blocks: p[8], tables: p[9], mult: p[10], slots: p[11], len: p[12] }
     }
 }
 
@@ -2058,9 +2060,8 @@ fn file_cols(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     let len = f.ins().load(types::I64, ro, at, 16);
     let tables = f.ins().iconst(types::I64, t.words.as_ptr() as i64);
     let mult = f.ins().iconst(types::I64, t.table.mult as i64);
-    let keys = f.ins().iconst(types::I64, t.words.as_ptr() as i64 + t.keys as i64);
-    let meta = f.ins().iconst(types::I64, t.words.as_ptr() as i64 + t.meta as i64);
-    FileCols { bytes, starts, lasts, codes, ns, nl, out, counts, blocks, tables, mult, keys, meta, len }
+    let slots = f.ins().iconst(types::I64, t.words.as_ptr() as i64 + t.slots as i64);
+    FileCols { bytes, starts, lasts, codes, ns, nl, out, counts, blocks, tables, mult, slots, len }
 }
 
 /// Where the token loop runs a block at a time (decision 0177): the blocks whose outputs are
@@ -3012,11 +3013,11 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let h1 = f.ins().bxor(key, len);
     let h1 = f.ins().imul(h1, c.mult);
     let slot = f.ins().ushr_imm(h1, i64::from(64 - t.table.bits));
-    let off = f.ins().ishl_imm(slot, 3);
-    let ka = f.ins().iadd(c.keys, off);
-    let kk = f.ins().load(types::I64, ro, ka, 0);
-    let ma = f.ins().iadd(c.meta, off);
-    let meta = f.ins().load(types::I64, ro, ma, 0);
+    // The slot's key and meta, side by side: one pair load.
+    let off = f.ins().ishl_imm(slot, 4);
+    let sa = f.ins().iadd(c.slots, off);
+    let kk = f.ins().load(types::I64, ro, sa, 0);
+    let meta = f.ins().load(types::I64, ro, sa, 8);
     let same_key = f.ins().icmp(IntCC::Equal, kk, key);
     let mlen = f.ins().band_imm(meta, 0xff);
     let same_len = f.ins().icmp(IntCC::Equal, mlen, len);
