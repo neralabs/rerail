@@ -100,8 +100,12 @@ pub struct Ctx {
     id_of: *mut u16,
     code_kf: *mut u32,
     code_first: *mut u32,
+    /// Tier 1's records' layout (`records::RecordLayout`): the bytes from a token's start,
+    /// last or code to the next token's (4 in columns, 12 in rows).
+    record_stride: u64,
 }
 
+const RECORD_STRIDE: i32 = std::mem::offset_of!(Ctx, record_stride) as i32;
 const SIZE_C: i32 = std::mem::offset_of!(Ctx, size_c) as i32;
 const OFF_C: i32 = std::mem::offset_of!(Ctx, off_c) as i32;
 const TAIL_C: i32 = std::mem::offset_of!(Ctx, tail_c) as i32;
@@ -1004,7 +1008,8 @@ fn lazy_mark(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, bw: &crate::native_cp
     f.ins().brif(first, none, &[], on, &[]);
     f.switch_to_block(on);
     let j = f.ins().iadd_imm(j, -1);
-    let off = f.ins().ishl_imm(j, 2);
+    let stride = (e.ctx)(f, RECORD_STRIDE);
+    let off = f.ins().imul(j, stride);
     let ca = f.ins().iadd(codes, off);
     let c = f.ins().uload32(flags, ca, 0);
     let sa = f.ins().iadd(starts, off);
@@ -1335,8 +1340,9 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
     let next = (e.get)(f, Mem::Next);
     let here = f.ins().iadd_imm(next, -1);
     let (no, yes) = (f.create_block(), f.create_block());
+    let stride = (e.ctx)(f, RECORD_STRIDE);
     let code_at = |f: &mut FunctionBuilder<'_>, j: Value| {
-        let off = f.ins().ishl_imm(j, 2);
+        let off = f.ins().imul(j, stride);
         let a = f.ins().iadd(codes, off);
         f.ins().uload32(flags, a, 0)
     };
@@ -2087,9 +2093,11 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
         field_set(f, ctx, Mem::Taken, code);
     }
     f.ins().return_(&[zero]);
-    // The token's record: its first byte, last byte and code, from three columns.
+    // The token's record: its first byte, last byte and code, where tier 1's layout has them
+    // (`Ctx::record_stride`).
     f.switch_to_block(token);
-    let off = f.ins().ishl_imm(next, 2);
+    let stride = load(f, RECORD_STRIDE);
+    let off = f.ins().imul(next, stride);
     let column = |f: &mut FunctionBuilder<'_>, at: i32| {
         let c = load(f, at);
         let a = f.ins().iadd(c, off);
@@ -3498,8 +3506,12 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     // three columns; no select, no compare but the end's. The record pass checked
                     // the columns (the totals' flag).
                     f.switch_to_block(token);
+                    // The records' stride (`records::RecordLayout`): columns or rows, tier 1's.
+                    let rb = if clustered { pinned(&mut f) } else { ctx };
+                    let stride = f.ins().load(types::I64, MemFlags::trusted().with_readonly().with_can_move(), rb, RECORD_STRIDE);
+                    let roff = f.ins().imul(next, stride);
                     let load_at = |f: &mut FunctionBuilder<'_>, c: Value| {
-                        let at = slot(f, c, next);
+                        let at = f.ins().iadd(c, roff);
                         f.ins().uload32(flags, at, 0)
                     };
                     let (s, l, c) = (load_at(&mut f, starts_p), load_at(&mut f, lasts_p), load_at(&mut f, codes_p));
@@ -5176,6 +5188,8 @@ pub struct Tier1View {
     pub totals: *const u8,
     pub totals_stride: usize,
     pub totals_mask: u64,
+    /// The bytes from a token's record field to the next token's (`records::RecordLayout`).
+    pub record_stride: usize,
 }
 
 /// The buffers one call writes, sized from the stream and the program's `Bounds`.
@@ -5375,6 +5389,7 @@ impl CompiledStream {
             id_of: tape.id_of.as_mut_ptr(),
             code_kf: tape.code_kf.as_mut_ptr(),
             code_first: tape.code_first.as_mut_ptr(),
+            record_stride: tier1.record_stride as u64,
         };
         // SAFETY: the caller's contract; the function writes only the tape's buffers and the
         // state in `ctx`.
@@ -5416,6 +5431,7 @@ impl CompiledStream {
             lasts_stride: 8 * n,
             outputs: all.as_ptr(),
             output_stride: 8,
+            record_stride: crate::records::RecordLayout::Columns.stride() as usize,
             totals: totals.as_ptr().cast(),
             totals_stride: 8,
             totals_mask: u64::MAX,
@@ -5584,9 +5600,15 @@ impl Parser {
         let extracts = self.tier1.extracts.len();
         let starts = self.stream(batch, self.tier2.starts);
         let outputs = batch.out[row.out as usize..].as_ptr();
-        // The records' other columns: the last bytes, and the codes after the extracts'.
         let lasts = self.stream(batch, self.tier2.lasts);
-        let codes = batch.positions[(row.positions + extracts as u64 * row.capacity) as usize..].as_ptr();
+        // The records where tier 1's layout has them (`records::RecordLayout`): a token's start,
+        // last and code, a column each or a row a token.
+        let (layout, cols) = match &self.tier1.records {
+            Some(t) => (t.layout, [u64::from(t.starts), u64::from(t.lasts), extracts as u64]),
+            None => (crate::records::RecordLayout::Columns, [self.tier2.starts.unwrap_or(0) as u64, self.tier2.lasts.unwrap_or(0) as u64, extracts as u64]),
+        };
+        let field = |k: usize| batch.positions[(row.positions + layout.index(k, 0, cols, row.capacity)) as usize..].as_ptr();
+        let (starts_p, lasts_p, codes) = (field(crate::records::FIELD_START), field(crate::records::FIELD_LAST), field(crate::records::FIELD_CODE));
         let none = [0u64];
         let totals = match batch.counts.get(row.counts as usize + extracts..) {
             Some(t) if !t.is_empty() => t,
@@ -5597,9 +5619,9 @@ impl Parser {
         // its blocks; each stream has `capacity` slots, at least two past its count; the tape is
         // sized for the stream.
         let view = Tier1View {
-            starts: starts.0.as_ptr(),
+            starts: if self.tier2.starts.is_some() { starts_p } else { starts.0.as_ptr() },
             nstarts: starts.1.min(lasts.1),
-            lasts: lasts.0.as_ptr(),
+            lasts: if self.tier2.lasts.is_some() { lasts_p } else { lasts.0.as_ptr() },
             codes,
             lasts_stride: 8 * self.tier1.outputs,
             outputs,
@@ -5607,6 +5629,7 @@ impl Parser {
             totals: totals.as_ptr().cast(),
             totals_stride: 8,
             totals_mask: u64::MAX,
+            record_stride: layout.stride() as usize,
         };
         let r = unsafe { self.tier2.call(batch.bytes.as_ptr().wrapping_add(row.bytes as usize), row.len as usize, view, tape) };
         if r != 0 {

@@ -1521,6 +1521,19 @@ pub mod tests {
         assert_eq!(found, vec![6]);
     }
 
+    /// The records' layout the compiler chose (`records::RecordLayout`): rr's token loop writes
+    /// each token's start, last and code, its only extracts, so on the CPU they are rows, the
+    /// lean lexer's `Tok`; tier 2 reads them a row a token and its tapes are the columns'.
+    #[test]
+    fn rrs_records_are_rows_on_the_cpu() {
+        let c = crate::compiled().expect("compiles");
+        let t = c.parser.tier1.records.as_ref().expect("the record pass");
+        assert_eq!(t.layout, rerail_compiler::records::RecordLayout::Rows);
+        let src = ".decl a(x: number)\na(1). // c\na(\"s\").\n";
+        let lean = crate::rr::lean::tape(src);
+        assert_eq!(c.parser.image(src.as_bytes()).ok().as_deref(), Some(&lean[..]), "rows: the lean tape");
+    }
+
     /// What a rule's count tests need of the bytes, together (`native_cpu_bytes::needs`): a
     /// string's, a control byte or a backslash from the byte before it (`escaped`'s run) to
     /// its last. A string with none of them skips its tests' call, by one vector compare.

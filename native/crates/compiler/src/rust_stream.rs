@@ -152,6 +152,7 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
     let c = unsafe { &*(ctx as *const Ctx) };
     let mut s = S {
         bytes: c.bytes, len: c.len as u32, starts: c.starts, lasts: c.lasts, codes: c.codes, n: c.nstarts as usize,
+        rs: c.record_stride as usize / 4,
         outputs: c.outputs as *const u8, ostride: c.output_stride as usize, lstride: c.lasts_stride as usize,
         totals: c.totals as *const u8, tstride: c.totals_stride as usize, tmask: c.totals_mask,
         rows: c.rows, snode: c.super_node, skind: c.super_kind, open: c.open, counts_out: c.counts,
@@ -262,7 +263,7 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
                  \x20       let (from, word) = loop {{\n\
                  \x20           if j == 0 {{ break (0, 0); }}\n\
                  \x20           j -= 1;\n\
-                 \x20           let (c, st) = unsafe {{ (*self.codes.add(j), *self.starts.add(j)) }};\n\
+                 \x20           let (c, st) = unsafe {{ (*self.codes.add(j * self.rs), *self.starts.add(j * self.rs)) }};\n\
                  {skip}\
                  \x20       }};\n\
                  {unless}\
@@ -328,6 +329,7 @@ pub struct Ctx {
     room_supers: u64, room_pushes: u64, stack_base: u64, stack_limit: u64, frame_shift: u64,
     state: [u64; $STATE], size_c: *mut u8, off_c: *mut u8, tail_c: *mut u8, base_c: *mut u32,
     image: *mut u8, id_of: *mut u16, code_kf: *mut u32, code_first: *mut u32,
+    record_stride: u64,
 }
 
 /// A node's working row (`native_cpu_tape::ROW`): its key (kind and field), its bytes. Not
@@ -351,6 +353,8 @@ const STATE: &str = "/// The run's buffers and state, as the lean parser's `Pars
 /// as the lean parser's methods take `&mut self`.
 struct S {
     bytes: *const u8, len: u32, starts: *const u32, lasts: *const u32, codes: *const u32, n: usize,
+    /// The words from a token's record field to the next token's (`Ctx::record_stride`).
+    rs: usize,
     outputs: *const u8, ostride: usize, lstride: usize, totals: *const u8, tstride: usize, tmask: u64,
     rows: *mut Row, snode: *mut u32, skind: *mut u32, open: *mut u32, counts_out: *mut u64,
     /// Scratch for a drop (`drop_dead`); which rows are wraps (`inner_field`).
@@ -485,9 +489,9 @@ fn token_step(out: &mut String, x: &Facts<'_>, any: Option<u8>, extras: bool, fl
                 self.live = {:#x};{end_code}
                 return Ok(());
             }}
-            let (st, c) = unsafe {{ (*self.starts.add(i), *self.codes.add(i)) }};
+            let (st, c) = unsafe {{ (*self.starts.add(i * self.rs), *self.codes.add(i * self.rs)) }};
             self.start = st;
-{set_end}            self.rec_end = unsafe {{ *self.lasts.add(i) }} + 1;
+{set_end}            self.rec_end = unsafe {{ *self.lasts.add(i * self.rs) }} + 1;
             self.code = c;
             self.next = i as u32 + 1;
 {extra}{refusals}            self.live = {live};
@@ -1190,16 +1194,16 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: u8) {
     let mut ahead = 0i8;
     for el in &m.elems {
         match el.offset {
-            0 => writeln!(body, "        let c = unsafe {{ *self.codes.add(here) }};\n        if !({}) {{ return false; }}", test(el)).unwrap(),
+            0 => writeln!(body, "        let c = unsafe {{ *self.codes.add(here * self.rs) }};\n        if !({}) {{ return false; }}", test(el)).unwrap(),
             o if o < 0 => {
                 // The record before, past the extras (an offset of -1).
-                writeln!(body, "        let mut j = here;\n        let c = loop {{\n            if j == 0 {{ return false; }}\n            j -= 1;\n            let c = unsafe {{ *self.codes.add(j) }};\n            if c >> {shift} & 1 == 0 {{ break c; }}\n        }};\n        if !({}) {{ return false; }}", test(el)).unwrap();
+                writeln!(body, "        let mut j = here;\n        let c = loop {{\n            if j == 0 {{ return false; }}\n            j -= 1;\n            let c = unsafe {{ *self.codes.add(j * self.rs) }};\n            if c >> {shift} & 1 == 0 {{ break c; }}\n        }};\n        if !({}) {{ return false; }}", test(el)).unwrap();
             }
             o => {
                 // No record left: an `end` element holds there (it is the last), any other fails.
                 let past = if el.end { "true" } else { "false" };
                 for _ in ahead..o {
-                    writeln!(body, "        let c = loop {{\n            at += 1;\n            if at >= self.n {{ return {past}; }}\n            let c = unsafe {{ *self.codes.add(at) }};\n            if c >> {shift} & 1 == 0 {{ break c; }}\n        }};").unwrap();
+                    writeln!(body, "        let c = loop {{\n            at += 1;\n            if at >= self.n {{ return {past}; }}\n            let c = unsafe {{ *self.codes.add(at * self.rs) }};\n            if c >> {shift} & 1 == 0 {{ break c; }}\n        }};").unwrap();
                 }
                 ahead = o;
                 writeln!(body, "        if !({}) {{ return false; }}", test(el)).unwrap();

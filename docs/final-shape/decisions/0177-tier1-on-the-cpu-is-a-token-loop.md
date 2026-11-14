@@ -776,3 +776,10 @@ block, in a backtick literal, in a comment. A fold left out fails it.
 
 Measured (`jit_against_aot`): tier 1 ahead of time 193 instructions and 55 cycles a node,
 from 222 and 65; the JIT 269 and 61, from 292 and 67.
+
+## The records' layout (2026-11-14)
+
+The token loop held three column bases for its records, and they were among
+the values it spilled each token. The records' layout is now the compiler's
+choice (decision 0231): rows on the CPU for rr, so the loop's stores share
+one base, as the lean lexer's `Tok`; columns on Metal.

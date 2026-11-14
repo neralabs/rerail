@@ -277,19 +277,26 @@ impl Batch {
                 let (base, n) = (row.out as usize, bytes.len().div_ceil(64));
                 let outputs = (0..program.outputs).map(|k| (0..n).map(|i| self.out[base + i * program.outputs + k]).collect()).collect();
                 let count = |c: usize| self.counts[row.counts as usize + c];
+                // A record's field by its layout (`records::RecordLayout`); an extract's
+                // positions are a column, or the rows' field of the records.
+                let field_of = |e: usize| program.records.as_ref().and_then(|t| [t.starts, t.lasts].iter().position(|&x| usize::from(x) == e));
+                let read = |field: usize, n: u64| -> Vec<u32> {
+                    let t = program.records.as_ref().expect("records");
+                    let cols = [u64::from(t.starts), u64::from(t.lasts), program.extracts.len() as u64];
+                    (0..n).map(|k| self.positions[(row.positions + t.layout.index(field, k, cols, row.capacity)) as usize]).collect()
+                };
                 let positions = (0..program.extracts.len())
-                    .map(|e| {
-                        let at = (row.positions + e as u64 * row.capacity) as usize;
-                        self.positions[at..at + count(e) as usize].to_vec()
+                    .map(|e| match field_of(e) {
+                        Some(field) => read(field, count(e)),
+                        None => {
+                            let at = (row.positions + e as u64 * row.capacity) as usize;
+                            self.positions[at..at + count(e) as usize].to_vec()
+                        }
                     })
                     .collect();
                 let totals = if program.totals.is_empty() { Vec::new() } else { vec![u64::from(count(program.extracts.len()) != 0)] };
                 let codes = match &program.records {
-                    Some(t) => {
-                        let n = count(usize::from(t.starts)).min(count(usize::from(t.lasts))) as usize;
-                        let at = (row.positions + program.extracts.len() as u64 * row.capacity) as usize;
-                        self.positions[at..at + n].to_vec()
-                    }
+                    Some(t) => read(crate::records::FIELD_CODE, count(usize::from(t.starts)).min(count(usize::from(t.lasts)))),
                     None => Vec::new(),
                 };
                 BlockRun { outputs, positions, totals, codes }
@@ -1533,7 +1540,10 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     let passes = native.passes();
     // The records (`records`): made in the last pass at each file's end where it is a forward
     // one, else in a pass of their own after the passes.
-    let tables = native.records.as_ref().map(|r| RecordTables::new(r, made)).transpose()?;
+    let mut tables = native.records.as_ref().map(|r| RecordTables::new(r, made)).transpose()?;
+    if let Some(t) = tables.as_mut() {
+        t.layout = record_layout(native, t);
+    }
     let merged = tables.is_some() && matches!(passes.passes.last(), Some(Pass::Forward { .. }));
     let mut ir = Vec::new();
     let keep = |ir: &mut Vec<(u32, cranelift_codegen::ir::Function)>, id: cranelift_module::FuncId, func: &cranelift_codegen::ir::Function| {
@@ -1674,6 +1684,19 @@ pub struct RecordTables {
     /// Each token test's bit in the entries (`TOKEN_TESTS`), where its first byte says whether
     /// it can hold (`test_filter`): set for the first bytes it can.
     pub filters: Vec<Option<i64>>,
+    /// Where the records are (`record_layout`): rows where the token loop writes them all.
+    pub layout: crate::records::RecordLayout,
+}
+
+/// The records' layout the compiler chooses for a program (decision 0231): rows where the
+/// token loop writes each token's start, last and code itself and they are the only extracts
+/// (`records_made`), so the three columns' room is the rows' and nothing else writes it; else
+/// columns, as the extracts write their positions.
+pub fn record_layout(native: &crate::block_native::BlockNative, t: &RecordTables) -> crate::records::RecordLayout {
+    let made = native.records_made();
+    let mine = |e: u16| native.extracts.get(usize::from(e)).is_some_and(|k| made.contains(k));
+    let both = native.extracts.len() == 2 && (t.starts, t.lasts) == (0, 1) && mine(t.starts) && mine(t.lasts);
+    crate::records::RecordLayout::choose(crate::records::RecordWriter::TokenLoop, both)
 }
 
 /// The entries' bits from which the token tests' first-byte filters are (`RecordTables::filters`).
@@ -1758,7 +1781,7 @@ impl RecordTables {
             *e = u32::from(r.kinds[b]) | u32::from(rule) << TOKEN_RULE | u32::from(wordy) << TOKEN_WORDY | tests | u32::from(row) << TOKEN_PAIR_ROW;
         }
         words.extend(entries.chunks(2).map(|c| u64::from(c[0]) | u64::from(c[1]) << 32));
-        Ok(RecordTables { words, slots, tails, table, starts: r.starts, lasts: r.lasts, pairs, token, filters })
+        Ok(RecordTables { words, slots, tails, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns })
     }
 }
 
@@ -1801,6 +1824,8 @@ struct FileCols {
     /// instruction.
     /// The word slots (`RecordTables::slots`).
     slots: Value,
+    /// Where the records are (`records::RecordLayout`): rows from `starts`, or a column each.
+    layout: crate::records::RecordLayout,
 }
 
 /// The record function's parameters (`record_fn`): `FileCols`' fields, in order.
@@ -1811,8 +1836,25 @@ impl FileCols {
         [self.bytes, self.starts, self.lasts, self.codes, self.ns, self.nl, self.out, self.counts, self.blocks, self.tables, self.mult, self.slots, self.len]
     }
 
-    fn of(p: &[Value]) -> Self {
-        FileCols { bytes: p[0], starts: p[1], lasts: p[2], codes: p[3], ns: p[4], nl: p[5], out: p[6], counts: p[7], blocks: p[8], tables: p[9], mult: p[10], slots: p[11], len: p[12] }
+    fn of(p: &[Value], layout: crate::records::RecordLayout) -> Self {
+        FileCols { bytes: p[0], starts: p[1], lasts: p[2], codes: p[3], ns: p[4], nl: p[5], out: p[6], counts: p[7], blocks: p[8], tables: p[9], mult: p[10], slots: p[11], len: p[12], layout }
+    }
+
+    /// Token `k`'s field `field` (`records::FIELD_*`): the address to load or store at, and
+    /// its offset. In rows, one base for the three fields (the lean lexer's `Tok`): the
+    /// offset says which.
+    fn field(&self, f: &mut FunctionBuilder<'_>, field: usize, k: Value) -> (Value, i32) {
+        match self.layout {
+            crate::records::RecordLayout::Columns => {
+                let at = f.ins().ishl_imm(k, 2);
+                let col = [self.starts, self.lasts, self.codes][field];
+                (f.ins().iadd(col, at), 0)
+            }
+            crate::records::RecordLayout::Rows => {
+                let at = f.ins().imul_imm(k, crate::records::RecordLayout::Rows.stride() as i64);
+                (f.ins().iadd(self.starts, at), 4 * field as i32)
+            }
+        }
     }
 }
 
@@ -1835,7 +1877,7 @@ fn record_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Rec
     f.append_block_params_for_function_params(entry);
     f.switch_to_block(entry);
     let p = f.block_params(entry).to_vec();
-    let cols = FileCols::of(&p);
+    let cols = FileCols::of(&p, t.layout);
     let mut heads = vec![];
     record_file(&mut f, r, t, extracts, outputs, &cols, done, &mut heads);
     f.switch_to_block(done);
@@ -1860,7 +1902,7 @@ fn words_signature(module: &JITModule, n: usize) -> cranelift_codegen::ir::Signa
 /// A file's token loop's end (`(slot)`), a function of its own: the block loop runs the token
 /// loop after each block, over the blocks whose outputs are final, and calls this at the
 /// file's end. The slot holds the file's columns and the loop's state (`REC_SLOT`).
-fn end_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Records, extracts: usize, outputs: usize, looped: u32) -> Result<(), Error> {
+fn end_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Records, extracts: usize, outputs: usize, looped: u32, layout: crate::records::RecordLayout) -> Result<(), Error> {
     let mut builder_context = FunctionBuilderContext::new();
     let mut f = FunctionBuilder::new(func, &mut builder_context);
     let (entry, done) = (f.create_block(), f.create_block());
@@ -1869,7 +1911,7 @@ fn end_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Record
     let p = f.block_params(entry).to_vec();
     let fl = MemFlags::trusted();
     let vals: Vec<Value> = (0..RECORD_PARAMS).map(|k| f.ins().load(types::I64, fl, p[0], 8 * k as i32)).collect();
-    let cols = FileCols::of(&vals);
+    let cols = FileCols::of(&vals, layout);
     let state = f.ins().iadd_imm(p[0], 8 * RECORD_PARAMS as i64);
     let mut heads = vec![];
     let n = f.ins().load(types::I64, fl, state, 0);
@@ -2089,7 +2131,14 @@ fn file_cols(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         let off = f.ins().ishl_imm(off, 2);
         f.ins().iadd(positions_all, off)
     };
-    let (starts, lasts, codes) = (column(i64::from(r.starts)), column(i64::from(r.lasts)), column(extracts as i64));
+    let (starts, lasts, codes) = match t.layout {
+        crate::records::RecordLayout::Columns => (column(i64::from(r.starts)), column(i64::from(r.lasts)), column(extracts as i64)),
+        // Rows from the first column (`RecordLayout::index`): a token's fields 4 bytes apart.
+        crate::records::RecordLayout::Rows => {
+            let first = column(i64::from(r.starts.min(r.lasts)));
+            (first, f.ins().iadd_imm(first, 4), f.ins().iadd_imm(first, 8))
+        }
+    };
     let ns = f.ins().load(types::I64, fl, counts, 8 * i32::from(r.starts));
     let nl = f.ins().load(types::I64, fl, counts, 8 * i32::from(r.lasts));
     let blocks = f.ins().load(types::I64, ro, at, 8);
@@ -2097,7 +2146,7 @@ fn file_cols(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     let tables = f.ins().iconst(types::I64, t.words.as_ptr() as i64);
     let mult = f.ins().iconst(types::I64, t.table.mult as i64);
     let slots = f.ins().iconst(types::I64, t.words.as_ptr() as i64 + t.slots as i64);
-    FileCols { bytes, starts, lasts, codes, ns, nl, out, counts, blocks, tables, mult, slots, len }
+    FileCols { bytes, starts, lasts, codes, ns, nl, out, counts, blocks, tables, mult, slots, len, layout: t.layout }
 }
 
 /// Where the token loop runs a block at a time (decision 0177): the blocks whose outputs are
@@ -3256,15 +3305,14 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     // A token: its first and last bytes, its kind and its word's slot.
     f.switch_to_block(token);
     let (k, after, bad, pending) = (h[0], h[1], h[2], pending_in);
-    let at = f.ins().ishl_imm(k, 2);
-    let sa = f.ins().iadd(c.starts, at);
-    let la = f.ins().iadd(c.lasts, at);
+    let (sa, so) = c.field(f, crate::records::FIELD_START, k);
+    let (la, lo_off) = c.field(f, crate::records::FIELD_LAST, k);
     let s = if walked.is_some() {
         let s = f.block_params(token)[0];
-        f.ins().istore32(stores, s, sa, 0);
+        f.ins().istore32(stores, s, sa, so);
         s
     } else {
-        f.ins().uload32(fl, sa, 0)
+        f.ins().uload32(fl, sa, so)
     };
     // The token's first eight bytes and its first byte's entry (`RecordTables::token`): its
     // kind, rule, word flag and pair row, one load, as the lean lexer's `TOKEN`.
@@ -3292,11 +3340,11 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     } else {
         match general {
             Some((l, refuse, tag, h)) => (l, Some(refuse), Some(tag), h),
-            None => (f.ins().uload32(fl, la, 0), None, None, zero),
+            None => (f.ins().uload32(fl, la, lo_off), None, None, zero),
         }
     };
     if ruled {
-        f.ins().istore32(stores, l, la, 0);
+        f.ins().istore32(stores, l, la, lo_off);
     }
     let (long, coded) = (f.create_block(), f.create_block());
     for _ in 0..STATE_WORDS + 2 {
@@ -3533,9 +3581,8 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             from = f.ins().iadd_imm(s, 1);
         }
     }
-    let at = f.ins().ishl_imm(cv[0], 2);
-    let ca = f.ins().iadd(c.codes, at);
-    f.ins().istore32(stores, code, ca, 0);
+    let (ca, co) = c.field(f, crate::records::FIELD_CODE, cv[0]);
+    f.ins().istore32(stores, code, ca, co);
     let k1 = f.ins().iadd_imm(cv[0], 1);
     let mut back: Vec<BlockArg> = vec![k1.into(), cv[1].into(), cv[2].into(), pending.into(), from.into(), word_before.into()];
     // The block's starts after the token, while it ends in the block; else none, for a refill.
@@ -3707,9 +3754,8 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
     };
     let sum = f.ins().iadd(q[3], q[4]);
     let mid = f.ins().ushr_imm(sum, 1);
-    let ma = f.ins().ishl_imm(mid, 2);
-    let ma = f.ins().iadd(c.starts, ma);
-    let sv = f.ins().uload32(fl, ma, 0);
+    let (ma, mo) = c.field(f, crate::records::FIELD_START, mid);
+    let sv = f.ins().uload32(fl, ma, mo);
     let below = f.ins().icmp(IntCC::UnsignedLessThan, sv, place);
     let mid1 = f.ins().iadd_imm(mid, 1);
     let lo = f.ins().select(below, mid1, q[3]);
@@ -3724,9 +3770,8 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
     let place = f.ins().iadd(base, b);
     let inside = f.ins().icmp(IntCC::UnsignedLessThan, q[3], n);
     let k = f.ins().select(inside, q[3], zero);
-    let ka = f.ins().ishl_imm(k, 2);
-    let sa = f.ins().iadd(c.starts, ka);
-    let sv = f.ins().uload32(fl, sa, 0);
+    let (sa, so) = c.field(f, crate::records::FIELD_START, k);
+    let sv = f.ins().uload32(fl, sa, so);
     let qa: Vec<BlockArg> = q.iter().map(|&v| v.into()).collect();
     if lift {
         // On past the extras' tokens: the first grammar token from it.
@@ -3768,9 +3813,8 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
             f.ins().jump(next, &qa);
         }
         f.switch_to_block(test);
-        let ka = f.ins().ishl_imm(q[3], 2);
-        let ca = f.ins().iadd(c.codes, ka);
-        let code = f.ins().uload32(fl, ca, 0);
+        let (ca, co) = c.field(f, crate::records::FIELD_CODE, q[3]);
+        let code = f.ins().uload32(fl, ca, co);
         let e = i64::from(crate::records::MARK_SHIFT) + i64::from(r.extra.unwrap_or(0));
         let is_extra = f.ins().ushr_imm(code, e);
         let is_extra = f.ins().band_imm(is_extra, i64::from(r.extra.is_some()));
@@ -3800,9 +3844,8 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
             f.switch_to_block(prior);
             let b = f.block_params(prior).to_vec();
             let j1 = f.ins().iadd_imm(b[4], -1);
-            let ka = f.ins().ishl_imm(j1, 2);
-            let ca = f.ins().iadd(c.codes, ka);
-            let code = f.ins().uload32(fl, ca, 0);
+            let (ca, co) = c.field(f, crate::records::FIELD_CODE, j1);
+            let code = f.ins().uload32(fl, ca, co);
             let is_extra = f.ins().ushr_imm(code, e);
             let is_extra = f.ins().band_imm(is_extra, i64::from(r.extra.is_some()));
             let word = f.ins().ushr_imm(code, i64::from(crate::records::KIND_BITS));
@@ -3826,9 +3869,8 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
     let off = f.ins().imul_imm(q[0], 8 * outputs as i64);
     let at = f.ins().iadd(c.out, off);
     let b = f.ins().ctz(q[2]);
-    let ka = f.ins().ishl_imm(q[3], 2);
-    let ca = f.ins().iadd(c.codes, ka);
-    let mut code = f.ins().uload32(fl, ca, 0);
+    let (ca, co) = c.field(f, crate::records::FIELD_CODE, q[3]);
+    let mut code = f.ins().uload32(fl, ca, co);
     for &(m, o) in &late {
         let w = f.ins().load(types::I64, fl, at, 8 * i32::from(o));
         let x = f.ins().ushr(w, b);
@@ -3842,7 +3884,7 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
         let x = f.ins().ishl_imm(x, i64::from(crate::records::MARK_SHIFT) + m as i64);
         code = f.ins().bor(code, x);
     }
-    f.ins().istore32(stores, code, ca, 0);
+    f.ins().istore32(stores, code, ca, co);
     f.ins().jump(next, &[q[0].into(), q[1].into(), q[2].into(), q[3].into()]);
 
     // The bit done: the next, from this token on.
@@ -4131,14 +4173,14 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     // The file's records: a function of its own (`record_fn`), called once a file; or, where
     // the loop finds the starts (decision 0177), a part after each block and the file's end.
     let part_calls = match records {
-        Some((rec, _, outputs)) if rec.skip.is_some() => {
+        Some((rec, rt, outputs)) if rec.skip.is_some() => {
             let sig = words_signature(module, 1);
             let id = module.declare_function(&format!("{name}_records_end"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;
             let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), sig.clone());
             // The marks the token loop sets itself (`loop_marks`): the end sets the others.
             let (lift, at) = loop_marks(rec, &|o| bytewise.can(o));
             let looped = lift.iter().chain(&at).fold(0u32, |a, &(m, _)| a | 1 << m);
-            end_fn(&mut func, rec, native.extracts.len(), outputs, looped)?;
+            end_fn(&mut func, rec, native.extracts.len(), outputs, looped, rt.layout)?;
             vec![(id, sig, func)]
         }
         _ => Vec::new(),
@@ -4424,7 +4466,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             f.switch_to_block(tokens);
             let tp = f.block_params(tokens).to_vec();
             let vals: Vec<Value> = (0..RECORD_PARAMS).map(|k| f.ins().stack_load(types::I64, slot, 8 * k as i32)).collect();
-            let cols = FileCols::of(&vals);
+            let cols = FileCols::of(&vals, t.layout);
             let ready = tp[params + STATE_WORDS];
             let init: [Value; STATE_WORDS] = std::array::from_fn(|k| tp[params + k]);
             record_tokens(&mut f, rec, t, native.extracts.len(), outputs, &cols, Some(RecPart { ready, init }), Some((&bytewise, &consts, &byte_ids)), after, &mut heads);

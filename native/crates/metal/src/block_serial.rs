@@ -1783,6 +1783,9 @@ pub struct Resident {
     pub positions: crate::pool::Block,
     pub files: Vec<ResidentFile>,
     pub sources: Vec<std::sync::Arc<crate::slabs::ResidentSource>>,
+    /// Where the records are in the positions (`records::RecordLayout`): the device's block
+    /// passes write a token a thread, so the compiler chooses columns for them.
+    pub layout: rerail_compiler::records::RecordLayout,
 }
 
 /// `Resident` before its output buffer is known (a pass of a program in passes writes to the
@@ -1798,7 +1801,14 @@ struct Kept {
 impl Kept {
     fn with(self, out: Option<crate::pool::Block>) -> Resident {
         let out = self.out.or(out).expect("a run's output buffer");
-        Resident { out, tot: self.tot, positions: self.positions, files: self.files, sources: self.sources }
+        Resident {
+            out,
+            tot: self.tot,
+            positions: self.positions,
+            files: self.files,
+            sources: self.sources,
+            layout: rerail_compiler::records::RecordLayout::choose(rerail_compiler::records::RecordWriter::Lanes, false),
+        }
     }
 }
 
