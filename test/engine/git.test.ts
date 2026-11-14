@@ -341,9 +341,17 @@ function gitInPlace(script: string): Promise<ChildProcess> {
   return started.promise;
 }
 
+/** In Git's place: prints a path, closes its output, and stays until its input ends (the test's, or the test process's). */
+const PRINTS_AND_CLOSES = "const fs = require('node:fs'); fs.writeSync(1, 'a.py\\0'); fs.closeSync(1); process.stdin.on('end', () => process.exit(0)).resume()";
+
 /** Resolves once `child`'s output has `event`ed: given its first bytes (`data`), or ended (`end`). */
 async function output(child: ChildProcess, event: "data" | "end"): Promise<void> {
   await new Promise(settle => child.stdout?.once(event, settle));
+}
+
+/** Resolves once the look a faked tick asked for has run: it runs one loop turn after the tick, before this. */
+async function afterLook(): Promise<void> {
+  await new Promise(settle => setImmediate(settle));
 }
 
 /** Answers that the read was still waiting, once `ms` has passed on a real timer. */
@@ -412,6 +420,35 @@ describe("Git reads and their time limit", () => {
     // The read's next look finds it past the limit on the clock, with output still coming: it ends there, as a timer of
     // the time limit ended it, and a walk asks the listing once more off its path. A read whose limit were a timer of
     // 10 s would still be waiting at 2 s.
+    await expect(Promise.race([read, stillWaiting(2_000)])).resolves.toBeUndefined();
+  }, 30_000);
+
+  it("answers with what Git printed when its output ended before its look past the time limit, and it exited after", async () => {
+    const root = await repository({ "a.py": "print(1)\n" });
+    fakeReadTimers();
+    const started = gitInPlace(PRINTS_AND_CLOSES);
+    const read = gitModifiedOrUntrackedPaths(root);
+    const child = await started;
+    await output(child, "end");
+    clockAhead(10_000);
+    vi.advanceTimersByTime(1_000);
+    await afterLook();
+    // That look saw Git's output end since the look before, so the read went on once more; Git exits now.
+    child.stdin?.end();
+    await expect(read).resolves.toEqual(["a.py"]);
+  }, 30_000);
+
+  it("ends a read whose Git closed its output before one look past the time limit and has not exited by the next", async () => {
+    const root = await repository({ "a.py": "print(1)\n" });
+    fakeReadTimers();
+    const started = gitInPlace(PRINTS_AND_CLOSES);
+    const read = gitModifiedOrUntrackedPaths(root);
+    await output(await started, "end");
+    clockAhead(10_000);
+    vi.advanceTimersByTime(1_000);
+    await afterLook();
+    // The next look finds nothing new since: Git is past the limit and not done, so the read ends it and answers late.
+    vi.advanceTimersByTime(1_000);
     await expect(Promise.race([read, stillWaiting(2_000)])).resolves.toBeUndefined();
   }, 30_000);
 });
