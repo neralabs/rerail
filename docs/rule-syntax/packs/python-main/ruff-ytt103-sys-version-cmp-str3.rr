@@ -28,13 +28,6 @@ ytt103_other_string(n) :- (kind(n, "string") ; kind(n, "concatenated_string")), 
 ytt103_other_string(n) :- kind(n, "parenthesized_expression"), child(n, c5, _),
     ytt103_other_string(c5).
 
-// sys_version(n): the JSON util `sys-version`, used where the JSON says `matches: "sys-version"`
-.decl ytt103_sys_version(n: node)
-ytt103_sys_version(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
-    sym_of(n, "sys.version").
-ytt103_sys_version(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
-    ytt103_sys_version(c1).
-
 // ordered_string_compare(n): the JSON util `ordered-string-compare`, used where the JSON says `matches: "ordered-string-compare"`
 .decl ytt103_ordered_string_compare(n: node)
 ytt103_ordered_string_compare(n) :- kind(n, "comparison_operator"), ytt103_tok_has_1(n),

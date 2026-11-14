@@ -21,10 +21,6 @@ ruf023_str_literal(n) :- kind(n, "concatenated_string"),
 ruf023_str_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
     !kind(c2, "comment"), ruf023_str_literal(c2).
 
-// elem(n): the JSON util `elem`, used where the JSON says `matches: "elem"`
-.decl ruf023_elem(n: node)
-ruf023_elem(n) :- node(_, n, _, _, _), !ruf023_alt_1(n).
-
 // seq_display(n): the JSON util `seq-display`, used where the JSON says `matches: "seq-display"`
 .decl ruf023_seq_display(n: node)
 ruf023_seq_display(n) :- (kind(n, "list") ; kind(n, "tuple") ; kind(n, "expression_list") ; kind(n, "set")).
@@ -37,8 +33,8 @@ ruf023_all_strings(n) :- kind(n, "dictionary"), count : { child(n, c2, _), !ruf0
 // unsorted(n): the JSON util `unsorted`, used where the JSON says `matches: "unsorted"`
 .decl ruf023_unsorted(n: node)
 ruf023_unsorted(n) :- ruf023_seq_display(n), child(n, c1, _), ruf023_str_literal(c1), node(_, c1, _, _, _), Y = c1,
-    precedes_stop(s2, c1, ruf023_elem), ruf023_str_literal(s2), node(_, s2, _, _, _), X = s2, YT < XT, value(X, t2_td),
-    XD = @replace_all(t2_td, "([0-9])\\s+([0-9])", "${1}\u0001${2}"),
+    precedes_stop(s2, c1, ruf023_stop_4), ruf023_str_literal(s2), node(_, s2, _, _, _), X = s2, YT < XT,
+    value(X, t2_td), XD = @replace_all(t2_td, "([0-9])\\s+([0-9])", "${1}\u0001${2}"),
     XS = @replace_all(XD, "\\s+", ""), XA = @replace_all(XS, "([-￿])", "퟿${1}"),
     XU = @replace_all(XA, "_", "Zz￿"),
     XT = @replace_all(XU, "(^|[^0-9])0([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?", "${1}0\u0004${2}\u0004${3}\u0004${4}\u0004${5}\u0004${6}\u0004${7}\u0004${8}\u0004${9}\u0004${10}\u0004${11}\u0001"),
@@ -110,6 +106,10 @@ ruf023_alt_2(n) :- ruf023_str_literal(n).
 ruf023_alt_3(n) :- kind(n, "comment").
 ruf023_alt_3(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
 ruf023_alt_3(n) :- kind(n, "pair"), field(n, "key", c1), ruf023_str_literal(c1).
+
+// stop_4(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf023_stop_4(n: node)
+ruf023_stop_4(n) :- node(_, n, _, _, _), !ruf023_alt_1(n).
 
 // alt_6(n): the JSON `any`: n matches if any one of these rules does
 .decl ruf023_alt_6(n: node)

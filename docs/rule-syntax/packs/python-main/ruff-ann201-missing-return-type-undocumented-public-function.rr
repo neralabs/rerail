@@ -214,10 +214,6 @@ ann201_public_class(n) :- !ann201_alt_15(n),
     ).
 
 
-// method(n): the JSON util `method`, used where the JSON says `matches: "method"`
-.decl ann201_method(n: node)
-ann201_method(n) :- within_stop(n, p1, ann201_stop_11), kind(p1, "class_definition").
-
 // accessor_object(n): the JSON util `accessor-object`, used where the JSON says `matches: "accessor-object"`
 //   FN: metavariable this relation binds for the calling rule
 .decl ann201_accessor_object(n: node, fn: loc)

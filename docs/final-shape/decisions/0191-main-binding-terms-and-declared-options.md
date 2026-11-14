@@ -44,7 +44,7 @@ with every node, and the negation then held for some unrelated node, so names we
 3. **Python gains the two bindings main has and the library lacked, as sites with a scope only.** A bare
    annotation `x: T` (`ann_site`) is Ruff's `Annotation`: it exists only where the scope binds the name nowhere
    earlier. A PEP 695 type parameter (`tp_site`) is the other. Neither is a `binding`, so reads never resolve to
-   them. Main's `global` and `deletion` sites are still missing.
+   them. Main's `global` and `deletion` sites were still missing (added in decision 0194).
 4. **A list option is read per item.** `{"$option": L, "join": "|", "template": T}` is
    `option_item(L, _, o), r = cat(pre, cat(o, post)), match(r, n)`, where `pre` and `post` are T around its `{}`.
    The joined regex matches exactly where the templated regex of one item does. A scalar option with a `template`

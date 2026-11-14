@@ -159,7 +159,7 @@ slf001_same_class_type(n, CLS, SELFTAG) :- kind(n, "subscript"), field(n, "value
     !slf001_annotated_head(c18), slf001_same_class_type(c18, CLS, SELFTAG).
 slf001_same_class_type(n, CLS, SELFTAG) :- kind(n, "subscript"), field(n, "value", c19),
     slf001_annotated_head(c19), slf001_tok_has_2(n), field(n, "subscript", c28),
-    precedes_stop(s29, c28, slf001_counted_11), glob("\\[", s29),
+    precedes_stop(s29, c28, slf001_stop_13), glob("\\[", s29),
     slf001_same_class_type(c28, CLS, SELFTAG).
 
 // same_class_callee(n): the JSON util `same-class-callee`, used where the JSON says `matches: "same-class-callee"`
@@ -278,6 +278,10 @@ slf001_counted_11(n) :- node(_, n, _, _, _), !kind(n, "comment").
 // counted_12(n): the siblings the JSON `nthChild.ofRule` counts
 .decl slf001_counted_12(n: node)
 slf001_counted_12(n) :- kind(n, "type").
+
+// stop_13(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl slf001_stop_13(n: node)
+slf001_stop_13(n) :- node(_, n, _, _, _), !kind(n, "comment").
 
 // stop_14(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl slf001_stop_14(n: node)

@@ -116,10 +116,6 @@ air301_task_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
     (sym_of(n, "airflow.decorators.task") ; sym_of(n, "airflow.sdk.task")).
 air301_task_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), air301_task_name(c1).
 
-// task_callee(n): the JSON util `task-callee`, used where the JSON says `matches: "task-callee"`
-.decl air301_task_callee(n: node)
-air301_task_callee(n) :- air301_task_name(n).
-
 // sdk_variable(n): the JSON util `sdk-variable`, used where the JSON says `matches: "sdk-variable"`
 .decl air301_sdk_variable(n: node)
 air301_sdk_variable(n) :- air301_demand_sdk_variable(n), kind(n, "attribute"),

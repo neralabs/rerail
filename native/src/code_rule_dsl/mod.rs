@@ -4890,8 +4890,12 @@ pub(crate) fn install_languages() {
         }
         // Python's format strings (decision 0176): guests only, parsed by Ruff's parsers' ports.
         if cfg!(feature = "lang-python") {
-            parsers.push((language::GrammarDialect::PercentFormat, &literal::format_tape::FormatStrings(language::GrammarDialect::PercentFormat)));
-            parsers.push((language::GrammarDialect::BraceFormat, &literal::format_tape::FormatStrings(language::GrammarDialect::BraceFormat)));
+            parsers.push((language::GrammarDialect::PercentFormat, { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::PercentFormat); &P }));
+            parsers.push((language::GrammarDialect::BraceFormat, { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::BraceFormat); &P }));
+        }
+        // ESLint's directive comments (decision 0194): guests only, parsed by main's directive parser.
+        if cfg!(feature = "lang-typescript") {
+            parsers.push((language::GrammarDialect::EslintDirective, { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::EslintDirective); &P }));
         }
         if cfg!(feature = "lang-json") {
             // simdjson where it builds; the Bitlex parser (`json_parser::tape::Bitlex`) is not yet the product's.

@@ -75,7 +75,7 @@ slot002_alt_1(n) :- field(n, "right", c2), kind(c2, "assignment"), slot002_slots
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 .decl slot002_alt_2(n: node)
 slot002_alt_2(n) :- kind(n, "dotted_name"), glob("builtins", n).
-slot002_alt_2(n) :- kind(n, "identifier"), glob("object", n), (bind_only(n) ; aug_target(n)),
+slot002_alt_2(n) :- kind(n, "identifier"), glob("object", n), bind_name(n, _),
     count : { bind_name(n, b1), main_form(b1, "typeParameter") } = 0.
 
 // alt_3(n): the JSON `any`: n matches if any one of these rules does

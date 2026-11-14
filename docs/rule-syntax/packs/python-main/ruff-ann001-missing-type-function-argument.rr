@@ -165,10 +165,6 @@ ann001_alt_6(n) :- kind(n, "decorated_definition"), child(n, c1, _),
 .decl ann001_stop_7(n: node)
 ann001_stop_7(n) :- ann001_holds_definition(n).
 
-// counted_9(n): the siblings the JSON `nthChild.ofRule` counts
-.decl ann001_counted_9(n: node)
-ann001_counted_9(n) :- ann001_non_variadic(n).
-
 // counted_11(n): the siblings the JSON `nthChild.ofRule` counts
 .decl ann001_counted_11(n: node)
 ann001_counted_11(n) :- ann001_non_variadic(n).

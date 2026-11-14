@@ -439,8 +439,9 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
             let c = Obj(vec![("position".to_owned(), val.clone())]);
             lits.extend(nth_child(px, prog, &c, v, vs)?);
         } else if k == "binds" && vo.is_some_and(Obj::is_empty) {
+            // `binds: {}`: v is some binding's name node (names.rr's `bind_name`, in every language).
             prog.use_("names");
-            lits.push(format!("(bind_only({v}) ; aug_target({v}))"));
+            lits.push(format!("bind_name({v}, _)"));
         } else if k == "binds" && vo.is_some() {
             // Main's `binds` holds at the binding's name node, and its filters are about the binding's site.
             prog.use_("names");
@@ -889,7 +890,25 @@ fn stop_set(px: &Patterns, prog: &mut Program, stop: &Value) -> R<String> {
             prog.add_rule(format!("{name}(n)"), body);
         }
     } else {
-        let body = lower(px, prog, stop, "n", &mut Vars::default(), &[])?;
+        let mut body = lower(px, prog, stop, "n", &mut Vars::default(), &[])?;
+        // A rule of negations only (`stopBy: {not: …}`) ranges over the nodes.
+        let stmt = format!("{name}(n) :- {}.", body.join(", "));
+        // n named by a positive literal, outside any aggregate's braces.
+        let names_n = |l: &String| {
+            let (mut depth, mut out) = (0i32, String::new());
+            for c in l.chars() {
+                match c {
+                    '{' => depth += 1,
+                    '}' => depth -= 1,
+                    _ if depth == 0 => out.push(c),
+                    _ => {}
+                }
+            }
+            !l.trim_start().starts_with('!') && fullmatch(r"(?s).*(?<![\w$])n\b.*", &out).is_some()
+        };
+        if !body.iter().any(names_n) || super::souffle::check_rule(px, &stmt, &BTreeSet::new(), &[]).is_ok_and(|b| b.iter().any(|x| x == "n")) {
+            body.insert(0, "node(_, n, _, _, _)".to_owned());
+        }
         prog.add_rule(format!("{name}(n)"), body);
     }
     Ok(name)
@@ -1329,7 +1348,12 @@ fn resolves(px: &Patterns, prog: &mut Program, r: &Obj, v: &str, vs: &mut Vars) 
             }
         } else if k == "unresolved" && (matches!(val, Value::Bool(true) | Value::Int(1)) || matches!(val, Value::Float(f) if *f == 1.0) || val.as_str() == Some("star")) {
             prog.use_("names");
-            lits.extend(main_terms::unresolved(prog, val, v, vs));
+            if prog.lang == "python" {
+                lits.extend(main_terms::unresolved(prog, val, v, vs));
+            } else {
+                // Another language's names library says it: `unresolved_ref(r)`, r resolves to nothing.
+                lits.push(format!("unresolved_ref({v})"));
+            }
         } else if k == "binding" && val.is_obj() {
             prog.use_("names");
             let s = vs.fresh("b");
@@ -1556,9 +1580,35 @@ pub fn violation_columns(viol: &Obj) -> Vec<String> {
     out
 }
 
+/// A message that depends on an option (`{"$option": O, "cases": {…}, "default": …}`, or a `template` with `{}`), as
+/// one text. A finding's key is its policy, code, path and line; its message is free, so the message need not
+/// follow the option. It is the first plain text a case or the default gives, else the template with the option's
+/// name in the place of its value (`limit <max>`).
+fn plain_message(v: &Value) -> String {
+    match v {
+        Value::Str(s) => s.clone(),
+        Value::Obj(o) if o.has("$option") => {
+            let name = o.get("$option").map(py_str).unwrap_or_default();
+            if let Some(t) = o.get("template").and_then(Value::as_str) {
+                return t.replacen("{}", &format!("<{name}>"), 1);
+            }
+            let cases: Vec<Value> = cases_of(v).into_iter().map(|(_, b)| b).collect();
+            let plain = o.get("default").filter(|d| d.is_str()).or_else(|| cases.iter().find(|c| c.is_str()));
+            match plain.or(o.get("default")).or(cases.first()) {
+                Some(x) => plain_message(x),
+                None => String::new(),
+            }
+        }
+        other => py_str(other),
+    }
+}
+
 pub fn violation_lines(viol: &Obj, rel: &str, cols: &[String], ast: bool, numeric: &BTreeSet<String>, symbolic: &BTreeSet<String>) -> Vec<String> {
     let code = viol.get("code").cloned().unwrap_or_else(|| Value::Str(rel.to_owned()));
     let mut msg = viol.get("message").cloned().unwrap_or(Value::Str(String::new()));
+    if is_option(&msg) {
+        msg = Value::Str(plain_message(&msg));
+    }
     if let Value::Str(m) = &msg {
         let mut m = m.clone();
         let mut sorted: Vec<&String> = cols.iter().collect();
@@ -1588,7 +1638,8 @@ pub fn violation_lines(viol: &Obj, rel: &str, cols: &[String], ast: bool, numeri
     }
     if let Some(Value::Obj(sup)) = viol.get("suppress").filter(|s| s.truthy()) {
         for (tool, spec) in sup.iter() {
-            let names = spec.get("codes").filter(|c| c.truthy()).or_else(|| spec.get("rules").filter(|c| c.truthy()));
+            // ESLint's and noqa's `rules`/`codes`, clippy's `lints`.
+            let names = ["codes", "rules", "lints"].into_iter().find_map(|k| spec.get(k).filter(|c| c.truthy()));
             match names.and_then(Value::as_list) {
                 Some(ns) if !ns.is_empty() => lines.push(format!("    suppress {tool} {}", ns.iter().map(q_val).collect::<Vec<_>>().join(", "))),
                 _ => lines.push(format!("    suppress {tool}")),

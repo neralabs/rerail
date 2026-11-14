@@ -91,7 +91,20 @@ gains bare annotations and type parameters as sites.
 The same probe showed two option bugs and one transform bug. A list option's regex (`join` and `template`) is now
 read per item through `option_item`. A rule's `.options` defaults reach the run. A transform whose source is bound
 only inside a negated util is no longer computed in the main rule, where it grounded the source over every node.
-N806 now reports exactly the expected names on the probe. Main's `global` and `deletion` sites are still missing.
+N806 now reports exactly the expected names on the probe. Main's `global` and `deletion` sites are added in
+decision 0194: `global x` in a function or class, and an unconditional `del x` (`del x, y`, `del (x, y)`). A `del`
+under an `if`, a loop's `else` or an `except` is Ruff's conditional deletion, a different binding, and is left out.
+
+### Shared translator fixes from the other packs (decision 0194)
+
+Checking main's 31 JavaScript, TypeScript, React, Vue, Rust and SQL rules that use `binds` changed 28 files here, with
+no change in findings (`run-check.txt`, and the Ruff fixtures are unchanged):
+
+- A util no finding reaches is no longer written. Main's packs define utils that no clause calls, and simplify
+  had already inlined others; nothing reads them.
+- `binds: {}` is `bind_name(n, _)`: n is some binding's name, in every language.
+- A `stopBy` of negations only (`stopBy: {not: …}`, ``!kind(n, "comment")``) ranges over the nodes
+  (`node(_, n, _, _, _)`), which simplify no longer drops for a name used only inside an aggregate or a negation.
 
 ### 14 refused by the reader: all fixed
 

@@ -73,7 +73,7 @@ slot001_alt_1(n) :- field(n, "right", c2), kind(c2, "assignment"), slot001_slots
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 .decl slot001_alt_2(n: node)
 slot001_alt_2(n) :- kind(n, "dotted_name"), glob("builtins", n).
-slot001_alt_2(n) :- kind(n, "identifier"), glob("tuple", n), (bind_only(n) ; aug_target(n)),
+slot001_alt_2(n) :- kind(n, "identifier"), glob("tuple", n), bind_name(n, _),
     count : { bind_name(n, b1), main_form(b1, "typeParameter") } = 0.
 
 // main's file condition {"notRegex": "\\.pyi$"}
