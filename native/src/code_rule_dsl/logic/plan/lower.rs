@@ -14,6 +14,9 @@ use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog, tape_tag};
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Hash)]
+#[derive(Ord)]
+#[derive(PartialOrd)]
 pub enum Domain {
     Int,
     Node,
@@ -93,8 +96,8 @@ fn expand_memberships(prog: &Program) -> Result<Option<Program>> {
         let mut bodies = vec![Vec::new()];
         for l in &rule.body {
             match membership(l) {
-                Some((x, items, holds)) if matches!(vars.get(&x), Some(Domain::Kind | Domain::Field)) => {
-                    let cmp = |item: &Term, op| Literal::Cmp { l: Term::Var(x.clone()), op, r: item.clone() };
+                Some((x, items, holds)) if matches!(vars.get(x.as_str()), Some(Domain::Kind | Domain::Field)) => {
+                    let cmp = |item: &Term, op| Literal::Cmp { l: Term::Var(x.clone().into()), op, r: item.clone() };
                     if holds {
                         bodies = bodies.iter().flat_map(|b| items.iter().map(move |item| b.iter().cloned().chain([cmp(item, "=")]).collect())).collect();
                     } else {
@@ -104,13 +107,24 @@ fn expand_memberships(prog: &Program) -> Result<Option<Program>> {
                 _ => bodies.iter_mut().for_each(|b| b.push(l.clone())),
             }
         }
-        out.rules.extend(bodies.into_iter().map(|body| super::super::front::Rule { head: rule.head.clone(), body }));
+        out.rules.extend(bodies.into_iter().map(|body| super::super::front::Rule { head: rule.head.clone(), body: body.into() }));
     }
     Ok(Some(out))
 }
 
 /// Each relation's column domains.
 pub(in crate::code_rule_dsl) type Domains = BTreeMap<String, Vec<Domain>>;
+
+/// Which of relation `rel`'s columns hold atoms (decision 0170: what a forked process maps, what an entry may name):
+/// its `sym` columns whose values are names, not a grammar's kind or field ids (`Domain::Kind`, `Domain::Field`:
+/// `field_atom`'s `tag << 16 | code`, which no store numbers). A relation `domains` does not cover keeps every `sym`
+/// column.
+pub(in crate::code_rule_dsl) fn atom_columns(prog: &Program, domains: &Domains, rel: &str) -> Vec<bool> {
+    let ds = domains.get(rel);
+    prog.decls.get(rel).map_or_else(Vec::new, |cols| {
+        cols.iter().enumerate().map(|(c, (_, t))| t == "sym" && ds.and_then(|d| d.get(c)).is_none_or(|d| *d == Domain::Name)).collect()
+    })
+}
 
 /// A base relation's symbol column that is not a name.
 fn base_domain(rel: &str, col: usize) -> Option<Domain> {
@@ -170,12 +184,15 @@ impl Vars<'_> {
 fn rule_vars(prog: &Program, cols: &BTreeMap<String, Vec<Option<Domain>>>, rule: usize) -> Result<HashMap<String, Domain>> {
     let r = &prog.rules[rule];
     let mut vars = Vars { head: &r.head, map: HashMap::new() };
+    // Each atom's columns, looked up once (by name, in a map of every relation), not once per argument per pass.
+    let atoms: Vec<(&Atom, Option<&Vec<Option<Domain>>>)> =
+        std::iter::once(&r.head).chain(r.body.iter().flat_map(atoms)).map(|a| (a, cols.get(a.rel.as_str()))).collect();
     let mut changed = true;
     while changed {
         changed = false;
-        for a in std::iter::once(&r.head).chain(r.body.iter().flat_map(atoms)) {
+        for &(a, ds) in &atoms {
             for (c, t) in a.args.iter().enumerate() {
-                if let (Term::Var(v), Some(Some(d))) = (t, cols.get(a.rel.as_str()).and_then(|ds| ds.get(c))) {
+                if let (Term::Var(v), Some(Some(d))) = (t, ds.and_then(|ds| ds.get(c))) {
                     changed |= vars.set(v, *d)?;
                 }
                 changed |= vars.call(t)?;
@@ -187,10 +204,10 @@ fn rule_vars(prog: &Program, cols: &BTreeMap<String, Vec<Option<Domain>>>, rule:
                     changed |= vars.call(l)?;
                     changed |= vars.call(r)?;
                     if let (Term::Var(x), Term::Var(y)) = (l, r) {
-                        if let Some(&d) = vars.map.get(x) {
+                        if let Some(&d) = vars.map.get(x.as_str()) {
                             changed |= vars.set(y, d)?;
                         }
-                        if let Some(&d) = vars.map.get(y) {
+                        if let Some(&d) = vars.map.get(y.as_str()) {
                             changed |= vars.set(x, d)?;
                         }
                     }
@@ -232,7 +249,7 @@ pub fn domains(prog: &Program) -> Result<Domains> {
                 _ => Err(Error::Plan(format!("{rel}: no domain for {t}"))),
             })
             .collect::<Result<_>>()?;
-        cols.insert(rel.clone(), ds);
+        cols.insert(rel.to_string(), ds);
     }
     // To a fixpoint, by a worklist: a rule is read again only when a relation it names gained a column's domain. Every
     // rule in every round was quadratic in a combined pack (O111: 539 rules, a round per step of a chain).
@@ -256,7 +273,7 @@ pub fn domains(prog: &Program) -> Result<Domains> {
             let Some(ds) = cols.get_mut(a.rel.as_str()) else { continue };
             for (c, t) in a.args.iter().enumerate() {
                 if let (Term::Var(v), Some(slot @ None)) = (t, ds.get_mut(c))
-                    && let Some(&d) = vars.get(v)
+                    && let Some(&d) = vars.get(v.as_str())
                 {
                     *slot = Some(d);
                     gained.push(a.rel.as_str());
@@ -332,7 +349,7 @@ impl Constants<'_> {
 
 fn strings(t: &Term, out: &mut Vec<String>) {
     match t {
-        Term::Str(s) => out.push(s.clone()),
+        Term::Str(s) => out.push(s.to_string()),
         Term::Call(_, args) => args.iter().for_each(|a| strings(a, out)),
         _ => {}
     }
@@ -364,7 +381,7 @@ pub fn lower(
     for rows in prog.facts.values() {
         for v in rows.iter().flatten() {
             if let Value::Str(s) = v {
-                all.push(s.clone());
+                all.push(s.to_string());
             }
         }
     }
@@ -394,7 +411,7 @@ pub fn lower(
                         }
                     }
                     Literal::Cmp { l, op, r } => {
-                        let of = |t: &Term| if let Term::Var(v) = t { vars.get(v).copied() } else { None };
+                        let of = |t: &Term| if let Term::Var(v) = t { vars.get(v.as_str()).copied() } else { None };
                         // Symbols are ordered by their text, not their atoms: `$t > $s` is `@str_cmp($t, $s) > 0`.
                         // A call whose value is a symbol (`cat(a, "!")`, a text function's) orders by its text too.
                         let symbol = |t: &Term| {
@@ -405,7 +422,7 @@ pub fn lower(
                         if matches!(*op, "<" | "<=" | ">" | ">=") && (symbol(l) || symbol(r)) {
                             let mut pair = [std::mem::replace(l, Term::Int(0)), std::mem::replace(r, Term::Int(0))];
                             pair.iter_mut().try_for_each(|t| k.term(t, Some(Domain::Name)))?;
-                            *l = Term::Call("str_cmp".to_owned(), pair.into());
+                            *l = Term::Call("str_cmp".into(), pair.into());
                             continue;
                         }
                         // Membership of a kind or field, `@equals($k, {"a", "b"})`: `@in` of their atoms.
@@ -418,7 +435,7 @@ pub fn lower(
                                 Term::Call(g, items) if g == crate::code_rule_dsl::logic::strings::SET => items.iter_mut().try_for_each(|i| k.term(i, Some(d)))?,
                                 one => k.term(one, Some(d))?,
                             }
-                            *f = "in".to_owned();
+                            *f = "in".into();
                             continue;
                         }
                         let (dl, dr) = (of(r), of(l));
@@ -477,7 +494,7 @@ impl Lowered {
                     used.insert(kindset.clone());
                     *literal = Literal::Atom(Atom {
                         rel: format!("{}{kindset}", crate::code_rule_dsl::logic::front::NEAREST).into(),
-                        args: vec![Term::Var(n.clone()), Term::Var(a.clone())],
+                        args: [Term::Var(n.clone().into()), Term::Var(a.clone().into())].into(),
                         neg: false,
                         gated: false,
                     });
@@ -495,7 +512,7 @@ impl Lowered {
         }
         for set in used {
             let rel = format!("{}{set}", crate::code_rule_dsl::logic::front::NEAREST);
-            prog.decls.insert(rel.clone(), vec![("n".to_owned(), "node".to_owned()), ("a".to_owned(), "node".to_owned())]);
+            prog.decls.insert(rel.clone().into(), [("n".into(), "node".into()), ("a".into(), "node".into())].into());
             if !prog.inputs.contains(&rel) {
                 prog.inputs.push(rel.clone());
             }

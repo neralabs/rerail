@@ -21,22 +21,22 @@
 //! evaluates one file against a store whose last full run planned for every file, takes the full run's choices; so
 //! does each later chunk of a run, where the first chunk's choices were made at the same size.
 //!
-//! Kept in the process (each part of a run, each chunk), and across processes in the tape cache, as the program as
-//! facts (`program_facts`, decision 0074), under a source named by the prepared program's key: the run's manifest
-//! names that source and the entry's plan (`named`), so collection keeps the entry while it keeps the run.
+//! Kept in the process (each part of a run, each chunk), and across processes in the tape cache: an entry of facts
+//! under a source named by the prepared program's key, a rewritten program as its `.rr` text (`program_text`, decision
+//! 0155) named by its digest. The run's manifest names that source and the entry's plan (`named`), so collection keeps
+//! the entry while it keeps the run.
 
 use super::super::front::{Program, Value};
 use super::super::program_facts::{self, Facts};
+use super::super::program_text;
 use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, StoreResult};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
-/// The entry's schema: bumped when its encoding or meaning changes.
-const SCHEMA: u32 = 1;
-
-/// The program's name in the entry's facts.
-const P: &str = "chosen";
+/// The entry's schema: bumped when its encoding or meaning changes (the program as its text, decision 0155). Never a
+/// retired corpus memo schema (`live_fact_schema`): it was 3, and a new store's first collection swept the entries.
+const SCHEMA: u32 = crate::content_store::live_fact_schema(106);
 
 /// A run takes choices made at a scale at least its own over this.
 pub(super) const GROWTH: f64 = 2.0;
@@ -119,8 +119,21 @@ const KEPT_PROGRAMS: usize = 16;
 thread_local! {
     /// The durable side of this thread's corpus run, while it holds `Durable`: the tape cache's store and the
     /// prepared program's key, which names the source the entries live under.
-    static DURABLE: std::cell::RefCell<Option<(ContentStore, [u8; 32], HashMap<String, Vec<u8>>)>> = const { std::cell::RefCell::new(None) };
+    /// With the entries, by path, and the texts of the programs they name, by digest: all read at the start. And the
+    /// run's late sources (the manifest's), to which each program text read or stored is added, so collection keeps
+    /// it while it keeps the run.
+    static DURABLE: std::cell::RefCell<Option<Arc<Held>>> = const { std::cell::RefCell::new(None) };
 }
+
+/// Carries the run's durable side to a job on another thread (`run_state`): a nested run there looks up and keeps
+/// its choices in the same store, under the same program, as the run's thread.
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    c.cloned(&["DURABLE"], &DURABLE);
+}
+
+/// The store, the prepared program's key, the entries by path, the programs' texts by digest (with the run's lists,
+/// which the programs read from them take theirs from), the late sources.
+type Held = (ContentStore, [u8; 32], HashMap<String, Vec<u8>>, (HashMap<[u8; 32], program_text::Stored>, Arc<crate::code_rule_dsl::logic::front::Lists>), Arc<Mutex<Vec<crate::content_store::SourceId>>>);
 
 /// While held, this thread's runs keep their choices in the store at `path`, under prepared program `prepared`.
 pub(in crate::code_rule_dsl) struct Durable;
@@ -128,17 +141,22 @@ pub(in crate::code_rule_dsl) struct Durable;
 impl Durable {
     /// Every entry kept under `prepared` is read here, at once, before the run's first wave (decision 0104): a
     /// lookup in the waves reads memory only.
-    pub(in crate::code_rule_dsl) fn start(path: &std::path::Path, prepared: [u8; 32]) -> Durable {
+    pub(in crate::code_rule_dsl) fn start(path: &std::path::Path, prepared: [u8; 32], late: Arc<Mutex<Vec<crate::content_store::SourceId>>>, lists: Arc<crate::code_rule_dsl::logic::front::Lists>) -> Durable {
         let store = ContentStore::open(path).ok();
         DURABLE.with(|d| {
-            *d.borrow_mut() = store.map(|s| {
+            *d.borrow_mut() = store.map(|s| -> Arc<Held> {
                 let stored = read_all(&s, &prepared).unwrap_or_default();
+                // The rewritten programs' texts too, in one read: parsed when looked up (`decode_chosen`).
+                let digests: Vec<[u8; 32]> = stored.values().filter_map(|entry| rewritten(entry)).collect();
+                let texts = program_text::texts(&s, &digests).unwrap_or_default();
+                late.lock().expect("the late sources").extend(texts.values().flat_map(|(_, ids)| ids.iter().copied()));
+                let texts = texts.into_iter().map(|(d, (text, _))| (d, text)).collect();
                 // And the plans of its rules (decision 0116 step 2), for this thread's run to take.
                 let _span = super::super::profile::span(|| "kept plans, read from the store".into());
                 let plans = read_plans(&s, &prepared).unwrap_or_default();
                 super::super::profile::decision("kept plans (decision 0116)", || format!("{} plans read from the store", plans.len()));
                 super::take_stored_plans(Arc::new(plans));
-                (s, prepared, stored)
+                Arc::new((s, prepared, stored, (texts, lists), late))
             })
         });
         Durable
@@ -149,14 +167,15 @@ impl Drop for Durable {
     /// The run's plans, where it changed any, queued for the store (decision 0116 step 2): the run's plans are
     /// still held here (`KeepPlans` is let before this).
     fn drop(&mut self) {
-        if let Some((store, prepared, _)) = DURABLE.with(|d| d.borrow_mut().take())
+        if let Some(held) = DURABLE.with(|d| d.borrow_mut().take())
+            && let (store, prepared) = (&held.0, held.1)
             && let Some(plans) = super::plans_to_store()
         {
             let _span = super::super::profile::span(|| "kept plans, queued for the store".into());
             let rows: Vec<Vec<Value>> = plans.iter().map(|(k, p)| super::StoredPlan::row(*k, p).into_iter().map(Value::Int).collect()).collect();
             let bytes = rows.iter().map(|r| 9 * r.len() + 8).sum();
             super::super::profile::decision("kept plans (decision 0116)", || format!("{} plans queued for the store", rows.len()));
-            store.write_back("the kept plans", bytes, vec![(crate::content_store::write_back::Key::of(&[b"facts_memo/plans", &prepared]), None)], Box::new(move |store| write_plans(store, &prepared, &rows).map(drop)));
+            store.write_back_syms(crate::content_store::write_back::Syms::None, "the kept plans", bytes, vec![(crate::content_store::write_back::Key::of(&[b"facts_memo/plans", &prepared]), None)], Box::new(move |store| write_plans(store, &prepared, &rows).map(drop)));
         }
     }
 }
@@ -171,7 +190,11 @@ pub(super) fn lookup(key: &[u8; 32], nodes: f64) -> Option<Chosen> {
     }
     // Decoded when first looked up: a run asks for a few of the entries read at its start (decoding them all there was
     // 0.07 s of an edit's).
-    let found = DURABLE.with(|d| d.borrow().as_ref()?.2.get(&path(key)).and_then(|entry| decode_chosen(entry)))?;
+    let found = DURABLE.with(|d| {
+        let d = d.borrow();
+        let (_, _, entries, texts, _) = &**d.as_ref()?;
+        entries.get(&path(key)).and_then(|entry| decode_chosen(&texts.0, entry, &texts.1))
+    })?;
     keep(*key, found.clone());
     holds(found.nodes, nodes).then_some(found)
 }
@@ -181,11 +204,13 @@ pub(super) fn remember(key: [u8; 32], chosen: Chosen) {
     keep(key, chosen.clone());
     DURABLE.with(|d| {
         let d = d.borrow();
-        if let Some((store, prepared, _)) = d.as_ref() {
+        if let Some((store, prepared, _, _, late)) = d.as_deref() {
             let _span = super::super::profile::span(|| "planning choices, kept in the store, queued".into());
             // Made into facts and written by the store's writer (decision 0102).
-            let prepared = *prepared;
-            store.write_back("the planning choices", 0, vec![(queued(&prepared, &key), None)], Box::new(move |store| write(store, &prepared, &key, &chosen).map(drop)));
+            let (prepared, late) = (*prepared, Arc::clone(late));
+            // Its facts hold strings as text (`program_facts::encode`'s own table), no atom: kept after a fork too
+            // (decision 0170).
+            store.write_back_syms(crate::content_store::write_back::Syms::None, "the planning choices", 0, vec![(queued(&prepared, &key), None)], Box::new(move |store| write(store, &prepared, &key, &chosen, &late).map(drop)));
         }
     });
 }
@@ -238,8 +263,8 @@ fn read_all(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<HashMap<St
     Ok(store.facts_results_of(source, SCHEMA, plan().plans[0])?.into_iter().collect())
 }
 
-/// The kept plans' schema, apart from the choices' so neither reads the other's entries.
-const PLANS_SCHEMA: u32 = 2;
+/// The kept plans' schema, apart from the choices' (`SCHEMA`) so neither reads the other's entries.
+const PLANS_SCHEMA: u32 = crate::content_store::live_fact_schema(107);
 /// The kept plans' entry under the prepared program's source, and its relation: one row per plan
 /// (`StoredPlan::row`).
 const PLANS_PATH: &str = "rerail/plans";
@@ -260,7 +285,7 @@ fn read_plans(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<super::S
 
 fn write_plans(store: &ContentStore, prepared: &[u8; 32], rows: &[Vec<Value>]) -> StoreResult<bool> {
     let mut facts = Facts::new();
-    facts.insert(PLANS_REL.to_owned(), rows.to_vec());
+    facts.insert(PLANS_REL.to_owned(), rows.iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
     let text = source_text(prepared);
     let hash = HashKey::sha256(text.as_bytes());
     let source = match store.held_source_by_hash(hash)? {
@@ -273,11 +298,18 @@ fn write_plans(store: &ContentStore, prepared: &[u8; 32], rows: &[Vec<Value>]) -
     Ok(true)
 }
 
-fn decode_chosen(entry: &[u8]) -> Option<Chosen> {
-    // Read in place (`decode_view`): the rewritten program off the encoding's rows, the rest copied out (small).
-    let Ok(view) = program_facts::decode_view(entry) else { return None };
-    let facts = view.owned(|r| [SCALE, INLINED, DEMANDED, REWRITTEN].contains(&r));
-    let nodes = match facts.get(SCALE).and_then(|rows| rows.first()).map(Vec::as_slice) {
+/// The digest of the rewritten program a choice's entry names, if it names one.
+fn rewritten(entry: &[u8]) -> Option<[u8; 32]> {
+    match program_facts::decode(entry).ok()?.get(REWRITTEN)?.first()?.as_slice() {
+        [Value::Str(digest)] => unhex(digest),
+        _ => None,
+    }
+}
+
+/// A choice's entry: its facts, and the rewritten program (`REWRITTEN`, its digest) read off its text in `texts`.
+fn decode_chosen(texts: &HashMap<[u8; 32], program_text::Stored>, entry: &[u8], lists: &crate::code_rule_dsl::logic::front::Lists) -> Option<Chosen> {
+    let Ok(facts) = program_facts::decode(entry) else { return None };
+    let nodes = match facts.get(SCALE).and_then(|rows| rows.first()).map(|r| r.as_slice()) {
         Some([Value::Int(n)]) => *n as f64,
         _ => return None,
     };
@@ -287,37 +319,46 @@ fn decode_chosen(entry: &[u8]) -> Option<Chosen> {
             .into_iter()
             .flatten()
             .filter_map(|row| match row.as_slice() {
-                [Value::Int(k), Value::Str(s)] => Some((*k, s.clone())),
+                [Value::Int(k), Value::Str(s)] => Some((*k, s.to_string())),
                 _ => None,
             })
             .collect();
         rows.sort();
         rows.into_iter().map(|(_, s)| s).collect()
     };
-    let program = if facts.contains_key(REWRITTEN) {
-        match program_facts::Grouped::of_views(std::slice::from_ref(&view)).program(P) {
-            Ok(p) => Some(Arc::new(p)),
-            Err(_) => return None,
+    let program = match facts.get(REWRITTEN).and_then(|rows| rows.first()).map(|r| r.as_slice()) {
+        Some([Value::Str(digest)]) => {
+            let digest = unhex(&digest)?;
+            Some(Arc::new(program_text::read_stored(texts.get(&digest)?, lists).ok()?))
         }
-    } else {
-        None
+        Some(_) => return None,
+        None => None,
     };
     Some(Chosen { program, inlined: names(INLINED), demanded: names(DEMANDED), nodes })
 }
 
-fn write(store: &ContentStore, prepared: &[u8; 32], key: &[u8; 32], chosen: &Chosen) -> StoreResult<bool> {
+fn unhex(text: &str) -> Option<[u8; 32]> {
+    let mut out = [0u8; 32];
+    if text.len() != 64 {
+        return None;
+    }
+    for (i, b) in out.iter_mut().enumerate() {
+        *b = u8::from_str_radix(&text[2 * i..2 * i + 2], 16).ok()?;
+    }
+    Some(out)
+}
+
+fn write(store: &ContentStore, prepared: &[u8; 32], key: &[u8; 32], chosen: &Chosen, late: &Mutex<Vec<crate::content_store::SourceId>>) -> StoreResult<bool> {
     let mut facts = Facts::new();
     if let Some(program) = &chosen.program {
-        program_facts::write(&mut facts, P, program);
-        // A program that does not read back the same is not kept: the next run chooses again.
-        let back = program_facts::program(&facts, P);
-        if !back.is_ok_and(|back| program_facts::debug_digest(&back) == program_facts::debug_digest(program)) {
-            return Ok(false);
-        }
-        facts.insert(REWRITTEN.to_owned(), vec![vec![Value::Int(1)]]);
+        // Kept as its text (decision 0155). A program that does not read back the same is not kept: the next run
+        // chooses again.
+        let Some((digest, sources)) = program_text::store(store, program)? else { return Ok(false) };
+        late.lock().expect("the late sources").extend(sources);
+        facts.insert(REWRITTEN.to_owned(), vec![[Value::Str(hex(&digest).into())].into()]);
     }
-    facts.insert(SCALE.to_owned(), vec![vec![Value::Int(chosen.nodes.round() as i64)]]);
-    let list = |names: &[String]| names.iter().enumerate().map(|(k, s)| vec![Value::Int(k as i64), Value::Str(s.clone())]).collect();
+    facts.insert(SCALE.to_owned(), vec![[Value::Int(chosen.nodes.round() as i64)].into()]);
+    let list = |names: &[String]| names.iter().enumerate().map(|(k, s)| [Value::Int(k as i64), Value::Str(s.clone().into())].into()).collect();
     facts.insert(INLINED.to_owned(), list(&chosen.inlined));
     facts.insert(DEMANDED.to_owned(), list(&chosen.demanded));
     let text = source_text(prepared);

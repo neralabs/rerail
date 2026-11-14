@@ -159,6 +159,17 @@ fn is_container_owner(kind: &str) -> bool {
     )
 }
 
+/// What kind `kind` is to the granules (`DEF`, `WRAPPER`, `BODY`, `OWNER`): the names above, made into a table by
+/// kind code once per grammar (`Dialect::granule_kind`), so cutting reads a byte for each node.
+pub fn kind_flags(kind: &str) -> u8 {
+    u8::from(is_def(kind)) * DEF | u8::from(is_wrapper(kind)) * WRAPPER | u8::from(is_body(kind)) * BODY
+        | u8::from(is_container_owner(kind)) * OWNER
+}
+pub const DEF: u8 = 1;
+pub const WRAPPER: u8 = 2;
+pub const BODY: u8 = 4;
+pub const OWNER: u8 = 8;
+
 /// Declarations named by what they bind.
 fn binds(kind: &str) -> bool {
     matches!(kind, "lexical_declaration" | "variable_declaration" | "expression_statement" | "const_declaration" | "property_declaration" | "field_definition" | "public_field_definition" | "let_declaration")
@@ -205,6 +216,7 @@ pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> (Vec<u32>, Ve
             fold = if fold == Fold::None { Fold::Statements } else { Fold::All };
             continue;
         }
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "granule slots".into());
         return (place(&cut, &nodes, tokens), order(&cut.of));
     }
 }
@@ -248,26 +260,27 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
     let f = &*p.facts;
     let n = p.core.len();
     let kind = |l: usize| dialect.name(f, p.core[l]);
+    let is = |l: usize, flag: u8| dialect.granule_kind(dialect.code(f, p.core[l])) & flag != 0;
+    let starts_span = crate::code_rule_dsl::logic::profile::span(|| "granule starts".into());
     let mut start: Vec<Option<Start>> = vec![None; n];
     // A wrapper's definition is in the wrapper's granule.
     let mut claimed = vec![false; n];
     if fold != Fold::All {
         for l in 1..n {
             let q = p.parent(l) as usize;
-            let k = kind(l);
             let owner = |q: usize| {
                 let o = p.parent(q) as usize;
-                is_container_owner(kind(o)) && (start[o].is_some() || claimed[o])
+                is(o, OWNER) && (start[o].is_some() || claimed[o])
             };
-            let in_container = q == 0 || (is_body(kind(q)) && p.parent(q) != super::NONE && owner(q));
-            if is_def(k) && !claimed[l] {
+            let in_container = q == 0 || (is(q, BODY) && p.parent(q) != super::NONE && owner(q));
+            if is(l, DEF) && !claimed[l] {
                 start[l] = Some(Start::Def);
             } else if in_container && fold == Fold::None {
                 start[l] = Some(Start::Stmt);
             }
             // A wrapper claims its first definition child, which then starts no granule of its own.
-            if start[l].is_some() && is_wrapper(k) {
-                if let Some(c) = p.children(l as u32).find(|&c| is_def(kind(c as usize))) {
+            if start[l].is_some() && is(l, WRAPPER) {
+                if let Some(c) = p.children(l as u32).find(|&c| is(c as usize, DEF)) {
                     claimed[c as usize] = true;
                     start[l] = Some(Start::Def);
                 }
@@ -287,6 +300,8 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
             of[p.parent(l) as usize]
         };
     }
+    drop(starts_span);
+    let _keys_span = crate::code_rule_dsl::logic::profile::span(|| "granule keys".into());
     // Keys, parents first (preorder).
     let mut keys = vec![String::new()];
     let mut seen: HashMap<String, u32> = HashMap::new();

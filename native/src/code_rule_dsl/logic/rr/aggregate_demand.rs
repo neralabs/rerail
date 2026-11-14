@@ -83,69 +83,70 @@ fn guards(
         })
         .cloned()
         .collect();
-    // Do not introduce unrelated cross products when projecting a demand.
+    // Do not introduce unrelated cross products when projecting a demand: a guard joins once it shares a variable with
+    // the keys or a guard joined before. A comparison that can run on what the guards bind joins too, and connects its
+    // variables: `p1 = @sub(p, 1)` brings in `byte(p1, 92)`, which reads none of the keys itself (without it, the
+    // demand of "the byte before p is a backslash" was every position).
     let mut connected = keys.clone();
-    loop {
-        let before = connected.len();
-        for l in &safe {
-            let vars = l.vars();
-            if !vars.is_disjoint(&connected) {
-                connected.extend(vars);
-            }
-        }
-        if connected.len() == before {
-            break;
-        }
-    }
-    let mut out: Vec<_> = safe
-        .into_iter()
-        .filter(|l| !l.vars().is_disjoint(&connected))
-        .collect();
-    let mut bound: BTreeSet<_> = out
-        .iter()
-        .filter_map(|l| match l {
-            Literal::Atom(a) => Some(a.vars()),
-            _ => None,
-        })
-        .flatten()
-        .collect();
-    // Nearest cannot start with a free subject. All other variables must be grounded too.
-    for l in &out {
-        if let Literal::Nearest { n, a, .. } = l {
-            if !bound.contains(n) {
-                return None;
-            }
-            bound.insert(a.clone());
-        }
-    }
+    // The atoms' variables (a nearest's subject must be one of them), and every variable bound so far.
+    let mut grounded = BTreeSet::new();
+    let mut bound = BTreeSet::new();
+    let mut joined = vec![false; safe.len()];
     let mut added = BTreeSet::new();
+    let mut compared = Vec::new();
     loop {
-        let before = added.len();
+        let before = (connected.len(), bound.len(), added.len());
+        for (k, l) in safe.iter().enumerate() {
+            let vars = l.vars();
+            if joined[k] || vars.is_disjoint(&connected) {
+                continue;
+            }
+            joined[k] = true;
+            connected.extend(vars.iter().cloned());
+            if let Literal::Atom(a) = l {
+                grounded.extend(a.vars());
+                bound.extend(a.vars());
+            }
+        }
+        // A nearest binds its node once its subject is an atom's.
+        for (l, _) in safe.iter().zip(&joined).filter(|(_, j)| **j) {
+            if let Literal::Nearest { n, a, .. } = l
+                && grounded.contains(n)
+            {
+                bound.insert(a.clone());
+            }
+        }
         for (i, l) in rule.body.iter().enumerate() {
             if added.contains(&i) {
                 continue;
             }
-            if let Literal::Cmp {
-                l: left,
-                op,
-                r: right,
-            } = l
+            if let Literal::Cmp { l: left, op, r: right } = l
+                && let Some(more) = front::cmp_binds(left, op, right, &bound)
             {
-                if let Some(more) = front::cmp_binds(left, op, right, &bound) {
-                    // Constants can test/alias a key; do not pull an aggregate's result into demand.
-                    let vars = l.vars();
-                    if vars.is_empty() || !vars.is_disjoint(&connected) {
-                        bound.extend(more);
-                        out.push(l.clone());
-                        added.insert(i);
-                    }
+                // Constants can test/alias a key; do not pull an aggregate's result into demand.
+                let vars = l.vars();
+                if vars.is_empty() || !vars.is_disjoint(&connected) {
+                    bound.extend(more);
+                    connected.extend(vars);
+                    compared.push(l.clone());
+                    added.insert(i);
                 }
             }
         }
-        if added.len() == before {
+        if (connected.len(), bound.len(), added.len()) == before {
             break;
         }
     }
+    let mut out: Vec<Literal> = safe.into_iter().zip(joined).filter_map(|(l, j)| j.then_some(l)).collect();
+    // Nearest cannot start with a free subject. All other variables must be grounded too.
+    for l in &out {
+        if let Literal::Nearest { n, .. } = l
+            && !grounded.contains(n)
+        {
+            return None;
+        }
+    }
+    out.extend(compared);
     (keys.is_subset(&bound) && !out.is_empty()).then_some(out)
 }
 
@@ -221,7 +222,7 @@ pub fn optimize(program: &mut Program) {
             || program.inputs.contains(&name)
             || program.natives.contains_key(name.as_str())
             || program.facts.contains_key(name.as_str())
-            || program.decls.contains_key(&format!("rr_demand_agg_{name}"))
+            || program.decls.contains_key(format!("rr_demand_agg_{name}").as_str())
         {
             continue;
         }
@@ -243,7 +244,7 @@ pub fn optimize(program: &mut Program) {
                     .iter()
                     .enumerate()
                     .filter_map(|(i, t)| match t {
-                        Term::Var(v) if Some(v) != over.as_ref() => Some(i),
+                        Term::Var(v) if Some(v.as_str()) != over.as_deref() => Some(i),
                         Term::Int(_) | Term::Str(_) => Some(i),
                         _ => None,
                     })
@@ -269,11 +270,11 @@ pub fn optimize(program: &mut Program) {
                 demands.push(Rule {
                     head: Atom {
                         rel: format!("rr_demand_agg_{name}").into(),
-                        args,
+                        args: args.into(),
                         neg: false,
                         gated: false,
                     },
-                    body,
+                    body: body.into(),
                 });
             }
             if refused {
@@ -297,7 +298,7 @@ pub fn optimize(program: &mut Program) {
         let closes = known.as_ref().is_none_or(|edges| guards.iter().any(|g| depends(edges, g, &name))) || full_checks();
         // Placed: the demand declared, read first by the aggregate's rules, made by its demand rules.
         let decl = positions.iter().map(|&i| program.decls[name.as_str()][i].clone()).collect();
-        program.decls.insert(demand.clone(), decl);
+        program.decls.insert(demand.clone().into(), decl);
         for &mi in makers.get(&name).into_iter().flatten() {
             let rule = &mut program.rules[mi];
             let args = positions.iter().map(|&i| rule.head.args[i].clone()).collect();
@@ -314,7 +315,7 @@ pub fn optimize(program: &mut Program) {
                     for &mi in makers.get(&name).into_iter().flatten() {
                         program.rules[mi].body.remove(0);
                     }
-                    program.decls.remove(&demand);
+                    program.decls.remove(demand.as_str());
                     continue;
                 }
             }
@@ -360,7 +361,7 @@ pub fn optimize(program: &mut Program) {
             }
             let mut anti = atom.clone();
             anti.neg = true;
-            rule.body[i] = Literal::Atom(anti);
+            rule.body.make_mut()[i] = Literal::Atom(anti);
             remove.insert(j);
         }
         let mut i = 0;
@@ -390,11 +391,11 @@ pub fn retype_helpers(program: &mut Program) {
     let mut changed = true;
     while changed {
         changed = false;
-        let helpers: Vec<String> = program.decls.keys().filter(|r| helper(r)).cloned().collect();
+        let helpers: Vec<String> = program.decls.keys().filter(|r| helper(r)).cloned().map(String::from).collect();
         for rel in helpers {
-            let width = program.decls[&rel].len();
+            let width = program.decls[rel.as_str()].len();
             for i in 0..width {
-                if program.decls[&rel][i].1 != "sym" {
+                if program.decls[rel.as_str()][i].1 != "sym" {
                     continue;
                 }
                 let (mut found, mut symbol) = (None::<String>, false);
@@ -413,7 +414,7 @@ pub fn retype_helpers(program: &mut Program) {
                                     let ty = if front::is_axis(&a.rel) {
                                         Some("node".to_owned())
                                     } else {
-                                        program.decls.get(a.rel.as_ref() as &str).and_then(|c| c.get(j)).map(|(_, t)| t.clone())
+                                        program.decls.get(a.rel.as_ref() as &str).and_then(|c| c.get(j)).map(|(_, t)| t.to_string())
                                     };
                                     match ty.as_deref() {
                                         Some("sym") if !helper(&a.rel) => symbol = true,
@@ -428,7 +429,7 @@ pub fn retype_helpers(program: &mut Program) {
                     }
                 }
                 if let (Some(ty), false) = (found, symbol) {
-                    program.decls.get_mut(&rel).expect("a helper")[i].1 = ty;
+                    program.decls.get_mut(rel.as_str()).expect("a helper").make_mut()[i].1 = ty.into();
                     changed = true;
                 }
             }

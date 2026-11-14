@@ -48,7 +48,7 @@ same_child(x, i, c) :- same_some(x), child(x, c, j), !kind(c, "comment"),
 // `1_0.0`, `10.` all "10"), as Ruff compares f64s; an imaginary number by its digits.
 .decl same_leaf(x: node, t: symbol, v: symbol)
 same_leaf(x, "str", v) :- same_some(x), plain_str(x, v).
-same_leaf(x, "bytes", v) :- same_some(x), string_form(x, "bytes"), value(x, v).
+same_leaf(x, "bytes", v) :- same_some(x), string_form(x, "bytes"), str(x, v).
 same_leaf(n, "bytes", v) :- same_some(n), kind(n, "concatenated_string"), child(n, s0, 0), string_form(s0, "bytes"),
     v = join w by i sep "" : { child(n, s, i), kind(s, "string"), value(s, w) }.
 same_leaf(x, "int", v) :- same_some(x), kind(x, "integer"), !same_imaginary(x), value(x, v).

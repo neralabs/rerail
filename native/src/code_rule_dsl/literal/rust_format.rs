@@ -614,7 +614,7 @@ fn piece_node(text: &str, piece: &Piece) -> PNode {
             unreachable!("a piece is a literal or a field")
         };
         return PNode::new(G, "literal", range.start, range.end)
-            .with_value(Value::Str(text[range.clone()].to_owned()));
+            .with_value(Value::Str(text[range.clone()].to_owned().into()));
     };
     // The argument runs from after the `{` to the `:` before the spec, or to the closing brace.
     let argument_end = if text[..spec_range.start].ends_with(':') {
@@ -628,7 +628,7 @@ fn piece_node(text: &str, piece: &Piece) -> PNode {
     let (kind, value) = match argument {
         Argument::Next => ("auto", None),
         Argument::Index(index) => ("index", Some(usize_value(*index))),
-        Argument::Name(name) => ("name", Some(Value::Str(name.clone()))),
+        Argument::Name(name) => ("name", Some(Value::Str(name.clone().into()))),
     };
     let mut field = PNode::new(G, "field", range.start, range.end);
     field.value = value.clone();
@@ -637,12 +637,12 @@ fn piece_node(text: &str, piece: &Piece) -> PNode {
     field.children.push(name);
     if !spec_range.is_empty() {
         let mut node = PNode::new(G, "format_spec", spec_range.start, spec_range.end)
-            .with_value(Value::Str(text[spec_range.clone()].to_owned()));
+            .with_value(Value::Str(text[spec_range.clone()].to_owned().into()));
         let written = trait_text(spec.ty);
         if !written.is_empty() && text[spec_range.clone()].ends_with(written) {
             node.children.push(
                 PNode::new(G, "type", spec_range.end - written.len(), spec_range.end)
-                    .with_value(Value::Str(written.to_owned())),
+                    .with_value(Value::Str(written.to_owned().into())),
             );
         }
         field.children.push(node);

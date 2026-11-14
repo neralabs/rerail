@@ -27,7 +27,7 @@ pub const TAPE_FORMAT_VERSION: u32 = rerail_tape_format::FORMAT_VERSION;
 /// The format's constants are `rerail_tape_format`'s: the parsers write tapes with its writer
 /// (decision 0140), and an image is one byte string however it was made.
 pub use rerail_tape_format::{CODE_ERROR, CODE_MISSING, COLUMN_ALIGN, ERROR_CODE, FIELD_LIMIT, HEADER_BYTES, KIND_LIMIT, MAGIC as TAPE_MAGIC, SENTINEL, TAIL_FROM_START, header, padded};
-use rerail_tape_format::CODE_EXTRA;
+pub use rerail_tape_format::CODE_EXTRA;
 /// The language tag (`language::tape_tag`) a stored tape image names in its header, if `bytes`
 /// starts like one (any format version): the store picks a frame's dictionary by it.
 pub fn stored_tape_tag(bytes: &[u8]) -> Option<u8> {
@@ -49,6 +49,18 @@ pub mod tokens;
 pub mod resident;
 pub mod validated;
 pub mod token_census;
+/// Python's tape from the lean parser (`rerail_python_lean`).
+pub mod python_lean;
+/// JavaScript's, TypeScript's and TSX's tapes from the lean parser (`rerail_ecma_lean`).
+pub mod ecma_lean;
+/// Rust's tape from the lean parser (`rerail_rust_lean`).
+pub mod rust_lean;
+/// Java's tape from the lean parser (`rerail_java_lean`).
+pub mod java_lean;
+/// C#'s tape from the lean parser (`rerail_csharp_lean`).
+pub mod csharp_lean;
+/// PHP's tape from the lean parser (`rerail_php_lean`).
+pub mod php_lean;
 pub use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
 pub const ERROR_SYMBOL: u16 = u16::MAX;
@@ -176,7 +188,7 @@ impl Grammar {
     }
 
     /// The grammar of an embedded program's dialect, built once per process.
-    fn embedded(lang: GrammarDialect) -> Result<Arc<Self>, String> {
+    pub fn embedded(lang: GrammarDialect) -> Result<Arc<Self>, String> {
         static GRAMMARS: std::sync::LazyLock<
             std::sync::Mutex<std::collections::HashMap<GrammarDialect, Arc<Grammar>>>,
         > = std::sync::LazyLock::new(Default::default);
@@ -197,7 +209,7 @@ impl Grammar {
         }
     }
 
-    fn kind_is_named(&self, code: u16) -> bool {
+    pub fn kind_is_named(&self, code: u16) -> bool {
         match self.named.get(usize::from(code)) {
             Some((_, named)) => *named,
             None => self.kinds.kind_is_named(code),
@@ -219,8 +231,9 @@ pub enum TemplateError {
 pub type OwnTable = (&'static [&'static str], u16, &'static [&'static str]);
 
 /// A dialect whose files a language parses itself, not with tree-sitter (Blade's Forte), or with a parser
-/// standing in for tree-sitter's (JSON's Bitlex parser). The crate that owns the parser registers it for its
-/// dialect as the engine loads (`install_parsers`); the tape reads the file through it (`TapeImage::parse`).
+/// standing in for tree-sitter's (JSON's simdjson kernels). The crate that owns the parser registers each
+/// implementation for its dialect as the engine loads (`install_parsers`, a `ParserImpl` each); the tape
+/// reads the file through the one the router takes (`tree_parser`, `TapeImage::parse`).
 pub trait TreeParser: Send + Sync {
     /// The file's documents: `None` where the parser leaves the file to tree-sitter, `Err(Parser)` where
     /// it stopped at a limit before it read the file.
@@ -245,16 +258,57 @@ pub trait TreeParser: Send + Sync {
     }
 }
 
-static PARSERS: std::sync::OnceLock<Vec<(GrammarDialect, &'static dyn TreeParser)>> = std::sync::OnceLock::new();
-
-/// The engine's tree parsers, by dialect; the first call holds.
-pub fn install_parsers(parsers: Vec<(GrammarDialect, &'static dyn TreeParser)>) {
-    let _ = PARSERS.set(parsers);
+/// One implementation of a dialect's parser, as its language registers it (`install_parsers`). A dialect
+/// may have several (JSON's: a kernel for each CPU family, simdjson's DOM parser); the router reads its
+/// files with the best one this host runs, and a file that one leaves alone goes to tree-sitter.
+pub struct ParserImpl {
+    pub dialect: GrammarDialect,
+    /// Its name, for the profile and the route's listing (`parser_routes`).
+    pub name: &'static str,
+    /// Its place among the dialect's implementations: the lowest this host runs is taken. The order is
+    /// the registering language's, from its measurements (JSON's: decision 0148).
+    pub rank: u32,
+    /// Whether this host runs it: its CPU's instructions, its build's.
+    pub runs: bool,
+    pub parser: &'static dyn TreeParser,
 }
 
-/// `dialect`'s own parser, where its language registered one.
+/// The parser router: every implementation registered, and for each dialect the one taken.
+struct Router {
+    registered: Vec<ParserImpl>,
+    /// Each dialect's implementation, an index into `registered`.
+    chosen: Vec<(GrammarDialect, usize)>,
+}
+
+static ROUTER: std::sync::OnceLock<Router> = std::sync::OnceLock::new();
+
+/// The engine's parsers, by dialect; the first call holds. Each dialect's files are read by the
+/// lowest-ranked implementation this host runs (the first registered, among equals).
+pub fn install_parsers(registered: Vec<ParserImpl>) {
+    let mut chosen: Vec<(GrammarDialect, usize)> = Vec::new();
+    for (i, r) in registered.iter().enumerate() {
+        if !r.runs {
+            continue;
+        }
+        match chosen.iter_mut().find(|(dialect, _)| *dialect == r.dialect) {
+            Some((_, best)) if registered[*best].rank <= r.rank => {}
+            Some((_, best)) => *best = i,
+            None => chosen.push((r.dialect, i)),
+        }
+    }
+    let _ = ROUTER.set(Router { registered, chosen });
+}
+
+/// `dialect`'s own parser, where its language registered one this host runs: the router's choice.
 pub fn tree_parser(dialect: GrammarDialect) -> Option<&'static dyn TreeParser> {
-    PARSERS.get()?.iter().find(|(lang, _)| *lang == dialect).map(|(_, parser)| *parser)
+    let router = ROUTER.get()?;
+    router.chosen.iter().find(|(lang, _)| *lang == dialect).map(|&(_, i)| router.registered[i].parser)
+}
+
+/// Every registered implementation, in registration order, and whether the router took it.
+pub fn parser_routes() -> Vec<(&'static ParserImpl, bool)> {
+    let Some(router) = ROUTER.get() else { return Vec::new() };
+    router.registered.iter().enumerate().map(|(i, r)| (r, router.chosen.iter().any(|&(_, c)| c == i))).collect()
 }
 
 impl From<String> for TemplateError {
@@ -327,8 +381,22 @@ impl Code {
         Ok(code)
     }
 
-    fn classes(&self) -> &[u16] {
+    /// An `ERROR` node's code under `field` (a parser that recovers writes it as tree-sitter does).
+    pub fn error(field: u16) -> Result<Self, String> {
+        if field as usize >= FIELD_LIMIT {
+            return Err(format!("field {field} past the tape's codes"));
+        }
+        Ok(Code { kf: ERROR_CODE | (field << 10), flags: CODE_ERROR, alias: SENTINEL, class_count: 0, classes: [0; MAX_NODE_SUPERTYPES] })
+    }
+
+    /// Its supertype memberships, ascending.
+    pub fn classes(&self) -> &[u16] {
         &self.classes[..usize::from(self.class_count)]
+    }
+
+    /// Its kind and field, as v8's `kf`: the kind in the low 10 bits, the field above.
+    pub fn kf(&self) -> u16 {
+        self.kf
     }
 
     /// The code's bytes in the image: kf, flags, alias, class count, classes.
@@ -471,13 +539,16 @@ impl DerivedImage {
             );
         }
         let grammar = Grammar::embedded(program.dialect)?;
-        let tape = TapeImage::encode_tree_image(
-            program.root(),
-            &grammar,
-            &program.text,
-            Some(&program.segments),
-            budget,
-        )?;
+        let tape = match &program.parse {
+            crate::code_rule_dsl::embed::Parse::Tree(tree) => TapeImage::encode_tree_image(
+                tree.root_node(),
+                &grammar,
+                &program.text,
+                Some(&program.segments),
+                budget,
+            )?,
+            crate::code_rule_dsl::embed::Parse::Tape(tape) => tape.omitting(&program.segments, &grammar, &program.text, budget)?,
+        };
         Ok(Self {
             role: DocumentRole::derived(&program.text, &program.segments),
             via,
@@ -1014,6 +1085,14 @@ impl TapeImage {
         Self::read_image(bytes, grammar)
     }
 
+    /// The image a parser wrote as it parsed `source` (its bytes, the engine's: decision 0140), read as
+    /// stored, with the source's digest (not stored since format 12), as `encode_rr`'s.
+    pub fn parsed(bytes: &[u8], grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
+        let mut image = Self::read_image(bytes, grammar)?;
+        image.source_digest = Some(source_digest(source, budget)?);
+        Ok(image)
+    }
+
     /// The image `bytes` hold, of a `grammar` file.
     fn read_image(bytes: &[u8], grammar: &Grammar) -> Result<Self, String> {
         let mut reader = TapeReader { bytes, offset: 0 };
@@ -1285,6 +1364,61 @@ impl TapeImage {
             }
         }
         Self::pack(&nodes, std::mem::take(&mut supertypes), grammar, source, budget)
+    }
+
+    /// The image without the nodes, and their subtrees, whose spans `segments` omits (an embedded
+    /// program's placeholders): the image of the tree `encode_tree_image` walks with the same
+    /// `omitted`. The image itself where nothing is omitted.
+    pub fn omitting(&self, segments: &SegmentMap, grammar: &Grammar, source: &str, budget: &impl Fn() -> bool) -> Result<Self, String> {
+        let count = self.node_count();
+        let from_start = self.widths[2] & TAIL_FROM_START != 0;
+        let end = |i: usize| {
+            let from = if from_start { self.start_at(i) } else { self.start_at(i + self.size_at(i) as usize - 1) };
+            from + self.tail_at(i)
+        };
+        let omitted = |i: usize| segments.omitted(self.start_at(i) as usize..end(i) as usize);
+        if !(0..count).any(omitted) {
+            return Ok(self.clone());
+        }
+        let mut nodes = Vec::<Pending>::with_capacity(count);
+        let mut supertypes = Vec::new();
+        // Per open ancestor: its index in `nodes`, and where its subtree ends in `self`.
+        let mut open: Vec<(u32, usize)> = Vec::new();
+        let mut i = 0;
+        while i < count {
+            if i % 256 == 0 {
+                checked(budget)?;
+            }
+            while open.last().is_some_and(|&(_, last)| last <= i) {
+                open.pop();
+            }
+            let size = self.size_at(i) as usize;
+            if omitted(i) {
+                i += size;
+                continue;
+            }
+            let code = &self.codes[usize::from(self.code_at(i))];
+            let index = u32::try_from(nodes.len()).map_err(|_| "rec6 node count overflow")?;
+            let start = self.start_at(i);
+            nodes.push(Pending {
+                kf: code.kf(),
+                parent: open.last().map(|&(at, _)| at),
+                start,
+                length: end(i) - start,
+                size: 1,
+                extra: code.flags & CODE_EXTRA != 0,
+                error: code.flags & CODE_ERROR != 0,
+                missing: code.flags & CODE_MISSING != 0,
+                kind_alias: None,
+            });
+            if code.alias != SENTINEL {
+                return Err("a written tape's contextual alias".into());
+            }
+            supertypes.extend(code.classes().iter().map(|&class| (index, class)));
+            open.push((index, i + size));
+            i += 1;
+        }
+        Self::finish(nodes, supertypes, grammar, source, budget)
     }
 
     /// An image from columns a parser wrote itself, in this format (codes numbered by first use, `base`

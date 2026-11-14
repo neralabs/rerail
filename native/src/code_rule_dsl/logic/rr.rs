@@ -69,11 +69,11 @@ pub use print::print;
 pub use syntax::quote;
 pub use translate::translate;
 
-/// The relations `core.rr` declares: the engine's names (decision 0047). Empty when `core.rr` does not read.
+/// The relations `core.rr` declares: the engine's names (decision 0141). Empty when `core.rr` does not read.
 pub fn core_names() -> &'static std::collections::BTreeSet<String> {
     static CORE: std::sync::OnceLock<std::collections::BTreeSet<String>> = std::sync::OnceLock::new();
     CORE.get_or_init(|| {
-        std::fs::read_to_string(library().join("core.rr")).ok().and_then(|src| parse(&src).ok()).map(|p| p.decls.into_keys().collect()).unwrap_or_default()
+        std::fs::read_to_string(library().join("core.rr")).ok().and_then(|src| parse(&src).ok()).map(|p| p.decls.into_keys().map(String::from).collect()).unwrap_or_default()
     })
 }
 
@@ -176,6 +176,24 @@ impl Text {
             })
             .collect();
         Some(Modules { files: files.iter().map(|(path, digest, statements)| (path.clone(), *digest, declares(statements))).collect(), heads, declared: declares(own) })
+    }
+
+    /// The text's header: its program without a clause of its own or of its libraries (their declarations, its
+    /// directives, its findings' declarations), for what a batch reads of a policy before its run (decision 0168):
+    /// its settings, `.policy`, `.language` and outputs, as its whole program has them, less `.global library` (which
+    /// `read_file` writes) and the settings a clause makes. Lowering only that is a fraction of lowering its rules.
+    pub fn header(self) -> Result<Program, Error> {
+        let header = |statements: Vec<syntax::Statement>| -> Vec<syntax::Statement> {
+            statements.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { .. } | syntax::Item::Include(_))).collect()
+        };
+        match self.0 {
+            Read::Plain(statements) => lower::lower(header(statements)),
+            Read::Modular { files, own } => {
+                let mut statements: Vec<syntax::Statement> = files.iter().flat_map(|(_, _, s)| s.iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { .. } | syntax::Item::Include(_))).cloned()).collect();
+                statements.extend(header(own));
+                lower::lower(statements)
+            }
+        }
     }
 
     /// The text's program, as `parse` (`clauses`) or `parse_own` reads it.
@@ -473,7 +491,7 @@ pub fn syntax_error(src: &str) -> Option<(usize, String)> {
 /// that is no whole string literal.
 pub(in crate::code_rule_dsl) fn string_value(text: &str) -> Option<String> {
     match syntax::tokens(text).ok()?.as_slice() {
-        [(syntax::Tok::Str(value), 0, end)] if *end == text.len() => Some(value.clone()),
+        [(syntax::Tok::Str(value), 0, end)] if *end == text.len() => Some(value.to_string()),
         _ => None,
     }
 }
@@ -495,7 +513,7 @@ pub fn metadata(program: &Program) -> Result<serde_json::Value, Error> {
             return Err(Error::Syntax("policy metadata requires a quoted identifier".to_owned()));
         };
         let revision = tokens.windows(2).find_map(|pair| match (&pair[0].0, &pair[1].0) {
-            (Tok::Id(key), Tok::Num(n)) if key == "revision" => Some(*n),
+            (Tok::Id(key), Tok::Num(n)) if *key == "revision" => Some(*n),
             _ => None,
         });
         policies.push(serde_json::json!({"id": id, "revision": revision}));
@@ -751,10 +769,10 @@ fn reached_statements(own: &Path, statements: &[(&PathBuf, Vec<&syntax::Statemen
         .collect()
 }
 
-/// The names a program's files may not declare or derive: `core.rr`'s, but in `core.rr` (decision 0047), and names
+/// The names a program's files may not declare or derive: `core.rr`'s, but in `core.rr` (decision 0141), and names
 /// starting `rr_`, but in the engine's own library programs.
 fn check_names(statements: &Files, core_unlisted: bool) -> Result<(), Error> {
-    // `core.rr`'s relations are the engine's (decision 0047): no other file declares or derives one.
+    // `core.rr`'s relations are the engine's (decision 0141): no other file declares or derives one.
     let core = library().join("core.rr").canonicalize().map_err(|e| Error::Syntax(format!("core.rr: {e}")))?;
     // From `core.rr` among the files, else (`core_unlisted`: the program reads it) as `core_names` reads it.
     let listed = statements.iter().any(|(file, _)| *file == core);
@@ -816,6 +834,24 @@ pub(in crate::code_rule_dsl) fn recording<T>(f: impl FnOnce() -> T) -> (T, Vec<L
     });
     let mut seen = std::collections::HashSet::new();
     (out, read.into_iter().filter(|f| seen.insert(f.path.clone())).collect())
+}
+
+/// `f` run on another thread for a caller inside `recording`: its result, and the library files it read, which
+/// `replay` notes on the caller's thread, in the order the caller's own reading would have noted them.
+pub(in crate::code_rule_dsl) fn recorded_on_worker<T>(f: impl FnOnce() -> T) -> (T, Vec<LibraryFile>) {
+    let outer = READS.with(|r| r.borrow_mut().replace(Vec::new()));
+    let out = f();
+    let read = READS.with(|r| std::mem::replace(&mut *r.borrow_mut(), outer)).unwrap_or_default();
+    (out, read)
+}
+
+/// The files a worker read (`recorded_on_worker`), noted on this thread as if it had read them.
+pub(in crate::code_rule_dsl) fn replay(files: Vec<LibraryFile>) {
+    READS.with(|r| {
+        if let Some(read) = r.borrow_mut().as_mut() {
+            read.extend(files);
+        }
+    });
 }
 
 fn noted(file: &LibraryFile) {

@@ -21,7 +21,7 @@
 //! converted program (`overlay`):
 //! - the file is `gate/data-layer/packs/data-layer/candidates/datalog/authored/<rule-id>.rr`, the rule id as in the
 //!   policy (`data-layer-lazy-architecture`), read whenever the rule is converted (no rebuild);
-//! - it declares every relation it reads or defines but core.rr's, which are the engine's (decision 0047:
+//! - it declares every relation it reads or defines but core.rr's, which are the engine's (decision 0141:
 //!   `rr::read_file` refuses a file that declares or derives one): core.rr's declarations are its prelude
 //!   (`rr::lower::core`), in the column types of the converter's (`BASE`): `doc(d, path, module)`,
 //!   `node(d, n, kind, start, end)`, `child(p, c, i)` (named children), `field(p, f, c)`, `text(n, s)`,
@@ -37,7 +37,7 @@
 //!   The base relations it reads are inputs, `.input` or not. It may `#include` the libraries (`python/ast.rr`):
 //!   their `.output`s are theirs. The scope, `in_scope(d: number)` and `out_scope(d: number)`, is the converter's
 //!   (the policy's, or the replay's per event): read, never derived. So is the tape's verdict, `tape_syntax_error`
-//!   (decision 0047). So is the report gate, `report_when_gt(k: number)`: one row
+//!   (decision 0141). So is the report gate, `report_when_gt(k: number)`: one row
 //!   `k` where the policy (as the run configures it) has `report_when: {count: {gt: k}}`, the only form the compiler
 //!   accepts (once per policy, on a define clause): the rule reports nothing unless its findings, all files and
 //!   clauses together, number more than `k`; no row where it has none. The tree: `inside(n, a, set)` and
@@ -899,7 +899,7 @@ pub(in crate::code_rule_dsl) fn reachable(prog: Program) -> Program {
             }
         }
     }
-    prog.decls.retain(|r, _| used.contains(r));
+    prog.decls.retain(|r, _| used.contains(r.as_str()));
     prog.inputs.retain(|r| used.contains(r));
     prog.facts.retain(|r, _| used.contains(r));
     prog.lattice.retain(|r, _| used.contains(r));
@@ -959,8 +959,8 @@ fn converter_name(rel: &str) -> bool {
 }
 
 #[cfg(test)]
-fn types(columns: &[(String, String)]) -> Vec<&str> {
-    columns.iter().map(|(_, t)| t.as_str()).collect()
+fn types<S: AsRef<str>>(columns: &[(S, S)]) -> Vec<&str> {
+    columns.iter().map(|(_, t)| t.as_ref()).collect()
 }
 
 /// Column types in `.rr` spellings, for the errors.

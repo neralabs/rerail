@@ -45,24 +45,27 @@ use segments::SegmentMap;
 use std::ops::Range;
 use tree_sitter::Node as TsNode;
 
+/// How a program's text was read: tree-sitter's tree, or a lean parser's tape of it, which is the
+/// tape that tree encodes to (decision 0198). Either spans the program's text.
+pub enum Parse {
+    Tree(tree_sitter::Tree),
+    /// The whole text's tape: the placeholders the program's segments omit are still in it
+    /// (`DerivedImage::encode` leaves them out, as it does a tree's).
+    Tape(crate::code_rule_dsl::tape::TapeImage),
+}
+
 /// A program an embedder built from a host file.
 pub struct Program {
-    /// The dialect its tree is parsed with and read as.
+    /// The dialect its text is parsed with and read as.
     pub dialect: GrammarDialect,
-    /// Its tree, which spans `text`.
-    pub tree: tree_sitter::Tree,
+    /// Its text, read.
+    pub parse: Parse,
     pub text: String,
     /// Where its text stands in the host source (indexed: `SegmentMap::index`), and its
     /// placeholders the tape leaves out.
     pub segments: SegmentMap,
     /// The host bytes it cannot be read through, sorted: the host's syntax errors it reads.
     pub host_errors: Vec<Range<usize>>,
-}
-
-impl Program {
-    pub(crate) fn root(&self) -> TsNode<'_> {
-        self.tree.root_node()
-    }
 }
 
 /// Builds a host file's embedded program: one per registry `via`.

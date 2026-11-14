@@ -54,20 +54,28 @@ impl Tree {
         }
     }
 
+    /// `op_at` of `p`'s nodes. A guest's (a string annotation's comparison, `x: "123 is not y"`) are made too: this
+    /// `op_at` stands in for `core_rr`'s, which holds every node's, the guests' included.
+    pub(super) fn operators(&mut self, p: &Projected, dialect: &Dialect, string: &mut dyn FnMut(&str) -> usize) {
+        if !self.op_at {
+            return;
+        }
+        let f = &*p.facts;
+        let fields = [dialect.operator, dialect.operators];
+        for (local, &id) in p.core.iter().enumerate() {
+            let n = p.global(local as u32);
+            let operators = f.children(id).iter().filter(|&&c| f.field[c as usize] != 0 && fields.contains(&Some(f.field[c as usize])));
+            for (i, &c) in operators.enumerate() {
+                self.op_ats.push([n, i as i64, string(dialect.name(f, c)) as i64]);
+            }
+        }
+    }
+
     /// Document `p`'s rows (`python`: it is Python's). A text document (no `dialect`) has none.
     pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, python: bool, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
         let Some(dialect) = dialect else { return };
-        if self.op_at {
-            let fields = [dialect.operator, dialect.operators];
-            for (local, &id) in p.core.iter().enumerate() {
-                let n = p.global(local as u32);
-                let operators = f.children(id).iter().filter(|&&c| f.field[c as usize] != 0 && fields.contains(&Some(f.field[c as usize])));
-                for (i, &c) in operators.enumerate() {
-                    self.op_ats.push([n, i as i64, string(dialect.name(f, c)) as i64]);
-                }
-            }
-        }
+        self.operators(p, dialect, string);
         if self.prev_token || self.token {
             for (local, &id) in p.core.iter().enumerate() {
                 let n = p.global(local as u32);

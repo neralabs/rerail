@@ -101,7 +101,7 @@ child the projection leaves out (an unnamed token) is found by a matcher but not
 
 - **0011:** composite matchers as node-label passes plus walking programs; this record runs them from `.rr`.
 - **0024:** a chunk's matching as one wave. Here it is one pass per matcher (Open).
-- **0036:** the rule language's built-ins made by the transducer; the axes (0105) and now the matchers.
+- **0036:** the rule language's built-ins made by the transducer; the axes (0143) and now the matchers.
 - **`waves::policies`:** authored `ast` atoms compiled as helper clauses. This record reuses its compile path.
 
 ## Open

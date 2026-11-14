@@ -1514,18 +1514,18 @@ tokens have no field.
 **Closure:** each made as `core.rr` says, or `core.rr`'s description changed.
 
 
-## O81. A program that derives a relation `core.rr` makes an input: closed (decision 0047)
+## O81. A program that derives a relation `core.rr` makes an input: closed (decision 0141)
 
 - Decision 0046 made `docof` a `core.rr` input, and `sql::select::input_columns` names its columns `n, d`.
   T's programs (`typing/programs/workload*.rr`, `calls`) still derive their own `docof(n, d) :- node(d, n, …)`.
   `plan::sql_col` names columns by `input_columns` for any relation of that name, so the SQL reads `t4.d` from
   a derived table whose columns are `c0, c1`: "names no column in scope".
 - Nine `logic::plan::tests` are ignored with this item (they fail the same way on final-rerail-shape-rr-align).
-**Closed by 0047:** both. The planner names a column by `input_columns` only for an input
+**Closed by 0141:** both. The planner names a column by `input_columns` only for an input
 (`plan::Model::col`); the reader refuses a file that declares or derives a `core.rr` relation; T's programs
 read `kind` and `docof` as inputs. The nine tests run again.
 Typing-support first closed it by renaming (`plan::private_derived_inputs`: a derived relation under a base
-relation's name planned as `<rel>_rr_derived`); the merge into final-rerail-shape keeps 0047's mechanism, not both.
+relation's name planned as `<rel>_rr_derived`); the merge into final-rerail-shape keeps 0141's mechanism, not both.
 
 ## O82. Metal runs abort in a debug test build
 
@@ -3248,30 +3248,30 @@ already. A process keeps each seed's graph while its modules' stats hold.
 
 ## O-artifact-entries. An artifact is one digest, so one edit makes all of it stale
 
-Decision 0095 §2. `test_collection`'s inputs are `**/*.py`: after any edit the artifact is stale everywhere, and
+Decision 0142 §2. `test_collection`'s inputs are `**/*.py`: after any edit the artifact is stale everywhere, and
 locally it is never fresh again. **Closure:** the v2 envelope with entries, each with its own digest and status;
 `facts-stamp` writing entries; a stale entry withholding and making Unknown only its rows' places; a test where one
 edited key file stales one entry.
 
 ## O-artifact-digest-p0. Artifact digests walk and hash the tree beside phase 0
 
-Decision 0095 §3. `inputs_digest` walks the root and hashes every matching file on every run and in every cutoff
+Decision 0142 §3. `inputs_digest` walks the root and hashes every matching file on every run and in every cutoff
 check, and it hashes git blob ids where phase 0 keys content by sha256. **Closure:** digests over phase 0's
 content sources, no read of an unchanged file on a warm run (counted by the observer), and stamp and run agreeing.
 
 ## O-artifact-store. One stamp per artifact, lost on a branch switch
 
-Decision 0095 §4. **Closure:** stamped entries in the store by `(artifact, key, digest)`, absorbed from the facts
+Decision 0142 §4. **Closure:** stamped entries in the store by `(artifact, key, digest)`, absorbed from the facts
 directory; a revert finds its old stamp; least recently used entries removed within the disk budget.
 
 ## O-artifact-imports. An entry's inputs are globs, not its imports
 
-Decision 0095 §2. **Closure:** an entry's digest as a join over its import closure, once phase 0's module graph is
+Decision 0142 §2. **Closure:** an entry's digest as a join over its import closure, once phase 0's module graph is
 a phase output (t24, "not built").
 
 ## O-test-collect-rules. `test-budget` counts tests with rules, not pytest's artifact
 
-Decision 0095 §1, t13 §6–§7. The spike's model and draft rules are in `notes/t13/`.
+Decision 0142 §1, t13 §6–§7. The spike's model and draft rules are in `notes/t13/`.
 
 **Built (2026-11-08).** The `product` aggregate (`de8b50a9f`); `python/pytest-collect.rr` (`8c68e8d82`), the
 model's levels 0–6 as rules, with lengths evaluated on demand (`pc_want`) and bounded by a number domain, not by the
@@ -3432,14 +3432,14 @@ names no import binds; a run of `sym_of` over the data layer within the run and 
 
 **Status:** closed (2026-11-08, `3cb7d0d0a`). `@git_tracked(path)` is a functor over the index phase 0's Git
 provider reads (`strings/git.rs`), read again when the index file's digest moves; the test stages an add and reads
-it again. Decision 0095 §6.
+it again. Decision 0142 §6.
 
 ## O-git-merge-base. `git_rev` is declared and never made; `--base` is the caller's
 
 **Status:** closed (2026-11-08, `3cb7d0d0a`). `git_rev("head", …)` and `git_rev("base", …)`, the merge base of
 `HEAD` and `--base` by gix's `merge_base`, are made when a rule reads `git_rev`; `at="base"` reads at the merge base;
 the whole-run cutoff records both as a read (`git_rev`, with the index as `git_index`) and checks them again. A bad
-`--base` gives `input_error("git_rev", "unreadable", …)`. Decision 0095 §6.
+`--base` gives `input_error("git_rev", "unreadable", …)`. Decision 0142 §6.
 
 
 ## O-stored-patterns. A stored prepared program lost its AST patterns, and its memo kept the result (fixed)
@@ -4129,6 +4129,27 @@ declarations. Two differences are the dropped form's gain, not a change: an unre
 declared and unread after `prune`; and a violation's `@place` variant is made when any rule makes a place (no
 reached one does there). 52–58% of the packs' and data layer's clauses are dropped.
 
+**Two roots were missing (fixed 2026-11-13).** What only the engine reads was dropped: a rule deriving one of
+the engine's relations (`load(f, q, "python") :- py_resolves(q, f, _)`, python/modules.rr), and a request rule,
+whose head nothing reads but whose body reads the file system (`py_listed(d) :- py_file_at(_, _, d, _),
+dir_entry(d, _, _)`), so no candidate directory was listed. A run that loads modules loaded nothing: the two cone
+tests (`the_cone_of_requests_is_kept_while_its_reads_and_answers_are`,
+`the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads`) failed after the merge into rr-align. The seven
+comparisons did not see it: they prune from the outputs alone, while a run first makes every file-system request
+and `load` an output (`run_with_options`, decision 0065 §2a), so such rules were always kept before. `core.rr`'s
+relations are now roots, and a request rule is kept once the file-system relation it reads is reached;
+`dropping_unreached_clauses_keeps_what_the_engine_reads`. Typing-support fixed the same loss at the same time
+(932322b28 in investigate-bend-vs-datalog): `LIBRARY_DERIVED`'s relations are roots, and a clause whose reads make
+a request (`asks`) is reached whatever reads its head. That fix is the one kept: 0141's `check_names` refuses a
+library clause deriving any other core relation, so the two root sets reach the same; and a request rule answers
+its request for every reader of the relation it reads, so it is kept even when its own head's reader is not.
+
+The same three rules were dropped from phase 1's `sources.rr` and typing's `calls.rr` and `calls_cx.rr` (99 → 102,
+672 → 675, 665 → 668 rules lowered): without them a run's phase 1 asked for no module loads, so no library stubs
+were loaded. **The saving is kept:** over the 44 data-layer policies (10,674 rules) and the 243 pack programs
+that reach a file-system reader (47,792 rules), the rules lowered are the same with the fix and without it. No
+policy or pack includes `python/modules.rr`.
+
 **Measured** (44 policies, strict, CPU, 48 findings each): dl1 188.1 → 163.2 G instructions; dl10 280.4 →
 257.8 G; dl1 over a store, cold 265 → 237.5 G, warm 112 → 88.5 G. `keeps::choose` (11% earlier) is under 1.5%
 now: no item.
@@ -4216,6 +4237,11 @@ keeping it there was measured to gain nothing, O-store-single-program), decoding
 store (127), and reading its sources (55). What is left of O91 is that setup, not a rerun: a process that serves
 many batches (a session) pays it once; else each piece is its own item (O-prepared-decode below).
 
+**Batch as one pack (2026-11-13, decision 0168).** `run-policies` now runs a batch's policies of one grammar as
+one pack, so the typing program, its setup and every library are read, combined, hidden and planned once for the
+batch, not per policy. dl1 147.9 → 137.5 G cold without a store, 89.5 → 71.1 G warm, findings unchanged. What is
+left is the pack's own passes (O-pack-passes).
+
 ## O-batch-phase-sources. Earlier phases' sources are made again for each policy
 
 **Seen (2026-11-12).** 5.5% of the batch: `phases::sources` → `run_with_options`, inside each policy's run. The
@@ -4281,6 +4307,10 @@ samples) and 3.3% without a store; of the warm 216, 127 are the typing program's
 hiding analysis kept per library module would now save about 2%, against its cost of keying and invalidating;
 not built. Open at that size.
 
+**A batch is one pack (2026-11-13, decision 0168).** The library's analysis is now made once a batch, over the
+pack's program: hiding the combined program was 0.46 s of the dl1 pack (4,287 rules), against each policy hiding
+its own. The analysis kept per library module is still open, for packs whose programs change.
+
 ## O-vocabulary-dfa-reuse. The text vocabulary's DFAs are built again for each policy
 
 **Seen (2026-11-12).** 3.5% of the batch: `strings::Vocabulary::compile` → `text::vocabulary::Searchers::new` →
@@ -4341,7 +4371,7 @@ records, with the sizes the passes before it found; no `Pending`, no `finish`. T
 byte for byte (`json_tapes_from_the_bitlex_parser_are_tree_sitters`), and the tape's cost in `json_parse_costs` is
 the parse's plus the writing of its bytes, as simdjson's writer now does (`rerail_simdjson::tape`, 0134).
 
-## O-jsonc-simdjson. JSON with comments goes to tree-sitter-json
+## O-jsonc-simdjson. JSON with comments goes to tree-sitter-json (closed)
 
 **Seen (2026-11-12, 0134).** simdjson reads strict JSON. A file with `//` or `/* */` comments (`tsconfig.json`,
 editor settings) or a trailing comma is refused, and read with tree-sitter-json (31 times simdjson's cost to parse).
@@ -4350,6 +4380,16 @@ In this repository 1 of 2,201 files is refused; JavaScript repositories have mor
 **Closure:** comments read without tree-sitter: blanked for simdjson (string-aware, by the same block masks as
 its stage 1) and placed as extras by tree-sitter's rule (the lowest node holding the tokens on either side), with
 the oracle extended to JSONC files; or the Bitlex parser, once it is ready for the product.
+
+**Comments closed (2026-11-13, 0158):** a file the strict read refuses that has `//` or `/*` is read again as
+JSONC, its comments blanked by stage 1 (simdjson's string scanner, a block at a time) and written by stage 2
+where tree-sitter-json places them; byte for byte tree-sitter-json's tapes (13 JSONC files of 2,099 in two
+`node_modules`, 0 differ), 523 instructions a node against tree-sitter-json's 18,000.
+
+**Trailing commas closed (2026-11-13, 0158 amended):** the JSONC read passes a trailing comma over, as TypeScript
+reads it (the user: permissive, as rerail reads source while it is written). The 2,099 files: 2,035 strict, 64
+JSONC (51 with trailing commas), 0 refused, 0 differ from tree-sitter-json's tape of the comma-blanked text; 578
+instructions a node.
 
 ## O-texts-digest-twice. A run's texts were digested twice (closed)
 
@@ -4513,7 +4553,7 @@ route. The whole-run cutoff is not involved: the full runs don't ask for it. `RE
 "0 relations differ" in the inputs, so the stale rows come in after them, from rows kept by owner
 or from the kept part's derived frames. The statistics keeper does count c.py as changed, under both
 memo keys. The test passed once right after the merge, under heavy load, so the route may depend on timing
-(write-behind, 0114). So does `the_reach_index_is_derived_again_when_cycles_and_connections_change_in_a_new_process`, on the same edit, against
+(write-behind, 0147). So does `the_reach_index_is_derived_again_when_cycles_and_connections_change_in_a_new_process`, on the same edit, against
 a run with an empty store; it too passes with `RERAIL_KEPT_INPUTS=off`. Both tests are ignored with this item's name. Next step: dump the full run's
 `impmod` (or the reach index's edge relation) rows for c.py with and without kept inputs, and find
 the owner range that was not marked dead.
@@ -4696,6 +4736,57 @@ whole log.
 **Closure:** the field that differs is known from a failure's message, and the cause is fixed; or it does not
 recur in ten runs of the chunk.
 
+## O-kept-strata-flake. A second run over unchanged files sometimes plans twice the cross part's strata
+
+**Closed (2026-11-13).** The shared state was the process's `RERAIL_*` switches. `rr::tape_tests::
+a_reader_that_only_negates_a_demanded_relation_reads_it_whole` (in the `tape` filter) and the session tests set
+`RERAIL_CROSS_K4=off`, `RERAIL_KEPT_PART=off` and others for their own oracle runs, and every other thread's run read
+them as it went. So this test's first run sometimes kept its strata without K4 (3 strata, `kept_strata`), and its
+second run with K4 (6, the maintained part with its supports). Now each corpus run holds
+`corpus::switches::reading()` from start to end. A test changes switches only through `switches::set`, which waits
+until no other thread's run holds them, keeps new runs out, and restores the variables when dropped. Nested runs and
+the setter's own runs take nothing. Every test that set a switch beside other runs goes through it (`corpus::tests`,
+`session::tests`, `rr::tape_tests`). The ignored typing spikes run alone and still set theirs directly. Ten runs of
+the `tape` filter: 10 of 10 pass (7 of 10 failed before), and `plan::corpus` passes (77).
+
+Found on the way: the plan choices (`plan::choices`, schema 3) and kept plans (2) used fact schemas that
+`RETIRED_CORPUS_MEMO_SCHEMAS` sweeps. So a new store's first collection deleted the first run's entries, and the next
+process planned again. The slice memo (3) had the same collision. They are now 106, 107 and 108, and every
+`facts_results` user declares its schema through `content_store::live_fact_schema`, which refuses a retired number at
+compile time. `kept_choices_are_taken_at_their_scale_or_less_and_read_back_from_the_store` now runs a collection pass
+on the new store before reading back.
+
+**Seen (2026-11-13, after the merge of the final-rerail-shape trunk, 293647a70).**
+`corpus::tests::cross_file_strata_are_kept_across_runs_in_the_tape_cache` fails in about half the runs of the
+engine's `tape` filter (104 tests, the default threads): its second or third run reports `(6, 6)` strata where
+the first had 3, so nothing is kept. It passes alone (3 of 3), with `plan::corpus` (77 tests), and with the same
+104 tests named one by one (`--exact`, slower). Something process-wide that a concurrent test changes alters the
+plan between two runs of the one test. Ruled out: the kept splits (`RERAIL_SPLIT_CHECK=1` finds every split equal
+to a whole one, and it still fails), the cost model (tests keep no samples), the build ids (only their own module
+sets them), and sessions (none of the 104 opens one). Not checked: whether the hub or the trunk alone shows it.
+
+**Closure:** the shared state is found and the test no longer depends on it, or the shared state goes; ten runs
+of the `tape` filter pass.
+
+## O-collector-busy-flake. The corpus collector beside three writers sometimes reports `Busy`
+
+**Closed (2026-11-13).** The call was `collect_held`, the pass's store collection. It is a write, but it opened its
+immediate transaction once, with only SQLite's busy timeout (250 ms). It also ran its vacuum the same way, and
+`release_pins` (an orphan's release) too. Under three writers at load 60-80 that timed out. Now each attempt runs under
+`retry_busy`, as every other store write does: the transaction, then the checkpoint and vacuum, then the release, each
+holding the connection for one attempt only. The pass's reads (`corpus_due` and the rest) are WAL reads, which a writer
+does not block. Ten runs of the store crate's tests: 10 of 10 pass (189 each).
+
+**Seen (2026-11-13, once in 8 runs of the store crate's tests, load average 60-80).**
+`corpus_runs::tests::parallel_writers_and_a_collector_share_one_store`: `collect_corpus_pass` returned
+`StoreError::Busy` while writers recorded runs, though the test says no write fails. It passes alone. A write
+retries for `BUSY_DEADLINE` (10 s, longer than the whole test), so the `Busy` is likely one of the pass's reads
+(`orphaned_holds`, `corpus_due`, `corpus_decision_worth`), which run on the connection without the write retries
+and wait one `BUSY_TIMEOUT` (250 ms) inside SQLite.
+
+**Closure:** the call that reports it is known (a failure's message names it), and a busy read in a pass is
+retried or gives up without failing the pass; ten runs of the store crate pass.
+
 ## O-join-shape-directives. Fixing a join's shape by hand, in the rule source, without rebuilding the engine
 
 **Closed (2026-11-12) by [decision 0137](decisions/0137-join-shape-directives.md):** `.shape B after A` and `.shape B bound x` on a written rule shape it and every derived form; EXPLAIN marks a shaped plan; a profiled run reports a directive whose order is the planner's own; the DP takes no cross product priced from a default size. Test: `a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms`.
@@ -4727,3 +4818,243 @@ shape. What is wanted:
 **Closure:** a `.rr` directive on a written rule shapes its plan and every derived form's (a test where it changes
 a maintained form's order, and EXPLAIN shows it); the profile reports a directive that saves nothing; the planner
 takes no cross product priced from a default size (a guard test).
+
+## O149. Answered world facts over held program facts have no test of their own
+
+The merge audit of 2026-11-13 (`docs/merging.md`) found that c19a0c146 dropped one case of 2911f61c5: a relation
+that the native engine already holds (its program facts) when the world's answers for it come. `setfix::retain`
+replaces a held relation, so the facts were lost. 42cab80c9 joins the held rows to the answers first. The cone and
+corpus tests pass with it, but none makes this case.
+
+**Closure:** a test with a produced relation that also has `.rr` facts, read by a native stratum and by a SQL
+stratum above it, which sees both the facts and the answers.
+
+## Remeasured after the hub merge (2026-11-13)
+
+At 17bbc4cd7, the hub (9a203197e) merged into rr-align. Debug build, CPU, strict; load 19-43.
+
+**O125 replay** (74 Python files, `spike_o125_replay`, `O125_NO_FULL`, profiled):
+
+| | step 01 (2 files) | step 07 (6 files) |
+|---|---|---|
+| session CPU | 3.4 s (the big rocks: 12.4 s) | 3.5 s (2.6 s on 11-12, at lower load) |
+| join evaluation | 1.17 s, 1.35 M units | 1.61 s, 1.87 M units |
+| per-file memo and export | 0.85 s | 0.72 s |
+| join order searches | 0.44 s | 0.43 s |
+| components opened (spec, open, close) | 578: 0.76 + 0.36 + 0.05 s | 464: 0.57 + 0.26 + 0.04 s |
+| rule runs, with no work | 5,216, 1,421 | 4,961, 1,365 |
+| seeds led by a base relation | 166 runs, 0.32 s | 159 runs, 0.26 s |
+| of which pure copies (`kind :- node`) | 5 runs, 0.04 s | 5 runs, 0.04 s |
+| work under an order later replaced | 3.4% of the work | 8.3% (0.06 s; `ifn__ins` 47 K) |
+
+What each item can still save, read from these:
+
+- **O-warm-noop-delta / O-component-overhead:** the largest remaining item at both steps. Each opened
+  component costs about 1.8 ms (spec, open, close), about 1.2 s a step, and a quarter of the rule runs do no work.
+- **O-local-memo-cost:** 0.7-0.85 s a step (`keep a file's entry` 0.48-0.56 s).
+- **O-join-unit-cost:** 1.52 s over 1.87 M units at step 07, about 810 ns a unit, unchanged (520-830 ns).
+- **O-plan-component-start:** an upper bound of 0.06 s a step. Small now.
+- **O-base-seed-copies:** pure copies are 0.04 s a step. The rest of the item is join unit cost.
+- **O137:** both departures now equal a full run: one session from step 01 to 05 (`call_open` matches), and
+  typeshed steps 16-17. Which change fixed them is not known, so the item's closure (cause and a test) is not met.
+
+**dl1 batch** (44 data-layer policies, `run-policies`, `RERAIL_TAPE_CACHE=off`): 48 findings, 159.1 G
+instructions, 53.2 G cycles, 13.8 s CPU (last measured 163.2 G). Shares of the main thread's samples:
+
+| | share | earlier |
+|---|---|---|
+| `keeps::choose` (plan searches for its calibrated rows) | 12.6% (5.5% after 0159) | under 1.5% |
+| `merge_to_fixpoint` (`simplify::merge_identical`) | 12.3% | new: the duplicate merge pass (0058) |
+| `hiding::hide` (O-combine-hiding-single) | 4.4% | 7.5%, 8.3% |
+| `bridge::facts` → `run_typed` (O-batch-typing-once) | 4.0%, 3.6% | 15%, 13.5% |
+
+`merge_to_fixpoint` is now the largest repeated setup cost with `keeps::choose`. It runs once per policy,
+repeating `merge_identical` up to 16 times. It should run once per combined program, kept by the program's
+digest like the combined program (0094 §6), or merge in one pass.
+
+**One pass (built 2026-11-13).** The batch made 139 merges, 1.50 s in all, each 2 or 3 congruences: a repeated
+rule kept a relation from its twin, since rules were compared as lists. The congruence now compares a relation's
+rules as a set, and `merge_and_drop_repeats` (renamed) drops repeats, merges once and drops the repeats the merge
+made. Checked over the batch and O125 step 07: a further merge then finds nothing. dl1: 159.1 → 153.5 G
+instructions, 53.2 → 47.4 G cycles, the same 48 findings; O125 step 07 equals a full run.
+`a_repeated_rule_does_not_keep_a_relation_from_its_twin`.
+
+**`keeps::choose` (2026-11-13, decision 0159).** Over the batch's 100 programs, `estimate` planned 6,213 of
+8,330 rules to price 2,445 candidates, and 1,854 of the 1,897 priced came out small (stored unpriced). Planning
+was 85% of `choose`. A candidate whose inputs' counts bound it under `SMALL` rows is now stored with nothing
+planned: 3,407 rules planned for 434 candidates. dl1: 152.0 → 148.8 G instructions, the same 48 findings (load
+15-19); `choose` 10.9% → 8.7% of the main thread. Seven programs store a relation they inlined before, one the
+planner put over `SMALL` though its inputs allow fewer rows. Left: searches of long upstream bodies (7 or more
+joins, about 0.36 s of 0.55 s). Tried and dropped: greedy orders for rows, the bound as rows, plans shared
+across programs (0159). `a_relation_is_bounded_by_its_inputs_counts`,
+`a_candidate_bounded_small_is_stored_unplanned`.
+
+Then the overhead around the estimates (0159, "What the remaining estimates cost"): the EXPLAIN record made for
+calibration's step rows, 0137's guard reading statistics by name per pair of joins, reader copies made only to be
+counted, filter readiness in a hash map. dl1: 148.8 → 143.3 G instructions, the same findings; `choose` 8.4% →
+5.5% of the main thread. Left: the cost model and the search.
+
+**A closed connection's cached inputs (fixed 2026-11-13).** In the logic crate's own tests,
+`repeated_native_consumers_fold_each_demanded_bag_once` failed after
+`native_join_shares_summaries_across_rules_and_independent_slots`: its join read 4 rows of `events` for 3,000.
+The native evaluator caches a connection's path, symbols and inputs by its address, and a closed connection's
+address goes to the next opened. The close hook drops them only once `install_forget` has run, and only the
+engine's set-up called it. The native module now installs it before it keeps anything by an address.
+`a_closed_connection_leaves_nothing_by_its_address`.
+
+**Not measured:** O99 and O130 run on the 9,010-file data layer (minutes, past the run cap). O133 and O114 run
+on the 84-file Jedi recording, which is not on this machine (a 40-file subset is).
+
+## O-pack-passes. A pack's passes cost more per rule than one policy's
+
+**Seen (2026-11-13, decision 0168).** The dl1 batch as one pack has 4,287 rules, against about 30,000 with the
+libraries pasted into each policy, yet costs 134 G against 148 G. In the pack:
+- `combine` is 46 G: parsing 2.9 s (each of 44 programs lowered 0.95 s), and merging the programs 1.4 s (hiding the
+  combined program 0.46 s, fact spaces 0.41 s, merging identical relations 0.39 s);
+- `prepare` is 52 G: prune, simplify and demand 1.2 s; pushing the file-local joins into the chunks 1.4 s, which
+  splits the program 8 times (`split: N of M relations again`); merging identical relations again 0.58 s;
+- inline-or-store is 1.0 s on the local part and 0.4 s on the cross part, most of it outside any span inside it.
+
+**Closure:** each pass measured against the rules it reads. Passes that grow faster than the pack's rules are made
+to grow with them, and the dl1 pack is measured below 100 G cold without a store, with findings unchanged.
+
+**Progress (2026-11-13, decision 0168 "Loading the pack, made lighter").** 137.3 → 124.8 G cold, 69.9 → 63.7 G warm.
+The constants-ignored congruence is made only when profiled; hiding edits rules in place and borrows its names; the
+guard moves the rules out instead of cloning them. Left in loading:
+- the fact spaces (0.41 s debug, 0.06 s optimized), which split the whole program (`file_local::split_located`) for
+  its located columns alone;
+- hiding a single policy's own run: 0.27 s for 678 rules against 0.35 s for the pack's 4,287 (debug). Each round
+  computes reaching and the carried variables from scratch.
+
+**Optimized build (2026-11-13, decision 0168 "Loading on an optimized build").** The 0.90 s of "parse each program"
+was a debug build's. Optimized, it is 0.12 s, of which reading the texts into tapes and statements is 11 ms. The rest
+is lowering: each program's rules 31 ms, its analyses 24 ms, aggregate demand 15 ms, cycle checks 12 ms. Reading
+the libraries once per run and checking cycles once, combined, were built and measured; neither paid. The next
+lever in loading is the per-rule cost of lowering (about 2 ms a program), not the libraries.
+
+
+## What a cold batch still runs in series (2026-11-13, after decision 0179)
+
+The items below remain from the cold `dl1` batch (44 data-layer policies as one pack, `RERAIL_TAPE_CACHE=off`).
+Decisions 0178 and 0179 put the whole-program passes on the pool and removed the repeated work in them: median wall
+went from 2.32 s to 1.77 s. What is left runs on the main thread, one step after another.
+
+## O-run-state-threads. A run's state lives in thread-locals, so two runs cannot overlap
+
+**Seen (2026-11-13).** These steps run one after another on the main thread:
+
+```
+phase 0 → combine → the bridged typing run → phase 1 → constants → prepare → local → cross
+```
+
+Several of them are nested engine runs: phase 0's runs, the bridged typing run, phase 1 and the constants. Some
+nested runs need only part of what comes before them. For example, phase 1 needs the combined program only for its
+language and scope. Such a run could overlap the next step if it ran on another thread. It cannot yet, because a
+run's state is held per thread and per process:
+- 123 `thread_local!` in the engine, among them run nesting (`RUNS_UNDER_WAY`), the current phase, phase 0's mode,
+  the profile's hold, the session, the kept plans and derived values (`KeepPlans`, `derived::Keep`), the consulted
+  inputs and the Git scope;
+- process-wide state: the split memo (`split_memo::SPLITS`, two kept splits) and the profile.
+
+A nested run on another thread would see none of this. It would take itself for an outer run, and it would share
+the split memo with the run beside it.
+
+**Closure:** a run's state is one value passed to the run (or carried to the thread that runs it, as
+`rr::recorded_on_worker` carries the library reads), and the split memo is the run's own. Then a nested run with no
+dependency on the step before it runs on the pool, beside that step. Measured: `dl1` cold, same findings, with the
+overlapped steps' wall shown by `RERAIL_TIMELINE`. See O-typing-run-overlap for the largest such step.
+
+**Progress (2026-11-13, decision 0192).** Every thread-local is listed with its class (`logic::run_state::STATE`),
+and every job the engine starts carries the run's context (`run_state::Carry`: `Jobs::spawn`, `beside`, the strata's
+`Ambient`). The strict mode's waves are per run (a carried stage). Tests and a commit check refuse an unlisted
+thread-local. The bridged typing run runs beside phase 1. Still open:
+- the split memo is process-wide (exact under two runs, but they can push out each other's entries);
+- two pieces of run context are not carried yet (`plan::PLANNED_NOW`, `choices::DURABLE`), pinned;
+- the other nested runs (phase 0's, the constants') still run in order.
+
+**Closed (2026-11-14, decision 0197).**
+- The split memo is the run's own: a carried thread-local that each run opens as it begins (`split_memo::own`).
+- Both NotYet entries are carried. `PLANNED_NOW` is now `RunPlans::planned_now`, and `DURABLE` is carried as an
+  `Arc`. The NotYet count is pinned at 0.
+- Neither of the remaining nested runs has anything to overlap:
+  - the constants' run never starts on `dl1`, `struct.rr` or the Python pack, because `constants::foldable` is empty
+    there. An early start was built, then backed out unmeasured, because nothing ran.
+  - phase 0 is one batched `bootstrap.rr` run (about 0.2 s of CPU), and every later step needs its graphs. The nested
+    runs find their graphs kept (under 1 ms each).
+
+## O-cone-kept-plans. A kept plan changes the cross-file cone's result
+
+**Seen (2026-11-13, decision 0192).** When the cone's job (`beside("the cone of requests")`, plan/corpus.rs) runs
+with the run's kept plans (`enter_plans`), one test fails:
+`phases::tests::phase_1_loads_the_libraries_the_imports_reach_and_a_reader_takes_them`. After `b.pyi` is edited to
+import `c`, the second run's `lib` rows are `a, b, builtins`, without `c`. Without the plans (as before decision
+0192), they are right. A plan is an order and a price; it should never change rows. So either a kept plan carries
+something that depends on the inputs, or its key misses an input of the cone's (its delta, its sources).
+
+The cone now enters no plans (`enter_plans(None)`), and plans every rule afresh.
+
+**Closure:** find what the kept plan carries into the cone's second run. Then the cone shares the run's plans like
+every other job, the `enter_plans(None)` goes, and the test passes with them.
+
+**Closed (2026-11-14).** Not the plans: whether a thread holds kept plans is also how a run knows it is a corpus run
+(`plan.rs`, `let corpus = PLANS…is_some()`), and a corpus run makes its planning choices. Testing each switch apart:
+- with the plans, the budget off: fails;
+- with the plans, the choices neither reused nor made: passes;
+- the choices made afresh each run: fails;
+- inlining off: fails, so the culprit is the negation split (`demand::split_negations`).
+
+The split computes a relation only for the keys its readers reach. The cone keeps its strata for the next run, so the
+next run's new key (`c`, imported by the edited `b.pyi`) had no rows and no delta to make them: spike O125's case,
+which the session's cross-file part already avoids with `demand::whole_relations`. The cone now does the same
+whenever it keeps its strata (`cone_kept`), and takes the run's plans. The phase-1 library test, the cone, session and
+kept-strata tests pass (115); `dl1`'s findings and instructions are unchanged, cold and warm.
+
+Left as a note: "holds kept plans" standing for "a corpus run" is a second meaning on one switch. That is how this
+bug stayed hidden.
+
+## O-typing-run-overlap. The bridged typing run waits for the whole combined program
+
+**Seen (2026-11-13).** The bridged typing run (`bridge::facts` → `run_typed`) is about 0.3 s of the cold run's
+wall, and 13% of the main thread's samples. It is a whole nested run, with its own phase 0, combine, phase 1,
+prepare, local and cross. It starts after all 44 programs are combined (about 0.18 s), because `bridge::wanted`
+reads the combined program to find the bridged outputs that a rule reaching an output reads.
+
+The typing program's own text does not depend on the policies. Only the outputs it is asked for do (the
+`typing_bridge_at` rules added to its text).
+
+**Closure:** depends on O-run-state-threads. Two options:
+1. run the typing program's preparation, which does not depend on the policies, beside the policies' combine;
+2. find the wanted outputs from the policies' declarations before combining, then run the typing run beside the
+   combine.
+
+Measured as the typing run's wall overlapping the combine's on `dl1`, with findings unchanged. O-batch-typing-once
+is the same run's repetition across a batch's policies.
+
+**Progress (2026-11-13, decision 0192).** The typing run now runs beside phase 1, as a job that carries the run's
+context. It still starts after the combine; both options above remain.
+
+## O-demand-negation-rounds. The negation split checks every reader again each round
+
+**Seen (2026-11-13).** `plan::demand::split_negations` takes 3 rounds on `dl1`'s cross part and 5 on its local part
+(31 ms and 10 ms, "negation split" in the timeline). Each round already drops every candidate it finds failing:
+the guard's refusals, the untyped variables, and every component that does not stratify. The rounds are a real
+fixpoint: dropping a candidate changes which reads the others' anchors bind. But each round checks every reader
+again, and clones and stratifies the whole program again, though only the readers of the dropped candidates can
+change.
+
+**Closure:** a round after the first checks again only the readers of the candidates the round before dropped. It
+also stratifies again only the components that held them, as `magic_adorn`'s trials do since decision 0179. A check
+mode compares the result with the whole rounds. Measured as the negation split's span on `dl1`, with the same
+demanded relations.
+
+## O-lower-domains-order. Lowering's domain fixpoint depends on the order of its rules
+
+**Seen (2026-11-13).** `plan::lower::domains` gives each `sym` column a domain (a name, a kind, a field) by a
+worklist over the rules. The first rule that gives a column a domain wins (`slot @ None`). If two rules would give
+the same column different domains, the order of the rules decides between them. So the worklist cannot run in
+rounds on the pool, as decision 0178's greatest fixpoints do. It is about 20 ms of "lower the program" on `dl1`
+(38 ms in all), after decision 0179 cut its repeated column lookups.
+
+**Closure:** either show that no program gives a column two domains, or make such a program an error (a column's
+domain is then a function of the rules, not of their order), and then run the fixpoint in rounds. Measured on
+`dl1` and the Python pack's programs, with identical domains for every column.

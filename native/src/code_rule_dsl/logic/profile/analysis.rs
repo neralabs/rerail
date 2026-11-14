@@ -57,6 +57,10 @@ pub(super) struct Finding {
     pub evidence: String,
     pub action: &'static str,
 }
+/// A rule is wasteful when its joins make this many rows between steps ...
+pub(super) const WASTEFUL_ROWS: u64 = 1_000_000;
+/// ... and it keeps fewer than one in this many of them.
+pub(super) const WASTEFUL_RATIO: u64 = 100;
 pub(super) const SCALARS: &[&str] = &[
     "text",
     "name",
@@ -223,6 +227,42 @@ pub(super) fn analyze(i: &Input) -> Vec<Finding> {
                     "Check whether this restriction can precede the expansion. Preserve aggregate, negation, recursion, and world dependencies; do not move it blindly.",
                 );
             }
+        }
+    }
+    // A wasteful rule: a head relation whose plans make many rows in a join step and then drop them, so the rule
+    // (or its plan) is what gets fixed. A plan's waste is the most rows any step after the seed and before the last
+    // made; a seed scan that a test narrows is not waste (a check that finds little scans what it must). Summed
+    // over the head's plans and compared with the rows their last steps make. `frag_str` (t34's gun 10): 376
+    // fragments crossed with every string, 4.2 M rows, all rejected by `@doc`.
+    let mut heads: std::collections::BTreeMap<String, (u64, u64, f64, Option<(&Join, u64)>)> = Default::default();
+    for j in &i.joins {
+        let n = j.steps.len();
+        let peak = if n > 2 { j.steps[1..n - 1].iter().map(|s| s.1).max().unwrap_or(0) } else { 0 };
+        let h = heads.entry(super::kinds::head(&j.plan)).or_default();
+        h.0 += peak;
+        h.1 += j.steps.last().map_or(0, |s| s.1);
+        h.2 += j.cpu.unwrap_or(0.0);
+        if h.3.is_none_or(|(_, p)| p < peak) {
+            h.3 = Some((j, peak));
+        }
+    }
+    for (head, (made_between, made, cpu, worst)) in heads {
+        if made_between >= WASTEFUL_ROWS && made.saturating_mul(WASTEFUL_RATIO) < made_between {
+            let (worst, _) = worst.expect("a head has a plan");
+            let steps: Vec<String> = worst.steps.iter().map(|(a, b)| format!("{a}:{b}")).collect();
+            add(
+                "WASTEFUL_RULE",
+                "observed",
+                format!("rule {head}"),
+                Some(cpu),
+                format!(
+                    "its joins made {made_between} rows between steps and kept {made}; the largest plan (at {}): steps {} ; {}",
+                    if worst.path.is_empty() || worst.path == "-" { "the run" } else { &worst.path },
+                    steps.join(" "),
+                    worst.plan
+                ),
+                "Read the rule's body in its .rr file: a literal that binds nothing the next one reads (a cross product), a test that could be dropped or bound first, or a plan made before its relation had rows. Fix the rule or its plan.",
+            );
         }
     }
     for q in &i.sql {
@@ -475,6 +515,25 @@ pub mod tests {
         let c = codes(&i);
         assert!(c.contains(&"REPREPARE"));
         assert!(c.contains(&"REPEATED_STATEMENTS"));
+    }
+    #[test]
+    fn a_rule_that_reads_millions_of_rows_for_none_is_named_as_wasteful() {
+        // `frag_str` (t34's gun 10): doc_role's fragments, then every string unbound, then `@doc` rejects them all.
+        let mut i = Input {
+            joins: vec![Join {
+                path: "local/stratum frag_str/native".into(),
+                plan: "seed frag_str: doc_role($d, 17505) , kind($s, 1255) , $d = @doc($s)".into(),
+                steps: vec![(1, 2455), (2455, 7_100_000), (7_100_000, 0)],
+                cpu: Some(0.8),
+            }],
+            ..Default::default()
+        };
+        let f = analyze(&i).into_iter().find(|f| f.code == "WASTEFUL_RULE").expect("named");
+        assert_eq!(f.location, "rule frag_str");
+        assert!(f.evidence.contains("made 7100000 rows between steps and kept 0"), "{}", f.evidence);
+        // A rule whose rows are kept is not wasteful, however large.
+        i.joins[0].steps = vec![(1, 2_000_000), (2_000_000, 2_000_000)];
+        assert!(!codes(&i).contains(&"WASTEFUL_RULE"));
     }
     #[test]
     fn empty_results_and_legitimate_large_scans_are_not_defects() {

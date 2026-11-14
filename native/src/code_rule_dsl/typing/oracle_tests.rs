@@ -1681,7 +1681,7 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
     let exports = crate::code_rule_dsl::logic::plan::corpus::phases::declared(&types).unwrap().exports;
     let mut reader = String::new();
     for e in &exports {
-        let cols = &types.decls[e];
+        let cols = &types.decls[e.as_str()];
         let decl = cols.iter().map(|(c, t)| format!("{c}: {t}")).collect::<Vec<_>>().join(", ");
         let vars = (0..cols.len()).map(|i| format!("v{i}")).collect::<Vec<_>>().join(", ");
         reader.push_str(&format!(".decl types__{e}({decl})\n.decl out_{e}({decl})\nout_{e}({vars}) :- types__{e}({vars}).\n.output out_{e}\n"));
@@ -2036,7 +2036,11 @@ fn spike_o125_replay() {
     let cold = run();
     derivations(a - 1, "cold");
     keep(a - 1, "cold");
-    println!("o125r cold at {:02}: {:.1} s CPU, cross {:.1} s; rows {:?}", a - 1, cpu(&cold), phase(&cold, "cross"), outputs().iter().map(Vec::len).collect::<Vec<_>>());
+    println!("o125r cold at {:02}: {:.1} s CPU, cross {:.1} s ({:.2} G instructions); rows {:?}", a - 1, cpu(&cold), phase(&cold, "cross"), cold.phase_instructions.iter().filter(|p| p.0 == "cross").map(|p| p.1).sum::<u64>() as f64 / 1e9, outputs().iter().map(Vec::len).collect::<Vec<_>>());
+    let (opened, made) = crate::code_rule_dsl::logic::native::setfix::orders_counted();
+    println!("o125r cold derived-input orders: {opened} opened, {made} made (first probed)");
+    if std::env::var_os("RERAIL_SPIKE_PRESORTED").is_some() { println!("o125r cold presorted: {}", crate::code_rule_dsl::logic::native::setfix::runs::presorted::report()); }
+    println!("o125r cold phases (G instructions): {}", cold.phase_instructions.iter().map(|(n, i)| format!("{n} {:.2}", *i as f64 / 1e9)).collect::<Vec<_>>().join(", "));
     // `O125_FULL_ONLY`: each step a full run alone (to profile it apart from the session's runs).
     let full_only = std::env::var_os("O125_FULL_ONLY").is_some();
     for step in a..=b {
@@ -2052,8 +2056,8 @@ fn spike_o125_replay() {
         keep(step, "session");
         let got = outputs();
         let mut line = format!(
-            "o125r {step:02} ({files} files): session {:.1} s CPU, cross {:.1} s, local {:.1} s; strata {:?}, maintained {:?}, again {:?}; rows over-deleted/inserted/held/input-deltas/truly-deleted/truly-inserted {:?}; inputs changed {}",
-            cpu(&r), phase(&r, "cross"), phase(&r, "local"), r.cross_strata, r.cross_maintained, r.cross_again, r.cross_delta_counts, r.cross_changed.len()
+            "o125r {step:02} ({files} files): session {:.1} s CPU, cross {:.1} s ({:.2} G instructions), local {:.1} s; strata {:?}, maintained {:?}, again {:?}; rows over-deleted/inserted/held/input-deltas/truly-deleted/truly-inserted {:?}; inputs changed {}",
+            cpu(&r), phase(&r, "cross"), r.phase_instructions.iter().filter(|p| p.0 == "cross").map(|p| p.1).sum::<u64>() as f64 / 1e9, phase(&r, "local"), r.cross_strata, r.cross_maintained, r.cross_again, r.cross_delta_counts, r.cross_changed.len()
         );
         // `O125_SAVE`: each step's outputs, `<dir>/NN.txt`, to compare two modes' runs without a full run each.
         if let Some(dir) = std::env::var_os("O125_SAVE").map(PathBuf::from) {
@@ -2076,6 +2080,7 @@ fn spike_o125_replay() {
         }
         println!("{line}");
     }
+    if std::env::var_os("RERAIL_SPIKE_PRESORTED").is_some() { println!("o125r all presorted: {}", crate::code_rule_dsl::logic::native::setfix::runs::presorted::report()); }
     session::stop();
     let _ = std::fs::remove_dir_all(&base);
 }

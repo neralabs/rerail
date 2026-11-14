@@ -102,7 +102,7 @@ impl Embedder for TestScript {
         segments.index();
         Some(Program {
             dialect,
-            tree,
+            parse: super::Parse::Tree(tree),
             text,
             segments,
             host_errors: Vec::new(),

@@ -147,7 +147,7 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
         match line {
             // The run held its rows in memory, not in tables; the replay writes them, to compare them.
             // Where the run put it (`Device`): the replay runs every capture on the CPU, and again on the device.
-            Line::NoWrite | Line::Device | Line::Leveled(_) | Line::Stats(_) | Line::KeptOld | Line::Seed { .. } | Line::Join { .. } => {}
+            Line::NoWrite | Line::Device | Line::Leveled(_) | Line::Stats(_) | Line::KeptOld | Line::Lattice { .. } | Line::Seed { .. } | Line::Join { .. } => {}
             Line::Rel { name, types, start } => {
                 let empty = match start {
                     Start::Rows => false,
@@ -157,6 +157,7 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
                 rels.push((name.clone(), format!("r{}", rels.len()), types.as_bytes().to_vec(), empty));
             }
             Line::Request(_) => return Err("a `request` line".to_owned()),
+            Line::Unplanned { .. } => return Err("a probe not planned yet".to_owned()),
             Line::Produced(_) => return Err("a `produced` line".to_owned()),
             Line::Probe { .. } => return Err("a `probe` line".to_owned()),
             Line::Gate { .. } => return Err("a `gate` line".to_owned()),

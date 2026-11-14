@@ -470,7 +470,7 @@ fn compile_case(name: &str, source: &str) -> Result<Case, String> {
             _ => {}
         }
     }
-    let falls = stmts.iter().any(|s| matches!(s, Stmt::Error(..) | Stmt::Escape(..) | Stmt::Count { .. }));
+    let falls = stmts.iter().any(|s| matches!(s, Stmt::Error(..) | Stmt::TokenError(..) | Stmt::Escape(..) | Stmt::Count { .. } | Stmt::Mark { unplaced: Some(_), .. } | Stmt::TokenEscape { .. }));
     let mut outputs: Vec<&str> = names.iter().map(String::as_str).collect();
     if falls {
         outputs.push(bitlex_compile::FALLBACK);

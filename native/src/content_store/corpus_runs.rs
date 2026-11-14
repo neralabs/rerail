@@ -97,9 +97,22 @@ impl CorpusPass {
 }
 
 /// The corpus memo's schemas before 4 (logic/plan/corpus/memo.rs): their rows were written before decision 0053, under
-/// plans no manifest names, so only a sweep collects them. Theirs alone: the slice's memo is schema 1 and a prepared
-/// program's entries 101 to 103, all under other numbers, and a content-pure row (empty path) is never the corpus's.
+/// plans no manifest names, so only a sweep collects them, by number alone (a content-pure row, empty path, is never
+/// the corpus's). So no other user of `facts_results` may take one: each declares its schema through
+/// `live_fact_schema`. The plan choices (3) and kept plans (2) once did, and a new store's first collection swept
+/// the first run's entries (O-kept-strata-flake).
 pub const RETIRED_CORPUS_MEMO_SCHEMAS: &[u32] = &[2, 3];
+
+/// `schema`, refused at compile time when the sweep of `RETIRED_CORPUS_MEMO_SCHEMAS` would delete its rows: every
+/// `facts_results` user's fact schema is declared through this.
+pub const fn live_fact_schema(schema: u32) -> u32 {
+    let mut i = 0;
+    while i < RETIRED_CORPUS_MEMO_SCHEMAS.len() {
+        assert!(RETIRED_CORPUS_MEMO_SCHEMAS[i] != schema, "a retired corpus memo schema: the collector sweeps its rows");
+        i += 1;
+    }
+    schema
+}
 
 fn lapsed_plan_hold(connection: &rusqlite::Connection, now: i64) -> StoreResult<bool> {
     Ok(connection
@@ -109,7 +122,7 @@ fn lapsed_plan_hold(connection: &rusqlite::Connection, now: i64) -> StoreResult<
 }
 
 /// The holds (`object_pins`) of runs whose process is gone: a run killed (a watchdog, a crash) never releases its
-/// hold, which kept its plans live, and their memos (decision 0108), for the lease's 6 hours. A run's owner names its
+/// hold, which kept its plans live, and their memos (decision 0146), for the lease's 6 hours. A run's owner names its
 /// process (`corpus-run:<pid>:…`); a process of this host that no longer exists holds nothing. A pid used again by
 /// another process keeps the hold to its lease, as before.
 fn orphaned_holds(connection: &rusqlite::Connection) -> StoreResult<Vec<String>> {
@@ -280,8 +293,18 @@ impl ContentStore {
         self.write_back("the kept statistics", blob.len(), vec![(stat_blob_key(&plan), None)], Box::new(move |store| store.put_stat_blob(plan, &blob)));
     }
 
+    /// `queue_stat_blob` of statistics naming symbols: `map` gives the blob with the store's ids, in the writer's
+    /// transaction (decision 0170).
+    pub fn queue_stat_blob_mapped(&self, plan: [u8; 32], blob: Vec<u8>, map: Box<dyn Fn(&ContentStore, &[u8]) -> StoreResult<Vec<u8>> + Send>) {
+        self.write_back_syms(super::write_back::Syms::Mapped, "the kept statistics", blob.len(), vec![(stat_blob_key(&plan), None)], Box::new(move |store| {
+            let mapped = map(store, &blob)?;
+            store.put_stat_blob(plan, &mapped)
+        }));
+    }
+
     /// Memo plan `plan`'s kept statistics (`put_stat_blob`), if a run kept them; a queued write of them first.
     pub fn stat_blob(&self, plan: [u8; 32]) -> StoreResult<Option<Vec<u8>>> {
+        // Its statistics name symbols by the store's ids: the reader maps them (decision 0170, `Keeper::map_symbols`).
         self.settle(&stat_blob_key(&plan));
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let kept: i64 = connection.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='stat_blob'", [], |r| r.get(0))?;
@@ -588,7 +611,7 @@ impl ContentStore {
             }
             // A plan is live while a root's protected runs name it (or a run holds it). A kept manifest past them
             // keeps its sources and tapes (any build's warm run reads them), not its plan: a plan names the engine
-            // build and the program, and its memo (decision 0108: a space of frames, the size of every file's
+            // build and the program, and its memo (decision 0146: a space of frames, the size of every file's
             // results) serves only runs of both. Manifests are kept by the bytes of their sources and tapes, which
             // a small corpus never fills, so every build's memo stayed live (1.75 GB of 1.86 GB of frames).
             let mut protection = Protection::default();
@@ -645,6 +668,11 @@ impl ContentStore {
     /// the store's collection (`collect`).
     /// Active readers defer the pass without clearing the pending collection flag.
     pub fn collect_corpus_pass(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<CorpusPass> {
+        // Its writes delete rows and set flags, naming no atom: a forked process collects too (decision 0170).
+        super::atoms::mapped(|| self.collect_corpus_pass_unmapped(policy, now))
+    }
+
+    fn collect_corpus_pass_unmapped(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<CorpusPass> {
         let Some(_lease) = self.try_collect()? else { return Ok(CorpusPass::default()) };
         let mut pass = CorpusPass::default();
         // Rows of the corpus memo's retired schemas (before decision 0053 named plans): no plan collects them.
@@ -706,7 +734,7 @@ impl ContentStore {
                     params![plan, PLAN_ROWS_PER_PASS],
                 )?;
                 if (n as i64) < PLAN_ROWS_PER_PASS {
-                    // The plan's per-file memo (decision 0108): its frames' space.
+                    // The plan's per-file memo (decision 0146): its frames' space.
                     let mut frames_gone = 0;
                     if let Ok(digest) = <[u8; 32]>::try_from(plan.as_slice()) {
                         let space = super::frames::local_space(&digest);
@@ -719,7 +747,7 @@ impl ContentStore {
                     }
                     tx.execute("DELETE FROM corpus_plans WHERE plan_digest=?1 AND live=0", [&plan])?;
                     tx.execute("DELETE FROM corpus_plan_relations WHERE plan_digest=?1", [&plan])?;
-                    // A dead plan collected is work done, though its memo is frames now (decision 0108), not rows.
+                    // A dead plan collected is work done, though its memo is frames now (decision 0146), not rows.
                     return Ok(n + frames_gone + 1);
                 }
                 Ok(n)

@@ -10,6 +10,9 @@ mod micro;
 pub mod syntax;
 pub mod tape;
 
+/// The tape image's format and its in-place reader (`View`), for the readers of this crate's images.
+pub use rerail_tape_format as tape_format;
+
 /// A `.rr` file that does not parse: the engine's `Error::Syntax`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {

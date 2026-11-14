@@ -61,7 +61,7 @@ pub(super) struct Compiled {
     prepares: Arc<std::sync::OnceLock<bool>>,
 }
 
-pub(super) fn accepts(prog: &Program) -> Result<bool> {
+pub fn accepts(prog: &Program) -> Result<bool> {
     if !prog.lattice.is_empty()
         || !prog.answers.is_empty()
         || !prog.gates.is_empty()
@@ -103,6 +103,8 @@ pub(super) fn accepts(prog: &Program) -> Result<bool> {
 }
 
 pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
+    // The program's rules, read by the planner by their handles (t36 item 2).
+    let vs = super::body::Versions::of(prog)?;
     // SQLite folds identifier case, whereas rule relations are case-sensitive.
     // Bind physical names on the typed query; never replace substrings in rendered SQL.
     let mut counts = HashMap::<String, usize>::new();
@@ -112,7 +114,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
     for rel in prog.decls.keys().filter(|r|counts[&r.to_ascii_lowercase()] > 1) {
         let mut name = format!("__rr_relation_{}", names.len());
         while !taken.insert(name.to_ascii_lowercase()) { name.push('_'); }
-        names.insert(rel.clone(), name);
+        names.insert(rel.to_string(), name);
     }
     let physical = |rel: &str| ident(names.get(rel).map(String::as_str).unwrap_or(rel)).into_owned();
     let outputs: Vec<String> = prog
@@ -145,7 +147,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
     let mut frame_defs = Vec::new();
     for (input, count) in frame_counts {
         let mut name = format!("__rr_demand_{}", frames.len());
-        while prog.decls.contains_key(&name) {
+        while prog.decls.contains_key(name.as_str()) {
             name.push('_');
         }
         frame_defs.push(format!(
@@ -220,7 +222,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
         )
     };
     for rel in prog.decls.keys().filter(|r| {
-        needed.contains(*r) && !prog.inputs.contains(*r) && !has_rules.contains(r.as_str())
+        needed.contains(r.as_str()) && !prog.inputs.iter().any(|i| i == r.as_str()) && !has_rules.contains(r.as_str())
     }) {
         let arms = constants(rel);
         add(
@@ -239,14 +241,12 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
         if !needed.contains(rel) || prog.inputs.contains(rel) {
             continue;
         }
-        let mut rules: Vec<_> = prog.rules.iter().filter(|r| r.head.rel == *rel).collect();
+        // The relation's rules, by key, read by their handles.
+        let reads_itself = |b: &super::body::Body<'_>| (0..b.len()).filter_map(|i| b.atom(i)).any(|a| b.rel(a) == rel.as_str());
+        let mut rules: Vec<super::body::Body<'_>> =
+            prog.rules.iter().enumerate().filter(|(_, r)| r.head.rel == *rel).map(|(k, _)| vs.at(super::body::RuleKey::program(k))).collect();
         // SQLite requires every seed before every recursive arm. UNION provides the visited set.
-        rules.sort_by_key(|r| {
-            r.body
-                .iter()
-                .filter_map(Literal::atom)
-                .any(|a| a.rel == *rel)
-        });
+        rules.sort_by_key(|b| reads_itself(b));
         if rules.is_empty() {
             continue;
         }
@@ -260,7 +260,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
         if let Some((kind,input,targets,parameters))=producer {
             *dependencies.entry(input.clone()).or_default() += 1;
             if let Some(target) = targets { *dependencies.entry(target.clone()).or_default() += 1; }
-            let cols = prog.decls[rel]
+            let cols = prog.decls[rel.as_str()]
                 .iter()
                 .enumerate()
                 .map(|(c, (_, ty))| {
@@ -288,10 +288,9 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
                 .unwrap_or_default();
             arms.push(format!("SELECT DISTINCT {cols} FROM {} AS demanded CROSS JOIN rr_batch_python_{kind} WHERE frame=demanded.handle{target}{parameters}",frames[input]));
         } else {
-            for rule in rules {
-                let ((order, _, _), _) =
-                    model.plan_rule_reused(prog, &rule.head, &rule.body, None)?;
-                let mut q = model.checked_query(prog, &rule.head, &order, None, None)?;
+            for b in rules {
+                let ((order, _, _), _) = model.plan_rule_reused(prog, &b, None)?;
+                let mut q = model.checked_query(prog, &b, &order, None, None)?;
                 count_reads(&mut q.body, &mut dependencies);
                 for cte in &mut q.ctes { for arm in &mut cte.arms { count_reads(arm, &mut dependencies); } }
                 bind_names(&mut q.body, &names);
@@ -303,13 +302,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
                 }
                 // Keep the statistics-driven plan's demand anchors. The session-table
                 // sqlite_order policy loses native posting selectivity behind these CTEs.
-                if !q.ctes.is_empty()
-                    && rule
-                        .body
-                        .iter()
-                        .filter_map(Literal::atom)
-                        .any(|a| a.rel == *rel)
-                {
+                if !q.ctes.is_empty() && reads_itself(&b) {
                     return Err(Error::Plan(format!(
                         "{rel}: recursive walk needs a separate physical plan"
                     )));
@@ -343,7 +336,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
     }
     let width = outputs
         .iter()
-        .map(|r| prog.decls[r].len())
+        .map(|r| prog.decls[r.as_str()].len())
         .max()
         .unwrap_or(1);
     let arms = outputs
@@ -352,7 +345,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
         .map(|(id, rel)| {
             let cols = (0..width)
                 .map(|c| {
-                    if c >= prog.decls[rel].len() {
+                    if c >= prog.decls[rel.as_str()].len() {
                         "NULL".into()
                     } else {
                         format!("c{c}")
@@ -482,7 +475,7 @@ impl Compiled {
         while let Some(row) = cursor.next()? {
             let rel = &self.outputs[row.get::<_, i64>(0)? as usize];
             values.get_mut(rel).unwrap().push(
-                (0..prog.decls[rel].len())
+                (0..prog.decls[rel.as_str()].len())
                     .map(|c| row.get(c + 1))
                     .collect::<rusqlite::Result<_>>()?,
             );
@@ -542,7 +535,7 @@ impl Compiled {
                     db,
                     &rel,
                     ints,
-                    vec![b'i'; prog.decls[&rel].len()],
+                    vec![b'i'; prog.decls[rel.as_str()].len()],
                 )?;
                 }
                 out.kept.insert(rel.clone());

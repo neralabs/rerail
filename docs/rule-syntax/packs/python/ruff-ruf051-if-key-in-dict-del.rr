@@ -30,7 +30,7 @@ field_more(s) :- kind(s, "subscript"), count : { child(s, c, _), !kind(c, "comme
 .decl key_of(e: node, t: symbol, v: symbol)
 key_of(e, "name", x) :- unparen(e, m), kind(m, "identifier"), text(m, x).
 key_of(e, "str", v) :- unparen(e, m), plain_str(m, v).
-key_of(e, "bytes", v) :- unparen(e, m), string_form(m, "bytes"), value(m, v).
+key_of(e, "bytes", v) :- unparen(e, m), string_form(m, "bytes"), str(m, v).
 key_of(e, "bytes", v) :- unparen(e, m), kind(m, "concatenated_string"), child(m, s0, 0), string_form(s0, "bytes"),
     v = join x by i sep "" : { child(m, s, i), kind(s, "string"), value(s, x) }.
 key_of(e, "integer", v) :- unparen(e, m), kind(m, "integer"), value(m, v).

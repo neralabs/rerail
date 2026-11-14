@@ -12,7 +12,7 @@
 //!
 //! - **Sizes** are powers of two from `SMALLEST` bytes, so a lease wastes at most half a block
 //!   and a run of growing chunks makes few blocks.
-//! - **What is kept** is bounded by `SHARE` bytes of the Metal buffer budget. A block returned
+//! - **What is kept** is bounded by `share()` bytes of the Metal buffer budget. A block returned
 //!   past it is released. Idle blocks give way to any buffer the budget would refuse
 //!   (`give_way`), the largest first.
 //! - **Everything is dropped** with the residency slabs, two minutes after the last execution
@@ -32,7 +32,10 @@ const SMALLEST: usize = 16 << 10;
 /// it (848 bytes a block of `.rr`), and a block made again at each run cost the host most of
 /// its time: a fresh mapping, every page faulted in and written. Idle blocks give way to a
 /// lease the budget would refuse (`lease_in`).
-const SHARE: usize = crate::runtime::METAL_BUFFER_LIMIT;
+/// The run's Metal budget (`--metal-mb`, decision 0126), read when a block is returned.
+fn share() -> usize {
+    crate::runtime::metal_buffer_limit()
+}
 
 struct Pool {
     /// Idle blocks per size class (`SMALLEST << class`).
@@ -85,7 +88,7 @@ impl Drop for Block {
         let Some(buffer) = self.buffer.take() else { return };
         let bytes = self.byte_length();
         let Ok(mut pool) = self.pool.lock() else { return };
-        if pool.held + bytes > SHARE {
+        if pool.held + bytes > share() {
             if std::env::var("RERAIL_POOL_DEBUG").is_ok() {
                 eprintln!("pool: a block of {} MiB released ({} MiB idle)", bytes >> 20, pool.held >> 20);
             }
@@ -267,7 +270,7 @@ mod tests {
         }
         // Idle, a block of most of the budget: a buffer as large is still made, and the idle
         // block is what gave way.
-        let most = crate::runtime::METAL_BUFFER_LIMIT / 2 + SMALLEST;
+        let most = crate::runtime::metal_buffer_limit() / 2 + SMALLEST;
         drop(lease(most).unwrap());
         assert!(held() >= most);
         let other = MappedBuffer::slab(most).unwrap();
