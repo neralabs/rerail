@@ -233,4 +233,4 @@ Still to do:
    - a slow-test timeout.
 5. **Fix the stack overflow** in `syntax_detection_reads_a_deeply_nested_top_level`.
 6. **A shared sccache backend on the mac mini, and the gates on the idle Macs** (§4).
-7. **Update AGENTS.md's figures:** a CLI rebuild after a one-file edit is now about 20 s, not 135 s.
+
