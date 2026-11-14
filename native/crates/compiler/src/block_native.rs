@@ -303,7 +303,13 @@ impl BlockNative {
     /// The extracts' outputs the CPU's record pass makes, not a mask (`ruled_lasts`,
     /// `walked_starts`).
     pub fn records_made(&self) -> Vec<usize> {
-        self.ruled_lasts().into_iter().chain(self.walked_starts()).collect()
+        self.ruled_lasts().into_iter().chain(self.walked_starts()).chain(self.loops_errors()).collect()
+    }
+
+    /// The outputs of the errors the CPU's token loop checks (`Records::untaken`), where it finds
+    /// the starts: the CPU makes none of them.
+    pub fn loops_errors(&self) -> Vec<usize> {
+        self.records.as_ref().filter(|r| r.skip.is_some()).map_or(Vec::new(), |r| r.untaken.iter().map(|&o| usize::from(o)).collect())
     }
 
     /// The same program with every `class` written as a boolean formula of the eight bit-planes

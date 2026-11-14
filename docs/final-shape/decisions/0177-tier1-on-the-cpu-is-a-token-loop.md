@@ -148,3 +148,12 @@ every mark from the codes: the any-mark mask goes (`the_marks_are_not_start_mask
 form: 285 operations, from 331. What still reads `code` and the regions among the marks:
 `newline` (its `after_comma`, a fill to the next start), `float_after` and `json_bad`.
 
+## Checks at the token
+
+`error "WHY" by tokens when E`: an error whose bytes are the ones the token loop starts a
+token at that no token begins with (`NO_RULE`). Its mask is an output of its own among the
+totals (`Records::untaken`): Metal makes it; the CPU makes a zero and its loop refuses the
+file at such a byte. The interpreter does both. Over the corpus and stray bytes at the blocks'
+edges, the two refuse the same files with the other errors (`the_loops_errors_are_the_masks`,
+1,525 files). The `.rr` grammar's `a byte no token takes` is one. CPU form: 276 operations.
+

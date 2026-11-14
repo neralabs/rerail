@@ -1452,7 +1452,8 @@ pub mod tests {
         let k = c.native.walked_starts().expect("the records' starts by the loop");
         let cpu = c.native.cpu_form();
         assert!(matches!(cpu.insts[usize::from(cpu.outputs[k])], BlockInst::Const(0)), "the CPU makes the starts' mask");
-        assert_eq!(c.native.records_made().len(), c.native.extracts.len(), "every extract the record pass's");
+        let made = c.native.records_made();
+        assert!(c.native.extracts.iter().all(|e| made.contains(e)), "every extract the record pass's");
     }
 
     /// The CPU's tier 1 (the JIT) makes the interpreter's records: each file's starts, lasts,
@@ -1532,6 +1533,12 @@ pub mod tests {
                     }
                 }
             }
+            for (i, &m) in c.native.masks.iter().enumerate() {
+                if m == o {
+                    let uses: Vec<&str> = c.words.lines().filter(|l| l.ends_with(&format!(" {i}")) && (l.contains(" ROW") || l.contains(" CHECK") || l.contains(" MARK"))).map(|l| if l.contains(" ROW") { "ROW" } else if l.contains(" CHECK") { "CHECK" } else { "MARK" }).collect();
+                    label.push(format!("mask{i}{:?}", uses.first()));
+                }
+            }
             rows.push((only, mine, o, label.join(",")));
         }
         rows.sort_by(|a, b| b.cmp(a));
@@ -1539,6 +1546,39 @@ pub mod tests {
         for (only, mine, o, label) in rows {
             eprintln!("  output {o:3} {label:30} reads {mine:4}, only it {only:4}");
         }
+    }
+
+    /// Decision 0177: an error by tokens (`a byte no token takes`) holds where the token loop
+    /// starts a token at a byte no token begins with, and nowhere else: its mask, which Metal
+    /// makes, and the loop, which the CPU runs, refuse the same files.
+    #[test]
+    fn the_loops_errors_are_the_masks() {
+        let c = crate::compiled().expect("compiles");
+        let block = &c.program.block_programs[0];
+        let r = block.records.as_ref().expect("records");
+        assert!(!r.untaken.is_empty(), "an error by tokens");
+        let files = corpus();
+        let mut inputs: Vec<Vec<u8>> = files.iter().map(|f| f.as_bytes().to_vec()).collect();
+        for bad in ["\\", "\u{e9}", "'", "$", "?", "\x01", "\\\"x\"", "\u{1F600}"] {
+            for pad in [0usize, 61, 63, 64] {
+                inputs.push(format!("{}r(x) :- a(x) {bad} b(x).\n", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("{}r(x) :- a(x), \"{bad}\" = x.\n", " ".repeat(pad)).into_bytes());
+            }
+        }
+        let skip = r.skip.expect("the loop's skip");
+        let (mut refused, mut both) = (0, 0);
+        for f in &inputs {
+            let run = block.run(f);
+            let fires = |o: usize| run.outputs[o].iter().any(|&w| w != 0);
+            let others = block.total_outputs().into_iter().any(|o| !r.untaken.iter().any(|&u| usize::from(u) == o) && fires(o));
+            let mask = others || r.untaken.iter().any(|&o| fires(usize::from(o)));
+            let (_, _, untaken) = rerail_compiler::records::walk(r, skip, f, &run.outputs);
+            let loop_ = others || untaken;
+            assert_eq!(mask, loop_, "{:?}: refused by the masks {mask}, with the loop's error {loop_}", String::from_utf8_lossy(&f[..f.len().min(80)]));
+            refused += usize::from(mask);
+            both += 1;
+        }
+        eprintln!("{both} files, {refused} refused by both");
     }
 
     /// Decision 0177's guard for the marks: none is a start mask. The marks between tokens are

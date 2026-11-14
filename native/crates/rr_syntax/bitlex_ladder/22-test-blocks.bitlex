@@ -199,7 +199,7 @@ mask p          = code & punct & ~f_dot
 mask p_start    = p & ~second
 mask p_last     = (p_start & ~two_start) | second
 
-error "a byte no token takes" when code & ~ws & ~hashword & ~ident & ~num & ~p & ~f_dot
+error "a byte no token takes" by tokens when code & ~ws & ~hashword & ~ident & ~num & ~p & ~f_dot
 
 # A token ended by a rule (`run`, `pair`) ends at its start on the CPU, by its run or its pair
 # bit (decision 0177); the others by their last byte's mask. The rules read no `code`: the token

@@ -417,7 +417,7 @@ impl<'a> Ev<'a> {
                 self.token_marks.insert(self.marks.len(), (before.clone(), seq.clone()));
                 self.marks.push((kind.clone(), Mask::zeros(self.n), false));
             }
-            Stmt::Error(msg, e) => {
+            Stmt::Error(msg, e) | Stmt::TokenError(msg, e) => {
                 let m = self.mask(e)?;
                 self.err(msg, &m);
             }

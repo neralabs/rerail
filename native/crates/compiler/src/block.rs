@@ -948,7 +948,8 @@ impl BlockProgram {
                 let mut positions = positions;
                 // The tokens by the loop (decision 0177, stage 2a): its starts and lasts.
                 if let Some((r, skip)) = self.records.as_ref().and_then(|r| r.skip.map(|k| (r, k))) {
-                    let (s, l) = crate::records::walk(r, skip, bytes, &outputs);
+                    let (s, l, untaken) = crate::records::walk(r, skip, bytes, &outputs);
+                    any |= untaken && !r.untaken.is_empty();
                     positions[usize::from(r.starts)] = s;
                     positions[usize::from(r.lasts)] = l;
                 } else if let Some(r) = self.records.as_ref().filter(|r| !r.rules.is_empty()) {
@@ -1730,6 +1731,10 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         }
         if let Some(k) = r.extra {
             let _ = writeln!(out, "  block {at} recextra {k}");
+        }
+        // `block N recuntaken O` each error the token loop checks.
+        for o in &r.untaken {
+            let _ = writeln!(out, "  block {at} recuntaken {o}");
         }
         // `block N recskip O`: the bytes between tokens, the loop's (stage 2a).
         if let Some(o) = r.skip {

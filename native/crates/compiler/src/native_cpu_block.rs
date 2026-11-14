@@ -1931,12 +1931,15 @@ fn inside_or_past(f: &mut FunctionBuilder<'_>, inside: Value, to: cranelift_code
 /// 0177): the rule by one load of its first byte, then a block a rule, each straight-line in its
 /// first word; a run or a search past it goes on a word at a time, in a cold block. A search
 /// that finds no last gives `s - 1`, which the order check refuses.
-fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, outputs: usize, c: &FileCols, s: Value, limit: Option<Limit>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
+fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, outputs: usize, c: &FileCols, s: Value, limit: Option<Limit>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Value, Value) {
     use crate::records::EndRule;
     let ro = MemFlags::trusted().with_readonly();
     let fl = MemFlags::trusted();
-    let ended = f.create_block();
+    // The last, and a refusal (its sign bit): a byte with no rule, where errors by tokens refuse.
+    let (ended, done) = (f.create_block(), f.create_block());
     f.append_block_param(ended, types::I64);
+    f.append_block_param(done, types::I64);
+    f.append_block_param(done, types::I64);
     // Output `o`'s word `q` (`q` below the file's blocks).
     let word_at = |f: &mut FunctionBuilder<'_>, q: Value, o: u16| {
         let off = f.ins().imul_imm(q, 8 * outputs as i64);
@@ -1959,7 +1962,8 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         f.switch_to_block(other);
         if k + 1 == blocks.len() {
             f.set_cold_block(other);
-            f.ins().jump(ended, &[s.into()]);
+            let refuse = f.ins().iconst(types::I64, if r.untaken.is_empty() || r.skip.is_none() { 0 } else { -1 });
+            f.ins().jump(done, &[s.into(), refuse.into()]);
         }
     }
     for (&rule, &b) in r.rules.iter().zip(&blocks) {
@@ -2053,7 +2057,11 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         }
     }
     f.switch_to_block(ended);
-    f.block_params(ended)[0]
+    let l = f.block_params(ended)[0];
+    let zero = f.ins().iconst(types::I64, 0);
+    f.ins().jump(done, &[l.into(), zero.into()]);
+    f.switch_to_block(done);
+    (f.block_params(done)[0], f.block_params(done)[1])
 }
 
 /// The next token's first byte from `after` (`records::walk`, stage 2a): the first bit at or
@@ -2217,8 +2225,10 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     } else {
         f.ins().uload32(fl, sa, 0)
     };
+    let mut refused = None;
     let l = if ruled {
-        let l = rule_last(f, r, t, outputs, c, s, limit, heads);
+        let (l, refuse) = rule_last(f, r, t, outputs, c, s, limit, heads);
+        refused = Some(refuse);
         f.ins().istore32(stores, l, la, 0);
         l
     } else {
@@ -2229,6 +2239,10 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let before = f.ins().isub(l, s);
     let inside = f.ins().isub(s, after);
     let wrong = f.ins().bor(before, inside);
+    let wrong = match refused {
+        Some(x) => f.ins().bor(wrong, x),
+        None => wrong,
+    };
     let bad = f.ins().bor(bad, wrong);
     // The loop goes on past the token's first byte at least, whatever its rule found: a
     // search that found no last gives `s - 1`, below zero at `s = 0`, so the max is signed.

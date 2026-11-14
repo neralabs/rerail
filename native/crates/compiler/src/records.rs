@@ -52,6 +52,9 @@ pub struct Records {
     pub gaps: u32,
     /// The mark whose bit tells an extra's token (a comment), if any: an extra has no gap mark.
     pub extra: Option<u8>,
+    /// The outputs of the errors the token loop checks (`error … by tokens`): a byte it starts a
+    /// token at that no token begins with refuses the file. The CPU makes none of them.
+    pub untaken: Vec<u16>,
 }
 
 /// A byte's end rule (`Records::ends`) when no token begins with it: its token is the byte
@@ -123,13 +126,15 @@ pub fn lasts(records: &Records, bytes: &[u8], starts: &[u32], outputs: &[Vec<u64
 /// first byte from the end of the one before that `skip` (an output) does not hold, a word of
 /// it at a time, and ends by its first byte's rule (`last_by_rule`; no rule, the byte alone).
 /// A region's token ends at its region's last byte, so the loop never starts one inside it.
-/// The starts and the lasts.
-pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) -> (Vec<u32>, Vec<u32>) {
+/// The starts, the lasts, and whether a token starts at a byte with no rule (`NO_RULE`), which
+/// the errors by tokens (`Records::untaken`) refuse.
+pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) -> (Vec<u32>, Vec<u32>, bool) {
     let n = bytes.len();
     let blank = outputs.get(usize::from(skip)).map_or(&[][..], |v| v.as_slice());
     let held = |q: usize| !blank.get(q).copied().unwrap_or(0);
     let (mut starts, mut lasts) = (Vec::new(), Vec::new());
     let mut at = 0usize;
+    let mut untaken = false;
     'tokens: while at < n {
         let mut q = at / 64;
         let mut x = held(q) & (!0u64 << (at % 64));
@@ -146,13 +151,16 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
         }
         let l = match records.rules.get(usize::from(records.ends[usize::from(bytes[s])])) {
             Some(&rule) => last_by_rule(rule, s, outputs).unwrap_or(s).max(s),
-            None => s,
+            None => {
+                untaken = true;
+                s
+            }
         };
         starts.push(s as u32);
         lasts.push(l as u32);
         at = l + 1;
     }
-    (starts, lasts)
+    (starts, lasts, untaken)
 }
 
 /// The most marks a code holds.

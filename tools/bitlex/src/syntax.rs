@@ -338,6 +338,10 @@ pub enum Stmt {
     Keywords { kind: String, words: Vec<(Vec<u8>, Option<String>)>, soft: Vec<Vec<u8>>, required: bool },
     Skip(Expr),
     Error(String, Expr),
+    /// `error "WHY" by tokens when E`: an error whose bytes are the ones the token loop finds no
+    /// token at, a first byte no token begins with (decision 0177). On the CPU the loop refuses
+    /// them; elsewhere `E` is a mask, as an error's.
+    TokenError(String, Expr),
     /// `escape "WHY" when E`: a construct the lexer does not handle; a file with a bit of `E` goes
     /// to tree-sitter. Unlike an error, it does not say the file is malformed.
     Escape(String, Expr),
@@ -1206,8 +1210,12 @@ impl P {
             "exit" => Stmt::Exit(self.ident()?),
             "error" => {
                 let m = String::from_utf8_lossy(&self.string()?).into_owned();
+                let by_tokens = self.eat_kw("by");
+                if by_tokens {
+                    self.want_kw("tokens")?;
+                }
                 self.want_kw("when")?;
-                Stmt::Error(m, self.expr()?)
+                if by_tokens { Stmt::TokenError(m, self.expr()?) } else { Stmt::Error(m, self.expr()?) }
             }
             "skip" => Stmt::Skip(self.expr()?),
             "escape" => {

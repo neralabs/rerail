@@ -142,6 +142,9 @@ pub const STREAM_MARK: &str = "stream mark";
 
 /// The output name for the fallback bit: set somewhere when the file goes to tree-sitter.
 pub const FALLBACK: &str = "fallback";
+/// An output of the fallback's the token loop checks (`Stmt::TokenError`): a total, which the
+/// CPU does not make (`Records::untaken`).
+pub const FALLBACK_TOKENS: &str = "fallback by tokens";
 
 /// A product of nibble sets: bit `h` of `hi` and bit `l` of `lo` for byte `h << 4 | l`.
 pub type Product = (u16, u16);
@@ -177,6 +180,8 @@ pub struct Lowering {
     pub names: HashMap<String, Val>,
     /// The masks any of whose bits sends the file to tree-sitter: errors and escapes.
     pub fallbacks: Vec<Val>,
+    /// The token loop's errors (`Stmt::TokenError`): each an output of its own (`FALLBACK_TOKENS`).
+    pub untaken: Vec<Val>,
     pub counts: HashMap<String, Count>,
     /// The counts no value has read yet (`C.frame` lowers one when it reads it): a tree's whose
     /// ups and downs are tokens' starts are tier 2's (`COUNT`, `tree_section`), the rest lowered
@@ -280,6 +285,7 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         classes: HashMap::new(),
         names: HashMap::new(),
         fallbacks: Vec::new(),
+        untaken: Vec::new(),
         counts: HashMap::new(),
         pending_counts: Vec::new(),
         pending_checks: Vec::new(),
@@ -337,6 +343,9 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         for x in low.fallback()? {
             vals.push((FALLBACK.to_owned(), x));
         }
+    }
+    for x in low.untaken.clone() {
+        vals.push((FALLBACK_TOKENS.to_owned(), x));
     }
     for name in outputs {
         if *name == FALLBACK {
@@ -418,7 +427,12 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
             }
         }
         // The fallback's outputs, one per delay, are the totals: one flag, which `EMPTY 0` reads.
-        low.program.totals = vals.iter().zip(&at).filter(|((label, _), _)| label == FALLBACK).map(|(_, &v)| v).collect();
+        low.program.totals = vals.iter().zip(&at).filter(|((label, _), _)| label == FALLBACK || label == FALLBACK_TOKENS).map(|(_, &v)| v).collect();
+        // The token loop's errors' outputs (`Records::untaken`).
+        let untaken: Vec<u16> = vals.iter().zip(&at).filter(|((label, _), _)| label == FALLBACK_TOKENS).map(|(_, &v)| v).collect();
+        if let Some(r) = &mut low.program.records {
+            r.untaken = untaken.iter().map(|v| low.program.outputs.iter().position(|o| o == v).map(|k| k as u16).ok_or("an error by tokens not an output")).collect::<Result<_, _>>()?;
+        }
         words = lowered;
         machine = text;
     }
@@ -498,6 +512,12 @@ impl Lowering {
                 Stmt::Mask(name, expr) => {
                     let value = self.expr(expr)?;
                     self.names.insert(name.clone(), value);
+                }
+                // The token loop's error (decision 0177): its mask an output of its own, among the
+                // totals; the CPU's loop refuses its bytes instead.
+                Stmt::TokenError(_, expr) => {
+                    let value = self.expr(expr)?;
+                    self.untaken.push(value);
                 }
                 // Both send the file to tree-sitter.
                 Stmt::Error(_, expr) | Stmt::Escape(_, expr) => {
@@ -1740,7 +1760,7 @@ pub fn rows(program: &BlockProgram) -> String {
 /// A statement's kind and name, for `Compiled::costs`.
 pub fn cost_name(stmt: &Stmt) -> String {
     let name = match stmt {
-        Stmt::Mask(n, _) | Stmt::Number(n, _) | Stmt::Error(n, _) | Stmt::Escape(n, _) => n.clone(),
+        Stmt::Mask(n, _) | Stmt::Number(n, _) | Stmt::Error(n, _) | Stmt::TokenError(n, _) | Stmt::Escape(n, _) => n.clone(),
         Stmt::Count { name, .. } => name.clone(),
         Stmt::Token { kind, .. } | Stmt::Mark { kind, .. } | Stmt::TokenMark { kind, .. } => kind.clone(),
         _ => String::new(),
@@ -2491,7 +2511,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }),
         _ => None,
     };
-    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark };
+    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new() };
     crate::records::WordTable::new(&records.words)?;
     Ok((grammar::text(&states, &arms), lowered.text, takes_last, mark_masks, records))
 }
