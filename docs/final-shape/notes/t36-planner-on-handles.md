@@ -61,6 +61,32 @@ Leaves first. Each item leaves every caller working.
 7. **`plan::run` takes a version** (step 5). Its callers pass the split's parts as views (E1), the run's edits as
    overlays (E2) and the session's cut as an overlay (E3). The trees on that path go.
 
+## Item 6, step by step
+
+The three passes in `plan::run` that rewrite the program (`keeps::choose`, `demand::split_negations`, a maintained
+stratum's form) each clone the tree and edit the clone. Under decision 0173 §7 each is an **overlay** of the run's
+version: the base rules it removes and the rules it adds, each added rule recording its source. A retry (the demand
+split's rounds, a refused inlining) is a candidate overlay, dropped when refused.
+
+1. **The edit tools.** `RuleBuilder::lit_with`: a literal of one rule copied into another through a `Rewrite`
+   (renamed variables, substituted terms, an atom negated, a comparison's operator turned), which unfolding and the
+   demand split need. Stratification over a version (`front::unstratified`'s check), for the split's refusal.
+2. **`keeps::choose` over the run's version.** Its readings (`rules_of`, `readers`, `refusals`, `bounds`, the
+   estimates and the pricing) read the version, and price program rules by their handles, not by `alone` encodes.
+   The copies it prices and the program it chooses are overlays: each reader copy written from the reader and the
+   inlined rules (`unfold`), the inlined relations' rules removed.
+3. **`split_negations` over a version.** Each round's split (`pre_<i>`, `demand_<r>`, the demanded rules' reads) is
+   an overlay of the version it was given, checked for strata over the version.
+4. **`choices` keeps versions.** A kept choice is the chosen overlay (its bytes over the run's base, which
+   `choices::key` names), in memory and in the store.
+5. **The run reads the chosen version.** `body::Versions` takes it as it is, with no encode; the tree the rest of
+   the run reads is decoded from it once (until item 7).
+6. **The maintained forms as views.** A stratum's form (`Driver::form`, the `Forms` arena) is a view of the run's
+   version with its rules overlaid, not a program of its own.
+
+Each pass is checked against its tree form while it is ported, as items 3 and 4 were: the overlay, decoded, equals
+the tree pass's program, over the planner's, corpus, session, `rr` and keeps tests and dl1. Then the tree form goes.
+
 ## Done
 
 - **Item 1, a step names its literal by position** (2026-11-13).
