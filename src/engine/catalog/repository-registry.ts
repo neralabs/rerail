@@ -219,14 +219,28 @@ function repositoryWithoutRemote(db: Reader, checkoutPath: string, cloneId: stri
 /**
  * {@link checkoutStatus} of the checkout at `location` as {@link lookupCheckout} finds it there, read from the database
  * and the clone id file alone, without Git. Undefined where only the checkout's remote, which Git reads, could still name
- * its repository; a folder outside Git has no remote, so there it is never undefined.
+ * its repository, and where the checkout's path does not resolve as it is read (`physicalPathNow`); a folder outside Git
+ * has no remote, so there it is undefined only for that.
  */
 export function statusWithoutRemote(db: Reader, location: RepositoryIdentityLocation): RepositoryStatus | undefined {
+  const checkoutPath = physicalPathNow(location.workspaceRoot);
+  if (checkoutPath === undefined) return undefined;
   const cloneId = readCloneIdAt(location.identityPath) ?? null;
-  const checkoutPath = physicalPath(location.workspaceRoot);
   const repositoryKey = repositoryWithoutRemote(db, checkoutPath, cloneId);
   if (repositoryKey === undefined && location.git) return undefined;
   return checkoutStatus(db, repositoryKey === undefined ? undefined : contextOf(location, checkoutPath, repositoryKey, cloneId));
+}
+
+/**
+ * {@link physicalPath} of `path`, or undefined where it fails: a folder on the way moved away, or replaced by a file,
+ * between its look for the path and its realpath of it (`ENOENT`, `ENOTDIR`).
+ */
+function physicalPathNow(path: string): string | undefined {
+  try {
+    return physicalPath(path);
+  } catch {
+    return undefined;
+  }
 }
 
 /** The repository of the row recorded at `checkoutPath`. Without an id file that row still names the checkout; a different id is a re-clone. */
