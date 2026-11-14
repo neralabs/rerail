@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { coverageGaps } from "../../ui/render/timeline.js";
 import { lastEventAt, openState, STALE_MIN, violationCounts, type SessionRow } from "../../ui/sessions-model.js";
 import { data } from "../../ui/state.js";
 
@@ -59,5 +60,27 @@ describe("violationCounts", () => {
 
   it("never reports more steered than logged", () => {
     expect(violationCounts(row({ violationCount: 2, steeredViolations: 5 }))).toEqual({ logged: 2, steered: 2 });
+  });
+});
+
+describe("what the timeline says Rerail did not see of the session", () => {
+  const NO_GAPS = { droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0 };
+  function withGaps(gaps: object) {
+    data.sessionDetail.set("s1", { head: null, gaps, events: [], nextAfter: 0, loaded: true, earlier: false, loading: null });
+  }
+
+  it("says each count in its words and its order, and nothing for a session it saw whole", () => {
+    withGaps(NO_GAPS);
+    expect(coverageGaps(row())).toBe("");
+    withGaps({ droppedEvents: 1, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 1, ignoredEdits: 1, ignoreRuleChanges: 1 });
+    expect(coverageGaps(row())).toBe([
+      "1 event never reached Rerail", "rules had not yet seen shell edits at 1 boundary", "code rules were not yet running at 1 boundary",
+      "1 edit went unchecked because Git ignores the file", "Git's ignore rules changed once",
+    ].join("; "));
+    withGaps({ droppedEvents: 1200, uncheckedBoundaries: 2, codeRulesPendingBoundaries: 3, ignoredEdits: 4, ignoreRuleChanges: 5 });
+    expect(coverageGaps(row())).toBe([
+      "1,200 events never reached Rerail", "rules had not yet seen shell edits at 2 boundaries",
+      "code rules were not yet running at 3 boundaries", "4 edits went unchecked because Git ignores the file", "Git's ignore rules changed 5 times",
+    ].join("; "));
   });
 });

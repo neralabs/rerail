@@ -123,6 +123,11 @@ declare module "*/ui/render/pack-panel.js" {
   export function packKind(pack: { category: string; publisher: string }): string;
 }
 
+declare module "*/ui/render/timeline.js" {
+  /** What Rerail did not see of the session, in a sentence's clauses: empty when it saw all of it. */
+  export function coverageGaps(s: { sessionId: string }): string;
+}
+
 declare module "*/ui/state.js" {
   export function sinceFor(range?: number): number;
   /** A cursor-paged list as the page holds it. */

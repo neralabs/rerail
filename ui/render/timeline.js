@@ -247,20 +247,21 @@ function renderEarlier(earlier) {
   setText(t.earlier.firstChild, ["Load earlier", ...parts].join(" · "));
 }
 
+/** Each count of what Rerail did not see of a session, in the order the timeline says them, with the clause for a count above 0. */
+const COVERAGE_CLAUSES = [
+  [droppedEvents, n => `${fmt(n)} ${plural(n, "event")} never reached Rerail`],
+  [uncheckedBoundaries, n => `rules had not yet seen shell edits at ${fmt(n)} ${plural(n, "boundary", "boundaries")}`],
+  [codeRulesPendingBoundaries, n => `code rules were not yet running at ${fmt(n)} ${plural(n, "boundary", "boundaries")}`],
+  [ignoredEdits, n => `${fmt(n)} ${plural(n, "edit")} went unchecked because Git ignores the file`],
+  [ignoreRuleChanges, n => `Git's ignore rules changed ${n === 1 ? "once" : `${fmt(n)} times`}`],
+];
+
 /** What Rerail did not see of the session, in a sentence's clauses: empty when it saw all of it. */
-function coverageGaps(sess) {
-  const dropped = droppedEvents(sess);
-  const unchecked = uncheckedBoundaries(sess);
-  const rulesPending = codeRulesPendingBoundaries(sess);
-  const ignored = ignoredEdits(sess);
-  const ruleChanges = ignoreRuleChanges(sess);
-  return [
-    ...(dropped === 0 ? [] : [`${fmt(dropped)} ${plural(dropped, "event")} never reached Rerail`]),
-    ...(unchecked === 0 ? [] : [`rules had not yet seen shell edits at ${fmt(unchecked)} ${plural(unchecked, "boundary", "boundaries")}`]),
-    ...(rulesPending === 0 ? [] : [`code rules were not yet running at ${fmt(rulesPending)} ${plural(rulesPending, "boundary", "boundaries")}`]),
-    ...(ignored === 0 ? [] : [`${fmt(ignored)} ${plural(ignored, "edit")} went unchecked because Git ignores the file`]),
-    ...(ruleChanges === 0 ? [] : [`Git's ignore rules changed ${ruleChanges === 1 ? "once" : `${fmt(ruleChanges)} times`}`]),
-  ].join("; ");
+export function coverageGaps(sess) {
+  return COVERAGE_CLAUSES.flatMap(([count, clause]) => {
+    const n = count(sess);
+    return n === 0 ? [] : [clause(n)];
+  }).join("; ");
 }
 
 /** The audited-clean note, and what it says of the session's coverage. */
