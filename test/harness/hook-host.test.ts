@@ -1482,4 +1482,19 @@ describe("the hook start check", () => {
       await daemon.close();
     }
   });
+
+  it.runIf(process.platform === "linux")("waits for the daemon where Git names a checkout's top in another letter case than the hook's realpath, as on a case-insensitive Linux folder", async () => {
+    const root = realpathSync.native(await temporaryDirectory({ started: false }));
+    const folders = miscasedFolders(root);
+    // There every realpath keeps a name as typed, and Git's `getcwd` gives the name the kernel cached.
+    const host = await startCheckHost(undefined, { system: "linux-case-insensitive", folders });
+    const daemon = await daemonAnsweringAfterProof(host, repository => host.daemonReads(repository));
+    try {
+      const found = await startChecksTypedOtherwise(host, daemon, folders);
+      expect({ wrong: found.wrong, answeredItselfIn: found.answeredItselfIn, asked: [...new Set(daemon.asked)] })
+        .toEqual({ wrong: [], answeredItselfIn: ["outside Git"], asked: folders.map(folder => folder.workspace) });
+    } finally {
+      await daemon.close();
+    }
+  });
 });
