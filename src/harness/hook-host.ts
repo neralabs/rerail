@@ -106,17 +106,28 @@ export async function hookRerailStarted(host: RerailHost, workspace: string, dat
 
 /**
  * The daemon's answer to the start check (`readRepositoryState`), null where none came; or `stopped` where the daemon
- * has not answered within the grace and `knownStopped` holds. The request ends on every way out, so a hook that
- * answers before the daemon leaves no socket open and exits at once.
+ * has not answered within the grace and `knownStopped` holds.
  */
 async function daemonAnswer(host: RerailHost, workspace: string): Promise<RepositoryStartState | null> {
   const request = new AbortController();
   const answer = readRepositoryState(workspace, host, request.signal);
+  if (await settlesWithin(answer, DAEMON_ANSWER_GRACE_MS) || !stoppedEndingRequest(workspace, request)) return await answer;
+  return "stopped";
+}
+
+/**
+ * `knownStopped`, ending `request` where it holds or throws: the hook then answers without the daemon, and a request
+ * left open would keep its process alive until the daemon or the read's time limit ended it. A request the daemon
+ * answered, or one the hook goes on waiting for, is left alone.
+ */
+function stoppedEndingRequest(workspace: string, request: AbortController): boolean {
+  // Stays true when the proof throws, so the request ends then too.
+  let stopped = true;
   try {
-    if (!await settlesWithin(answer, DAEMON_ANSWER_GRACE_MS) && knownStopped(workspace)) return "stopped";
-    return await answer;
+    stopped = knownStopped(workspace);
+    return stopped;
   } finally {
-    request.abort();
+    if (stopped) request.abort();
   }
 }
 
