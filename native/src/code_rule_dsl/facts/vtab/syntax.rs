@@ -103,11 +103,63 @@ pub struct Projection {
     /// `docof` from `node`, `rr::lower::projections`; a program may name an output as a base relation is named). A
     /// bound table of that name would be the planner's to drop.
     pub derived: BTreeSet<String>,
+    /// `rx_spans` compiled, once for the run's projection, not again for every batch it binds.
+    pub compiled_rx: CompiledSpans,
+}
+
+/// A projection's `rx_span` patterns compiled: each one's regex and, over a document's source or lines, its block
+/// program (`span_prefilter`). Made on the first batch and shared by the projection's clones; kept with the patterns it
+/// was made from, so a clone whose patterns differ compiles its own. A run's library loads bind a batch a window of
+/// files, and each compiled every pattern again: 3% of a cold batch's main thread.
+#[derive(Clone, Default)]
+pub struct CompiledSpans(Arc<std::sync::OnceLock<(Vec<(crate::code_rule_dsl::logic::front::ast::SpanIn, String)>, Vec<CompiledSpan>)>>);
+
+/// One `rx_span` pattern, compiled: its regex and its block program, if it has one.
+type CompiledSpan = (regex::Regex, Option<Arc<dyn crate::code_rule_dsl::facts::span_prefilter::SpanEnds>>);
+
+impl std::fmt::Debug for CompiledSpans {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "CompiledSpans({})", self.0.get().map_or(0, |(_, c)| c.len()))
+    }
+}
+
+impl CompiledSpans {
+    /// `patterns` compiled: the kept ones when they were made from these, else compiled now (and kept if none were).
+    fn of(&self, patterns: &[(crate::code_rule_dsl::logic::front::ast::SpanIn, String)]) -> StoreResult<Vec<CompiledSpan>> {
+        if let Some((from, compiled)) = self.0.get()
+            && from.as_slice() == patterns
+        {
+            return Ok(compiled.clone());
+        }
+        let compiled = compile_spans(patterns)?;
+        let _ = self.0.set((patterns.to_vec(), compiled.clone()));
+        Ok(compiled)
+    }
+}
+
+/// Compiles `rx_span`'s patterns, each on the pool's threads, a class of every character first written as any
+/// character (`unfolded`). Over a document's source or its lines, each with its block program (decision 0081 §3): the
+/// bytes a match can end after, chunk at a time, so the regex runs only where one can.
+fn compile_spans(patterns: &[(crate::code_rule_dsl::logic::front::ast::SpanIn, String)]) -> StoreResult<Vec<CompiledSpan>> {
+    use crate::code_rule_dsl::logic::front::ast::SpanIn;
+    use rayon::prelude::*;
+    let on = std::env::var("RERAIL_SPAN_PREFILTER").map_or(true, |v| v != "off");
+    patterns
+        .par_iter()
+        .map(|(within, re)| {
+            let compiled = crate::code_rule_dsl::facts::span_prefilter::unfolded(re);
+            let prefilter = match within {
+                SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::facts::span_prefilter::compile(&compiled, *within == SpanIn::Line),
+                _ => None,
+            };
+            regex::Regex::new(&compiled).map(|r| (r, prefilter)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}")))
+        })
+        .collect()
 }
 
 impl Projection {
     pub fn core() -> Self {
-        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, token_text: true, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: BTreeSet::new(), verdict: false, derived: BTreeSet::new() }
+        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, token_text: true, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: BTreeSet::new(), verdict: false, derived: BTreeSet::new(), compiled_rx: CompiledSpans::default() }
     }
     fn wants(&self, rel: &str) -> bool {
         self.reads.as_ref().is_none_or(|r| r.contains(rel))
@@ -131,7 +183,7 @@ impl Projection {
         let verdict = shape == Shape::T && program.decls.get("syntax_error").is_some_and(|cols| cols.len() == 3);
         let derived: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).collect();
         let reads = reads.into_iter().filter(|r| !derived.contains(r)).collect();
-        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(spans), token_text, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: partial.collect(), verdict, derived }
+        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(spans), token_text, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: partial.collect(), verdict, derived, compiled_rx: CompiledSpans::default() }
     }
 
     /// This projection, with `text` made at any length for the node kinds whose text the program's rules read
@@ -2566,26 +2618,10 @@ impl Batch {
         let wants_trees = core && projection.reads.as_ref().is_some_and(|r| r.contains("tree_digest"));
         let wants_units = core && projection.reads.as_ref().is_some_and(|r| r.contains("def_digest"));
         let wants_digests = wants_trees || wants_units;
-        // `rx_span`'s regexes, compiled once for the batch.
-        // Over a document's source or its lines, each with its block program (decision 0081 §3): the bytes a match can
-        // end after, chunk at a time, so the regex runs only where one can.
-        // Each on the pool's threads, a class of every character first written as any character (`unfolded`).
+        // `rx_span`'s regexes, compiled once for the run's projection (`CompiledSpans`).
         let rx_spans: Vec<core_rr::SpanPattern> = if core {
-            use rayon::prelude::*;
-            projection
-                .rx_spans
-                .par_iter()
-                .map(|(within, re)| {
-                    use crate::code_rule_dsl::logic::front::ast::SpanIn;
-                    let on = std::env::var("RERAIL_SPAN_PREFILTER").map_or(true, |v| v != "off");
-                    let compiled = crate::code_rule_dsl::facts::span_prefilter::unfolded(re);
-                    let prefilter = match within {
-                        SpanIn::Source | SpanIn::Line if on => crate::code_rule_dsl::facts::span_prefilter::compile(&compiled, *within == SpanIn::Line),
-                        _ => None,
-                    };
-                    regex::Regex::new(&compiled).map(|r| (within.clone(), re.as_str(), r, prefilter)).map_err(|e| StoreError::Invalid(format!("rx_span: bad regex {re:?}: {e}")))
-                })
-                .collect::<StoreResult<_>>()?
+            let compiled = projection.compiled_rx.of(&projection.rx_spans)?;
+            projection.rx_spans.iter().zip(compiled).map(|((within, re), (r, prefilter))| (within.clone(), re.as_str(), r, prefilter)).collect()
         } else {
             Vec::new()
         };
