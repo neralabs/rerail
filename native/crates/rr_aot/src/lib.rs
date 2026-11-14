@@ -37,8 +37,10 @@ pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
     c.parser.tier1.ir.clear();
     c.parser.tier2.ir.clear();
     if tiers.one {
-        let tables = c.parser.tier1.tables_address().unwrap_or(0);
-        tier1_aot::TABLES.store(tables as u64, std::sync::atomic::Ordering::Relaxed);
+        // The code reads its own copy of the tables (`TABLES_DATA`): the program's.
+        if c.parser.tier1.tables_words() != Some(&tier1_aot::TABLES_DATA[..]) {
+            return Err("the ahead-of-time tables are of another program: run `cargo run -p rerail-rr-aot-gen`".into());
+        }
         type Raw = unsafe extern "C" fn(u64, u64, u64, u64, u64, u64, u64);
         let raw: &[Raw] = tier1_aot::ENTRIES;
         // SAFETY: each is the pass's code (the fingerprint), taking the JIT's entry's

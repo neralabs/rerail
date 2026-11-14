@@ -145,9 +145,9 @@ impl CompiledBlock {
         self.entries.len()
     }
 
-    /// The record pass's tables' address, which its code holds as a constant.
-    pub fn tables_address(&self) -> Option<i64> {
-        self.records.as_ref().map(|t| t.words.as_ptr() as i64)
+    /// The record pass's tables' words, as its code reads them.
+    pub fn tables_words(&self) -> Option<&[u64]> {
+        self.records.as_ref().map(|t| &t.words[..])
     }
 
     /// The record pass's tables: their address and bytes. Its code holds addresses inside them
@@ -1860,6 +1860,15 @@ impl FileCols {
         FileCols { bytes: p[0], starts: p[1], lasts: p[2], codes: p[3], ns: p[4], nl: p[5], out: p[6], counts: p[7], blocks: p[8], tables: p[9], mult: p[10], slots: p[11], len: p[12], layout }
     }
 
+    /// As `of`, the grammar's tables, their slots and the word table's multiplier constants
+    /// of this function (`tables_consts`), as the lean lexer's tables are statics: an address
+    /// or a number the code makes again where it needs it, no register held for it across the
+    /// token loop, none loaded from the caller's.
+    fn of_tables(f: &mut FunctionBuilder<'_>, p: &[Value], t: &RecordTables) -> Self {
+        let (tables, mult, slots) = tables_consts(f, t);
+        FileCols { tables, mult, slots, ..FileCols::of(p, t.layout) }
+    }
+
     /// Token `k`'s field `field` (`records::FIELD_*`): the address to load or store at, and
     /// its offset. In rows, one base for the three fields (the lean lexer's `Tok`): the
     /// offset says which.
@@ -1951,7 +1960,7 @@ fn record_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Rec
     f.append_block_params_for_function_params(entry);
     f.switch_to_block(entry);
     let p = f.block_params(entry).to_vec();
-    let cols = FileCols::of(&p, t.layout);
+    let cols = FileCols::of_tables(&mut f, &p, t);
     let mut heads = vec![];
     record_file(&mut f, r, t, extracts, outputs, &cols, done, &mut heads);
     f.switch_to_block(done);
@@ -2217,10 +2226,17 @@ fn file_cols(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     let nl = f.ins().load(types::I64, fl, counts, 8 * i32::from(r.lasts));
     let blocks = f.ins().load(types::I64, ro, at, 8);
     let len = f.ins().load(types::I64, ro, at, 16);
+    let (tables, mult, slots) = tables_consts(f, t);
+    FileCols { bytes, starts, lasts, codes, ns, nl, out, counts, blocks, tables, mult, slots, len, layout: t.layout }
+}
+
+/// The record pass's tables' address, its word table's multiplier and its slots' address, as
+/// constants (`clif_rust` names addresses inside the tables `TABLES`).
+fn tables_consts(f: &mut FunctionBuilder<'_>, t: &RecordTables) -> (Value, Value, Value) {
     let tables = f.ins().iconst(types::I64, t.words.as_ptr() as i64);
     let mult = f.ins().iconst(types::I64, t.table.mult as i64);
     let slots = f.ins().iconst(types::I64, t.words.as_ptr() as i64 + t.slots as i64);
-    FileCols { bytes, starts, lasts, codes, ns, nl, out, counts, blocks, tables, mult, slots, len, layout: t.layout }
+    (tables, mult, slots)
 }
 
 /// Where the token loop runs a block at a time (decision 0177): the blocks whose outputs are
@@ -4644,7 +4660,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             f.switch_to_block(tokens);
             let tp = f.block_params(tokens).to_vec();
             let vals: Vec<Value> = (0..RECORD_PARAMS).map(|k| f.ins().stack_load(types::I64, slot, 8 * k as i32)).collect();
-            let cols = FileCols::of(&vals, t.layout);
+            let cols = FileCols::of_tables(&mut f, &vals, t);
             let ready = tp[params + STATE_WORDS];
             let init: [Value; STATE_WORDS] = std::array::from_fn(|k| tp[params + k]);
             record_tokens(&mut f, rec, t, native.extracts.len(), outputs, &cols, Some(RecPart { ready, init }), Some((&bytewise, &consts, &byte_ids)), after, &mut heads);
