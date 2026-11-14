@@ -609,6 +609,12 @@ T3–T5 sweeps. Its README says how to rerun them and add a candidate. The first
   15–19). The tape's names stream holds the text in 1.0–1.4 B/node and decodes at about 2 ns a leaf.
   Atoms win only for comparisons (0.55 ns against 2.2 for bytes). So text is read from the tape and
   interned only where a join needs it.
+- E10 (2026-11-14, [t38](../notes/t38-in-memory-tape-design.md)): read in place, format 15 takes
+  8.7–9.2 B a node. The bit-packed explicit tape with folded structure and predicted positions (MF)
+  takes 3.4–4.0, and the balanced-parentheses tape with Elias–Fano positions (BE) 2.4–2.9. MF costs
+  about X's time a question, and BE 2–3.5× that. Loading from the events (shape 2) costs 27–48 ns a
+  node from 0.7–1.6 B a node of disk. Loading the tape's own bytes under zstd (shape 1) costs 1.3–4.2
+  ns a node from 1.4–4× that disk.
 - E9, partial decode (withdrawn as a conclusion, 2026-11-14): a single node's read through span LZ
   plus Huffman costs 5.8–15 µs, against 78–89 ns a node to decode the whole document. Both decode,
   so both break the fixed requirement. What it shows is that span LZ under entropy coding is not

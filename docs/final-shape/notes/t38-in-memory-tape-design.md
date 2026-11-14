@@ -474,3 +474,122 @@ nodes) is too small to fill the GPU.
   - M1, M3 and x86 hardware;
   - BE's select on x86 with `PDEP`;
   - the forest's children walk, given wide nodes, as a kernel one group a node.
+
+  The third round (below) takes the first three.
+
+## E10, third round: X's structure, shape 2's writer, other CPUs (2026-11-14)
+
+Three things changed, and every candidate was measured again. The numbers below supersede the second
+round's: the new packing (2) makes every candidate 0.1–0.2 B a node smaller. Every answer was checked
+against the tree again, with 0 wrong on every corpus, the CPU and Metal alike.
+
+### 1. XF: size and back distance in one slot
+
+X stores two numbers a node, the subtree size and the distance back to the parent. Half of each is
+known without storing it:
+
+- a leaf's size is always 1;
+- the node after an inner node is that node's first child, so its parent is one back.
+
+XF stores one slot a node, tagged by its low bit. An inner node's slot holds its size (tag 0). A
+leaf's slot holds the back distance of the node after it (tag 1): that node follows a leaf, so it is
+a later sibling, and its parent is the one thing not known. Every question reads one slot, with no
+rank and no search:
+
+```rust
+// subtree end: a leaf ends at the next node, an inner node at its size
+let v = slot.get(i);
+let t = v & 1;
+i + (((v >> 1) & t.wrapping_sub(1)) | t) as usize
+// parent of i (not the root): read the slot of the node before it
+let v = slot.get(i - 1);
+let t = v & 1;
+i - (((v >> 1) & t.wrapping_neg()) | (t ^ 1)) as usize
+```
+
+| structure, B/node | X | XF | B |
+|---|---|---|---|
+| impl/sqlite | 1.58 | **0.99** | 0.38 |
+| data-layer | 1.53 | **1.02** | 0.37 |
+| rerail | 1.61 | **1.11** | 0.37 |
+
+- **XF saves 0.5–0.6 B a node.** XF is 4.15 B/node on data-layer, against X's 4.66. MF (XF with the
+  predictor and the gap end) is 3.37, against M's 3.88. That puts MF within 0.25 B of B (3.50), at X's
+  speed.
+- **The cost is 0.3–0.7 ns on subtree end and parent** (data-layer: 2.4 against 1.7, and 3.0 against
+  2.7). Leaf or inner is a coin toss, so the reads are branch-free; with a branch, parent cost 5.5 ns.
+- **On Metal XF costs the same as X** (subtree end 0.086 ns, parent 0.086; MF 0.060 for both).
+- **XF's floor in this family is about 1 B.** The slots carry 4.3 bits of value on average, but a
+  block's width is set by its tail. Moving the values that cross a block boundary into per-block
+  ancestor tables would gain at most 0.1 B, before paying for the tables (`XF_HIST=1` prints these
+  costs). So it was not built.
+
+### 2. PFOR with indexed escapes
+
+Every candidate packs its arrays with PFOR: 256 values a block at one width, with exceptions for the
+values that do not fit. The second round's PFOR stored each exception as 40 bits (an index and a
+32-bit value), and found an exception by scanning the block's list. Now a block's top `e` codes are
+escapes: a slot at or above 2^w − e names its exception directly, and the exceptions follow the
+block's slots, packed at the block's own exception width. The header is one word a block. So no
+exception needs a search, and none takes more bits than the block's largest value.
+
+- **Every candidate is 0.1–0.2 B a node smaller,** and the questions cost the same.
+- **A branch-free exception read is slower:** start went from 2.3 to 5.6 ns, because the second load
+  is then always taken. It was dropped.
+- **The width comes from a histogram of value widths,** and the escapes are made exact for that
+  width. Before, every width from 0 to 40 was tried, each to a fixpoint. That cost 0.01–0.04 B a node
+  and cut the build 8×.
+
+### 3. Shape 2: a writer from events straight to each tape
+
+Every builder now reads one set of flat columns (code, start, end, size, parent, in preorder). The
+columns come either from the tree, or straight from format 16's events in one pass with a stack of
+open nodes. The writer reads them off the byte planes as zstd gives them back, with no events built
+between. Each candidate built from the events is checked byte for byte against the one built from the
+tree.
+
+| data-layer, ns/node | X | M | B | BE | XF | MF |
+|---|---|---|---|---|---|---|
+| zstd of the events | 4.0 | 4.0 | 4.0 | 4.0 | 4.0 | 4.0 |
+| byte planes to columns | 6.9 | 6.9 | 6.9 | 6.9 | 6.9 | 6.9 |
+| columns to the tape | 23.1 | 24.3 | 16.5 | 16.1 | 18.3 | 19.7 |
+| **shape 2: load, all** | **33.9** | **35.2** | **27.4** | **27.0** | **29.2** | **30.6** |
+| shape 1: load (zstd of the tape) | 2.8 | 2.3 | 1.3 | 1.7 | 2.1 | 1.7 |
+
+| disk, B/node | X | M | B | BE | XF | MF |
+|---|---|---|---|---|---|---|
+| shape 1 (data-layer / impl/sqlite / rerail) | 2.98 / 4.02 / 3.06 | 2.16 / 3.28 / 2.39 | 2.48 / 3.30 / 2.47 | 1.36 / 2.19 / 1.43 | 2.86 / 3.74 / 2.92 | 2.04 / 3.01 / 2.27 |
+| shape 2 (the events) | 0.73 / 1.56 / 0.93 | | | | | |
+
+- **Shape 2 loads in 27–48 ns a node** (29–40 on impl/sqlite, 34–48 on rerail), against the second
+  round's upper bound of 90–150. Shape 1 loads in 1.3–4.2 ns, but takes 1.4–4× the disk.
+- **The build is now most of shape 2's load:** 16–34 ns a node. X's four PFOR arrays cost the most,
+  and the B family's parentheses cost little.
+- **So it is a trade:** with shape 2, a 10 GB/s read of 0.73 B a node gives nodes 30–40× faster than
+  the writer can build them. Shape 2 wins where disk or the network is the limit (cold loads, remote
+  stores), and shape 1 where load time is (a warm local cache).
+
+### 4. x86, M1 and M3
+
+- **x86 with BMI2 takes Elias–Fano's select from PDEP:** `_pdep_u64(1 << r, x).trailing_zeros()`.
+  Builds without BMI2 take the broadword select. That includes Zen 1 and 2, which run PDEP in
+  microcode, so a build for them has to leave BMI2 off.
+- **The lab now builds and counts on Linux** (instructions and cycles by `perf_event_open`), and
+  every results file opens with the machine and the target features compiled in.
+- **Checked under Rosetta, not timed:** an x86-64 baseline build and an x86-64-v3 build (BMI2, 12
+  PDEP sites) give every answer right on impl/sqlite, with the same bytes. Rosetta's timings are the
+  M5's running translated code, so they say nothing about x86 CPUs.
+- **`scripts/bench-pack.sh <dir> <capture>...`** packs the lab, the format crate, the toolchain pin
+  and the captures into one directory. Its `run.sh` builds a baseline build and a
+  `target-cpu=native` build on the machine, and runs every question on each capture. M1, M3 and x86
+  numbers need those machines. The captures hold source text, so a pack carries the code of the
+  repositories it was captured from.
+
+### What the third round says
+
+- **MF is the X family's best: 3.37 B a node on data-layer at X's speed,** against format 15's 9.00
+  and BE's 2.43. Its median-rule mix is 2.3 ns a node (BE 4.6). On all 121 rules it is 16.7 (BE 41.1).
+- **The B family still costs 2–3× on structure questions** and saves only 0.65 B against XF's
+  structure.
+- **Still to measure:** M1, M3 and x86 hardware (a pack is ready); the forest's children walk as a
+  kernel one group a node.
