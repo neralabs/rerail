@@ -228,7 +228,32 @@ pub struct Writer<L: Layout = Widths> {
     /// narrowest widths without reading the tail column. (Offsets and bases are not kept as the
     /// parse goes: `finish` computes them from the starts in one pass, `offsets`.)
     marks: Vec<(u32, u8)>,
+    /// The open chains (`open_chain`), innermost last: each its node and where its wraps begin in
+    /// `held`. `chain_at` is the innermost's node (`usize::MAX`: none), the one compare `close`,
+    /// `key` and `set_key` make.
+    chains: Vec<(usize, usize)>,
+    chain_at: usize,
+    /// The wraps of the open chains, not yet on the tape: each its key, start, and at its close the
+    /// nodes there were then and its end (0 nodes: open).
+    held: Vec<Held>,
     tag: u8,
+}
+
+/// A wrap of an open chain, put on the tape when its chain ends (`Writer::end_chain`).
+#[derive(Clone, Copy)]
+struct Held {
+    key: u32,
+    start: u32,
+    nodes: u32,
+    end: u32,
+}
+
+/// Where a writer was (`Writer::checkpoint`): its nodes, and its open chains and their wraps.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Checkpoint {
+    n: usize,
+    chains: usize,
+    held: usize,
 }
 
 const TAIL_WIDE: u8 = 1;
@@ -285,6 +310,9 @@ impl<L: Layout> Writer<L> {
             layout,
             wide_from: 0x10000,
             marks: Vec::new(),
+            chains: Vec::new(),
+            chain_at: usize::MAX,
+            held: Vec::new(),
             tag,
         }
     }
@@ -343,6 +371,9 @@ impl<L: Layout> Writer<L> {
 
     #[inline]
     pub fn key(&self, node: usize) -> u32 {
+        if node == self.chain_at && let Some(h) = self.held_last() {
+            return h.key;
+        }
         self.keys[node]
     }
 
@@ -449,7 +480,15 @@ impl<L: Layout> Writer<L> {
     /// `node`'s end: its subtree is the nodes from it on, and its tail from its last one.
     #[inline(always)]
     pub fn close(&mut self, node: usize, end: u32) {
-        let n = self.n;
+        if node == self.chain_at && self.close_held(end) {
+            return;
+        }
+        self.close_at(node, end, self.n);
+    }
+
+    /// `close` as it was when the tape had `n` nodes: the nodes before `n` are its subtree's.
+    #[inline(always)]
+    fn close_at(&mut self, node: usize, end: u32, n: usize) {
         debug_assert!(node < n);
         // SAFETY: `node < n <= cap`.
         let (last, own) = unsafe { (*self.starts.get_unchecked(n - 1), *self.starts.get_unchecked(node)) };
@@ -476,6 +515,10 @@ impl<L: Layout> Writer<L> {
     /// `node`'s key changed (a field set after it was made, a kind found later).
     #[inline]
     pub fn set_key(&mut self, node: usize, key: u32) {
+        if node == self.chain_at && let Some(h) = self.held_last_mut() {
+            h.key = key;
+            return;
+        }
         self.uncode_from(node);
         self.keys[node] = key;
     }
@@ -484,6 +527,10 @@ impl<L: Layout> Writer<L> {
     /// the first of its children (an operator after its left operand). It is open: its close
     /// gives its size. The code column from `at` on is written again at the commit.
     pub fn insert(&mut self, at: usize, key: u32, start: u32) {
+        if at == self.chain_at {
+            self.held.push(Held { key, start, nodes: 0, end: 0 });
+            return;
+        }
         if at == self.n {
             self.push(key, start);
             return;
@@ -509,6 +556,112 @@ impl<L: Layout> Writer<L> {
         for m in self.marks.iter_mut().filter(|m| m.0 as usize >= at) {
             m.0 += 1;
         }
+    }
+
+    /// A chain at node `at`: the nodes wrapped there one after another (`a + b + c`, `a.b.c`), each
+    /// inserted at `at` before the last. Until the chain ends, each `insert` at `at` is held, not
+    /// put on the tape, and `at` names the last held one (for `key`, `set_key` and `close`); the
+    /// nodes after `at` stay where they are. `end_chain` puts them all on the tape in one move, so a
+    /// chain of k wraps over n nodes costs n + k, where an insert each cost k times n. What is opened
+    /// at `at` before the first wrap is the chain's own (a member chain inside an operand).
+    /// Returns the chain's depth, which `end_chain` takes.
+    pub fn open_chain(&mut self, at: usize) -> usize {
+        debug_assert!(at <= self.n);
+        let depth = self.chains.len();
+        // An outer chain at the same node holds no wraps yet: they come after this chain ends.
+        debug_assert!(self.chains.last().is_none_or(|&(a, base)| a != at || base == self.held.len()));
+        self.chains.push((at, self.held.len()));
+        self.chain_at = at;
+        depth
+    }
+
+    /// Ends the chains from `depth` on (`open_chain`'s), innermost first: their wraps put on the
+    /// tape at their nodes, the last held outermost, each closed as it was.
+    pub fn end_chain(&mut self, depth: usize) {
+        while self.chains.len() > depth {
+            let (at, base) = self.chains.pop().expect("a chain");
+            self.chain_at = self.chains.last().map_or(usize::MAX, |c| c.0);
+            self.put_held(at, base);
+        }
+    }
+
+    #[inline]
+    fn held_last(&self) -> Option<&Held> {
+        let &(_, base) = self.chains.last()?;
+        self.held[base..].last()
+    }
+
+    #[inline]
+    fn held_last_mut(&mut self) -> Option<&mut Held> {
+        let &(_, base) = self.chains.last()?;
+        self.held[base..].last_mut()
+    }
+
+    /// `close` of the innermost chain's node: its last held wrap's, kept for `end_chain`. False
+    /// when the chain holds none (the node is on the tape).
+    fn close_held(&mut self, end: u32) -> bool {
+        let n = self.n as u32;
+        match self.held_last_mut() {
+            Some(h) => {
+                h.nodes = n;
+                h.end = end;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The wraps held from `base` on, put at `at` in one move: the last held first (outermost).
+    /// Each closes as it would have: at its close the tape had `nodes` nodes, and every wrap held
+    /// moved those up by the k wraps now before them.
+    fn put_held(&mut self, at: usize, base: usize) {
+        let k = self.held.len() - base;
+        if k == 0 {
+            return;
+        }
+        while self.n + k > self.cap {
+            self.grow();
+        }
+        let (n, ws) = (self.n, self.layout.widths());
+        let shift = |column: &mut [u8], width: u8| {
+            let w = usize::from(width);
+            column.copy_within(at * w..n * w, (at + k) * w);
+        };
+        shift(&mut self.size, ws.size);
+        shift(&mut self.tail, ws.tail);
+        self.keys.copy_within(at..n, at + k);
+        self.starts.copy_within(at..n, at + k);
+        self.n = n + k;
+        self.uncode_from(at);
+        for m in self.marks.iter_mut().filter(|m| m.0 as usize >= at) {
+            m.0 += k as u32;
+        }
+        for j in 0..k {
+            let h = self.held[base + j];
+            let node = at + k - 1 - j;
+            self.keys[node] = h.key;
+            self.starts[node] = h.start;
+            Self::put(&mut self.size, node, ws.size, 0);
+            Self::put(&mut self.tail, node, ws.tail, 0);
+            if h.nodes != 0 {
+                self.close_at(node, h.end, h.nodes as usize + k);
+            }
+        }
+        self.held.truncate(base);
+    }
+
+    /// Where the writer is: what `rewind` goes back to.
+    #[inline]
+    pub fn checkpoint(&self) -> Checkpoint {
+        Checkpoint { n: self.n, chains: self.chains.len(), held: self.held.len() }
+    }
+
+    /// Back to `c` (a parse that did not hold): the nodes, chains and wraps since taken back.
+    pub fn rewind(&mut self, c: Checkpoint) {
+        self.chains.truncate(c.chains);
+        self.chain_at = self.chains.last().map_or(usize::MAX, |c| c.0);
+        self.held.truncate(c.held);
+        self.truncate(c.n);
     }
 
     /// The nodes from `len` on taken back (a parse that did not hold).
@@ -561,6 +714,7 @@ impl<L: Layout> Writer<L> {
     /// The widths the nodes need, and the bases and offsets (`offsets`): `Redo` where the
     /// writer's widths do not hold them.
     fn check_widths(&mut self) -> Result<(Vec<u32>, Vec<u8>), Redo> {
+        debug_assert!(self.chains.is_empty(), "a chain not ended");
         self.commit();
         let (base, off, wide) = self.offsets(self.layout.widths().off);
         let has = |what: u8| self.marks.iter().any(|m| m.1 == what);
