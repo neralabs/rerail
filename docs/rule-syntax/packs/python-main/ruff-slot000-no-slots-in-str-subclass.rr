@@ -39,10 +39,10 @@ slot000_slots_statement(n) :- kind(n, "expression_statement"), child(n, c1, _),
 slot000_str_base(n) :- slot000_demand_str_base(n), (kind(n, "identifier") ; kind(n, "attribute")),
     global_ref(n, "str"), sym_of(n, "builtins.str").
 slot000_str_base(n) :- slot000_demand_str_base(n), kind(n, "identifier"), glob("str", n),
-    ref_site(n, b1), site_form(b1, "typeParameter"),
+    ref_site(n, b1), main_form(b1, "typeParameter"),
     count : { inside(n, p2, "module"), within(c3, p2), slot000_alt_2(c3) } = 0.
 slot000_str_base(n) :- slot000_demand_str_base(n), kind(n, "parenthesized_expression"),
-    child(n, c4, _), slot000_str_base(c4).
+    child(n, c5, _), slot000_str_base(c5).
 
 // enum_name(n, …): the JSON util `enum-name`, called with `matches` and arguments E
 //   K, N1, N2, N3, N4, SB: metavariables of the calling rule, passed in (bound by the caller)
@@ -126,15 +126,15 @@ slot000_demand_class_ref(c6) :- node(_, K, _, _, _), node(_, O, _, _, _), slot00
     field(p11, "name", c8), kind(p11, "class_definition"), field(p11, "body", c12),
     within_stop(c13, c12, slot000_stop_7), kind(c13, "class_definition"),
     field(c13, "name", c14), kind(c14, "identifier"), text(c14, t_k2), text(K, t_k2),
-    text(K, t15), text(N, t15), site_latest(c14), @doc(OX) = @doc(O), @doc(c14) = @doc(K), @doc(K) = @doc(N).
+    text(K, t15), text(N, t15), bind_name(c14, b17), site_latest(b17), @doc(OX) = @doc(O), @doc(c14) = @doc(K), @doc(K) = @doc(N).
 
 // demand_str_base: the nodes str_base is asked at (its recursion looks at every descendant)
 .decl slot000_demand_str_base(n: node)
 slot000_demand_str_base(c3) :- kind(n, "identifier"), field(p1, "name", n),
     kind(p1, "class_definition"), field(p1, "superclasses", c2),
     kind(c2, "argument_list"), child(c2, c3, _).
-slot000_demand_str_base(c4) :- slot000_demand_str_base(n), kind(n, "parenthesized_expression"),
-    child(n, c4, _).
+slot000_demand_str_base(c5) :- slot000_demand_str_base(n), kind(n, "parenthesized_expression"),
+    child(n, c5, _).
 
 // set_3: symbols from the JSON `resolves.import`
 .decl slot000_set_3(v: symbol)
@@ -153,8 +153,8 @@ slot000_alt_1(n) :- field(n, "right", c2), kind(c2, "assignment"), slot000_slots
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 .decl slot000_alt_2(n: node)
 slot000_alt_2(n) :- kind(n, "dotted_name"), glob("builtins", n).
-slot000_alt_2(n) :- kind(n, "identifier"), glob("str", n), (bind_only(n) ; aug_target(n)),
-    !site_form(n, "typeParameter").
+slot000_alt_2(n) :- kind(n, "identifier"), glob("str", n), bind_name(n, _),
+    count : { bind_name(n, b1), main_form(b1, "typeParameter") } = 0.
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 //   K, N1, N2, N3, N4, SB: metavariables of the calling rule, passed in (bound by the caller)
@@ -203,7 +203,7 @@ slot000_alt_8(n, K, N, O, OX) :- node(_, K, _, _, _), slot000_demand_alt_8(n), k
     field(p11, "name", c8), kind(p11, "class_definition"), field(p11, "body", c12),
     within_stop(c13, c12, slot000_stop_7), kind(c13, "class_definition"),
     field(c13, "name", c14), kind(c14, "identifier"), text(c14, t_k2), text(K, t_k2),
-    text(K, t15), text(N, t15), site_latest(c14), @doc(OX) = @doc(O), @doc(c14) = @doc(K), @doc(K) = @doc(N).
+    text(K, t15), text(N, t15), bind_name(c14, b17), site_latest(b17), @doc(OX) = @doc(O), @doc(c14) = @doc(K), @doc(K) = @doc(N).
 
 // main's file condition {"notRegex": "\\.pyi$"}
 .decl SLOT000_raw(at: node)

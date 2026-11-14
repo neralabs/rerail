@@ -85,7 +85,7 @@ b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "i
     inside(st11, p12, "import_from_statement"), field(p12, "module_name", c13),
     has(c13, c14, "identifier"), glob(q1, c14).
 b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "identifier"),
-    node(_, n, _, _, _), HEAD = n, count : { ref_site(n, b15), site_form(b15, "import") } = 0,
+    node(_, n, _, _, _), HEAD = n, count : { ref_site(n, b15), main_form(b15, "import") } = 0,
     within(n, p16), precedes(s17, p16), within(c18, s17), b615_writer(c18, q1, HEAD).
 
 // named(n, key): 3 copies of one rule set (`named-from-pretrained`, `named-hub-download`, `named-load-dataset`), folded into one: row `key` of
@@ -104,7 +104,7 @@ b615_named(n, q1) :- b615_named_case(q1, s1, s2, s3), kind(n, "identifier"), ref
 b615_named(n, q1) :- b615_named_case(q1, s1, s2, s3), kind(n, "identifier"), node(_, n, _, _, _), CALLEE = n,
     ref_site(n, b11), binding(sc12, x13, b11, _),
     k15 = count : { binding(sc12, x13, s14, _) }, k15 >= 2,
-    count : { ref_site(n, b16), site_form(b16, "import") } = 0, within(n, p17),
+    count : { ref_site(n, b16), main_form(b16, "import") } = 0, within(n, p17),
     precedes(s18, p17), has(s18, c19, "aliased_import"), field(c19, "alias", c20),
     node(_, c20, _, _, _), CALLEE = c20, field(c19, "name", c21), child(c21, c22, _),
     kind(c22, "identifier"), child(p23, c22, _), b615_counted(c22),

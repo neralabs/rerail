@@ -294,7 +294,8 @@ pth116_demand_class_holding_int(c8, A) :- pth116_demand_alt_5(n, A), kind(n, "at
     field(n, "object", c4), kind(c4, "identifier"), ref_site(c4, b5),
     (st6 = b5 ; within(b5, st6)), kind(st6, "class_definition"),
     field(st6, "body", c7), within_stop(c8, c7, "class_definition"),
-    field(c8, "name", c9), node(_, c9, _, _, _), B = c9, site_scope(c9, "class"), site_latest(c9).
+    field(c8, "name", c9), node(_, c9, _, _, _), B = c9, bind_name(c9, b10), site_scope(b10, "class"),
+    site_latest(b10).
 
 // demand_int_class_member: the rows of int_class_member its callers ask for (the metavariable columns they pass in)
 .decl pth116_demand_int_class_member(n: node, a: loc)
@@ -315,14 +316,14 @@ pth116_alt_2(n) :- field(n, "right", c2), pth116_int_type(c2).
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 .decl pth116_alt_3(n: node)
 pth116_alt_3(n) :- ref_site(n, b1), site_only(b1),
-    (site_form(b1, "assignment") ; site_form(b1, "named")), binding_value(b1, x2),
+    (main_form(b1, "assignment") ; main_form(b1, "named")), binding_value(b1, x2),
     pth116_int_value(x2).
 pth116_alt_3(n) :- ref_site(n, b3), site_only(b3), (st4 = b3 ; within(b3, st4)),
     kind(st4, "as_pattern"), child(st4, c5, _), pth116_int_value(c5).
 pth116_alt_3(n) :- ref_site(n, b6), site_only(b6),
-    ( site_form(b6, "annotated")
-    ; site_form(b6, "annotation")
-    ; site_form(b6, "parameter")
+    ( main_form(b6, "annotated")
+    ; main_form(b6, "annotation")
+    ; main_form(b6, "parameter")
     ),
     (st7 = b6 ; within(b6, st7)),
     count : { child(st7, c8, _), (kind(c8, "list_splat_pattern") ; kind(c8, "dictionary_splat_pattern")) } = 0,
@@ -333,22 +334,23 @@ pth116_alt_3(n) :- ref_site(n, b10), site_only(b10), (st11 = b10 ; within(b10, s
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 .decl pth116_alt_4(n: node)
-pth116_alt_4(n) :- site_scope(n, "class"), site_latest(n),
-    (site_form(n, "assignment") ; site_form(n, "named")), binding_value(n, x1),
-    pth116_int_value(x1).
-pth116_alt_4(n) :- site_scope(n, "class"), site_latest(n), (st2 = n ; within(n, st2)),
-    kind(st2, "as_pattern"), child(st2, c3, _), pth116_int_value(c3).
-pth116_alt_4(n) :- site_scope(n, "class"), site_latest(n),
-    ( site_form(n, "annotated")
-    ; site_form(n, "annotation")
-    ; site_form(n, "parameter")
+pth116_alt_4(n) :- bind_name(n, b1), site_scope(b1, "class"), site_latest(b1),
+    (main_form(b1, "assignment") ; main_form(b1, "named")), binding_value(b1, x2),
+    pth116_int_value(x2).
+pth116_alt_4(n) :- bind_name(n, b3), site_scope(b3, "class"), site_latest(b3),
+    (st4 = b3 ; within(b3, st4)), kind(st4, "as_pattern"), child(st4, c5, _),
+    pth116_int_value(c5).
+pth116_alt_4(n) :- bind_name(n, b6), site_scope(b6, "class"), site_latest(b6),
+    ( main_form(b6, "annotated")
+    ; main_form(b6, "annotation")
+    ; main_form(b6, "parameter")
     ),
-    (st4 = n ; within(n, st4)),
-    count : { child(st4, c5, _), (kind(c5, "list_splat_pattern") ; kind(c5, "dictionary_splat_pattern")) } = 0,
-    site_annotation(n, o6), pth116_int_annotation(o6).
-pth116_alt_4(n) :- site_scope(n, "class"), site_latest(n), (st7 = n ; within(n, st7)),
-    kind(st7, "function_definition"), field(st7, "return_type", c8),
-    pth116_int_annotation(c8).
+    (st7 = b6 ; within(b6, st7)),
+    count : { child(st7, c8, _), (kind(c8, "list_splat_pattern") ; kind(c8, "dictionary_splat_pattern")) } = 0,
+    site_annotation(b6, o9), pth116_int_annotation(o9).
+pth116_alt_4(n) :- bind_name(n, b10), site_scope(b10, "class"), site_latest(b10),
+    (st11 = b10 ; within(b10, st11)), kind(st11, "function_definition"),
+    field(st11, "return_type", c12), pth116_int_annotation(c12).
 
 // alt_5(n): the JSON `any`: n matches if any one of these rules does
 //   A: metavariable of the calling rule, passed in (bound by the caller)
@@ -359,5 +361,5 @@ pth116_alt_5(n, A) :- pth116_demand_alt_5(n, A), kind(n, "attribute"), field(n, 
     kind(c3, "identifier"), node(_, c3, _, _, _), B = c3, field(n, "object", c4), kind(c4, "identifier"),
     ref_site(c4, b5), (st6 = b5 ; within(b5, st6)), kind(st6, "class_definition"),
     field(st6, "body", c7), within_stop(c8, c7, "class_definition"),
-    pth116_class_holding_int(c8, A), field(c8, "name", c9), node(_, c9, _, _, _), B = c9,
-    site_scope(c9, "class"), site_latest(c9).
+    pth116_class_holding_int(c8, A), field(c8, "name", c9), node(_, c9, _, _, _), B = c9, bind_name(c9, b10),
+    site_scope(b10, "class"), site_latest(b10).

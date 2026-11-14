@@ -55,4 +55,4 @@ pattern: {context: "try:\n    work()\nexcept:\n    pass", selector: except_claus
   is at the name, with forms `assignment`, `named`, `augmented` and so on. `lib/python/names.rr` puts a simple
   assignment's site on the statement, with forms `assign`, `walrus`, `augassign`. So `x = 1` gets no
   `site_form(x, "assignment")`, and N806 misses it, in its override as in its generated form. About 46 generated
-  rules use `site_form`.
+  rules use `site_form`. (Fixed in decision 0191.)

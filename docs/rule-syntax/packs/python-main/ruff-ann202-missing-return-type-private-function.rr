@@ -79,8 +79,8 @@ ann202_static_or_class_expr(n) :- ann202_imports_builtins(n),
     (kind(n, "identifier") ; kind(n, "attribute")),
     (global_ref(n, "staticmethod") ; global_ref(n, "classmethod")),
     (sym_of(n, "builtins.staticmethod") ; sym_of(n, "builtins.classmethod")).
-ann202_static_or_class_expr(n) :- kind(n, "parenthesized_expression"), child(n, c5, _),
-    ann202_static_or_class_expr(c5).
+ann202_static_or_class_expr(n) :- kind(n, "parenthesized_expression"), child(n, c11, _),
+    ann202_static_or_class_expr(c11).
 
 // accessor_expr(n): the JSON util `accessor-expr`, used where the JSON says `matches: "accessor-expr"`
 //   FN: metavariable this relation binds for the calling rule
@@ -349,19 +349,19 @@ ann202_stop_3(n) :- ann202_holds_definition(n).
 ann202_alt_6(n) :- ann202_imports_builtins(n).
 ann202_alt_6(n) :- inside(n, p1, "module"), within(c2, p1),
     (kind(c2, "identifier") ; kind(c2, "dotted_name")), glob("staticmethod", c2),
-    site_scope(c2, "module"), !ann202_alt_10(c2).
+    bind_name(c2, b3), site_scope(b3, "module"), !ann202_alt_10(c2).
 
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
 .decl ann202_alt_10(n: node)
-ann202_alt_10(n) :- site_form(n, "annotation").
-ann202_alt_10(n) :- site_form(n, "except").
+ann202_alt_10(n) :- bind_name(n, b1), main_form(b1, "annotation").
+ann202_alt_10(n) :- bind_name(n, b2), main_form(b2, "except").
 
 // alt_9(n): the JSON `any`: n matches if any one of these rules does
 .decl ann202_alt_9(n: node)
 ann202_alt_9(n) :- ann202_imports_builtins(n).
 ann202_alt_9(n) :- inside(n, p1, "module"), within(c2, p1),
     (kind(c2, "identifier") ; kind(c2, "dotted_name")), glob("classmethod", c2),
-    site_scope(c2, "module"), !ann202_alt_10(c2).
+    bind_name(c2, b3), site_scope(b3, "module"), !ann202_alt_10(c2).
 
 // alt_15(n): the JSON `any`: n matches if any one of these rules does
 .decl ann202_alt_15(n: node)

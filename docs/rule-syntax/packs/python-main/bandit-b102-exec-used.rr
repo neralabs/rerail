@@ -17,9 +17,9 @@ B102(n) :- kind(n, "call"), field(n, "function", c1), b102_exec_callee(c1).
 // exec_callee(n): the JSON util `exec-callee`, used where the JSON says `matches: "exec-callee"`
 .decl b102_exec_callee(n: node)
 b102_exec_callee(n) :- b102_demand_exec_callee(n), kind(n, "identifier"), glob("exec", n),
-    count : { ref_site(n, b1), site_form(b1, "import"), (st2 = b1 ; within(b1, st2)), b102_alias_to_other(st2) } = 0.
+    count : { ref_site(n, b1), main_form(b1, "import"), (st2 = b1 ; within(b1, st2)), b102_alias_to_other(st2) } = 0.
 b102_exec_callee(n) :- b102_demand_exec_callee(n), kind(n, "identifier"), ref_site(n, b3),
-    site_form(b3, "import"), (st4 = b3 ; within(b3, st4)), b102_alias_to_exec(st4).
+    main_form(b3, "import"), (st4 = b3 ; within(b3, st4)), b102_alias_to_exec(st4).
 b102_exec_callee(n) :- b102_demand_exec_callee(n), kind(n, "parenthesized_expression"),
     child(n, c5, _), b102_exec_callee(c5).
 

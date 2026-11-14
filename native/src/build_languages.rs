@@ -19,7 +19,7 @@ const FORMAT: &str = "rerail.language/v1";
 /// for a file it refuses (JSON's: `transducer::packed::json_parser`).
 const PARSERS: &[&str] = &["tree-sitter", "forte", "rr", "bitlex", "literal"];
 /// The grammars Rerail implements itself (`native:<name>`): no tree-sitter grammar backs them.
-const NATIVE_GRAMMARS: &[&str] = &["forte", "rr", "percent-format", "brace-format"];
+const NATIVE_GRAMMARS: &[&str] = &["forte", "rr", "percent-format", "brace-format", "eslint-directive"];
 /// ast-grep-language 0.45's `SupportLang` variants. A vendored grammar whose dialect variant is
 /// one of them (Python, TypeScript and TSX, which Rerail vendors with patches) still lends that
 /// language's pattern syntax (`GrammarDialect::support`); any other vendored grammar, and a

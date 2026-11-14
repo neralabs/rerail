@@ -94,8 +94,8 @@ ann201_static_or_class_expr(n) :- ann201_imports_builtins(n),
     (kind(n, "identifier") ; kind(n, "attribute")),
     (global_ref(n, "staticmethod") ; global_ref(n, "classmethod")),
     (sym_of(n, "builtins.staticmethod") ; sym_of(n, "builtins.classmethod")).
-ann201_static_or_class_expr(n) :- kind(n, "parenthesized_expression"), child(n, c5, _),
-    ann201_static_or_class_expr(c5).
+ann201_static_or_class_expr(n) :- kind(n, "parenthesized_expression"), child(n, c11, _),
+    ann201_static_or_class_expr(c11).
 
 // accessor_expr(n): the JSON util `accessor-expr`, used where the JSON says `matches: "accessor-expr"`
 //   FN: metavariable this relation binds for the calling rule
@@ -214,10 +214,6 @@ ann201_public_class(n) :- !ann201_alt_15(n),
     ).
 
 
-// method(n): the JSON util `method`, used where the JSON says `matches: "method"`
-.decl ann201_method(n: node)
-ann201_method(n) :- within_stop(n, p1, ann201_stop_11), kind(p1, "class_definition").
-
 // accessor_object(n): the JSON util `accessor-object`, used where the JSON says `matches: "accessor-object"`
 //   FN: metavariable this relation binds for the calling rule
 .decl ann201_accessor_object(n: node, fn: loc)
@@ -319,19 +315,19 @@ ann201_stop_3(n) :- ann201_holds_definition(n).
 ann201_alt_6(n) :- ann201_imports_builtins(n).
 ann201_alt_6(n) :- inside(n, p1, "module"), within(c2, p1),
     (kind(c2, "identifier") ; kind(c2, "dotted_name")), glob("staticmethod", c2),
-    site_scope(c2, "module"), !ann201_alt_10(c2).
+    bind_name(c2, b3), site_scope(b3, "module"), !ann201_alt_10(c2).
 
 // alt_10(n): the JSON `any`: n matches if any one of these rules does
 .decl ann201_alt_10(n: node)
-ann201_alt_10(n) :- site_form(n, "annotation").
-ann201_alt_10(n) :- site_form(n, "except").
+ann201_alt_10(n) :- bind_name(n, b1), main_form(b1, "annotation").
+ann201_alt_10(n) :- bind_name(n, b2), main_form(b2, "except").
 
 // alt_9(n): the JSON `any`: n matches if any one of these rules does
 .decl ann201_alt_9(n: node)
 ann201_alt_9(n) :- ann201_imports_builtins(n).
 ann201_alt_9(n) :- inside(n, p1, "module"), within(c2, p1),
     (kind(c2, "identifier") ; kind(c2, "dotted_name")), glob("classmethod", c2),
-    site_scope(c2, "module"), !ann201_alt_10(c2).
+    bind_name(c2, b3), site_scope(b3, "module"), !ann201_alt_10(c2).
 
 // alt_15(n): the JSON `any`: n matches if any one of these rules does
 .decl ann201_alt_15(n: node)

@@ -16,7 +16,7 @@
 N816(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
     match("[_\\x{FE33}\\x{FE34}\\x{FE4D}-\\x{FE4F}\\x{FF3F}]?[\\p{Lowercase}--[\\x{149}\\x{2E4}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}\\x{107B6}-\\x{107B9}]].*", n),
     match(".*[\\p{Uppercase}\\x{1C5}\\x{1C8}\\x{1CB}\\x{1F2}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}].*", n),
-    ( site_form(n, f1), n816_set_4(f1), site_scope(n, "module"), !site_outer(n)
+    ( bind_name(n, b1), main_form(b1, f1), n816_set_4(f1), site_scope(b1, "module"), !site_outer(b1)
     ; within_stop(n, p1, n816_stop_5), kind(p1, "tuple_pattern"), field(p2, "left", p1), kind(p2, "augmented_assignment"), count : { within(p2, p3), (kind(p3, "function_definition") ; kind(p3, "class_definition")) } = 0
     ),
     !n816_alt_9(n).
