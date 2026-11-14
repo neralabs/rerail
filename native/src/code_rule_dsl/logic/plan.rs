@@ -6291,12 +6291,12 @@ impl<'a> Run<'a, '_> {
             self.model.stats.heavy_mark.insert(rel.as_str(), std::sync::Arc::new(now.mark()));
         }
         let held: Vec<_> = full.iter().map(|(rel, _)| engine::held(self.db, rel)).collect();
-        let made = table::heavy_batch(full.iter().map(|(rel, cols)| (engine::derived(self.db, rel), cols.clone())).collect());
+        let made = table::heavy_batch(full.iter().zip(&held).map(|((rel, cols), now)| (engine::derived(self.db, rel), now.clone(), cols.clone())).collect());
         for (((rel, cols), got), now) in full.iter().zip(made).zip(held) {
             let Some(got) = got else { continue };
             for (&c, h) in cols.iter().zip(got) {
                 if raise { joins::raise(key, rel, c); }
-                joins::log(|| format!("heavy values {rel}.{c}: {} rows, {} values, top {} hold {:.0}% (batches: {:?} CPU, GPU)", h.rows, h.ndv, h.top.len(), 100.0 * (1.0 - h.tail_rows / h.rows.max(1.0)), table::batches()));
+                joins::log(|| format!("heavy values {rel}.{c}: {} rows, {} values, top {} hold {:.0}% (batches: {:?} CPU, GPU; {} columns read in place)", h.rows, h.ndv, h.top.len(), 100.0 * (1.0 - h.tail_rows / h.rows.max(1.0)), table::batches(), table::read_in_place()));
                 self.model.stats.heavy.insert((rel.as_str(), c), std::sync::Arc::new(h));
                 n += 1;
             }
@@ -6322,14 +6322,15 @@ impl<'a> Run<'a, '_> {
     /// (O171, and decision 0216's spike): the key is a variable at a column whose heavy values are made, held by the
     /// lead itself, or by the one atom holding both it and a variable of the lead (`inf(f, m)` from
     /// `kind(m, return)`). Returns the heavy column, and the rows of heavy keys and of the rest.
-    fn heavy_parts(&self, name: &str, line: usize, r: &Rule, lead: usize) -> Result<Option<(String, usize, Vec<u32>, Vec<u32>)>> {
+    fn heavy_parts(&self, name: &str, line: usize, r: &Rule, lead: usize) -> Result<Option<HeavyParts>> {
         use super::native::component as engine;
         let Literal::Atom(la) = &r.body[lead] else { return Ok(None) };
-        // (the linking relation, its key column, its column of the lead's variable, that variable's lead column)
-        let mut found: Option<(String, usize, Option<(usize, usize)>, HashSet<i64>)> = None;
+        // (the linking relation, its key column, its column of the lead's variable and that variable's lead column,
+        // the key's variable)
+        let mut found: Option<(String, usize, Option<(usize, usize)>, Term)> = None;
         for (cv, t) in la.args.iter().enumerate() {
-            if let Term::Var(_) = t && let Some(h) = self.model.heavy_of(&la.rel, cv) {
-                found = Some((la.rel.to_string(), cv, None, h.top.iter().map(|t| t.0).collect()));
+            if let Term::Var(_) = t && self.model.heavy_of(&la.rel, cv).is_some() {
+                found = Some((la.rel.to_string(), cv, None, t.clone()));
                 break;
             }
         }
@@ -6339,18 +6340,18 @@ impl<'a> Run<'a, '_> {
             if d == lead || a.neg { continue }
             for (cv, t) in a.args.iter().enumerate() {
                 let Term::Var(v) = t else { continue };
-                let Some(h) = self.model.heavy_of(&a.rel, cv) else { continue };
+                if self.model.heavy_of(&a.rel, cv).is_none() { continue }
                 for (cu, t2) in a.args.iter().enumerate() {
                     let Term::Var(u) = t2 else { continue };
                     if u == v { continue }
                     if let Some(lc) = la.args.iter().position(|t| matches!(t, Term::Var(x) if x == u)) {
-                        found = Some((a.rel.to_string(), cv, Some((cu, lc)), h.top.iter().take(table::HEAVY).map(|t| t.0).collect()));
+                        found = Some((a.rel.to_string(), cv, Some((cu, lc)), t.clone()));
                         break 'find;
                     }
                 }
             }
         }
-        let Some((link, cv, via, _)) = found.as_ref().map(|f| (f.0.clone(), f.1, f.2, ())) else { return Ok(None) };
+        let Some((link, cv, via, key_var)) = found else { return Ok(None) };
         // The heavy values reported: the `HEAVY` largest of those kept.
         let heavy: HashSet<i64> = {
             let h = self.model.heavy_of(&link, cv).expect("found");
@@ -6359,11 +6360,19 @@ impl<'a> Run<'a, '_> {
             top.into_iter().take(table::HEAVY).map(|t| t.0).collect()
         };
         let (Some(ids), Some(lsrc)) = (engine::trial_ids(self.db, name, line)?, engine::derived(self.db, &la.rel)) else { return Ok(None) };
-        let (mut hot, mut cold) = (Vec::new(), Vec::new());
+        // A row's size (decision 0223): its key's rows raised to the joins on the key past the first, the work a
+        // self-join of `m` atoms on it does per row being about count^(m-1).
+        let h = self.model.heavy_of(&link, cv).expect("found");
+        let m = r.body.iter().filter(|l| matches!(l, Literal::Atom(a) if !a.neg && a.args.contains(&key_var))).count();
+        let e = m.saturating_sub(1).max(1) as i32;
+        let size = |v: i64| h.rows_of(v).powi(e);
+        let mut parts = HeavyParts { link: link.clone(), cv, hot: Vec::new(), cold: Vec::new(), hot_x: Vec::new(), cold_x: Vec::new() };
+        let put = |p: &mut HeavyParts, id: u32, is_hot: bool, x: f64| if is_hot { p.hot.push(id); p.hot_x.push(x) } else { p.cold.push(id); p.cold_x.push(x) };
         match via {
             None => {
                 for &id in &ids {
-                    if heavy.contains(&lsrc.value(id as usize, cv)) { hot.push(id) } else { cold.push(id) }
+                    let v = lsrc.value(id as usize, cv);
+                    put(&mut parts, id, heavy.contains(&v), size(v));
                 }
             }
             Some((cu, lc)) => {
@@ -6371,12 +6380,12 @@ impl<'a> Run<'a, '_> {
                 let mut keys: HashMap<i64, Vec<i64>> = HashMap::new();
                 for row in 0..dsrc.len() { keys.entry(dsrc.value(row, cu)).or_default().push(dsrc.value(row, cv)); }
                 for &id in &ids {
-                    let u = lsrc.value(id as usize, lc);
-                    if keys.get(&u).is_some_and(|vs| vs.iter().any(|v| heavy.contains(v))) { hot.push(id) } else { cold.push(id) }
+                    let vs = keys.get(&lsrc.value(id as usize, lc)).map_or(&[][..], Vec::as_slice);
+                    put(&mut parts, id, vs.iter().any(|v| heavy.contains(v)), vs.iter().map(|&v| size(v)).sum::<f64>().max(1.0));
                 }
             }
         }
-        Ok(Some((link, cv, hot, cold)))
+        Ok(Some(parts))
     }
 
     /// Decision 0209 §5's spike: whether a line's best order differs between its heavy key values and the rest.
@@ -6385,7 +6394,7 @@ impl<'a> Run<'a, '_> {
     /// cut at 4 times the part's least work so far. Logged only.
     #[allow(clippy::too_many_arguments)]
     fn split_spike(&mut self, name: &str, line: usize, r: &Rule, orders: &[Vec<Step>], lead: usize, first: Option<usize>, cut_order: &[Step], ri: &BTreeMap<String, usize>, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>) -> Result<()> {
-        let Some((link, cv, hot, cold)) = self.heavy_parts(name, line, r, lead)? else { joins::log(|| format!("split spike {}: no heavy key reached from the lead", r.head.rel)); return Ok(()) };
+        let Some(HeavyParts { link, cv, hot, cold, .. }) = self.heavy_parts(name, line, r, lead)? else { joins::log(|| format!("split spike {}: no heavy key reached from the lead", r.head.rel)); return Ok(()) };
         use super::native::component as engine;
         let mut report = Vec::new();
         for (part, picked) in [("heavy", &hot), ("rest", &cold)] {
@@ -8199,12 +8208,19 @@ impl<'a> Run<'a, '_> {
                     // the rest apart, a quarter of it from the heavy, and each order's work per row is their mean
                     // weighted by the parts' rows. At a stride alone, a key whose heavy values hold most of the work
                     // was measured on its light rows (`call_ret`: 23% of the rows did 96% of the work).
+                    // Decision 0223: each part's work is estimated by ratio to its rows' sizes (`heavy_parts`), not
+                    // by its rows: a heavy row's work grows with its key's rows, and a part's few sampled rows
+                    // stood for all of its rows at their mean.
                     let parts = match self.heavy_parts(&name, line, r, lead)? {
-                        Some((_, _, hot, cold)) if !hot.is_empty() && !cold.is_empty() => {
-                            let stride = |ids: &[u32], k: usize| -> Vec<u32> { let st = ids.len().div_ceil(k.max(1)).max(1); ids.iter().step_by(st).copied().collect() };
-                            let kh = (sample / 4).max(2).min(hot.len());
-                            let kc = sample.saturating_sub(kh).max(1).min(cold.len());
-                            Some([(stride(&hot, kh), hot.len()), (stride(&cold, kc), cold.len())])
+                        Some(hp) if !hp.hot.is_empty() && !hp.cold.is_empty() => {
+                            // (the rows picked, the part's rows, the picked rows' sizes summed, the part's)
+                            let stride = |ids: &[u32], xs: &[f64], k: usize| -> (Vec<u32>, usize, f64, f64) {
+                                let st = ids.len().div_ceil(k.max(1)).max(1);
+                                (ids.iter().step_by(st).copied().collect(), ids.len(), xs.iter().step_by(st).sum(), xs.iter().sum())
+                            };
+                            let kh = (sample / 4).max(2).min(hp.hot.len());
+                            let kc = sample.saturating_sub(kh).max(1).min(hp.cold.len());
+                            Some([stride(&hp.hot, &hp.hot_x, kh), stride(&hp.cold, &hp.cold_x, kc)])
                         }
                         _ => None,
                     };
@@ -8230,14 +8246,20 @@ impl<'a> Run<'a, '_> {
                             }
                             Some(ps) => {
                                 let mut got = Vec::new();
-                                for (p, (pick, _)) in ps.iter().enumerate() {
+                                for (p, (pick, ..)) in ps.iter().enumerate() {
                                     let Some(run) = one(self, Ok(pick), budget(least[p], cap / 2))? else { break };
                                     if !run.cut { least[p] = Some(least[p].map_or(run.work, |w| w.min(run.work))); }
                                     got.push(run);
                                 }
                                 if got.len() < 2 { continue; }
                                 let all = (ps[0].1 + ps[1].1) as f64;
-                                let per_row: f64 = got.iter().zip(ps).map(|(run, (_, size))| *size as f64 / all * run.work as f64 / run.rows.max(1) as f64).sum();
+                                // A part's work: its sample's over the sizes of the rows it ran (a cut part ran a
+                                // share of them), times all its rows' sizes.
+                                let total: f64 = got.iter().zip(ps).map(|(run, (pick, _, xs, xall))| {
+                                    let ran = xs * (run.rows as f64 / pick.len().max(1) as f64).min(1.0);
+                                    if ran > 0.0 { run.work as f64 * xall / ran } else { 0.0 }
+                                }).sum();
+                                let per_row = total / all;
                                 let rows = got[0].rows + got[1].rows;
                                 super::native::component::TrialRun { work: (per_row * rows as f64).round() as u64, rows, made: got[0].made + got[1].made, cut: got[0].cut || got[1].cut }
                             }
@@ -8245,7 +8267,7 @@ impl<'a> Run<'a, '_> {
                         measured.push((o.clone(), run));
                     }
                     if let Some(ps) = &parts {
-                        joins::log(|| format!("trials {}: stratified, {} of {} rows of heavy keys and {} of {} of the rest", r.head.rel, ps[0].0.len(), ps[0].1, ps[1].0.len(), ps[1].1));
+                        joins::log(|| format!("trials {}: stratified, {} of {} rows of heavy keys and {} of {} of the rest; their sizes {:.0} of {:.0} and {:.0} of {:.0}", r.head.rel, ps[0].0.len(), ps[0].1, ps[1].0.len(), ps[1].1, ps[0].2, ps[0].3, ps[1].2, ps[1].3));
                     }
                     let rule = order_rules[line];
                     let mut prices = Vec::new();
@@ -11679,4 +11701,15 @@ mod search_tests {
         }
         explaining(was);
     }
+}
+
+/// A checked line's rows left, split by its key's heavy values (`Run::heavy_parts`): the linking relation and its key
+/// column; the rows of heavy keys and the rest, with each row's size (decision 0223).
+struct HeavyParts {
+    link: String,
+    cv: usize,
+    hot: Vec<u32>,
+    cold: Vec<u32>,
+    hot_x: Vec<f64>,
+    cold_x: Vec<f64>,
 }

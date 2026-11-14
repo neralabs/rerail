@@ -467,27 +467,41 @@ pub fn heavy_fan(here: &HeavyCol, by: &[&HeavyCol]) -> Option<f64> {
     (den > 0.0).then(|| num / den)
 }
 
-/// Decision 0209 §6: each relation's requested columns' heavy values, in one batch: on the GPU in one command
-/// buffer (`heavy_of_values_gpu`) where the round's rows make a launch pay (`gpu_pays`), else on the CPU, one pass
-/// over each relation's rows (its source, where it has one), the relations spread over the pool.
-pub fn heavy_batch(reqs: Vec<(Option<std::sync::Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>, Vec<usize>)>) -> Vec<Option<Vec<HeavyCol>>> {
+/// Decision 0209 §6: each relation's requested columns' heavy values, in one batch: on the device in one command
+/// buffer (`heavy_of_device`) where the round's rows make a launch pay (`gpu_pays`), else on the CPU, one pass over
+/// each relation's rows (its source, where it has one), the relations spread over the pool. A request names the
+/// relation's source and, where the engine holds it, the relation itself: the device reads the columns of one it
+/// holds in place (decision 0223).
+pub fn heavy_batch(reqs: Vec<HeavyReq>) -> Vec<Option<Vec<HeavyCol>>> {
     use rayon::prelude::*;
-    let rows: usize = reqs.iter().map(|(s, cols)| s.as_ref().map_or(0, |s| s.len() * cols.len())).sum();
+    use crate::code_rule_dsl::logic::device::StatColumn;
+    let rows: usize = reqs.iter().map(|(s, _, cols)| s.as_ref().map_or(0, |s| s.len() * cols.len())).sum();
     if gpu_pays(rows) {
+        // Values gathered only for a source the engine does not hold as a relation.
         let values: Vec<Option<Vec<Vec<i64>>>> = reqs
             .par_iter()
-            .map(|(src, cols)| src.as_ref().map(|src| cols.iter().map(|&c| (0..src.len()).map(|row| src.value(row, c)).collect()).collect()))
+            .map(|(src, rel, cols)| match (src, rel) {
+                (Some(src), None) => Some(cols.iter().map(|&c| (0..src.len()).map(|row| src.value(row, c)).collect()).collect()),
+                _ => None,
+            })
             .collect();
-        let flat: Vec<&[i64]> = values.iter().flatten().flat_map(|cs| cs.iter().map(Vec::as_slice)).collect();
-        if let Some(mut made) = heavy_of_values_gpu(&flat) {
+        let mut cols: Vec<StatColumn<'_>> = Vec::new();
+        for ((src, rel, cs), v) in reqs.iter().zip(&values) {
+            match (src, rel, v) {
+                (Some(_), Some(rel), _) => cols.extend(cs.iter().map(|&c| StatColumn::Rel(rel, c))),
+                (_, _, Some(v)) => cols.extend(v.iter().map(|v| StatColumn::Values(v))),
+                _ => {}
+            }
+        }
+        if let Some(mut made) = heavy_of_device(&cols) {
             BATCHES[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let mut made = made.drain(..);
-            return values.iter().map(|v| v.as_ref().map(|cs| cs.iter().map(|_| made.next().expect("one a column")).collect())).collect();
+            return reqs.iter().map(|(src, _, cs)| src.as_ref().map(|_| cs.iter().map(|_| made.next().expect("one a column")).collect())).collect();
         }
     }
     BATCHES[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     reqs.into_par_iter()
-        .map(|(src, cols)| {
+        .map(|(src, _, cols)| {
             let src = src?;
             let mut counts: Vec<FxHashMap<i64, u64>> = cols.iter().map(|_| FxHashMap::default()).collect();
             for row in 0..src.len() {
@@ -499,6 +513,9 @@ pub fn heavy_batch(reqs: Vec<(Option<std::sync::Arc<dyn crate::code_rule_dsl::fa
         })
         .collect()
 }
+
+/// A request of `heavy_batch`: a relation's source, the engine's relation where it holds one, and the columns.
+pub type HeavyReq = (Option<std::sync::Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>, Option<std::sync::Arc<crate::code_rule_dsl::logic::native::component::InRel>>, Vec<usize>);
 
 /// The batches made, on the CPU and on the GPU.
 static BATCHES: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
@@ -519,24 +536,31 @@ fn gpu_pays(rows: usize) -> bool {
     MODE.unwrap_or(rows >= GPU_ROWS)
 }
 
-/// Columns' heavy values made on the GPU (`rerail_accel::gpu::join::column_stats`), exact; `None` without a device.
+/// Columns' heavy values made on the registered device (`SolverDevice::column_stats`), exact; `None` without one.
+/// The columns read in place are counted (`in_place`).
+pub fn heavy_of_device(cols: &[crate::code_rule_dsl::logic::device::StatColumn<'_>]) -> Option<Vec<HeavyCol>> {
+    let (made, read) = crate::code_rule_dsl::logic::device::solver()?.column_stats(cols, KEPT).ok()?;
+    IN_PLACE.fetch_add(read as u64, std::sync::atomic::Ordering::Relaxed);
+    Some(made.into_iter().map(|m| {
+        let mut top: Vec<(i64, f64)> = m.top.iter().map(|&(v, n)| (v, n as f64)).collect();
+        top.sort_unstable_by_key(|t| t.0);
+        let held: f64 = top.iter().map(|t| t.1).sum();
+        let (rows, ndv) = (m.rows as f64, m.ndv as f64);
+        HeavyCol { tail_rows: rows - held, tail_ndv: ndv - top.len() as f64, top, err: 0.0, rows, ndv, sq: m.sq as f64, cube: m.cube as f64 }
+    }).collect())
+}
+
+/// Columns the device read in place (`heavy_of_device`).
+static IN_PLACE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn read_in_place() -> u64 {
+    IN_PLACE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Columns' heavy values made on the device, from host values (`heavy_of_device`).
 pub fn heavy_of_values_gpu(cols: &[&[i64]]) -> Option<Vec<HeavyCol>> {
-    #[cfg(target_os = "macos")]
-    {
-        let made = rerail_accel::gpu::join::column_stats(cols, KEPT).ok()?;
-        Some(made.into_iter().map(|m| {
-            let mut top: Vec<(i64, f64)> = m.top.iter().map(|&(v, n)| (v, n as f64)).collect();
-            top.sort_unstable_by_key(|t| t.0);
-            let held: f64 = top.iter().map(|t| t.1).sum();
-            let (rows, ndv) = (m.rows as f64, m.ndv as f64);
-            HeavyCol { tail_rows: rows - held, tail_ndv: ndv - top.len() as f64, top, err: 0.0, rows, ndv, sq: m.sq as f64, cube: m.cube as f64 }
-        }).collect())
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = cols;
-        None
-    }
+    let cols: Vec<_> = cols.iter().map(|c| crate::code_rule_dsl::logic::device::StatColumn::Values(c)).collect();
+    heavy_of_device(&cols)
 }
 
 #[cfg(test)]
@@ -597,45 +621,5 @@ mod tests {
         let (m3, f3) = (heavy_fan(&merged, &[&merged, &merged]).unwrap(), heavy_fan(&full, &[&full, &full]).unwrap());
         assert!((m3 / f3 - 1.0).abs() < 0.02, "{m3} against {f3}");
         assert!(merged.err <= 2.0 + 30.0, "a value left out held at most its rows: {}", merged.err);
-    }
-    #[test]
-    fn the_gpu_batch_makes_the_cpu_batch_heavy_values() {
-        // A skewed key of node-like ids, and a narrow one; where there is no device, nothing to compare.
-        let mut x = 0x0209_u64;
-        let mut next = || { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x };
-        let wide: Vec<i64> = (0..20_000).map(|_| { let r = next() % 1000; 3_288_784_809_065_000_000 + (if r < 500 { next() % 30 } else { next() % 3_000 }) as i64 }).collect();
-        let narrow: Vec<i64> = (0..3_000).map(|_| (next() % 5) as i64).collect();
-        let Some(gpu) = heavy_of_values_gpu(&[&wide, &narrow]) else { return };
-        for (col, g) in [&wide, &narrow].into_iter().zip(gpu) {
-            let mut counts: FxHashMap<i64, u64> = FxHashMap::default();
-            for &v in col { *counts.entry(v).or_default() += 1; }
-            let cpu = HeavyCol::of_counts(counts);
-            assert_eq!((g.rows, g.ndv, g.sq, g.cube, g.tail_rows, g.tail_ndv), (cpu.rows, cpu.ndv, cpu.sq, cpu.cube, cpu.tail_rows, cpu.tail_ndv));
-            // The same top counts (ties may take other values of the same count).
-            let counts_of = |h: &HeavyCol| { let mut c: Vec<u64> = h.top.iter().map(|t| t.1 as u64).collect(); c.sort_unstable(); c };
-            assert_eq!(counts_of(&g), counts_of(&cpu));
-            assert!((heavy_fan(&g, &[&g, &g]).unwrap() / heavy_fan(&cpu, &[&cpu, &cpu]).unwrap() - 1.0).abs() < 1e-6);
-        }
-    }
-    /// The CPU's and the GPU's batch on columns of 1 M and 8 M rows, warm (a measure: `--ignored`).
-    #[test]
-    #[ignore]
-    fn heavy_batches_timed() {
-        let mut x = 0x0209_u64;
-        let mut next = || { x ^= x << 13; x ^= x >> 7; x ^= x << 17; x };
-        for n in [1usize << 20, 8 << 20] {
-            let col: Vec<i64> = (0..n).map(|_| { let r = next() % 1000; 3_288_784_809_065_000_000 + (if r < 500 { next() % 600 } else { next() % 200_000 }) as i64 }).collect();
-            let _ = heavy_of_values_gpu(&[&col]);
-            let t = std::time::Instant::now();
-            let gpu = heavy_of_values_gpu(&[&col]).expect("a device");
-            let g = t.elapsed().as_secs_f64();
-            let t = std::time::Instant::now();
-            let mut counts: FxHashMap<i64, u64> = FxHashMap::default();
-            for &v in &col { *counts.entry(v).or_default() += 1; }
-            let cpu = HeavyCol::of_counts(counts);
-            let c = t.elapsed().as_secs_f64();
-            assert_eq!((gpu[0].ndv, gpu[0].sq), (cpu.ndv, cpu.sq));
-            eprintln!("heavy batch, {n} rows: GPU {:.1} ms, CPU {:.1} ms", g * 1e3, c * 1e3);
-        }
     }
 }

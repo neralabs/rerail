@@ -111,6 +111,8 @@ there is a device. Otherwise on the CPU. `RERAIL_STATS_GPU=on` or `off` chooses.
 
 ## Open
 
+All three addressed by decision 0223 (2026-11-14); the first stays open as O173.
+
 - The estimate is still under the line's work. Each part's sample has few rows, and a heavy row's work varies
   with its function's size. A larger heavy share needs a larger cap; neither is tuned.
 - The GPU batch uploads the columns from the host. Columns the device joins already hold could be read in place.

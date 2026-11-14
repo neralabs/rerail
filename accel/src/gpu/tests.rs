@@ -334,6 +334,23 @@ fn concurrent_submissions_are_exact() {
 /// Decision 0209 §6: the device's column statistics, several columns in one command buffer, are the exact counts:
 /// distinct values, sums of counts squared and cubed, and the most common values with their counts.
 #[test]
+fn column_statistics_of_resident_columns_are_read_in_place() {
+    let mut rng = Rng(0x5eed_0223);
+    // Two columns of one column-major buffer: a node-like key (a narrow span far from zero), and one whose span passes
+    // 32 bits (made again, 64 bits wide).
+    let n = 20_000;
+    let key: Vec<i64> = (0..n).map(|_| { let r = rng.below(1000); (3_288_784_809_065_000_000 + if r < 600 { rng.below(20) } else { rng.below(5_000) }) as i64 }).collect();
+    let wide: Vec<i64> = (0..n).map(|_| if rng.below(2) == 0 { -(1i64 << 40) + rng.below(30) as i64 } else { (1i64 << 40) + rng.below(30) as i64 }).collect();
+    let all: Vec<i64> = key.iter().chain(&wide).copied().collect();
+    let held = join::Held::of(all.into_iter()).expect("the device");
+    let cols = [join::StatCol::Device { buffer: &held.buffer, at: 0, rows: n }, join::StatCol::Device { buffer: &held.buffer, at: n, rows: n }];
+    let got = join::column_stats_of(&cols, 16).expect("the device");
+    let want = join::column_stats(&[&key, &wide], 16).expect("the device");
+    assert_eq!(got, want);
+    assert_eq!(got[1].ndv, 60);
+}
+
+#[test]
 fn column_statistics_on_the_device_are_the_exact_counts() {
     use std::collections::HashMap;
     let mut rng = Rng(0x5eed_0209);

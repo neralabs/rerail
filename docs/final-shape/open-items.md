@@ -5109,3 +5109,11 @@ Closed (2026-11-14, decision 0221): a change is merged into kept heavy values (`
 the relation); raised columns are kept with their note in the store (`rr_join_raised`); the GPU batch is
 `rerail_accel::gpu::join::column_stats`, one command buffer a round, exact.
 
+
+## O173. A trial's estimate under its line's work on a correlated key (decision 0223)
+
+On the self-join seed `call_ret`, a stratified trial (decision 0221) estimates the winning order at 0.69 of the
+line's work per row, even when each part is estimated by ratio to its rows' sizes (decision 0223). The sample is
+representative by size, so the gap is per-row work the key's size does not explain: the returns a function
+reaches (decision 0216 §3). Open: a size that sees that correlation, from exact pair statistics (0203 §3), or a
+larger heavy share under a larger cap; neither is tuned.
