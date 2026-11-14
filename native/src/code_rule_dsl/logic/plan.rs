@@ -4666,6 +4666,8 @@ struct Driving<'a> {
     /// Per line, the seconds its probes ran (the engine's per-probe wall time), for the measured critical path
     /// (decision 0208).
     walled: Vec<f64>,
+    /// Per probe, its whole plan's order (O168).
+    wholes: HashMap<usize, Vec<Step>>,
 }
 
 struct Run<'a, 'b> {
@@ -7262,6 +7264,8 @@ impl<'a> Run<'a, '_> {
         self.model.wants(round, &mut wanted);
         self.model.make_statistics(prog, &wanted)?;
         let mut probes = Vec::new();
+        // Each probe's whole plan's order, where it has one (O168: a whole plan cut is handed off as a probe is).
+        let mut wholes: HashMap<usize, Vec<Step>> = HashMap::new();
         let mut unplanned: Vec<bool> = Vec::new();
         for (r, b) in rules.iter().zip(&rule_bodies) {
             // The rule's whole plan, and its spec once one is wanted: one per rule, whichever atom is its delta.
@@ -7339,6 +7343,7 @@ impl<'a> Run<'a, '_> {
                 } else {
                     None
                 };
+                if wspec.is_some() { wholes.insert(probes.len(), whole.clone()); }
                 lines.push(SpecLine::Join { head: ri[r.head.rel.as_str()], delta: ri[a.rel.as_str()], join: spec, whole: wspec });
                 keys.push(Some(key));
                 probes.push((*r, ai, order));
@@ -7425,23 +7430,24 @@ impl<'a> Run<'a, '_> {
                     live_stats(&mut self.model, &r, l);
                 }
                 self.model.stats.sized(names);
-                let mut whole: Vec<(*const Rule, Arc<JoinSpec>)> = Vec::new();
+                let mut whole: Vec<(*const Rule, Arc<JoinSpec>, Vec<Step>)> = Vec::new();
                 for k in 0..probes.len() {
                     let r = probes[k].0;
                     if sql_probe[k] || unplanned[k] || r.body[probes[k].1].atom().is_some_and(|a| small_batches(&a.rel)) {
                         continue;
                     }
-                    let spec = match whole.iter().find(|(p, _)| std::ptr::eq(*p, r)) {
-                        Some((_, w)) => w.clone(),
+                    let (spec, order) = match whole.iter().find(|(p, _, _)| std::ptr::eq(*p, r)) {
+                        Some((_, w, o)) => (w.clone(), o.clone()),
                         None => {
                             let _span = planning(r, "plan whole at open");
                             let ((new, _, _), _) = self.model.plan_rule_live(prog, &vs.body(r)?, None)?;
                             let Some(w) = self.whole_join_spec(&r.head, Order::new(&r.body, &new), None, &ri, scc, &native_rels) else { continue };
-                            whole.push((r, w.clone()));
-                            w
+                            whole.push((r, w.clone(), new.clone()));
+                            (w, new)
                         }
                     };
                     self.fx().reprobe(&name, nseeds + k, &Reprobe::Whole(spec))?;
+                    wholes.insert(k, order);
                 }
             }
         }
@@ -7490,6 +7496,7 @@ impl<'a> Run<'a, '_> {
             searched: Vec::new(),
             handoff: Vec::new(),
             walled: Vec::new(),
+            wholes,
             keys,
             started,
             placed,
@@ -7531,7 +7538,7 @@ impl<'a> Run<'a, '_> {
     fn drive(&mut self, d: Box<Driving<'a>>, native_rels: &BTreeSet<String>, numbers: &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<Native<'a>> {
         let vs = Arc::clone(&self.versions);
         let prog = self.prog;
-        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, mut orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken, mut unplanned, mut handoff, mut walled } = *d;
+        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, mut orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken, mut unplanned, mut handoff, mut walled, mut wholes } = *d;
         let scc = &scc_owned;
         let rels: Vec<&String> = rels_owned.iter().collect();
         let planning = |r: &Rule, what: &str| {
@@ -7588,7 +7595,7 @@ impl<'a> Run<'a, '_> {
                     drop(rels);
                     Box::new(Driving {
                         scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, probes, order_rules, nseeds, seeds, ngates,
-                        explained, counted, earlier, timed, chunk, replanned_at, searched, keys, started, placed, shape, lab, not_taken, unplanned, handoff, walled,
+                        explained, counted, earlier, timed, chunk, replanned_at, searched, keys, started, placed, shape, lab, not_taken, unplanned, handoff, walled, wholes,
                         cpu_own: if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_at } else { 0.0 },
                     })
                 }};
@@ -7714,7 +7721,7 @@ impl<'a> Run<'a, '_> {
                 // The whole plans, planned from seed estimates (a derived relation empty, its columns without
                 // distinct counts), again from the live counts: once per rule, the same plan for each of its probes
                 // (`setfix` runs it once a wave).
-                let mut whole: Vec<(*const Rule, Arc<JoinSpec>)> = Vec::new();
+                let mut whole: Vec<(*const Rule, Arc<JoinSpec>, Vec<Step>)> = Vec::new();
                 let wants_whole = |k: usize, this: &Self| {
                     let r = probes[k].0;
                     !sql_probe[k]
@@ -7733,18 +7740,19 @@ impl<'a> Run<'a, '_> {
                     }
                     let r = probes[k].0;
                     if !replanned_at.take_whole(k) { continue; }
-                    let spec = match whole.iter().find(|(p, _)| std::ptr::eq(*p, r)) {
-                        Some((_, w)) => w.clone(),
+                    let (spec, order) = match whole.iter().find(|(p, _, _)| std::ptr::eq(*p, r)) {
+                        Some((_, w, o)) => (w.clone(), o.clone()),
                         None => {
                             self.model.late(prog, &vs.body(r)?, None, true)?;
                             let _span = planning(r, "replan whole");
                             let ((new, _, _), _) = self.model.plan_rule_live(prog, &vs.body(r)?, None)?;
                             let Some(w) = self.whole_join_spec(&r.head, Order::new(&r.body, &new), None, &ri, scc, &native_rels) else { continue };
-                            whole.push((r, w.clone()));
-                            w
+                            whole.push((r, w.clone(), new.clone()));
+                            (w, new)
                         }
                     };
                     self.fx().reprobe(&name, nseeds + k, &Reprobe::Whole(spec))?;
+                    wholes.insert(k, order);
                 }
                 // Maintenance probes deliberately have no whole plan. They must also use the seed wave's
                 // measured domains before their first delta runs, rather than waiting two further waves.
@@ -7832,40 +7840,64 @@ impl<'a> Run<'a, '_> {
             }
             // Decision 0206, the handoff: a join cut at its check, then replaced, reads the rows of its first atom its
             // old order left, under a limit of `slow_factor` times its price for them. Cut again, the order with the
-            // less work per row goes on from there, unlimited.
+            // less work per row goes on from there, unlimited. A probe's whole plan (O168) is cut and handed off as a
+            // seed is: it leads with its first atom, and reads no delta.
             if let Some(c) = &cut && c.probe < nseeds + probes.len() {
                 let line = c.probe;
+                let k = line.wrapping_sub(nseeds);
+                let whole = c.whole && line >= nseeds && wholes.contains_key(&k);
                 let seed = line < nseeds;
-                let (r, first) = if seed { (orders[line].0, None) } else { (probes[line - nseeds].0, Some(probes[line - nseeds].1)) };
+                let led = seed || whole;
+                let (r, first) = if seed { (orders[line].0, None) } else if whole { (probes[k].0, None) } else { (probes[k].0, Some(probes[k].1)) };
                 let b = vs.body(r)?;
-                let order_now = |orders: &Vec<(&Rule, Vec<Step>)>, probes: &Vec<_>| -> Vec<Step> { if seed { orders[line].1.clone() } else { let p: &(&Rule, usize, Vec<Step>) = &probes[line - nseeds]; p.2.clone() } };
-                let mut old = if seed { Some(orders[line].1.clone()) } else { before.clone() };
-                // A seed is checked here, at its cut (a probe was, above), and planned again over the rows it left,
-                // leading with the atom it led with.
-                if seed && let Some(key) = keys.get(line).copied().flatten() && let Some(ran) = counted.get(line) {
-                    let work = super::profile::plan_work(ran) as f64;
-                    let at0 = orders[line].1[0].at;
-                    let est = if joins::check(key, work) { self.model.price_for_delta(prog, &b, Some(at0), &orders[line].1, c.done.max(1) as f64) } else { None };
+                let order_now = |orders: &Vec<(&Rule, Vec<Step>)>, probes: &Vec<(&Rule, usize, Vec<Step>)>, wholes: &HashMap<usize, Vec<Step>>| -> Vec<Step> {
+                    if seed { orders[line].1.clone() } else if whole { wholes[&k].clone() } else { probes[k].2.clone() }
+                };
+                let mut old = if led { Some(order_now(&orders, &probes, &wholes)) } else { before.clone() };
+                let cut_lead = old.as_ref().map_or_else(|| order_now(&orders, &probes, &wholes)[0].at, |o| o[0].at);
+                // Puts `new` in the engine for the line, and in the driver's place for it; its counts so far stay
+                // with the order they were the old one's (a whole plan's are not counted).
+                macro_rules! place {
+                    ($new:expr) => {{
+                        let new: Vec<Step> = $new;
+                        let at = first.map(|ai| new.iter().position(|s| s.at == ai).expect("the delta atom"));
+                        match self.whole_join_spec(&r.head, Order::new(&r.body, &new), at, &ri, scc, native_rels) {
+                            Some(spec) => {
+                                self.fx().reprobe(&name, line, &if whole { Reprobe::Whole(spec) } else { Reprobe::Join(spec) })?;
+                                if new[0].at == cut_lead { super::native::component::cut_step(self.db, &name, 0)?; }
+                                if whole {
+                                    wholes.insert(k, new);
+                                } else {
+                                    if earlier.len() <= line { earlier.resize_with(line + 1, Vec::new); }
+                                    let ran = counted.get_mut(line).map(std::mem::take).unwrap_or_default();
+                                    let slot = if seed { &mut orders[line].1 } else { &mut probes[k].2 };
+                                    if ran.iter().any(|&(a, _)| a > 0) { earlier[line].push((std::mem::replace(slot, new), ran)); }
+                                    else { *slot = new; }
+                                }
+                                true
+                            }
+                            None => false,
+                        }
+                    }};
+                }
+                // The line's work: its counts, and a whole plan's work as its cut reported it.
+                let work = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64 + if whole { c.work as f64 } else { 0.0 };
+                // A seed or whole plan is checked here, at its cut (a probe was, above).
+                if led && let Some(key) = keys.get(line).copied().flatten() {
+                    let running = order_now(&orders, &probes, &wholes);
+                    let est = if joins::check(key, work) { self.model.price_for_delta(prog, &b, Some(cut_lead), &running, c.done.max(1) as f64) } else { None };
                     if let Some(est) = est && work > joins::slow_factor() * est.max(1.0) && r.body.iter().filter(|l| matches!(l, Literal::Atom(a) if !a.neg)).count() >= 2 {
                         let rule = order_rules[line];
                         joins::flag_slow(key, rule, est, work);
-                        super::profile::decision("slow joins (decision 0203)", || format!("seed {}: {work:.0} rows of work, priced {est:.0} for its {} rows read", r.head.rel, c.done));
-                        let exact = self.exact_statistics(&name, line, r, &orders[line].1);
-                        joins::log(|| format!("slow seed {}: {work:.0} rows of work, priced {est:.0} for its {} rows read; {} exact pair statistics", r.head.rel, c.done, exact.len()));
+                        super::profile::decision("slow joins (decision 0203)", || format!("{} {}: {work:.0} rows of work, priced {est:.0} for its {} rows read", if whole { "whole plan" } else { "seed" }, r.head.rel, c.done));
+                        let exact = self.exact_statistics(&name, line, r, &running);
+                        joins::log(|| format!("slow {} {}: {work:.0} rows of work, priced {est:.0} for its {} rows read; {} exact pair statistics", if whole { "whole plan" } else { "seed" }, r.head.rel, c.done, exact.len()));
                         joins::put_exact(key, rule, exact);
                         joins::take_forced(&key);
                         self.request_search(r, None, rule, key, work)?;
                         // With trials (decision 0207) the orders are measured below instead.
-                        if !joins::trials_on() && let Some(new) = self.model.plan_for_rows(prog, &b, at0, c.left.max(1) as f64)
-                            && !same_order(&new, &orders[line].1)
-                            && let Some(spec) = self.whole_join_spec(&r.head, Order::new(&r.body, &new), None, &ri, scc, native_rels)
-                        {
-                            self.fx().reprobe(&name, line, &Reprobe::Join(spec))?;
-                            if new[0].at == at0 { super::native::component::cut_step(self.db, &name, 0)?; }
-                            if earlier.len() <= line { earlier.resize_with(line + 1, Vec::new); }
-                            let ran = counted.get_mut(line).map(std::mem::take).unwrap_or_default();
-                            if ran.iter().any(|&(a, _)| a > 0) { earlier[line].push((std::mem::replace(&mut orders[line].1, new), ran)); }
-                            else { orders[line].1 = new; }
+                        if !joins::trials_on() && let Some(new) = self.model.plan_for_rows(prog, &b, cut_lead, c.left.max(1) as f64) && !same_order(&new, &running) {
+                            place!(new);
                         }
                     }
                 }
@@ -7875,13 +7907,12 @@ impl<'a> Run<'a, '_> {
                 // order tried; the least measured goes on where it beats the running order by `trial_margin`.
                 // The sample is what the share pays for at the running order's work per row, at most `trial_rows`;
                 // under `TRIAL_LEAST` rows, the trials wait for a later check.
-                let so_far = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) as f64;
-                let cap = (joins::trial_share() * so_far).max(1_000.0) as u64;
+                let cap = (joins::trial_share() * work).max(1_000.0) as u64;
                 let sample = if c.led && c.done > 0 { ((cap as f64 * c.done as f64 / c.work.max(1) as f64) as usize).min(joins::trial_rows() as usize) } else { 0 };
                 const TRIAL_LEAST: usize = 8;
                 let joined = r.body.iter().filter(|l| matches!(l, Literal::Atom(a) if !a.neg)).count() >= 2;
                 if let Some(key) = keys.get(line).copied().flatten() && joins::trials_on() && joined && sample >= TRIAL_LEAST && handoff[line].is_none() && joins::take_trial(key) {
-                    let running = order_now(&orders, &probes);
+                    let running = order_now(&orders, &probes, &wholes);
                     let cut_order = old.clone().unwrap_or_else(|| running.clone());
                     let lead = first.unwrap_or(cut_order[0].at);
                     let left = if c.led { c.left } else { c.done + c.left };
@@ -7920,29 +7951,25 @@ impl<'a> Run<'a, '_> {
                             joins::put_tried(key, rule, o, run.work as f64 / est.max(1.0));
                         }
                     }
-                    joins::log(|| format!("trials {} over {} rows ({} rows of work in all): {}", r.head.rel, measured.first().map_or(0, |m| m.1.rows), measured.iter().map(|m| m.1.work).sum::<u64>(), measured.iter().map(|(o, t)| format!("{}{} {}{}", if same_order(o, &running) { "*" } else { "" }, o.iter().map(|s| s.at.to_string()).collect::<Vec<_>>().join("."), t.work, if t.cut { "+" } else { "" })).collect::<Vec<_>>().join(", ")));
+                    // O169: the rows a finished trial made over its sample are the wave's; the order that goes on
+                    // reads the rest.
+                    let kept = super::native::component::keep_trial_rows(self.db, &name)?;
+                    joins::log(|| format!("trials {}{} over {} rows ({} rows of work in all, {kept} rows kept): {}", if whole { "whole plan " } else { "" }, r.head.rel, measured.first().map_or(0, |m| m.1.rows), measured.iter().map(|m| m.1.work).sum::<u64>(), measured.iter().map(|(o, t)| format!("{}{} {}{}", if same_order(o, &running) { "*" } else { "" }, o.iter().map(|s| s.at.to_string()).collect::<Vec<_>>().join("."), t.work, if t.cut { "+" } else { "" })).collect::<Vec<_>>().join(", ")));
                     let mine = measured.iter().find(|(o, _)| same_order(o, &running)).map(|(_, t)| *t);
                     let best = measured.iter().filter(|(_, t)| !t.cut).min_by_key(|(_, t)| t.work);
                     if let (Some(mine), Some((best, won))) = (mine, best)
                         && !same_order(best, &running)
                         && (mine.cut || won.work as f64 * joins::trial_margin() < mine.work as f64)
                     {
-                        let at = first.map(|ai| best.iter().position(|s| s.at == ai).expect("trialled with the delta"));
-                        if let Some(spec) = self.whole_join_spec(&r.head, Order::new(&r.body, best), at, &ri, scc, native_rels) {
+                        let (best, won) = (best.clone(), *won);
+                        if place!(best) {
                             super::profile::decision("join trials (decision 0207)", || format!("{}: {} rows of work over the sample, the running order {}{}", r.head.rel, won.work, mine.work, if mine.cut { " or more" } else { "" }));
-                            self.fx().reprobe(&name, line, &Reprobe::Join(spec))?;
-                            if best[0].at == cut_order[0].at { super::native::component::cut_step(self.db, &name, 0)?; }
-                            if earlier.len() <= line { earlier.resize_with(line + 1, Vec::new); }
-                            let ran = counted.get_mut(line).map(std::mem::take).unwrap_or_default();
-                            let slot = if seed { &mut orders[line].1 } else { &mut probes[line - nseeds].2 };
-                            if ran.iter().any(|&(a, _)| a > 0) { earlier[line].push((std::mem::replace(slot, best.clone()), ran)); }
-                            else { *slot = best.clone(); }
                             if old.is_none() { old = Some(running); }
                         }
                     }
                 }
-                if !seed && old.as_ref().is_some_and(|o| same_order(o, &probes[line - nseeds].2)) { old = None; }
-                let now = order_now(&orders, &probes);
+                if !led && old.as_ref().is_some_and(|o| same_order(o, &probes[k].2)) { old = None; }
+                let now = order_now(&orders, &probes, &wholes);
                 let per_row = |work: u64, done: u64| if done > 0 { work as f64 / done as f64 } else { f64::INFINITY };
                 match handoff[line].take() {
                     None => {
@@ -7961,18 +7988,8 @@ impl<'a> Run<'a, '_> {
                         let back = ran > h.per_row;
                         joins::log(|| format!("handoff {}: the replacement was cut too, {ran:.1} rows of work per row against the old order's {:.1}: {} goes on", r.head.rel, h.per_row, if back { "the old order" } else { "the replacement" }));
                         joins::count_handoff(back);
-                        if back {
-                            let at = first.map(|ai| h.old.iter().position(|s| s.at == ai).expect("the delta atom"));
-                            let spec = self
-                                .whole_join_spec(&r.head, Order::new(&r.body, &h.old), at, &ri, scc, native_rels)
-                                .ok_or_else(|| Error::Plan(format!("a join of {} has no native step", r.head)))?;
-                            self.fx().reprobe(&name, line, &Reprobe::Join(spec))?;
-                            if seed && h.old[0].at == now[0].at { super::native::component::cut_step(self.db, &name, 0)?; }
-                            if earlier.len() <= line { earlier.resize_with(line + 1, Vec::new); }
-                            let ran = counted.get_mut(line).map(std::mem::take).unwrap_or_default();
-                            let slot = if seed { &mut orders[line].1 } else { &mut probes[line - nseeds].2 };
-                            if ran.iter().any(|&(a, _)| a > 0) { earlier[line].push((std::mem::replace(slot, h.old), ran)); }
-                            else { *slot = h.old; }
+                        if back && !place!(h.old) {
+                            return Err(Error::Plan(format!("a join of {} has no native step", r.head)));
                         }
                     }
                 }

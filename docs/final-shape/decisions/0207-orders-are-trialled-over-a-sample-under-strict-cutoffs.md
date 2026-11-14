@@ -1,7 +1,7 @@
 # 0207: A line's orders are trialled over a sample of its rows, under strict cutoffs
 
 Status: built (2026-11-14). The engine's trial (`setfix::trial`), the driver's trials at a line's check
-(`Run::drive`), the measured ratios kept in the memo (`joins::put_tried`). Open: O169.
+(`Run::drive`), the measured ratios kept in the memo (`joins::put_tried`). A finished trial's rows are kept (O169, closed the same day).
 
 ## Intro
 
@@ -96,8 +96,18 @@ At default settings:
 In all, 3.6× less work, with the same findings. The slow check alone (decision 0206 at 8×) had left this order
 running.
 
-## Open
+## A finished trial's rows are kept (O169, closed 2026-11-14)
 
-- **O169, a trial's rows are made twice.** A trial's rows are dropped, then made again by the order that goes on.
-  Over a sample that is most of the rows left, the work is done twice. Keeping the winner's rows (they are a set's)
-  would save that.
+Every trial that finishes over a sample makes the same rows: they are the rule's rows from those rows of its first
+atom. The engine keeps the first finished trial's rows (`Component::trial_rows`). Once the line's trials are done,
+the driver calls `keep_trial_rows`:
+
+- the rows join the cut wave's rows;
+- the sample's rows leave the rows the probe has left.
+
+So the order that goes on does not make those rows again, whichever order it is.
+
+**Test** (`setfix::cut_tests`): the rows kept are the trial's, kept once, and the fixpoint is the unlimited run's.
+
+**Smoke** (the self-join seed, default settings): 1,833 rows kept from the 8-row sample. The line's work went from
+374 k to 363 k rows, with the same 545 findings.
