@@ -603,4 +603,18 @@ describe.runIf(process.platform === "win32")("On Windows, a folder outside Git t
     expect(checkoutRows(databasePath)).toEqual([{ path: stored, started: 0 }, { path: earlierKey, started: 1 }]);
     expect(startChecks(spelled, databasePath)).toEqual(STOPPED);
   });
+
+  it("reads a stop 0.1.4 saved under the folder's spelling for another repository as not this folder's", async () => {
+    const { databasePath, spelled, earlierKey } = await stoppedBy014(throughLetter, false);
+    const database = openRerailDatabase(databasePath);
+    try {
+      // The letter reached another clone when 0.1.4 stopped it there, so 0.1.4's row under it names that repository.
+      database.$client.prepare("INSERT INTO repositories (repository_key, display_name, started, configured_at, created_at, updated_at) VALUES (?, ?, 1, 1, 1, 1)")
+        .run("clone:another", "Another");
+      database.$client.prepare("UPDATE checkouts SET repository_key = ?, clone_id = ? WHERE checkout_path = ?").run("clone:another", "another", earlierKey);
+    } finally {
+      database.$client.close();
+    }
+    expect(startChecks(spelled, databasePath)).toEqual({ hook: "started", daemon: "started", runtime: "started" });
+  });
 });
