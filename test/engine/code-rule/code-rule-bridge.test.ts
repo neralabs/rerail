@@ -215,6 +215,20 @@ function holdNextListingAgain(): { asked: Promise<string>; release(): void } {
   return { asked: asked.promise, release: released.resolve };
 }
 
+/**
+ * Runs `run` with every `setTimeout` held back, and drops those it started once it ends: a slot a listing asked again
+ * took meanwhile is handed on only once its Git answers, never at the wait (`LISTING_AGAIN_WAIT_MS`), however slow the
+ * machine. Nothing `run` waits for may need a timer.
+ */
+async function withoutSlotWaits<T>(run: () => Promise<T>): Promise<T> {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    return await run();
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
 /** As in `code-rule-bridge.ts`: how many listings asked again hold a slot to ask Git at once, and for how long at most. */
 const LISTINGS_AGAIN_AT_ONCE = 4;
 const LISTING_AGAIN_WAIT_MS = 1_000;
@@ -268,7 +282,8 @@ async function settled<T>(promise: Promise<T>): Promise<boolean> {
 
 const directories: string[] = [];
 afterEach(async () => {
-  // A test that timed out never reached its own `finally`: no Git hangs in the tests after it.
+  // A test that timed out never reached its own `finally`: no Git hangs in the tests after it, and no timer stays held.
+  vi.useRealTimers();
   asyncGitCalls.hanging = undefined;
   asyncGitCalls.throwsNext = undefined;
   listings.late.length = 0;
@@ -884,34 +899,38 @@ describe("CodeRuleBridge", () => {
     });
     const bridge = createBridge(root, { ...auditor(auditGeneratedEdits), sourceRoot });
     // The baseline walk's listing of each checkout runs past its time limit. The listings asked again, one in each slot
-    // and one waiting for a slot, wait until an edit's audit holds the bridge's queue.
+    // and one waiting for a slot, wait until an edit's audit holds the bridge's queue. Until then no slot's wait runs
+    // out, so only a Git's answer can hand a slot on, however long the edit and its audit take.
     listings.late.push(...checkouts);
     const asking = holdListingsAgain();
-    await bridge.openWorkspace("session-1");
-    await bridge.checkpoint("turn");
-    await bridge.begin("edit-1", "write", { path: "src/held.py" });
-    await writeFile(join(root, "src", "held.py"), "held\n");
-    const edited = bridge.finish("edit-1");
-    await audited.promise;
-    asking.release();
+    const { edited } = await withoutSlotWaits(async () => {
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      await bridge.begin("edit-1", "write", { path: "src/held.py" });
+      await writeFile(join(root, "src", "held.py"), "held\n");
+      const finishing = bridge.finish("edit-1");
+      await audited.promise;
+      expect(listings.asked).toHaveLength(LISTINGS_AGAIN_AT_ONCE);
+      asking.release();
+      return { edited: finishing };
+    });
     // Those in a slot answer, read what they list and wait for the queue to keep it; the last asks Git once one answered.
     await vi.waitFor(() => expect(listings.asked.length).toBeGreaterThan(LISTINGS_AGAIN_AT_ONCE), { timeout: 5_000, interval: 5 }).catch(() => undefined);
     const releasedAt = performance.now();
     audit.resolve();
     await edited;
     await bridge.settleListingsAgain();
-    const inSlots = listings.asked.slice(0, LISTINGS_AGAIN_AT_ONCE);
-    const handedOn = Math.min(...inSlots.map(listing => Math.min(listing.answered ?? Infinity, listing.asked + LISTING_AGAIN_WAIT_MS)));
+    const answered = Math.min(...listings.asked.slice(0, LISTINGS_AGAIN_AT_ONCE).map(listing => listing.answered ?? Infinity));
     expect(listings.asked).toHaveLength(checkouts.length);
-    // Asked while the audit still held the queue, as soon as a slot's Git answered (or had run the wait), not once the
-    // reads and the keep of the listing in that slot were done.
+    // Asked while the audit still held the queue, as soon as a slot's Git answered, not once the reads and the keep of
+    // the listing in that slot were done.
     expect(listings.asked[LISTINGS_AGAIN_AT_ONCE]?.asked).toBeLessThan(releasedAt);
-    expect(listings.asked[LISTINGS_AGAIN_AT_ONCE]?.asked).toBeLessThanOrEqual(handedOn + 100);
+    expect(listings.asked[LISTINGS_AGAIN_AT_ONCE]?.asked).toBeLessThanOrEqual(answered + 100);
   }, 30_000);
 
   it("asks Git nothing for the listings asked again still waiting for a slot once the session closes, while an audit holds the bridge's queue", async () => {
-    // Four listings in the slots and six behind them: four take a slot a second after the first ones were asked, the
-    // last two a second after that, so some still wait when the session closes, even on a slow machine.
+    // Four listings in the slots and six behind them. No slot's wait runs out before the session closes, so the six
+    // still wait for a slot as it closes, however long the edit and its audit take.
     const { root, checkouts, sourceRoot } = await changedCheckouts(2 * LISTINGS_AGAIN_AT_ONCE + 2);
     const audited = Promise.withResolvers<void>();
     const audit = Promise.withResolvers<void>();
@@ -922,24 +941,29 @@ describe("CodeRuleBridge", () => {
       return response(batch);
     });
     const bridge = createBridge(root, { ...auditor(auditGeneratedEdits), sourceRoot });
-    // The baseline walk's listing of each checkout runs past its time limit. Each listing asked again waits until the
-    // session is closing, then answers as a Git its time limit ended, starting none.
+    // The baseline walk's listing of each checkout runs past its time limit. The four listings in the slots wait until the
+    // session is closing; each listing asked again answers as a Git its time limit ended, starting none.
     listings.late.push(...checkouts);
     listings.lateAgain.push(...checkouts);
-    const asking = holdListingsAgain();
-    await bridge.openWorkspace("session-1");
-    await bridge.checkpoint("turn");
-    await bridge.begin("edit-1", "write", { path: "src/held.py" });
-    await writeFile(join(root, "src", "held.py"), "held\n");
-    const edited = bridge.finish("edit-1");
-    await audited.promise;
-    // The close cancels the session at once, then waits for the audit to leave the bridge's queue before it stops the
-    // session's Git reads. Meanwhile the listings in the slots answer and hand their slots on.
-    const askedBefore = listings.calls.length;
-    const closed = bridge.close();
-    asking.release();
-    await bridge.settleListingsAgain();
-    const askedAfter = listings.calls.slice(askedBefore);
+    const slow = Array.from({ length: LISTINGS_AGAIN_AT_ONCE }, () => holdNextListingAgain());
+    const { edited, closed, askedAfter } = await withoutSlotWaits(async () => {
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      await Promise.all(slow.map(hold => hold.asked));
+      await bridge.begin("edit-1", "write", { path: "src/held.py" });
+      await writeFile(join(root, "src", "held.py"), "held\n");
+      const finishing = bridge.finish("edit-1");
+      await audited.promise;
+      // Only the four in the slots have asked Git: the six behind them still wait for a slot.
+      expect(listings.calls.filter(call => call.startsWith("again "))).toHaveLength(LISTINGS_AGAIN_AT_ONCE);
+      // The close cancels the session at once, then waits for the audit to leave the bridge's queue before it stops the
+      // session's Git reads. Meanwhile the listings in the slots answer and hand their slots on.
+      const askedBefore = listings.calls.length;
+      const closing = bridge.close();
+      for (const hold of slow) hold.release();
+      await bridge.settleListingsAgain();
+      return { edited: finishing, closed: closing, askedAfter: listings.calls.slice(askedBefore) };
+    });
     audit.resolve();
     await edited;
     await closed;
