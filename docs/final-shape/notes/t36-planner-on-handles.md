@@ -120,8 +120,17 @@ Leaves first. Each item leaves every caller working.
     reader, the join specs' constant conditions (item 4).
   - dl1 (images required, profiling build, a fresh store): the 48 findings are equal; cold 55.7 G instructions, warm
     19.9 G (53.6 G and 19.3 G in the run with the check on: the runs' spread).
-  - Open: the convert replay sample (`a_sample_of_the_replay_gives_the_recorded_findings`) takes 345 s in the debug
-    test binary, past the 170 s watchdog; it passes given the time. No earlier timing is recorded to compare.
+  - The convert replay sample (`a_sample_of_the_replay_gives_the_recorded_findings`) took 345 s in the debug test
+    binary, past the 170 s watchdog. Two causes, both fixed (2026-11-13), and it now takes 33 s:
+    - `corpus::session::current` held the process's session lock for a whole corpus run even when the run was no
+      session's, so the sample's eight workers ran one at a time (one core busy, the workers in `__psynch_mutexwait`).
+      A run that is not the session's holds nothing now. The workers are named as a test's threads, so each has a
+      store of its own (`test_store::own`).
+    - One check (`serverplan_state_tripwires`) took 198 s alone: an aggregate's demand
+      (`rr::aggregate_demand::guards`) left out a guard that reaches the key only through a comparison
+      (`spt_flow_jb(rr_t1, 92)` with `rr_t1 = @sub(p, 1)`), so every byte of a 6 KB text was demanded and its helper
+      held every pair of bytes (17.9 M rows, indexed three times). Guards and comparisons now connect in one fixpoint;
+      the check takes 11 s. `RERAIL_REPLAY_CHECK` runs the checks whose group or name holds it.
 - **Item 4, the join-spec lowering reads handles** (2026-11-13).
   - `plan::join_spec` lowers a planned rule (`Body` and steps) into a `JoinSpec`: `whole_join_spec`, `join_spec` (the
     run's kept spec, under the same digest: `Body::digest_atom` and `digest_lit` write what the tree's did) and
