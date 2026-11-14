@@ -62,9 +62,14 @@ const FIRST_SIGHT_TEXT_BYTES = 8 * 1024 * 1024;
 /** Paths observed per wave; on network or virtualised mounts each lstat/read is a round trip, so latency, not bandwidth, bounds the walk. */
 const OBSERVATION_CONCURRENCY = 16;
 /**
- * How long a listing asked again (`#startListingAgain`) runs before the next one starts beside it. Git lists a checkout
- * in milliseconds, so they run one at a time; one that takes longer holds the rest back no more than this.
+ * How many listings asked again (`#startListingAgain`) hold a slot to ask Git at once, and how long one holds its slot
+ * at most before the next listing asked takes it: until Git answers, or `LISTING_AGAIN_WAIT_MS`. Git lists a checkout in
+ * milliseconds, so no more than `LISTINGS_AGAIN_AT_ONCE` run at once while each answers in time, and a slow one keeps
+ * the rest waiting no more than a second. Four slots list 72 late checkouts within the second or two before an agent's
+ * next tool call on a busy Windows machine, where one or two do not. When every listing is slow, four more start each
+ * second, so up to about 44 run at once until Git's 10 s limit ends the first.
  */
+const LISTINGS_AGAIN_AT_ONCE = 4;
 const LISTING_AGAIN_WAIT_MS = 1_000;
 
 /**
@@ -455,11 +460,8 @@ interface SourceDiscovery {
   readonly askingAgain: Map<string, Map<string, Source>>;
   /** Each listing asked again that has not finished, with its reads and keeps of first-sight texts (`settleListingsAgain`). */
   readonly listingsAgain: Set<Promise<void>>;
-  /**
-   * When the next listing asked again may ask Git: once the one before has answered or has run `LISTING_AGAIN_WAIT_MS`,
-   * whichever comes first.
-   */
-  nextListingAgain: Promise<void>;
+  /** The slots listings asked again take to ask Git (`LISTINGS_AGAIN_AT_ONCE`), and those waiting for one. */
+  readonly listingSlots: Slots;
   readonly worktrees: WorktreeDiscovery;
   error: string | undefined;
   /** A boundary answered while the current walk was running; closing before it finishes says so again. */
@@ -678,6 +680,23 @@ function settledOrAfter(answered: Promise<unknown>, ms: number): Promise<void> {
     };
     answered.then(settle, settle);
   });
+}
+/** Slots for tasks that run at once: how many are free, and the tasks waiting for one, in the order they asked. */
+interface Slots {
+  free: number;
+  readonly waiting: Array<() => void>;
+}
+/** Resolves once a slot of `slots` is the caller's: at once while one is free, else when one is handed on to it. */
+function slotTaken(slots: Slots): Promise<void> {
+  if (slots.free === 0) return new Promise(resolve => { slots.waiting.push(resolve); });
+  slots.free -= 1;
+  return Promise.resolve();
+}
+/** Hands the caller's slot in `slots` on to the task that has waited longest, or frees it. */
+function slotHandedOn(slots: Slots): void {
+  const next = slots.waiting.shift();
+  if (next === undefined) slots.free += 1;
+  else next();
 }
 /** The sources `scan` found at `paths`, by path. */
 function sourcesAt(scan: SourceScan, paths: readonly string[]): Map<string, Source> {
@@ -980,7 +999,7 @@ export class CodeRuleBridge {
         startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
         heads: new Map(), git, unmerged: new Map(), passedCheckouts: new Set(), readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
-        late: new Set(), askingAgain: new Map(), listingsAgain: new Set(), nextListingAgain: Promise.resolve(),
+        late: new Set(), askingAgain: new Map(), listingsAgain: new Set(), listingSlots: { free: LISTINGS_AGAIN_AT_ONCE, waiting: [] },
       };
       this.#unwatched = new ToolCallWindows();
       this.#discovery = discovery;
@@ -1725,9 +1744,10 @@ export class CodeRuleBridge {
   /**
    * Asks Git once more which files changed in each of `late`'s checkouts, whose listing ran past its time limit for the
    * walk just applied, off every walk's path: no walk or boundary waits for it, so what that walk and the next find is
-   * checked at the boundary each reaches. Each checkout's listing asks Git once the one asked for before it has answered
-   * or has run `LISTING_AGAIN_WAIT_MS`: the load that made them late meets one more Git at a time while each answers in
-   * time, and a slow one holds the rest back no longer than that. The next boundary reports each checkout (`newlyLate`).
+   * checked at the boundary each reaches. Each checkout's listing asks Git once it holds one of `LISTINGS_AGAIN_AT_ONCE`
+   * slots, in the order asked, and hands its slot on once Git has answered or has run `LISTING_AGAIN_WAIT_MS`: the load
+   * that made them late meets no more than that many more Gits at once while each answers in time, and a slow one keeps
+   * the rest waiting no longer than that. The next boundary reports each checkout (`newlyLate`).
    * `late` holds the sources the walk saw first in each, whose first-sight text it could not keep; a listing asked again
    * that has not answered yet, running or waiting its turn, takes them on.
    */
@@ -1742,16 +1762,24 @@ export class CodeRuleBridge {
 
   #startListingAgain(discovery: SourceDiscovery, checkout: string, seen: Map<string, Source>): void {
     discovery.askingAgain.set(checkout, seen);
-    const turn = discovery.nextListingAgain;
-    const listing = turn.then(() => this.#gitListingAgain(discovery, checkout));
-    // Only Git waits its turn: reading and keeping the files it lists runs beside the next listing.
-    discovery.nextListingAgain = turn.then(() => settledOrAfter(listing, LISTING_AGAIN_WAIT_MS));
-    const done = listing.then(answer => this.#takeListedAgain(discovery, checkout, seen, answer))
+    const done = this.#gitListingInSlot(discovery, checkout)
+      .then(answer => this.#takeListedAgain(discovery, checkout, seen, answer))
       .catch((error: unknown) => {
         process.stderr.write(`rerail: cannot read the files ${checkout} listed again: ${errorMessage(error)}\n`);
       })
       .finally(() => discovery.listingsAgain.delete(done));
     discovery.listingsAgain.add(done);
+  }
+
+  /**
+   * Lists `checkout` again once it holds a slot to ask Git. Only Git holds the slot: it goes to the next listing once Git
+   * has answered or has run `LISTING_AGAIN_WAIT_MS`, so reading and keeping the files it lists run beside the next.
+   */
+  async #gitListingInSlot(discovery: SourceDiscovery, checkout: string): Promise<ChangedPathsListing> {
+    await slotTaken(discovery.listingSlots);
+    const listing = this.#gitListingAgain(discovery, checkout);
+    void settledOrAfter(listing, LISTING_AGAIN_WAIT_MS).then(() => { slotHandedOn(discovery.listingSlots); });
+    return await listing;
   }
 
   /** Lists `checkout`'s changed files once more, through the session's Git reads, which its close stops; a throw is a failed listing. */
