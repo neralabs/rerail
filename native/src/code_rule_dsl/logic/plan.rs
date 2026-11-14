@@ -78,6 +78,7 @@ pub mod demand;
 pub mod keeps;
 pub mod body;
 mod select;
+mod join_spec;
 pub mod native_demand;
 pub mod replanning;
 pub mod compose;
@@ -3591,129 +3592,6 @@ fn symbol_of(atoms: Option<[i64; 3]>, e: Expr) -> Expr {
     if atoms.is_some() { call("sym_atom", vec![e]) } else { e }
 }
 
-/// A term as SQL, read from the tree: the join specs' constant conditions (`select::term` reads handles; t36 item 4
-/// moves this reader).
-fn sql_term(t: &Term, env: &HashMap<String, Expr>, atoms: Option<[i64; 3]>) -> Result<Expr> {
-    Ok(match t {
-        Term::Var(v) => env.get(v.as_str()).cloned().ok_or_else(|| Error::Plan(format!("${v} is unbound in SQL")))?,
-        Term::Int(i) => integer(*i),
-        Term::Str(s) => string(s),
-        Term::Top => integer(TOP),
-        Term::Call(f, args) => {
-            let a = args.iter().map(|x| sql_term(x, env, atoms)).collect::<Result<Vec<_>>>()?;
-            match (f.as_str(), a.as_slice()) {
-                // Membership of a kind or field among atoms (`plan::lower`): 1 or 0.
-                ("in", [x, _]) => {
-                    let items: Vec<&Term> = match &args[1] {
-                        Term::Call(g, items) if g == super::strings::SET => items.iter().collect(),
-                        one => vec![one],
-                    };
-                    let mut out = None;
-                    for item in items {
-                        let e = eq(x.clone(), sql_term(item, env, atoms)?);
-                        out = Some(match out {
-                            None => e,
-                            Some(o) => bin(Op::Or, o, e),
-                        });
-                    }
-                    out.unwrap_or_else(|| integer(0))
-                }
-                // A literal test on a name or path (`logic::strings`): the atoms' text in atoms mode.
-                (f, [x, y]) if super::strings::is_test(f) => {
-                    let text = |e: &Expr| if atoms.is_some() { call("sym_text", vec![e.clone()]) } else { e.clone() };
-                    let op = super::strings::TESTS.iter().find(|t| **t == f).expect("a test");
-                    // A pattern set is its patterns' text already (`set` below).
-                    let set = matches!(&args[1], Term::Call(g, _) if g == super::strings::SET);
-                    call("str_test", vec![string(op), text(x), if set { y.clone() } else { text(y) }])
-                }
-                // A pattern set (decision 0037): its patterns' text joined by `strings::SET_SEP`.
-                (f, items) if f == super::strings::SET => {
-                    let text = |e: &Expr| if atoms.is_some() { call("sym_text", vec![e.clone()]) } else { e.clone() };
-                    let sep = string(&super::strings::SET_SEP.to_string());
-                    let mut out = items.first().map(text).unwrap_or_else(|| string(""));
-                    for item in items.iter().skip(1) {
-                        out = bin(Op::Concatenate, bin(Op::Concatenate, out, sep.clone()), text(item));
-                    }
-                    out
-                }
-                // A node's document (`typing::cross_rounds`): nodes are `d << 32 | index`.
-                ("doc", [x]) => bin(Op::Divide, x.clone(), integer(1i64 << 32)),
-                // A sibling's position (`logic::convert`: `precedes`, `follows`), and `.rr`'s arithmetic.
-                ("add", [x, y]) => bin(Op::Add, x.clone(), y.clone()),
-                ("sub", [x, y]) => bin(Op::Subtract, x.clone(), y.clone()),
-                ("mul", [x, y]) => bin(Op::Multiply, x.clone(), y.clone()),
-                ("div", [x, y]) => bin(Op::Divide, x.clone(), y.clone()),
-                // Soufflé's `max(a, b)` and `min(a, b)`: SQL's scalar `max` and `min`.
-                ("max", [x, y]) => call("max", vec![x.clone(), y.clone()]),
-                ("min", [x, y]) => call("min", vec![x.clone(), y.clone()]),
-                // `.rr`'s string functions (Soufflé's): `substr` counts from 0.
-                ("strlen", [x]) => length(&text_of(atoms, x)),
-                ("concat", [x, y]) => symbol_of(atoms, bin(Op::Concatenate, text_of(atoms, x), text_of(atoms, y))),
-                ("to_string", [x]) => symbol_of(atoms, bin(Op::Concatenate, x.clone(), string(""))),
-                // A named group of a regex's match (`.rr`'s `match` with captures, `strings::group`); NULL without one.
-                ("rx_group", [x, re, g]) => symbol_of(atoms, call("rx_group", vec![text_of(atoms, x), text_of(atoms, re), text_of(atoms, g)])),
-                ("substr", [x, i, n]) => symbol_of(atoms, substr(vec![text_of(atoms, x), bin(Op::Add, i.clone(), integer(1)), n.clone()])),
-                // `@dot` (`core.rr`): `a.b`, and `"" . b` is `b`.
-                ("cat", [x, y]) if atoms.is_some() => call("sym_cat", vec![x.clone(), y.clone()]),
-                // `@dot("", y)` is `y` (`core.rr`).
-                ("cat", [x, y]) => Expr::Case {
-                    branches: vec![(bin(Op::Equal, x.clone(), string("")), y.clone())],
-                    fallback: Box::new(bin(Op::Concatenate, bin(Op::Concatenate, x.clone(), string(".")), y.clone())),
-                },
-                // core.rr's functors whose meaning is W's (`register_functors`), ahead of `strings::functions`' below.
-                ("replace_all", [s, re, by]) => symbol_of(atoms, call("rr_replace_all", vec![text_of(atoms, s), text_of(atoms, re), text_of(atoms, by)])),
-                // A JSON string literal as W's signed-list stages write one (`json_group_array`'s elements): SQLite's
-                // `json_quote` of the text.
-                ("json_str", [x]) => symbol_of(atoms, call("json_quote", vec![bin(Op::Concatenate, text_of(atoms, x), string(""))])),
-                ("nfkc", [x]) => symbol_of(atoms, call("rr_nfkc", vec![text_of(atoms, x)])),
-                ("py_repr", [x]) => symbol_of(atoms, call("rr_py_repr", vec![text_of(atoms, x)])),
-                ("ed25519_ok", [k, m, sig]) => call("rr_ed25519_ok", vec![text_of(atoms, k), text_of(atoms, m), text_of(atoms, sig)]),
-                ("rx_replace", [s, re, by]) => symbol_of(atoms, call("rr_rx_replace", vec![text_of(atoms, s), text_of(atoms, re), text_of(atoms, by)])),
-                ("flat_bin", [o, x, y]) => {
-                    let big = integer(1i64 << 40);
-                    let [plus, minus, times] = match atoms {
-                        Some(ops) => ops.map(integer),
-                        None => ["+", "-", "*"].map(string),
-                    };
-                    let small = |e: &Expr| bin(Op::Less, call("abs", vec![e.clone()]), big.clone());
-                    Expr::Case {
-                        branches: vec![
-                            (bin(Op::Or, eq(x.clone(), integer(TOP)), eq(y.clone(), integer(TOP))), integer(TOP)),
-                            (eq(o.clone(), plus), bin(Op::Add, x.clone(), y.clone())),
-                            (eq(o.clone(), minus), bin(Op::Subtract, x.clone(), y.clone())),
-                            (bin(Op::And, bin(Op::And, eq(o.clone(), times), small(x)), small(y)), bin(Op::Multiply, x.clone(), y.clone())),
-                        ],
-                        fallback: Box::new(integer(TOP)),
-                    }
-                }
-                // `.rr`'s `@place(path, line)` (`rr::lower`'s `PLACE`): `-2 - (path << 32 | line)`, the path's symbol
-                // atom and the line, below `unset` (-1) and every node id; `unset` for a line outside `0 .. 2^32`.
-                // `@place_path` and `@place_line` take it apart.
-                ("place", [p, l]) if atoms.is_some() => {
-                    let valid = bin(Op::And, bin(Op::GreaterOrEqual, l.clone(), integer(0)), bin(Op::Less, l.clone(), integer(1 << 32)));
-                    let place = bin(Op::Subtract, integer(-2), bin(Op::Add, bin(Op::Multiply, p.clone(), integer(1 << 32)), l.clone()));
-                    Expr::Case { branches: vec![(valid, place)], fallback: Box::new(integer(-1)) }
-                }
-                ("place_path", [x]) if atoms.is_some() => bin(Op::Divide, bin(Op::Subtract, integer(-2), x.clone()), integer(1 << 32)),
-                ("place_line", [x]) if atoms.is_some() => {
-                    let n = bin(Op::Subtract, integer(-2), x.clone());
-                    bin(Op::Subtract, n.clone(), bin(Op::Multiply, bin(Op::Divide, n, integer(1 << 32)), integer(1 << 32)))
-                }
-                ("place" | "place_path" | "place_line", _) => return Err(Error::Plan(format!("no SQL for {t}: a place is made of a symbol atom"))),
-                // `core.rr`'s text functors (`strings::functions`): symbols in as text, a symbol result back.
-                (f, items) if let Some((f, kinds, ret)) = super::strings::functions::signature(f) && kinds.len() == items.len() => {
-                    use super::strings::functions::Kind;
-                    let items = items.iter().zip(kinds).map(|(e, k)| if *k == Kind::Text { text_of(atoms, e) } else { e.clone() }).collect();
-                    let value = call(f, items);
-                    if ret == Kind::Text { symbol_of(atoms, value) } else { value }
-                }
-                _ => return Err(Error::Plan(format!("no SQL for {t}"))),
-            }
-        }
-        Term::Wild => return Err(Error::Plan("no SQL for _".to_owned())),
-    })
-}
-
 /// A kind set's members as SQL values: kind atoms, or kind names.
 fn kinds(members: &[String]) -> Vec<Expr> {
     members.iter().map(|k| k.parse::<i64>().map_or_else(|_| string(k), integer)).collect()
@@ -5400,497 +5278,6 @@ impl<'a> Run<'a, '_> {
         Ok(())
     }
 
-    /// A probe's planned body as a native join spec (sqlite-ext `setfix.rs`, "native join probes", T's `join_spec`),
-    /// or `None` where a literal has no native step (an aggregate other than `count`, a descent, a document range,
-    /// top): that probe stays SQL.
-    /// `join_spec` for a whole body: `None` too when a head variable is bound by none of its steps (the native join
-    /// would read past its slots). A prefix of a body (the probe for how far a body runs natively) is not checked.
-    fn whole_join_spec(&self, h: &Atom, order: Order<'_>, at: Option<usize>, ri: &BTreeMap<String, usize>, scc: &BTreeSet<String>, native_rels: &BTreeSet<String>) -> Option<Arc<JoinSpec>> {
-        let mut bound = BTreeSet::new();
-        for s in order.steps {
-            let mut add = |t: &Term| if let Term::Var(v) = t { bound.insert(v.clone()); };
-            match order.lit(s) {
-                Literal::Atom(l) if !l.neg => l.args.iter().for_each(&mut add),
-                // `$s = @cat($m, $x)` with s bound splits s: m and x are bound too.
-                Literal::Cmp { l, op, r: Term::Call(f, args) } if *op == "=" && f == "cat" => { add(l); args.iter().for_each(&mut add) }
-                Literal::Cmp { l, op, r } if *op == "=" => { add(l); add(r) }
-                Literal::Nearest { n, a, .. } => { add(&Term::Var(n.clone().into())); add(&Term::Var(a.clone().into())) }
-                Literal::Agg { var, .. } => add(&Term::Var(var.clone().into())),
-                _ => {}
-            }
-        }
-        let head_vars = h.args.iter().flat_map(|t| match t { Term::Call(_, a) => a.iter().collect::<Vec<_>>(), t => vec![t] });
-        if head_vars.filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }).any(|v| !bound.contains(v)) {
-            return None;
-        }
-        self.join_spec(h, order, at, ri, scc, native_rels)
-    }
-
-    /// A rule's native join spec (`join_spec_made`), kept for the run by a digest of every input it reads
-    /// (`logic::derived`): each chunk's program is new, and most of its strata plan the same orders over the same
-    /// sources.
-    fn join_spec(
-        &self,
-        h: &Atom,
-        order: Order<'_>,
-        at: Option<usize>,
-        ri: &BTreeMap<String, usize>,
-        scc: &BTreeSet<String>,
-        native_rels: &BTreeSet<String>,
-    ) -> Option<Arc<JoinSpec>> {
-        let prog = self.prog;
-        let inputs = |d: &mut super::derived::Inputs| {
-            digest_atom(d, h);
-            d.u64(at.map_or(u64::MAX, |a| a as u64));
-            match self.model.inputs.atoms {
-                Some(ops) => ops.iter().for_each(|&o| d.u64(o as u64)),
-                None => d.u64(u64::MAX),
-            }
-            let read = |rel: &str, d: &mut super::derived::Inputs| {
-                d.str(rel);
-                if let Some(i) = ri.get(rel).filter(|_| scc.contains(rel)) {
-                    d.u64(0);
-                    d.u64(*i as u64);
-                } else if native_rels.contains(rel) {
-                    d.u64(1);
-                } else {
-                    d.u64(2);
-                    d.str(&self.model.relation(prog, rel, false).render());
-                    d.u64(u64::from(self.inputs.contains(rel)) | u64::from(self.model.derived.contains(rel)) << 1 | u64::from(self.projections.contains_key(rel)) << 2);
-                    match self.model.view_src.get(rel) {
-                        Some((base, cols)) => {
-                            d.str(base);
-                            d.u64(cols.len() as u64);
-                            for c in cols {
-                                d.str(c.as_deref().unwrap_or("\u{0}"));
-                            }
-                        }
-                        None => d.u64(u64::MAX),
-                    }
-                }
-                let decl = prog.decls.get(rel).map_or(&[][..], |c| c.as_slice());
-                d.u64(decl.len() as u64);
-                for (_, t) in decl {
-                    d.str(t);
-                }
-            };
-            for s in order.steps {
-                digest_literal(d, order.lit(s));
-                d.u64(match s.mode {
-                    None => 0,
-                    Some(Mode::Range) => 1,
-                    Some(Mode::Climb) => 2,
-                    Some(Mode::Descend) => 3,
-                });
-                match order.lit(s) {
-                    Literal::Atom(l) | Literal::Agg { atom: l, .. } => read(&l.rel, d),
-                    Literal::Nearest { kindset, .. } => {
-                        let kinds = prog.kindsets.get(kindset).map_or(&[][..], Vec::as_slice);
-                        d.u64(kinds.len() as u64);
-                        kinds.iter().for_each(|k| d.str(k));
-                    }
-                    _ => {}
-                }
-            }
-        };
-        super::derived::value("join spec", inputs, || self.join_spec_made(h, order, at, ri, scc, native_rels).map(Arc::new))
-    }
-
-    fn join_spec_made(
-        &self,
-        h: &Atom,
-        order: Order<'_>,
-        at: Option<usize>,
-        ri: &BTreeMap<String, usize>,
-        scc: &BTreeSet<String>,
-        native_rels: &BTreeSet<String>,
-    ) -> Option<JoinSpec> {
-        let prog = self.prog;
-        let mut slots: HashMap<String, usize> = HashMap::new();
-        let typ = |t: &Term| -> Option<String> {
-            match t {
-                Term::Int(_) => Some("int".to_owned()),
-                Term::Str(_) => Some("sym".to_owned()),
-                // A variable's type: its column's in a positive atom; a count's, a sum's or a number function's
-                // value is a number. A variable equal to another (`$m = $a`, a capture's alias) has the other's type.
-                Term::Var(n) => {
-                    let mut same: Vec<&str> = vec![n.as_str()];
-                    let mut i = 0;
-                    while i < same.len() {
-                        for s in order.steps {
-                            if let Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } = order.lit(s) {
-                                for (x, y) in [(a, b), (b, a)] {
-                                    if x == same[i] && !same.contains(&y.as_str()) {
-                                        same.push(y.as_str());
-                                    }
-                                }
-                            }
-                        }
-                        i += 1;
-                    }
-                    same.iter().find_map(|n| order.steps.iter().find_map(|s| match order.lit(s) {
-                        Literal::Atom(l) if !l.neg => l
-                            .args
-                            .iter()
-                            .position(|x| matches!(x, Term::Var(v) if v == n))
-                            .and_then(|c| Some(prog.decls.get(l.rel.as_str())?.get(c)?.1.to_string())),
-                        Literal::Agg { var, op: AggOp::Count | AggOp::Sum | AggOp::Product, .. } if var == n => Some("int".to_owned()),
-                        Literal::Cmp { l: Term::Var(v), op: "=", r: r @ Term::Call(..) } if v == n && numeric_call(r) => Some("int".to_owned()),
-                        // A variable equal to a constant (`0 = $r`, an inlined `fneed(f, 0)`) has the constant's type.
-                        Literal::Cmp { l: Term::Var(v), op: "=", r: Term::Int(_) } | Literal::Cmp { l: Term::Int(_), op: "=", r: Term::Var(v) } if v == n => Some("int".to_owned()),
-                        Literal::Cmp { l: Term::Var(v), op: "=", r: Term::Str(_) } | Literal::Cmp { l: Term::Str(_), op: "=", r: Term::Var(v) } if v == n => Some("sym".to_owned()),
-                        _ => None,
-                    }))
-                }
-                _ => None,
-            }
-        };
-        fn tok(t: &Term, slots: &mut HashMap<String, usize>) -> Option<Tok> {
-            match t {
-                Term::Wild => Some(Tok::Wild),
-                Term::Var(n) => {
-                    let len = slots.len();
-                    Some(Tok::Slot(*slots.entry(n.to_string()).or_insert(len)))
-                }
-                Term::Int(_) | Term::Str(_) => const_tok(t),
-                _ => None,
-            }
-        }
-        // A computed term (`@concat`, the text and number functions `strings::functions::native_call` names) of
-        // bound arguments, nested on either side, as `func` steps, inner ones first, each into a slot of its own
-        // (`rr_fn<step>_<k>`): the term of its value. A bound variable or a constant is itself; anything else (an
-        // unbound variable, a call with no native function) has none.
-        fn expr(t: &Term, idx: usize, slots: &mut HashMap<String, usize>, lines: &mut Vec<JoinItem>) -> Option<Term> {
-            match t {
-                Term::Var(v) => slots.contains_key(v.as_str()).then(|| t.clone()),
-                Term::Int(_) | Term::Str(_) => Some(t.clone()),
-                // `@cat(a, b)` (what `@dot` lowers to) inside another term: the head's `Cat`, made into a slot first
-                // (`sym(f, @concat(@cat(q, x), …))`).
-                Term::Call(f, args) if f == "cat" && args.len() == 2 => {
-                    let made: Vec<Term> = args.iter().map(|a| expr(a, idx, slots, lines)).collect::<Option<_>>()?;
-                    let (a, b) = (tok(&made[0], slots)?, tok(&made[1], slots)?);
-                    let out = Term::Var(format!("rr_fn{idx}_{}", lines.len()).into());
-                    lines.push(JoinItem::Cat { out: tok(&out, slots)?, a, b });
-                    Some(out)
-                }
-                Term::Call(f, args) => {
-                    let name = call_name(f, args.len())?;
-                    let made: Vec<Term> = args.iter().map(|a| expr(a, idx, slots, lines)).collect::<Option<_>>()?;
-                    let args: Vec<Tok> = made.iter().map(|a| tok(a, slots)).collect::<Option<_>>()?;
-                    let out = Term::Var(format!("rr_fn{idx}_{}", lines.len()).into());
-                    lines.push(JoinItem::Func { name: name.to_owned(), out: tok(&out, slots)?, args });
-                    Some(out)
-                }
-                _ => None,
-            }
-        }
-        // The native function of call `f` with `n` arguments (`@concat` is `str_concat`).
-        fn call_name(f: &str, n: usize) -> Option<&'static str> {
-            if f == "concat" {
-                return (n == 2).then_some("str_concat");
-            }
-            let (name, kinds, _) = crate::code_rule_dsl::logic::strings::functions::native_call(f)?;
-            (kinds.len() == n).then_some(name)
-        }
-        // Whether a computed term's value is a number (a function's result kind), not a symbol.
-        fn numeric_call(t: &Term) -> bool {
-            matches!(t, Term::Call(f, _) if f != "concat"
-                && crate::code_rule_dsl::logic::strings::functions::native_call(f).is_some_and(|(_, _, k)| k == crate::code_rule_dsl::logic::strings::functions::Kind::Number))
-        }
-        // The atom's source and tokens. An input relation is loaded with its constant columns as a filter and
-        // projected away (`field($n, "path", $p)` loads the `path` edges only), so it is read in the size it is used.
-        let args = |l: &Atom, slots: &mut HashMap<String, usize>| l.args.iter().map(|t| tok(t, slots).map(Arg::Tok)).collect::<Option<Vec<_>>>();
-        let atom = |l: &Atom, idx: Option<usize>, slots: &mut HashMap<String, usize>| -> Option<(JoinSource, Vec<Arg>)> {
-            if scc.contains(l.rel.as_str()) {
-                let src = if idx.is_some() && idx == at { JoinSource::Delta(ri[l.rel.as_str()]) } else { JoinSource::Full(ri[l.rel.as_str()]) };
-                return Some((src, args(l, slots)?));
-            }
-            if native_rels.contains(l.rel.as_str()) {
-                return Some((JoinSource::Native(l.rel.to_string()), args(l, slots)?));
-            }
-            let is_const = |t: &Term| matches!(t, Term::Int(_) | Term::Str(_));
-            let keep: Vec<usize> = (0..l.args.len()).filter(|&c| !is_const(&l.args[c])).collect();
-            // A view that only projects an input (`kind($n, $k) :- node(_, $n, $k, _, _)`) is read from the input,
-            // in place: its columns are the input's.
-            let projected = self.model.view_src.get(l.rel.as_str()).filter(|(_, vc)| vc.iter().all(Option::is_some)).filter(|_| self.projections.contains_key(l.rel.as_str()));
-            let sql_col = |rel: &str, c: usize| match projected { Some((_, vc)) => vc[c].clone().unwrap(), None => self.model.col(rel, c) };
-            let cols = keep.iter().map(|&c| sql_col(&l.rel, c)).collect::<Vec<_>>().join(", ");
-            let cols = if cols.is_empty() { "1".to_owned() } else { cols };
-            let mut wheres = Vec::new();
-            // The view's own filters, on its input's columns.
-            if let Some((base, _)) = projected {
-                for &(c, v) in &self.projections[l.rel.as_str()] {
-                    wheres.push(format!("{} = {v}", self.model.col(base, c)));
-                }
-            }
-            for (c, t) in l.args.iter().enumerate() {
-                if is_const(t) {
-                    wheres.push(format!("{} = {}", sql_col(&l.rel, c), sql_term(t, &HashMap::new(), self.model.inputs.atoms).ok()?.render()));
-                }
-            }
-            // A relation this program part does not declare (an input view of the whole) is not joined natively: SQL
-            // reads it.
-            let decl = prog.decls.get(l.rel.as_str())?;
-            let types: String = keep
-                .iter()
-                .map(|&c| sym_char(&self.model.inputs, &decl.get(c).unwrap_or_else(|| panic!("{} is declared with {} columns and read as {l}", l.rel, decl.len())).1))
-                .collect();
-            let types = if types.is_empty() { "i".to_owned() } else { types };
-            let mut sel = self.model.relation(prog, projected.map_or(&l.rel, |(base, _)| base), false).render();
-            if !wheres.is_empty() {
-                sel += &format!(" WHERE {}", wheres.join(" AND "));
-            }
-            let mut toks: Vec<Arg> = keep.iter().map(|&c| tok(&l.args[c], slots).map(Arg::Tok)).collect::<Option<_>>()?;
-            if toks.is_empty() {
-                toks.push(Arg::Tok(Tok::Wild));
-            }
-            let base = self.inputs.contains(l.rel.as_str()) || self.model.view_src.contains_key(l.rel.as_str());
-            Some((JoinSource::Input(InputKey { base, sql: sel, cols, types }), toks))
-        };
-        let kinds = |kset: &str| prog.kindsets[kset].join(",");
-        let mut lines = Vec::new();
-        for (idx, s) in order.steps.iter().enumerate() {
-            match order.lit(s) {
-                Literal::Atom(l) => {
-                    if s.mode == Some(Mode::Range) {
-                        return None;
-                    }
-                    let (src, args) = atom(l, Some(idx), &mut slots)?;
-                    lines.push(JoinItem::Atom { neg: l.neg, src, args });
-                }
-                Literal::Cmp { l: Term::Call(fl, xl), op, r: Term::Call(fr, xr) }
-                    if (*op == "=" || *op == "!=") && fl == "doc" && fr == "doc" && xl.len() == 1 && xr.len() == 1 =>
-                {
-                    // `@doc($a) = @doc($b)` (cross_rounds' hops): both nodes bound.
-                    let bound = |t: &Term| matches!(t, Term::Var(v) if slots.contains_key(v.as_str()));
-                    if !bound(&xl[0]) || !bound(&xr[0]) {
-                        return None;
-                    }
-                    let (a, b) = (tok(&xl[0], &mut slots)?, tok(&xr[0], &mut slots)?);
-                    lines.push(JoinItem::Doc { a, b, eq: *op == "=" });
-                }
-                Literal::Cmp { l: Term::Var(d), op: "=", r: Term::Call(f, args) } if f == "doc" && args.len() == 1 => {
-                    // `$d = @doc($n)` (the cross-file memo's guard, decision 0076): n bound; d bound or tested.
-                    if !matches!(&args[0], Term::Var(v) if slots.contains_key(v.as_str())) {
-                        return None;
-                    }
-                    let n = tok(&args[0], &mut slots)?;
-                    lines.push(JoinItem::DocOf { out: tok(&Term::Var(d.clone().into()), &mut slots)?, n });
-                }
-                Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(want @ (0 | 1)) }
-                    if (f == "in" || f == "equals")
-                        && let [x, Term::Call(set, members)] = args.as_slice()
-                        && set == crate::code_rule_dsl::logic::strings::SET
-                        && members.iter().all(|m| matches!(m, Term::Int(_)))
-                        && matches!(x, Term::Var(v) if slots.contains_key(v.as_str())) =>
-                {
-                    // `@equals($q, {"a", "b"}) = 1` once lowered (the strings are symbols): membership, natively.
-                    let set: Vec<Tok> = members.iter().map(|m| tok(m, &mut slots)).collect::<Option<_>>()?;
-                    lines.push(JoinItem::In { a: tok(x, &mut slots)?, want: *want == 1, set });
-                }
-                Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(want @ (0 | 1)) }
-                    if crate::code_rule_dsl::logic::strings::is_test(f)
-                        && let [x, Term::Call(set, members)] = args.as_slice()
-                        && set == crate::code_rule_dsl::logic::strings::SET
-                        && members.iter().all(|m| matches!(m, Term::Int(_)))
-                        && matches!(x, Term::Var(v) if slots.contains_key(v.as_str())) =>
-                {
-                    // `@contains($w, {"dolt_", "dolt log"}) = 1` once lowered (the patterns are symbols): one matcher
-                    // of the symbols' names, made with the spec.
-                    let members: Vec<Tok> = members.iter().map(|m| tok(m, &mut slots)).collect::<Option<_>>()?;
-                    lines.push(JoinItem::TestSet { op: f.to_string(), s: tok(x, &mut slots)?, want: *want == 1, members });
-                }
-                Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(want @ (0 | 1)) }
-                    if crate::code_rule_dsl::logic::strings::is_test(f) && args.len() == 2 =>
-                {
-                    // `@prefix($s, p) = 1` (or `= 0`): a text test of a string no text relation gives (`strings::as_test`
-                    // takes the others to the vocabulary), its string and pattern bound; a set's patterns as one string.
-                    let pattern = match crate::code_rule_dsl::logic::strings::patterns(&args[1]) {
-                        Some(ps) => Term::Str(ps.join(&crate::code_rule_dsl::logic::strings::SET_SEP.to_string()).into()),
-                        // A computed pattern (`@suffix($s, @concat(".", $x))`): made first, into its own slot.
-                        None if matches!(&args[1], Term::Call(..)) => expr(&args[1], idx, &mut slots, &mut lines)?,
-                        None => args[1].clone(),
-                    };
-                    // A constant string is a symbol (`Int`) once lowered; a computed string (`@lower($s)`) is made first.
-                    let tested = expr(&args[0], idx, &mut slots, &mut lines)?;
-                    let bound = |t: &Term| match t {
-                        Term::Var(v) => slots.contains_key(v.as_str()),
-                        Term::Str(_) | Term::Int(_) => true,
-                        _ => false,
-                    };
-                    if !bound(&tested) || !bound(&pattern) {
-                        return None;
-                    }
-                    let (ts, tp) = (tok(&tested, &mut slots)?, tok(&pattern, &mut slots)?);
-                    lines.push(JoinItem::Test { op: f.to_string(), s: ts, p: tp, want: *want == 1 });
-                }
-                Literal::Cmp { l, op, r } if (*op == "=" || *op == "!=") && !matches!(r, Term::Call(f, _) if f == "cat") => {
-                    // `$v = @f(…)` (a text or number function, `@concat`, nested calls): the call's value straight into
-                    // `$v`, bound or tested; any other `=` or `!=`, of variables, constants or computed terms, as a test
-                    // (or `$v = <bound term>`, binding `$v`). Calls on either side are made first, inner ones first.
-                    let unbound = |t: &Term, slots: &HashMap<String, usize>| matches!(t, Term::Var(v) if !slots.contains_key(v.as_str()));
-                    let (l, r) = if matches!(r, Term::Var(_)) && matches!(l, Term::Call(..)) { (r, l) } else { (l, r) };
-                    if *op == "="
-                        && let (Term::Var(_), Term::Call(f, args)) = (l, r)
-                    {
-                        let name = call_name(f, args.len())?;
-                        let made: Vec<Term> = args.iter().map(|a| expr(a, idx, &mut slots, &mut lines)).collect::<Option<_>>()?;
-                        let args: Vec<Tok> = made.iter().map(|a| tok(a, &mut slots)).collect::<Option<_>>()?;
-                        lines.push(JoinItem::Func { name: name.to_owned(), out: tok(l, &mut slots)?, args });
-                    } else {
-                        // The bound side goes right.
-                        let (a, b) = if unbound(r, &slots) { (r, l) } else { (l, r) };
-                        if unbound(b, &slots) || (*op == "!=" && unbound(a, &slots)) {
-                            return None;
-                        }
-                        let b = expr(b, idx, &mut slots, &mut lines)?;
-                        let a = if unbound(a, &slots) { a.clone() } else { expr(a, idx, &mut slots, &mut lines)? };
-                        let (a, b) = (tok(&a, &mut slots)?, tok(&b, &mut slots)?);
-                        lines.push(JoinItem::Eq { a, b, ne: *op != "=" });
-                    }
-                }
-                Literal::Cmp { l, op: "=", r: Term::Call(f, args) } if f == "cat" => {
-                    if !matches!(l, Term::Var(_)) {
-                        return None;
-                    }
-                    let (a, b) = (&args[0], &args[1]);
-                    let (out, a) = (tok(l, &mut slots)?, tok(a, &mut slots)?);
-                    lines.push(JoinItem::Cat { out, a, b: tok(b, &mut slots)? });
-                }
-                Literal::Cmp { l, op, r } if matches!(*op, "<" | "<=" | ">" | ">=") => {
-                    // Integers (and nodes) only: symbols are numbered in the order they are met. A number function's
-                    // value (`@strlen($s) > 1`, `@add($i, $j) <= 2`) is made first.
-                    let bad = |t: &Term| {
-                        if matches!(t, Term::Call(..)) {
-                            return !numeric_call(t);
-                        }
-                        matches!(t, Term::Var(v) if !slots.contains_key(v.as_str())) || matches!(typ(t).as_deref(), None | Some("sym"))
-                    };
-                    if bad(l) || bad(r) {
-                        return None;
-                    }
-                    let (l, r) = (expr(l, idx, &mut slots, &mut lines)?, expr(r, idx, &mut slots, &mut lines)?);
-                    let (a, b) = if matches!(*op, "<" | "<=") { (&l, &r) } else { (&r, &l) };
-                    let ta = tok(a, &mut slots)?;
-                    lines.push(JoinItem::Lt { a: ta, b: tok(b, &mut slots)?, or_eq: !matches!(*op, "<" | ">") });
-                }
-                Literal::Agg { var, op: op @ (AggOp::Count | AggOp::Sum | AggOp::Min | AggOp::Max), over, atom: a } => {
-                    // The over-variable belongs to the bag even if an outer step bound the same name.
-                    let local=a.args.iter().enumerate().filter_map(|(c,t)|matches!(t,Term::Var(v) if Some(v.as_str())==over.as_deref()).then_some(c)).collect::<Vec<_>>();
-                    if self.model.inputs.atoms.is_none() && (*op != AggOp::Count || local.len() > 1) {
-                        return None;
-                    }
-                    let mut a = a.clone();
-                    let col = over.as_ref().and_then(|o| a.args.iter().position(|t| matches!(t, Term::Var(v) if v==o)));
-                    if *op != AggOp::Count && col.is_none() { return None; }
-                    if let Some(c) = col {
-                        let typ = prog_types(prog, &a.rel).get(c).copied();
-                        if *op == AggOp::Sum && typ == Some("sym") { return None; }
-                        // Text extrema compare text unless this program holds symbols as atoms on both paths.
-                        if *op != AggOp::Count && self.model.inputs.atoms.is_none() && typ == Some("sym") { return None; }
-                    }
-                    for term in &mut a.args {
-                        if matches!(term, Term::Var(v) if Some(v.as_str())==over.as_deref()) { *term=Term::Wild; }
-                    }
-                    if a.args.iter().any(|t| matches!(t, Term::Var(v) if !slots.contains_key(v.as_str()))) { return None; }
-                    // Input constant filters are projected out by `atom`; its value column uses that projection too.
-                    let value_col = col.map(|c| if scc.contains(a.rel.as_str()) || native_rels.contains(a.rel.as_str()) {c} else {
-                        a.args[..c].iter().filter(|t| !matches!(t, Term::Int(_) | Term::Str(_))).count()
-                    });
-                    let (src, mut args) = atom(&a, None, &mut slots)?;
-                    if local.len()>1 {
-                        for c in local {
-                            let c=if scc.contains(a.rel.as_str())||native_rels.contains(a.rel.as_str()) {c} else {a.args[..c].iter().filter(|t|!matches!(t,Term::Int(_)|Term::Str(_))).count()};
-                            args[c]=Arg::Local("0".into());
-                        }
-                    }
-                    let out=tok(&Term::Var(var.clone().into()),&mut slots)?;
-                    lines.push(match op {
-                        AggOp::Count => JoinItem::Count { src, args, out },
-                        _ => JoinItem::Extreme { op: match op {AggOp::Sum=>Extreme::Sum,AggOp::Min=>Extreme::Min,_=>Extreme::Max}, src, args, col: value_col?, out },
-                    });
-                }
-                Literal::Agg { var, op: AggOp::Join { by, sep }, over: Some(o), atom: a } => {
-                    // `$s = join $x by ($k…) sep "…" : { atom }`: x and the unbound k are the atom's own columns, one
-                    // each; every other variable is bound. A bound k is the same for every row, so it orders nothing.
-                    // Symbols order by their names natively, as SQL orders their text.
-                    let column = |v: &str| a.args.iter().position(|t| matches!(t, Term::Var(x) if x == v));
-                    let uses = |v: &str| a.args.iter().filter(|t| matches!(t, Term::Var(x) if x == v)).count();
-                    let local: Vec<&String> = std::iter::once(o).chain(by.iter().filter(|b| !slots.contains_key(*b))).collect();
-                    if slots.contains_key(o) || local.iter().any(|v| uses(v) != 1) {
-                        return None;
-                    }
-                    if a.args.iter().any(|t| matches!(t, Term::Var(v) if !slots.contains_key(v.as_str()) && !local.iter().any(|l| l.as_str() == v.as_str()))) {
-                        return None;
-                    }
-                    let sym = |c: usize| u8::from(prog_types(prog, &a.rel).get(c).copied() == Some("sym"));
-                    // An input is read without its constant columns (`atom`): a column's place among those read.
-                    let read = |c: usize| {
-                        if scc.contains(a.rel.as_str()) || native_rels.contains(a.rel.as_str()) {
-                            c
-                        } else {
-                            c - a.args[..c].iter().filter(|t| matches!(t, Term::Int(_) | Term::Str(_))).count()
-                        }
-                    };
-                    let xc = column(o)?;
-                    let mut bycols = Vec::new();
-                    for b in by.iter().filter(|b| !slots.contains_key(*b)) {
-                        let c = column(b)?;
-                        bycols.push((read(c), sym(c) == 1));
-                    }
-                    let mut a = a.clone();
-                    for v in &local {
-                        let c = column(v)?;
-                        a.args.make_mut()[c] = Term::Wild;
-                    }
-                    let (src, args) = atom(&a, None, &mut slots)?;
-                    let sep = const_tok(&Term::Str(sep.clone().into()))?;
-                    let out = tok(&Term::Var(var.clone().into()), &mut slots)?;
-                    lines.push(JoinItem::StrJoin { src, args, x: (read(xc), sym(xc) == 1), by: bycols, sep, out });
-                }
-                Literal::Nearest { n, a, kindset } if s.mode == Some(Mode::Climb) => {
-                    let tn = tok(&Term::Var(n.clone().into()), &mut slots)?;
-                    lines.push(JoinItem::Near { down: false, n: tn, a: tok(&Term::Var(a.clone().into()), &mut slots)?, kinds: kinds(kindset) });
-                }
-                Literal::Nearest { n, a, kindset } if slots.contains_key(a) && !slots.contains_key(n) => {
-                    let tn = tok(&Term::Var(n.clone().into()), &mut slots)?;
-                    lines.push(JoinItem::Near { down: true, n: tn, a: tok(&Term::Var(a.clone().into()), &mut slots)?, kinds: kinds(kindset) });
-                }
-                _ => return None,
-            }
-        }
-        let mut head = Vec::new();
-        for (k, t) in h.args.iter().enumerate() {
-            match t {
-                Term::Call(f, args) if f == "cat" && args.len() == 2 && args.iter().all(|x| matches!(x, Term::Var(v) if slots.contains_key(v.as_str()))) => {
-                    let (Some(Tok::Slot(a)), Some(Tok::Slot(b))) = (tok(&args[0], &mut slots), tok(&args[1], &mut slots)) else { return None };
-                    head.push(HeadTok::Cat(a, b));
-                }
-                // `sym_at($e, @cat(1539, $x))`: a qualified name of a constant scope (the planner folds a scope's name
-                // to its symbol) and a bound part, or two constants: the name made into a slot of its own first.
-                Term::Call(f, args) if f == "cat" && args.len() == 2 => {
-                    let part = |t: &Term, slots: &HashMap<String, usize>| matches!(t, Term::Int(_) | Term::Str(_)) || matches!(t, Term::Var(v) if slots.contains_key(v.as_str()));
-                    if !args.iter().all(|x| part(x, &slots)) {
-                        return None;
-                    }
-                    let (a, b) = (tok(&args[0], &mut slots)?, tok(&args[1], &mut slots)?);
-                    let out = tok(&Term::Var(format!("rr_head_cat{k}").into()), &mut slots)?;
-                    lines.push(JoinItem::Cat { out: out.clone(), a, b });
-                    head.push(HeadTok::Tok(out));
-                }
-                // `q(…, @concat(m, ".", a))`, `q(…, @add($i, 1))`: the computed term made into a slot before the head
-                // reads it.
-                Term::Call(..) => {
-                    let made = expr(t, order.len(), &mut slots, &mut lines)?;
-                    head.push(HeadTok::Tok(tok(&made, &mut slots)?));
-                }
-                _ => head.push(HeadTok::Tok(tok(t, &mut slots)?)),
-            }
-        }
-        lines.push(JoinItem::Head(head));
-        Some(JoinSpec { items: lines })
-    }
-
     /// The rules of a stratum not known now to derive nothing (decision 0123: what a level's batch asks statistics
     /// for): none joins a lower relation known to hold no rows, one run natively and held empty or an input delta
     /// bound empty. A relation not run yet is not known; the stratum leaves out what it finds empty then
@@ -5938,13 +5325,13 @@ impl<'a> Run<'a, '_> {
             return out;
         }
         plan_site("a level's seed joins");
-        for (r, b) in seeds.into_iter().zip(&bodies) {
+        for b in &bodies {
             if self.model.late(prog, b, None, false).is_err() {
                 continue;
             }
             let Ok(((order, _, _), _)) = self.model.plan_rule_reused(prog, b, None) else { continue };
             // The level batch keys its pairs by the spec's digest, as the stratum's join does.
-            if let Some(spec) = self.whole_join_spec(&r.head, Order::new(&r.body, &order), None, &ri, scc, &self.native_rels) {
+            if let Some(spec) = self.whole_join_spec(b, &order, None, &ri, scc, &self.native_rels) {
                 out.push(spec);
             }
         }
@@ -6259,22 +5646,21 @@ impl<'a> Run<'a, '_> {
         // The first step of `order` without a native step (EXPLAIN's reason the engine declined).
         // Prefixes are probed with a head of no terms: the rule's own head names variables a prefix has not bound yet,
         // so every prefix would fail at its first step. `None`: every step has one, and the head is what has none.
-        let first_missing = |this: &Self, h: &Atom, order: Order<'_>, at: Option<usize>| -> Option<usize> {
-            let bare = Atom { rel: h.rel.clone(), args: Vec::new().into(), neg: false, gated: false };
-            (1..=order.len()).find(|&k| this.join_spec(&bare, order.take(k), at.filter(|&a| a < k), &ri, scc, &native_rels).is_none())
+        let first_missing = |this: &Self, b: &Body<'_>, steps: &[Step], at: Option<usize>| -> Option<usize> {
+            (1..=steps.len()).find(|&k| this.join_spec(b, &steps[..k], true, at.filter(|&a| a < k), &ri, scc, &native_rels).is_none())
         };
-        let missing = |this: &Self, h: &Atom, order: Order<'_>, at: Option<usize>| -> String {
-            match first_missing(this, h, order, at) {
+        let missing = |this: &Self, b: &Body<'_>, steps: &[Step], at: Option<usize>| -> String {
+            match first_missing(this, b, steps, at) {
                 Some(k) => {
-                    let s = &order.steps[k - 1];
-                    format!("{}{} has no native step", order.lit(s), if s.mode == Some(Mode::Range) { " (a range read inside a document)" } else { "" })
+                    let s = &steps[k - 1];
+                    format!("{}{} has no native step", b.show(s.at), if s.mode == Some(Mode::Range) { " (a range read inside a document)" } else { "" })
                 }
-                None => format!("the head {h} has no native form"),
+                None => format!("the head {} has no native form", b.head_text()),
             }
         };
         // The same step's kind (`decline_class`).
-        let missing_class = |this: &Self, h: &Atom, order: Order<'_>, at: Option<usize>| -> String {
-            match first_missing(this, h, order, at) {
+        let missing_class = |this: &Self, b: &Body<'_>, order: Order<'_>, at: Option<usize>| -> String {
+            match first_missing(this, b, order.steps, at) {
                 Some(k) if order.steps[k - 1].mode == Some(Mode::Range) => "a range read inside a document".to_owned(),
                 Some(k) => decline_class(order.lit(&order.steps[k - 1]), prog, native_rels),
                 None => "a head term".to_owned(),
@@ -6307,7 +5693,7 @@ impl<'a> Run<'a, '_> {
             if let Some(x) = &x {
                 shape.add_joins(Order::new(&r.body, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0));
             }
-            let Some(spec) = self.whole_join_spec(&r.head, Order::new(&r.body, &order), None, &ri, scc, &native_rels) else {
+            let Some(spec) = self.whole_join_spec(b, &order, None, &ri, scc, &native_rels) else {
                 if answering {
                     let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()).filter(|a| !scc.contains(a.as_str())).collect();
                     self.materialize(&reads)?;
@@ -6317,8 +5703,8 @@ impl<'a> Run<'a, '_> {
                     sql_seeded.insert(r.head.rel.to_string());
                     continue;
                 }
-                self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, Order::new(&r.body, &order), None)));
-                self.why_class = Some(missing_class(self, &r.head, Order::new(&r.body, &order), None));
+                self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, b, &order, None)));
+                self.why_class = Some(missing_class(self, b, Order::new(&r.body, &order), None));
                 return Ok(Native::Declined);
             };
             if let Some(x) = &x {
@@ -6396,7 +5782,7 @@ impl<'a> Run<'a, '_> {
                     shape.add_joins(Order::new(&r.body, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0));
                 }
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
-                let Some(spec) = self.whole_join_spec(&r.head, Order::new(&r.body, &order), Some(at), &ri, scc, &native_rels) else {
+                let Some(spec) = self.whole_join_spec(b, &order, Some(at), &ri, scc, &native_rels) else {
                     if answering {
                         let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()).filter(|a| !scc.contains(a.as_str())).collect();
                         // SQL reads the views too (`native_stratum` made only those no native join reads in place).
@@ -6413,8 +5799,8 @@ impl<'a> Run<'a, '_> {
                         sql_probe.push(true);
                         continue;
                     }
-                    self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, &r.head, Order::new(&r.body, &order), Some(at))));
-                    self.why_class = Some(missing_class(self, &r.head, Order::new(&r.body, &order), Some(at)));
+                    self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, b, &order, Some(at))));
+                    self.why_class = Some(missing_class(self, b, Order::new(&r.body, &order), Some(at)));
                     return Ok(Native::Declined);
                 };
                 let x = x.map(|x| delta_sources(x, Order::new(&r.body, &order), at, scc));
@@ -6440,7 +5826,7 @@ impl<'a> Run<'a, '_> {
                 }
                 let whole = whole_plan.as_ref().expect("planned");
                 let wspec = if whole[0].at != ai && !small_batches(&a.rel) {
-                    whole_spec.get_or_insert_with(|| self.whole_join_spec(&r.head, Order::new(&r.body, whole), None, &ri, scc, &native_rels)).clone()
+                    whole_spec.get_or_insert_with(|| self.whole_join_spec(b, whole, None, &ri, scc, &native_rels)).clone()
                 } else {
                     None
                 };
@@ -6522,7 +5908,7 @@ impl<'a> Run<'a, '_> {
                         None => {
                             let _span = planning(r, "plan whole at open");
                             let ((new, _, _), _) = self.model.plan_rule_live(prog, &vs.body(r)?, None)?;
-                            let Some(w) = self.whole_join_spec(&r.head, Order::new(&r.body, &new), None, &ri, scc, &native_rels) else { continue };
+                            let Some(w) = self.whole_join_spec(&vs.body(r)?, &new, None, &ri, scc, &native_rels) else { continue };
                             whole.push((r, w.clone()));
                             w
                         }
@@ -6712,7 +6098,7 @@ impl<'a> Run<'a, '_> {
                             self.model.late(prog, &vs.body(r)?, None, true)?;
                             let _span = planning(r, "replan whole");
                             let ((new, _, _), _) = self.model.plan_rule_live(prog, &vs.body(r)?, None)?;
-                            let Some(w) = self.whole_join_spec(&r.head, Order::new(&r.body, &new), None, &ri, scc, &native_rels) else { continue };
+                            let Some(w) = self.whole_join_spec(&vs.body(r)?, &new, None, &ri, scc, &native_rels) else { continue };
                             whole.push((r, w.clone()));
                             w
                         }
@@ -6768,7 +6154,7 @@ impl<'a> Run<'a, '_> {
                 e.2 = x.map(|x| delta_sources(x, Order::new(&r.body, &new), at, scc));
                 let at = new.iter().position(|s| s.at == ai).expect("the delta atom");
                 let spec = self
-                    .whole_join_spec(&r.head, Order::new(&r.body, &new), Some(at), &ri, scc, &native_rels)
+                    .whole_join_spec(&b, &new, Some(at), &ri, scc, &native_rels)
                     .ok_or_else(|| Error::Plan(format!("a replanned probe of {} has no native step", r.head)))?;
                 self.fx().reprobe(&name, nseeds + k, &Reprobe::Join(spec))?;
                 // The counts so far are the old order's: kept with it, and the new order's counted from nothing. Summed
@@ -7166,7 +6552,7 @@ impl<'a> Run<'a, '_> {
                 Literal::Atom(a) => a.rel.clone(),
                 _ => unreachable!(),
             };
-            if join && let Some(spec) = self.whole_join_spec(&r.head, Order::new(&r.body, order), Some(*at), &ri, scc, &none) {
+            if join && let Some(spec) = self.whole_join_spec(&vs.body(r)?, order, Some(*at), &ri, scc, &none) {
                 lines.push(SpecLine::Join { head: ri[r.head.rel.as_str()], delta: ri[rel.as_str()], join: spec, whole: None });
                 continue;
             }
@@ -7204,7 +6590,7 @@ impl<'a> Run<'a, '_> {
                     continue;
                 }
                 let nat = new.iter().position(|s| s.at == ai).expect("the delta atom");
-                let spec = if join { self.whole_join_spec(&r.head, Order::new(&r.body, &new), Some(nat), &ri, scc, &none) } else { None };
+                let spec = if join { self.whole_join_spec(&vs.body(r)?, &new, Some(nat), &ri, scc, &none) } else { None };
                 let new_body = match spec {
                     Some(spec) => Reprobe::Join(spec),
                     None => {

@@ -122,3 +122,18 @@ Leaves first. Each item leaves every caller working.
     19.9 G (53.6 G and 19.3 G in the run with the check on: the runs' spread).
   - Open: the convert replay sample (`a_sample_of_the_replay_gives_the_recorded_findings`) takes 345 s in the debug
     test binary, past the 170 s watchdog; it passes given the time. No earlier timing is recorded to compare.
+- **Item 4, the join-spec lowering reads handles** (2026-11-13).
+  - `plan::join_spec` lowers a planned rule (`Body` and steps) into a `JoinSpec`: `whole_join_spec`, `join_spec` (the
+    run's kept spec, under the same digest: `Body::digest_atom` and `digest_lit` write what the tree's did) and
+    `join_spec_made`. A spec's slots are keyed by what they hold (a rule's variable by slot, a made value by its
+    step), numbered as first met, so the specs are unchanged; a made value no longer shares a name space with the
+    rule's variables (`rr_fn<i>_<k>` could have been a variable's name).
+  - A prefix is probed with `bare` (the steps alone, a head of no terms) instead of a made head atom. The decline
+    messages (`missing`) read the body's text; `decline_class` still reads the tree literal (item 5 moves it).
+  - Every caller passes its rule's `Body`: a level's seed joins, a stratum's seeds, probes, whole plans and replans,
+    and the set fixpoint's probes and reprobes.
+  - Checked while porting, as item 3 was: each made spec was compared with the tree lowering's for the rule decoded
+    from the version, over the planner's, corpus, emit, session, coverage, `rr`, native and image tests and dl1 cold
+    and warm; they never differed. The check, the tree lowering and the tree `sql_term` are gone.
+  - dl1 (images required, profiling build, a fresh store): the 48 findings are equal; cold 55.1 G instructions, warm
+    19.8 G (56.8 G and 19.3 G with the check on).

@@ -330,7 +330,7 @@ impl<'v> Body<'v> {
         d.u64(a.args().count() as u64);
         a.args().for_each(|t| self.digest_term(d, t));
     }
-    fn digest_lit(&self, d: &mut super::super::derived::Inputs, l: LitRef<'_>) {
+    pub(in crate::code_rule_dsl) fn digest_lit(&self, d: &mut super::super::derived::Inputs, l: LitRef<'_>) {
         match l.view() {
             Lit::Atom(a) => {
                 d.u64(0);
