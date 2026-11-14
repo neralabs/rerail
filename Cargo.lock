@@ -4257,6 +4257,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-rust-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+ "unicode-ident",
+]
+
+[[package]]
 name = "rerail-sessions"
 version = "0.1.0"
 dependencies = [

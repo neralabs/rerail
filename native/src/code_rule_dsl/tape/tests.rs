@@ -2520,7 +2520,18 @@ pub(crate) fn python_tape_text(image: &TapeImage, grammar: &Grammar, source: &st
 fn ecma_implied_tokens() {
     let out = std::env::var("RERAIL_ECMA_IMPLIED").expect("set RERAIL_ECMA_IMPLIED");
     let mut text = String::new();
-    for (name, dialect) in [("javascript", GrammarDialect::JavaScript), ("typescript", GrammarDialect::TypeScript), ("tsx", GrammarDialect::Tsx)] {
+    // With `RERAIL_IMPLIED_DIALECTS` (comma-separated: `rust`, `java`, `csharp`, ...), those dialects'
+    // rows instead, for another lean parser's table.
+    let all = [
+        ("javascript", GrammarDialect::JavaScript),
+        ("typescript", GrammarDialect::TypeScript),
+        ("tsx", GrammarDialect::Tsx),
+        ("rust", GrammarDialect::Rust),
+        ("java", GrammarDialect::Java),
+        ("csharp", GrammarDialect::CSharp),
+    ];
+    let wanted = std::env::var("RERAIL_IMPLIED_DIALECTS").unwrap_or_else(|_| "javascript,typescript,tsx".into());
+    for (name, dialect) in all.into_iter().filter(|(name, _)| wanted.split(',').any(|w| w == *name)) {
         let grammar = tokens::TokenGrammar::of_dialect(dialect).expect("a token grammar");
         for (kind, dropped) in grammar.implied_tokens() {
             for (token, field) in dropped {
@@ -2537,12 +2548,15 @@ fn python_tape_expect() {
     let list = std::fs::read_to_string(std::env::var("RERAIL_PY_FILES").expect("set RERAIL_PY_FILES")).unwrap();
     let out = std::path::PathBuf::from(std::env::var("RERAIL_PY_OUT").expect("set RERAIL_PY_OUT"));
     std::fs::create_dir_all(&out).unwrap();
-    // With `RERAIL_PY_DIALECT` (`javascript`, `typescript`, `tsx`), another dialect's tapes, for the
-    // lean ECMAScript parser's oracle (`rerail-ecma-lean`).
+    // With `RERAIL_PY_DIALECT` (`javascript`, `typescript`, `tsx`, `rust`, `java`, `csharp`), another
+    // dialect's tapes, for that lean parser's oracle (`rerail-ecma-lean`, ...).
     let dialect = match std::env::var("RERAIL_PY_DIALECT").as_deref() {
         Ok("javascript") => GrammarDialect::JavaScript,
         Ok("typescript") => GrammarDialect::TypeScript,
         Ok("tsx") => GrammarDialect::Tsx,
+        Ok("rust") => GrammarDialect::Rust,
+        Ok("java") => GrammarDialect::Java,
+        Ok("csharp") => GrammarDialect::CSharp,
         _ => GrammarDialect::Python,
     };
     let grammar = Grammar::new(dialect).unwrap();
