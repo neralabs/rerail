@@ -943,7 +943,6 @@ fn a_versions_fields_say_what_the_tree_says() {
         if encode(&prog).is_err() {
             continue;
         }
-        eprintln!("{}", path.display());
         fields_agree(&prog);
         n += 1;
     }
