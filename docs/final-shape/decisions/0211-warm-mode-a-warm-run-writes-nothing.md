@@ -1,4 +1,6 @@
-# 0197: Warm mode: a truly warm run writes nothing, and any write fails it
+# 0211: Warm mode: a truly warm run writes nothing, and any write fails it
+
+Numbered 0197 when written; moved to 0211 at the merge of the hub, whose 0197 is a run's split memo and planned keys.
 
 Status: built (2026-11-14). A warm batch over a corpus that is its own repository now writes nothing; what a warm run with the cutoff off still writes is collection's bookkeeping, open below. Follows decision 0183 (a warm
 batch recomputes nothing) and uses 0104's statement trace (`RERAIL_SQL_STRICT`).

@@ -59,6 +59,9 @@ const FACT_STORE: &[&str] = &[
     "samples",
     // The SQL executor's planning observations (`costs::sql_plans`), its plan model's data: measurements, as `samples`.
     "sql_plan_observations",
+    // The kernels' forms per machine (decision 0202): each compiled or interpreted, its compile time, what it missed;
+    // measurements of the machine, as `samples`, ranked for the upkeep job that compiles them.
+    "kernel_forms",
     "{p}_out in code_rule_dsl/logic/native.rs",
     "{p}_out in code_rule_dsl/logic/native/extension.rs",
     "{} in code_rule_dsl/logic/plan.rs",
@@ -189,6 +192,16 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/costs.rs", "FITTED"),
     ("code_rule_dsl/logic/costs.rs", "WRITER"),
     ("code_rule_dsl/logic/costs.rs", "MODEL_STATE"),
+    // Decision 0203: the batch predictor a crate above registers (`joins::set_pricer`), the wider searches queued for
+    // the idle `join-search` upkeep job, and that job's one registration.
+    ("code_rule_dsl/logic/plan/joins.rs", "PRICER"),
+    ("code_rule_dsl/logic/plan/joins.rs", "REQUESTS"),
+    ("code_rule_dsl/logic/plan/joins.rs", "JOB"),
+    // Decision 0203's feedback as measured: each line's notes, exact pair statistics, proposals and trials, written
+    // back with the kept plans (`joins::to_store`) and read from them; measurements, as the cost model's `FITTED`.
+    ("code_rule_dsl/logic/plan/joins.rs", "MEMO"),
+    // The gate of the RERAIL_* switches (`corpus::switches`): its readers, writer and waiters, no value kept.
+    ("code_rule_dsl/logic/plan/corpus/switches.rs", "STATE"),
     // The SQL executor's plan model, fitted from `sql_plan_observations`, and the observations queued for writing.
     ("code_rule_dsl/logic/costs/sql_plans.rs", "MODEL"),
     ("code_rule_dsl/logic/costs/sql_plans.rs", "QUEUE"),
@@ -268,6 +281,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
     // A test's own store, the template's path and the threads said to ask off a test's (`test_store`): which files
     // the tests' stores are, not results.
+    ("code_rule_dsl/logic/plan/corpus/test_store.rs", "HANDED"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "PATH"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "SAID"),
@@ -309,7 +323,6 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "OPERATION_WAITED"),
     ("content_store/connection.rs", "THREAD_CONNECTIONS"),
     ("content_store/connection.rs", "WAIT_SPENT"),
-    ("content_store/hazards.rs", "HAZARDS"),
     // The run each frame space last counted in this process, so a run's programs count it once.
     ("content_store/frames.rs", "COUNTED"),
     // The store's frames as this process holds them, ahead of SQLite (decision 0104): the facts themselves, read
@@ -336,7 +349,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED"),
     // Profiling: where a plan is made and the keys planned in a profiled run, for the planning budget's account.
     ("code_rule_dsl/logic/plan.rs", "PLAN_SITE"),
-    ("code_rule_dsl/logic/plan.rs", "PLANNED_NOW"),
     // Measurement aids under `RERAIL_PLAN_GREEDY_PROBE`: its switches, and the probe's counts and sums.
     ("code_rule_dsl/logic/plan.rs", "PROBE"),
     ("code_rule_dsl/logic/plan.rs", "SEEN"),

@@ -347,3 +347,27 @@ hit(f) :- fn(f), count : { ident(x), count : { ref(n,f,x) } = 0 } > 0.
         assert_eq!(result.outputs["hit"], ["2", "3"], "outer groups lost in {modes:?}");
     }
 }
+
+/// A guard that reads a key only through a comparison (`byte(q, 92)` with `q = p - 1`) restricts the demand too: the
+/// demand of "the last byte before p that is not a backslash", asked where the byte before p is a backslash, is those
+/// positions, not every byte (the pairs below each, every pair of the text's bytes, were 17.9 M rows of a 6 KB text).
+#[test]
+fn a_guard_reached_through_a_comparison_restricts_the_demand() {
+    let mut p = rr::parse(
+        r#"
+.decl byte(i: number, v: number)
+.input byte
+.decl odd(p: number)
+.output odd
+odd(p) :- byte(p, _), q = @sub(p, 1), byte(q, 92), m = max j : { byte(j, v), v != 92, j < p }, @sub(p, m) = 3.
+"#,
+    )
+    .unwrap();
+    optimize(&mut p);
+    let demand = p.rules.iter().find(|r| r.head.rel.starts_with("rr_demand_agg")).unwrap_or_else(|| panic!("no demand: {p:?}"));
+    assert!(
+        demand.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel == "byte" && matches!(&a.args[1], front::Term::Int(92)))),
+        "the demand reads every byte: {demand}"
+    );
+    front::strata(&p).unwrap();
+}

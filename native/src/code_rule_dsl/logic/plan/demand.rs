@@ -68,6 +68,11 @@ thread_local! {
     static WHOLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// Carries the setting to a job on another thread (`run_state`).
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    c.copy(&["WHOLE"], &WHOLE);
+}
+
 /// While the guard lives, `split_negations` splits nothing (`WHOLE`).
 pub(in crate::code_rule_dsl) fn whole_relations() -> impl Drop {
     struct Reset(bool);

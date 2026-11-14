@@ -24,8 +24,8 @@ D102_raw(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n,
     count : { inside(p6, p7, "class_definition"), node(_, p7, _, _, _) } = 0,
     field(p6, "name", c8), node(_, c8, _, _, _), C = c8,
     ( count : { inside(c8, p1_1, "module"), d102_stop_3_within(c2_1, p1_1), d102_all_stmt(c2_1) } = 0
-    ; site_exported(c8)
-    ; inside(c8, p3_3, "module"), within_stop(c4_3, p3_3, d102_stop_3), kind(c4_3, "string"), node(_, c4_3, _, _, _), S = c4_3, value(S, t5_3), value(C, t5_3), d102_all_entry(c4_3)
+    ; bind_name(c8, b3_2), site_exported(b3_2)
+    ; inside(c8, p4_3, "module"), within_stop(c5_3, p4_3, d102_stop_3), kind(c5_3, "string"), node(_, c5_3, _, _, _), S = c5_3, value(S, t6_3), value(C, t6_3), d102_all_entry(c5_3)
     ),
     count : { field(p1, "body", c9), child(c9, c10, _), d102_docstring(c10) } = 0,
     count : { child(p11, p1, _), kind(p11, "decorated_definition"), child(p11, c12, _), kind(c12, "decorator"), child(c12, c13, _), d102_exempt_decorator(c13, N) } = 0.

@@ -476,7 +476,8 @@ pth123_demand_class_holding_int(c8, A) :- pth123_demand_alt_5(n, A), kind(n, "at
     field(n, "object", c4), kind(c4, "identifier"), ref_site(c4, b5),
     (st6 = b5 ; within(b5, st6)), kind(st6, "class_definition"),
     field(st6, "body", c7), within_stop(c8, c7, "class_definition"),
-    field(c8, "name", c9), node(_, c9, _, _, _), B = c9, site_scope(c9, "class"), site_latest(c9).
+    field(c8, "name", c9), node(_, c9, _, _, _), B = c9, bind_name(c9, b10), site_scope(b10, "class"),
+    site_latest(b10).
 
 // demand_int_class_member: the rows of int_class_member its callers ask for (the metavariable columns they pass in)
 .decl pth123_demand_int_class_member(n: node, a: loc)
@@ -504,15 +505,15 @@ pth123_alt_2(n) :- field(n, "right", c2), pth123_int_type(c2).
 // alt_3(n): the JSON `any`: n matches if any one of these rules does
 .decl pth123_alt_3(n: node)
 pth123_alt_3(n) :- ref_site(n, b1), site_only(b1),
-    (site_form(b1, "assignment") ; site_form(b1, "named")), binding_value(b1, x2),
+    (main_form(b1, "assignment") ; main_form(b1, "named")), binding_value(b1, x2),
     pth123_int_value(x2).
 pth123_alt_3(n) :- ref_site(n, b3), site_only(b3), (st4 = b3 ; within(b3, st4)),
     kind(st4, "as_pattern"), child(st4, c5, _), pth123_int_value(c5), child(st4, c6, _),
     kind(c6, "as_pattern_target"), child(c6, c7, _), kind(c7, "identifier").
 pth123_alt_3(n) :- ref_site(n, b8), site_only(b8),
-    ( site_form(b8, "annotated")
-    ; site_form(b8, "annotation")
-    ; site_form(b8, "parameter")
+    ( main_form(b8, "annotated")
+    ; main_form(b8, "annotation")
+    ; main_form(b8, "parameter")
     ),
     (st9 = b8 ; within(b8, st9)),
     count : { child(st9, c10, _), (kind(c10, "list_splat_pattern") ; kind(c10, "dictionary_splat_pattern")) } = 0,
@@ -533,23 +534,24 @@ pth123_alt_3(n) :- node(_, n, _, _, _), PW = n, ref_site(n, b15), site_only(b15)
 
 // alt_4(n): the JSON `any`: n matches if any one of these rules does
 .decl pth123_alt_4(n: node)
-pth123_alt_4(n) :- site_scope(n, "class"), site_latest(n),
-    (site_form(n, "assignment") ; site_form(n, "named")), binding_value(n, x1),
-    pth123_int_value(x1).
-pth123_alt_4(n) :- site_scope(n, "class"), site_latest(n), (st2 = n ; within(n, st2)),
-    kind(st2, "as_pattern"), child(st2, c3, _), pth123_int_value(c3), child(st2, c4, _),
-    kind(c4, "as_pattern_target"), child(c4, c5, _), kind(c5, "identifier").
-pth123_alt_4(n) :- site_scope(n, "class"), site_latest(n),
-    ( site_form(n, "annotated")
-    ; site_form(n, "annotation")
-    ; site_form(n, "parameter")
+pth123_alt_4(n) :- bind_name(n, b1), site_scope(b1, "class"), site_latest(b1),
+    (main_form(b1, "assignment") ; main_form(b1, "named")), binding_value(b1, x2),
+    pth123_int_value(x2).
+pth123_alt_4(n) :- bind_name(n, b3), site_scope(b3, "class"), site_latest(b3),
+    (st4 = b3 ; within(b3, st4)), kind(st4, "as_pattern"), child(st4, c5, _),
+    pth123_int_value(c5), child(st4, c6, _), kind(c6, "as_pattern_target"), child(c6, c7, _),
+    kind(c7, "identifier").
+pth123_alt_4(n) :- bind_name(n, b8), site_scope(b8, "class"), site_latest(b8),
+    ( main_form(b8, "annotated")
+    ; main_form(b8, "annotation")
+    ; main_form(b8, "parameter")
     ),
-    (st6 = n ; within(n, st6)),
-    count : { child(st6, c7, _), (kind(c7, "list_splat_pattern") ; kind(c7, "dictionary_splat_pattern")) } = 0,
-    site_annotation(n, o8), pth123_int_annotation(o8).
-pth123_alt_4(n) :- site_scope(n, "class"), site_latest(n), (st9 = n ; within(n, st9)),
-    kind(st9, "function_definition"), field(st9, "return_type", c10),
-    pth123_int_annotation(c10).
+    (st9 = b8 ; within(b8, st9)),
+    count : { child(st9, c10, _), (kind(c10, "list_splat_pattern") ; kind(c10, "dictionary_splat_pattern")) } = 0,
+    site_annotation(b8, o11), pth123_int_annotation(o11).
+pth123_alt_4(n) :- bind_name(n, b12), site_scope(b12, "class"), site_latest(b12),
+    (st13 = b12 ; within(b12, st13)), kind(st13, "function_definition"),
+    field(st13, "return_type", c14), pth123_int_annotation(c14).
 
 // alt_5(n): the JSON `any`: n matches if any one of these rules does
 //   A: metavariable of the calling rule, passed in (bound by the caller)
@@ -560,8 +562,8 @@ pth123_alt_5(n, A) :- pth123_demand_alt_5(n, A), kind(n, "attribute"), field(n, 
     kind(c3, "identifier"), node(_, c3, _, _, _), B = c3, field(n, "object", c4), kind(c4, "identifier"),
     ref_site(c4, b5), (st6 = b5 ; within(b5, st6)), kind(st6, "class_definition"),
     field(st6, "body", c7), within_stop(c8, c7, "class_definition"),
-    pth123_class_holding_int(c8, A), field(c8, "name", c9), node(_, c9, _, _, _), B = c9,
-    site_scope(c9, "class"), site_latest(c9).
+    pth123_class_holding_int(c8, A), field(c8, "name", c9), node(_, c9, _, _, _), B = c9, bind_name(c9, b10),
+    site_scope(b10, "class"), site_latest(b10).
 
 // alt_9(n): the JSON `any`: n matches if any one of these rules does
 .decl pth123_alt_9(n: node)

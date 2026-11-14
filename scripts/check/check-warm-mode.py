@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refuses a commit that lets the warm check (`RERAIL_WARM`, decision 0197) change what a run does.
+"""Refuses a commit that lets the warm check (`RERAIL_WARM`, decision 0211) change what a run does.
 
 The warm check only watches a run: it never changes how the run computes, or what it writes. This checks the tree
 (in under a second) for two things:
@@ -25,7 +25,7 @@ READERS = {
     "native/src/code_rule_dsl/logic/plan/corpus/reuse.rs": (1, "`NOT_OUTPUTS`: the mode is left out of the cutoff's key"),
 }
 
-# The writes a warm run may make (`profile::WARM_WRITES_ALLOWED`): approved by the user (decision 0197).
+# The writes a warm run may make (`profile::WARM_WRITES_ALLOWED`): approved by the user (decision 0211).
 ALLOWED = [
     "the run's hold on its plans",
     "the run's hold released",
@@ -88,11 +88,11 @@ def main():
         if listed != ALLOWED:
             faults.append(
                 f"{PROFILE}: `WARM_WRITES_ALLOWED` is {listed}, approved is {ALLOWED}: the writes a warm run may make "
-                "change only with the user's approval (decision 0197), in both places"
+                "change only with the user's approval (decision 0211), in both places"
             )
 
     if faults:
-        print("check-warm-mode: the warm check (decision 0197) must not change what a run does:", file=sys.stderr)
+        print("check-warm-mode: the warm check (decision 0211) must not change what a run does:", file=sys.stderr)
         for f in faults:
             print(f"  {f}", file=sys.stderr)
         return 1

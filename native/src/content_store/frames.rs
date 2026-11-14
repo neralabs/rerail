@@ -891,7 +891,7 @@ impl ContentStore {
         }
         let mut gone = gone;
         gone.extend(self.ended_deltas(&space, frames.iter().map(|f| (&f.rel, f.part))));
-        // Nothing to write is no write: a warm run's kept part queues no empty job (decision 0197).
+        // Nothing to write is no write: a warm run's kept part queues no empty job (decision 0211).
         if frames.is_empty() && delta_frames.is_empty() && retags.is_empty() && heads.is_empty() && gone.is_empty() && used.is_none() {
             return;
         }

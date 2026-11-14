@@ -4829,6 +4829,61 @@ corpus tests pass with it, but none makes this case.
 **Closure:** a test with a produced relation that also has `.rr` facts, read by a native stratum and by a SQL
 stratum above it, which sees both the facts and the answers.
 
+## O162. Metal forms of the matcher wave and of block programs with rounds, back fills and loads
+
+Decision 0202 (a). `kernel_forms` ranks them by batches. **Closure:** generated MSL for each, compiled in upkeep at
+idle, with the record's `metal-form` entries gone.
+
+## O163. IR forms of the clauses the lowering refuses, and of the logic natives
+
+Decision 0202 (b). **Closure:** the `ir-form` entries lowered, most batches first, each with a test that the
+program's findings equal the native ones.
+
+## O164. A compiled form a later process can reuse
+
+Decision 0202 (c, d). A `Program` has no byte form. **Closure:** a first compile's split measured (MSL front end
+and pipeline); then stored programs (0173) or `MTLBinaryArchive`s keyed by `pipeline_key`, whichever pays.
+
+## O165. Upkeep's compiles are released by the residency's drop
+
+Decision 0202. `drop_pipelines` clears every pipeline two minutes after a full execution. **Closure:** pipelines
+compiled ahead of need exempted, or persisted (O164).
+
+## O160. Re-sorting stored rows is not an upkeep job yet
+
+Decision 0190 §5: once 0164's frames keep sorted orders, their compaction past the dead-row bound (and an order for a
+relation probed by a key without one) is an upkeep job, one frame a step, published by the frame's swap.
+
+**Closure:** the job registered for each store, due from 0164's counters, with a test that a frame past its bound is
+rewritten in its key order on an idle machine and probes read it.
+
+## O161. Join orders observed to be slow are not tried again
+
+Decision 0190 §6: `plan_feedback` keeps each plan's measured cost per root, and `compiled_plans` its decisions, but
+nothing lists the joins whose cost is past their forecast, and nothing tries the other orders away from a run.
+
+**Closure:** the planner's alternative orders for a plan exposed, a bounded off-path run of one over the store's
+facts, and an upkeep job that records a winning order as the plan's kept choice (0090 §5), with a test on a join
+planned with a wrong estimate.
+
+**Progress (2026-11-14, decision 0203):** built: the runners-up exposed, slow lines flagged mid-run with exact pair
+statistics, the critical path, the memo beside the kept plans, and the `join-search` upkeep job, whose proposals
+the next plan weighs. A test plans a join with a wrong estimate (`exact_statistics_and_the_memo_change_the_plan`).
+What remains is the off-path run: proposals are priced, not run over stored facts.
+
+## O166. No batch pricer is set for the join choices
+
+Decision 0203 §2: `joins::choose` calls a `Pricer` once a round, but none is set, so the planner's estimates stand.
+**Closure:** the misprediction classifier (the cost model's batched GPU prediction, 0100 §14) set as the pricer,
+with its features drawn from the candidates' steps, and a measurement of a round's prediction cost against the
+search's.
+
+## O167. Wider searches asked for by a one-shot process are lost at its exit
+
+Decision 0203 §5: the `join-search` job runs at idle; a command exits first, and only `wants_search` survives (the
+next run searches inline where the line's work pays). **Closure:** the queued requests kept in the store as the
+line and rule, and run by `rerail-engine upkeep` or a daemon, which rebuild the model from the stored statistics.
+
 ## Remeasured after the hub merge (2026-11-13)
 
 At 17bbc4cd7, the hub (9a203197e) merged into rr-align. Debug build, CPU, strict; load 19-43.
@@ -4964,6 +5019,54 @@ the split memo with the run beside it.
 dependency on the step before it runs on the pool, beside that step. Measured: `dl1` cold, same findings, with the
 overlapped steps' wall shown by `RERAIL_TIMELINE`. See O-typing-run-overlap for the largest such step.
 
+**Progress (2026-11-13, decision 0192).** Every thread-local is listed with its class (`logic::run_state::STATE`),
+and every job the engine starts carries the run's context (`run_state::Carry`: `Jobs::spawn`, `beside`, the strata's
+`Ambient`). The strict mode's waves are per run (a carried stage). Tests and a commit check refuse an unlisted
+thread-local. The bridged typing run runs beside phase 1. Still open:
+- the split memo is process-wide (exact under two runs, but they can push out each other's entries);
+- two pieces of run context are not carried yet (`plan::PLANNED_NOW`, `choices::DURABLE`), pinned;
+- the other nested runs (phase 0's, the constants') still run in order.
+
+**Closed (2026-11-14, decision 0197).**
+- The split memo is the run's own: a carried thread-local that each run opens as it begins (`split_memo::own`).
+- Both NotYet entries are carried. `PLANNED_NOW` is now `RunPlans::planned_now`, and `DURABLE` is carried as an
+  `Arc`. The NotYet count is pinned at 0.
+- Neither of the remaining nested runs has anything to overlap:
+  - the constants' run never starts on `dl1`, `struct.rr` or the Python pack, because `constants::foldable` is empty
+    there. An early start was built, then backed out unmeasured, because nothing ran.
+  - phase 0 is one batched `bootstrap.rr` run (about 0.2 s of CPU), and every later step needs its graphs. The nested
+    runs find their graphs kept (under 1 ms each).
+
+## O-cone-kept-plans. A kept plan changes the cross-file cone's result
+
+**Seen (2026-11-13, decision 0192).** When the cone's job (`beside("the cone of requests")`, plan/corpus.rs) runs
+with the run's kept plans (`enter_plans`), one test fails:
+`phases::tests::phase_1_loads_the_libraries_the_imports_reach_and_a_reader_takes_them`. After `b.pyi` is edited to
+import `c`, the second run's `lib` rows are `a, b, builtins`, without `c`. Without the plans (as before decision
+0192), they are right. A plan is an order and a price; it should never change rows. So either a kept plan carries
+something that depends on the inputs, or its key misses an input of the cone's (its delta, its sources).
+
+The cone now enters no plans (`enter_plans(None)`), and plans every rule afresh.
+
+**Closure:** find what the kept plan carries into the cone's second run. Then the cone shares the run's plans like
+every other job, the `enter_plans(None)` goes, and the test passes with them.
+
+**Closed (2026-11-14).** Not the plans: whether a thread holds kept plans is also how a run knows it is a corpus run
+(`plan.rs`, `let corpus = PLANS…is_some()`), and a corpus run makes its planning choices. Testing each switch apart:
+- with the plans, the budget off: fails;
+- with the plans, the choices neither reused nor made: passes;
+- the choices made afresh each run: fails;
+- inlining off: fails, so the culprit is the negation split (`demand::split_negations`).
+
+The split computes a relation only for the keys its readers reach. The cone keeps its strata for the next run, so the
+next run's new key (`c`, imported by the edited `b.pyi`) had no rows and no delta to make them: spike O125's case,
+which the session's cross-file part already avoids with `demand::whole_relations`. The cone now does the same
+whenever it keeps its strata (`cone_kept`), and takes the run's plans. The phase-1 library test, the cone, session and
+kept-strata tests pass (115); `dl1`'s findings and instructions are unchanged, cold and warm.
+
+Left as a note: "holds kept plans" standing for "a corpus run" is a second meaning on one switch. That is how this
+bug stayed hidden.
+
 ## O-typing-run-overlap. The bridged typing run waits for the whole combined program
 
 **Seen (2026-11-13).** The bridged typing run (`bridge::facts` → `run_typed`) is about 0.3 s of the cold run's
@@ -4981,6 +5084,9 @@ The typing program's own text does not depend on the policies. Only the outputs 
 
 Measured as the typing run's wall overlapping the combine's on `dl1`, with findings unchanged. O-batch-typing-once
 is the same run's repetition across a batch's policies.
+
+**Progress (2026-11-13, decision 0192).** The typing run now runs beside phase 1, as a job that carries the run's
+context. It still starts after the combine; both options above remain.
 
 ## O-demand-negation-rounds. The negation split checks every reader again each round
 
@@ -5007,3 +5113,15 @@ rounds on the pool, as decision 0178's greatest fixpoints do. It is about 20 ms 
 **Closure:** either show that no program gives a column two domains, or make such a program an error (a column's
 domain is then a function of the rules, not of their order), and then run the fixpoint in rounds. Measured on
 `dl1` and the Python pack's programs, with identical domains for every column.
+
+## O168. Whole plans are not cut (decision 0206)
+
+A probe run as its whole plan (its delta is all of its relation, in a component's first wave) has no budget, so a
+slow whole plan runs to its end. The driver plans whole plans apart from the delta probes (`take_whole`), and a
+handoff would need the whole plan's own replacement and its rows left. Open.
+
+## O169. A trial's rows are made twice (decision 0207)
+
+A trial's rows are counted and dropped, then made again by the order that goes on. Over a sample that is most of
+the rows left, that work is done twice. The winner's rows could be kept (a component's relations are sets) and its
+sample's rows taken out of the rows left. Open.

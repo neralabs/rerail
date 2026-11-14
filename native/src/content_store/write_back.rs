@@ -491,7 +491,7 @@ impl ContentStore {
                     };
                     // The batch's span holds its jobs' and its commit.
                     let batch_span = super::hazards::span("a batch, in one transaction");
-                    // The warm check's scope (decision 0197) holds the whole transaction, its runs again included.
+                    // The warm check's scope (decision 0211) holds the whole transaction, its runs again included.
                     let warm_scope = super::hazards::warm_scope();
                     // A batch that finds the store busy (another process's writer held SQLite's write lock past this
                     // one's wait, at its start or its commit) rolled back whole: run again, as a busy job is

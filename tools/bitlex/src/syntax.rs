@@ -50,6 +50,27 @@ pub enum Arg {
     S(Vec<u8>),
 }
 
+/// A test of a token over its own bytes (`Stmt::TokenEscape`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TokenTest {
+    /// The mask's bits in the token.
+    Count,
+    /// The mask at each of the token's first bytes, from its first.
+    Run,
+}
+
+/// A mark's token test (`Stmt::Mark`'s `at` and `after`): at tokens of `kind`, `test` over
+/// `expr` at least `least`; one that passes is a bit of the mark at its first byte, or (`after`)
+/// at the byte after its last.
+#[derive(Clone, Debug)]
+pub struct MarkCheck {
+    pub after: bool,
+    pub kind: String,
+    pub test: TokenTest,
+    pub expr: Expr,
+    pub least: u32,
+}
+
 /// How a token ends, told at its start (`Stmt::Token`'s `run` and `pair`).
 #[derive(Clone, Debug)]
 pub enum TokenRule {
@@ -57,6 +78,14 @@ pub enum TokenRule {
     Run(Expr),
     /// One byte, or two where the mask holds at its first.
     Pair(Expr),
+    /// `pair P`, `P` a `pairs P = "AB" …`: one byte, or two where its first and the next are
+    /// one of the pairs, as a lexer reads its next byte; `P` its mask.
+    Pairs { pairs: Vec<[u8; 2]>, mask: Expr },
+    /// `read K | …`: a region's token, read from its opener to its closer (decision 0177): the
+    /// region whose opener holds at its first byte, then its closer's first byte after it; its
+    /// last byte the closer's last (`outside`: the byte before it). A lexer's reader of a
+    /// string or a comment: on the CPU, a search of the closer's bits from the start.
+    Read(Vec<Region>),
 }
 
 impl TokenRule {
@@ -77,7 +106,34 @@ impl TokenRule {
                 let t = or(s.clone(), after);
                 and(t.clone(), not(call("next", vec![and(t, not(s.clone()))])))
             }
-            TokenRule::Pair(p) => or(and(s.clone(), not(p.clone())), call("prev", vec![and(s.clone(), p.clone())])),
+            TokenRule::Pair(p) | TokenRule::Pairs { mask: p, .. } => or(and(s.clone(), not(p.clone())), call("prev", vec![and(s.clone(), p.clone())])),
+            // Each region's last byte, from its fill (`Regions::body`): the closer's last, or
+            // the byte before an `outside` closer; with `else E bytes M`, `E`'s `M`th byte.
+            TokenRule::Read(regions) => {
+                let name = |x: String| Expr::Name(x);
+                let prev = |e: Expr, k: u8| match k {
+                    0 => e,
+                    1 => call("prev", vec![e]),
+                    k => Expr::Call("prev".into(), vec![Arg::E(e), Arg::N(u64::from(k))]),
+                };
+                let mut out: Option<Expr> = None;
+                for r in regions {
+                    let f = name(format!("f_{}", r.kind));
+                    let mut last = if r.outside {
+                        and(f.clone(), not(call("next", vec![f])))
+                    } else {
+                        and(prev(f.clone(), r.bytes), not(prev(f, r.bytes - 1)))
+                    };
+                    if let Some((e, m)) = &r.empty {
+                        last = or(last, prev(name(e.clone()), m - 1));
+                    }
+                    out = Some(match out {
+                        Some(o) => or(o, last),
+                        None => last,
+                    });
+                }
+                out.unwrap_or(Expr::Empty)
+            }
         }
     }
 }
@@ -338,9 +394,19 @@ pub enum Stmt {
     Keywords { kind: String, words: Vec<(Vec<u8>, Option<String>)>, soft: Vec<Vec<u8>>, required: bool },
     Skip(Expr),
     Error(String, Expr),
+    /// `error "WHY" by tokens when E`: an error whose bytes are the ones the token loop refuses
+    /// at (decision 0177): a first byte no token begins with, a reader's region open at the
+    /// file's end or with no opener there. On the CPU the loop refuses them; elsewhere `E` is a
+    /// mask, as an error's. `escape "WHY" by tokens when E` too, its reason `escape: WHY`.
+    TokenError(String, Expr),
     /// `escape "WHY" when E`: a construct the lexer does not handle; a file with a bit of `E` goes
     /// to tree-sitter. Unlike an error, it does not say the file is malformed.
     Escape(String, Expr),
+    /// `escape "WHY" at KIND when count(E) at least N` (or `run(E)`): a test of each token of
+    /// the kind over its own bytes, as a lexer checks a token it reads (decision 0177): `count`,
+    /// `E`'s bits in the token at least `N`; `run`, `E` at each of its first `N` bytes (the token
+    /// that long at least). A token that passes it sends the file to the fallback.
+    TokenEscape { why: String, kind: String, test: TokenTest, expr: Expr, least: u32 },
     /// `tree NAME { … }`: the statements that say where each node starts and ends
     /// (docs/parser-generators/13-tape-on-the-gpu.md).
     Tree { name: String, body: Vec<Stmt> },
@@ -363,8 +429,15 @@ pub enum Stmt {
     /// `mark KIND = E`: a token of no width before the first grammar token that starts at or
     /// after each bit of `E`; several bits before one token are one mark, and marks of several
     /// kinds before one token come in the order they are declared. `, end`: the end of the file
-    /// has it too, after the last token.
-    Mark { kind: String, at: Expr, end: bool },
+    /// has it too, after the last token. `unless after W …`: a mark whose grammar token before
+    /// (the extras passed over) is one of these words is none, as lean's parser asks whether a
+    /// `,` ends the line before (decision 0177). `, else escape "WHY"`: a bit with no grammar
+    /// token at or after it (past the last one's start) sends the file to the fallback.
+    ///
+    /// `, at KIND when TEST` and `, after KIND when TEST` (`MarkCheck`): a token of the kind
+    /// that passes the test (a token escape's, `TokenEscape`) is a bit of the mark at its first
+    /// byte (`at`) or at the byte after its last (`after`), as a lexer marks what it reads.
+    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck> },
     /// `mark KIND = tokens [after E] E …` (decision 0129): a mark before a token that begins a
     /// run of tokens, each one of an element's choices (`|`): a token kind (a name) or a word
     /// (a string), the extras between them skipped. `after`: the token before is one of
@@ -563,6 +636,14 @@ fn lex(src: &str) -> Result<Vec<Tok>, String> {
 struct P {
     t: Vec<Tok>,
     i: usize,
+    /// The regions read so far (`regions`), for a token's `read` (`TokenRule::Read`).
+    regions: Vec<Region>,
+    /// Statements the one just read needs before it: a `pairs`' classes, one a byte, each made
+    /// once (`classed`).
+    before: Vec<Stmt>,
+    classed: Vec<u8>,
+    /// The `pairs` read so far, by name, for a token's `pair` (`TokenRule::Pairs`).
+    pair_sets: Vec<(String, Vec<[u8; 2]>)>,
 }
 
 type R<T> = Result<T, String>;
@@ -1028,10 +1109,58 @@ impl P {
             if self.peek().is_none() {
                 return self.err("}");
             }
-            out.push(self.stmt()?);
+            let st = self.stmt()?;
+            out.append(&mut self.before);
+            out.push(st);
             self.nls();
         }
         Ok(out)
+    }
+    /// `pairs P = "AB" …`: the mask of the pairs' first bytes, a run's every other from the
+    /// left (`two & ~escaped(two)`, `two` each pair's first byte where its second is next), of
+    /// hidden classes one a byte; the list kept for a token's `pair P` (`TokenRule::Pairs`).
+    fn pairs(&mut self, name_of: String) -> R<Stmt> {
+        let mut pairs: Vec<[u8; 2]> = vec![];
+        while let Some(Tok::Str(_)) = self.peek() {
+            let w = self.string()?;
+            let [a, b] = w[..] else {
+                return self.err("a pair of two bytes");
+            };
+            pairs.push([a, b]);
+        }
+        let name = |b: u8| format!("pair_byte_{b:02x}");
+        for &b in pairs.iter().flatten() {
+            if !self.classed.contains(&b) {
+                self.classed.push(b);
+                self.before.push(Stmt::Class(name(b), vec![(u32::from(b), u32::from(b))]));
+            }
+        }
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let next = |e: Expr| Expr::Call("next".into(), vec![Arg::E(e)]);
+        let two = pairs.iter().map(|&[a, b]| and(Expr::Name(name(a)), next(Expr::Name(name(b))))).reduce(|x, y| Expr::Or(Box::new(x), Box::new(y))).ok_or("a pair")?;
+        let mask = and(two.clone(), Expr::Not(Box::new(Expr::Call("escaped".into(), vec![Arg::E(two)]))));
+        self.pair_sets.push((name_of.clone(), pairs));
+        Ok(Stmt::Mask(name_of, mask))
+    }
+    /// A token test: `count(E) at least N` or `run(E) at least N` (`TokenTest`).
+    fn token_test(&mut self) -> R<(TokenTest, Expr, u32)> {
+        let test = if self.eat_kw("count") {
+            TokenTest::Count
+        } else if self.eat_kw("run") {
+            TokenTest::Run
+        } else {
+            return self.err("`count` or `run`");
+        };
+        self.want_p("(")?;
+        let expr = self.expr()?;
+        self.want_p(")")?;
+        self.want_kw("at")?;
+        self.want_kw("least")?;
+        let least = u32::try_from(self.int()?).map_err(|_| "a token test's count past u32".to_string())?;
+        if least == 0 || (test == TokenTest::Run && least > 64) {
+            return self.err("a count from 1 (a run's at most 64)");
+        }
+        Ok((test, expr, least))
     }
     fn class_items(&mut self) -> R<Vec<(u32, u32)>> {
         let mut v = vec![];
@@ -1084,6 +1213,11 @@ impl P {
                 let n = self.ident()?;
                 self.want_p("=")?;
                 Stmt::Class(n, self.class_items()?)
+            }
+            "pairs" => {
+                let n = self.ident()?;
+                self.want_p("=")?;
+                self.pairs(n)?
             }
             "mask" => {
                 let n = self.ident()?;
@@ -1196,6 +1330,7 @@ impl P {
             }
             "regions" => {
                 let regions = self.regions()?;
+                self.regions.extend(regions.kinds.iter().cloned());
                 Stmt::Rounds { n: None, settle: true, body: regions.body(), regions: Some(regions) }
             }
             "reject" => {
@@ -1206,14 +1341,31 @@ impl P {
             "exit" => Stmt::Exit(self.ident()?),
             "error" => {
                 let m = String::from_utf8_lossy(&self.string()?).into_owned();
+                let by_tokens = self.eat_kw("by");
+                if by_tokens {
+                    self.want_kw("tokens")?;
+                }
                 self.want_kw("when")?;
-                Stmt::Error(m, self.expr()?)
+                if by_tokens { Stmt::TokenError(m, self.expr()?) } else { Stmt::Error(m, self.expr()?) }
             }
             "skip" => Stmt::Skip(self.expr()?),
             "escape" => {
                 let m = String::from_utf8_lossy(&self.string()?).into_owned();
-                self.want_kw("when")?;
-                Stmt::Escape(m, self.expr()?)
+                // `escape "WHY" by tokens when E`: the token loop's, as an error's
+                // (`Stmt::TokenError`), its reason an escape's.
+                if self.eat_kw("by") {
+                    self.want_kw("tokens")?;
+                    self.want_kw("when")?;
+                    Stmt::TokenError(format!("escape: {m}"), self.expr()?)
+                } else if self.eat_kw("at") {
+                    let kind = self.ident()?;
+                    self.want_kw("when")?;
+                    let (test, expr, least) = self.token_test()?;
+                    Stmt::TokenEscape { why: m, kind, test, expr, least }
+                } else {
+                    self.want_kw("when")?;
+                    Stmt::Escape(m, self.expr()?)
+                }
             }
             "tree" => {
                 let name = self.ident()?;
@@ -1372,11 +1524,37 @@ impl P {
                     return Ok(s);
                 }
                 let at = self.expr()?;
-                let end = self.eat_p(",");
-                if end {
-                    self.want_kw("end")?;
+                let mut unless = vec![];
+                if self.eat_kw("unless") {
+                    self.want_kw("after")?;
+                    for c in self.token_choices()? {
+                        match c {
+                            TokenElem::Word(w) => unless.push(w),
+                            _ => return self.err("`unless after` words only"),
+                        }
+                    }
                 }
-                Stmt::Mark { kind, at, end }
+                let (mut end, mut unplaced, mut checks) = (false, None, vec![]);
+                while self.eat_p(",") {
+                    self.nls();
+                    if self.eat_kw("else") {
+                        self.want_kw("escape")?;
+                        unplaced = Some(String::from_utf8_lossy(&self.string()?).into_owned());
+                    } else if self.is_kw("at") || self.is_kw("after") {
+                        let after = self.eat_kw("after");
+                        if !after {
+                            self.want_kw("at")?;
+                        }
+                        let kind = self.ident()?;
+                        self.want_kw("when")?;
+                        let (test, expr, least) = self.token_test()?;
+                        checks.push(MarkCheck { after, kind, test, expr, least });
+                    } else {
+                        self.want_kw("end")?;
+                        end = true;
+                    }
+                }
+                Stmt::Mark { kind, at, end, unless, unplaced, checks }
             }
             "token" => {
                 let kind = self.kind()?;
@@ -1390,7 +1568,27 @@ impl P {
                 } else if self.eat_kw("run") {
                     Some(TokenRule::Run(self.expr()?))
                 } else if self.eat_kw("pair") {
-                    Some(TokenRule::Pair(self.expr()?))
+                    let e = self.expr()?;
+                    match &e {
+                        Expr::Name(n) => match self.pair_sets.iter().find(|(m, _)| m == n) {
+                            Some((_, pairs)) => Some(TokenRule::Pairs { pairs: pairs.clone(), mask: e.clone() }),
+                            None => Some(TokenRule::Pair(e)),
+                        },
+                        _ => Some(TokenRule::Pair(e)),
+                    }
+                } else if self.eat_kw("read") {
+                    let mut regions = vec![];
+                    loop {
+                        let k = self.ident()?;
+                        let Some(r) = self.regions.iter().find(|r| r.kind == k) else {
+                            return self.err("a region read before (`regions`)");
+                        };
+                        regions.push(r.clone());
+                        if !self.eat_p("|") {
+                            break;
+                        }
+                    }
+                    Some(TokenRule::Read(regions))
                 } else {
                     None
                 };
@@ -1508,11 +1706,13 @@ impl P {
 }
 
 pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
-    let mut p = P { t: lex(src)?, i: 0 };
+    let mut p = P { t: lex(src)?, i: 0, regions: vec![], before: vec![], classed: vec![], pair_sets: vec![] };
     p.nls();
     let mut out = vec![];
     while p.peek().is_some() {
-        out.push(p.stmt()?);
+        let st = p.stmt()?;
+        out.append(&mut p.before);
+        out.push(st);
         p.nls();
     }
     Ok(out)

@@ -41,11 +41,6 @@ b009_identifier_literal(n) :- kind(n, "parenthesized_expression"), child(n, c6, 
 b009_positional(n) :- node(_, n, _, _, _), !kind(n, "keyword_argument"),
     !kind(n, "dictionary_splat"), !kind(n, "list_splat").
 
-// argument(n): the JSON util `argument`, used where the JSON says `matches: "argument"`
-.decl b009_argument(n: node)
-b009_argument(n) :- node(_, n, _, _, _), !kind(n, "keyword_argument"),
-    !kind(n, "dictionary_splat").
-
 // no_keywords(n): the JSON util `no-keywords`, used where the JSON says `matches: "no-keywords"`
 .decl b009_no_keywords(n: node)
 b009_no_keywords(n) :- kind(n, "argument_list"),

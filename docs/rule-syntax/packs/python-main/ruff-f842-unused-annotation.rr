@@ -13,6 +13,7 @@
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 .violation F842(at: node, n: loc) "Local variable `{n}` is annotated but never used"
     suppress noqa "F842"
-F842(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, site_form(n, "annotation"),
-    (site_scope(n, "function") ; site_scope(n, "lambda")), site_latest(n),
-    !site_used(n), !match("(?:_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9])", n).
+F842(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),
+    main_form(b1, "annotation"),
+    (site_scope(b1, "function") ; site_scope(b1, "lambda")), site_latest(b1),
+    !site_used(b1), !match("(?:_+|_+[a-zA-Z0-9_]*[a-zA-Z0-9])", n).

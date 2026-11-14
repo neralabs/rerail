@@ -43,9 +43,9 @@ c417_lambda_ok(n, B, P) :- kind(n, "lambda"), node(_, n, _, _, _), L = n, field(
     k3 >= 1, k3 <= 1, child(c1, c4, _), kind(c4, "identifier"), node(_, c4, _, _, _), P = c4,
     field(n, "body", c5), node(_, c5, _, _, _), B = c5,
     count : { has(n, c6, "yield"), node(_, c6, _, _, _) } = 0,
-    count : { has(n, c7, "identifier"), node(_, c7, _, _, _), N = c7, ref_site(c7, b8), inside(c7, p9, "lambda"), node(_, p9, _, _, _), K = p9, field(p9, "parameters", c10), has(c10, c11, "identifier"), node(_, c11, _, _, _), Q = c11, site_form(c11, "parameter"), text(Q, t12), text(P, t12), inside(c7, p14, "lambda"), node(_, p14, _, _, _), M = p14, text(N, t15), text(P, t15), text(K, t17), text(L, t17), text(M, t19), text(L, t20), t19 != t20, @doc(Q) = @doc(P), @doc(N) = @doc(P), @doc(K) = @doc(L) } = 0.
-c417_lambda_ok(n, B, P) :- kind(n, "parenthesized_expression"), child(n, c21, _),
-    c417_lambda_ok(c21, B, P).
+    count : { has(n, c7, "identifier"), node(_, c7, _, _, _), N = c7, ref_site(c7, b8), inside(c7, p9, "lambda"), node(_, p9, _, _, _), K = p9, field(p9, "parameters", c10), has(c10, c11, "identifier"), node(_, c11, _, _, _), Q = c11, bind_name(c11, b12), main_form(b12, "parameter"), text(Q, t13), text(P, t13), inside(c7, p15, "lambda"), node(_, p15, _, _, _), M = p15, text(N, t16), text(P, t16), text(K, t18), text(L, t18), text(M, t20), text(L, t21), t20 != t21, @doc(Q) = @doc(P), @doc(N) = @doc(P), @doc(K) = @doc(L) } = 0.
+c417_lambda_ok(n, B, P) :- kind(n, "parenthesized_expression"), child(n, c22, _),
+    c417_lambda_ok(c22, B, P).
 
 // map_call(n): the JSON util `map-call`, used where the JSON says `matches: "map-call"`
 //   B, P: metavariables this relation binds for the calling rule

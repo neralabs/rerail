@@ -239,9 +239,20 @@ impl BlockNative {
         for (_, group) in self.groups.iter().enumerate().filter(|(g, _)| !walked[*g]) {
             todo.extend(group.carries.iter().flat_map(|&(c, x)| [c, x]));
         }
+        // A walk's call makes all its values: one kept keeps the others (the reader-made
+        // tokens leave some of a region's fills unread on the CPU, decision 0177).
+        let mut walk_of: Vec<Option<usize>> = vec![None; insts.len()];
+        for (w, walk) in self.walks.iter().enumerate() {
+            for v in walk.made() {
+                walk_of[usize::from(v)] = Some(w);
+            }
+        }
         while let Some(x) = todo.pop() {
             if !std::mem::replace(&mut keep[x], true) {
                 todo.extend(insts[x].operands());
+                if let Some(w) = walk_of[x] {
+                    todo.extend(self.walks[w].made().into_iter().map(usize::from));
+                }
                 // A kept group's carry reads its next, a round later.
                 for group in self.groups.iter().enumerate().filter(|(g, _)| !walked[*g]).map(|(_, g)| g) {
                     if let Some(&(_, next)) = group.carries.iter().find(|p| p.0 == x) {
@@ -261,9 +272,19 @@ impl BlockNative {
         }
         let m = |v: u16| number[usize::from(v)];
         let place_of = |x: usize| usize::from(number[x]);
+        // The walks whose values are kept (none read: the CPU reads no region, decision 0177),
+        // renumbered.
+        let kept_walks: Vec<usize> = (0..self.walks.len()).filter(|&w| keep[usize::from(self.walks[w].hidden)]).collect();
+        let walk_at = |w: u16| kept_walks.iter().position(|&k| k == usize::from(w)).expect("a kept walk's call") as u16;
         BlockNative {
             tables: self.tables.clone(),
-            insts: order.iter().map(|&x| Self::renamed(insts[x], m)).collect(),
+            insts: order
+                .iter()
+                .map(|&x| match Self::renamed(insts[x], m) {
+                    BlockInst::Walk { walk, out, args } => BlockInst::Walk { walk: walk_at(walk), out, args },
+                    i => i,
+                })
+                .collect(),
             outputs: outputs.iter().map(|&v| m(v)).collect(),
             extracts: self.extracts.clone(),
             totals: self.totals.clone(),
@@ -282,7 +303,7 @@ impl BlockNative {
                     crate::block::Group { members, carries: g.carries.iter().map(|&(c, x)| (place_of(c), place_of(x))).collect() }
                 })
                 .collect(),
-            walks: self.walks.iter().map(|w| Self::walk_renamed(w, m)).collect(),
+            walks: kept_walks.iter().map(|&w| Self::walk_renamed(&self.walks[w], m)).collect(),
         }
     }
 
@@ -303,7 +324,19 @@ impl BlockNative {
     /// The extracts' outputs the CPU's record pass makes, not a mask (`ruled_lasts`,
     /// `walked_starts`).
     pub fn records_made(&self) -> Vec<usize> {
-        self.ruled_lasts().into_iter().chain(self.walked_starts()).collect()
+        self.ruled_lasts().into_iter().chain(self.walked_starts()).chain(self.loops_errors()).chain(self.readers_tags()).collect()
+    }
+
+    /// The outputs of the start masks the CPU's readers say instead (`Records::retags`): where
+    /// its token loop runs, a reader gives its token's kind and marks, so it makes none of them.
+    pub fn readers_tags(&self) -> Vec<usize> {
+        self.records.as_ref().filter(|r| r.skip.is_some()).map_or(Vec::new(), |r| r.retags.iter().map(|t| usize::from(t.o)).collect())
+    }
+
+    /// The outputs of the errors the CPU's token loop checks (`Records::untaken`), where it finds
+    /// the starts: the CPU makes none of them.
+    pub fn loops_errors(&self) -> Vec<usize> {
+        self.records.as_ref().filter(|r| r.skip.is_some()).map_or(Vec::new(), |r| r.untaken.iter().map(|&o| usize::from(o)).collect())
     }
 
     /// The same program with every `class` written as a boolean formula of the eight bit-planes

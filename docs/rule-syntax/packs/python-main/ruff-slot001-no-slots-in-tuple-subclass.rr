@@ -44,9 +44,9 @@ slot001_tuple_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
     ).
 
 slot001_tuple_name(n) :- kind(n, "identifier"), glob("tuple", n), ref_site(n, b1),
-    site_form(b1, "typeParameter"),
+    main_form(b1, "typeParameter"),
     count : { inside(n, p2, "module"), within(c3, p2), slot001_alt_2(c3) } = 0.
-slot001_tuple_name(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), slot001_tuple_name(c4).
+slot001_tuple_name(n) :- kind(n, "parenthesized_expression"), child(n, c5, _), slot001_tuple_name(c5).
 
 // tuple_base(n): the JSON util `tuple-base`, used where the JSON says `matches: "tuple-base"`
 .decl slot001_tuple_base(n: node)
@@ -73,8 +73,8 @@ slot001_alt_1(n) :- field(n, "right", c2), kind(c2, "assignment"), slot001_slots
 // alt_2(n): the JSON `any`: n matches if any one of these rules does
 .decl slot001_alt_2(n: node)
 slot001_alt_2(n) :- kind(n, "dotted_name"), glob("builtins", n).
-slot001_alt_2(n) :- kind(n, "identifier"), glob("tuple", n), (bind_only(n) ; aug_target(n)),
-    !site_form(n, "typeParameter").
+slot001_alt_2(n) :- kind(n, "identifier"), glob("tuple", n), bind_name(n, _),
+    count : { bind_name(n, b1), main_form(b1, "typeParameter") } = 0.
 
 // main's file condition {"notRegex": "\\.pyi$"}
 .decl SLOT001_raw(at: node)

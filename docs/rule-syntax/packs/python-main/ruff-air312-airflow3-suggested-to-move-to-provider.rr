@@ -127,7 +127,7 @@ air312_guarded_attribute(n, ATTR) :- air312_demand_guarded_attribute(n, ATTR),
 //   ATTR: metavariable of the calling rule, passed in (bound by the caller)
 .decl air312_guarded_local(n: node, attr: loc)
 air312_guarded_local(n, ATTR) :- air312_demand_guarded_local(n, ATTR), air312_alt_8(n, LOCAL),
-    text(LOCAL, t3), text(ATTR, t3), @doc(LOCAL) = @doc(ATTR).
+    text(LOCAL, t5), text(ATTR, t5), @doc(LOCAL) = @doc(ATTR).
 
 // guarded_forward(n): the JSON util `guarded-forward`, used where the JSON says `matches: "guarded-forward"`
 //   ATTR: metavariable of the calling rule, passed in (bound by the caller)
@@ -136,7 +136,7 @@ air312_guarded_forward(n, ATTR) :- air312_demand_guarded_forward(n, ATTR), insid
     has(p1, c2, "except_clause"), within(c3, c2), air312_guarded_local(c3, ATTR),
     count : { within(c3, p4), (kind(p4, "function_definition") ; kind(p4, "class_definition")) } = 0.
 air312_guarded_forward(n, ATTR) :- air312_demand_guarded_forward(n, ATTR), air312_alt_12(n, ATTR),
-    count : { inside(n, p15, "module"), within(c16, p15), (kind(c16, "import_from_statement") ; kind(c16, "import_statement")), within(c17, c16), (kind(c17, "identifier") ; kind(c17, "dotted_name")), node(_, c17, _, _, _), MOD = c17, site_scope(c17, "module"), text(MOD, t18), text(ATTR, t18), @doc(MOD) = @doc(ATTR) } = 0.
+    count : { inside(n, p15, "module"), within(c16, p15), (kind(c16, "import_from_statement") ; kind(c16, "import_statement")), within(c17, c16), (kind(c17, "identifier") ; kind(c17, "dotted_name")), node(_, c17, _, _, _), MOD = c17, bind_name(c17, b18), site_scope(b18, "module"), text(MOD, t19), text(ATTR, t19), @doc(MOD) = @doc(ATTR) } = 0.
 
 // string_name(n): the JSON util `string-name`, used where the JSON says `matches: "string-name"`
 //   ATTR: metavariable this relation binds for the calling rule
@@ -356,9 +356,10 @@ air312_stop_3(n) :- kind(n, "block"), child(p1, n, _),
 //   LOCAL: metavariable this relation binds for the calling rule
 .decl air312_alt_8(n: node, local: loc)
 air312_alt_8(n, LOCAL) :- kind(n, "dotted_name"), air312_guarded_import(n), node(_, n, _, _, _), LOCAL = n,
-    site_latest(n), count : { child(p1, n, _), kind(p1, "aliased_import") } = 0.
-air312_alt_8(n, LOCAL) :- kind(n, "aliased_import"), air312_guarded_import(n), field(n, "alias", c2),
-    node(_, c2, _, _, _), LOCAL = c2, site_latest(c2).
+    bind_name(n, b1), site_latest(b1),
+    count : { child(p2, n, _), kind(p2, "aliased_import") } = 0.
+air312_alt_8(n, LOCAL) :- kind(n, "aliased_import"), air312_guarded_import(n), field(n, "alias", c3),
+    node(_, c3, _, _, _), LOCAL = c3, bind_name(c3, b4), site_latest(b4).
 
 // stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
 .decl air312_stop_10(n: node)

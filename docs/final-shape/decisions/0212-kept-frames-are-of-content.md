@@ -1,6 +1,6 @@
 # 0212: Kept frames are of content: digests and granules by atom strings, written mapped
 
-Status: built (2026-11-14). Follows decision 0170 (a forked process maps its atoms to the store's) and 0197 (a
+Status: built (2026-11-14). Follows decision 0170 (a forked process maps its atoms to the store's) and 0211 (a
 warm run writes nothing).
 
 ## Intro
@@ -46,7 +46,7 @@ A kept frame's identity, digest, read digests and parts are functions of content
 ## Consequences
 
 - A forked process's kept part lands in the store. The next run finds its frames current, and a warm run writes none
-  of them again (0197).
+  of them again (0211).
 - PostHog, forked cold run (169 s): the 34 relations are written. The warm run after it (8.6 s, 29,747 findings
   as before) writes no derived frame. No job is queued when it has nothing to write: frames with no frame, delta,
   retag, removal or use, or the run's atoms with none pending.
