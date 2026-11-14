@@ -458,24 +458,30 @@ const MESSAGE_WAIT_MS = 5_000;
  * Resolves with the next message Node publishes on its diagnostics channel `name` that `pick` takes, from any server in
  * this process. A test starts the close once the engine's server has what it sent, which this shows without waiting a
  * set time that a slow machine can outlast. The channel is the process's, shared with every later test in the file, so
- * the wait leaves it once it has its message, once `MESSAGE_WAIT_MS` have passed with none (it then rejects, naming
- * the channel), or once the test ends, whichever comes first. A test that ends has stopped awaiting it, so its end
- * leaves the wait pending rather than reject it.
+ * the wait leaves it as it takes its message, as `MESSAGE_WAIT_MS` pass with none (it then rejects, naming the
+ * channel), or as the test ends, whichever comes first. It leaves in that same call, so a message published later in
+ * the same turn, such as a second request the server parsed from the same chunk, never reaches `pick`. A test that ends
+ * has stopped awaiting the wait, so its end leaves it pending rather than reject it.
  */
 function nextMessage<T>(name: string, pick: (message: unknown) => T | undefined): Promise<T> {
   const taken = Promise.withResolvers<T>();
   const take = (message: unknown): void => {
     const picked = pick(message);
-    if (picked !== undefined) taken.resolve(picked);
+    if (picked === undefined) return;
+    leave();
+    taken.resolve(picked);
   };
-  const limit = setTimeout(() => taken.reject(new Error(`no message came on the diagnostics channel ${name} in ${MESSAGE_WAIT_MS} ms`)), MESSAGE_WAIT_MS);
+  const limit = setTimeout(() => {
+    leave();
+    taken.reject(new Error(`no message came on the diagnostics channel ${name} in ${MESSAGE_WAIT_MS} ms`));
+  }, MESSAGE_WAIT_MS);
   const leave = (): void => {
     clearTimeout(limit);
     unsubscribe(name, take);
   };
   subscribe(name, take);
   onTestFinished(leave);
-  return handled(taken.promise.finally(leave));
+  return handled(taken.promise);
 }
 
 /**
