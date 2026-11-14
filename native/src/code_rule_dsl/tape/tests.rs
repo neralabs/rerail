@@ -3809,6 +3809,15 @@ fn sql_tapes_from_the_lean_parser_are_tree_sitters() {
         "SELECT row_number() OVER (PARTITION BY a, b ORDER BY c DESC) AS n, sum(x) OVER w FROM t WINDOW w AS (PARTITION BY z);\nSELECT sum(x) OVER (ORDER BY y ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), count(*) FILTER (WHERE x > 1) FROM t;\n",
         "INSERT INTO t (a, b) VALUES (1, 2) ON CONFLICT (a) DO UPDATE SET b = excluded.b WHERE t.b <> excluded.b RETURNING *;\nINSERT INTO t (a) VALUES (1) ON CONFLICT ON CONSTRAINT t_pkey DO NOTHING;\n",
         "SELECT date '2020-01-01', timestamp with time zone '2020-01-01', interval '1 day' FROM t;\n",
+        // Application SQL: parameters (`$1`, `?`, `:name`), lateral joins, `extract`, aggregates'
+        // `distinct` and `order by`, `delete … using`.
+        "SELECT id FROM users WHERE id = ? AND created_at BETWEEN :start AND :end AND status = ANY($1);\n",
+        "SELECT u.id, l.at FROM users u LEFT JOIN LATERAL (SELECT at FROM o WHERE o.u = u.id LIMIT 1) last ON true CROSS JOIN LATERAL unnest(u.tags) AS t(tag), LATERAL (SELECT 1) x;\n",
+        "SELECT extract(epoch FROM at), count(DISTINCT u), string_agg(n, ', ' ORDER BY n) FROM t;\n",
+        "DELETE FROM orders USING users WHERE orders.user_id = users.id RETURNING orders.id;\n",
+        // Migrations: `alter table`'s renames, constraints and their attributes.
+        "ALTER TABLE users RENAME COLUMN name TO full_name;\nALTER TABLE users RENAME TO accounts;\nALTER TABLE o DROP CONSTRAINT IF EXISTS fk CASCADE, VALIDATE CONSTRAINT k;\nALTER TABLE o OWNER TO app;\nALTER TABLE o SET SCHEMA archive;\nALTER TABLE o ADD CONSTRAINT fk FOREIGN KEY (u) REFERENCES users (id) NOT VALID;\n",
+        "CREATE TABLE m (u bigint, CONSTRAINT fk FOREIGN KEY (u) REFERENCES users (id) DEFERRABLE INITIALLY DEFERRED);\n",
     ];
     let grammar = Grammar::new(GrammarDialect::Sql).unwrap();
     let mut parser = tree_sitter::Parser::new();
@@ -3826,7 +3835,8 @@ fn sql_tapes_from_the_lean_parser_are_tree_sitters() {
         );
     }
     // Any syntax error: refused, for tree-sitter, which recovers as it recovers.
-    for invalid in ["SELECT (1;\n", "SELECT a FROM t WHERE;\n", "CREATE TABLE t (a int;\n", "SELECT 'a;\n"] {
+    // `id=?` is one operator (`op_other`) to tree-sitter-sql, so a syntax error.
+    for invalid in ["SELECT (1;\n", "SELECT a FROM t WHERE;\n", "CREATE TABLE t (a int;\n", "SELECT 'a;\n", "SELECT a FROM t WHERE id=?;\n"] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(sql_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }

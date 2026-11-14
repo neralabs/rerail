@@ -394,6 +394,20 @@ impl P<'_> {
                 let c = self.byte(t.s);
                 if c == b'(' {
                     self.paren(all)?;
+                } else if c == b'?' && self.op_len(t.s, 1) {
+                    // `?` where an operand goes: a `parameter` (where an operator goes, `op_other`).
+                    self.take(Tok { e: t.s + 1, ..t });
+                    self.a.leaf(K::Parameter, 0, t.s, t.s + 1);
+                } else if c == b':' && (self.byte(t.s + 1).is_ascii_alphabetic() || self.byte(t.s + 1) == b'_') {
+                    // `:name` where an operand goes: a `parameter` (`:[A-Za-z_][A-Za-z0-9_]*`). Its end
+                    // is the word's, from stage 1; a word with `$` or bytes past ASCII is refused, as
+                    // are the quoted forms (`:'name'`, psql's).
+                    let e = self.b.word_end(t.s + 1);
+                    if self.src[t.s + 1..e].iter().any(|&b| b == b'$' || b >= 0x80) {
+                        return self.refuse();
+                    }
+                    self.take(Tok { e, ..t });
+                    self.a.leaf(K::Parameter, 0, t.s, e);
                 } else if c == b'*' && self.op_len(t.s, 1) {
                     if !all {
                         return self.refuse();
@@ -741,8 +755,23 @@ impl P<'_> {
         if self.punct(b")", K::TRParen)?.is_some() {
             return Ok(());
         }
-        if self.is(K::KeywordDistinct)? || self.is(K::KeywordVariadic)? || self.is(K::KeywordAll)? {
+        if self.is(K::KeywordVariadic)? || self.is(K::KeywordAll)? {
             return self.refuse();
+        }
+        if self.unit_next()? {
+            // `extract(epoch from t)`: `unit: object_reference`, `from`, a term, by commas.
+            loop {
+                if !self.unit_next()? || self.object_reference(NONE, f::UNIT)?.is_none() {
+                    return self.refuse();
+                }
+                self.expect(K::KeywordFrom)?;
+                self.term()?;
+                if self.punct(b",", K::TComma)?.is_none() {
+                    break;
+                }
+            }
+            self.expect_punct(b")", K::TRParen)?;
+            return Ok(());
         }
         loop {
             // A named argument: `name => value`.
@@ -768,10 +797,16 @@ impl P<'_> {
                     continue;
                 }
             }
+            // `count(distinct a)`, `string_agg(a, ', ' order by a)`: `distinct` before an argument,
+            // an `order_by` after it.
+            self.kw(K::KeywordDistinct)?;
+            if self.is(K::KeywordVariadic)? {
+                return self.refuse();
+            }
             let id = self.term()?;
             self.a.set_field(id, f::PARAMETER);
             if self.is(K::KeywordOrder)? {
-                return self.refuse();
+                self.order_by()?;
             }
             // A string after a comma is a term too: tree-sitter takes the general form over the last
             // one's `_expression_string` (`f(a, 'b')`; the oracle's corpus has no other reading).
@@ -781,6 +816,19 @@ impl P<'_> {
         }
         self.expect_punct(b")", K::TRParen)?;
         Ok(())
+    }
+
+    /// Whether a name and `from` are next (an invocation's `unit from term`).
+    fn unit_next(&mut self) -> R<bool> {
+        let t = self.peek()?;
+        if t.t != T::Word && t.t != T::Quoted {
+            return Ok(false);
+        }
+        let save = (self.at, self.last_end, self.look);
+        self.take(t);
+        let from = self.is(K::KeywordFrom)?;
+        (self.at, self.last_end, self.look) = save;
+        Ok(from)
     }
 
     /// A term: an expression or `*` (`value:`), and its alias.

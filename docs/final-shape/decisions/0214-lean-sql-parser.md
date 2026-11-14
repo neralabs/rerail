@@ -110,19 +110,22 @@ These were found by the oracle, and the parser keeps each as tree-sitter reads i
 
 ### Read
 
-`select` (with CTEs, set operations, joins, subqueries, `group by`, `having`, `window`, `order by`,
-`limit`, `offset`, `fetch`), `values`, `insert` (with `on conflict`), `update`, `delete`,
+`select` (with CTEs, set operations, joins and lateral joins, subqueries, `group by`, `having`, `window`, `order by`,
+`limit`, `offset`, `fetch`), `values`, `insert` (with `on conflict`), `update`, `delete` (with `using`),
 `truncate`; `create table` (columns, column and table constraints, storage parameters),
 `create index` (columns and function fields), `create view`, `create materialized view`,
 `create function`, `create trigger`, `create sequence`, `create extension`, `create schema`,
 `create type`, `create role`; `drop` (tables, views, materialized views, indexes, functions,
 sequences); `refresh materialized view`; `alter table` (`only`; add and drop columns, `alter column`'s
-`set`/`drop not null`, `set`/`drop default` and `type`, add constraints, `set (…)` and `reset (…)`),
+`set`/`drop not null`, `set`/`drop default` and `type`, add, drop and validate constraints, `rename
+[column] … to`, `rename to`, `owner to`, `set schema`, `set (…)` and `reset (…)`),
 `alter sequence`, `alter function`, `alter extension`; `grant`, `revoke`; transactions; `set`,
-`reset`; `comment on`; `call`; `do`; psql meta-commands. Expressions: literals, strings with
-continuations, dollar-quoted strings, string casts, parameters, casts, `case`, `exists`, `in`,
+`reset`; `comment on`; `call`; `do`; psql meta-commands. Constraints take their attributes (`[not]
+deferrable`, `initially deferred`, `not valid`, …). Expressions: literals, strings with
+continuations, dollar-quoted strings, string casts, parameters (`$1`, `?`, `:name`), casts, `case`, `exists`, `in`,
 `like`, `between`, `is` forms, `collate`, arrays, `interval`, subscripts, window functions (`over`
-a name or a specification: `partition by`, `order by`, `rows`/`range`/`groups` frames), `filter`.
+a name or a specification: `partition by`, `order by`, `rows`/`range`/`groups` frames), `filter`, an
+aggregate's `distinct` and `order by`, `extract(unit from …)`.
 
 pg_dump's output (a Rails `db/structure.sql`: `set` lines, extensions, tables with `character
 varying` and `timestamp(6) without time zone`, sequences and `owned by`, `alter table only … alter
@@ -137,11 +140,11 @@ A file is refused where the lean parser does not read the construct exactly:
 - the statements not listed above: `create operator`, `operator class` and `family`, `aggregate`,
   `foreign data wrapper`, `transform`, `access method`, `domain`; `alter operator`, `alter role`,
   `alter index`; `copy`, `load`, `prepare`, `execute`, `explain`, `merge`, `vacuum`;
-- the clauses not listed above: a table's `partition by` and `inherits`, `tablesample`, `lateral`,
-  index hints, nested joins in parentheses, `exclude` frames, `is json`, `escape`, a parenthesized
+- the clauses not listed above: a table's `partition by` and `inherits`, `tablesample`, index hints, nested joins in parentheses, `exclude` frames, `is json`, `escape`, a parenthesized
   index field;
 - forms of other dialects that tree-sitter-sql reads (backticks, `!`, Delta and Spark SQL);
-- bytes that are not UTF-8.
+- bytes that are not UTF-8;
+- quoted parameters (`:'name'`, psql's).
 
 ### In the engine
 
@@ -155,12 +158,16 @@ tree-sitter's, line by line, over the 600 files:
 
 | | same | differ | refused |
 |---|---|---|---|
-| clean texts (224) | 117 | 0 | 107 |
+| clean texts (224) | 124 | 0 | 100 |
 | texts with errors (376) | — | 0 | 376 |
 
 **Hand-written files** (scratch, not in the repository; their forms are in the engine test below):
-two `structure.sql` files of pg_dump's forms, window functions, upserts and string casts, their
-tapes from tree-sitter through `python_tape_expect`. All five the same.
+two `structure.sql` files of pg_dump's forms, window functions, upserts and string casts; then
+SQL as source code holds it: application queries (parameters, `distinct on`, `ilike`,
+`returning`, aggregates), migrations, JSON operators, lateral joins, `alter table`'s actions, and
+ORM-written queries (Rails', Django's, Hibernate's). Their tapes come from tree-sitter through
+`python_tape_expect`. All 11 are the same; Hibernate's `id=?` is a syntax error to tree-sitter
+(`=?` is one `op_other`), and is refused.
 
 No tape differs. Of the texts with errors, 277 are sqlfluff's fixtures, many of other dialects
 (T-SQL, BigQuery, Snowflake, …); the rest are PostgreSQL's and TimescaleDB's tests, with forms
@@ -174,20 +181,22 @@ tree-sitter-sql does not read.
 - `the_product_reads_sql_with_the_lean_parser`: the engine's parse route gives the lean tape, and a
   refused file gets tree-sitter's.
 
-**Cost** (`sql_parse_costs`, profiling build, over the 117 corpus files the lean parser reads:
-152,219 bytes, 22,583 nodes):
+**Cost** (`sql_parse_costs`, profiling build, over the 124 corpus files the lean parser reads:
+168,895 bytes, 25,972 nodes; with 0219's keyword switch):
 
 | | instructions a node | cycles a node |
 |---|---|---|
-| lean: the parser's columns | 951 | 226 |
-| lean: the tape | 990 | 217 |
-| tree-sitter-sql: parse | 4,026 | 1,053 |
-| tree-sitter-sql: the tape | 6,978 | 1,895 |
+| lean: the parser's columns | 844 | 221 |
+| lean: the tape | 881 | 244 |
+| tree-sitter-sql: parse | 4,030 | 1,099 |
+| tree-sitter-sql: the tape | 6,982 | 1,939 |
+
+(Cycles under a load average near 100.) The first measurement, before 0219, over 117 files: 990
+instructions a node for the lean tape, 6,978 for tree-sitter's.
 
 The lean tape costs a seventh of tree-sitter's in instructions, about a tenth in cycles.
 
-(The keyword lookup below is replaced by 0219's switch: one probe a word, in the lexer; 886
-instructions a node.) The keyword lookup was a bucket by length and first byte, its words compared by their first eight
+(The keyword lookup below was replaced by 0219's switch: one probe a word, in the lexer.) The keyword lookup was a bucket by length and first byte, its words compared by their first eight
 bytes, and cached for the last two words (a two-token look goes between them); a token read ahead
 and given back is not lexed again; the arena is sized from the text. The first build searched all
 517 words at each question and allocated in the automata walk: 1,769 instructions a node.

@@ -592,46 +592,23 @@ impl P<'_> {
             }
             self.relation_alias()?;
         } else {
-            if self.is(K::KeywordOnly)? || self.is(K::KeywordLateral)? || self.is(K::KeywordRows)? {
+            if self.is(K::KeywordLateral)? {
+                // `lateral (subquery) [alias]`, `lateral f(…) [alias]`; `lateral` may be a table's
+                // name where neither follows.
+                if !self.next_is_paren()? && !self.next_is_call()? {
+                    return self.refuse();
+                }
+                self.expect(K::KeywordLateral)?;
+                self.lateral_item(false)?;
+                self.a.node(K::Relation, m);
+                return Ok(());
+            }
+            if self.is(K::KeywordOnly)? || self.is(K::KeywordRows)? {
                 return self.refuse();
             }
             // A function in `from` (`_func_table`: an invocation), or a table.
-            let save = (self.at, self.last_end, self.look);
-            let first = self.peek()?;
-            self.take(first);
-            let mut call = self.at_punct(b"(")?;
-            while !call && self.at_punct(b".")? {
-                let d = self.peek()?;
-                self.take(Tok { e: d.s + 1, ..d });
-                let n = self.peek()?;
-                if n.t != T::Word && n.t != T::Quoted {
-                    break;
-                }
-                self.take(n);
-                call = self.at_punct(b"(")?;
-            }
-            (self.at, self.last_end, self.look) = save;
-            if call {
-                self.expr(prec::TYPECAST + 1, 0)?;
-                if self.a.nodes[*self.a.stack.last().expect("an expression") as usize].kind != K::Invocation {
-                    return self.refuse();
-                }
-                if self.is(K::KeywordWith)? {
-                    return self.refuse();
-                }
-                // `_func_alias`: an alias and its columns (names, or definitions).
-                let before = self.a.mark();
-                if self.kw(K::KeywordAs)?.is_some() {
-                    if self.at_punct(b"(")? {
-                        return self.refuse();
-                    }
-                    self.expect_ident(NONE, f::ALIAS)?;
-                } else {
-                    self.ident(Ctx::Unsure(&[AFTER_RELATION]), f::ALIAS)?;
-                }
-                if self.a.mark() > before && self.at_punct(b"(")? {
-                    self.column_list()?;
-                }
+            if self.is_call()? {
+                self.func_table()?;
                 self.a.node(K::Relation, m);
                 return Ok(());
             }
@@ -645,6 +622,86 @@ impl P<'_> {
         }
         self.a.node(K::Relation, m);
         Ok(())
+    }
+
+    /// Whether the next tokens are a function's name and `(`: `f(`, `s.f(`.
+    fn is_call(&mut self) -> R<bool> {
+        let save = (self.at, self.last_end, self.look);
+        let first = self.peek()?;
+        if first.t != T::Word && first.t != T::Quoted {
+            return Ok(false);
+        }
+        self.take(first);
+        let mut call = self.at_punct(b"(")?;
+        while !call && self.at_punct(b".")? {
+            let d = self.peek()?;
+            self.take(Tok { e: d.s + 1, ..d });
+            let n = self.peek()?;
+            if n.t != T::Word && n.t != T::Quoted {
+                break;
+            }
+            self.take(n);
+            call = self.at_punct(b"(")?;
+        }
+        (self.at, self.last_end, self.look) = save;
+        Ok(call)
+    }
+
+    /// Whether the token after the next starts a call (`lateral f(…)`).
+    fn next_is_call(&mut self) -> R<bool> {
+        let save = (self.at, self.last_end, self.look);
+        let t = self.peek()?;
+        self.take(t);
+        let call = self.is_call()?;
+        (self.at, self.last_end, self.look) = save;
+        Ok(call)
+    }
+
+    /// `_func_table` and its `_func_alias`: an invocation, then an alias and its columns.
+    fn func_table(&mut self) -> R<()> {
+        self.expr(prec::TYPECAST + 1, 0)?;
+        if self.a.nodes[*self.a.stack.last().expect("an expression") as usize].kind != K::Invocation {
+            return self.refuse();
+        }
+        if self.is(K::KeywordWith)? {
+            return self.refuse();
+        }
+        let before = self.a.mark();
+        if self.kw(K::KeywordAs)?.is_some() {
+            if self.at_punct(b"(")? {
+                return self.refuse();
+            }
+            self.expect_ident(NONE, f::ALIAS)?;
+        } else {
+            self.ident(Ctx::Unsure(&[AFTER_RELATION]), f::ALIAS)?;
+        }
+        if self.a.mark() > before && self.at_punct(b"(")? {
+            self.column_list()?;
+        }
+        Ok(())
+    }
+
+    /// `_lateral_item`: a function table, or a subquery with its alias. In a `lateral_join`
+    /// (`on_next`), a bare alias is followed by `on`, so any other keyword is a name.
+    fn lateral_item(&mut self, on_next: bool) -> R<()> {
+        if self.at_punct(b"(")? {
+            let id = self.paren(false)?;
+            if self.a.nodes[id as usize].kind != K::Subquery {
+                return self.refuse();
+            }
+            if on_next && !self.is(K::KeywordAs)? && !self.is(K::KeywordOn)? {
+                self.ident(Ctx::Sure(&[&[K::KeywordOn]]), f::ALIAS)?;
+                if self.at_punct(b"(")? {
+                    self.column_list()?;
+                }
+                return Ok(());
+            }
+            self.relation_alias()
+        } else if self.is_call()? {
+            self.func_table()
+        } else {
+            self.refuse()
+        }
     }
 
     /// `_relation_alias`: an alias and its column list.
@@ -696,6 +753,12 @@ impl P<'_> {
         if self.is(K::KeywordCross)? {
             self.expect(K::KeywordCross)?;
             self.expect(K::KeywordJoin)?;
+            if self.is(K::KeywordLateral)? && (self.next_is_paren()? || self.next_is_call()?) {
+                self.expect(K::KeywordLateral)?;
+                self.lateral_item(false)?;
+                self.a.node(K::LateralCrossJoin, m);
+                return Ok(true);
+            }
             if self.is(K::KeywordLateral)? {
                 return self.refuse();
             }
@@ -703,13 +766,26 @@ impl P<'_> {
             self.a.node(K::CrossJoin, m);
             return Ok(true);
         }
-        self.kw(K::KeywordNatural)?;
-        if self.kw(K::KeywordLeft)?.is_some() || self.kw(K::KeywordRight)?.is_some() || self.kw(K::KeywordFull)?.is_some() {
+        // `lateral_join` takes `[left [outer] | inner] join lateral`; a natural, right or full join
+        // before `lateral` is refused.
+        let mut lateral_ok = self.kw(K::KeywordNatural)?.is_none();
+        if self.kw(K::KeywordLeft)?.is_some() {
             self.kw(K::KeywordOuter)?;
+        } else if self.kw(K::KeywordRight)?.is_some() || self.kw(K::KeywordFull)?.is_some() {
+            self.kw(K::KeywordOuter)?;
+            lateral_ok = false;
         } else {
             self.kw(K::KeywordInner)?;
         }
         self.expect(K::KeywordJoin)?;
+        if self.is(K::KeywordLateral)? && lateral_ok && (self.next_is_paren()? || self.next_is_call()?) {
+            self.expect(K::KeywordLateral)?;
+            self.lateral_item(true)?;
+            self.expect(K::KeywordOn)?;
+            self.expr(0, 0)?;
+            self.a.node(K::LateralJoin, m);
+            return Ok(true);
+        }
         if self.is(K::KeywordLateral)? {
             return self.refuse();
         }
@@ -925,8 +1001,15 @@ impl P<'_> {
             return self.refuse();
         }
         self.alias_unsure()?;
-        if self.is(K::KeywordUsing)? {
-            return self.refuse();
+        if self.kw(K::KeywordUsing)?.is_some() {
+            // `using r, …` and its joins.
+            loop {
+                self.relation()?;
+                if self.punct(b",", K::TComma)?.is_none() {
+                    break;
+                }
+            }
+            while self.join()? {}
         }
         if self.is(K::KeywordWhere)? {
             self.where_()?;
@@ -1237,8 +1320,38 @@ impl P<'_> {
             self.expect_ident(NONE, f::NAME)?;
         }
         self.constraint_body()?;
+        self.constraint_attributes()?;
         self.a.node(K::Constraint, m);
         Ok(())
+    }
+
+    /// `_constraint_attribute`s: `[not] deferrable`, `initially deferred | immediate`, `[not]
+    /// enforced`, `not valid`, `no inherit`, as keywords of the node they follow.
+    fn constraint_attributes(&mut self) -> R<()> {
+        loop {
+            if self.kw(K::KeywordDeferrable)?.is_some() || self.kw(K::KeywordEnforced)?.is_some() {
+                continue;
+            }
+            if self.kw(K::KeywordInitially)?.is_some() {
+                if self.kw(K::KeywordDeferred)?.is_none() {
+                    self.expect(K::KeywordImmediate)?;
+                }
+                continue;
+            }
+            if self.is(K::KeywordNo)? && self.next_is(K::KeywordInherit)? {
+                self.expect(K::KeywordNo)?;
+                self.expect(K::KeywordInherit)?;
+                continue;
+            }
+            if self.is(K::KeywordNot)? && (self.next_is(K::KeywordDeferrable)? || self.next_is(K::KeywordEnforced)? || self.next_is(K::KeywordValid)?) {
+                self.expect(K::KeywordNot)?;
+                if self.kw(K::KeywordDeferrable)?.is_none() && self.kw(K::KeywordEnforced)?.is_none() {
+                    self.expect(K::KeywordValid)?;
+                }
+                continue;
+            }
+            return Ok(());
+        }
     }
 
     /// `_constraint_body`: a primary key, unique, foreign key or check constraint, with none of
@@ -1278,7 +1391,7 @@ impl P<'_> {
             }
             _ => return self.refuse(),
         }
-        if self.is(K::KeywordInclude)? || self.is(K::KeywordWith)? || self.is(K::KeywordUsing)? || self.is(K::KeywordDeferrable)? || self.is(K::KeywordNot)? || self.is(K::KeywordInitially)? {
+        if self.is(K::KeywordInclude)? || self.is(K::KeywordWith)? || self.is(K::KeywordUsing)? {
             return self.refuse();
         }
         Ok(())
@@ -2441,6 +2554,7 @@ impl P<'_> {
                     let c = self.a.mark();
                     self.constraint_body()?;
                     self.a.node(K::Constraint, c);
+                    self.constraint_attributes()?;
                     self.a.node(K::AddConstraint, s);
                     if self.punct(b",", K::TComma)?.is_none() {
                         break;
@@ -2454,6 +2568,48 @@ impl P<'_> {
                     return self.refuse();
                 }
                 self.a.node(K::AddColumn, s);
+            } else if self.is(K::KeywordRename)? {
+                self.expect(K::KeywordRename)?;
+                if self.kw(K::KeywordTo)?.is_some() {
+                    // `rename to t`.
+                    if self.object_reference(NONE, 0)?.is_none() {
+                        return self.refuse();
+                    }
+                    self.a.node(K::RenameObject, s);
+                } else {
+                    // `rename [column] a to b`: `column` may be the old name (`rename column to b`).
+                    if self.kw(K::KeywordColumn)?.is_some() && self.is(K::KeywordTo)? {
+                        return self.refuse();
+                    }
+                    self.expect_ident(Ctx::Sure(&[&[K::KeywordColumn, K::KeywordTo]]), f::OLD_NAME)?;
+                    self.expect(K::KeywordTo)?;
+                    self.expect_ident(NONE, f::NEW_NAME)?;
+                    self.a.node(K::RenameColumn, s);
+                }
+            } else if self.is(K::KeywordValidate)? {
+                self.expect(K::KeywordValidate)?;
+                self.expect(K::KeywordConstraint)?;
+                self.expect_ident(NONE, 0)?;
+                self.a.node(K::ValidateConstraint, s);
+            } else if self.is(K::KeywordOwner)? {
+                self.expect(K::KeywordOwner)?;
+                self.expect(K::KeywordTo)?;
+                self.expect_ident(NONE, 0)?;
+                self.a.node(K::ChangeOwnership, s);
+            } else if self.is(K::KeywordSet)? && self.next_is(K::KeywordSchema)? {
+                self.expect(K::KeywordSet)?;
+                self.expect(K::KeywordSchema)?;
+                self.expect_ident(NONE, f::SCHEMA)?;
+                self.a.node(K::SetSchema, s);
+            } else if self.is(K::KeywordDrop)? && self.next_is(K::KeywordConstraint)? {
+                self.expect(K::KeywordDrop)?;
+                self.expect(K::KeywordConstraint)?;
+                self.if_exists()?;
+                self.expect_ident(Ctx::Sure(&[&[K::KeywordIf]]), 0)?;
+                if self.kw(K::KeywordCascade)?.is_none() {
+                    self.kw(K::KeywordRestrict)?;
+                }
+                self.a.node(K::DropConstraint, s);
             } else if self.is(K::KeywordDrop)? {
                 self.expect(K::KeywordDrop)?;
                 if !self.is(K::KeywordColumn)? {
@@ -2532,6 +2688,16 @@ impl P<'_> {
             self.expr(0, 0)?;
         }
         Ok(())
+    }
+
+    /// Whether the token after the next may be keyword `k`.
+    fn next_is(&mut self, k: K) -> R<bool> {
+        let save = (self.at, self.last_end, self.look);
+        let t = self.peek()?;
+        self.take(t);
+        let is = self.is(k)?;
+        (self.at, self.last_end, self.look) = save;
+        Ok(is)
     }
 
     /// Whether the token after the next is `(`.
