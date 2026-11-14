@@ -189,6 +189,19 @@ function setOwner(databasePath: string, sessionId: string, row: { processId: num
   }
 }
 
+/** Opens `session`'s record and claims it from this process under no lock, as a pi or OMP session's runtime does. */
+function claimUnlocked(databasePath: string, session: { host: "claude-code"; sessionId: string; cwd: string }): void {
+  const sessions = new SqliteSessionStore(databasePath);
+  const controls = new SqliteAuditControlStore(databasePath);
+  try {
+    sessions.openSession(session);
+    controls.registerOwner(session.sessionId, "next-event");
+  } finally {
+    controls.close();
+    sessions.close();
+  }
+}
+
 describe("the next daemon's start after a daemon that died", () => {
   const holders = [
     ["this process", async () => process.pid],
@@ -242,19 +255,28 @@ describe("the next daemon's start after a daemon that died", () => {
     }
   });
 
-  // An owner row written under no lock (by an earlier version's daemon, or a runtime that could take none) names its
-  // writer by pid alone. One naming this process but written before it started is a process's that had the pid before.
-  it("ends a session whose owner row names this process under no lock only when written before this process started", { timeout: 60_000 }, async () => {
+  // An owner row written under no lock (by an earlier version's daemon, a pi or OMP session's runtime, or a runtime that
+  // could take none) names its writer by pid alone. One naming this process is its own only when this process made that
+  // claim: the wall clock can step back after the start (NTP, a virtual machine resumed), so a row's time cannot tell a
+  // claim made since from one a process that had the pid before made.
+  it("ends a session whose owner row names this process under no lock only when this process did not make that claim", { timeout: 60_000 }, async () => {
     const { root, databasePath, checkout } = await records();
     const { start } = events(checkout);
     const first = await service(root, databasePath, Date.now);
     await ingestEngineEvent({ socketPath: first.socketPath }, start("earlier"));
-    await ingestEngineEvent({ socketPath: first.socketPath }, start("later"));
+    await ingestEngineEvent({ socketPath: first.socketPath }, start("stepped"));
+    // Rows of a process that had this pid before: written before this process started, and after it by a clock that
+    // has stepped back since.
     setOwner(databasePath, "earlier", { processId: process.pid, token: randomUUID(), updatedAt: Math.floor(performance.timeOrigin) - 60_000 });
-    setOwner(databasePath, "later", { processId: process.pid, token: randomUUID(), updatedAt: Date.now() });
+    setOwner(databasePath, "stepped", { processId: process.pid, token: randomUUID(), updatedAt: Date.now() });
+    // A claim this process made under no lock after its clock stepped back: its time reads as before the start.
+    claimUnlocked(databasePath, { host: "claude-code", sessionId: "mine", cwd: checkout });
+    setOwner(databasePath, "mine", { processId: process.pid, updatedAt: Math.floor(performance.timeOrigin) - 60_000 });
     await service(root, databasePath, Date.now);
-    expect([recorded(databasePath, "earlier").endedAt === null, live(databasePath, "earlier")]).toEqual([false, false]);
-    expect([recorded(databasePath, "later").endedAt, live(databasePath, "later")]).toEqual([null, true]);
+    for (const sessionId of ["earlier", "stepped"]) {
+      expect([recorded(databasePath, sessionId).endedAt === null, live(databasePath, sessionId)], sessionId).toEqual([false, false]);
+    }
+    expect([recorded(databasePath, "mine").endedAt, live(databasePath, "mine")]).toEqual([null, true]);
   });
 });
 
