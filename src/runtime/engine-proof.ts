@@ -25,14 +25,17 @@ const PIPE_RETRY_MS = 50;
 const PROOF_TIMEOUT_MS = 2_000;
 /**
  * How long `rerail daemon start` waits for the daemon it launched to answer, counted from the launch (`readyDaemon` in
- * daemon-control.ts takes it from here).
+ * daemon-control.ts takes it from here): the engine start beside a held pipe has to end inside it.
  */
 export const DAEMON_START_TIMEOUT_MS = 15_000;
 /**
- * How long the engine start waits for a free instance of a held Windows pipe: as long as Node's own connect waits for
- * one, so a busy engine of this home that frees one in that time proves itself, and no second daemon starts beside it.
+ * How long the engine start waits for a free instance of a held Windows pipe: what is left of
+ * {@link DAEMON_START_TIMEOUT_MS} once the holder has had {@link PROOF_TIMEOUT_MS} to answer and the daemon 5 s for its
+ * launch before the engine listens and the rest of its start after. A busy engine of this home that frees an instance
+ * in that time proves itself, so no second daemon starts beside it; a holder that keeps every instance taken longer is
+ * passed over for the fallback pipe while `rerail daemon start` still waits.
  */
-const START_PIPE_WAIT_MS = 30_000;
+const START_PIPE_WAIT_MS = DAEMON_START_TIMEOUT_MS - PROOF_TIMEOUT_MS - 5_000;
 
 /** Whether `value` is a challenge as {@link engineHoldsCapability} sends one. */
 export function isEngineChallenge(value: unknown): value is string {
