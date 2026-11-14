@@ -297,6 +297,23 @@ describe("the next daemon's start after a daemon that died", () => {
     }
     expect([recorded(databasePath, "mine").endedAt, live(databasePath, "mine")]).toEqual([null, true]);
   });
+
+  // This process keeps a claim it made under no lock only until it lets it go, so what it keeps stays as large as the
+  // sessions it holds. A record a claim it let go left open is no one's, as one a process that ended left.
+  it("ends a session whose record stayed open after this process let go of its claim made under no lock", async () => {
+    const { root, databasePath } = await records();
+    const sessions = new SqliteSessionStore(databasePath);
+    const controls = new SqliteAuditControlStore(databasePath);
+    try {
+      sessions.openSession({ host: "claude-code", sessionId: "let-go", cwd: root });
+      controls.releaseOwner("let-go", controls.registerOwner("let-go", "next-event"));
+      expect(controls.endSessionsOfEndedOwners(IDLE_MS, Date.now())).toBe(1);
+      expect(recorded(databasePath, "let-go").endedAt).not.toBeNull();
+    } finally {
+      controls.close();
+      sessions.close();
+    }
+  });
 });
 
 describe("a daemon that runs on after another on the same records died", () => {
