@@ -98,6 +98,22 @@ impl<'v> Fields<'v> {
         let v = self.v;
         self.decl(rel).map(|d| d.cols().map(|(n, t)| (v.text(n), v.text(t))).collect())
     }
+    /// `rel`'s declared columns' count, failing where it is not declared (as `Program::decls[rel]` does).
+    pub fn width(&self, rel: &str) -> usize {
+        self.arity(rel).unwrap_or_else(|| panic!("no declaration of {rel}"))
+    }
+    /// `rel`'s declared columns' types, in order, failing where it is not declared (`plan::prog_types`).
+    pub fn types(&self, rel: &str) -> Vec<&'v str> {
+        let v = self.v;
+        self.decl(rel).unwrap_or_else(|| panic!("no declaration of {rel}")).cols().map(|(_, t)| v.text(t)).collect()
+    }
+    /// Every declaration's relation and its columns' types, by name (`Program::decls`' order).
+    pub fn decls_by_name(&self) -> Vec<(&'v str, Vec<&'v str>)> {
+        let v = self.v;
+        let mut out: Vec<(&'v str, Vec<&'v str>)> = self.v.decls().into_iter().map(|d| (v.text(d.name()), d.cols().map(|(_, t)| v.text(t)).collect())).collect();
+        out.sort_unstable_by(|a, b| a.0.cmp(b.0));
+        out
+    }
     /// `rel`'s column `c`'s type.
     pub fn column_type(&self, rel: &str, c: usize) -> Option<&'v str> {
         self.decl(rel).and_then(|d| d.cols().nth(c)).map(|(_, t)| self.v.text(t))
@@ -171,6 +187,16 @@ impl<'v> Fields<'v> {
         let Some(q) = self.rel(req) else { return Vec::new() };
         let about: &'v About = self.about;
         about.answers.iter().filter(|a| a.0 == q).map(|a| self.v.rel_name(a.1)).collect()
+    }
+    /// Whether `rel` is a relation an answer produces (`answers::produced`' keys).
+    pub fn produced(&self, rel: &str) -> bool {
+        self.rel(rel).is_some_and(|r| self.about.answers.iter().any(|&(_, p)| p == r))
+    }
+    /// The request that produces `rel`, as `answers::produced` maps it: of several, the last by name.
+    pub fn request_of(&self, rel: &str) -> Option<&'v str> {
+        let r = self.rel(rel)?;
+        let v = self.v;
+        self.about.answers.iter().filter(|&&(_, p)| p == r).map(|&(q, _)| v.rel_name(q)).max()
     }
     /// Every request and a relation it produces, by request then in order (`Program::answers`).
     pub fn answers(&self) -> &'v [(RelId, RelId)] {
@@ -271,6 +297,18 @@ mod tests {
         let vs = Versions::with(&p, placed.clone());
         assert!(std::ptr::eq(vs.fields(0).unwrap().about, f.about));
         assert!(vs.fields(1).is_none());
+        assert_eq!(vs.index_of(&p), Some(0));
+        // A whole program added (a maintained form) is a whole version of its own, found by its address, once.
+        let mut vs = vs;
+        let mut form = Program::default();
+        form.decls.insert("e".into(), [("a".into(), "int".into())].into());
+        form.inputs = vec!["e".into()];
+        vs.add(&form).unwrap();
+        vs.add(&form).unwrap();
+        let k = vs.index_of(&form).unwrap();
+        assert_eq!(k, 1);
+        assert_eq!((vs.whole(k).inputs().collect::<Vec<_>>(), vs.whole(k).columns("e")), (vec!["e"], Some(vec![("a", "int")])));
+        assert!(vs.fields(2).is_none());
         // A version of rules alone has none.
         assert!(Fields::of(&Placed::made(&p.rules).unwrap()).is_none());
     }

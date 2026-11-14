@@ -371,3 +371,34 @@ ported, over the targeted tests and dl1.
     programs with a field of every kind (`every_field`: each native kind, merges and widenings, answers, gates,
     qualifiers, tapes, demand in order). `fields_are_read_once_and_say_the_trees` (logic) checks the sharing.
 
+- **Item 7, step 4: the run reads the program's fields from its version** (2026-11-14).
+  - `Run` holds `version`, the place of its current program among `run.versions` (0, the program; a maintained
+    form's once added), set with `prog` by `set_prog` wherever the run swaps to a form and back, and in a strand of
+    forms (`run_forms`, `strand_forms`). `Run::fields()` reads the current program's `Fields`; a helper that mutates
+    the run takes them from its own clone of `versions`.
+  - `Versions::add(form)` adds a whole version of its own (`Placed::of_program`: its rules, fields and `Maint`),
+    found by the program's address (`index_of`); `add_rules` stays an overlay for again's rule lists. The run's
+    version 0 is whole: a kept choice stored as text (no version) has its image made at the run's start, and a
+    program with no image is an error.
+  - Moved to `Fields`: the tables made over the declarations (iterated by name, `decls_by_name`, facts from the
+    version's cells), the named set, inputs and outputs, adopted inputs, the gated and kept sets, the retained strata's
+    checks (`retainable_stratum`, `with_answers`, `kept_strata_ran`, `produced_rows`, `kept_strata_hold`,
+    `stored_types`), the requests and produced relations (`produced`, `request_of`: of several requests the last by
+    name, as `answers::produced` maps it), the natives (`native_relation`, `reach_rows`, `native_reach`, the Python and
+    components operators take `NativeSpec`), `index_for`, `insert_rows`, `strand_reads_with`, `strand_forms`,
+    `absorb_forms`, `seed_specs`, `native_stratum_` (lattices, gates as `GateRef`s sorted by level then name,
+    qualifiers, facts, types), `drive`, `native_fixpoint`, `native_set_fixpoint`, `decline_class`, and
+    `sql_kernel::program_for` and `component` (lattice tops by name, value types, inputs). `issue.rs` reads no field.
+  - Still the tree's, and why: `again` and `together` (step 7, `Maint`); the rule lists; `Model`'s methods, which
+    take the tree (`plan_rule*`, `sql_select`, `make_statistics`, `late`, `resolve`, `fork`, `absorb`), and
+    `prior_stats`/`prior_now` with them; `join_spec` (its own `Run` impl, with `prog_types`); the stratum readers
+    shared with tree callers (`stratum_reads`, `first_reads`, `last_reads`, `identities` and `leaf_identity`, whose
+    digests are of the tree's text) and those shared with `emit` (`plan_views`, `decoded_outputs`): step 5; the run's
+    input set extended with a form's inputs (its names must live as long as the run); and what runs before the
+    version is made (`sql_kernel::normalize`, `stated_apart`, the lowering's domains, the composed path).
+  - Checked while porting: at the run's start and at each `set_prog`, every field the run reads (inputs and outputs
+    in order, declarations, facts by text, lattices, natives and their reads, answers in order, `request_of` against
+    `answers::produced`, gates, qualifiers) equalled the tree's, over the planner's tests (logic `plan::`, 110) and the
+    engine's keeps, demand, negation, inline, choices, cone, phase0, session, maintain, again, retain, edit,
+    `corpus::`, `rr::`, program_image, strata, answer, native and setfix tests, and dl1 cold and warm. The check is
+    gone; `fields_are_read_once_and_say_the_trees` checks a form's version (`add`, `index_of`).

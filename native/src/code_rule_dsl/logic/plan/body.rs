@@ -421,9 +421,10 @@ pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &Var
 /// The versions of the programs whose rules a run plans, each encoded once, and a rule of one found by its place in
 /// the program's rules. Until `plan::run` takes a version (t36 item 7) and its rules are keyed by id (item 5), the run's
 /// programs are trees, and this is how the planner reads their rules by handles. A program is added once it is
-/// final: its rules do not move after.
+/// final: its rules do not move after. A whole program (the run's, a maintained form) is also found by its address
+/// (`index_of`), for the run to read its fields from its version.
 #[derive(Clone, Default)]
-pub struct Versions(Vec<(usize, usize, Placed)>);
+pub struct Versions(Vec<(usize, usize, Placed)>, Vec<(usize, usize)>);
 
 /// A program's version, and where its rules are in it: the program's rule `k` is the version's rule `ids[k]` (rule
 /// `k` where `ids` is `None`, a version made of the rules in order). A pass's overlay keeps its rules where its edits
@@ -606,12 +607,30 @@ impl Versions {
     pub fn with(prog: &Program, placed: Placed) -> Versions {
         let rules = &prog.rules;
         let start = rules.as_ptr() as usize;
-        Versions(vec![(start, start + std::mem::size_of_val(rules.as_slice()), placed)])
+        Versions(vec![(start, start + std::mem::size_of_val(rules.as_slice()), placed)], vec![(prog as *const Program as usize, 0)])
     }
-    /// Adds `prog`'s rules, encoded (the planner reads its rules alone; the rest of a program it reads from the tree
-    /// until item 7, and a maintained form's parts have no image).
+    /// Adds `prog` (a maintained form), a whole version of its own (`Placed::of_program`): its rules, its other fields
+    /// and its maintenance's parts, which the run reads while it is the run's program (t36 item 7). Once only.
     pub fn add(&mut self, prog: &Program) -> Result<()> {
-        self.add_rules(&prog.rules)
+        let at = prog as *const Program as usize;
+        if self.1.iter().any(|e| e.0 == at) {
+            return Ok(());
+        }
+        let rules = &prog.rules;
+        let start = rules.as_ptr() as usize;
+        let placed = Placed::of_program(prog)?;
+        self.1.push((at, self.0.len()));
+        self.0.push((start, start + std::mem::size_of_val(rules.as_slice()), placed));
+        Ok(())
+    }
+    /// Where whole program `prog` is among the run's versions (`with`, `add`): the program's is 0.
+    pub fn index_of(&self, prog: &Program) -> Option<usize> {
+        let at = prog as *const Program as usize;
+        self.1.iter().find(|e| e.0 == at).map(|e| e.1)
+    }
+    /// The run's `k`-th version.
+    pub fn placed(&self, k: usize) -> &Placed {
+        &self.0[k].2
     }
     /// Adds `rules` (a program's, or a maintained form's), encoded, unless they are held already.
     pub fn add_rules(&mut self, rules: &[Rule]) -> Result<()> {
@@ -647,6 +666,10 @@ impl Versions {
     /// The fields of the run's `k`-th version (the program's is 0), read once: `None` where it is rules alone.
     pub fn fields(&self, k: usize) -> Option<super::fields::Fields<'_>> {
         self.0.get(k).and_then(|e| super::fields::Fields::of(&e.2))
+    }
+    /// The fields of the run's `k`-th version, a whole program's (the run's, a maintained form: `with`, `add`).
+    pub fn whole(&self, k: usize) -> super::fields::Fields<'_> {
+        self.fields(k).unwrap_or_else(|| panic!("the run's version {k} is its rules alone"))
     }
     /// The rule `k` names, as the planner reads it.
     pub fn at(&self, k: RuleKey) -> Body<'_> {
