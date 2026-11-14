@@ -2392,6 +2392,33 @@ pub struct TrialRun { pub work: u64, pub rows: u64, pub made: u64, pub cut: bool
 /// `step`: where `spec` reads those rows (it leads with the same atom); else where known (`restricted`). `None` when
 /// the sample cannot be placed in `spec`, or the probe is no join.
 pub fn trial(conn: impl Scoped, name: &str, probe: usize, spec: Option<&JoinSpec>, step: Option<usize>, sample: usize, budget: u64) -> Result<Option<TrialRun>> {
+    trial_over(conn, name, probe, spec, step, Err(sample), budget)
+}
+
+/// The rows `trial` draws its sample from, for probe `probe`: the rows its cut left, else every row its first step
+/// reads, as row ids of the relation they live in (decision 0209's split spike picks among them).
+pub fn trial_ids(conn: impl Scoped, name: &str, probe: usize) -> Result<Option<Vec<u32>>> {
+    let conn = conn.db();
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    let cut = comp.cut.as_ref().filter(|c| c.next == probe);
+    if let Some(left) = cut.and_then(|c| c.left.as_ref()) {
+        return Ok(Some((0..left.bits.len() * 64).filter(|&b| left.bits[b / 64] >> (b % 64) & 1 == 1).map(|b| left.lo + b as u32).collect()));
+    }
+    let Some(p) = comp.probes.get(probe) else { return Ok(None) };
+    let Body::Join(own) = &p.body else { return Ok(None) };
+    let store = comp.store.read().unwrap();
+    let Some(Step::Atom { src, .. }) = own.steps.first() else { return Ok(None) };
+    Ok(Some(match src {
+        Src::Delta(r) => (store.rels[*r].lo as u32..store.rels[*r].hi as u32).collect(),
+        Src::Full(r) | Src::FullMulti(r, _) => (0..store.rels[*r].n as u32).collect(),
+        Src::In(r, _) => (0..r.len() as u32).collect(),
+    }))
+}
+
+/// `trial` over the rows `pick` names (`Ok`, among those `trial_ids` gives), or a sample of at most that many at a
+/// stride (`Err`).
+pub fn trial_over(conn: impl Scoped, name: &str, probe: usize, spec: Option<&JoinSpec>, step: Option<usize>, pick: std::result::Result<&[u32], usize>, budget: u64) -> Result<Option<TrialRun>> {
     let conn = conn.db();
     let comp = component(conn, name)?;
     let mut comp = comp.lock().unwrap();
@@ -2431,8 +2458,11 @@ pub fn trial(conn: impl Scoped, name: &str, probe: usize, spec: Option<&JoinSpec
         }
     };
     if ids.is_empty() { return Ok(None) }
-    let stride = ids.len().div_ceil(sample.max(1)).max(1);
-    let picked: Vec<u32> = ids.iter().step_by(stride).copied().collect();
+    let picked: Vec<u32> = match pick {
+        Ok(only) => { let only: std::collections::HashSet<u32> = only.iter().copied().collect(); ids.iter().copied().filter(|i| only.contains(i)).collect() }
+        Err(sample) => { let stride = ids.len().div_ceil(sample.max(1)).max(1); ids.iter().step_by(stride).copied().collect() }
+    };
+    if picked.is_empty() { return Ok(None) }
     let rows = Rows0::of(of, &picked);
     let j = made.as_ref().unwrap_or(own);
     let named = if made.is_some() { step } else { Some(0) };

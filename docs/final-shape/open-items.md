@@ -5088,3 +5088,17 @@ block of slots in one array). The planner's prepared atoms (`AtomCols`) resolve 
 readers by name pay one lookup of the name, where each read built a `(String, usize)` key before. Planner tests: 116
 pass (the 115 unchanged, and the table's own). `ColStats` (input columns by name) stays as it is: its readers are the
 SQL statistics' loads, not the search.
+
+## O171. A trial's sample misses a skewed key's heavy rows (decision 0216)
+
+A trial (decision 0207) samples a line's rows at a stride. On `call_ret`, 23% of the rows (those of the 64
+largest functions) do 96% of the work, so a 9-row sample measures mostly light rows: 492 rows of work a row, where
+the line does 906. Sampling by the heavy values (some of each part, weighted back) would measure both. Open.
+
+## O172. Heavy values: deltas, processes, GPU (decision 0216)
+
+Heavy values are made by a full pass over a relation when a column is raised. Open:
+- a delta's Misra–Gries summary merged into the kept one (0209 §4), so a growing relation is not counted again;
+- a line's raised columns kept with its note across processes;
+- the GPU batch (0209 §6, step 4).
+

@@ -111,3 +111,10 @@ So the order that goes on does not make those rows again, whichever order it is.
 
 **Smoke** (the self-join seed, default settings): 1,833 rows kept from the 8-row sample. The line's work went from
 374 k to 363 k rows, with the same 545 findings.
+
+## Correction (2026-11-14, decision 0216)
+
+The line's work above counted its last order only. With every order counted, the default run did 0.70 M rows of
+work and 0.12 M of trials (not 0.37 M); the O169 run's 363 k is understated the same way. The 3.6× gain is 2.5×.
+With decision 0216's price of a bound kind check, the planner starts with the trials' winner: 0.39 M and 0.04 M of
+trials.

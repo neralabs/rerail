@@ -1,7 +1,8 @@
 # 0209: Statistics are one flat table, made in one batch, and keep a column's heavy values
 
-Status: step 1 built (2026-11-14, `plan::table`, O170); steps 2–3 in progress. The user chose price only, with a
-spike on split plans (§5, 2026-11-14).
+Status: steps 1–3 built (2026-11-14): the table (`plan::table`, O170), the CPU batch and heavy-value pricing
+(decision 0216). The user chose price only, with a spike on split plans (§5); the spike found nothing to gain on
+the seed measured (0216). Open: deltas' summaries merged, the GPU batch (O172).
 
 ## Intro
 

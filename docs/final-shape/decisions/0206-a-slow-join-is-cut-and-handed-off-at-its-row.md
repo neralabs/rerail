@@ -132,3 +132,10 @@ relation's rows rather than a delta. It now has the probe's budget too.
 
 **Test** (`setfix::cut_tests`): a whole plan is cut in its first wave, trialled, and handed to another whole order.
 The fixpoint is the unlimited run's.
+
+## Correction (2026-11-14, decision 0216)
+
+A line's recorded work held its last order's work only, not the orders it handed off. The handoff run above
+(`RERAIL_JOIN_SLOW=0.5`) is understated by the replaced order's work. With every order counted, the default run of
+decision 0207 did 0.70 M rows (not 0.37 M), still 2.5× under the 1.73 M of no cuts. With decision 0216's price of a
+kind check, the line starts in its best order and does 0.39 M.

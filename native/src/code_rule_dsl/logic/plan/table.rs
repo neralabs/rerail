@@ -338,6 +338,105 @@ impl<T, S: AsRef<str>> std::ops::Index<&(S, usize)> for ColMap<T> {
     }
 }
 
+/// Decision 0209 §4, level 1: how many of a column's values are kept by their counts.
+pub const HEAVY: usize = 64;
+
+/// A column's heavy values: its most common values with their exact rows, and what is left (the tail), made over
+/// `rows` rows (decision 0209 §4).
+#[derive(Clone, Debug, PartialEq)]
+pub struct HeavyCol {
+    /// The values and their rows, by value (for lookups), at most `HEAVY`.
+    pub top: Vec<(i64, f64)>,
+    pub rows: f64,
+    pub ndv: f64,
+    /// Rows and distinct values outside `top`.
+    pub tail_rows: f64,
+    pub tail_ndv: f64,
+    /// The sums of counts squared and cubed (the column's second and third moments).
+    pub sq: f64,
+    pub cube: f64,
+}
+
+impl HeavyCol {
+    /// From a column's exact counts.
+    pub fn of_counts(counts: impl IntoIterator<Item = (i64, u64)>) -> HeavyCol {
+        let mut all: Vec<(i64, u64)> = counts.into_iter().filter(|c| c.1 > 0).collect();
+        let (mut rows, mut sq, mut cube) = (0.0, 0.0, 0.0);
+        for &(_, n) in &all {
+            let n = n as f64;
+            rows += n;
+            sq += n * n;
+            cube += n * n * n;
+        }
+        let ndv = all.len() as f64;
+        if all.len() > HEAVY {
+            all.select_nth_unstable_by(HEAVY - 1, |a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            all.truncate(HEAVY);
+        }
+        let mut top: Vec<(i64, f64)> = all.into_iter().map(|(v, n)| (v, n as f64)).collect();
+        top.sort_unstable_by_key(|t| t.0);
+        let held: f64 = top.iter().map(|t| t.1).sum();
+        HeavyCol { tail_rows: rows - held, tail_ndv: ndv - top.len() as f64, top, rows, ndv, sq, cube }
+    }
+    /// Value `v`'s rows, where it is heavy.
+    #[inline]
+    pub fn count(&self, v: i64) -> Option<f64> {
+        self.top.binary_search_by_key(&v, |t| t.0).ok().map(|i| self.top[i].1)
+    }
+    /// The rows of a value of the tail, on average.
+    #[inline]
+    pub fn tail_mean(&self) -> f64 {
+        if self.tail_ndv >= 1.0 { self.tail_rows / self.tail_ndv } else { 0.0 }
+    }
+    /// A value's rows: its own where it is heavy, else the tail's mean.
+    #[inline]
+    pub fn rows_of(&self, v: i64) -> f64 {
+        self.count(v).unwrap_or_else(|| self.tail_mean())
+    }
+}
+
+/// Decision 0209 §4's price of a probe: the rows column `here` holds per binding of its variable, where the binding
+/// was drawn through the columns `by` (the atoms placed before that hold it). A value's weight is the product of its
+/// rows in each of `by`, so a value common in all is drawn more often: value by value over the heavy values of any,
+/// a value heavy in one only taken at the others' tail mean, and the tails' shared values (containment: as many as
+/// the fewest any has left) at their means. `None` where no value is drawn.
+pub fn heavy_fan(here: &HeavyCol, by: &[&HeavyCol]) -> Option<f64> {
+    let mut vals: Vec<i64> = here.top.iter().map(|t| t.0).chain(by.iter().flat_map(|h| h.top.iter().map(|t| t.0))).collect();
+    vals.sort_unstable();
+    vals.dedup();
+    let (mut num, mut den) = (0.0f64, 0.0f64);
+    for &v in &vals {
+        let w: f64 = by.iter().map(|h| h.rows_of(v)).product();
+        num += w * here.rows_of(v);
+        den += w;
+    }
+    // The values heavy in none: each column's tail less the values of `vals` it holds in its tail.
+    let left = |h: &HeavyCol| (h.tail_ndv - (vals.len() - h.top.len()) as f64).max(0.0);
+    let shared = by.iter().map(|h| left(h)).fold(left(here), f64::min);
+    let w: f64 = by.iter().map(|h| h.tail_mean()).product();
+    num += shared * w * here.tail_mean();
+    den += shared * w;
+    (den > 0.0).then(|| num / den)
+}
+
+/// Decision 0209 §6, the CPU batch: each relation's requested columns' heavy values, in one pass over its rows (its
+/// source, where it has one), the relations spread over the pool.
+pub fn heavy_batch(reqs: Vec<(Option<std::sync::Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>, Vec<usize>)>) -> Vec<Option<Vec<HeavyCol>>> {
+    use rayon::prelude::*;
+    reqs.into_par_iter()
+        .map(|(src, cols)| {
+            let src = src?;
+            let mut counts: Vec<FxHashMap<i64, u64>> = cols.iter().map(|_| FxHashMap::default()).collect();
+            for row in 0..src.len() {
+                for (k, &c) in cols.iter().enumerate() {
+                    *counts[k].entry(src.value(row, c)).or_default() += 1;
+                }
+            }
+            Some(counts.into_iter().map(HeavyCol::of_counts).collect())
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,5 +462,18 @@ mod tests {
         assert_eq!(fan.of_rel("t_rel_a").collect::<Vec<_>>(), vec![(1, &1.5), (9, &9.5)]);
         fan.retain(|_, c, _| c != 1);
         assert_eq!((fan.len(), fan.get(&("t_rel_a", 1))), (2, None));
+    }
+    #[test]
+    fn heavy_values_price_a_skewed_self_join_value_by_value() {
+        // 100 values of 1 row and one of 300: a three-way self-join on the column.
+        let counts: Vec<(i64, u64)> = (0..100).map(|v| (v, 1)).chain([(1000, 300)]).collect();
+        let true3: f64 = counts.iter().map(|&(_, n)| (n as f64).powi(3)).sum();
+        let true2: f64 = counts.iter().map(|&(_, n)| (n as f64).powi(2)).sum();
+        let h = HeavyCol::of_counts(counts.clone());
+        assert_eq!((h.rows, h.ndv, h.top.len(), h.count(1000), h.tail_ndv), (400.0, 101.0, 64, Some(300.0), 37.0));
+        // The second atom's rows a binding are sq / rows; the third's, cube / sq.
+        assert!((heavy_fan(&h, &[&h]).unwrap() - true2 / 400.0).abs() < 1e-9);
+        assert!((heavy_fan(&h, &[&h, &h]).unwrap() - true3 / true2).abs() < 1e-9);
+        assert_eq!((h.sq, h.cube), (true2, true3));
     }
 }
