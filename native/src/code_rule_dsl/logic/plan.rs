@@ -198,31 +198,28 @@ pub struct Step {
     pub mode: Option<Mode>,
 }
 
-/// A plan read beside the body it orders: each step with its literal. Every reader of a plan's literals reads them
-/// here (`lit`, `iter`), so none indexes a body itself.
-#[derive(Clone, Copy, Debug)]
-pub struct Order<'b> {
-    pub body: &'b [Literal],
-    pub steps: &'b [Step],
+/// A plan read beside the rule it orders (`Body`, by handles): each step with its literal. Every reader of a plan's
+/// literals reads them here (`view`), so none indexes a body itself.
+#[derive(Clone, Copy)]
+pub struct Order<'a, 'v> {
+    pub b: &'a Body<'v>,
+    pub steps: &'a [Step],
 }
 
-impl<'b> Order<'b> {
-    pub fn new(body: &'b [Literal], steps: &'b [Step]) -> Order<'b> {
-        Order { body, steps }
+impl<'a, 'v> Order<'a, 'v> {
+    pub fn new(b: &'a Body<'v>, steps: &'a [Step]) -> Order<'a, 'v> {
+        Order { b, steps }
     }
     /// Step `s`'s literal.
-    pub fn lit(&self, s: &Step) -> &'b Literal {
-        &self.body[s.at]
+    pub fn view(&self, s: &Step) -> Lit<'v> {
+        self.b.view(s.at)
     }
-    /// Each step with its literal, in order.
-    pub fn iter(self) -> impl DoubleEndedIterator<Item = (&'b Step, &'b Literal)> + ExactSizeIterator + Clone + 'b {
-        let body = self.body;
-        self.steps.iter().map(move |s| (s, &body[s.at]))
+    /// The literals in step order.
+    pub fn lits(&self) -> impl Iterator<Item = Lit<'v>> + '_ {
+        self.steps.iter().map(|s| self.view(s))
     }
-    /// The literals, in order.
-    pub fn lits(self) -> impl DoubleEndedIterator<Item = &'b Literal> + ExactSizeIterator + Clone + 'b {
-        let body = self.body;
-        self.steps.iter().map(move |s| &body[s.at])
+    pub fn iter(&self) -> std::slice::Iter<'a, Step> {
+        self.steps.iter()
     }
     pub fn len(&self) -> usize {
         self.steps.len()
@@ -231,8 +228,8 @@ impl<'b> Order<'b> {
         self.steps.is_empty()
     }
     /// The plan of its first `n` steps.
-    pub fn take(&self, n: usize) -> Order<'b> {
-        Order { body: self.body, steps: &self.steps[..n.min(self.steps.len())] }
+    pub fn take(&self, n: usize) -> Order<'a, 'v> {
+        Order { b: self.b, steps: &self.steps[..n.min(self.steps.len())] }
     }
 }
 
@@ -3942,51 +3939,43 @@ pub fn projections(prog: &Program) -> HashMap<String, Vec<(usize, i64)>> {
 
 impl Run<'_, '_> {
     /// A composite index on each derived relation for every bound-column pattern the plan probes it with.
-    fn ensure_indexes(&mut self, order: Order<'_>) -> Result<()> {
-        let mut bound = BTreeSet::new();
+    fn ensure_indexes(&mut self, order: Order<'_, '_>) -> Result<()> {
+        let b = order.b;
+        let mut bound = VarSet::new();
         for s in order.steps {
-            let a = match order.lit(s) {
-                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a),
-                _ => None,
-            };
+            let a = b.atom(s.at);
+            let args = b.args(s.at);
+            let probed_col = |t: &TermRef<'_>, bound: &VarSet| b.constant(*t).is_some() || matches!(t, TermRef::Var(v) if bound.contains(*v));
             if let Some(a) = a
-                && self.views.contains(a.rel.as_str())
-                && let Some((base, cols)) = self.model.view_src.get(a.rel.as_str())
+                && self.views.contains(b.rel(a))
+                && let Some((base, cols)) = self.model.view_src.get(b.rel(a))
             {
                 // A view over an input is probed through the input's indexes. If none serves this probe, SQLite
                 // builds an automatic index per statement, which for a filtered view scans every node, every round.
                 // Materialize it once instead; it then gets indexes like any derived relation.
-                let probed: HashSet<&String> = a
-                    .args
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, t)| constant(t).is_some() || matches!(t, Term::Var(v) if bound.contains(v.as_str())))
-                    .filter_map(|(c, _)| cols[c].as_ref())
-                    .collect();
+                let probed: HashSet<&String> = args.iter().enumerate().filter(|(_, t)| probed_col(t, &bound)).filter_map(|(c, _)| cols[c].as_ref()).collect();
                 let served = self.model.stats.indexes.get(base).into_iter().flatten().any(|ix| ix.first().is_some_and(|c| probed.contains(c)));
                 if !probed.is_empty() && !served {
-                    let r = &a.rel;
+                    let r = b.rel(a);
                     let q = crate::code_rule_dsl::logic::sql::ident(r);
                     self.db.execute_batch(&format!(
                         "CREATE TEMP TABLE {r}__m AS SELECT * FROM {q}; DROP VIEW {q}; ALTER TABLE {r}__m RENAME TO {q};"
                     ))?;
-                    Arc::make_mut(&mut self.views).remove(r.as_str());
-                    Arc::make_mut(&mut self.model.view_src).remove(r.as_str());
+                    Arc::make_mut(&mut self.views).remove(r);
+                    Arc::make_mut(&mut self.model.view_src).remove(r);
                     self.keyless.insert(r.to_string());
                 }
             }
             if let Some(a) = a
-                && !self.inputs.contains(a.rel.as_str())
-                && !self.views.contains(a.rel.as_str())
+                && !self.inputs.contains(b.rel(a))
+                && !self.views.contains(b.rel(a))
             {
-                let cols: Vec<usize> = (0..a.args.len())
-                    .filter(|&c| constant(&a.args[c]).is_some() || matches!(&a.args[c], Term::Var(v) if bound.contains(v.as_str())))
-                    .collect();
-                if !cols.is_empty() && self.made.insert((a.rel.to_string(), cols.clone())) {
-                    self.index_for(&a.rel, &cols)?;
+                let cols: Vec<usize> = (0..args.len()).filter(|&c| probed_col(&args[c], &bound)).collect();
+                if !cols.is_empty() && self.made.insert((b.rel(a).to_string(), cols.clone())) {
+                    self.index_for(b.rel(a), &cols)?;
                 }
             }
-            bound.extend(order.lit(s).vars());
+            bound.extend(b.vars(s.at));
         }
         Ok(())
     }
@@ -4593,45 +4582,50 @@ impl Run<'_, '_> {
 /// Adds a native join's step counts ("in:out" per step, `set_fixpoint_steps`) to the observed fanouts of the binding
 /// patterns its positive atoms were read with (T's `observe`). The first step (the delta, or a seed's anchor) is
 /// skipped.
-fn observe(stats: &mut Stats, rule: u64, order: Order<'_>, counts: &[(i64, i64)]) {
+fn observe(stats: &mut Stats, rule: u64, order: Order<'_, '_>, counts: &[(i64, i64)]) {
     keeps::observe_steps(rule, order, counts);
     // A probe that ran no step past its first (its delta empty this chunk) observed nothing.
     if counts.iter().skip(1).all(|&(n_in, _)| n_in == 0) {
         return;
     }
-    let mut bound = BTreeSet::new();
+    let b = order.b;
+    let mut bound = VarSet::new();
     for (i, (s, &(n_in, n_out))) in order.steps.iter().zip(counts).enumerate() {
-        if i > 0
-            && let Literal::Atom(l) = order.lit(s)
-            && !l.neg
-            && n_in != 0
-        {
-            let o = stats.obs.entry(rule).or_default().entry(atom_sig(l, &bound)).or_insert([0, 0]);
+        let neg = b.plain_atom(s.at).is_some_and(|a| a.neg());
+        if i > 0 && b.plain_atom(s.at).is_some() && !neg && n_in != 0 {
+            let o = stats.obs.entry(rule).or_default().entry(b.sig(s.at, &bound)).or_insert([0, 0]);
             o[0] += n_in;
             o[1] += n_out;
         }
-        if !matches!(order.lit(s), Literal::Atom(l) if l.neg) {
-            bound.extend(order.lit(s).vars());
+        if !neg {
+            bound.extend(b.vars(s.at));
         }
     }
 }
 
 /// The fanouts observed for each step of `order` (`observe`), where at least `OBS_MIN` bindings were counted:
 /// the prices `atom_rows` takes first, so a probe is replanned when one appears or moves (`replanning::Watch`).
-fn observed_fans(stats: &Stats, rule: u64, order: Order<'_>) -> Vec<Option<f64>> {
+fn observed_fans(stats: &Stats, rule: u64, order: Order<'_, '_>) -> Vec<Option<f64>> {
     let seen = stats.obs.get(&rule);
-    let mut bound = BTreeSet::new();
-    order.steps.iter().enumerate().map(|(i, s)| {
-        let fan = match order.lit(s) {
-            Literal::Atom(l) if i > 0 && !l.neg => seen.and_then(|o| o.get(&atom_sig(l, &bound)))
-                .filter(|n| n[0] >= OBS_MIN).map(|n| n[1] as f64 / n[0] as f64),
-            _ => None,
-        };
-        if !matches!(order.lit(s), Literal::Atom(l) if l.neg) {
-            bound.extend(order.lit(s).vars());
-        }
-        fan
-    }).collect()
+    let b = order.b;
+    let mut bound = VarSet::new();
+    order
+        .steps
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let neg = b.plain_atom(s.at).is_some_and(|a| a.neg());
+            let fan = if i > 0 && b.plain_atom(s.at).is_some() && !neg {
+                seen.and_then(|o| o.get(&b.sig(s.at, &bound))).filter(|n| n[0] >= OBS_MIN).map(|n| n[1] as f64 / n[0] as f64)
+            } else {
+                None
+            };
+            if !neg {
+                bound.extend(b.vars(s.at));
+            }
+            fan
+        })
+        .collect()
 }
 
 /// A relation's column types (T's `prog_types`).
@@ -4761,30 +4755,38 @@ pub fn live_stats(model: &mut Model, r: &str, live: LiveRel) -> Vec<usize> {
 /// aggregate by its operator, a function by its name (the first one in the literal), a comparison by its operator,
 /// a read by its relation when it is an input, else by who holds it (a relation an earlier SQLite stratum made is
 /// a fallback that brings on the next).
-fn decline_class(lit: &Literal, prog: &Program, native: &BTreeSet<String>) -> String {
-    fn first_call(t: &Term) -> Option<&str> {
+/// The kind of literal `i` of `b` that has no native step (`decline_class` of the coverage ledger).
+fn decline_class(b: &Body<'_>, i: usize, prog: &Program, native: &BTreeSet<String>) -> String {
+    fn first_call<'t>(b: &'t Body<'_>, t: TermRef<'_>) -> Option<&'t str> {
         match t {
-            Term::Call(f, args) => Some(args.iter().find_map(first_call).filter(|_| f == "concat" || f == "add").unwrap_or(f.as_str())),
+            TermRef::Call(f, args) => {
+                let f = b.v.text(f);
+                Some(args.clone().find_map(|a| first_call(b, a)).filter(|_| f == "concat" || f == "add").unwrap_or(f))
+            }
             _ => None,
         }
     }
-    match lit {
-        Literal::Agg { op, .. } => format!("aggregate {}", match op {
-            super::front::AggOp::Count => "count",
-            super::front::AggOp::Min => "min",
-            super::front::AggOp::Max => "max",
-            super::front::AggOp::Sum => "sum",
-            super::front::AggOp::Product => "product",
-            super::front::AggOp::Join { .. } => "join (string concatenation)",
-        }),
-        Literal::Atom(a) if prog.inputs.iter().any(|i| *i == a.rel) => format!("{}read of input {}", if a.neg { "negated " } else { "" }, a.rel),
-        Literal::Atom(a) if native.contains(a.rel.as_str()) => format!("{}read of a relation the native engine holds", if a.neg { "negated " } else { "" }),
-        Literal::Atom(a) => format!("{}read of a relation an earlier SQLite stratum made", if a.neg { "negated " } else { "" }),
-        Literal::Cmp { l, op, r } => match first_call(l).or_else(|| first_call(r)) {
+    let neg = |a: super::program_image::AtomRef<'_>| if a.neg() { "negated " } else { "" };
+    match b.view(i) {
+        Lit::Agg { op, .. } => format!(
+            "aggregate {}",
+            match op {
+                super::program_image::AggRef::Count => "count",
+                super::program_image::AggRef::Min => "min",
+                super::program_image::AggRef::Max => "max",
+                super::program_image::AggRef::Sum => "sum",
+                super::program_image::AggRef::Product => "product",
+                super::program_image::AggRef::Join { .. } => "join (string concatenation)",
+            }
+        ),
+        Lit::Atom(a) if prog.inputs.iter().any(|x| x == b.rel(a)) => format!("{}read of input {}", neg(a), b.rel(a)),
+        Lit::Atom(a) if native.contains(b.rel(a)) => format!("{}read of a relation the native engine holds", neg(a)),
+        Lit::Atom(a) => format!("{}read of a relation an earlier SQLite stratum made", neg(a)),
+        Lit::Cmp { l, op, r } => match first_call(b, l).or_else(|| first_call(b, r)) {
             Some(f) => format!("function @{f}"),
-            None => format!("comparison {op}"),
+            None => format!("comparison {}", op.as_str()),
         },
-        other => format!("{}", other).split('(').next().unwrap_or("literal").to_owned(),
+        _ => b.show(i).split('(').next().unwrap_or("literal").to_owned(),
     }
 }
 
@@ -4795,10 +4797,10 @@ fn stratum_key(scc: &BTreeSet<String>) -> String {
 
 /// A delta probe's plan with the stratum's own relations named as read: the last wave's delta at `at`, else the
 /// rows so far.
-fn delta_sources(mut x: super::profile::RulePlan, order: Order<'_>, at: usize, scc: &BTreeSet<String>) -> super::profile::RulePlan {
+fn delta_sources(mut x: super::profile::RulePlan, order: Order<'_, '_>, at: usize, scc: &BTreeSet<String>) -> super::profile::RulePlan {
     for (i, st) in order.steps.iter().enumerate() {
-        if let Literal::Atom(l) = order.lit(st)
-            && scc.contains(l.rel.as_str())
+        if let Some(l) = order.b.plain_atom(st.at)
+            && scc.contains(order.b.rel(l))
         {
             x.steps[i].source = if i == at { "delta (last wave)".into() } else { "this stratum".into() };
         }
@@ -4806,8 +4808,8 @@ fn delta_sources(mut x: super::profile::RulePlan, order: Order<'_>, at: usize, s
     x
 }
 
-fn shown(order: Order<'_>) -> Vec<String> {
-    order.lits().map(ToString::to_string).collect()
+fn shown(order: Order<'_, '_>) -> Vec<String> {
+    order.b.shown(order.steps)
 }
 
 /// Whether two orders of one body are the same: each step's position and mode (what `shown` compared as text,
@@ -5659,10 +5661,10 @@ impl<'a> Run<'a, '_> {
             }
         };
         // The same step's kind (`decline_class`).
-        let missing_class = |this: &Self, b: &Body<'_>, order: Order<'_>, at: Option<usize>| -> String {
-            match first_missing(this, b, order.steps, at) {
-                Some(k) if order.steps[k - 1].mode == Some(Mode::Range) => "a range read inside a document".to_owned(),
-                Some(k) => decline_class(order.lit(&order.steps[k - 1]), prog, native_rels),
+        let missing_class = |this: &Self, b: &Body<'_>, steps: &[Step], at: Option<usize>| -> String {
+            match first_missing(this, b, steps, at) {
+                Some(k) if steps[k - 1].mode == Some(Mode::Range) => "a range read inside a document".to_owned(),
+                Some(k) => decline_class(b, steps[k - 1].at, prog, native_rels),
                 None => "a head term".to_owned(),
             }
         };
@@ -5689,22 +5691,22 @@ impl<'a> Run<'a, '_> {
             let ((order, work, rows), x) = self.model.plan_rule_reused(prog, b, None)?;
             let took = if profiling { super::profile::now() - t0 } else { 0.0 };
             drop(span);
-            shape.add(Order::new(&r.body, &order), &r.head.args, work, false);
+            shape.add(Order::new(b, &order), work, false);
             if let Some(x) = &x {
-                shape.add_joins(Order::new(&r.body, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0));
+                shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0));
             }
             let Some(spec) = self.whole_join_spec(b, &order, None, &ri, scc, &native_rels) else {
                 if answering {
                     let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()).filter(|a| !scc.contains(a.as_str())).collect();
                     self.materialize(&reads)?;
-                    self.ensure_indexes(Order::new(&r.body, &order))?;
+                    self.ensure_indexes(Order::new(b, &order))?;
                     let select = self.model.sql_select(prog, b, &order, None, None)?;
                     self.insert_rows(&r.head, &select)?;
                     sql_seeded.insert(r.head.rel.to_string());
                     continue;
                 }
                 self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, b, &order, None)));
-                self.why_class = Some(missing_class(self, b, Order::new(&r.body, &order), None));
+                self.why_class = Some(missing_class(self, b, &order, None));
                 return Ok(Native::Declined);
             };
             if let Some(x) = &x {
@@ -5777,9 +5779,9 @@ impl<'a> Run<'a, '_> {
                 let ((order, work, _), x) = self.model.plan_rule_reused(prog, b, Some(ai))?;
                 let key = self.model.reused_key(b, Some(ai));
                 let took = if profiling { super::profile::now() - t0 } else { 0.0 };
-                shape.add(Order::new(&r.body, &order), &r.head.args, work, true);
+                shape.add(Order::new(b, &order), work, true);
                 if let Some(x) = &x {
-                    shape.add_joins(Order::new(&r.body, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0));
+                    shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0));
                 }
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
                 let Some(spec) = self.whole_join_spec(b, &order, Some(at), &ri, scc, &native_rels) else {
@@ -5789,8 +5791,8 @@ impl<'a> Run<'a, '_> {
                         self.ensure(&reads)?;
                         self.materialize(&reads)?;
                         // The component's own relations are read through its views; only the others take indexes.
-                        let outside: Vec<Step> = Order::new(&r.body, &order).iter().filter(|(_, l)| l.atom().is_none_or(|b| !scc.contains(b.rel.as_str()))).map(|(st, _)| *st).collect();
-                        self.ensure_indexes(Order::new(&r.body, &outside))?;
+                        let outside: Vec<Step> = order.iter().filter(|st| b.atom(st.at).is_none_or(|a| !scc.contains(b.rel(a)))).copied().collect();
+                        self.ensure_indexes(Order::new(b, &outside))?;
                         let sql = self.model.sql_select(prog, b, &order, Some(at), Some(&views))?;
                         explained.push((format!("probe {} (delta {})", r.head.rel, a.rel), rule_no(r), None, took, 0));
                         lines.push(SpecLine::Probe { head: ri[r.head.rel.as_str()], delta: ri[a.rel.as_str()], sql });
@@ -5800,10 +5802,10 @@ impl<'a> Run<'a, '_> {
                         continue;
                     }
                     self.why_not = Some(format!("rule #{:04}: {}", rule_no(r).unwrap_or(0), missing(self, b, &order, Some(at))));
-                    self.why_class = Some(missing_class(self, b, Order::new(&r.body, &order), Some(at)));
+                    self.why_class = Some(missing_class(self, b, &order, Some(at)));
                     return Ok(Native::Declined);
                 };
-                let x = x.map(|x| delta_sources(x, Order::new(&r.body, &order), at, scc));
+                let x = x.map(|x| delta_sources(x, Order::new(b, &order), at, scc));
                 if let Some(x) = &x {
                     expect_axis_lookups(self.db, x);
                 }
@@ -5930,7 +5932,8 @@ impl<'a> Run<'a, '_> {
         // relations' deltas are all their rows and the probes run their whole plans.
         // RDL_WAVE_TRACE: the component's planned joins, in probe order, before it runs (a stalled probe is named).
         if std::env::var_os("RDL_WAVE_TRACE").is_some() {
-            for (k, o) in orders.iter().map(|(r, o)| Order::new(&r.body, o)).chain(probes.iter().map(|p| Order::new(&p.0.body, &p.2))).enumerate() {
+            let line_bodies: Vec<Body<'_>> = orders.iter().map(|(r, _)| vs.body(r)).chain(probes.iter().map(|p| vs.body(p.0))).collect::<Result<_>>()?;
+            for (k, o) in orders.iter().map(|(_, o)| o).chain(probes.iter().map(|p| &p.2)).zip(&line_bodies).map(|(o, b)| Order::new(b, o)).enumerate() {
                 eprintln!("    {name} probe {k}: {}", shown(o).join(" , "));
             }
         }
@@ -5980,6 +5983,9 @@ impl<'a> Run<'a, '_> {
         let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken } = *d;
         let scc = &scc_owned;
         let rels: Vec<&String> = rels_owned.iter().collect();
+        // Each line's rule as the planner reads it: the seeds' orders, then the probes' (their rules fixed, their
+        // orders replanned in place).
+        let line_bodies: Vec<Body<'_>> = orders.iter().map(|(r, _)| vs.body(r)).chain(probes.iter().map(|p| vs.body(p.0))).collect::<Result<_>>()?;
         let planning = |r: &Rule, what: &str| {
             super::profile::span(|| {
                 let no = numbers.get(&(r as *const Rule)).map_or("?".to_owned(), |k| format!("{k:04}"));
@@ -6033,7 +6039,7 @@ impl<'a> Run<'a, '_> {
             let steps = self.fx().steps(&name)?;
             // A line that did nothing this chunk observed nothing (decision 0122: no planning work for it).
             let idle = |line: &[(i64, i64)]| line.iter().all(|&(a, b)| a == 0 && b == 0);
-            for ((o, &rule), line) in orders.iter().map(|(r, o)| Order::new(&r.body, o)).chain(probes.iter().map(|p| Order::new(&p.0.body, &p.2))).zip(&order_rules).zip(&steps) {
+            for ((o, &rule), line) in orders.iter().map(|(_, o)| o).chain(probes.iter().map(|p| &p.2)).zip(&line_bodies).map(|(o, b)| Order::new(b, o)).zip(&order_rules).zip(&steps) {
                 if !idle(line) {
                     observe(&mut self.model.stats, rule, o, line);
                 }
@@ -6041,7 +6047,7 @@ impl<'a> Run<'a, '_> {
             // A step whose fanout was observed, or moved, is priced by it now: its probe is planned again.
             for (k, p) in probes.iter().enumerate() {
                 if steps.get(nseeds + k).is_some_and(|l| !idle(l)) {
-                    replanned_at.observed(k, observed_fans(&self.model.stats, order_rules[nseeds + k], Order::new(&p.0.body, &p.2)));
+                    replanned_at.observed(k, observed_fans(&self.model.stats, order_rules[nseeds + k], Order::new(&line_bodies[nseeds + k], &p.2)));
                 }
             }
             for (k, line) in steps.iter().enumerate() {
@@ -6151,7 +6157,7 @@ impl<'a> Run<'a, '_> {
                 let at = new.iter().position(|s| s.at == ai).expect("the delta atom");
                 let x = x.or_else(|| self.model.explain_order(prog, &b, Some(ai), &new));
                 let e = &mut explained[nseeds + k];
-                e.2 = x.map(|x| delta_sources(x, Order::new(&r.body, &new), at, scc));
+                e.2 = x.map(|x| delta_sources(x, Order::new(&b, &new), at, scc));
                 let at = new.iter().position(|s| s.at == ai).expect("the delta atom");
                 let spec = self
                     .whole_join_spec(&b, &new, Some(at), &ri, scc, &native_rels)
@@ -6199,10 +6205,10 @@ impl<'a> Run<'a, '_> {
         if super::profile::on() {
             let empty = Vec::new();
             let kinds = seeds.iter().map(|r| format!("seed {}", r.head)).chain(probes.iter().map(|(r, ai, _)| format!("join {} (delta at {ai})", r.head)));
-            for ((k, o), kind) in orders.iter().map(|(r, o)| Order::new(&r.body, o)).chain(probes.iter().map(|p| Order::new(&p.0.body, &p.2))).enumerate().zip(kinds) {
+            for ((k, o), kind) in orders.iter().map(|(_, o)| o).chain(probes.iter().map(|p| &p.2)).zip(&line_bodies).map(|(o, b)| Order::new(b, o)).enumerate().zip(kinds) {
                 // Each earlier order with its own counts (its time is in the current order's).
                 for (was, c) in earlier.get(k).into_iter().flatten() {
-                    super::profile::native(format!("{kind}: {}", shown(Order::new(o.body, was)).join(" , ")), c, 0.0);
+                    super::profile::native(format!("{kind}: {}", shown(Order::new(o.b, was)).join(" , ")), c, 0.0);
                 }
                 super::profile::native(format!("{kind}: {}", shown(o).join(" , ")), counted.get(k).unwrap_or(&empty), timed.get(k).copied().unwrap_or(0.0));
             }
@@ -6242,10 +6248,10 @@ impl<'a> Run<'a, '_> {
                 }
             }
             let empty = Vec::new();
-            for (k, o) in orders.iter().map(|(r, o)| Order::new(&r.body, o)).chain(probes.iter().map(|p| Order::new(&p.0.body, &p.2))).enumerate() {
+            for (k, o) in orders.iter().map(|(_, o)| o).chain(probes.iter().map(|p| &p.2)).zip(&line_bodies).map(|(o, b)| Order::new(b, o)).enumerate() {
                 for (was, c) in earlier.get(k).into_iter().flatten() {
                     let work: u64 = super::profile::plan_work(c);
-                    text += &format!("  work={work} (an earlier order) {}\n    {}\n", c.iter().map(|(a, b)| format!("{a}:{b}")).collect::<Vec<_>>().join(","), shown(Order::new(o.body, was)).join(" , "));
+                    text += &format!("  work={work} (an earlier order) {}\n    {}\n", c.iter().map(|(a, b)| format!("{a}:{b}")).collect::<Vec<_>>().join(","), shown(Order::new(o.b, was)).join(" , "));
                 }
                 let line: Vec<String> = counted.get(k).unwrap_or(&empty).iter().map(|(a, b)| format!("{a}:{b}")).collect();
                 let work: u64 = super::profile::plan_work(counted.get(k).unwrap_or(&empty));
@@ -6374,10 +6380,10 @@ impl<'a> Run<'a, '_> {
         // Each part a rule of its own, planned as any rule is.
         let part_rules: Vec<Rule> = parts.iter().map(|(_, head, body)| Rule { head: head.clone(), body: body.clone().into() }).collect();
         let made = body::made(&part_rules)?;
-        for (k, (_, head, body)) in parts.iter().enumerate() {
+        for (k, (_, head, _)) in parts.iter().enumerate() {
             let part = body::nth(&made, k);
             let (order, _, _) = self.model.plan_rule(prog, &part, None)?;
-            self.ensure_indexes(Order::new(body, &order))?;
+            self.ensure_indexes(Order::new(&part, &order))?;
             let select = self.model.sql_select(prog, &part, &order, None, None)?;
             self.db.execute(&format!("INSERT INTO {} {select}", crate::code_rule_dsl::logic::sql::ident(&head.rel)), [])?;
         }
@@ -6422,10 +6428,12 @@ impl<'a> Run<'a, '_> {
         let mut seed_plans = Vec::new();
         let vs = Arc::clone(&self.versions);
         for r in rules.iter().filter(|r| recursive(&r.body, scc).is_empty()) {
-            seed_plans.push((*r, &r.head, &r.body, self.model.plan_rule(prog, &vs.body(r)?, None)?));
+            let b = vs.body(r)?;
+            let plan = self.model.plan_rule(prog, &b, None)?;
+            seed_plans.push((&r.head, b, plan));
         }
         for r in &rels {
-            let rows: f64 = seed_plans.iter().filter(|(_, h, _, _)| h.rel == **r).map(|(_, _, _, p)| p.2).sum();
+            let rows: f64 = seed_plans.iter().filter(|(h, _, _)| h.rel == **r).map(|(_, _, p)| p.2).sum();
             let card = prior_stats(&mut self.model, prog, r).map_or(rows.max(1.0), |n| n.max(rows.max(1.0)));
             self.model.stats.card.insert((*r).clone(), card);
         }
@@ -6531,13 +6539,14 @@ impl<'a> Run<'a, '_> {
                 probes.push((*r, order, at, ai));
             }
         }
-        for (r, h, body, (order, _, _)) in &seed_plans {
-            self.ensure_indexes(Order::new(body, order))?;
-            let select = self.model.sql_select(prog, &vs.body(r)?, order, None, None)?;
+        for (h, b, (order, _, _)) in &seed_plans {
+            self.ensure_indexes(Order::new(b, order))?;
+            let select = self.model.sql_select(prog, b, order, None, None)?;
             self.insert_rows(h, &select)?;
         }
-        for (ehead, rest, order, made) in &edges {
-            self.ensure_indexes(Order::new(rest, order))?;
+        for (ehead, _, order, made) in &edges {
+            let b = body::nth(made, 0);
+            self.ensure_indexes(Order::new(&b, order))?;
             let cols = (0..ehead.args.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
             self.db.execute_batch(&format!("DROP TABLE IF EXISTS {0}; CREATE TEMP TABLE {0}({cols});", crate::code_rule_dsl::logic::sql::ident(&ehead.rel)))?;
             if !ehead.args.is_empty() {
@@ -6558,8 +6567,9 @@ impl<'a> Run<'a, '_> {
             }
             let reads: Vec<String> = r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()).collect();
             self.ensure(&reads)?;
-            self.ensure_indexes(Order::new(&r.body, order))?;
-            let sql = self.model.sql_select(prog, &vs.body(r)?, order, Some(*at), Some(&tables))?;
+            let b = vs.body(r)?;
+            self.ensure_indexes(Order::new(&b, order))?;
+            let sql = self.model.sql_select(prog, &b, order, Some(*at), Some(&tables))?;
             lines.push(SpecLine::Probe { head: ri[r.head.rel.as_str()], delta: ri[rel.as_str()], sql });
         }
         self.fx().open(&ComponentSpec { name: name.clone(), lines })?;
@@ -6594,8 +6604,9 @@ impl<'a> Run<'a, '_> {
                 let new_body = match spec {
                     Some(spec) => Reprobe::Join(spec),
                     None => {
-                        self.ensure_indexes(Order::new(&r.body, &new))?;
-                        Reprobe::Sql(self.model.sql_select(prog, &vs.body(r)?, &new, Some(nat), Some(&tables))?)
+                        let b = vs.body(r)?;
+                        self.ensure_indexes(Order::new(&b, &new))?;
+                        Reprobe::Sql(self.model.sql_select(prog, &b, &new, Some(nat), Some(&tables))?)
                     }
                 };
                 self.fx().reprobe(&name, k, &new_body)?;
@@ -8750,25 +8761,25 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             let t0 = if super::profile::on() { super::profile::now() } else { 0.0 };
             let ((order, work, _), x) = run.model.plan_rule_reused(prog, b, None)?;
             explained.push((x, if super::profile::on() { super::profile::now() - t0 } else { 0.0 }));
-            run.ensure_indexes(Order::new(&rule.body, &order))?;
-            let ord = Order::new(&rule.body, &order);
+            run.ensure_indexes(Order::new(b, &order))?;
             outcome.chosen.push(Chosen {
                 rule: prog.rules.iter().position(|r| std::ptr::eq(r, *rule)).expect("a rule of the program"),
                 steps: order.iter().map(|s| (s.at, s.mode)).collect(),
                 head: rule.head.to_string(),
-                anchor: ord.lits().next().map_or_else(|| "scalar".into(), ToString::to_string),
-                walks: ord.iter().filter_map(|(s, l)| s.mode.map(|m| (l.to_string(), m.name()))).collect(),
+                anchor: order.first().map_or_else(|| "scalar".into(), |s| b.show(s.at)),
+                walks: order.iter().filter_map(|s| s.mode.map(|m| (b.show(s.at), m.name()))).collect(),
                 work: work.round_ties_even() as i64,
             });
             planned.push((*rule, order));
         }
         drop(planning);
+        let planned_bodies = &bodies;
         if scc.iter().all(|r| run.views.contains(r)) {
             super::profile::stratum(&skey, "SQL view", || "a view over the inputs: SQLite reads it in place where a rule joins it".into());
             continue;
         }
         let recursive =
-            scc.len() > 1 || planned.iter().flat_map(|(r, o)| Order::new(&r.body, o).lits()).any(|l| matches!(l, Literal::Atom(a) if !a.neg && scc.contains(a.rel.as_str())));
+            scc.len() > 1 || planned.iter().zip(planned_bodies).any(|((_, o), b)| Order::new(b, o).lits().any(|l| matches!(l, Lit::Atom(a) if !a.neg() && scc.contains(b.rel(a)))));
         let mut ran_native=false;
         if recursive {
             for r in scc {db.execute(&format!("CREATE TEMP TABLE delta_{r} AS SELECT * FROM {} WHERE 0", crate::code_rule_dsl::logic::sql::ident(r)),[])?;}
@@ -8782,8 +8793,8 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             // The device's hazards too: a stratum the native engine declines is never placed, so its shape is read here.
             let lacking = if super::profile::on() {
                 let mut shape = placement::Shape::default();
-                for (r, order) in &planned {
-                    shape.add(Order::new(&r.body, order), &r.head.args, 0.0, recursive);
+                for ((_, order), b) in planned.iter().zip(planned_bodies) {
+                    shape.add(Order::new(b, order), 0.0, recursive);
                 }
                 shape.lacking()
             } else {

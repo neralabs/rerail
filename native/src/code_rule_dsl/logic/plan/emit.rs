@@ -144,15 +144,16 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
     }
     let relations: Vec<(String, usize)> = prog.decls.iter().filter(|(rel, _)| derived(rel)).map(|(rel, cols)| (rel.to_string(), cols.len())).collect();
     // The derived relations a rule body reads, in order.
-    let reads = |order: Order<'_>, keep: &dyn Fn(&str) -> bool| -> Vec<String> {
+    let reads = |order: Order<'_, '_>, keep: &dyn Fn(&str) -> bool| -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
         for l in order.lits() {
-            if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
-                && derived(&a.rel)
-                && keep(&a.rel)
-                && !out.iter().any(|x| x == &a.rel)
+            if let Lit::Atom(a) | Lit::Agg { atom: a, .. } = l
+                && let rel = order.b.rel(a)
+                && derived(rel)
+                && keep(rel)
+                && !out.iter().any(|x| x == rel)
             {
-                out.push(a.rel.to_string());
+                out.push(rel.to_string());
             }
         }
         out
@@ -205,19 +206,21 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
         };
         let mut planned = Vec::new();
         for rule in &rules {
+            let b = vs.body(rule)?;
             let started = profile_key.as_ref().map(|_|super::super::profile::now());
-            let ((order, _, _), explain) = model.plan_rule_explained(prog, &vs.body(rule)?, None)?;
+            let ((order, _, _), explain) = model.plan_rule_explained(prog, &b, None)?;
             record(rule,"full query",explain,started.map_or(0.0,|t|super::super::profile::now()-t));
-            planned.push((rule, order));
+            planned.push((rule, b, order));
         }
         let own = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg && scc.contains(a.rel.as_str()));
-        let recursive = scc.len() > 1 || planned.iter().flat_map(|(r, o)| Order::new(&r.body, o).lits()).any(own);
-        for (rule, order) in &planned {
-            let order = Order::new(&rule.body, order);
-            let query = model.checked_query(prog, &vs.body(rule)?, order.steps, None, None)?;
+        let own_lit = |b: &super::body::Body<'_>, l: Lit<'_>| matches!(l, Lit::Atom(a) if !a.neg() && scc.contains(b.rel(a)));
+        let recursive = scc.len() > 1 || planned.iter().any(|(_, b, o)| Order::new(b, o).lits().any(|l| own_lit(b, l)));
+        for (rule, b, order) in &planned {
+            let order = Order::new(b, order);
+            let query = model.checked_query(prog, b, order.steps, None, None)?;
             // Positive own atoms have delta variants. An aggregate needs the complete
             // current input, so wake the full query when that recursive input changes.
-            let aggregates=order.lits().filter_map(|l|match l {Literal::Agg{atom,..}=>Some(atom.rel.as_str()),_=>None}).collect::<BTreeSet<_>>();
+            let aggregates=order.lits().filter_map(|l|match l {Lit::Agg{atom,..}=>Some(b.rel(atom)),_=>None}).collect::<BTreeSet<_>>();
             let reads = reads(order, &|rel| !recursive || !scc.contains(rel) || aggregates.contains(rel));
             step(&rule.head.rel, stratum, reads, &query.render(), Some(query));
         }
