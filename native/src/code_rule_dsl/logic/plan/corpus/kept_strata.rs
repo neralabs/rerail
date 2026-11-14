@@ -281,14 +281,15 @@ pub(in crate::code_rule_dsl) fn load(
     let by_stratum: Vec<Vec<&crate::code_rule_dsl::logic::front::Rule>> = crate::code_rule_dsl::logic::front::rules_by_stratum(prog, &sccs);
     let input_names: std::collections::HashSet<&str> = inputs.iter().map(|(r, _)| r.as_str()).collect();
     let cones = cones(prog, &sccs, &input_names);
-    let mut frames: HashMap<String, (FrameRel, Option<FrameStored>)> = crate::code_rule_dsl::logic::plan::identities_of(prog, &sccs, &by_stratum)?
+    // One version of the program for its identities and its inputs' leaves.
+    let leaves = crate::code_rule_dsl::logic::plan::Leaves::of(prog);
+    let mut frames: HashMap<String, (FrameRel, Option<FrameStored>)> = leaves.identities(&sccs, &by_stratum)?
         .into_iter()
         .filter(|(name, _)| name != "finding" && !input_names.contains(name.as_str()))
         .map(|(name, ident)| (name.clone(), (FrameRel { name, ident }, None)))
         .collect();
     // An input's rows are its program's: programs over the same root bind inputs of the same name to other rows
     // (P3's cross part and its loading cone, a phase), so its frame is under the program's key too.
-    let leaves = crate::code_rule_dsl::logic::plan::Leaves::of(prog);
     for (rel, _) in inputs {
         let leaf = leaves.identity(rel).ok_or_else(|| super::Error::Plan("the program has no image: its leaves are read from its version".into()))?;
         let mut h = Sha256::new();

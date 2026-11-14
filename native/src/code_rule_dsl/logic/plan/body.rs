@@ -677,9 +677,15 @@ impl Versions {
     }
     /// Rule `r` as the planner reads it.
     pub fn body(&self, r: &Rule) -> Result<Body<'_>> {
+        let (v, rule) = self.rule_ref(r)?;
+        Ok(Body::of(v, rule))
+    }
+    /// `r` by its handles, its literals read in place: for a reader that walks a rule once, with no `Body` (which
+    /// collects the literals).
+    pub fn rule_ref(&self, r: &Rule) -> Result<(&Version, RuleRef<'_>)> {
         let (v, id) = self.find(r).ok_or_else(|| Error::Plan(format!("{} :- …: a rule of no program the run holds", r.head)))?;
         let rule = v.rule(id).ok_or_else(|| Error::Plan(format!("{}: rule {} is not in its version", r.head, id.0)))?;
-        Ok(Body::of(v, rule))
+        Ok((v, rule))
     }
 }
 

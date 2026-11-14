@@ -1438,7 +1438,9 @@ impl Retained {
     /// `sccs`: `prog`'s strata, computed once by the caller.
     pub(in crate::code_rule_dsl) fn from_frames(store: &ContentStore, space: [u8; 32], key: [u8; 32], prog: &front::Program, sccs: &[BTreeSet<String>], bound: &HashMap<String, u64>) -> Result<Retained> {
         let by_stratum: Vec<Vec<&front::Rule>> = front::rules_by_stratum(prog, &sccs);
-        let idents = crate::code_rule_dsl::logic::plan::identities_of(prog, &sccs, &by_stratum)?;
+        // One version of the program for its identities and its leaves' (`from_frame_snapshot`).
+        let leaves = crate::code_rule_dsl::logic::plan::Leaves::of(prog);
+        let idents = leaves.identities(sccs, &by_stratum)?;
         let derived: BTreeSet<&String> = sccs.iter().flatten().collect();
         let mut names: HashMap<String, FrameRel> = idents.into_iter().map(|(name, ident)| (name.clone(), FrameRel { name, ident })).collect();
         // The inputs are what the run binds (`bound`, by their digests): the program's, and an earlier phase's export
@@ -1449,7 +1451,7 @@ impl Retained {
         }
         let all: Vec<FrameRel> = names.values().cloned().collect();
         let stored = store.frames(&space, &all, DOCS_PART).map_err(|e| Error::Plan(e.to_string()))?;
-        Self::from_frame_snapshot(store, space, key, prog, &sccs, names, stored, bound)
+        Self::from_frame_snapshot(store, space, key, prog, &leaves, &sccs, names, stored, bound)
     }
 
     fn empty_frames(key: [u8; 32], mut frames: InFrames) -> Self {
@@ -1459,12 +1461,11 @@ impl Retained {
     }
 
     fn from_frame_snapshot(
-        store: &ContentStore, space: [u8; 32], key: [u8; 32], prog: &front::Program,
+        store: &ContentStore, space: [u8; 32], key: [u8; 32], prog: &front::Program, leaves: &crate::code_rule_dsl::logic::plan::Leaves<'_>,
         sccs: &[BTreeSet<String>], names: HashMap<String, FrameRel>, stored: HashMap<FrameRel, FrameStored>, bound: &HashMap<String, u64>,
     ) -> Result<Self> {
         let derived: BTreeSet<&String> = sccs.iter().flatten().collect();
         let mut frames = InFrames { space, names, ..Default::default() };
-        let leaves = crate::code_rule_dsl::logic::plan::Leaves::of(prog);
         // The inputs are what the run binds (`bound`): the program's, and an earlier phase's export (`from_frames`).
         let read: BTreeSet<&String> = prog.inputs.iter().chain(bound.keys()).filter(|r| !derived.contains(r) && frames.names.contains_key(*r)).collect();
         let asked: Vec<_> = read.iter().filter(|r| stored.contains_key(&frames.names[**r])).map(|r| frames.names[*r].clone()).collect();

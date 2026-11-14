@@ -5130,14 +5130,19 @@ fn body_of<'v>(vs: &'v body::Versions, r: &Rule) -> Body<'v> {
     vs.body(r).unwrap_or_else(|e| panic!("{e}"))
 }
 
+/// `body_of`'s rule read in place (`Versions::rule_ref`), for a reader that walks it once.
+fn rule_of<'v>(vs: &'v body::Versions, r: &Rule) -> (&'v super::program_image::Version, super::program_image::RuleRef<'v>) {
+    vs.rule_ref(r).unwrap_or_else(|e| panic!("{e}"))
+}
+
 /// The relations of `scc` that reach themselves through `rules` (any read: positive, negated or aggregated), each
 /// read by its handles.
 fn cyclic_relations(vs: &body::Versions, scc: &BTreeSet<String>, rules: &[&Rule]) -> BTreeSet<String> {
     let mut next: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for r in rules {
-        let b = body_of(vs, r);
-        let head = b.rel(b.head());
-        for a in (0..b.len()).filter_map(|i| b.atom(i)).map(|a| b.rel(a)).filter(|a| scc.contains(*a)) {
+        let (v, rule) = rule_of(vs, r);
+        let head = v.rel_name(rule.head().rel());
+        for a in rule.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel())).filter(|a| scc.contains(*a)) {
             next.entry(a).or_default().insert(head);
         }
     }
@@ -5171,7 +5176,10 @@ fn reads_change(b: &Body<'_>, scc: &BTreeSet<String>) -> bool {
 /// The component a stratum's plans are made as solving (`Stats::solve`, in their keys): itself when a rule reads it,
 /// else none. Its seeds planned ahead (`seed_specs`, `Model::wants_strata`) are keyed as the stratum keys them.
 fn solving_of(vs: &body::Versions, scc: &BTreeSet<String>, rules: &[&Rule]) -> Option<BTreeSet<String>> {
-    rules.iter().any(|r| !recursive(&body_of(vs, r), scc).is_empty()).then(|| scc.clone())
+    rules.iter().any(|r| {
+        let (v, rule) = rule_of(vs, r);
+        rule.body().any(|l| matches!(l.view(), Lit::Atom(a) if !a.neg() && scc.contains(v.rel_name(a.rel()))))
+    }).then(|| scc.clone())
 }
 
 /// The positive atoms of `scc` in `b` (its recursive atoms): each one's place in the body and its relation.
@@ -5640,8 +5648,8 @@ impl<'a> Run<'a, '_> {
             self.native_rels.contains(rel) && super::native::component::held(self.db, rel).is_some_and(|h| h.rows() == 0)
         };
         rules.iter().copied().filter(|r| {
-            let b = body_of(&self.versions, r);
-            !(0..b.len()).filter_map(|i| b.plain_atom(i)).any(|a| !a.neg() && empty(b.rel(a)))
+            let (v, rule) = rule_of(&self.versions, r);
+            !rule.body().any(|l| matches!(l.view(), Lit::Atom(a) if !a.neg() && empty(v.rel_name(a.rel()))))
         }).collect()
     }
 
@@ -7294,17 +7302,18 @@ pub trait KeptStrata {
 /// The relations a stratum's rules read: atoms (an aggregate's too), `node` and `child` for a `nearest` climb, a
 /// native operator's inputs.
 fn stratum_reads(f: Fields<'_>, vs: &body::Versions, scc: &BTreeSet<String>, rules: &[&Rule]) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
+    let mut read: BTreeSet<&str> = BTreeSet::new();
     let mut nearest = false;
     for r in rules {
-        let b = body_of(vs, r);
-        for i in 0..b.len() {
-            if let Some(a) = b.atom(i) {
-                out.insert(b.rel(a).to_owned());
+        let (v, rule) = rule_of(vs, r);
+        for l in rule.body() {
+            if let Some(a) = l.atom() {
+                read.insert(v.rel_name(a.rel()));
             }
-            nearest |= matches!(b.view(i), Lit::Nearest { .. });
+            nearest |= matches!(l.view(), Lit::Nearest { .. });
         }
     }
+    let mut out: BTreeSet<String> = read.into_iter().map(str::to_owned).collect();
     if nearest {
         out.extend(["node".to_owned(), "child".to_owned()]);
     }
@@ -7325,10 +7334,7 @@ fn stratum_reads(f: Fields<'_>, vs: &body::Versions, scc: &BTreeSet<String>, rul
 fn retainable_stratum(f: Fields<'_>, vs: &body::Versions, scc: &BTreeSet<String>, rules: &[&Rule], views: &HashSet<String>) -> bool {
     !rules.is_empty()
         && !scc.iter().any(|r| f.native(r).is_some() || f.lattice(r) || views.contains(r) || f.produced(r))
-        && !rules.iter().any(|r| {
-            let b = body_of(vs, r);
-            (0..b.len()).any(|i| matches!(b.view(i), Lit::Ast { .. }))
-        })
+        && !rules.iter().any(|r| rule_of(vs, r).1.body().any(|l| matches!(l.view(), Lit::Ast { .. })))
 }
 
 /// What a stratum read names a native step's answers for `p` by: `answer:<p>`.
@@ -7464,9 +7470,7 @@ pub fn identities(f: Fields<'_>, vs: &body::Versions, sccs: &[BTreeSet<String>],
 
 /// `identities` of a program the caller holds as a tree: its version made for them (`Placed::of_program`).
 pub fn identities_of(prog: &Program, sccs: &[BTreeSet<String>], by_stratum: &[Vec<&Rule>]) -> Result<HashMap<String, [u8; 32]>> {
-    let vs = body::Versions::with(prog, body::Placed::of_program(prog)?);
-    let f = vs.fields(0).ok_or_else(|| Error::Plan("the program has no image: its identities are read from its version".into()))?;
-    Ok(identities(f, &vs, sccs, by_stratum))
+    Leaves::of(prog).identities(sccs, by_stratum)
 }
 
 /// The identity of a relation no rule of `prog` derives (an input, the program's facts): its name, its declaration
@@ -7484,16 +7488,25 @@ pub fn leaf_identity(f: Fields<'_>, rel: &str) -> [u8; 32] {
 /// ask (`Placed::of_program`); `None` for a program with no image.
 pub struct Leaves<'p> {
     prog: &'p Program,
-    placed: std::cell::OnceCell<Option<body::Placed>>,
+    placed: std::cell::OnceCell<std::result::Result<body::Placed, String>>,
 }
 
 impl<'p> Leaves<'p> {
     pub fn of(prog: &'p Program) -> Leaves<'p> {
         Leaves { prog, placed: std::cell::OnceCell::new() }
     }
+    /// The program's version, made at the first ask and shared by every identity read after it.
+    fn placed(&self) -> Result<&body::Placed> {
+        self.placed.get_or_init(|| body::Placed::of_program(self.prog).map_err(|e| e.to_string())).as_ref().map_err(|e| Error::Plan(e.clone()))
+    }
     pub fn identity(&self, rel: &str) -> Option<[u8; 32]> {
-        let p = self.placed.get_or_init(|| body::Placed::of_program(self.prog).ok()).as_ref()?;
-        Some(leaf_identity(p.fields().ok()?, rel))
+        Some(leaf_identity(self.placed().ok()?.fields().ok()?, rel))
+    }
+    /// `identities` of the program, read from the same version as its leaves.
+    pub fn identities(&self, sccs: &[BTreeSet<String>], by_stratum: &[Vec<&Rule>]) -> Result<HashMap<String, [u8; 32]>> {
+        let vs = body::Versions::with(self.prog, self.placed()?.clone());
+        let f = vs.fields(0).ok_or_else(|| Error::Plan("the program has no image: its identities are read from its version".into()))?;
+        Ok(identities(f, &vs, sccs, by_stratum))
     }
 }
 

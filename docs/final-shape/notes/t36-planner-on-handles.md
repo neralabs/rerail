@@ -422,7 +422,15 @@ ported, over the targeted tests and dl1.
     composed path and the rule lists themselves (step 3); `prog.` field reads outside the run (the compose path,
     `emit`'s callers).
   - Checked: logic `plan::` (110), the engine's keeps, demand, negation, inline, choices, cone, phase0, session,
-    maintain, again, retain, edit, `corpus::`, `rr::`, program_image, strata, emit and answer.
+    maintain, again, retain, edit, `corpus::`, `rr::`, program_image, strata, emit and answer; dl1 against
+    589b75d43's build: the same 48 findings cold and warm.
+  - Measured on dl1 (profiling builds, same load): the port first cost about 2 G instructions cold (45.8–46.3 G
+    against 43.5–44.3 G). Two causes, both fixed: the kept frames' readers (`Retained::from_frames`,
+    `kept_strata`) made the tree's version twice, for its identities and for its leaves (`Leaves` now makes it
+    once and gives both, `Leaves::identities`); and the readers that walk a rule once (`stratum_reads`, under
+    `first_reads` and `last_reads`; `cyclic_relations`, `runnable`, `solving_of`, `retainable_stratum`) made a
+    `Body`, which collects the rule's literals, for every rule they read. They read it in place
+    (`Versions::rule_ref`). After: 43.8–45.5 G cold, 2.6 G warm, as before.
   - Open (found while building, not this item's): the crate split left about twenty warnings of dead code and of
     private types in public interfaces in the store, prof, java_lean and w crates (items only another crate's tests
     use); the logic and engine ones were fixed here.
