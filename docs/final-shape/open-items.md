@@ -5072,3 +5072,12 @@ variables as small integers, made once per rule body and kept with the body's di
 remove the allocations and the string comparisons. `_platform_memcmp`, 14.6% of the main thread, is spread over
 string-keyed BTree lookups like these across many passes (tarjan, components, `fork_with`, `keeps::choose`,
 `text_kind_demand`). `Board::finish`, 15%, is the main thread waiting on the pool: it is not work to cut.
+
+## O-corpus0-peak-memory. A run over corpus0 peaks at 2.5 GB (2026-11-14, decision 0225)
+
+Status: open. The main pack's 317 rules over corpus0's 300 files, profiling build: cold 2,533 MB peak footprint, a
+file edit 2,335 MB, a message edit 1,602 MB, a rule-body edit 2,128 MB, all over decision 0126's 1 GB overall budget.
+50 files cold: 1,050 MB, as 5de418d7a's 991 MB, so the growth is in the files, not a regression of the stall's fix
+(2ff9ffe8e). The sections' peak RSS says where: `parse (worker)` and `batch (worker)` 2.7–2.9 GB, `cross` 2.7 GB,
+`local` 2.1 GB. Not yet traced: which relation or buffer holds it, and whether a chunk's rows are held past the
+chunk.

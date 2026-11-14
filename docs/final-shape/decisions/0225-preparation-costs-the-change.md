@@ -1,7 +1,8 @@
-# 0225: Preparation costs the change: its analyses move onto the image, as rules the engine maintains
+# 0225: An edit costs what it changes: rules keyed by module, and preparation's analyses on the image
 
-Status: draft (2026-11-14), for review. Builds on decision 0173 (a program is a flat image), and is its stage 3
-made specific. Stops decision 0210's line of work at its §12.
+Status: draft (2026-11-14), for review. Revised the same day with the edit profile measured (below). Builds on
+decision 0173 (a program is a flat image) and 0089 (libraries held once). Stops decision 0210's line of work at its
+§12.
 
 ## Intro
 
@@ -16,104 +17,164 @@ them first ask questions of the whole program:
 - the domains of columns;
 - the spans a pattern reads.
 
-Decision 0210 made these questions cheaper. dl1 (44 data-layer policies, cold) went from 23.64 to 20.80 G
-instructions in twelve steps. Each step found the same shape:
+Decision 0210 made these questions cheaper. dl1 (44 data-layer policies over 2 files, cold) went from 23.64 to 20.80
+G instructions in twelve steps. Each step found the same shape:
 - a pass that rebuilds its answer over the whole program, every time it is asked;
 - relations keyed by their names;
 - an answer found by a hand-written fixpoint with its own numbering.
 
-This record says what is wrong with that shape and what replaces it. In short: preparation should cost what
-changed, not what is there, and the way to get that is decision 0173's: one program form keyed by ids, with every
-whole-program question a rule over it that the engine maintains by delta.
+The first draft of this record said preparation should cost what changed. Measuring what a user waits on (an edit,
+then a run again) showed something larger. Preparation is a small part of an edit. What an edit of one rule pays for
+is every file's file-local part evaluated again, for every policy. So this record now asks first that **an edit cost
+what it changes**: a rule's edit re-evaluates what reads that rule, and a file's edit what reads that file. The
+preparation questions become rules over the image after that.
 
-## What was found
+## What an edit costs (measured)
 
-On dl1, over one cold run (0210, 2026-11-14):
+The edit profile of t34 over corpus0: 300 Python files and the 317 rules of the main pack, one store, a profiling
+build, 2026-11-14. Load was 55–100 throughout, so wall times are not comparable; instructions and the shares are.
+`prepare` is the main thread's preparation section.
 
-| Question | Times asked in a run | Done over |
-|---|---|---|
-| the split (`file_local::split_in`) | 44 (21 computed, 23 from the memo) | the cone of what changed, else everything |
-| `constant_relations` | 52 | the whole program |
-| `simplify`'s `congruence` | 24 | 27,664 rules in all; 19,306 distinct bodies |
-| the rule index (`RuleIndex::of`) | 89 | the whole program |
-| the strata (`front::components_of`) | about 20 callers | the whole program |
+| Step | Instructions | CPU | `prepare` | Violations |
+|---|---|---|---|---|
+| cold | 856 G | 88.1 s | 1.33 s | 462 |
+| warm (nothing changed) | 9.9 G | 1.1 s | — | 462 |
+| one file: a function appended | 89.4 G | 9.1 s | 0.18 s | 463 |
+| one rule: its message changed | 96.4 G | 10.8 s | 0.75 s | 463 |
+| one rule: a literal added to its body | **765 G** | **75.3 s** | 0.70 s | 463 |
 
-Four things follow.
+The profile's spans (with the profiler on, so shares only) of the two cheap edits:
 
-1. **Preparation is redone, whole.** A round of pushing joins changes a few hundred rules. The next split, the next
-   `congruence` and the next index read all of the program again. The split memo (0197) and the bodies it now keeps
-   (0210 §10) find what did not change by hashing all of it: reading unchanged data, made cheaper. Across processes,
-   a prepared program is kept whole, by its text's digest (0073, 0155). An edit of one rule prepares the batch
-   again.
-2. **Each question is its own evaluator.** The split's four fixpoints (constants, locations, filters, file-local),
-   span patterns, column domains, text-kind demand, the keeps factors, `congruence` and the strata are each a Rust
-   fixpoint, with their own rounds and their own invalidation. They are Datalog over the program. The engine has
-   that schema (0074), phases, and delta maintenance (counting, DRed). Preparation uses none of them: the "phases,
-   not new evaluators" rule, broken by the compiler itself.
-3. **Each pass numbers the program again.** Names are the keys, so each fast path makes its own ids. 0210 added
-   several: `shape::Rels` and `Form`, `ColMap`, `front::Graph`, the span-pattern ids, `lower::domains`' and
-   `text_kind_demand`'s numberings, the keeps factors' bits. Each is a copy of what 0173 §1 gives once.
-4. **The benchmark measures the path that should not exist.** dl1 runs with `RERAIL_TAPE_CACHE=off`: no store, so
-   every run prepares everything. In use that happens once per change. What a user waits on is the edit: change a
-   rule or a file, run again (t34). There, preparation costs what is redone, not how fast it is redone, and 0210's
-   numbers do not measure it.
+- **The file edit:** preparation 1.8% (the prepared program read back from the store in 0.05 s, no analysis run).
+  The rest: opening inputs and building indexes 20%, the store writer's frames 16%, the cross-file part 28%,
+  measuring sources 10%.
+- **The message edit:** preparation 6.9%, and about 16% with lowering (0.48 s) and the program's other analyses.
+  The rest: the store writer's frames 29% (2.7 s), parsing 14% (1.1 s of it the 317 rule texts read again), the
+  per-file memo 16%, retain 10%.
+
+So:
+
+1. **A rule-body edit costs 89% of a cold run.** Its `local` section is 23 s, as cold's is 26 s: every file's
+   file-local part is evaluated again, for all 317 policies. The per-file memo's key is a digest of the whole
+   file-local program (`corpus::memo::program_digest`), so a change to one policy's rules is a miss for every file
+   and every policy.
+2. **A message edit prepares and parses the batch again.** A finding's message is a constant in the policy's
+   `rr_diagnostic` rule, so the program's text changed and its digest with it. Nothing it evaluates changed.
+3. **Preparation is 1–16% of an edit**, and its whole-program analyses run only when a policy's text changed.
+
+The analyses themselves (`RERAIL_MEASURE`, a scratch hook: each call's wall time, nested, summed over the pool's
+threads at load 55–100, so an upper bound):
+
+| Analysis | dl1 cold: calls, ms | 50 files cold: calls, ms | message edit: calls, ms |
+|---|---|---|---|
+| the split (`file_local::split_in`) | 44, 1,175 | 32, 1,119 | 15, 1,735 |
+| `congruence` | 24, 672 | 17, 746 | 9, 785 |
+| `merge_identical` | 16, 580 | 11, 411 | 7, 491 |
+| the strata | 242, 184 | 684, 418 | 666, 398 |
+| `constant_relations` | 46, 151 | 30, 249 | 22, 559 |
+| span patterns | 99, 33 | 324, 137 | 324, 360 |
+
+The 50-file cold run is 28.5 s of CPU; these sum to about 3.9 s of wall on the pool.
+
+On the message edit, the split ran whole: its memo is the run's own (0197), so a new process finds nothing in it.
+The two largest splits were `whole-new` over 5,030 and 1,897 derived relations, and two more `whole-big-cone`.
+
+What `congruence` still merges:
+
+| | Calls | Merged nothing | Groups | Rules in them | Across policies | Within one | Plain (unprefixed) |
+|---|---|---|---|---|---|---|---|
+| dl1 | 24 | 16 | 384 | 1,051 | 69 | 82 | 233 |
+| 50 files, main pack | 17 | 11 | 538 | 5,338 | 37 | 61 | 440 |
+
+Most calls merge nothing. Where it does merge, most groups are unprefixed relations (library and engine-made rules),
+so libraries are still copied somewhere before `congruence` merges them back, though 0089 holds them once.
 
 ## Decision (proposed)
 
-### 1. Preparation is steered by the edit
+### 1. An edit is steered by the edit profile
 
-The measure of preparation is the edit profile of t34: a one-file edit and a one-rule edit, warm, instructions and
-CPU. A cold dl1 run stays as a regression check, not a target. No more constant-factor work on the tree's passes:
-0210 ends at §12.
+The measure is the table above, instructions and CPU, one step at a time. A cold dl1 run stays a regression check,
+not a target. No more constant-factor work on the tree's passes: 0210 ends at §12.
 
-### 2. The interim numberings are stand-ins
+### 2. A rule's edit re-evaluates what reads it
 
-0210's numberings (§3 above) are kept only until their pass reads the image. Each one goes when its pass moves, and
-no new one is added. A pass that needs ids before then waits for stage 2.
+The per-file memo is keyed per module (0089's modules: a library once, each policy's own part on its own), not by
+the whole file-local program. A file's entry holds each module's rows under that module's own digest. An edit of one
+policy's rules misses only that policy's part, and what reads it, in every file. The other parts are read from the
+memo as a warm run reads them. The rule-body edit above should then cost a warm run plus one policy's local part
+over 300 files.
 
-### 3. The whole-program questions are rules over the image
+### 3. A message is not the program
+
+A finding's message, and the other texts only the output reads, are kept beside the program, not in the digest that
+keys preparation and the memo. Changing one re-evaluates nothing: the findings are read again with the new text.
+
+### 4. The interim numberings are stand-ins
+
+0210's numberings (`shape::Rels` and `Form`, `ColMap`, `front::Graph`, the span-pattern ids, `lower::domains`' and
+`text_kind_demand`'s numberings, the keeps factors' bits) are kept only until their pass reads the image. Each goes
+when its pass moves, and no new one is added. A pass that needs ids before then waits for 0173 stage 2.
+
+### 5. The whole-program questions are rules over the image
 
 0173 §9 and §10 name prune, magic sets, the strata and merging repeats as rules over the image's relations, kept by
-the engine's maintenance. This record adds every question in "What was found":
+the engine's maintenance. This record adds:
 
 - **The split.** Constants, locations, filters and file-local are greatest fixpoints: a relation stays until some
   rule of it fails. Each is the complement of a least fixpoint ("leaves"), which is plain recursive Datalog with
-  stratified negation. The split goes first: it is asked most, has the most rounds, and its form is the clearest.
-  A cross-file relation's cause (`causes`) stays a Rust explanation, made for a rule the rules say fails.
+  stratified negation. The split goes first: it is asked most, costs most, runs whole in every new process, and its
+  form is the clearest. A cross-file relation's cause (`causes`) stays a Rust explanation, made for a rule the rules
+  say fails.
 - **`congruence`.** Partition refinement, as 0173 §10's group-by over rules' byte hashes, labels by class.
 - **Span patterns, column domains, text-kind demand, the keeps factors.** Each is a fixpoint over reads.
 
-Each is checked against the tree pass it replaces on every pack program, as 0173 stage 3 says. Then a pass's edit
-(a few rules appended or dropped, 0173 §9's `from`) is a delta of the analysis, and a round costs its rules.
+Each is checked against the tree pass it replaces on every pack program, as 0173 stage 3 says. A pass's edit (a few
+rules appended or dropped, 0173 §9's `from`) is then a delta of the analysis, and a round costs its rules. This comes
+after §2 and §3: preparation is 1–16% of an edit, and §2 and §3 remove most of the edits that prepare at all.
 
-### 4. A prepared program is kept as its image and its analyses
+### 6. What `congruence` merges
 
-A prepared program is kept today as its text and a pointer (0073, 0155). With the analyses maintained, what is kept
-is the image and the analyses' relations, per module (0089's modules: a library once, each policy's own part on its
-own). An edit of one policy prepares that policy's part and maintains the rest by delta. A cold run is an append of
-everything.
+The calls that merge nothing (16 of 24 on dl1, 11 of 17 on the main pack) are dropped where the caller can tell
+beforehand. The merged unprefixed groups are traced to where a library's rules are still copied, and that copy is
+removed (0089), not merged back.
 
-### 5. What `congruence` still merges is measured first
+### 7. A prepared program is kept as its image and analyses, per module
 
-0089 holds libraries once, so the copies `congruence` was made to merge back should be gone for libraries. On dl1 it
-still runs 24 times. Before §3 ports it: measure what it merges (library copies left, policies' own repeated rules,
-or nothing), and drop the calls that merge nothing.
+As §2 keys the memo per module, the prepared program is kept per module too: its image and its analyses'
+relations. An edit of one policy prepares that policy's part and maintains the rest by delta. A cold run is an append
+of everything.
 
-### 6. Who does what
+### 8. Who does what
 
-Stage 2 of 0173 (the planner on the image: t36 item 7) belongs to the Typing-support-final-shape work, and is under
-way. This record's steps begin when it is merged, so its passes and the planner share one image and one set of ids.
-The order then: §5's measurement and §1's edit profile, then the split (§3), then the other questions, then §4.
+0173 stage 2 (the planner on the image: t36 item 7) belongs to the Typing-support-final-shape work, and is under way.
+§2 and §3 do not wait for it: they change the memo's and the prepared program's keys, not the passes. §5–§7 begin
+when stage 2 is merged, so the passes and the planner share one image and one set of ids. The order: §2, §3, §6,
+then the split (§5), then the other questions, then §7.
 
 ## What this is not
 
 - Not a new evaluator: the analyses run in the engine, as rules.
-- Not a cache: what is kept is the program and relations derived from it, maintained as any relation is.
-- Not a change of findings: each step is checked against the pass it replaces.
+- Not a cache: what is kept is the program, its modules' rows and relations derived from it, maintained as any
+  relation is.
+- Not a change of findings: each step is checked against what it replaces.
+
+## Found while measuring
+
+- **A cold run of the main pack over 50 files did not finish** (300 files ran past 7 minutes), since the hub merge
+  a1f6d2f41. Format strings are guest documents now (0176), so `node`'s document column holds about 6,771 values
+  for 50 files. A factorized export's part key (`fzk(d) :- node(d, v, …), text(v, _), line(v, _)`) was bounded past
+  keeps' small-relation cutoff and inlined into its cross-file readers. Each reader row then enumerated its
+  document's nodes again: one stratum went from 1,422 to 7.9 M rows. Fixed in 2ff9ffe8e: the factorized parts' keys
+  and export demand's keys are never inlined. Now 300 files cold: 75 s wall, 847 G, and 50 files' violations
+  identical to 5de418d7a's.
+- **Peak memory on corpus0 is 2.5 GB**, over decision 0126's 1 GB overall budget (cold, and the edits 1.6–2.9 GB). 50
+  files cold: 1.0 GB, as 5de418d7a's 991 MB. Open (O-corpus0-peak-memory).
 
 ## Open questions
 
 - Whether the analyses run in phase 0's bootstrap run, or in a phase of their own over the image's relations.
 - Whether the explanation of a cross-file relation (`causes`) can be read off the rules' failing reads, so no Rust
   explanation is left.
-- What §4's per-module key is for a batch of policies that share a request cone (0089 stage 2).
+- What §2's per-module key is for a batch of policies that share a request cone (0089 stage 2), and for a policy
+  whose rules a library's rules read.
+- Which texts besides messages §3 moves out of the digest (a finding's tags, a policy's description).
