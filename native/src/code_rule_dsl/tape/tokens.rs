@@ -56,6 +56,8 @@ struct Automaton {
     /// The tokens other than delimiters that some gap holds beside a choice ([`kept`]): stored
     /// wherever they stand, implied gaps included.
     kept: rustc_hash::FxHashSet<Label>,
+    /// The fields its moves label children with, sorted ([`TokenGrammar::fields_of`]).
+    fields: Vec<Sym>,
 }
 
 impl Automaton {
@@ -467,7 +469,8 @@ impl TokenGrammar {
             let implied = implied(&moves, &accepting);
             let kept = kept(&moves, &accepting, &implied, &builder.texts);
             let sym = builder.sym(name);
-            kinds.insert(sym, Automaton { moves, accepting, implied, kept });
+            let fields: BTreeSet<Sym> = moves.iter().flat_map(|moves| moves.keys()).map(|label| label.field).filter(|&field| field != 0).collect();
+            kinds.insert(sym, Automaton { moves, accepting, implied, kept, fields: fields.into_iter().collect() });
         }
         let extras = grammar["extras"].as_array().into_iter().flatten().filter_map(|extra| extra["name"].as_str().map(str::to_owned)).collect();
         let Builder { names, texts, .. } = builder;
@@ -590,10 +593,9 @@ impl TokenGrammar {
     }
 
     /// The field names `kind`'s automaton labels its children with.
-    pub(in crate::code_rule_dsl) fn fields_of(&self, kind: &str) -> Vec<&str> {
-        let Some(automaton) = self.names.get(kind).and_then(|sym| self.kinds.get(sym)) else { return Vec::new() };
-        let fields: BTreeSet<Sym> = automaton.moves.iter().flat_map(|moves| moves.keys()).map(|label| label.field).filter(|&field| field != 0).collect();
-        fields.into_iter().map(|field| self.texts[field as usize].as_str()).collect()
+    pub(in crate::code_rule_dsl) fn fields_of(&self, kind: &str) -> impl Iterator<Item = &str> {
+        let fields = self.names.get(kind).and_then(|sym| self.kinds.get(sym)).map_or(&[][..], |automaton| &automaton.fields[..]);
+        fields.iter().map(|&field| self.texts[field as usize].as_str())
     }
 
     /// The gaps of a `kind` node whose stored children are `children` (named, kind, field; `""`
@@ -851,16 +853,25 @@ impl TokenGrammar {
 }
 
 /// `parent`'s stored children and its gaps; `None` where its kind has no automaton.
+///
+/// A gap test asks this of a node's parent for every node it tests (each of a module's statements walks all of
+/// them), so nothing is copied out: a tape's kinds are its grammar's names, and the fields are the automaton's.
 pub fn stored_gaps<'t, 'g, D: ast_grep_core::Doc>(grammar: &'g TokenGrammar, parent: &ast_grep_core::Node<'t, D>) -> Option<(Vec<ast_grep_core::Node<'t, D>>, Gaps<'g>)> {
     let kind = parent.kind();
-    let mut fields: std::collections::HashMap<usize, &str> = std::collections::HashMap::new();
+    let children: Vec<ast_grep_core::Node<'t, D>> = parent.children().collect();
+    let mut field_at: Vec<&str> = vec![""; children.len()];
     for field in grammar.fields_of(&kind) {
+        let mut from = 0;
         for child in parent.field_children(field) {
-            fields.insert(child.node_id(), field);
+            // A field's children come in the children's order.
+            let id = child.node_id();
+            if let Some(k) = children[from..].iter().position(|c| c.node_id() == id) {
+                field_at[from + k] = field;
+                from += k + 1;
+            }
         }
     }
-    let children: Vec<ast_grep_core::Node<'t, D>> = parent.children().collect();
-    let kinds: Vec<(bool, String, &str)> = children.iter().map(|child| (child.is_named(), child.kind().into_owned(), fields.get(&child.node_id()).copied().unwrap_or(""))).collect();
-    let gaps = grammar.gaps(&kind, kinds.iter().map(|(named, kind, field)| (*named, kind.as_str(), *field)))?;
+    let kinds: Vec<(bool, std::borrow::Cow<'_, str>)> = children.iter().map(|child| (child.is_named(), child.kind())).collect();
+    let gaps = grammar.gaps(&kind, kinds.iter().zip(&field_at).map(|((named, kind), field)| (*named, kind.as_ref(), *field)))?;
     Some((children, gaps))
 }
