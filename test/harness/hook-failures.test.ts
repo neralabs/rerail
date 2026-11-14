@@ -626,6 +626,29 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     });
   });
 
+  // As above, but `.1` opens and then cannot be read, as on an I/O error or, on Windows, a range of it another program
+  // locked. The first call on `.1`'s descriptor after the open, fstat, fails here; a failed read takes the same path.
+  it("says since when it counts from the live part, at once, when .1 opens but cannot be read", async () => {
+    const rerailHome = await home();
+    writeFileSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`), partText(5_000, 5_000, 6_000));
+    writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), partText(9_000, 9_500, 10_000));
+    const { said, listings } = await statusWith(rerailHome, {
+      openSync: `open => (path, ...rest) => {
+        const descriptor = open(path, ...rest);
+        if (String(path).endsWith(".1")) globalThis.movedAside = descriptor;
+        return descriptor;
+      }`,
+      fstatSync: `fstat => (descriptor, ...rest) => {
+        if (descriptor === globalThis.movedAside) throw Object.assign(new Error("EIO: i/o error, fstat"), { code: "EIO" });
+        return fstat(descriptor, ...rest);
+      }`,
+    });
+    expect({ said, listings }).toEqual({
+      said: expect.stringMatching(/^Hooks: 2 hook events could not be recorded since 1970-01-01T00:00:09\.000Z, as far back as the log goes; /u),
+      listings: 1,
+    });
+  });
+
   // A hook takes the full log while it is also the live log under a second name, cannot move it to `.1`, and gives it
   // back by copy. As it looks for the log's other names, another hook takes the live log: the first must find the log
   // under the name the other took, and copy nothing.
@@ -726,7 +749,7 @@ async function recordWithRename(rerailHome: string, at: number | undefined, wrap
 }
 
 /** The `node:fs` functions a test can wrap in a process of its own, each by the source of a function of the real one. */
-type Wraps = Partial<Record<"renameSync" | "appendFileSync" | "unlinkSync" | "readdirSync" | "openSync" | "readSync" | "statSync", string>>;
+type Wraps = Partial<Record<"renameSync" | "appendFileSync" | "unlinkSync" | "readdirSync" | "openSync" | "readSync" | "statSync" | "fstatSync", string>>;
 
 /**
  * {@link recordWithRename} with each `node:fs` function `wraps` names made by the function source given for it, and
