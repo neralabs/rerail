@@ -211,12 +211,17 @@ which runs every other compile.
 | empty cache, every compile here | 262 s | 1,273 s (270 + 1,003) | 0 of 378 |
 | empty cache, misses on the other Macs | 316 s | 734 s (336 + 398) | 0 of 378; 354 compiles remote, 382 s there |
 | a second worktree, cache filled by the first | 170 s | 402 s (293 + 110) | 376 of 378 |
+| the same, after the C builds became path-free | 142 s | 366 s (273 + 93) | 378 of 378 |
 
 - Sharing is the large saving: a new worktree, or one that switches branches, compiles almost
   nothing. The two misses were `rerail_lang` and `libmimalloc_sys`. Each bundles a static C library
   built by its build script, whose archive names and debug info held the checkout's path. Since
   `f9fb75060` those archives are byte-identical across checkouts (`-ffile-prefix-map`,
-  `SOURCE_DATE_EPOCH`); the end-to-end rerun is still to do.
+  `SOURCE_DATE_EPOCH`). Rerun: 378 of 378 hits, 142 s wall and 366 s CPU here (271 + 93) against
+  170 s and 402 s.
+- What a fully cached build still compiles is what sccache never caches: 61 build-script binaries,
+  21 proc macros and the final binary. That, and the link, is the rest of its 142 s. The farm
+  could cache build scripts and proc macros itself, since their outputs are now path-free (open).
 - Remote compiles cut this machine's CPU by 42% on a cold cache, but not the wall time under this
   load. Small crates pay ssh and tar per compile, and the workspace crates on the critical path
   compile here when the hosts are full.
