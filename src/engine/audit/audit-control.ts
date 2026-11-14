@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, like, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { checkoutRealpath, physicalPath } from "../catalog/checkout-control.js";
 import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
@@ -374,6 +374,15 @@ export class SqliteAuditControlStore {
       if (ended.length > 0) this.#endAbandoned(ended, idleMs, now);
       return ended.length;
     });
+  }
+  /**
+   * Whether an open session's owner row was written under the lock `lockId` (`ownerToken`), so its lock file must stay
+   * until a sweep has ended that session: a row whose lock has no file reads as a writer's that may still run.
+   */
+  namesOwnerLock(lockId: string): boolean {
+    return this.#database.select({ sessionId: policySessionOwners.sessionId }).from(policySessionOwners)
+      .innerJoin(sessions, eq(sessions.sessionId, policySessionOwners.sessionId))
+      .where(and(isNull(sessions.endedAt), like(policySessionOwners.token, `${lockId}.%`))).limit(1).get() !== undefined;
   }
   #endAbandoned(ended: readonly OwnedOpenSession[], idleMs: number, now: number): void {
     const ids = ended.map(owner => owner.sessionId);

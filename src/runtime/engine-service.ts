@@ -623,6 +623,16 @@ function disposeRuntime(state: EngineRoutingState, runtimeKey: string): void {
   void disposal.then(() => state.pending.delete(disposal));
 }
 
+/**
+ * Closes every runtime, each whatever another's close does, and once all have settled rejects with the first failure:
+ * one failure no longer settles the service's close while the others still close their sessions.
+ */
+async function disposeAll(runtimes: Iterable<RerailRuntime>): Promise<void> {
+  const closed = await Promise.allSettled([...runtimes].map(runtime => runtime.dispose()));
+  const failed = closed.find((result): result is PromiseRejectedResult => result.status === "rejected");
+  if (failed !== undefined) throw failed.reason;
+}
+
 function listen(server: Server, socketPath: string): Promise<void> {
   const listening = Promise.withResolvers<void>();
   server.once("error", listening.reject);
@@ -800,10 +810,11 @@ export async function startEngineService(options: EngineServiceOptions): Promise
         for (const timer of routing.idle.values()) clearTimeout(timer);
         routing.idle.clear();
         await Promise.allSettled(routing.pending);
-        await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
+        await disposeAll(routing.runtimes.values());
       } finally {
         // Also when the server's or a runtime's close failed: a suspended session left open would read as live with no
-        // daemon. Its lock goes once its sessions have ended.
+        // daemon. Its lock goes once its sessions have ended, and its file stays, so a later sweep ends any session a
+        // failed close left open (`OwnerLock.release`).
         try {
           endSuspended(routing);
         } finally {
@@ -835,16 +846,18 @@ export async function startEngineService(options: EngineServiceOptions): Promise
  * restart, its heap limit or a kill ends none of the sessions it held or had suspended while quiet, and no later daemon
  * holds them, so each read as open for good, and as owned while another process held its pid. Each ends at the idle
  * limit after it was last heard from, as the idle close would have ended it, and at the latest now
- * (`SqliteAuditControlStore.endSessionsOfEndedOwners`); then the locks of the services that ended are removed. A
- * database not made yet holds none. A failure is reported, and the service runs all the same.
+ * (`SqliteAuditControlStore.endSessionsOfEndedOwners`); then the lock files of the services that ended are removed,
+ * each once no open session's row names it (`forgetFreedOwnerLocks`). A database not made yet holds none. A failure is
+ * reported, and the service runs all the same.
  */
 function endAbandonedSessions(databasePath: string, idleMs: number, now: () => number): void {
   if (!existsSync(databasePath)) return;
   let store: SqliteAuditControlStore | undefined;
   try {
-    store = new SqliteAuditControlStore(databasePath);
-    store.endSessionsOfEndedOwners(idleMs, now());
-    forgetFreedOwnerLocks(databasePath);
+    const controls = new SqliteAuditControlStore(databasePath);
+    store = controls;
+    controls.endSessionsOfEndedOwners(idleMs, now());
+    forgetFreedOwnerLocks(databasePath, lockId => controls.namesOwnerLock(lockId));
   } catch (error) {
     process.stderr.write(`rerail: ending the sessions a stopped daemon left open failed: ${error instanceof Error ? error.message : String(error)}\n`);
   } finally {

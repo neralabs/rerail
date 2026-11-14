@@ -12,12 +12,16 @@ import { loadNativeBinding, type NativeExclusiveFileLock } from "../native/nativ
  * `locks/owners/<id>.lock` beside its database, under an id of its own, and the owner rows its runtimes write carry
  * that id at the head of their token (`ownerToken`). The OS drops the lock however the process ends, so a later process
  * that can take it knows the rows' writer is gone. Another process takes an id's lock only to see whether it is free,
- * and removes the file only while holding it.
+ * and removes the file only while holding it, once no open session's row names it (`forgetFreedOwnerLocks`): a row
+ * whose lock has no file reads as a writer's that may still run, and would stay open for good.
  */
 export interface OwnerLock {
   /** Undefined when no lock is held: the rows are then written without one. */
   readonly id: string | undefined;
-  /** Removes the lock file while still holding it, then lets the lock go: at the service's close, once its sessions ended. */
+  /**
+   * Lets the lock go and leaves its file: at the service's close, also one that left sessions open, which a later
+   * sweep then ends, since the lock is free (`ownerLockFreed`), before it removes the file.
+   */
   release(): void;
 }
 
@@ -58,7 +62,7 @@ export function holdOwnerLock(databasePath: string): OwnerLock {
   } catch {
     return NO_LOCK;
   }
-  if (lock !== null && existsSync(path)) return { id, release: () => removeHeld(path, lock) };
+  if (lock !== null && existsSync(path)) return { id, release: () => lock.release() };
   lock?.release();
   return NO_LOCK;
 }
@@ -95,10 +99,13 @@ export function ownerLockFreed(databasePath: string, lockId: string): boolean {
 }
 
 /**
- * Removes the lock file of every runtime beside `databasePath` that has ended, each while holding its lock: those whose
- * sessions the start has just ended, and those of a daemon that ended with none open. A held one is left.
+ * Removes the lock file of every engine service beside `databasePath` that has ended, each while holding its lock,
+ * unless an open session's owner row still names it (`named`): those whose sessions a sweep has just ended, and those of
+ * a service that ended with none open. A held one is left, and so is a free one a row names, such as that of a daemon
+ * that died after the sweep judged its lock held: the next sweep ends its sessions first. `named` is asked while the
+ * lock is held, so its answer is current: a service that has ended names no more.
  */
-export function forgetFreedOwnerLocks(databasePath: string): void {
+export function forgetFreedOwnerLocks(databasePath: string, named: (lockId: string) => boolean): void {
   const folder = ownersFolder(databasePath);
   let names: string[];
   try {
@@ -107,8 +114,20 @@ export function forgetFreedOwnerLocks(databasePath: string): void {
     return;
   }
   for (const name of names.filter(entry => LOCK_FILE.test(entry))) {
-    const path = join(folder, name);
-    const lock = takeIfFree(path);
-    if (lock !== null) removeHeld(path, lock);
+    forgetIfFree(join(folder, name), name.slice(0, -".lock".length), named);
+  }
+}
+
+/** Removes the lock file at `path` of the lock `lockId` while holding it, when it is free and no open row names it. */
+function forgetIfFree(path: string, lockId: string, named: (lockId: string) => boolean): void {
+  const lock = takeIfFree(path);
+  if (lock === null) return;
+  // Kept, and let go, also when the question fails: a lock this process went on holding would read as held for good.
+  let keep = true;
+  try {
+    keep = named(lockId);
+  } finally {
+    if (keep) lock.release();
+    else removeHeld(path, lock);
   }
 }
