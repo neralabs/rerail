@@ -78,8 +78,9 @@ function checkoutLocation(top: string, commonDirectory: string, gitDirectory: st
  * refuses the checkout (`safe.directory`, a ceiling, a filesystem boundary, `core.bare`); with no `.git` above, it ends
  * outside Git. Each end is the location {@link repositoryIdentityLocation} gives there, for the folder's real path, which
  * is what a hook asks the daemon about. Undefined where the filesystem leaves the end open: a folder with no real path, a
- * `.git` Git would pass over or refuse, a Git folder on the way (inside `.git`, a bare repository), a `core.worktree`
- * that puts the checkout elsewhere, or a checkout whose top Git would name otherwise than this walk spells it.
+ * folder on the way that is gone while the walk looks in it, a `.git` Git would pass over or refuse, a Git folder on the
+ * way (inside `.git`, a bare repository), a `core.worktree` that puts the checkout elsewhere, or a checkout whose top Git
+ * would name otherwise than this walk spells it.
  */
 export function gitSearchEnds(workspace: string): RepositoryIdentityLocation[] | undefined {
   const requested = realFolder(workspace);
@@ -163,11 +164,15 @@ type TakenDotGit = { readonly kind: "taken"; readonly gitDirectory: string; read
 const NO_DOT_GIT: DotGit = { kind: "none" };
 const OPEN_DOT_GIT: DotGit = { kind: "open" };
 
-/** The `.git` in `folder`: the `.git` folder itself, or the folder a `gitdir:` file names, when Git takes it. */
+/**
+ * The `.git` in `folder`: the `.git` folder itself, or the folder a `gitdir:` file names, when Git takes it. A `.git`
+ * missing from a folder that is itself gone once it was looked for (moved away while the walk ran) is open: the folder
+ * may be back with its `.git`, where Git, which walks up from inside its working folder, finds it.
+ */
 function dotGitIn(folder: string): DotGit {
   const dotGit = join(folder, ".git");
   const kind = entryKind(dotGit);
-  if (kind === "none") return NO_DOT_GIT;
+  if (kind === "none") return existsSync(folder) ? NO_DOT_GIT : OPEN_DOT_GIT;
   const gitDirectory = kind === "folder" ? dotGit : kind === "file" ? gitfileTarget(dotGit) : undefined;
   return gitDirectory === undefined ? OPEN_DOT_GIT : takenGitDirectory(gitDirectory);
 }
