@@ -59,6 +59,18 @@ pub enum TokenTest {
     Run,
 }
 
+/// A mark's token test (`Stmt::Mark`'s `at` and `after`): at tokens of `kind`, `test` over
+/// `expr` at least `least`; one that passes is a bit of the mark at its first byte, or (`after`)
+/// at the byte after its last.
+#[derive(Clone, Debug)]
+pub struct MarkCheck {
+    pub after: bool,
+    pub kind: String,
+    pub test: TokenTest,
+    pub expr: Expr,
+    pub least: u32,
+}
+
 /// How a token ends, told at its start (`Stmt::Token`'s `run` and `pair`).
 #[derive(Clone, Debug)]
 pub enum TokenRule {
@@ -66,6 +78,9 @@ pub enum TokenRule {
     Run(Expr),
     /// One byte, or two where the mask holds at its first.
     Pair(Expr),
+    /// `pair P`, `P` a `pairs P = "AB" …`: one byte, or two where its first and the next are
+    /// one of the pairs, as a lexer reads its next byte; `P` its mask.
+    Pairs { pairs: Vec<[u8; 2]>, mask: Expr },
     /// `read K | …`: a region's token, read from its opener to its closer (decision 0177): the
     /// region whose opener holds at its first byte, then its closer's first byte after it; its
     /// last byte the closer's last (`outside`: the byte before it). A lexer's reader of a
@@ -91,7 +106,7 @@ impl TokenRule {
                 let t = or(s.clone(), after);
                 and(t.clone(), not(call("next", vec![and(t, not(s.clone()))])))
             }
-            TokenRule::Pair(p) => or(and(s.clone(), not(p.clone())), call("prev", vec![and(s.clone(), p.clone())])),
+            TokenRule::Pair(p) | TokenRule::Pairs { mask: p, .. } => or(and(s.clone(), not(p.clone())), call("prev", vec![and(s.clone(), p.clone())])),
             // Each region's last byte, from its fill (`Regions::body`): the closer's last, or
             // the byte before an `outside` closer; with `else E bytes M`, `E`'s `M`th byte.
             TokenRule::Read(regions) => {
@@ -418,7 +433,11 @@ pub enum Stmt {
     /// (the extras passed over) is one of these words is none, as lean's parser asks whether a
     /// `,` ends the line before (decision 0177). `, else escape "WHY"`: a bit with no grammar
     /// token at or after it (past the last one's start) sends the file to the fallback.
-    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String> },
+    ///
+    /// `, at KIND when TEST` and `, after KIND when TEST` (`MarkCheck`): a token of the kind
+    /// that passes the test (a token escape's, `TokenEscape`) is a bit of the mark at its first
+    /// byte (`at`) or at the byte after its last (`after`), as a lexer marks what it reads.
+    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck> },
     /// `mark KIND = tokens [after E] E …` (decision 0129): a mark before a token that begins a
     /// run of tokens, each one of an element's choices (`|`): a token kind (a name) or a word
     /// (a string), the extras between them skipped. `after`: the token before is one of
@@ -619,6 +638,12 @@ struct P {
     i: usize,
     /// The regions read so far (`regions`), for a token's `read` (`TokenRule::Read`).
     regions: Vec<Region>,
+    /// Statements the one just read needs before it: a `pairs`' classes, one a byte, each made
+    /// once (`classed`).
+    before: Vec<Stmt>,
+    classed: Vec<u8>,
+    /// The `pairs` read so far, by name, for a token's `pair` (`TokenRule::Pairs`).
+    pair_sets: Vec<(String, Vec<[u8; 2]>)>,
 }
 
 type R<T> = Result<T, String>;
@@ -1084,10 +1109,58 @@ impl P {
             if self.peek().is_none() {
                 return self.err("}");
             }
-            out.push(self.stmt()?);
+            let st = self.stmt()?;
+            out.append(&mut self.before);
+            out.push(st);
             self.nls();
         }
         Ok(out)
+    }
+    /// `pairs P = "AB" …`: the mask of the pairs' first bytes, a run's every other from the
+    /// left (`two & ~escaped(two)`, `two` each pair's first byte where its second is next), of
+    /// hidden classes one a byte; the list kept for a token's `pair P` (`TokenRule::Pairs`).
+    fn pairs(&mut self, name_of: String) -> R<Stmt> {
+        let mut pairs: Vec<[u8; 2]> = vec![];
+        while let Some(Tok::Str(_)) = self.peek() {
+            let w = self.string()?;
+            let [a, b] = w[..] else {
+                return self.err("a pair of two bytes");
+            };
+            pairs.push([a, b]);
+        }
+        let name = |b: u8| format!("pair_byte_{b:02x}");
+        for &b in pairs.iter().flatten() {
+            if !self.classed.contains(&b) {
+                self.classed.push(b);
+                self.before.push(Stmt::Class(name(b), vec![(u32::from(b), u32::from(b))]));
+            }
+        }
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let next = |e: Expr| Expr::Call("next".into(), vec![Arg::E(e)]);
+        let two = pairs.iter().map(|&[a, b]| and(Expr::Name(name(a)), next(Expr::Name(name(b))))).reduce(|x, y| Expr::Or(Box::new(x), Box::new(y))).ok_or("a pair")?;
+        let mask = and(two.clone(), Expr::Not(Box::new(Expr::Call("escaped".into(), vec![Arg::E(two)]))));
+        self.pair_sets.push((name_of.clone(), pairs));
+        Ok(Stmt::Mask(name_of, mask))
+    }
+    /// A token test: `count(E) at least N` or `run(E) at least N` (`TokenTest`).
+    fn token_test(&mut self) -> R<(TokenTest, Expr, u32)> {
+        let test = if self.eat_kw("count") {
+            TokenTest::Count
+        } else if self.eat_kw("run") {
+            TokenTest::Run
+        } else {
+            return self.err("`count` or `run`");
+        };
+        self.want_p("(")?;
+        let expr = self.expr()?;
+        self.want_p(")")?;
+        self.want_kw("at")?;
+        self.want_kw("least")?;
+        let least = u32::try_from(self.int()?).map_err(|_| "a token test's count past u32".to_string())?;
+        if least == 0 || (test == TokenTest::Run && least > 64) {
+            return self.err("a count from 1 (a run's at most 64)");
+        }
+        Ok((test, expr, least))
     }
     fn class_items(&mut self) -> R<Vec<(u32, u32)>> {
         let mut v = vec![];
@@ -1140,6 +1213,11 @@ impl P {
                 let n = self.ident()?;
                 self.want_p("=")?;
                 Stmt::Class(n, self.class_items()?)
+            }
+            "pairs" => {
+                let n = self.ident()?;
+                self.want_p("=")?;
+                self.pairs(n)?
             }
             "mask" => {
                 let n = self.ident()?;
@@ -1282,22 +1360,7 @@ impl P {
                 } else if self.eat_kw("at") {
                     let kind = self.ident()?;
                     self.want_kw("when")?;
-                    let test = if self.eat_kw("count") {
-                        TokenTest::Count
-                    } else if self.eat_kw("run") {
-                        TokenTest::Run
-                    } else {
-                        return self.err("`count` or `run`");
-                    };
-                    self.want_p("(")?;
-                    let expr = self.expr()?;
-                    self.want_p(")")?;
-                    self.want_kw("at")?;
-                    self.want_kw("least")?;
-                    let least = u32::try_from(self.int()?).map_err(|_| "a token test's count past u32".to_string())?;
-                    if least == 0 || (test == TokenTest::Run && least > 64) {
-                        return self.err("a count from 1 (a run's at most 64)");
-                    }
+                    let (test, expr, least) = self.token_test()?;
                     Stmt::TokenEscape { why: m, kind, test, expr, least }
                 } else {
                     self.want_kw("when")?;
@@ -1471,17 +1534,27 @@ impl P {
                         }
                     }
                 }
-                let (mut end, mut unplaced) = (false, None);
+                let (mut end, mut unplaced, mut checks) = (false, None, vec![]);
                 while self.eat_p(",") {
+                    self.nls();
                     if self.eat_kw("else") {
                         self.want_kw("escape")?;
                         unplaced = Some(String::from_utf8_lossy(&self.string()?).into_owned());
+                    } else if self.is_kw("at") || self.is_kw("after") {
+                        let after = self.eat_kw("after");
+                        if !after {
+                            self.want_kw("at")?;
+                        }
+                        let kind = self.ident()?;
+                        self.want_kw("when")?;
+                        let (test, expr, least) = self.token_test()?;
+                        checks.push(MarkCheck { after, kind, test, expr, least });
                     } else {
                         self.want_kw("end")?;
                         end = true;
                     }
                 }
-                Stmt::Mark { kind, at, end, unless, unplaced }
+                Stmt::Mark { kind, at, end, unless, unplaced, checks }
             }
             "token" => {
                 let kind = self.kind()?;
@@ -1495,7 +1568,14 @@ impl P {
                 } else if self.eat_kw("run") {
                     Some(TokenRule::Run(self.expr()?))
                 } else if self.eat_kw("pair") {
-                    Some(TokenRule::Pair(self.expr()?))
+                    let e = self.expr()?;
+                    match &e {
+                        Expr::Name(n) => match self.pair_sets.iter().find(|(m, _)| m == n) {
+                            Some((_, pairs)) => Some(TokenRule::Pairs { pairs: pairs.clone(), mask: e.clone() }),
+                            None => Some(TokenRule::Pair(e)),
+                        },
+                        _ => Some(TokenRule::Pair(e)),
+                    }
                 } else if self.eat_kw("read") {
                     let mut regions = vec![];
                     loop {
@@ -1626,11 +1706,13 @@ impl P {
 }
 
 pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
-    let mut p = P { t: lex(src)?, i: 0, regions: vec![] };
+    let mut p = P { t: lex(src)?, i: 0, regions: vec![], before: vec![], classed: vec![], pair_sets: vec![] };
     p.nls();
     let mut out = vec![];
     while p.peek().is_some() {
-        out.push(p.stmt()?);
+        let st = p.stmt()?;
+        out.append(&mut p.before);
+        out.push(st);
         p.nls();
     }
     Ok(out)

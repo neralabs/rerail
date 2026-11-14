@@ -50,7 +50,7 @@ by its own reader, its checks made at it. The CPU's tier 1 is generated to that 
 | Part | The lean lexer | The CPU's tier 1 | Built |
 |---|---|---|---|
 | A block's masks | space, word, rare, pair | `skip`, the runs, the pair (1, 1 and 9, 31 operations) | yes (2c) |
-| The token loop | in the block loop | a part after each block, over the blocks whose outputs are final (`part_fn`) | yes |
+| The token loop | in the block loop | in the block loop, after each block, over the blocks whose outputs are final; its state the loop's values | yes |
 | A token's start | the first non-space after the one before | `skip`'s words after the token before (`records::walk`) | yes (2a) |
 | A token's end | its run, its pair | its first byte's rule (`run`, `pair`, `last`) | yes (1) |
 | A rare token | its reader, which moves the cursor | its region's last byte, by the walk's masks | masks for now |
@@ -226,5 +226,114 @@ end and the four backticks are `error … by tokens` and `escape … by tokens`,
 and the CPU does not (`the_loops_errors_are_the_masks`: 1,717 files and edge cases, 152
 refused by both). The regions' last-byte masks go from the CPU: 204 operations, from 249.
 
-What still reads the region walk and `code` on the CPU: the `json_bad` mark, the `ROW` mask
-(a comment or a `/`), `float_after`, JSON's checks, and the comments' extra mark.
+## A reader says its kind
+
+A comment and a `/` share a first byte, so the token's kind came from the `ROW` mask: a
+region mask the CPU made to tell them apart. The comment's extra mark came from a mask too.
+The lean lexer's reader knows what it read. Here likewise:
+
+```text
+# the comment rows move to a byte no row starts, for tier 2's view;
+# the reader that read a comment gives its kind and marks
+# a reader: its other rule, then the kind and marks of what it reads
+recreader OTHER retag KIND MARKS
+# where no reader runs: at a bit of output O, the same kind and marks
+recretag O KIND MARKS
+```
+
+On the CPU the reader returns its tag with the last byte; the token loop writes that kind
+and ORs those marks, and the gap pass skips them. Metal and the interpreter keep the masks
+(`Records::retags`, by the moved row's start mask). The `ROW` mask and the extra mark go from
+the CPU: 191 operations, from 204.
+
+## Pairs from the next byte
+
+A two-byte spelling (`:-`, `<=`) was a mask, `two_start`: each spelling's first byte, and in
+a run of them (`:->`) every other one, by `escaped`. The lean lexer reads the byte after the
+token's first instead. Here likewise:
+
+```text
+# the spellings, one list; its mask is Metal's and the interpreter's meaning
+pairs two_start = ":-" "=>" "!=" "<=" "<:" ">=" "->"
+token punct     = start punct & p_start pair two_start
+```
+
+`pairs P = …` makes the mask, from classes of one byte each. A token's `pair P` takes the
+list too (`TokenRule::Pairs`). On the CPU each first byte gets its own rule, `next` with its
+second bytes (`EndRule::Next`, `Records::nexts`): one load of the byte after the start, if
+inside the file, and a compare a byte. A run needs nothing more: the loop starts each token
+after the one before, so `:->` is `:-` and `>`. The pair mask goes from the CPU.
+
+## Marks from checks at the token
+
+A mark had its bits from a mask: `float_after` from a float's last digit, `json_bad` from
+string bytes, comments and numbers, each mask reading the regions. The lean lexer marks what
+it reads: a number with a `.` is a float, a string with a bad byte is not JSON. Here likewise:
+
+```text
+# a token that passes the test is a bit of the mark:
+# `after`, at the byte after its last (the next grammar token has it);
+# `at`, at its first (it has it, if a grammar token)
+mark float_after = empty, after number when count(dot) at least 1,
+                   else escape "a float the file ends with"
+mark json_bad    = ff,
+                   after string when count(str_bad) at least 1,
+                   after string when count(uesc & ~h4) at least 1,
+                   after comment when count(line_open | block_open) at least 1,
+                   at punct when run(minus & ~next(digit)) at least 1,
+                   at number when run(zero & next(digit)) at least 1
+```
+
+The tests are the token tests of `escape … at KIND` (`Records::checks`), each with what a
+pass does (`CheckThen`: refuse, `At`, `After`). As bits, they keep the gap marks' rules
+(`unless after`, `else escape`). On the CPU the token loop carries them: a grammar token takes
+its own `At` hits and the bits left before it; an extra's token leaves all of its own to the
+next (`pending`, a fourth word of the loop's state). Metal and the interpreter find the same
+in their look-back from each grammar token (`record_hits`, `gap_marks`). A mark of tests alone
+reads no mask (`Records::tested_only`).
+
+A test `count(A & L) at least 1` with `L` local look-ahead is tier 2's instead: a `CHECK` at
+the kind's tokens, at each bit of `A` in the token, as a lexer checks an escape it reads.
+A hidden mark only refused checks it in its refusing levels. So the `\u` checks stay tier 2's,
+none of the digits' masks tier 1's, and need no region: `uesc` is any escaped `u`, and one in a
+comment is no string's.
+
+```text
+escape "a \\u escape the engine checks" at string when count(uesc & ~u_ok) at least 1
+```
+
+The meaning moves in two places, neither inside a JSON document: a `-` that is a pair's second
+byte (`:-`) is no JSON minus, and a form feed in a backtick literal marks the token after it.
+`the_marks_tests_are_the_masks` compares the old form's tapes and refusals with the new
+(400 files and the cases' edges), and the CPU's and Metal's codes with the interpreter's.
+
+Nothing on the CPU reads the regions now: its form calls no walk (a walk no value of which is
+read goes, `cpu_form`). 57 operations, from 162.
+
+## A rule by a jump table; one rule for the pairs
+
+The lean lexer gives a common token's kind and length by one load of a table, and reads a
+rare first byte by a `match`. The token loop chose a token's end rule by a compare a rule,
+and the pairs had a rule a first byte (eleven rules). Now:
+
+- The rule is a jump table on `Records::ends`' byte (`br_table`). The translation to Rust
+  writes it as a `match` (`clif_rust`), which rustc makes a table again.
+- A kind's pairs are one table (`PairTable`): a row a first byte, and in the row the set of
+  second bytes. All the punctuation is one rule: the row's load by the first byte, then the
+  set's word by the next. Seven rules.
+
+Open: `u_ok`'s look-ahead is tier 2's, but `str_bad` and the punctuation and number tests are
+tier 1 masks a block; the lean lexer reads them at the token's bytes alone.
+
+## The token loop in the block loop
+
+The lean lexer has one loop: a block's masks, then its tokens. The token loop was a function
+of its own, called after each block, its state stored and loaded each time. Now it is in the
+block loop's function, once: the full body and the general one both go on to it, and from it
+to the next block. Its four state words are the block loop's values, passed round it as its
+carries are. Only the file's end (its counts, the marks of any word) is still a call, once a
+file. Tier 1's Rust is three functions, from four.
+
+Next: the loop reads the masks from the block's rows in memory. A mask with no delay is in a
+register at the loop; a delayed one is the word before and this one, joined.
+

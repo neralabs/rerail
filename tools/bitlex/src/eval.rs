@@ -131,6 +131,9 @@ pub struct Ev<'a> {
     checks: Vec<(String, Gram)>,
     /// Each `escape … at KIND when …` (`Stmt::TokenEscape`): its reason, kind, test, mask, count.
     token_escapes: Vec<(String, String, TokenTest, Mask, u32)>,
+    /// The marks' token tests (`MarkCheck`): the mark, `after`, the kind, the test, its mask,
+    /// its count.
+    mark_checks: Vec<(usize, bool, String, TokenTest, Mask, u32)>,
 }
 
 type R<T> = Result<T, String>;
@@ -198,6 +201,7 @@ impl<'a> Ev<'a> {
             byte_classes: HashMap::new(),
             checks: vec![],
             token_escapes: vec![],
+            mark_checks: vec![],
         };
         ev.exec(prog)?;
         let tokens = ev.finish()?;
@@ -422,8 +426,12 @@ impl<'a> Ev<'a> {
             Stmt::Remember(names) => self.tree.get_or_insert_with(TreeDecl::default).remember.extend(names.iter().cloned()),
             // Applied by the parser (`A as IMPLIED` in the rule's body).
             Stmt::Implied { .. } => {}
-            Stmt::Mark { kind, at, end, unless, unplaced } => {
+            Stmt::Mark { kind, at, end, unless, unplaced, checks } => {
                 let m = self.mask(at)?;
+                for c in checks {
+                    let x = self.mask(&c.expr)?;
+                    self.mark_checks.push((self.marks.len(), c.after, c.kind.clone(), c.test, x, c.least));
+                }
                 if !unless.is_empty() {
                     self.unless.insert(self.marks.len(), unless.clone());
                 }
@@ -1158,20 +1166,32 @@ impl<'a> Ev<'a> {
             self.errors.push(format!("byte {i} is in no token"));
         }
         // Each token test over its kind's tokens' bytes, before the keywords rename them.
+        let passes = |t: &Token, test: &TokenTest, m: &Mask, least: u32| {
+            let n = least as usize;
+            match test {
+                TokenTest::Count => (t.start..t.end).filter(|&i| m.get(i)).count() >= n,
+                TokenTest::Run => t.end - t.start >= n && (t.start..t.start + n).all(|i| m.get(i)),
+            }
+        };
         let mut failed = Vec::new();
         for (why, kind, test, m, least) in &self.token_escapes {
             for t in toks.iter().filter(|t| &t.kind == kind) {
-                let n = *least as usize;
-                let hit = match test {
-                    TokenTest::Count => (t.start..t.end).filter(|&i| m.get(i)).count() >= n,
-                    TokenTest::Run => t.end - t.start >= n && (t.start..t.start + n).all(|i| m.get(i)),
-                };
-                if hit {
+                if passes(t, test, m, *least) {
                     failed.push(format!("escape: {why} (byte {})", t.start));
                 }
             }
         }
         self.errors.extend(failed);
+        // The marks' token tests: each passing token a bit of its mark, at its first byte or
+        // the byte after its last (`after`).
+        let mut checked: Vec<(usize, usize)> = Vec::new();
+        for (k, after, kind, test, m, least) in &self.mark_checks {
+            for t in toks.iter().filter(|t| &t.kind == kind) {
+                if passes(t, test, m, *least) {
+                    checked.push((*k, if *after { t.end } else { t.start }));
+                }
+            }
+        }
         for (kind, words, soft, required) in &self.keywords {
             for t in toks.iter_mut().filter(|t| &t.kind == kind) {
                 let text = &self.src[t.start..t.end];
@@ -1226,7 +1246,8 @@ impl<'a> Ev<'a> {
         let mut escapes = Vec::new();
         for (k, (_, m, _)) in self.marks.iter().enumerate() {
             let unless: Vec<TokenElem> = self.unless.get(&k).map_or(vec![], |ws| ws.iter().cloned().map(TokenElem::Word).collect());
-            for i in m.ones_iter() {
+            let bits: Vec<usize> = m.ones_iter().chain(checked.iter().filter(|c| c.0 == k).map(|c| c.1)).collect();
+            for i in bits {
                 let g = grammar.partition_point(|&t| toks[t].start < i);
                 // `unless after`: none where the grammar token before is one of its words.
                 if g > 0 && !unless.is_empty() && is(Some(&toks[grammar[g - 1]]), &unless) {

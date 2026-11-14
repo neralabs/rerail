@@ -1339,11 +1339,33 @@ fn records_source(programs: &[&BlockNative]) -> String {
          static inline bool record_bit(device const ulong* out, FileRow f, uint o, uint p) { return ((out[f.out_base + o * f.groups + p / 64u] >> (p % 64u)) & 1ul) != 0ul; }\n",
     );
     let mut cases = String::new();
+    // A token test's code (`Records::checks`) over the token `s..=l` (`len` bytes): `bad` set
+    // where it holds. A count over its words; a run from a window of one word or two.
+    let test_code = |i: usize, c: &rerail_compiler::records::TokenCheck| -> String {
+        let o = c.o;
+        assert!(i < 8, "at most 8 token tests");
+        if c.count {
+            format!("uint got = 0u; for (uint q = s / 64u; q <= l / 64u; q++) {{ ulong x = out[f.out_base + {o}u * f.groups + q]; if (q == s / 64u) x &= ~0ul << (s % 64u); if (q == l / 64u) x &= ~0ul >> (63u - l % 64u); got += popcount(x); }} bad = bad || got >= {n}u;", n = c.least)
+        } else {
+            let need = format!("{:#x}ul", !0u64 >> (64 - c.least));
+            format!("if (len >= {n}u) {{ const uint sh = s % 64u; ulong win = out[f.out_base + {o}u * f.groups + s / 64u] >> sh; if (sh + {n}u > 64u) win |= out[f.out_base + {o}u * f.groups + s / 64u + 1u] << (64u - sh); bad = bad || (win & {need}) == {need}; }}", n = c.least)
+        }
+    };
     for (p, n) in programs.iter().enumerate() {
         let Some(r) = &n.records else { continue };
         let t = rerail_compiler::records::WordTable::new(&r.words).expect("verified: the words fit a table");
         let tails: Vec<u64> = if t.tails.is_empty() { vec![0; 7] } else { t.tails.iter().flatten().copied().collect() };
         let (se, le, e, x) = (r.starts, r.lasts, n.extracts.len(), n.extracts.len());
+        let tested = r.checks.iter().any(|c| c.then != rerail_compiler::records::CheckThen::Escape);
+        // The tests, each once whatever rules it is at (a bit of `record_tests`).
+        let mut distinct: Vec<rerail_compiler::records::TokenCheck> = Vec::new();
+        for c in &r.checks {
+            let c = rerail_compiler::records::TokenCheck { rule: 0, ..*c };
+            if !distinct.contains(&c) {
+                distinct.push(c);
+            }
+        }
+        let bit_of = |c: &rerail_compiler::records::TokenCheck| distinct.iter().position(|d| *d == rerail_compiler::records::TokenCheck { rule: 0, ..*c }).expect("listed");
         out.push_str(&format!(
             "constant uchar record_kinds_{p}[256] = {{{kinds}}};\n\
              constant ulong record_keys_{p}[{slots}] = {{{keys}}};\n\
@@ -1364,6 +1386,14 @@ fn records_source(programs: &[&BlockNative]) -> String {
              \x20 }}\n\
              \x20 return word;\n\
              }}\n\
+             // The marks' tests' hits at the token `s..=l` (`records::check_hits`).\n\
+             static inline uint record_hits_{p}(device const uint4* bytes, FileRow f, device const ulong* out, uint s, uint l) {{\n\
+             \x20 const uint len = l + 1u - s;\n\
+             \x20 const uint on = record_tests_{p}[uint(record_load8(bytes, f, s) & 0xfful)];\n\
+             \x20 uint hits = 0u;{hits}\n\
+             \x20 (void)len; (void)on;\n\
+             \x20 return hits;\n\
+             }}\n\
              static inline void records_{p}(device const uint4* bytes, FileRow f, uint lane, device const ulong* out, device uint* positions, device const uint* tot, device atomic_uint* flag) {{\n\
              \x20 const uint cap = max(f.len, 1u);\n\
              \x20 device const uint* starts = positions + f.pos_base + {se}u * cap;\n\
@@ -1375,9 +1405,9 @@ fn records_source(programs: &[&BlockNative]) -> String {
              \x20   const uint s = starts[k], l = lasts[k], after = k > 0u ? lasts[k - 1u] + 1u : 0u;\n\
              \x20   bad = bad || l < s || s < after;\n\
              \x20   const uint len = l + 1u - s;\n\
-             \x20   const uint kind = record_kinds_{p}[uint(record_load8(bytes, f, s) & 0xfful)];\n\
+             \x20   uint kind = record_kinds_{p}[uint(record_load8(bytes, f, s) & 0xfful)];\n\
              \x20   const uint word = record_word_{p}(bytes, f, s, len);\n\
-             \x20   uint marks = 0u;{marks}{gaps}{checks}\n\
+             \x20   uint marks = 0u;{marks}{retags}{gaps}{checks}\n\
              \x20   codes[k] = kind | (word << {kb}u) | (marks << {ms}u);\n\
              \x20 }}\n\
              {unplaced}\
@@ -1388,22 +1418,31 @@ fn records_source(programs: &[&BlockNative]) -> String {
             // rule, each a bit; a count over its words, a run from a window of one word or two.
             tests = list(&mut (0..256usize).map(|b| {
                 let rule = r.ends.get(b).copied().unwrap_or(rerail_compiler::records::NO_RULE);
-                r.checks.iter().enumerate().filter(|(_, c)| c.rule == rule).fold(0u32, |a, (i, _)| a | 1 << i).to_string()
+                r.checks.iter().filter(|c| c.rule == rule).fold(0u32, |a, c| a | 1 << bit_of(c)).to_string()
             })),
-            checks = r
-                .checks
+            // A reader's kind and marks by its start mask (`Records::retags`).
+            retags = r
+                .retags
+                .iter()
+                .map(|t| format!(" if (record_bit(out, f, {}u, s)) {{ kind = {}u; marks |= {}u; }}", t.o, t.kind, t.marks))
+                .collect::<String>(),
+            checks = distinct
                 .iter()
                 .enumerate()
-                .map(|(i, c)| {
-                    let o = c.o;
-                    let test = if c.count {
-                        format!("uint got = 0u; for (uint q = s / 64u; q <= l / 64u; q++) {{ ulong x = out[f.out_base + {o}u * f.groups + q]; if (q == s / 64u) x &= ~0ul << (s % 64u); if (q == l / 64u) x &= ~0ul >> (63u - l % 64u); got += popcount(x); }} bad = bad || got >= {n}u;", n = c.least)
-                    } else {
-                        let need = format!("{:#x}ul", !0u64 >> (64 - c.least));
-                        format!("if (len >= {n}u) {{ const uint sh = s % 64u; ulong win = out[f.out_base + {o}u * f.groups + s / 64u] >> sh; if (sh + {n}u > 64u) win |= out[f.out_base + {o}u * f.groups + s / 64u + 1u] << (64u - sh); bad = bad || (win & {need}) == {need}; }}", n = c.least)
+                .filter(|(_, c)| c.then == rerail_compiler::records::CheckThen::Escape)
+                .map(|(i, c)| format!(" if ((record_tests_{p}[uint(record_load8(bytes, f, s) & 0xfful)] >> {i}u) & 1u) {{ {} }}", test_code(i, c)))
+                .collect::<String>(),
+            // The marks' tests (`CheckThen::At`, `After`): a token's hits, `records::check_hits`.
+            hits = distinct
+                .iter()
+                .enumerate()
+                .filter_map(|(i, c)| {
+                    let bit = match c.then {
+                        rerail_compiler::records::CheckThen::Escape => return None,
+                        rerail_compiler::records::CheckThen::At(k) => 1u32 << k,
+                        rerail_compiler::records::CheckThen::After(k) => 1u32 << (rerail_compiler::records::AFTER_SHIFT + u32::from(k)),
                     };
-                    assert!(i < 8, "at most 8 token tests");
-                    format!(" if ((record_tests_{p}[uint(record_load8(bytes, f, s) & 0xfful)] >> {i}u) & 1u) {{ {test} }}")
+                    Some(format!(" if ((on >> {i}u) & 1u) {{ bool bad = false; {} if (bad) hits |= {bit}u; }}", test_code(i, c)))
                 })
                 .collect::<String>(),
             slots = t.keys.len(),
@@ -1442,15 +1481,33 @@ fn records_source(programs: &[&BlockNative]) -> String {
                     .iter()
                     .enumerate()
                     .filter(|&(m, _)| r.unplaced >> m & 1 == 1)
-                    .map(|(_, &(o, _))| format!(" bad = bad || record_any(out, f, {o}u, from, f.len - 1u);"))
+                    .map(|(m, &(o, _))| {
+                        let any = if r.tested_only >> m & 1 == 1 { String::new() } else { format!(" || record_any(out, f, {o}u, from, f.len - 1u)") };
+                        format!(" bad = bad || ((pend >> {m}u) & 1u) != 0u{any};")
+                    })
                     .collect();
-                format!("\x20 if (lane == 0u && f.len > 0u) {{ int j = int(n) - 1; while (j >= 0 && {before}) j--; const uint from = j >= 0 ? starts[j] + 1u : 0u;{tests} }}\n")
+                // The marks' tests' bits after the last grammar token: its `After` hits, and the
+                // extras' after it, both.
+                let pend = if tested {
+                    format!(" uint pend = 0u; for (int u = max(j, 0); u < int(n); u++) {{ const uint h = record_hits_{p}(bytes, f, out, starts[u], lasts[u]); pend |= (h >> {a}u) | (u > j ? h & {low}u : 0u); }}", low = (1u32 << rerail_compiler::records::AFTER_SHIFT) - 1, a = rerail_compiler::records::AFTER_SHIFT)
+                } else {
+                    " const uint pend = 0u;".to_string()
+                };
+                format!("\x20 if (lane == 0u && f.len > 0u) {{ int j = int(n) - 1; while (j >= 0 && {before}) j--; const uint from = j >= 0 ? starts[j] + 1u : 0u;{pend}{tests} }}\n")
             },
             // The gap marks (`records::gap_marks`): a grammar token's from the bytes after the
             // grammar token before it, the extras' tokens before it passed over by their mark.
             gaps = if r.gaps == 0 {
                 String::new()
             } else {
+                // The marks' tests' bits (`records::gap_marks`): the token's own `At` hits; the
+                // grammar token before's `After` hits; the extras' between, both.
+                let pend = || {
+                    if !tested {
+                        return " const uint pend = 0u;".to_string();
+                    }
+                    format!(" uint pend = record_hits_{p}(bytes, f, out, s, l) & {low}u; for (int u = max(j, 0); u < int(k); u++) {{ const uint h = record_hits_{p}(bytes, f, out, starts[u], lasts[u]); pend |= (h >> {a}u) | (u > j ? h & {low}u : 0u); }}", low = (1u32 << rerail_compiler::records::AFTER_SHIFT) - 1, a = rerail_compiler::records::AFTER_SHIFT)
+                };
                 let extra = r.extra.map(|e| (e, r.marks[usize::from(e)].0));
                 let is_extra = |at: &str| match extra {
                     Some((_, o)) => format!("record_bit(out, f, {o}u, {at})"),
@@ -1464,12 +1521,14 @@ fn records_source(programs: &[&BlockNative]) -> String {
                     .map(|(m, &(o, _))| {
                         // `unless after`: none after a grammar token of these words.
                         let none: String = r.unless.iter().filter(|&&(u, _)| usize::from(u) == m).map(|&(_, w)| format!(" && wb != {w}u")).collect();
-                        format!(" if (record_any(out, f, {o}u, from, s){none}) marks |= {}u;", 1u32 << m)
+                        let any = if r.tested_only >> m & 1 == 1 { "false".to_string() } else { format!("record_any(out, f, {o}u, from, s)") };
+                        format!(" if (((pend >> {m}u) & 1u || {any}){none}) marks |= {}u;", 1u32 << m)
                     })
                     .collect();
                 let wb = if r.unless.is_empty() { String::new() } else { format!(" const uint wb = j >= 0 ? record_word_{p}(bytes, f, starts[j], lasts[j] + 1u - starts[j]) : 0u;") };
                 format!(
-                    " marks &= ~{gaps}u; if (!{here}) {{ int j = int(k) - 1; while (j >= 0 && {before}) j--; const uint from = j >= 0 ? starts[j] + 1u : 0u;{wb}{tests} }}",
+                    " marks &= ~{gaps}u; if (!{here}) {{ int j = int(k) - 1; while (j >= 0 && {before}) j--; const uint from = j >= 0 ? starts[j] + 1u : 0u;{pend}{wb}{tests} }}",
+                    pend = pend(),
                     gaps = r.gaps,
                     here = is_extra("s"),
                     before = is_extra("starts[j]"),
