@@ -152,10 +152,24 @@ and takes 6.7 G instructions and 0.58 s user, against 8.0 G and 0.72 s over `dl1
   The deepest root names 11% fewer paths where the work tree is a root, and asks 30% more often. Each ask costs a
   wait for its cookie, and now that `forget` is a range a path, a path named costs little. Where the corpus is its
   own repository, the roots do not nest and the two are the same.
-- **The asks themselves are the warm batch's wall time**: 22 asks, about 6 s of waits for 0.8 s of CPU over `dl1g`.
-  Seen in them:
-  - one directory is asked as two roots: `/var/folders/…` and `/private/var/folders/…` (the phase-0 root), and
-    `native/crates/logic/../../src/…` is kept uncanonical;
-  - `dl1g/.git` is asked as a root of its own, beside `dl1g`;
-  - each root is asked again at each of the batch's runs (the 5 asks of `dl1g`);
-  - the phase-0 root's ask timed out twice ("the cookie's event did not arrive"), so it was not trusted.
+- **The journal's asks were the warm batch's wall time**: 22 asks, about 6 s of waits for 0.8 s of CPU over `dl1g`.
+  Each cause is fixed:
+
+  | Seen | Fix |
+  |---|---|
+  | One directory asked as two roots, `/var/folders/…` and `/private/var/folders/…` (phase 0's root) | Phase 0's root is canonical, and not watched up front: it is an empty placeholder, and a read under it is watched as it comes |
+  | A root kept as `native/crates/logic/../../src/…` | `rr::native_dir()` names the source tree without `..`; the library, the typing programs and phase 1's program are found through it |
+  | Each root asked again after every run inside the run (phase 0's, a policy's) | Only the outermost run's end (`Observer::flush` with no run left open) ends the roots' answers and settles the roots the journal could not speak for |
+  | Each root asked again, with a cookie's wait, at each policy of a batch | A batch is one run for the observer (`corpus::ObservedBatch`, in `run_policies`): its runs read the tree as of its first ask; a change meanwhile is named to the next batch |
+  | `dl1g/.git` asked beside `dl1g` | A cutoff's check (`changed_since`) skips a root under another it holds with the same cursor: one ask gave both |
+  | Phase 0's root timed out twice, so it was not trusted | Not asked up front (above) |
+
+  After all of them: 6 asks and 0.51 s of waits, 1.1 s wall for the warm batch (from about 10 s), 6.9 G instructions,
+  no warm fault, the same findings (load 47 to 87). Before the last, 12 asks waited 1.5 s, mostly the first cookie
+  of each library stream (0.6 to 0.9 s): they replay from cursors 7 million events old (below).
+- **An old cursor is slow to replay after all, at 7 million events.** It was not at 2 million (above). The first ask
+  of a stream started from a cursor that old waited 0.6 to 2 s, against 0.04 to 0.17 s for the same stream's later
+  asks. A cursor stays where it was while the journal names nothing under its root, so a root that never changes
+  ages without bound. Moving it again is a write a warm run would make, a timestamp, so it is not done without the
+  user's approval: a cursor older than a bound (a million events, say) would be stored again, at most once in that
+  many events.

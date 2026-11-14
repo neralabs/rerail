@@ -1750,6 +1750,27 @@ pub fn observe<T>(f: impl FnOnce(&mut crate::content_store::observe::Observer) -
     crate::content_store::observe::with(store.as_deref(), f)
 }
 
+/// A batch of runs (`tools::run_policies`) is one run for the file observer while it lives: each root is asked of
+/// the journal once for the batch, one cookie's wait each, where every policy's run asked again. The batch's runs
+/// read the tree as of the batch's first ask; what changes under it meanwhile is named to the next batch.
+pub struct ObservedBatch(());
+
+impl ObservedBatch {
+    pub fn begin() -> ObservedBatch {
+        observe(|o| o.begin());
+        ObservedBatch(())
+    }
+}
+
+impl Drop for ObservedBatch {
+    fn drop(&mut self) {
+        observe(|o| {
+            o.flush();
+            o.written();
+        });
+    }
+}
+
 /// Closes a run's connection beside the run (a job on the pool): its close frees what the process kept for it (the bound
 /// sources, the engine's relations: `vtab::connection_scope`), which is no step's work. Idle, it holds no lock.
 fn close_beside(db: Connection) {
@@ -1956,9 +1977,13 @@ fn run_handed(
     // them is not statted.
     let library = crate::code_rule_dsl::logic::rr::library();
     let library = std::fs::canonicalize(&library).unwrap_or(library);
+    // Phase 0's root is an empty placeholder (`phase0`): asked up front, the journal waited for a cookie of a busy
+    // temporary directory every run (2 s when the event came late). A read under it is watched as it comes
+    // (`watch_above`).
+    let watched: Vec<std::path::PathBuf> = if phase0::active() { vec![library] } else { vec![root.to_path_buf(), library] };
     let before = observe(|o| {
         o.begin();
-        o.watch(&[root.to_path_buf(), library]);
+        o.watch(&watched);
         o.counts
     });
     let lifecycle_observed = usage();

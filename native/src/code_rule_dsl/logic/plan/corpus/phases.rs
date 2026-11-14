@@ -145,7 +145,7 @@ fn source(name: &str, dir: Option<&Path>) -> Result<Option<String>> {
 
 /// The file of phase program `name` (`source`).
 fn locate(name: &str, dir: Option<&Path>) -> Option<PathBuf> {
-    let builtin = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/typing/programs");
+    let builtin = crate::code_rule_dsl::logic::rr::native_dir().join("src/code_rule_dsl/typing/programs");
     dir.into_iter().chain([builtin.as_path()]).map(|d| d.join(format!("{name}.rr"))).find(|p| p.exists())
 }
 
@@ -431,7 +431,7 @@ pub(super) fn current() -> Option<String> {
 
 /// Phase 1's program, the builtin one.
 pub(super) fn sources_path() -> PathBuf {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/typing/programs/sources.rr")
+    crate::code_rule_dsl::logic::rr::native_dir().join("src/code_rule_dsl/typing/programs/sources.rr")
 }
 
 /// Phase 1, `sources` (decision 0104): the run's source files, each `(path, module, grammar, content digest)`, loaded

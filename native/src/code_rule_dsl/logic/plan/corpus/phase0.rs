@@ -276,8 +276,10 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
         text.push_str(&format!("env(\"rerail.program_dir\", {}).\n", quote(&dir.to_string_lossy())));
     }
     // No corpus: an empty root, and the library a root the loader may read (`env`).
+    // Canonical (`/private/var/...`, not `/var/...` on macOS), as the run's world names its roots: one journal root.
     let root = std::env::temp_dir().join("rerail-phase-0-root");
     std::fs::create_dir_all(&root).map_err(|e| PlanError::Plan(format!("{}: {e}", root.display())))?;
+    let root = std::fs::canonicalize(&root).unwrap_or(root);
     static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let out = std::env::temp_dir().join(format!("rerail-phase-0-{}-{}", std::process::id(), RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
     let options = serde_json::json!({ "reuse": true });

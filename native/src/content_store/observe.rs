@@ -621,7 +621,13 @@ impl Observer {
             return None;
         }
         let mut named = Vec::new();
-        for (root, cursor) in roots.iter().zip(cursors) {
+        for (i, (root, cursor)) in roots.iter().zip(cursors).enumerate() {
+            // A root under another of `roots` with the same cursor (one ask gave both, `mark`: a corpus and its
+            // `.git`, a `.git` named as the repository's own and its common one) is named in the other's answer.
+            let covered = roots.iter().zip(cursors).enumerate().any(|(j, (r, c))| c == cursor && root.starts_with(r) && (r != root || j < i));
+            if covered {
+                continue;
+            }
             match super::journal::since(std::slice::from_ref(root), Some(cursor), &cookies) {
                 super::journal::Since::Changed { paths, .. } => named.extend(paths),
                 super::journal::Since::Lost { .. } => return None,
@@ -825,12 +831,17 @@ impl Observer {
         }
     }
 
-    /// Writes what changed since the last flush to the store, in one transaction.
+    /// Ends a run: writes what changed since the last flush to the store, in one transaction. The outermost run's
+    /// end also settles the roots the journal could not speak for, and ends the roots' answers: the next run asks
+    /// again. A run inside a run (phase 0's, a batch's policies) leaves the outer run's roots asked: counting its end
+    /// asked each of them again after every inner run.
     pub fn flush(&mut self) {
         self.write_dirty();
-        self.settle_roots();
-        self.flushes += 1;
         self.open = self.open.saturating_sub(1);
+        if self.open == 0 {
+            self.settle_roots();
+            self.flushes += 1;
+        }
     }
 
     fn write_dirty(&mut self) {
