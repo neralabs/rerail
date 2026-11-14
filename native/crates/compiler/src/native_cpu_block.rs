@@ -2363,15 +2363,27 @@ fn record_end(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, extracts
     if ruled {
         f.ins().store(stores, n, c.counts, 8 * i32::from(r.lasts));
     }
-    late_marks(f, r, outputs, c, n, then, heads);
+    // The gap marks (decision 0177) after the others: they read the extra's mark.
+    if r.gaps == 0 {
+        late_marks(f, r, outputs, c, n, false, then, heads);
+    } else {
+        let gaps = f.create_block();
+        late_marks(f, r, outputs, c, n, false, gaps, heads);
+        f.switch_to_block(gaps);
+        late_marks(f, r, outputs, c, n, true, then, heads);
+    }
 }
 
 /// The marks of any word (`Records::marks` with no word): rare bits, so set after the tokens,
 /// not tested at each. Over the file's rows, the marks' words ORed; at each bit, its token by a
 /// binary search over the starts from the token before; where a token starts there, each
 /// mark's bit ORed into its code. Then on to `then`.
-fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, outputs: usize, c: &FileCols, n: Value, then: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
-    let late: Vec<(usize, u16)> = r.marks.iter().enumerate().filter(|(_, m)| m.0 != crate::records::WORD_ALONE && m.1 == 0).map(|(k, m)| (k, m.0)).collect();
+///
+/// The gap marks (`lift`, `Records::gaps`): each bit to the first grammar token that starts at
+/// it or after (an extra's token, by its mark, passed over), as `records::gap_marks`.
+#[allow(clippy::too_many_arguments)]
+fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, outputs: usize, c: &FileCols, n: Value, lift: bool, then: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
+    let late: Vec<(usize, u16)> = r.marks.iter().enumerate().filter(|&(k, m)| m.0 != crate::records::WORD_ALONE && m.1 == 0 && (r.gaps >> k & 1 == 1) == lift).map(|(k, m)| (k, m.0)).collect();
     if late.is_empty() {
         f.ins().jump(then, &[]);
         return;
@@ -2470,10 +2482,35 @@ fn late_marks(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, outputs:
     let ka = f.ins().ishl_imm(k, 2);
     let sa = f.ins().iadd(c.starts, ka);
     let sv = f.ins().uload32(fl, sa, 0);
-    let at_it = f.ins().icmp(IntCC::Equal, sv, place);
-    let hit = f.ins().band(inside, at_it);
     let qa: Vec<BlockArg> = q.iter().map(|&v| v.into()).collect();
-    f.ins().brif(hit, set, &qa, next, &qa);
+    if lift {
+        // On past the extras' tokens: the first grammar token from it.
+        let (over, test) = (f.create_block(), f.create_block());
+        for _ in 0..4 {
+            f.append_block_param(over, types::I64);
+        }
+        heads.push((over, Step::Token));
+        let _ = (sv, place, k);
+        f.ins().jump(over, &qa);
+        f.switch_to_block(over);
+        let q = f.block_params(over).to_vec();
+        let qa: Vec<BlockArg> = q.iter().map(|&v| v.into()).collect();
+        let inside = f.ins().icmp(IntCC::UnsignedLessThan, q[3], n);
+        f.ins().brif(inside, test, &[], next, &qa);
+        f.switch_to_block(test);
+        let ka = f.ins().ishl_imm(q[3], 2);
+        let ca = f.ins().iadd(c.codes, ka);
+        let code = f.ins().uload32(fl, ca, 0);
+        let e = i64::from(crate::records::MARK_SHIFT) + i64::from(r.extra.unwrap_or(0));
+        let is_extra = f.ins().ushr_imm(code, e);
+        let is_extra = f.ins().band_imm(is_extra, i64::from(r.extra.is_some()));
+        let k1 = f.ins().iadd_imm(q[3], 1);
+        f.ins().brif(is_extra, over, &[q[0].into(), q[1].into(), q[2].into(), k1.into()], set, &qa);
+    } else {
+        let at_it = f.ins().icmp(IntCC::Equal, sv, place);
+        let hit = f.ins().band(inside, at_it);
+        f.ins().brif(hit, set, &qa, next, &qa);
+    }
 
     f.switch_to_block(set);
     let q = f.block_params(set).to_vec();

@@ -45,6 +45,13 @@ pub struct Records {
     /// the loop's (`walk`), each at the first byte after the one before that it does not hold,
     /// not the starts' extract's.
     pub skip: Option<u16>,
+    /// The marks (bits of `marks`) a grammar token has from the bytes before it (decision 0177):
+    /// mark `k`'s bit at a token is whether its output holds anywhere after the grammar token
+    /// before (an extra's are not) up to its first byte. The other marks are their outputs' bits
+    /// at the token's first byte.
+    pub gaps: u32,
+    /// The mark whose bit tells an extra's token (a comment), if any: an extra has no gap mark.
+    pub extra: Option<u8>,
 }
 
 /// A byte's end rule (`Records::ends`) when no token begins with it: its token is the byte
@@ -308,5 +315,49 @@ pub fn pass(records: &Records, table: &WordTable, bytes: &[u8], starts: &[u32], 
         }
         codes.push(kind | word << KIND_BITS | marks << MARK_SHIFT);
     }
+    gap_marks(records, starts, outputs, &mut codes);
     (codes, bad)
+}
+
+/// Whether output `o` holds anywhere in bytes `a..=b` (`a > b`: none), a word at a time.
+pub fn any_in(outputs: &[Vec<u64>], o: u16, a: usize, b: usize) -> bool {
+    let w = outputs.get(usize::from(o)).map_or(&[][..], |v| v.as_slice());
+    if a > b {
+        return false;
+    }
+    (a / 64..=b / 64).any(|q| {
+        let mut x = w.get(q).copied().unwrap_or(0);
+        if q == a / 64 {
+            x &= !0u64 << (a % 64);
+        }
+        if q == b / 64 && b % 64 != 63 {
+            x &= (1u64 << (b % 64 + 1)) - 1;
+        }
+        x != 0
+    })
+}
+
+/// The gap marks (`Records::gaps`) into the codes: each grammar token's, from its mark's output
+/// after the grammar token before it up to its first byte. An extra's token has none.
+pub fn gap_marks(records: &Records, starts: &[u32], outputs: &[Vec<u64>], codes: &mut [u32]) {
+    if records.gaps == 0 {
+        return;
+    }
+    let extra = |c: u32| records.extra.is_some_and(|e| c >> (MARK_SHIFT + u32::from(e)) & 1 == 1);
+    let mut from = 0usize;
+    for (k, &s) in starts.iter().enumerate().take(codes.len()) {
+        let s = s as usize;
+        if extra(codes[k]) {
+            codes[k] &= !(records.gaps << MARK_SHIFT);
+            continue;
+        }
+        let mut gap = 0u32;
+        for (m, &(o, _)) in records.marks.iter().enumerate().filter(|&(m, _)| records.gaps >> m & 1 == 1) {
+            if any_in(outputs, o, from, s) {
+                gap |= 1 << m;
+            }
+        }
+        codes[k] = codes[k] & !(records.gaps << MARK_SHIFT) | gap << MARK_SHIFT;
+        from = s + 1;
+    }
 }

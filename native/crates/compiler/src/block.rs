@@ -1724,6 +1724,13 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                 let _ = writeln!(out, "  block {at} recrule {how} {o}");
             }
         }
+        // `block N recgaps G` the gap marks' bits, `block N recextra K` an extra's mark.
+        if r.gaps != 0 {
+            let _ = writeln!(out, "  block {at} recgaps {}", r.gaps);
+        }
+        if let Some(k) = r.extra {
+            let _ = writeln!(out, "  block {at} recextra {k}");
+        }
         // `block N recskip O`: the bytes between tokens, the loop's (stage 2a).
         if let Some(o) = r.skip {
             let _ = writeln!(out, "  block {at} recskip {o}");

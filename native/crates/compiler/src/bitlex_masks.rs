@@ -2018,12 +2018,25 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let mut checks: Vec<(Vec<u16>, Option<u16>, Val, crate::program::LocalCheck)> = Vec::new();
     // With the fixed points' equations and the lemmas proved on the way, kept for every mark.
     let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
+    // Where the token loop finds the starts (decision 0177), a mark is no start mask: a mark of
+    // one word is its other terms at the token's first byte (none: the word alone), a token mark
+    // the word alone, any other its own mask, which the records lift to the next grammar token
+    // (`Records::gaps`).
+    let looped = !low.token_rules.is_empty() && low.skip.is_some();
+    let mut gaps = 0u32;
+    let mut alone = vec![false; low.marks.len()];
     for (k, (kind, m, end)) in low.marks.clone().into_iter().enumerate() {
         let gs = grammar_starts.ok_or("marks with no grammar token")?;
         // A token mark: its bit at every grammar token (its first element's word's, where it is
         // one word), the rest tier 2's; its bytes, its first element's.
         if let Some((before, seq)) = low.token_marks.get(&k).cloned() {
-            mark_masks.push(gs);
+            if looped && matches!(seq[0].as_slice(), [TokenElem::Word(_)]) {
+                alone[k] = true;
+                let none = low.leaf(BlockOp::Const(0), false);
+                mark_masks.push(none);
+            } else {
+                mark_masks.push(gs);
+            }
             let mut first: ByteSet = [0; 4];
             for c in &seq[0] {
                 match c {
@@ -2138,23 +2151,40 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 let differs = low.xor(t, e)?;
                 let ok = settled.never(&low.program.ops, &low.program.tables, differs.v, differs.d);
                 if ok {
-                    let mut rest = gs;
+                    let mut rest = if looped { None } else { Some(gs) };
                     for (_, other) in parts.iter().enumerate().filter(|&(j, _)| j != i) {
                         let x = low.expr(other)?;
-                        rest = low.and(rest, x)?;
+                        rest = Some(match rest {
+                            Some(y) => low.and(y, x)?,
+                            None => x,
+                        });
                     }
-                    m = rest;
+                    m = match rest {
+                        Some(r) => r,
+                        None => {
+                            alone[k] = true;
+                            low.leaf(BlockOp::Const(0), false)
+                        }
+                    };
                     word = Some(w.clone());
                     break 'find;
                 }
             }
         }
         let before = low.andnot(m, gs)?;
-        let since = low.fill(before, gs)?;
-        let since = low.prev(since, 1)?;
-        let any = low.or(m, since)?;
-        let at = low.and(gs, any)?;
-        mark_masks.push(at);
+        if looped {
+            // A mark of one word reads its terms at the token; any other, its own mask, lifted.
+            if word.is_none() && k < crate::records::MARKS {
+                gaps |= 1 << k;
+            }
+            mark_masks.push(m);
+        } else {
+            let since = low.fill(before, gs)?;
+            let since = low.prev(since, 1)?;
+            let any = low.or(m, since)?;
+            let at = low.and(gs, any)?;
+            mark_masks.push(at);
+        }
         // The bytes its token can begin with: the first bytes of each row whose starts it may
         // meet (it holds only at the grammar's starts, so within those rows' starts; a row left
         // out is proved apart, `never`). A state that refuses it tests it only on those bytes.
@@ -2196,6 +2226,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // of the tests of `.rr`'s corpus), so `TOKEN` reads this once and the marks are live only
     // where it holds (`TOKEN m=1+k`).
     let any_mark = match mark_masks.split_first() {
+        // With the marks the records' (`looped`), tier 2 reads them from the codes.
+        _ if looped => None,
         Some((&first, rest)) => {
             let mut any = first;
             for &m in rest {
@@ -2343,6 +2375,12 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             in_code[k].0 = crate::records::WORD_ALONE;
         }
     }
+    for (k, m) in in_code.iter_mut().enumerate() {
+        if alone.get(k).copied().unwrap_or(false) {
+            m.0 = crate::records::WORD_ALONE;
+        }
+    }
+    let mut extra_mark = None;
     // The extra's bit, after the marks': its rows' starts (`TOKEN_EXTRAS`, `Words::extras`).
     if token_extras {
         let mut starts: Option<Val> = None;
@@ -2357,6 +2395,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         mark_masks.push(starts);
         in_code.push((mark_masks.len() as u16 - 1, 0));
         let bit = (in_code.len() - 1) as u8;
+        extra_mark = Some(bit);
         crate::rir_text::extra_rows(&mut lowered.text, &[(bit, id(&low.extra[0])?)]);
     }
     // The token marks, their kinds the records' (`Words::token_marks`).
@@ -2452,7 +2491,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }),
         _ => None,
     };
-    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip };
+    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark };
     crate::records::WordTable::new(&records.words)?;
     Ok((grammar::text(&states, &arms), lowered.text, takes_last, mark_masks, records))
 }

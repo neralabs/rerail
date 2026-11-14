@@ -137,3 +137,14 @@ covers; the escapes and errors), reading 199, 32 of them its own; the marks tier
 250, mostly shared; and the regions' last bytes. Each is a check of stage 3, made at the token:
 2b (the start masks go) is done there, not apart.
 
+## The marks
+
+Where the loop finds the starts, no mark is a start mask. A mark that holds between tokens
+is its own mask, and the record pass lifts each of its bits to the first grammar token at it
+or after (an extra's token passed over by its mark): `Records::gaps`, `records::gap_marks`,
+the CPU's late marks, Metal's record kernel. A mark of one word is its other terms at the
+token (none: the word alone), a token mark of one first word the word alone. Tier 2 takes
+every mark from the codes: the any-mark mask goes (`the_marks_are_not_start_masks`). The CPU's
+form: 285 operations, from 331. What still reads `code` and the regions among the marks:
+`newline` (its `after_comma`, a fill to the next start), `float_after` and `json_bad`.
+

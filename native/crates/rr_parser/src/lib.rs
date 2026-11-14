@@ -1541,6 +1541,20 @@ pub mod tests {
         }
     }
 
+    /// Decision 0177's guard for the marks: none is a start mask. The marks between tokens are
+    /// the records' gap marks, lifted by the record pass; the marks of one word and the token
+    /// marks are the word alone or their terms at the token; tier 2 reads no mask of any mark.
+    #[test]
+    fn the_marks_are_not_start_masks() {
+        let c = crate::compiled().expect("compiles");
+        let r = c.native.records.as_ref().expect("records");
+        assert!(r.gaps != 0, "gap marks");
+        assert!(r.extra.is_some(), "the extra's mark");
+        // `TOKEN m=1+k` would read mask `k` for any mark; `m=128` is the extras' alone.
+        let any_mark = |l: &&str| l.contains(" TOKEN m=") && !l.contains(" TOKEN m=128 ");
+        assert!(!c.words.lines().any(|l| any_mark(&l)), "tier 2 reads no mask of any mark");
+    }
+
     /// A float read as simdjson reads one: digits, a `.`, digits, then a byte that is not
     /// one more `.` and digit. `1.2.3` goes to the engine; tier 1 iterates nothing for it.
     #[test]
