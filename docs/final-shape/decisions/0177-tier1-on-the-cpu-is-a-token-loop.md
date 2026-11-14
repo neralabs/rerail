@@ -822,3 +822,20 @@ Two more (the same day):
   lays them out and weighs them as Cranelift does.
 
 Tier 1 AOT 171 to 164 instructions a node.
+
+## Punctuation by the table (2026-11-14)
+
+Counted over the corpus (2.56M tokens), 55.5% are the fused pair rule's
+(punctuation) and 35.3% the fused run rule's (words); 86% had a first
+byte some word starts with, so they looked a word up: every punctuation
+too, as rr's punctuation are words of the table. The lean lexer looks
+none up: `TOKEN[c | pair << 8 | …]` gives a punctuation's kind.
+
+Now a punctuation's code bits are by its first byte and its length
+(`RecordTables::punct`, `TOKEN_PUNCT`), a load beside the entry's. The
+compiler fills the table with the word table's own lookup, so it holds
+what the lookup gives; a first byte whose pairs are two words (`<`:
+`<=`, `<:`) keeps the lookup. `rrs_records_are_rows_on_the_cpu` checks
+which bytes take the table.
+
+Tier 1 AOT 169 to 155 instructions a node, JIT 253 to 239.

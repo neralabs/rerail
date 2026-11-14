@@ -1529,6 +1529,13 @@ pub mod tests {
         let c = crate::compiled().expect("compiles");
         let t = c.parser.tier1.records.as_ref().expect("the record pass");
         assert_eq!(t.layout, rerail_compiler::records::RecordLayout::Rows);
+        // Every first byte of the fused pair rule (punctuation, most of rr's tokens) takes its
+        // code from the table, as the lean lexer's `TOKEN`: no word looked up. But `<`, whose
+        // two pairs (`<=`, `<:`) are two words: its two-byte tokens look theirs up.
+        let r = c.native.records.as_ref().expect("records");
+        let (kn, _) = t.fused.expect("the fused rules");
+        let pair_bytes: Vec<u8> = (0..=255u8).filter(|&b| r.ends.get(usize::from(b)).is_some_and(|&e| usize::from(e) == kn) && b != b'<').collect();
+        assert_eq!(c.parser.tier1.punct_bytes(), pair_bytes);
         let src = ".decl a(x: number)\na(1). // c\na(\"s\").\n";
         let lean = crate::rr::lean::tape(src);
         assert_eq!(c.parser.image(src.as_bytes()).ok().as_deref(), Some(&lean[..]), "rows: the lean tape");

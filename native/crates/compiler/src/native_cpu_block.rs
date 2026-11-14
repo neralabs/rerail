@@ -145,6 +145,12 @@ impl CompiledBlock {
         self.entries.len()
     }
 
+    /// The first bytes whose tokens take their codes from the punctuation table
+    /// (`TOKEN_PUNCT`), no word looked up.
+    pub fn punct_bytes(&self) -> Vec<u8> {
+        self.records.as_ref().map_or_else(Vec::new, |t| (0..=255u8).filter(|&b| t.words[t.token / 8 + usize::from(b)] >> TOKEN_PUNCT & 1 == 1).collect())
+    }
+
     /// The record pass's tables' words, as its code reads them.
     pub fn tables_words(&self) -> Option<&[u64]> {
         self.records.as_ref().map(|t| &t.words[..])
@@ -1690,6 +1696,9 @@ pub struct RecordTables {
     /// rule `fused_rules` takes with the main run's word in a register. The loop tests the
     /// bits where its own choice is this one, else it compares the rule.
     pub fused: Option<(usize, usize)>,
+    /// Where each first byte's punctuation codes are (`TOKEN_PUNCT`), 8 bytes each: the code
+    /// bits of its one-byte token, then of its two-byte one, as the word table gives them.
+    pub punct: usize,
 }
 
 /// The records' layout the compiler chooses for a program (decision 0231): rows where the
@@ -1730,6 +1739,10 @@ const TOKEN_PAIR_ROW: i64 = 24;
 /// length and a word's run is its mask's.
 const TOKEN_FUSED_PAIR: i64 = 32;
 const TOKEN_FUSED_RUN: i64 = 33;
+/// 1 where the byte's tokens are the fused pair rule's and their code bits are by the first
+/// byte and the length alone (`RecordTables::punct`): no word looked up, as the lean lexer's
+/// `TOKEN` gives a punctuation's kind.
+const TOKEN_PUNCT: i64 = 34;
 
 impl RecordTables {
     pub fn new(r: &crate::records::Records, made: &crate::block_native::BlockNative) -> Result<Self, Error> {
@@ -1786,6 +1799,36 @@ impl RecordTables {
             _ => None,
         }).collect();
         let fused = if r.skip.is_some() { fused_of(r, &filters, Some(made), &main_run) } else { None };
+        // The fused pair rule's tokens' code bits, by first byte and length, where one value
+        // each is the word table's (the code's own lookup, `WordTable::slot`): every pair of
+        // the byte gives the same; no mark of a word read at the token (`Records::marks`).
+        let lookup = |text: &[u8]| -> u64 {
+            let len = text.len() as u64;
+            let key = text.iter().take(8).enumerate().fold(0u64, |a, (i, &b)| a | u64::from(b) << (8 * i));
+            let slot = table.slot(key, len);
+            match (table.keys.get(slot), metas.get(slot)) {
+                (Some(&k), Some(&m)) if k == key && m & 0xff == len => m >> 8,
+                _ => 0,
+            }
+        };
+        let read_marks = r.marks.iter().any(|&(o, wc)| o != crate::records::WORD_ALONE && wc != 0);
+        let mut punct_codes = [(0u64, 0u64, false); 256];
+        if let Some((kn, _)) = fused.filter(|_| !read_marks) {
+            if let crate::records::EndRule::Next(i) = r.rules[kn] {
+                let pt = &r.nexts[usize::from(i)];
+                for (b, e) in punct_codes.iter_mut().enumerate() {
+                    if r.ends.get(b).is_none_or(|&x| usize::from(x) != kn) {
+                        continue;
+                    }
+                    let one = lookup(&[b as u8]);
+                    let twos: Vec<u64> = (0..=255u8).filter(|&c| pt.holds(b as u8, c)).map(|c| lookup(&[b as u8, c])).collect();
+                    let two = twos.first().copied().unwrap_or(0);
+                    if one >> 32 == 0 && two >> 32 == 0 && twos.iter().all(|&x| x == two) {
+                        *e = (one, two, true);
+                    }
+                }
+            }
+        }
         let mut entries = [0u64; 256];
         for (b, e) in entries.iter_mut().enumerate() {
             let rule = r.ends.get(b).copied().unwrap_or(crate::records::NO_RULE);
@@ -1798,10 +1841,12 @@ impl RecordTables {
             // that more than one rule takes (`rule_last`'s fused rules).
             let tests = sets.iter().filter(|(_, n, k)| n.has(b as u8) && *k == rule).fold(0u32, |a, &(k, _, _)| a | 1 << k);
             let (fp, fr) = fused.map_or((false, false), |(kn, kr)| (usize::from(rule) == kn, usize::from(rule) == kr));
-            *e = u64::from(r.kinds[b]) | u64::from(rule) << TOKEN_RULE | u64::from(wordy) << TOKEN_WORDY | u64::from(tests) | u64::from(row) << TOKEN_PAIR_ROW | u64::from(fp) << TOKEN_FUSED_PAIR | u64::from(fr) << TOKEN_FUSED_RUN;
+            *e = u64::from(r.kinds[b]) | u64::from(rule) << TOKEN_RULE | u64::from(wordy) << TOKEN_WORDY | u64::from(tests) | u64::from(row) << TOKEN_PAIR_ROW | u64::from(fp) << TOKEN_FUSED_PAIR | u64::from(fr) << TOKEN_FUSED_RUN | u64::from(punct_codes[b].2) << TOKEN_PUNCT;
         }
         words.extend(entries);
-        Ok(RecordTables { words, slots, tails, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns, fused })
+        let punct = 8 * words.len();
+        words.extend(punct_codes.iter().map(|&(one, two, _)| one | two << 32));
+        Ok(RecordTables { words, slots, tails, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns, fused, punct })
     }
 }
 
@@ -3546,6 +3591,22 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         }
         _ => (kind, None),
     };
+    // A punctuation of the fused pair rule (`TOKEN_PUNCT`): its code bits by its first byte
+    // and its length, a load beside the entry's, no word looked up, as the lean lexer's.
+    if common {
+        let (punct, rest) = (f.create_block(), f.create_block());
+        let is_p = f.ins().band_imm(entry, 1 << TOKEN_PUNCT);
+        f.ins().brif(is_p, punct, &[], rest, &[]);
+        f.switch_to_block(punct);
+        let pc = f.ins().load(types::I64, ro, ea, t.punct as i32);
+        let two = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, len, 1);
+        let hi = f.ins().ushr_imm(pc, 32);
+        let lo = f.ins().band_imm(pc, 0xffff_ffff);
+        let bits = f.ins().select(two, hi, lo);
+        let code = f.ins().bor(kind, bits);
+        f.ins().jump(coded, &[k.into(), next_after.into(), bad.into(), pending.into(), from_in.into(), h[5].into(), code.into(), hits.into()]);
+        f.switch_to_block(rest);
+    }
     // A first byte no word starts: no word to look up, its code the kind and a reader's marks.
     let looked = f.create_block();
     let wordy = f.ins().band_imm(entry, 1 << TOKEN_WORDY);
