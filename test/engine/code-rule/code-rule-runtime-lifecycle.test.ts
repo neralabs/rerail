@@ -462,7 +462,9 @@ describe("source-scoped steers", () => {
     const locked = join(root, "locked");
     await mkdir(locked);
     await writeFile(join(locked, "a.py"), "x = 1\n");
-    const databasePath = join(root, "rerail.sqlite");
+    // Rerail's own files outside the session's folder, as its home is: the walk reads only the folder's.
+    const store = await realpath(await temporaryDirectory());
+    const databasePath = join(store, "rerail.sqlite");
     const denial = `EACCES: permission denied, opendir '${locked}'`;
     let denied = false;
     const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
@@ -471,7 +473,7 @@ describe("source-scoped steers", () => {
       return actual.opendir(...args);
     });
     const runtime = new RerailRuntime({
-      storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
+      storageRoot: join(store, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
       createAuditor: () => ({
         openWorkspace: async () => undefined,
         acceptsPath: () => true,
@@ -492,7 +494,8 @@ describe("source-scoped steers", () => {
       // The turn end's answer is what it was before: the gap goes on the record, not to the agent.
       expect(await turnEnd("turn-2")).toEqual([]);
       expect(await turnEnd("turn-3")).toEqual([]);
-      expect(gapRecords()).toEqual([{ boundary: "turn", message: `locked: ${denial}` }]);
+      // The walk's own text: the folder, and the file it saw there before, which it can no longer read.
+      expect(gapRecords()).toEqual([{ boundary: "turn", message: `locked: ${denial}; locked/a.py: ${denial}` }]);
       expect(reader.gaps(session.sessionId)).toMatchObject({ discoveryGaps: 1, uncheckedBoundaries: 0 });
     } finally {
       await runtime.dispose();

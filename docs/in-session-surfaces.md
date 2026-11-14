@@ -217,7 +217,7 @@ Rerail checks shell-written files when the command finishes. Edits made while a 
 <summary>Shell edits and indexing</summary>
 
 - A shell result, or a turn end, waits up to 10 seconds for Rerail to find what the shell wrote. Later finds are steered at a later step, and the dashboard timeline says rules had not yet seen shell edits there.
-- A turn end whose walk could not check part of the repository (a folder or file Rerail may not read, an unlisted file too large to read, a failed walk of another worktree) goes on the session's record with the walk's text (`source-discovery-gap`), once per session and text, however many turn ends meet it. Shell writes there are not checked. `sessions_get` counts these in `gaps.discoveryGaps`, and the dashboard timeline says rules could not see shell edits in part of the repository. The coding agent is not told, and `session_events` withholds the text from it.
+- A turn end whose walk could not check part of the repository (a folder or file Rerail may not read, an unlisted file too large to read, a failed walk of another worktree) goes on the session's record, each gap with its text (`source-discovery-gap`) and once per session, however many turn ends meet it. Shell writes there are not checked. `sessions_get` counts these in `gaps.discoveryGaps`, and the dashboard timeline says rules could not see shell edits in part of the repository. The coding agent is not told, and `session_events` withholds the text from it.
 - A file the shell deleted is reported only if Rerail had seen it.
 
 In a large repository, Rerail indexes at session start before code rules can run; nothing waits for it.

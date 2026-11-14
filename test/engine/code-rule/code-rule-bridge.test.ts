@@ -713,11 +713,14 @@ describe("CodeRuleBridge", () => {
       return message;
     }
 
-    it("tells the gap callback what each turn's walk could not read, and nothing once a walk reads it all", async () => {
+    it("tells the gap callback each gap of each turn's walk alone, and nothing once a walk reads it all", async () => {
       const root = await workspace();
       const locked = join(root, "src", "locked");
       await mkdir(locked);
-      const message = `src/locked: ${denyFolder(locked)}`;
+      const folder = `src/locked: ${denyFolder(locked)}`;
+      // An unlisted file too large to read is said once at its stamp; the folder at each turn the walk cannot read it.
+      await writeFile(join(root, "big.bin"), Buffer.alloc(1_000_001));
+      const large = "big.bin: Source exceeds 1000000 byte policy limit";
       const gaps: unknown[] = [];
       const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
         onDiscoveryGap: gap => { gaps.push(gap); },
@@ -725,13 +728,15 @@ describe("CodeRuleBridge", () => {
       await bridge.openWorkspace("session-1");
 
       await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({
-        failures: [{ clauseId: "source-discovery", code: "source-incomplete", message, stage: "scan" }],
+        failures: [{ clauseId: "source-discovery", code: "source-incomplete", message: `${folder}; ${large}`, stage: "scan" }],
       }));
-      await bridge.checkpoint("turn");
-      expect(gaps).toEqual([{ boundary: "turn", message }, { boundary: "turn", message }]);
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({
+        failures: [expect.objectContaining({ code: "source-incomplete", message: folder })],
+      }));
+      expect(gaps).toEqual([{ boundary: "turn", message: folder }, { boundary: "turn", message: large }, { boundary: "turn", message: folder }]);
       discovery.directories.delete(locked);
       await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({ failures: [] }));
-      expect(gaps).toHaveLength(2);
+      expect(gaps).toHaveLength(3);
     });
 
     it("leaves a boundary that answered before its walk finished to the pending callback alone", async () => {
@@ -768,7 +773,7 @@ describe("CodeRuleBridge", () => {
       const locked = join(root, "src", "locked");
       await mkdir(locked);
       const message = `src/locked: ${denyFolder(locked)}`;
-      const onDiscoveryGap = vi.fn(() => { throw new Error("database is locked"); });
+      const onDiscoveryGap = vi.fn((_gap: unknown) => { throw new Error("database is locked"); });
       const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGap });
       try {
         await bridge.openWorkspace("session-1");

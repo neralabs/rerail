@@ -246,7 +246,7 @@ describe("Rerail API over HTTP", () => {
     const locked = { boundary: "turn" as const, message: "src/locked: EACCES: permission denied, opendir '/repo/src/locked'" };
     sessionStore.recordDiscoveryGap(SESSION, locked);
     sessionStore.recordDiscoveryGap(SESSION, locked);
-    sessionStore.recordDiscoveryGap(SESSION, { boundary: "turn", message: "big.bin: Source exceeds 1048576 byte policy limit" });
+    sessionStore.recordDiscoveryGap(SESSION, { boundary: "turn", message: "big.bin: Source exceeds 1000000 byte policy limit" });
     // More than a transcript page of later events: the dashboard opens on those and never loads the gaps.
     for (let index = 0; index < 600; index += 1) {
       sessionStore.append({ sessionId: SESSION.sessionId, eventId: `later-${index}`, kind: "turn-end", observedAt: 10_000 + index, payload: {} });
