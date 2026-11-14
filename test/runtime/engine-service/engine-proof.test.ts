@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { closeSync, existsSync, openSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
@@ -11,18 +11,13 @@ import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { DAEMON_STATE_FILE, lookupDaemon, type DaemonState } from "../../../src/runtime/daemon-control.js";
-import { DAEMON_START_TIMEOUT_MS, engineCapabilityProof, engineHoldsCapability, engineProof } from "../../../src/runtime/engine-proof.js";
+import { engineCapabilityProof, engineHoldsCapability, engineProof } from "../../../src/runtime/engine-proof.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 /** How far past its limit a proof may answer on a loaded test machine; the wait it must not take is 30 s. */
 const SLACK_MS = 2_000;
 /** How long a test waits for a process that should have ended once it answered, before it reads it as held. */
 const HELD_MS = 25_000;
-/**
- * What of `rerail daemon start`'s wait a daemon's launch before its engine listens and the rest of its start after may
- * take on a loaded Windows machine; the engine start's proof beside a held pipe has the remainder.
- */
-const DAEMON_LAUNCH_MS = 5_000;
 
 /**
  * A listener whose process's one event loop stops once it listens, as a daemon's does while it is paused or inside a
@@ -125,18 +120,12 @@ async function busyEngine(path: string, stopMs: number): Promise<void> {
   expect(await firstLine(startNode(BUSY_ENGINE, [PROOF_MODULE, path, String(stopMs)], true))).toMatch(/^busy [1-9]\d* EBUSY\n$/u);
 }
 
-/** What a holder of a pipe does besides taking one client and never reading: what it writes first, and how long it lives. */
-interface HolderBehaviour {
-  answer?: string;
-  seconds?: number;
-}
-
 /**
  * A holder of the pipe `name` that is not an engine, as any local user can create an engine pipe's name first: one
  * instance with no input buffer, which takes one client and never reads, so a write to it waits until the holder ends,
- * `seconds` on (20 by default). With an `answer`, it writes that to the client first. Returns once the instance exists.
+ * 20 s on. With an `answer`, it writes that to the client first. Returns once the instance exists.
  */
-async function holderThatNeverReads(name: string, { answer, seconds = 20 }: HolderBehaviour = {}): Promise<void> {
+async function holderThatNeverReads(name: string, answer?: string): Promise<void> {
   const script = [
     "$ErrorActionPreference = 'Stop'",
     "Add-Type -AssemblyName System.Core",
@@ -147,7 +136,7 @@ async function holderThatNeverReads(name: string, { answer, seconds = 20 }: Hold
       `$answer = [Convert]::FromBase64String('${Buffer.from(answer, "latin1").toString("base64")}')`,
       "$pipe.Write($answer, 0, $answer.Length); $pipe.Flush()",
     ]),
-    `Start-Sleep -Seconds ${seconds}`,
+    "Start-Sleep -Seconds 20",
   ].join("\n");
   const holder = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
     stdio: ["ignore", "pipe", "inherit"], windowsHide: true,
@@ -167,23 +156,6 @@ async function proveInAnotherProcess(path: string): Promise<{ answer: unknown; r
   const answeredAt = Date.now();
   await Promise.race([closed, delay(HELD_MS)]);
   return { answer: (JSON.parse(line) as { answer: unknown }).answer, ranOnMs: Date.now() - answeredAt };
-}
-
-/**
- * Opens the pipe `path` until no instance is free, keeps what it opened until the test ends, and says how many it took
- * and how the next open ended: `EBUSY` once none was free.
- */
-function openEveryFreeInstance(path: string): string {
-  for (let taken = 0; taken < 16; taken += 1) {
-    try {
-      const opened = openSync(path, "r+");
-      closers.push(() => closeSync(opened));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EBUSY") throw error;
-      return `${taken} taken, then EBUSY`;
-    }
-  }
-  return "16 taken, none refused";
 }
 
 /**
@@ -275,26 +247,10 @@ describe.runIf(process.platform === "win32")("the engine proof, against a pipe's
   // cancels it.
   it("leaves its process free to end once it has a verdict, also when the holder answers before it reads the request", async () => {
     const name = pipeName("answered");
-    await holderThatNeverReads(name, { answer: "HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\n\r\n" });
+    await holderThatNeverReads(name, "HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\n\r\n");
     const { answer, ranOnMs } = await proveInAnotherProcess(String.raw`\\.\pipe` + "\\" + name);
     expect(answer, `the process ended ${ranOnMs} ms after its answer`).toBe("refused");
     expect(ranOnMs).toBeLessThan(SLACK_MS);
-  }, 45_000);
-});
-
-describe.runIf(process.platform === "win32")("the engine start, against a holder that keeps every instance of the pipe taken", () => {
-  // Any local user can create the engine pipe's name first and keep its one instance taken. The start must pass the
-  // holder over in time to listen on the fallback pipe before `rerail daemon start` stops waiting for the daemon.
-  it("passes the holder over within what the daemon start leaves it", async () => {
-    const name = pipeName("squat");
-    await holderThatNeverReads(name, { seconds: 60 });
-    const path = String.raw`\\.\pipe` + "\\" + name;
-    expect(openEveryFreeInstance(path)).toBe("1 taken, then EBUSY");
-    const began = Date.now();
-    const holds = await engineHoldsCapability(path, "capability");
-    const ms = Date.now() - began;
-    expect(holds, `the proof answered after ${ms} ms`).toBe(false);
-    expect(ms).toBeLessThan(DAEMON_START_TIMEOUT_MS - DAEMON_LAUNCH_MS);
   }, 45_000);
 });
 
@@ -308,10 +264,11 @@ describe.runIf(process.platform === "win32")("the engine proof, against a busy e
   }, 45_000);
 
   // The engine start asks before it listens beside a held pipe: a busy engine of this home read as another process
-  // would get a second daemon beside it.
-  it("lets the engine start find a busy engine of this home that frees an instance after a lookup's limit", async () => {
+  // would get a second daemon beside it. Within the 15 s `rerail daemon start` waits for the daemon, such an engine
+  // looks the same as a holder that keeps every instance taken, so the start waits for a free instance past them.
+  it("lets the engine start find a busy engine of this home that frees an instance only after the daemon start's 15 s", async () => {
     const path = pipePath("start");
-    await busyEngine(path, 3_000);
+    await busyEngine(path, 20_000);
     const began = Date.now();
     expect(await engineHoldsCapability(path, "capability"), `the proof answered after ${Date.now() - began} ms`).toBe(true);
   }, 45_000);
