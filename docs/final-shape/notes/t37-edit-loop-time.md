@@ -6,10 +6,10 @@ This note measures the edit, build and test loop and says what to change. It cov
 
 - what makes the loop long and costly in CPU;
 - Relax, a JIT for Rust;
-- compiling on other machines (an M1 mac mini, an M1 Max and an M3 Max are idle on the LAN);
+- compiling on other machines;
 - the long-running tests.
 
-The numbers are from 2026-11-14 on the M5 Max (18 cores). They were taken on the hub
+The numbers are from 2026-11-14 on the development machine (18 cores). They were taken on the hub
 (`final-shape-serverplan-quality` at 686ede10a). Every run was at `nice -n 19`. Other sessions
 kept the load between 40 and 90, so wall times are inflated. CPU time (user + sys) is the figure
 to compare.
@@ -187,13 +187,13 @@ What adoption needs:
 
 What the idle machines can do:
 
-- **A shared sccache backend.** Run MinIO (S3) or Redis on the mac mini. It helps fresh
+- **A shared sccache backend.** Run MinIO (S3) or Redis on an idle machine. It helps fresh
   worktrees, dependency bumps and toolchain changes. Every machine and session must then use one
   rustc (see §5).
 - **Remote test runs.** This saves the most CPU here. Full suites and gates (45 CPU-minutes each)
-  run on the M3 Max or M1 Max over ssh, from a pushed branch, each machine keeping its own warm
-  `target/`. The M5 keeps only edit, rebuild and targeted tests. Metal tests that need M3 or later
-  GPU features stay off the M1s.
+  run on an idle machine over ssh, from a pushed branch, each machine keeping its own warm
+  `target/`. The development machine keeps only edit, rebuild and targeted tests. Metal tests that
+  need newer GPU features run only where the GPU has them.
 
 ## 5. The environment
 
@@ -247,5 +247,5 @@ Still to do:
    - per-test times;
    - test groups;
    - a slow-test timeout.
-5. **A shared sccache backend on the mac mini, and the gates on the idle Macs** (§4).
+5. **A shared sccache backend, and the gates on the idle machines** (§4).
 
