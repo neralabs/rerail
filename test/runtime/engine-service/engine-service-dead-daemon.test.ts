@@ -24,8 +24,16 @@ const roots: string[] = [];
 const services: EngineService[] = [];
 const children: ChildProcess[] = [];
 
+/** Kills `child` unless it has exited, and waits for its exit: a folder it runs in cannot be removed before. */
+function ended(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
+  child.kill("SIGKILL");
+  return exited;
+}
+
 afterEach(async () => {
-  for (const child of children.splice(0)) if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+  await Promise.all(children.splice(0).map(ended));
   await Promise.allSettled(services.splice(0).map(service => service.close()));
   await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
@@ -185,6 +193,7 @@ describe("the next daemon's start after a daemon that died", () => {
       setOwner(databasePath, "q", { processId: await pidHolder() });
       const next = await service(root, databasePath, () => Date.now() + 3 * DAY);
       const { endedAt, heardAt } = recorded(databasePath, "q");
+      expect(endedAt, "the record ended").not.toBeNull();
       expect(endedAt).toBeGreaterThanOrEqual(heardAt + IDLE_MS);
       expect(endedAt).toBeLessThanOrEqual(closedAt);
       expect(live(databasePath, "q")).toBe(false);
