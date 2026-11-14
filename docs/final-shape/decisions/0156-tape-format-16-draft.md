@@ -6,6 +6,33 @@ day after the user's answers: open choices are written as tradeoffs to measure, 
 Replaces, if accepted: 0025 (v9np), 0140's writer, and parts of 0026 and 0032.
 Survey: `notes/t35-tape-format-issues.md` (cited below as "t35 n").
 
+## Fixed: the tape is read in place, never decoded (the user, 2026-11-14)
+
+This is not a tradeoff. It holds for every candidate, and a design that breaks it is wrong by
+construction.
+
+- **No decoding, no transformations.** Every question a reader asks is answered on the in-memory
+  tape's bytes, where they lie, as every simdjson operation runs on simdjson's tape. Nothing turns
+  the tape into another form: no columns, trees, records, rows or copies of facts.
+- **The questions** are kind, field, flags, named, supertype memberships, span (start and end),
+  children, next sibling, subtree end, parent, line, text and `span_within`. Each needs a direct
+  read, or a bounded walk, on the tape.
+- **Compression in memory must be readable in place.** Examples: block-local bit widths read with
+  a shift and a mask; a repeated subtree stored once and referenced; LZ whose references name
+  *compressed* content, with an index (requirements 2 and 3). Entropy coding is not readable in
+  place, so it is only for storage.
+- **On disk, a general codec (zstd) is allowed.** It is not an in-memory format: loading inflates
+  it to exactly the in-memory tape bytes. Balancing it is part of the design, but not most of it.
+- **The measure** of a candidate is its in-memory bytes per node, and the in-place cost of each
+  question, weighted by what rules actually ask (E7). At-rest bytes and load cost are a separate,
+  smaller axis (E10).
+
+The user's requirements always said this: simdjson's tape; compression the GPU reads; the same
+structure with the same bits "without affecting the decodability"; LZ references into compressed
+content "plus some kind of index structure" for random access; less data in memory. Sections 1.1
+and 4 below, and the decode-speed experiments, drifted from it. Section 4 is withdrawn; 1.1's
+deltas stay only where a question can still be answered in place (T9).
+
 ## Intro
 
 **What a tape is for.** A tape is the engine's copy of one file's parse tree: each named node's
@@ -245,32 +272,12 @@ block everything is u32, block-relative, so per-node decoded records stay 32-bit
 reference is (block, local) or a u64 ordinal. A stored block is far below SQLite's 2^31−1-byte blob
 limit (1 GB by default), which no single-frame format could meet for such files (t35 U5).
 
-## 4. Decoding and the resident form
+## 4. Decoding and the resident form (withdrawn, 2026-11-14)
 
-A decode turns a block into the one resident per-node form that every reader uses:
-- the codec (2);
-- opens' event indexes from a prefix sum of `pops`, with closes filling the gaps in postorder;
-- absolute positions from an inclusive scan of deltas in event order, plus the block's base;
-- depth from a scan of (1 − pops);
-- parent and size by an all-nearest-smaller-values pass over depth (parallel on the device, a stack
-  on the CPU);
-- line numbers from the text stream's newline counts (6), with no source scan.
-
-```text
-resident record (columns, 16-byte aligned, block-relative u32)
-  kind u16, field u8, flags u8, memb u16, start u32, end u32, parent u32, size u32, line u32
-```
-
-That is about 26 B a node, in one place. Today a read builds `Rec` (40 B), `Facts` (about 39 B),
-`MetalNode` (44 B) and the anchor index's entries (about 100 B), each per phase (t35 35–36). Format
-16 cannot by itself stop the engine making copies. What it does is make the decoded block complete
-enough that none is needed: parent, next sibling (i + size), span and line are there. Decoding happens
-once at admission, with validation and hashing then too (t35 38–40). That is the spec's "once per
-admission" rule (`rule-engine-direction/spec.md:474`), made the only path.
-
-On the CPU the parent pass is the stack that already exists (4.1–5.1 ns a node). Storing a parent
-delta, as the spike's rec6 did (1 B in 96.6% of nodes), is left to E3: format 16 derives it, and
-adds a stored plane only if the derivation measures as a cost.
+This section proposed decoding each block into a resident per-node form of about 26 B a node,
+which every reader would use. That breaks the fixed requirement above: readers read the tape
+itself. What it was for still holds, in the tape: parent, next sibling, span and line must be
+answerable in place (T9), and validation and hashing happen once at admission.
 
 ## 5. Hashes and identity
 
@@ -517,6 +524,32 @@ node. The choice is whether those boundaries keep the tape and rebuild what a re
   (T6). And `span_within` is never stored, because the tree already holds it.
 - **Measured by:** E9.
 
+### T9. Each question, answered in place
+
+Every question must be answered on the tape where it lies. The tradeoff is how each field is
+stored: what it costs in bytes, what it costs to read in place, and whether a repeated subtree
+keeps the same bits.
+
+- **Subtree end and next sibling.** An absolute index of the node's end (simdjson) is a direct
+  read, but differs in every copy of a subtree. A self-relative distance (the subtree's size) is
+  the same in every copy and is just as direct.
+- **Start and end.** Absolute positions are direct reads, but no two copies match. A delta from the
+  event before needs a scan, which is a decode. Between them: a block base plus block-local
+  offsets; an offset from the parent's start (a walk up); or a stored start every K nodes, with
+  deltas between (a walk of at most K).
+- **Parent.** None (walkers come down from the parent and know it), a self-relative back distance,
+  or a back pointer in the close. The pack reads parent under 0.01 times a node, and the heaviest
+  rule 1.3 times (E7).
+- **Line.** A line table in the tape, searched; or a line delta per node, with the same choice as
+  start.
+- **Widths.** Fixed-width fields (simdjson's 8 B words), or block-local bit widths read with a shift
+  and a mask (E8 gives the widths each field needs).
+- **Repetition.** A repeated subtree stored once and referenced, or LZ references into earlier
+  records with an index from node to location. A read through a reference must stay a direct read.
+- **Text.** A leaf's span into the source, or its id in the names stream (6). Comparison works on
+  bytes, or on stream ids once a constant has been found in the pool.
+- **Measured by:** E10.
+
 ## Experiments
 
 Each reports a curve over its options, not a pass or fail. Each runs on captured corpora
@@ -538,6 +571,18 @@ Each reports a curve over its options, not a pass or fail. Each runs on captured
 - **E9, base relations** (T8). The engine's base relations (`node`, `child`, `field`, `line`,
   `span_within`) as the store encodes them, against the tape. Measures bytes, the cost to rebuild
   each side's probe form, and ns a probe.
+- **E10, in place** (T9, and T1–T4 for storage). Each candidate tape is built in memory, and every
+  question is answered on its bytes with nothing built beside it. An index counts only if it is
+  part of the tape, and its bytes are counted. Reported per candidate and corpus:
+  - in-memory bytes per node;
+  - each question's cost on the CPU (ns and instructions), and cache lines touched, every answer
+    checked against the tree;
+  - the same cost weighted by E7's question mix, for the median, 90th-percentile and heaviest rule;
+  - same bits: the share of repeated subtrees, and of CDC blocks, whose bytes are identical;
+  - on disk: bytes per node under zstd (with and without a dictionary), and the load cost to inflate
+    to exactly the in-memory bytes;
+  - the writer's cost a node (E6).
+  On Metal, the same questions as kernels, later.
 - **E8, key width** (T7). Index and fact store bytes a row under each identity, against the
   4.5–8 B/row target.
 
@@ -561,10 +606,10 @@ T3–T5 sweeps. Its README says how to rerun them and add a candidate. The first
   15–19). The tape's names stream holds the text in 1.0–1.4 B/node and decodes at about 2 ns a leaf.
   Atoms win only for comparisons (0.55 ns against 2.2 for bytes). So text is read from the tape and
   interned only where a join needs it.
-- E9, partial decode: on the CPU a single node's read costs 5.8–15 µs, against 78–89 ns a node for the
-  whole document. A partial decode pays only below one read in 74–177 nodes. The median rule reads
-  about one part in 9 nodes beyond its kind and flags sweep. So format 16 is decoded whole, and
-  random reads serve only single lookups outside a run.
+- E9, partial decode (withdrawn as a conclusion, 2026-11-14): a single node's read through span LZ
+  plus Huffman costs 5.8–15 µs, against 78–89 ns a node to decode the whole document. Both decode,
+  so both break the fixed requirement. What it shows is that span LZ under entropy coding is not
+  readable in place. It stays a storage candidate, not an in-memory one.
 
 ## Answered by the user (2026-11-13)
 

@@ -1,5 +1,10 @@
 # Tape format 16 lab
 
+**Fixed (0156, 2026-11-14): the tape is read in place, never decoded.** Every question a reader
+asks is answered on the in-memory tape's bytes. A candidate is costed by its in-memory bytes and by
+each question's in-place cost; decode speed applies only to an at-rest codec (zstd on disk), which
+inflates to exactly the in-memory bytes.
+
 Spikes for decision 0156's tradeoffs (T1–T7) and experiments (E1–E8). Each candidate encoding is code
 here, and each command prints one table of measurements, so any new solution is judged on every
 tradeoff by adding it to the grid and running the same commands.

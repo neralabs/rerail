@@ -712,10 +712,10 @@ sweep, the median rule reads about 0.11 parts a node (field 0.04, span 0.01, chi
 node, against 78 for the whole decode. Reads near each other would share segments, so this
 overstates them, but not by 8×.
 
-- **Decode whole documents.** A partial decode loses for the median rule, and the kind and flags
-  sweep needs every node anyway. Format 16 needs a fast whole-document decode on the CPU and on the
-  GPU, not random access to single nodes. Random reads stay useful only for a single lookup outside
-  a run, such as a finding's location.
+- **Withdrawn (2026-11-14): "decode whole documents".** The tape is read in place, never decoded
+  (0156, "Fixed"). Both sides of this comparison decode, so neither is a format 16 reader. What the
+  numbers show is that span LZ under Huffman cannot be read in place: it is a storage candidate only.
+  E10 measures the in-place readers.
 
 ## Open items found along the way
 
