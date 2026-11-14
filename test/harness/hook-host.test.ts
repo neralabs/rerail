@@ -1,6 +1,6 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -759,6 +759,8 @@ const agentGitSettings: Array<{ variable: string; arrange: (root: string) => { w
 /** What each proof of the hook start check (`stoppedWithoutGit`) found, in order. */
 interface ProofLog {
   readonly found: Array<boolean | "threw">;
+  /** How long each proof took, in ms, in the same order. */
+  readonly took: number[];
   run(proof: () => boolean): boolean;
   /** Marks the start of another start check: `ran` then waits for its proof. */
   nextCheck(): void;
@@ -768,21 +770,25 @@ interface ProofLog {
 
 function proofLog(): ProofLog {
   const found: Array<boolean | "threw"> = [];
+  const took: number[] = [];
   const waiting: Array<{ count: number; resolve: () => void }> = [];
   let before = 0;
-  const record = (result: boolean | "threw"): void => {
+  const record = (result: boolean | "threw", begun: number): void => {
+    took.push(performance.now() - begun);
     found.push(result);
     for (const each of waiting.filter(entry => found.length >= entry.count)) each.resolve();
   };
   return {
     found,
+    took,
     run: proof => {
+      const begun = performance.now();
       try {
         const result = proof();
-        record(result);
+        record(result, begun);
         return result;
       } catch (error) {
-        record("threw");
+        record("threw", begun);
         throw error;
       }
     },
@@ -888,9 +894,9 @@ async function startCheckHost(proof?: (workspace: string) => boolean, spelling?:
       seen.opened.push(path);
       return actual.openRerailDatabase(path, options);
     };
-    const openRerailDatabaseAsIs: typeof actual.openRerailDatabaseAsIs = path => {
-      seen.opened.push(path);
-      return actual.openRerailDatabaseAsIs(path);
+    const openRerailDatabaseAsIs: typeof actual.openRerailDatabaseAsIs = (...open) => {
+      seen.opened.push(open[0]);
+      return actual.openRerailDatabaseAsIs(...open);
     };
     return { ...actual, openRerailDatabase, openRerailDatabaseAsIs };
   });
@@ -1300,6 +1306,209 @@ function recordTypedCheck(found: TypedChecksFound, folder: MiscasedFolder, { nam
 }
 
 /**
+ * The longest the hook's own read may take where it cannot read the database: it gives up at once there, where it took
+ * 1.5 to 5 s waiting on another process's lock, and about 1.4 s on Windows inside SQLite's retries of an open Windows
+ * refused. A whole read takes a median 7 to 9 ms.
+ */
+const GIVEN_UP_WITHIN_MS = 200;
+
+/**
+ * The start check in `workspace`, beside `daemon`, which answers started only once the hook's own read has run: the
+ * hook waits for it and takes its answer, well before its read of the daemon would give up, and its own read gave up
+ * within `GIVEN_UP_WITHIN_MS`.
+ */
+async function startedFromLateDaemon(host: StartCheckHost, daemon: CountingDaemon, workspace: string): Promise<void> {
+  const started = await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", workspace));
+  expect({ started, proofs: host.proofs.found, requests: daemon.requests, ended: daemon.ended() })
+    .toEqual({ started: true, proofs: [false], requests: ["/api/presentation"], ended: 0 });
+  expect(host.proofs.took[0]).toBeLessThan(GIVEN_UP_WITHIN_MS);
+}
+
+/** Another process holding the Rerail database, until `end` ends it. */
+interface DatabaseHolder {
+  end(): Promise<void>;
+}
+
+/** Settles once `child` has printed `line`; rejects with what it printed when it exits first or 30 s pass. */
+async function printed(child: ChildProcess, line: string): Promise<void> {
+  let output = "";
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(`no "${line}" within 30 s: ${output}`)), 30_000);
+      child.stdout?.on("data", (chunk: Buffer) => {
+        output += String(chunk);
+        if (output.includes(line)) resolve();
+      });
+      child.stderr?.on("data", (chunk: Buffer) => {
+        output += String(chunk);
+      });
+      child.once("exit", code => reject(new Error(`exited ${String(code)} before "${line}": ${output}`)));
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** `command` with `args` once it prints `held`; `end` ends it and waits until it has exited. */
+async function holdingProcess(command: string, args: readonly string[]): Promise<DatabaseHolder> {
+  const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
+  const end = async (): Promise<void> => {
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+    await exited;
+  };
+  try {
+    await printed(child, "held");
+  } catch (error) {
+    await end();
+    throw error;
+  }
+  return { end };
+}
+
+/**
+ * Another process holding the Rerail database locked against readers, as a writer that keeps it does: SQLite's
+ * exclusive locking mode with a write open, until it ends or, with `releaseMs`, that long after it took the lock.
+ */
+async function lockedByAnotherProcess(releaseMs?: number): Promise<DatabaseHolder> {
+  const script = [
+    "const Database = require(require.resolve('better-sqlite3', { paths: [process.argv[1]] }));",
+    "const database = new Database(process.argv[2]);",
+    "database.pragma('locking_mode = EXCLUSIVE');",
+    "database.exec('BEGIN EXCLUSIVE');",
+    "database.exec('UPDATE repositories SET started = started');",
+    "process.stdout.write('held\\n');",
+    "if (process.argv[3] !== '') setTimeout(() => process.exit(0), Number(process.argv[3]));",
+    "setInterval(() => undefined, 1 << 30);",
+  ].join("\n");
+  return await holdingProcess(process.execPath, ["-e", script, process.cwd(), defaultRerailDatabasePath(), releaseMs === undefined ? "" : String(releaseMs)]);
+}
+
+/** A Windows system tool by its full path: a shell's own tools (Git Bash's `whoami`) may come first on PATH. */
+function windowsTool(...path: string[]): string {
+  return join(process.env.SystemRoot ?? String.raw`C:\Windows`, "System32", ...path);
+}
+
+/** Another program holding the Rerail database file open with no sharing, as a backup or a copy can. */
+async function heldWithoutSharing(): Promise<DatabaseHolder> {
+  const command = `$f = [System.IO.File]::Open('${defaultRerailDatabasePath().replaceAll("'", "''")}', 'Open', 'ReadWrite', 'None'); `
+    + "[Console]::Out.WriteLine('held'); [Console]::Out.Flush(); Start-Sleep -Seconds 600";
+  return await holdingProcess(windowsTool("WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", command]);
+}
+
+/** The Rerail database file denied to this user by an NTFS deny entry, which `end` takes off. */
+function deniedToThisUser(): Promise<DatabaseHolder> {
+  const user = execFileSync(windowsTool("whoami.exe"), ["/user", "/fo", "csv", "/nh"], { encoding: "utf8" }).trim().split(",").at(-1)!.replaceAll('"', "");
+  const path = defaultRerailDatabasePath();
+  execFileSync(windowsTool("icacls.exe"), [path, "/deny", `*${user}:F`], { stdio: "ignore" });
+  const end = (): Promise<void> => {
+    execFileSync(windowsTool("icacls.exe"), [path, "/remove:d", `*${user}`], { stdio: "ignore" });
+    return Promise.resolve();
+  };
+  return Promise.resolve({ end });
+}
+
+/**
+ * Ways Windows refuses to open the database for a moment, which SQLite's own open retries for about 1.4 s and the
+ * busy timeout does not bound.
+ */
+const windowsRefusals = [
+  { what: "another program holds the database file open and shares nothing", refuse: heldWithoutSharing },
+  { what: "the database file is denied to this user", refuse: deniedToThisUser },
+];
+
+/** `step`, tried again while Windows refuses it for a moment (a scanner or the search indexer holding a folder). */
+function retried<T>(step: () => T): T {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return step();
+    } catch (error) {
+      if (attempt >= 50) throw error;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
+  }
+}
+
+/** How a folder is away: moved aside, or moved aside with a file left at its path. */
+type Away = "moved" | "a file in its place";
+
+/** `step`, run while `folder` is away as `away` says; then the folder is back. */
+function whileAway<T>(folder: string, away: Away, step: () => T): T {
+  retried(() => renameSync(folder, `${folder}.aside`));
+  if (away === "a file in its place") writeFileSync(folder, "");
+  try {
+    return step();
+  } finally {
+    if (away === "a file in its place") retried(() => rmSync(folder));
+    retried(() => renameSync(`${folder}.aside`, folder));
+  }
+}
+
+/** The error code of `error`, or its name. */
+function codeOf(error: unknown): string {
+  return error instanceof Error && "code" in error ? String(error.code) : String(error);
+}
+
+/**
+ * `checkout-control.ts` with `physicalPath` of `top` failing once, as it fails when `folder` goes away between its look
+ * for the path and its realpath of it: it takes the realpath itself while the folder is away, and adds the error's code
+ * to `thrown`. In a start check beside a stand-in daemon, only the hook's own read resolves `top`.
+ */
+function physicalPathFailingOnce(top: string, folder: string, away: Away, thrown: string[]): void {
+  vi.doMock("../../src/engine/catalog/checkout-control.js", async () => {
+    const actual = await vi.importActual<typeof import("../../src/engine/catalog/checkout-control.js")>("../../src/engine/catalog/checkout-control.js");
+    const realpath = process.platform === "win32" ? realpathSync.native : realpathSync;
+    return {
+      ...actual,
+      physicalPath: (path: string, platform?: NodeJS.Platform) => {
+        if (thrown.length > 0 || path !== top) return actual.physicalPath(path, platform);
+        try {
+          return whileAway(folder, away, () => realpath(path));
+        } catch (error) {
+          thrown.push(codeOf(error));
+          throw error;
+        }
+      },
+    };
+  });
+}
+
+/**
+ * Ways a checkout's path stops resolving for a moment while the hook's own read resolves it, with the code Node's
+ * realpath fails with on this system.
+ */
+const checkoutPathsGoneAWhile = [
+  { what: "the checkout's folder is moved away", away: "moved" as const, folderOf: (top: string) => top, code: "ENOENT" },
+  {
+    what: "the checkout's parent folder is replaced by a file", away: "a file in its place" as const, folderOf: (top: string) => dirname(top),
+    code: process.platform === "win32" ? "ENOENT" : "ENOTDIR",
+  },
+];
+
+/**
+ * `checkout-control.ts` with `top` moved away as soon as the hook's walk has the real path of the folder it starts from
+ * (`storedPath`, which only the walk calls in a start check), and back on the next turn of the event loop, once the
+ * hook's own read is over; `moves` gets the path the walk started from.
+ */
+function topMovedAwayOnceWalkStarts(top: string, moves: string[]): void {
+  vi.doMock("../../src/engine/catalog/checkout-control.js", async () => {
+    const actual = await vi.importActual<typeof import("../../src/engine/catalog/checkout-control.js")>("../../src/engine/catalog/checkout-control.js");
+    return {
+      ...actual,
+      storedPath: (path: string) => {
+        const stored = actual.storedPath(path);
+        if (moves.length > 0) return stored;
+        moves.push(path);
+        retried(() => renameSync(top, `${top}.aside`));
+        setImmediate(() => retried(() => renameSync(`${top}.aside`, top)));
+        return stored;
+      },
+    };
+  });
+}
+
+/**
  * A grace for the start check that no answer of the daemon's misses, nor the empty read where none is recorded: a test
  * of what the hook does when the daemon answers in time gives it, so a slow or busy machine cannot make that answer late.
  */
@@ -1412,6 +1621,72 @@ describe("the hook start check", () => {
     try {
       expect({ started: await host.hookRerailStarted("claude-code", app), proofs: host.proofs.found, requests: daemon.requests, stepRun: stepRun(step) })
         .toEqual({ started: true, proofs: [false], requests: ["/api/presentation"], stepRun: false });
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it.each([
+    { held: "for the whole check", releaseMs: undefined },
+    { held: "and lets it go 1.5 s later", releaseMs: 1_500 },
+  ])("waits for a late daemon without waiting on the lock where another process holds the database locked $held", { timeout: 30_000 }, async ({ releaseMs }) => {
+    const root = await temporaryDirectory({ started: false });
+    const app = startedApp(root);
+    const host = await startCheckHost();
+    const daemon = await daemonAnsweringAfterProof(host, "started");
+    const holder = await lockedByAnotherProcess(releaseMs);
+    try {
+      await startedFromLateDaemon(host, daemon, app);
+    } finally {
+      await holder.end();
+      await daemon.close();
+    }
+  });
+
+  it.runIf(process.platform === "win32").each(windowsRefusals)("waits for a late daemon at once where $what", { timeout: 30_000 }, async ({ refuse }) => {
+    const root = await temporaryDirectory({ started: false });
+    const app = startedApp(root);
+    const host = await startCheckHost();
+    const daemon = await daemonAnsweringAfterProof(host, "started");
+    const holder = await refuse();
+    try {
+      await startedFromLateDaemon(host, daemon, app);
+    } finally {
+      await holder.end();
+      await daemon.close();
+    }
+  });
+
+  it.each(checkoutPathsGoneAWhile)("waits for a late daemon where $what while the hook's own read resolves the checkout's path", async ({ away, folderOf, code }) => {
+    const root = await temporaryDirectory({ started: false });
+    const app = startedApp(join(root, "parent"));
+    mkdirSync(join(app, "src"));
+    const top = realpathSync.native(app);
+    const thrown: string[] = [];
+    physicalPathFailingOnce(top, folderOf(top), away, thrown);
+    const host = await startCheckHost();
+    const daemon = await daemonAnsweringAfterProof(host, "started");
+    try {
+      expect({
+        started: await host.hookRerailStarted("claude-code", join(app, "src")), proofs: host.proofs.found, requests: daemon.requests, ended: daemon.ended(), thrown,
+      }).toEqual({ started: true, proofs: [false], requests: ["/api/presentation"], ended: 0, thrown: [code] });
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it("waits for a late daemon where the checkout's folder is moved away while the hook walks up from a folder inside it", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = startedApp(root);
+    mkdirSync(join(app, "src"));
+    const moves: string[] = [];
+    topMovedAwayOnceWalkStarts(app, moves);
+    const host = await startCheckHost();
+    const daemon = await daemonAnsweringAfterProof(host, "started");
+    try {
+      expect({
+        started: await host.hookRerailStarted("claude-code", join(app, "src")), proofs: host.proofs.found, requests: daemon.requests, ended: daemon.ended(), moves: moves.length,
+      }).toEqual({ started: true, proofs: [false], requests: ["/api/presentation"], ended: 0, moves: 1 });
     } finally {
       await daemon.close();
     }
