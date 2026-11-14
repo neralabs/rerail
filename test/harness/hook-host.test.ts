@@ -506,7 +506,8 @@ interface CountingDaemon {
  * repository's start state is `repositoryState`, or what it gives for the folder asked about. With `answerWhen`, it
  * holds each start check until the promise `answerWhen` gives for it settles, as a daemon busy with other checkouts
  * does, and `close` lets every held one go. On Windows a recorded daemon counts as alive only while its
- * engine pipe exists (`recordedDaemonAlive`), so it holds one.
+ * engine pipe exists (`recordedDaemonAlive`), so it holds one. It keeps the Rerail database open where there is one, as
+ * a running daemon does, so the database's WAL and the WAL's index stay beside it.
  */
 async function countingDaemon(
   home: string,
@@ -550,16 +551,36 @@ async function countingDaemon(
     pid: process.pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "test",
     databasePath: join(home, "rerail.sqlite"), kernelSocketPath, ui: "bundled", startedAt: 1, packageRoot: home,
   }));
+  const database = heldOpen(join(home, "rerail.sqlite"));
   return {
     requests,
     asked,
     ended: () => ended,
     close: async () => {
       closing.resolve();
+      database?.close();
       await releaseEndpoint();
       await new Promise<void>(resolve => server.close(() => resolve()));
     },
   };
+}
+
+/**
+ * A read-only connection to the database at `path` that has read it once, which makes its WAL and the WAL's index;
+ * undefined where there is no database yet, or another process holds it so that a read fails at once. Read-only, so
+ * it never writes the file nor runs a schema step on it, and closing it leaves the WAL and the index there.
+ */
+function heldOpen(path: string): Database.Database | undefined {
+  if (!existsSync(path)) return undefined;
+  let database: Database.Database | undefined;
+  try {
+    database = new Database(path, { readonly: true, fileMustExist: true, timeout: 0 });
+    database.prepare("SELECT count(*) FROM sqlite_master").get();
+    return database;
+  } catch {
+    database?.close();
+    return undefined;
+  }
 }
 
 /** A daemon busy with other checkouts the whole test: it answers no start check until it closes. */
@@ -621,24 +642,6 @@ describe("hooks where Rerail does not run", () => {
     const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest);
     try {
       expect(await answeredWellBeforeReadLimit(run(root))).toEqual({});
-      const { asked, ended } = await endedStartChecks(daemon);
-      expect(ended).toBe(asked);
-    } finally {
-      await daemon.close();
-    }
-  });
-
-  it.each(hooksWhereRerailIsOff)("answer $host's $event in a folder outside Git that Rerail was never started in without waiting for a busy daemon", async ({ run }) => {
-    const root = await temporaryDirectory({ started: false });
-    // Rerail runs in another folder on the machine, so the database is there.
-    const elsewhere = join(root, "elsewhere");
-    const never = join(root, "never");
-    await mkdir(elsewhere);
-    await mkdir(never);
-    startTestRepository(elsewhere);
-    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest);
-    try {
-      expect(await answeredWellBeforeReadLimit(run(never))).toEqual({});
       const { asked, ended } = await endedStartChecks(daemon);
       expect(ended).toBe(asked);
     } finally {
@@ -970,6 +973,27 @@ const foldersTheDaemonDecides = [
   {
     folder: "a new clone of a started repository", daemonSays: "stopped", started: false,
     make: (root: string) => { startedApp(root); return newClone(join(root, "clone")); },
+  },
+  // Each of the next two reads stopped only for what is not there: no `.git` above the folder and no record of it, or
+  // no record of the worktree and none around it. A `.git` or a record the walk missed would make it started.
+  {
+    folder: "a folder outside Git that no record names", daemonSays: "started", started: true,
+    make: (root: string) => {
+      startedApp(root);
+      const plain = join(root, "plain");
+      mkdirSync(plain);
+      return plain;
+    },
+  },
+  {
+    folder: "a linked worktree no record holds, of a repository stopped as a whole", daemonSays: "started", started: true,
+    make: (root: string) => {
+      const app = gitRepository(join(root, "app"));
+      startTestRepository(app);
+      stopRerail(app, silently, { repository: true });
+      git(app, "worktree", "add", "-q", join(root, "wt"));
+      return join(root, "wt");
+    },
   },
 ];
 
@@ -1397,10 +1421,9 @@ async function heldWithoutSharing(): Promise<DatabaseHolder> {
   return await holdingProcess(windowsTool("WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", command]);
 }
 
-/** The Rerail database file denied to this user by an NTFS deny entry, which `end` takes off. */
-function deniedToThisUser(): Promise<DatabaseHolder> {
+/** A file of the Rerail database, the database itself unless `path` names another, denied to this user by an NTFS deny entry, which `end` takes off. */
+function deniedToThisUser(path = defaultRerailDatabasePath()): Promise<DatabaseHolder> {
   const user = execFileSync(windowsTool("whoami.exe"), ["/user", "/fo", "csv", "/nh"], { encoding: "utf8" }).trim().split(",").at(-1)!.replaceAll('"', "");
-  const path = defaultRerailDatabasePath();
   execFileSync(windowsTool("icacls.exe"), [path, "/deny", `*${user}:F`], { stdio: "ignore" });
   const end = (): Promise<void> => {
     execFileSync(windowsTool("icacls.exe"), [path, "/remove:d", `*${user}`], { stdio: "ignore" });
@@ -1511,6 +1534,60 @@ function topMovedAwayOnceWalkStarts(top: string, moves: string[]): void {
       },
     };
   });
+}
+
+/**
+ * `checkout-control.ts` with `checkout`'s `.git` folder moved to `separate` as soon as the hook's walk has the real path
+ * of the folder it starts from (`storedPath`), and a `gitdir:` file naming it written in its place on the next turn of
+ * the event loop, once the hook's own read is over: `git init --separate-git-dir` and `git submodule absorbgitdirs`
+ * leave a checkout with no `.git` for that moment. `moves` gets the path the walk started from.
+ */
+function dotGitTurnedIntoAFileOnceWalkStarts(checkout: string, separate: string, moves: string[]): void {
+  vi.doMock("../../src/engine/catalog/checkout-control.js", async () => {
+    const actual = await vi.importActual<typeof import("../../src/engine/catalog/checkout-control.js")>("../../src/engine/catalog/checkout-control.js");
+    return {
+      ...actual,
+      storedPath: (path: string) => {
+        const stored = actual.storedPath(path);
+        if (moves.length > 0) return stored;
+        moves.push(path);
+        retried(() => renameSync(join(checkout, ".git"), separate));
+        setImmediate(() => writeFileSync(join(checkout, ".git"), `gitdir: ${separate}\n`));
+        return stored;
+      },
+    };
+  });
+}
+
+/**
+ * Another process holding the Rerail database as the daemon's writer does, with `started` committed for every
+ * repository only in the WAL: it checkpoints no more, and the database file itself says stopped.
+ */
+async function startedOnlyInTheWal(): Promise<DatabaseHolder> {
+  const script = [
+    "const Database = require(require.resolve('better-sqlite3', { paths: [process.argv[1]] }));",
+    "const database = new Database(process.argv[2]);",
+    "database.pragma('wal_autocheckpoint = 0');",
+    "database.exec('UPDATE repositories SET started = 0');",
+    "database.pragma('wal_checkpoint(TRUNCATE)');",
+    "database.exec('UPDATE repositories SET started = 1');",
+    "process.stdout.write('held\\n');",
+    "setInterval(() => undefined, 1 << 30);",
+  ].join("\n");
+  return await holdingProcess(process.execPath, ["-e", script, process.cwd(), defaultRerailDatabasePath()]);
+}
+
+/**
+ * The WAL and the WAL's index a reader left beside the database when it closed: another process can then take the file
+ * alone, which it cannot while a daemon's connection holds it.
+ */
+function companionsLeftByAReader(): void {
+  heldOpen(defaultRerailDatabasePath())?.close();
+}
+
+/** A Windows server address that never answers (TEST-NET-1), one per call: Windows remembers a server it gave up on. */
+function silentServer(): string {
+  return `192.0.2.${String(2 + Math.floor(Math.random() * 250))}`;
 }
 
 /**
@@ -1638,8 +1715,10 @@ describe("the hook start check", () => {
     const root = await temporaryDirectory({ started: false });
     const app = startedApp(root);
     const host = await startCheckHost();
-    const daemon = await daemonAnsweringAfterProof(host, "started");
+    companionsLeftByAReader();
     const holder = await lockedByAnotherProcess(releaseMs);
+    // The daemon reads nothing either while the lock is held.
+    const daemon = await daemonAnsweringAfterProof(host, "started");
     try {
       await startedFromLateDaemon(host, daemon, app);
     } finally {
@@ -1652,8 +1731,10 @@ describe("the hook start check", () => {
     const root = await temporaryDirectory({ started: false });
     const app = startedApp(root);
     const host = await startCheckHost();
-    const daemon = await daemonAnsweringAfterProof(host, "started");
+    companionsLeftByAReader();
     const holder = await heldWithoutSharing();
+    // The daemon cannot open the file either while the program holds it.
+    const daemon = await daemonAnsweringAfterProof(host, "started");
     try {
       await startedFromLateDaemon(host, daemon, app);
     } finally {
@@ -1707,6 +1788,87 @@ describe("the hook start check", () => {
       expect({
         started: await host.hookRerailStarted("claude-code", join(app, "src")), proofs: host.proofs.found, requests: daemon.requests, ended: daemon.ended(), moves: moves.length,
       }).toEqual({ started: true, proofs: [false], requests: ["/api/presentation"], ended: 0, moves: 1 });
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it("waits for a late daemon where the checkout's .git folder turns into a gitdir: file while the hook walks up from a folder inside it", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = startedApp(root);
+    mkdirSync(join(app, "src"));
+    const moves: string[] = [];
+    dotGitTurnedIntoAFileOnceWalkStarts(app, join(root, "separate.git"), moves);
+    const host = await startCheckHost();
+    const daemon = await daemonAnsweringAfterProof(host, "started");
+    try {
+      expect({
+        started: await host.hookRerailStarted("claude-code", join(app, "src")), proofs: host.proofs.found, requests: daemon.requests, ended: daemon.ended(), moves: moves.length,
+      }).toEqual({ started: true, proofs: [false], requests: ["/api/presentation"], ended: 0, moves: 1 });
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it("waits for a late daemon where a recorded checkout's .git folder turns into a gitdir: file while the hook walks up through it to a stopped checkout around it", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const nested = gitRepository(join(app, "nested"));
+    startTestRepository(nested);
+    mkdirSync(join(nested, "src"));
+    const moves: string[] = [];
+    dotGitTurnedIntoAFileOnceWalkStarts(nested, join(root, "separate.git"), moves);
+    const host = await startCheckHost();
+    const daemon = await daemonAnsweringAfterProof(host, "started");
+    try {
+      expect({
+        started: await host.hookRerailStarted("claude-code", join(nested, "src")), proofs: host.proofs.found, requests: daemon.requests, ended: daemon.ended(), moves: moves.length,
+      }).toEqual({ started: true, proofs: [false], requests: ["/api/presentation"], ended: 0, moves: 1 });
+    } finally {
+      await daemon.close();
+    }
+  });
+
+  it.runIf(process.platform === "linux")("waits for a late daemon where the WAL and its index are deleted under the daemon's writer, whose start is only in the WAL", { timeout: 30_000 }, async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = startedApp(root);
+    const host = await startCheckHost();
+    const daemon = await daemonAnsweringAfterProof(host, "started");
+    const writer = await startedOnlyInTheWal();
+    try {
+      for (const companion of ["-wal", "-shm"]) rmSync(`${defaultRerailDatabasePath()}${companion}`);
+      await startedFromLateDaemon(host, daemon, app);
+    } finally {
+      await writer.end();
+      await daemon.close();
+    }
+  });
+
+  it.runIf(process.platform === "win32")("waits for a late daemon at once where the database's WAL is denied to this user", { timeout: 30_000 }, async ({ skip }) => {
+    const root = await temporaryDirectory({ started: false });
+    const app = startedApp(root);
+    const host = await startCheckHost();
+    const daemon = await daemonAnsweringAfterProof(host, "started");
+    const wal = `${defaultRerailDatabasePath()}-wal`;
+    const holder = await deniedToThisUser(wal);
+    try {
+      if (nodeOpensDespiteDeny(wal)) skip("this process's Backup privilege is enabled, so Node's open passes the deny entry");
+      await startedFromLateDaemon(host, daemon, app);
+    } finally {
+      await holder.end();
+      await daemon.close();
+    }
+  });
+
+  it.runIf(process.platform === "win32")("waits for a late daemon at once where the checkout's .git file names a Git folder on a server", { timeout: 60_000 }, async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = startedApp(root);
+    renameSync(join(app, ".git"), join(root, "app.git"));
+    writeFileSync(join(app, ".git"), `gitdir: \\\\${silentServer()}\\share\\app.git\n`);
+    const host = await startCheckHost();
+    const daemon = await daemonAnsweringAfterProof(host, "started");
+    try {
+      await startedFromLateDaemon(host, daemon, app);
     } finally {
       await daemon.close();
     }
@@ -1796,7 +1958,11 @@ describe("the hook start check", () => {
     } finally {
       await daemon.close();
     }
-    expect({ wrong, askedThoughStopped }).toEqual({ wrong: [], askedThoughStopped: ["b/own-folder", "never", "never/src"] });
+    // Where the daemon reads stopped and the hook waits all the same, as `main` does: no record holds the folder (a
+    // repository never recorded, a folder outside Git, a worktree beside its checkout, and on Windows, where Git takes a
+    // `.git` whose `objects` is a file, one only a clone id names), or a record lies where the walk found no `.git`.
+    const unheld = [...(process.platform === "win32" ? ["app/objects-file"] : []), "b/own-folder", "c-beside", "never", "never/src", "plain", "plain-started/sub"];
+    expect({ wrong, askedThoughStopped }).toEqual({ wrong: [], askedThoughStopped: unheld });
   });
 
   it("asks about a folder typed in another letter case by its stored spelling and answers itself only where the daemon reads stopped, with macOS's realpaths", { timeout: 120_000 }, async () => {
