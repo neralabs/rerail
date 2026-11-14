@@ -341,7 +341,7 @@ export const LANGUAGE_REGISTRY = /* registry */ [
         ],
         "parser": "tree-sitter",
         "grammar": "ast-grep:Java",
-        "tapeTag": 15
+        "tapeTag": 18
       }
     ],
     "capabilities": {
@@ -367,7 +367,7 @@ export const LANGUAGE_REGISTRY = /* registry */ [
         ],
         "parser": "tree-sitter",
         "grammar": "ast-grep:CSharp",
-        "tapeTag": 16
+        "tapeTag": 19
       }
     ],
     "capabilities": {

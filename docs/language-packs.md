@@ -257,7 +257,7 @@ Each dialect has:
 - **`grammar`**, supported only: `vendored:<name>` (built by `build.rs`), `native:<name>` (a parser Rerail implements)
   or `ast-grep:<Language>`.
 - **`tapeTag`**: required when supported; a `planned` dialect may declare one to reserve it. Persisted, unique across
-  entries, never reused. Taken: Rust 9, SQL 10, Vue 12, rr 13, JSON 14, Java 15 and C# 16 (11 is free for a second SQL dialect).
+  entries, never reused. Taken: Rust 9, SQL 10, Vue 12, rr 13, JSON 14, Python's percent- and brace-format strings 15 and 16, ESLint directives 17, Java 18 and C# 19 (11 is free for a second SQL dialect).
 
 </details>
 
@@ -356,7 +356,7 @@ Register the language as planned, add its grammar and adapter, then flip capabil
 
 1. **Register it.** Add `languages/<id>.json` with `status: "planned"`: family, dialect labels and suffixes, every
    capability `not-supported-yet`, suppressions and embeds. Give each dialect the `tapeTag` it reserves (Rust 9, SQL
-   10, Vue 12, rr 13, JSON 14, Java 15 and C# 16 are taken; 11 is free for a second SQL dialect). Run `npm run generate:languages` and commit the
+   10, Vue 12, rr 13, JSON 14, Python's format strings 15 and 16, ESLint directives 17, Java 18 and C# 19 are taken; 11 is free for a second SQL dialect). Run `npm run generate:languages` and commit the
    regenerated `src/engine/code-rule/code-rule-language-registry.generated.ts`. Rules and packs can land now.
 2. **Add its grammar.** Vendor or pick one (add a vendored one to `GRAMMARS` in `native/build.rs`). Flip the entry to
    `supported` with each dialect's `variant`, `parser` and `grammar`. The build fails until `adapter::<Family>` exists.
