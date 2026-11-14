@@ -129,3 +129,26 @@ expected.
    samples).
 4. **Cold combine.** Find the 0.7 s wall gap. Phase 1's file listing, digests and `realpath` are file-system bound.
 5. Repair the `RERAIL_SPIKE_DELTA` diagnostic for in-place maintenance.
+
+## Follow-up (2026-11-14, after decision 0217)
+
+1. **Delta rules (cause a)** were not a search problem. The search priced `aleaf` probes as all its rows, because a
+   relation held as kept had its row count but no column statistics. Decision 0217 gives it the engine's kept
+   statistics. Step 14's cross part fell from 7.07 to 3.73 G; the 20 steps fell 3.8%. Rules whose delta literal is not
+   first now take 1% of step 14's join work, from 61%.
+2. **Cause b is not about positions.** The file-local strata the cross part reruns (`kind :- node`, `fl391_tgt :-
+   child, kind`) read no position column. They are derived over each edited document's rows (33 k for one file),
+   four loops a step. Their output deltas are tiny (`kind`: 173 gone, 25 new). After 0217 the whole step-14 join
+   work is 1.03 M rows, so these reruns are no longer the floor. Making positions relative would change no one of
+   them, and would change the rule packs' and findings' schema.
+3. **The floor is now per-stratum overhead.** Step 14's session ran 308 strata. 128 of the 241 maintained relations
+   changed nothing. Profiled CPU in the stream jobs: joins 33 ms, a stratum's setup (`spec`) 16 ms, planning
+   searches 12 ms, live statistics 10 ms, index opening 9 ms, close 7 ms, reprobe 6.5 ms.
+4. **Base views.** Flattening the views into columns would decode the tape, which the in-place rule forbids. In
+   place, a stored relation's index search now reads a fence first (commit 9a47c0382); it did not resolve at load 83.
+   `Projected::local_of` is a binary search over a document's id pairs, already contiguous.
+5. **Combine's 0.7 s gap** was not idle. With every thread's spans (`RERAIL_TIMELINE=all`), the stretch from the test
+   store's template run to phase 1 is 0.21 s, covered by reading and binding the 680-rule program. The 0.7 s was
+   that work stretched by load.
+6. **`RERAIL_SPIKE_DELTA`** now reads each reached stratum's form as it ran. Step 14: 241 relations maintained, 128
+   unchanged; 2,498 rows over-deleted, 2,494 truly gone (4 put back), 497 inserted.
