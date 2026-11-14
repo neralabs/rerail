@@ -187,7 +187,6 @@ const STATE: &[(&str, &str)] = &[
     // The process's interned relation names (`front::Name`): one allocation per distinct name, not a result kept.
     ("code_rule_dsl/logic/front/name.rs", "TABLE"),
     ("code_rule_dsl/logic/costs.rs", "FITTED"),
-    ("code_rule_dsl/logic/costs.rs", "WRITER"),
     ("code_rule_dsl/logic/costs.rs", "MODEL_STATE"),
     // The SQL executor's plan model, fitted from `sql_plan_observations`, and the observations queued for writing.
     ("code_rule_dsl/logic/costs/sql_plans.rs", "MODEL"),
