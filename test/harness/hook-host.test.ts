@@ -1,6 +1,6 @@
 import { type ChildProcess, execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -1410,13 +1410,18 @@ function deniedToThisUser(): Promise<DatabaseHolder> {
 }
 
 /**
- * Ways Windows refuses to open the database for a moment, which SQLite's own open retries for about 1.4 s and the
- * busy timeout does not bound.
+ * Whether this process's Node opens `path` though a deny entry refuses it to this user: an enabled Backup privilege
+ * (an elevated SSH session holds it so) lets Node's opens, which all use backup semantics, pass the entry SQLite's own
+ * open meets.
  */
-const windowsRefusals = [
-  { what: "another program holds the database file open and shares nothing", refuse: heldWithoutSharing },
-  { what: "the database file is denied to this user", refuse: deniedToThisUser },
-];
+function nodeOpensDespiteDeny(path: string): boolean {
+  try {
+    closeSync(openSync(path, "r"));
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** `step`, tried again while Windows refuses it for a moment (a scanner or the search indexer holding a folder). */
 function retried<T>(step: () => T): T {
@@ -1643,13 +1648,28 @@ describe("the hook start check", () => {
     }
   });
 
-  it.runIf(process.platform === "win32").each(windowsRefusals)("waits for a late daemon at once where $what", { timeout: 30_000 }, async ({ refuse }) => {
+  it.runIf(process.platform === "win32")("waits for a late daemon at once where another program holds the database file open and shares nothing", { timeout: 30_000 }, async () => {
     const root = await temporaryDirectory({ started: false });
     const app = startedApp(root);
     const host = await startCheckHost();
     const daemon = await daemonAnsweringAfterProof(host, "started");
-    const holder = await refuse();
+    const holder = await heldWithoutSharing();
     try {
+      await startedFromLateDaemon(host, daemon, app);
+    } finally {
+      await holder.end();
+      await daemon.close();
+    }
+  });
+
+  it.runIf(process.platform === "win32")("waits for a late daemon at once where the database file is denied to this user", { timeout: 30_000 }, async ({ skip }) => {
+    const root = await temporaryDirectory({ started: false });
+    const app = startedApp(root);
+    const host = await startCheckHost();
+    const daemon = await daemonAnsweringAfterProof(host, "started");
+    const holder = await deniedToThisUser();
+    try {
+      if (nodeOpensDespiteDeny(defaultRerailDatabasePath())) skip("this process's Backup privilege is enabled, so Node's open passes the deny entry");
       await startedFromLateDaemon(host, daemon, app);
     } finally {
       await holder.end();
