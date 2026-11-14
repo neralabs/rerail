@@ -62,7 +62,8 @@ def main():
     os.chdir(git("rev-parse", "--show-toplevel").strip())
     faults = []
     counts = {}
-    for path in git("ls-files", "*.rs").split():
+    # Once a file: a file a merge has not resolved is listed once a stage.
+    for path in sorted(set(git("ls-files", "*.rs").split())):
         if path.startswith("native/target") or "/target/" in path:
             continue
         try:

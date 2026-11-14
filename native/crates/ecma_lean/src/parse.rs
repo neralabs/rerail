@@ -16,7 +16,7 @@
 use crate::kinds::{K, f};
 use crate::lex::{Extra, Lexer, Piece, R, Refusal, T, Tok, w};
 use crate::{Dialect, Tape, key, unkey};
-use rerail_tape_format::{Redo, Widths, Writer};
+use rerail_tape_format::{Checkpoint, Redo, Widths, Writer};
 
 // Supertype sets (`crate::CLASSES`).
 const C_NONE: u8 = 0;
@@ -187,12 +187,6 @@ const V_EXPR: V = V_LOGICAL_OR | V_LBRACKET | V_LPAREN | V_STAR | V_PLUS | V_MIN
 
 const MAX_DEPTH: u32 = 300;
 
-/// The most operators one left-associative chain (`a + b + c …`) takes. Each wraps the chain so
-/// far, inserted before it on the tape (`Writer::insert`): past this, a chain's inserts cost its
-/// length squared (200,000 terms: 20 s), and the file is refused to tree-sitter, as a nesting past
-/// `MAX_DEPTH` is. A tree this deep is tree-sitter's too.
-const MAX_CHAIN: u32 = 4096;
-
 /// `kinds::DROPPED` as open-addressed tables, built at compile time: a key's slot by one
 /// multiply-shift, then the next slots to an empty one. At a quarter full, a lookup is 1.2 probes
 /// on average, where the binary search was 8 dependent loads.
@@ -235,7 +229,7 @@ struct N {
 #[derive(Clone, Copy)]
 struct Mark {
     i: usize,
-    n: usize,
+    n: Checkpoint,
     e: usize,
     last_end: u32,
     depth: u32,
@@ -436,7 +430,7 @@ impl<'a> P<'a> {
 
     fn mark(&mut self) -> Mark {
         self.fill(0);
-        Mark { i: self.i, n: self.w.len(), e: self.e, last_end: self.last_end, depth: self.depth, after: self.after, asi: self.asi, relexes: self.relexes }
+        Mark { i: self.i, n: self.w.checkpoint(), e: self.e, last_end: self.last_end, depth: self.depth, after: self.after, asi: self.asi, relexes: self.relexes }
     }
 
     /// Back to `m`. The tokens lexed since are kept where every one was lexed in normal mode
@@ -452,7 +446,7 @@ impl<'a> P<'a> {
             self.extras.truncate(keep);
         }
         self.e = m.e;
-        self.w.truncate(m.n);
+        self.w.rewind(m.n);
         self.last_end = m.last_end;
         self.depth = m.depth;
         self.after = m.after;
@@ -2548,8 +2542,17 @@ impl<'a> P<'a> {
     /// operand, on the operand (`a ** (b as T)`).
     fn binary_as(&mut self, s: Slot, min: u8, allow: bool) -> R<N> {
         let start = self.here();
-        let mut left = self.unary(s, false)?;
-        let mut chain = 0u32;
+        let left = self.unary(s, false)?;
+        // Each operator wraps the chain so far at `start` (`a + b + c`): held by the writer until
+        // the chain ends, then put before it in one move (`Writer::open_chain`).
+        let chain = self.w.open_chain(start);
+        let r = self.binary_chain(start, left, s, min, allow);
+        self.w.end_chain(chain);
+        r
+    }
+
+    /// `binary_as`'s operators after its first operand `left`, written at `start`.
+    fn binary_chain(&mut self, start: usize, mut left: N, s: Slot, min: u8, allow: bool) -> R<N> {
         loop {
             let t = self.tok();
             if self.ts && allow && t.kind == T::Name && matches!(t.word, w::AS | w::SATISFIES) && !self.stops() {
@@ -2559,10 +2562,6 @@ impl<'a> P<'a> {
             let Some((prec, op, right_assoc)) = binop(t) else { break };
             if prec < min || self.stops() {
                 break;
-            }
-            chain += 1;
-            if chain > MAX_CHAIN {
-                return self.refuse();
             }
             let n = self.wrap(N { at: start, kind: left.kind }, K::BinaryExpression, s, slot(f::LEFT, Ctx::Expr));
             self.leaf(op, f::OPERATOR, C_NONE)?;
@@ -2695,7 +2694,16 @@ impl<'a> P<'a> {
     /// A primary expression and its postfixes: members, subscripts, calls, tagged templates.
     fn postfix(&mut self, s: Slot) -> R<N> {
         let start = self.here();
-        let mut e = if self.is_word(w::NEW) { self.new_expression(s)? } else { self.primary(s)? };
+        let e = if self.is_word(w::NEW) { self.new_expression(s)? } else { self.primary(s)? };
+        // Each postfix wraps the chain so far at `start` (`a.b(c)[d]`), as `binary_as`'s operators.
+        let chain = self.w.open_chain(start);
+        let r = self.postfix_chain(start, e, s);
+        self.w.end_chain(chain);
+        r
+    }
+
+    /// `postfix`'s members, subscripts and calls after its primary `e`, written at `start`.
+    fn postfix_chain(&mut self, start: usize, mut e: N, s: Slot) -> R<N> {
         loop {
             let t = self.tok();
             match t.kind {
@@ -2900,7 +2908,26 @@ impl<'a> P<'a> {
         }
         // The constructor: a primary expression and its members (no call).
         let start = self.here();
-        let mut e = self.primary(slot(f::CONSTRUCTOR, Ctx::Primary))?;
+        let e = self.primary(slot(f::CONSTRUCTOR, Ctx::Primary))?;
+        let chain = self.w.open_chain(start);
+        let r = self.constructor_members(start, e);
+        self.w.end_chain(chain);
+        r?;
+        if self.ts && self.peek() == T::Lt {
+            self.type_arguments(f::TYPE_ARGUMENTS)?;
+        }
+        if self.peek() == T::LParen && !self.stops() {
+            self.arguments()?;
+        }
+        self.close(n);
+        self.depth -= 1;
+        self.after = V_EXPR;
+        Ok(n)
+    }
+
+    /// `new_expression`'s constructor members after its primary `e`, written at `start`: a chain
+    /// (`Writer::open_chain`), as `postfix`'s.
+    fn constructor_members(&mut self, start: usize, mut e: N) -> R<()> {
         loop {
             let t = self.tok();
             match t.kind {
@@ -2934,16 +2961,7 @@ impl<'a> P<'a> {
                 _ => break,
             }
         }
-        if self.ts && self.peek() == T::Lt {
-            self.type_arguments(f::TYPE_ARGUMENTS)?;
-        }
-        if self.peek() == T::LParen && !self.stops() {
-            self.arguments()?;
-        }
-        self.close(n);
-        self.depth -= 1;
-        self.after = V_EXPR;
-        Ok(n)
+        Ok(())
     }
 
     fn primary(&mut self, s: Slot) -> R<N> {
