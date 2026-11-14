@@ -435,7 +435,7 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
         } else if k == "capture" && val.is_str() {
             lits.push(format!("{} = {v}", cap(val.as_str().expect("a string"))));
         } else if k == "compare" && vo.is_some_and(|o| o.has("left") && o.has("op") && o.has("right")) {
-            lits.extend(compare(vo.expect("an object"), vs));
+            lits.extend(compare(prog, vo.expect("an object"), vs));
         } else if k == "count" && vo.is_some() {
             lits.extend(count(px, prog, vo.expect("an object"), v, vs)?);
         } else if k == "layout" && vo.is_some() && main_terms::layout(prog, vo.expect("an object"), v, &mut Vars::default()).is_some() {
@@ -579,7 +579,7 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
     Ok(lits)
 }
 
-fn compare(c: &Obj, vs: &mut Vars) -> Vec<String> {
+fn compare(prog: &mut Program, c: &Obj, vs: &mut Vars) -> Vec<String> {
     let op = c.get("op").expect("op");
     if !op.is_str() {
         return vec![format!("ast({}, {})", mv_v(c.get("left").expect("left")), compact(&Value::obj(vec![("compare", Value::Obj(c.clone()))])))];
@@ -587,7 +587,16 @@ fn compare(c: &Obj, vs: &mut Vars) -> Vec<String> {
     let (l, r, op) = (mv_v(c.get("left").expect("left")), mv_v(c.get("right").expect("right")), py_str(op));
     let (a, b) = (vs.fresh("t"), vs.fresh("t"));
     let text = c.get("text").cloned().unwrap_or(Value::Str("node".into()));
-    let reader = if matches!(text.as_str(), Some("node" | "text")) { "text" } else { "value" };
+    let reader = match text.as_str() {
+        Some("node" | "text") => "text",
+        // ESLint's static property name and the quote-stripped text, which a key or identifier has with no value
+        // (decision 0202): a library's, for the ECMAScript languages.
+        Some(mode @ ("key" | "unquoted")) if matches!(prog.lang.as_str(), "typescript" | "javascript" | "tsx" | "vue") => {
+            prog.use_("compare");
+            if mode == "key" { "cmp_key" } else { "cmp_unquoted" }
+        }
+        _ => "value",
+    };
     if op == "eq" {
         return vec![format!("{reader}({l}, {a}), {reader}({r}, {a})")];
     }
@@ -1514,12 +1523,21 @@ pub fn transform_lits(prog: &mut Program, tr: &Value, vs: &mut Vars, defined: &B
         let (op, a) = single.0[0].clone();
         let ao = a.as_obj();
         let src = ao.map(|ao| mv_v(ao.get("source").unwrap_or(&Value::Str(String::new())))).unwrap_or_default();
+        // A value, else the name an ECMAScript node has (`cmp_value`, decision 0202): main's `value: true`.
+        let ecma = matches!(prog.lang.as_str(), "typescript" | "javascript" | "tsx" | "vue");
+        if ecma && truthy(a.get("value")) {
+            prog.use_("compare");
+        }
         let read = |lits: &mut Vec<String>, vs: &mut Vars| -> String {
             if defined.contains(&src) {
                 return src.clone();
             }
             let x = vs.fresh("t");
-            let reader = if truthy(a.get("value")) { "value" } else { "text" };
+            let reader = match (truthy(a.get("value")), ecma) {
+                (true, true) => "cmp_value",
+                (true, false) => "value",
+                (false, _) => "text",
+            };
             lits.push(format!("{reader}({src}, {x})"));
             x
         };

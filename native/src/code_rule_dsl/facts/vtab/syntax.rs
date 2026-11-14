@@ -1796,12 +1796,9 @@ impl Extra {
         }
     }
 
-    /// Document `p`'s rows (its `Document` `d`, its grammar's kinds `dialect`, none for a text-only document);
-    /// `splitlines`: its lines split as Python's `str.splitlines()` does; `rx`: `rx_span`'s patterns, the spans each
-    /// runs over and its block program, and `ends` (by pattern) the bytes of the document's source a match can end
-    /// after, where the batch ran the pattern's block program (decision 0081 §3).
-    #[allow(clippy::too_many_arguments)]
-    fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, splitlines: bool, rx: &[core_rr::SpanPattern<'_>], ends: &[Option<Vec<u64>>], text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
+    /// Document `p`'s W values, read off its tape (`Document::tape`): a file's, or an embedded program's that keeps
+    /// one (a Vue view, decision 0202).
+    fn values(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
         let f = &*p.facts;
         let plain = self.value || self.value_type_of || self.value_type;
         // A text-only document has no node, so no value; a document of a family W reads no values of has none of W's
@@ -1844,6 +1841,17 @@ impl Extra {
                 }
             });
         }
+        Ok(())
+    }
+
+    /// Document `p`'s rows (its `Document` `d`, its grammar's kinds `dialect`, none for a text-only document);
+    /// `splitlines`: its lines split as Python's `str.splitlines()` does; `rx`: `rx_span`'s patterns, the spans each
+    /// runs over and its block program, and `ends` (by pattern) the bytes of the document's source a match can end
+    /// after, where the batch ran the pattern's block program (decision 0081 §3).
+    #[allow(clippy::too_many_arguments)]
+    fn document(&mut self, p: &Projected, d: &Document, dialect: Option<&Dialect>, splitlines: bool, rx: &[core_rr::SpanPattern<'_>], ends: &[Option<Vec<u64>>], text: &mut Vec<[i64; 2]>, string: &mut dyn FnMut(&str) -> usize) -> StoreResult<()> {
+        let f = &*p.facts;
+        self.values(p, d, dialect, string)?;
         self.nodes(p, string);
         let key = i64::from(p.key);
         use granules::ExtraSpan;
@@ -2511,7 +2519,10 @@ impl Batch {
                 tree.document(&p, dialect, python == Some(tag), &mut string);
             } else {
                 // A guest's nodes have their places in its file (`Locs::place`); W's values, f-string trees and CPython's
-                // verdicts are a file's, read off its tape.
+                // verdicts are a file's, read off its tape; an embedded program keeps its own (decision 0202).
+                if d.tape.is_some() {
+                    extra.values(&p, d, dialect, &mut string)?;
+                }
                 extra.nodes(&p, &mut string);
             }
             // A guest's are read only by a producer of guests' rows (string annotations); the others' are its file's.

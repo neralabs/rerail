@@ -424,7 +424,13 @@ pub fn translate(px: &Patterns, doc: &Value, reserved: &Set) -> R<(String, usize
                 // there, in its own frame) is not computed here: grounding its source would range it over every
                 // node. The helper that reads it computes it itself (transform_defs_for), so it stays local there.
                 // ast-grep leaves such a target unset where the rule's own match does not bind it.
-                let bound = binders(px, &lits.join(", "), false);
+                let mut bound = binders(px, &lits.join(", "), false);
+                // And, in a clause over an embedded program, what a util called here outside a negation or an
+                // aggregate binds (`matches: item` binds K). Elsewhere it is left as decision 0201 has it: counted
+                // there, it would change nine of the Python pack's rules, which the Ruff comparison has not checked.
+                if entry.is_some() {
+                    bound.extend(util_binds(px, &prog, &local, &lits));
+                }
                 let defs = prog.transform_defs.as_ref().expect("transform defs");
                 for (t, root) in &targets {
                     if root.is_empty() || bound.contains(root) {
@@ -666,6 +672,30 @@ struct Emit<'a> {
     inputs: &'a BTreeMap<String, Set>,
     declared: Set,
     out: Vec<String>,
+}
+
+/// The metavariables the utils `lits` call outside a negation or an aggregate bind, through the utils they call so
+/// (decision 0202): before the shared columns are added, a call is `item_p(n)`, and the rule's K is the util's. The
+/// utils are the program's and the clause's own (`local`, rendered but not yet added).
+fn util_binds(px: &Patterns, prog: &Program, local: &[(String, Vec<String>)], lits: &[String]) -> Set {
+    let called = |text: &str| -> Vec<String> {
+        let outside = super::text::drop_aggregates(px, text);
+        let positive = re(r"(?<![!\w.@])([a-z_]\w*)\(");
+        findall(&positive, &masked(px, &outside))
+    };
+    let (mut out, mut seen, mut todo) = (Set::new(), Set::new(), called(&lits.join(", ")));
+    while let Some(name) = todo.pop() {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let own = local.iter().filter(|(h, _)| h.split('(').next() == Some(name.as_str())).map(|(_, l)| l);
+        for body in prog.arena.iter().filter(|e| e.name() == name).map(|e| &e.lits).chain(own) {
+            let text = body.join(", ");
+            out.extend(binders(px, &text, false));
+            todo.extend(called(&text));
+        }
+    }
+    out
 }
 
 fn check(px: &Patterns, text: &str, inputs: &[String]) -> R<Vec<String>> {
