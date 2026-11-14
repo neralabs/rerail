@@ -1,0 +1,25 @@
+.policy "bandit-b310-urllib-urlopen" revision 1
+.guests off
+.description "Restrict URLs passed to urllib's urlopen, urlretrieve, and URLopener to expected schemes; file: and custom schemes can expose local files."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B310(n): a finding at node n, from clause `bandit:B310`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on F are added to every rule.
+.violation B310(at: node) "Audit URL opening for permitted schemes; file or custom schemes may be unexpected."
+    suppress nosec "B310"
+B310(n) :- n ~ `$F($$$ARGS)`, sym_of(F, q1), b310_set_1(q1).
+
+// set_1: symbols from the JSON `resolves.import`
+.decl b310_set_1(v: symbol)
+b310_set_1("urllib.request.urlopen"). b310_set_1("urllib.request.urlretrieve").
+b310_set_1("urllib.request.URLopener"). b310_set_1("urllib.request.FancyURLopener").
+b310_set_1("six.moves.urllib.request.urlopen").
+b310_set_1("six.moves.urllib.request.urlretrieve").
+b310_set_1("six.moves.urllib.request.URLopener").
+b310_set_1("six.moves.urllib.request.FancyURLopener").

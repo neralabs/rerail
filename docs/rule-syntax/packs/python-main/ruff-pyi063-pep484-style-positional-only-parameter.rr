@@ -1,0 +1,97 @@
+.policy "ruff-pyi063-pep484-style-positional-only-parameter" revision 1
+.guests off
+.description "Mark positional-only parameters with a slash in the signature instead of a double-underscore name prefix; the slash is enforced at runtime, the prefix only by type checkers."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PYI063(n): a finding at node n, from clause `pep484-style-positional-only-parameter`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI063(at: node, name: loc) "Drop the `__` prefix from `{name}` and from the `__`-prefixed parameters right after it (renaming their uses), then add `/` after the last one; skip this if the code supports Python before 3.8."
+    suppress noqa "PYI063"
+PYI063(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, glob("_[_＿︳︴﹍-﹏]**", n),
+    !glob("**[_＿︳︴﹍-﹏][_＿︳︴﹍-﹏]", n),
+    ( child(p1, n, _), kind(p1, "parameters"), pyi063_target_param(n)
+    ; child(p2, n, _), kind(p2, "typed_parameter"), pyi063_target_param(p2)
+    ; field(p3, "name", n), (kind(p3, "default_parameter") ; kind(p3, "typed_default_parameter")), pyi063_target_param(p3)
+    ).
+
+
+// static_name(n): the JSON util `static-name`, used where the JSON says `matches: "static-name"`
+.decl pyi063_static_name(n: node)
+pyi063_static_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "staticmethod"),
+    (sym_of(n, "builtins.staticmethod") ; sym_of(n, "abc.abstractstaticmethod")).
+pyi063_static_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi063_static_name(c1).
+
+// static_ref(n): the JSON util `static-ref`, used where the JSON says `matches: "static-ref"`
+.decl pyi063_static_ref(n: node)
+pyi063_static_ref(n) :- pyi063_static_name(n).
+pyi063_static_ref(n) :- kind(n, "call"), field(n, "function", c1), pyi063_static_name(c1).
+pyi063_static_ref(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pyi063_static_ref(c2).
+
+// class_name(n): the JSON util `class-name`, used where the JSON says `matches: "class-name"`
+.decl pyi063_class_name(n: node)
+pyi063_class_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "classmethod"),
+    (sym_of(n, "builtins.classmethod") ; sym_of(n, "abc.abstractclassmethod")).
+pyi063_class_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi063_class_name(c1).
+
+// class_ref(n): the JSON util `class-ref`, used where the JSON says `matches: "class-ref"`
+.decl pyi063_class_ref(n: node)
+pyi063_class_ref(n) :- pyi063_class_name(n).
+pyi063_class_ref(n) :- kind(n, "call"), field(n, "function", c1), pyi063_class_name(c1).
+pyi063_class_ref(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pyi063_class_ref(c2).
+
+// skips_first(n): the JSON util `skips-first`, used where the JSON says `matches: "skips-first"`
+.decl pyi063_skips_first(n: node)
+pyi063_skips_first(n) :- kind(n, "function_definition"), within_stop(n, p1, pyi063_stop_1),
+    kind(p1, "class_definition"),
+    count : { child(p2, n, _), kind(p2, "decorated_definition"), child(p2, c3, _), kind(c3, "decorator"), child(c3, c4, _), pyi063_static_ref(c4) } = 0,
+    ( child(p3, n, _), kind(p3, "decorated_definition"), child(p3, c1, _), kind(c1, "decorator"), child(c1, c2, _), pyi063_class_ref(c2)
+    ; count : { field(n, "name", c5), glob("__new__", c5) } = 0
+    ).
+
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl pyi063_positional(n: node)
+pyi063_positional(n) :-
+    ( (kind(n, "identifier") ; kind(n, "default_parameter") ; kind(n, "typed_default_parameter"))
+    ; kind(n, "typed_parameter"), count : { child(n, c1, _), (kind(c1, "list_splat_pattern") ; kind(c1, "dictionary_splat_pattern")) } = 0
+    ),
+    count : { precedes(s2, n), pyi063_alt_4(s2) } = 0.
+
+// target_param(n): the JSON util `target-param`, used where the JSON says `matches: "target-param"`
+.decl pyi063_target_param(n: node)
+pyi063_target_param(n) :- pyi063_positional(n), child(p1, n, _), kind(p1, "parameters"),
+    count : { child(p1, c2, _), kind(c2, "positional_separator") } = 0, pyi063_alt_7(n).
+
+// stop_1: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi063_stop_1(kind: symbol)
+pyi063_stop_1("function_definition"). pyi063_stop_1("class_definition").
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi063_alt_4(n: node)
+pyi063_alt_4(n) :- (kind(n, "keyword_separator") ; kind(n, "list_splat_pattern")).
+pyi063_alt_4(n) :- kind(n, "typed_parameter"), child(n, c1, _),
+    kind(c1, "list_splat_pattern").
+
+// counted(n): 4 identical copies of one rule set (`counted_5`, `counted_6`, `counted_8` and 1 more), folded into one.
+.decl pyi063_counted(n: node)
+pyi063_counted(n) :- pyi063_positional(n).
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi063_alt_7(n: node)
+pyi063_alt_7(n) :- child(p1, n, _), pyi063_counted(n),
+    k3 = count : { child(p1, s2, _), precedes(s2, n), pyi063_counted(s2) }, k3 = 0,
+    child(p4, n, _), kind(p4, "parameters"), child(p5, p4, _),
+    kind(p5, "function_definition"), !pyi063_skips_first(p5).
+pyi063_alt_7(n) :- child(p6, n, _), pyi063_counted(n),
+    k8 = count : { child(p6, s7, _), precedes(s7, n), pyi063_counted(s7) }, k8 = 1,
+    child(p9, n, _), kind(p9, "parameters"), child(p10, p9, _),
+    kind(p10, "function_definition"), pyi063_skips_first(p10).

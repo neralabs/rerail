@@ -1,0 +1,35 @@
+.policy "ruff-f634-if-tuple" revision 2
+.guests off
+.description "Don't use a tuple as an if or elif condition; a non-empty tuple is always true, so the branch always runs."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F634(n): a finding at node n, from clause `if-tuple`.
+// Each rule below is one way the JSON `rule` can match.
+.violation F634(at: node) "Replace this tuple condition with the intended boolean expression; a non-empty tuple is always true."
+    suppress noqa "F634"
+F634(n) :- kind(n, "tuple"), f634_non_empty_tuple(n), f634_branch_test(n).
+
+// trivia(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl f634_trivia(n: node)
+f634_trivia(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+
+// non_empty_tuple(n): the JSON util `non-empty-tuple`, used where the JSON says `matches: "non-empty-tuple"`
+.decl f634_non_empty_tuple(n: node)
+f634_non_empty_tuple(n) :- kind(n, "tuple"), child(n, c1, _), !f634_alt_1(c1).
+f634_non_empty_tuple(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    f634_non_empty_tuple(c2).
+
+// branch_test(n): the JSON util `branch-test`, used where the JSON says `matches: "branch-test"`
+.decl f634_branch_test(n: node)
+f634_branch_test(n) :- field(p1, "condition", n),
+    (kind(p1, "if_statement") ; kind(p1, "elif_clause")).
+f634_branch_test(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"),
+    f634_branch_test(p2).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl f634_alt_1(n: node)
+f634_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).
+f634_alt_1(n) :- f634_trivia(n).

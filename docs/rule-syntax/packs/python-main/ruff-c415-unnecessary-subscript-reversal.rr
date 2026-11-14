@@ -1,0 +1,116 @@
+.policy "ruff-c415-unnecessary-subscript-reversal" revision 1
+.guests off
+.description "Don't reverse an iterable with a slice before passing it to set, sorted or reversed; each of them reorders or reverses it again anyway."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// one(n): the JSON util `one`, used where the JSON says `matches: "one"`
+.decl c415_one(n: node)
+c415_one(n) :- kind(n, "integer"), value(n, "1").
+c415_one(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), c415_one(c1).
+
+// minus_one(n): the JSON util `minus-one`, used where the JSON says `matches: "minus-one"`
+.decl c415_minus_one(n: node)
+c415_minus_one(n) :- kind(n, "unary_operator"), prefix("-", n), field(n, "argument", c1),
+    c415_one(c1).
+c415_minus_one(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), c415_minus_one(c2).
+
+// reversal(n): the JSON util `reversal`, used where the JSON says `matches: "reversal"`
+.decl c415_reversal(n: node)
+c415_reversal(n) :- kind(n, "subscript"), !c415_tok_has_1(n), field(n, "subscript", c9),
+    kind(c9, "slice"), k18 = count : { c415_tok_has_2(c9) }, k18 >= 2, k18 <= 2,
+    count : { child(c9, c19, _), !c415_alt_1(c19), c415_tok_precedes_3(c19) } = 0,
+    child(c9, c27, _), c415_minus_one(c27).
+c415_reversal(n) :- kind(n, "parenthesized_expression"), child(n, c28, _), c415_reversal(c28).
+
+// lead(n): the JSON util `lead`, used where the JSON says `matches: "lead"`
+.decl c415_lead(n: node)
+c415_lead(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+c415_lead(n) :- node(_, n, _, _, _), glob("[(]", n).
+
+// reversed_arg(n): the JSON util `reversed-arg`, used where the JSON says `matches: "reversed-arg"`
+.decl c415_reversed_arg(n: node)
+c415_reversed_arg(n) :- kind(n, "argument_list"), child(n, c1, _), c415_reversal(c1),
+    count : { precedes(s2, c1), !c415_lead(s2) } = 0.
+
+// C415(n): a finding at node n, from clause `reorders-anyway`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation C415(at: node, m: node, f: loc) "Pass the iterable straight to `{f}()` without the `[::-1]` slice, since `{f}()` reorders the elements anyway; keep the slice only if `sorted()` must keep equal keys in reversed input order."
+    suppress noqa "C415"
+C415(M, n, F) :- kind(n, "call"), field(n, "function", c1), c415_alt_2(c1, F),
+    field(n, "arguments", c3), c415_reversed_arg(c3), match("(?s)(?:\\*\\s*)?(?P<M>.*)", n).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl c415_callee(n: node)
+c415_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (global_ref(n, "set") ; global_ref(n, "sorted")),
+    (sym_of(n, "builtins.set") ; sym_of(n, "builtins.sorted")).
+c415_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), c415_callee(c1).
+
+// C415_reversed_of_reversal(n): a finding at node n, from clause `reversed-of-reversal`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation C415_reversed_of_reversal(at: node, m: node) code "C415" "`reversed()` of a `[::-1]` slice walks the original order: iterate the sequence itself (or `iter()` of it) instead of reversing it twice."
+    suppress noqa "C415"
+C415_reversed_of_reversal(M, n) :- kind(n, "call"), field(n, "function", c1),
+    ( kind(c1, "list_splat"), child(c1, c2, _), c415_callee_reversed_of_reversal(c2)
+    ; !kind(c1, "list_splat"), c415_callee_reversed_of_reversal(c1)
+    ),
+    field(n, "arguments", c3), c415_reversed_arg(c3), match("(?s)(?:\\*\\s*)?(?P<M>.*)", n).
+
+// callee_reversed_of_reversal(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl c415_callee_reversed_of_reversal(n: node)
+c415_callee_reversed_of_reversal(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "reversed"), sym_of(n, "builtins.reversed").
+c415_callee_reversed_of_reversal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    c415_callee_reversed_of_reversal(c1).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl c415_tok_has_1(n: node)
+.stored c415_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+c415_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+c415_tok_has_1(n) :- op(n, t2), match(",", t2).
+c415_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+c415_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+c415_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl c415_tok_has_2(n: node)
+.stored c415_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+c415_tok_has_2(n) :- child(n, c10, _), glob(":", c10).
+c415_tok_has_2(n) :- op(n, t11), match(":", t11).
+c415_tok_has_2(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g12).
+c415_tok_has_2(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g12).
+c415_tok_has_2(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g12).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl c415_tok_precedes_3(n: node)
+.stored c415_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+c415_tok_precedes_3(n) :- precedes(n, s20), glob(":", s20).
+c415_tok_precedes_3(n) :- child(p23, n, _), node(_, n, _, _, en26),
+    token(p23, _, t21, st25, _), st25 >= en26, match(":", t21).
+c415_tok_precedes_3(n) :- structural_after(n, g22),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g22).
+c415_tok_precedes_3(n) :- precedes(n, o24), structural_after(o24, g22),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g22).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl c415_alt_1(n: node)
+c415_alt_1(n) :- node(_, n, _, _, _), glob(":", n).
+c415_alt_1(n) :- kind(n, "comment").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   F: metavariable this relation binds for the calling rule
+.decl c415_alt_2(n: node, f: loc)
+c415_alt_2(n, F) :- kind(n, "list_splat"), child(n, c1, _), c415_callee(c1), node(_, c1, _, _, _), F = c1.
+c415_alt_2(n, F) :- !kind(n, "list_splat"), c415_callee(n), node(_, n, _, _, _), F = n.

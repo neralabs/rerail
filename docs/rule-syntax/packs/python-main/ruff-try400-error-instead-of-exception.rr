@@ -1,0 +1,68 @@
+.policy "ruff-try400-error-instead-of-exception" revision 1
+.guests off
+.description "Use the exception logging method instead of error when logging inside an exception handler; it records the traceback."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// TRY400(n): a finding at node n, from clause `error-instead-of-exception`.
+// Each rule below is one way the JSON `rule` can match.
+.violation TRY400(at: node) "Call `exception(...)` instead of `error(...)` so the traceback of the handled exception is logged. Leave it if this object is not a logger or the traceback is intentionally omitted."
+    suppress noqa "TRY400"
+TRY400(n) :- kind(n, "call"), inside(n, p1, "block"), child(p2, p1, _),
+    kind(p2, "except_clause"), field(n, "function", c3), try400_level_callee(c3),
+    count : { field(n, "arguments", c4), child(c4, c5, _), try400_exc_info_kwarg(c5) } = 0,
+    !try400_alt_2(n).
+
+// logger_object(n): the JSON util `logger-object`, used where the JSON says `matches: "logger-object"`
+.decl try400_logger_object(n: node)
+try400_logger_object(n) :- kind(n, "call"), field(n, "function", c1),
+    (sym_of(c1, "logging.getLogger") ; sym_of(c1, "logging.Logger")).
+try400_logger_object(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    try400_logger_object(c2).
+try400_logger_object(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "logging") ; sym_of(n, "flask.current_app.logger")).
+try400_logger_object(n) :-
+    ( kind(n, "identifier"), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", n)
+    ; kind(n, "attribute"), field(n, "attribute", c1), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c1), field(n, "object", c2), try400_name_chain(c2)
+    ),
+    !sym_of(n, _).
+
+// name_chain(n): the JSON util `name-chain`, used where the JSON says `matches: "name-chain"`
+.decl try400_name_chain(n: node)
+try400_name_chain(n) :- kind(n, "identifier").
+try400_name_chain(n) :- kind(n, "attribute"), field(n, "object", c1), try400_name_chain(c1).
+try400_name_chain(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), try400_name_chain(c2).
+
+// exc_info_set(n): the JSON util `exc-info-set`, used where the JSON says `matches: "exc-info-set"`
+.decl try400_exc_info_set(n: node)
+try400_exc_info_set(n) :- kind(n, "true").
+try400_exc_info_set(n) :- kind(n, "call"), field(n, "function", c1),
+    sym_of(c1, "sys.exc_info").
+try400_exc_info_set(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    try400_exc_info_set(c2).
+
+// exc_info_kwarg(n): the JSON util `exc-info-kwarg`, used where the JSON says `matches: "exc-info-kwarg"`
+.decl try400_exc_info_kwarg(n: node)
+try400_exc_info_kwarg(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("exc_info", c1), field(n, "value", c2), try400_exc_info_set(c2).
+
+// level_callee(n): the JSON util `level-callee`, used where the JSON says `matches: "level-callee"`
+.decl try400_level_callee(n: node)
+try400_level_callee(n) :- kind(n, "attribute"), field(n, "attribute", c1), glob("error", c1),
+    field(n, "object", c2), try400_logger_object(c2).
+try400_level_callee(n) :- kind(n, "identifier"), sym_of(n, "logging.error").
+try400_level_callee(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    try400_level_callee(c3).
+
+// handler_type(n): the JSON util `handler-type`, used where the JSON says `matches: "handler-type"`
+.decl try400_handler_type(n: node)
+try400_handler_type(n) :- !kind(n, "block"), child(p1, n, _), kind(p1, "except_clause").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl try400_alt_2(n: node)
+try400_alt_2(n) :- try400_handler_type(n).
+try400_alt_2(n) :- within(n, p1), try400_handler_type(p1).

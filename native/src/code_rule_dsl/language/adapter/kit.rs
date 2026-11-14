@@ -331,7 +331,7 @@ fn python() {
         package_manifests: (false, false),
         value: value_kit::Expect {
             lang: Family::Python,
-            string: Value::Str("é".to_owned()),
+            string: Value::Str("é".into()),
             numbers: [Value::int(16), Value::int(u64::MAX)],
             decoded: ("x = 0x10\n", "integer", Value::int(16)),
             name_kinds: &["identifier"],
@@ -1067,7 +1067,7 @@ fn sql() {
         package_manifests: (false, false),
         value: value_kit::Expect {
             lang: Family::Sql,
-            string: Value::Str("é".to_owned()),
+            string: Value::Str("é".into()),
             numbers: [Value::int(16), Value::int(u64::MAX)],
             decoded: ("SELECT 0x10;\n", "literal", Value::int(16)),
             name_kinds: &[],
@@ -1178,7 +1178,7 @@ fn rust() {
         package_manifests: (false, false),
         value: value_kit::Expect {
             lang: Family::Rust,
-            string: Value::Str("é".to_owned()),
+            string: Value::Str("é".into()),
             numbers: [
                 Value::RustInt {
                     value: 16.into(),

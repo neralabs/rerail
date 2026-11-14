@@ -1,0 +1,44 @@
+.policy "ruff-n813-camelcase-imported-as-lowercase" revision 1
+.guests off
+.description "Keep the alias of an imported CamelCase name in CamelCase; a lowercase alias makes readers mistake a class for a function or variable."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// N813(n): a finding at node n, from clause `camelcase-imported-as-lowercase`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation N813(at: node, asname: loc, name: loc) "Use a CamelCase alias instead of `{asname}` for `{name}` and update its uses; leave it if `{name}` is really a function or variable despite its CamelCase name."
+    suppress noqa "N813"
+N813(n, ASNAME, NAME) :- kind(n, "aliased_import"), field(n, "name", c1),
+    kind(c1, "dotted_name"), child(c1, c2, _), kind(c2, "identifier"),
+    child(p3, c2, _), n813_counted_1(c2),
+    k5 = count : { child(p3, s4, _), precedes(c2, s4), n813_counted_1(s4) }, k5 = 0,
+    node(_, c2, _, _, _), NAME = c2, n813_camelcase(c2), field(n, "alias", c6), kind(c6, "identifier"),
+    node(_, c6, _, _, _), ASNAME = c6, n813_cased_lower(c6).
+
+// has_upper(n): the JSON util `has-upper`, used where the JSON says `matches: "has-upper"`
+.decl n813_has_upper(n: node)
+n813_has_upper(n) :- node(_, n, _, _, _),
+    match(".*[\\p{Uppercase}\\x{1C5}\\x{1C8}\\x{1CB}\\x{1F2}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}].*", n).
+
+// cased_lower(n): the JSON util `cased-lower`, used where the JSON says `matches: "cased-lower"`
+.decl n813_cased_lower(n: node)
+n813_cased_lower(n) :- node(_, n, _, _, _), match(".*\\p{Lowercase}.*", n), !n813_has_upper(n).
+
+// cased_upper(n): the JSON util `cased-upper`, used where the JSON says `matches: "cased-upper"`
+.decl n813_cased_upper(n: node)
+n813_cased_upper(n) :- n813_has_upper(n),
+    match("[\\P{Lowercase}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}]*", n),
+    !match(".*[\\x{1C5}\\x{1C8}\\x{1CB}\\x{1F2}].*", n).
+
+// camelcase(n): the JSON util `camelcase`, used where the JSON says `matches: "camelcase"`
+.decl n813_camelcase(n: node)
+n813_camelcase(n) :- node(_, n, _, _, _), !contains("_", n), !n813_cased_lower(n),
+    !n813_cased_upper(n),
+    !glob("{setUp,tearDown,setUpClass,tearDownClass,setUpModule,tearDownModule,asyncSetUp,asyncTearDown,setUpTestData,failureException,longMessage,maxDiff}", n).
+
+// counted_1(n): the siblings the JSON `nthChild.ofRule` counts
+.decl n813_counted_1(n: node)
+n813_counted_1(n) :- kind(n, "identifier").

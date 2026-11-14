@@ -1,0 +1,81 @@
+.policy "ruff-slot001-no-slots-in-tuple-subclass" revision 1
+.guests off
+.description "Define __slots__ in subclasses of tuple; without it every instance carries its own attribute dict and uses more memory."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// SLOT001(n): a finding at node n, from clause `no-slots-in-tuple-subclass`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation SLOT001(at: node) "Add `__slots__ = ()` to this `tuple` subclass so instances skip the per-instance `__dict__`; leave it if the class assigns instance attributes, which an empty `__slots__` forbids."
+    suppress noqa "SLOT001"
+SLOT001_raw(n) :- kind(n, "identifier"), field(p1, "name", n),
+    kind(p1, "class_definition"), field(p1, "superclasses", c2),
+    kind(c2, "argument_list"), child(c2, c3, _), slot001_tuple_base(c3),
+    count : { field(p1, "body", c4), child(c4, c5, _), slot001_slots_statement(c5) } = 0.
+
+// slots_target(n): the JSON util `slots-target`, used where the JSON says `matches: "slots-target"`
+.decl slot001_slots_target(n: node)
+slot001_slots_target(n) :- kind(n, "identifier"), glob("__slots__", n).
+slot001_slots_target(n) :- kind(n, "tuple_pattern"), child(n, c1, _), slot001_slots_target(c1),
+    !slot001_tok_has_1(n).
+
+// slots_assignment(n): the JSON util `slots-assignment`, used where the JSON says `matches: "slots-assignment"`
+.decl slot001_slots_assignment(n: node)
+slot001_slots_assignment(n) :- kind(n, "assignment"), slot001_alt_1(n).
+
+// slots_statement(n): the JSON util `slots-statement`, used where the JSON says `matches: "slots-statement"`
+.decl slot001_slots_statement(n: node)
+slot001_slots_statement(n) :- kind(n, "expression_statement"), child(n, c1, _),
+    kind(c1, "assignment"), slot001_slots_assignment(c1).
+
+// tuple_name(n): the JSON util `tuple-name`, used where the JSON says `matches: "tuple-name"`
+.decl slot001_tuple_name(n: node)
+slot001_tuple_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "tuple"),
+    ( sym_of(n, "builtins.tuple")
+    ; sym_of(n, "typing.Tuple")
+    ; sym_of(n, "typing_extensions.Tuple")
+    ; sym_of(n, "_typeshed.Tuple")
+    ).
+
+slot001_tuple_name(n) :- kind(n, "identifier"), glob("tuple", n), ref_site(n, b1),
+    site_form(b1, "typeParameter"),
+    count : { inside(n, p2, "module"), within(c3, p2), slot001_alt_2(c3) } = 0.
+slot001_tuple_name(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), slot001_tuple_name(c4).
+
+// tuple_base(n): the JSON util `tuple-base`, used where the JSON says `matches: "tuple-base"`
+.decl slot001_tuple_base(n: node)
+slot001_tuple_base(n) :- slot001_tuple_name(n).
+slot001_tuple_base(n) :- kind(n, "subscript"), field(n, "value", c1), slot001_tuple_name(c1).
+slot001_tuple_base(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), slot001_tuple_base(c2).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl slot001_tok_has_1(n: node)
+.stored slot001_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+slot001_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
+slot001_tok_has_1(n) :- op(n, t3), match(",", t3).
+slot001_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+slot001_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+slot001_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl slot001_alt_1(n: node)
+slot001_alt_1(n) :- field(n, "left", c1), slot001_slots_target(c1).
+slot001_alt_1(n) :- field(n, "right", c2), kind(c2, "assignment"), slot001_slots_assignment(c2).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl slot001_alt_2(n: node)
+slot001_alt_2(n) :- kind(n, "dotted_name"), glob("builtins", n).
+slot001_alt_2(n) :- kind(n, "identifier"), glob("tuple", n), (bind_only(n) ; aug_target(n)),
+    !site_form(n, "typeParameter").
+
+// main's file condition {"notRegex": "\\.pyi$"}
+.decl SLOT001_raw(at: node)
+SLOT001(v0) :- SLOT001_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

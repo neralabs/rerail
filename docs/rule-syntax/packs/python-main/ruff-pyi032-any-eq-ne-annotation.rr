@@ -1,0 +1,100 @@
+.policy "ruff-pyi032-any-eq-ne-annotation" revision 1
+.guests off
+.description "Use object instead of Any to annotate the other operand of equality and inequality methods; object accepts every value while keeping type checking on."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PYI032(n): a finding at node n, from clause `any-eq-ne-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+.violation PYI032(at: node) "Annotate the other operand of this `__eq__` or `__ne__` as `object` instead of `Any`; `==` and `!=` must accept any value, and `Any` turns type checking off."
+    suppress noqa "PYI032"
+PYI032(n) :- pyi032_any_annotation(n), !kind(n, "parenthesized_expression"),
+    pyi032_annotation_slot(n).
+
+// any_ref(n): the JSON util `any-ref`, used where the JSON says `matches: "any-ref"`
+.decl pyi032_any_ref(n: node)
+pyi032_any_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Any")
+    ; sym_of(n, "typing_extensions.Any")
+    ; sym_of(n, "_typeshed.Any")
+    ).
+
+pyi032_any_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi032_any_ref(c1).
+
+// any_annotation(n): the JSON util `any-annotation`, used where the JSON says `matches: "any-annotation"`
+.decl pyi032_any_annotation(n: node)
+pyi032_any_annotation(n) :- pyi032_any_ref(n).
+pyi032_any_annotation(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), child(r1, c2, _), pyi032_any_ref(c2).
+pyi032_any_annotation(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    pyi032_any_annotation(c3).
+
+// star_param(n): the JSON util `star-param`, used where the JSON says `matches: "star-param"`
+.decl pyi032_star_param(n: node)
+pyi032_star_param(n) :-
+    ( kind(n, "keyword_separator")
+    ; kind(n, "list_splat_pattern")
+    ; kind(n, "dictionary_splat_pattern")
+    ).
+
+pyi032_star_param(n) :- kind(n, "typed_parameter"),
+    count : { child(n, c1, _), kind(c1, "identifier") } = 0.
+
+// arg_param(n): the JSON util `arg-param`, used where the JSON says `matches: "arg-param"`
+.decl pyi032_arg_param(n: node)
+pyi032_arg_param(n) :- child(p1, n, _), kind(p1, "parameters"),
+    ( (kind(n, "identifier") ; kind(n, "default_parameter") ; kind(n, "typed_default_parameter"))
+    ; kind(n, "typed_parameter"), child(n, c1, _), kind(c1, "identifier")
+    ).
+
+
+// first_arg(n): the JSON util `first-arg`, used where the JSON says `matches: "first-arg"`
+.decl pyi032_first_arg(n: node)
+pyi032_first_arg(n) :- pyi032_arg_param(n), precedes_stop(s1, n, pyi032_stop_2),
+    (kind(s1, "positional_separator") ; glob("(", s1)).
+
+// second_arg(n): the JSON util `second-arg`, used where the JSON says `matches: "second-arg"`
+.decl pyi032_second_arg(n: node)
+pyi032_second_arg(n) :- (kind(n, "typed_parameter") ; kind(n, "typed_default_parameter")),
+    pyi032_arg_param(n), precedes_stop(s1, n, pyi032_stop_2), pyi032_first_arg(s1),
+    count : { pyi032_stop_7_precedes(n, s2), pyi032_alt_8(s2) } = 0, child(p3, n, _),
+    kind(p3, "parameters"), child(p4, p3, _), kind(p4, "function_definition"),
+    field(p4, "name", c5), glob("__{eq,ne}__", c5), within_stop(p4, p6, pyi032_stop_9),
+    kind(p6, "class_definition").
+
+// annotation_slot(n): the JSON util `annotation-slot`, used where the JSON says `matches: "annotation-slot"`
+.decl pyi032_annotation_slot(n: node)
+pyi032_annotation_slot(n) :- child(p1, n, _), kind(p1, "type"), field(p2, "type", p1),
+    pyi032_second_arg(p2).
+pyi032_annotation_slot(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"),
+    pyi032_annotation_slot(p3).
+
+// stop_9: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi032_stop_9(kind: symbol)
+pyi032_stop_9("function_definition"). pyi032_stop_9("class_definition").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi032_alt_3(n: node)
+pyi032_alt_3(n) :- kind(n, "comment").
+pyi032_alt_3(n) :- node(_, n, _, _, _), glob("\\,", n).
+
+// stop_2(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi032_stop_2(n: node)
+pyi032_stop_2(n) :- node(_, n, _, _, _), !pyi032_alt_3(n).
+
+// stop_7(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi032_stop_7(n: node)
+pyi032_stop_7(n) :- pyi032_star_param(n).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi032_alt_8(n: node)
+pyi032_alt_8(n) :- pyi032_arg_param(n).
+pyi032_alt_8(n) :- kind(n, "positional_separator").
+
+// stop_7_precedes: precedes_stop over the stop set stop_7, read inside an aggregate
+.decl pyi032_stop_7_precedes(a: node, b: node)
+pyi032_stop_7_precedes(x, y) :- precedes_stop(x, y, pyi032_stop_7).

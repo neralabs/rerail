@@ -1,0 +1,35 @@
+.policy "ruff-b034-re-sub-positional-args" revision 1
+.guests off
+.description "Pass count, maxsplit and flags as keyword arguments to re.sub(), re.subn() and re.split(); their positional order is easy to get wrong."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B034(n): a finding at node n, from clause `re-sub-positional-args`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B034(at: node) "`re.sub` should pass `count` and `flags` as keyword arguments to avoid confusion due to unintuitive argument positions"
+    suppress noqa "B034"
+B034(n) :- kind(n, "call"),
+    ( child(n, c1, _), kind(c1, "argument_list"), k1 = count : { child(c1, c2, _), !b034_alt_1(c2) }, k1 >= 4, next_sibling(s1, c1), b034_re_sub(s1)
+    ; child(n, c3, _), kind(c3, "argument_list"), k2 = count : { child(c3, c4, _), !b034_alt_1(c4) }, k2 >= 3, next_sibling(s2, c3), b034_re_split(s2)
+    ).
+
+
+// re_sub(n): the JSON util `re-sub`, used where the JSON says `matches: "re-sub"`
+.decl b034_re_sub(n: node)
+b034_re_sub(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "re.sub") ; sym_of(n, "re.subn")).
+b034_re_sub(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), b034_re_sub(c1).
+
+// re_split(n): the JSON util `re-split`, used where the JSON says `matches: "re-split"`
+.decl b034_re_split(n: node)
+b034_re_split(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "re.split").
+b034_re_split(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), b034_re_split(c1).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl b034_alt_1(n: node)
+b034_alt_1(n) :- (kind(n, "keyword_argument") ; kind(n, "dictionary_splat") ; kind(n, "comment")).
+b034_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).

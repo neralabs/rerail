@@ -1,0 +1,93 @@
+.policy "ruff-c409-unnecessary-literal-within-tuple-call" revision 1
+.guests off
+.description "Write a tuple literal instead of passing a list or tuple literal to the tuple constructor; the extra call only adds work."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// C409(n, detail): findings from clauses `list-literal-within-tuple-call`, `tuple-literal-within-tuple-call`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation C409(at: node, call: node, detail: symbol) "{detail}."
+    suppress noqa "C409"
+C409(CALL, n, "Write the elements as a tuple literal `(...)` instead of `tuple([...])`; a single element needs a trailing comma, as in `(x,)`") :- c409_target(n),
+    node(_, n, _, _, _), CALL = n.
+C409(CALL, n, "Write the elements as a tuple literal `(...)` instead of `tuple([...])`; a single element needs a trailing comma, as in `(x,)`") :- c409_in_annotation(n, CALL).
+C409(CALL, n, "Remove the outer `tuple()` call and keep the tuple literal it wraps; the call just returns that same tuple") :- c409_target_tuple_literal_within_tuple_call(n),
+    node(_, n, _, _, _), CALL = n.
+C409(CALL, n, "Remove the outer `tuple()` call and keep the tuple literal it wraps; the call just returns that same tuple") :- c409_in_annotation_tuple_literal_within_tuple_call(n, CALL).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl c409_callee(n: node)
+c409_callee(n) :- kind(n, "identifier"), global_ref(n, "tuple").
+c409_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), c409_callee(c1).
+
+// literal(n): the JSON util `literal`, used where the JSON says `matches: "literal"`
+.decl c409_literal(n: node)
+c409_literal(n) :- kind(n, "list").
+c409_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), c409_literal(c1).
+
+// trivia(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl c409_trivia(n: node)
+c409_trivia(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+c409_trivia(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl c409_target(n: node)
+c409_target(n) :- kind(n, "call"), field(n, "function", c1), c409_callee(c1),
+    field(n, "arguments", c2), kind(c2, "argument_list"),
+    k4 = count : { child(c2, c3, _), !c409_trivia(c3) }, k4 >= 1, k4 <= 1, child(c2, c5, _),
+    c409_literal(c5).
+
+// in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl c409_in_annotation(n: node, call: loc)
+c409_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), c409_alt_1(c2, CALL).
+
+// callee_tuple_literal_within_tuple_call(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl c409_callee_tuple_literal_within_tuple_call(n: node)
+c409_callee_tuple_literal_within_tuple_call(n) :- kind(n, "identifier"),
+    global_ref(n, "tuple").
+c409_callee_tuple_literal_within_tuple_call(n) :- kind(n, "parenthesized_expression"),
+    child(n, c1, _), c409_callee_tuple_literal_within_tuple_call(c1).
+
+// literal_tuple_literal_within_tuple_call(n): the JSON util `literal`, used where the JSON says `matches: "literal"`
+.decl c409_literal_tuple_literal_within_tuple_call(n: node)
+c409_literal_tuple_literal_within_tuple_call(n) :- kind(n, "tuple").
+c409_literal_tuple_literal_within_tuple_call(n) :- kind(n, "parenthesized_expression"),
+    child(n, c1, _), c409_literal_tuple_literal_within_tuple_call(c1).
+
+// trivia_tuple_literal_within_tuple_call(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl c409_trivia_tuple_literal_within_tuple_call(n: node)
+c409_trivia_tuple_literal_within_tuple_call(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+c409_trivia_tuple_literal_within_tuple_call(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// target_tuple_literal_within_tuple_call(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl c409_target_tuple_literal_within_tuple_call(n: node)
+c409_target_tuple_literal_within_tuple_call(n) :- kind(n, "call"), field(n, "function", c1),
+    c409_callee_tuple_literal_within_tuple_call(c1), field(n, "arguments", c2),
+    kind(c2, "argument_list"),
+    k4 = count : { child(c2, c3, _), !c409_trivia_tuple_literal_within_tuple_call(c3) },
+    k4 >= 1, k4 <= 1, child(c2, c5, _), c409_literal_tuple_literal_within_tuple_call(c5).
+
+// in_annotation_tuple_literal_within_tuple_call(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl c409_in_annotation_tuple_literal_within_tuple_call(n: node, call: loc)
+c409_in_annotation_tuple_literal_within_tuple_call(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), c409_alt_2(c2, CALL).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   CALL: metavariable this relation binds for the calling rule
+.decl c409_alt_1(n: node, call: loc)
+c409_alt_1(n, CALL) :- c409_target(n), CALL = n.
+c409_alt_1(n, CALL) :- c409_in_annotation(n, CALL).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   CALL: metavariable this relation binds for the calling rule
+.decl c409_alt_2(n: node, call: loc)
+c409_alt_2(n, CALL) :- c409_target_tuple_literal_within_tuple_call(n), CALL = n.
+c409_alt_2(n, CALL) :- c409_in_annotation_tuple_literal_within_tuple_call(n, CALL).

@@ -1,0 +1,20 @@
+.policy "ruff-pie800-unnecessary-spread" revision 1
+.guests off
+.description "Write the entries directly instead of spreading a dict literal into another Python dict literal."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PIE800(n): a finding at node n, from clause `unnecessary-spread`.
+// Each rule below is one way the JSON `rule` can match.
+.violation PIE800(at: node) "Unnecessary spread `**`"
+    suppress noqa "PIE800"
+PIE800(n) :- kind(n, "dictionary"), pie800_spread_slot(n).
+
+// spread_slot(n): the JSON util `spread-slot`, used where the JSON says `matches: "spread-slot"`
+.decl pie800_spread_slot(n: node)
+pie800_spread_slot(n) :- child(p1, n, _), kind(p1, "dictionary_splat"), child(p2, p1, _),
+    kind(p2, "dictionary").
+pie800_spread_slot(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"),
+    pie800_spread_slot(p3).

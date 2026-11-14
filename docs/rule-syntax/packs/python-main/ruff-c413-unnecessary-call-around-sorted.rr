@@ -1,0 +1,98 @@
+.policy "ruff-c413-unnecessary-call-around-sorted" revision 1
+.guests off
+.description "Remove a list or reversed call wrapped around sorted; sorted already returns a new list and can sort in reverse order itself."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// C413(n, detail): findings from clauses `list-call-around-sorted`, `reversed-call-around-sorted`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation C413(at: node, call: node, detail: symbol) "{detail}."
+    suppress noqa "C413"
+C413(CALL, n, "Remove the `list()` call around `sorted()`; `sorted()` already returns a new list") :- c413_target(n),
+    node(_, n, _, _, _), CALL = n.
+C413(CALL, n, "Remove the `list()` call around `sorted()`; `sorted()` already returns a new list") :- c413_in_annotation(n, CALL).
+C413(CALL, n, "Pass `reverse=True` (or flip the existing `reverse=`) to `sorted()` instead of wrapping it in `reversed()`; keep `reversed()` if equal elements must come out in reverse input order") :- c413_target_reversed_call_around_sorted(n),
+    node(_, n, _, _, _), CALL = n.
+C413(CALL, n, "Pass `reverse=True` (or flip the existing `reverse=`) to `sorted()` instead of wrapping it in `reversed()`; keep `reversed()` if equal elements must come out in reverse input order") :- c413_in_annotation_reversed_call_around_sorted(n, CALL).
+
+// outer_family(n, key): 4 copies of one rule set (`outer`, `outer`, `sorted` and 1 more), folded into one: row `key` of
+// outer_family_case gives the strings each copy had.
+.decl c413_outer_family(n: node, key: symbol)
+c413_outer_family(n, q1) :- c413_outer_family_case(q1, s1, s2),
+    (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, s1), sym_of(n, s2).
+c413_outer_family(n, q1) :- c413_outer_family_case(q1, s1, s2),
+    kind(n, "parenthesized_expression"), child(n, c1, _), c413_outer_family(c1, q1).
+
+// sorted_call(n): the JSON util `sorted-call`, used where the JSON says `matches: "sorted-call"`
+.decl c413_sorted_call(n: node)
+c413_sorted_call(n) :- kind(n, "call"), field(n, "function", c1),
+    c413_outer_family(c1, "sorted").
+c413_sorted_call(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    c413_sorted_call(c2).
+
+// lead(n): the JSON util `lead`, used where the JSON says `matches: "lead"`
+.decl c413_lead(n: node)
+c413_lead(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+c413_lead(n) :- node(_, n, _, _, _), glob("[(]", n).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl c413_target(n: node)
+c413_target(n) :- kind(n, "call"), field(n, "function", c1), c413_outer_family(c1, "outer"),
+    field(n, "arguments", c2), kind(c2, "argument_list"), child(c2, c3, _),
+    c413_sorted_call(c3), count : { precedes(s4, c3), !c413_lead(s4) } = 0.
+
+// in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl c413_in_annotation(n: node, call: loc)
+c413_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), c413_alt_1(c2, CALL).
+
+// sorted_call_reversed_call_around_sorted(n): the JSON util `sorted-call`, used where the JSON says `matches: "sorted-call"`
+.decl c413_sorted_call_reversed_call_around_sorted(n: node)
+c413_sorted_call_reversed_call_around_sorted(n) :- kind(n, "call"),
+    field(n, "function", c1), c413_outer_family(c1, "sorted_reversed_call_around_sorted").
+c413_sorted_call_reversed_call_around_sorted(n) :- kind(n, "parenthesized_expression"),
+    child(n, c2, _), c413_sorted_call_reversed_call_around_sorted(c2).
+
+// lead_reversed_call_around_sorted(n): the JSON util `lead`, used where the JSON says `matches: "lead"`
+.decl c413_lead_reversed_call_around_sorted(n: node)
+c413_lead_reversed_call_around_sorted(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+c413_lead_reversed_call_around_sorted(n) :- node(_, n, _, _, _), glob("[(]", n).
+
+// target_reversed_call_around_sorted(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl c413_target_reversed_call_around_sorted(n: node)
+c413_target_reversed_call_around_sorted(n) :- kind(n, "call"), field(n, "function", c1),
+    c413_outer_family(c1, "outer_reversed_call_around_sorted"), field(n, "arguments", c2),
+    kind(c2, "argument_list"), child(c2, c3, _),
+    c413_sorted_call_reversed_call_around_sorted(c3),
+    count : { precedes(s4, c3), !c413_lead_reversed_call_around_sorted(s4) } = 0.
+
+// in_annotation_reversed_call_around_sorted(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl c413_in_annotation_reversed_call_around_sorted(n: node, call: loc)
+c413_in_annotation_reversed_call_around_sorted(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), c413_alt_2(c2, CALL).
+
+// outer_family_case: one row per relation folded into outer_family: its key, then the strings that differed.
+.decl c413_outer_family_case(key: symbol, s1: symbol, s2: symbol)
+c413_outer_family_case("outer", "list", "builtins.list").
+c413_outer_family_case("outer_reversed_call_around_sorted", "reversed", "builtins.reversed").
+c413_outer_family_case("sorted", "sorted", "builtins.sorted").
+c413_outer_family_case("sorted_reversed_call_around_sorted", "sorted", "builtins.sorted").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   CALL: metavariable this relation binds for the calling rule
+.decl c413_alt_1(n: node, call: loc)
+c413_alt_1(n, CALL) :- c413_target(n), CALL = n.
+c413_alt_1(n, CALL) :- c413_in_annotation(n, CALL).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   CALL: metavariable this relation binds for the calling rule
+.decl c413_alt_2(n: node, call: loc)
+c413_alt_2(n, CALL) :- c413_target_reversed_call_around_sorted(n), CALL = n.
+c413_alt_2(n, CALL) :- c413_in_annotation_reversed_call_around_sorted(n, CALL).

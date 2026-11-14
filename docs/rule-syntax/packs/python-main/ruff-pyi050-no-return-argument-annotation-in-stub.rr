@@ -1,0 +1,59 @@
+.policy "ruff-pyi050-no-return-argument-annotation-in-stub" revision 1
+.guests off
+.description "Use Never instead of NoReturn for parameter annotations in stub files; NoReturn describes a function that never returns, which makes little sense for a parameter."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PYI050(n): a finding at node n, from clause `no-return-argument-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI050(at: node) "Annotate this parameter as `Never` instead of `NoReturn`, importing it from `typing_extensions` (or `typing` on Python 3.11+); the two are equivalent for type checkers."
+    suppress noqa "PYI050"
+PYI050_raw(n) :- pyi050_no_return_ref(n), pyi050_up_1(n, p1), field(p2, "type", p1),
+    (kind(p2, "typed_parameter") ; kind(p2, "typed_default_parameter")).
+PYI050_raw(n) :- pyi050_plain_string(n), pyi050_up_2(n, p3), field(p4, "type", p3),
+    (kind(p4, "typed_parameter") ; kind(p4, "typed_default_parameter")),
+    parsed(n, "annotation", r5), kind(r5, "expression_statement"), child(r5, c6, _),
+    pyi050_no_return_expr(c6).
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl pyi050_plain_string(n: node)
+pyi050_plain_string(n) :- kind(n, "string"), match("[rRuU]{0,2}['\"].*", n),
+    count : { has(n, c1, "interpolation"), node(_, c1, _, _, _) } = 0.
+pyi050_plain_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), !match("[rRuU]{0,2}['\"].*", c2) } = 0.
+
+// no_return_ref(n): the JSON util `no-return-ref`, used where the JSON says `matches: "no-return-ref"`
+.decl pyi050_no_return_ref(n: node)
+pyi050_no_return_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.NoReturn")
+    ; sym_of(n, "typing_extensions.NoReturn")
+    ; sym_of(n, "_typeshed.NoReturn")
+    ).
+
+
+// no_return_expr(n): the JSON util `no-return-expr`, used where the JSON says `matches: "no-return-expr"`
+.decl pyi050_no_return_expr(n: node)
+pyi050_no_return_expr(n) :- pyi050_no_return_ref(n).
+pyi050_no_return_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi050_no_return_expr(c1).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi050_up_1(n: node, p: node)
+pyi050_up_1(n, p) :- pyi050_no_return_ref(n), within_stop(n, p, pyi050_stop_1), kind(p, "type").
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi050_up_2(n: node, p: node)
+pyi050_up_2(n, p) :- pyi050_plain_string(n), within_stop(n, p, pyi050_stop_1), kind(p, "type").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi050_stop_1(n: node)
+pyi050_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI050_raw(at: node)
+PYI050(v0) :- PYI050_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

@@ -1,0 +1,23 @@
+.policy "ruff-f403-undefined-local-with-import-star" revision 1
+.guests off
+.description "Avoid from module import * star imports; they hide where names come from and stop undefined names from being detected."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F403(n): a finding at node n, from clause `undefined-local-with-import-star`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation F403(at: node, module: loc) "`from {module} import *` used; unable to detect undefined names"
+    suppress noqa "F403"
+F403(n, MODULE) :- kind(n, "import_from_statement"), child(n, c1, _),
+    kind(c1, "wildcard_import"), precedes(s2, c1),
+    (kind(s2, "dotted_name") ; kind(s2, "relative_import")), node(_, s2, _, _, _), MODULE = s2,
+    count : { child(n, c3, _), f403_alt_1(c3) } = 0.
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl f403_alt_1(n: node)
+f403_alt_1(n) :- kind(n, "dotted_name"), glob("__future__", n).
+f403_alt_1(n) :- kind(n, "relative_import"), child(n, c1, _), kind(c1, "dotted_name"),
+    glob("__future__", c1).

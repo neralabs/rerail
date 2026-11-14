@@ -371,7 +371,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
             return Err(Error::Plan(format!("{name}.rr says `.phase {}`", declared.name)));
         }
         for export in &declared.exports {
-            let cols = program.decls.get(export).ok_or_else(|| Error::Plan(format!("{name}.rr exports {export}, which it does not declare")))?;
+            let cols = program.decls.get(export.as_str()).ok_or_else(|| Error::Plan(format!("{name}.rr exports {export}, which it does not declare")))?;
             if let Some((c, _)) = cols.iter().find(|(_, t)| t == "node") {
                 return Err(Error::Plan(format!("{name}.rr exports {export}, whose column {c} is a node: an export names symbols, which an edit does not renumber")));
             }
@@ -383,7 +383,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
             if !declared.exports.contains(export) {
                 return Err(Error::Plan(format!("{rel}: phase {name} does not export {export} (a phase's other relations are its own)")));
             }
-            let (want, have) = (&program.decls[export], &prog.decls[rel]);
+            let (want, have) = (&program.decls[export.as_str()], &prog.decls[rel.as_str()]);
             let ty = |t: &str| if t == "sym" { "symbol".to_owned() } else if t == "int" { "number".to_owned() } else { t.to_owned() };
             if want.len() != have.len() || want.iter().zip(have).any(|((_, a), (_, b))| ty(a) != ty(b)) {
                 return Err(Error::Plan(format!("{rel}: {} columns, where phase {name}'s {export} has {}", have.len(), want.len())));
@@ -489,7 +489,7 @@ pub(super) fn sources(
         options = serde_json::json!({ "inputFiles": [] });
     }
     // The observer's facts: stated, handed down as a phase's exports are (they are its inputs, not its program).
-    let stated: Vec<Vec<Value>> = files.iter().map(|(p, m, g, c)| vec![Value::Str(p.clone()), Value::Str(m.clone()), Value::Str(g.clone()), Value::Str(c.clone())]).collect();
+    let stated: Vec<Vec<Value>> = files.iter().map(|(p, m, g, c)| vec![Value::Str(p.clone().into()), Value::Str(m.clone().into()), Value::Str(g.clone().into()), Value::Str(c.clone().into())]).collect();
     let _down = HandedDown::enter(NAME, Facts::from([("observer__source_file".to_owned(), stated)]));
     let out = scratch.join(format!("phase-{NAME}"));
     let report = {
@@ -549,7 +549,7 @@ fn read_exports(name: &str, program: &Program, declared: &Declared, out: &Path) 
             let held: Vec<String> = std::fs::read_dir(out).map(|d| d.filter_map(|f| f.ok().map(|f| f.file_name().to_string_lossy().into_owned())).collect()).unwrap_or_default();
             Error::Plan(format!("phase {name}: {export}: {e} (in {}, which holds {held:?})", out.display()))
         })?;
-        let width = program.decls[export].len();
+        let width = program.decls[export.as_str()].len();
         let read: Vec<Vec<String>> = text.lines().map(|l| l.split('\t').map(str::to_owned).collect()).collect();
         // Outputs are lines of tab-separated values, unescaped: a value holding a newline or a tab would come back
         // as other rows, and be handed on as facts no rule made.
@@ -565,13 +565,13 @@ fn read_exports(name: &str, program: &Program, declared: &Declared, out: &Path) 
 /// The rows of the exports `reads` names, as the reader's relations' values.
 fn hand_on(name: &str, program: &Program, reads: &[(String, String)], rows: &BTreeMap<String, Vec<Vec<String>>>, facts: &mut Facts) -> Result<()> {
     for (rel, export) in reads {
-        let types: Vec<&str> = program.decls[export].iter().map(|(_, t)| t.as_str()).collect();
+        let types: Vec<&str> = program.decls[export.as_str()].iter().map(|(_, t)| t.as_str()).collect();
         let held = facts.entry(rel.clone()).or_default();
         for r in rows.get(export).into_iter().flatten() {
             let row = r
                 .iter()
                 .zip(&types)
-                .map(|(v, t)| if *t == "symbol" || *t == "sym" { Ok(Value::Str(v.clone())) } else { v.parse::<i64>().map(Value::Int).map_err(|_| Error::Plan(format!("phase {name}: {export}: not a number: {v}"))) })
+                .map(|(v, t)| if *t == "symbol" || *t == "sym" { Ok(Value::Str(v.clone().into())) } else { v.parse::<i64>().map(Value::Int).map_err(|_| Error::Plan(format!("phase {name}: {export}: not a number: {v}"))) })
                 .collect::<Result<Vec<_>>>()?;
             held.push(row);
         }

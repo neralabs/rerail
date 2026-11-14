@@ -1,0 +1,146 @@
+.policy "ruff-b028-no-explicit-stacklevel" revision 1
+.guests off
+.description "Pass an explicit stacklevel to warnings.warn(); without it the warning points at the warn call instead of the caller who triggered it."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B028(n): a finding at node n, from clause `no-explicit-stacklevel`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B028(at: node) "Pass stacklevel= to this warnings.warn() call, usually 2, so the warning points at the caller."
+    suppress noqa "B028"
+B028(n) :- (kind(n, "attribute") ; kind(n, "identifier")), b028_warnings_warn(n),
+    b028_warn_args(n), b028_up_1(n, p1).
+
+// warnings_warn(n): the JSON util `warnings-warn`, used where the JSON says `matches: "warnings-warn"`
+.decl b028_warnings_warn(n: node)
+b028_warnings_warn(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "warnings.warn").
+b028_warnings_warn(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    b028_warnings_warn(c1).
+
+// warn_args(n): the JSON util `warn-args`, used where the JSON says `matches: "warn-args"`
+.decl b028_warn_args(n: node)
+b028_warn_args(n) :- child(p1, n, _), kind(p1, "call"), next_sibling(n, s2),
+    (kind(s2, "argument_list"), !b028_alt_1(s2) ; kind(s2, "generator_expression")).
+b028_warn_args(n) :- child(p21, n, _), kind(p21, "parenthesized_expression"),
+    b028_warn_args(p21).
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b028_tok_precedes_1(n: node)
+.stored b028_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b028_tok_precedes_1(n) :- next_sibling(n, s5), glob("=", s5).
+b028_tok_precedes_1(n) :- structural_after(n, g7), match("\\s*", g7), child(p8, n, _),
+    node(_, n, _, _, en11), o9 = en11 + strlen(g7), token(p8, _, t6, o9, _),
+    match("=", t6).
+b028_tok_precedes_1(n) :- structural_after(n, g7),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g7).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b028_tok_follows_2(n: node)
+.stored b028_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b028_tok_follows_2(n) :- next_sibling(s13, n), glob("=", s13).
+b028_tok_follows_2(n) :- structural_before(n, g15), match("\\s*", g15), child(p16, n, _),
+    node(_, n, _, st18, _), o17 = st18 - strlen(g15), token(p16, _, t14, _, o17),
+    match("=", t14).
+b028_tok_follows_2(n) :- structural_before(n, g15),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g15).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b028_tok_precedes_3(n: node)
+.stored b028_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b028_tok_precedes_3(n) :- next_sibling(n, s3), glob("=", s3).
+b028_tok_precedes_3(n) :- structural_after(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, _, en9), o7 = en9 + strlen(g5), token(p6, _, t4, o7, _),
+    match("=", t4).
+b028_tok_precedes_3(n) :- structural_after(n, g5),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b028_tok_follows_4(n: node)
+.stored b028_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b028_tok_follows_4(n) :- next_sibling(s11, n), glob("=", s11).
+b028_tok_follows_4(n) :- structural_before(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, st16, _), o15 = st16 - strlen(g13), token(p14, _, t12, _, o15),
+    match("=", t12).
+b028_tok_follows_4(n) :- structural_before(n, g13),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)\\s*)$", g13).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl b028_args_plain(l: node, a: node, i: number)
+b028_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl b028_args_splat(l: node, i: number)
+b028_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl b028_args_pos(l: node, a: node, j: number)
+b028_args_pos(l, a, j) :- b028_args_plain(l, a, i), count : { b028_args_splat(l, k), k < i } = 0,
+    j = count : { b028_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl b028_args_star(l: node, j: number)
+b028_args_star(l, j) :- b028_args_splat(l, i), count : { b028_args_splat(l, k), k < i } = 0,
+    j = count : { b028_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl b028_args_kwp(l: node, k: symbol, v: node)
+b028_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl b028_args_lit_dict(s: node, d: node)
+b028_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !b028_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl b028_args_str_pair(p: node)
+b028_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl b028_args_kw(l: node, k: symbol, v: node)
+b028_args_kw(l, k, v) :- b028_args_kwp(l, k, v).
+b028_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), b028_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl b028_args_kw_spread(l: node)
+b028_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !b028_args_lit_dict(s, _).
+
+// arg_stacklevel_1: call n passes v for slot `stacklevel` of (message, category, stacklevel), syntactic: Ruff's find_argument
+.decl b028_arg_stacklevel_1(n: node, v: node)
+b028_arg_stacklevel_1(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    b028_args_kwp(l, "stacklevel", v).
+b028_arg_stacklevel_1(n, v) :- kind(n, "call"), field(n, "arguments", l), b028_args_pos(l, v, 2),
+    !b028_args_kwp(l, "stacklevel", _).
+
+// arg_no_stacklevel_1: call n does not pass slot `stacklevel` of (message, category, stacklevel), syntactic: Ruff's find_argument
+.decl b028_arg_no_stacklevel_1(n: node)
+b028_arg_no_stacklevel_1(n) :- kind(n, "call"), field(n, "arguments", l),
+    !b028_args_kwp(l, "stacklevel", _), !b028_args_pos(l, _, 2).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl b028_up_1(n: node, p: node)
+b028_up_1(n, p) :- b028_warnings_warn(n), b028_warn_args(n), within_stop(n, p, "call"),
+    kind(p, "call"), b028_arg_no_stacklevel_1(p).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl b028_alt_1(n: node)
+b028_alt_1(n) :- child(n, c1, _), kind(c1, "keyword_argument"), child(c1, c2, _),
+    kind(c2, "identifier"), glob("skip_file_prefixes", c2), b028_tok_precedes_3(c2),
+    child(c1, c10, _), b028_tok_follows_4(c10),
+    count : { kind(c10, "tuple"), match("\\(\\s*\\)", c10) } = 0.
+b028_alt_1(n) :- child(n, c18, _),
+    (kind(c18, "list_splat") ; kind(c18, "dictionary_splat")).

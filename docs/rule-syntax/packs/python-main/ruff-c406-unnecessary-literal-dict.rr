@@ -1,0 +1,64 @@
+.policy "ruff-c406-unnecessary-literal-dict" revision 1
+.guests off
+.description "Write a dict literal instead of passing a list or tuple of pairs to dict(); the call builds a throwaway sequence first."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// C406(n): a finding at node n, from clause `unnecessary-literal-dict`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation C406(at: node, call: node) "Rewrite `dict([(k, v), ...])` as the dict literal `{{k: v, ...}}` and `dict([])` as `{{}}`; leave it when a pair unpacks with `*`, as in `(k, *v)`."
+    suppress noqa "C406"
+C406(CALL, n) :- c406_target(n), node(_, n, _, _, _), CALL = n.
+C406(CALL, n) :- c406_in_annotation(n, CALL).
+
+// callee_dict(n): the JSON util `callee-dict`, used where the JSON says `matches: "callee-dict"`
+.decl c406_callee_dict(n: node)
+c406_callee_dict(n) :- kind(n, "identifier"), glob("dict", n), global_ref(n, "dict").
+c406_callee_dict(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    c406_callee_dict(c1).
+
+// element(n): the JSON util `element`, used where the JSON says `matches: "element"`
+.decl c406_element(n: node)
+c406_element(n) :- node(_, n, _, _, _), !c406_alt_1(n).
+
+// pair(n): the JSON util `pair`, used where the JSON says `matches: "pair"`
+.decl c406_pair(n: node)
+c406_pair(n) :- kind(n, "tuple"), k2 = count : { child(n, c1, _), c406_element(c1) }, k2 >= 2,
+    k2 <= 2.
+c406_pair(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), c406_pair(c3).
+
+// pair_sequence(n): the JSON util `pair-sequence`, used where the JSON says `matches: "pair-sequence"`
+.decl c406_pair_sequence(n: node)
+c406_pair_sequence(n) :- (kind(n, "list") ; kind(n, "tuple")),
+    count : { child(n, c1, _), c406_element(c1), !c406_pair(c1) } = 0.
+c406_pair_sequence(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    c406_pair_sequence(c2).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl c406_target(n: node)
+c406_target(n) :- kind(n, "call"), field(n, "function", c1), c406_callee_dict(c1),
+    field(n, "arguments", c2), kind(c2, "argument_list"),
+    k4 = count : { child(c2, c3, _), c406_element(c3) }, k4 >= 1, k4 <= 1, child(c2, c5, _),
+    c406_pair_sequence(c5).
+
+// in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl c406_in_annotation(n: node, call: loc)
+c406_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), c406_alt_2(c2, CALL).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl c406_alt_1(n: node)
+c406_alt_1(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+c406_alt_1(n) :- node(_, n, _, _, _), glob("[\\[\\](),]", n).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   CALL: metavariable this relation binds for the calling rule
+.decl c406_alt_2(n: node, call: loc)
+c406_alt_2(n, CALL) :- c406_target(n), CALL = n.
+c406_alt_2(n, CALL) :- c406_in_annotation(n, CALL).

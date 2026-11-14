@@ -1,0 +1,24 @@
+.policy "bandit-b606-start-process-with-no-shell" revision 1
+.guests off
+.description "Validate input passed to the os exec, spawn and startfile functions; they start whatever program and arguments they receive."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B606(n): a finding at node n, from clause `bandit-b606`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on F are added to every rule.
+.violation B606(at: node) "Validate any untrusted input passed to this os exec, spawn or startfile call; it starts whatever program and arguments it receives."
+    suppress nosec "B606"
+B606(n) :- n ~ `$F($$$ARGS)`, sym_of(F, q1), b606_set_1(q1).
+
+// set_1: symbols from the JSON `resolves.import`
+.decl b606_set_1(v: symbol)
+b606_set_1("os.execl"). b606_set_1("os.execle"). b606_set_1("os.execlp"). b606_set_1("os.execlpe").
+b606_set_1("os.execv"). b606_set_1("os.execve"). b606_set_1("os.execvp"). b606_set_1("os.execvpe").
+b606_set_1("os.spawnl"). b606_set_1("os.spawnle"). b606_set_1("os.spawnlp"). b606_set_1("os.spawnlpe").
+b606_set_1("os.spawnv"). b606_set_1("os.spawnve"). b606_set_1("os.spawnvp"). b606_set_1("os.spawnvpe").
+b606_set_1("os.startfile").

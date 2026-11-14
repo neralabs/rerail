@@ -1,0 +1,63 @@
+.policy "ruff-b904-raise-without-from-inside-except" revision 1
+.guests off
+.description "Use raise ... from err (or from None) when raising a new exception inside an except block; it keeps the cause chain clear instead of looking like a bug in the handler."
+.language python
+.mode steer
+.scope include "**/*.py", "**/*.pyi"
+.scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B904(n): a finding at node n, from clause `raise-without-from-inside-except`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B904(at: node) "Raise this exception with `from err` or `from None` so the cause chain is clear."
+    suppress noqa "B904"
+B904(n) :- kind(n, "raise_statement"), b904_in_handler(n), child(n, c1, _),
+    !glob("raise", c1), !b904_tok_has_1(n),
+    count : { child(n, c10, _), b904_tok_follows_2(c10), b904_handler_name(c10), within_stop(n, p18, "except_clause"), kind(p18, "except_clause"), child(p18, c19, _), kind(c19, "as_pattern"), child(c19, c20, _), kind(c20, "as_pattern_target"), child(c20, c21, _), kind(c21, "identifier"), node(_, c21, _, _, _), X = c21 } = 0.
+
+// in_handler(n): the JSON util `in-handler`, used where the JSON says `matches: "in-handler"`
+.decl b904_in_handler(n: node)
+b904_in_handler(n) :- child(p1, n, _), kind(p1, "block"), b904_alt_1(p1).
+
+// handler_name(n): the JSON util `handler-name`, used where the JSON says `matches: "handler-name"`
+.decl b904_handler_name(n: node)
+b904_handler_name(n) :- kind(n, "identifier"), node(_, n, _, _, _), X = n.
+b904_handler_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    b904_handler_name(c1).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^from$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b904_tok_has_1(n: node)
+.stored b904_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b904_tok_has_1(n) :- child(n, c2, _), glob("from", c2).
+b904_tok_has_1(n) :- op(n, t3), match("from", t3).
+b904_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g4).
+b904_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g4).
+b904_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g4).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^raise$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b904_tok_follows_2(n: node)
+.stored b904_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b904_tok_follows_2(n) :- next_sibling(s11, n), glob("raise", s11).
+b904_tok_follows_2(n) :- structural_before(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, st16, _), o15 = st16 - strlen(g13), token(p14, _, t12, _, o15),
+    match("raise", t12).
+b904_tok_follows_2(n) :- structural_before(n, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:raise)\\s*)$", g13).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl b904_alt_1(n: node)
+b904_alt_1(n) :- child(p1, n, _), kind(p1, "except_clause").
+b904_alt_1(n) :- child(p2, n, _),
+    ( kind(p2, "if_statement")
+    ; kind(p2, "with_statement")
+    ; kind(p2, "for_statement")
+    ; kind(p2, "while_statement")
+    ),
+    b904_in_handler(p2).
+b904_alt_1(n) :- child(p3, n, _), (kind(p3, "elif_clause") ; kind(p3, "else_clause")),
+    child(p4, p3, _), kind(p4, "if_statement"), b904_in_handler(p4).
+b904_alt_1(n) :- child(p5, n, _), kind(p5, "case_clause"), child(p6, p5, _),
+    kind(p6, "block"), child(p7, p6, _), kind(p7, "match_statement"), b904_in_handler(p7).

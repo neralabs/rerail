@@ -1,0 +1,97 @@
+.policy "ruff-try201-verbose-raise" revision 1
+.guests off
+.description "Use a bare raise to re-raise the caught exception instead of raising it again by name; the bare form is the idiomatic way to propagate it."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// exc_slot(n): the JSON util `exc-slot`, used where the JSON says `matches: "exc-slot"`
+.decl try201_exc_slot(n: node)
+try201_exc_slot(n) :- child(p1, n, _), kind(p1, "raise_statement"), !try201_tok_has_1(p1).
+try201_exc_slot(n) :- child(p10, n, _), kind(p10, "parenthesized_expression"), try201_exc_slot(p10).
+
+// reached(n): the JSON util `reached`, used where the JSON says `matches: "reached"`
+//   E: metavariable this relation binds for the calling rule
+.decl try201_reached(n: node, e: loc)
+try201_reached(n, E) :- try201_vis(n, E).
+try201_reached(n, E) :- try201_wis(n, E).
+
+// vis(n): the JSON util `vis`, used where the JSON says `matches: "vis"`
+//   E: metavariable this relation binds for the calling rule
+.decl try201_vis(n: node, e: loc)
+try201_vis(n, E) :- child(p1, n, _), kind(p1, "decorated_definition"), try201_vis(p1, E).
+try201_vis(n, E) :- child(p2, n, _), kind(p2, "block"), child(p3, p2, _), try201_alt_2(p3, E).
+
+// wis(n): the JSON util `wis`, used where the JSON says `matches: "wis"`
+//   E: metavariable this relation binds for the calling rule
+.decl try201_wis(n: node, e: loc)
+try201_wis(n, E) :- child(p1, n, _), kind(p1, "decorated_definition"), try201_wis(p1, E).
+try201_wis(n, E) :- child(p2, n, _), kind(p2, "block"), child(p3, p2, _), try201_alt_4(p3, E).
+
+// binds_e(n): the JSON util `binds-e`, used where the JSON says `matches: "binds-e"`
+//   E: metavariable this relation binds for the calling rule
+.decl try201_binds_e(n: node, e: loc)
+try201_binds_e(n, E) :- kind(n, "except_clause"), child(n, c1, _), kind(c1, "as_pattern"),
+    child(c1, c2, _), kind(c2, "as_pattern_target"), child(c2, c3, _),
+    kind(c3, "identifier"), node(_, c3, _, _, _), E = c3.
+
+// TRY201(n): findings from clauses `verbose-raise`, `verbose-raise-again`, which say the same.
+// Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation TRY201(at: node, e: loc) "Use a bare `raise` instead of `raise {e}`. Keep the name if `{e}` was reassigned, or the raise is in a nested function or an inner `except` block, where a bare raise re-raises something else."
+    suppress noqa "TRY201"
+TRY201(n, E) :- kind(n, "identifier"), node(_, n, _, _, _), E = n, try201_exc_slot(n),
+    inside(n, p1, "raise_statement"), try201_vis(p1, E).
+TRY201(n, E) :- kind(n, "identifier"), node(_, n, _, _, _), E = n, try201_exc_slot(n),
+    inside(n, p1, "raise_statement"), try201_vis(p1, E), within_stop(n, p2, try201_stop_5),
+    try201_binds_e(p2, E), child(p3, p2, _), kind(p3, "try_statement"), try201_wis(p3, E).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^from$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl try201_tok_has_1(n: node)
+.stored try201_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+try201_tok_has_1(n) :- child(n, c2, _), glob("from", c2).
+try201_tok_has_1(n) :- op(n, t3), match("from", t3).
+try201_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g4).
+try201_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g4).
+try201_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g4).
+
+// set_1: node kinds from a JSON `any`
+.decl try201_set_1(v: symbol)
+try201_set_1("function_definition"). try201_set_1("class_definition"). try201_set_1("if_statement").
+try201_set_1("for_statement"). try201_set_1("while_statement"). try201_set_1("with_statement").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   E: metavariable this relation binds for the calling rule
+.decl try201_alt_2(n: node, e: loc)
+try201_alt_2(n, E) :- try201_binds_e(n, E).
+try201_alt_2(n, E) :- kind(n, "except_clause"), child(p1, n, _), kind(p1, "try_statement"),
+    try201_wis(p1, E).
+try201_alt_2(n, E) :- kind(n, "else_clause"), child(p2, n, _), kind(p2, "try_statement"),
+    try201_wis(p2, E).
+try201_alt_2(n, E) :- kind(n, "finally_clause"), child(p3, n, _), kind(p3, "try_statement"),
+    try201_wis(p3, E).
+try201_alt_2(n, E) :- kind(n, "try_statement"), try201_wis(n, E).
+try201_alt_2(n, E) :- kind(n, k4), try201_set_1(k4), try201_reached(n, E).
+try201_alt_2(n, E) :- (kind(n, "elif_clause") ; kind(n, "else_clause")), child(p5, n, _),
+    ( kind(p5, "if_statement")
+    ; kind(p5, "for_statement")
+    ; kind(p5, "while_statement")
+    ),
+    try201_reached(p5, E).
+try201_alt_2(n, E) :- kind(n, "case_clause"), child(p6, n, _), kind(p6, "block"),
+    child(p7, p6, _), kind(p7, "match_statement"), try201_reached(p7, E).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+//   E: metavariable this relation binds for the calling rule
+.decl try201_alt_4(n: node, e: loc)
+try201_alt_4(n, E) :- kind(n, "try_statement"), try201_vis(n, E).
+try201_alt_4(n, E) :- kind(n, "finally_clause"), child(p1, n, _), kind(p1, "try_statement"),
+    try201_vis(p1, E).
+
+// stop_5(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl try201_stop_5(n: node)
+try201_stop_5(n) :- try201_binds_e(n, _).

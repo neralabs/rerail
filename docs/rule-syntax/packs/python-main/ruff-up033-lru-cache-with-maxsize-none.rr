@@ -1,0 +1,58 @@
+.policy "ruff-up033-lru-cache-with-maxsize-none" revision 1
+.guests off
+.description "Use functools.cache instead of functools.lru_cache with maxsize=None; it is the same unbounded cache without the call."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// UP033(n): a finding at node n, from clause `lru-cache-maxsize-none`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation UP033(at: node, r: node) "Replace `lru_cache(maxsize=None)` with `functools.cache` (importing `cache` from functools if needed); it is the same unbounded cache and takes no call."
+    suppress noqa "UP033"
+UP033(R, n) :- kind(n, "decorator"),
+    match("(?s:.*)(?P<R>[\\s)\\\\]*(?:#[^\\n]*\\n[\\s)\\\\]*)*\\((?:\\s|#[^\\n]*)*maxsize\\s*=[\\s\\S]*?\\))\\s*(?:#[^\\n]*)?", n),
+    child(p1, n, _), kind(p1, "decorated_definition"), field(p1, "definition", c2),
+    kind(c2, "function_definition"), child(n, c3, _), up033_decorator_call(c3).
+
+// none_literal(n): the JSON util `none-literal`, used where the JSON says `matches: "none-literal"`
+.decl up033_none_literal(n: node)
+up033_none_literal(n) :- kind(n, "none").
+up033_none_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    up033_none_literal(c1).
+
+// lru_maxsize_none_call(n): the JSON util `lru-maxsize-none-call`, used where the JSON says `matches: "lru-maxsize-none-call"`
+.decl up033_lru_maxsize_none_call(n: node)
+up033_lru_maxsize_none_call(n) :- kind(n, "call"), field(n, "function", c1),
+    up033_lru_reference(c1), field(n, "arguments", c2), kind(c2, "argument_list"),
+    child(c2, c3, _), kind(c3, "keyword_argument"), child(p4, c3, _), up033_counted_1(c3),
+    k6 = count : { child(p4, s5, _), precedes(s5, c3), up033_counted_1(s5) }, k6 = 0,
+    child(p7, c3, _), up033_counted_2(c3),
+    k9 = count : { child(p7, s8, _), precedes(c3, s8), up033_counted_2(s8) }, k9 = 0,
+    field(c3, "value", c10), up033_none_literal(c10), field(c3, "name", c11),
+    kind(c11, "identifier"), glob("maxsize", c11).
+
+// decorator_call(n): the JSON util `decorator-call`, used where the JSON says `matches: "decorator-call"`
+.decl up033_decorator_call(n: node)
+up033_decorator_call(n) :- up033_lru_maxsize_none_call(n).
+up033_decorator_call(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    up033_decorator_call(c1).
+
+// lru_reference(n): the JSON util `lru-reference`, used where the JSON says `matches: "lru-reference"`
+.decl up033_lru_reference(n: node)
+up033_lru_reference(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "functools.lru_cache").
+up033_lru_reference(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    up033_lru_reference(c1).
+
+// counted_1(n): the siblings the JSON `nthChild.ofRule` counts
+.decl up033_counted_1(n: node)
+up033_counted_1(n) :- node(_, n, _, _, _), !kind(n, "comment").
+
+// counted_2(n): the siblings the JSON `nthChild.ofRule` counts
+.decl up033_counted_2(n: node)
+up033_counted_2(n) :- node(_, n, _, _, _), !kind(n, "comment").

@@ -1,0 +1,89 @@
+.policy "ruff-g101-logging-extra-attr-clash" revision 1
+.guests off
+.description "Avoid extra keys that clash with built-in LogRecord attributes in logging calls; the logging call raises KeyError when they collide."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// G101(n): a finding at node n, from clause `logging-extra-attr-clash`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation G101(at: node, k: loc) "Rename the `extra` key {k}: it clashes with a built-in LogRecord attribute, so a standard-library logger raises KeyError when it builds the record."
+    suppress noqa "G101"
+G101(n, K) :-
+    ( kind(n, "string"), !g101_interpolated_part(n)
+    ; kind(n, "concatenated_string"), count : { child(n, c1, _), g101_interpolated_part(c1) } = 0
+    ),
+
+    value(n, v2), glob("{args,asctime,created,exc_info,exc_text,filename,funcName,levelname,levelno,lineno,module,msecs,message,msg,name,pathname,process,processName,relativeCreated,stack_info,thread,threadName}", v2),
+    node(_, n, _, _, _), K = n, g101_extra_key(n).
+G101(n, K) :- kind(n, "keyword_argument"), field(n, "name", c3),
+    glob("{args,asctime,created,exc_info,exc_text,filename,funcName,levelname,levelno,lineno,module,msecs,message,msg,name,pathname,process,processName,relativeCreated,stack_info,thread,threadName}", c3),
+    node(_, c3, _, _, _), K = c3, child(p4, n, _), kind(p4, "argument_list"), field(p5, "arguments", p4),
+    kind(p5, "call"), field(p5, "function", c6), g101_builtin_dict(c6), g101_extra_value(p5).
+
+// logger_object(n): the JSON util `logger-object`, used where the JSON says `matches: "logger-object"`
+.decl g101_logger_object(n: node)
+g101_logger_object(n) :- kind(n, "call"), field(n, "function", c1),
+    (sym_of(c1, "logging.getLogger") ; sym_of(c1, "logging.Logger")).
+g101_logger_object(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    g101_logger_object(c2).
+g101_logger_object(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "logging") ; sym_of(n, "flask.current_app.logger")).
+g101_logger_object(n) :-
+    ( kind(n, "identifier"), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", n)
+    ; kind(n, "attribute"), field(n, "attribute", c1), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c1), field(n, "object", c2), g101_name_chain(c2)
+    ),
+    !sym_of(n, _).
+
+// name_chain(n): the JSON util `name-chain`, used where the JSON says `matches: "name-chain"`
+.decl g101_name_chain(n: node)
+g101_name_chain(n) :- kind(n, "identifier").
+g101_name_chain(n) :- kind(n, "attribute"), field(n, "object", c1), g101_name_chain(c1).
+g101_name_chain(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), g101_name_chain(c2).
+
+// logging_callee(n): the JSON util `logging-callee`, used where the JSON says `matches: "logging-callee"`
+.decl g101_logging_callee(n: node)
+g101_logging_callee(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("{debug,critical,error,exception,info,warn,warning,log}", c1),
+    field(n, "object", c2), g101_logger_object(c2).
+g101_logging_callee(n) :- kind(n, "identifier"), sym_of(n, q3), g101_set_2(q3).
+g101_logging_callee(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    g101_logging_callee(c4).
+
+// extra_value(n): the JSON util `extra-value`, used where the JSON says `matches: "extra-value"`
+.decl g101_extra_value(n: node)
+g101_extra_value(n) :- field(p1, "value", n), kind(p1, "keyword_argument"),
+    field(p1, "name", c2), glob("extra", c2), child(p3, p1, _),
+    kind(p3, "argument_list"), field(p4, "arguments", p3), kind(p4, "call"),
+    field(p4, "function", c5), g101_logging_callee(c5).
+g101_extra_value(n) :- child(p6, n, _), kind(p6, "parenthesized_expression"),
+    g101_extra_value(p6).
+
+// extra_key(n): the JSON util `extra-key`, used where the JSON says `matches: "extra-key"`
+.decl g101_extra_key(n: node)
+g101_extra_key(n) :- field(p1, "key", n), kind(p1, "pair"), child(p2, p1, _),
+    kind(p2, "dictionary"), g101_extra_value(p2).
+g101_extra_key(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"), g101_extra_key(p3).
+
+// interpolated_part(n): the JSON util `interpolated-part`, used where the JSON says `matches: "interpolated-part"`
+.decl g101_interpolated_part(n: node)
+g101_interpolated_part(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "string_start"),
+    match("[A-Za-z]*[fFtT].*", c1).
+
+// builtin_dict(n): the JSON util `builtin-dict`, used where the JSON says `matches: "builtin-dict"`
+.decl g101_builtin_dict(n: node)
+g101_builtin_dict(n) :- kind(n, "identifier"), global_ref(n, "dict").
+g101_builtin_dict(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "builtins.dict").
+g101_builtin_dict(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    g101_builtin_dict(c1).
+
+// set_2: symbols from the JSON `resolves.import`
+.decl g101_set_2(v: symbol)
+g101_set_2("logging.debug"). g101_set_2("logging.critical"). g101_set_2("logging.error").
+g101_set_2("logging.exception"). g101_set_2("logging.info"). g101_set_2("logging.warn").
+g101_set_2("logging.warning"). g101_set_2("logging.log").

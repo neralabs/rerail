@@ -1,0 +1,105 @@
+.policy "ruff-ret501-unnecessary-return-none" revision 1
+.guests off
+.description "Use a bare return instead of return None in Python functions that never return anything else."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// RET501(n): a finding at node n, from clause `unnecessary-return-none`.
+// Each rule below is one way the JSON `rule` can match.
+.violation RET501(at: node) "Do not explicitly `return None` in function if it is the only possible return value"
+    suppress noqa "RET501"
+RET501(n) :- kind(n, "return_statement"), child(n, c1, _), ret501_none_literal(c1),
+    within_stop(n, p2, ret501_stop_1), kind(p2, "function_definition"), ret501_analysed_function(p2),
+    !ret501_alt_7(p2), ret501_none_or_no_annotation(p2).
+
+// analysed_function(n): the JSON util `analysed-function`, used where the JSON says `matches: "analysed-function"`
+.decl ret501_analysed_function(n: node)
+ret501_analysed_function(n) :- kind(n, "function_definition"),
+    count : { ret501_stop_1_within(c1, n), kind(c1, "yield") } = 0,
+    count : { child(n, c2, _), kind(c2, "block"), child(c2, c3, _), kind(c3, "return_statement"), count : { child(c2, c4, _), !kind(c4, "return_statement"), !kind(c4, "comment") } = 0 } = 0.
+
+// none_literal(n): the JSON util `none-literal`, used where the JSON says `matches: "none-literal"`
+.decl ret501_none_literal(n: node)
+ret501_none_literal(n) :- kind(n, "none").
+ret501_none_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ret501_none_literal(c1).
+
+// value_return(n): the JSON util `value-return`, used where the JSON says `matches: "value-return"`
+.decl ret501_value_return(n: node)
+ret501_value_return(n) :- kind(n, "return_statement"), child(n, c1, _),
+    match("(?s).*..*", c1), !ret501_alt_2(c1).
+
+// own_return(n): the JSON util `own-return`, used where the JSON says `matches: "own-return"`
+.decl ret501_own_return(n: node)
+ret501_own_return(n) :- kind(n, "return_statement").
+
+// has_result(n): the JSON util `has-result`, used where the JSON says `matches: "has-result"`
+.decl ret501_has_result(n: node)
+ret501_has_result(n) :- within_stop(c1, n, ret501_stop_1), ret501_value_return(c1).
+
+// property_decorated(n): the JSON util `property-decorated`, used where the JSON says `matches: "property-decorated"`
+.decl ret501_property_decorated(n: node)
+ret501_property_decorated(n) :- child(p1, n, _), kind(p1, "decorated_definition"),
+    child(p1, c2, _), kind(c2, "decorator"), child(c2, c3, _),
+    ( ret501_property_name(c3)
+    ; kind(c3, "call"), child(c3, c1, _), !ret501_tok_follows_2(c1), ret501_property_name(c1)
+    ).
+
+
+// property_name(n): the JSON util `property-name`, used where the JSON says `matches: "property-name"`
+.decl ret501_property_name(n: node)
+ret501_property_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "property"), sym_of(n, q1), ret501_set_5(q1).
+ret501_property_name(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ret501_property_name(c2).
+
+// none_or_no_annotation(n): the JSON util `none-or-no-annotation`, used where the JSON says `matches: "none-or-no-annotation"`
+.decl ret501_none_or_no_annotation(n: node)
+ret501_none_or_no_annotation(n) :- node(_, n, _, _, _),
+    count : { child(n, c1, _), kind(c1, "type"), count : { child(c1, c2, _), ret501_none_literal(c2) } = 0 } = 0.
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ret501_tok_follows_1(n: node)
+.stored ret501_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ret501_tok_follows_1(n) :- next_sibling(s5, n), match("(?s).*..*", s5).
+ret501_tok_follows_1(n) :- structural_before(n, g7), match("\\s*", g7), child(p8, n, _),
+    node(_, n, _, st10, _), o9 = st10 - strlen(g7), token(p8, _, t6, _, o9),
+    match("(?s).*..*", t6).
+ret501_tok_follows_1(n) :- structural_before(n, g7), match("(?s)^.*\\S\\s*$", g7).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ret501_tok_follows_2(n: node)
+.stored ret501_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ret501_tok_follows_2(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+ret501_tok_follows_2(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+ret501_tok_follows_2(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// stop_1: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ret501_stop_1(kind: symbol)
+ret501_stop_1("function_definition"). ret501_stop_1("class_definition").
+
+// set_5: symbols from the JSON `resolves.import`
+.decl ret501_set_5(v: symbol)
+ret501_set_5("builtins.property"). ret501_set_5("enum.property"). ret501_set_5("functools.cached_property").
+ret501_set_5("abc.abstractproperty"). ret501_set_5("types.DynamicClassAttribute").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl ret501_alt_2(n: node)
+ret501_alt_2(n) :- node(_, n, _, _, _), glob("return", n).
+ret501_alt_2(n) :- kind(n, "comment").
+ret501_alt_2(n) :- ret501_none_literal(n).
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+.decl ret501_alt_7(n: node)
+ret501_alt_7(n) :- ret501_has_result(n).
+ret501_alt_7(n) :- ret501_property_decorated(n).
+
+// stop_1_within: within_stop over the stop set stop_1, read inside an aggregate
+.decl ret501_stop_1_within(n: node, a: node)
+ret501_stop_1_within(x, y) :- within_stop(x, y, ret501_stop_1).

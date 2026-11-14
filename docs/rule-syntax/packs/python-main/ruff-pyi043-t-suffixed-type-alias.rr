@@ -1,0 +1,63 @@
+.policy "ruff-pyi043-t-suffixed-type-alias" revision 1
+.guests off
+.description "Don't end a private type alias name with a T suffix; that suffix is the convention for type variables, so it misleads readers."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PYI043(n): a finding at node n, from clause `t-suffixed-type-alias`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI043(at: node, name: loc) "Rename private type alias `{name}` so it no longer ends in `T` (or `T` plus a digit), e.g. by dropping the `T`, and update its references; that suffix conventionally marks a type variable."
+    suppress noqa "PYI043"
+PYI043(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, prefix("_", n),
+    match(".*T[0-9]?", n), !match(".*[^a-z]T[0-9]?", n),
+    (pyi043_assignment_target(n) ; pyi043_statement_name(n)).
+
+// type_alias_marker(n): the JSON util `type-alias-marker`, used where the JSON says `matches: "type-alias-marker"`
+.decl pyi043_type_alias_marker(n: node)
+pyi043_type_alias_marker(n) :- pyi043_alt_1(n),
+    ( sym_of(n, "typing.TypeAlias")
+    ; sym_of(n, "typing_extensions.TypeAlias")
+    ; sym_of(n, "_typeshed.TypeAlias")
+    ).
+
+
+// alias_assignment(n): the JSON util `alias-assignment`, used where the JSON says `matches: "alias-assignment"`
+.decl pyi043_alias_assignment(n: node)
+pyi043_alias_assignment(n) :- kind(n, "assignment"), field(n, "type", c1), child(c1, c2, _),
+    pyi043_type_alias_marker(c2).
+
+// assignment_target(n): the JSON util `assignment-target`, used where the JSON says `matches: "assignment-target"`
+.decl pyi043_assignment_target(n: node)
+pyi043_assignment_target(n) :- field(p1, "left", n), pyi043_alias_assignment(p1).
+pyi043_assignment_target(n) :- child(p2, n, _), kind(p2, "tuple_pattern"),
+    pyi043_assignment_target(p2), !pyi043_tok_has_1(p2).
+
+// statement_name(n): the JSON util `statement-name`, used where the JSON says `matches: "statement-name"`
+.decl pyi043_statement_name(n: node)
+pyi043_statement_name(n) :- child(p1, n, _), kind(p1, "type"), field(p2, "left", p1),
+    kind(p2, "type_alias_statement").
+pyi043_statement_name(n) :- next_sibling(n, s3), kind(s3, "type_parameter"), child(p4, n, _),
+    kind(p4, "generic_type"), child(p5, p4, _), kind(p5, "type"),
+    field(p6, "left", p5), kind(p6, "type_alias_statement").
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi043_tok_has_1(n: node)
+.stored pyi043_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi043_tok_has_1(n) :- child(n, c3, _), glob("\\,", c3).
+pyi043_tok_has_1(n) :- op(n, t4), match(",", t4).
+pyi043_tok_has_1(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:.*(?:,).*)$", g5).
+pyi043_tok_has_1(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:.*(?:,).*)$", g5).
+pyi043_tok_has_1(n) :- node_text(n, g5), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g5).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi043_alt_1(n: node)
+pyi043_alt_1(n) :- (kind(n, "identifier") ; kind(n, "attribute")).
+pyi043_alt_1(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi043_type_alias_marker(c1).

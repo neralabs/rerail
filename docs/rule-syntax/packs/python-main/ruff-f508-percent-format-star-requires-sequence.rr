@@ -1,0 +1,32 @@
+.policy "ruff-f508-percent-format-star-requires-sequence" revision 1
+.guests off
+.description "Pass a tuple, not a dict, to a %-format string that uses a * width or precision; the call fails at run time."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F508(n): a finding at node n, from clause `percent-format-star-requires-sequence`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on S, R are added to every rule.
+.violation F508(at: node) "Pass a tuple instead of a dict to this %-format string; its `*` width or precision takes positional values."
+    suppress noqa "F508"
+F508(n) :- n ~ `$S % $R`, f508_format_string(S), f508_operand(R).
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl f508_plain_string(n: node)
+f508_plain_string(n) :- kind(n, "string"), !match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", n).
+f508_plain_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", c1) } = 0.
+
+// format_string(n): the JSON util `format-string`, used where the JSON says `matches: "format-string"`
+.decl f508_format_string(n: node)
+f508_format_string(n) :- f508_plain_string(n), parsed(n, "percentFormat", r1),
+    count : { child(r1, c2, _), kind(c2, "error") } = 0, has(r1, c3, "star").
+f508_format_string(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    f508_format_string(c4).
+
+// operand(n): the JSON util `operand`, used where the JSON says `matches: "operand"`
+.decl f508_operand(n: node)
+f508_operand(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+f508_operand(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), f508_operand(c1).

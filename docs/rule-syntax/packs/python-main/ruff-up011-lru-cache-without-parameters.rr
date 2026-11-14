@@ -1,0 +1,39 @@
+.policy "ruff-up011-lru-cache-without-parameters" revision 1
+.guests off
+.description "Drop the empty parentheses from a functools.lru_cache decorator; it works without them, with a default cache size, since Python 3.8."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// UP011(n): a finding at node n, from clause `lru-cache-without-parameters`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation UP011(at: node, parens: node) "Remove the empty parentheses after `lru_cache` in this decorator and write it bare; it defaults to the same cache size. Keep the call only if the code must support Python 3.7 or older."
+    suppress noqa "UP011"
+UP011(PARENS, n) :- kind(n, "decorator"),
+    match("(?s)@.*?(?<PARENS>(?:[\\s)\\\\]|#[^\\n]*\\n)*\\((?:[\\s\\\\]|#[^\\n]*\\n)*\\)(?:(?:[\\s\\\\]|#[^\\n]*\\n)*\\))*)(?:[\\s\\\\]|#[^\\n]*)*", n),
+    child(p1, n, _), kind(p1, "decorated_definition"), field(p1, "definition", c2),
+    kind(c2, "function_definition"), within_stop(c3, n, up011_stop_1), kind(c3, "call"),
+    field(c3, "function", c4),
+    ( up011_lru_cache_ref(c4)
+    ; kind(c4, "parenthesized_expression"), child(c4, c1, _), up011_lru_cache_ref(c1)
+    ),
+    field(c3, "arguments", c6), kind(c6, "argument_list"),
+    count : { child(c6, c7, _), child(p8, c7, _), up011_counted_3(c7), k10 = count : { child(p8, s9, _), precedes(s9, c7), up011_counted_3(s9) }, k10 = 0 } = 0.
+
+// lru_cache_ref(n): the JSON util `lru-cache-ref`, used where the JSON says `matches: "lru-cache-ref"`
+.decl up011_lru_cache_ref(n: node)
+up011_lru_cache_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "functools.lru_cache").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl up011_stop_1(n: node)
+up011_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// counted_3(n): the siblings the JSON `nthChild.ofRule` counts
+.decl up011_counted_3(n: node)
+up011_counted_3(n) :- node(_, n, _, _, _), !kind(n, "comment"),
+    !kind(n, "line_continuation").

@@ -1,0 +1,35 @@
+.policy "ruff-dtz002-call-datetime-today" revision 1
+.guests off
+.description "Use datetime.now with a timezone instead of datetime.today; today returns a naive local time with no zone information."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// DTZ002(n): a finding at node n, from clause `call-datetime-today`.
+// Each rule below is one way the JSON `rule` can match.
+.violation DTZ002(at: node) "Replace `today()` with `now(tz=...)`, passing the zone you mean (`datetime.timezone.utc` for UTC) so the result is aware. Keep `today()` only where a naive local time is required."
+    suppress noqa "DTZ002"
+DTZ002(n) :- kind(n, "call"), field(n, "function", c1), dtz002_callee(c1), !dtz002_astz_safe(n).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl dtz002_callee(n: node)
+dtz002_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "datetime.datetime.today").
+dtz002_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), dtz002_callee(c1).
+
+// astz_safe(n): the JSON util `astz-safe`, used where the JSON says `matches: "astz-safe"`
+.decl dtz002_astz_safe(n: node)
+dtz002_astz_safe(n) :- within_stop(n, p1, dtz002_stop_1), kind(p1, "attribute"), dtz002_alt_3(p1).
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl dtz002_stop_1(n: node)
+dtz002_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl dtz002_alt_3(n: node)
+dtz002_alt_3(n) :- field(n, "attribute", c1), glob("astimezone", c1).
+dtz002_alt_3(n) :- field(n, "attribute", c2), glob("replace", c2), within_stop(n, p3, dtz002_stop_1),
+    kind(p3, "call"), dtz002_astz_safe(p3).

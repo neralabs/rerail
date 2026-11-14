@@ -1,0 +1,23 @@
+.policy "ruff-f622-multiple-starred-expressions" revision 1
+.guests off
+.description "Use at most one starred element in each Python unpacking target; two in the same target is a syntax error."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F622(n): a finding at node n, from clause `multiple-starred-expressions`.
+// Each rule below is one way the JSON `rule` can match.
+.violation F622(at: node) "Two starred expressions in assignment"
+    suppress noqa "F622"
+F622(n) :- (kind(n, "pattern_list") ; kind(n, "tuple_pattern") ; kind(n, "list_pattern")),
+    k2 = count : { child(n, c1, _), kind(c1, "list_splat_pattern") }, k2 >= 2.
+F622(n) :- (kind(n, "tuple") ; kind(n, "list")), f622_with_target(n),
+    k4 = count : { child(n, c3, _), kind(c3, "list_splat") }, k4 >= 2.
+
+// with_target(n): the JSON util `with-target`, used where the JSON says `matches: "with-target"`
+.decl f622_with_target(n: node)
+f622_with_target(n) :- child(p1, n, _), kind(p1, "as_pattern_target").
+f622_with_target(n) :- child(p2, n, _),
+    (kind(p2, "tuple") ; kind(p2, "list") ; kind(p2, "parenthesized_expression")),
+    f622_with_target(p2).

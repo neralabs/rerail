@@ -1,0 +1,58 @@
+.policy "ruff-n811-constant-imported-as-non-constant" revision 1
+.guests off
+.description "Keep the alias of an imported constant in UPPER_CASE; a lowercase or CamelCase alias makes readers mistake the constant for a variable or class."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// N811(n): a finding at node n, from clause `constant-imported-as-non-constant`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation N811(at: node, asname: loc, name: loc) "Drop `as {asname}` or use an UPPER_CASE alias for the constant `{name}`, and update its uses; keep the alias if `{name}` is really a class."
+    suppress noqa "N811"
+N811(n, ASNAME, NAME) :- kind(n, "aliased_import"), field(n, "name", c1),
+    kind(c1, "dotted_name"), child(c1, c2, _), kind(c2, "identifier"),
+    child(p3, c2, _), n811_counted_1(c2),
+    k5 = count : { child(p3, s4, _), precedes(c2, s4), n811_counted_1(s4) }, k5 = 0,
+    node(_, c2, _, _, _), NAME = c2, n811_cased_upper(c2), field(n, "alias", c6), kind(c6, "identifier"),
+    node(_, c6, _, _, _), ASNAME = c6, !n811_alt_2(c6),
+    count : { field(n, "name", c7), kind(c7, "dotted_name"), child(c7, c8, _), kind(c8, "identifier"), child(p9, c8, _), n811_counted_3(c8), k11 = count : { child(p9, s10, _), precedes(c8, s10), n811_counted_3(s10) }, k11 = 0, match("[^\\x{132}\\x{13F}\\x{1C4}\\x{1C7}\\x{1CA}\\x{1F1}\\x{2161}-\\x{2163}\\x{2165}-\\x{2168}\\x{216A}\\x{216B}]", c8), field(n, "alias", c12), kind(c12, "identifier"), !n811_alt_4(c12) } = 0.
+
+// has_lower(n): the JSON util `has-lower`, used where the JSON says `matches: "has-lower"`
+.decl n811_has_lower(n: node)
+n811_has_lower(n) :- node(_, n, _, _, _),
+    match(".*[\\x{1C5}\\x{1C8}\\x{1CB}\\x{1F2}[\\p{Lowercase}--[\\x{2E4}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}\\x{107B6}-\\x{107B9}]]].*", n).
+
+// has_upper(n): the JSON util `has-upper`, used where the JSON says `matches: "has-upper"`
+.decl n811_has_upper(n: node)
+n811_has_upper(n) :- node(_, n, _, _, _),
+    match(".*[\\p{Uppercase}\\x{1C5}\\x{1C8}\\x{1CB}\\x{1F2}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}].*", n).
+
+// cased_upper(n): the JSON util `cased-upper`, used where the JSON says `matches: "cased-upper"`
+.decl n811_cased_upper(n: node)
+n811_cased_upper(n) :- n811_has_upper(n), !n811_has_lower(n).
+
+// cased_lower(n): the JSON util `cased-lower`, used where the JSON says `matches: "cased-lower"`
+.decl n811_cased_lower(n: node)
+n811_cased_lower(n) :- n811_has_lower(n), !n811_has_upper(n).
+
+// counted_1(n): the siblings the JSON `nthChild.ofRule` counts
+.decl n811_counted_1(n: node)
+n811_counted_1(n) :- kind(n, "identifier").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl n811_alt_2(n: node)
+n811_alt_2(n) :- n811_cased_upper(n).
+n811_alt_2(n) :- node(_, n, _, _, _),
+    glob("{setUp,tearDown,setUpClass,tearDownClass,setUpModule,tearDownModule,asyncSetUp,asyncTearDown,setUpTestData,failureException,longMessage,maxDiff}", n).
+
+// counted_3(n): the siblings the JSON `nthChild.ofRule` counts
+.decl n811_counted_3(n: node)
+n811_counted_3(n) :- kind(n, "identifier").
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl n811_alt_4(n: node)
+n811_alt_4(n) :- node(_, n, _, _, _),
+    match(".*[_\\x{FE33}\\x{FE34}\\x{FE4D}-\\x{FE4F}\\x{FF3F}].*", n).
+n811_alt_4(n) :- n811_cased_lower(n).

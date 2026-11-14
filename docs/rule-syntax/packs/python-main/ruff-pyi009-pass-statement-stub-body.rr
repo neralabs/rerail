@@ -1,0 +1,30 @@
+.policy "ruff-pyi009-pass-statement-stub-body" revision 1
+.guests off
+.description "Use an ellipsis instead of pass as the whole body of a function or class in stub files; stubs only declare types and are never executed."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PYI009(n): a finding at node n, from clause `pass-statement-stub-body`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI009(at: node) "Replace this `pass` with `...`; stub bodies are never executed, so the empty body is written as an ellipsis."
+    suppress noqa "PYI009"
+PYI009_raw(n) :- kind(n, "pass_statement"), child(p1, n, _), kind(p1, "block"),
+    field(p2, "body", p1),
+    (kind(p2, "function_definition") ; kind(p2, "class_definition")), !pyi009_alt_1(n).
+
+// filler(n): the JSON util `filler`, used where the JSON says `matches: "filler"`
+.decl pyi009_filler(n: node)
+pyi009_filler(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pyi009_filler(n) :- node(_, n, _, _, _), glob(";", n).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi009_alt_1(n: node)
+pyi009_alt_1(n) :- precedes(s1, n), !pyi009_filler(s1).
+pyi009_alt_1(n) :- precedes(n, s2), !pyi009_filler(s2).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI009_raw(at: node)
+PYI009(v0) :- PYI009_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

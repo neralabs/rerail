@@ -1,0 +1,36 @@
+.policy "ruff-b021-f-string-docstring" revision 1
+.guests off
+.description "Use a plain string literal, not an f-string, for docstrings; Python doesn't treat an f-string as a docstring."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B021(n): a finding at node n, from clause `f-string-docstring`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B021(at: node) "f-string used as docstring. Python will interpret this as a joined string, rather than a docstring."
+    suppress noqa "B021"
+B021(n) :- kind(n, "expression_statement"), child(n, c1, _), b021_f_string(c1),
+    !b021_tok_has_1(n), count : { precedes(s10, n), !kind(s10, "comment") } = 0,
+    ( child(p1, n, _), kind(p1, "module")
+    ; child(p2, n, _), kind(p2, "block"), child(p3, p2, _), (kind(p3, "function_definition") ; kind(p3, "class_definition"))
+    ).
+
+
+// f_string(n): the JSON util `f-string`, used where the JSON says `matches: "f-string"`
+.decl b021_f_string(n: node)
+b021_f_string(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "string_start"),
+    glob("**[fF]**", c1).
+b021_f_string(n) :- kind(n, "concatenated_string"), child(n, c2, _), b021_f_string(c2).
+b021_f_string(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), b021_f_string(c3).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b021_tok_has_1(n: node)
+.stored b021_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b021_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
+b021_tok_has_1(n) :- op(n, t3), match(",", t3).
+b021_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+b021_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+b021_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).

@@ -1,0 +1,25 @@
+.policy "ruff-pt013-pytest-incorrect-pytest-import" revision 1
+.guests off
+.description "Import pytest as a plain module, without an alias or from-imports, and access its members through it; this keeps usage consistent across tests."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PT013(n): a finding at node n, from clause `import-as`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PT013(at: node, s: node) "Drop the alias: write `import pytest` and use `pytest.xxx` (for example `pytest.mark`); keep the alias only if another name `pytest` in this file would clash."
+    suppress noqa "PT013"
+PT013(S, n) :- kind(n, "aliased_import"),
+    ( field(n, "name", c1), kind(c1, "dotted_name"), match("pytest[\\s\\\\]*\\..*", c1)
+    ; field(n, "name", c2), kind(c2, "dotted_name"), glob("pytest", c2), field(n, "alias", c3), kind(c3, "identifier"), !glob("pytest", c3)
+    ),
+    child(p4, n, _), kind(p4, "import_statement"), node(_, p4, _, _, _), S = p4.
+
+// PT013_import_from(n): a finding at node n, from clause `import-from`.
+// Each rule below is one way the JSON `rule` can match.
+.violation PT013_import_from(at: node) code "PT013" "Replace this with `import pytest` and refer to each member as `pytest.<name>`, such as `pytest.fixture`; leave it if this repo imports pytest names directly on purpose."
+    suppress noqa "PT013"
+PT013_import_from(n) :- kind(n, "import_from_statement"), field(n, "module_name", c1),
+    kind(c1, "dotted_name"), match("pytest(?:[\\s\\\\]*\\.|$).*", c1).

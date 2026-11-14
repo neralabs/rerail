@@ -1,0 +1,129 @@
+.policy "ruff-pyi006-bad-version-info-comparison" revision 1
+.guests off
+.description "Compare sys.version_info with only the less-than or greater-than-or-equal operators; the other operators give surprising results on patch releases."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// test_slot(n): the JSON util `test-slot`, used where the JSON says `matches: "test-slot"`
+.decl pyi006_test_slot(n: node)
+pyi006_test_slot(n) :- field(p1, "condition", n), kind(p1, "if_statement").
+pyi006_test_slot(n) :- field(p2, "condition", n), kind(p2, "elif_clause").
+pyi006_test_slot(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"), pyi006_test_slot(p3).
+
+// bool_and_top(n): the JSON util `bool-and-top`, used where the JSON says `matches: "bool-and-top"`
+.decl pyi006_bool_and_top(n: node)
+pyi006_bool_and_top(n) :- kind(n, "boolean_operator"), field(n, "operator", c1),
+    glob("and", c1), pyi006_alt_1(n).
+
+// bool_or_top(n): the JSON util `bool-or-top`, used where the JSON says `matches: "bool-or-top"`
+.decl pyi006_bool_or_top(n: node)
+pyi006_bool_or_top(n) :- kind(n, "boolean_operator"), field(n, "operator", c1),
+    glob("or", c1), pyi006_alt_2(n).
+
+// test_operand(n): the JSON util `test-operand`, used where the JSON says `matches: "test-operand"`
+.decl pyi006_test_operand(n: node)
+pyi006_test_operand(n) :- pyi006_test_slot(n).
+pyi006_test_operand(n) :- child(p1, n, _), (pyi006_bool_and_top(p1) ; pyi006_bool_or_top(p1)).
+pyi006_test_operand(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"),
+    pyi006_test_operand(p2).
+
+// sys_version_info(n): the JSON util `sys-version-info`, used where the JSON says `matches: "sys-version-info"`
+.decl pyi006_sys_version_info(n: node)
+pyi006_sys_version_info(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "sys.version_info").
+pyi006_sys_version_info(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi006_sys_version_info(c1).
+
+// PYI006(n, detail): findings from clauses `greater-than`, `less-or-equal`, `equality`, `membership-or-identity`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+.violation PYI006(at: node, detail: symbol) "{detail}."
+    suppress noqa "PYI006"
+PYI006(n, "Use `>=` with the next minor version instead of `>`, e.g. `sys.version_info >= (3, 9)` for `> (3, 8)`; `>` is also true on every 3.8 patch release") :- kind(n, "comparison_operator"),
+    pyi006_test_operand(n), k2 = count : { child(n, c1, _), !pyi006_alt_4(c1) }, k2 >= 2, k2 <= 2,
+    pyi006_tok_has_1(n), child(n, c11, _), !pyi006_tok_follows_2(c11), pyi006_sys_version_info(c11).
+PYI006(n, "Use `<` with the next minor version instead of `<=`, e.g. `sys.version_info < (3, 9)` for `<= (3, 8)`; `<=` is false on 3.8 patch releases") :- kind(n, "comparison_operator"),
+    pyi006_test_operand(n), k2 = count : { child(n, c1, _), !pyi006_alt_4(c1) }, k2 >= 2, k2 <= 2,
+    pyi006_tok_has_3(n), child(n, c11, _), !pyi006_tok_follows_2(c11), pyi006_sys_version_info(c11).
+PYI006(n, "Use `<` and `>=` instead of `==`/`!=`: `sys.version_info >= (3, 8) and sys.version_info < (3, 9)` selects 3.8; use `or` with the opposite bounds for `!=`") :- kind(n, "comparison_operator"),
+    pyi006_test_operand(n), k2 = count : { child(n, c1, _), !pyi006_alt_4(c1) }, k2 >= 2, k2 <= 2,
+    pyi006_tok_has_4(n), child(n, c11, _), !pyi006_tok_follows_2(c11), pyi006_sys_version_info(c11).
+PYI006(n, "Compare `sys.version_info` with `<` or `>=` against a tuple, e.g. `sys.version_info >= (3, 9)`; `in` and `is` don't behave as version checks") :- kind(n, "comparison_operator"),
+    pyi006_test_operand(n), k2 = count : { child(n, c1, _), !pyi006_alt_4(c1) }, k2 >= 2, k2 <= 2,
+    pyi006_tok_has_5(n), child(n, c11, _), !pyi006_tok_follows_2(c11), pyi006_sys_version_info(c11).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^>$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi006_tok_has_1(n: node)
+.stored pyi006_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi006_tok_has_1(n) :- child(n, c3, _), glob(">", c3).
+pyi006_tok_has_1(n) :- op(n, t4), match(">", t4).
+pyi006_tok_has_1(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+pyi006_tok_has_1(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+pyi006_tok_has_1(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi006_tok_follows_2(n: node)
+.stored pyi006_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi006_tok_follows_2(n) :- next_sibling(s12, n), match("(?s).*..*", s12).
+pyi006_tok_follows_2(n) :- structural_before(n, g14), match("\\s*", g14), child(p15, n, _),
+    node(_, n, _, st17, _), o16 = st17 - strlen(g14), token(p15, _, t13, _, o16),
+    match("(?s).*..*", t13).
+pyi006_tok_follows_2(n) :- structural_before(n, g14), match("(?s)^.*\\S\\s*$", g14).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^<=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi006_tok_has_3(n: node)
+.stored pyi006_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi006_tok_has_3(n) :- child(n, c3, _), glob("<=", c3).
+pyi006_tok_has_3(n) :- op(n, t4), match("<=", t4).
+pyi006_tok_has_3(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+pyi006_tok_has_3(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+pyi006_tok_has_3(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^(==|!=)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi006_tok_has_4(n: node)
+.stored pyi006_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi006_tok_has_4(n) :- child(n, c3, _), glob("{==,!=}", c3).
+pyi006_tok_has_4(n) :- op(n, t4), match("(==|!=)", t4).
+pyi006_tok_has_4(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+pyi006_tok_has_4(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+pyi006_tok_has_4(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+
+// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^(in|not\\s+in|is|is\\s+not)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi006_tok_has_5(n: node)
+.stored pyi006_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi006_tok_has_5(n) :- child(n, c3, _), match("(in|not\\s+in|is|is\\s+not)", c3).
+pyi006_tok_has_5(n) :- op(n, t4), match("(in|not\\s+in|is|is\\s+not)", t4).
+pyi006_tok_has_5(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:not\\s+in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:is\\s+not)(?:\\W.*)?)$", g5).
+pyi006_tok_has_5(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:not\\s+in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:is\\s+not)(?:\\W.*)?)$", g5).
+pyi006_tok_has_5(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:not\\s+in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:is\\s+not)(?:\\W.*)?)$", g5).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi006_alt_1(n: node)
+pyi006_alt_1(n) :- pyi006_test_slot(n).
+pyi006_alt_1(n) :- field(p1, "left", n), pyi006_bool_and_top(p1).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi006_alt_2(n: node)
+pyi006_alt_2(n) :- pyi006_test_slot(n).
+pyi006_alt_2(n) :- field(p1, "left", n), pyi006_bool_or_top(p1).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi006_alt_4(n: node)
+pyi006_alt_4(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pyi006_alt_4(n) :- node(_, n, _, _, _),
+    match("(==|!=|<|>|<=|>=|is|not|in|is\\s+not|not\\s+in)", n).

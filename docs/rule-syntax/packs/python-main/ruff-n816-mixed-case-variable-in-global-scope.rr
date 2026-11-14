@@ -1,0 +1,96 @@
+.policy "ruff-n816-mixed-case-variable-in-global-scope" revision 1
+.guests off
+.description "Name module-level variables in lowercase snake_case, not mixedCase, as PEP 8 recommends for variable names."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// N816(n): a finding at node n, from clause `mixed-case-variable-in-global-scope`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation N816(at: node, name: loc) "Rename `{name}` to lowercase snake_case, such as `my_variable`, and update its uses; keep the name if other modules import it or it mirrors an external API."
+    suppress noqa "N816"
+N816(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
+    match("[_\\x{FE33}\\x{FE34}\\x{FE4D}-\\x{FE4F}\\x{FF3F}]?[\\p{Lowercase}--[\\x{149}\\x{2E4}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}\\x{107B6}-\\x{107B9}]].*", n),
+    match(".*[\\p{Uppercase}\\x{1C5}\\x{1C8}\\x{1CB}\\x{1F2}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}].*", n),
+    ( site_form(n, f1), n816_set_4(f1), site_scope(n, "module"), !site_outer(n)
+    ; within_stop(n, p1, n816_stop_5), kind(p1, "tuple_pattern"), field(p2, "left", p1), kind(p2, "augmented_assignment"), count : { within(p2, p3), (kind(p3, "function_definition") ; kind(p3, "class_definition")) } = 0
+    ),
+    !n816_alt_9(n).
+
+// nt_callee(n): the JSON util `nt-callee`, used where the JSON says `matches: "nt-callee"`
+.decl n816_nt_callee(n: node)
+n816_nt_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "collections.namedtuple")
+    ; sym_of(n, "typing.NamedTuple")
+    ; sym_of(n, "typing_extensions.NamedTuple")
+    ; sym_of(n, "_typeshed.NamedTuple")
+    ).
+
+n816_nt_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), n816_nt_callee(c1).
+
+// nt_value(n): the JSON util `nt-value`, used where the JSON says `matches: "nt-value"`
+.decl n816_nt_value(n: node)
+n816_nt_value(n) :- kind(n, "call"), field(n, "function", c1), n816_nt_callee(c1).
+n816_nt_value(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), n816_nt_value(c2).
+
+// nt_assign(n): the JSON util `nt-assign`, used where the JSON says `matches: "nt-assign"`
+.decl n816_nt_assign(n: node)
+n816_nt_assign(n) :- kind(n, "assignment"),
+    count : { field(n, "type", c1), kind(c1, "type") } = 0, field(n, "right", c2),
+    n816_alt_1(c2).
+
+// in_comprehension_scope(n): the JSON util `in-comprehension-scope`, used where the JSON says `matches: "in-comprehension-scope"`
+.decl n816_in_comprehension_scope(n: node)
+n816_in_comprehension_scope(n) :- within_stop(n, p1, n816_stop_2),
+    ( kind(p1, "list_comprehension")
+    ; kind(p1, "set_comprehension")
+    ; kind(p1, "dictionary_comprehension")
+    ; kind(p1, "generator_expression")
+    ).
+
+n816_in_comprehension_scope(n) :- within(n, p2),
+    ( kind(p2, "list_comprehension")
+    ; kind(p2, "set_comprehension")
+    ; kind(p2, "dictionary_comprehension")
+    ; kind(p2, "generator_expression")
+    ),
+    n816_in_comprehension_scope(p2).
+
+// set_4: binding forms the JSON accepts
+.decl n816_set_4(v: symbol)
+n816_set_4("assignment"). n816_set_4("annotated"). n816_set_4("annotation"). n816_set_4("augmented").
+n816_set_4("named"). n816_set_4("for"). n816_set_4("with"). n816_set_4("match"). n816_set_4("typeAlias").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl n816_alt_1(n: node)
+n816_alt_1(n) :- n816_nt_value(n).
+n816_alt_1(n) :- kind(n, "assignment"), n816_nt_assign(n).
+
+// counted_3(n): the siblings the JSON `nthChild.ofRule` counts
+.decl n816_counted_3(n: node)
+n816_counted_3(n) :- kind(n, "for_in_clause").
+
+// stop_2(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl n816_stop_2(n: node)
+n816_stop_2(n) :- kind(n, "for_in_clause"), child(p1, n, _), n816_counted_3(n),
+    k3 = count : { child(p1, s2, _), precedes(s2, n), n816_counted_3(s2) }, k3 = 0.
+
+// stop_5(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl n816_stop_5(n: node)
+n816_stop_5(n) :- node(_, n, _, _, _), !kind(n, "tuple_pattern").
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+.decl n816_alt_9(n: node)
+n816_alt_9(n) :- within(n, p1), n816_nt_assign(p1).
+n816_alt_9(n) :- inside(n, p2, "class_definition"), field(_, "superclasses", n).
+n816_alt_9(n) :- within(n, p3), field(_, "type", n),
+    (kind(p3, "typed_parameter") ; kind(p3, "typed_default_parameter")).
+n816_alt_9(n) :- inside(n, p4, "function_definition"), field(_, "return_type", n).
+n816_alt_9(n) :- inside(n, p5, "type_alias_statement"), field(_, "right", n).
+n816_alt_9(n) :- n816_in_comprehension_scope(n).
+n816_alt_9(n) :- node(_, n, _, _, _),
+    glob("{setUp,tearDown,setUpClass,tearDownClass,setUpModule,tearDownModule,asyncSetUp,asyncTearDown,setUpTestData,failureException,longMessage,maxDiff}", n).

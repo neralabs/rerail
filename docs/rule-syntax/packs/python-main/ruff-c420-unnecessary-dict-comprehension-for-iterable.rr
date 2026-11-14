@@ -1,0 +1,196 @@
+.policy "ruff-c420-unnecessary-dict-comprehension-for-iterable" revision 1
+.guests off
+.description "Use dict.fromkeys(iterable, value) instead of a dict comprehension that maps each item to the same constant value; it is clearer and faster."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// C420(n): a finding at node n, from clause `unnecessary-dict-comprehension-for-iterable`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation C420(at: node, comp: node) "Replace this comprehension with `dict.fromkeys(iterable, value)`, omitting the value when it is None; if the loop unpacks its items, do this only when they are already tuples."
+    suppress noqa "C420"
+C420(COMP, n) :- c420_target(n), node(_, n, _, _, _), COMP = n.
+C420(COMP, n) :- c420_in_annotation(n, COMP).
+
+// not_shareable(n): the JSON util `not-shareable`, used where the JSON says `matches: "not-shareable"`
+.decl c420_not_shareable(n: node)
+c420_not_shareable(n) :- kind(n, k1), c420_set_1(k1).
+
+// target_name(n): the JSON util `target-name`, used where the JSON says `matches: "target-name"`
+.decl c420_target_name(n: node)
+c420_target_name(n) :- kind(n, "identifier"), node(_, n, _, _, _), X = n,
+    count : { field(p1, "attribute", n), kind(p1, "attribute") } = 0,
+    within_stop(n, p2, "dictionary_comprehension"),
+    kind(p2, "dictionary_comprehension"), child(p2, c3, _), kind(c3, "for_in_clause"),
+    field(c3, "left", c4), c420_alt_2(c4, X).
+
+// bad_value(n): the JSON util `bad-value`, used where the JSON says `matches: "bad-value"`
+.decl c420_bad_value(n: node)
+c420_bad_value(n) :- c420_not_shareable(n).
+c420_bad_value(n) :- c420_target_name(n).
+
+// paren_target(n): the JSON util `paren-target`, used where the JSON says `matches: "paren-target"`
+//   INNER: metavariable this relation binds for the calling rule
+.decl c420_paren_target(n: node, inner: loc)
+c420_paren_target(n, INNER) :- c420_paren_target_u7(n, INNER).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl c420_target(n: node)
+c420_target(n) :- kind(n, "dictionary_comprehension"), child(n, c1, _), kind(c1, "pair"),
+    field(c1, "key", c2), node(_, c2, _, _, _), KEY = c2, field(c1, "value", c3), !c420_alt_5(c3), !c420_alt_6(n),
+    child(n, c8, _), kind(c8, "for_in_clause"), !match("async\\b.*", c8),
+    field(c8, "left", c9), !c420_alt_7(c9), c420_alt_8(c8, KEY).
+
+// in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   COMP: metavariable this relation binds for the calling rule
+.decl c420_in_annotation(n: node, comp: loc)
+c420_in_annotation(n, COMP) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), c420_alt_9(c2, COMP).
+
+.decl c420_alt_4_u0(n: node, inner: loc)
+c420_alt_4_u0(n, INNER) :- node(_, n, _, _, _), INNER = n.
+
+.decl c420_alt_4_u1(n: node, inner: loc)
+c420_alt_4_u1(n, INNER) :- c420_paren_target_u0(n, INNER).
+c420_alt_4_u1(n, INNER) :- !c420_paren_target_u0(n, INNER), node(_, n, _, _, _), INNER = n.
+
+.decl c420_alt_4_u2(n: node, inner: loc)
+c420_alt_4_u2(n, INNER) :- c420_paren_target_u1(n, INNER).
+c420_alt_4_u2(n, INNER) :- !c420_paren_target_u1(n, INNER), node(_, n, _, _, _), INNER = n.
+
+.decl c420_alt_4_u3(n: node, inner: loc)
+c420_alt_4_u3(n, INNER) :- c420_paren_target_u2(n, INNER).
+c420_alt_4_u3(n, INNER) :- !c420_paren_target_u2(n, INNER), node(_, n, _, _, _), INNER = n.
+
+.decl c420_alt_4_u4(n: node, inner: loc)
+c420_alt_4_u4(n, INNER) :- c420_paren_target_u3(n, INNER).
+c420_alt_4_u4(n, INNER) :- !c420_paren_target_u3(n, INNER), node(_, n, _, _, _), INNER = n.
+
+.decl c420_alt_4_u5(n: node, inner: loc)
+c420_alt_4_u5(n, INNER) :- c420_paren_target_u4(n, INNER).
+c420_alt_4_u5(n, INNER) :- !c420_paren_target_u4(n, INNER), node(_, n, _, _, _), INNER = n.
+
+.decl c420_alt_4_u6(n: node, inner: loc)
+c420_alt_4_u6(n, INNER) :- c420_paren_target_u5(n, INNER).
+c420_alt_4_u6(n, INNER) :- !c420_paren_target_u5(n, INNER), node(_, n, _, _, _), INNER = n.
+
+.decl c420_alt_4_u7(n: node, inner: loc)
+c420_alt_4_u7(n, INNER) :- c420_paren_target_u6(n, INNER).
+c420_alt_4_u7(n, INNER) :- !c420_paren_target_u6(n, INNER), node(_, n, _, _, _), INNER = n.
+
+.decl c420_paren_target_u1(n: node, inner: loc)
+c420_paren_target_u1(n, INNER) :- kind(n, "tuple_pattern"), !c420_tok_has_1(n), child(n, c9, _),
+    !c420_alt_3(c9), c420_alt_4_u0(c9, INNER).
+
+.decl c420_paren_target_u2(n: node, inner: loc)
+c420_paren_target_u2(n, INNER) :- kind(n, "tuple_pattern"), !c420_tok_has_1(n), child(n, c9, _),
+    !c420_alt_3(c9), c420_alt_4_u1(c9, INNER).
+
+.decl c420_paren_target_u3(n: node, inner: loc)
+c420_paren_target_u3(n, INNER) :- kind(n, "tuple_pattern"), !c420_tok_has_1(n), child(n, c9, _),
+    !c420_alt_3(c9), c420_alt_4_u2(c9, INNER).
+
+.decl c420_paren_target_u4(n: node, inner: loc)
+c420_paren_target_u4(n, INNER) :- kind(n, "tuple_pattern"), !c420_tok_has_1(n), child(n, c9, _),
+    !c420_alt_3(c9), c420_alt_4_u3(c9, INNER).
+
+.decl c420_paren_target_u5(n: node, inner: loc)
+c420_paren_target_u5(n, INNER) :- kind(n, "tuple_pattern"), !c420_tok_has_1(n), child(n, c9, _),
+    !c420_alt_3(c9), c420_alt_4_u4(c9, INNER).
+
+.decl c420_paren_target_u6(n: node, inner: loc)
+c420_paren_target_u6(n, INNER) :- kind(n, "tuple_pattern"), !c420_tok_has_1(n), child(n, c9, _),
+    !c420_alt_3(c9), c420_alt_4_u5(c9, INNER).
+
+.decl c420_paren_target_u7(n: node, inner: loc)
+c420_paren_target_u7(n, INNER) :- kind(n, "tuple_pattern"), !c420_tok_has_1(n), child(n, c9, _),
+    !c420_alt_3(c9), c420_alt_4_u6(c9, INNER).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl c420_tok_has_1(n: node)
+.stored c420_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+c420_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+c420_tok_has_1(n) :- op(n, t2), match(",", t2).
+c420_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+c420_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+c420_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// demand_alt_2: the rows of alt_2 its callers ask for (the metavariable columns they pass in)
+.decl c420_demand_alt_2(n: node, x: loc)
+c420_demand_alt_2(c4, X) :- kind(n, "identifier"), node(_, n, _, _, _), X = n,
+    within_stop(n, p2, "dictionary_comprehension"),
+    kind(p2, "dictionary_comprehension"), child(p2, c3, _), kind(c3, "for_in_clause"),
+    field(c3, "left", c4).
+
+// demand_alt_8: the rows of alt_8 its callers ask for (the metavariable columns they pass in)
+.decl c420_demand_alt_8(n: node, key: loc)
+c420_demand_alt_8(c8, KEY) :- kind(n, "dictionary_comprehension"), child(n, c1, _),
+    kind(c1, "pair"), field(c1, "key", c2), node(_, c2, _, _, _), KEY = c2, field(c1, "value", c3),
+    child(n, c8, _), kind(c8, "for_in_clause"), field(c8, "left", c9).
+
+// alt_4_u0_empty: level -1 of an unrolled recursion, empty
+.decl c420_alt_4_u0_empty(n: node, inner: loc)
+
+// paren_target_u0: level -1 of an unrolled recursion, empty
+.decl c420_paren_target_u0(n: node, inner: loc)
+
+// paren_target_u0_empty: level -1 of an unrolled recursion, empty
+.decl c420_paren_target_u0_empty(n: node, inner: loc)
+
+// set_1: node kinds from a JSON `any`
+.decl c420_set_1(v: symbol)
+c420_set_1("lambda"). c420_set_1("list"). c420_set_1("dictionary"). c420_set_1("set").
+c420_set_1("list_comprehension"). c420_set_1("set_comprehension").
+c420_set_1("dictionary_comprehension"). c420_set_1("generator_expression"). c420_set_1("await").
+c420_set_1("yield"). c420_set_1("call"). c420_set_1("named_expression").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   X: metavariable of the calling rule, passed in (bound by the caller)
+.decl c420_alt_2(n: node, x: loc)
+c420_alt_2(n, X) :- c420_demand_alt_2(n, X), kind(n, "identifier"), text(n, t_x1), text(X, t_x1), @doc(n) = @doc(X).
+c420_alt_2(n, X) :- c420_demand_alt_2(n, X), has(n, c1, "identifier"),
+    text(c1, t_x2), text(X, t_x2), @doc(c1) = @doc(X).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl c420_alt_3(n: node)
+c420_alt_3(n) :- kind(n, "comment").
+c420_alt_3(n) :- node(_, n, _, _, _), glob("[()]", n).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+//   INNER: metavariable this relation binds for the calling rule
+.decl c420_alt_4(n: node, inner: loc)
+c420_alt_4(n, INNER) :- c420_alt_4_u7(n, INNER).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl c420_alt_5(n: node)
+c420_alt_5(n) :- c420_bad_value(n).
+c420_alt_5(n) :- within(c1, n), c420_bad_value(c1).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl c420_alt_6(n: node)
+c420_alt_6(n) :- child(n, c1, _), kind(c1, "if_clause").
+c420_alt_6(n) :- node(_, n, _, _, _),
+    k3 = count : { child(n, c2, _), kind(c2, "for_in_clause") }, k3 >= 2.
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+.decl c420_alt_7(n: node)
+c420_alt_7(n) :- (kind(n, "attribute") ; kind(n, "subscript")).
+c420_alt_7(n) :- within(c1, n), (kind(c1, "attribute") ; kind(c1, "subscript")).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+//   KEY: metavariable of the calling rule, passed in (bound by the caller)
+.decl c420_alt_8(n: node, key: loc)
+c420_alt_8(n, KEY) :- c420_demand_alt_8(n, KEY), field(n, "left", c1), node(_, c1, _, _, _), TARGET = c1,
+    value(KEY, t2), value(TARGET, t2).
+c420_alt_8(n, KEY) :- c420_demand_alt_8(n, KEY), field(n, "left", c4), c420_paren_target(c4, INNER),
+    value(KEY, t5), value(INNER, t5).
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+//   COMP: metavariable this relation binds for the calling rule
+.decl c420_alt_9(n: node, comp: loc)
+c420_alt_9(n, COMP) :- c420_target(n), COMP = n.
+c420_alt_9(n, COMP) :- c420_in_annotation(n, COMP).

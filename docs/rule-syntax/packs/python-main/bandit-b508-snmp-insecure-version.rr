@@ -1,0 +1,82 @@
+.policy "bandit-b508-snmp-insecure-version" revision 1
+.guests off
+.description "Use SNMPv3 instead of SNMPv1 or v2c in pysnmp CommunityData; the older versions send community strings in clear text."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B508(n): a finding at node n, from clause `bandit:B508`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on F, MODEL are added to every rule.
+.violation B508(at: node, f: node) "Switch to SNMPv3 with UsmUserData instead of this CommunityData; mpModel 0 or 1 sends the community string in clear text."
+    suppress nosec "B508"
+B508(F, n) :- n ~ `$F($$$ARGS)`, kind(n, "call"), b508_arg_mpmodel_1(n, a1), MODEL = a1,
+    sym_of(F, "pysnmp.hlapi.CommunityData"), (value(MODEL, 0) ; value(MODEL, 1)).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl b508_args_plain(l: node, a: node, i: number)
+b508_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl b508_args_splat(l: node, i: number)
+b508_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl b508_args_pos(l: node, a: node, j: number)
+b508_args_pos(l, a, j) :- b508_args_plain(l, a, i), count : { b508_args_splat(l, k), k < i } = 0,
+    j = count : { b508_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl b508_args_star(l: node, j: number)
+b508_args_star(l, j) :- b508_args_splat(l, i), count : { b508_args_splat(l, k), k < i } = 0,
+    j = count : { b508_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl b508_args_kwp(l: node, k: symbol, v: node)
+b508_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl b508_args_lit_dict(s: node, d: node)
+b508_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !b508_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl b508_args_str_pair(p: node)
+b508_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl b508_args_kw(l: node, k: symbol, v: node)
+b508_args_kw(l, k, v) :- b508_args_kwp(l, k, v).
+b508_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), b508_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl b508_args_kw_spread(l: node)
+b508_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !b508_args_lit_dict(s, _).
+
+// arg_mpmodel_1: call n passes v for slot `mpModel` of (communityIndex, communityName, mpModel, contextEngineId, contextName, tag, securityName), as Python binds the call
+.decl b508_arg_mpmodel_1(n: node, v: node)
+b508_arg_mpmodel_1(n, v) :- kind(n, "call"), field(n, "arguments", l), b508_args_pos(l, v, 2),
+    !b508_args_kw(l, "mpModel", _).
+b508_arg_mpmodel_1(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    b508_args_kw(l, "mpModel", v), count : { b508_args_kw(l, "mpModel", _) } = 1,
+    !b508_args_pos(l, _, 2).
+
+// arg_no_mpmodel_1: call n does not pass slot `mpModel` of (communityIndex, communityName, mpModel, contextEngineId, contextName, tag, securityName), as Python binds the call
+.decl b508_arg_no_mpmodel_1(n: node)
+b508_arg_no_mpmodel_1(n) :- kind(n, "call"), field(n, "arguments", l), !b508_args_pos(l, _, 2),
+    count : { b508_args_star(l, j), j <= 2 } = 0, !b508_args_kw(l, "mpModel", _),
+    !b508_args_kw_spread(l).

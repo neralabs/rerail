@@ -1,0 +1,204 @@
+.policy "ruff-ruf068-duplicate-entry-in-dunder-all" revision 1
+.guests off
+.description "Don't list the same name twice in a module's __all__; a repeat has no effect and often hides a copy-paste mistake."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// RUF068(n): a finding at node n, from clause `duplicate-entry`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF068(at: node, ruf068_dup: node) "{{dup}} is already listed earlier in this `__all__` list; remove the repeat, or correct it if another name was meant."
+    suppress noqa "RUF068"
+RUF068(DUP, n) :- ruf068_dup(n, DUP), child(p1, n, _), ruf068_sequence(p1).
+RUF068(DUP, n) :- ruf068_dup_in_string(n, DUP),
+    count : { within(n, p2), ruf068_other_scope(p2) } = 0.
+
+// plain_str(n): the JSON util `plain-str`, used where the JSON says `matches: "plain-str"`
+.decl ruf068_plain_str(n: node)
+ruf068_plain_str(n) :- (kind(n, "string") ; kind(n, "concatenated_string")), value(n, v1),
+    value_type(v1, "str"),
+    count : { has(n, c2, "string_start"), glob("**[fFtT]**", c2) } = 0.
+
+// current(n): the JSON util `current`, used where the JSON says `matches: "current"`
+//   DUP: metavariable this relation binds for the calling rule
+.decl ruf068_current(n: node, ruf068_dup: loc)
+ruf068_current(n, DUP) :- ruf068_plain_str(n), node(_, n, _, _, _), DUP = n.
+ruf068_current(n, DUP) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf068_current(c1, DUP).
+
+// dunder_all(n): the JSON util `dunder-all`, used where the JSON says `matches: "dunder-all"`
+.decl ruf068_dunder_all(n: node)
+ruf068_dunder_all(n) :- kind(n, "identifier"), glob("__all__", n).
+ruf068_dunder_all(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf068_dunder_all(c1).
+
+// extend_method(n): the JSON util `extend-method`, used where the JSON says `matches: "extend-method"`
+.decl ruf068_extend_method(n: node)
+ruf068_extend_method(n) :- kind(n, "attribute"), field(n, "object", c1), ruf068_dunder_all(c1),
+    field(n, "attribute", c2), glob("extend", c2).
+ruf068_extend_method(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    ruf068_extend_method(c3).
+
+// dunder_all_target(n): the JSON util `dunder-all-target`, used where the JSON says `matches: "dunder-all-target"`
+.decl ruf068_dunder_all_target(n: node)
+ruf068_dunder_all_target(n) :- ruf068_dunder_all(n).
+ruf068_dunder_all_target(n) :- kind(n, "tuple_pattern"), child(n, c1, _),
+    ruf068_dunder_all_target(c1), !ruf068_tok_has_1(n).
+
+// other_scope(n): the JSON util `other-scope`, used where the JSON says `matches: "other-scope"`
+.decl ruf068_other_scope(n: node)
+ruf068_other_scope(n) :-
+    ( kind(n, "class_definition")
+    ; kind(n, "type_parameter")
+    ; kind(n, "type_alias_statement")
+    ; kind(n, "if_clause")
+    ).
+
+ruf068_other_scope(n) :- kind(n, "block"), child(p1, n, _), kind(p1, "function_definition").
+ruf068_other_scope(n) :- kind(n, "type"), child(p2, n, _),
+    ( kind(p2, "typed_parameter")
+    ; kind(p2, "typed_default_parameter")
+    ; kind(p2, "function_definition")
+    ).
+
+ruf068_other_scope(n) :- child(p3, n, _), kind(p3, "lambda"), ruf068_tok_follows_2(n).
+ruf068_other_scope(n) :- field(p11, "body", n),
+    ( kind(p11, "list_comprehension")
+    ; kind(p11, "set_comprehension")
+    ; kind(p11, "dictionary_comprehension")
+    ; kind(p11, "generator_expression")
+    ).
+
+ruf068_other_scope(n) :- kind(n, "for_in_clause"), precedes(s12, n),
+    kind(s12, "for_in_clause").
+ruf068_other_scope(n) :- field(p13, "left", n), kind(p13, "for_in_clause").
+
+// assign_context(n): the JSON util `assign-context`, used where the JSON says `matches: "assign-context"`
+.decl ruf068_assign_context(n: node)
+ruf068_assign_context(n) :- kind(n, "assignment"), field(n, "left", c1),
+    ruf068_dunder_all_target(c1), count : { child(p2, n, _), kind(p2, "assignment") } = 0.
+
+// augment_context(n): the JSON util `augment-context`, used where the JSON says `matches: "augment-context"`
+.decl ruf068_augment_context(n: node)
+ruf068_augment_context(n) :- kind(n, "augmented_assignment"), field(n, "left", c1),
+    ruf068_dunder_all_target(c1), field(n, "operator", c2), glob("+=", c2).
+
+// extend_context(n): the JSON util `extend-context`, used where the JSON says `matches: "extend-context"`
+.decl ruf068_extend_context(n: node)
+ruf068_extend_context(n) :- kind(n, "argument_list"), child(p1, n, _), kind(p1, "call"),
+    field(p1, "function", c2), ruf068_extend_method(c2), ruf068_one_arg(n).
+
+// sequence(n): the JSON util `sequence`, used where the JSON says `matches: "sequence"`
+.decl ruf068_sequence(n: node)
+ruf068_sequence(n) :- (kind(n, "list") ; kind(n, "tuple") ; kind(n, "expression_list")),
+    within_stop(n, p1, ruf068_stop_1),
+    (ruf068_assign_context(p1) ; ruf068_augment_context(p1) ; ruf068_extend_context(p1)),
+    count : { within(n, p2), ruf068_other_scope(p2) } = 0.
+
+// dup(n): the JSON util `dup`, used where the JSON says `matches: "dup"`
+//   DUP: metavariable this relation binds for the calling rule
+.decl ruf068_dup(n: node, ruf068_dup: loc)
+ruf068_dup(n, DUP) :- ruf068_current(n, DUP), precedes(s1, n), ruf068_alt_4(s1, FIRST),
+    value(FIRST, t7), value(DUP, t7).
+
+// ann_extend(n): the JSON util `ann-extend`, used where the JSON says `matches: "ann-extend"`
+.decl ruf068_ann_extend(n: node)
+ruf068_ann_extend(n) :- kind(n, "attribute"), child(n, c1, _), kind(c1, "identifier"),
+    glob("extend", c1), ruf068_tok_follows_3(c1), child(n, c9, _), ruf068_dunder_all(c9),
+    ruf068_tok_precedes_4(c9).
+ruf068_ann_extend(n) :- kind(n, "parenthesized_expression"), child(n, c17, _),
+    ruf068_ann_extend(c17).
+
+// ann_sequence(n): the JSON util `ann-sequence`, used where the JSON says `matches: "ann-sequence"`
+.decl ruf068_ann_sequence(n: node)
+ruf068_ann_sequence(n) :- (kind(n, "list") ; kind(n, "tuple")), within_stop(n, p1, ruf068_stop_1),
+    kind(p1, "argument_list"), child(p2, p1, _), kind(p2, "call"), child(p2, c3, _),
+    ruf068_ann_extend(c3), next_sibling(c3, s4), kind(s4, "argument_list"), ruf068_one_arg(p1),
+    count : { within(n, p5), kind(p5, k6), ruf068_set_7(k6) } = 0.
+
+// dup_in_string(n): the JSON util `dup-in-string`, used where the JSON says `matches: "dup-in-string"`
+//   DUP: metavariable this relation binds for the calling rule
+.decl ruf068_dup_in_string(n: node, ruf068_dup: loc)
+ruf068_dup_in_string(n, DUP) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ruf068_alt_8(c2, DUP).
+
+// one_arg(n): the JSON util `one-arg`, used where the JSON says `matches: "one-arg"`
+.decl ruf068_one_arg(n: node)
+ruf068_one_arg(n) :- node(_, n, _, _, _), k2 = count : { child(n, c1, _), !ruf068_alt_9(c1) },
+    k2 >= 1, k2 <= 1.
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf068_tok_has_1(n: node)
+.stored ruf068_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf068_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
+ruf068_tok_has_1(n) :- op(n, t3), match(",", t3).
+ruf068_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+ruf068_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+ruf068_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf068_tok_follows_2(n: node)
+.stored ruf068_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf068_tok_follows_2(n) :- precedes(s4, n), glob(":", s4).
+ruf068_tok_follows_2(n) :- child(p7, n, _), node(_, n, _, st9, _), token(p7, _, t5, _, en10),
+    en10 <= st9, match(":", t5).
+ruf068_tok_follows_2(n) :- structural_before(n, g6),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+ruf068_tok_follows_2(n) :- precedes(o8, n), structural_before(o8, g6),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf068_tok_follows_3(n: node)
+.stored ruf068_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf068_tok_follows_3(n) :- precedes(s2, n), glob(".", s2).
+ruf068_tok_follows_3(n) :- child(p5, n, _), node(_, n, _, st7, _), token(p5, _, t3, _, en8),
+    en8 <= st7, match("\\.", t3).
+ruf068_tok_follows_3(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+ruf068_tok_follows_3(n) :- precedes(o6, n), structural_before(o6, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// tok_precedes_4(n): a later sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf068_tok_precedes_4(n: node)
+.stored ruf068_tok_precedes_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf068_tok_precedes_4(n) :- precedes(n, s10), glob(".", s10).
+ruf068_tok_precedes_4(n) :- child(p13, n, _), node(_, n, _, _, en16),
+    token(p13, _, t11, st15, _), st15 >= en16, match("\\.", t11).
+ruf068_tok_precedes_4(n) :- structural_after(n, g12),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g12).
+ruf068_tok_precedes_4(n) :- precedes(n, o14), structural_after(o14, g12),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g12).
+
+// set_7: node kinds from a JSON `any`
+.decl ruf068_set_7(v: symbol)
+ruf068_set_7("lambda"). ruf068_set_7("list_comprehension"). ruf068_set_7("set_comprehension").
+ruf068_set_7("dictionary_comprehension"). ruf068_set_7("generator_expression").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf068_stop_1(n: node)
+ruf068_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+//   FIRST: metavariable this relation binds for the calling rule
+.decl ruf068_alt_4(n: node, first: loc)
+ruf068_alt_4(n, FIRST) :- (kind(n, "string") ; kind(n, "concatenated_string")), value(n, v1),
+    value_type(v1, "str"),
+    count : { has(n, c2, "string_start"), glob("**[fFtT]**", c2) } = 0, node(_, n, _, _, _), FIRST = n.
+ruf068_alt_4(n, FIRST) :- kind(n, "parenthesized_expression"), within_stop(c3, n, ruf068_stop_1),
+    (kind(c3, "string") ; kind(c3, "concatenated_string")), value(c3, v4),
+    value_type(v4, "str"),
+    count : { has(c3, c5, "string_start"), glob("**[fFtT]**", c5) } = 0, node(_, c3, _, _, _), FIRST = c3.
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+//   DUP: metavariable this relation binds for the calling rule
+.decl ruf068_alt_8(n: node, ruf068_dup: loc)
+ruf068_alt_8(n, DUP) :- ruf068_dup(n, DUP), child(p1, n, _), ruf068_ann_sequence(p1).
+ruf068_alt_8(n, DUP) :- ruf068_dup_in_string(n, DUP).
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf068_alt_9(n: node)
+ruf068_alt_9(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+ruf068_alt_9(n) :- node(_, n, _, _, _), glob("[(),]", n).

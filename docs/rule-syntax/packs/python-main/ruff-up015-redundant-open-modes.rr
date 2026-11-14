@@ -1,0 +1,218 @@
+.policy "ruff-up015-redundant-open-modes" revision 1
+.guests off
+.description "Drop redundant flags from the mode passed to open(); text reading is the default, so t, U and a bare r add nothing."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl up015_callee(n: node)
+up015_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "open"),
+    (sym_of(n, "builtins.open") ; sym_of(n, "aiofiles.open")).
+up015_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), up015_callee(c1).
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl up015_plain_string(n: node)
+up015_plain_string(n) :- kind(n, "string"), !match("[A-Za-z]*[fFtT].*", n).
+up015_plain_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), match("[A-Za-z]*[fFtT].*", c1) } = 0.
+
+// open_call(n): the JSON util `open-call`, used where the JSON says `matches: "open-call"`
+//   M: metavariable this relation binds for the calling rule
+.decl up015_open_call(n: node, m: loc)
+up015_open_call(n, M) :- kind(n, "call"), field(n, "function", c1), up015_callee(c1),
+    up015_arg_mode_1(n, a2), M = a2.
+
+// redundant_mode(n): the JSON util `redundant-mode`, used where the JSON says `matches: "redundant-mode"`
+.decl up015_redundant_mode(n: node)
+up015_redundant_mode(n) :- up015_plain_string(n), value(n, v1), value_type(v1, "str"),
+    match("[rwaxbtU+]+", v1), value(n, v2), glob("**[rUwax]**", v2),
+    count : { value(n, v3), match(".*(.).*\\1.*", v3) } = 0,
+    count : { value(n, v4), glob("**{t**b,b**t,[rU]**[wax],[wax]**[rU],[wax]**[wax]}**", v4) } = 0,
+    ( value(n, v5), glob("**[tU]**", v5)
+    ; value(n, v6), contains("r", v6), count : { value(n, v7), glob("**[b+]**", v7) } = 0
+    ).
+
+
+// empty_mode(n): the JSON util `empty-mode`, used where the JSON says `matches: "empty-mode"`
+.decl up015_empty_mode(n: node)
+up015_empty_mode(n) :- up015_redundant_mode(n), value(n, v1), match("[rtU]+", v1).
+
+// flags_mode(n): the JSON util `flags-mode`, used where the JSON says `matches: "flags-mode"`
+.decl up015_flags_mode(n: node)
+up015_flags_mode(n) :- up015_redundant_mode(n), value(n, v1), glob("**[bwax+]**", v1).
+
+// not_argument(n): the JSON util `not-argument`, used where the JSON says `matches: "not-argument"`
+.decl up015_not_argument(n: node)
+up015_not_argument(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+up015_not_argument(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// mode_after_continued_comma(n): the JSON util `mode-after-continued-comma`, used where the JSON says `matches: "mode-after-continued-comma"`
+.decl up015_mode_after_continued_comma(n: node)
+up015_mode_after_continued_comma(n) :- child(p1, n, _), up015_counted_2(n),
+    k3 = count : { child(p1, s2, _), precedes(s2, n), up015_counted_2(s2) }, k3 = 1,
+    count : { precedes(s4, n), kind(s4, "list_splat") } = 0, child(p5, n, _),
+    kind(p5, "argument_list"),
+    count : { child(p5, c6, _), kind(c6, "keyword_argument"), field(c6, "name", c7), glob("mode", c7) } = 0,
+    child(p8, p5, _), kind(p8, "call"), field(p8, "function", c9), up015_callee(c9),
+    precedes_stop(s10, n, up015_stop_3), glob("\\,", s10), precedes_stop(s11, s10, up015_stop_3),
+    kind(s11, "line_continuation").
+
+// UP015(n, detail): findings from clauses `mode-only-redundant`, `mode-has-redundant-flags`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on M are added to every rule.
+.violation UP015(at: node, s: node, detail: symbol) "{detail}."
+    suppress noqa "UP015"
+UP015(S, n, "Remove this mode argument; open() reads text by default, so `r`, `t` and `U` add nothing") :- kind(n, "call"),
+    field(n, "function", c1), up015_callee(c1), up015_arg_mode_1(n, a2), M = a2,
+    up015_mode_only_redundant_site(M, S).
+UP015(S, n, "Remove this mode argument; open() reads text by default, so `r`, `t` and `U` add nothing") :- up015_mode_only_redundant_site(n, S),
+    up015_mode_after_continued_comma(n), up015_mode_only_redundant_site(M, S).
+UP015(S, n, "Remove this mode argument; open() reads text by default, so `r`, `t` and `U` add nothing") :- up015_mode_only_redundant_in_string(n, M, S),
+    up015_mode_only_redundant_site(M, S).
+UP015(S, n, "Drop the redundant flags from this mode: `t` and `U` always, and `r` unless `b` or `+` is also there (`Ub` becomes `rb`, `wt` becomes `w`)") :- kind(n, "call"),
+    field(n, "function", c1), up015_callee(c1), up015_arg_mode_1(n, a2), M = a2,
+    up015_mode_has_redundant_flags_site(M, S).
+UP015(S, n, "Drop the redundant flags from this mode: `t` and `U` always, and `r` unless `b` or `+` is also there (`Ub` becomes `rb`, `wt` becomes `w`)") :- up015_mode_has_redundant_flags_site(n, S),
+    up015_mode_after_continued_comma(n), up015_mode_has_redundant_flags_site(M, S).
+UP015(S, n, "Drop the redundant flags from this mode: `t` and `U` always, and `r` unless `b` or `+` is also there (`Ub` becomes `rb`, `wt` becomes `w`)") :- up015_mode_has_redundant_flags_in_string(n, M, S),
+    up015_mode_has_redundant_flags_site(M, S).
+
+// mode_only_redundant_site(n): the JSON util `mode-only-redundant-site`, used where the JSON says `matches: "mode-only-redundant-site"`
+//   S: metavariable this relation binds for the calling rule
+.decl up015_mode_only_redundant_site(n: node, s: loc)
+up015_mode_only_redundant_site(n, S) :- up015_empty_mode(n), node(_, n, _, _, _), S = n.
+up015_mode_only_redundant_site(n, S) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    up015_mode_only_redundant_site(c1, S).
+
+// mode_only_redundant_slot(n): the JSON util `mode-only-redundant-slot`, used where the JSON says `matches: "mode-only-redundant-slot"`
+//   M: metavariable this relation binds for the calling rule
+.decl up015_mode_only_redundant_slot(n: node, m: loc)
+up015_mode_only_redundant_slot(n, M) :- up015_empty_mode(n), node(_, n, _, _, _), L = n,
+    ( within(n, p1_1), up015_open_call(p1_1, M), text(L, t2_1), text(M, t2_1), @doc(L) = @doc(M) ; up015_up_1(n, p4_2), node(_, p4_2, _, _, _), P = p4_2, within(p4_2, p5_2), up015_open_call(p5_2, M), text(P, t6_2), text(M, t6_2), @doc(P) = @doc(M) ).
+
+
+// mode_only_redundant_in_string(n): the JSON util `mode-only-redundant-in-string`, used where the JSON says `matches: "mode-only-redundant-in-string"`
+//   M, S: metavariables this relation binds for the calling rule
+.decl up015_mode_only_redundant_in_string(n: node, m: loc, s: loc)
+up015_mode_only_redundant_in_string(n, M, S) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), up015_alt_8(c2, M, S).
+
+// mode_has_redundant_flags_site(n): the JSON util `mode-has-redundant-flags-site`, used where the JSON says `matches: "mode-has-redundant-flags-site"`
+//   S: metavariable this relation binds for the calling rule
+.decl up015_mode_has_redundant_flags_site(n: node, s: loc)
+up015_mode_has_redundant_flags_site(n, S) :- up015_flags_mode(n), node(_, n, _, _, _), S = n.
+up015_mode_has_redundant_flags_site(n, S) :- kind(n, "parenthesized_expression"),
+    child(n, c1, _), up015_mode_has_redundant_flags_site(c1, S).
+
+// mode_has_redundant_flags_slot(n): the JSON util `mode-has-redundant-flags-slot`, used where the JSON says `matches: "mode-has-redundant-flags-slot"`
+//   M: metavariable this relation binds for the calling rule
+.decl up015_mode_has_redundant_flags_slot(n: node, m: loc)
+up015_mode_has_redundant_flags_slot(n, M) :- up015_flags_mode(n), node(_, n, _, _, _), L = n,
+    ( within(n, p1_3), up015_open_call(p1_3, M), text(L, t2_3), text(M, t2_3), @doc(L) = @doc(M) ; up015_up_2(n, p4_4), node(_, p4_4, _, _, _), P = p4_4, within(p4_4, p5_4), up015_open_call(p5_4, M), text(P, t6_4), text(M, t6_4), @doc(P) = @doc(M) ).
+
+
+// mode_has_redundant_flags_in_string(n): the JSON util `mode-has-redundant-flags-in-string`, used where the JSON says `matches: "mode-has-redundant-flags-in-string"`
+//   M, S: metavariables this relation binds for the calling rule
+.decl up015_mode_has_redundant_flags_in_string(n: node, m: loc, s: loc)
+up015_mode_has_redundant_flags_in_string(n, M, S) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), up015_alt_12(c2, M, S).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl up015_args_plain(l: node, a: node, i: number)
+up015_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl up015_args_splat(l: node, i: number)
+up015_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl up015_args_pos(l: node, a: node, j: number)
+up015_args_pos(l, a, j) :- up015_args_plain(l, a, i), count : { up015_args_splat(l, k), k < i } = 0,
+    j = count : { up015_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl up015_args_star(l: node, j: number)
+up015_args_star(l, j) :- up015_args_splat(l, i), count : { up015_args_splat(l, k), k < i } = 0,
+    j = count : { up015_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl up015_args_kwp(l: node, k: symbol, v: node)
+up015_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl up015_args_lit_dict(s: node, d: node)
+up015_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !up015_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl up015_args_str_pair(p: node)
+up015_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl up015_args_kw(l: node, k: symbol, v: node)
+up015_args_kw(l, k, v) :- up015_args_kwp(l, k, v).
+up015_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), up015_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl up015_args_kw_spread(l: node)
+up015_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !up015_args_lit_dict(s, _).
+
+// arg_mode_1: call n passes v for slot `mode` of (file, mode), syntactic: Ruff's find_argument
+.decl up015_arg_mode_1(n: node, v: node)
+up015_arg_mode_1(n, v) :- kind(n, "call"), field(n, "arguments", l), up015_args_kwp(l, "mode", v).
+up015_arg_mode_1(n, v) :- kind(n, "call"), field(n, "arguments", l), up015_args_pos(l, v, 1),
+    !up015_args_kwp(l, "mode", _).
+
+// arg_no_mode_1: call n does not pass slot `mode` of (file, mode), syntactic: Ruff's find_argument
+.decl up015_arg_no_mode_1(n: node)
+up015_arg_no_mode_1(n) :- kind(n, "call"), field(n, "arguments", l), !up015_args_kwp(l, "mode", _),
+    !up015_args_pos(l, _, 1).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl up015_up_1(n: node, p: node)
+up015_up_1(n, p) :- up015_empty_mode(n), within_stop(n, p, up015_stop_11),
+    kind(p, "parenthesized_expression").
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl up015_up_2(n: node, p: node)
+up015_up_2(n, p) :- up015_flags_mode(n), within_stop(n, p, up015_stop_11),
+    kind(p, "parenthesized_expression").
+
+// counted_2(n): the siblings the JSON `nthChild.ofRule` counts
+.decl up015_counted_2(n: node)
+up015_counted_2(n) :- node(_, n, _, _, _), !up015_not_argument(n).
+
+// stop_3(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl up015_stop_3(n: node)
+up015_stop_3(n) :- node(_, n, _, _, _), !kind(n, "comment").
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+//   M, S: metavariables this relation binds for the calling rule
+.decl up015_alt_8(n: node, m: loc, s: loc)
+up015_alt_8(n, M, S) :- up015_mode_only_redundant_slot(n, M), S = n.
+up015_alt_8(n, M, S) :- up015_mode_only_redundant_in_string(n, M, S).
+
+// stop_11(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl up015_stop_11(n: node)
+up015_stop_11(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// alt_12(n): the JSON `any`: n matches if any one of these rules does
+//   M, S: metavariables this relation binds for the calling rule
+.decl up015_alt_12(n: node, m: loc, s: loc)
+up015_alt_12(n, M, S) :- up015_mode_has_redundant_flags_slot(n, M), S = n.
+up015_alt_12(n, M, S) :- up015_mode_has_redundant_flags_in_string(n, M, S).

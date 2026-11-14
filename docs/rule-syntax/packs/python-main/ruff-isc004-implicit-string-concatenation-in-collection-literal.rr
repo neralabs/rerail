@@ -1,0 +1,74 @@
+.policy "ruff-isc004-implicit-string-concatenation-in-collection-literal" revision 1
+.guests off
+.description "Add the missing comma, or wrap the strings in parentheses, where adjacent strings concatenate inside a list, tuple or set literal; the merge usually hides a forgotten comma."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// ISC004(n): a finding at node n, from clause `implicit-string-concatenation-in-collection-literal`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation ISC004(at: node, c: node) "Add the missing comma if these strings are separate items; if joining them is intended, wrap the concatenation in parentheses."
+    suppress noqa "ISC004"
+ISC004(C, n) :- isc004_target(n), node(_, n, _, _, _), C = n.
+ISC004(C, n) :- isc004_in_string(n, C).
+
+// comma(n): the JSON util `comma`, used where the JSON says `matches: "comma"`
+.decl isc004_comma(n: node)
+isc004_comma(n) :- isc004_tok_has_1(n).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl isc004_target(n: node)
+isc004_target(n) :- kind(n, "concatenated_string"), isc004_alt_2(n).
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   C: metavariable this relation binds for the calling rule
+.decl isc004_in_string(n: node, c: loc)
+isc004_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), isc004_alt_4(c2, C).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl isc004_tok_has_1(n: node)
+.stored isc004_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+isc004_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+isc004_tok_has_1(n) :- op(n, t2), match(",", t2).
+isc004_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+isc004_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+isc004_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl isc004_stop_1(n: node)
+isc004_stop_1(n) :- node(_, n, _, _, _), !kind(n, "comment"), !kind(n, "line_continuation").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl isc004_alt_2(n: node)
+isc004_alt_2(n) :- child(p1, n, _),
+    ( kind(p1, "list")
+    ; kind(p1, "tuple")
+    ; kind(p1, "set")
+    ; kind(p1, "expression_list")
+    ).
+
+isc004_alt_2(n) :- child(p2, n, _),
+    ( kind(p2, "expression_statement")
+    ; kind(p2, "match_statement")
+    ; kind(p2, "print_statement")
+    ),
+    isc004_comma(p2).
+isc004_alt_2(n) :- child(p3, n, _), kind(p3, "subscript"), isc004_comma(p3),
+    count : { isc004_stop_1_precedes(n, s4), glob("\\[", s4) } = 0.
+isc004_alt_2(n) :- child(p5, n, _), kind(p5, "type"), child(p6, p5, _),
+    kind(p6, "type_parameter"), isc004_comma(p6).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl isc004_alt_4(n: node, c: loc)
+isc004_alt_4(n, C) :- isc004_target(n), C = n.
+isc004_alt_4(n, C) :- isc004_in_string(n, C).
+
+// stop_1_precedes: precedes_stop over the stop set stop_1, read inside an aggregate
+.decl isc004_stop_1_precedes(a: node, b: node)
+isc004_stop_1_precedes(x, y) :- precedes_stop(x, y, isc004_stop_1).

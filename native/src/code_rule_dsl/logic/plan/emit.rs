@@ -140,7 +140,7 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
             model.stats.card.insert(rel.to_owned(), (*rows as f64).max(1.0));
         }
     }
-    let relations: Vec<(String, usize)> = prog.decls.iter().filter(|(rel, _)| derived(rel)).map(|(rel, cols)| (rel.clone(), cols.len())).collect();
+    let relations: Vec<(String, usize)> = prog.decls.iter().filter(|(rel, _)| derived(rel)).map(|(rel, cols)| (rel.to_string(), cols.len())).collect();
     // The derived relations a rule body reads, in order.
     let reads = |order: &[Step], keep: &dyn Fn(&str) -> bool| -> Vec<String> {
         let mut out: Vec<String> = Vec::new();
@@ -241,9 +241,9 @@ pub fn emit_inputs(prog:&Program, db:&Connection, name:&str, counts:Option<&BTre
     Ok(Emitted {
         constant_rows: std::sync::Arc::new(prog.facts.iter().filter(|(rel,rows)|derived(rel) && !rows.is_empty())
             .filter_map(|(rel,rows)|rows.iter().map(|row|row.iter().map(|v|if let Value::Int(n)=v {Some(*n)}else{None}).collect::<Option<Vec<_>>>()).collect::<Option<Vec<_>>>().map(|rows|(rel.clone(),rows))).collect()),
-        value_types: std::sync::Arc::new(prog.decls.iter().map(|(r,c)|(r.clone(),c.iter().map(|(_,t)|t.clone()).collect())).collect()),
+        value_types: std::sync::Arc::new(prog.decls.iter().map(|(r,c)|(r.to_string(),c.iter().map(|(_,t)|t.clone()).map(String::from).collect())).collect()),
         analysis: model.analysis(prog),
-        program: schedule::Program { name: name.to_owned(), column_types:relations.iter().map(|(rel,_)|(rel.clone(),prog.decls[rel].iter().map(|(_,ty)|if !atoms && ty=="sym" {"TEXT".into()} else {"INTEGER".into()}).collect())).collect(), relations, steps, file_local: false, partitions: Vec::new(), lattices, lattice_operations:BTreeMap::new() },
+        program: schedule::Program { name: name.to_owned(), column_types:relations.iter().map(|(rel,_)|(rel.clone(),prog.decls[rel.as_str()].iter().map(|(_,ty)|if !atoms && ty=="sym" {"TEXT".into()} else {"INTEGER".into()}).collect())).collect(), relations, steps, file_local: false, partitions: Vec::new(), lattices, lattice_operations:BTreeMap::new() },
         setup,
         queries,
         views: planned_views,

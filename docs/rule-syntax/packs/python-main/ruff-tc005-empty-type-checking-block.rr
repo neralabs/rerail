@@ -1,0 +1,42 @@
+.policy "ruff-tc005-empty-type-checking-block" revision 1
+.guests off
+.description "Remove type-checking blocks that contain only a pass statement; an empty block does nothing and confuses readers."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// TC005(n): a finding at node n, from clause `empty-type-checking-block`.
+// Each rule below is one way the JSON `rule` can match.
+.violation TC005(at: node) "Delete this `if TYPE_CHECKING:` block; its body is only `pass`, so it does nothing."
+    suppress noqa "TC005"
+TC005(n) :- kind(n, "pass_statement"), !tc005_alt_3(n), child(p3, n, _), kind(p3, "block"),
+    field(p4, "consequence", p3), kind(p4, "if_statement"), field(p4, "condition", c5),
+    tc005_type_checking_test(c5),
+    count : { child(p4, c6, _), (kind(c6, "elif_clause") ; kind(c6, "else_clause")) } = 0.
+
+// type_checking_test(n): the JSON util `type-checking-test`, used where the JSON says `matches: "type-checking-test"`
+.decl tc005_type_checking_test(n: node)
+tc005_type_checking_test(n) :- kind(n, "identifier"), glob("TYPE_CHECKING", n).
+tc005_type_checking_test(n) :- kind(n, "identifier"),
+    ( sym_of(n, "typing.TYPE_CHECKING")
+    ; sym_of(n, "typing_extensions.TYPE_CHECKING")
+    ; sym_of(n, "_typeshed.TYPE_CHECKING")
+    ).
+
+tc005_type_checking_test(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("TYPE_CHECKING", c1).
+tc005_type_checking_test(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    tc005_type_checking_test(c2).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl tc005_alt_1(n: node)
+tc005_alt_1(n) :- kind(n, "comment").
+tc005_alt_1(n) :- node(_, n, _, _, _), glob(";", n).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl tc005_alt_3(n: node)
+tc005_alt_3(n) :- precedes(s1, n), !tc005_alt_1(s1).
+tc005_alt_3(n) :- precedes(n, s2), !tc005_alt_1(s2).

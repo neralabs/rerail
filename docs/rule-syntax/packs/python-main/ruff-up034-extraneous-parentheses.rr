@@ -1,0 +1,540 @@
+.policy "ruff-up034-extraneous-parentheses" revision 1
+.guests off
+.description "Remove redundant doubled parentheses around an expression; one pair is enough."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// UP034(n): a finding at node n, from clause `extraneous-parentheses`.
+// Each rule below is one way the JSON `rule` can match.
+.violation UP034(at: node) "Delete the highlighted inner pair of parentheses; the enclosing parentheses already group this expression, so the meaning is unchanged."
+    suppress noqa "UP034"
+UP034(n) :- up034_doubled(n).
+
+// bracket(n): the JSON util `bracket`, used where the JSON says `matches: "bracket"`
+.decl up034_bracket(n: node)
+up034_bracket(n) :- kind(n, k1), up034_set_1(k1).
+
+// group(n): the JSON util `group`, used where the JSON says `matches: "group"`
+.decl up034_group(n: node)
+up034_group(n) :-
+    ( kind(n, "generator_expression")
+    ; kind(n, "parenthesized_expression")
+    ; kind(n, "tuple_pattern")
+    ),
+    count : { up034_stop_13_within(c1, n), up034_alt_3(c1) } = 0.
+
+// only_child_of_parentheses(n): the JSON util `only-child-of-parentheses`, used where the JSON says `matches: "only-child-of-parentheses"`
+.decl up034_only_child_of_parentheses(n: node)
+up034_only_child_of_parentheses(n) :- child(p1, n, _), up034_counted_4(n),
+    k3 = count : { child(p1, s2, _), precedes(s2, n), up034_counted_4(s2) }, k3 = 0,
+    child(p4, n, _), up034_counted_5(n),
+    k6 = count : { child(p4, s5, _), precedes(n, s5), up034_counted_5(s5) }, k6 = 0,
+    child(p7, n, _),
+    ( kind(p7, "parenthesized_expression")
+    ; kind(p7, "argument_list"), !up034_tok_has_3(p7)
+    ; kind(p7, "tuple_pattern"), !up034_tok_has_4(p7)
+    ),
+    !up034_consumed_outer(p7).
+
+// doubled(n): the JSON util `doubled`, used where the JSON says `matches: "doubled"`
+.decl up034_doubled(n: node)
+up034_doubled(n) :- up034_group(n),
+    ( up034_only_child_of_parentheses(n)
+    ; child(p1, n, _), kind(p1, "case_pattern"), up034_only_child_of_parentheses(p1)
+    ; child(p2, n, _), kind(p2, "case_pattern"), child(p3, p2, _), kind(p3, "class_pattern"), !up034_alt_7(p3)
+    ).
+
+
+// after_open_parenthesis(n): the JSON util `after-open-parenthesis`, used where the JSON says `matches: "after-open-parenthesis"`
+.decl up034_after_open_parenthesis(n: node)
+up034_after_open_parenthesis(n) :- precedes_stop(s1, n, up034_counted_4), glob("(", s1).
+up034_after_open_parenthesis(n) :- count : { up034_counted_4_precedes(s2, n), !kind(s2, "comment"), !kind(s2, "line_continuation") } = 0,
+    child(p3, n, _), up034_after_open_parenthesis(p3).
+
+// call_of_parenthesized_callee(n): the JSON util `call-of-parenthesized-callee`, used where the JSON says `matches: "call-of-parenthesized-callee"`
+.decl up034_call_of_parenthesized_callee(n: node)
+up034_call_of_parenthesized_callee(n) :- up034_call_of_parenthesized_callee_u7(n).
+
+// consumed_outer(n): the JSON util `consumed-outer`, used where the JSON says `matches: "consumed-outer"`
+.decl up034_consumed_outer(n: node)
+up034_consumed_outer(n) :- up034_call_of_parenthesized_callee(n).
+up034_consumed_outer(n) :- up034_scanned(n).
+up034_consumed_outer(n) :- within(n, p1), up034_group_start(p1).
+
+// group_start(n): the JSON util `group-start`, used where the JSON says `matches: "group-start"`
+.decl up034_group_start(n: node)
+up034_group_start(n) :- up034_group_start_u7(n).
+
+// tuple_start(n): the JSON util `tuple-start`, used where the JSON says `matches: "tuple-start"`
+.decl up034_tuple_start(n: node)
+up034_tuple_start(n) :- up034_tuple_start_u7(n).
+
+// scanned(n): the JSON util `scanned`, used where the JSON says `matches: "scanned"`
+.decl up034_scanned(n: node)
+up034_scanned(n) :- up034_group_start(n).
+up034_scanned(n) :- up034_before_scan_stop(n).
+
+// scan_stopper(n): the JSON util `scan-stopper`, used where the JSON says `matches: "scan-stopper"`
+.decl up034_scan_stopper(n: node)
+up034_scan_stopper(n) :- up034_scan_stopper_u7(n).
+
+// before_scan_stop(n): the JSON util `before-scan-stop`, used where the JSON says `matches: "before-scan-stop"`
+.decl up034_before_scan_stop(n: node)
+up034_before_scan_stop(n) :- up034_before_scan_stop_u7(n).
+
+// level_clear(n): the JSON util `level-clear`, used where the JSON says `matches: "level-clear"`
+.decl up034_level_clear(n: node)
+up034_level_clear(n) :- up034_level_clear_u7(n).
+
+// after_args_open(n): the JSON util `after-args-open`, used where the JSON says `matches: "after-args-open"`
+.decl up034_after_args_open(n: node)
+up034_after_args_open(n) :- up034_after_args_open_u7(n).
+
+.decl up034_after_args_open_u1(n: node)
+up034_after_args_open_u1(n) :- precedes_stop(s1, n, up034_counted_4), glob("(", s1),
+    child(p2, n, _), up034_call_of_parenthesized_callee_u0(p2).
+up034_after_args_open_u1(n) :- count : { up034_counted_4_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
+    child(p4, n, _), up034_after_args_open_u0(p4).
+
+.decl up034_after_args_open_u2(n: node)
+up034_after_args_open_u2(n) :- precedes_stop(s1, n, up034_counted_4), glob("(", s1),
+    child(p2, n, _), up034_call_of_parenthesized_callee_u1(p2).
+up034_after_args_open_u2(n) :- count : { up034_counted_4_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
+    child(p4, n, _), up034_after_args_open_u1(p4).
+
+.decl up034_after_args_open_u3(n: node)
+up034_after_args_open_u3(n) :- precedes_stop(s1, n, up034_counted_4), glob("(", s1),
+    child(p2, n, _), up034_call_of_parenthesized_callee_u2(p2).
+up034_after_args_open_u3(n) :- count : { up034_counted_4_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
+    child(p4, n, _), up034_after_args_open_u2(p4).
+
+.decl up034_after_args_open_u4(n: node)
+up034_after_args_open_u4(n) :- precedes_stop(s1, n, up034_counted_4), glob("(", s1),
+    child(p2, n, _), up034_call_of_parenthesized_callee_u3(p2).
+up034_after_args_open_u4(n) :- count : { up034_counted_4_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
+    child(p4, n, _), up034_after_args_open_u3(p4).
+
+.decl up034_after_args_open_u5(n: node)
+up034_after_args_open_u5(n) :- precedes_stop(s1, n, up034_counted_4), glob("(", s1),
+    child(p2, n, _), up034_call_of_parenthesized_callee_u4(p2).
+up034_after_args_open_u5(n) :- count : { up034_counted_4_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
+    child(p4, n, _), up034_after_args_open_u4(p4).
+
+.decl up034_after_args_open_u6(n: node)
+up034_after_args_open_u6(n) :- precedes_stop(s1, n, up034_counted_4), glob("(", s1),
+    child(p2, n, _), up034_call_of_parenthesized_callee_u5(p2).
+up034_after_args_open_u6(n) :- count : { up034_counted_4_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
+    child(p4, n, _), up034_after_args_open_u5(p4).
+
+.decl up034_after_args_open_u7(n: node)
+up034_after_args_open_u7(n) :- precedes_stop(s1, n, up034_counted_4), glob("(", s1),
+    child(p2, n, _), up034_call_of_parenthesized_callee_u6(p2).
+up034_after_args_open_u7(n) :- count : { up034_counted_4_precedes(s3, n), !kind(s3, "comment"), !kind(s3, "line_continuation") } = 0,
+    child(p4, n, _), up034_after_args_open_u6(p4).
+
+.decl up034_call_of_parenthesized_callee_u1(n: node)
+up034_call_of_parenthesized_callee_u1(n) :- kind(n, "argument_list"), child(p1, n, _),
+    kind(p1, "call"), field(p1, "function", c2), up034_group_start_u0(c2).
+
+.decl up034_call_of_parenthesized_callee_u2(n: node)
+up034_call_of_parenthesized_callee_u2(n) :- kind(n, "argument_list"), child(p1, n, _),
+    kind(p1, "call"), field(p1, "function", c2), up034_group_start_u1(c2).
+
+.decl up034_call_of_parenthesized_callee_u3(n: node)
+up034_call_of_parenthesized_callee_u3(n) :- kind(n, "argument_list"), child(p1, n, _),
+    kind(p1, "call"), field(p1, "function", c2), up034_group_start_u2(c2).
+
+.decl up034_call_of_parenthesized_callee_u4(n: node)
+up034_call_of_parenthesized_callee_u4(n) :- kind(n, "argument_list"), child(p1, n, _),
+    kind(p1, "call"), field(p1, "function", c2), up034_group_start_u3(c2).
+
+.decl up034_call_of_parenthesized_callee_u5(n: node)
+up034_call_of_parenthesized_callee_u5(n) :- kind(n, "argument_list"), child(p1, n, _),
+    kind(p1, "call"), field(p1, "function", c2), up034_group_start_u4(c2).
+
+.decl up034_call_of_parenthesized_callee_u6(n: node)
+up034_call_of_parenthesized_callee_u6(n) :- kind(n, "argument_list"), child(p1, n, _),
+    kind(p1, "call"), field(p1, "function", c2), up034_group_start_u5(c2).
+
+.decl up034_call_of_parenthesized_callee_u7(n: node)
+up034_call_of_parenthesized_callee_u7(n) :- kind(n, "argument_list"), child(p1, n, _),
+    kind(p1, "call"), field(p1, "function", c2), up034_group_start_u6(c2).
+
+.decl up034_group_start_u0(n: node)
+up034_group_start_u0(n) :- up034_group(n), up034_after_open_parenthesis(n).
+
+.decl up034_group_start_u1(n: node)
+up034_group_start_u1(n) :- up034_group(n), up034_after_open_parenthesis(n), !up034_after_args_open_u0(n).
+
+.decl up034_group_start_u2(n: node)
+up034_group_start_u2(n) :- up034_group(n), up034_after_open_parenthesis(n), !up034_after_args_open_u1(n).
+
+.decl up034_group_start_u3(n: node)
+up034_group_start_u3(n) :- up034_group(n), up034_after_open_parenthesis(n), !up034_after_args_open_u2(n).
+
+.decl up034_group_start_u4(n: node)
+up034_group_start_u4(n) :- up034_group(n), up034_after_open_parenthesis(n), !up034_after_args_open_u3(n).
+
+.decl up034_group_start_u5(n: node)
+up034_group_start_u5(n) :- up034_group(n), up034_after_open_parenthesis(n), !up034_after_args_open_u4(n).
+
+.decl up034_group_start_u6(n: node)
+up034_group_start_u6(n) :- up034_group(n), up034_after_open_parenthesis(n), !up034_after_args_open_u5(n).
+
+.decl up034_group_start_u7(n: node)
+up034_group_start_u7(n) :- up034_group(n), up034_after_open_parenthesis(n), !up034_after_args_open_u6(n).
+
+.decl up034_alt_15_u1(n: node)
+up034_alt_15_u1(n) :- up034_scan_stopper_u0(n).
+up034_alt_15_u1(n) :- !up034_bracket(n), within_stop(c1, n, up034_stop_13), up034_scan_stopper_u0(c1).
+
+.decl up034_alt_15_u2(n: node)
+up034_alt_15_u2(n) :- up034_scan_stopper_u1(n).
+up034_alt_15_u2(n) :- !up034_bracket(n), within_stop(c1, n, up034_stop_13), up034_scan_stopper_u1(c1).
+
+.decl up034_alt_15_u3(n: node)
+up034_alt_15_u3(n) :- up034_scan_stopper_u2(n).
+up034_alt_15_u3(n) :- !up034_bracket(n), within_stop(c1, n, up034_stop_13), up034_scan_stopper_u2(c1).
+
+.decl up034_alt_15_u4(n: node)
+up034_alt_15_u4(n) :- up034_scan_stopper_u3(n).
+up034_alt_15_u4(n) :- !up034_bracket(n), within_stop(c1, n, up034_stop_13), up034_scan_stopper_u3(c1).
+
+.decl up034_alt_15_u5(n: node)
+up034_alt_15_u5(n) :- up034_scan_stopper_u4(n).
+up034_alt_15_u5(n) :- !up034_bracket(n), within_stop(c1, n, up034_stop_13), up034_scan_stopper_u4(c1).
+
+.decl up034_alt_15_u6(n: node)
+up034_alt_15_u6(n) :- up034_scan_stopper_u5(n).
+up034_alt_15_u6(n) :- !up034_bracket(n), within_stop(c1, n, up034_stop_13), up034_scan_stopper_u5(c1).
+
+.decl up034_alt_15_u7(n: node)
+up034_alt_15_u7(n) :- up034_scan_stopper_u6(n).
+up034_alt_15_u7(n) :- !up034_bracket(n), within_stop(c1, n, up034_stop_13), up034_scan_stopper_u6(c1).
+
+.decl up034_before_scan_stop_u1(n: node)
+up034_before_scan_stop_u1(n) :- up034_level_clear_u0(n), child(p1, n, _), up034_tuple_start_u0(p1).
+up034_before_scan_stop_u1(n) :- child(p2, n, _), up034_bracket(p2), up034_before_scan_stop_u0(p2).
+up034_before_scan_stop_u1(n) :- up034_level_clear_u0(n), child(p3, n, _), up034_before_scan_stop_u0(p3).
+
+.decl up034_before_scan_stop_u2(n: node)
+up034_before_scan_stop_u2(n) :- up034_level_clear_u1(n), child(p1, n, _), up034_tuple_start_u1(p1).
+up034_before_scan_stop_u2(n) :- child(p2, n, _), up034_bracket(p2), up034_before_scan_stop_u1(p2).
+up034_before_scan_stop_u2(n) :- up034_level_clear_u1(n), child(p3, n, _), up034_before_scan_stop_u1(p3).
+
+.decl up034_before_scan_stop_u3(n: node)
+up034_before_scan_stop_u3(n) :- up034_level_clear_u2(n), child(p1, n, _), up034_tuple_start_u2(p1).
+up034_before_scan_stop_u3(n) :- child(p2, n, _), up034_bracket(p2), up034_before_scan_stop_u2(p2).
+up034_before_scan_stop_u3(n) :- up034_level_clear_u2(n), child(p3, n, _), up034_before_scan_stop_u2(p3).
+
+.decl up034_before_scan_stop_u4(n: node)
+up034_before_scan_stop_u4(n) :- up034_level_clear_u3(n), child(p1, n, _), up034_tuple_start_u3(p1).
+up034_before_scan_stop_u4(n) :- child(p2, n, _), up034_bracket(p2), up034_before_scan_stop_u3(p2).
+up034_before_scan_stop_u4(n) :- up034_level_clear_u3(n), child(p3, n, _), up034_before_scan_stop_u3(p3).
+
+.decl up034_before_scan_stop_u5(n: node)
+up034_before_scan_stop_u5(n) :- up034_level_clear_u4(n), child(p1, n, _), up034_tuple_start_u4(p1).
+up034_before_scan_stop_u5(n) :- child(p2, n, _), up034_bracket(p2), up034_before_scan_stop_u4(p2).
+up034_before_scan_stop_u5(n) :- up034_level_clear_u4(n), child(p3, n, _), up034_before_scan_stop_u4(p3).
+
+.decl up034_before_scan_stop_u6(n: node)
+up034_before_scan_stop_u6(n) :- up034_level_clear_u5(n), child(p1, n, _), up034_tuple_start_u5(p1).
+up034_before_scan_stop_u6(n) :- child(p2, n, _), up034_bracket(p2), up034_before_scan_stop_u5(p2).
+up034_before_scan_stop_u6(n) :- up034_level_clear_u5(n), child(p3, n, _), up034_before_scan_stop_u5(p3).
+
+.decl up034_before_scan_stop_u7(n: node)
+up034_before_scan_stop_u7(n) :- up034_level_clear_u6(n), child(p1, n, _), up034_tuple_start_u6(p1).
+up034_before_scan_stop_u7(n) :- child(p2, n, _), up034_bracket(p2), up034_before_scan_stop_u6(p2).
+up034_before_scan_stop_u7(n) :- up034_level_clear_u6(n), child(p3, n, _), up034_before_scan_stop_u6(p3).
+
+.decl up034_level_clear_u0(n: node)
+up034_level_clear_u0(n) :- node(_, n, _, _, _),
+    count : { precedes(s1, n), up034_alt_15_u0_empty(s1) } = 0.
+
+.decl up034_level_clear_u1(n: node)
+up034_level_clear_u1(n) :- node(_, n, _, _, _),
+    count : { precedes(s1, n), up034_alt_15_u0(s1) } = 0.
+
+.decl up034_level_clear_u2(n: node)
+up034_level_clear_u2(n) :- node(_, n, _, _, _),
+    count : { precedes(s1, n), up034_alt_15_u1(s1) } = 0.
+
+.decl up034_level_clear_u3(n: node)
+up034_level_clear_u3(n) :- node(_, n, _, _, _),
+    count : { precedes(s1, n), up034_alt_15_u2(s1) } = 0.
+
+.decl up034_level_clear_u4(n: node)
+up034_level_clear_u4(n) :- node(_, n, _, _, _),
+    count : { precedes(s1, n), up034_alt_15_u3(s1) } = 0.
+
+.decl up034_level_clear_u5(n: node)
+up034_level_clear_u5(n) :- node(_, n, _, _, _),
+    count : { precedes(s1, n), up034_alt_15_u4(s1) } = 0.
+
+.decl up034_level_clear_u6(n: node)
+up034_level_clear_u6(n) :- node(_, n, _, _, _),
+    count : { precedes(s1, n), up034_alt_15_u5(s1) } = 0.
+
+.decl up034_level_clear_u7(n: node)
+up034_level_clear_u7(n) :- node(_, n, _, _, _),
+    count : { precedes(s1, n), up034_alt_15_u6(s1) } = 0.
+
+.decl up034_scan_stopper_u1(n: node)
+up034_scan_stopper_u1(n) :- glob("{\\,,yield}", n), within_stop(n, p1, up034_stop_13),
+    up034_tuple_start_u0(p1).
+
+.decl up034_scan_stopper_u2(n: node)
+up034_scan_stopper_u2(n) :- glob("{\\,,yield}", n), within_stop(n, p1, up034_stop_13),
+    up034_tuple_start_u1(p1).
+
+.decl up034_scan_stopper_u3(n: node)
+up034_scan_stopper_u3(n) :- glob("{\\,,yield}", n), within_stop(n, p1, up034_stop_13),
+    up034_tuple_start_u2(p1).
+
+.decl up034_scan_stopper_u4(n: node)
+up034_scan_stopper_u4(n) :- glob("{\\,,yield}", n), within_stop(n, p1, up034_stop_13),
+    up034_tuple_start_u3(p1).
+
+.decl up034_scan_stopper_u5(n: node)
+up034_scan_stopper_u5(n) :- glob("{\\,,yield}", n), within_stop(n, p1, up034_stop_13),
+    up034_tuple_start_u4(p1).
+
+.decl up034_scan_stopper_u6(n: node)
+up034_scan_stopper_u6(n) :- glob("{\\,,yield}", n), within_stop(n, p1, up034_stop_13),
+    up034_tuple_start_u5(p1).
+
+.decl up034_scan_stopper_u7(n: node)
+up034_scan_stopper_u7(n) :- glob("{\\,,yield}", n), within_stop(n, p1, up034_stop_13),
+    up034_tuple_start_u6(p1).
+
+.decl up034_tuple_start_u0(n: node)
+up034_tuple_start_u0(n) :-
+    ( kind(n, "tuple"), up034_tok_has_6(n)
+    ; kind(n, "tuple_pattern"), !up034_group(n)
+    ; kind(n, "generator_expression"), !up034_group(n)
+    ; kind(n, "parenthesized_expression"), !up034_group(n)
+    ),
+    up034_after_open_parenthesis(n), !up034_after_args_open(n),
+    count : { within(n, p9), up034_group_start(p9) } = 0.
+
+.decl up034_tuple_start_u1(n: node)
+up034_tuple_start_u1(n) :-
+    ( kind(n, "tuple"), up034_tok_has_6(n)
+    ; kind(n, "tuple_pattern"), !up034_group(n)
+    ; kind(n, "generator_expression"), !up034_group(n)
+    ; kind(n, "parenthesized_expression"), !up034_group(n)
+    ),
+    up034_after_open_parenthesis(n), !up034_after_args_open(n),
+    count : { within(n, p9), up034_group_start(p9) } = 0, !up034_before_scan_stop_u0(n).
+
+.decl up034_tuple_start_u2(n: node)
+up034_tuple_start_u2(n) :-
+    ( kind(n, "tuple"), up034_tok_has_6(n)
+    ; kind(n, "tuple_pattern"), !up034_group(n)
+    ; kind(n, "generator_expression"), !up034_group(n)
+    ; kind(n, "parenthesized_expression"), !up034_group(n)
+    ),
+    up034_after_open_parenthesis(n), !up034_after_args_open(n),
+    count : { within(n, p9), up034_group_start(p9) } = 0, !up034_before_scan_stop_u1(n).
+
+.decl up034_tuple_start_u3(n: node)
+up034_tuple_start_u3(n) :-
+    ( kind(n, "tuple"), up034_tok_has_6(n)
+    ; kind(n, "tuple_pattern"), !up034_group(n)
+    ; kind(n, "generator_expression"), !up034_group(n)
+    ; kind(n, "parenthesized_expression"), !up034_group(n)
+    ),
+    up034_after_open_parenthesis(n), !up034_after_args_open(n),
+    count : { within(n, p9), up034_group_start(p9) } = 0, !up034_before_scan_stop_u2(n).
+
+.decl up034_tuple_start_u4(n: node)
+up034_tuple_start_u4(n) :-
+    ( kind(n, "tuple"), up034_tok_has_6(n)
+    ; kind(n, "tuple_pattern"), !up034_group(n)
+    ; kind(n, "generator_expression"), !up034_group(n)
+    ; kind(n, "parenthesized_expression"), !up034_group(n)
+    ),
+    up034_after_open_parenthesis(n), !up034_after_args_open(n),
+    count : { within(n, p9), up034_group_start(p9) } = 0, !up034_before_scan_stop_u3(n).
+
+.decl up034_tuple_start_u5(n: node)
+up034_tuple_start_u5(n) :-
+    ( kind(n, "tuple"), up034_tok_has_6(n)
+    ; kind(n, "tuple_pattern"), !up034_group(n)
+    ; kind(n, "generator_expression"), !up034_group(n)
+    ; kind(n, "parenthesized_expression"), !up034_group(n)
+    ),
+    up034_after_open_parenthesis(n), !up034_after_args_open(n),
+    count : { within(n, p9), up034_group_start(p9) } = 0, !up034_before_scan_stop_u4(n).
+
+.decl up034_tuple_start_u6(n: node)
+up034_tuple_start_u6(n) :-
+    ( kind(n, "tuple"), up034_tok_has_6(n)
+    ; kind(n, "tuple_pattern"), !up034_group(n)
+    ; kind(n, "generator_expression"), !up034_group(n)
+    ; kind(n, "parenthesized_expression"), !up034_group(n)
+    ),
+    up034_after_open_parenthesis(n), !up034_after_args_open(n),
+    count : { within(n, p9), up034_group_start(p9) } = 0, !up034_before_scan_stop_u5(n).
+
+.decl up034_tuple_start_u7(n: node)
+up034_tuple_start_u7(n) :-
+    ( kind(n, "tuple"), up034_tok_has_6(n)
+    ; kind(n, "tuple_pattern"), !up034_group(n)
+    ; kind(n, "generator_expression"), !up034_group(n)
+    ; kind(n, "parenthesized_expression"), !up034_group(n)
+    ),
+    up034_after_open_parenthesis(n), !up034_after_args_open(n),
+    count : { within(n, p9), up034_group_start(p9) } = 0, !up034_before_scan_stop_u6(n).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up034_tok_has_1(n: node)
+.stored up034_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up034_tok_has_1(n) :- child(n, c8, _), glob("\\,", c8).
+up034_tok_has_1(n) :- op(n, t9), match(",", t9).
+up034_tok_has_1(n) :- child(n, c15, _), structural_before(c15, g10),
+    match("(?s)^(?:.*(?:,).*)$", g10).
+up034_tok_has_1(n) :- child(n, c15, _), structural_after(c15, g10),
+    match("(?s)^(?:.*(?:,).*)$", g10).
+up034_tok_has_1(n) :- node_text(n, g10), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g10).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up034_tok_has_2(n: node)
+.stored up034_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up034_tok_has_2(n) :- child(n, c16, _), glob("\\,", c16).
+up034_tok_has_2(n) :- op(n, t17), match(",", t17).
+up034_tok_has_2(n) :- child(n, c23, _), structural_before(c23, g18),
+    match("(?s)^(?:.*(?:,).*)$", g18).
+up034_tok_has_2(n) :- child(n, c23, _), structural_after(c23, g18),
+    match("(?s)^(?:.*(?:,).*)$", g18).
+up034_tok_has_2(n) :- node_text(n, g18), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g18).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up034_tok_has_3(n: node)
+.stored up034_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up034_tok_has_3(n) :- child(n, c1, _), glob("\\,", c1).
+up034_tok_has_3(n) :- op(n, t2), match(",", t2).
+up034_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+up034_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+up034_tok_has_3(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up034_tok_has_4(n: node)
+.stored up034_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up034_tok_has_4(n) :- child(n, c9, _), glob("\\,", c9).
+up034_tok_has_4(n) :- op(n, t10), match(",", t10).
+up034_tok_has_4(n) :- child(n, c16, _), structural_before(c16, g11),
+    match("(?s)^(?:.*(?:,).*)$", g11).
+up034_tok_has_4(n) :- child(n, c16, _), structural_after(c16, g11),
+    match("(?s)^(?:.*(?:,).*)$", g11).
+up034_tok_has_4(n) :- node_text(n, g11), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g11).
+
+// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up034_tok_has_5(n: node)
+.stored up034_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up034_tok_has_5(n) :- child(n, c4, _), glob("\\,", c4).
+up034_tok_has_5(n) :- op(n, t5), match(",", t5).
+up034_tok_has_5(n) :- child(n, c11, _), structural_before(c11, g6),
+    match("(?s)^(?:.*(?:,).*)$", g6).
+up034_tok_has_5(n) :- child(n, c11, _), structural_after(c11, g6),
+    match("(?s)^(?:.*(?:,).*)$", g6).
+up034_tok_has_5(n) :- node_text(n, g6), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g6).
+
+// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^\\($": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up034_tok_has_6(n: node)
+.stored up034_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up034_tok_has_6(n) :- child(n, c1, _), glob("(", c1).
+up034_tok_has_6(n) :- op(n, t2), match("\\(", t2).
+up034_tok_has_6(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:\\().*)$", g3).
+up034_tok_has_6(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:\\().*)$", g3).
+up034_tok_has_6(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:\\().*)$", g3).
+
+// after_args_open_u0: level -1 of an unrolled recursion, empty
+.decl up034_after_args_open_u0(n: node)
+
+// after_args_open_u0_empty: level -1 of an unrolled recursion, empty
+.decl up034_after_args_open_u0_empty(n: node)
+
+// call_of_parenthesized_callee_u0: level -1 of an unrolled recursion, empty
+.decl up034_call_of_parenthesized_callee_u0(n: node)
+
+// call_of_parenthesized_callee_u0_empty: level -1 of an unrolled recursion, empty
+.decl up034_call_of_parenthesized_callee_u0_empty(n: node)
+
+// group_start_u0_empty: level -1 of an unrolled recursion, empty
+.decl up034_group_start_u0_empty(n: node)
+
+// alt_15_u0: level -1 of an unrolled recursion, empty
+.decl up034_alt_15_u0(n: node)
+
+// alt_15_u0_empty: level -1 of an unrolled recursion, empty
+.decl up034_alt_15_u0_empty(n: node)
+
+// before_scan_stop_u0: level -1 of an unrolled recursion, empty
+.decl up034_before_scan_stop_u0(n: node)
+
+// before_scan_stop_u0_empty: level -1 of an unrolled recursion, empty
+.decl up034_before_scan_stop_u0_empty(n: node)
+
+// level_clear_u0_empty: level -1 of an unrolled recursion, empty
+.decl up034_level_clear_u0_empty(n: node)
+
+// scan_stopper_u0: level -1 of an unrolled recursion, empty
+.decl up034_scan_stopper_u0(n: node)
+
+// scan_stopper_u0_empty: level -1 of an unrolled recursion, empty
+.decl up034_scan_stopper_u0_empty(n: node)
+
+// tuple_start_u0_empty: level -1 of an unrolled recursion, empty
+.decl up034_tuple_start_u0_empty(n: node)
+
+// set_1: node kinds from a JSON `any`
+.decl up034_set_1(v: symbol)
+up034_set_1("parenthesized_expression"). up034_set_1("tuple"). up034_set_1("list"). up034_set_1("set").
+up034_set_1("dictionary"). up034_set_1("argument_list"). up034_set_1("subscript").
+up034_set_1("generator_expression"). up034_set_1("list_comprehension"). up034_set_1("set_comprehension").
+up034_set_1("dictionary_comprehension"). up034_set_1("interpolation"). up034_set_1("string").
+up034_set_1("concatenated_string"). up034_set_1("tuple_pattern"). up034_set_1("list_pattern").
+up034_set_1("dict_pattern"). up034_set_1("class_pattern").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl up034_alt_3(n: node)
+up034_alt_3(n) :- node(_, n, _, _, _), glob("\\,", n).
+up034_alt_3(n) :- node(_, n, _, _, _), glob("yield", n).
+
+// counted_4(n): the siblings the JSON `nthChild.ofRule` counts
+.decl up034_counted_4(n: node)
+up034_counted_4(n) :- node(_, n, _, _, _), !kind(n, "comment"),
+    !kind(n, "line_continuation").
+
+// counted_5(n): the siblings the JSON `nthChild.ofRule` counts
+.decl up034_counted_5(n: node)
+up034_counted_5(n) :- node(_, n, _, _, _), !kind(n, "comment"),
+    !kind(n, "line_continuation").
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+.decl up034_alt_7(n: node)
+up034_alt_7(n) :- up034_tok_has_3(n).
+up034_alt_7(n) :- up034_consumed_outer(n).
+
+// stop_13(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl up034_stop_13(n: node)
+up034_stop_13(n) :- up034_bracket(n).
+
+// alt_15(n): the JSON `any`: n matches if any one of these rules does
+.decl up034_alt_15(n: node)
+up034_alt_15(n) :- up034_alt_15_u7(n).
+
+// stop_13_within: within_stop over the stop set stop_13, read inside an aggregate
+.decl up034_stop_13_within(n: node, a: node)
+up034_stop_13_within(x, y) :- within_stop(x, y, up034_stop_13).
+
+// counted_4_precedes: precedes_stop over the stop set counted_4, read inside an aggregate
+.decl up034_counted_4_precedes(a: node, b: node)
+up034_counted_4_precedes(x, y) :- precedes_stop(x, y, up034_counted_4).

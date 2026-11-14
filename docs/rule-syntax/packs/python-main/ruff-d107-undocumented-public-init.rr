@@ -1,0 +1,144 @@
+.policy "ruff-d107-undocumented-public-init" revision 1
+.guests off
+.description "Add a docstring to the __init__ method of each public class, describing its arguments and side effects."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// doc_expr(n): the JSON util `doc-expr`, used where the JSON says `matches: "doc-expr"`
+.decl d107_doc_expr(n: node)
+d107_doc_expr(n) :- kind(n, "string"), match("[rRuU]{0,2}['\"].*", n).
+d107_doc_expr(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !match("[rRuU]{0,2}['\"].*", c1) } = 0.
+d107_doc_expr(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), d107_doc_expr(c2).
+
+// documented(n): the JSON util `documented`, used where the JSON says `matches: "documented"`
+.decl d107_documented(n: node)
+d107_documented(n) :- kind(n, "block"), child(n, c1, _), kind(c1, "expression_statement"),
+    child(p2, c1, _), d107_counted_1(c1),
+    k4 = count : { child(p2, s3, _), precedes(s3, c1), d107_counted_1(s3) }, k4 = 0,
+    child(c1, c5, _), d107_doc_expr(c5), !d107_tok_has_1(c1).
+
+// dunder_all(n): the JSON util `dunder-all`, used where the JSON says `matches: "dunder-all"`
+.decl d107_dunder_all(n: node)
+d107_dunder_all(n) :- (kind(n, "assignment") ; kind(n, "augmented_assignment")),
+    field(n, "left", c1), kind(c1, "identifier"), glob("__all__", c1), child(p2, n, _),
+    kind(p2, "expression_statement").
+
+// public_class(n): the JSON util `public-class`, used where the JSON says `matches: "public-class"`
+.decl d107_public_class(n: node)
+d107_public_class(n) :- d107_demand_public_class(n), kind(n, "class_definition"),
+    count : { field(n, "name", c1), prefix("_", c1) } = 0, d107_alt_6(n).
+
+// exempt_decorator(n): the JSON util `exempt-decorator`, used where the JSON says `matches: "exempt-decorator"`
+.decl d107_exempt_decorator(n: node)
+d107_exempt_decorator(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), d107_set_11(q1).
+d107_exempt_decorator(n) :- kind(n, "attribute"), field(n, "attribute", c2),
+    glob("{setter,deleter}", c2), field(n, "object", c3), d107_alt_13(c3).
+d107_exempt_decorator(n) :- kind(n, "parenthesized_expression"), child(n, c6, _),
+    d107_exempt_decorator(c6).
+
+// undocumented_method(n): the JSON util `undocumented-method`, used where the JSON says `matches: "undocumented-method"`
+.decl d107_undocumented_method(n: node)
+d107_undocumented_method(n) :- kind(n, "function_definition"),
+    count : { field(n, "body", c1), d107_documented(c1) } = 0, within_stop(n, p2, d107_stop_10),
+    kind(p2, "class_definition"), d107_public_class(p2),
+    count : { child(p3, n, _), kind(p3, "decorated_definition"), child(p3, c4, _), kind(c4, "decorator"), child(c4, c5, _), d107_exempt_decorator(c5) } = 0.
+
+// D107(n): a finding at node n, from clause `undocumented-public-init`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation D107(at: node) "Add a docstring to `__init__` describing its arguments, side effects and raised exceptions."
+    suppress noqa "D107"
+D107_raw(n) :- kind(n, "identifier"), glob("__init__", n), node(_, n, _, _, _), NAME = n,
+    field(p1, "name", n), d107_undocumented_method(p1).
+
+// D107_undocumented_public_init_in_package(n): a finding at node n, from clause `undocumented-public-init-in-package`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation D107_undocumented_public_init_in_package(at: node) code "D107" "Add a docstring to `__init__` describing its arguments, side effects and raised exceptions."
+    suppress noqa "D107"
+D107_undocumented_public_init_in_package_raw(n) :- kind(n, "identifier"),
+    glob("__init__", n), node(_, n, _, _, _), NAME = n, field(p1, "name", n), d107_undocumented_method(p1).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl d107_tok_has_1(n: node)
+.stored d107_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+d107_tok_has_1(n) :- child(n, c6, _), glob("\\,", c6).
+d107_tok_has_1(n) :- op(n, t7), match(",", t7).
+d107_tok_has_1(n) :- child(n, c13, _), structural_before(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+d107_tok_has_1(n) :- child(n, c13, _), structural_after(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+d107_tok_has_1(n) :- node_text(n, g8), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g8).
+
+// demand_alt_6: the nodes alt_6 is asked at (its recursion looks at every descendant)
+.decl d107_demand_alt_6(n: node)
+d107_demand_alt_6(n) :- d107_demand_public_class(n), kind(n, "class_definition").
+
+// demand_public_class: the nodes public_class is asked at (its recursion looks at every descendant)
+.decl d107_demand_public_class(n: node)
+d107_demand_public_class(p2) :- kind(n, "function_definition"), within_stop(n, p2, d107_stop_10),
+    kind(p2, "class_definition").
+d107_demand_public_class(p1) :- d107_demand_alt_6(n), d107_up_2(n, p1).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl d107_up_1(n: node, p: node)
+d107_up_1(n, p) :- d107_demand_alt_6(n), within_stop(n, p, d107_stop_10), kind(p, "class_definition"),
+    d107_public_class(p).
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl d107_up_2(n: node, p: node)
+d107_up_2(n, p) :- d107_demand_alt_6(n), within_stop(n, p, d107_stop_10), kind(p, "class_definition").
+
+// stop_10: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl d107_stop_10(kind: symbol)
+d107_stop_10("function_definition"). d107_stop_10("class_definition").
+
+// set_11: symbols from the JSON `resolves.import`
+.decl d107_set_11(v: symbol)
+d107_set_11("typing.overload"). d107_set_11("typing_extensions.overload").
+d107_set_11("_typeshed.overload"). d107_set_11("typing.override").
+d107_set_11("typing_extensions.override"). d107_set_11("_typeshed.override").
+
+// counted_1(n): the siblings the JSON `nthChild.ofRule` counts
+.decl d107_counted_1(n: node)
+d107_counted_1(n) :- node(_, n, _, _, _), !kind(n, "comment").
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl d107_alt_6(n: node)
+d107_alt_6(n) :- d107_demand_alt_6(n), d107_up_1(n, p1).
+d107_alt_6(n) :- d107_demand_alt_6(n),
+    count : { within(n, p2), (kind(p2, "function_definition") ; kind(p2, "class_definition")) } = 0,
+    field(n, "name", c3),
+    ( count : { inside(c3, p1, "module"), d107_stop_10_within(c1, p1), d107_dunder_all(c1) } = 0
+    ; site_exported(c3)
+    ).
+
+
+// alt_12(n): the JSON `any`: n matches if any one of these rules does
+.decl d107_alt_12(n: node)
+d107_alt_12(n) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n.
+d107_alt_12(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    kind(c1, "identifier"), node(_, c1, _, _, _), NAME = c1.
+
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+.decl d107_alt_13(n: node)
+d107_alt_13(n) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n.
+d107_alt_13(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), d107_alt_12(c1).
+
+// stop_10_within: within_stop over the stop set stop_10, read inside an aggregate
+.decl d107_stop_10_within(n: node, a: node)
+d107_stop_10_within(x, y) :- within_stop(x, y, d107_stop_10).
+
+// main's file condition {"notRegex": "\\.pyi$|(?:^|[\\\\/])(?:_|_[^_\\\\/][^\\\\/]*|__[^\\\\/]*[^_\\\\/]_?)\\.[^.\\\\/]+$"}
+.decl D107_raw(at: node)
+D107(v0) :- D107_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$|(?:^|[\\\\/])(?:_|_[^_\\\\/][^\\\\/]*|__[^\\\\/]*[^_\\\\/]_?)\\.[^.\\\\/]+$", rr_p).
+
+// main's file condition {"notRegex": "\\.pyi$"}
+.decl D107_undocumented_public_init_in_package_raw(at: node)
+D107_undocumented_public_init_in_package(v0) :- D107_undocumented_public_init_in_package_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

@@ -1,0 +1,36 @@
+.policy "ruff-ruf030-assert-with-print-message" revision 1
+.guests off
+.description "Pass the message itself as the assert message instead of a print call; print returns None, so the assertion error is empty."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// RUF030(n): a finding at node n, from clause `assert-with-print-message`.
+// Each rule below is one way the JSON `rule` can match.
+.violation RUF030(at: node) "Replace the `print(...)` message with the text itself, as in `assert cond, \"text\"`, or drop the message when `print` has no arguments; `print` returns None."
+    suppress noqa "RUF030"
+RUF030(n) :- kind(n, "call"), field(n, "function", c1), ruf030_callee(c1), ruf030_message_slot(n).
+
+// trivia(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl ruf030_trivia(n: node)
+ruf030_trivia(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl ruf030_callee(n: node)
+ruf030_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "print"),
+    sym_of(n, "builtins.print").
+ruf030_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf030_callee(c1).
+
+// message_slot(n): the JSON util `message-slot`, used where the JSON says `matches: "message-slot"`
+.decl ruf030_message_slot(n: node)
+ruf030_message_slot(n) :- child(p1, n, _), kind(p1, "assert_statement"),
+    precedes_stop(s2, n, ruf030_stop_1), glob("\\,", s2).
+ruf030_message_slot(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"),
+    ruf030_message_slot(p3).
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf030_stop_1(n: node)
+ruf030_stop_1(n) :- node(_, n, _, _, _), !ruf030_trivia(n).

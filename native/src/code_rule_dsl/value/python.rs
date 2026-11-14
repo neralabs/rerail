@@ -608,7 +608,7 @@ fn call<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
             "bool" => Value::Bool(false),
             "int" => Value::int(0),
             "float" => Value::Float(0.0),
-            "str" => Value::Str(String::new()),
+            "str" => Value::Str(String::new().into()),
             "bytes" => Value::Bytes(Vec::new()),
             "tuple" => Value::Tuple(Vec::new()),
             kind => Value::Container {

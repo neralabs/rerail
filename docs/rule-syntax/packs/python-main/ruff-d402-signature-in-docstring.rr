@@ -1,0 +1,100 @@
+.policy "ruff-d402-signature-in-docstring" revision 1
+.guests off
+.description "Describe what a function does in its docstring's first line instead of repeating its signature."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// D402(n): a finding at node n, from clause `signature-in-docstring`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes C1, C10, C11, C12, C13, C14, C15, C16, C17, C18, C19, C2, C20, C21, C22, C23, C24, C3, C4, C5, C6, C7, C8, C9, CALLS, LINE from other metavariables' text; its literals end each rule.
+.violation D402(at: node, name: loc) "Reword this docstring's first line so it no longer spells `{name}(...)`; say what the function does, since the signature already shows its parameters."
+    suppress noqa "D402"
+D402(n, NAME) :- d402_docstring(n), child(n, c2, _), kind(c2, "string_content"),
+    node(_, c2, _, _, _), DOC = c2, inside(n, p3, "function_definition"), field(p3, "name", c4),
+    kind(c4, "identifier"), node(_, c4, _, _, _), NAME = c4,
+    ( value(NAME, C1)
+    ; value(NAME, C2)
+    ; value(NAME, C3)
+    ; value(NAME, C4)
+    ; value(NAME, C5)
+    ; value(NAME, C6)
+    ; value(NAME, C7)
+    ; value(NAME, C8)
+    ; value(NAME, C9)
+    ; value(NAME, C10)
+    ; value(NAME, C11)
+    ; value(NAME, C12)
+    ; value(NAME, C13)
+    ; value(NAME, C14)
+    ; value(NAME, C15)
+    ; value(NAME, C16)
+    ; value(NAME, C17)
+    ; value(NAME, C18)
+    ; value(NAME, C19)
+    ; value(NAME, C20)
+    ; value(NAME, C21)
+    ; value(NAME, C22)
+    ; value(NAME, C23)
+    ; value(NAME, C24)
+    ),
+    text(DOC, t1), LINE = @replace_all(t1, "^\\s*([^\\n\\r]*)[\\s\\S]*$", "$1"),
+    CALLS = @replace_all(LINE, "(?:^|[ \\t;,])(\\w+)\\(|[\\s\\S]", " $1"),
+    C1 = @replace_all(CALLS, "^\\s*(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C2 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){1}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C3 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){2}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C4 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){3}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C5 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){4}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C6 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){5}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C7 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){6}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C8 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){7}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C9 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){8}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C10 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){9}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C11 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){10}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C12 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){11}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C13 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){12}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C14 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){13}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C15 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){14}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C16 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){15}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C17 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){16}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C18 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){17}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C19 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){18}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C20 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){19}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C21 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){20}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C22 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){21}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C23 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){22}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1"),
+    C24 = @replace_all(CALLS, "^\\s*(?:\\S+\\s+){23}(\\S+)[\\s\\S]*$|^[\\s\\S]*$", "$1").
+
+// doc_stmt(n): the JSON util `doc-stmt`, used where the JSON says `matches: "doc-stmt"`
+.decl d402_doc_stmt(n: node)
+d402_doc_stmt(n) :- kind(n, "expression_statement"), !d402_alt_1(n), child(p10, n, _),
+    kind(p10, "block"), child(p11, p10, _), kind(p11, "function_definition").
+
+// doc_holder(n): the JSON util `doc-holder`, used where the JSON says `matches: "doc-holder"`
+.decl d402_doc_holder(n: node)
+d402_doc_holder(n) :- d402_doc_stmt(n).
+d402_doc_holder(n) :- kind(n, "parenthesized_expression"), child(p1, n, _), d402_doc_holder(p1).
+
+// docstring(n): the JSON util `docstring`, used where the JSON says `matches: "docstring"`
+.decl d402_docstring(n: node)
+d402_docstring(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[bBfFtT]**", c1) } = 0,
+    child(p2, n, _), d402_doc_holder(p2).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl d402_tok_has_1(n: node)
+.stored d402_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+d402_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+d402_tok_has_1(n) :- op(n, t2), match(",", t2).
+d402_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+d402_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+d402_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl d402_alt_1(n: node)
+d402_alt_1(n) :- d402_tok_has_1(n).
+d402_alt_1(n) :- precedes(s9, n), !kind(s9, "comment").

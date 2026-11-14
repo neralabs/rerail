@@ -1,0 +1,16 @@
+.policy "bandit-b321-ftplib" revision 1
+.guests off
+.description "Avoid opening ftplib.FTP connections; FTP sends credentials and data unencrypted, so use SFTP, SCP, or another encrypted protocol."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B321(n): a finding at node n, from clause `B321`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on F are added to every rule.
+.violation B321(at: node) "Replace this FTP connection with SFTP, SCP, or another encrypted protocol; FTP sends credentials in clear text."
+    suppress nosec "B321"
+B321(n) :- n ~ `$F($$$ARGS)`, sym_of(F, "ftplib.FTP").

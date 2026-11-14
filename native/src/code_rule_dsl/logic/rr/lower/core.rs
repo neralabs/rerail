@@ -54,11 +54,11 @@ pub fn is_core(rel: &str) -> bool {
 }
 
 fn atom(rel: &str, args: Vec<Term>, neg: bool) -> Literal {
-    Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg, gated: false })
+    Literal::Atom(Atom { rel: rel.to_owned().into(), args: args.into(), neg, gated: false })
 }
 
 fn var(v: &str) -> Term {
-    Term::Var(v.to_owned())
+    Term::Var(v.to_owned().into())
 }
 
 fn less(l: &str, r: &str) -> Literal {
@@ -73,7 +73,7 @@ fn definition(rel: &str) -> (&'static [&'static str], Vec<Literal>) {
             &["a", "b"],
             vec![
                 atom("child", vec![var("p"), var("a"), var("i")], false),
-                Literal::Cmp { l: var("j"), op: "=", r: Term::Call("add".to_owned(), vec![var("i"), Term::Int(1)]) },
+                Literal::Cmp { l: var("j"), op: "=", r: Term::Call("add".into(), [var("i"), Term::Int(1)].into()) },
                 atom("child", vec![var("p"), var("b"), var("j")], false),
             ],
         ),
@@ -97,8 +97,8 @@ fn definition(rel: &str) -> (&'static [&'static str], Vec<Literal>) {
 
 fn substitute(t: &Term, map: &BTreeMap<String, Term>) -> Term {
     match t {
-        Term::Var(v) => map.get(v).cloned().unwrap_or_else(|| t.clone()),
-        Term::Call(f, args) => Term::Call(f.clone(), args.iter().map(|a| substitute(a, map)).collect()),
+        Term::Var(v) => map.get(v.as_str()).cloned().unwrap_or_else(|| t.clone()),
+        Term::Call(f, args) => Term::Call(f.clone().into(), args.iter().map(|a| substitute(a, map)).collect()),
         t => t.clone(),
     }
 }
@@ -124,13 +124,13 @@ impl Lowerer {
                 let (params, body) = definition(rel);
                 let mut map = BTreeMap::new();
                 for (p, a) in params.iter().zip(&args) {
-                    let a = if *a == Term::Wild { Term::Var(self.fresh(rel)) } else { a.clone() };
+                    let a = if *a == Term::Wild { Term::Var(self.fresh(rel).into()) } else { a.clone() };
                     map.insert((*p).to_owned(), a);
                 }
                 let mut own = BTreeSet::new();
                 body.iter().for_each(|l| literal_vars(l, &mut own));
                 for v in own {
-                    map.entry(v).or_insert_with(|| Term::Var(self.fresh(rel)));
+                    map.entry(v).or_insert_with(|| Term::Var(self.fresh(rel).into()));
                 }
                 body.iter().map(|l| substitute_literal(l, &map)).collect()
             }
@@ -141,10 +141,10 @@ impl Lowerer {
     /// The relation of a rewritten relation's rows, `rr_core_<rel>`, made on its first use.
     fn helper(&mut self, rel: &str) -> String {
         let name = format!("rr_core_{rel}");
-        if !self.prog.decls.contains_key(&name) {
+        if !self.prog.decls.contains_key(name.as_str()) {
             let (params, body) = definition(rel);
-            self.prog.decls.insert(name.clone(), DECLS[rel].clone());
-            self.prog.rules.push(Rule { head: Atom { rel: name.clone().into(), args: params.iter().map(|p| var(p)).collect(), neg: false, gated: false }, body });
+            self.prog.decls.insert(name.clone().into(), DECLS[rel].iter().map(|(c, t)| (c.into(), t.into())).collect());
+            self.prog.rules.push(Rule { head: Atom { rel: name.clone().into(), args: params.iter().map(|p| var(p)).collect(), neg: false, gated: false }, body: body.into() });
         }
         name
     }
@@ -159,7 +159,7 @@ impl Lowerer {
             .map(|a| (a.rel.to_string(), a.args.len()))
             .collect();
         for (rel, arity) in read {
-            if self.prog.decls.contains_key(&rel) || is_axis(&rel) {
+            if self.prog.decls.contains_key(rel.as_str()) || is_axis(&rel) {
                 continue;
             }
             let Some(cols) = DECLS.get(&rel) else { continue };
@@ -170,7 +170,7 @@ impl Lowerer {
                 // core.rr's `docof(x: loc, d)`: an input that spans have rows in, not `node`'s projection.
                 self.docof_of_locs = true;
             }
-            self.prog.decls.insert(rel.clone(), cols.clone());
+            self.prog.decls.insert(rel.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
             // Its tape columns stay tapes (the engine's `sym`): a printed program declares them `tape` again.
             let tapes = super::super::tape_type::tape_columns(&rel);
             if !tapes.is_empty() {
@@ -197,9 +197,9 @@ pub fn drop_unread_core(prog: &mut crate::code_rule_dsl::logic::front::Program) 
         .chain(prog.facts.keys().cloned())
         .chain(prog.outputs.iter().cloned())
         .collect();
-    let unused: Vec<String> = DECLS.iter().filter(|(rel, cols)| !used.contains(*rel) && prog.decls.get(*rel).is_none_or(|own| own == *cols)).map(|(rel, _)| rel.clone()).collect();
+    let unused: Vec<String> = DECLS.iter().filter(|(rel, cols)| !used.contains(rel.as_str()) && prog.decls.get(rel.as_str()).is_none_or(|own| own.len() == cols.len() && own.iter().zip(cols.iter()).all(|((a, b), (c, d))| a == c && b == d))).map(|(rel, _)| rel.clone()).collect();
     for rel in unused {
-        prog.decls.remove(&rel);
+        prog.decls.remove(rel.as_str());
         prog.inputs.retain(|i| *i != rel);
     }
 }
@@ -207,7 +207,7 @@ pub fn drop_unread_core(prog: &mut crate::code_rule_dsl::logic::front::Program) 
 fn term_vars(t: &Term, out: &mut BTreeSet<String>) {
     match t {
         Term::Var(v) => {
-            out.insert(v.clone());
+            out.insert(v.to_string());
         }
         Term::Call(_, args) => args.iter().for_each(|a| term_vars(a, out)),
         _ => {}

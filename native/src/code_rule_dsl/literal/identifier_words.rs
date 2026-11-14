@@ -23,7 +23,7 @@ pub(super) fn parse(text: &str) -> PNode {
         }
         root.children.push(
             PNode::new(GRAMMAR, "word", start, end)
-                .with_value(Value::Str(text[start..end].to_owned())),
+                .with_value(Value::Str(text[start..end].to_owned().into())),
         );
     }
     root

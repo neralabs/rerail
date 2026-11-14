@@ -358,7 +358,7 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
     statements.extend(test.rules.iter().cloned());
     let mut program = super::lower_files(path, modules).map_err(|e| format!("{id}: {e}"))?;
     // The relations the test's `.expect`s read are outputs of its run.
-    let declared: BTreeSet<String> = program.decls.keys().cloned().collect();
+    let declared: BTreeSet<String> = program.decls.keys().cloned().map(String::from).collect();
     for e in &test.expects {
         let relation = match &e.what {
             Expected::Row { relation, .. } => relation,

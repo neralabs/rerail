@@ -80,6 +80,8 @@ rerail-prof = { path = "../prof" }
 rerail-rr-syntax = { path = "../rr_syntax" }
 # The tape's format and the writer the parsers write it with (decision 0140).
 rerail-tape-format = { path = "../tape_format" }
+# Python's lean parser: tree-sitter-python's tape, written as the parse goes (`tape::python_lean`).
+rerail-python-lean = { path = "../python_lean" }
 rerail-store = { path = "../store" }
 rerail-accel = { path = "../../../accel" }
 rerail-compiler = { path = "../compiler" }

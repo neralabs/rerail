@@ -1,0 +1,220 @@
+.policy "ruff-pyi003-unrecognized-version-info-check" revision 1
+.guests off
+.description "Compare sys.version_info in stub files only against tuples of integers, or its major version against an integer; type checkers do not understand other forms."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// in_test(n): the JSON util `in-test`, used where the JSON says `matches: "in-test"`
+.decl pyi003_in_test(n: node)
+pyi003_in_test(n) :- field(p1, "condition", n), kind(p1, "if_statement").
+pyi003_in_test(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"), pyi003_in_test(p2).
+
+// chain_and(n): the JSON util `chain-and`, used where the JSON says `matches: "chain-and"`
+.decl pyi003_chain_and(n: node)
+pyi003_chain_and(n) :- kind(n, "boolean_operator"), field(n, "operator", c1), glob("and", c1),
+    pyi003_alt_1(n).
+
+// chain_or(n): the JSON util `chain-or`, used where the JSON says `matches: "chain-or"`
+.decl pyi003_chain_or(n: node)
+pyi003_chain_or(n) :- kind(n, "boolean_operator"), field(n, "operator", c1), glob("or", c1),
+    pyi003_alt_2(n).
+
+// operand_slot(n): the JSON util `operand-slot`, used where the JSON says `matches: "operand-slot"`
+.decl pyi003_operand_slot(n: node)
+pyi003_operand_slot(n) :- field(p1, "left", n), kind(p1, "boolean_operator"), pyi003_alt_3(p1),
+    !pyi003_alt_3(n).
+pyi003_operand_slot(n) :- field(p2, "right", n), kind(p2, "boolean_operator"), pyi003_alt_3(p2),
+    !pyi003_alt_3(n).
+pyi003_operand_slot(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"),
+    pyi003_operand_slot(p3), !pyi003_alt_7(n).
+
+// test_value(n): the JSON util `test-value`, used where the JSON says `matches: "test-value"`
+.decl pyi003_test_value(n: node)
+pyi003_test_value(n) :- !pyi003_alt_8(n),
+    (!kind(n, "boolean_operator"), pyi003_in_test(n) ; pyi003_operand_slot(n)).
+
+// single_compare(n): the JSON util `single-compare`, used where the JSON says `matches: "single-compare"`
+.decl pyi003_single_compare(n: node)
+pyi003_single_compare(n) :- kind(n, "comparison_operator"), pyi003_test_value(n),
+    k9 = count : { pyi003_tok_has_1(n) }, k9 >= 1, k9 <= 1.
+
+// comparator(n): the JSON util `comparator`, used where the JSON says `matches: "comparator"`
+.decl pyi003_comparator(n: node)
+pyi003_comparator(n) :- precedes_stop(s1, n, pyi003_stop_10),
+    match("(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)", s1),
+    !kind(n, "comment").
+
+// version_ref(n): the JSON util `version-ref`, used where the JSON says `matches: "version-ref"`
+.decl pyi003_version_ref(n: node)
+pyi003_version_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "sys.version_info").
+pyi003_version_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi003_version_ref(c1).
+
+// int_literal(n): the JSON util `int-literal`, used where the JSON says `matches: "int-literal"`
+.decl pyi003_int_literal(n: node)
+pyi003_int_literal(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int").
+pyi003_int_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pyi003_int_literal(c2).
+
+// zero_literal(n): the JSON util `zero-literal`, used where the JSON says `matches: "zero-literal"`
+.decl pyi003_zero_literal(n: node)
+pyi003_zero_literal(n) :- pyi003_int_literal(n), value(n, v1), value_type(v1, "int"), v1 = 0.
+
+// small_literal(n): the JSON util `small-literal`, used where the JSON says `matches: "small-literal"`
+.decl pyi003_small_literal(n: node)
+pyi003_small_literal(n) :- pyi003_int_literal(n), value(n, v1), value_type(v1, "int"),
+    (value_type(v1, "int") ; value_type(v1, "float")), to_number(v1) >= 1,
+    to_number(v1) <= 2.
+
+// sole_index(n): the JSON util `sole-index`, used where the JSON says `matches: "sole-index"`
+.decl pyi003_sole_index(n: node)
+pyi003_sole_index(n) :- node(_, n, _, _, _), !pyi003_alt_11(n).
+
+// version_subscript(n): the JSON util `version-subscript`, used where the JSON says `matches: "version-subscript"`
+.decl pyi003_version_subscript(n: node)
+pyi003_version_subscript(n) :- kind(n, "subscript"), field(n, "value", c1), pyi003_version_ref(c1).
+
+// major_subscript(n): the JSON util `major-subscript`, used where the JSON says `matches: "major-subscript"`
+.decl pyi003_major_subscript(n: node)
+pyi003_major_subscript(n) :- kind(n, "subscript"), pyi003_version_subscript(n),
+    field(n, "subscript", c1), pyi003_zero_literal(c1), pyi003_sole_index(c1).
+
+// prefix_subscript(n): the JSON util `prefix-subscript`, used where the JSON says `matches: "prefix-subscript"`
+.decl pyi003_prefix_subscript(n: node)
+pyi003_prefix_subscript(n) :- kind(n, "subscript"), pyi003_version_subscript(n),
+    field(n, "subscript", c1), kind(c1, "slice"), child(c1, c2, _), pyi003_small_literal(c2),
+    precedes_stop(s3, c2, pyi003_stop_10), glob(":", s3),
+    count : { precedes(s4, s3), !kind(s4, "comment") } = 0,
+    count : { precedes(c2, s5), !pyi003_alt_13(s5) } = 0, pyi003_sole_index(c1).
+
+// bad_subscript(n): the JSON util `bad-subscript`, used where the JSON says `matches: "bad-subscript"`
+.decl pyi003_bad_subscript(n: node)
+pyi003_bad_subscript(n) :- pyi003_version_subscript(n), !pyi003_alt_14(n).
+
+// left_bad(n): the JSON util `left-bad`, used where the JSON says `matches: "left-bad"`
+.decl pyi003_left_bad(n: node)
+pyi003_left_bad(n) :- pyi003_bad_subscript(n).
+pyi003_left_bad(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi003_left_bad(c1).
+
+// left_major(n): the JSON util `left-major`, used where the JSON says `matches: "left-major"`
+.decl pyi003_left_major(n: node)
+pyi003_left_major(n) :- pyi003_major_subscript(n).
+pyi003_left_major(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi003_left_major(c1).
+
+// left_tuple(n): the JSON util `left-tuple`, used where the JSON says `matches: "left-tuple"`
+.decl pyi003_left_tuple(n: node)
+pyi003_left_tuple(n) :- pyi003_version_ref(n).
+pyi003_left_tuple(n) :- pyi003_prefix_subscript(n).
+pyi003_left_tuple(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi003_left_tuple(c1).
+
+// int_tuple(n): the JSON util `int-tuple`, used where the JSON says `matches: "int-tuple"`
+.decl pyi003_int_tuple(n: node)
+pyi003_int_tuple(n) :- kind(n, "tuple"), count : { child(n, c1, _), !pyi003_alt_15(c1) } = 0.
+pyi003_int_tuple(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pyi003_int_tuple(c2).
+
+// PYI003(n, detail): findings from clauses `unrecognized-version-subscript`, `unrecognized-major-comparison`, `unrecognized-tuple-comparison`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI003(at: node, detail: symbol) "{detail}."
+    suppress noqa "PYI003"
+PYI003_raw(n, "Index `sys.version_info` only with `[0]`, `[:1]` or `[:2]`, or compare the whole value against a tuple; type checkers do not understand other forms") :- pyi003_single_compare(n),
+    child(n, c1, _), child(_, c1, 0), pyi003_left_bad(c1).
+PYI003_raw(n, "Compare `sys.version_info[0]` against an integer literal such as `3`; type checkers do not understand other comparands") :- pyi003_single_compare(n),
+    child(n, c1, _), child(_, c1, 0), pyi003_left_major(c1), child(n, c2, _), pyi003_comparator(c2),
+    !pyi003_int_literal(c2).
+PYI003_raw(n, "Compare `sys.version_info` against a tuple of integer literals such as `(3, 10)`; type checkers do not understand other comparands") :- pyi003_single_compare(n),
+    child(n, c1, _), child(_, c1, 0), pyi003_left_tuple(c1), child(n, c2, _), pyi003_comparator(c2),
+    !pyi003_int_tuple(c2).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi003_tok_has_1(n: node)
+.stored pyi003_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi003_tok_has_1(n) :- child(n, c1, _),
+    match("(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)", c1).
+pyi003_tok_has_1(n) :- op(n, t2),
+    match("(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)", t2).
+pyi003_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:not\\s[\\s\\S]*in)(?:\\W.*)?|(?:.*\\W)?(?:is\\s[\\s\\S]*not)(?:\\W.*)?)$", g3).
+pyi003_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:not\\s[\\s\\S]*in)(?:\\W.*)?|(?:.*\\W)?(?:is\\s[\\s\\S]*not)(?:\\W.*)?)$", g3).
+pyi003_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:not\\s[\\s\\S]*in)(?:\\W.*)?|(?:.*\\W)?(?:is\\s[\\s\\S]*not)(?:\\W.*)?)$", g3).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi003_tok_precedes_2(n: node)
+.stored pyi003_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi003_tok_precedes_2(n) :- precedes(n, s1), glob("\\,", s1).
+pyi003_tok_precedes_2(n) :- child(p4, n, _), node(_, n, _, _, en7), token(p4, _, t2, st6, _),
+    st6 >= en7, match(",", t2).
+pyi003_tok_precedes_2(n) :- structural_after(n, g3), match("(?s)^(?:.*(?:,).*)$", g3).
+pyi003_tok_precedes_2(n) :- precedes(n, o5), structural_after(o5, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi003_tok_follows_3(n: node)
+.stored pyi003_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi003_tok_follows_3(n) :- precedes(s8, n), glob("\\,", s8).
+pyi003_tok_follows_3(n) :- child(p11, n, _), node(_, n, _, st13, _),
+    token(p11, _, t9, _, en14), en14 <= st13, match(",", t9).
+pyi003_tok_follows_3(n) :- structural_before(n, g10), match("(?s)^(?:.*(?:,).*)$", g10).
+pyi003_tok_follows_3(n) :- precedes(o12, n), structural_before(o12, g10),
+    match("(?s)^(?:.*(?:,).*)$", g10).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi003_alt_1(n: node)
+pyi003_alt_1(n) :- pyi003_in_test(n).
+pyi003_alt_1(n) :- field(p1, "left", n), kind(p1, "boolean_operator"), pyi003_chain_and(p1).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi003_alt_2(n: node)
+pyi003_alt_2(n) :- pyi003_in_test(n).
+pyi003_alt_2(n) :- field(p1, "left", n), kind(p1, "boolean_operator"), pyi003_chain_or(p1).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi003_alt_3(n: node)
+pyi003_alt_3(n) :- pyi003_chain_and(n).
+pyi003_alt_3(n) :- pyi003_chain_or(n).
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi003_alt_7(n: node)
+pyi003_alt_7(n) :- kind(n, "comment").
+pyi003_alt_7(n) :- node(_, n, _, _, _), glob("[()]", n).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi003_alt_8(n: node)
+pyi003_alt_8(n) :- (kind(n, "parenthesized_expression") ; kind(n, "comment")).
+pyi003_alt_8(n) :- node(_, n, _, _, _), glob("[()]", n).
+
+// stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi003_stop_10(n: node)
+pyi003_stop_10(n) :- node(_, n, _, _, _), !kind(n, "comment").
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi003_alt_11(n: node)
+pyi003_alt_11(n) :- pyi003_tok_precedes_2(n).
+pyi003_alt_11(n) :- pyi003_tok_follows_3(n).
+
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi003_alt_13(n: node)
+pyi003_alt_13(n) :- kind(n, "comment").
+pyi003_alt_13(n) :- node(_, n, _, _, _), glob(":", n).
+
+// alt_14(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi003_alt_14(n: node)
+pyi003_alt_14(n) :- pyi003_major_subscript(n).
+pyi003_alt_14(n) :- pyi003_prefix_subscript(n).
+
+// alt_15(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi003_alt_15(n: node)
+pyi003_alt_15(n) :- node(_, n, _, _, _), glob("[(),]", n).
+pyi003_alt_15(n) :- kind(n, "comment").
+pyi003_alt_15(n) :- pyi003_int_literal(n).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI003_raw(at: node, detail: symbol)
+PYI003(v0, v1) :- PYI003_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

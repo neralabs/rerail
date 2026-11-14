@@ -1,0 +1,386 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up013-convert-typed-dict-functional-to-class",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Define typed dictionaries with class syntax instead of the functional TypedDict call; the class form is easier to read.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "plain-text": {
+            "any": [
+              {
+                "kind": "string",
+                "not": {
+                  "regex": "^[A-Za-z]*[bBfFtT]"
+                }
+              },
+              {
+                "kind": "concatenated_string",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "string",
+                    "regex": "^[A-Za-z]*[bBfFtT]"
+                  }
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "plain-text"
+                }
+              }
+            ]
+          },
+          "arg-node": {
+            "not": {
+              "any": [
+                {
+                  "regex": "^[()\\[\\],]$"
+                },
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                }
+              ]
+            }
+          },
+          "keyword-arg": {
+            "any": [
+              {
+                "kind": "keyword_argument"
+              },
+              {
+                "kind": "dictionary_splat"
+              }
+            ]
+          },
+          "positional-arg": {
+            "matches": "arg-node",
+            "not": {
+              "matches": "keyword-arg"
+            }
+          },
+          "one-positional": {
+            "kind": "argument_list",
+            "count": {
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "positional-arg"
+              },
+              "min": 1,
+              "max": 1
+            }
+          },
+          "no-keywords": {
+            "kind": "argument_list",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "keyword-arg"
+              }
+            }
+          },
+          "no-splat-keywords": {
+            "kind": "argument_list",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "kind": "dictionary_splat"
+              }
+            }
+          },
+          "two-positional": {
+            "kind": "argument_list",
+            "count": {
+              "has": {
+                "stopBy": "neighbor",
+                "matches": "positional-arg"
+              },
+              "min": 2,
+              "max": 2
+            }
+          },
+          "second-positional": {
+            "matches": "positional-arg",
+            "follows": {
+              "stopBy": "end",
+              "matches": "positional-arg"
+            }
+          },
+          "typed-dict-ref": {
+            "any": [
+              {
+                "kind": "identifier"
+              },
+              {
+                "kind": "attribute"
+              }
+            ],
+            "pattern": "$BASE",
+            "resolves": {
+              "import": [
+                "typing.TypedDict",
+                "typing_extensions.TypedDict",
+                "_typeshed.TypedDict"
+              ]
+            }
+          },
+          "typed-dict-callee": {
+            "any": [
+              {
+                "matches": "typed-dict-ref"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "typed-dict-callee"
+                }
+              }
+            ]
+          },
+          "name-target": {
+            "any": [
+              {
+                "kind": "identifier",
+                "pattern": "$NAME"
+              },
+              {
+                "kind": "tuple_pattern",
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^,$"
+                  }
+                },
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "name-target"
+                }
+              }
+            ]
+          },
+          "typed-dict-value": {
+            "any": [
+              {
+                "kind": "call",
+                "all": [
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "function",
+                      "matches": "typed-dict-callee"
+                    }
+                  },
+                  {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "field": "arguments",
+                      "matches": "typed-dict-arguments"
+                    }
+                  }
+                ]
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "typed-dict-value"
+                }
+              }
+            ]
+          },
+          "typed-dict-field-name": {
+            "matches": "plain-text",
+            "value": {
+              "regex": "^[\\p{XID_Start}_]\\p{XID_Continue}*$"
+            },
+            "not": {
+              "any": [
+                {
+                  "value": {
+                    "regex": "^(?:False|None|True|and|as|assert|async|await|break|class|continue|def|del|elif|else|except|finally|for|from|global|if|import|in|is|lambda|nonlocal|not|or|pass|raise|return|try|while|with|yield)$"
+                  }
+                },
+                {
+                  "value": {
+                    "regex": "^__"
+                  }
+                }
+              ]
+            }
+          },
+          "typed-dict-literal": {
+            "kind": "dictionary",
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "dictionary_splat"
+                  },
+                  {
+                    "kind": "pair",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "field": "key",
+                        "matches": "typed-dict-field-name"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "dict-name": {
+            "any": [
+              {
+                "kind": "identifier",
+                "regex": "^dict$"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "dict-name"
+                }
+              }
+            ]
+          },
+          "dict-call": {
+            "kind": "call",
+            "has": {
+              "stopBy": "neighbor",
+              "field": "function",
+              "matches": "dict-name"
+            },
+            "not": {
+              "has": {
+                "stopBy": "neighbor",
+                "field": "arguments",
+                "kind": "argument_list",
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "dictionary_splat"
+                }
+              }
+            }
+          },
+          "typed-dict-fields": {
+            "any": [
+              {
+                "matches": "typed-dict-literal"
+              },
+              {
+                "matches": "dict-call"
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "typed-dict-fields"
+                }
+              }
+            ]
+          },
+          "typed-dict-arguments": {
+            "any": [
+              {
+                "kind": "generator_expression"
+              },
+              {
+                "matches": "one-positional",
+                "all": [
+                  {
+                    "matches": "no-splat-keywords"
+                  }
+                ]
+              },
+              {
+                "matches": "two-positional",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "second-positional",
+                  "all": [
+                    {
+                      "matches": "typed-dict-fields"
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "typed-dict-functional",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "assignment",
+            "not": {
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "assignment"
+              }
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "left",
+                  "matches": "name-target"
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "type",
+                    "kind": "type"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "right",
+                  "matches": "typed-dict-value"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP013",
+        "message": "Define `$NAME` as `class $NAME($BASE):` with one `field: type` line per field; options passed after the fields, such as `total=False`, become class keywords.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP013"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

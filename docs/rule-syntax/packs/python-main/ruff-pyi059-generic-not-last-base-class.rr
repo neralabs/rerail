@@ -1,0 +1,50 @@
+.policy "ruff-pyi059-generic-not-last-base-class" revision 1
+.guests off
+.description "Put Generic last in a class's list of base classes; earlier in the list it can give the class an unexpected method resolution order."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PYI059(n): a finding at node n, from clause `generic-not-last-base-class`.
+// Each rule below is one way the JSON `rule` can match.
+.violation PYI059(at: node) "Move `Generic[...]` after the other positional base classes, keeping keyword arguments last; this changes the method resolution order, so check nothing relied on the old one."
+    suppress noqa "PYI059"
+PYI059(n) :- kind(n, "argument_list"), field(p1, "superclasses", n),
+    kind(p1, "class_definition"), child(n, c2, _), pyi059_generic_base(c2), precedes(c2, s3),
+    pyi059_positional_base(s3).
+
+// generic_name(n): the JSON util `generic-name`, used where the JSON says `matches: "generic-name"`
+.decl pyi059_generic_name(n: node)
+pyi059_generic_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Generic")
+    ; sym_of(n, "typing_extensions.Generic")
+    ; sym_of(n, "_typeshed.Generic")
+    ).
+
+pyi059_generic_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi059_generic_name(c1).
+
+// generic_base(n): the JSON util `generic-base`, used where the JSON says `matches: "generic-base"`
+.decl pyi059_generic_base(n: node)
+pyi059_generic_base(n) :- pyi059_generic_name(n).
+pyi059_generic_base(n) :- kind(n, "subscript"), field(n, "value", c1), pyi059_generic_name(c1).
+pyi059_generic_base(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pyi059_generic_base(c2).
+
+// positional_base(n): the JSON util `positional-base`, used where the JSON says `matches: "positional-base"`
+.decl pyi059_positional_base(n: node)
+pyi059_positional_base(n) :- node(_, n, _, _, _), !pyi059_alt_1(n).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi059_alt_1(n: node)
+pyi059_alt_1(n) :-
+    ( kind(n, "keyword_argument")
+    ; kind(n, "dictionary_splat")
+    ; kind(n, "comment")
+    ; kind(n, "line_continuation")
+    ).
+
+pyi059_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).

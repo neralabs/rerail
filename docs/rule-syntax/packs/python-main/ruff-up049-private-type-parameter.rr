@@ -1,0 +1,32 @@
+.policy "ruff-up049-private-type-parameter" revision 1
+.guests off
+.description "Avoid leading underscores in the type parameter names of generic classes and functions; each parameter is already local to its declaration, so the underscore adds nothing."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// UP049(n): a finding at node n, from clause `private-type-parameter`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation UP049(at: node, name: loc) "Remove the leading underscores from type parameter `{name}` here and in every use; if the bare name would shadow a variable or builtin, or is not a valid identifier, choose another name."
+    suppress noqa "UP049"
+UP049(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, match("_.*[^_]", n),
+    child(p1, n, _),
+    ( up049_parameter_slot(p1)
+    ; kind(p1, "splat_type"), child(p2, p1, _), up049_parameter_slot(p2)
+    ; kind(p1, "type"), child(_, p1, 0), child(p3, p1, _), kind(p3, "constrained_type"), child(p4, p3, _), up049_parameter_slot(p4)
+    ).
+
+
+// declaration_parameters(n): the JSON util `declaration-parameters`, used where the JSON says `matches: "declaration-parameters"`
+.decl up049_declaration_parameters(n: node)
+up049_declaration_parameters(n) :- kind(n, "type_parameter"), child(p1, n, _),
+    (kind(p1, "function_definition") ; kind(p1, "class_definition")).
+
+// parameter_slot(n): the JSON util `parameter-slot`, used where the JSON says `matches: "parameter-slot"`
+.decl up049_parameter_slot(n: node)
+up049_parameter_slot(n) :- kind(n, "type"),
+    ( child(p1, n, _), up049_declaration_parameters(p1)
+    ; field(p2, "name", n), kind(p2, "type_default"), child(p3, p2, _), up049_declaration_parameters(p3)
+    ).

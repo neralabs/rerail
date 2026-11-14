@@ -1,0 +1,226 @@
+.policy "ruff-pyi011-typed-argument-default-in-stub" revision 1
+.guests off
+.description "Use an ellipsis for annotated parameter defaults in stub files unless the default is a simple literal; type checkers ignore the value."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PYI011(n): a finding at node n, from clause `typed-argument-default-in-stub`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI011(at: node) "Replace this default with `...`; type checkers ignore defaults in stubs, and only simple literals and short containers are worth keeping."
+    suppress noqa "PYI011"
+PYI011_raw(n) :- pyi011_default_slot(n), !pyi011_alt_7(n).
+
+// plain_prefix(n): the JSON util `plain-prefix`, used where the JSON says `matches: "plain-prefix"`
+.decl pyi011_plain_prefix(n: node)
+pyi011_plain_prefix(n) :- node(_, n, _, _, _), match("[rRuUbB]{0,2}[\"'].*", n).
+
+// str_literal(n): the JSON util `str-literal`, used where the JSON says `matches: "str-literal"`
+.decl pyi011_str_literal(n: node)
+pyi011_str_literal(n) :- kind(n, "string"), pyi011_plain_prefix(n).
+pyi011_str_literal(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !pyi011_plain_prefix(c1) } = 0.
+
+// number(n): the JSON util `number`, used where the JSON says `matches: "number"`
+.decl pyi011_number(n: node)
+pyi011_number(n) :- (kind(n, "integer") ; kind(n, "float")).
+
+// peeled_number(n): the JSON util `peeled-number`, used where the JSON says `matches: "peeled-number"`
+.decl pyi011_peeled_number(n: node)
+pyi011_peeled_number(n) :- pyi011_number(n).
+pyi011_peeled_number(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi011_peeled_number(c1).
+
+// real_short(n): the JSON util `real-short`, used where the JSON says `matches: "real-short"`
+.decl pyi011_real_short(n: node)
+pyi011_real_short(n) :- pyi011_number(n), match("[^jJ]{1,10}", n).
+
+// peeled_real_short(n): the JSON util `peeled-real-short`, used where the JSON says `matches: "peeled-real-short"`
+.decl pyi011_peeled_real_short(n: node)
+pyi011_peeled_real_short(n) :- pyi011_real_short(n).
+pyi011_peeled_real_short(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi011_peeled_real_short(c1).
+
+// peeled_imaginary(n): the JSON util `peeled-imaginary`, used where the JSON says `matches: "peeled-imaginary"`
+.decl pyi011_peeled_imaginary(n: node)
+pyi011_peeled_imaginary(n) :- pyi011_number(n), glob("**[jJ]", n).
+pyi011_peeled_imaginary(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi011_peeled_imaginary(c1).
+
+// signed_real_short(n): the JSON util `signed-real-short`, used where the JSON says `matches: "signed-real-short"`
+.decl pyi011_signed_real_short(n: node)
+pyi011_signed_real_short(n) :- pyi011_peeled_real_short(n).
+pyi011_signed_real_short(n) :- kind(n, "unary_operator"), field(n, "operator", c1),
+    glob("-", c1), field(n, "argument", c2), pyi011_peeled_real_short(c2).
+pyi011_signed_real_short(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    pyi011_signed_real_short(c3).
+
+// negatable_constant(n): the JSON util `negatable-constant`, used where the JSON says `matches: "negatable-constant"`
+.decl pyi011_negatable_constant(n: node)
+pyi011_negatable_constant(n) :- kind(n, "attribute"),
+    ( sym_of(n, "math.inf")
+    ; sym_of(n, "math.e")
+    ; sym_of(n, "math.pi")
+    ; sym_of(n, "math.tau")
+    ).
+
+pyi011_negatable_constant(n) :- pyi011_later_math(n), !glob("math.nan", n).
+
+// peeled_negatable_constant(n): the JSON util `peeled-negatable-constant`, used where the JSON says `matches: "peeled-negatable-constant"`
+.decl pyi011_peeled_negatable_constant(n: node)
+pyi011_peeled_negatable_constant(n) :- pyi011_negatable_constant(n).
+pyi011_peeled_negatable_constant(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi011_peeled_negatable_constant(c1).
+
+// allowed_constant(n): the JSON util `allowed-constant`, used where the JSON says `matches: "allowed-constant"`
+.decl pyi011_allowed_constant(n: node)
+pyi011_allowed_constant(n) :- kind(n, "attribute"), sym_of(n, q1), pyi011_set_1(q1).
+pyi011_allowed_constant(n) :- pyi011_later_math(n).
+pyi011_allowed_constant(n) :- pyi011_later_sys(n).
+
+// negation(n): the JSON util `negation`, used where the JSON says `matches: "negation"`
+.decl pyi011_negation(n: node)
+pyi011_negation(n) :- kind(n, "unary_operator"), field(n, "operator", c1), glob("-", c1),
+    field(n, "argument", c2), (pyi011_peeled_number(c2) ; pyi011_peeled_negatable_constant(c2)).
+
+// complex_sum(n): the JSON util `complex-sum`, used where the JSON says `matches: "complex-sum"`
+.decl pyi011_complex_sum(n: node)
+pyi011_complex_sum(n) :- kind(n, "binary_operator"), field(n, "operator", c1),
+    glob("[+-]", c1), field(n, "right", c2), pyi011_peeled_imaginary(c2),
+    field(n, "left", c3), pyi011_signed_real_short(c3).
+
+// simple_value(n): the JSON util `simple-value`, used where the JSON says `matches: "simple-value"`
+.decl pyi011_simple_value(n: node)
+pyi011_simple_value(n) :- kind(n, k1), pyi011_set_3(k1).
+pyi011_simple_value(n) :- pyi011_str_literal(n).
+pyi011_simple_value(n) :- pyi011_negation(n).
+pyi011_simple_value(n) :- pyi011_complex_sum(n).
+pyi011_simple_value(n) :- pyi011_allowed_constant(n).
+pyi011_simple_value(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pyi011_simple_value(c2).
+
+// punctuation(n): the JSON util `punctuation`, used where the JSON says `matches: "punctuation"`
+.decl pyi011_punctuation(n: node)
+pyi011_punctuation(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+
+// dict_pair(n): the JSON util `dict-pair`, used where the JSON says `matches: "dict-pair"`
+.decl pyi011_dict_pair(n: node)
+pyi011_dict_pair(n) :- kind(n, "pair"), field(n, "key", c1), pyi011_simple_value(c1),
+    field(n, "value", c2), pyi011_simple_value(c2).
+
+// too_long(n): the JSON util `too-long`, used where the JSON says `matches: "too-long"`
+.decl pyi011_too_long(n: node)
+pyi011_too_long(n) :- child(n, c1, _), child(p2, c1, _), pyi011_counted_4(c1),
+    k4 = count : { child(p2, s3, _), precedes(s3, c1), pyi011_counted_4(s3) }, k4 >= 10.
+
+// simple_container(n): the JSON util `simple-container`, used where the JSON says `matches: "simple-container"`
+.decl pyi011_simple_container(n: node)
+pyi011_simple_container(n) :- (kind(n, "list") ; kind(n, "tuple") ; kind(n, "set")),
+    count : { child(n, c1, _), !pyi011_alt_5(c1) } = 0, !pyi011_too_long(n).
+pyi011_simple_container(n) :- kind(n, "dictionary"),
+    count : { child(n, c2, _), !pyi011_alt_6(c2) } = 0, !pyi011_too_long(n).
+
+// default_slot(n): the JSON util `default-slot`, used where the JSON says `matches: "default-slot"`
+.decl pyi011_default_slot(n: node)
+pyi011_default_slot(n) :- field(p1, "value", n), kind(p1, "typed_default_parameter").
+pyi011_default_slot(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"),
+    pyi011_default_slot(p2).
+
+// unbound_object(n): the JSON util `unbound-object`, used where the JSON says `matches: "unbound-object"`
+.decl pyi011_unbound_object(n: node)
+pyi011_unbound_object(n) :- field(n, "object", c1), kind(c1, "identifier"), docof(c1, d3),
+    modnode(d3, m4),
+    ( kind(c1, "identifier"), !bind_only(c1), miss(c1, x2)
+    ; (kind(c1, "string") ; kind(c1, "concatenated_string")), pyi011_all_entry(c1, x2), !bound_in(m4, x2)
+    ),
+    !builtin(x2), !star(m4).
+
+// module_level(n): the JSON util `module-level`, used where the JSON says `matches: "module-level"`
+.decl pyi011_module_level(n: node)
+pyi011_module_level(n) :- node(_, n, _, _, _),
+    count : { within(n, p1), (kind(p1, "function_definition") ; kind(p1, "class_definition")) } = 0.
+
+// later_math(n): the JSON util `later-math`, used where the JSON says `matches: "later-math"`
+.decl pyi011_later_math(n: node)
+pyi011_later_math(n) :- kind(n, "attribute"), glob("math.{inf,nan,e,pi,tau}", n),
+    pyi011_unbound_object(n),
+    count : { inside(n, p1, "parameters"), has(p1, c2, "identifier"), glob("math", c2), count : { field(p3, "object", c2), kind(p3, "attribute") } = 0 } = 0,
+    inside(n, p4, "module"), has(p4, c5, "import_statement"), pyi011_module_level(c5),
+    child(c5, c6, _), kind(c6, "dotted_name"), match("math(?:\\.|$).*", c6).
+
+// later_sys(n): the JSON util `later-sys`, used where the JSON says `matches: "later-sys"`
+.decl pyi011_later_sys(n: node)
+pyi011_later_sys(n) :- kind(n, "attribute"),
+    glob("sys.{stdin,stdout,stderr,version,version_info,platform,executable,prefix,exec_prefix,base_prefix,byteorder,maxsize,hexversion,winver}", n),
+    pyi011_unbound_object(n),
+    count : { inside(n, p1, "parameters"), has(p1, c2, "identifier"), glob("sys", c2), count : { field(p3, "object", c2), kind(p3, "attribute") } = 0 } = 0,
+    inside(n, p4, "module"), has(p4, c5, "import_statement"), pyi011_module_level(c5),
+    child(c5, c6, _), kind(c6, "dotted_name"), match("sys(?:\\.|$).*", c6).
+
+// all_expr: x is a module-level `__all__ =`, `+=` or `: T =` value, or a part of one that lists names
+//   (Ruff's extract_dunder_all_names: `+` chains, parentheses, walrus values, list(...) and tuple(...))
+.decl pyi011_all_expr(x: node)
+pyi011_all_expr(x) :- (kind(st, "assignment") ; kind(st, "augmented_assignment")),
+    field(st, "left", l), kind(l, "identifier"), text(l, "__all__"), child(es, st, _),
+    kind(es, "expression_statement"), child(m, es, _), kind(m, "module"),
+    field(st, "right", x).
+pyi011_all_expr(y) :- pyi011_all_expr(x), kind(x, "assignment"), field(x, "right", y).
+pyi011_all_expr(y) :- pyi011_all_expr(x), kind(x, "binary_operator"),
+    (field(x, "left", y) ; field(x, "right", y)).
+pyi011_all_expr(y) :- pyi011_all_expr(x), kind(x, "parenthesized_expression"), child(x, y, _),
+    !kind(y, "comment").
+pyi011_all_expr(y) :- pyi011_all_expr(x), kind(x, "named_expression"), field(x, "value", y).
+pyi011_all_expr(y) :- pyi011_all_expr(x), kind(x, "call"), field(x, "function", f),
+    kind(f, "identifier"), (text(f, "list") ; text(f, "tuple")),
+    field(x, "arguments", a), child(a, y, _).
+
+// all_entry: string e is an entry of a module `__all__` definition, exporting the name x
+.decl pyi011_all_entry(e: node, x: symbol)
+pyi011_all_entry(e, x) :- pyi011_all_expr(l), (kind(l, "list") ; kind(l, "tuple")), child(l, e, _),
+    (kind(e, "string") ; kind(e, "concatenated_string")),
+    count : { within(i, e), kind(i, "interpolation") } = 0, str(e, x).
+
+// set_1: symbols from the JSON `resolves.import`
+.decl pyi011_set_1(v: symbol)
+pyi011_set_1("math.inf"). pyi011_set_1("math.nan"). pyi011_set_1("math.e"). pyi011_set_1("math.pi").
+pyi011_set_1("math.tau"). pyi011_set_1("sys.stdin"). pyi011_set_1("sys.stdout"). pyi011_set_1("sys.stderr").
+pyi011_set_1("sys.version"). pyi011_set_1("sys.version_info"). pyi011_set_1("sys.platform").
+pyi011_set_1("sys.executable"). pyi011_set_1("sys.prefix"). pyi011_set_1("sys.exec_prefix").
+pyi011_set_1("sys.base_prefix"). pyi011_set_1("sys.byteorder"). pyi011_set_1("sys.maxsize").
+pyi011_set_1("sys.hexversion"). pyi011_set_1("sys.winver").
+
+// set_3: node kinds from a JSON `any`
+.decl pyi011_set_3(v: symbol)
+pyi011_set_3("integer"). pyi011_set_3("float"). pyi011_set_3("true"). pyi011_set_3("false"). pyi011_set_3("none").
+pyi011_set_3("ellipsis").
+
+// counted_4(n): the siblings the JSON `nthChild.ofRule` counts
+.decl pyi011_counted_4(n: node)
+pyi011_counted_4(n) :- node(_, n, _, _, _), !kind(n, "comment").
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi011_alt_5(n: node)
+pyi011_alt_5(n) :- pyi011_simple_value(n).
+pyi011_alt_5(n) :- kind(n, "comment").
+pyi011_alt_5(n) :- pyi011_punctuation(n).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi011_alt_6(n: node)
+pyi011_alt_6(n) :- pyi011_dict_pair(n).
+pyi011_alt_6(n) :- kind(n, "comment").
+pyi011_alt_6(n) :- pyi011_punctuation(n).
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi011_alt_7(n: node)
+pyi011_alt_7(n) :- (kind(n, "parenthesized_expression") ; kind(n, "comment")).
+pyi011_alt_7(n) :- pyi011_punctuation(n).
+pyi011_alt_7(n) :- pyi011_simple_value(n).
+pyi011_alt_7(n) :- pyi011_simple_container(n).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI011_raw(at: node)
+PYI011(v0) :- PYI011_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

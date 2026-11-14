@@ -38,7 +38,7 @@ pub fn prune(mut program: front::Program) -> front::Program {
             named.contains(&r) || named.contains(&format!("{}rel_{r}", catalog::PREFIX))
         })
         .cloned()
-        .collect();
+        .map(String::from).collect();
     let outputs = program.outputs.clone();
     program.outputs.extend(keep);
     let mut program = front::prune(program);
@@ -121,8 +121,8 @@ fn resolve(db: &mut Database, emitted: &plan::emit::Emitted, program: &front::Pr
             let prepared = db.prepare(&format!("{prefix}SELECT * FROM ({})", p.query)).map(|s| s.column_count());
             db.connection_mut().authorizer(None::<fn(rusqlite::hooks::AuthContext<'_>) -> Authorization>).map_err(error)?;
             let width = prepared.map_err(|e| error(format!("{}: SQL producer query: {e}", p.rel)))?;
-            if width != program.decls[&p.rel].len() {
-                return Err(error(format!("{}: the query gives {width} columns, the declaration {}", p.rel, program.decls[&p.rel].len())));
+            if width != program.decls[p.rel.as_str()].len() {
+                return Err(error(format!("{}: the query gives {width} columns, the declaration {}", p.rel, program.decls[p.rel.as_str()].len())));
             }
             let mut reads = BTreeSet::new();
             let mut other = BTreeSet::new();
@@ -187,7 +187,7 @@ pub fn steps(db: &mut Database, emitted: &mut plan::emit::Emitted, program: &fro
     let all_reads: Vec<Vec<String>> = resolved.iter().map(|(reads, _)| reads.clone()).collect();
     let mut stratum = emitted.program.steps.iter().map(|s| s.stratum).max().unwrap_or(0);
     for (p, reads) in producers.iter().zip(&all_reads) {
-        let decl = &program.decls[&p.rel];
+        let decl = &program.decls[p.rel.as_str()];
         let below = downstream(program, producers, &all_reads, &p.rel);
         if let Some(cycle) = reads.iter().find(|r| below.contains(*r)) {
             return Err(error(format!(
@@ -221,7 +221,7 @@ pub fn steps(db: &mut Database, emitted: &mut plan::emit::Emitted, program: &fro
         .filter(|(r,_)|named.contains(&format!("{}rel_{}",catalog::PREFIX,r.to_ascii_lowercase())))
         .map(|(r,_)|r.clone())).collect::<BTreeSet<_>>();
     for rel in typed_reads {
-        if let Some(decl)=program.decls.get(&rel) {
+        if let Some(decl)=program.decls.get(rel.as_str()) {
             let view=quote(&format!("{}rel_{rel}",catalog::PREFIX));
             let names=catalog::view_columns(decl).iter().map(|c|quote(c)).collect::<Vec<_>>().join(", ");
             emitted.setup.push(format!("DROP VIEW IF EXISTS temp.{view}"));

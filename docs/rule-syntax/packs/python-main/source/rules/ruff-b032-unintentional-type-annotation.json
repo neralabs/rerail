@@ -1,0 +1,157 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b032-unintentional-type-annotation",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use = instead of : when setting a subscript or another object's attribute without a value; a colon there makes a type annotation that assigns nothing.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "unintentional-type-annotation",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "name": {
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "name"
+                  }
+                }
+              ]
+            },
+            "non-self-name": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "not": {
+                    "regex": "^self$"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "non-self-name"
+                  }
+                }
+              ]
+            },
+            "target": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "subscript",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "not": {
+                          "follows": {
+                            "stopBy": "neighbor",
+                            "regex": "(?s)."
+                          }
+                        },
+                        "matches": "name"
+                      }
+                    },
+                    {
+                      "kind": "attribute",
+                      "has": {
+                        "stopBy": "neighbor",
+                        "not": {
+                          "follows": {
+                            "stopBy": "neighbor",
+                            "regex": "(?s)."
+                          }
+                        },
+                        "matches": "non-self-name"
+                      }
+                    },
+                    {
+                      "kind": "tuple_pattern",
+                      "not": {
+                        "has": {
+                          "stopBy": "neighbor",
+                          "regex": "^,$"
+                        }
+                      },
+                      "has": {
+                        "stopBy": "neighbor",
+                        "matches": "target"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "target"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "assignment",
+            "inside": {
+              "stopBy": "neighbor",
+              "kind": "expression_statement"
+            },
+            "all": [
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "type"
+                }
+              },
+              {
+                "not": {
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^=$"
+                  }
+                }
+              },
+              {
+                "has": {
+                  "stopBy": "neighbor",
+                  "not": {
+                    "follows": {
+                      "stopBy": "neighbor",
+                      "regex": "(?s)."
+                    }
+                  },
+                  "matches": "target"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "B032",
+        "message": "Possible unintentional type annotation (using `:`). Did you mean to assign (using `=`)?",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "B032"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

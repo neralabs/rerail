@@ -1,0 +1,66 @@
+.policy "ruff-ruf026-default-factory-kwarg" revision 1
+.guests off
+.description "Pass the default factory to defaultdict as the first positional argument; a default_factory keyword is stored as an ordinary dictionary entry."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// RUF026(n): a finding at node n, from clause `default-factory-kwarg`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF026(at: node, c: node) "Pass the factory positionally, as in `defaultdict(list)`; `default_factory=` is stored as a dict entry and leaves the dict without a default. Leave it if that entry is intended."
+    suppress noqa "RUF026"
+RUF026(C, n) :- ruf026_bad_call(n), node(_, n, _, _, _), C = n.
+RUF026(C, n) :- ruf026_in_string(n, C).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl ruf026_callee(n: node)
+ruf026_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "collections.defaultdict").
+ruf026_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf026_callee(c1).
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl ruf026_positional(n: node)
+ruf026_positional(n) :- node(_, n, _, _, _), !ruf026_alt_1(n).
+
+// non_callable(n): the JSON util `non-callable`, used where the JSON says `matches: "non-callable"`
+.decl ruf026_non_callable(n: node)
+ruf026_non_callable(n) :- kind(n, k1), ruf026_set_2(k1).
+ruf026_non_callable(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf026_non_callable(c2).
+
+// bad_call(n): the JSON util `bad-call`, used where the JSON says `matches: "bad-call"`
+.decl ruf026_bad_call(n: node)
+ruf026_bad_call(n) :- kind(n, "call"), field(n, "function", c1), ruf026_callee(c1),
+    field(n, "arguments", c2), kind(c2, "argument_list"),
+    count : { child(c2, c3, _), ruf026_positional(c3) } = 0, child(c2, c4, _),
+    kind(c4, "keyword_argument"), field(c4, "name", c5), glob("default_factory", c5),
+    field(c4, "value", c6), !ruf026_non_callable(c6).
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   C: metavariable this relation binds for the calling rule
+.decl ruf026_in_string(n: node, c: loc)
+ruf026_in_string(n, C) :- kind(n, "string"), count : { contains("\\", n) } = 0,
+    parsed(n, "annotation", r1), within(c2, r1), ruf026_alt_3(c2, C).
+
+// set_2: node kinds from a JSON `any`
+.decl ruf026_set_2(v: symbol)
+ruf026_set_2("integer"). ruf026_set_2("float"). ruf026_set_2("none"). ruf026_set_2("true"). ruf026_set_2("false").
+ruf026_set_2("ellipsis"). ruf026_set_2("string"). ruf026_set_2("concatenated_string"). ruf026_set_2("list").
+ruf026_set_2("dictionary"). ruf026_set_2("set"). ruf026_set_2("tuple"). ruf026_set_2("list_comprehension").
+ruf026_set_2("set_comprehension"). ruf026_set_2("dictionary_comprehension").
+ruf026_set_2("generator_expression").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf026_alt_1(n: node)
+ruf026_alt_1(n) :- (kind(n, "comment") ; kind(n, "keyword_argument") ; kind(n, "dictionary_splat")).
+ruf026_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl ruf026_alt_3(n: node, c: loc)
+ruf026_alt_3(n, C) :- ruf026_bad_call(n), C = n.
+ruf026_alt_3(n, C) :- ruf026_in_string(n, C).

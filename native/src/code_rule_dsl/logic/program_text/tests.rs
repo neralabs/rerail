@@ -7,11 +7,11 @@ fn same(a: &Program, b: &Program) {
 }
 
 fn atom(rel: &str, args: Vec<Term>) -> Atom {
-    Atom { rel: rel.into(), args, neg: false, gated: false }
+    Atom { rel: rel.into(), args: args.into(), neg: false, gated: false }
 }
 
 fn v(x: &str) -> Term {
-    Term::Var(x.to_owned())
+    Term::Var(x.to_owned().into())
 }
 
 /// Every part of a program reads back as written: escaped names, the least number, strings that need escapes, each
@@ -19,11 +19,11 @@ fn v(x: &str) -> Term {
 #[test]
 fn a_program_reads_back_from_its_text() {
     let mut prog = Program::default();
-    prog.decls.insert("r".into(), vec![("c".into(), "int".into()), ("d".into(), "sym".into())]);
-    prog.decls.insert("nearest".into(), vec![("x".into(), "int".into())]);
+    prog.decls.insert("r".into(), [("c".into(), "int".into()), ("d".into(), "sym".into())].into());
+    prog.decls.insert("nearest".into(), [("x".into(), "int".into())].into());
     prog.inputs = vec!["a".into(), "b".into()];
     prog.outputs = vec!["r".into()];
-    prog.facts.insert("k".into(), vec![vec![Value::Int(i64::MIN), Value::Str("q\"\\\n\u{1}é".into())], vec![Value::Int(-3), Value::Str(String::new())]]);
+    prog.facts.insert("k".into(), vec![[Value::Int(i64::MIN), Value::Str("q\"\\\n\u{1}é".into())].into(), [Value::Int(-3), Value::Str(String::new().into())].into()]);
     prog.facts.insert("empty".into(), vec![]);
     let mut gated = atom("done_x", vec![v("x")]);
     gated.neg = true;
@@ -31,13 +31,13 @@ fn a_program_reads_back_from_its_text() {
     let mut neg = atom("b", vec![Term::Wild, Term::Top]);
     neg.neg = true;
     prog.rules = vec![
-        Rule { head: atom("r", vec![v("x"), Term::Call("cat".into(), vec![v("top"), Term::Str("s".into())])]), body: vec![
+        Rule { head: atom("r", vec![v("x"), Term::Call("cat".into(), [v("top"), Term::Str("s".into())].into())]), body: vec![
             Literal::Atom(atom("a", vec![v("x"), v("count_"), v("min")])),
             Literal::Atom(neg),
             Literal::Atom(gated),
             Literal::Cmp { l: v("x"), op: "<=", r: Term::Int(i64::MIN) },
-            Literal::Cmp { l: Term::Call("rx".into(), vec![v("x"), Term::Str("^a$".into())]), op: "=", r: Term::Int(1) },
-        ] },
+            Literal::Cmp { l: Term::Call("rx".into(), [v("x"), Term::Str("^a$".into())].into()), op: "=", r: Term::Int(1) },
+        ].into() },
         Rule { head: atom("nearest", vec![v("n")]), body: vec![
             Literal::Agg { var: "n".into(), op: AggOp::Count, over: None, atom: atom("a", vec![v("x"), Term::Wild]) },
             Literal::Agg { var: "m".into(), op: AggOp::Min, over: Some("y".into()), atom: atom("a", vec![v("y")]) },
@@ -46,8 +46,8 @@ fn a_program_reads_back_from_its_text() {
             Literal::Agg { var: "j2".into(), op: AggOp::Join { by: vec![], sep: "".into() }, over: Some("y".into()), atom: atom("a", vec![v("y")]) },
             Literal::Nearest { n: "x".into(), a: "p".into(), kindset: "Scope".into() },
             Literal::Ast { document: "d".into(), node: "n".into(), matcher: "{\"kind\": \"call\"}".into(), captures: vec![("NAME".into(), "v".into())] },
-        ] },
-        Rule { head: atom("unit", vec![]), body: vec![] },
+        ].into() },
+        Rule { head: atom("unit", vec![]), body: vec![].into() },
     ];
     prog.natives.insert("reach_x".into(), Native::Reach { seed: "s".into(), edge: "e".into() });
     prog.kindsets.insert("Scope".into(), vec!["module".into(), "class".into()]);
@@ -91,4 +91,33 @@ fn the_tape_reader_refuses_what_print_never_writes() {
     ] {
         assert!(read(text).is_err(), "{text:?}");
     }
+}
+
+/// Two programs read through one run's lists share each list they have in common: an argument list, a body, a
+/// declaration's columns and a fact's row are each the one list in both (decision 0172).
+#[test]
+fn a_runs_programs_share_their_lists() {
+    let program = |more: bool| {
+        let mut prog = Program::default();
+        prog.decls.insert("e".into(), [("x".into(), "int".into()), ("y".into(), "sym".into())].into());
+        prog.decls.insert("p".into(), [("x".into(), "int".into()), ("y".into(), "sym".into())].into());
+        prog.outputs = vec!["p".into()];
+        prog.facts.insert("e".into(), vec![[Value::Int(1), Value::Str("a".into())].into()]);
+        prog.rules.push(Rule { head: atom("p", vec![v("x"), v("y")]), body: vec![Literal::Atom(atom("e", vec![v("x"), v("y")])), Literal::Cmp { l: v("x"), op: "<", r: Term::Int(3) }].into() });
+        if more {
+            prog.rules.push(Rule { head: atom("p", vec![v("x"), v("y")]), body: vec![Literal::Atom(atom("e", vec![v("y"), v("x")]))].into() });
+        }
+        print(&prog).unwrap()
+    };
+    let text = |more: bool| program(more);
+    let lists = crate::code_rule_dsl::logic::front::Lists::default();
+    let one = super::read_in(&text(false), &lists).unwrap();
+    let two = super::read_in(&text(true), &lists).unwrap();
+    assert!(one.decls["e"].same(&two.decls["e"]) && one.decls["e"].same(&one.decls["p"]), "columns");
+    assert!(one.facts["e"][0].same(&two.facts["e"][0]), "a fact's row");
+    assert!(one.rules[0].body.same(&two.rules[0].body), "a body");
+    assert!(one.rules[0].head.args.same(&two.rules[0].head.args), "arguments");
+    assert!(!two.rules[1].head.args.same(&two.rules[1].body[0].atom().unwrap().args), "other arguments, another list");
+    // And read alone, the same program.
+    same(&one, &read(&text(false)).unwrap());
 }

@@ -1,0 +1,107 @@
+.policy "ruff-pt022-pytest-useless-yield-fixture" revision 1
+.guests off
+.description "Use return instead of yield in a pytest fixture that has no teardown code after its only yield; a plain return is simpler."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PT022(n): a finding at node n, from clause `fixture-yield-without-teardown`.
+// Each rule below is one way the JSON `rule` can match.
+.violation PT022(at: node) "Nothing runs after this `yield`: use `return`, and annotate the value type instead of `Generator[T, ...]` or `Iterator[T]`. Keep `yield` if a local object (temp dir, open file) must stay alive."
+    suppress noqa "PT022"
+PT022(n) :- kind(n, "expression_statement"), child(n, c1, _), pt022_yield_expr(c1),
+    child(p2, n, _), pt022_counted_2(n),
+    k4 = count : { child(p2, s3, _), precedes(n, s3), pt022_counted_2(s3) }, k4 = 0,
+    child(p5, n, _), kind(p5, "block"),
+    k7 = count : { pt022_stop_3_within(c6, p5), pt022_plain_yield(c6) }, k7 <= 1,
+    child(p8, p5, _), kind(p8, "function_definition"), child(p9, p8, _),
+    kind(p9, "decorated_definition"), child(p9, c10, _), kind(c10, "decorator"),
+    child(c10, c11, _), pt022_fixture_expr(c11),
+    count : { child(p9, c12, _), kind(c12, "decorator"), child(c12, c13, _), pt022_abstract_expr(c13) } = 0.
+
+// fixture_ref(n): the JSON util `fixture-ref`, used where the JSON says `matches: "fixture-ref"`
+.decl pt022_fixture_ref(n: node)
+pt022_fixture_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "pytest.fixture") ; sym_of(n, "pytest.yield_fixture")).
+
+// fixture_callee(n): the JSON util `fixture-callee`, used where the JSON says `matches: "fixture-callee"`
+.decl pt022_fixture_callee(n: node)
+pt022_fixture_callee(n) :- pt022_fixture_ref(n).
+pt022_fixture_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt022_fixture_callee(c1).
+
+// fixture_expr(n): the JSON util `fixture-expr`, used where the JSON says `matches: "fixture-expr"`
+.decl pt022_fixture_expr(n: node)
+pt022_fixture_expr(n) :- pt022_fixture_callee(n).
+pt022_fixture_expr(n) :- kind(n, "call"), field(n, "function", c1), pt022_fixture_callee(c1).
+pt022_fixture_expr(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt022_fixture_expr(c2).
+
+// abstract_ref(n): the JSON util `abstract-ref`, used where the JSON says `matches: "abstract-ref"`
+.decl pt022_abstract_ref(n: node)
+pt022_abstract_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "abc.abstractmethod")
+    ; sym_of(n, "abc.abstractclassmethod")
+    ; sym_of(n, "abc.abstractstaticmethod")
+    ; sym_of(n, "abc.abstractproperty")
+    ).
+
+
+// abstract_expr(n): the JSON util `abstract-expr`, used where the JSON says `matches: "abstract-expr"`
+.decl pt022_abstract_expr(n: node)
+pt022_abstract_expr(n) :- pt022_abstract_ref(n).
+pt022_abstract_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt022_abstract_expr(c1).
+
+// plain_yield(n): the JSON util `plain-yield`, used where the JSON says `matches: "plain-yield"`
+.decl pt022_plain_yield(n: node)
+pt022_plain_yield(n) :- kind(n, "yield"), !pt022_tok_has_1(n).
+
+// yield_expr(n): the JSON util `yield-expr`, used where the JSON says `matches: "yield-expr"`
+.decl pt022_yield_expr(n: node)
+pt022_yield_expr(n) :- pt022_plain_yield(n).
+pt022_yield_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pt022_yield_expr(c1).
+
+// yield_walk_stop(n): the JSON util `yield-walk-stop`, used where the JSON says `matches: "yield-walk-stop"`
+.decl pt022_yield_walk_stop(n: node)
+pt022_yield_walk_stop(n) :- kind(n, k1), pt022_set_1(k1).
+pt022_yield_walk_stop(n) :- kind(n, "decorated_definition"), field(n, "definition", c2),
+    kind(c2, "function_definition").
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^from$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pt022_tok_has_1(n: node)
+.stored pt022_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pt022_tok_has_1(n) :- child(n, c1, _), glob("from", c1).
+pt022_tok_has_1(n) :- op(n, t2), match("from", t2).
+pt022_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g3).
+pt022_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g3).
+pt022_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g3).
+
+// set_1: node kinds from a JSON `any`
+.decl pt022_set_1(v: symbol)
+pt022_set_1("function_definition"). pt022_set_1("lambda"). pt022_set_1("return_statement").
+pt022_set_1("yield"). pt022_set_1("boolean_operator"). pt022_set_1("binary_operator").
+pt022_set_1("unary_operator"). pt022_set_1("not_operator"). pt022_set_1("comparison_operator").
+pt022_set_1("conditional_expression"). pt022_set_1("named_expression"). pt022_set_1("await").
+pt022_set_1("attribute"). pt022_set_1("subscript"). pt022_set_1("slice"). pt022_set_1("list_splat").
+pt022_set_1("dictionary"). pt022_set_1("set"). pt022_set_1("list"). pt022_set_1("tuple").
+pt022_set_1("expression_list"). pt022_set_1("list_comprehension"). pt022_set_1("set_comprehension").
+pt022_set_1("dictionary_comprehension"). pt022_set_1("generator_expression"). pt022_set_1("string").
+
+// counted_2(n): the siblings the JSON `nthChild.ofRule` counts
+.decl pt022_counted_2(n: node)
+pt022_counted_2(n) :- node(_, n, _, _, _), !kind(n, "comment").
+
+// stop_3(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pt022_stop_3(n: node)
+pt022_stop_3(n) :- pt022_yield_walk_stop(n).
+
+// stop_3_within: within_stop over the stop set stop_3, read inside an aggregate
+.decl pt022_stop_3_within(n: node, a: node)
+pt022_stop_3_within(x, y) :- within_stop(x, y, pt022_stop_3).

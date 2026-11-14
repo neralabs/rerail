@@ -1,0 +1,118 @@
+.policy "ruff-d106-undocumented-public-nested-class" revision 1
+.guests off
+.description "Add a docstring to each public nested class; it does not inherit the docstring of the class that encloses it."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// doc_expr(n): the JSON util `doc-expr`, used where the JSON says `matches: "doc-expr"`
+.decl d106_doc_expr(n: node)
+d106_doc_expr(n) :- kind(n, "string"), match("[rRuU]{0,2}['\"].*", n).
+d106_doc_expr(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !match("[rRuU]{0,2}['\"].*", c1) } = 0.
+d106_doc_expr(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), d106_doc_expr(c2).
+
+// documented(n): the JSON util `documented`, used where the JSON says `matches: "documented"`
+.decl d106_documented(n: node)
+d106_documented(n) :- kind(n, "block"), child(n, c1, _), kind(c1, "expression_statement"),
+    child(p2, c1, _), d106_counted_1(c1),
+    k4 = count : { child(p2, s3, _), precedes(s3, c1), d106_counted_1(s3) }, k4 = 0,
+    child(c1, c5, _), d106_doc_expr(c5), !d106_tok_has_1(c1).
+
+// dunder_all(n): the JSON util `dunder-all`, used where the JSON says `matches: "dunder-all"`
+.decl d106_dunder_all(n: node)
+d106_dunder_all(n) :- (kind(n, "assignment") ; kind(n, "augmented_assignment")),
+    field(n, "left", c1), kind(c1, "identifier"), glob("__all__", c1), child(p2, n, _),
+    kind(p2, "expression_statement").
+
+// public_class(n): the JSON util `public-class`, used where the JSON says `matches: "public-class"`
+.decl d106_public_class(n: node)
+d106_public_class(n) :- d106_demand_public_class(n), kind(n, "class_definition"),
+    count : { field(n, "name", c1), prefix("_", c1) } = 0, d106_alt_6(n).
+
+// D106(n): a finding at node n, from clause `undocumented-public-nested-class`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation D106(at: node, name: loc) "Add a docstring to nested class `{name}` describing its purpose; it does not inherit its enclosing class's docstring."
+    suppress noqa "D106"
+D106_raw(n, NAME) :- kind(n, "identifier"), match("[^_].*", n), node(_, n, _, _, _), NAME = n,
+    field(p1, "name", n), kind(p1, "class_definition"),
+    count : { field(p1, "body", c2), d106_documented(c2) } = 0,
+    within_stop(p1, p3, d106_stop_10), kind(p3, "class_definition"), d106_public_class(p3).
+
+// D106_undocumented_public_nested_class_in_package(n): a finding at node n, from clause `undocumented-public-nested-class-in-package`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation D106_undocumented_public_nested_class_in_package(at: node, name: loc) code "D106" "Add a docstring to nested class `{name}` describing its purpose; it does not inherit its enclosing class's docstring."
+    suppress noqa "D106"
+D106_undocumented_public_nested_class_in_package_raw(n, NAME) :- kind(n, "identifier"),
+    match("[^_].*", n), node(_, n, _, _, _), NAME = n, field(p1, "name", n),
+    kind(p1, "class_definition"),
+    count : { field(p1, "body", c2), d106_documented(c2) } = 0,
+    within_stop(p1, p3, d106_stop_10), kind(p3, "class_definition"), d106_public_class(p3).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl d106_tok_has_1(n: node)
+.stored d106_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+d106_tok_has_1(n) :- child(n, c6, _), glob("\\,", c6).
+d106_tok_has_1(n) :- op(n, t7), match(",", t7).
+d106_tok_has_1(n) :- child(n, c13, _), structural_before(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+d106_tok_has_1(n) :- child(n, c13, _), structural_after(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+d106_tok_has_1(n) :- node_text(n, g8), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g8).
+
+// demand_alt_6: the nodes alt_6 is asked at (its recursion looks at every descendant)
+.decl d106_demand_alt_6(n: node)
+d106_demand_alt_6(n) :- d106_demand_public_class(n), kind(n, "class_definition").
+
+// demand_public_class: the nodes public_class is asked at (its recursion looks at every descendant)
+.decl d106_demand_public_class(n: node)
+d106_demand_public_class(p3) :- kind(n, "identifier"), match("[^_].*", n), node(_, n, _, _, _), NAME = n,
+    field(p1, "name", n), kind(p1, "class_definition"), within_stop(p1, p3, d106_stop_10),
+    kind(p3, "class_definition").
+d106_demand_public_class(p1) :- d106_demand_alt_6(n), d106_up_2(n, p1).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl d106_up_1(n: node, p: node)
+d106_up_1(n, p) :- d106_demand_alt_6(n), within_stop(n, p, d106_stop_10), kind(p, "class_definition"),
+    d106_public_class(p).
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl d106_up_2(n: node, p: node)
+d106_up_2(n, p) :- d106_demand_alt_6(n), within_stop(n, p, d106_stop_10), kind(p, "class_definition").
+
+// stop_10: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl d106_stop_10(kind: symbol)
+d106_stop_10("function_definition"). d106_stop_10("class_definition").
+
+// counted_1(n): the siblings the JSON `nthChild.ofRule` counts
+.decl d106_counted_1(n: node)
+d106_counted_1(n) :- node(_, n, _, _, _), !kind(n, "comment").
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl d106_alt_6(n: node)
+d106_alt_6(n) :- d106_demand_alt_6(n), d106_up_1(n, p1).
+d106_alt_6(n) :- d106_demand_alt_6(n),
+    count : { within(n, p2), (kind(p2, "function_definition") ; kind(p2, "class_definition")) } = 0,
+    field(n, "name", c3),
+    ( count : { inside(c3, p1, "module"), d106_stop_10_within(c1, p1), d106_dunder_all(c1) } = 0
+    ; site_exported(c3)
+    ).
+
+// stop_10_within: within_stop over the stop set stop_10, read inside an aggregate
+.decl d106_stop_10_within(n: node, a: node)
+d106_stop_10_within(x, y) :- within_stop(x, y, d106_stop_10).
+
+// main's file condition {"notRegex": "\\.pyi$|(?:^|[\\\\/])(?:_|_[^_\\\\/][^\\\\/]*|__[^\\\\/]*[^_\\\\/]_?)\\.[^.\\\\/]+$"}
+.decl D106_raw(at: node, name: loc)
+D106(v0, v1) :- D106_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$|(?:^|[\\\\/])(?:_|_[^_\\\\/][^\\\\/]*|__[^\\\\/]*[^_\\\\/]_?)\\.[^.\\\\/]+$", rr_p).
+
+// main's file condition {"notRegex": "\\.pyi$"}
+.decl D106_undocumented_public_nested_class_in_package_raw(at: node, name: loc)
+D106_undocumented_public_nested_class_in_package(v0, v1) :- D106_undocumented_public_nested_class_in_package_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

@@ -1,0 +1,44 @@
+.policy "ruff-sim210-if-expr-with-true-false" revision 1
+.guests off
+.description "Use bool() on the condition instead of a conditional expression that yields True when it holds and False otherwise."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// SIM210(n): a finding at node n, from clause `if-expr-with-true-false`.
+// Each rule below is one way the JSON `rule` can match.
+.violation SIM210(at: node) "Use `bool(...)` instead of `True if ... else False`"
+    suppress noqa "SIM210"
+SIM210(n) :- kind(n, "conditional_expression"), child(n, c1, _), sim210_true(c1),
+    sim210_tok_precedes_1(c1), child(n, c9, _), sim210_false(c9), sim210_tok_follows_2(c9).
+
+// true(n): the JSON util `true`, used where the JSON says `matches: "true"`
+.decl sim210_true(n: node)
+sim210_true(n) :- kind(n, "true").
+sim210_true(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), sim210_true(c1).
+
+// false(n): the JSON util `false`, used where the JSON says `matches: "false"`
+.decl sim210_false(n: node)
+sim210_false(n) :- kind(n, "false").
+sim210_false(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), sim210_false(c1).
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim210_tok_precedes_1(n: node)
+.stored sim210_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim210_tok_precedes_1(n) :- next_sibling(n, s2), glob("if", s2).
+sim210_tok_precedes_1(n) :- structural_after(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, _, en8), o6 = en8 + strlen(g4), token(p5, _, t3, o6, _),
+    match("if", t3).
+sim210_tok_precedes_1(n) :- structural_after(n, g4),
+    match("(?s)^(?:\\s*(?:if)(?:\\W.*)?)$", g4).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim210_tok_follows_2(n: node)
+.stored sim210_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim210_tok_follows_2(n) :- next_sibling(s10, n), glob("else", s10).
+sim210_tok_follows_2(n) :- structural_before(n, g12), match("\\s*", g12), child(p13, n, _),
+    node(_, n, _, st15, _), o14 = st15 - strlen(g12), token(p13, _, t11, _, o14),
+    match("else", t11).
+sim210_tok_follows_2(n) :- structural_before(n, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:else)\\s*)$", g12).

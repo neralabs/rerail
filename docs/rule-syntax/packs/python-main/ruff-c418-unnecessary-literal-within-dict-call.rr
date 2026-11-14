@@ -1,0 +1,51 @@
+.policy "ruff-c418-unnecessary-literal-within-dict-call" revision 1
+.guests off
+.description "Remove dict() calls wrapped around a dict literal or dict comprehension; the inner expression already builds a dictionary."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// C418(n): a finding at node n, from clause `unnecessary-literal-within-dict-call`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation C418(at: node, call: node) "Drop the outer `dict()` call and keep the inner dict literal or comprehension; it already builds a new dictionary."
+    suppress noqa "C418"
+C418(CALL, n) :- c418_target(n), node(_, n, _, _, _), CALL = n.
+C418(CALL, n) :- c418_in_annotation(n, CALL).
+
+// callee_dict(n): the JSON util `callee-dict`, used where the JSON says `matches: "callee-dict"`
+.decl c418_callee_dict(n: node)
+c418_callee_dict(n) :- kind(n, "identifier"), glob("dict", n), global_ref(n, "dict").
+c418_callee_dict(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    c418_callee_dict(c1).
+
+// dict_arg(n): the JSON util `dict-arg`, used where the JSON says `matches: "dict-arg"`
+.decl c418_dict_arg(n: node)
+c418_dict_arg(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+c418_dict_arg(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), c418_dict_arg(c1).
+
+// not_argument(n): the JSON util `not-argument`, used where the JSON says `matches: "not-argument"`
+.decl c418_not_argument(n: node)
+c418_not_argument(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+c418_not_argument(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl c418_target(n: node)
+c418_target(n) :- kind(n, "call"), field(n, "function", c1), c418_callee_dict(c1),
+    field(n, "arguments", c2), kind(c2, "argument_list"), child(c2, c3, _),
+    c418_dict_arg(c3), k5 = count : { child(c2, c4, _), !c418_not_argument(c4) }, k5 <= 1.
+
+// in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl c418_in_annotation(n: node, call: loc)
+c418_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), c418_alt_1(c2, CALL).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   CALL: metavariable this relation binds for the calling rule
+.decl c418_alt_1(n: node, call: loc)
+c418_alt_1(n, CALL) :- c418_target(n), CALL = n.
+c418_alt_1(n, CALL) :- c418_in_annotation(n, CALL).

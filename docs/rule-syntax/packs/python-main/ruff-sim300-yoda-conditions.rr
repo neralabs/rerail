@@ -1,0 +1,712 @@
+.policy "ruff-sim300-yoda-conditions" revision 2
+.guests off
+.description "Put the variable first and the constant or literal second in comparisons, avoiding Yoda conditions; it reads the way you would say it."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// SIM300(n): a finding at node n, from clause `yoda-conditions`.
+// Each rule below is one way the JSON `rule` can match.
+.violation SIM300(at: node) "Put the variable first; reverse `<`/`>` and `<=`/`>=` when swapping operands, and keep equality operators unchanged."
+    suppress noqa "SIM300"
+SIM300(n) :- sim300_single_op(n),
+    ( child(n, c1, _), sim300_left(c1), sim300_definitely(c1), child(n, c2, _), sim300_right(c2), !sim300_definitely(c2)
+    ; child(n, c3, _), sim300_left(c3), sim300_probably(c3), child(n, c4, _), sim300_right(c4), !sim300_probably(c4)
+    ).
+
+
+// part_t(n): the JSON util `part-t`, used where the JSON says `matches: "part-t"`
+.decl sim300_part_t(n: node)
+sim300_part_t(n) :- child(n, c1, _), kind(c1, "string_start"), match("[A-Za-z]*[tT].*", c1).
+
+// part_f(n): the JSON util `part-f`, used where the JSON says `matches: "part-f"`
+.decl sim300_part_f(n: node)
+sim300_part_f(n) :- child(n, c1, _), kind(c1, "string_start"), match("[A-Za-z]*[fF].*", c1).
+
+// t_string(n): the JSON util `t-string`, used where the JSON says `matches: "t-string"`
+.decl sim300_t_string(n: node)
+sim300_t_string(n) :- kind(n, "string"), sim300_part_t(n).
+sim300_t_string(n) :- kind(n, "concatenated_string"), child(n, c1, _), kind(c1, "string"),
+    sim300_part_t(c1).
+
+// f_string(n): the JSON util `f-string`, used where the JSON says `matches: "f-string"`
+.decl sim300_f_string(n: node)
+sim300_f_string(n) :- !sim300_t_string(n),
+    ( kind(n, "string"), sim300_part_f(n)
+    ; kind(n, "concatenated_string"), child(n, c1, _), kind(c1, "string"), sim300_part_f(c1)
+    ).
+
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl sim300_plain_string(n: node)
+sim300_plain_string(n) :- (kind(n, "string") ; kind(n, "concatenated_string")), !sim300_alt_2(n).
+
+// literal(n): the JSON util `literal`, used where the JSON says `matches: "literal"`
+.decl sim300_literal(n: node)
+sim300_literal(n) :- kind(n, k1), sim300_set_3(k1).
+sim300_literal(n) :- sim300_plain_string(n).
+
+// definitely(n): the JSON util `definitely`, used where the JSON says `matches: "definitely"`
+.decl sim300_definitely(n: node)
+sim300_definitely(n) :- sim300_definitely_u7(n).
+
+// probably(n): the JSON util `probably`, used where the JSON says `matches: "probably"`
+.decl sim300_probably(n: node)
+sim300_probably(n) :- sim300_probably_u7(n).
+
+// single_op(n): the JSON util `single-op`, used where the JSON says `matches: "single-op"`
+.decl sim300_single_op(n: node)
+sim300_single_op(n) :- kind(n, "comparison_operator"), sim300_tok_has_2(n),
+    k17 = count : { sim300_tok_has_3(n) }, k17 <= 1.
+
+// left(n): the JSON util `left`, used where the JSON says `matches: "left"`
+.decl sim300_left(n: node)
+sim300_left(n) :- node(_, n, _, _, _), !sim300_tok_follows_4(n).
+
+// right(n): the JSON util `right`, used where the JSON says `matches: "right"`
+.decl sim300_right(n: node)
+sim300_right(n) :- node(_, n, _, _, _), !sim300_tok_precedes_5(n).
+
+.decl sim300_alt_10_u0(n: node)
+sim300_alt_10_u0(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_10_u0(n) :- node(_, n, _, _, _), glob(":", n).
+sim300_alt_10_u0(n) :- kind(n, "comment").
+
+.decl sim300_alt_10_u1(n: node)
+sim300_alt_10_u1(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_10_u1(n) :- node(_, n, _, _, _), glob(":", n).
+sim300_alt_10_u1(n) :- kind(n, "comment").
+sim300_alt_10_u1(n) :- sim300_definitely_u0(n).
+
+.decl sim300_alt_10_u2(n: node)
+sim300_alt_10_u2(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_10_u2(n) :- node(_, n, _, _, _), glob(":", n).
+sim300_alt_10_u2(n) :- kind(n, "comment").
+sim300_alt_10_u2(n) :- sim300_definitely_u1(n).
+
+.decl sim300_alt_10_u3(n: node)
+sim300_alt_10_u3(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_10_u3(n) :- node(_, n, _, _, _), glob(":", n).
+sim300_alt_10_u3(n) :- kind(n, "comment").
+sim300_alt_10_u3(n) :- sim300_definitely_u2(n).
+
+.decl sim300_alt_10_u4(n: node)
+sim300_alt_10_u4(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_10_u4(n) :- node(_, n, _, _, _), glob(":", n).
+sim300_alt_10_u4(n) :- kind(n, "comment").
+sim300_alt_10_u4(n) :- sim300_definitely_u3(n).
+
+.decl sim300_alt_10_u5(n: node)
+sim300_alt_10_u5(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_10_u5(n) :- node(_, n, _, _, _), glob(":", n).
+sim300_alt_10_u5(n) :- kind(n, "comment").
+sim300_alt_10_u5(n) :- sim300_definitely_u4(n).
+
+.decl sim300_alt_10_u6(n: node)
+sim300_alt_10_u6(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_10_u6(n) :- node(_, n, _, _, _), glob(":", n).
+sim300_alt_10_u6(n) :- kind(n, "comment").
+sim300_alt_10_u6(n) :- sim300_definitely_u5(n).
+
+.decl sim300_alt_10_u7(n: node)
+sim300_alt_10_u7(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_10_u7(n) :- node(_, n, _, _, _), glob(":", n).
+sim300_alt_10_u7(n) :- kind(n, "comment").
+sim300_alt_10_u7(n) :- sim300_definitely_u6(n).
+
+.decl sim300_alt_12_u0(n: node)
+sim300_alt_12_u0(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_12_u0(n) :- kind(n, "comment").
+sim300_alt_12_u0(n) :- kind(n, "pair"), count : { child(n, c1, _) } = 0.
+
+.decl sim300_alt_12_u1(n: node)
+sim300_alt_12_u1(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_12_u1(n) :- kind(n, "comment").
+sim300_alt_12_u1(n) :- kind(n, "pair"), count : { child(n, c1, _), !sim300_alt_10_u0(c1) } = 0.
+sim300_alt_12_u1(n) :- kind(n, "dictionary_splat"), child(n, c2, _), sim300_definitely_u0(c2).
+
+.decl sim300_alt_12_u2(n: node)
+sim300_alt_12_u2(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_12_u2(n) :- kind(n, "comment").
+sim300_alt_12_u2(n) :- kind(n, "pair"), count : { child(n, c1, _), !sim300_alt_10_u1(c1) } = 0.
+sim300_alt_12_u2(n) :- kind(n, "dictionary_splat"), child(n, c2, _), sim300_definitely_u1(c2).
+
+.decl sim300_alt_12_u3(n: node)
+sim300_alt_12_u3(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_12_u3(n) :- kind(n, "comment").
+sim300_alt_12_u3(n) :- kind(n, "pair"), count : { child(n, c1, _), !sim300_alt_10_u2(c1) } = 0.
+sim300_alt_12_u3(n) :- kind(n, "dictionary_splat"), child(n, c2, _), sim300_definitely_u2(c2).
+
+.decl sim300_alt_12_u4(n: node)
+sim300_alt_12_u4(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_12_u4(n) :- kind(n, "comment").
+sim300_alt_12_u4(n) :- kind(n, "pair"), count : { child(n, c1, _), !sim300_alt_10_u3(c1) } = 0.
+sim300_alt_12_u4(n) :- kind(n, "dictionary_splat"), child(n, c2, _), sim300_definitely_u3(c2).
+
+.decl sim300_alt_12_u5(n: node)
+sim300_alt_12_u5(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_12_u5(n) :- kind(n, "comment").
+sim300_alt_12_u5(n) :- kind(n, "pair"), count : { child(n, c1, _), !sim300_alt_10_u4(c1) } = 0.
+sim300_alt_12_u5(n) :- kind(n, "dictionary_splat"), child(n, c2, _), sim300_definitely_u4(c2).
+
+.decl sim300_alt_12_u6(n: node)
+sim300_alt_12_u6(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_12_u6(n) :- kind(n, "comment").
+sim300_alt_12_u6(n) :- kind(n, "pair"), count : { child(n, c1, _), !sim300_alt_10_u5(c1) } = 0.
+sim300_alt_12_u6(n) :- kind(n, "dictionary_splat"), child(n, c2, _), sim300_definitely_u5(c2).
+
+.decl sim300_alt_12_u7(n: node)
+sim300_alt_12_u7(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_12_u7(n) :- kind(n, "comment").
+sim300_alt_12_u7(n) :- kind(n, "pair"), count : { child(n, c1, _), !sim300_alt_10_u6(c1) } = 0.
+sim300_alt_12_u7(n) :- kind(n, "dictionary_splat"), child(n, c2, _), sim300_definitely_u6(c2).
+
+.decl sim300_alt_14_u0(n: node)
+sim300_alt_14_u0(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,<<,>>,&,|,^,@}", n).
+
+.decl sim300_alt_14_u1(n: node)
+sim300_alt_14_u1(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,<<,>>,&,|,^,@}", n).
+sim300_alt_14_u1(n) :- sim300_definitely_u0(n).
+
+.decl sim300_alt_14_u2(n: node)
+sim300_alt_14_u2(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,<<,>>,&,|,^,@}", n).
+sim300_alt_14_u2(n) :- sim300_definitely_u1(n).
+
+.decl sim300_alt_14_u3(n: node)
+sim300_alt_14_u3(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,<<,>>,&,|,^,@}", n).
+sim300_alt_14_u3(n) :- sim300_definitely_u2(n).
+
+.decl sim300_alt_14_u4(n: node)
+sim300_alt_14_u4(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,<<,>>,&,|,^,@}", n).
+sim300_alt_14_u4(n) :- sim300_definitely_u3(n).
+
+.decl sim300_alt_14_u5(n: node)
+sim300_alt_14_u5(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,<<,>>,&,|,^,@}", n).
+sim300_alt_14_u5(n) :- sim300_definitely_u4(n).
+
+.decl sim300_alt_14_u6(n: node)
+sim300_alt_14_u6(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,<<,>>,&,|,^,@}", n).
+sim300_alt_14_u6(n) :- sim300_definitely_u5(n).
+
+.decl sim300_alt_14_u7(n: node)
+sim300_alt_14_u7(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,<<,>>,&,|,^,@}", n).
+sim300_alt_14_u7(n) :- sim300_definitely_u6(n).
+
+.decl sim300_alt_9_u0(n: node)
+sim300_alt_9_u0(n) :- sim300_literal(n).
+sim300_alt_9_u0(n) :- sim300_literal(n).
+sim300_alt_9_u0(n) :- (kind(n, "tuple") ; kind(n, "list")), count : { child(n, c1, _) } = 0.
+sim300_alt_9_u0(n) :- kind(n, "dictionary"), count : { child(n, c2, _) } = 0.
+sim300_alt_9_u0(n) :- kind(n, "binary_operator"), count : { child(n, c5, _) } = 0.
+
+.decl sim300_alt_9_u1(n: node)
+sim300_alt_9_u1(n) :- sim300_literal(n).
+sim300_alt_9_u1(n) :- sim300_literal(n).
+sim300_alt_9_u1(n) :- (kind(n, "tuple") ; kind(n, "list")),
+    count : { child(n, c1, _), !sim300_alt_10_u0(c1) } = 0.
+sim300_alt_9_u1(n) :- kind(n, "dictionary"), count : { child(n, c2, _), !sim300_alt_12_u0(c2) } = 0.
+sim300_alt_9_u1(n) :- kind(n, "binary_operator"),
+    count : { child(n, c5, _), !sim300_alt_14_u0(c5) } = 0.
+sim300_alt_9_u1(n) :- kind(n, "unary_operator"), child(n, c6, _), sim300_definitely_u0(c6).
+
+.decl sim300_alt_9_u2(n: node)
+sim300_alt_9_u2(n) :- sim300_literal(n).
+sim300_alt_9_u2(n) :- sim300_literal(n).
+sim300_alt_9_u2(n) :- (kind(n, "tuple") ; kind(n, "list")),
+    count : { child(n, c1, _), !sim300_alt_10_u1(c1) } = 0.
+sim300_alt_9_u2(n) :- kind(n, "dictionary"), count : { child(n, c2, _), !sim300_alt_12_u1(c2) } = 0.
+sim300_alt_9_u2(n) :- kind(n, "binary_operator"),
+    count : { child(n, c5, _), !sim300_alt_14_u1(c5) } = 0.
+sim300_alt_9_u2(n) :- kind(n, "unary_operator"), child(n, c6, _), sim300_definitely_u1(c6).
+
+.decl sim300_alt_9_u3(n: node)
+sim300_alt_9_u3(n) :- sim300_literal(n).
+sim300_alt_9_u3(n) :- sim300_literal(n).
+sim300_alt_9_u3(n) :- (kind(n, "tuple") ; kind(n, "list")),
+    count : { child(n, c1, _), !sim300_alt_10_u2(c1) } = 0.
+sim300_alt_9_u3(n) :- kind(n, "dictionary"), count : { child(n, c2, _), !sim300_alt_12_u2(c2) } = 0.
+sim300_alt_9_u3(n) :- kind(n, "binary_operator"),
+    count : { child(n, c5, _), !sim300_alt_14_u2(c5) } = 0.
+sim300_alt_9_u3(n) :- kind(n, "unary_operator"), child(n, c6, _), sim300_definitely_u2(c6).
+
+.decl sim300_alt_9_u4(n: node)
+sim300_alt_9_u4(n) :- sim300_literal(n).
+sim300_alt_9_u4(n) :- sim300_literal(n).
+sim300_alt_9_u4(n) :- (kind(n, "tuple") ; kind(n, "list")),
+    count : { child(n, c1, _), !sim300_alt_10_u3(c1) } = 0.
+sim300_alt_9_u4(n) :- kind(n, "dictionary"), count : { child(n, c2, _), !sim300_alt_12_u3(c2) } = 0.
+sim300_alt_9_u4(n) :- kind(n, "binary_operator"),
+    count : { child(n, c5, _), !sim300_alt_14_u3(c5) } = 0.
+sim300_alt_9_u4(n) :- kind(n, "unary_operator"), child(n, c6, _), sim300_definitely_u3(c6).
+
+.decl sim300_alt_9_u5(n: node)
+sim300_alt_9_u5(n) :- sim300_literal(n).
+sim300_alt_9_u5(n) :- sim300_literal(n).
+sim300_alt_9_u5(n) :- (kind(n, "tuple") ; kind(n, "list")),
+    count : { child(n, c1, _), !sim300_alt_10_u4(c1) } = 0.
+sim300_alt_9_u5(n) :- kind(n, "dictionary"), count : { child(n, c2, _), !sim300_alt_12_u4(c2) } = 0.
+sim300_alt_9_u5(n) :- kind(n, "binary_operator"),
+    count : { child(n, c5, _), !sim300_alt_14_u4(c5) } = 0.
+sim300_alt_9_u5(n) :- kind(n, "unary_operator"), child(n, c6, _), sim300_definitely_u4(c6).
+
+.decl sim300_alt_9_u6(n: node)
+sim300_alt_9_u6(n) :- sim300_literal(n).
+sim300_alt_9_u6(n) :- sim300_literal(n).
+sim300_alt_9_u6(n) :- (kind(n, "tuple") ; kind(n, "list")),
+    count : { child(n, c1, _), !sim300_alt_10_u5(c1) } = 0.
+sim300_alt_9_u6(n) :- kind(n, "dictionary"), count : { child(n, c2, _), !sim300_alt_12_u5(c2) } = 0.
+sim300_alt_9_u6(n) :- kind(n, "binary_operator"),
+    count : { child(n, c5, _), !sim300_alt_14_u5(c5) } = 0.
+sim300_alt_9_u6(n) :- kind(n, "unary_operator"), child(n, c6, _), sim300_definitely_u5(c6).
+
+.decl sim300_alt_9_u7(n: node)
+sim300_alt_9_u7(n) :- sim300_literal(n).
+sim300_alt_9_u7(n) :- sim300_literal(n).
+sim300_alt_9_u7(n) :- (kind(n, "tuple") ; kind(n, "list")),
+    count : { child(n, c1, _), !sim300_alt_10_u6(c1) } = 0.
+sim300_alt_9_u7(n) :- kind(n, "dictionary"), count : { child(n, c2, _), !sim300_alt_12_u6(c2) } = 0.
+sim300_alt_9_u7(n) :- kind(n, "binary_operator"),
+    count : { child(n, c5, _), !sim300_alt_14_u6(c5) } = 0.
+sim300_alt_9_u7(n) :- kind(n, "unary_operator"), child(n, c6, _), sim300_definitely_u6(c6).
+
+.decl sim300_definitely_u1(n: node)
+sim300_definitely_u1(n) :- sim300_alt_9_u0(n).
+sim300_definitely_u1(n) :- kind(n, "parenthesized_expression"), child(n, c7, _),
+    sim300_definitely_u0(c7).
+
+.decl sim300_definitely_u2(n: node)
+sim300_definitely_u2(n) :- sim300_alt_9_u1(n).
+sim300_definitely_u2(n) :- kind(n, "parenthesized_expression"), child(n, c7, _),
+    sim300_definitely_u1(c7).
+
+.decl sim300_definitely_u3(n: node)
+sim300_definitely_u3(n) :- sim300_alt_9_u2(n).
+sim300_definitely_u3(n) :- kind(n, "parenthesized_expression"), child(n, c7, _),
+    sim300_definitely_u2(c7).
+
+.decl sim300_definitely_u4(n: node)
+sim300_definitely_u4(n) :- sim300_alt_9_u3(n).
+sim300_definitely_u4(n) :- kind(n, "parenthesized_expression"), child(n, c7, _),
+    sim300_definitely_u3(c7).
+
+.decl sim300_definitely_u5(n: node)
+sim300_definitely_u5(n) :- sim300_alt_9_u4(n).
+sim300_definitely_u5(n) :- kind(n, "parenthesized_expression"), child(n, c7, _),
+    sim300_definitely_u4(c7).
+
+.decl sim300_definitely_u6(n: node)
+sim300_definitely_u6(n) :- sim300_alt_9_u5(n).
+sim300_definitely_u6(n) :- kind(n, "parenthesized_expression"), child(n, c7, _),
+    sim300_definitely_u5(c7).
+
+.decl sim300_definitely_u7(n: node)
+sim300_definitely_u7(n) :- sim300_alt_9_u6(n).
+sim300_definitely_u7(n) :- kind(n, "parenthesized_expression"), child(n, c7, _),
+    sim300_definitely_u6(c7).
+
+.decl sim300_alt_16_u0(n: node)
+sim300_alt_16_u0(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_16_u0(n) :- node(_, n, _, _, _), glob(":", n).
+sim300_alt_16_u0(n) :- kind(n, "comment").
+
+.decl sim300_alt_16_u1(n: node)
+sim300_alt_16_u1(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_16_u1(n) :- node(_, n, _, _, _), glob(":", n).
+sim300_alt_16_u1(n) :- kind(n, "comment").
+sim300_alt_16_u1(n) :- sim300_probably_u0(n).
+
+.decl sim300_alt_16_u2(n: node)
+sim300_alt_16_u2(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_16_u2(n) :- node(_, n, _, _, _), glob(":", n).
+sim300_alt_16_u2(n) :- kind(n, "comment").
+sim300_alt_16_u2(n) :- sim300_probably_u1(n).
+
+.decl sim300_alt_16_u3(n: node)
+sim300_alt_16_u3(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_16_u3(n) :- node(_, n, _, _, _), glob(":", n).
+sim300_alt_16_u3(n) :- kind(n, "comment").
+sim300_alt_16_u3(n) :- sim300_probably_u2(n).
+
+.decl sim300_alt_16_u4(n: node)
+sim300_alt_16_u4(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_16_u4(n) :- node(_, n, _, _, _), glob(":", n).
+sim300_alt_16_u4(n) :- kind(n, "comment").
+sim300_alt_16_u4(n) :- sim300_probably_u3(n).
+
+.decl sim300_alt_16_u5(n: node)
+sim300_alt_16_u5(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_16_u5(n) :- node(_, n, _, _, _), glob(":", n).
+sim300_alt_16_u5(n) :- kind(n, "comment").
+sim300_alt_16_u5(n) :- sim300_probably_u4(n).
+
+.decl sim300_alt_16_u6(n: node)
+sim300_alt_16_u6(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_16_u6(n) :- node(_, n, _, _, _), glob(":", n).
+sim300_alt_16_u6(n) :- kind(n, "comment").
+sim300_alt_16_u6(n) :- sim300_probably_u5(n).
+
+.decl sim300_alt_16_u7(n: node)
+sim300_alt_16_u7(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_16_u7(n) :- node(_, n, _, _, _), glob(":", n).
+sim300_alt_16_u7(n) :- kind(n, "comment").
+sim300_alt_16_u7(n) :- sim300_probably_u6(n).
+
+.decl sim300_alt_18_u0(n: node)
+sim300_alt_18_u0(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_18_u0(n) :- kind(n, "comment").
+sim300_alt_18_u0(n) :- kind(n, "pair"), count : { child(n, c1, _) } = 0.
+
+.decl sim300_alt_18_u1(n: node)
+sim300_alt_18_u1(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_18_u1(n) :- kind(n, "comment").
+sim300_alt_18_u1(n) :- kind(n, "pair"), count : { child(n, c1, _), !sim300_alt_16_u0(c1) } = 0.
+sim300_alt_18_u1(n) :- kind(n, "dictionary_splat"), child(n, c2, _), sim300_probably_u0(c2).
+
+.decl sim300_alt_18_u2(n: node)
+sim300_alt_18_u2(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_18_u2(n) :- kind(n, "comment").
+sim300_alt_18_u2(n) :- kind(n, "pair"), count : { child(n, c1, _), !sim300_alt_16_u1(c1) } = 0.
+sim300_alt_18_u2(n) :- kind(n, "dictionary_splat"), child(n, c2, _), sim300_probably_u1(c2).
+
+.decl sim300_alt_18_u3(n: node)
+sim300_alt_18_u3(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_18_u3(n) :- kind(n, "comment").
+sim300_alt_18_u3(n) :- kind(n, "pair"), count : { child(n, c1, _), !sim300_alt_16_u2(c1) } = 0.
+sim300_alt_18_u3(n) :- kind(n, "dictionary_splat"), child(n, c2, _), sim300_probably_u2(c2).
+
+.decl sim300_alt_18_u4(n: node)
+sim300_alt_18_u4(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_18_u4(n) :- kind(n, "comment").
+sim300_alt_18_u4(n) :- kind(n, "pair"), count : { child(n, c1, _), !sim300_alt_16_u3(c1) } = 0.
+sim300_alt_18_u4(n) :- kind(n, "dictionary_splat"), child(n, c2, _), sim300_probably_u3(c2).
+
+.decl sim300_alt_18_u5(n: node)
+sim300_alt_18_u5(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_18_u5(n) :- kind(n, "comment").
+sim300_alt_18_u5(n) :- kind(n, "pair"), count : { child(n, c1, _), !sim300_alt_16_u4(c1) } = 0.
+sim300_alt_18_u5(n) :- kind(n, "dictionary_splat"), child(n, c2, _), sim300_probably_u4(c2).
+
+.decl sim300_alt_18_u6(n: node)
+sim300_alt_18_u6(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_18_u6(n) :- kind(n, "comment").
+sim300_alt_18_u6(n) :- kind(n, "pair"), count : { child(n, c1, _), !sim300_alt_16_u5(c1) } = 0.
+sim300_alt_18_u6(n) :- kind(n, "dictionary_splat"), child(n, c2, _), sim300_probably_u5(c2).
+
+.decl sim300_alt_18_u7(n: node)
+sim300_alt_18_u7(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim300_alt_18_u7(n) :- kind(n, "comment").
+sim300_alt_18_u7(n) :- kind(n, "pair"), count : { child(n, c1, _), !sim300_alt_16_u6(c1) } = 0.
+sim300_alt_18_u7(n) :- kind(n, "dictionary_splat"), child(n, c2, _), sim300_probably_u6(c2).
+
+.decl sim300_alt_20_u0(n: node)
+sim300_alt_20_u0(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,<<,>>,&,|,^,@}", n).
+
+.decl sim300_alt_20_u1(n: node)
+sim300_alt_20_u1(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,<<,>>,&,|,^,@}", n).
+sim300_alt_20_u1(n) :- sim300_probably_u0(n).
+
+.decl sim300_alt_20_u2(n: node)
+sim300_alt_20_u2(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,<<,>>,&,|,^,@}", n).
+sim300_alt_20_u2(n) :- sim300_probably_u1(n).
+
+.decl sim300_alt_20_u3(n: node)
+sim300_alt_20_u3(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,<<,>>,&,|,^,@}", n).
+sim300_alt_20_u3(n) :- sim300_probably_u2(n).
+
+.decl sim300_alt_20_u4(n: node)
+sim300_alt_20_u4(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,<<,>>,&,|,^,@}", n).
+sim300_alt_20_u4(n) :- sim300_probably_u3(n).
+
+.decl sim300_alt_20_u5(n: node)
+sim300_alt_20_u5(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,<<,>>,&,|,^,@}", n).
+sim300_alt_20_u5(n) :- sim300_probably_u4(n).
+
+.decl sim300_alt_20_u6(n: node)
+sim300_alt_20_u6(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,<<,>>,&,|,^,@}", n).
+sim300_alt_20_u6(n) :- sim300_probably_u5(n).
+
+.decl sim300_alt_20_u7(n: node)
+sim300_alt_20_u7(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,<<,>>,&,|,^,@}", n).
+sim300_alt_20_u7(n) :- sim300_probably_u6(n).
+
+.decl sim300_alt_21_u0(n: node)
+sim300_alt_21_u0(n) :- sim300_literal(n).
+sim300_alt_21_u0(n) :-
+    ( kind(n, "identifier"), match("\\P{Lowercase}*\\p{Uppercase}\\P{Lowercase}*", n)
+    ; kind(n, "attribute"), child(n, c1, _), kind(c1, "identifier"), match("\\P{Lowercase}*\\p{Uppercase}\\P{Lowercase}*", c1), sim300_tok_follows_1(c1)
+    ).
+
+sim300_alt_21_u0(n) :- (kind(n, "tuple") ; kind(n, "list")), count : { child(n, c9, _) } = 0.
+sim300_alt_21_u0(n) :- kind(n, "dictionary"), count : { child(n, c10, _) } = 0.
+sim300_alt_21_u0(n) :- kind(n, "binary_operator"), count : { child(n, c13, _) } = 0.
+
+.decl sim300_alt_21_u1(n: node)
+sim300_alt_21_u1(n) :- sim300_literal(n).
+sim300_alt_21_u1(n) :-
+    ( kind(n, "identifier"), match("\\P{Lowercase}*\\p{Uppercase}\\P{Lowercase}*", n)
+    ; kind(n, "attribute"), child(n, c1, _), kind(c1, "identifier"), match("\\P{Lowercase}*\\p{Uppercase}\\P{Lowercase}*", c1), sim300_tok_follows_1(c1)
+    ).
+
+sim300_alt_21_u1(n) :- (kind(n, "tuple") ; kind(n, "list")),
+    count : { child(n, c9, _), !sim300_alt_16_u0(c9) } = 0.
+sim300_alt_21_u1(n) :- kind(n, "dictionary"),
+    count : { child(n, c10, _), !sim300_alt_18_u0(c10) } = 0.
+sim300_alt_21_u1(n) :- kind(n, "binary_operator"),
+    count : { child(n, c13, _), !sim300_alt_20_u0(c13) } = 0.
+sim300_alt_21_u1(n) :- kind(n, "unary_operator"), child(n, c14, _), sim300_probably_u0(c14).
+
+.decl sim300_alt_21_u2(n: node)
+sim300_alt_21_u2(n) :- sim300_literal(n).
+sim300_alt_21_u2(n) :-
+    ( kind(n, "identifier"), match("\\P{Lowercase}*\\p{Uppercase}\\P{Lowercase}*", n)
+    ; kind(n, "attribute"), child(n, c1, _), kind(c1, "identifier"), match("\\P{Lowercase}*\\p{Uppercase}\\P{Lowercase}*", c1), sim300_tok_follows_1(c1)
+    ).
+
+sim300_alt_21_u2(n) :- (kind(n, "tuple") ; kind(n, "list")),
+    count : { child(n, c9, _), !sim300_alt_16_u1(c9) } = 0.
+sim300_alt_21_u2(n) :- kind(n, "dictionary"),
+    count : { child(n, c10, _), !sim300_alt_18_u1(c10) } = 0.
+sim300_alt_21_u2(n) :- kind(n, "binary_operator"),
+    count : { child(n, c13, _), !sim300_alt_20_u1(c13) } = 0.
+sim300_alt_21_u2(n) :- kind(n, "unary_operator"), child(n, c14, _), sim300_probably_u1(c14).
+
+.decl sim300_alt_21_u3(n: node)
+sim300_alt_21_u3(n) :- sim300_literal(n).
+sim300_alt_21_u3(n) :-
+    ( kind(n, "identifier"), match("\\P{Lowercase}*\\p{Uppercase}\\P{Lowercase}*", n)
+    ; kind(n, "attribute"), child(n, c1, _), kind(c1, "identifier"), match("\\P{Lowercase}*\\p{Uppercase}\\P{Lowercase}*", c1), sim300_tok_follows_1(c1)
+    ).
+
+sim300_alt_21_u3(n) :- (kind(n, "tuple") ; kind(n, "list")),
+    count : { child(n, c9, _), !sim300_alt_16_u2(c9) } = 0.
+sim300_alt_21_u3(n) :- kind(n, "dictionary"),
+    count : { child(n, c10, _), !sim300_alt_18_u2(c10) } = 0.
+sim300_alt_21_u3(n) :- kind(n, "binary_operator"),
+    count : { child(n, c13, _), !sim300_alt_20_u2(c13) } = 0.
+sim300_alt_21_u3(n) :- kind(n, "unary_operator"), child(n, c14, _), sim300_probably_u2(c14).
+
+.decl sim300_alt_21_u4(n: node)
+sim300_alt_21_u4(n) :- sim300_literal(n).
+sim300_alt_21_u4(n) :-
+    ( kind(n, "identifier"), match("\\P{Lowercase}*\\p{Uppercase}\\P{Lowercase}*", n)
+    ; kind(n, "attribute"), child(n, c1, _), kind(c1, "identifier"), match("\\P{Lowercase}*\\p{Uppercase}\\P{Lowercase}*", c1), sim300_tok_follows_1(c1)
+    ).
+
+sim300_alt_21_u4(n) :- (kind(n, "tuple") ; kind(n, "list")),
+    count : { child(n, c9, _), !sim300_alt_16_u3(c9) } = 0.
+sim300_alt_21_u4(n) :- kind(n, "dictionary"),
+    count : { child(n, c10, _), !sim300_alt_18_u3(c10) } = 0.
+sim300_alt_21_u4(n) :- kind(n, "binary_operator"),
+    count : { child(n, c13, _), !sim300_alt_20_u3(c13) } = 0.
+sim300_alt_21_u4(n) :- kind(n, "unary_operator"), child(n, c14, _), sim300_probably_u3(c14).
+
+.decl sim300_alt_21_u5(n: node)
+sim300_alt_21_u5(n) :- sim300_literal(n).
+sim300_alt_21_u5(n) :-
+    ( kind(n, "identifier"), match("\\P{Lowercase}*\\p{Uppercase}\\P{Lowercase}*", n)
+    ; kind(n, "attribute"), child(n, c1, _), kind(c1, "identifier"), match("\\P{Lowercase}*\\p{Uppercase}\\P{Lowercase}*", c1), sim300_tok_follows_1(c1)
+    ).
+
+sim300_alt_21_u5(n) :- (kind(n, "tuple") ; kind(n, "list")),
+    count : { child(n, c9, _), !sim300_alt_16_u4(c9) } = 0.
+sim300_alt_21_u5(n) :- kind(n, "dictionary"),
+    count : { child(n, c10, _), !sim300_alt_18_u4(c10) } = 0.
+sim300_alt_21_u5(n) :- kind(n, "binary_operator"),
+    count : { child(n, c13, _), !sim300_alt_20_u4(c13) } = 0.
+sim300_alt_21_u5(n) :- kind(n, "unary_operator"), child(n, c14, _), sim300_probably_u4(c14).
+
+.decl sim300_alt_21_u6(n: node)
+sim300_alt_21_u6(n) :- sim300_literal(n).
+sim300_alt_21_u6(n) :-
+    ( kind(n, "identifier"), match("\\P{Lowercase}*\\p{Uppercase}\\P{Lowercase}*", n)
+    ; kind(n, "attribute"), child(n, c1, _), kind(c1, "identifier"), match("\\P{Lowercase}*\\p{Uppercase}\\P{Lowercase}*", c1), sim300_tok_follows_1(c1)
+    ).
+
+sim300_alt_21_u6(n) :- (kind(n, "tuple") ; kind(n, "list")),
+    count : { child(n, c9, _), !sim300_alt_16_u5(c9) } = 0.
+sim300_alt_21_u6(n) :- kind(n, "dictionary"),
+    count : { child(n, c10, _), !sim300_alt_18_u5(c10) } = 0.
+sim300_alt_21_u6(n) :- kind(n, "binary_operator"),
+    count : { child(n, c13, _), !sim300_alt_20_u5(c13) } = 0.
+sim300_alt_21_u6(n) :- kind(n, "unary_operator"), child(n, c14, _), sim300_probably_u5(c14).
+
+.decl sim300_alt_21_u7(n: node)
+sim300_alt_21_u7(n) :- sim300_literal(n).
+sim300_alt_21_u7(n) :-
+    ( kind(n, "identifier"), match("\\P{Lowercase}*\\p{Uppercase}\\P{Lowercase}*", n)
+    ; kind(n, "attribute"), child(n, c1, _), kind(c1, "identifier"), match("\\P{Lowercase}*\\p{Uppercase}\\P{Lowercase}*", c1), sim300_tok_follows_1(c1)
+    ).
+
+sim300_alt_21_u7(n) :- (kind(n, "tuple") ; kind(n, "list")),
+    count : { child(n, c9, _), !sim300_alt_16_u6(c9) } = 0.
+sim300_alt_21_u7(n) :- kind(n, "dictionary"),
+    count : { child(n, c10, _), !sim300_alt_18_u6(c10) } = 0.
+sim300_alt_21_u7(n) :- kind(n, "binary_operator"),
+    count : { child(n, c13, _), !sim300_alt_20_u6(c13) } = 0.
+sim300_alt_21_u7(n) :- kind(n, "unary_operator"), child(n, c14, _), sim300_probably_u6(c14).
+
+.decl sim300_probably_u1(n: node)
+sim300_probably_u1(n) :- sim300_alt_21_u0(n).
+sim300_probably_u1(n) :- kind(n, "parenthesized_expression"), child(n, c15, _),
+    sim300_probably_u0(c15).
+
+.decl sim300_probably_u2(n: node)
+sim300_probably_u2(n) :- sim300_alt_21_u1(n).
+sim300_probably_u2(n) :- kind(n, "parenthesized_expression"), child(n, c15, _),
+    sim300_probably_u1(c15).
+
+.decl sim300_probably_u3(n: node)
+sim300_probably_u3(n) :- sim300_alt_21_u2(n).
+sim300_probably_u3(n) :- kind(n, "parenthesized_expression"), child(n, c15, _),
+    sim300_probably_u2(c15).
+
+.decl sim300_probably_u4(n: node)
+sim300_probably_u4(n) :- sim300_alt_21_u3(n).
+sim300_probably_u4(n) :- kind(n, "parenthesized_expression"), child(n, c15, _),
+    sim300_probably_u3(c15).
+
+.decl sim300_probably_u5(n: node)
+sim300_probably_u5(n) :- sim300_alt_21_u4(n).
+sim300_probably_u5(n) :- kind(n, "parenthesized_expression"), child(n, c15, _),
+    sim300_probably_u4(c15).
+
+.decl sim300_probably_u6(n: node)
+sim300_probably_u6(n) :- sim300_alt_21_u5(n).
+sim300_probably_u6(n) :- kind(n, "parenthesized_expression"), child(n, c15, _),
+    sim300_probably_u5(c15).
+
+.decl sim300_probably_u7(n: node)
+sim300_probably_u7(n) :- sim300_alt_21_u6(n).
+sim300_probably_u7(n) :- kind(n, "parenthesized_expression"), child(n, c15, _),
+    sim300_probably_u6(c15).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim300_tok_follows_1(n: node)
+.stored sim300_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim300_tok_follows_1(n) :- next_sibling(s2, n), glob(".", s2).
+sim300_tok_follows_1(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("\\.", t3).
+sim300_tok_follows_1(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^(==|!=|<|<=|>|>=)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim300_tok_has_2(n: node)
+.stored sim300_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim300_tok_has_2(n) :- child(n, c1, _), glob("{==,!=,<,<=,>,>=}", c1).
+sim300_tok_has_2(n) :- op(n, t2), match("(==|!=|<|<=|>|>=)", t2).
+sim300_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+sim300_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+sim300_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^(==|!=|<|<=|>|>=|<>|in|not in|is|is not)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim300_tok_has_3(n: node)
+.stored sim300_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim300_tok_has_3(n) :- child(n, c9, _), glob("{==,!=,<,<=,>,>=,<>,in,not in,is,is not}", c9).
+sim300_tok_has_3(n) :- op(n, t10), match("(==|!=|<|<=|>|>=|<>|in|not in|is|is not)", t10).
+sim300_tok_has_3(n) :- child(n, c16, _), structural_before(c16, g11),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:not in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:is not)(?:\\W.*)?)$", g11).
+sim300_tok_has_3(n) :- child(n, c16, _), structural_after(c16, g11),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:not in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:is not)(?:\\W.*)?)$", g11).
+sim300_tok_has_3(n) :- node_text(n, g11), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:not in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:is not)(?:\\W.*)?)$", g11).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim300_tok_follows_4(n: node)
+.stored sim300_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim300_tok_follows_4(n) :- next_sibling(s1, n), match("(?s).*..*", s1).
+sim300_tok_follows_4(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("(?s).*..*", t2).
+sim300_tok_follows_4(n) :- structural_before(n, g3), match("(?s)^.*\\S\\s*$", g3).
+
+// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim300_tok_precedes_5(n: node)
+.stored sim300_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim300_tok_precedes_5(n) :- next_sibling(n, s1), match("(?s).*..*", s1).
+sim300_tok_precedes_5(n) :- structural_after(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, _, en7), o5 = en7 + strlen(g3), token(p4, _, t2, o5, _),
+    match("(?s).*..*", t2).
+sim300_tok_precedes_5(n) :- structural_after(n, g3), match("(?s)^\\s*\\S.*$", g3).
+
+// alt_10_u0_empty: level -1 of an unrolled recursion, empty
+.decl sim300_alt_10_u0_empty(n: node)
+
+// alt_12_u0_empty: level -1 of an unrolled recursion, empty
+.decl sim300_alt_12_u0_empty(n: node)
+
+// alt_14_u0_empty: level -1 of an unrolled recursion, empty
+.decl sim300_alt_14_u0_empty(n: node)
+
+// alt_9_u0_empty: level -1 of an unrolled recursion, empty
+.decl sim300_alt_9_u0_empty(n: node)
+
+// definitely_u0: level -1 of an unrolled recursion, empty
+.decl sim300_definitely_u0(n: node)
+
+// definitely_u0_empty: level -1 of an unrolled recursion, empty
+.decl sim300_definitely_u0_empty(n: node)
+
+// alt_16_u0_empty: level -1 of an unrolled recursion, empty
+.decl sim300_alt_16_u0_empty(n: node)
+
+// alt_18_u0_empty: level -1 of an unrolled recursion, empty
+.decl sim300_alt_18_u0_empty(n: node)
+
+// alt_20_u0_empty: level -1 of an unrolled recursion, empty
+.decl sim300_alt_20_u0_empty(n: node)
+
+// alt_21_u0_empty: level -1 of an unrolled recursion, empty
+.decl sim300_alt_21_u0_empty(n: node)
+
+// probably_u0: level -1 of an unrolled recursion, empty
+.decl sim300_probably_u0(n: node)
+
+// probably_u0_empty: level -1 of an unrolled recursion, empty
+.decl sim300_probably_u0_empty(n: node)
+
+// set_3: node kinds from a JSON `any`
+.decl sim300_set_3(v: symbol)
+sim300_set_3("integer"). sim300_set_3("float"). sim300_set_3("true"). sim300_set_3("false"). sim300_set_3("none").
+sim300_set_3("ellipsis").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl sim300_alt_2(n: node)
+sim300_alt_2(n) :- sim300_t_string(n).
+sim300_alt_2(n) :- sim300_f_string(n).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl sim300_alt_10(n: node)
+sim300_alt_10(n) :- sim300_alt_10_u7(n).
+
+// alt_12(n): the JSON `any`: n matches if any one of these rules does
+.decl sim300_alt_12(n: node)
+sim300_alt_12(n) :- sim300_alt_12_u7(n).
+
+// alt_14(n): the JSON `any`: n matches if any one of these rules does
+.decl sim300_alt_14(n: node)
+sim300_alt_14(n) :- sim300_alt_14_u7(n).
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+.decl sim300_alt_9(n: node)
+sim300_alt_9(n) :- sim300_alt_9_u7(n).
+
+// alt_16(n): the JSON `any`: n matches if any one of these rules does
+.decl sim300_alt_16(n: node)
+sim300_alt_16(n) :- sim300_alt_16_u7(n).
+
+// alt_18(n): the JSON `any`: n matches if any one of these rules does
+.decl sim300_alt_18(n: node)
+sim300_alt_18(n) :- sim300_alt_18_u7(n).
+
+// alt_20(n): the JSON `any`: n matches if any one of these rules does
+.decl sim300_alt_20(n: node)
+sim300_alt_20(n) :- sim300_alt_20_u7(n).
+
+// alt_21(n): the JSON `any`: n matches if any one of these rules does
+.decl sim300_alt_21(n: node)
+sim300_alt_21(n) :- sim300_alt_21_u7(n).

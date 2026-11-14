@@ -49,6 +49,8 @@ pub mod tokens;
 pub mod resident;
 pub mod validated;
 pub mod token_census;
+/// Python's tape from the lean parser (`rerail_python_lean`).
+pub mod python_lean;
 pub use wire::index_span;
 use wire::{CHECKPOINT_STRIDE, WIDTH};
 pub const ERROR_SYMBOL: u16 = u16::MAX;
@@ -197,7 +199,7 @@ impl Grammar {
         }
     }
 
-    fn kind_is_named(&self, code: u16) -> bool {
+    pub fn kind_is_named(&self, code: u16) -> bool {
         match self.named.get(usize::from(code)) {
             Some((_, named)) => *named,
             None => self.kinds.kind_is_named(code),
@@ -369,8 +371,22 @@ impl Code {
         Ok(code)
     }
 
-    fn classes(&self) -> &[u16] {
+    /// An `ERROR` node's code under `field` (a parser that recovers writes it as tree-sitter does).
+    pub fn error(field: u16) -> Result<Self, String> {
+        if field as usize >= FIELD_LIMIT {
+            return Err(format!("field {field} past the tape's codes"));
+        }
+        Ok(Code { kf: ERROR_CODE | (field << 10), flags: CODE_ERROR, alias: SENTINEL, class_count: 0, classes: [0; MAX_NODE_SUPERTYPES] })
+    }
+
+    /// Its supertype memberships, ascending.
+    pub fn classes(&self) -> &[u16] {
         &self.classes[..usize::from(self.class_count)]
+    }
+
+    /// Its kind and field, as v8's `kf`: the kind in the low 10 bits, the field above.
+    pub fn kf(&self) -> u16 {
+        self.kf
     }
 
     /// The code's bytes in the image: kf, flags, alias, class count, classes.

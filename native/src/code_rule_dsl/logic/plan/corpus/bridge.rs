@@ -92,13 +92,13 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
             if !program.outputs.contains(&b.output) {
                 return Err(Error::Plan(format!("{}: {name}.rr has no output {}", b.rel, b.output)));
             }
-            let nodes: Vec<bool> = program.decls[&b.output].iter().map(|(_, ty)| ty == "node").collect();
+            let nodes: Vec<bool> = program.decls[b.output.as_str()].iter().map(|(_, ty)| ty == "node").collect();
             // Lowered, `symbol` is `sym` and `number` is `int`.
-            let want: Vec<&str> = program.decls[&b.output]
+            let want: Vec<&str> = program.decls[b.output.as_str()]
                 .iter()
                 .flat_map(|(_, ty)| if ty == "node" { vec!["sym", "sym", "int", "int"] } else { vec![ty.as_str()] })
                 .collect();
-            let have = &prog.decls[&b.rel];
+            let have = &prog.decls[b.rel.as_str()];
             let fits = have.len() == want.len() && have.iter().zip(&want).all(|((_, ty), w)| ty == w);
             if !fits {
                 return Err(Error::Plan(format!(
@@ -135,7 +135,7 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
         }
         for b in &bridged {
             let nodes = &columns[b.output.as_str()];
-            let types: Vec<&str> = program.decls[&b.output].iter().map(|(_, ty)| ty.as_str()).collect();
+            let types: Vec<&str> = program.decls[b.output.as_str()].iter().map(|(_, ty)| ty.as_str()).collect();
             let int = |v: &str| v.parse::<i64>().map(Value::Int).map_err(|_| Error::Plan(format!("{name}: {}: not a number: {v}", b.output)));
             let held = facts.entry(b.rel.clone()).or_default();
             for r in rows(&b.output)? {
@@ -143,9 +143,9 @@ pub(crate) fn facts(prog: &Program, root: &Path, scratch: &Path, modes: &str, bi
                 for ((v, &node), ty) in r.iter().zip(nodes).zip(&types) {
                     if node {
                         let [p, k, s, e] = at.get(v).ok_or_else(|| Error::Plan(format!("{name}: no span for {v}")))?;
-                        args.extend([Value::Str(p.clone()), Value::Str(k.clone()), int(s)?, int(e)?]);
+                        args.extend([Value::Str(p.clone().into()), Value::Str(k.clone().into()), int(s)?, int(e)?]);
                     } else if *ty == "sym" || *ty == "symbol" {
-                        args.push(Value::Str(v.clone()));
+                        args.push(Value::Str(v.clone().into()));
                     } else {
                         args.push(int(v)?);
                     }

@@ -75,7 +75,7 @@ fn literals_parse_to_t_ast() {
     .unwrap();
     assert_eq!(p.facts["e"], [vec![Value::Int(1), Value::Int(-2)]]);
     let body = &p.rules[0].body;
-    assert_eq!(p.rules[0].head.args[1], Term::Call("cat".into(), vec![Term::Var("q".into()), Term::Var("a".into())]));
+    assert_eq!(p.rules[0].head.args[1], Term::Call("cat".into(), [Term::Var("q".into()), Term::Var("a".into())].into()));
     assert!(matches!(&body[1], Literal::Atom(a) if a.neg && a.rel == "g"));
     assert!(matches!(&body[2], Literal::Agg { var, op: AggOp::Count, over: None, atom } if var == "k" && atom.args[1] == Term::Wild));
     assert!(matches!(&body[3], Literal::Cmp { op: ">=", r: Term::Int(2), .. }));
@@ -245,7 +245,7 @@ fn an_undeclared_input_is_named() {
 fn comparisons_bind_like_t() {
     let bound = |vs: &[&str]| vs.iter().map(|v| v.to_string()).collect::<BTreeSet<_>>();
     let x = Term::Var("x".into());
-    let cat = Term::Call("cat".into(), vec![Term::Var("q".into()), Term::Var("a".into())]);
+    let cat = Term::Call("cat".into(), [Term::Var("q".into()), Term::Var("a".into())].into());
     assert_eq!(cmp_binds(&x, "=", &cat, &bound(&["q", "a"])), Some(bound(&["x"])));
     assert_eq!(cmp_binds(&x, "=", &cat, &bound(&["q"])), None);
     // A bound result splits into its unbound parts.

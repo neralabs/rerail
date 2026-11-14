@@ -1,0 +1,150 @@
+.policy "ruff-b905-zip-without-explicit-strict" revision 2
+.guests off
+.description "Pass strict= explicitly to zip() over two or more iterables on Python 3.10+; otherwise mismatched lengths are truncated silently."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B905(n): a finding at node n, from clause `zip-without-explicit-strict`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation B905(at: node, call: node) "Pass `strict=` explicitly: `strict=True` when lengths must match, `strict=False` when truncation is intended."
+    suppress noqa "B905"
+B905(CALL, n) :- kind(n, "call"), b905_arg_no_strict_1(n), b905_alt_4(n, CALL), child(n, c4, _),
+    kind(c4, "argument_list"),
+    count : { child(c4, c5, _), !b905_not_positional(c5), b905_infinite(c5) } = 0,
+    ( k1 = count : { child(c4, c1, _), !b905_not_positional(c1) }, k1 >= 2
+    ; child(c4, c2, _), kind(c2, "list_splat")
+    ).
+
+
+// it_cycle_count(n): the JSON util `it-cycle-count`, used where the JSON says `matches: "it-cycle-count"`
+.decl b905_it_cycle_count(n: node)
+b905_it_cycle_count(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "itertools.cycle") ; sym_of(n, "itertools.count")).
+b905_it_cycle_count(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    b905_it_cycle_count(c1).
+
+// it_repeat(n): the JSON util `it-repeat`, used where the JSON says `matches: "it-repeat"`
+.decl b905_it_repeat(n: node)
+b905_it_repeat(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "itertools.repeat").
+b905_it_repeat(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), b905_it_repeat(c1).
+
+// none_literal(n): the JSON util `none-literal`, used where the JSON says `matches: "none-literal"`
+.decl b905_none_literal(n: node)
+b905_none_literal(n) :- kind(n, "none").
+b905_none_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    b905_none_literal(c1).
+
+// infinite_call(n): the JSON util `infinite-call`, used where the JSON says `matches: "infinite-call"`
+.decl b905_infinite_call(n: node)
+b905_infinite_call(n) :- kind(n, "call"),
+    ( field(n, "function", c1), b905_it_cycle_count(c1)
+    ; field(n, "function", c2), b905_it_repeat(c2), child(n, c3, _), kind(c3, "argument_list"), b905_alt_1(c3)
+    ; field(n, "function", c4), b905_it_repeat(c4), child(n, c5, _), kind(c5, "generator_expression")
+    ).
+
+
+// infinite(n): the JSON util `infinite`, used where the JSON says `matches: "infinite"`
+.decl b905_infinite(n: node)
+b905_infinite(n) :- b905_infinite_call(n).
+b905_infinite(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), b905_infinite(c1).
+
+// callee_zip(n): the JSON util `callee-zip`, used where the JSON says `matches: "callee-zip"`
+.decl b905_callee_zip(n: node)
+b905_callee_zip(n) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "zip"),
+    sym_of(n, "builtins.zip").
+b905_callee_zip(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), b905_callee_zip(c1).
+
+// trivia(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl b905_trivia(n: node)
+b905_trivia(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+
+// not_positional(n): the JSON util `not-positional`, used where the JSON says `matches: "not-positional"`
+.decl b905_not_positional(n: node)
+b905_not_positional(n) :- (kind(n, "keyword_argument") ; kind(n, "dictionary_splat")).
+b905_not_positional(n) :- b905_trivia(n).
+b905_not_positional(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl b905_args_plain(l: node, a: node, i: number)
+b905_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl b905_args_splat(l: node, i: number)
+b905_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl b905_args_pos(l: node, a: node, j: number)
+b905_args_pos(l, a, j) :- b905_args_plain(l, a, i), count : { b905_args_splat(l, k), k < i } = 0,
+    j = count : { b905_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl b905_args_star(l: node, j: number)
+b905_args_star(l, j) :- b905_args_splat(l, i), count : { b905_args_splat(l, k), k < i } = 0,
+    j = count : { b905_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl b905_args_kwp(l: node, k: symbol, v: node)
+b905_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl b905_args_lit_dict(s: node, d: node)
+b905_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !b905_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl b905_args_str_pair(p: node)
+b905_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl b905_args_kw(l: node, k: symbol, v: node)
+b905_args_kw(l, k, v) :- b905_args_kwp(l, k, v).
+b905_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), b905_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl b905_args_kw_spread(l: node)
+b905_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !b905_args_lit_dict(s, _).
+
+// arg_strict_1: call n passes v for slot `strict` of (*, strict), syntactic: Ruff's find_argument
+.decl b905_arg_strict_1(n: node, v: node)
+b905_arg_strict_1(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    b905_args_kwp(l, "strict", v).
+
+// arg_no_strict_1: call n does not pass slot `strict` of (*, strict), syntactic: Ruff's find_argument
+.decl b905_arg_no_strict_1(n: node)
+b905_arg_no_strict_1(n) :- kind(n, "call"), field(n, "arguments", l),
+    !b905_args_kwp(l, "strict", _).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl b905_alt_1(n: node)
+b905_alt_1(n) :- node(_, n, _, _, _), k2 = count : { child(n, c1, _), !b905_not_positional(c1) },
+    k2 >= 1, k2 <= 1,
+    count : { child(n, c3, _), (kind(c3, "keyword_argument") ; kind(c3, "dictionary_splat")) } = 0.
+b905_alt_1(n) :- k5 = count : { child(n, c4, _), !b905_not_positional(c4) }, k5 >= 2, k5 <= 2,
+    child(n, c6, _), !b905_not_positional(c6), b905_none_literal(c6), precedes(s7, c6),
+    !b905_not_positional(s7).
+b905_alt_1(n) :- child(n, c8, _), kind(c8, "keyword_argument"), field(c8, "name", c9),
+    glob("times", c9), field(c8, "value", c10), b905_none_literal(c10).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+//   CALL: metavariable this relation binds for the calling rule
+.decl b905_alt_4(n: node, call: loc)
+b905_alt_4(n, CALL) :- node(_, n, _, _, _), CALL = n, field(n, "function", c1), b905_callee_zip(c1).
+b905_alt_4(n, CALL) :- field(n, "function", c2), kind(c2, "list_splat"), child(c2, c3, _),
+    b905_callee_zip(c3), node(_, c3, _, _, _), CALL = c3.

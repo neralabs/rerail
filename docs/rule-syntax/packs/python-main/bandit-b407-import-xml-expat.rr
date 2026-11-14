@@ -1,0 +1,17 @@
+.policy "bandit-b407-import-xml-expat" revision 1
+.guests off
+.description "Avoid importing xml.dom.expatbuilder to parse XML; it is open to XML attacks, so use defusedxml."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B407(n): a finding at node n, from clause `B407`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B407(at: node) "xml.dom.expatbuilder parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library."
+    suppress nosec "B407"
+B407(n) :- n ~ `import xml.dom.expatbuilder`.
+B407(n) :- n ~ `import xml.dom.expatbuilder as $ALIAS`.
+B407(n) :- n ~ `from xml.dom.expatbuilder import $$$NAMES`.
+B407(n) :- n ~ `from xml.dom import expatbuilder`.
+B407(n) :- n ~ `from xml.dom import expatbuilder as $ALIAS`.

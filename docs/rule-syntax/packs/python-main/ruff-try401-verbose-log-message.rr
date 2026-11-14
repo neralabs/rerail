@@ -1,0 +1,76 @@
+.policy "ruff-try401-verbose-log-message" revision 1
+.guests off
+.description "Don't include the caught exception object in an exception log message; the exception call already records it with its traceback."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// TRY401(n): a finding at node n, from clause `verbose-log-message`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation TRY401(at: node, c: loc, e: loc) "Remove `{e}` from this message: the `exception` call already logs the caught exception and its traceback. Leave it if this logger does not append the traceback."
+    suppress noqa "TRY401"
+TRY401(n, C, E) :- kind(n, "identifier"), node(_, n, _, _, _), E = n, try401_walked(n, C), ref_site(n, b1),
+    site_form(b1, "except").
+
+// logger_object(n): the JSON util `logger-object`, used where the JSON says `matches: "logger-object"`
+.decl try401_logger_object(n: node)
+try401_logger_object(n) :- kind(n, "call"), field(n, "function", c1),
+    (sym_of(c1, "logging.getLogger") ; sym_of(c1, "logging.Logger")).
+try401_logger_object(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    try401_logger_object(c2).
+try401_logger_object(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "logging") ; sym_of(n, "flask.current_app.logger")).
+try401_logger_object(n) :-
+    ( kind(n, "identifier"), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", n)
+    ; kind(n, "attribute"), field(n, "attribute", c1), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c1), field(n, "object", c2), try401_name_chain(c2)
+    ),
+    !sym_of(n, _).
+
+// name_chain(n): the JSON util `name-chain`, used where the JSON says `matches: "name-chain"`
+.decl try401_name_chain(n: node)
+try401_name_chain(n) :- kind(n, "identifier").
+try401_name_chain(n) :- kind(n, "attribute"), field(n, "object", c1), try401_name_chain(c1).
+try401_name_chain(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), try401_name_chain(c2).
+
+// level_callee(n): the JSON util `level-callee`, used where the JSON says `matches: "level-callee"`
+.decl try401_level_callee(n: node)
+try401_level_callee(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("exception", c1), field(n, "object", c2), try401_logger_object(c2).
+try401_level_callee(n) :- kind(n, "identifier"), sym_of(n, "logging.exception").
+try401_level_callee(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    try401_level_callee(c3).
+
+// exception_call(n): the JSON util `exception-call`, used where the JSON says `matches: "exception-call"`
+//   C: metavariable this relation binds for the calling rule
+.decl try401_exception_call(n: node, c: loc)
+try401_exception_call(n, C) :- kind(n, "call"), node(_, n, _, _, _), C = n, inside(n, p1, "block"),
+    child(p2, p1, _), kind(p2, "except_clause"), field(n, "function", c3),
+    try401_level_callee(c3), !try401_alt_2(n).
+
+// walked(n): the JSON util `walked`, used where the JSON says `matches: "walked"`
+//   C: metavariable this relation binds for the calling rule
+.decl try401_walked(n: node, c: loc)
+try401_walked(n, C) :- child(p1, n, _), kind(p1, "argument_list"), child(p2, p1, _),
+    kind(p2, "call"), try401_exception_call(p2, C), !kind(n, "keyword_argument"),
+    !kind(n, "dictionary_splat").
+try401_walked(n, C) :- kind(n, "generator_expression"), field(p3, "arguments", n),
+    kind(p3, "call"), try401_exception_call(p3, C).
+try401_walked(n, C) :- child(p4, n, _), try401_walked_parent(p4, C).
+
+// walked_parent(n): the JSON util `walked-parent`, used where the JSON says `matches: "walked-parent"`
+//   C: metavariable this relation binds for the calling rule
+.decl try401_walked_parent(n: node, c: loc)
+try401_walked_parent(n, C) :- try401_walked(n, C), !kind(n, "attribute").
+
+// handler_type(n): the JSON util `handler-type`, used where the JSON says `matches: "handler-type"`
+.decl try401_handler_type(n: node)
+try401_handler_type(n) :- !kind(n, "block"), child(p1, n, _), kind(p1, "except_clause").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl try401_alt_2(n: node)
+try401_alt_2(n) :- try401_handler_type(n).
+try401_alt_2(n) :- within(n, p1), try401_handler_type(p1).

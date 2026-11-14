@@ -1,0 +1,132 @@
+.policy "ruff-c414-unnecessary-double-cast-or-process" revision 1
+.guests off
+.description "Remove a list, tuple, set, sorted or reversed call nested directly inside a list, tuple, set or sorted call; the outer call already accepts any iterable."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// fn_list_tuple(n): the JSON util `fn-list-tuple`, used where the JSON says `matches: "fn-list-tuple"`
+.decl c414_fn_list_tuple(n: node)
+c414_fn_list_tuple(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (global_ref(n, "list") ; global_ref(n, "tuple")),
+    (sym_of(n, "builtins.list") ; sym_of(n, "builtins.tuple")).
+c414_fn_list_tuple(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    c414_fn_list_tuple(c1).
+
+// fn(n, key): 3 copies of one rule set (`fn-reversed`, `fn-set`, `fn-sorted`), folded into one: row `key` of
+// fn_case gives the strings each copy had.
+.decl c414_fn(n: node, key: symbol)
+c414_fn(n, q1) :- c414_fn_case(q1, s1), (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, q1), sym_of(n, s1).
+c414_fn(n, q1) :- c414_fn_case(q1, s1), kind(n, "parenthesized_expression"), child(n, c1, _),
+    c414_fn(c1, q1).
+
+// inner_call(n): the JSON util `inner-call`, used where the JSON says `matches: "inner-call"`
+//   I, IA: metavariables this relation binds for the calling rule
+.decl c414_inner_call(n: node, i: loc, ia: loc)
+c414_inner_call(n, I, IA) :- kind(n, "call"), field(n, "function", c1), node(_, c1, _, _, _), I = c1,
+    field(n, "arguments", c2), node(_, c2, _, _, _), IA = c2.
+c414_inner_call(n, I, IA) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    c414_inner_call(c3, I, IA).
+
+// lead(n): the JSON util `lead`, used where the JSON says `matches: "lead"`
+.decl c414_lead(n: node)
+c414_lead(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+c414_lead(n) :- node(_, n, _, _, _), glob("[(]", n).
+
+// nested_call(n): the JSON util `nested-call`, used where the JSON says `matches: "nested-call"`
+//   I, IA, O, OA: metavariables this relation binds for the calling rule
+.decl c414_nested_call(n: node, i: loc, ia: loc, o: loc, oa: loc)
+c414_nested_call(n, I, IA, O, OA) :- kind(n, "call"), field(n, "function", c1),
+    c414_alt_1(c1, O), field(n, "arguments", c3), kind(c3, "argument_list"), node(_, c3, _, _, _), OA = c3,
+    child(c3, c4, _), c414_inner_call(c4, I, IA),
+    count : { precedes(s5, c4), !c414_lead(s5) } = 0.
+
+// kw(n, …): the JSON util `kw`, called with `matches` and arguments N, V, S
+.decl c414_kw(n: node, n_mv: node, v: node, s: node)
+c414_kw(n, N, V, S) :-
+    ( kind(n, "keyword_argument"), field(n, "name", c1_1), node(_, c1_1, _, _, _), N = c1_1, field(n, "value", c2_1), node(_, c2_1, _, _, _), V = c2_1, unset(S)
+    ; kind(n, "dictionary_splat"), child(n, c3_2, _), !c414_alt_2(c3_2), node(_, c3_2, _, _, _), S = c3_2, unset(N), unset(V)
+    ).
+
+
+// C414(n): a finding at node n, from clause `inside-set`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on O, I are added to every rule.
+.violation C414(at: node, m: node, i: loc, o: loc) "Remove the inner `{i}()` call and pass its argument straight to `{o}()`, which accepts any iterable and gives the same result."
+    suppress noqa "C414"
+C414(M, n, I, O) :- c414_nested_call(n, I, _, O, _), match("(?s)(?:\\*\\s*)?(?P<M>.*)", n),
+    c414_fn(O, "set"),
+    (c414_fn_list_tuple(I) ; c414_fn(I, "set") ; c414_fn(I, "sorted") ; c414_fn(I, "reversed")).
+
+// C414_list_or_tuple_inside(n): a finding at node n, from clause `list-or-tuple-inside`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on O, I are added to every rule.
+.violation C414_list_or_tuple_inside(at: node, m: node, i: loc, o: loc) code "C414" "Remove the inner `{i}()` call and pass its argument straight to `{o}()`, which accepts any iterable and gives the same result."
+    suppress noqa "C414"
+C414_list_or_tuple_inside(M, n, I, O) :- c414_nested_call(n, I, _, O, _),
+    match("(?s)(?:\\*\\s*)?(?P<M>.*)", n), (c414_fn_list_tuple(O) ; c414_fn(O, "sorted")),
+    c414_fn_list_tuple(I).
+
+// C414_sorted_inside_sorted(n): a finding at node n, from clause `sorted-inside-sorted`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on O, I are added to every rule.
+.violation C414_sorted_inside_sorted(at: node, m: node, i: loc, o: loc) code "C414" "Remove the inner `{i}()` call and pass its argument straight to `{o}()`, which accepts any iterable and gives the same result."
+    suppress noqa "C414"
+C414_sorted_inside_sorted(M, n, I, O) :- kind(n, "call"), c414_nested_call(n, I, IA, O, OA),
+    count : { field(n, "arguments", c1), child(c1, c2, _), c414_kw(c2, KN, KV, KS), count : { inside(c2, p3, "call"), has(p3, c4, "argument_list"), node(_, c4, _, _, _), Y = c4, text(Y, t5), text(IA, t5), child(c4, c7, _), c414_alt_6(c7), @doc(Y) = @doc(IA) } = 0 } = 0,
+    count : { has(n, c8, "argument_list"), node(_, c8, _, _, _), Z = c8, text(Z, t9), text(IA, t9), child(c8, c11, _), c414_kw(c11, JN, JV, JS), count : { inside(c11, p12, "argument_list"), node(_, p12, _, _, _), W = p12, text(W, t13), text(OA, t13), child(p12, c15, _), c414_alt_6(c15), @doc(W) = @doc(OA) } = 0, @doc(Z) = @doc(IA) } = 0,
+    match("(?s)(?:\\*\\s*)?(?P<M>.*)", n), c414_fn(O, "sorted"), c414_fn(I, "sorted").
+
+// C414_reversed_inside_sorted(n): a finding at node n, from clause `reversed-inside-sorted`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on O, I are added to every rule.
+.violation C414_reversed_inside_sorted(at: node, m: node, i: loc, o: loc) code "C414" "Remove the inner `{i}()` call and pass its argument straight to `{o}()`; keep it only if items that sort equal must stay in reversed input order."
+    suppress noqa "C414"
+C414_reversed_inside_sorted(M, n, I, O) :- c414_nested_call(n, I, _, O, _),
+    match("(?s)(?:\\*\\s*)?(?P<M>.*)", n), c414_fn(O, "sorted"), c414_fn(I, "reversed").
+
+// demand_alt_6: the rows of alt_6 its callers ask for (the metavariable columns they pass in)
+.decl c414_demand_alt_6(n: node)
+c414_demand_alt_6(c7) :- kind(n, "call"), c414_nested_call(n, I, IA, O, OA),
+    match("(?s)(?:\\*\\s*)?(?P<M>.*)", n), c414_fn(O, "sorted"), c414_fn(I, "sorted"),
+    field(n, "arguments", c1), child(c1, c2, _), c414_kw(c2, KN, KV, KS),
+    inside(c2, p3, "call"), has(p3, c4, "argument_list"), node(_, c4, _, _, _), Y = c4, text(Y, t5),
+    text(IA, t5), child(c4, c7, _), @doc(Y) = @doc(IA).
+c414_demand_alt_6(c15) :- kind(n, "call"), c414_nested_call(n, I, IA, O, OA),
+    match("(?s)(?:\\*\\s*)?(?P<M>.*)", n), c414_fn(O, "sorted"), c414_fn(I, "sorted"),
+    has(n, c8, "argument_list"), node(_, c8, _, _, _), Z = c8, text(Z, t9), text(IA, t9),
+    child(c8, c11, _), c414_kw(c11, JN, JV, JS), inside(c11, p12, "argument_list"),
+    node(_, p12, _, _, _), W = p12, text(W, t13), text(OA, t13), child(p12, c15, _), @doc(Z) = @doc(IA), @doc(W) = @doc(OA).
+
+// fn_case: one row per relation folded into fn: its key, then the strings that differed.
+.decl c414_fn_case(key: symbol, s1: symbol)
+c414_fn_case("reversed", "builtins.reversed"). c414_fn_case("set", "builtins.set").
+c414_fn_case("sorted", "builtins.sorted").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   O: metavariable this relation binds for the calling rule
+.decl c414_alt_1(n: node, o: loc)
+c414_alt_1(n, O) :- kind(n, "list_splat"), child(n, c1, _), node(_, c1, _, _, _), O = c1.
+c414_alt_1(n, O) :- !kind(n, "list_splat"), node(_, n, _, _, _), O = n.
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl c414_alt_2(n: node)
+c414_alt_2(n) :- node(_, n, _, _, _), glob("\\*\\*", n).
+c414_alt_2(n) :- kind(n, "comment").
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl c414_alt_6(n: node)
+c414_alt_6(n) :- node(_, N, _, _, _), node(_, V, _, _, _), c414_demand_alt_6(n),
+    kind(n, "keyword_argument"), field(n, "name", c1), node(_, c1, _, _, _), A = c1,
+    text(A, t2), text(N, t2), field(n, "value", c4), node(_, c4, _, _, _), B = c4,
+    value(B, t5), value(V, t5), @doc(A) = @doc(N).
+c414_alt_6(n) :- node(_, S, _, _, _), c414_demand_alt_6(n), kind(n, "dictionary_splat"),
+    child(n, c7, _), !c414_alt_2(c7), node(_, c7, _, _, _), C = c7, value(C, t8), value(S, t8).

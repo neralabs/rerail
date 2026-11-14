@@ -3,15 +3,17 @@
 //!
 //! A run's documents are, by key (`syntax::GUEST_KEYS`, `syntax::HIDDEN_KEYS`):
 //! - files, `1..2^30`;
-//! - guests in the run's language (a Python string annotation in a Python run), `2^30..2^30 + 2^29`: shown, unless
-//!   the program says `.guests off`;
+//! - guests of code in the run's language (Python in a Python string, embedded by a library), `2^30..2^30 + 2^28`:
+//!   shown, unless the program says `.guests off`;
+//! - annotations (a type expression, Python's in a Python run), `..2^30 + 2^29`: not shown to a rule that does not
+//!   name them, but kept in a relation they reach once its copies for them are folded into it (`fold_own`);
 //! - every other document (a guest in another grammar, a value `@parse` or `@splice` made), up to `2^31`: never
 //!   shown.
 //!
 //! A node's id is its document's key `<< 32` and its index, so "shown" is one bound on a location value.
 //!
 //! A variable is *scoped* when the rule reached it from a guest relation (`guest`, `parsed`, `doc_root`, `doc_role`,
-//! `tape_of`, `host_node`): it is a location in a guest column of one, or it shares a base atom's location columns
+//! `tape_of`, `host_node`, `string_annotation`): it is a location in a guest column of one, or it shares a base atom's location columns
 //! with a scoped variable (they are in one document), or it is read from a derived relation's column that some rule
 //! fills from a scoped variable. Every other variable in a positive base atom's location column gets the bound
 //! (`n < bound << 32`, `d < bound`). The bound is a comparison on a value the join already has: no row is copied,
@@ -28,8 +30,11 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// The relations a rule enters a guest through, and their columns that are the guest's: (relation, guest location
 /// columns, grammar column, tape column).
-const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 9] = [
+/// `string_annotation(s)` is one: Ruff's strings that are type definitions, nested ones too, whose nodes are in an
+/// annotation's document (not shown, `guests::key`).
+const ENTRIES: [(&str, &[usize], Option<usize>, Option<usize>); 10] = [
     ("guest", &[0], Some(3), None),
+    ("string_annotation", &[0], None, None),
     ("parsed", &[2], Some(1), None),
     ("sub_tape", &[], Some(1), Some(2)),
     ("doc_root", &[0, 1], None, None),
@@ -50,11 +55,11 @@ pub(super) fn dialect_label(grammar: &str) -> &str {
 
 /// The bound of `prog`'s shown documents: files, and the run language's guests unless `.guests off`.
 pub(super) fn bound(prog: &Program) -> u32 {
-    use crate::code_rule_dsl::facts::vtab::syntax::{GUEST_KEYS, GUEST_POLICY, HIDDEN_KEYS};
+    use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, GUEST_KEYS, GUEST_POLICY};
     let off = prog.facts.get(GUEST_POLICY).into_iter().flatten().any(|row| {
         matches!(row.as_slice(), [crate::code_rule_dsl::logic::front::Value::Str(k), crate::code_rule_dsl::logic::front::Value::Str(v)] if k == "library" && v == "off")
     });
-    if off { GUEST_KEYS } else { HIDDEN_KEYS }
+    if off { GUEST_KEYS } else { ANNOTATION_KEYS }
 }
 
 /// What the analysis knows of a variable: scoped, and its grammar (`Some("")` when two disagree). `definite`: it is
@@ -134,7 +139,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         // made from its original as it was (no snapshot of every rule each round, which was a fifth of hiding a pack).
         let mut edits: Vec<(usize, usize, Edit)> = Vec::new();
         let mut copies: Vec<(crate::code_rule_dsl::logic::front::Rule, BTreeMap<String, Fact>)> = Vec::new();
-        let mut decls: Vec<(String, Vec<(String, String)>)> = Vec::new();
+        let mut decls: Vec<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::List<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::Name)>)> = Vec::new();
         let mut kindsets: Vec<(String, Vec<String>)> = Vec::new();
         let mut changed = false;
         let mut by_head: Option<HashMap<&str, Vec<usize>>> = None;
@@ -215,13 +220,13 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                         let mut seed = BTreeMap::new();
                         for (c, g) in &cols {
                             if let Some(Term::Var(v)) = copy.head.args.get(*c) {
-                                seed.insert(v.clone(), Fact { scoped: true, grammar: Some(g.clone()), definite: true });
+                                seed.insert(v.to_string(), Fact { scoped: true, grammar: Some(g.clone()), definite: true });
                             }
                         }
                         copies.push((copy, seed));
                     }
-                    if let Some(d) = prog.decls.get(&orig) {
-                        decls.push((name.clone(), d.clone()));
+                    if let Some(d) = prog.decls.get(orig.as_str()) {
+                        decls.push((name.clone().into(), d.clone()));
                     }
                     specialized.insert(name.clone(), (orig, cols));
                 }
@@ -236,7 +241,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         }
         drop(by_head);
         for (i, k, edit) in edits {
-            match (&mut prog.rules[i].body[k], edit) {
+            match (&mut prog.rules[i].body.make_mut()[k], edit) {
                 (Literal::Nearest { kindset, .. }, Edit::Kindset(name)) => *kindset = name,
                 (Literal::Atom(a) | Literal::Agg { atom: a, .. }, Edit::Rel(name)) => a.rel = name.into(),
                 _ => unreachable!("an edit is of the literal it was recorded for"),
@@ -254,8 +259,14 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
     }
     let bound_of = |doc_column: bool| if doc_column { i64::from(bound) } else { i64::from(bound) << 32 };
     let reaches = reaching(prog, &seeds);
+    // What `parsed` asks for (`rr_embed_req`, and the contexts `rr_ctx<k>` only it reads) is not bounded: asking is
+    // not seeing. A string in an annotation is in a document not shown, and its rule's demand is made of inputs
+    // alone (`rr_ctx3(s) :- kind(s, "string")`), so bounded, the string inside `"Opt['Baz']"` was never asked for,
+    // and no rule reached it through the annotation either.
+    let asking = asking(prog);
+    let asks = |rel: &str| asking.contains(rel);
     // Each rule bounded on its own, on the pool's threads.
-    prog.rules.par_iter_mut().zip(&seeds).zip(reaches).filter(|((r, _), _)| !VIEWS.contains(&r.head.rel.as_str())).for_each(|((rule, seed), reaches)| {
+    prog.rules.par_iter_mut().zip(&seeds).zip(reaches).filter(|((r, _), _)| !VIEWS.contains(&r.head.rel.as_str()) && !asks(&r.head.rel)).for_each(|((rule, seed), reaches)| {
         let facts: BTreeMap<String, Fact> = if reaches { analyse(rule, &base_locations, &carried, seed).into_iter().map(|(v, f)| (v.to_owned(), f)).collect() } else { BTreeMap::new() };
         // Wildcards in an unscoped base atom's location columns become variables, so they can be bounded.
         let mut fresh = 0;
@@ -267,11 +278,11 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             }
             let Some(cols) = base_locations.get(a.rel.as_str()) else { continue };
             let doc_col = crate::code_rule_dsl::typing::file_local::document_column(&a.rel);
-            let atom_scoped = cols.iter().any(|&c| matches!(a.args.get(c), Some(Term::Var(v)) if facts.get(v).is_some_and(|f| f.scoped)));
+            let atom_scoped = cols.iter().any(|&c| matches!(a.args.get(c), Some(Term::Var(v)) if facts.get(v.as_str()).is_some_and(|f| f.scoped)));
             if atom_scoped {
                 // Named in the guest's grammar only where the node is the guest's (a clone's seed), not maybe one.
                 let grammar = cols.iter().find_map(|&c| match a.args.get(c) {
-                    Some(Term::Var(v)) => facts.get(v).filter(|f| f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty()),
+                    Some(Term::Var(v)) => facts.get(v.as_str()).filter(|f| f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty()),
                     _ => None,
                 });
                 if let Some(g) = grammar {
@@ -280,14 +291,14 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                 continue;
             }
             for &c in cols {
-                match a.args.get_mut(c) {
+                match a.args.make_mut().get_mut(c) {
                     Some(Term::Var(v)) => {
-                        bounded.entry(v.clone()).or_insert(Some(c) == doc_col);
+                        bounded.entry(v.to_string()).or_insert(Some(c) == doc_col);
                     }
                     Some(t @ Term::Wild) => {
                         let v = format!("rr_shown{fresh}");
                         fresh += 1;
-                        *t = Term::Var(v.clone());
+                        *t = Term::Var(v.clone().into());
                         bounded.insert(v, Some(c) == doc_col);
                     }
                     _ => {}
@@ -295,7 +306,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             }
         }
         for (v, doc_column) in bounded {
-            rule.body.push(Literal::Cmp { l: Term::Var(v), op: "<", r: Term::Int(bound_of(doc_column)) });
+            rule.body.push(Literal::Cmp { l: Term::Var(v.into()), op: "<", r: Term::Int(bound_of(doc_column)) });
         }
     });
     // An aggregate's atom is its own scope: one over a base atom reads it through a bounded helper,
@@ -315,13 +326,13 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             let mut inner = atom.clone();
             for (c, t) in inner.args.iter_mut().enumerate() {
                 if matches!(t, Term::Wild) {
-                    *t = Term::Var(format!("rr_shown_agg_c{c}"));
+                    *t = Term::Var(format!("rr_shown_agg_c{c}").into());
                 }
             }
             let bounds: Vec<Literal> = cols
                 .iter()
                 .filter_map(|&c| match inner.args.get(c) {
-                    Some(Term::Var(v)) => Some(Literal::Cmp { l: Term::Var(v.clone()), op: "<", r: Term::Int(bound_of(Some(c) == doc_col)) }),
+                    Some(Term::Var(v)) => Some(Literal::Cmp { l: Term::Var(v.clone().into()), op: "<", r: Term::Int(bound_of(Some(c) == doc_col)) }),
                     _ => None,
                 })
                 .collect();
@@ -330,11 +341,11 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                 if let Term::Var(v) = t
                     && !vars.iter().any(|(x, _)| x == v)
                 {
-                    vars.push((v.clone(), decl.get(c).map_or_else(|| "int".to_owned(), |(_, ty)| ty.clone())));
+                    vars.push((v.to_string(), decl.get(c).map_or_else(|| "int".to_owned(), |(_, ty)| ty.to_string())));
                 }
             }
             let name = format!("rr_shown_agg{}", helpers.len());
-            let head = Atom { rel: name.into(), args: vars.iter().map(|(v, _)| Term::Var(v.clone())).collect(), neg: false, gated: false };
+            let head = Atom { rel: name.into(), args: vars.iter().map(|(v, _)| Term::Var(v.clone().into())).collect(), neg: false, gated: false };
             // The aggregate's own wildcards stay wildcards: its named variables are correlated.
             let args = head.args.iter().map(|t| match t {
                 Term::Var(v) if v.starts_with("rr_shown_agg_c") => Term::Wild,
@@ -345,8 +356,34 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         }
     }
     for (head, vars, body) in helpers {
-        prog.decls.insert(head.rel.to_string(), vars);
-        prog.rules.push(crate::code_rule_dsl::logic::front::Rule { head, body });
+        prog.decls.insert(head.rel.clone(), vars.iter().map(|(c, t)| (c.into(), t.into())).collect());
+        prog.rules.push(crate::code_rule_dsl::logic::front::Rule { head, body: body.into() });
+    }
+}
+
+/// The guest demand (`guests::DEMAND`) and the contexts (`rr_ctx<k>`, `rr::lower`) that only it reads, transitively.
+fn asking(prog: &Program) -> BTreeSet<String> {
+    // A combined run's program prefix (`p<i>_`, `corpus::combine`) comes first.
+    let context = |r: &str| {
+        let own = r.strip_prefix('p').and_then(|t| t.find('_').filter(|&i| i > 0 && t[..i].bytes().all(|b| b.is_ascii_digit())).map(|i| &t[i + 1..]));
+        own.unwrap_or(r).starts_with("rr_ctx")
+    };
+    let mut asking: BTreeSet<String> = BTreeSet::from([super::guests::DEMAND.to_owned()]);
+    loop {
+        let more: Vec<String> = prog
+            .decls
+            .keys()
+            .filter(|r| context(r) && !asking.contains(r.as_str()))
+            .filter(|r| {
+                let mut readers = prog.rules.iter().filter(|x| x.body.iter().any(|l| l.atom().is_some_and(|a| a.rel == r.as_str()))).peekable();
+                readers.peek().is_some() && readers.all(|x| asking.contains(x.head.rel.as_str()))
+            })
+            .map(|r| r.to_string())
+            .collect();
+        if more.is_empty() {
+            return asking;
+        }
+        asking.extend(more);
     }
 }
 
@@ -359,7 +396,8 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
 /// `merge_and_drop_repeats`. With guests not shown (`bound`, `.guests off`) nothing is folded. Gives the copies folded.
 /// `RERAIL_SHOWN_COPIES=on` keeps them (to measure what they cost).
 pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
-    if bound != crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS || std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|v| v == "on") {
+    use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
+    if bound != ANNOTATION_KEYS || std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|v| v == "on") {
         return 0;
     }
     let own = |g: &str| dialect_label(g) == label;
@@ -383,7 +421,7 @@ pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
         // The longest original that leaves an own prefix.
         let orig = (0..tail.len()).filter(|&i| tail.is_char_boundary(i)).map(|i| (&tail[..i], &tail[i..])).find(|(mid, orig)| !orig.starts_with("rr_in_") && prog.decls.contains_key(*orig) && own_mid(mid));
         if let Some((_, orig)) = orig {
-            folded.insert(rel.clone(), orig.to_owned());
+            folded.insert(rel.to_string(), orig.to_owned());
         }
     }
     let sets: HashMap<String, String> = prog
@@ -398,6 +436,21 @@ pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
         return 0;
     }
     prog.rules.retain(|r| !folded.contains_key(r.head.rel.as_str()));
+    // An original holds its copies' rows: its rules' bounds take the annotations in (`ANNOTATION_KEYS` to
+    // `HIDDEN_KEYS`), as its copies' seeded columns did. A rule that does not reach an annotation keeps the bound.
+    let originals: BTreeSet<&str> = folded.values().map(String::as_str).collect();
+    let (narrow, wide) = (i64::from(ANNOTATION_KEYS), i64::from(HIDDEN_KEYS));
+    for rule in prog.rules.iter_mut().filter(|r| originals.contains(r.head.rel.as_str())) {
+        for l in &mut rule.body {
+            if let Literal::Cmp { op: "<", r: Term::Int(b), .. } = l {
+                if *b == narrow << 32 {
+                    *b = wide << 32;
+                } else if *b == narrow {
+                    *b = wide;
+                }
+            }
+        }
+    }
     let plain = format!("{label}:");
     let unqualify = |a: &mut Atom| {
         let col = match a.rel.as_str() {
@@ -405,10 +458,10 @@ pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
             "node" => Some(2),
             _ => None,
         };
-        if let Some(Term::Str(s)) = col.and_then(|c| a.args.get_mut(c))
+        if let Some(Term::Str(s)) = col.and_then(|c| a.args.make_mut().get_mut(c))
             && let Some(name) = s.strip_prefix(plain.as_str())
         {
-            *s = name.to_owned();
+            *s = name.to_owned().into();
         }
     };
     for rule in &mut prog.rules {
@@ -430,7 +483,7 @@ pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
         }
     }
     for rel in folded.keys() {
-        prog.decls.remove(rel);
+        prog.decls.remove(rel.as_str());
         prog.qualifiers.remove(rel);
     }
     for k in sets.keys() {
@@ -496,7 +549,7 @@ fn carry(prog: &Program, base: &HashMap<String, Vec<usize>>, seeds: &[BTreeMap<S
     let mut carried: HashMap<Name, Vec<Fact>> = HashMap::default();
     for r in &prog.rules {
         if !carried.contains_key(r.head.rel.as_str()) && !view(&r.head.rel) {
-            let n = prog.decls.get(r.head.rel.as_str()).map_or(0, Vec::len);
+            let n = prog.decls.get(r.head.rel.as_str()).map_or(0, |c| c.len());
             carried.insert(r.head.rel.clone(), vec![Fact::default(); n]);
         }
     }
@@ -582,7 +635,7 @@ fn analyse<'r>(rule: &'r crate::code_rule_dsl::logic::front::Rule, base: &HashMa
     for a in positive() {
         let Some(&(_, cols, grammar, tape)) = ENTRIES.iter().find(|(e, ..)| *e == a.rel) else { continue };
         let grammar = grammar.and_then(|g| match a.args.get(g) {
-            Some(Term::Str(s)) => Some(s.clone()),
+            Some(Term::Str(s)) => Some(s.to_string()),
             _ => None,
         });
         let fact = Fact { scoped: true, grammar, definite: true };
@@ -657,10 +710,10 @@ fn qualify(a: &mut Atom, label: &str) {
         "field" => Some(1),
         _ => None,
     };
-    if let Some(Term::Str(s)) = col.and_then(|c| a.args.get_mut(c))
+    if let Some(Term::Str(s)) = col.and_then(|c| a.args.make_mut().get_mut(c))
         && qualified(s).is_none()
     {
-        *s = format!("{label}:{s}");
+        *s = format!("{label}:{s}").into();
     }
 }
 
@@ -740,28 +793,40 @@ pub mod tests {
     /// In another language's run, or with guests hidden, the copies stay.
     #[test]
     fn copies_for_a_guest_in_the_runs_own_language_are_folded_into_their_originals() {
-        let text = concat!(
-            ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
-            ".decl val(n: node)\nval(n) :- e(n).\nval(r) :- parsed(_, \"annotation\", r).\n",
-            ".decl asg(n: node)\nasg(n) :- e(n), kind(n, \"identifier\").\n",
-            ".decl only(n: node)\nonly(r) :- parsed(_, \"annotation\", r).\n",
-            ".decl out(n: node)\n.output out\nout(n) :- val(n), asg(n).\nout(n) :- only(n), asg(n).\n",
-        );
-        let hidden = |label: &str, bound: u32| {
-            let mut p = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        let text = |g: &str| {
+            format!(concat!(
+                ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
+                ".decl val(n: node)\nval(n) :- e(n).\nval(r) :- parsed(_, \"{g}\", r).\n",
+                ".decl asg(n: node)\nasg(n) :- e(n), kind(n, \"identifier\").\n",
+                ".decl only(n: node)\nonly(r) :- parsed(_, \"{g}\", r).\n",
+                ".decl out(n: node)\n.output out\nout(n) :- val(n), asg(n).\nout(n) :- only(n), asg(n).\n",
+            ), g = g)
+        };
+        let hidden = |grammar: &str, label: &str, bound: u32| {
+            let mut p = crate::code_rule_dsl::logic::rr::parse(&text(grammar)).unwrap();
             hide(&mut p, bound);
             let made = p.decls.keys().filter(|r| r.starts_with("rr_in_")).count();
             let folded = fold_own(&mut p, label, bound);
             super::super::merge_and_drop_repeats(&mut p);
             (made, folded, p)
         };
-        let (made, folded, p) = hidden("python", crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS);
-        assert!(made > 0, "hiding made the annotation's copies");
+        let shown = crate::code_rule_dsl::facts::vtab::syntax::ANNOTATION_KEYS;
+        let (made, folded, p) = hidden("python", "python", shown);
+        assert!(made > 0, "hiding made the guest's copies");
         assert_eq!(folded, made);
         assert!(p.rules.iter().all(|r| !r.to_string().contains("rr_in_") && !r.to_string().contains("python:")), "{:#?}", p.rules.iter().map(|r| r.to_string()).collect::<Vec<_>>());
         let outs: Vec<String> = p.rules.iter().filter(|r| r.head.rel == "out").map(|r| r.to_string()).collect();
         assert_eq!(outs.len(), 2, "each clone repeats its rule: {outs:#?}");
-        assert_eq!(hidden("rust", crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS).1, 0, "another language's run keeps them");
-        assert_eq!(hidden("python", 1 << 30).1, 0, "guests hidden keep them");
+        assert_eq!(hidden("python", "rust", shown).1, 0, "another language's run keeps them");
+        assert_eq!(hidden("python", "python", 1 << 30).1, 0, "guests hidden keep them");
+        // An annotation is not shown to a rule that does not name it, so its copies fold into originals whose
+        // bounds take annotations in; a rule no annotation reaches keeps the narrow bound.
+        let (made, folded, p) = hidden("annotation", "python", shown);
+        assert!(made > 0 && folded == made, "{made} made, {folded} folded");
+        let wide = (i64::from(crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS) << 32).to_string();
+        let narrow = (i64::from(shown) << 32).to_string();
+        let rules: Vec<String> = p.rules.iter().map(|r| r.to_string()).collect();
+        assert!(rules.iter().any(|r| r.starts_with("asg(") && r.contains(&wide)), "{rules:#?}");
+        assert!(rules.iter().any(|r| r.starts_with("out(") && r.contains(&narrow)) || rules.iter().filter(|r| r.starts_with("out(")).all(|r| !r.contains(&wide)), "{rules:#?}");
     }
 }

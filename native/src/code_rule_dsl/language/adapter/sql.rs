@@ -382,7 +382,7 @@ impl ValueRules for Sql {
     }
 
     fn string(text: &str) -> Value {
-        Value::Str(text.to_owned())
+        Value::Str(text.to_owned().into())
     }
 
     /// A JSON integer is an integer literal's value.

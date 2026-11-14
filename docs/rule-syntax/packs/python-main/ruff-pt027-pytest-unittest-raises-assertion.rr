@@ -1,0 +1,54 @@
+.policy "ruff-pt027-pytest-unittest-raises-assertion" revision 1
+.guests off
+.description "Use pytest.raises instead of assertRaises-style methods such as assertRaises and assertRaisesRegex; it is the exception-testing style pytest recommends."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PT027(n): a finding at node n, from clause `pytest-unittest-raises-assertion`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on CALL are added to every rule.
+.violation PT027(at: node, assertion: loc) "Use `pytest.raises` instead of `{assertion}`: a regex goes in `match=` and an `as` target's `.exception` becomes `.value`. Leave it in tests that don't run under pytest."
+    suppress noqa "PT027"
+PT027(n, ASSERTION) :- kind(n, "attribute"), field(n, "attribute", c1),
+    node(_, c1, _, _, _), ASSERTION = c1,
+    glob("{assertRaises,failUnlessRaises,assertRaisesRegex,assertRaisesRegexp}", c1),
+    pt027_callee_position(n, CALL), !pt027_context_with_target(CALL).
+
+// callee_position(n): the JSON util `callee-position`, used where the JSON says `matches: "callee-position"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl pt027_callee_position(n: node, call: loc)
+pt027_callee_position(n, CALL) :- child(p1, n, _), kind(p1, "call"), node(_, p1, _, _, _), CALL = p1,
+    next_sibling(n, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")).
+pt027_callee_position(n, CALL) :- child(p3, n, _), kind(p3, "parenthesized_expression"),
+    pt027_callee_position(p3, CALL).
+
+// context_with_target(n): the JSON util `context-with-target`, used where the JSON says `matches: "context-with-target"`
+.decl pt027_context_with_target(n: node)
+pt027_context_with_target(n) :- pt027_demand_context_with_target(n), pt027_up_1(n, p1), child(p2, p1, _),
+    kind(p2, "with_item"), child(p1, c3, _), kind(c3, "as_pattern_target"),
+    count : { child(c3, c4, _), pt027_plain_name(c4) } = 0.
+
+// plain_name(n): the JSON util `plain-name`, used where the JSON says `matches: "plain-name"`
+.decl pt027_plain_name(n: node)
+pt027_plain_name(n) :- kind(n, "identifier").
+pt027_plain_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pt027_plain_name(c1).
+
+// demand_context_with_target: the nodes context_with_target is asked at (it looks at every ancestor of every node)
+.decl pt027_demand_context_with_target(n: node)
+pt027_demand_context_with_target(CALL) :- kind(n, "attribute"), field(n, "attribute", c1),
+    node(_, c1, _, _, _), ASSERTION = c1,
+    glob("{assertRaises,failUnlessRaises,assertRaisesRegex,assertRaisesRegexp}", c1),
+    pt027_callee_position(n, CALL).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pt027_up_1(n: node, p: node)
+pt027_up_1(n, p) :- pt027_demand_context_with_target(n), within_stop(n, p, pt027_stop_1),
+    kind(p, "as_pattern").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pt027_stop_1(n: node)
+pt027_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").

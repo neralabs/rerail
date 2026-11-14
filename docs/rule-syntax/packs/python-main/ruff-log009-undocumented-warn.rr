@@ -1,0 +1,15 @@
+.policy "ruff-log009-undocumented-warn" revision 1
+.guests off
+.description "Use logging.WARNING instead of logging.WARN; WARN is an undocumented alias that the logging documentation does not mention."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// LOG009(n): a finding at node n, from clause `undocumented-warn`.
+// Each rule below is one way the JSON `rule` can match.
+.violation LOG009(at: node) "Replace this use of the undocumented `WARN` alias with `logging.WARNING` (or `WARNING` imported from `logging`); the value is identical."
+    suppress noqa "LOG009"
+LOG009(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "logging.WARN").

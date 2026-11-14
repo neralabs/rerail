@@ -1,0 +1,30 @@
+.policy "ruff-pyi044-future-annotations-in-stub" revision 1
+.guests off
+.description "Remove the future annotations import from stub files; stubs are never executed and already treat annotations as forward references."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PYI044(n): a finding at node n, from clause `future-annotations-import`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI044(at: node) "Delete `annotations` from this `__future__` import (and the whole line if nothing else is imported); stubs already treat annotations as forward references."
+    suppress noqa "PYI044"
+PYI044_raw(n) :-
+    ( kind(n, "future_import_statement")
+    ; kind(n, "import_from_statement"), field(n, "module_name", c1), kind(c1, "relative_import"), child(c1, c2, _), kind(c2, "dotted_name"), glob("__future__", c2)
+    ),
+    child(n, c3, _),
+    ( pyi044_annotations_name(c3)
+    ; kind(c3, "aliased_import"), child(c3, c4, _), pyi044_annotations_name(c4)
+    ).
+
+
+// annotations_name(n): the JSON util `annotations-name`, used where the JSON says `matches: "annotations-name"`
+.decl pyi044_annotations_name(n: node)
+pyi044_annotations_name(n) :- kind(n, "dotted_name"), glob("annotations", n).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI044_raw(at: node)
+PYI044(v0) :- PYI044_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

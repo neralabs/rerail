@@ -559,6 +559,12 @@ impl Lowering {
                     self.marks.push((kind.clone(), none, false));
                     self.mark_exprs.push(Expr::Empty);
                 }
+                Stmt::Rounds { n: None, regions: Some(regions), .. } => {
+                    let (from, costs) = (self.program.ops.len(), self.costs.len());
+                    self.regions(regions)?;
+                    self.costs.truncate(costs);
+                    self.cost(format!("regions {}", regions.hidden), from);
+                }
                 Stmt::Rounds { n: None, body, .. } => {
                     ::bitlex::syntax::strictly_causal(body)?;
                     // One cost for the group: its body is lowered once per try.
@@ -629,6 +635,78 @@ impl Lowering {
             }
         }
         Err("rounds: the carries' delays do not settle".into())
+    }
+
+    /// `regions H { … }` (`::bitlex::syntax::Regions`, decision 0139): a rounds group whose
+    /// every value is at one delay `D`, the largest of its openers' and closers' (one more with
+    /// an `else`), so a word's bit is one byte throughout and the group is a walk
+    /// (`block::Walk`) as well as a fixed point. Each opener and closer brought to `D` and cut to
+    /// the stream; the carry `H`; per kind `o_K = O & ~H`, `f_K = fill(o_K, C)`, and the hidden
+    /// bytes after them by `prev`s at `D`. An `else`'s "a closer after the byte" is the closer's
+    /// `back_fill` at `D - 1`: the same bits, a byte on.
+    pub fn regions(&mut self, regions: &::bitlex::syntax::Regions) -> Result<(), String> {
+        let mut inputs = Vec::new();
+        for r in &regions.kinds {
+            inputs.push((self.expr(&r.opener)?, self.expr(&r.closer)?));
+        }
+        let later = regions.kinds.iter().any(|r| r.empty.is_some());
+        let d = inputs.iter().flat_map(|(o, c)| [o.d, c.d]).max().unwrap_or(0) + u8::from(later);
+        let zero = self.op(BlockOp::Const(0));
+        let w = self.within(d)?;
+        let clean = |me: &mut Self, x: Val, d: u8| -> Result<u16, String> {
+            let v = me.at(x, d)?;
+            let w = me.within(d)?;
+            Ok(me.op(BlockOp::And(v, w)))
+        };
+        let mut ins = Vec::new();
+        for &(o, c) in &inputs {
+            let later = if later { Some(clean(self, c, d - 1)?) } else { None };
+            ins.push((clean(self, o, d)?, clean(self, c, d)?, later));
+        }
+        let hidden = self.program.ops.len() as u16;
+        self.program.ops.push(BlockOp::Carry(zero));
+        let code = self.op(BlockOp::AndNot(w, hidden));
+        let mut hide: Vec<u16> = Vec::new();
+        let mut kinds = Vec::new();
+        let named = |me: &mut Self, name: String, v: u16| {
+            me.names.insert(name, Val { v, d, dirty: true, set: None });
+        };
+        for (r, &(opener, closer, c_before)) in regions.kinds.iter().zip(&ins) {
+            let taken = self.op(BlockOp::And(opener, code));
+            let (open, empty) = match &r.empty {
+                Some((e, m)) => {
+                    let later = self.op(BlockOp::BackFill(c_before.expect("made with an else"), zero));
+                    let open = self.op(BlockOp::And(taken, later));
+                    let ev = self.op(BlockOp::AndNot(taken, later));
+                    named(self, e.clone(), ev);
+                    for k in 1..*m {
+                        hide.push(self.op(BlockOp::Prev(ev, k)));
+                    }
+                    (open, Some((ev, *m)))
+                }
+                None => (taken, None),
+            };
+            let fill = self.op(BlockOp::Fill(open, closer));
+            if r.outside {
+                let p = self.op(BlockOp::Prev(fill, 1));
+                hide.push(self.op(BlockOp::AndNot(p, closer)));
+            } else {
+                for k in 1..=r.bytes {
+                    hide.push(self.op(BlockOp::Prev(fill, k)));
+                }
+            }
+            named(self, format!("o_{}", r.kind), open);
+            named(self, format!("f_{}", r.kind), fill);
+            kinds.push(crate::block::WalkKind { opener, closer, open, fill, bytes: r.bytes, outside: r.outside, empty });
+        }
+        let mut next = *hide.first().ok_or("regions that hide nothing")?;
+        for &h in &hide[1..] {
+            next = self.op(BlockOp::Or(next, h));
+        }
+        named(self, regions.hidden.clone(), hidden);
+        self.program.rounds.push(vec![(hidden, next)]);
+        self.program.walks.push(crate::block::Walk { group: (self.program.rounds.len() - 1) as u16, hidden, kinds });
+        Ok(())
     }
 
     /// The fallback masks, ORed per delay (`empty` without any): a mask at one delay is never
@@ -1576,6 +1654,15 @@ pub fn kept(program: &BlockProgram) -> Vec<bool> {
             }
         }
         let mut grew = false;
+        // A walk's values are kept with its group: the walk makes them all.
+        for walk in &program.walks {
+            if walk.made().iter().any(|&v| keep[usize::from(v)]) {
+                for v in walk.made().into_iter().chain(walk.reads()) {
+                    grew |= !keep[usize::from(v)];
+                    keep[usize::from(v)] = true;
+                }
+            }
+        }
         for group in &program.rounds {
             if group.iter().any(|&(c, _)| keep[usize::from(c)]) {
                 for &(c, x) in group {
@@ -1608,7 +1695,17 @@ pub fn live_of(program: &BlockProgram, keep: &[bool]) -> BlockProgram {
     out.extracts = program.extracts.iter().map(|&v| n(v)).collect();
     out.totals = program.totals.iter().map(|&v| n(v)).collect();
     out.masks = program.masks.iter().map(|&v| n(v)).collect();
-    out.rounds = program.rounds.iter().filter(|g| keep[usize::from(g[0].0)]).map(|g| g.iter().map(|&(c, x)| (n(c), n(x))).collect()).collect();
+    let kept_groups: Vec<usize> = (0..program.rounds.len()).filter(|&g| keep[usize::from(program.rounds[g][0].0)]).collect();
+    out.rounds = kept_groups.iter().map(|&g| program.rounds[g].iter().map(|&(c, x)| (n(c), n(x))).collect()).collect();
+    out.walks = program
+        .walks
+        .iter()
+        .filter_map(|w| {
+            let group = kept_groups.iter().position(|&g| g == usize::from(w.group))? as u16;
+            let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: n(k.opener), closer: n(k.closer), open: n(k.open), fill: n(k.fill), empty: k.empty.map(|(e, m)| (n(e), m)), ..*k }).collect();
+            Some(crate::block::Walk { group, hidden: n(w.hidden), kinds })
+        })
+        .collect();
     out.records = program.records.clone();
     out
 }
@@ -1917,6 +2014,8 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                             }
                         }
                     }
+                    // Refused by the syntax in a mark's first element.
+                    TokenElem::Not(_) | TokenElem::End => return Err("a `~` or `end` as a token mark's first token".into()),
                 }
             }
             let word = match seq[0].as_slice() {
@@ -2167,7 +2266,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // A token mark's kinds (decision 0129): a column each, so a kind of the records is one
     // kind's tokens or none of them; a byte that starts that kind's tokens and another's can not
     // tell them apart, and the mark is not compiled.
-    let mut mark_kind_names: Vec<String> = lowered.token_marks.iter().flat_map(|(_, es)| es.iter().flat_map(|e| e.1.iter().cloned())).collect();
+    let mut mark_kind_names: Vec<String> = lowered.token_marks.iter().flat_map(|(_, _, es)| es.iter().flat_map(|e| e.1.iter().cloned())).collect();
     mark_kind_names.sort();
     mark_kind_names.dedup();
     let starts_kind = |name: &str, b: usize| (0..rows.len()).any(|r| token_rows[r].0 == name && rows[r].first[b / 64] >> (b % 64) & 1 == 1);
@@ -2245,9 +2344,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             return Err("token marks with extras not taken in the token step".into());
         }
         let mut tms = Vec::new();
-        for (order, elems) in &lowered.token_marks {
+        for (order, refuses, elems) in &lowered.token_marks {
             let mut out = Vec::new();
-            for (offset, names, words) in elems {
+            for (offset, names, words, not, end) in elems {
                 let mut set = 0u64;
                 for name in names {
                     for b in (0..256).filter(|&b| starts_kind(name, b)) {
@@ -2258,9 +2357,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                         set |= 1 << k;
                     }
                 }
-                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone() });
+                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), not: *not, end: *end });
             }
-            tms.push(crate::program::TokenMark { order: *order, elems: out });
+            tms.push(crate::program::TokenMark { order: *order, elems: out, refuses: *refuses });
         }
         crate::rir_text::token_mark_rows(&mut lowered.text, &tms);
     }

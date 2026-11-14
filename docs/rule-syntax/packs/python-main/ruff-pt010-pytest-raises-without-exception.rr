@@ -1,0 +1,51 @@
+.policy "ruff-pt010-pytest-raises-without-exception" revision 1
+.guests off
+.description "Name the expected exception when using pytest.raises; a call with no exception, match or check fails at runtime."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PT010(n): a finding at node n, from clause `raises-without-exception`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PT010(at: node, f: node) "Pass the exception class this block should raise as the first argument to `{f}`; with no exception class, `match=` or `check=` the call fails when run."
+    suppress noqa "PT010"
+PT010(F, n) :- kind(n, "call"), field(n, "function", c1), pt010_raises(c1, F),
+    field(n, "arguments", c2), kind(c2, "argument_list"),
+    count : { child(c2, c3, _), pt010_alt_3(c3) } = 0.
+
+// raises(n): the JSON util `raises`, used where the JSON says `matches: "raises"`
+//   F: metavariable this relation binds for the calling rule
+.decl pt010_raises(n: node, f: loc)
+pt010_raises(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pt010_raises(c1, F).
+pt010_raises(n, F) :- (kind(n, "identifier") ; kind(n, "attribute")), node(_, n, _, _, _), F = n,
+    sym_of(n, "pytest.raises").
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl pt010_positional(n: node)
+pt010_positional(n) :- node(_, n, _, _, _), !pt010_alt_1(n).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pt010_alt_1(n: node)
+pt010_alt_1(n) :-
+    ( kind(n, "keyword_argument")
+    ; kind(n, "dictionary_splat")
+    ; kind(n, "comment")
+    ; kind(n, "line_continuation")
+    ).
+
+pt010_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pt010_alt_2(n: node)
+pt010_alt_2(n) :- kind(n, "list_splat").
+pt010_alt_2(n) :- precedes(s1, n), pt010_positional(s1).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl pt010_alt_3(n: node)
+pt010_alt_3(n) :- pt010_positional(n), !pt010_alt_2(n).
+pt010_alt_3(n) :- kind(n, "keyword_argument"), field(n, "name", c2),
+    glob("{expected_exception,match,check}", c2).

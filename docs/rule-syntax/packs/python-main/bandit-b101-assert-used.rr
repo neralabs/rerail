@@ -1,0 +1,14 @@
+.policy "bandit-b101-assert-used" revision 2
+.guests off
+.description "Avoid assert statements in Python code outside tests; they are stripped when Python runs with optimization, so any check they perform silently disappears."
+.language python
+.mode steer
+.scope include "**/*"
+.scope exclude "**/tests/**", "**/test_*.py", "**/*_test.py", "**/conftest.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B101(n): a finding at node n, from clause `assert-used`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B101(at: node) "Replace this assert with an if check that raises an exception; asserts are stripped when Python runs with -O."
+    suppress nosec "B101"
+B101(n) :- kind(n, "assert_statement").

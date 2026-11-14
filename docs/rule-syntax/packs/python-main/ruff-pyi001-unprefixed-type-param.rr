@@ -1,0 +1,87 @@
+.policy "ruff-pyi001-unprefixed-type-param" revision 1
+.guests off
+.description "Start the names of TypeVar, ParamSpec and TypeVarTuple variables in stub files with an underscore, so the stub does not export them."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// type_param_callee(n): the JSON util `type-param-callee`, used where the JSON says `matches: "type-param-callee"`
+.decl pyi001_type_param_callee(n: node)
+pyi001_type_param_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), pyi001_set_1(q1).
+pyi001_type_param_callee(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pyi001_type_param_callee(c2).
+
+// type_param_call(n): the JSON util `type-param-call`, used where the JSON says `matches: "type-param-call"`
+.decl pyi001_type_param_call(n: node)
+pyi001_type_param_call(n) :- kind(n, "call"), field(n, "function", c1), pyi001_type_param_callee(c1).
+
+// private_target(n): the JSON util `private-target`, used where the JSON says `matches: "private-target"`
+.decl pyi001_private_target(n: node)
+pyi001_private_target(n) :- kind(n, "identifier"), prefix("_", n).
+pyi001_private_target(n) :- kind(n, "tuple_pattern"), !pyi001_tok_has_1(n), child(n, c9, _),
+    pyi001_private_target(c9).
+
+// assigned_value(n): the JSON util `assigned-value`, used where the JSON says `matches: "assigned-value"`
+.decl pyi001_assigned_value(n: node)
+pyi001_assigned_value(n) :- field(p1, "right", n), kind(p1, "assignment"), !pyi001_alt_2(p1).
+pyi001_assigned_value(n) :- child(p5, n, _), kind(p5, "parenthesized_expression"),
+    pyi001_assigned_value(p5).
+
+// name_target(n): the JSON util `name-target`, used where the JSON says `matches: "name-target"`
+.decl pyi001_name_target(n: node)
+pyi001_name_target(n) :- kind(n, "identifier").
+pyi001_name_target(n) :- kind(n, "tuple_pattern"), !pyi001_tok_has_1(n), child(n, c9, _),
+    pyi001_name_target(c9).
+
+// assigned_to_name(n): the JSON util `assigned-to-name`, used where the JSON says `matches: "assigned-to-name"`
+.decl pyi001_assigned_to_name(n: node)
+pyi001_assigned_to_name(n) :- field(p1, "right", n), kind(p1, "assignment"),
+    field(p1, "left", c2), pyi001_name_target(c2).
+pyi001_assigned_to_name(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"),
+    pyi001_assigned_to_name(p3).
+
+// PYI001(n, detail): findings from clauses `unprefixed-type-param`, `unprefixed-type-param-target`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI001(at: node, detail: symbol) "{detail}; stubs should not export type variables."
+    suppress noqa "PYI001"
+PYI001_raw(n, "Rename this type variable to start with an underscore (`T` becomes `_T`) and update its uses here and in any module importing it") :- pyi001_type_param_call(n),
+    pyi001_assigned_value(n),
+    count : { inside(n, p1, "function_definition"), node(_, p1, _, _, _) } = 0,
+    pyi001_assigned_to_name(n).
+PYI001_raw(n, "Assign this type variable to a single plain name starting with an underscore, as in `_T = TypeVar(\"_T\")`") :- pyi001_type_param_call(n),
+    pyi001_assigned_value(n),
+    count : { inside(n, p1, "function_definition"), node(_, p1, _, _, _) } = 0,
+    !pyi001_assigned_to_name(n).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi001_tok_has_1(n: node)
+.stored pyi001_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi001_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+pyi001_tok_has_1(n) :- op(n, t2), match(",", t2).
+pyi001_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+pyi001_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+pyi001_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// set_1: symbols from the JSON `resolves.import`
+.decl pyi001_set_1(v: symbol)
+pyi001_set_1("typing.TypeVar"). pyi001_set_1("typing.ParamSpec"). pyi001_set_1("typing.TypeVarTuple").
+pyi001_set_1("typing_extensions.TypeVar"). pyi001_set_1("typing_extensions.ParamSpec").
+pyi001_set_1("typing_extensions.TypeVarTuple"). pyi001_set_1("_typeshed.TypeVar").
+pyi001_set_1("_typeshed.ParamSpec"). pyi001_set_1("_typeshed.TypeVarTuple").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi001_alt_2(n: node)
+pyi001_alt_2(n) :- field(n, "type", c1), kind(c1, "type").
+pyi001_alt_2(n) :- field(p2, "right", n), kind(p2, "assignment").
+pyi001_alt_2(n) :- field(n, "left", c3), pyi001_private_target(c3).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI001_raw(at: node, detail: symbol)
+PYI001(v0, v1) :- PYI001_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

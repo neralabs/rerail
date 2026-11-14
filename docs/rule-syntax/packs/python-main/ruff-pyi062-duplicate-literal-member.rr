@@ -1,0 +1,278 @@
+.policy "ruff-pyi062-duplicate-literal-member" revision 1
+.guests off
+.description "Remove duplicate members from a Literal type; repeating a value adds nothing."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// literal_name(n): the JSON util `literal-name`, used where the JSON says `matches: "literal-name"`
+.decl pyi062_literal_name(n: node)
+pyi062_literal_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Literal")
+    ; sym_of(n, "typing_extensions.Literal")
+    ; sym_of(n, "_typeshed.Literal")
+    ).
+
+pyi062_literal_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi062_literal_name(c1).
+
+// literal_sub(n): the JSON util `literal-sub`, used where the JSON says `matches: "literal-sub"`
+.decl pyi062_literal_sub(n: node)
+pyi062_literal_sub(n) :- kind(n, "subscript"), child(n, c1, _), pyi062_literal_name(c1),
+    !pyi062_tok_follows_1(c1).
+
+// literal_gen(n): the JSON util `literal-gen`, used where the JSON says `matches: "literal-gen"`
+.decl pyi062_literal_gen(n: node)
+pyi062_literal_gen(n) :- kind(n, "generic_type"), child(n, c1, _), kind(c1, "identifier"),
+    pyi062_literal_name(c1).
+
+// literal(n): the JSON util `literal`, used where the JSON says `matches: "literal"`
+.decl pyi062_literal(n: node)
+pyi062_literal(n) :- pyi062_literal_sub(n).
+pyi062_literal(n) :- pyi062_literal_gen(n).
+
+// direct_slot(n): the JSON util `direct-slot`, used where the JSON says `matches: "direct-slot"`
+.decl pyi062_direct_slot(n: node)
+pyi062_direct_slot(n) :- child(p1, n, _), pyi062_literal_sub(p1), node(_, n, _, _, _), !kind(n, "comment"),
+    pyi062_tok_follows_2(n).
+pyi062_direct_slot(n) :- kind(n, "type"), child(p9, n, _), kind(p9, "type_parameter"),
+    child(p10, p9, _), pyi062_literal_gen(p10).
+
+// tuple_slot(n): the JSON util `tuple-slot`, used where the JSON says `matches: "tuple-slot"`
+.decl pyi062_tuple_slot(n: node)
+pyi062_tuple_slot(n) :- pyi062_direct_slot(n),
+    (kind(n, "tuple") ; kind(n, "type"), child(n, c1, _), kind(c1, "tuple")),
+    !pyi062_alt_2(n).
+
+// slot(n): the JSON util `slot`, used where the JSON says `matches: "slot"`
+.decl pyi062_slot(n: node)
+pyi062_slot(n) :- pyi062_direct_slot(n).
+pyi062_slot(n) :- child(p1, n, _), kind(p1, "tuple"),
+    (pyi062_tuple_slot(p1) ; child(p2, p1, _), kind(p2, "type"), pyi062_tuple_slot(p2)), node(_, n, _, _, _),
+    !kind(n, "comment").
+
+// wraps_literal(n): the JSON util `wraps-literal`, used where the JSON says `matches: "wraps-literal"`
+.decl pyi062_wraps_literal(n: node)
+pyi062_wraps_literal(n) :- pyi062_literal(n).
+pyi062_wraps_literal(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c1, _), pyi062_wraps_literal(c1).
+
+// wraps_container(n): the JSON util `wraps-container`, used where the JSON says `matches: "wraps-container"`
+.decl pyi062_wraps_container(n: node)
+pyi062_wraps_container(n) :- (kind(n, "subscript") ; kind(n, "generic_type")).
+pyi062_wraps_container(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c1, _), pyi062_wraps_container(c1).
+
+// nested_slot(n): the JSON util `nested-slot`, used where the JSON says `matches: "nested-slot"`
+.decl pyi062_nested_slot(n: node)
+pyi062_nested_slot(n) :- pyi062_slot(n), pyi062_wraps_literal(n).
+
+// container_slot(n): the JSON util `container-slot`, used where the JSON says `matches: "container-slot"`
+.decl pyi062_container_slot(n: node)
+pyi062_container_slot(n) :- pyi062_slot(n), (pyi062_wraps_container(n) ; pyi062_tuple_slot(n)).
+
+// leaf_slot(n): the JSON util `leaf-slot`, used where the JSON says `matches: "leaf-slot"`
+.decl pyi062_leaf_slot(n: node)
+pyi062_leaf_slot(n) :- pyi062_slot(n), !pyi062_container_slot(n).
+
+// in_literal_chain(n): the JSON util `in-literal-chain`, used where the JSON says `matches: "in-literal-chain"`
+.decl pyi062_in_literal_chain(n: node)
+pyi062_in_literal_chain(n) :- pyi062_literal(n).
+pyi062_in_literal_chain(n) :- kind(n, "type_parameter"), child(p1, n, _), pyi062_literal_gen(p1).
+pyi062_in_literal_chain(n) :- pyi062_slot(n).
+pyi062_in_literal_chain(n) :- kind(n, "tuple"), child(p2, n, _), kind(p2, "type"),
+    pyi062_tuple_slot(p2).
+pyi062_in_literal_chain(n) :- kind(n, "parenthesized_expression").
+
+// member_expr(n): the JSON util `member-expr`, used where the JSON says `matches: "member-expr"`
+//   DUP: metavariable this relation binds for the calling rule
+.decl pyi062_member_expr(n: node, dup: loc)
+pyi062_member_expr(n, DUP) :- !kind(n, "type"), !kind(n, "parenthesized_expression"),
+    node(_, n, _, _, _), DUP = n.
+pyi062_member_expr(n, DUP) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c1, _), pyi062_member_expr(c1, DUP).
+
+// equal_expr(n): the JSON util `equal-expr`, used where the JSON says `matches: "equal-expr"`
+//   DUP: metavariable of the calling rule, passed in (bound by the caller)
+.decl pyi062_equal_expr(n: node, dup: loc)
+pyi062_equal_expr(n, DUP) :- pyi062_demand_equal_expr(n, DUP), !kind(n, "type"), node(_, n, _, _, _), F = n,
+    value(F, t1), value(DUP, t1).
+pyi062_equal_expr(n, DUP) :- pyi062_demand_equal_expr(n, DUP), kind(n, "type"), child(n, c3, _),
+    node(_, c3, _, _, _), F = c3, value(F, t4), value(DUP, t4).
+
+// deep_slots_have_equal(n): the JSON util `deep-slots-have-equal`, used where the JSON says `matches: "deep-slots-have-equal"`
+//   DUP: metavariable of the calling rule, passed in (bound by the caller)
+.decl pyi062_deep_slots_have_equal(n: node, dup: loc)
+pyi062_deep_slots_have_equal(n, DUP) :- pyi062_demand_deep_slots_have_equal(n, DUP),
+    pyi062_slots_have_equal(n, DUP).
+pyi062_deep_slots_have_equal(n, DUP) :- pyi062_demand_deep_slots_have_equal(n, DUP),
+    (kind(n, "type") ; kind(n, "parenthesized_expression")), child(n, c1, _),
+    pyi062_deep_slots_have_equal(c1, DUP).
+
+// slots_have_equal(n): the JSON util `slots-have-equal`, used where the JSON says `matches: "slots-have-equal"`
+//   DUP: metavariable of the calling rule, passed in (bound by the caller)
+.decl pyi062_slots_have_equal(n: node, dup: loc)
+pyi062_slots_have_equal(n, DUP) :- pyi062_demand_slots_have_equal(n, DUP), pyi062_literal(n), pyi062_alt_5(n, DUP).
+pyi062_slots_have_equal(n, DUP) :- pyi062_demand_slots_have_equal(n, DUP), pyi062_tuple_slot(n),
+    kind(n, "tuple"), child(n, c4, _), pyi062_contains_equal(c4, DUP).
+pyi062_slots_have_equal(n, DUP) :- pyi062_demand_slots_have_equal(n, DUP), pyi062_tuple_slot(n),
+    kind(n, "type"), child(n, c5, _), kind(c5, "tuple"), child(c5, c6, _),
+    pyi062_contains_equal(c6, DUP).
+
+// contains_equal(n): the JSON util `contains-equal`, used where the JSON says `matches: "contains-equal"`
+//   DUP: metavariable of the calling rule, passed in (bound by the caller)
+.decl pyi062_contains_equal(n: node, dup: loc)
+pyi062_contains_equal(n, DUP) :- pyi062_demand_contains_equal(n, DUP), node(_, n, _, _, _), !kind(n, "comment"),
+    pyi062_alt_6(n), pyi062_equal_expr(n, DUP), !pyi062_wraps_container(n), !pyi062_tuple_slot(n).
+pyi062_contains_equal(n, DUP) :- pyi062_demand_contains_equal(n, DUP), node(_, n, _, _, _), !kind(n, "comment"),
+    pyi062_alt_6(n),
+    ( (kind(n, "subscript") ; kind(n, "generic_type") ; kind(n, "tuple"))
+    ; (kind(n, "type") ; kind(n, "parenthesized_expression")), child(n, c1, _), kind(c1, k1), pyi062_set_10(k1)
+    ),
+    pyi062_deep_slots_have_equal(n, DUP).
+
+// string_duplicate_member(n): the JSON util `string-duplicate-member`, used where the JSON says `matches: "string-duplicate-member"`
+//   D: metavariable this relation binds for the calling rule
+.decl pyi062_string_duplicate_member(n: node, d: loc)
+pyi062_string_duplicate_member(n, D) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), pyi062_alt_11(c2, D).
+
+// duplicate_member(n): the JSON util `duplicate-member`, used where the JSON says `matches: "duplicate-member"`
+//   DUP: metavariable this relation binds for the calling rule
+.decl pyi062_duplicate_member(n: node, dup: loc)
+pyi062_duplicate_member(n, DUP) :- pyi062_leaf_slot(n), pyi062_member_expr(n, DUP),
+    ( precedes(s1, n), pyi062_contains_equal(s1, DUP)
+    ; pyi062_up_1(n, p1), precedes(s2, p1), pyi062_contains_equal(s2, DUP)
+    ).
+
+
+// PYI062(n): a finding at node n, from clause `duplicate-literal-member`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI062(at: node, dup: node) "Remove the repeated member `{dup}` from this Literal; an earlier member already covers it."
+    suppress noqa "PYI062"
+PYI062(DUP, n) :- pyi062_alt_15(n), pyi062_duplicate_member(n, DUP).
+
+// PYI062_duplicate_literal_member_in_string(n): a finding at node n, from clause `duplicate-literal-member-in-string`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI062_duplicate_literal_member_in_string(at: node, d: node) code "PYI062" "Remove the repeated member `{d}` from this Literal; an earlier member already covers it."
+    suppress noqa "PYI062"
+PYI062_duplicate_literal_member_in_string(D, n) :- pyi062_string_duplicate_member(n, D).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi062_tok_follows_1(n: node)
+.stored pyi062_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi062_tok_follows_1(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+pyi062_tok_follows_1(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+pyi062_tok_follows_1(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi062_tok_follows_2(n: node)
+.stored pyi062_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi062_tok_follows_2(n) :- precedes(s2, n), glob("\\[", s2).
+pyi062_tok_follows_2(n) :- child(p5, n, _), node(_, n, _, st7, _), token(p5, _, t3, _, en8),
+    en8 <= st7, match("\\[", t3).
+pyi062_tok_follows_2(n) :- structural_before(n, g4), match("(?s)^(?:.*(?:\\[).*)$", g4).
+pyi062_tok_follows_2(n) :- precedes(o6, n), structural_before(o6, g4),
+    match("(?s)^(?:.*(?:\\[).*)$", g4).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^[\\[(]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi062_tok_follows_3(n: node)
+.stored pyi062_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi062_tok_follows_3(n) :- precedes(s1, n), glob("[\\[(]", s1).
+pyi062_tok_follows_3(n) :- child(p4, n, _), node(_, n, _, st6, _), token(p4, _, t2, _, en7),
+    en7 <= st6, match("[\\[(]", t2).
+pyi062_tok_follows_3(n) :- structural_before(n, g3), match("(?s)^(?:.*(?:[\\[(]).*)$", g3).
+pyi062_tok_follows_3(n) :- precedes(o5, n), structural_before(o5, g3),
+    match("(?s)^(?:.*(?:[\\[(]).*)$", g3).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^[\\[(]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi062_tok_follows_4(n: node)
+.stored pyi062_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi062_tok_follows_4(n) :- precedes(s8, n), glob("[\\[(]", s8).
+pyi062_tok_follows_4(n) :- child(p11, n, _), node(_, n, _, st13, _),
+    token(p11, _, t9, _, en14), en14 <= st13, match("[\\[(]", t9).
+pyi062_tok_follows_4(n) :- structural_before(n, g10), match("(?s)^(?:.*(?:[\\[(]).*)$", g10).
+pyi062_tok_follows_4(n) :- precedes(o12, n), structural_before(o12, g10),
+    match("(?s)^(?:.*(?:[\\[(]).*)$", g10).
+
+// demand_alt_5: the rows of alt_5 its callers ask for (the metavariable columns they pass in)
+.decl pyi062_demand_alt_5(n: node, dup: loc)
+pyi062_demand_alt_5(n, DUP) :- pyi062_demand_slots_have_equal(n, DUP), pyi062_literal(n).
+
+// demand_contains_equal: the rows of contains_equal its callers ask for (the metavariable columns they pass in)
+.decl pyi062_demand_contains_equal(n: node, dup: loc)
+pyi062_demand_contains_equal(c4, DUP) :- pyi062_demand_slots_have_equal(n, DUP), pyi062_tuple_slot(n),
+    kind(n, "tuple"), child(n, c4, _).
+pyi062_demand_contains_equal(c6, DUP) :- pyi062_demand_slots_have_equal(n, DUP), pyi062_tuple_slot(n),
+    kind(n, "type"), child(n, c5, _), kind(c5, "tuple"), child(c5, c6, _).
+pyi062_demand_contains_equal(s1, DUP) :- pyi062_leaf_slot(n), pyi062_member_expr(n, DUP), precedes(s1, n).
+pyi062_demand_contains_equal(s2, DUP) :- pyi062_leaf_slot(n), pyi062_member_expr(n, DUP), pyi062_up_1(n, p1),
+    precedes(s2, p1).
+pyi062_demand_contains_equal(c1, DUP) :- pyi062_demand_alt_5(n, DUP), kind(n, "subscript"),
+    child(n, c1, _).
+pyi062_demand_contains_equal(c3, DUP) :- pyi062_demand_alt_5(n, DUP), kind(n, "generic_type"),
+    child(n, c2, _), kind(c2, "type_parameter"), child(c2, c3, _).
+
+// demand_deep_slots_have_equal: the rows of deep_slots_have_equal its callers ask for (the metavariable columns they pass in)
+.decl pyi062_demand_deep_slots_have_equal(n: node, dup: loc)
+pyi062_demand_deep_slots_have_equal(c1, DUP) :- pyi062_demand_deep_slots_have_equal(n, DUP),
+    (kind(n, "type") ; kind(n, "parenthesized_expression")), child(n, c1, _).
+pyi062_demand_deep_slots_have_equal(n, DUP) :- pyi062_demand_contains_equal(n, DUP), node(_, n, _, _, _),
+    pyi062_alt_6(n).
+
+// demand_slots_have_equal: the rows of slots_have_equal its callers ask for (the metavariable columns they pass in)
+.decl pyi062_demand_slots_have_equal(n: node, dup: loc)
+pyi062_demand_slots_have_equal(n, DUP) :- pyi062_demand_deep_slots_have_equal(n, DUP).
+
+// demand_equal_expr: the rows of equal_expr its callers ask for (the metavariable columns they pass in)
+.decl pyi062_demand_equal_expr(n: node, dup: loc)
+pyi062_demand_equal_expr(n, DUP) :- pyi062_demand_contains_equal(n, DUP), node(_, n, _, _, _), pyi062_alt_6(n).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi062_up_1(n: node, p: node)
+pyi062_up_1(n, p) :- pyi062_leaf_slot(n), within_stop(n, p, pyi062_stop_12), pyi062_nested_slot(p).
+
+// set_10: node kinds from a JSON `any`
+.decl pyi062_set_10(v: symbol)
+pyi062_set_10("subscript"). pyi062_set_10("generic_type"). pyi062_set_10("tuple"). pyi062_set_10("type").
+pyi062_set_10("parenthesized_expression").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi062_alt_2(n: node)
+pyi062_alt_2(n) :- precedes(s1, n), pyi062_direct_slot(s1).
+pyi062_alt_2(n) :- precedes(n, s2), pyi062_direct_slot(s2).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+//   DUP: metavariable of the calling rule, passed in (bound by the caller)
+.decl pyi062_alt_5(n: node, dup: loc)
+pyi062_alt_5(n, DUP) :- pyi062_demand_alt_5(n, DUP), kind(n, "subscript"), child(n, c1, _),
+    pyi062_contains_equal(c1, DUP).
+pyi062_alt_5(n, DUP) :- pyi062_demand_alt_5(n, DUP), kind(n, "generic_type"), child(n, c2, _),
+    kind(c2, "type_parameter"), child(c2, c3, _), pyi062_contains_equal(c3, DUP).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi062_alt_6(n: node)
+pyi062_alt_6(n) :- kind(n, "type").
+pyi062_alt_6(n) :- pyi062_tok_follows_3(n).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+//   D: metavariable this relation binds for the calling rule
+.decl pyi062_alt_11(n: node, d: loc)
+pyi062_alt_11(n, D) :- pyi062_duplicate_member(n, _), D = n.
+pyi062_alt_11(n, D) :- pyi062_string_duplicate_member(n, D).
+
+// stop_12(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi062_stop_12(n: node)
+pyi062_stop_12(n) :- node(_, n, _, _, _), !pyi062_in_literal_chain(n).
+
+// alt_15(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi062_alt_15(n: node)
+pyi062_alt_15(n) :- child(p1, n, _), (kind(p1, "subscript") ; kind(p1, "tuple")), node(_, n, _, _, _).
+pyi062_alt_15(n) :- kind(n, "type"), child(p2, n, _), kind(p2, "type_parameter").

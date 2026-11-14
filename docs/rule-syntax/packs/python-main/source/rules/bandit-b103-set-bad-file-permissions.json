@@ -1,0 +1,112 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b103-set-bad-file-permissions",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid chmod modes that grant group-write, group-execute, world-write, or world-execute permission; overly broad permissions let other users tamper with files.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "world-writable-chmod",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "$F($PATH, $MODE)"
+              },
+              {
+                "pattern": "$F($PATH, mode=$MODE)"
+              },
+              {
+                "pattern": "$F(path=$PATH, mode=$MODE)"
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "regex": ".*chmod.*"
+            },
+            "MODE": {
+              "value": {
+                "bitsAny": 2
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B103",
+        "anchor": "witness.span",
+        "message": "Remove world-write from this chmod mode; use 0o644 for files or 0o755 for directories.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B103"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "group-or-world-executable-chmod",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "any": [
+              {
+                "pattern": "$F($PATH, $MODE)"
+              },
+              {
+                "pattern": "$F($PATH, mode=$MODE)"
+              },
+              {
+                "pattern": "$F(path=$PATH, mode=$MODE)"
+              }
+            ]
+          },
+          "constraints": {
+            "F": {
+              "regex": ".*chmod.*"
+            },
+            "MODE": {
+              "all": [
+                {
+                  "value": {
+                    "bitsAny": 25
+                  }
+                },
+                {
+                  "not": {
+                    "value": {
+                      "bitsAny": 2
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B103",
+        "anchor": "witness.span",
+        "message": "Narrow this chmod mode to owner-only write and execute, such as 0o600 or 0o700, unless others must run it.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B103"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

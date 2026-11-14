@@ -1,0 +1,62 @@
+.policy "ruff-pyi042-snake-case-type-alias" revision 1
+.guests off
+.description "Name type aliases in CamelCase so they read as types and are not mistaken for ordinary variables."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PYI042(n): a finding at node n, from clause `snake-case-type-alias`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI042(at: node, name: loc) "Rename type alias `{name}` to CamelCase, e.g. `MyAlias`, and update every reference; leave it if the lowercase name mirrors a runtime name that other code imports."
+    suppress noqa "PYI042"
+PYI042(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, match("_?[a-z0-9].*", n),
+    (pyi042_assignment_target(n) ; pyi042_statement_name(n)).
+
+// type_alias_marker(n): the JSON util `type-alias-marker`, used where the JSON says `matches: "type-alias-marker"`
+.decl pyi042_type_alias_marker(n: node)
+pyi042_type_alias_marker(n) :- pyi042_alt_1(n),
+    ( sym_of(n, "typing.TypeAlias")
+    ; sym_of(n, "typing_extensions.TypeAlias")
+    ; sym_of(n, "_typeshed.TypeAlias")
+    ).
+
+
+// alias_assignment(n): the JSON util `alias-assignment`, used where the JSON says `matches: "alias-assignment"`
+.decl pyi042_alias_assignment(n: node)
+pyi042_alias_assignment(n) :- kind(n, "assignment"), field(n, "type", c1), child(c1, c2, _),
+    pyi042_type_alias_marker(c2).
+
+// assignment_target(n): the JSON util `assignment-target`, used where the JSON says `matches: "assignment-target"`
+.decl pyi042_assignment_target(n: node)
+pyi042_assignment_target(n) :- field(p1, "left", n), pyi042_alias_assignment(p1).
+pyi042_assignment_target(n) :- child(p2, n, _), kind(p2, "tuple_pattern"),
+    pyi042_assignment_target(p2), !pyi042_tok_has_1(p2).
+
+// statement_name(n): the JSON util `statement-name`, used where the JSON says `matches: "statement-name"`
+.decl pyi042_statement_name(n: node)
+pyi042_statement_name(n) :- child(p1, n, _), kind(p1, "type"), field(p2, "left", p1),
+    kind(p2, "type_alias_statement").
+pyi042_statement_name(n) :- next_sibling(n, s3), kind(s3, "type_parameter"), child(p4, n, _),
+    kind(p4, "generic_type"), child(p5, p4, _), kind(p5, "type"),
+    field(p6, "left", p5), kind(p6, "type_alias_statement").
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi042_tok_has_1(n: node)
+.stored pyi042_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi042_tok_has_1(n) :- child(n, c3, _), glob("\\,", c3).
+pyi042_tok_has_1(n) :- op(n, t4), match(",", t4).
+pyi042_tok_has_1(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:.*(?:,).*)$", g5).
+pyi042_tok_has_1(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:.*(?:,).*)$", g5).
+pyi042_tok_has_1(n) :- node_text(n, g5), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g5).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi042_alt_1(n: node)
+pyi042_alt_1(n) :- (kind(n, "identifier") ; kind(n, "attribute")).
+pyi042_alt_1(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi042_type_alias_marker(c1).

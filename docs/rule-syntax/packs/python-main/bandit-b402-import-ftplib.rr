@@ -1,0 +1,15 @@
+.policy "bandit-b402-import-ftplib" revision 1
+.guests off
+.description "Remove imports of ftplib; FTP sends credentials and data unencrypted, so use SFTP, SCP, or another encrypted protocol."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B402(n): a finding at node n, from clause `B402`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B402(at: node) "Remove this ftplib import and use SFTP, SCP, or another encrypted protocol instead."
+    suppress nosec "B402"
+B402(n) :- n ~ `import ftplib`.
+B402(n) :- n ~ `import ftplib as $ALIAS`.
+B402(n) :- n ~ `from ftplib import $$$NAMES`.

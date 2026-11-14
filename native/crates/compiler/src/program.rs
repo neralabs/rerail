@@ -218,6 +218,9 @@ pub fn local_value(ops: &[LocalOp], bytes: &[u8], i: i64) -> bool {
 pub struct TokenMark {
     pub order: u8,
     pub elems: Vec<TokenElem>,
+    /// A mark the grammar takes nowhere: where it holds, the file is refused. `TOKEN` tests it
+    /// at each token its record's bit names, once (no state tests it).
+    pub refuses: bool,
 }
 
 /// One token of a token mark: its offset from the mark's token (-1 the one before), and what
@@ -228,6 +231,10 @@ pub struct TokenElem {
     pub offset: i8,
     pub kinds: u64,
     pub words: Vec<u16>,
+    /// A token none of the kinds and words (never the file's end).
+    pub not: bool,
+    /// The file's end takes it too: no token left (the last element only).
+    pub end: bool,
 }
 
 impl TokenElem {
@@ -236,5 +243,13 @@ impl TokenElem {
         let kind = code & 0xff;
         let word = crate::records::word_of(code);
         (kind < 64 && self.kinds >> kind & 1 == 1) || (word > 0 && self.words.contains(&((word - 1) as u16)))
+    }
+
+    /// Whether the element holds at a record's code (`None`: no record left, the file's end).
+    pub fn holds(&self, code: Option<u32>) -> bool {
+        match code {
+            None => self.end,
+            Some(c) => self.takes(c) != self.not,
+        }
     }
 }

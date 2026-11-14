@@ -1,0 +1,109 @@
+.policy "ruff-ruf048-map-int-version-parsing" revision 1
+.guests off
+.description "Parse a version string with a real version parser, not by mapping int over its dot-separated parts; versions can contain non-numeric parts."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// RUF048(n): a finding at node n, from clause `map-int-version-parsing`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF048(at: node, r: node) "`int` fails on non-numeric version parts such as `post1`; parse with `packaging.version.parse(...)` instead, unless the version is known to be purely numeric."
+    suppress noqa "RUF048"
+RUF048(R, n) :- ruf048_map_int_version(n),
+    match("(?s)(?:\\*(?:[\\s\\\\]|#[^\\n]*)*)?(?P<R>.*)", n).
+RUF048(R, n) :- ruf048_check_in_string(n, R).
+
+// trivia(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl ruf048_trivia(n: node)
+ruf048_trivia(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+
+// builtin_map(n): the JSON util `builtin-map`, used where the JSON says `matches: "builtin-map"`
+.decl ruf048_builtin_map(n: node)
+ruf048_builtin_map(n) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "map"),
+    sym_of(n, "builtins.map").
+ruf048_builtin_map(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf048_builtin_map(c1).
+
+// builtin_int(n): the JSON util `builtin-int`, used where the JSON says `matches: "builtin-int"`
+.decl ruf048_builtin_int(n: node)
+ruf048_builtin_int(n) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "int"),
+    sym_of(n, "builtins.int").
+ruf048_builtin_int(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf048_builtin_int(c1).
+
+// dunder_version(n): the JSON util `dunder-version`, used where the JSON says `matches: "dunder-version"`
+.decl ruf048_dunder_version(n: node)
+ruf048_dunder_version(n) :- kind(n, "identifier"), glob("__version__", n).
+ruf048_dunder_version(n) :- kind(n, "attribute"), child(n, c1, _), kind(c1, "identifier"),
+    glob("__version__", c1), precedes_stop(s2, c1, ruf048_stop_1), glob(".", s2).
+ruf048_dunder_version(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    ruf048_dunder_version(c3).
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl ruf048_plain_string(n: node)
+ruf048_plain_string(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[fFtT]**", c1) } = 0.
+
+// dot_string(n): the JSON util `dot-string`, used where the JSON says `matches: "dot-string"`
+.decl ruf048_dot_string(n: node)
+ruf048_dot_string(n) :- ruf048_plain_string(n), value(n, ".").
+ruf048_dot_string(n) :- kind(n, "concatenated_string"), value(n, "."),
+    count : { child(n, c1, _), kind(c1, "string"), child(c1, c2, _), kind(c2, "string_start"), glob("**[fFtT]**", c2) } = 0.
+ruf048_dot_string(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), ruf048_dot_string(c3).
+
+// split_attr(n): the JSON util `split-attr`, used where the JSON says `matches: "split-attr"`
+.decl ruf048_split_attr(n: node)
+ruf048_split_attr(n) :- kind(n, "attribute"), child(n, c1, _), kind(c1, "identifier"),
+    glob("split", c1), precedes_stop(s2, c1, ruf048_stop_1), glob(".", s2), child(n, c3, _),
+    ruf048_dunder_version(c3), precedes_stop(c3, s4, ruf048_stop_1), glob(".", s4).
+ruf048_split_attr(n) :- kind(n, "parenthesized_expression"), child(n, c5, _), ruf048_split_attr(c5).
+
+// version_split(n): the JSON util `version-split`, used where the JSON says `matches: "version-split"`
+.decl ruf048_version_split(n: node)
+ruf048_version_split(n) :- kind(n, "call"), field(n, "function", c1), ruf048_split_attr(c1),
+    child(n, c2, _), kind(c2, "argument_list"),
+    k4 = count : { child(c2, c3, _), !ruf048_alt_11(c3) }, k4 >= 1, k4 <= 1, child(c2, c5, _),
+    ( ruf048_dot_string(c5)
+    ; kind(c5, "keyword_argument"), child(c5, c4, _), kind(c4, "identifier"), glob("sep", c4), precedes_stop(c4, s1, ruf048_stop_1), glob("=", s1), child(c5, c6, _), ruf048_dot_string(c6), precedes_stop(s2, c6, ruf048_stop_1), glob("=", s2)
+    ).
+
+
+// version_split_expr(n): the JSON util `version-split-expr`, used where the JSON says `matches: "version-split-expr"`
+.decl ruf048_version_split_expr(n: node)
+ruf048_version_split_expr(n) :- ruf048_version_split(n).
+ruf048_version_split_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf048_version_split_expr(c1).
+
+// map_int_version(n): the JSON util `map-int-version`, used where the JSON says `matches: "map-int-version"`
+.decl ruf048_map_int_version(n: node)
+ruf048_map_int_version(n) :- kind(n, "call"), field(n, "function", c1),
+    (ruf048_builtin_map(c1) ; kind(c1, "list_splat"), child(c1, c2, _), ruf048_builtin_map(c2)),
+    child(n, c3, _), kind(c3, "argument_list"),
+    k5 = count : { child(c3, c4, _), !ruf048_alt_11(c4) }, k5 >= 2, k5 <= 2, child(c3, c6, _),
+    ruf048_builtin_int(c6), precedes_stop(s7, c6, ruf048_stop_1), glob("(", s7), child(c3, c8, _),
+    ruf048_version_split_expr(c8).
+
+// check_in_string(n): the JSON util `check-in-string`, used where the JSON says `matches: "check-in-string"`
+//   R: metavariable this relation binds for the calling rule
+.decl ruf048_check_in_string(n: node, r: loc)
+ruf048_check_in_string(n, R) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ruf048_alt_13(c2, R).
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf048_stop_1(n: node)
+ruf048_stop_1(n) :- node(_, n, _, _, _), !ruf048_trivia(n).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf048_alt_11(n: node)
+ruf048_alt_11(n) :- ruf048_trivia(n).
+ruf048_alt_11(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+//   R: metavariable this relation binds for the calling rule
+.decl ruf048_alt_13(n: node, r: loc)
+ruf048_alt_13(n, R) :- ruf048_map_int_version(n), node(_, n, _, _, _), R = n.
+ruf048_alt_13(n, R) :- ruf048_check_in_string(n, R).

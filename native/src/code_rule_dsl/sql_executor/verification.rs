@@ -71,8 +71,8 @@ impl CodeRuleSqlExecutor {
         for run in &self.executions {
             for (name, columns) in &run.program.decls {
                 types
-                    .entry(name.clone())
-                    .or_insert_with(|| columns.iter().map(|(_, t)| t.clone()).collect());
+                    .entry(name.to_string())
+                    .or_insert_with(|| columns.iter().map(|(_, t)| t.clone()).map(String::from).collect());
             }
         }
         for (name, (_, bound)) in &self.input_shapes {

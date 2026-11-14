@@ -1,0 +1,54 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-b002-unary-prefix-increment-decrement",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't write a doubled plus or minus prefix to increment or decrement a value; Python has no such operators, so the value is left unchanged.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "unary-prefix-increment",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "plus": {
+              "any": [
+                { "kind": "unary_operator", "regex": "^\\+" },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "plus" } }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "unary_operator",
+            "regex": "^\\+",
+            "has": { "stopBy": "neighbor", "matches": "plus" }
+          }
+        }
+      },
+      "violation": { "anchor": "witness.span", "code": "B002", "message": "Replace this `++` prefix with `+= 1`; Python reads `++x` as `x`, so nothing is incremented.", "suppress": { "noqa": { "codes": ["B002"] } } }
+    },
+    {
+      "id": "unary-prefix-decrement",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "minus": {
+              "any": [
+                { "kind": "unary_operator", "regex": "^-" },
+                { "kind": "parenthesized_expression", "has": { "stopBy": "neighbor", "matches": "minus" } }
+              ]
+            }
+          },
+          "rule": {
+            "kind": "unary_operator",
+            "regex": "^-",
+            "has": { "stopBy": "neighbor", "matches": "minus" }
+          }
+        }
+      },
+      "violation": { "anchor": "witness.span", "code": "B002", "message": "Replace this `--` prefix with `-= 1`; Python reads `--x` as `x`, so nothing is decremented.", "suppress": { "noqa": { "codes": ["B002"] } } }
+    }
+  ]
+}

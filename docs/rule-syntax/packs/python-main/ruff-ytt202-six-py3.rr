@@ -1,0 +1,61 @@
+.policy "ruff-ytt202-six-py3" revision 1
+.guests off
+.description "Use not six.PY2 instead of six.PY3; six.PY3 is false on Python 4 and later."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// YTT202(n): a finding at node n, from clause `six-py3`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation YTT202(at: node, c: node) "Replace `{c}` with `not six.PY2` (in a `case` pattern, test `not six.PY2` in a guard instead); `six.PY3` is false on Python 4 and later."
+    suppress noqa "YTT202"
+YTT202(C, n) :- ytt202_target(n), node(_, n, _, _, _), C = n.
+YTT202(C, n) :- ytt202_splat_target(n),
+    match("\\*(?:[\\s\\\\]|#[^\\n]*\\n)*(?<C>[\\s\\S]*)", n).
+YTT202(C, n) :- ytt202_pattern_target(n),
+    match("(?<C>[^\\s.\\\\#]+(?:[\\s\\\\]|#[^\\n]*\\n)*\\.(?:[\\s\\\\]|#[^\\n]*\\n)*PY3)(?s:.*)", n).
+YTT202(C, n) :- ytt202_in_string(n, C).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl ytt202_target(n: node)
+ytt202_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "six.PY3").
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   C: metavariable this relation binds for the calling rule
+.decl ytt202_in_string(n: node, c: loc)
+ytt202_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ytt202_alt_1(c2, C).
+
+// pattern_target(n): the JSON util `pattern-target`, used where the JSON says `matches: "pattern-target"`
+.decl ytt202_pattern_target(n: node)
+ytt202_pattern_target(n) :- kind(n, "dotted_name"), inside(n, p1, "case_clause"),
+    count : { within(n, p2), (kind(p2, "import_statement") ; kind(p2, "import_from_statement")) } = 0,
+    child(n, c3, _), child(p4, c3, _), ytt202_counted_2(c3),
+    k6 = count : { child(p4, s5, _), precedes(s5, c3), ytt202_counted_2(s5) }, k6 = 0,
+    sym_of(c3, "six"), child(n, c7, _), child(p8, c7, _), ytt202_counted_3(c7),
+    k10 = count : { child(p8, s9, _), precedes(s9, c7), ytt202_counted_3(s9) }, k10 = 1,
+    glob("PY3", c7).
+
+// splat_target(n): the JSON util `splat-target`, used where the JSON says `matches: "splat-target"`
+.decl ytt202_splat_target(n: node)
+ytt202_splat_target(n) :- kind(n, "attribute"), field(n, "object", c1),
+    kind(c1, "list_splat"), child(c1, c2, _), kind(c2, "identifier"),
+    sym_of(c2, "six"), field(n, "attribute", c3), glob("PY3", c3).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl ytt202_alt_1(n: node, c: loc)
+ytt202_alt_1(n, C) :- ytt202_target(n), C = n.
+ytt202_alt_1(n, C) :- ytt202_in_string(n, C).
+
+// counted_2(n): the siblings the JSON `nthChild.ofRule` counts
+.decl ytt202_counted_2(n: node)
+ytt202_counted_2(n) :- kind(n, "identifier").
+
+// counted_3(n): the siblings the JSON `nthChild.ofRule` counts
+.decl ytt202_counted_3(n: node)
+ytt202_counted_3(n) :- kind(n, "identifier").

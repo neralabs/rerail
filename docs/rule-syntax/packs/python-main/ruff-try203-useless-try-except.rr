@@ -1,0 +1,56 @@
+.policy "ruff-try203-useless-try-except" revision 1
+.guests off
+.description "Remove exception handlers that only re-raise; the try block adds nothing when every handler immediately raises the same error again."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// TRY203(n): a finding at node n, from clause `reraise-only-handler`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation TRY203(at: node, handler: node) "This handler only re-raises: drop the `try`/`except` so the error propagates, moving any `else` code after the body and keeping any `finally`."
+    suppress noqa "TRY203"
+TRY203(HANDLER, n) :- kind(n, "except_clause"),
+    match("(?s)(?<HANDLER>(?:(?:[^'\"#]|#[^\\n]*)*?(?:[^\\s'\"#;]|'''(?:[^'\\\\]|\\\\.|''?(?:[^'\\\\]|\\\\.))*'''|\"\"\"(?:[^\"\\\\]|\\\\.|\"\"?(?:[^\"\\\\]|\\\\.))*\"\"\"|'(?:[^'\\\\\\n]|\\\\.)*'|\"(?:[^\"\\\\\\n]|\\\\.)*\"))+?)(?:\\s|;|#[^\\n]*)*", n),
+    try203_all_useless(n).
+
+// name_chain(n): the JSON util `name-chain`, used where the JSON says `matches: "name-chain"`
+.decl try203_name_chain(n: node)
+try203_name_chain(n) :- kind(n, "identifier"), node(_, n, _, _, _), N = n.
+try203_name_chain(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), try203_name_chain(c1).
+
+// first_raise(n): the JSON util `first-raise`, used where the JSON says `matches: "first-raise"`
+.decl try203_first_raise(n: node)
+try203_first_raise(n) :- kind(n, "raise_statement"),
+    count : { precedes(s1, n), !kind(s1, "comment") } = 0, !try203_tok_has_1(n).
+
+// useless_handler(n): the JSON util `useless-handler`, used where the JSON says `matches: "useless-handler"`
+.decl try203_useless_handler(n: node)
+try203_useless_handler(n) :- kind(n, "except_clause"), try203_alt_1(n).
+
+// all_useless(n): the JSON util `all-useless`, used where the JSON says `matches: "all-useless"`
+.decl try203_all_useless(n: node)
+try203_all_useless(n) :- child(p1, n, _), kind(p1, "try_statement"),
+    count : { child(p1, c2, _), kind(c2, "except_clause"), !try203_useless_handler(c2) } = 0.
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^from$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl try203_tok_has_1(n: node)
+.stored try203_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+try203_tok_has_1(n) :- child(n, c2, _), glob("from", c2).
+try203_tok_has_1(n) :- op(n, t3), match("from", t3).
+try203_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g4).
+try203_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g4).
+try203_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g4).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl try203_alt_1(n: node)
+try203_alt_1(n) :- child(n, c1, _), kind(c1, "block"), child(c1, c2, _), try203_first_raise(c2),
+    count : { child(c2, c3, _), !glob("raise", c3) } = 0.
+try203_alt_1(n) :- child(n, c4, _), kind(c4, "block"), child(c4, c5, _), try203_first_raise(c5),
+    child(c5, c6, _), try203_name_chain(c6), child(n, c7, _), kind(c7, "as_pattern"),
+    child(c7, c8, _), kind(c8, "as_pattern_target"), child(c8, c9, _),
+    kind(c9, "identifier"), node(_, c9, _, _, _), N = c9.

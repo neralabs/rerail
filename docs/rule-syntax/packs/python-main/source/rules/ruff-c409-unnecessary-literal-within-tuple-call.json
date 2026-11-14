@@ -1,0 +1,287 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-c409-unnecessary-literal-within-tuple-call",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Write a tuple literal instead of passing a list or tuple literal to the tuple constructor; the extra call only adds work.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "list-literal-within-tuple-call",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "global": [
+                      "tuple"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "literal": {
+              "any": [
+                {
+                  "kind": "list"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "literal"
+                  }
+                }
+              ]
+            },
+            "trivia": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "regex": "^[(),]$"
+                }
+              ]
+            },
+            "target": {
+              "kind": "call",
+              "all": [
+                {
+                  "has": {
+                    "field": "function",
+                    "matches": "callee"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "arguments",
+                    "kind": "argument_list",
+                    "count": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "not": {
+                          "matches": "trivia"
+                        }
+                      },
+                      "min": 1,
+                      "max": 1
+                    },
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "literal"
+                    }
+                  }
+                }
+              ]
+            },
+            "in-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "target",
+                      "capture": "CALL"
+                    },
+                    {
+                      "matches": "in-annotation"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "target",
+                "pattern": "$CALL"
+              },
+              {
+                "matches": "in-annotation"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CALL",
+        "code": "C409",
+        "message": "Write the elements as a tuple literal `(...)` instead of `tuple([...])`; a single element needs a trailing comma, as in `(x,)`.",
+        "each": "CALL",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C409"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "tuple-literal-within-tuple-call",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "callee": {
+              "any": [
+                {
+                  "kind": "identifier",
+                  "resolves": {
+                    "global": [
+                      "tuple"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            },
+            "literal": {
+              "any": [
+                {
+                  "kind": "tuple"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "literal"
+                  }
+                }
+              ]
+            },
+            "trivia": {
+              "any": [
+                {
+                  "kind": "comment"
+                },
+                {
+                  "kind": "line_continuation"
+                },
+                {
+                  "regex": "^[(),]$"
+                }
+              ]
+            },
+            "target": {
+              "kind": "call",
+              "all": [
+                {
+                  "has": {
+                    "field": "function",
+                    "matches": "callee"
+                  }
+                },
+                {
+                  "has": {
+                    "field": "arguments",
+                    "kind": "argument_list",
+                    "count": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "not": {
+                          "matches": "trivia"
+                        }
+                      },
+                      "min": 1,
+                      "max": 1
+                    },
+                    "has": {
+                      "stopBy": "neighbor",
+                      "matches": "literal"
+                    }
+                  }
+                }
+              ]
+            },
+            "in-annotation": {
+              "any": [
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                }
+              ],
+              "parse": {
+                "grammar": "annotation",
+                "has": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "target",
+                      "capture": "CALL"
+                    },
+                    {
+                      "matches": "in-annotation"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "rule": {
+            "any": [
+              {
+                "matches": "target",
+                "pattern": "$CALL"
+              },
+              {
+                "matches": "in-annotation"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "capture.CALL",
+        "code": "C409",
+        "message": "Remove the outer `tuple()` call and keep the tuple literal it wraps; the call just returns that same tuple.",
+        "each": "CALL",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "C409"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

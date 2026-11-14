@@ -1166,17 +1166,24 @@ impl<'a> Ev<'a> {
         let grammar: Vec<usize> = (0..toks.len()).filter(|&i| !extra.contains(&toks[i].kind)).collect();
         let mut before: Vec<Vec<bool>> = vec![vec![false; self.marks.len()]; toks.len()];
         // A token mark: at each grammar token that begins its run, after its token before.
-        let is = |t: &Token, e: &[TokenElem]| {
-            e.iter().any(|x| match x {
-                TokenElem::Kind(k) => &t.kind == k,
-                TokenElem::Word(w) => t.kind.as_bytes() == w.as_slice() || t.soft.as_deref().is_some_and(|s| s.as_bytes() == w.as_slice()),
-            })
+        // A choice at a token: its kind, or its text as a word (its kind's spelling, a
+        // keyword's, or its soft word). `~`: none of its choices, and never the file's end.
+        let one = |t: &Token, c: &TokenElem| match c {
+            TokenElem::Kind(k) => &t.kind == k,
+            TokenElem::Word(w) => t.kind.as_bytes() == w.as_slice() || t.soft.as_deref().is_some_and(|s| s.as_bytes() == w.as_slice()),
+            TokenElem::Not(_) | TokenElem::End => false,
+        };
+        let is = |t: Option<&Token>, e: &[TokenElem]| match (e, t) {
+            ([TokenElem::Not(inner)], Some(t)) => !inner.iter().any(|c| one(t, c)),
+            ([TokenElem::Not(_)], None) => false,
+            (_, None) => e.contains(&TokenElem::End),
+            (_, Some(t)) => e.iter().any(|c| one(t, c)),
         };
         for (&k, (pre, seq)) in &self.token_marks {
             for g in 0..grammar.len() {
-                let at = |i: usize| &toks[grammar[g + i]];
-                let run = g + seq.len() <= grammar.len() && seq.iter().enumerate().all(|(i, e)| is(at(i), e));
-                let after = pre.is_empty() || (g > 0 && is(&toks[grammar[g - 1]], pre));
+                let at = |i: usize| grammar.get(g + i).map(|&x| &toks[x]);
+                let run = seq.iter().enumerate().all(|(i, e)| is(at(i), e));
+                let after = pre.is_empty() || (g > 0 && is(Some(&toks[grammar[g - 1]]), pre));
                 if run && after {
                     before[grammar[g]][k] = true;
                 }

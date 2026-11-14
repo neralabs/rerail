@@ -1,0 +1,77 @@
+.policy "ruff-pt002-pytest-fixture-positional-args" revision 1
+.guests off
+.description "Pass pytest fixture configuration such as scope or params as keyword arguments, not positionally, for clarity."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PT002(n): a finding at node n, from clause `fixture-positional-args`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PT002(at: node, span: node, f: loc) "Pass the arguments of `{f}(...)` by keyword: positional ones map, in order, to `scope`, `params`, `autouse`, `ids` and `name`."
+    suppress noqa "PT002"
+PT002(rr_at, SPAN, F) :- kind(n, "decorator"), child(n, c1, _), pt002_positional_call(c1, F),
+    count : { precedes(s2, n), kind(s2, "decorator"), child(s2, c3, _), pt002_fixture_expr(c3) } = 0,
+    child(p4, n, _), kind(p4, "decorated_definition"), field(p4, "definition", c5),
+    kind(c5, "function_definition"),
+    ( count : { child(n, c1_1, _), kind(c1_1, "comment") } = 0, unset(SPAN)
+    ; child(n, c2_2, _), kind(c2_2, "comment"), match("(?s)(?<SPAN>@(?:[^#\"'\\\\]|\\\\.|#[^\\n]*\\n|\"\"\"[^\"\\\\]*(?:(?:\\\\.|\"{1,2}[^\"\\\\])[^\"\\\\]*)*\"\"\"|'''[^'\\\\]*(?:(?:\\\\.|'{1,2}[^'\\\\])[^'\\\\]*)*'''|\"\"(?:[^\"#'\\\\]|#[^\\n]*\\n|\\\\.)|\"(?:[^\"\\\\]|\\\\.)+\"|''(?:[^\"#'\\\\]|#[^\\n]*\\n|\\\\.)|'(?:[^'\\\\]|\\\\.)+')*?(?:\"\"|'')?\\))(?:[ \\t\\f]|\\\\(?:\\r\\n?|\\n))*(?:#[^\\n]*)?\\s*", n)
+    ; child(n, c3_3, _), kind(c3_3, "comment"), unset(SPAN)
+    ),
+    (unset(SPAN), rr_at = n ; !unset(SPAN), rr_at = SPAN).
+
+
+// fixture_name(n): the JSON util `fixture-name`, used where the JSON says `matches: "fixture-name"`
+.decl pt002_fixture_name(n: node)
+pt002_fixture_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "pytest.fixture") ; sym_of(n, "pytest.yield_fixture")).
+
+// fixture_ref(n): the JSON util `fixture-ref`, used where the JSON says `matches: "fixture-ref"`
+//   F: metavariable this relation binds for the calling rule
+.decl pt002_fixture_ref(n: node, f: loc)
+pt002_fixture_ref(n, F) :- pt002_fixture_name(n), node(_, n, _, _, _), F = n.
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl pt002_callee(n: node, f: loc)
+pt002_callee(n, F) :- pt002_fixture_ref(n, F).
+pt002_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pt002_callee(c1, F).
+
+// plain_callee(n): the JSON util `plain-callee`, used where the JSON says `matches: "plain-callee"`
+.decl pt002_plain_callee(n: node)
+pt002_plain_callee(n) :- pt002_fixture_name(n).
+pt002_plain_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt002_plain_callee(c1).
+
+// fixture_expr(n): the JSON util `fixture-expr`, used where the JSON says `matches: "fixture-expr"`
+.decl pt002_fixture_expr(n: node)
+pt002_fixture_expr(n) :- pt002_plain_callee(n).
+pt002_fixture_expr(n) :- kind(n, "call"), field(n, "function", c1), pt002_plain_callee(c1).
+pt002_fixture_expr(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt002_fixture_expr(c2).
+
+// positional_call(n): the JSON util `positional-call`, used where the JSON says `matches: "positional-call"`
+//   F: metavariable this relation binds for the calling rule
+.decl pt002_positional_call(n: node, f: loc)
+pt002_positional_call(n, F) :- kind(n, "call"), field(n, "function", c1), pt002_callee(c1, F),
+    field(n, "arguments", c2),
+    ( kind(c2, "generator_expression")
+    ; kind(c2, "argument_list"), child(c2, c3, _), !pt002_alt_1(c3)
+    ).
+
+pt002_positional_call(n, F) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    pt002_positional_call(c4, F).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pt002_alt_1(n: node)
+pt002_alt_1(n) :-
+    ( kind(n, "keyword_argument")
+    ; kind(n, "dictionary_splat")
+    ; kind(n, "comment")
+    ; kind(n, "line_continuation")
+    ).
+
+pt002_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).

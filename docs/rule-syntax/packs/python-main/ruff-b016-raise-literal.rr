@@ -1,0 +1,43 @@
+.policy "ruff-b016-raise-literal" revision 1
+.guests off
+.description "Raise an exception instance instead of a literal like a string or number; raising a literal fails with a TypeError."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B016(n): a finding at node n, from clause `raise-literal`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B016(at: node) "Cannot raise a literal. Did you intend to return it or raise an Exception?"
+    suppress noqa "B016"
+B016(n) :- b016_raised(n),
+    ( kind(n, k1), b016_set_1(k1)
+    ; b016_plain_string(n)
+    ; kind(n, "concatenated_string"), count : { child(n, c1, _), kind(c1, "string"), !b016_plain_string(c1) } = 0
+    ).
+
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl b016_plain_string(n: node)
+b016_plain_string(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[fFtT]**", c1) } = 0.
+
+// raised(n): the JSON util `raised`, used where the JSON says `matches: "raised"`
+.decl b016_raised(n: node)
+b016_raised(n) :- b016_tok_follows_1(n), child(p8, n, _), kind(p8, "raise_statement").
+b016_raised(n) :- child(p9, n, _), kind(p9, "parenthesized_expression"), b016_raised(p9).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^raise$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b016_tok_follows_1(n: node)
+.stored b016_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b016_tok_follows_1(n) :- next_sibling(s1, n), glob("raise", s1).
+b016_tok_follows_1(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("raise", t2).
+b016_tok_follows_1(n) :- structural_before(n, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:raise)\\s*)$", g3).
+
+// set_1: node kinds from a JSON `any`
+.decl b016_set_1(v: symbol)
+b016_set_1("integer"). b016_set_1("float"). b016_set_1("true"). b016_set_1("false"). b016_set_1("none").
+b016_set_1("ellipsis").

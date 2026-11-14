@@ -1,0 +1,38 @@
+.policy "ruff-up020-open-alias" revision 1
+.guests off
+.description "Use the builtin open instead of io.open; in Python 3 they are the same function."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// UP020(n): a finding at node n, from clause `io-open`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation UP020(at: node, c: node) "Call the builtin `open` instead of `io.open`; they are the same function in Python 3. If `open` is rebound in this scope, use `builtins.open`."
+    suppress noqa "UP020"
+UP020(C, n) :- up020_io_open_call(n), node(_, n, _, _, _), C = n.
+UP020(C, n) :- up020_call_in_string(n, C).
+
+// io_open(n): the JSON util `io-open`, used where the JSON says `matches: "io-open"`
+.decl up020_io_open(n: node)
+up020_io_open(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "io.open").
+up020_io_open(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), up020_io_open(c1).
+
+// io_open_call(n): the JSON util `io-open-call`, used where the JSON says `matches: "io-open-call"`
+.decl up020_io_open_call(n: node)
+up020_io_open_call(n) :- kind(n, "call"), field(n, "function", c1), up020_io_open(c1).
+
+// call_in_string(n): the JSON util `call-in-string`, used where the JSON says `matches: "call-in-string"`
+//   C: metavariable this relation binds for the calling rule
+.decl up020_call_in_string(n: node, c: loc)
+up020_call_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), up020_alt_1(c2, C).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl up020_alt_1(n: node, c: loc)
+up020_alt_1(n, C) :- up020_io_open_call(n), C = n.
+up020_alt_1(n, C) :- up020_call_in_string(n, C).

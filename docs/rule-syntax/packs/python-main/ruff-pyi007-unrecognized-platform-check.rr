@@ -1,0 +1,104 @@
+.policy "ruff-pyi007-unrecognized-platform-check" revision 1
+.guests off
+.description "Compare sys.platform only by equality or inequality with a plain string literal in stub files; type checkers cannot evaluate other checks."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// test_slot(n): the JSON util `test-slot`, used where the JSON says `matches: "test-slot"`
+.decl pyi007_test_slot(n: node)
+pyi007_test_slot(n) :- field(p1, "condition", n), kind(p1, "if_statement").
+pyi007_test_slot(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"), pyi007_test_slot(p2).
+
+// bool_and_top(n): the JSON util `bool-and-top`, used where the JSON says `matches: "bool-and-top"`
+.decl pyi007_bool_and_top(n: node)
+pyi007_bool_and_top(n) :- kind(n, "boolean_operator"), field(n, "operator", c1),
+    glob("and", c1), pyi007_alt_1(n).
+
+// bool_or_top(n): the JSON util `bool-or-top`, used where the JSON says `matches: "bool-or-top"`
+.decl pyi007_bool_or_top(n: node)
+pyi007_bool_or_top(n) :- kind(n, "boolean_operator"), field(n, "operator", c1),
+    glob("or", c1), pyi007_alt_2(n).
+
+// test_operand(n): the JSON util `test-operand`, used where the JSON says `matches: "test-operand"`
+.decl pyi007_test_operand(n: node)
+pyi007_test_operand(n) :- pyi007_test_slot(n).
+pyi007_test_operand(n) :- child(p1, n, _), (pyi007_bool_and_top(p1) ; pyi007_bool_or_top(p1)).
+pyi007_test_operand(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"),
+    pyi007_test_operand(p2).
+
+// sys_platform(n): the JSON util `sys-platform`, used where the JSON says `matches: "sys-platform"`
+.decl pyi007_sys_platform(n: node)
+pyi007_sys_platform(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "sys.platform").
+pyi007_sys_platform(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi007_sys_platform(c1).
+
+// str_literal(n): the JSON util `str-literal`, used where the JSON says `matches: "str-literal"`
+.decl pyi007_str_literal(n: node)
+pyi007_str_literal(n) :- kind(n, "string"), match("[uUrR]?[\"'].*", n).
+pyi007_str_literal(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !match("[uUrR]?[\"'].*", c1) } = 0.
+pyi007_str_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pyi007_str_literal(c2).
+
+// PYI007(n, detail): findings from clauses `other-operator`, `non-string-operand`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI007(at: node, detail: symbol) "Compare `sys.platform` to a {detail}."
+    suppress noqa "PYI007"
+PYI007_raw(n, "string with `==` or `!=`, e.g. `sys.platform == \"linux\"` (use `or` for several platforms); type checkers can't evaluate other operators") :- kind(n, "comparison_operator"),
+    pyi007_test_operand(n), k2 = count : { child(n, c1, _), !pyi007_alt_4(c1) }, k2 >= 2, k2 <= 2,
+    child(n, c3, _), !pyi007_tok_follows_1(c3), pyi007_sys_platform(c3), pyi007_tok_has_2(n).
+PYI007_raw(n, "plain string literal such as `\"linux\"`; type checkers can't evaluate any other value") :- kind(n, "comparison_operator"),
+    pyi007_test_operand(n), k2 = count : { child(n, c1, _), !pyi007_alt_4(c1) }, k2 >= 2, k2 <= 2,
+    child(n, c3, _), !pyi007_tok_follows_1(c3), pyi007_sys_platform(c3), child(n, c11, _),
+    precedes_stop(s12, c11, pyi007_stop_6), glob("{==,!=}", s12), !pyi007_str_literal(c11).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi007_tok_follows_1(n: node)
+.stored pyi007_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi007_tok_follows_1(n) :- next_sibling(s4, n), match("(?s).*..*", s4).
+pyi007_tok_follows_1(n) :- structural_before(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, st9, _), o8 = st9 - strlen(g6), token(p7, _, t5, _, o8),
+    match("(?s).*..*", t5).
+pyi007_tok_follows_1(n) :- structural_before(n, g6), match("(?s)^.*\\S\\s*$", g6).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^(<|>|<=|>=|in|not\\s+in|is|is\\s+not)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi007_tok_has_2(n: node)
+.stored pyi007_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi007_tok_has_2(n) :- child(n, c11, _), match("(<|>|<=|>=|in|not\\s+in|is|is\\s+not)", c11).
+pyi007_tok_has_2(n) :- op(n, t12), match("(<|>|<=|>=|in|not\\s+in|is|is\\s+not)", t12).
+pyi007_tok_has_2(n) :- child(n, c18, _), structural_before(c18, g13),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:not\\s+in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:is\\s+not)(?:\\W.*)?)$", g13).
+pyi007_tok_has_2(n) :- child(n, c18, _), structural_after(c18, g13),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:not\\s+in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:is\\s+not)(?:\\W.*)?)$", g13).
+pyi007_tok_has_2(n) :- node_text(n, g13), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:not\\s+in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:is\\s+not)(?:\\W.*)?)$", g13).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi007_alt_1(n: node)
+pyi007_alt_1(n) :- pyi007_test_slot(n).
+pyi007_alt_1(n) :- field(p1, "left", n), pyi007_bool_and_top(p1).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi007_alt_2(n: node)
+pyi007_alt_2(n) :- pyi007_test_slot(n).
+pyi007_alt_2(n) :- field(p1, "left", n), pyi007_bool_or_top(p1).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi007_alt_4(n: node)
+pyi007_alt_4(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pyi007_alt_4(n) :- node(_, n, _, _, _),
+    match("(==|!=|<|>|<=|>=|is|not|in|is\\s+not|not\\s+in)", n).
+
+// stop_6(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi007_stop_6(n: node)
+pyi007_stop_6(n) :- node(_, n, _, _, _), !kind(n, "comment"), !kind(n, "line_continuation").
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI007_raw(at: node, detail: symbol)
+PYI007(v0, v1) :- PYI007_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

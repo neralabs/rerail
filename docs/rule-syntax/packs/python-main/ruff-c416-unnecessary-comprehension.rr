@@ -1,0 +1,679 @@
+.policy "ruff-c416-unnecessary-comprehension" revision 1
+.guests off
+.description "Pass the iterable to list, set or dict directly instead of a comprehension that rebuilds it unchanged."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// dict_expr(n): the JSON util `dict-expr`, used where the JSON says `matches: "dict-expr"`
+.decl c416_dict_expr(n: node)
+c416_dict_expr(n) :- c416_dict_expr_u7(n).
+
+// dict_callee(n): the JSON util `dict-callee`, used where the JSON says `matches: "dict-callee"`
+.decl c416_dict_callee(n: node)
+c416_dict_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "dict"), sym_of(n, "builtins.dict").
+c416_dict_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    c416_dict_callee(c1).
+
+// dict_init(n): the JSON util `dict-init`, used where the JSON says `matches: "dict-init"`
+.decl c416_dict_init(n: node)
+c416_dict_init(n) :- c416_dict_expr(n).
+c416_dict_init(n) :- kind(n, "call"), child(n, c1, _), c416_dict_callee(c1),
+    next_sibling(c1, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")).
+
+// dict_ann(n): the JSON util `dict-ann`, used where the JSON says `matches: "dict-ann"`
+.decl c416_dict_ann(n: node)
+c416_dict_ann(n) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "dict"),
+    sym_of(n, "builtins.dict").
+c416_dict_ann(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Dict")
+    ; sym_of(n, "_typeshed.Dict")
+    ; sym_of(n, "typing_extensions.Dict")
+    ).
+
+c416_dict_ann(n) :- (kind(n, "subscript") ; kind(n, "generic_type")), child(n, c1, _),
+    !c416_tok_follows_4(c1), c416_dict_ann(c1).
+c416_dict_ann(n) :- kind(n, "parenthesized_expression"), child(n, c9, _), c416_dict_ann(c9).
+
+// plain_target(n): the JSON util `plain-target`, used where the JSON says `matches: "plain-target"`
+.decl c416_plain_target(n: node)
+c416_plain_target(n) :- kind(n, "identifier").
+c416_plain_target(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    c416_plain_target(c1).
+
+// dict_bound(n): the JSON util `dict-bound`, used where the JSON says `matches: "dict-bound"`
+.decl c416_dict_bound(n: node)
+c416_dict_bound(n) :- kind(n, "identifier"), c416_alt_3(n).
+
+// receiver_name(n): the JSON util `receiver-name`, used where the JSON says `matches: "receiver-name"`
+.decl c416_receiver_name(n: node)
+c416_receiver_name(n) :- c416_dict_bound(n).
+c416_receiver_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    c416_receiver_name(c1).
+
+// any_xname(n): the JSON util `any-xname`, used where the JSON says `matches: "any-xname"`
+.decl c416_any_xname(n: node)
+c416_any_xname(n) :- kind(n, "identifier").
+c416_any_xname(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), c416_any_xname(c1).
+
+// name_elt(n): the JSON util `name-elt`, used where the JSON says `matches: "name-elt"`
+//   E: metavariable this relation binds for the calling rule
+.decl c416_name_elt(n: node, e: loc)
+c416_name_elt(n, E) :- kind(n, "identifier"), node(_, n, _, _, _), E = n.
+c416_name_elt(n, E) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    c416_name_elt(c1, E).
+
+// name_key(n): the JSON util `name-key`, used where the JSON says `matches: "name-key"`
+//   EK: metavariable this relation binds for the calling rule
+.decl c416_name_key(n: node, ek: loc)
+c416_name_key(n, EK) :- kind(n, "identifier"), node(_, n, _, _, _), EK = n.
+c416_name_key(n, EK) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    c416_name_key(c1, EK).
+
+// name_value(n): the JSON util `name-value`, used where the JSON says `matches: "name-value"`
+//   EV: metavariable this relation binds for the calling rule
+.decl c416_name_value(n: node, ev: loc)
+c416_name_value(n, EV) :- kind(n, "identifier"), node(_, n, _, _, _), EV = n.
+c416_name_value(n, EV) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    c416_name_value(c1, EV).
+
+// any_pname(n): the JSON util `any-pname`, used where the JSON says `matches: "any-pname"`
+.decl c416_any_pname(n: node)
+c416_any_pname(n) :- kind(n, "identifier").
+c416_any_pname(n) :- kind(n, "tuple_pattern"), !c416_tok_has_6(n), child(n, c9, _),
+    c416_any_pname(c9).
+
+// name_tgt(n): the JSON util `name-tgt`, used where the JSON says `matches: "name-tgt"`
+//   T: metavariable this relation binds for the calling rule
+.decl c416_name_tgt(n: node, t: loc)
+c416_name_tgt(n, T) :- kind(n, "identifier"), node(_, n, _, _, _), T = n.
+c416_name_tgt(n, T) :- kind(n, "tuple_pattern"), !c416_tok_has_6(n), child(n, c9, _),
+    c416_name_tgt(c9, T).
+
+// tgt_key(n): the JSON util `tgt-key`, used where the JSON says `matches: "tgt-key"`
+//   TK: metavariable this relation binds for the calling rule
+.decl c416_tgt_key(n: node, tk: loc)
+c416_tgt_key(n, TK) :- kind(n, "identifier"), node(_, n, _, _, _), TK = n.
+c416_tgt_key(n, TK) :- kind(n, "tuple_pattern"), !c416_tok_has_6(n), child(n, c9, _),
+    c416_tgt_key(c9, TK).
+
+// tgt_value(n): the JSON util `tgt-value`, used where the JSON says `matches: "tgt-value"`
+//   TV: metavariable this relation binds for the calling rule
+.decl c416_tgt_value(n: node, tv: loc)
+c416_tgt_value(n, TV) :- kind(n, "identifier"), node(_, n, _, _, _), TV = n.
+c416_tgt_value(n, TV) :- kind(n, "tuple_pattern"), !c416_tok_has_6(n), child(n, c9, _),
+    c416_tgt_value(c9, TV).
+
+// target_pair(n): the JSON util `target-pair`, used where the JSON says `matches: "target-pair"`
+//   TK, TV: metavariables this relation binds for the calling rule
+.decl c416_target_pair(n: node, tk: loc, tv: loc)
+c416_target_pair(n, TK, TV) :- (kind(n, "pattern_list") ; kind(n, "tuple_pattern") ; kind(n, "list_pattern")),
+    k2 = count : { child(n, c1, _), !c416_alt_5(c1) }, k2 >= 2, k2 <= 2,
+    count : { child(n, c3, _), !c416_alt_6(c3) } = 0, child(n, c4, _), c416_tgt_key(c4, TK),
+    precedes(c4, s5), c416_tgt_value(s5, TV).
+c416_target_pair(n, TK, TV) :- kind(n, "tuple_pattern"), !c416_tok_has_7(n), child(n, c14, _),
+    c416_target_pair(c14, TK, TV).
+
+// target_tuple_pair(n): the JSON util `target-tuple-pair`, used where the JSON says `matches: "target-tuple-pair"`
+//   TK, TV: metavariables this relation binds for the calling rule
+.decl c416_target_tuple_pair(n: node, tk: loc, tv: loc)
+c416_target_tuple_pair(n, TK, TV) :- (kind(n, "pattern_list") ; kind(n, "tuple_pattern")),
+    k2 = count : { child(n, c1, _), !c416_alt_5(c1) }, k2 >= 2, k2 <= 2,
+    count : { child(n, c3, _), !c416_alt_6(c3) } = 0, child(n, c4, _), c416_tgt_key(c4, TK),
+    precedes(c4, s5), c416_tgt_value(s5, TV).
+c416_target_tuple_pair(n, TK, TV) :- kind(n, "tuple_pattern"), !c416_tok_has_7(n),
+    child(n, c14, _), c416_target_tuple_pair(c14, TK, TV).
+
+// tuple_pair(n): the JSON util `tuple-pair`, used where the JSON says `matches: "tuple-pair"`
+//   EK, EV: metavariables this relation binds for the calling rule
+.decl c416_tuple_pair(n: node, ek: loc, ev: loc)
+c416_tuple_pair(n, EK, EV) :- kind(n, "tuple"),
+    k2 = count : { child(n, c1, _), !c416_alt_5(c1) }, k2 >= 2, k2 <= 2,
+    count : { child(n, c3, _), !c416_alt_10(c3) } = 0, child(n, c4, _), c416_name_key(c4, EK),
+    precedes(c4, s5), c416_name_value(s5, EV).
+c416_tuple_pair(n, EK, EV) :- kind(n, "parenthesized_expression"), child(n, c6, _),
+    c416_tuple_pair(c6, EK, EV).
+
+// single_for(n): the JSON util `single-for`, used where the JSON says `matches: "single-for"`
+//   IT: metavariable this relation binds for the calling rule
+.decl c416_single_for(n: node, it: loc)
+c416_single_for(n, IT) :- k2 = count : { child(n, c1, _), kind(c1, "for_in_clause") },
+    k2 >= 1, k2 <= 1, count : { child(n, c3, _), c416_alt_11(c3) } = 0, child(n, c4, _),
+    kind(c4, "for_in_clause"), field(c4, "right", c5), node(_, c5, _, _, _), IT = c5.
+
+// items_call(n): the JSON util `items-call`, used where the JSON says `matches: "items-call"`
+.decl c416_items_call(n: node)
+c416_items_call(n) :- kind(n, "call"), field(n, "function", c1), kind(c1, "attribute"),
+    field(c1, "object", c2), c416_receiver_name(c2), field(c1, "attribute", c3),
+    glob("items", c3).
+c416_items_call(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), c416_items_call(c4).
+
+// kind_name(n): the JSON util `kind-name`, used where the JSON says `matches: "kind-name"`
+//   KN: metavariable of the calling rule, passed in (bound by the caller)
+.decl c416_kind_name(n: node, kn: symbol)
+c416_kind_name(n, KN) :- node(_, W, _, _, _),
+    (kind(n, "identifier") ; kind(n, "dotted_name")), node(_, n, _, _, _), BN = n, text(BN, KN),
+    text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+
+// fn_body(n): the JSON util `fn-body`, used where the JSON says `matches: "fn-body"`
+.decl c416_fn_body(n: node)
+c416_fn_body(n) :- c416_demand_fn_body(n), within(n, p1), field(_, "body", n),
+    (kind(p1, "function_definition") ; kind(p1, "lambda")).
+
+// comp(n): the JSON util `comp`, used where the JSON says `matches: "comp"`
+.decl c416_comp(n: node)
+c416_comp(n) :-
+    ( kind(n, "list_comprehension")
+    ; kind(n, "set_comprehension")
+    ; kind(n, "dictionary_comprehension")
+    ; kind(n, "generator_expression")
+    ).
+
+
+// not_first_iter(n): the JSON util `not-first-iter`, used where the JSON says `matches: "not-first-iter"`
+.decl c416_not_first_iter(n: node)
+c416_not_first_iter(n) :- node(_, n, _, _, _), !kind(n, "for_in_clause").
+c416_not_first_iter(n) :- kind(n, "for_in_clause"), precedes(s1, n),
+    kind(s1, "for_in_clause").
+
+// comp_binds(n): the JSON util `comp-binds`, used where the JSON says `matches: "comp-binds"`
+//   KN: metavariable of the calling rule, passed in (bound by the caller)
+.decl c416_comp_binds(n: node, kn: symbol)
+c416_comp_binds(n, KN) :- node(_, W, _, _, _), c416_comp(n), child(n, c1, _),
+    kind(c1, "for_in_clause"), within(c2, c1), field(_, "left", c2), c416_kind_name(c2, KN),
+    text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+
+// shadowed(n): the JSON util `shadowed`, used where the JSON says `matches: "shadowed"`
+//   KN: metavariable of the calling rule, passed in (bound by the caller)
+.decl c416_shadowed(n: node, kn: symbol)
+c416_shadowed(n, KN) :- node(_, W, _, _, _), c416_fn_body(n), inside(n, p1, "module"),
+    within(c2, p1), c416_kind_name(c2, KN), !site_form(c2, "except"),
+    !site_form(c2, "annotation"), site_scope(c2, "module"), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN) :- node(_, W, _, _, _),
+    ( precedes(s1, n), within(c1, s1), c416_kind_name(c1, KN), !site_form(c1, "except"), !site_form(c1, "annotation"), site_scope(c1, "module")
+    ; within(n, p1), precedes(s2, p1), within(c2, s2), c416_kind_name(c2, KN), !site_form(c2, "except"), !site_form(c2, "annotation"), site_scope(c2, "module")
+    ),
+    text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN) :- node(_, W, _, _, _), within(n, p8), field(_, "body", n),
+    (kind(p8, "function_definition") ; kind(p8, "lambda")), within(p8, p9),
+    field(_, "body", p8), (kind(p9, "function_definition") ; kind(p9, "lambda")),
+    node(_, p9, _, _, _), F = p9, within(c10, p9), c416_kind_name(c10, KN), !site_form(c10, "except"),
+    !site_form(c10, "annotation"),
+    (site_scope(c10, "function") ; site_scope(c10, "lambda")),
+    (st11 = c10 ; within(c10, st11)), within(st11, p12),
+    (kind(p12, "function_definition") ; kind(p12, "lambda")), node(_, p12, _, _, _), G = p12,
+    text(G, t13), text(F, t13), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict"), @doc(G) = @doc(F).
+c416_shadowed(n, KN) :- node(_, W, _, _, _), within(n, p15), field(_, "body", n),
+    (kind(p15, "function_definition") ; kind(p15, "lambda")), node(_, p15, _, _, _), F = p15,
+    c416_alt_13(n, F, KN), text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN) :- node(_, W, _, _, _), inside(n, p29, "lambda"), field(_, "body", n),
+    child(p29, c30, _), kind(c30, "lambda_parameters"), within(c31, c30),
+    c416_kind_name(c31, KN), site_scope(c31, "lambda"), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN) :- node(_, W, _, _, _), inside(n, p32, "class_definition"),
+    field(_, "body", n), node(_, p32, _, _, _), F = p32,
+    count : { within_stop(n, p33, "class_definition"), field(_, "body", n), (kind(p33, "function_definition") ; kind(p33, "lambda")) } = 0,
+    count : { child(p34, n, _), c416_comp(p34) } = 0,
+    count : { within_stop(n, p35, "class_definition"), c416_not_first_iter(p35), child(p36, p35, _), c416_comp(p36) } = 0,
+    c416_alt_14(n, F, KN), text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN) :- node(_, W, _, _, _), child(n, c50, _), kind(c50, "for_in_clause"),
+    has(c50, c51, "named_expression"), field(_, "right", c51), field(c51, "name", c52),
+    c416_kind_name(c52, KN), text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN) :- node(_, W, _, _, _), child(p53, n, _), c416_comp_binds(p53, KN),
+    text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN) :- node(_, W, _, _, _), within(n, p54), c416_not_first_iter(p54),
+    child(p55, p54, _), c416_comp_binds(p55, KN), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN) :- node(_, W, _, _, _), within_stop(n, p56, c416_stop_15),
+    kind(p56, "block"), child(p57, p56, _), kind(p57, "except_clause"),
+    child(p57, c58, _), kind(c58, "as_pattern"), child(c58, c59, _),
+    kind(c59, "as_pattern_target"), child(c59, c60, _), c416_kind_name(c60, KN),
+    text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN) :- node(_, W, _, _, _), within(n, p61), field(_, "body", n),
+    (kind(p61, "function_definition") ; kind(p61, "class_definition")),
+    within(c62, p61), field(_, "type_parameters", c62), c416_kind_name(c62, KN),
+    text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_shadowed(n, KN) :- node(_, W, _, _, _), inside(n, p63, "type_alias_statement"),
+    field(_, "right", n), within(c64, p63), field(_, "left", c64), c416_kind_name(c64, KN),
+    site_form(c64, "typeParameter"), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+
+// list_comprehension_in_annotation(n): the JSON util `list-comprehension-in-annotation`, used where the JSON says `matches: "list-comprehension-in-annotation"`
+//   KN: metavariable of the calling rule, passed in (bound by the caller)
+//   COMP, IT, TK, TV: metavariables this relation binds for the calling rule
+.decl c416_list_comprehension_in_annotation(n: node, c416_comp: loc, it: loc, kn: symbol, tk: loc, tv: loc)
+c416_list_comprehension_in_annotation(n, COMP, IT, KN, TK, TV) :- node(_, W, _, _, _),
+    c416_demand_list_comprehension_in_annotation(n),
+    (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
+    within(c2, r1), c416_alt_17(c2, COMP, IT, KN, TK, TV), !c416_shadowed(n, KN), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+
+// set_comprehension_in_annotation(n): the JSON util `set-comprehension-in-annotation`, used where the JSON says `matches: "set-comprehension-in-annotation"`
+//   KN: metavariable of the calling rule, passed in (bound by the caller)
+//   COMP, IT, TK, TV: metavariables this relation binds for the calling rule
+.decl c416_set_comprehension_in_annotation(n: node, c416_comp: loc, it: loc, kn: symbol, tk: loc, tv: loc)
+c416_set_comprehension_in_annotation(n, COMP, IT, KN, TK, TV) :- node(_, W, _, _, _),
+    c416_demand_set_comprehension_in_annotation(n),
+    (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
+    within(c2, r1), c416_alt_19(c2, COMP, IT, KN, TK, TV), !c416_shadowed(n, KN), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+
+// dict_comprehension_node(n): the JSON util `dict-comprehension-node`, used where the JSON says `matches: "dict-comprehension-node"`
+//   KN: metavariable of the calling rule, passed in (bound by the caller)
+//   COMP, EK, EV, IT, TK, TV: metavariables this relation binds for the calling rule
+.decl c416_dict_comprehension_node(n: node, c416_comp: loc, ek: loc, ev: loc, it: loc, kn: symbol, tk: loc, tv: loc)
+c416_dict_comprehension_node(n, COMP, EK, EV, IT, KN, TK, TV) :- node(_, W, _, _, _),
+    kind(n, "dictionary_comprehension"), c416_single_for(n, IT), field(n, "body", c1),
+    kind(c1, "pair"), field(c1, "key", c2), c416_name_key(c2, EK), field(c1, "value", c3),
+    c416_name_value(c3, EV), child(n, c4, _), kind(c4, "for_in_clause"),
+    field(c4, "left", c5), c416_target_tuple_pair(c5, TK, TV), text(EK, t6), text(TK, t6),
+    text(EV, t8), text(TV, t8), !c416_shadowed(n, KN), node(_, n, _, _, _), COMP = n, text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict"), @doc(EK) = @doc(TK), @doc(EV) = @doc(TV).
+
+// dict_comprehension_in_annotation(n): the JSON util `dict-comprehension-in-annotation`, used where the JSON says `matches: "dict-comprehension-in-annotation"`
+//   KN: metavariable of the calling rule, passed in (bound by the caller)
+//   COMP, EK, EV, IT, TK, TV: metavariables this relation binds for the calling rule
+.decl c416_dict_comprehension_in_annotation(n: node, c416_comp: loc, ek: loc, ev: loc, it: loc, kn: symbol, tk: loc, tv: loc)
+c416_dict_comprehension_in_annotation(n, COMP, EK, EV, IT, KN, TK, TV) :- node(_, W, _, _, _),
+    c416_demand_dict_comprehension_in_annotation(n),
+    (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
+    within(c2, r1), c416_alt_20(c2, COMP, EK, EV, IT, KN, TK, TV), !c416_shadowed(n, KN),
+    text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+
+// C416(n): a finding at node n, from clause `list-comprehension`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes KN from other metavariables' text; its literals end each rule.
+.violation C416(at: node, c416_comp: node, it: loc) "Replace this comprehension with `list({it})`, which copies the same items; keep it inside `__len__`, where `list()` can recurse."
+    suppress noqa "C416"
+C416(COMP, n, IT) :- node(_, n, _, _, _), W = n, c416_alt_17(n, COMP, IT, KN, _, _), text(W, t1),
+    KN = @replace_all(t1, "(?s)^.*$", "list").
+
+// C416_set_comprehension(n): a finding at node n, from clause `set-comprehension`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes KN from other metavariables' text; its literals end each rule.
+.violation C416_set_comprehension(at: node, c416_comp: node, it: loc) code "C416" "Replace this comprehension with `set({it})`, which copies the same items; keep it inside `__len__`, where `set()` can recurse."
+    suppress noqa "C416"
+C416_set_comprehension(COMP, n, IT) :- node(_, n, _, _, _), W = n, c416_alt_19(n, COMP, IT, KN, _, _),
+    text(W, t1), KN = @replace_all(t1, "(?s)^.*$", "set").
+
+// C416_dict_comprehension(n): a finding at node n, from clause `dict-comprehension`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes KN from other metavariables' text; its literals end each rule.
+.violation C416_dict_comprehension(at: node, c416_comp: node, it: loc) code "C416" "Replace this comprehension with `dict({it})`; if `{it}` is a mapping whose keys are pairs, use `dict({it}.keys())`; keep it inside `__len__`, where `dict()` can recurse."
+    suppress noqa "C416"
+C416_dict_comprehension(COMP, n, IT) :- node(_, n, _, _, _), W = n, c416_alt_20(n, COMP, _, _, IT, KN, _, _),
+    text(W, t1), KN = @replace_all(t1, "(?s)^.*$", "dict").
+
+.decl c416_alt_1_u0(n: node)
+c416_alt_1_u0(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+c416_alt_1_u0(n) :- kind(n, "comment").
+
+.decl c416_alt_1_u1(n: node)
+c416_alt_1_u1(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+c416_alt_1_u1(n) :- kind(n, "comment").
+c416_alt_1_u1(n) :- c416_dict_expr_u0(n).
+
+.decl c416_alt_1_u2(n: node)
+c416_alt_1_u2(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+c416_alt_1_u2(n) :- kind(n, "comment").
+c416_alt_1_u2(n) :- c416_dict_expr_u1(n).
+
+.decl c416_alt_1_u3(n: node)
+c416_alt_1_u3(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+c416_alt_1_u3(n) :- kind(n, "comment").
+c416_alt_1_u3(n) :- c416_dict_expr_u2(n).
+
+.decl c416_alt_1_u4(n: node)
+c416_alt_1_u4(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+c416_alt_1_u4(n) :- kind(n, "comment").
+c416_alt_1_u4(n) :- c416_dict_expr_u3(n).
+
+.decl c416_alt_1_u5(n: node)
+c416_alt_1_u5(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+c416_alt_1_u5(n) :- kind(n, "comment").
+c416_alt_1_u5(n) :- c416_dict_expr_u4(n).
+
+.decl c416_alt_1_u6(n: node)
+c416_alt_1_u6(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+c416_alt_1_u6(n) :- kind(n, "comment").
+c416_alt_1_u6(n) :- c416_dict_expr_u5(n).
+
+.decl c416_alt_1_u7(n: node)
+c416_alt_1_u7(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+c416_alt_1_u7(n) :- kind(n, "comment").
+c416_alt_1_u7(n) :- c416_dict_expr_u6(n).
+
+.decl c416_dict_expr_u0(n: node)
+c416_dict_expr_u0(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+c416_dict_expr_u0(n) :- kind(n, "boolean_operator"), count : { child(n, c26, _) } = 0.
+
+.decl c416_dict_expr_u1(n: node)
+c416_dict_expr_u1(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+c416_dict_expr_u1(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    c416_dict_expr_u0(c1).
+c416_dict_expr_u1(n) :- kind(n, "named_expression"), child(n, c2, _), c416_tok_follows_1(c2),
+    c416_dict_expr_u0(c2).
+c416_dict_expr_u1(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    c416_tok_precedes_2(c10), c416_dict_expr_u0(c10), child(n, c18, _), c416_tok_follows_3(c18),
+    c416_dict_expr_u0(c18).
+c416_dict_expr_u1(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !c416_alt_1_u0(c26) } = 0.
+
+.decl c416_dict_expr_u2(n: node)
+c416_dict_expr_u2(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+c416_dict_expr_u2(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    c416_dict_expr_u1(c1).
+c416_dict_expr_u2(n) :- kind(n, "named_expression"), child(n, c2, _), c416_tok_follows_1(c2),
+    c416_dict_expr_u1(c2).
+c416_dict_expr_u2(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    c416_tok_precedes_2(c10), c416_dict_expr_u1(c10), child(n, c18, _), c416_tok_follows_3(c18),
+    c416_dict_expr_u1(c18).
+c416_dict_expr_u2(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !c416_alt_1_u1(c26) } = 0.
+
+.decl c416_dict_expr_u3(n: node)
+c416_dict_expr_u3(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+c416_dict_expr_u3(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    c416_dict_expr_u2(c1).
+c416_dict_expr_u3(n) :- kind(n, "named_expression"), child(n, c2, _), c416_tok_follows_1(c2),
+    c416_dict_expr_u2(c2).
+c416_dict_expr_u3(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    c416_tok_precedes_2(c10), c416_dict_expr_u2(c10), child(n, c18, _), c416_tok_follows_3(c18),
+    c416_dict_expr_u2(c18).
+c416_dict_expr_u3(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !c416_alt_1_u2(c26) } = 0.
+
+.decl c416_dict_expr_u4(n: node)
+c416_dict_expr_u4(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+c416_dict_expr_u4(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    c416_dict_expr_u3(c1).
+c416_dict_expr_u4(n) :- kind(n, "named_expression"), child(n, c2, _), c416_tok_follows_1(c2),
+    c416_dict_expr_u3(c2).
+c416_dict_expr_u4(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    c416_tok_precedes_2(c10), c416_dict_expr_u3(c10), child(n, c18, _), c416_tok_follows_3(c18),
+    c416_dict_expr_u3(c18).
+c416_dict_expr_u4(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !c416_alt_1_u3(c26) } = 0.
+
+.decl c416_dict_expr_u5(n: node)
+c416_dict_expr_u5(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+c416_dict_expr_u5(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    c416_dict_expr_u4(c1).
+c416_dict_expr_u5(n) :- kind(n, "named_expression"), child(n, c2, _), c416_tok_follows_1(c2),
+    c416_dict_expr_u4(c2).
+c416_dict_expr_u5(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    c416_tok_precedes_2(c10), c416_dict_expr_u4(c10), child(n, c18, _), c416_tok_follows_3(c18),
+    c416_dict_expr_u4(c18).
+c416_dict_expr_u5(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !c416_alt_1_u4(c26) } = 0.
+
+.decl c416_dict_expr_u6(n: node)
+c416_dict_expr_u6(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+c416_dict_expr_u6(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    c416_dict_expr_u5(c1).
+c416_dict_expr_u6(n) :- kind(n, "named_expression"), child(n, c2, _), c416_tok_follows_1(c2),
+    c416_dict_expr_u5(c2).
+c416_dict_expr_u6(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    c416_tok_precedes_2(c10), c416_dict_expr_u5(c10), child(n, c18, _), c416_tok_follows_3(c18),
+    c416_dict_expr_u5(c18).
+c416_dict_expr_u6(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !c416_alt_1_u5(c26) } = 0.
+
+.decl c416_dict_expr_u7(n: node)
+c416_dict_expr_u7(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+c416_dict_expr_u7(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    c416_dict_expr_u6(c1).
+c416_dict_expr_u7(n) :- kind(n, "named_expression"), child(n, c2, _), c416_tok_follows_1(c2),
+    c416_dict_expr_u6(c2).
+c416_dict_expr_u7(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    c416_tok_precedes_2(c10), c416_dict_expr_u6(c10), child(n, c18, _), c416_tok_follows_3(c18),
+    c416_dict_expr_u6(c18).
+c416_dict_expr_u7(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !c416_alt_1_u6(c26) } = 0.
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^:=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl c416_tok_follows_1(n: node)
+.stored c416_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+c416_tok_follows_1(n) :- next_sibling(s3, n), glob(":=", s3).
+c416_tok_follows_1(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match(":=", t4).
+c416_tok_follows_1(n) :- structural_before(n, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::=)\\s*)$", g5).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl c416_tok_precedes_2(n: node)
+.stored c416_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+c416_tok_precedes_2(n) :- next_sibling(n, s11), glob("if", s11).
+c416_tok_precedes_2(n) :- structural_after(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, _, en17), o15 = en17 + strlen(g13), token(p14, _, t12, o15, _),
+    match("if", t12).
+c416_tok_precedes_2(n) :- structural_after(n, g13),
+    match("(?s)^(?:\\s*(?:if)(?:\\W.*)?)$", g13).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl c416_tok_follows_3(n: node)
+.stored c416_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+c416_tok_follows_3(n) :- next_sibling(s19, n), glob("else", s19).
+c416_tok_follows_3(n) :- structural_before(n, g21), match("\\s*", g21), child(p22, n, _),
+    node(_, n, _, st24, _), o23 = st24 - strlen(g21), token(p22, _, t20, _, o23),
+    match("else", t20).
+c416_tok_follows_3(n) :- structural_before(n, g21),
+    match("(?s)^(?:(?:.*\\W)?(?:else)\\s*)$", g21).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl c416_tok_follows_4(n: node)
+.stored c416_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+c416_tok_follows_4(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+c416_tok_follows_4(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+c416_tok_follows_4(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl c416_tok_precedes_5(n: node)
+.stored c416_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+c416_tok_precedes_5(n) :- precedes(n, s14), glob("as", s14).
+c416_tok_precedes_5(n) :- child(p17, n, _), node(_, n, _, _, en20),
+    token(p17, _, t15, st19, _), st19 >= en20, match("as", t15).
+c416_tok_precedes_5(n) :- structural_after(n, g16),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g16).
+c416_tok_precedes_5(n) :- precedes(n, o18), structural_after(o18, g16),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g16).
+
+// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl c416_tok_has_6(n: node)
+.stored c416_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+c416_tok_has_6(n) :- child(n, c1, _), glob("\\,", c1).
+c416_tok_has_6(n) :- op(n, t2), match(",", t2).
+c416_tok_has_6(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+c416_tok_has_6(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+c416_tok_has_6(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// tok_has_7(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl c416_tok_has_7(n: node)
+.stored c416_tok_has_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+c416_tok_has_7(n) :- child(n, c6, _), glob("\\,", c6).
+c416_tok_has_7(n) :- op(n, t7), match(",", t7).
+c416_tok_has_7(n) :- child(n, c13, _), structural_before(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+c416_tok_has_7(n) :- child(n, c13, _), structural_after(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+c416_tok_has_7(n) :- node_text(n, g8), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g8).
+
+// demand_alt_17: the nodes alt_17 is asked at (its recursion looks at every descendant)
+.decl c416_demand_alt_17(n: node)
+c416_demand_alt_17(c2) :- c416_demand_list_comprehension_in_annotation(n),
+    (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
+    within(c2, r1).
+c416_demand_alt_17(n) :- node(_, n, _, _, _), W = n, text(W, t1).
+
+// demand_list_comprehension_in_annotation: the nodes list_comprehension_in_annotation is asked at (its recursion looks at every descendant)
+.decl c416_demand_list_comprehension_in_annotation(n: node)
+c416_demand_list_comprehension_in_annotation(n) :- c416_demand_alt_17(n).
+
+// demand_alt_19: the nodes alt_19 is asked at (its recursion looks at every descendant)
+.decl c416_demand_alt_19(n: node)
+c416_demand_alt_19(c2) :- c416_demand_set_comprehension_in_annotation(n),
+    (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
+    within(c2, r1).
+c416_demand_alt_19(n) :- node(_, n, _, _, _), W = n, text(W, t1).
+
+// demand_set_comprehension_in_annotation: the nodes set_comprehension_in_annotation is asked at (its recursion looks at every descendant)
+.decl c416_demand_set_comprehension_in_annotation(n: node)
+c416_demand_set_comprehension_in_annotation(n) :- c416_demand_alt_19(n).
+
+// demand_alt_20: the nodes alt_20 is asked at (its recursion looks at every descendant)
+.decl c416_demand_alt_20(n: node)
+c416_demand_alt_20(c2) :- c416_demand_dict_comprehension_in_annotation(n),
+    (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
+    within(c2, r1).
+c416_demand_alt_20(n) :- node(_, n, _, _, _), W = n, text(W, t1).
+
+// demand_dict_comprehension_in_annotation: the nodes dict_comprehension_in_annotation is asked at (its recursion looks at every descendant)
+.decl c416_demand_dict_comprehension_in_annotation(n: node)
+c416_demand_dict_comprehension_in_annotation(n) :- c416_demand_alt_20(n).
+
+// demand_fn_body: the nodes fn_body is asked at (it looks at every ancestor of every node)
+.decl c416_demand_fn_body(n: node)
+c416_demand_fn_body(n) :- inside(n, p1, "module"), within(c2, p1), c416_kind_name(c2, KN),
+    site_scope(c2, "module").
+
+// alt_1_u0_empty: level -1 of an unrolled recursion, empty
+.decl c416_alt_1_u0_empty(n: node)
+
+// dict_expr_u0_empty: level -1 of an unrolled recursion, empty
+.decl c416_dict_expr_u0_empty(n: node)
+
+// stop_15: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl c416_stop_15(kind: symbol)
+c416_stop_15("function_definition"). c416_stop_15("lambda").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl c416_alt_1(n: node)
+c416_alt_1(n) :- c416_alt_1_u7(n).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl c416_alt_3(n: node)
+c416_alt_3(n) :- ref_site(n, b1), (st2 = b1 ; within(b1, st2)),
+    ( kind(st2, "dictionary_splat_pattern"), child(p1, st2, _), kind(p1, "parameters")
+    ; kind(st2, "typed_parameter"), child(p2, st2, _), kind(p2, "parameters"), child(st2, c1, _), kind(c1, "dictionary_splat_pattern")
+    ).
+
+c416_alt_3(n) :- ref_site(n, b6), binding_value(b6, x7), c416_dict_init(x7),
+    (st8 = b6 ; within(b6, st8)), count : { child(st8, c9, _), kind(c9, "type") } = 0.
+c416_alt_3(n) :- ref_site(n, b10), (st11 = b10 ; within(b10, st11)),
+    kind(st11, "as_pattern"), child(p12, st11, _), kind(p12, "with_item"),
+    child(st11, c13, _), c416_dict_init(c13), c416_tok_precedes_5(c13), child(st11, c21, _),
+    kind(c21, "as_pattern_target"), child(c21, c22, _), c416_plain_target(c22).
+c416_alt_3(n) :- ref_site(n, b23), site_annotation(b23, o24), c416_dict_ann(o24),
+    (st25 = b23 ; within(b23, st25)),
+    count : { child(st25, c26, _), (kind(c26, "list_splat_pattern") ; kind(c26, "dictionary_splat_pattern")) } = 0.
+c416_alt_3(n) :- ref_site(n, b27), (st28 = b27 ; within(b27, st28)),
+    kind(st28, "function_definition"), child(st28, c29, _), kind(c29, "type"),
+    child(c29, c30, _), c416_dict_ann(c30).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl c416_alt_5(n: node)
+c416_alt_5(n) :- node(_, n, _, _, _), glob("[(),\\[\\]]", n).
+c416_alt_5(n) :- kind(n, "comment").
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl c416_alt_6(n: node)
+c416_alt_6(n) :- c416_any_pname(n).
+c416_alt_6(n) :- node(_, n, _, _, _), glob("[(),\\[\\]]", n).
+c416_alt_6(n) :- kind(n, "comment").
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl c416_alt_10(n: node)
+c416_alt_10(n) :- c416_any_xname(n).
+c416_alt_10(n) :- node(_, n, _, _, _), glob("[(),\\[\\]]", n).
+c416_alt_10(n) :- kind(n, "comment").
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl c416_alt_11(n: node)
+c416_alt_11(n) :- kind(n, "if_clause").
+c416_alt_11(n) :- kind(n, "for_in_clause"), match("async\\b.*", n).
+
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+//   F, KN: metavariables of the calling rule, passed in (bound by the caller)
+.decl c416_alt_13(n: node, f: loc, kn: symbol)
+c416_alt_13(n, F, KN) :- node(_, F, _, _, _), node(_, W, _, _, _), precedes(s1, n),
+    within(c2, s1), c416_kind_name(c2, KN), !site_form(c2, "except"),
+    !site_form(c2, "annotation"),
+    (site_scope(c2, "function") ; site_scope(c2, "lambda")),
+    (st3 = c2 ; within(c2, st3)), within(st3, p4),
+    (kind(p4, "function_definition") ; kind(p4, "lambda")), node(_, p4, _, _, _), G = p4,
+    text(G, t5), text(F, t5), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict"), @doc(G) = @doc(F).
+c416_alt_13(n, F, KN) :- node(_, F, _, _, _), node(_, W, _, _, _), within(n, p7),
+    precedes(s8, p7), within(c9, s8), c416_kind_name(c9, KN), !site_form(c9, "except"),
+    !site_form(c9, "annotation"),
+    (site_scope(c9, "function") ; site_scope(c9, "lambda")),
+    (st10 = c9 ; within(c9, st10)), within(st10, p11),
+    (kind(p11, "function_definition") ; kind(p11, "lambda")), node(_, p11, _, _, _), G = p11,
+    text(G, t12), text(F, t12), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict"), @doc(G) = @doc(F).
+
+// alt_14(n): the JSON `any`: n matches if any one of these rules does
+//   F, KN: metavariables of the calling rule, passed in (bound by the caller)
+.decl c416_alt_14(n: node, f: loc, kn: symbol)
+c416_alt_14(n, F, KN) :- node(_, F, _, _, _), node(_, W, _, _, _), precedes(s1, n),
+    within(c2, s1), c416_kind_name(c2, KN), !site_form(c2, "except"),
+    !site_form(c2, "annotation"), site_scope(c2, "class"),
+    (st3 = c2 ; within(c2, st3)), inside(st3, p4, "class_definition"), node(_, p4, _, _, _), G = p4,
+    text(G, t5), text(F, t5), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict"), @doc(G) = @doc(F).
+c416_alt_14(n, F, KN) :- node(_, F, _, _, _), node(_, W, _, _, _), within(n, p7),
+    precedes(s8, p7), within(c9, s8), c416_kind_name(c9, KN), !site_form(c9, "except"),
+    !site_form(c9, "annotation"), site_scope(c9, "class"),
+    (st10 = c9 ; within(c9, st10)), inside(st10, p11, "class_definition"), node(_, p11, _, _, _), G = p11,
+    text(G, t12), text(F, t12), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict"), @doc(G) = @doc(F).
+
+// alt_17(n): the JSON `any`: n matches if any one of these rules does
+//   KN: metavariable of the calling rule, passed in (bound by the caller)
+//   COMP, IT, TK, TV: metavariables this relation binds for the calling rule
+.decl c416_alt_17(n: node, c416_comp: loc, it: loc, kn: symbol, tk: loc, tv: loc)
+// TK, TV: not bound by this rule, so empty (unset) here, as in ast-grep.
+c416_alt_17(n, COMP, IT, KN, TK, TV) :- node(_, W, _, _, _), c416_demand_alt_17(n),
+    kind(n, "list_comprehension"), c416_single_for(n, IT), (field(n, "body", c1_1_5), c416_name_elt(c1_1_5, E), child(n, c2_1_5, _), kind(c2_1_5, "for_in_clause"), field(c2_1_5, "left", c3_1_5), c416_name_tgt(c3_1_5, T), text(E, t4_1_5), text(T, t4_1_5), @doc(E) = @doc(T) ; child(n, c6_2_5, _), kind(c6_2_5, "for_in_clause"), field(c6_2_5, "right", c7_2_5), c416_items_call(c7_2_5), field(c6_2_5, "left", c8_2_5), c416_target_pair(c8_2_5, TK, TV), field(n, "body", c9_2_5), c416_tuple_pair(c9_2_5, EK, EV), text(EK, t10_2_5), text(TK, t10_2_5), text(EV, t12_2_5), text(TV, t12_2_5), @doc(EK) = @doc(TK), @doc(EV) = @doc(TV) ), !c416_shadowed(n, KN), node(_, n, _, _, _), COMP = n,
+    text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict"), unset(TK), unset(TV).
+c416_alt_17(n, COMP, IT, KN, TK, TV) :- node(_, W, _, _, _), c416_demand_alt_17(n),
+    c416_list_comprehension_in_annotation(n, COMP, IT, KN, TK, TV), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+
+// alt_19(n): the JSON `any`: n matches if any one of these rules does
+//   KN: metavariable of the calling rule, passed in (bound by the caller)
+//   COMP, IT, TK, TV: metavariables this relation binds for the calling rule
+.decl c416_alt_19(n: node, c416_comp: loc, it: loc, kn: symbol, tk: loc, tv: loc)
+// TK, TV: not bound by this rule, so empty (unset) here, as in ast-grep.
+c416_alt_19(n, COMP, IT, KN, TK, TV) :- node(_, W, _, _, _), c416_demand_alt_19(n),
+    kind(n, "set_comprehension"), c416_single_for(n, IT), (field(n, "body", c1_3_6), c416_name_elt(c1_3_6, E), child(n, c2_3_6, _), kind(c2_3_6, "for_in_clause"), field(c2_3_6, "left", c3_3_6), c416_name_tgt(c3_3_6, T), text(E, t4_3_6), text(T, t4_3_6), @doc(E) = @doc(T) ; child(n, c6_4_6, _), kind(c6_4_6, "for_in_clause"), field(c6_4_6, "right", c7_4_6), c416_items_call(c7_4_6), field(c6_4_6, "left", c8_4_6), c416_target_pair(c8_4_6, TK, TV), field(n, "body", c9_4_6), c416_tuple_pair(c9_4_6, EK, EV), text(EK, t10_4_6), text(TK, t10_4_6), text(EV, t12_4_6), text(TV, t12_4_6), @doc(EK) = @doc(TK), @doc(EV) = @doc(TV) ), !c416_shadowed(n, KN), node(_, n, _, _, _), COMP = n,
+    text(W, t1_td), KN = @replace_all(t1_td, "(?s)^.*$", "dict"), unset(TK), unset(TV).
+c416_alt_19(n, COMP, IT, KN, TK, TV) :- node(_, W, _, _, _), c416_demand_alt_19(n),
+    c416_set_comprehension_in_annotation(n, COMP, IT, KN, TK, TV), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+
+// alt_20(n): the JSON `any`: n matches if any one of these rules does
+//   KN: metavariable of the calling rule, passed in (bound by the caller)
+//   COMP, EK, EV, IT, TK, TV: metavariables this relation binds for the calling rule
+.decl c416_alt_20(n: node, c416_comp: loc, ek: loc, ev: loc, it: loc, kn: symbol, tk: loc, tv: loc)
+c416_alt_20(n, COMP, EK, EV, IT, KN, TK, TV) :- node(_, W, _, _, _), c416_demand_alt_20(n),
+    c416_dict_comprehension_node(n, COMP, EK, EV, IT, KN, TK, TV), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").
+c416_alt_20(n, COMP, EK, EV, IT, KN, TK, TV) :- node(_, W, _, _, _), c416_demand_alt_20(n),
+    c416_dict_comprehension_in_annotation(n, COMP, EK, EV, IT, KN, TK, TV), text(W, t1_td),
+    KN = @replace_all(t1_td, "(?s)^.*$", "dict").

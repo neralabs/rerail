@@ -1,0 +1,179 @@
+.policy "ruff-pt019-pytest-fixture-param-without-value" revision 1
+.guests off
+.description "Activate fixtures a test does not read with the usefixtures mark instead of declaring underscore-prefixed parameters for them."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PT019(n): a finding at node n, from clause `fixture-param-without-value`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes T1, T10, T11, T12, T2, T3, T4, T5, T6, T7, T8, T9, TE from other metavariables' text; its literals end each rule.
+.violation PT019(at: node, n: loc) "If the test never reads `{n}`, remove the parameter and add `@pytest.mark.usefixtures(\"{n}\")` to the test; if it reads the value, leave it as is."
+    suppress noqa "PT019"
+PT019(n, N) :- node(_, E, _, _, _), node(_, S, _, _, _), pt019_alt_1(n, N),
+    ( kind(n, "module"), kind(n, "identifier"), node(_, n, _, _, _), S = n, node(_, n, _, _, _), E = n
+    ; glob("**", n), unset(E), unset(S)
+    ),
+    child(p16, n, _), kind(p16, "parameters"), child(p17, p16, _),
+    kind(p17, "function_definition"), field(p17, "name", c18), prefix("test_", c18),
+    count : { child(p19, p17, _), kind(p19, "decorated_definition"), child(p19, c20, _), kind(c20, "decorator"), pt019_stop_3_within(c21, c20), (kind(c21, "call"), pt019_pm_call(c21, A), field(c21, "arguments", c1_15), kind(c1_15, "argument_list"), pt019_stop_10_within(c2_15, c1_15), (pt019_name_expr(c2_15) ; pt019_seq_expr(c2_15), child(c2_15, c3_15, _), pt019_name_expr(c3_15)), node(_, c2_15, _, _, _), B = c2_15, value(B, t4_15), value(A, t4_15) ; kind(c21, "call"), pt019_pm_call(c21, A), field(c21, "arguments", c6_16), kind(c6_16, "argument_list"), pt019_stop_10_within(c7_16, c6_16), pt019_str_lit(c7_16), (text(N, T1) ; text(N, T2) ; text(N, T3) ; text(N, T4) ; text(N, T5) ; text(N, T6) ; text(N, T7) ; text(N, T8) ; text(N, T9) ; text(N, T10) ; text(N, T11) ; text(N, T12)), value(S, t32_16), value(A, t32_16), node(_, c7_16, _, _, _), S = c7_16 ; kind(c21, "call"), pt019_pm_call(c21, A), field(c21, "arguments", c34_17), kind(c34_17, "argument_list"), pt019_stop_10_within(c35_17, c34_17), (kind(c35_17, "list") ; kind(c35_17, "tuple")), child(c35_17, c36_17, _), pt019_str_lit(c36_17), node(_, c36_17, _, _, _), E = c36_17, text(N, TE), node(_, c35_17, _, _, _), L = c35_17, value(L, t39_17), value(A, t39_17)) } = 0,
+    value(S, t1),
+    T1 = @replace_all(t1, "(?s)^(?:[^,]*,){0}\\s*([^,]*?)\\s*(?:,.*)?$", "$1"),
+    value(S, t2),
+    T2 = @replace_all(t2, "(?s)^(?:[^,]*,){1}\\s*([^,]*?)\\s*(?:,.*)?$", "$1"),
+    value(S, t3),
+    T3 = @replace_all(t3, "(?s)^(?:[^,]*,){2}\\s*([^,]*?)\\s*(?:,.*)?$", "$1"),
+    value(S, t4),
+    T4 = @replace_all(t4, "(?s)^(?:[^,]*,){3}\\s*([^,]*?)\\s*(?:,.*)?$", "$1"),
+    value(S, t5),
+    T5 = @replace_all(t5, "(?s)^(?:[^,]*,){4}\\s*([^,]*?)\\s*(?:,.*)?$", "$1"),
+    value(S, t6),
+    T6 = @replace_all(t6, "(?s)^(?:[^,]*,){5}\\s*([^,]*?)\\s*(?:,.*)?$", "$1"),
+    value(S, t7),
+    T7 = @replace_all(t7, "(?s)^(?:[^,]*,){6}\\s*([^,]*?)\\s*(?:,.*)?$", "$1"),
+    value(S, t8),
+    T8 = @replace_all(t8, "(?s)^(?:[^,]*,){7}\\s*([^,]*?)\\s*(?:,.*)?$", "$1"),
+    value(S, t9),
+    T9 = @replace_all(t9, "(?s)^(?:[^,]*,){8}\\s*([^,]*?)\\s*(?:,.*)?$", "$1"),
+    value(S, t10),
+    T10 = @replace_all(t10, "(?s)^(?:[^,]*,){9}\\s*([^,]*?)\\s*(?:,.*)?$", "$1"),
+    value(S, t11),
+    T11 = @replace_all(t11, "(?s)^(?:[^,]*,){10}\\s*([^,]*?)\\s*(?:,.*)?$", "$1"),
+    value(S, t12),
+    T12 = @replace_all(t12, "(?s)^(?:[^,]*,){11}\\s*([^,]*?)\\s*(?:,.*)?$", "$1"),
+    value(E, t13), TE = @replace_all(t13, "(?s)^\\s*(.*?)\\s*$", "$1").
+
+// pytest_name(n): the JSON util `pytest-name`, used where the JSON says `matches: "pytest-name"`
+.decl pt019_pytest_name(n: node)
+pt019_pytest_name(n) :- kind(n, "identifier"), glob("pytest", n).
+pt019_pytest_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt019_pytest_name(c1).
+
+// pytest_mark(n): the JSON util `pytest-mark`, used where the JSON says `matches: "pytest-mark"`
+.decl pt019_pytest_mark(n: node)
+pt019_pytest_mark(n) :- kind(n, "attribute"), field(n, "object", c1), pt019_pytest_name(c1),
+    field(n, "attribute", c2), glob("mark", c2).
+pt019_pytest_mark(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    pt019_pytest_mark(c3).
+
+// pm_callee(n): the JSON util `pm-callee`, used where the JSON says `matches: "pm-callee"`
+.decl pt019_pm_callee(n: node)
+pt019_pm_callee(n) :- kind(n, "attribute"), field(n, "object", c1), pt019_pytest_mark(c1),
+    field(n, "attribute", c2), glob("parametrize", c2).
+pt019_pm_callee(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), pt019_pm_callee(c3).
+
+// name_expr(n): the JSON util `name-expr`, used where the JSON says `matches: "name-expr"`
+.decl pt019_name_expr(n: node)
+pt019_name_expr(n) :- kind(n, "identifier").
+pt019_name_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pt019_name_expr(c1).
+
+// seq_expr(n): the JSON util `seq-expr`, used where the JSON says `matches: "seq-expr"`
+.decl pt019_seq_expr(n: node)
+pt019_seq_expr(n) :- (kind(n, "list") ; kind(n, "tuple")).
+pt019_seq_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pt019_seq_expr(c1).
+
+// str_lit(n): the JSON util `str-lit`, used where the JSON says `matches: "str-lit"`
+.decl pt019_str_lit(n: node)
+pt019_str_lit(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), match("[^'\"]*[bBfFtT].*", c1) } = 0.
+pt019_str_lit(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), child(c2, c3, _), kind(c3, "string_start"), match("[^'\"]*[bBfFtT].*", c3) } = 0.
+pt019_str_lit(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), pt019_str_lit(c4).
+
+// pm_call(n): the JSON util `pm-call`, used where the JSON says `matches: "pm-call"`
+//   A: metavariable this relation binds for the calling rule
+.decl pt019_pm_call(n: node, a: loc)
+pt019_pm_call(n, A) :- kind(n, "call"), pt019_arg_argnames_1(n, a1), A = a1,
+    field(n, "function", c2), pt019_pm_callee(c2).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl pt019_args_plain(l: node, a: node, i: number)
+pt019_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl pt019_args_splat(l: node, i: number)
+pt019_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl pt019_args_pos(l: node, a: node, j: number)
+pt019_args_pos(l, a, j) :- pt019_args_plain(l, a, i), count : { pt019_args_splat(l, k), k < i } = 0,
+    j = count : { pt019_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl pt019_args_star(l: node, j: number)
+pt019_args_star(l, j) :- pt019_args_splat(l, i), count : { pt019_args_splat(l, k), k < i } = 0,
+    j = count : { pt019_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl pt019_args_kwp(l: node, k: symbol, v: node)
+pt019_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl pt019_args_lit_dict(s: node, d: node)
+pt019_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !pt019_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl pt019_args_str_pair(p: node)
+pt019_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl pt019_args_kw(l: node, k: symbol, v: node)
+pt019_args_kw(l, k, v) :- pt019_args_kwp(l, k, v).
+pt019_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), pt019_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl pt019_args_kw_spread(l: node)
+pt019_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !pt019_args_lit_dict(s, _).
+
+// arg_argnames_1: call n passes v for slot `argnames` of (argnames), syntactic: Ruff's find_argument
+.decl pt019_arg_argnames_1(n: node, v: node)
+pt019_arg_argnames_1(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    pt019_args_kwp(l, "argnames", v).
+pt019_arg_argnames_1(n, v) :- kind(n, "call"), field(n, "arguments", l), pt019_args_pos(l, v, 0),
+    !pt019_args_kwp(l, "argnames", _).
+pt019_arg_argnames_1(n, v) :- kind(n, "call"), field(n, "arguments", v),
+    kind(v, "generator_expression").
+
+// arg_no_argnames_1: call n does not pass slot `argnames` of (argnames), syntactic: Ruff's find_argument
+.decl pt019_arg_no_argnames_1(n: node)
+pt019_arg_no_argnames_1(n) :- kind(n, "call"), field(n, "arguments", l),
+    !pt019_args_kwp(l, "argnames", _), !pt019_args_pos(l, _, 0), !kind(l, "generator_expression").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   N: metavariable this relation binds for the calling rule
+.decl pt019_alt_1(n: node, n_mv: loc)
+pt019_alt_1(n, N) :- kind(n, "identifier"), prefix("_", n), node(_, n, _, _, _), N = n.
+pt019_alt_1(n, N) :- kind(n, "typed_parameter"), child(n, c1, _), kind(c1, "identifier"),
+    prefix("_", c1), node(_, c1, _, _, _), N = c1.
+pt019_alt_1(n, N) :- (kind(n, "default_parameter") ; kind(n, "typed_default_parameter")),
+    field(n, "name", c2), prefix("_", c2), node(_, c2, _, _, _), N = c2.
+
+// stop_3(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pt019_stop_3(n: node)
+pt019_stop_3(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pt019_stop_10(n: node)
+pt019_stop_10(n) :- node(_, n, _, _, _), !kind(n, "keyword_argument"),
+    !kind(n, "parenthesized_expression").
+
+// stop_3_within: within_stop over the stop set stop_3, read inside an aggregate
+.decl pt019_stop_3_within(n: node, a: node)
+pt019_stop_3_within(x, y) :- within_stop(x, y, pt019_stop_3).
+
+// stop_10_within: within_stop over the stop set stop_10, read inside an aggregate
+.decl pt019_stop_10_within(n: node, a: node)
+pt019_stop_10_within(x, y) :- within_stop(x, y, pt019_stop_10).

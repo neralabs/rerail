@@ -1,0 +1,23 @@
+.policy "bandit-b311-random" revision 1
+.guests off
+.description "Avoid the random module's generators for anything security-related; their output is predictable, so use the secrets module for tokens, passwords, and keys."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B311(n): a finding at node n, from clause `bandit:B311`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on F are added to every rule.
+.violation B311(at: node) "Standard pseudo-random generators are not suitable for security or cryptographic purposes."
+    suppress nosec "B311"
+B311(n) :- n ~ `$F($$$ARGS)`, sym_of(F, q1), b311_set_1(q1).
+
+// set_1: symbols from the JSON `resolves.import`
+.decl b311_set_1(v: symbol)
+b311_set_1("random.Random"). b311_set_1("random.random"). b311_set_1("random.randrange").
+b311_set_1("random.randint"). b311_set_1("random.choice"). b311_set_1("random.choices").
+b311_set_1("random.uniform"). b311_set_1("random.triangular"). b311_set_1("random.randbytes").
+b311_set_1("random.sample"). b311_set_1("random.getrandbits").

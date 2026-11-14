@@ -1,0 +1,19 @@
+.policy "ruff-sim107-return-in-try-except-finally" revision 1
+.guests off
+.description "Don't return from a finally block when the try or except also returns; the finally return silently overrides theirs."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// SIM107(n): a finding at node n, from clause `return-in-try-except-finally`.
+// Each rule below is one way the JSON `rule` can match.
+.violation SIM107(at: node) "Remove the `return` from the `finally` block; it silently overrides the `return` in `try` or `except`."
+    suppress noqa "SIM107"
+SIM107(n) :- kind(n, "return_statement"),
+    count : { precedes(s1, n), kind(s1, "return_statement") } = 0, child(p2, n, _),
+    kind(p2, "block"), child(p3, p2, _), kind(p3, "finally_clause"), child(p4, p3, _),
+    kind(p4, "try_statement"),
+    ( child(p4, c1, _), kind(c1, "block"), child(c1, c2, _), kind(c2, "return_statement")
+    ; child(p4, c3, _), kind(c3, "except_clause"), child(c3, c4, _), kind(c4, "block"), child(c4, c5, _), kind(c5, "return_statement")
+    ).

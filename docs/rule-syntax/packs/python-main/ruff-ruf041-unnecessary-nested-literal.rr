@@ -1,0 +1,154 @@
+.policy "ruff-ruf041-unnecessary-nested-literal" revision 1
+.guests off
+.description "Flatten a Literal that wraps another Literal into a single Literal; the nesting adds nothing but noise."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// lit_name(n): the JSON util `lit-name`, used where the JSON says `matches: "lit-name"`
+.decl ruf041_lit_name(n: node)
+ruf041_lit_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Literal")
+    ; sym_of(n, "typing_extensions.Literal")
+    ; sym_of(n, "_typeshed.Literal")
+    ).
+
+ruf041_lit_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf041_lit_name(c1).
+
+// lit_sub(n): the JSON util `lit-sub`, used where the JSON says `matches: "lit-sub"`
+.decl ruf041_lit_sub(n: node)
+ruf041_lit_sub(n) :- kind(n, "subscript"), field(n, "value", c1), ruf041_lit_name(c1).
+
+// lit_gen(n): the JSON util `lit-gen`, used where the JSON says `matches: "lit-gen"`
+.decl ruf041_lit_gen(n: node)
+ruf041_lit_gen(n) :- kind(n, "generic_type"), child(n, c1, _), kind(c1, "identifier"),
+    ruf041_lit_name(c1).
+
+// lit(n): the JSON util `lit`, used where the JSON says `matches: "lit"`
+.decl ruf041_lit(n: node)
+ruf041_lit(n) :- ruf041_lit_sub(n).
+ruf041_lit(n) :- ruf041_lit_gen(n).
+
+// elem_lit(n): the JSON util `elem-lit`, used where the JSON says `matches: "elem-lit"`
+.decl ruf041_elem_lit(n: node)
+ruf041_elem_lit(n) :- ruf041_lit(n).
+ruf041_elem_lit(n) :- (kind(n, "parenthesized_expression") ; kind(n, "type")),
+    child(n, c1, _), ruf041_elem_lit(c1).
+
+// tuple_lit(n): the JSON util `tuple-lit`, used where the JSON says `matches: "tuple-lit"`
+.decl ruf041_tuple_lit(n: node)
+ruf041_tuple_lit(n) :- kind(n, "tuple"), child(n, c1, _), ruf041_elem_lit(c1).
+ruf041_tuple_lit(n) :- (kind(n, "parenthesized_expression") ; kind(n, "type")),
+    child(n, c2, _), ruf041_tuple_lit(c2).
+
+// holds_lit(n): the JSON util `holds-lit`, used where the JSON says `matches: "holds-lit"`
+.decl ruf041_holds_lit(n: node)
+ruf041_holds_lit(n) :- kind(n, "subscript"), child(n, c1, _), ruf041_elem_lit(c1), ruf041_tok_follows_1(c1).
+ruf041_holds_lit(n) :- kind(n, "subscript"), !ruf041_tok_has_2(n), child(n, c17, _), ruf041_tuple_lit(c17),
+    ruf041_tok_follows_3(c17).
+ruf041_holds_lit(n) :- kind(n, "generic_type"), child(n, c25, _), kind(c25, "type_parameter"),
+    child(c25, c26, _), kind(c26, "type"), ruf041_elem_lit(c26).
+ruf041_holds_lit(n) :- kind(n, "generic_type"), child(n, c27, _), kind(c27, "type_parameter"),
+    !ruf041_tok_has_4(c27), child(c27, c36, _), kind(c36, "type"), ruf041_tuple_lit(c36).
+
+// under_lit0(n): the JSON util `under-lit0`, used where the JSON says `matches: "under-lit0"`
+.decl ruf041_under_lit0(n: node)
+ruf041_under_lit0(n) :- ruf041_tok_follows_5(n), child(p8, n, _), ruf041_lit_sub(p8).
+ruf041_under_lit0(n) :- child(p9, n, _), kind(p9, "type_parameter"), child(p10, p9, _),
+    ruf041_lit_gen(p10).
+ruf041_under_lit0(n) :- child(p11, n, _),
+    (kind(p11, "parenthesized_expression") ; kind(p11, "type")), ruf041_under_lit0(p11).
+
+// under_lit(n): the JSON util `under-lit`, used where the JSON says `matches: "under-lit"`
+.decl ruf041_under_lit(n: node)
+ruf041_under_lit(n) :- ruf041_under_lit0(n).
+ruf041_under_lit(n) :- child(p1, n, _), kind(p1, "tuple"), ruf041_lone_slice(p1).
+
+// lone_slice(n): the JSON util `lone-slice`, used where the JSON says `matches: "lone-slice"`
+.decl ruf041_lone_slice(n: node)
+ruf041_lone_slice(n) :- ruf041_tok_follows_5(n), child(p8, n, _), ruf041_lit_sub(p8), !ruf041_tok_has_2(p8).
+ruf041_lone_slice(n) :- child(p17, n, _), kind(p17, "type_parameter"), !ruf041_tok_has_6(p17),
+    child(p26, p17, _), ruf041_lit_gen(p26).
+ruf041_lone_slice(n) :- child(p27, n, _),
+    (kind(p27, "parenthesized_expression") ; kind(p27, "type")), ruf041_lone_slice(p27).
+
+// RUF041(n): a finding at node n, from clause `nested-literal`.
+// Each rule below is one way the JSON `rule` can match.
+.violation RUF041(at: node) "Flatten this nested `Literal` into one `Literal[...]` listing every value; if an inner group is reused, name it as an alias (`Mode = Literal[...]`) and nest the alias instead."
+    suppress noqa "RUF041"
+RUF041(n) :- ruf041_lit(n), ruf041_holds_lit(n), !ruf041_under_lit(n).
+
+// RUF041_nested_literal_in_string(n): a finding at node n, from clause `nested-literal-in-string`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF041_nested_literal_in_string(at: node, c: node) code "RUF041" "Flatten this nested `Literal` into one `Literal[...]` listing every value; if an inner group is reused, name it as an alias (`Mode = Literal[...]`) and nest the alias instead."
+    suppress noqa "RUF041"
+RUF041_nested_literal_in_string(C, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ruf041_lit(c2), ruf041_holds_lit(c2),
+    !ruf041_under_lit(c2), C = c2.
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf041_tok_follows_1(n: node)
+.stored ruf041_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf041_tok_follows_1(n) :- precedes(s2, n), glob("\\[", s2).
+ruf041_tok_follows_1(n) :- child(p5, n, _), node(_, n, _, st7, _), token(p5, _, t3, _, en8),
+    en8 <= st7, match("\\[", t3).
+ruf041_tok_follows_1(n) :- structural_before(n, g4), match("(?s)^(?:.*(?:\\[).*)$", g4).
+ruf041_tok_follows_1(n) :- precedes(o6, n), structural_before(o6, g4),
+    match("(?s)^(?:.*(?:\\[).*)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf041_tok_has_2(n: node)
+.stored ruf041_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf041_tok_has_2(n) :- child(n, c9, _), glob("\\,", c9).
+ruf041_tok_has_2(n) :- op(n, t10), match(",", t10).
+ruf041_tok_has_2(n) :- child(n, c16, _), structural_before(c16, g11),
+    match("(?s)^(?:.*(?:,).*)$", g11).
+ruf041_tok_has_2(n) :- child(n, c16, _), structural_after(c16, g11),
+    match("(?s)^(?:.*(?:,).*)$", g11).
+ruf041_tok_has_2(n) :- node_text(n, g11), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g11).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf041_tok_follows_3(n: node)
+.stored ruf041_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf041_tok_follows_3(n) :- precedes(s18, n), glob("\\[", s18).
+ruf041_tok_follows_3(n) :- child(p21, n, _), node(_, n, _, st23, _),
+    token(p21, _, t19, _, en24), en24 <= st23, match("\\[", t19).
+ruf041_tok_follows_3(n) :- structural_before(n, g20), match("(?s)^(?:.*(?:\\[).*)$", g20).
+ruf041_tok_follows_3(n) :- precedes(o22, n), structural_before(o22, g20),
+    match("(?s)^(?:.*(?:\\[).*)$", g20).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf041_tok_has_4(n: node)
+.stored ruf041_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf041_tok_has_4(n) :- child(n, c28, _), glob("\\,", c28).
+ruf041_tok_has_4(n) :- op(n, t29), match(",", t29).
+ruf041_tok_has_4(n) :- child(n, c35, _), structural_before(c35, g30),
+    match("(?s)^(?:.*(?:,).*)$", g30).
+ruf041_tok_has_4(n) :- child(n, c35, _), structural_after(c35, g30),
+    match("(?s)^(?:.*(?:,).*)$", g30).
+ruf041_tok_has_4(n) :- node_text(n, g30), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g30).
+
+// tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf041_tok_follows_5(n: node)
+.stored ruf041_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf041_tok_follows_5(n) :- precedes(s1, n), glob("\\[", s1).
+ruf041_tok_follows_5(n) :- child(p4, n, _), node(_, n, _, st6, _), token(p4, _, t2, _, en7),
+    en7 <= st6, match("\\[", t2).
+ruf041_tok_follows_5(n) :- structural_before(n, g3), match("(?s)^(?:.*(?:\\[).*)$", g3).
+ruf041_tok_follows_5(n) :- precedes(o5, n), structural_before(o5, g3),
+    match("(?s)^(?:.*(?:\\[).*)$", g3).
+
+// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf041_tok_has_6(n: node)
+.stored ruf041_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf041_tok_has_6(n) :- child(n, c18, _), glob("\\,", c18).
+ruf041_tok_has_6(n) :- op(n, t19), match(",", t19).
+ruf041_tok_has_6(n) :- child(n, c25, _), structural_before(c25, g20),
+    match("(?s)^(?:.*(?:,).*)$", g20).
+ruf041_tok_has_6(n) :- child(n, c25, _), structural_after(c25, g20),
+    match("(?s)^(?:.*(?:,).*)$", g20).
+ruf041_tok_has_6(n) :- node_text(n, g20), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g20).

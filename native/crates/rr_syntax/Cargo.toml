@@ -75,6 +75,8 @@ zstd = "=0.14.3"
 serde_json = "1.0"
 # The engine's tape, which the lean parser writes.
 rerail-tape-format = { path = "../tape_format" }
+# simdjson's SIMD operations, for the micro-lexers on every CPU.
+rerail-simd8 = { path = "../simd8" }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }

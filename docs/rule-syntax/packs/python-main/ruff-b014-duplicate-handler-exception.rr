@@ -1,0 +1,57 @@
+.policy "ruff-b014-duplicate-handler-exception" revision 1
+.guests off
+.description "Remove duplicate exception types from an except clause's tuple; naming one twice adds nothing."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B014(n): a finding at node n, from clause `duplicate-handler-exception`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation B014(at: node, name: loc) "Exception handler with duplicate exception: `{name}`"
+    suppress noqa "B014"
+B014(n, NAME) :- kind(n, "tuple"), b014_handler_type(n), child(n, c1, _), b014_element(c1, NAME),
+    precedes(c1, s2), b014_same_element(s2, NAME).
+
+// handler_type(n): the JSON util `handler-type`, used where the JSON says `matches: "handler-type"`
+.decl b014_handler_type(n: node)
+b014_handler_type(n) :- child(p1, n, _), b014_alt_1(p1).
+
+// dotted_name(n): the JSON util `dotted-name`, used where the JSON says `matches: "dotted-name"`
+.decl b014_dotted_name(n: node)
+b014_dotted_name(n) :- kind(n, "identifier").
+b014_dotted_name(n) :- kind(n, "attribute"), child(n, c1, _), kind(c1, "identifier"),
+    b014_tok_precedes_1(c1), b014_dotted_name(c1).
+b014_dotted_name(n) :- kind(n, "attribute"), child(n, c9, _), kind(c9, "attribute"),
+    b014_dotted_name(c9).
+
+// element(n): the JSON util `element`, used where the JSON says `matches: "element"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl b014_element(n: node, name: loc)
+b014_element(n, NAME) :- b014_dotted_name(n), node(_, n, _, _, _), NAME = n.
+b014_element(n, NAME) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    b014_element(c1, NAME).
+
+// same_element(n): the JSON util `same-element`, used where the JSON says `matches: "same-element"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl b014_same_element(n: node, name: loc)
+b014_same_element(n, NAME) :- node(_, n, _, _, _), NAME = n.
+b014_same_element(n, NAME) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    b014_same_element(c1, NAME).
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b014_tok_precedes_1(n: node)
+.stored b014_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b014_tok_precedes_1(n) :- next_sibling(n, s2), glob(".", s2).
+b014_tok_precedes_1(n) :- structural_after(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, _, en8), o6 = en8 + strlen(g4), token(p5, _, t3, o6, _),
+    match("\\.", t3).
+b014_tok_precedes_1(n) :- structural_after(n, g4),
+    match("(?s)^(?:\\s*(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl b014_alt_1(n: node)
+b014_alt_1(n) :- kind(n, "except_clause").
+b014_alt_1(n) :- kind(n, "as_pattern"), child(p1, n, _), kind(p1, "except_clause").
+b014_alt_1(n) :- kind(n, "parenthesized_expression"), b014_handler_type(n).

@@ -1,0 +1,69 @@
+.policy "ruff-pt001-pytest-fixture-incorrect-parentheses-style" revision 1
+.guests off
+.description "Drop the empty parentheses from an argument-free pytest fixture decorator, so fixtures follow the style of the pytest documentation."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PT001(n): a finding at node n, from clause `fixture-empty-parentheses`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PT001(at: node, span: node, f: loc) "Remove the empty parentheses: write the decorator as `@{f}` instead of `@{f}()`."
+    suppress noqa "PT001"
+// SPAN: not bound by every branch, so empty (unset) where not bound, as in ast-grep.
+PT001(rr_at, SPAN, F) :- kind(n, "decorator"), child(n, c1, _), pt001_empty_call(c1, F),
+    count : { precedes(s2, n), kind(s2, "decorator"), child(s2, c3, _), pt001_fixture_expr(c3) } = 0,
+    child(p4, n, _), kind(p4, "decorated_definition"), field(p4, "definition", c5),
+    kind(c5, "function_definition"),
+    ( count : { child(n, c2, _), kind(c2, "comment") } = 0, unset(SPAN)
+    ; child(n, c4, _), kind(c4, "comment"), match("(?s)(?<SPAN>@.*?\\))(?:[ \\t\\f]|\\\\(?:\\r\\n?|\\n))*(?:#[^\\n]*)?\\s*", n)
+    ; child(n, c6, _), kind(c6, "comment"), unset(SPAN)
+    ),
+    (unset(SPAN), rr_at = n ; !unset(SPAN), rr_at = SPAN).
+
+
+// fixture_name(n): the JSON util `fixture-name`, used where the JSON says `matches: "fixture-name"`
+.decl pt001_fixture_name(n: node)
+pt001_fixture_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "pytest.fixture") ; sym_of(n, "pytest.yield_fixture")).
+
+// fixture_ref(n): the JSON util `fixture-ref`, used where the JSON says `matches: "fixture-ref"`
+//   F: metavariable this relation binds for the calling rule
+.decl pt001_fixture_ref(n: node, f: loc)
+pt001_fixture_ref(n, F) :- pt001_fixture_name(n), node(_, n, _, _, _), F = n.
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl pt001_callee(n: node, f: loc)
+pt001_callee(n, F) :- pt001_fixture_ref(n, F).
+pt001_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pt001_callee(c1, F).
+
+// plain_callee(n): the JSON util `plain-callee`, used where the JSON says `matches: "plain-callee"`
+.decl pt001_plain_callee(n: node)
+pt001_plain_callee(n) :- pt001_fixture_name(n).
+pt001_plain_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt001_plain_callee(c1).
+
+// fixture_expr(n): the JSON util `fixture-expr`, used where the JSON says `matches: "fixture-expr"`
+.decl pt001_fixture_expr(n: node)
+pt001_fixture_expr(n) :- pt001_plain_callee(n).
+pt001_fixture_expr(n) :- kind(n, "call"), field(n, "function", c1), pt001_plain_callee(c1).
+pt001_fixture_expr(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt001_fixture_expr(c2).
+
+// empty_call(n): the JSON util `empty-call`, used where the JSON says `matches: "empty-call"`
+//   F: metavariable this relation binds for the calling rule
+.decl pt001_empty_call(n: node, f: loc)
+pt001_empty_call(n, F) :- kind(n, "call"), field(n, "function", c1), pt001_callee(c1, F),
+    field(n, "arguments", c2), kind(c2, "argument_list"),
+    count : { child(c2, c3, _), !pt001_alt_1(c3) } = 0.
+pt001_empty_call(n, F) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    pt001_empty_call(c4, F).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pt001_alt_1(n: node)
+pt001_alt_1(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pt001_alt_1(n) :- node(_, n, _, _, _), glob("[()]", n).

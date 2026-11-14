@@ -1,0 +1,94 @@
+.policy "ruff-sim112-uncapitalized-environment-variables" revision 2
+.guests off
+.description "Use uppercase names when reading environment variables through os.environ or os.getenv; the lowercase proxy variables are exempt."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// SIM112(n): a finding at node n, from clause `uncapitalized-environment-variables`.
+// Each rule below is one way the JSON `rule` can match.
+.violation SIM112(at: node) "Uppercase only if the deployment uses that name; preserve intentional lowercase keys because lookups are case-sensitive on POSIX."
+    suppress noqa "SIM112"
+SIM112(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    count : { child(p1, n, _), kind(p1, "concatenated_string") } = 0, sim112_env_string(n),
+    sim112_env_slot(n), node(d2, n, _, st3, _), sim112_seen_import(s4, h6, ks7), (h6 = "os"),
+    node(d2, s4, _, so5, _),
+    kn8 = count : { within(n, b9), field(f9, "body", b9), kind(f9, "function_definition") },
+    ( ks7 < kn8
+    ; ks7 = kn8, so5 < st3
+    ; count : { within(n, l9), field(m9, "body", l9), kind(m9, "lambda") } > 0
+    ).
+
+
+// env_string(n): the JSON util `env-string`, used where the JSON says `matches: "env-string"`
+.decl sim112_env_string(n: node)
+sim112_env_string(n) :-
+    ( kind(n, "string"), match("[uUrR]{0,2}['\"].*", n)
+    ; kind(n, "concatenated_string"), count : { child(n, c1, _), kind(c1, "string"), !match("[uUrR]{0,2}['\"].*", c1) } = 0
+    ),
+    value(n, v2), glob("**[a-z]**", v2),
+    count : { value(n, v3), glob("{https_proxy,http_proxy,no_proxy}", v3) } = 0.
+
+// env_slot(n): the JSON util `env-slot`, used where the JSON says `matches: "env-slot"`
+.decl sim112_env_slot(n: node)
+sim112_env_slot(n) :- sim112_tok_follows_1(n), child(p8, n, _),
+    ( kind(p8, "argument_list"), child(p1, p8, _), sim112_env_call(p1)
+    ; kind(p8, "subscript"), child(p8, c1, _), kind(c1, "attribute"), match("os\\s*\\.\\s*environ", c1), !sim112_tok_follows_3(c1)
+    ).
+
+sim112_env_slot(n) :- child(p18, n, _), kind(p18, "parenthesized_expression"), sim112_env_slot(p18).
+
+// env_call(n): the JSON util `env-call`, used where the JSON says `matches: "env-call"`
+.decl sim112_env_call(n: node)
+sim112_env_call(n) :- kind(n, "call"), child(n, c1, _), !sim112_tok_follows_4(c1),
+    (kind(c1, "identifier") ; kind(c1, "attribute")),
+    (sym_of(c1, "os.environ.get") ; sym_of(c1, "os.getenv")).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^[(\\[]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim112_tok_follows_1(n: node)
+.stored sim112_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim112_tok_follows_1(n) :- next_sibling(s1, n), glob("[(\\[]", s1).
+sim112_tok_follows_1(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("[(\\[]", t2).
+sim112_tok_follows_1(n) :- structural_before(n, g3), match("(?s)^(?:.*(?:[(\\[])\\s*)$", g3).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim112_tok_follows_2(n: node)
+.stored sim112_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim112_tok_follows_2(n) :- next_sibling(s11, n), match("(?s).*..*", s11).
+sim112_tok_follows_2(n) :- structural_before(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, st16, _), o15 = st16 - strlen(g13), token(p14, _, t12, _, o15),
+    match("(?s).*..*", t12).
+sim112_tok_follows_2(n) :- structural_before(n, g13), match("(?s)^.*\\S\\s*$", g13).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim112_tok_follows_3(n: node)
+.stored sim112_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim112_tok_follows_3(n) :- next_sibling(s3, n), match("(?s).*..*", s3).
+sim112_tok_follows_3(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match("(?s).*..*", t4).
+sim112_tok_follows_3(n) :- structural_before(n, g5), match("(?s)^.*\\S\\s*$", g5).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim112_tok_follows_4(n: node)
+.stored sim112_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim112_tok_follows_4(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+sim112_tok_follows_4(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+sim112_tok_follows_4(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// seen_import: import statement s imports absolute module h (its first segment), inside k function bodies
+.decl sim112_seen_import(s: node, h: symbol, k: number)
+sim112_seen_import(s, h, k) :- kind(s, "import_statement"), child(s, c, _),
+    (kind(c, "dotted_name"), x = c ; kind(c, "aliased_import"), field(c, "name", x)),
+    child(x, i, 0), kind(i, "identifier"), text(i, h),
+    k = count : { within(s, b), field(f, "body", b), kind(f, "function_definition") }.
+sim112_seen_import(s, h, k) :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "dotted_name"), child(x, i, 0), kind(i, "identifier"), text(i, h),
+    k = count : { within(s, b), field(f, "body", b), kind(f, "function_definition") }.

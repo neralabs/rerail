@@ -361,7 +361,7 @@ fn depth_summary(prog: &Program, rules: &[&Rule], depths: &Depths) -> BTreeMap<(
             let mut all = true;
             for (rule, reached) in rules.iter().zip(&reached) {
                 let d = match (reached.get(&i), rule.head.args.get(j)) {
-                    (Some(r), Some(Term::Var(y))) => r.get(y).copied(),
+                    (Some(r), Some(Term::Var(y))) => r.get(y.as_str()).copied(),
                     _ => None,
                 };
                 let Some(d) = d.filter(|d| d.0 > -INF || d.1 < INF) else {
@@ -439,7 +439,7 @@ fn step(rule: &Rule, edges: &Edges, from: &str, to: &str, way: Move) -> Option<b
     // The head's column `#j` is its variable there (a part of a variable is tested by nothing).
     let named = |v: &str| -> Option<String> {
         match v.strip_prefix('#').and_then(|j| j.parse::<usize>().ok()).and_then(|j| rule.head.args.get(j)) {
-            Some(Term::Var(x)) => Some(x.clone()),
+            Some(Term::Var(x)) => Some(x.to_string()),
             Some(_) => None,
             None => Some(v.to_owned()),
         }
@@ -509,7 +509,7 @@ impl<'a> Bounds<'a> {
                 _ => {}
             }
         }
-        let bound = |v: &String, below: bool| {
+        let bound = |v: &str, below: bool| {
             rule.body.iter().any(|l| match l {
                 Literal::Cmp { l: Term::Var(x), op, r: Term::Int(_) } if x == v => if below { matches!(*op, ">" | ">=") } else { matches!(*op, "<" | "<=") },
                 Literal::Cmp { l: Term::Int(_), op, r: Term::Var(x) } if x == v => if below { matches!(*op, "<" | "<=") } else { matches!(*op, ">" | ">=") },
@@ -521,7 +521,7 @@ impl<'a> Bounds<'a> {
                 && bound(v, true)
                 && bound(v, false)
             {
-                outside.insert(v.clone());
+                outside.insert(v.to_string());
             }
         }
         Bounds { rule, outside }
@@ -554,7 +554,7 @@ impl<'a> Bounds<'a> {
             },
             _ => return false,
         };
-        let bound = |k: &Term| matches!(k, Term::Int(_)) || matches!(k, Term::Var(v) if self.outside.contains(v));
+        let bound = |k: &Term| matches!(k, Term::Int(_)) || matches!(k, Term::Var(v) if self.outside.contains(v.as_str()));
         let this = |t: &Term| matches!(t, Term::Var(v) if v == x || Some(v.as_str()) == alias);
         let (below, above): (&[&str], &[&str]) = if by > 0 { (&["<", "<="], &[">", ">="]) } else { (&[">", ">="], &["<", "<="]) };
         by == 0
@@ -626,9 +626,9 @@ fn flow(rules: &[&Rule], component: &BTreeSet<String>) -> Vec<(Column, Column, b
             if let Some(a) = literal.atom().filter(|a| !a.neg && component.contains(a.rel.as_str())) {
                 for (i, t) in a.args.iter().enumerate() {
                     if let Term::Var(v) = t
-                        && !b.outside.contains(v)
+                        && !b.outside.contains(v.as_str())
                     {
-                        from.entry(v.clone()).or_default().insert(((a.rel.to_string(), i), false));
+                        from.entry(v.to_string()).or_default().insert(((a.rel.to_string(), i), false));
                     }
                 }
             }
@@ -668,7 +668,7 @@ fn flow(rules: &[&Rule], component: &BTreeSet<String>) -> Vec<(Column, Column, b
             .body
             .iter()
             .filter_map(|l| match l {
-                Literal::Cmp { l: Term::Var(v), op: "=", r } if b.outside.contains(v) => Some(r),
+                Literal::Cmp { l: Term::Var(v), op: "=", r } if b.outside.contains(v.as_str()) => Some(r),
                 _ => None,
             })
             .collect();
@@ -795,11 +795,11 @@ fn count_step(rule: &Rule, bounds: &Bounds<'_>, edges: &Edges, head: Option<usiz
     let up = |t: &Term| matches!(t, Term::Call(f, args) if f == "add" && matches!(args.as_slice(), [Term::Var(x), Term::Int(c)] | [Term::Int(c), Term::Var(x)] if x == b && *c > 0));
     // `t` is the value of a variable bound outside the component (`$k = t`, either way round).
     let outside_value = |t: &Term| {
-        rule.body.iter().any(|l| matches!(l, Literal::Cmp { l: Term::Var(v), op: "=", r } | Literal::Cmp { l: r, op: "=", r: Term::Var(v) } if outside.contains(v) && r == t))
+        rule.body.iter().any(|l| matches!(l, Literal::Cmp { l: Term::Var(v), op: "=", r } | Literal::Cmp { l: r, op: "=", r: Term::Var(v) } if outside.contains(v.as_str()) && r == t))
     };
     // A comparison is a move in values' order: document order's under preorder ids (`by_value`).
     let smaller = if by_value() { Move::Smaller } else { Move::Earlier };
-    let above = |x: &String| outside.contains(x) && reach(edges, x, b, smaller) == Some(true);
+    let above = |x: &str| outside.contains(x) && reach(edges, x, b, smaller) == Some(true);
     match rule.head.args.get(j)? {
         Term::Var(x) if x == b => Some(false),
         Term::Var(x) => rule
@@ -807,11 +807,11 @@ fn count_step(rule: &Rule, bounds: &Bounds<'_>, edges: &Edges, head: Option<usiz
             .iter()
             .find_map(|l| match l {
                 Literal::Cmp { l: Term::Var(v), op: "=", r: Term::Var(y) } | Literal::Cmp { l: Term::Var(y), op: "=", r: Term::Var(v) } if v == x && y == b => Some(false),
-                Literal::Cmp { l: Term::Var(v), op: "=", r } if v == x && up(r) && (outside.contains(b) || outside.contains(x) || bounds.counter(r, Some(x.as_str()))) => Some(true),
+                Literal::Cmp { l: Term::Var(v), op: "=", r } if v == x && up(r) && (outside.contains(b.as_str()) || outside.contains(x.as_str()) || bounds.counter(r, Some(x.as_str()))) => Some(true),
                 _ => None,
             })
             .or_else(|| above(x).then_some(true)),
-        t if up(t) && (outside.contains(b) || outside_value(t) || bounds.counter(t, None)) => Some(true),
+        t if up(t) && (outside.contains(b.as_str()) || outside_value(t) || bounds.counter(t, None)) => Some(true),
         _ => None,
     }
 }
@@ -821,12 +821,12 @@ fn count_step(rule: &Rule, bounds: &Bounds<'_>, edges: &Edges, head: Option<usiz
 /// relation of `keyless`, and each other column is made from the inputs and values bound outside the component.
 fn function(rules: &[&Rule], component: &BTreeSet<String>, keyless: &BTreeSet<&str>) -> Option<BTreeSet<usize>> {
     let arity = rules.first()?.head.args.len();
-    let bound_by_atom = |rule: &Rule, v: &String| rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && a.args.iter().any(|t| matches!(t, Term::Var(x) if x == v))));
+    let bound_by_atom = |rule: &Rule, v: &str| rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && a.args.iter().any(|t| matches!(t, Term::Var(x) if x == v))));
     let inputs: BTreeSet<usize> = (0..arity)
         .filter(|&j| {
             rules.iter().all(|rule| match rule.head.args.get(j) {
                 Some(Term::Int(_) | Term::Str(_)) => true,
-                Some(Term::Var(v)) => bound_by_atom(rule, v),
+                Some(Term::Var(v)) => bound_by_atom(rule, v.as_str()),
                 _ => false,
             })
         })
@@ -846,7 +846,7 @@ fn function(rules: &[&Rule], component: &BTreeSet<String>, keyless: &BTreeSet<&s
                     let mut vars = BTreeSet::new();
                     r.vars(&mut vars);
                     if vars.is_subset(&known) {
-                        known.insert(v.clone());
+                        known.insert(v.to_string());
                     }
                 }
             }
@@ -901,7 +901,7 @@ fn bounded(
             (false, _) => None,
         };
         // The variables an atom strictly along the key binds, for the functions' inputs.
-        let mut before = BTreeSet::<&String>::new();
+        let mut before = BTreeSet::<&str>::new();
         for literal in &rule.body {
             let Some(a) = literal.atom().filter(|a| component.contains(a.rel.as_str()) && !functions.contains_key(a.rel.as_str())) else { continue };
             let (ak, acount) = key[a.rel.as_str()];
@@ -927,7 +927,7 @@ fn bounded(
             match moved {
                 Some(true) => {
                     if matches!(literal, Literal::Atom(x) if !x.neg) {
-                        before.extend(a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v) } else { None }));
+                        before.extend(a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.as_str()) } else { None }));
                     }
                 }
                 Some(false) => {
@@ -943,7 +943,7 @@ fn bounded(
             let Some(a) = literal.atom().filter(|a| functions.contains_key(a.rel.as_str())) else { continue };
             for &j in &functions[a.rel.as_str()] {
                 match a.args.get(j) {
-                    Some(Term::Var(v)) if before.contains(v) || bounds.outside.contains(v) => {}
+                    Some(Term::Var(v)) if before.contains(v.as_str()) || bounds.outside.contains(v.as_str()) => {}
                     Some(Term::Int(_) | Term::Str(_)) => {}
                     _ => return Err(rule.to_string()),
                 }

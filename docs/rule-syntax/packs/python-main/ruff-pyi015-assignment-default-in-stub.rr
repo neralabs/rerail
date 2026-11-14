@@ -1,0 +1,262 @@
+.policy "ruff-pyi015-assignment-default-in-stub" revision 1
+.guests off
+.description "Replace complex assigned values in stub files with an ellipsis; only simple literal values belong in a stub."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PYI015(n): a finding at node n, from clause `assignment-default-in-stub`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI015(at: node) "Replace this assigned value with `...`; a stub only needs to show that the name has a value, and keeps literal values only when they are simple."
+    suppress noqa "PYI015"
+PYI015_raw(n) :- !pyi015_alt_10(n), pyi015_assign_slot(n),
+    count : { inside(n, p1, "function_definition"), node(_, p1, _, _, _) } = 0,
+    !pyi015_valid(n), !pyi015_typevar_call(n),
+    count : { (kind(n, "identifier") ; kind(n, "attribute")), pyi015_stop_11_within(n, p2), kind(p2, "assignment"), field(p2, "type", c3), kind(c3, "type"), child(c3, c4, _), (kind(c4, "identifier") ; kind(c4, "attribute") ; kind(c4, "parenthesized_expression")), (sym_of(c4, "typing.Final") ; sym_of(c4, "_typeshed.Final") ; sym_of(c4, "typing_extensions.Final")) } = 0,
+    pyi015_alt_14(n).
+
+// trivia(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl pyi015_trivia(n: node)
+pyi015_trivia(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pyi015_trivia(n) :- node(_, n, _, _, _), glob("[,()\\[\\]{}]", n).
+
+// fstring(n): the JSON util `fstring`, used where the JSON says `matches: "fstring"`
+.decl pyi015_fstring(n: node)
+pyi015_fstring(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "string_start"),
+    match("[A-Za-z]*[fFtT].*", c1).
+
+// number(n): the JSON util `number`, used where the JSON says `matches: "number"`
+.decl pyi015_number(n: node)
+pyi015_number(n) :- (kind(n, "integer") ; kind(n, "float")).
+
+// neg_arg(n): the JSON util `neg-arg`, used where the JSON says `matches: "neg-arg"`
+.decl pyi015_neg_arg(n: node)
+pyi015_neg_arg(n) :- pyi015_number(n).
+pyi015_neg_arg(n) :- kind(n, "attribute"),
+    ( sym_of(n, "math.inf")
+    ; sym_of(n, "math.e")
+    ; sym_of(n, "math.pi")
+    ; sym_of(n, "math.tau")
+    ).
+
+pyi015_neg_arg(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi015_neg_arg(c1).
+
+// complex_arg(n): the JSON util `complex-arg`, used where the JSON says `matches: "complex-arg"`
+.decl pyi015_complex_arg(n: node)
+pyi015_complex_arg(n) :- pyi015_number(n), glob("**[jJ]", n).
+pyi015_complex_arg(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi015_complex_arg(c1).
+
+// real_arg(n): the JSON util `real-arg`, used where the JSON says `matches: "real-arg"`
+.decl pyi015_real_arg(n: node)
+pyi015_real_arg(n) :- pyi015_number(n), !glob("**[jJ]", n), match(".{1,10}", n).
+pyi015_real_arg(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi015_real_arg(c1).
+
+// minus(n): the JSON util `minus`, used where the JSON says `matches: "minus"`
+.decl pyi015_minus(n: node)
+pyi015_minus(n) :- kind(n, "unary_operator"), field(n, "operator", c1), glob("-", c1).
+
+// complex_left(n): the JSON util `complex-left`, used where the JSON says `matches: "complex-left"`
+.decl pyi015_complex_left(n: node)
+pyi015_complex_left(n) :- pyi015_real_arg(n).
+pyi015_complex_left(n) :- pyi015_minus(n), field(n, "argument", c1), pyi015_real_arg(c1).
+pyi015_complex_left(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pyi015_complex_left(c2).
+
+// scalar(n): the JSON util `scalar`, used where the JSON says `matches: "scalar"`
+.decl pyi015_scalar(n: node)
+pyi015_scalar(n) :- (kind(n, "true") ; kind(n, "false") ; kind(n, "none") ; kind(n, "ellipsis")).
+pyi015_scalar(n) :- kind(n, "string"), !pyi015_fstring(n).
+pyi015_scalar(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), pyi015_fstring(c1) } = 0.
+pyi015_scalar(n) :- pyi015_number(n).
+pyi015_scalar(n) :- pyi015_minus(n), field(n, "argument", c2), pyi015_neg_arg(c2).
+pyi015_scalar(n) :- kind(n, "binary_operator"), field(n, "operator", c3), glob("[+-]", c3),
+    field(n, "left", c4), pyi015_complex_left(c4), field(n, "right", c5), pyi015_complex_arg(c5).
+pyi015_scalar(n) :- kind(n, "attribute"), sym_of(n, q6), pyi015_set_1(q6).
+
+// elem(n): the JSON util `elem`, used where the JSON says `matches: "elem"`
+.decl pyi015_elem(n: node)
+pyi015_elem(n) :- pyi015_scalar(n).
+pyi015_elem(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi015_elem(c1).
+
+// no_eleventh(n): the JSON util `no-eleventh`, used where the JSON says `matches: "no-eleventh"`
+.decl pyi015_no_eleventh(n: node)
+pyi015_no_eleventh(n) :- node(_, n, _, _, _),
+    count : { child(n, c1, _), child(p2, c1, _), pyi015_counted_2(c1), k4 = count : { child(p2, s3, _), precedes(s3, c1), pyi015_counted_2(s3) }, k4 = 10 } = 0.
+
+// pair_ok(n): the JSON util `pair-ok`, used where the JSON says `matches: "pair-ok"`
+.decl pyi015_pair_ok(n: node)
+pyi015_pair_ok(n) :- kind(n, "pair"), field(n, "key", c1), pyi015_elem(c1), field(n, "value", c2),
+    pyi015_elem(c2).
+
+// valid(n): the JSON util `valid`, used where the JSON says `matches: "valid"`
+.decl pyi015_valid(n: node)
+pyi015_valid(n) :- pyi015_elem(n).
+pyi015_valid(n) :- (kind(n, "list") ; kind(n, "tuple") ; kind(n, "set") ; kind(n, "expression_list")),
+    pyi015_no_eleventh(n), count : { child(n, c1, _), !pyi015_alt_3(c1) } = 0.
+pyi015_valid(n) :- kind(n, "dictionary"), pyi015_no_eleventh(n),
+    count : { child(n, c2, _), !pyi015_alt_4(c2) } = 0.
+pyi015_valid(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), pyi015_valid(c3).
+
+// pipe(n): the JSON util `pipe`, used where the JSON says `matches: "pipe"`
+.decl pyi015_pipe(n: node)
+pyi015_pipe(n) :- kind(n, "binary_operator"), field(n, "operator", c1), glob("|", c1).
+
+// pep604(n): the JSON util `pep604`, used where the JSON says `matches: "pep604"`
+.decl pyi015_pep604(n: node)
+pyi015_pep604(n) :- pyi015_pipe(n), field(n, "left", c1), pyi015_member(c1), field(n, "right", c2),
+    pyi015_member(c2).
+
+// member(n): the JSON util `member`, used where the JSON says `matches: "member"`
+.decl pyi015_member(n: node)
+pyi015_member(n) :-
+    ( kind(n, "identifier")
+    ; kind(n, "subscript")
+    ; kind(n, "attribute")
+    ; kind(n, "none")
+    ).
+
+pyi015_member(n) :- pyi015_pep604(n).
+pyi015_member(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi015_member(c1).
+
+// plain_ok(n): the JSON util `plain-ok`, used where the JSON says `matches: "plain-ok"`
+.decl pyi015_plain_ok(n: node)
+pyi015_plain_ok(n) :- kind(n, k1), pyi015_set_5(k1).
+pyi015_plain_ok(n) :- pyi015_pep604(n).
+
+// name_target(n): the JSON util `name-target`, used where the JSON says `matches: "name-target"`
+.decl pyi015_name_target(n: node)
+pyi015_name_target(n) :- kind(n, "identifier").
+pyi015_name_target(n) :- kind(n, "tuple_pattern"), !pyi015_tok_has_1(n), child(n, c9, _),
+    pyi015_name_target(c9).
+pyi015_name_target(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    pyi015_name_target(c10).
+
+// assign_slot(n): the JSON util `assign-slot`, used where the JSON says `matches: "assign-slot"`
+.decl pyi015_assign_slot(n: node)
+pyi015_assign_slot(n) :- field(p1, "right", n), kind(p1, "assignment").
+pyi015_assign_slot(n) :- child(p2, n, _), pyi015_assign_slot(p2),
+    kind(p2, "parenthesized_expression"), !kind(n, "comment").
+
+// typevar_call(n): the JSON util `typevar-call`, used where the JSON says `matches: "typevar-call"`
+.decl pyi015_typevar_call(n: node)
+pyi015_typevar_call(n) :- kind(n, "call"), field(n, "function", c1),
+    sym_of(c1, q2), pyi015_set_6(q2).
+
+// special(n): the JSON util `special`, used where the JSON says `matches: "special"`
+.decl pyi015_special(n: node)
+pyi015_special(n) :- field(n, "left", c1), pyi015_all_name(c1),
+    count : { inside(n, p2, "class_definition"), node(_, p2, _, _, _) } = 0.
+pyi015_special(n) :- field(n, "left", c3), pyi015_class_dunder_name(c3), within_stop(n, p4, pyi015_stop_7),
+    kind(p4, "class_definition").
+
+// all_name(n): the JSON util `all-name`, used where the JSON says `matches: "all-name"`
+.decl pyi015_all_name(n: node)
+pyi015_all_name(n) :- kind(n, "identifier"), glob("__all__", n).
+pyi015_all_name(n) :- pyi015_alt_8(n), child(n, c9, _), pyi015_all_name(c9).
+
+// class_dunder_name(n): the JSON util `class-dunder-name`, used where the JSON says `matches: "class-dunder-name"`
+.decl pyi015_class_dunder_name(n: node)
+pyi015_class_dunder_name(n) :- kind(n, "identifier"), glob("{__match_args__,__slots__}", n).
+pyi015_class_dunder_name(n) :- pyi015_alt_8(n), child(n, c9, _), pyi015_class_dunder_name(c9).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi015_tok_has_1(n: node)
+.stored pyi015_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi015_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+pyi015_tok_has_1(n) :- op(n, t2), match(",", t2).
+pyi015_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+pyi015_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+pyi015_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// demand_alt_14: the nodes alt_14 is asked at (it looks at every ancestor of every node)
+.decl pyi015_demand_alt_14(n: node)
+pyi015_demand_alt_14(n) :- pyi015_assign_slot(n).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi015_up_1(n: node, p: node)
+pyi015_up_1(n, p) :- pyi015_demand_alt_14(n), within_stop(n, p, pyi015_stop_11), kind(p, "assignment").
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi015_up_2(n: node, p: node)
+pyi015_up_2(n, p) :- pyi015_demand_alt_14(n), within_stop(n, p, pyi015_stop_11), kind(p, "assignment").
+
+// set_1: symbols from the JSON `resolves.import`
+.decl pyi015_set_1(v: symbol)
+pyi015_set_1("math.inf"). pyi015_set_1("math.nan"). pyi015_set_1("math.e"). pyi015_set_1("math.pi").
+pyi015_set_1("math.tau"). pyi015_set_1("sys.stdin"). pyi015_set_1("sys.stdout"). pyi015_set_1("sys.stderr").
+pyi015_set_1("sys.version"). pyi015_set_1("sys.version_info"). pyi015_set_1("sys.platform").
+pyi015_set_1("sys.executable"). pyi015_set_1("sys.prefix"). pyi015_set_1("sys.exec_prefix").
+pyi015_set_1("sys.base_prefix"). pyi015_set_1("sys.byteorder"). pyi015_set_1("sys.maxsize").
+pyi015_set_1("sys.hexversion"). pyi015_set_1("sys.winver").
+
+// set_5: node kinds from a JSON `any`
+.decl pyi015_set_5(v: symbol)
+pyi015_set_5("call"). pyi015_set_5("identifier"). pyi015_set_5("attribute"). pyi015_set_5("subscript").
+pyi015_set_5("ellipsis"). pyi015_set_5("none").
+
+// set_6: symbols from the JSON `resolves.import`
+.decl pyi015_set_6(v: symbol)
+pyi015_set_6("typing.TypeVar"). pyi015_set_6("typing.TypeVarTuple"). pyi015_set_6("typing.NewType").
+pyi015_set_6("typing.ParamSpec"). pyi015_set_6("typing_extensions.TypeVar").
+pyi015_set_6("typing_extensions.TypeVarTuple"). pyi015_set_6("typing_extensions.NewType").
+pyi015_set_6("typing_extensions.ParamSpec").
+
+// stop_7: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi015_stop_7(kind: symbol)
+pyi015_stop_7("class_definition"). pyi015_stop_7("function_definition").
+
+// counted_2(n): the siblings the JSON `nthChild.ofRule` counts
+.decl pyi015_counted_2(n: node)
+pyi015_counted_2(n) :- node(_, n, _, _, _), !kind(n, "comment"),
+    !kind(n, "line_continuation").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi015_alt_3(n: node)
+pyi015_alt_3(n) :- pyi015_trivia(n).
+pyi015_alt_3(n) :- pyi015_elem(n).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi015_alt_4(n: node)
+pyi015_alt_4(n) :- pyi015_trivia(n).
+pyi015_alt_4(n) :- pyi015_pair_ok(n).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi015_alt_8(n: node)
+pyi015_alt_8(n) :- kind(n, "parenthesized_expression").
+pyi015_alt_8(n) :- kind(n, "tuple_pattern"), !pyi015_tok_has_1(n).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi015_alt_10(n: node)
+pyi015_alt_10(n) :- pyi015_trivia(n).
+pyi015_alt_10(n) :- kind(n, "parenthesized_expression").
+
+// stop_11(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi015_stop_11(n: node)
+pyi015_stop_11(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// alt_14(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi015_alt_14(n: node)
+pyi015_alt_14(n) :- pyi015_demand_alt_14(n), pyi015_up_1(n, p1),
+    count : { field(p1, "type", c2), kind(c2, "type") } = 0, field(p1, "left", c3),
+    pyi015_name_target(c3), count : { field(p1, "right", c4), kind(c4, "assignment") } = 0,
+    count : { field(p5, "right", p1), kind(p5, "assignment") } = 0, !pyi015_special(p1),
+    !pyi015_plain_ok(n).
+pyi015_alt_14(n) :- pyi015_demand_alt_14(n), pyi015_up_2(n, p6), field(p6, "type", c7), kind(c7, "type"),
+    !pyi015_special(p6),
+    count : { field(p6, "type", c8), kind(c8, "type"), child(c8, c9, _), (kind(c9, "identifier") ; kind(c9, "attribute") ; kind(c9, "parenthesized_expression")), (sym_of(c9, "typing.TypeAlias") ; sym_of(c9, "_typeshed.TypeAlias") ; sym_of(c9, "typing_extensions.TypeAlias")) } = 0.
+
+// stop_11_within: within_stop over the stop set stop_11, read inside an aggregate
+.decl pyi015_stop_11_within(n: node, a: node)
+pyi015_stop_11_within(x, y) :- within_stop(x, y, pyi015_stop_11).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI015_raw(at: node)
+PYI015(v0) :- PYI015_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

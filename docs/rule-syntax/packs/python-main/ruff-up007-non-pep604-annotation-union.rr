@@ -1,0 +1,250 @@
+.policy "ruff-up007-non-pep604-annotation-union" revision 1
+.guests off
+.description "Write union types as X | Y instead of Union[X, Y]; the union operator is shorter and needs no typing import."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// annotation_root(n): the JSON util `annotation-root`, used where the JSON says `matches: "annotation-root"`
+.decl up007_annotation_root(n: node)
+up007_annotation_root(n) :- kind(n, "type"),
+    ( field(p1, "type", n), (kind(p1, "typed_parameter") ; kind(p1, "typed_default_parameter") ; kind(p1, "assignment"))
+    ; field(p2, "return_type", n), kind(p2, "function_definition")
+    ).
+
+
+// named_tuple_ref(n): the JSON util `named-tuple-ref`, used where the JSON says `matches: "named-tuple-ref"`
+.decl up007_named_tuple_ref(n: node)
+up007_named_tuple_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.NamedTuple")
+    ; sym_of(n, "typing_extensions.NamedTuple")
+    ; sym_of(n, "_typeshed.NamedTuple")
+    ).
+
+
+// named_tuple(n): the JSON util `named-tuple`, used where the JSON says `matches: "named-tuple"`
+.decl up007_named_tuple(n: node)
+up007_named_tuple(n) :- up007_named_tuple_ref(n).
+up007_named_tuple(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c1, _), up007_named_tuple(c1).
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl up007_plain_string(n: node)
+up007_plain_string(n) :- kind(n, "string"), !match("[a-zA-Z]*[bBfFtT].*", n).
+up007_plain_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), match("[a-zA-Z]*[bBfFtT].*", c1) } = 0.
+
+// quoted_element(n): the JSON util `quoted-element`, used where the JSON says `matches: "quoted-element"`
+.decl up007_quoted_element(n: node)
+up007_quoted_element(n) :- up007_plain_string(n).
+up007_quoted_element(n) :- (kind(n, "type") ; kind(n, "tuple") ; kind(n, "parenthesized_expression")),
+    child(n, c1, _), up007_quoted_element(c1).
+
+// starred_element(n): the JSON util `starred-element`, used where the JSON says `matches: "starred-element"`
+.decl up007_starred_element(n: node)
+up007_starred_element(n) :- (kind(n, "list_splat") ; kind(n, "splat_type")).
+up007_starred_element(n) :- (kind(n, "type") ; kind(n, "tuple")), child(n, c1, _),
+    up007_starred_element(c1).
+
+// plain_slice(n): the JSON util `plain-slice`, used where the JSON says `matches: "plain-slice"`
+.decl up007_plain_slice(n: node)
+up007_plain_slice(n) :- node(_, n, _, _, _), !up007_alt_2(n).
+
+// quoted_slice(n): the JSON util `quoted-slice`, used where the JSON says `matches: "quoted-slice"`
+.decl up007_quoted_slice(n: node)
+up007_quoted_slice(n) :- child(n, c1, _), up007_quoted_element(c1).
+
+// union_subscript(n): the JSON util `union-subscript`, used where the JSON says `matches: "union-subscript"`
+.decl up007_union_subscript(n: node)
+up007_union_subscript(n) :- kind(n, "subscript"), up007_plain_slice(n), field(n, "value", c1),
+    up007_union_head(c1).
+
+// union_generic(n): the JSON util `union-generic`, used where the JSON says `matches: "union-generic"`
+.decl up007_union_generic(n: node)
+up007_union_generic(n) :- kind(n, "generic_type"), child(n, c1, _), kind(c1, "identifier"),
+    up007_union_head(c1), child(n, c2, _), kind(c2, "type_parameter"), up007_plain_slice(c2).
+
+// union_node(n): the JSON util `union-node`, used where the JSON says `matches: "union-node"`
+.decl up007_union_node(n: node)
+up007_union_node(n) :- up007_union_subscript(n).
+up007_union_node(n) :- up007_union_generic(n).
+
+// quoted_union(n): the JSON util `quoted-union`, used where the JSON says `matches: "quoted-union"`
+.decl up007_quoted_union(n: node)
+up007_quoted_union(n) :- kind(n, "subscript"), up007_quoted_slice(n).
+up007_quoted_union(n) :- kind(n, "generic_type"), child(n, c1, _),
+    kind(c1, "type_parameter"), up007_quoted_slice(c1).
+
+// type_checking_test(n): the JSON util `type-checking-test`, used where the JSON says `matches: "type-checking-test"`
+.decl up007_type_checking_test(n: node)
+up007_type_checking_test(n) :- kind(n, "identifier"), glob("TYPE_CHECKING", n).
+up007_type_checking_test(n) :- kind(n, "identifier"),
+    ( sym_of(n, "typing.TYPE_CHECKING")
+    ; sym_of(n, "typing_extensions.TYPE_CHECKING")
+    ; sym_of(n, "_typeshed.TYPE_CHECKING")
+    ).
+
+up007_type_checking_test(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("TYPE_CHECKING", c1).
+up007_type_checking_test(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    !kind(c2, "comment"), up007_type_checking_test(c2).
+
+// in_type_checking(n): the JSON util `in-type-checking`, used where the JSON says `matches: "in-type-checking"`
+.decl up007_in_type_checking(n: node)
+up007_in_type_checking(n) :- inside(n, p1, "block"), field(p2, "consequence", p1),
+    kind(p2, "if_statement"), field(p2, "condition", c3), up007_type_checking_test(c3).
+
+// in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+.decl up007_in_annotation(n: node)
+up007_in_annotation(n) :- up007_demand_in_annotation(n), up007_up_1(n, p1).
+
+// in_local_annotation(n): the JSON util `in-local-annotation`, used where the JSON says `matches: "in-local-annotation"`
+.decl up007_in_local_annotation(n: node)
+up007_in_local_annotation(n) :- within(n, p1), up007_annotation_root(p1), child(p2, p1, _),
+    kind(p2, "assignment"), within_stop(p2, p3, up007_stop_3),
+    kind(p3, "function_definition").
+
+// union_in_string(n): the JSON util `union-in-string`, used where the JSON says `matches: "union-in-string"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl up007_union_in_string(n: node, name: loc)
+up007_union_in_string(n, NAME) :- up007_string_annotation(n), parsed(n, "annotation", r1),
+    within(c2, r1), up007_alt_4(c2, NAME).
+
+// string_annotation(n): the JSON util `string-annotation`, used where the JSON says `matches: "string-annotation"`
+.decl up007_string_annotation(n: node)
+up007_string_annotation(n) :- kind(n, "string"),
+    (count : { contains("\\", n) } = 0 ; match("[a-zA-Z]*[rR].*", n)).
+
+// union_head(n): the JSON util `union-head`, used where the JSON says `matches: "union-head"`
+.decl up007_union_head(n: node)
+up007_union_head(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Union")
+    ; sym_of(n, "typing_extensions.Union")
+    ; sym_of(n, "_typeshed.Union")
+    ).
+
+up007_union_head(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), up007_union_head(c1).
+
+// named_tuple_tuple(n): the JSON util `named-tuple-tuple`, used where the JSON says `matches: "named-tuple-tuple"`
+.decl up007_named_tuple_tuple(n: node)
+up007_named_tuple_tuple(n) :- kind(n, "tuple"), child(n, c1, _), up007_named_tuple(c1).
+up007_named_tuple_tuple(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c2, _), up007_named_tuple_tuple(c2).
+
+// future_stmt(n): the JSON util `future-stmt`, used where the JSON says `matches: "future-stmt"`
+.decl up007_future_stmt(n: node)
+up007_future_stmt(n) :- kind(n, "future_import_statement"), has(n, c1, "identifier"),
+    glob("annotations", c1),
+    count : { field(p2, "alias", c1), kind(p2, "aliased_import") } = 0.
+
+// future_annotations(n): the JSON util `future-annotations`, used where the JSON says `matches: "future-annotations"`
+.decl up007_future_annotations(n: node)
+up007_future_annotations(n) :- up007_demand_future_annotations(n), within(n, p1), precedes(s2, p1),
+    up007_future_stmt(s2).
+
+// in_type_param(n): the JSON util `in-type-param`, used where the JSON says `matches: "in-type-param"`
+.decl up007_in_type_param(n: node)
+up007_in_type_param(n) :- within(n, p1),
+    ( kind(p1, "type_parameter"), field(p2, "type_parameters", p1), (kind(p2, "function_definition") ; kind(p2, "class_definition"))
+    ; kind(p1, "type"), child(p3, p1, _), kind(p3, "type_alias_statement")
+    ).
+
+
+// typing_context(n): the JSON util `typing-context`, used where the JSON says `matches: "typing-context"`
+.decl up007_typing_context(n: node)
+up007_typing_context(n) :- up007_in_type_checking(n).
+up007_typing_context(n) :- up007_in_local_annotation(n).
+up007_typing_context(n) :- up007_in_type_param(n).
+up007_typing_context(n) :- up007_future_annotations(n), up007_up_2(n, p1).
+
+// UP007(n): a finding at node n, from clause `union-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation UP007(at: node, name: node) "Write `Union[X, Y]` as `X | Y`, and drop the `Union` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10."
+    suppress noqa "UP007"
+UP007_raw(NAME, n) :- up007_union_node(n), node(_, n, _, _, _), NAME = n, (!up007_quoted_union(n) ; up007_typing_context(n)).
+UP007_raw(NAME, n) :- up007_union_in_string(n, NAME).
+
+// UP007_union_annotation_stub(n): a finding at node n, from clause `union-annotation-stub`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation UP007_union_annotation_stub(at: node, name: node) code "UP007" "Write `Union[X, Y]` as `X | Y`, and drop the `Union` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10."
+    suppress noqa "UP007"
+UP007_union_annotation_stub_raw(NAME, n) :- up007_union_node(n), node(_, n, _, _, _), NAME = n,
+    (!up007_quoted_union(n) ; up007_in_type_checking(n) ; up007_in_annotation(n) ; up007_in_type_param(n)).
+UP007_union_annotation_stub_raw(NAME, n) :- up007_union_in_string(n, NAME).
+
+// UP007_union_annotation_future_annotations(n): a finding at node n, from clause `union-annotation-future-annotations`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation UP007_union_annotation_future_annotations(at: node, name: node) code "UP007" "Write `Union[X, Y]` as `X | Y`, and drop the `Union` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10."
+    suppress noqa "UP007"
+UP007_union_annotation_future_annotations_raw(NAME, n) :- up007_future_annotations(n),
+    up007_alt_9(n, NAME).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up007_tok_has_1(n: node)
+.stored up007_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up007_tok_has_1(n) :- child(n, c4, _), glob("\\,", c4).
+up007_tok_has_1(n) :- op(n, t5), match(",", t5).
+up007_tok_has_1(n) :- child(n, c11, _), structural_before(c11, g6),
+    match("(?s)^(?:.*(?:,).*)$", g6).
+up007_tok_has_1(n) :- child(n, c11, _), structural_after(c11, g6),
+    match("(?s)^(?:.*(?:,).*)$", g6).
+up007_tok_has_1(n) :- node_text(n, g6), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g6).
+
+// demand_future_annotations: the nodes future_annotations is asked at (it looks at every ancestor of every node)
+.decl up007_demand_future_annotations(n: node)
+up007_demand_future_annotations(n) :- within(n, p1), up007_annotation_root(p1).
+up007_demand_future_annotations(n) :- up007_alt_9(n, NAME).
+
+// demand_in_annotation: the nodes in_annotation is asked at (it looks at every ancestor of every node)
+.decl up007_demand_in_annotation(n: node)
+up007_demand_in_annotation(n) :- up007_union_node(n), node(_, n, _, _, _), NAME = n.
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl up007_up_1(n: node, p: node)
+up007_up_1(n, p) :- up007_demand_in_annotation(n), within(n, p), up007_annotation_root(p).
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl up007_up_2(n: node, p: node)
+up007_up_2(n, p) :- up007_future_annotations(n), within(n, p), up007_annotation_root(p).
+
+// stop_3: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl up007_stop_3(kind: symbol)
+up007_stop_3("function_definition"). up007_stop_3("class_definition").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl up007_alt_2(n: node)
+up007_alt_2(n) :- child(n, c1, _), up007_starred_element(c1).
+up007_alt_2(n) :- child(n, c2, _), up007_named_tuple(c2).
+up007_alt_2(n) :- child(n, c3, _), up007_named_tuple_tuple(c3), !up007_tok_has_1(n).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+//   NAME: metavariable this relation binds for the calling rule
+.decl up007_alt_4(n: node, name: loc)
+up007_alt_4(n, NAME) :- up007_union_node(n), node(_, n, _, _, _), NAME = n.
+up007_alt_4(n, NAME) :- up007_union_in_string(n, NAME).
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+//   NAME: metavariable this relation binds for the calling rule
+.decl up007_alt_9(n: node, name: loc)
+up007_alt_9(n, NAME) :- up007_union_node(n), node(_, n, _, _, _), NAME = n, up007_in_annotation(n).
+up007_alt_9(n, NAME) :- up007_union_in_string(n, NAME).
+
+// main's file condition {"notRegex": "\\.pyi$"}
+.decl UP007_raw(at: node, name: node)
+UP007(v0, v1) :- UP007_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl UP007_union_annotation_stub_raw(at: node, name: node)
+UP007_union_annotation_stub(v0, v1) :- UP007_union_annotation_stub_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).
+
+// pythonVersion {"max": "3.9"} excludes Python 3.10, main's default: no findings.
+.decl UP007_union_annotation_future_annotations_raw(at: node, name: node)

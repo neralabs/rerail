@@ -1,0 +1,102 @@
+.policy "bandit-b502-ssl-with-bad-version" revision 1
+.guests off
+.description "Don't select SSLv2, SSLv3, TLS 1.0 or TLS 1.1 when configuring ssl or pyOpenSSL connections; these protocol versions are broken."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B502(n): a finding at node n, from clause `B502`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on PROTOCOL are added to every rule.
+.violation B502(at: node) "Select TLS 1.2 or newer here (e.g. ssl.PROTOCOL_TLS_CLIENT) instead of this SSLv2, SSLv3, TLS 1.0 or TLS 1.1 protocol."
+    suppress nosec "B502"
+B502(n) :- n ~ `$F($$$ARGS)`, b502_alt_1(n, PROTOCOL), sym_of(PROTOCOL, q3), b502_set_2(q3).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl b502_args_plain(l: node, a: node, i: number)
+b502_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl b502_args_splat(l: node, i: number)
+b502_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl b502_args_pos(l: node, a: node, j: number)
+b502_args_pos(l, a, j) :- b502_args_plain(l, a, i), count : { b502_args_splat(l, k), k < i } = 0,
+    j = count : { b502_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl b502_args_star(l: node, j: number)
+b502_args_star(l, j) :- b502_args_splat(l, i), count : { b502_args_splat(l, k), k < i } = 0,
+    j = count : { b502_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl b502_args_kwp(l: node, k: symbol, v: node)
+b502_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl b502_args_lit_dict(s: node, d: node)
+b502_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !b502_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl b502_args_str_pair(p: node)
+b502_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl b502_args_kw(l: node, k: symbol, v: node)
+b502_args_kw(l, k, v) :- b502_args_kwp(l, k, v).
+b502_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), b502_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl b502_args_kw_spread(l: node)
+b502_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !b502_args_lit_dict(s, _).
+
+// arg_method_1: call n passes v for slot `method` of (*, method), as Python binds the call
+.decl b502_arg_method_1(n: node, v: node)
+b502_arg_method_1(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    b502_args_kw(l, "method", v), count : { b502_args_kw(l, "method", _) } = 1.
+
+// arg_no_method_1: call n does not pass slot `method` of (*, method), as Python binds the call
+.decl b502_arg_no_method_1(n: node)
+b502_arg_no_method_1(n) :- kind(n, "call"), field(n, "arguments", l),
+    !b502_args_kw(l, "method", _), !b502_args_kw_spread(l).
+
+// arg_ssl_version_2: call n passes v for slot `ssl_version` of (*, ssl_version), as Python binds the call
+.decl b502_arg_ssl_version_2(n: node, v: node)
+b502_arg_ssl_version_2(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    b502_args_kw(l, "ssl_version", v), count : { b502_args_kw(l, "ssl_version", _) } = 1.
+
+// arg_no_ssl_version_2: call n does not pass slot `ssl_version` of (*, ssl_version), as Python binds the call
+.decl b502_arg_no_ssl_version_2(n: node)
+b502_arg_no_ssl_version_2(n) :- kind(n, "call"), field(n, "arguments", l),
+    !b502_args_kw(l, "ssl_version", _), !b502_args_kw_spread(l).
+
+// set_2: symbols from the JSON `resolves.import`
+.decl b502_set_2(v: symbol)
+b502_set_2("ssl.PROTOCOL_SSLv2"). b502_set_2("ssl.PROTOCOL_SSLv3"). b502_set_2("ssl.PROTOCOL_TLSv1").
+b502_set_2("ssl.PROTOCOL_TLSv1_1"). b502_set_2("OpenSSL.SSL.SSLv2_METHOD").
+b502_set_2("OpenSSL.SSL.SSLv23_METHOD"). b502_set_2("OpenSSL.SSL.SSLv3_METHOD").
+b502_set_2("OpenSSL.SSL.TLSv1_METHOD"). b502_set_2("OpenSSL.SSL.TLSv1_1_METHOD").
+b502_set_2("pyOpenSSL.SSL.SSLv2_METHOD"). b502_set_2("pyOpenSSL.SSL.SSLv23_METHOD").
+b502_set_2("pyOpenSSL.SSL.SSLv3_METHOD"). b502_set_2("pyOpenSSL.SSL.TLSv1_METHOD").
+b502_set_2("pyOpenSSL.SSL.TLSv1_1_METHOD").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   PROTOCOL: metavariable this relation binds for the calling rule
+.decl b502_alt_1(n: node, protocol: loc)
+b502_alt_1(n, PROTOCOL) :- kind(n, "call"), b502_arg_method_1(n, a1), PROTOCOL = a1.
+b502_alt_1(n, PROTOCOL) :- kind(n, "call"), b502_arg_ssl_version_2(n, a2), PROTOCOL = a2.

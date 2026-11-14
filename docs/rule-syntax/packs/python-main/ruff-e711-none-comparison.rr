@@ -1,0 +1,340 @@
+.policy "ruff-e711-none-comparison" revision 2
+.guests off
+.description "Use is None or is not None instead of == or != to compare with None; equality can be overridden and gives surprising results."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// E711(n, detail): findings from clauses `none-comparison-equal`, `none-comparison-not-equal`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+.violation E711(at: node, detail: symbol) "Use `is {detail} None` for this comparison."
+    suppress noqa "E711"
+E711(n, "None` instead of `==") :- kind(n, "none"), e711_operand(n).
+E711(n, "not None` instead of `!=") :- kind(n, "none"),
+    e711_operand_none_comparison_not_equal(n).
+
+// constant(n): the JSON util `constant`, used where the JSON says `matches: "constant"`
+.decl e711_constant(n: node)
+e711_constant(n) :- e711_constant_u7(n).
+
+// constant_non_singleton(n): the JSON util `constant-non-singleton`, used where the JSON says `matches: "constant-non-singleton"`
+.decl e711_constant_non_singleton(n: node)
+e711_constant_non_singleton(n) :- e711_constant(n), !e711_singleton(n).
+
+// compared_operand(n): the JSON util `compared-operand`, used where the JSON says `matches: "compared-operand"`
+.decl e711_compared_operand(n: node)
+e711_compared_operand(n) :- child(p1, n, _), kind(p1, "comparison_operator"),
+    ( !e711_tok_follows_2(n), next_sibling(n, s1), glob("==", s1), next_sibling(s1, s2), !e711_constant_non_singleton(s2)
+    ; next_sibling(s3, n), glob("==", s3), next_sibling(s4, s3), !e711_constant_non_singleton(s4)
+    ).
+
+
+// operand(n): the JSON util `operand`, used where the JSON says `matches: "operand"`
+.decl e711_operand(n: node)
+e711_operand(n) :- e711_compared_operand(n).
+e711_operand(n) :- child(p1, n, _), kind(p1, "parenthesized_expression"), e711_operand(p1).
+
+// singleton(n): the JSON util `singleton`, used where the JSON says `matches: "singleton"`
+.decl e711_singleton(n: node)
+e711_singleton(n) :- (kind(n, "none") ; kind(n, "true") ; kind(n, "false") ; kind(n, "ellipsis")).
+e711_singleton(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), e711_singleton(c1).
+
+// constant_none_comparison_not_equal(n): the JSON util `constant`, used where the JSON says `matches: "constant"`
+.decl e711_constant_none_comparison_not_equal(n: node)
+e711_constant_none_comparison_not_equal(n) :- e711_constant_none_comparison_not_equal_u7(n).
+
+// constant_non_singleton_none_comparison_not_equal(n): the JSON util `constant-non-singleton`, used where the JSON says `matches: "constant-non-singleton"`
+.decl e711_constant_non_singleton_none_comparison_not_equal(n: node)
+e711_constant_non_singleton_none_comparison_not_equal(n) :- e711_constant_none_comparison_not_equal(n),
+    !e711_singleton_none_comparison_not_equal(n).
+
+// compared_operand_none_comparison_not_equal(n): the JSON util `compared-operand`, used where the JSON says `matches: "compared-operand"`
+.decl e711_compared_operand_none_comparison_not_equal(n: node)
+e711_compared_operand_none_comparison_not_equal(n) :- child(p1, n, _),
+    kind(p1, "comparison_operator"),
+    ( !e711_tok_follows_2(n), next_sibling(n, s1), glob("!=", s1), next_sibling(s1, s2), !e711_constant_non_singleton_none_comparison_not_equal(s2)
+    ; next_sibling(s3, n), glob("!=", s3), next_sibling(s4, s3), !e711_constant_non_singleton_none_comparison_not_equal(s4)
+    ).
+
+
+// operand_none_comparison_not_equal(n): the JSON util `operand`, used where the JSON says `matches: "operand"`
+.decl e711_operand_none_comparison_not_equal(n: node)
+e711_operand_none_comparison_not_equal(n) :- e711_compared_operand_none_comparison_not_equal(n).
+e711_operand_none_comparison_not_equal(n) :- child(p1, n, _),
+    kind(p1, "parenthesized_expression"), e711_operand_none_comparison_not_equal(p1).
+
+// singleton_none_comparison_not_equal(n): the JSON util `singleton`, used where the JSON says `matches: "singleton"`
+.decl e711_singleton_none_comparison_not_equal(n: node)
+e711_singleton_none_comparison_not_equal(n) :- (kind(n, "none") ; kind(n, "true") ; kind(n, "false") ; kind(n, "ellipsis")).
+e711_singleton_none_comparison_not_equal(n) :- kind(n, "parenthesized_expression"),
+    child(n, c1, _), e711_singleton_none_comparison_not_equal(c1).
+
+.decl e711_alt_2_u0(n: node)
+e711_alt_2_u0(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl e711_alt_2_u1(n: node)
+e711_alt_2_u1(n) :- e711_constant_u0(n).
+e711_alt_2_u1(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl e711_alt_2_u2(n: node)
+e711_alt_2_u2(n) :- e711_constant_u1(n).
+e711_alt_2_u2(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl e711_alt_2_u3(n: node)
+e711_alt_2_u3(n) :- e711_constant_u2(n).
+e711_alt_2_u3(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl e711_alt_2_u4(n: node)
+e711_alt_2_u4(n) :- e711_constant_u3(n).
+e711_alt_2_u4(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl e711_alt_2_u5(n: node)
+e711_alt_2_u5(n) :- e711_constant_u4(n).
+e711_alt_2_u5(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl e711_alt_2_u6(n: node)
+e711_alt_2_u6(n) :- e711_constant_u5(n).
+e711_alt_2_u6(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl e711_alt_2_u7(n: node)
+e711_alt_2_u7(n) :- e711_constant_u6(n).
+e711_alt_2_u7(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl e711_constant_u0(n: node)
+e711_constant_u0(n) :- kind(n, k1), e711_set_1(k1).
+e711_constant_u0(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+e711_constant_u0(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+e711_constant_u0(n) :- kind(n, "tuple"), count : { child(n, c5, _) } = 0.
+
+.decl e711_constant_u1(n: node)
+e711_constant_u1(n) :- kind(n, k1), e711_set_1(k1).
+e711_constant_u1(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+e711_constant_u1(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+e711_constant_u1(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    e711_constant_u0(c4).
+e711_constant_u1(n) :- kind(n, "tuple"), count : { child(n, c5, _), !e711_alt_2_u0(c5) } = 0.
+
+.decl e711_constant_u2(n: node)
+e711_constant_u2(n) :- kind(n, k1), e711_set_1(k1).
+e711_constant_u2(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+e711_constant_u2(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+e711_constant_u2(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    e711_constant_u1(c4).
+e711_constant_u2(n) :- kind(n, "tuple"), count : { child(n, c5, _), !e711_alt_2_u1(c5) } = 0.
+
+.decl e711_constant_u3(n: node)
+e711_constant_u3(n) :- kind(n, k1), e711_set_1(k1).
+e711_constant_u3(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+e711_constant_u3(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+e711_constant_u3(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    e711_constant_u2(c4).
+e711_constant_u3(n) :- kind(n, "tuple"), count : { child(n, c5, _), !e711_alt_2_u2(c5) } = 0.
+
+.decl e711_constant_u4(n: node)
+e711_constant_u4(n) :- kind(n, k1), e711_set_1(k1).
+e711_constant_u4(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+e711_constant_u4(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+e711_constant_u4(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    e711_constant_u3(c4).
+e711_constant_u4(n) :- kind(n, "tuple"), count : { child(n, c5, _), !e711_alt_2_u3(c5) } = 0.
+
+.decl e711_constant_u5(n: node)
+e711_constant_u5(n) :- kind(n, k1), e711_set_1(k1).
+e711_constant_u5(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+e711_constant_u5(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+e711_constant_u5(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    e711_constant_u4(c4).
+e711_constant_u5(n) :- kind(n, "tuple"), count : { child(n, c5, _), !e711_alt_2_u4(c5) } = 0.
+
+.decl e711_constant_u6(n: node)
+e711_constant_u6(n) :- kind(n, k1), e711_set_1(k1).
+e711_constant_u6(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+e711_constant_u6(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+e711_constant_u6(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    e711_constant_u5(c4).
+e711_constant_u6(n) :- kind(n, "tuple"), count : { child(n, c5, _), !e711_alt_2_u5(c5) } = 0.
+
+.decl e711_constant_u7(n: node)
+e711_constant_u7(n) :- kind(n, k1), e711_set_1(k1).
+e711_constant_u7(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+e711_constant_u7(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+e711_constant_u7(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    e711_constant_u6(c4).
+e711_constant_u7(n) :- kind(n, "tuple"), count : { child(n, c5, _), !e711_alt_2_u6(c5) } = 0.
+
+.decl e711_alt_5_u0(n: node)
+e711_alt_5_u0(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl e711_alt_5_u1(n: node)
+e711_alt_5_u1(n) :- e711_constant_none_comparison_not_equal_u0(n).
+e711_alt_5_u1(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl e711_alt_5_u2(n: node)
+e711_alt_5_u2(n) :- e711_constant_none_comparison_not_equal_u1(n).
+e711_alt_5_u2(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl e711_alt_5_u3(n: node)
+e711_alt_5_u3(n) :- e711_constant_none_comparison_not_equal_u2(n).
+e711_alt_5_u3(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl e711_alt_5_u4(n: node)
+e711_alt_5_u4(n) :- e711_constant_none_comparison_not_equal_u3(n).
+e711_alt_5_u4(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl e711_alt_5_u5(n: node)
+e711_alt_5_u5(n) :- e711_constant_none_comparison_not_equal_u4(n).
+e711_alt_5_u5(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl e711_alt_5_u6(n: node)
+e711_alt_5_u6(n) :- e711_constant_none_comparison_not_equal_u5(n).
+e711_alt_5_u6(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl e711_alt_5_u7(n: node)
+e711_alt_5_u7(n) :- e711_constant_none_comparison_not_equal_u6(n).
+e711_alt_5_u7(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl e711_constant_none_comparison_not_equal_u0(n: node)
+e711_constant_none_comparison_not_equal_u0(n) :- kind(n, k1), e711_set_1(k1).
+e711_constant_none_comparison_not_equal_u0(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+e711_constant_none_comparison_not_equal_u0(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+e711_constant_none_comparison_not_equal_u0(n) :- kind(n, "tuple"),
+    count : { child(n, c5, _) } = 0.
+
+.decl e711_constant_none_comparison_not_equal_u1(n: node)
+e711_constant_none_comparison_not_equal_u1(n) :- kind(n, k1), e711_set_1(k1).
+e711_constant_none_comparison_not_equal_u1(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+e711_constant_none_comparison_not_equal_u1(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+e711_constant_none_comparison_not_equal_u1(n) :- kind(n, "parenthesized_expression"),
+    child(n, c4, _), e711_constant_none_comparison_not_equal_u0(c4).
+e711_constant_none_comparison_not_equal_u1(n) :- kind(n, "tuple"),
+    count : { child(n, c5, _), !e711_alt_5_u0(c5) } = 0.
+
+.decl e711_constant_none_comparison_not_equal_u2(n: node)
+e711_constant_none_comparison_not_equal_u2(n) :- kind(n, k1), e711_set_1(k1).
+e711_constant_none_comparison_not_equal_u2(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+e711_constant_none_comparison_not_equal_u2(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+e711_constant_none_comparison_not_equal_u2(n) :- kind(n, "parenthesized_expression"),
+    child(n, c4, _), e711_constant_none_comparison_not_equal_u1(c4).
+e711_constant_none_comparison_not_equal_u2(n) :- kind(n, "tuple"),
+    count : { child(n, c5, _), !e711_alt_5_u1(c5) } = 0.
+
+.decl e711_constant_none_comparison_not_equal_u3(n: node)
+e711_constant_none_comparison_not_equal_u3(n) :- kind(n, k1), e711_set_1(k1).
+e711_constant_none_comparison_not_equal_u3(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+e711_constant_none_comparison_not_equal_u3(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+e711_constant_none_comparison_not_equal_u3(n) :- kind(n, "parenthesized_expression"),
+    child(n, c4, _), e711_constant_none_comparison_not_equal_u2(c4).
+e711_constant_none_comparison_not_equal_u3(n) :- kind(n, "tuple"),
+    count : { child(n, c5, _), !e711_alt_5_u2(c5) } = 0.
+
+.decl e711_constant_none_comparison_not_equal_u4(n: node)
+e711_constant_none_comparison_not_equal_u4(n) :- kind(n, k1), e711_set_1(k1).
+e711_constant_none_comparison_not_equal_u4(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+e711_constant_none_comparison_not_equal_u4(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+e711_constant_none_comparison_not_equal_u4(n) :- kind(n, "parenthesized_expression"),
+    child(n, c4, _), e711_constant_none_comparison_not_equal_u3(c4).
+e711_constant_none_comparison_not_equal_u4(n) :- kind(n, "tuple"),
+    count : { child(n, c5, _), !e711_alt_5_u3(c5) } = 0.
+
+.decl e711_constant_none_comparison_not_equal_u5(n: node)
+e711_constant_none_comparison_not_equal_u5(n) :- kind(n, k1), e711_set_1(k1).
+e711_constant_none_comparison_not_equal_u5(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+e711_constant_none_comparison_not_equal_u5(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+e711_constant_none_comparison_not_equal_u5(n) :- kind(n, "parenthesized_expression"),
+    child(n, c4, _), e711_constant_none_comparison_not_equal_u4(c4).
+e711_constant_none_comparison_not_equal_u5(n) :- kind(n, "tuple"),
+    count : { child(n, c5, _), !e711_alt_5_u4(c5) } = 0.
+
+.decl e711_constant_none_comparison_not_equal_u6(n: node)
+e711_constant_none_comparison_not_equal_u6(n) :- kind(n, k1), e711_set_1(k1).
+e711_constant_none_comparison_not_equal_u6(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+e711_constant_none_comparison_not_equal_u6(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+e711_constant_none_comparison_not_equal_u6(n) :- kind(n, "parenthesized_expression"),
+    child(n, c4, _), e711_constant_none_comparison_not_equal_u5(c4).
+e711_constant_none_comparison_not_equal_u6(n) :- kind(n, "tuple"),
+    count : { child(n, c5, _), !e711_alt_5_u5(c5) } = 0.
+
+.decl e711_constant_none_comparison_not_equal_u7(n: node)
+e711_constant_none_comparison_not_equal_u7(n) :- kind(n, k1), e711_set_1(k1).
+e711_constant_none_comparison_not_equal_u7(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+e711_constant_none_comparison_not_equal_u7(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+e711_constant_none_comparison_not_equal_u7(n) :- kind(n, "parenthesized_expression"),
+    child(n, c4, _), e711_constant_none_comparison_not_equal_u6(c4).
+e711_constant_none_comparison_not_equal_u7(n) :- kind(n, "tuple"),
+    count : { child(n, c5, _), !e711_alt_5_u6(c5) } = 0.
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl e711_tok_follows_1(n: node)
+.stored e711_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+e711_tok_follows_1(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+e711_tok_follows_1(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+e711_tok_follows_1(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl e711_tok_follows_2(n: node)
+.stored e711_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+e711_tok_follows_2(n) :- next_sibling(s1, n), match("(?s).*..*", s1).
+e711_tok_follows_2(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("(?s).*..*", t2).
+e711_tok_follows_2(n) :- structural_before(n, g3), match("(?s)^.*\\S\\s*$", g3).
+
+// alt_2_u0_empty: level -1 of an unrolled recursion, empty
+.decl e711_alt_2_u0_empty(n: node)
+
+// constant_u0_empty: level -1 of an unrolled recursion, empty
+.decl e711_constant_u0_empty(n: node)
+
+// alt_5_u0_empty: level -1 of an unrolled recursion, empty
+.decl e711_alt_5_u0_empty(n: node)
+
+// constant_none_comparison_not_equal_u0_empty: level -1 of an unrolled recursion, empty
+.decl e711_constant_none_comparison_not_equal_u0_empty(n: node)
+
+// set_1: node kinds from a JSON `any`
+.decl e711_set_1(v: symbol)
+e711_set_1("integer"). e711_set_1("float"). e711_set_1("none"). e711_set_1("true"). e711_set_1("false").
+e711_set_1("ellipsis").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl e711_alt_2(n: node)
+e711_alt_2(n) :- e711_alt_2_u7(n).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl e711_alt_5(n: node)
+e711_alt_5(n) :- e711_alt_5_u7(n).

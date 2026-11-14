@@ -17,12 +17,12 @@
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() as i64;
         let passes = || (0..2).for_each(|_| drop(store.collect(now, 256).unwrap()));
         passes();
-        assert!(lookup(&store, &key).unwrap().is_some(), "kept through another run's collection");
+        assert!(lookup(&store, &key, &Default::default()).unwrap().is_some(), "kept through another run's collection");
         // Once the run that combined it ends, the pins go: named by no manifest here, the entry is collected.
         drop(Pins::new(&store, &key));
         store.written().unwrap();
         passes();
-        assert!(lookup(&store, &key).unwrap().is_none(), "named by no manifest, collected once its pins are released");
+        assert!(lookup(&store, &key, &Default::default()).unwrap().is_none(), "named by no manifest, collected once its pins are released");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -38,26 +38,26 @@
         let read = [LibraryFile { path: lib.clone(), sha256: Some(Sha256::digest(b"a").into()) }, LibraryFile { path: missing.clone(), sha256: None }];
         let key = [7u8; 32];
         assert!(remember(&store, &key, &read, &program).unwrap());
-        let back = lookup(&store, &key).unwrap().expect("kept");
+        let back = lookup(&store, &key, &Default::default()).unwrap().expect("kept");
         assert_eq!(format!("{back:?}"), format!("{program:?}"));
         // The source the manifest names is the store's.
         let (text, _) = named(&key);
         assert!(store.sources_by_hashes(&[HashKey::sha256(text.as_bytes())]).unwrap()[0].is_some());
         // Another key finds nothing.
-        assert!(lookup(&store, &[8u8; 32]).unwrap().is_none());
+        assert!(lookup(&store, &[8u8; 32], &Default::default()).unwrap().is_none());
         // A file appearing where an include found none combines again.
         // Each edit comes in a later run (`flush` ends one): a run reads its files as they were when it first looked
         // (decision 0105).
         let next_run = || super::super::observe(|o| o.flush());
         std::fs::write(&missing, "b").unwrap();
         next_run();
-        assert!(lookup(&store, &key).unwrap().is_none());
+        assert!(lookup(&store, &key, &Default::default()).unwrap().is_none());
         std::fs::remove_file(&missing).unwrap();
         next_run();
-        assert!(lookup(&store, &key).unwrap().is_some());
+        assert!(lookup(&store, &key, &Default::default()).unwrap().is_some());
         // So does an edited library file.
         std::fs::write(&lib, "c").unwrap();
         next_run();
-        assert!(lookup(&store, &key).unwrap().is_none());
+        assert!(lookup(&store, &key, &Default::default()).unwrap().is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }

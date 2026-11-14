@@ -1,0 +1,132 @@
+.policy "ruff-ruf023-unsorted-dunder-slots" revision 1
+.guests off
+.description "Keep the entries of a class's __slots__ in natural sorted order, with digit runs compared by number."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// RUF023(n): a finding at node n, from clause `unsorted-dunder-slots`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `transform` computes XA, XD, XS, XT, XU, YA, YD, YS, YT, YU from other metavariables' text; its literals end each rule.
+.violation RUF023(at: node) "Sort the entries of this `__slots__` in natural order (digit runs by number). Reordering is safe unless other code iterates `__slots__` and relies on the order."
+    suppress noqa "RUF023"
+RUF023(n) :- ruf023_slots_value(n), ruf023_all_strings(n), ruf023_unsorted(n, X, XT, Y, YT), value(Y, t1),
+    YD = @replace_all(t1, "([0-9])\\s+([0-9])", "${1}\u0001${2}"),
+    YS = @replace_all(YD, "\\s+", ""), YA = @replace_all(YS, "([-￿])", "퟿${1}"),
+    YU = @replace_all(YA, "_", "Zz￿"),
+    YT = @replace_all(YU, "(^|[^0-9])0([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?", "${1}0\u0004${2}\u0004${3}\u0004${4}\u0004${5}\u0004${6}\u0004${7}\u0004${8}\u0004${9}\u0004${10}\u0004${11}\u0001"),
+    value(X, t2), XD = @replace_all(t2, "([0-9])\\s+([0-9])", "${1}\u0001${2}"),
+    XS = @replace_all(XD, "\\s+", ""), XA = @replace_all(XS, "([-￿])", "퟿${1}"),
+    XU = @replace_all(XA, "_", "Zz￿"),
+    XT = @replace_all(XU, "(^|[^0-9])0([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?", "${1}0\u0004${2}\u0004${3}\u0004${4}\u0004${5}\u0004${6}\u0004${7}\u0004${8}\u0004${9}\u0004${10}\u0004${11}\u0001").
+
+// str_literal(n): the JSON util `str-literal`, used where the JSON says `matches: "str-literal"`
+.decl ruf023_str_literal(n: node)
+ruf023_str_literal(n) :- kind(n, "string"), match("[rRuU]{0,2}['\"].*", n).
+ruf023_str_literal(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !match("[rRuU]{0,2}['\"].*", c1) } = 0.
+ruf023_str_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    !kind(c2, "comment"), ruf023_str_literal(c2).
+
+// elem(n): the JSON util `elem`, used where the JSON says `matches: "elem"`
+.decl ruf023_elem(n: node)
+ruf023_elem(n) :- node(_, n, _, _, _), !ruf023_alt_1(n).
+
+// seq_display(n): the JSON util `seq-display`, used where the JSON says `matches: "seq-display"`
+.decl ruf023_seq_display(n: node)
+ruf023_seq_display(n) :- (kind(n, "list") ; kind(n, "tuple") ; kind(n, "expression_list") ; kind(n, "set")).
+
+// all_strings(n): the JSON util `all-strings`, used where the JSON says `matches: "all-strings"`
+.decl ruf023_all_strings(n: node)
+ruf023_all_strings(n) :- ruf023_seq_display(n), count : { child(n, c1, _), !ruf023_alt_2(c1) } = 0.
+ruf023_all_strings(n) :- kind(n, "dictionary"), count : { child(n, c2, _), !ruf023_alt_3(c2) } = 0.
+
+// unsorted(n): the JSON util `unsorted`, used where the JSON says `matches: "unsorted"`
+//   XT, YT: metavariables of the calling rule, passed in (bound by the caller)
+//   X, Y: metavariables this relation binds for the calling rule
+.decl ruf023_unsorted(n: node, x: loc, xt: symbol, y: loc, yt: symbol)
+ruf023_unsorted(n, X, XT, Y, YT) :- ruf023_seq_display(n), child(n, c1, _), ruf023_str_literal(c1),
+    node(_, c1, _, _, _), Y = c1, precedes_stop(s2, c1, ruf023_elem), ruf023_str_literal(s2), node(_, s2, _, _, _), X = s2, YT < XT,
+    value(X, t2_td), XD = @replace_all(t2_td, "([0-9])\\s+([0-9])", "${1}\u0001${2}"),
+    XS = @replace_all(XD, "\\s+", ""), XA = @replace_all(XS, "([-￿])", "퟿${1}"),
+    XU = @replace_all(XA, "_", "Zz￿"),
+    XT = @replace_all(XU, "(^|[^0-9])0([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?", "${1}0\u0004${2}\u0004${3}\u0004${4}\u0004${5}\u0004${6}\u0004${7}\u0004${8}\u0004${9}\u0004${10}\u0004${11}\u0001"),
+    value(Y, t1_td), YD = @replace_all(t1_td, "([0-9])\\s+([0-9])", "${1}\u0001${2}"),
+    YS = @replace_all(YD, "\\s+", ""), YA = @replace_all(YS, "([-￿])", "퟿${1}"),
+    YU = @replace_all(YA, "_", "Zz￿"),
+    YT = @replace_all(YU, "(^|[^0-9])0([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?", "${1}0\u0004${2}\u0004${3}\u0004${4}\u0004${5}\u0004${6}\u0004${7}\u0004${8}\u0004${9}\u0004${10}\u0004${11}\u0001").
+ruf023_unsorted(n, X, XT, Y, YT) :- kind(n, "dictionary"), child(n, c5, _), kind(c5, "pair"),
+    field(c5, "key", c6), node(_, c6, _, _, _), Y = c6, precedes_stop(s7, c5, "pair"), kind(s7, "pair"),
+    field(s7, "key", c8), node(_, c8, _, _, _), X = c8, YT < XT, value(X, t2_td),
+    XD = @replace_all(t2_td, "([0-9])\\s+([0-9])", "${1}\u0001${2}"),
+    XS = @replace_all(XD, "\\s+", ""), XA = @replace_all(XS, "([-￿])", "퟿${1}"),
+    XU = @replace_all(XA, "_", "Zz￿"),
+    XT = @replace_all(XU, "(^|[^0-9])0([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?", "${1}0\u0004${2}\u0004${3}\u0004${4}\u0004${5}\u0004${6}\u0004${7}\u0004${8}\u0004${9}\u0004${10}\u0004${11}\u0001"),
+    value(Y, t1_td), YD = @replace_all(t1_td, "([0-9])\\s+([0-9])", "${1}\u0001${2}"),
+    YS = @replace_all(YD, "\\s+", ""), YA = @replace_all(YS, "([-￿])", "퟿${1}"),
+    YU = @replace_all(YA, "_", "Zz￿"),
+    YT = @replace_all(YU, "(^|[^0-9])0([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?([0-9])?", "${1}0\u0004${2}\u0004${3}\u0004${4}\u0004${5}\u0004${6}\u0004${7}\u0004${8}\u0004${9}\u0004${10}\u0004${11}\u0001").
+
+// slots_name(n): the JSON util `slots-name`, used where the JSON says `matches: "slots-name"`
+.decl ruf023_slots_name(n: node)
+ruf023_slots_name(n) :- kind(n, "identifier"), glob("__slots__", n).
+ruf023_slots_name(n) :- (kind(n, "parenthesized_expression") ; kind(n, "tuple_pattern")),
+    !ruf023_tok_has_1(n), child(n, c9, _), !ruf023_alt_6(c9), ruf023_slots_name(c9).
+
+// slots_value(n): the JSON util `slots-value`, used where the JSON says `matches: "slots-value"`
+.decl ruf023_slots_value(n: node)
+ruf023_slots_value(n) :- ruf023_demand_slots_value(n), ruf023_up_1(n, p1), field(_, "right", n),
+    field(p1, "left", c2), ruf023_slots_name(c2),
+    count : { child(p3, p1, _), kind(p3, "assignment") } = 0,
+    within_stop(p1, p4, ruf023_stop_8), kind(p4, "class_definition").
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf023_tok_has_1(n: node)
+.stored ruf023_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf023_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+ruf023_tok_has_1(n) :- op(n, t2), match(",", t2).
+ruf023_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+ruf023_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+ruf023_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// demand_slots_value: the nodes slots_value is asked at (it looks at every ancestor of every node)
+.decl ruf023_demand_slots_value(n: node)
+ruf023_demand_slots_value(n) :- ruf023_all_strings(n), ruf023_unsorted(n, X, XT, Y, YT), value(Y, t1),
+    value(X, t2).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl ruf023_up_1(n: node, p: node)
+ruf023_up_1(n, p) :- ruf023_demand_slots_value(n), within_stop(n, p, ruf023_stop_7), kind(p, "assignment").
+
+// stop_8: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf023_stop_8(kind: symbol)
+ruf023_stop_8("function_definition"). ruf023_stop_8("class_definition").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf023_alt_1(n: node)
+ruf023_alt_1(n) :- kind(n, "comment").
+ruf023_alt_1(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf023_alt_2(n: node)
+ruf023_alt_2(n) :- kind(n, "comment").
+ruf023_alt_2(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+ruf023_alt_2(n) :- ruf023_str_literal(n).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf023_alt_3(n: node)
+ruf023_alt_3(n) :- kind(n, "comment").
+ruf023_alt_3(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+ruf023_alt_3(n) :- kind(n, "pair"), field(n, "key", c1), ruf023_str_literal(c1).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf023_alt_6(n: node)
+ruf023_alt_6(n) :- kind(n, "comment").
+ruf023_alt_6(n) :- node(_, n, _, _, _), glob("[()]", n).
+
+// stop_7(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf023_stop_7(n: node)
+ruf023_stop_7(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").

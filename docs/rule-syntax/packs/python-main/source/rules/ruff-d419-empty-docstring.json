@@ -1,0 +1,49 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-d419-empty-docstring",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Write a summary in every Python docstring or remove it; an empty docstring documents nothing.",
+  "scope": { "include": ["**/*"], "exclude": [] },
+  "clauses": [
+    {
+      "id": "empty-docstring",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "doc-stmt": {
+              "kind": "expression_statement",
+              "not": { "any": [ { "has": { "stopBy": "neighbor", "regex": "^,$" } }, { "follows": { "stopBy": "end", "not": { "kind": "comment" } } } ] },
+              "any": [
+                { "inside": { "stopBy": "neighbor", "kind": "module" } },
+                { "inside": { "stopBy": "neighbor", "kind": "block", "inside": { "stopBy": "neighbor", "any": [ { "kind": "function_definition" }, { "kind": "class_definition" } ] } } }
+              ]
+            },
+            "doc-holder": {
+              "any": [
+                { "matches": "doc-stmt" },
+                { "kind": "parenthesized_expression", "inside": { "stopBy": "neighbor", "matches": "doc-holder" } }
+              ]
+            },
+            "docstring": {
+              "kind": "string",
+              "not": { "has": { "stopBy": "neighbor", "kind": "string_start", "regex": "[bBfFtT]" } },
+              "inside": { "stopBy": "neighbor", "matches": "doc-holder" }
+            }
+          },
+          "rule": {
+            "matches": "docstring",
+            "regex": "^[uUrR]*(?:\"\"\"|'''|\"|')\\s*(?:\"\"\"|'''|\"|')$"
+          }
+        }
+      },
+      "violation": {
+        "code": "D419",
+        "anchor": "witness.span",
+        "message": "Write a one-line summary of what this module, class or function does in the docstring, or delete the empty docstring.",
+        "suppress": { "noqa": { "codes": ["D419"] } }
+      }
+    }
+  ]
+}

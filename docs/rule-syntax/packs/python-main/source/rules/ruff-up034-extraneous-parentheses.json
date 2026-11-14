@@ -1,0 +1,502 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-up034-extraneous-parentheses",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Remove redundant doubled parentheses around an expression; one pair is enough.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "extraneous-parentheses",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "bracket": {
+              "any": [
+                {
+                  "kind": "parenthesized_expression"
+                },
+                {
+                  "kind": "tuple"
+                },
+                {
+                  "kind": "list"
+                },
+                {
+                  "kind": "set"
+                },
+                {
+                  "kind": "dictionary"
+                },
+                {
+                  "kind": "argument_list"
+                },
+                {
+                  "kind": "subscript"
+                },
+                {
+                  "kind": "generator_expression"
+                },
+                {
+                  "kind": "list_comprehension"
+                },
+                {
+                  "kind": "set_comprehension"
+                },
+                {
+                  "kind": "dictionary_comprehension"
+                },
+                {
+                  "kind": "interpolation"
+                },
+                {
+                  "kind": "string"
+                },
+                {
+                  "kind": "concatenated_string"
+                },
+                {
+                  "kind": "tuple_pattern"
+                },
+                {
+                  "kind": "list_pattern"
+                },
+                {
+                  "kind": "dict_pattern"
+                },
+                {
+                  "kind": "class_pattern"
+                }
+              ]
+            },
+            "group": {
+              "any": [
+                {
+                  "kind": "generator_expression"
+                },
+                {
+                  "kind": "parenthesized_expression"
+                },
+                {
+                  "kind": "tuple_pattern"
+                }
+              ],
+              "not": {
+                "has": {
+                  "stopBy": {
+                    "matches": "bracket"
+                  },
+                  "any": [
+                    {
+                      "regex": "^,$"
+                    },
+                    {
+                      "regex": "^yield$"
+                    }
+                  ]
+                }
+              }
+            },
+            "only-child-of-parentheses": {
+              "all": [
+                {
+                  "nthChild": {
+                    "position": 1,
+                    "ofRule": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "nthChild": {
+                    "position": 1,
+                    "reverse": true,
+                    "ofRule": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ],
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "parenthesized_expression"
+                  },
+                  {
+                    "kind": "argument_list",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "tuple_pattern",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    }
+                  }
+                ],
+                "not": {
+                  "matches": "consumed-outer"
+                }
+              }
+            },
+            "doubled": {
+              "matches": "group",
+              "any": [
+                {
+                  "matches": "only-child-of-parentheses"
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "case_pattern",
+                    "matches": "only-child-of-parentheses"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "case_pattern",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "class_pattern",
+                      "not": {
+                        "any": [
+                          {
+                            "has": {
+                              "stopBy": "neighbor",
+                              "regex": "^,$"
+                            }
+                          },
+                          {
+                            "matches": "consumed-outer"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              ]
+            },
+            "after-open-parenthesis": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    },
+                    "regex": "^\\($"
+                  }
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "kind": "line_continuation"
+                            }
+                          ]
+                        }
+                      },
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "after-open-parenthesis"
+                  }
+                }
+              ]
+            },
+            "call-of-parenthesized-callee": {
+              "kind": "argument_list",
+              "inside": {
+                "stopBy": "neighbor",
+                "kind": "call",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "function",
+                  "matches": "group-start"
+                }
+              }
+            },
+            "consumed-outer": {
+              "any": [
+                {
+                  "matches": "call-of-parenthesized-callee"
+                },
+                {
+                  "matches": "scanned"
+                },
+                {
+                  "inside": {
+                    "stopBy": "end",
+                    "matches": "group-start"
+                  }
+                }
+              ]
+            },
+            "group-start": {
+              "matches": "group",
+              "all": [
+                {
+                  "matches": "after-open-parenthesis"
+                }
+              ],
+              "not": {
+                "matches": "after-args-open"
+              }
+            },
+            "tuple-start": {
+              "any": [
+                {
+                  "kind": "tuple",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "regex": "^\\($"
+                  }
+                },
+                {
+                  "kind": "tuple_pattern",
+                  "not": {
+                    "matches": "group"
+                  }
+                },
+                {
+                  "kind": "generator_expression",
+                  "not": {
+                    "matches": "group"
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "not": {
+                    "matches": "group"
+                  }
+                }
+              ],
+              "matches": "after-open-parenthesis",
+              "all": [
+                {
+                  "not": {
+                    "matches": "after-args-open"
+                  }
+                },
+                {
+                  "not": {
+                    "inside": {
+                      "stopBy": "end",
+                      "matches": "group-start"
+                    }
+                  }
+                },
+                {
+                  "not": {
+                    "matches": "before-scan-stop"
+                  }
+                }
+              ]
+            },
+            "scanned": {
+              "any": [
+                {
+                  "matches": "group-start"
+                },
+                {
+                  "matches": "before-scan-stop"
+                }
+              ]
+            },
+            "scan-stopper": {
+              "regex": "^(,|yield)$",
+              "inside": {
+                "stopBy": {
+                  "matches": "bracket"
+                },
+                "matches": "tuple-start"
+              }
+            },
+            "before-scan-stop": {
+              "any": [
+                {
+                  "matches": "level-clear",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "tuple-start"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "bracket",
+                    "all": [
+                      {
+                        "matches": "before-scan-stop"
+                      }
+                    ]
+                  }
+                },
+                {
+                  "matches": "level-clear",
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "before-scan-stop"
+                  }
+                }
+              ]
+            },
+            "level-clear": {
+              "not": {
+                "follows": {
+                  "stopBy": "end",
+                  "any": [
+                    {
+                      "matches": "scan-stopper"
+                    },
+                    {
+                      "not": {
+                        "matches": "bracket"
+                      },
+                      "has": {
+                        "stopBy": {
+                          "matches": "bracket"
+                        },
+                        "matches": "scan-stopper"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "after-args-open": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": {
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    },
+                    "regex": "^\\($"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "call-of-parenthesized-callee"
+                  }
+                },
+                {
+                  "not": {
+                    "follows": {
+                      "stopBy": {
+                        "not": {
+                          "any": [
+                            {
+                              "kind": "comment"
+                            },
+                            {
+                              "kind": "line_continuation"
+                            }
+                          ]
+                        }
+                      },
+                      "not": {
+                        "any": [
+                          {
+                            "kind": "comment"
+                          },
+                          {
+                            "kind": "line_continuation"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "matches": "after-args-open"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "doubled"
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "UP034",
+        "message": "Delete the highlighted inner pair of parentheses; the enclosing parentheses already group this expression, so the meaning is unchanged.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "UP034"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

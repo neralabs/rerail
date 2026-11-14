@@ -1,0 +1,41 @@
+.policy "ruff-td003-missing-todo-link" revision 1
+.guests off
+.description "Link every TODO comment to an issue or ticket, on the same line or in the comment lines right after it, so the work can be tracked."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// TD003(n): a finding at node n, from clause `missing-todo-link`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation TD003(at: node, d: node) "Add an issue link or ticket id for this `{d}`: a URL or `#123` on the same line, or a URL or id like `PROJ-123` on the next comment line; leave it if no issue exists yet."
+    suppress noqa "TD003"
+TD003(D, n) :- kind(n, "comment"),
+    match("(?:#[#\\s]*(?:(?:[[\\p{Alphabetic}\\p{N}]--[FHTXfhtx]][\\p{Alphabetic}\\p{N}]*|[tT](?:[[\\p{Alphabetic}\\p{N}]--[oO]][\\p{Alphabetic}\\p{N}]*|[oO](?:[[\\p{Alphabetic}\\p{N}]--[dD]][\\p{Alphabetic}\\p{N}]*|[dD](?:[[\\p{Alphabetic}\\p{N}]--[oO]][\\p{Alphabetic}\\p{N}]*|[oO][\\p{Alphabetic}\\p{N}]+)?)?)?|[fF](?:[[\\p{Alphabetic}\\p{N}]--[iI]][\\p{Alphabetic}\\p{N}]*|[iI](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX](?:[[\\p{Alphabetic}\\p{N}]--[mM]][\\p{Alphabetic}\\p{N}]*|[mM](?:[[\\p{Alphabetic}\\p{N}]--[eE]][\\p{Alphabetic}\\p{N}]*|[eE][\\p{Alphabetic}\\p{N}]+)?)?)?)?|[hH](?:[[\\p{Alphabetic}\\p{N}]--[aA]][\\p{Alphabetic}\\p{N}]*|[aA](?:[[\\p{Alphabetic}\\p{N}]--[cC]][\\p{Alphabetic}\\p{N}]*|[cC](?:[[\\p{Alphabetic}\\p{N}]--[kK]][\\p{Alphabetic}\\p{N}]*|[kK][\\p{Alphabetic}\\p{N}]+)?)?)?|[xX](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX][\\p{Alphabetic}\\p{N}]+)?)?)(?:[^\\p{Alphabetic}\\p{N}#][^#]*)?|[^\\p{Alphabetic}\\p{N}#\\s][^#]*))*#[#\\s]*(?<D>(?i:todo)|(?i:fixme)|(?i:xxx))(?:[^\\p{Alphabetic}\\p{N}]|$).*", n),
+    !match("(?:#[#\\s]*(?:(?:[[\\p{Alphabetic}\\p{N}]--[FHTXfhtx]][\\p{Alphabetic}\\p{N}]*|[tT](?:[[\\p{Alphabetic}\\p{N}]--[oO]][\\p{Alphabetic}\\p{N}]*|[oO](?:[[\\p{Alphabetic}\\p{N}]--[dD]][\\p{Alphabetic}\\p{N}]*|[dD](?:[[\\p{Alphabetic}\\p{N}]--[oO]][\\p{Alphabetic}\\p{N}]*|[oO][\\p{Alphabetic}\\p{N}]+)?)?)?|[fF](?:[[\\p{Alphabetic}\\p{N}]--[iI]][\\p{Alphabetic}\\p{N}]*|[iI](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX](?:[[\\p{Alphabetic}\\p{N}]--[mM]][\\p{Alphabetic}\\p{N}]*|[mM](?:[[\\p{Alphabetic}\\p{N}]--[eE]][\\p{Alphabetic}\\p{N}]*|[eE][\\p{Alphabetic}\\p{N}]+)?)?)?)?|[hH](?:[[\\p{Alphabetic}\\p{N}]--[aA]][\\p{Alphabetic}\\p{N}]*|[aA](?:[[\\p{Alphabetic}\\p{N}]--[cC]][\\p{Alphabetic}\\p{N}]*|[cC](?:[[\\p{Alphabetic}\\p{N}]--[kK]][\\p{Alphabetic}\\p{N}]*|[kK][\\p{Alphabetic}\\p{N}]+)?)?)?|[xX](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX][\\p{Alphabetic}\\p{N}]+)?)?)(?:[^\\p{Alphabetic}\\p{N}#][^#]*)?|[^\\p{Alphabetic}\\p{N}#\\s][^#]*))*#[#\\s]*(?:(?i:todo)|(?i:fixme)|(?i:xxx))(?:#\\d|[^\\p{Alphabetic}\\p{N}].*(?:https?://|#\\d)).*", n),
+    !td003_link_after(n).
+
+// directive(n): the JSON util `directive`, used where the JSON says `matches: "directive"`
+.decl td003_directive(n: node)
+td003_directive(n) :- kind(n, "comment"),
+    match(".*#[#\\s]*(?:(?i:todo)|(?i:fixme)|(?i:hac)[kK]|(?i:xxx))(?:[^\\p{Alphabetic}\\p{N}]|$).*", n).
+
+// link_after(n): the JSON util `link-after`, used where the JSON says `matches: "link-after"`
+.decl td003_link_after(n: node)
+td003_link_after(n) :- next_sibling(n, s1), kind(s1, "comment"), !td003_directive(s1), td003_alt_1(s1).
+td003_link_after(n) :- !td003_tok_precedes_1(n), child(p9, n, _), td003_link_after(p9).
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl td003_tok_precedes_1(n: node)
+.stored td003_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+td003_tok_precedes_1(n) :- next_sibling(n, s2), glob("**", s2).
+td003_tok_precedes_1(n) :- structural_after(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, _, en8), o6 = en8 + strlen(g4), token(p5, _, t3, o6, _),
+    match(".*", t3).
+td003_tok_precedes_1(n) :- structural_after(n, g4), match("(?s)^\\s*\\S.*$", g4).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl td003_alt_1(n: node)
+td003_alt_1(n) :- node(_, n, _, _, _), match("#\\s*(?:https?://|\\d+$|[A-Z]+-?\\d+$).*", n).
+td003_alt_1(n) :- td003_link_after(n).

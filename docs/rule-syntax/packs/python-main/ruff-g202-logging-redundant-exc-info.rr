@@ -1,0 +1,79 @@
+.policy "ruff-g202-logging-redundant-exc-info" revision 1
+.guests off
+.description "Remove exc_info from exception logging calls inside exception handlers; the exception method already logs the traceback."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// G202(n): a finding at node n, from clause `logging-redundant-exc-info`.
+// Each rule below is one way the JSON `rule` can match.
+.violation G202(at: node) "Remove this redundant `exc_info` argument: `exception(...)` already logs the active exception's traceback."
+    suppress noqa "G202"
+G202(n) :- g202_exc_info_kwarg(n), child(p1, n, _), kind(p1, "argument_list"),
+    field(p2, "arguments", p1), kind(p2, "call"), g202_in_handler(p2),
+    field(p2, "function", c3), g202_level_callee(c3).
+
+// logger_object(n): the JSON util `logger-object`, used where the JSON says `matches: "logger-object"`
+.decl g202_logger_object(n: node)
+g202_logger_object(n) :- kind(n, "call"), field(n, "function", c1),
+    (sym_of(c1, "logging.getLogger") ; sym_of(c1, "logging.Logger")).
+g202_logger_object(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    g202_logger_object(c2).
+g202_logger_object(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "logging") ; sym_of(n, "flask.current_app.logger")).
+g202_logger_object(n) :-
+    ( kind(n, "identifier"), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", n)
+    ; kind(n, "attribute"), field(n, "attribute", c1), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", c1), field(n, "object", c2), g202_name_chain(c2)
+    ),
+    !sym_of(n, _).
+
+// name_chain(n): the JSON util `name-chain`, used where the JSON says `matches: "name-chain"`
+.decl g202_name_chain(n: node)
+g202_name_chain(n) :- kind(n, "identifier").
+g202_name_chain(n) :- kind(n, "attribute"), field(n, "object", c1), g202_name_chain(c1).
+g202_name_chain(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), g202_name_chain(c2).
+
+// in_handler(n): the JSON util `in-handler`, used where the JSON says `matches: "in-handler"`
+.decl g202_in_handler(n: node)
+g202_in_handler(n) :- g202_demand_in_handler(n), g202_up_1(n, p1).
+
+// exc_info_set(n): the JSON util `exc-info-set`, used where the JSON says `matches: "exc-info-set"`
+.decl g202_exc_info_set(n: node)
+g202_exc_info_set(n) :- kind(n, "true").
+g202_exc_info_set(n) :- kind(n, "call"), field(n, "function", c1),
+    sym_of(c1, "sys.exc_info").
+g202_exc_info_set(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    g202_exc_info_set(c2).
+
+// exc_info_kwarg(n): the JSON util `exc-info-kwarg`, used where the JSON says `matches: "exc-info-kwarg"`
+.decl g202_exc_info_kwarg(n: node)
+g202_exc_info_kwarg(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("exc_info", c1), field(n, "value", c2), g202_exc_info_set(c2).
+
+// level_callee(n): the JSON util `level-callee`, used where the JSON says `matches: "level-callee"`
+.decl g202_level_callee(n: node)
+g202_level_callee(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("exception", c1), field(n, "object", c2), g202_logger_object(c2).
+g202_level_callee(n) :- kind(n, "identifier"), sym_of(n, "logging.exception").
+g202_level_callee(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    g202_level_callee(c3).
+
+// demand_in_handler: the nodes in_handler is asked at (it looks at every ancestor of every node)
+.decl g202_demand_in_handler(n: node)
+g202_demand_in_handler(p2) :- g202_exc_info_kwarg(n), child(p1, n, _), kind(p1, "argument_list"),
+    field(p2, "arguments", p1), kind(p2, "call"), field(p2, "function", c3),
+    g202_level_callee(c3).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl g202_up_1(n: node, p: node)
+g202_up_1(n, p) :- g202_demand_in_handler(n), within_stop(n, p, g202_stop_2),
+    kind(p, "except_clause").
+
+// stop_2(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl g202_stop_2(n: node)
+g202_stop_2(n) :- kind(n, "except_clause").
+g202_stop_2(n) :- kind(n, "block"), child(p1, n, _),
+    (kind(p1, "function_definition") ; kind(p1, "class_definition")).

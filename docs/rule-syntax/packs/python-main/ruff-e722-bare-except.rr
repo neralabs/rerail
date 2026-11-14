@@ -1,0 +1,25 @@
+.policy "ruff-e722-bare-except" revision 1
+.guests off
+.description "Name the exception types in except clauses instead of a bare except, unless the handler re-raises; a bare except also catches KeyboardInterrupt and SystemExit."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// E722(n): a finding at node n, from clause `bare-except`.
+// Each rule below is one way the JSON `rule` can match.
+.violation E722(at: node) "Name the exception types this bare except should catch; it also catches KeyboardInterrupt and SystemExit."
+    suppress noqa "E722"
+E722(n) :- glob("except", n), child(p1, n, _), kind(p1, "except_clause"),
+    count : { child(p1, c2, _), kind(c2, "block"), child(c2, c3, _), kind(c3, "raise_statement"), glob("raise", c3) } = 0,
+    e722_tok_precedes_1(n).
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl e722_tok_precedes_1(n: node)
+.stored e722_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+e722_tok_precedes_1(n) :- next_sibling(n, s4), glob(":", s4).
+e722_tok_precedes_1(n) :- structural_after(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, _, en10), o8 = en10 + strlen(g6), token(p7, _, t5, o8, _),
+    match(":", t5).
+e722_tok_precedes_1(n) :- structural_after(n, g6),
+    match("(?s)^(?:\\s*(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).

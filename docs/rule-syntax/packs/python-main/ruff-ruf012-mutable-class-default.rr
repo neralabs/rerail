@@ -1,0 +1,1390 @@
+.policy "ruff-ruf012-mutable-class-default" revision 1
+.guests off
+.description "Initialize mutable class attributes such as lists, dicts and sets in the constructor, or mark them as class variables; a default in the class body is shared by every instance."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// immutable_name(n): the JSON util `immutable-name`, used where the JSON says `matches: "immutable-name"`
+.decl ruf012_immutable_name(n: node)
+ruf012_immutable_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, g1), ruf012_set_1(g1), sym_of(n, q2), ruf012_set_2(q2).
+
+// immutable_generic(n): the JSON util `immutable-generic`, used where the JSON says `matches: "immutable-generic"`
+.decl ruf012_immutable_generic(n: node)
+ruf012_immutable_generic(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (global_ref(n, "frozenset") ; global_ref(n, "tuple") ; global_ref(n, "frozendict")),
+    sym_of(n, q1), ruf012_set_3(q1).
+
+// ref_typing_union(n): the JSON util `ref-typing-union`, used where the JSON says `matches: "ref-typing-union"`
+.decl ruf012_ref_typing_union(n: node)
+ruf012_ref_typing_union(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "typing.Union").
+
+// ref_typing_optional(n): the JSON util `ref-typing-optional`, used where the JSON says `matches: "ref-typing-optional"`
+.decl ruf012_ref_typing_optional(n: node)
+ruf012_ref_typing_optional(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "typing.Optional").
+
+// ref_annotated(n): the JSON util `ref-annotated`, used where the JSON says `matches: "ref-annotated"`
+.decl ruf012_ref_annotated(n: node)
+ruf012_ref_annotated(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "typing.Annotated") ; sym_of(n, "typing_extensions.Annotated")).
+
+// generic_head(n): the JSON util `generic-head`, used where the JSON says `matches: "generic-head"`
+.decl ruf012_generic_head(n: node)
+ruf012_generic_head(n) :- ruf012_tok_precedes_1(n), child(p8, n, _), kind(p8, "subscript").
+ruf012_generic_head(n) :- kind(n, "identifier"), child(p9, n, _), kind(p9, "generic_type").
+
+// generic_item(n): the JSON util `generic-item`, used where the JSON says `matches: "generic-item"`
+.decl ruf012_generic_item(n: node)
+ruf012_generic_item(n) :- !ruf012_alt_10(n),
+    ( ruf012_tok_follows_2(n), child(p1, n, _), kind(p1, "subscript")
+    ; child(p2, n, _), kind(p2, "type_parameter")
+    ).
+
+
+// immutable_annotation(n): the JSON util `immutable-annotation`, used where the JSON says `matches: "immutable-annotation"`
+.decl ruf012_immutable_annotation(n: node)
+ruf012_immutable_annotation(n) :- ruf012_immutable_annotation_u7(n).
+
+// class_var_import_follows(n): the JSON util `class-var-import-follows`, used where the JSON says `matches: "class-var-import-follows"`
+.decl ruf012_class_var_import_follows(n: node)
+ruf012_class_var_import_follows(n) :- ruf012_demand_class_var_import_follows(n),
+    inside(n, p1, "module"), within_stop(c2, p1, ruf012_stop_28),
+    kind(c2, "import_from_statement"), field(c2, "module_name", c3),
+    glob("{typing,typing_extensions,_typeshed}", c3), child(c2, c4, _),
+    kind(c4, "dotted_name"), glob("ClassVar", c4).
+
+// class_var_ref(n): the JSON util `class-var-ref`, used where the JSON says `matches: "class-var-ref"`
+.decl ruf012_class_var_ref(n: node)
+ruf012_class_var_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.ClassVar")
+    ; sym_of(n, "typing_extensions.ClassVar")
+    ; sym_of(n, "_typeshed.ClassVar")
+    ).
+
+ruf012_class_var_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf012_class_var_ref(c1).
+ruf012_class_var_ref(n) :- kind(n, "identifier"), glob("ClassVar", n), docof(n, d3),
+    modnode(d3, m4),
+    ( kind(n, "identifier"), !bind_only(n), miss(n, x2)
+    ; (kind(n, "string") ; kind(n, "concatenated_string")), ruf012_all_entry(n, x2), !bound_in(m4, x2)
+    ),
+    !builtin(x2), !star(m4), ruf012_class_var_import_follows(n).
+
+// class_var_annotation(n): the JSON util `class-var-annotation`, used where the JSON says `matches: "class-var-annotation"`
+.decl ruf012_class_var_annotation(n: node)
+ruf012_class_var_annotation(n) :- kind(n, "type"), child(n, c1, _), ruf012_class_var_annotation(c1).
+ruf012_class_var_annotation(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf012_class_var_annotation(c2).
+ruf012_class_var_annotation(n) :- ruf012_class_var_ref(n).
+ruf012_class_var_annotation(n) :- (kind(n, "subscript") ; kind(n, "generic_type")),
+    child(n, c3, _), ruf012_generic_head(c3), ruf012_class_var_ref(c3).
+
+// mutable_name(n): the JSON util `mutable-name`, used where the JSON says `matches: "mutable-name"`
+.decl ruf012_mutable_name(n: node)
+ruf012_mutable_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (global_ref(n, "dict") ; global_ref(n, "list") ; global_ref(n, "set")),
+    sym_of(n, q1), ruf012_set_29(q1).
+ruf012_mutable_name(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf012_mutable_name(c2).
+
+// mutable_callee(n): the JSON util `mutable-callee`, used where the JSON says `matches: "mutable-callee"`
+.decl ruf012_mutable_callee(n: node)
+ruf012_mutable_callee(n) :- ruf012_mutable_name(n).
+ruf012_mutable_callee(n) :- kind(n, "subscript"), field(n, "value", c1), ruf012_mutable_name(c1).
+ruf012_mutable_callee(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf012_mutable_callee(c2).
+
+// mutable_expression(n): the JSON util `mutable-expression`, used where the JSON says `matches: "mutable-expression"`
+.decl ruf012_mutable_expression(n: node)
+ruf012_mutable_expression(n) :- kind(n, k1), ruf012_set_30(k1).
+ruf012_mutable_expression(n) :- kind(n, "call"), field(n, "function", c2), ruf012_mutable_callee(c2).
+
+// stdlib_name(n): the JSON util `stdlib-name`, used where the JSON says `matches: "stdlib-name"`
+.decl ruf012_stdlib_name(n: node)
+ruf012_stdlib_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "dataclasses.dataclass").
+ruf012_stdlib_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf012_stdlib_name(c1).
+
+// attrs_name(n): the JSON util `attrs-name`, used where the JSON says `matches: "attrs-name"`
+.decl ruf012_attrs_name(n: node)
+ruf012_attrs_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), ruf012_set_31(q1).
+ruf012_attrs_name(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), ruf012_attrs_name(c2).
+
+// stdlib_expression(n): the JSON util `stdlib-expression`, used where the JSON says `matches: "stdlib-expression"`
+.decl ruf012_stdlib_expression(n: node)
+ruf012_stdlib_expression(n) :- ruf012_stdlib_name(n).
+ruf012_stdlib_expression(n) :- kind(n, "call"), field(n, "function", c1), ruf012_stdlib_name(c1).
+ruf012_stdlib_expression(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf012_stdlib_expression(c2).
+
+// attrs_expression(n): the JSON util `attrs-expression`, used where the JSON says `matches: "attrs-expression"`
+.decl ruf012_attrs_expression(n: node)
+ruf012_attrs_expression(n) :- ruf012_attrs_name(n).
+ruf012_attrs_expression(n) :- kind(n, "call"), field(n, "function", c1), ruf012_attrs_name(c1).
+ruf012_attrs_expression(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf012_attrs_expression(c2).
+
+// final_import_follows(n): the JSON util `final-import-follows`, used where the JSON says `matches: "final-import-follows"`
+.decl ruf012_final_import_follows(n: node)
+ruf012_final_import_follows(n) :- ruf012_demand_final_import_follows(n), inside(n, p1, "module"),
+    within_stop(c2, p1, ruf012_stop_28), kind(c2, "import_from_statement"),
+    field(c2, "module_name", c3), glob("{typing,typing_extensions,_typeshed}", c3),
+    child(c2, c4, _), kind(c4, "dotted_name"), glob("Final", c4).
+
+// final_ref(n): the JSON util `final-ref`, used where the JSON says `matches: "final-ref"`
+.decl ruf012_final_ref(n: node)
+ruf012_final_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Final")
+    ; sym_of(n, "typing_extensions.Final")
+    ; sym_of(n, "_typeshed.Final")
+    ).
+
+ruf012_final_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf012_final_ref(c1).
+ruf012_final_ref(n) :- kind(n, "identifier"), glob("Final", n), docof(n, d3), modnode(d3, m4),
+    ( kind(n, "identifier"), !bind_only(n), miss(n, x2)
+    ; (kind(n, "string") ; kind(n, "concatenated_string")), ruf012_all_entry(n, x2), !bound_in(m4, x2)
+    ),
+    !builtin(x2), !star(m4), ruf012_final_import_follows(n).
+
+// final_annotation(n): the JSON util `final-annotation`, used where the JSON says `matches: "final-annotation"`
+.decl ruf012_final_annotation(n: node)
+ruf012_final_annotation(n) :- kind(n, "type"), child(n, c1, _), ruf012_final_annotation(c1).
+ruf012_final_annotation(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf012_final_annotation(c2).
+ruf012_final_annotation(n) :- ruf012_final_ref(n).
+ruf012_final_annotation(n) :- (kind(n, "subscript") ; kind(n, "generic_type")),
+    child(n, c3, _), ruf012_generic_head(c3), ruf012_final_ref(c3).
+
+// dataclass_expression(n): the JSON util `dataclass-expression`, used where the JSON says `matches: "dataclass-expression"`
+.decl ruf012_dataclass_expression(n: node)
+ruf012_dataclass_expression(n) :- ruf012_stdlib_expression(n).
+ruf012_dataclass_expression(n) :- ruf012_attrs_expression(n).
+
+// special_name(n): the JSON util `special-name`, used where the JSON says `matches: "special-name"`
+.decl ruf012_special_name(n: node)
+ruf012_special_name(n) :- kind(n, "identifier"),
+    glob("{__slots__,__dict__,__weakref__,__annotations__}", n).
+
+// copy_ref(n): the JSON util `copy-ref`, used where the JSON says `matches: "copy-ref"`
+//   B: metavariable this relation binds for the calling rule
+.decl ruf012_copy_ref(n: node, b: loc)
+// B: not bound by this rule, so empty (unset) here, as in ast-grep.
+ruf012_copy_ref(n, B) :- ruf012_demand_copy_ref(n), (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), ruf012_set_33(q1), unset(B).
+ruf012_copy_ref(n, B) :- ruf012_demand_copy_ref(n), kind(n, "identifier"), node(_, n, _, _, _), B = n,
+    ruf012_copy_module_class(n, B, B).
+ruf012_copy_ref(n, B) :- ruf012_demand_copy_ref(n), kind(n, "subscript"), field(n, "value", c2),
+    ruf012_copy_ref(c2, B).
+ruf012_copy_ref(n, B) :- ruf012_demand_copy_ref(n), kind(n, "parenthesized_expression"),
+    child(n, c3, _), ruf012_copy_ref(c3, B).
+
+// copy_module_class(n, …): the JSON util `copy-module-class`, called with `matches` and arguments P
+//   B: metavariable of the calling rule, passed in (bound by the caller)
+.decl ruf012_copy_module_class(n: node, p: node, b: loc)
+ruf012_copy_module_class(n, P, B) :- ruf012_demand_copy_module_class(n), node(_, n, _, _, _), P = n,
+    inside(n, p1, "module"), within_stop(c2, p1, ruf012_stop_28),
+    kind(c2, "class_definition"), field(c2, "name", c3), node(_, c3, _, _, _), P = c3, ruf012_copy_class(c2, B).
+
+// copy_class(n): the JSON util `copy-class`, used where the JSON says `matches: "copy-class"`
+//   B: metavariable this relation binds for the calling rule
+.decl ruf012_copy_class(n: node, b: loc)
+ruf012_copy_class(n, B) :- ruf012_demand_copy_class(n), kind(n, "class_definition"),
+    field(n, "superclasses", c1), child(c1, c2, _), ruf012_copy_ref(c2, B).
+
+// ctypes_ref(n): the JSON util `ctypes-ref`, used where the JSON says `matches: "ctypes-ref"`
+//   B: metavariable this relation binds for the calling rule
+.decl ruf012_ctypes_ref(n: node, b: loc)
+// B: not bound by this rule, so empty (unset) here, as in ast-grep.
+ruf012_ctypes_ref(n, B) :- ruf012_demand_ctypes_ref(n),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, q1), ruf012_set_35(q1),
+    unset(B).
+ruf012_ctypes_ref(n, B) :- ruf012_demand_ctypes_ref(n), kind(n, "identifier"), node(_, n, _, _, _), B = n,
+    ruf012_ctypes_module_class(n, B, B).
+ruf012_ctypes_ref(n, B) :- ruf012_demand_ctypes_ref(n), kind(n, "subscript"), field(n, "value", c2),
+    ruf012_ctypes_ref(c2, B).
+ruf012_ctypes_ref(n, B) :- ruf012_demand_ctypes_ref(n), kind(n, "parenthesized_expression"),
+    child(n, c3, _), ruf012_ctypes_ref(c3, B).
+
+// ctypes_module_class(n, …): the JSON util `ctypes-module-class`, called with `matches` and arguments P
+//   B: metavariable of the calling rule, passed in (bound by the caller)
+.decl ruf012_ctypes_module_class(n: node, p: node, b: loc)
+ruf012_ctypes_module_class(n, P, B) :- ruf012_demand_ctypes_module_class(n), node(_, n, _, _, _), P = n,
+    inside(n, p1, "module"), within_stop(c2, p1, ruf012_stop_28),
+    kind(c2, "class_definition"), field(c2, "name", c3), node(_, c3, _, _, _), P = c3,
+    ruf012_ctypes_class(c2, B).
+
+// ctypes_class(n): the JSON util `ctypes-class`, used where the JSON says `matches: "ctypes-class"`
+//   B: metavariable this relation binds for the calling rule
+.decl ruf012_ctypes_class(n: node, b: loc)
+ruf012_ctypes_class(n, B) :- ruf012_demand_ctypes_class(n), kind(n, "class_definition"),
+    field(n, "superclasses", c1), child(c1, c2, _), ruf012_ctypes_ref(c2, B).
+
+// good_target(n): the JSON util `good-target`, used where the JSON says `matches: "good-target"`
+.decl ruf012_good_target(n: node)
+ruf012_good_target(n) :- ruf012_special_name(n).
+ruf012_good_target(n) :- kind(n, "identifier"), node(_, n, _, _, _), N = n,
+    inside(n, p1, "expression_statement"), precedes(s2, p1),
+    kind(s2, "expression_statement"), child(s2, c3, _), kind(c3, "assignment"),
+    field(c3, "type", c4), ruf012_class_var_annotation(c4), field(c3, "right", c5),
+    c5 ~ `$_V`, field(c3, "left", c6), kind(c6, "identifier"), node(_, c6, _, _, _), N = c6.
+ruf012_good_target(n) :- kind(n, "parenthesized_expression"), child(n, c7, _),
+    ruf012_good_target(c7).
+ruf012_good_target(n) :- kind(n, "tuple_pattern"), !ruf012_tok_has_25(n), child(n, c16, _),
+    ruf012_good_target(c16).
+
+// assigned_mutable(n): the JSON util `assigned-mutable`, used where the JSON says `matches: "assigned-mutable"`
+.decl ruf012_assigned_mutable(n: node)
+ruf012_assigned_mutable(n) :- ruf012_mutable_expression(n).
+ruf012_assigned_mutable(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf012_assigned_mutable(c1).
+ruf012_assigned_mutable(n) :- kind(n, "assignment"), field(n, "right", c2),
+    ruf012_assigned_mutable(c2).
+
+// ctypes_return(n): the JSON util `ctypes-return`, used where the JSON says `matches: "ctypes-return"`
+//   B: metavariable this relation binds for the calling rule
+.decl ruf012_ctypes_return(n: node, b: loc)
+ruf012_ctypes_return(n, B) :- kind(n, "expression_statement"), child(n, c1, _),
+    kind(c1, "assignment"), count : { child(c1, c2, _), kind(c2, "type") } = 0,
+    field(c1, "left", c3), kind(c3, "identifier"), glob("_fields_", c3),
+    field(c1, "right", c4), ruf012_assigned_mutable(c4), child(p5, n, _), kind(p5, "block"),
+    field(p6, "body", p5), kind(p6, "class_definition"), ruf012_ctypes_class(p6, B).
+
+// after_ctypes_return(n): the JSON util `after-ctypes-return`, used where the JSON says `matches: "after-ctypes-return"`
+//   B: metavariable this relation binds for the calling rule
+.decl ruf012_after_ctypes_return(n: node, b: loc)
+ruf012_after_ctypes_return(n, B) :- kind(n, "expression_statement"),
+    (ruf012_ctypes_return(n, B) ; precedes(s1, n), ruf012_ctypes_return(s1, B)).
+
+// ann_default(n): the JSON util `ann-default`, used where the JSON says `matches: "ann-default"`
+.decl ruf012_ann_default(n: node)
+ruf012_ann_default(n) :- field(p1, "right", n), kind(p1, "assignment"), child(p1, c2, _),
+    kind(c2, "type"), count : { field(p1, "type", c3), ruf012_alt_38(c3) } = 0,
+    count : { field(p1, "left", c4), ruf012_special_name(c4) } = 0, child(p5, p1, _),
+    kind(p5, "expression_statement"), !ruf012_after_ctypes_return(p5, _), child(p6, p5, _),
+    kind(p6, "block"), field(p7, "body", p6), kind(p7, "class_definition"),
+    !ruf012_copy_class(p7, _),
+    count : { child(p8, p7, _), kind(p8, "decorated_definition"), child(p8, c9, _), kind(c9, "decorator"), child(c9, c10, _), ruf012_dataclass_expression(c10) } = 0.
+ruf012_ann_default(n) :- child(p11, n, _), kind(p11, "parenthesized_expression"),
+    ruf012_ann_default(p11).
+
+// plain_default(n): the JSON util `plain-default`, used where the JSON says `matches: "plain-default"`
+.decl ruf012_plain_default(n: node)
+ruf012_plain_default(n) :- ruf012_demand_plain_default(n), field(p1, "right", n),
+    kind(p1, "assignment"), count : { child(p1, c2, _), kind(c2, "type") } = 0,
+    ( field(p1, "left", c1), !ruf012_good_target(c1)
+    ; within_stop(p1, p2, "expression_statement"), kind(p2, "assignment"), field(p2, "left", c3), !ruf012_good_target(c3)
+    ),
+    within_stop(p1, p6, "expression_statement"), kind(p6, "expression_statement"),
+    !ruf012_after_ctypes_return(p6, _), child(p7, p6, _), kind(p7, "block"),
+    field(p8, "body", p7), kind(p8, "class_definition"), !ruf012_copy_class(p8, _).
+ruf012_plain_default(n) :- ruf012_demand_plain_default(n), child(p9, n, _),
+    kind(p9, "parenthesized_expression"), ruf012_plain_default(p9).
+
+// tuple_all_immutable(n): the JSON util `tuple-all-immutable`, used where the JSON says `matches: "tuple-all-immutable"`
+.decl ruf012_tuple_all_immutable(n: node)
+ruf012_tuple_all_immutable(n) :- ruf012_tuple_all_immutable_u7(n).
+
+// tuple_first_immutable(n): the JSON util `tuple-first-immutable`, used where the JSON says `matches: "tuple-first-immutable"`
+.decl ruf012_tuple_first_immutable(n: node)
+ruf012_tuple_first_immutable(n) :- ruf012_tuple_first_immutable_u7(n).
+
+// RUF012(n): a finding at node n, from clause `mutable-class-default`.
+// Each rule below is one way the JSON `rule` can match.
+.violation RUF012(at: node) "Initialize this mutable default in `__init__`, or annotate it `ClassVar[...]` if one object is meant to be shared; a class-level default is shared by every instance."
+    suppress noqa "RUF012"
+RUF012(n) :- ruf012_mutable_expression(n), (ruf012_ann_default(n) ; ruf012_plain_default(n)).
+
+.decl ruf012_alt_12_u0(n: node)
+ruf012_alt_12_u0(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1).
+ruf012_alt_12_u0(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "type_parameter"),
+    child(c2, c3, _), ruf012_generic_item(c3).
+
+.decl ruf012_alt_12_u1(n: node)
+ruf012_alt_12_u1(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    !ruf012_immutable_annotation_u0(c1).
+ruf012_alt_12_u1(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "type_parameter"),
+    child(c2, c3, _), ruf012_generic_item(c3), !ruf012_immutable_annotation_u0(c3).
+
+.decl ruf012_alt_12_u2(n: node)
+ruf012_alt_12_u2(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    !ruf012_immutable_annotation_u1(c1).
+ruf012_alt_12_u2(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "type_parameter"),
+    child(c2, c3, _), ruf012_generic_item(c3), !ruf012_immutable_annotation_u1(c3).
+
+.decl ruf012_alt_12_u3(n: node)
+ruf012_alt_12_u3(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    !ruf012_immutable_annotation_u2(c1).
+ruf012_alt_12_u3(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "type_parameter"),
+    child(c2, c3, _), ruf012_generic_item(c3), !ruf012_immutable_annotation_u2(c3).
+
+.decl ruf012_alt_12_u4(n: node)
+ruf012_alt_12_u4(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    !ruf012_immutable_annotation_u3(c1).
+ruf012_alt_12_u4(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "type_parameter"),
+    child(c2, c3, _), ruf012_generic_item(c3), !ruf012_immutable_annotation_u3(c3).
+
+.decl ruf012_alt_12_u5(n: node)
+ruf012_alt_12_u5(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    !ruf012_immutable_annotation_u4(c1).
+ruf012_alt_12_u5(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "type_parameter"),
+    child(c2, c3, _), ruf012_generic_item(c3), !ruf012_immutable_annotation_u4(c3).
+
+.decl ruf012_alt_12_u6(n: node)
+ruf012_alt_12_u6(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    !ruf012_immutable_annotation_u5(c1).
+ruf012_alt_12_u6(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "type_parameter"),
+    child(c2, c3, _), ruf012_generic_item(c3), !ruf012_immutable_annotation_u5(c3).
+
+.decl ruf012_alt_12_u7(n: node)
+ruf012_alt_12_u7(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    !ruf012_immutable_annotation_u6(c1).
+ruf012_alt_12_u7(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "type_parameter"),
+    child(c2, c3, _), ruf012_generic_item(c3), !ruf012_immutable_annotation_u6(c3).
+
+.decl ruf012_alt_14_u1(n: node)
+ruf012_alt_14_u1(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    ruf012_immutable_annotation_u0(c1).
+ruf012_alt_14_u1(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "type_parameter"),
+    child(c2, c3, _), ruf012_generic_item(c3), ruf012_immutable_annotation_u0(c3).
+
+.decl ruf012_alt_14_u2(n: node)
+ruf012_alt_14_u2(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    ruf012_immutable_annotation_u1(c1).
+ruf012_alt_14_u2(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "type_parameter"),
+    child(c2, c3, _), ruf012_generic_item(c3), ruf012_immutable_annotation_u1(c3).
+
+.decl ruf012_alt_14_u3(n: node)
+ruf012_alt_14_u3(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    ruf012_immutable_annotation_u2(c1).
+ruf012_alt_14_u3(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "type_parameter"),
+    child(c2, c3, _), ruf012_generic_item(c3), ruf012_immutable_annotation_u2(c3).
+
+.decl ruf012_alt_14_u4(n: node)
+ruf012_alt_14_u4(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    ruf012_immutable_annotation_u3(c1).
+ruf012_alt_14_u4(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "type_parameter"),
+    child(c2, c3, _), ruf012_generic_item(c3), ruf012_immutable_annotation_u3(c3).
+
+.decl ruf012_alt_14_u5(n: node)
+ruf012_alt_14_u5(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    ruf012_immutable_annotation_u4(c1).
+ruf012_alt_14_u5(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "type_parameter"),
+    child(c2, c3, _), ruf012_generic_item(c3), ruf012_immutable_annotation_u4(c3).
+
+.decl ruf012_alt_14_u6(n: node)
+ruf012_alt_14_u6(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    ruf012_immutable_annotation_u5(c1).
+ruf012_alt_14_u6(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "type_parameter"),
+    child(c2, c3, _), ruf012_generic_item(c3), ruf012_immutable_annotation_u5(c3).
+
+.decl ruf012_alt_14_u7(n: node)
+ruf012_alt_14_u7(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    ruf012_immutable_annotation_u6(c1).
+ruf012_alt_14_u7(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "type_parameter"),
+    child(c2, c3, _), ruf012_generic_item(c3), ruf012_immutable_annotation_u6(c3).
+
+.decl ruf012_alt_16_u1(n: node)
+ruf012_alt_16_u1(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    ruf012_immutable_annotation_u0(c1), count : { precedes(s2, c1), ruf012_generic_item(s2) } = 0.
+ruf012_alt_16_u1(n) :- kind(n, "generic_type"), child(n, c3, _), kind(c3, "type_parameter"),
+    child(c3, c4, _), ruf012_generic_item(c4), ruf012_immutable_annotation_u0(c4),
+    count : { precedes(s5, c4), ruf012_generic_item(s5) } = 0.
+
+.decl ruf012_alt_16_u2(n: node)
+ruf012_alt_16_u2(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    ruf012_immutable_annotation_u1(c1), count : { precedes(s2, c1), ruf012_generic_item(s2) } = 0.
+ruf012_alt_16_u2(n) :- kind(n, "generic_type"), child(n, c3, _), kind(c3, "type_parameter"),
+    child(c3, c4, _), ruf012_generic_item(c4), ruf012_immutable_annotation_u1(c4),
+    count : { precedes(s5, c4), ruf012_generic_item(s5) } = 0.
+
+.decl ruf012_alt_16_u3(n: node)
+ruf012_alt_16_u3(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    ruf012_immutable_annotation_u2(c1), count : { precedes(s2, c1), ruf012_generic_item(s2) } = 0.
+ruf012_alt_16_u3(n) :- kind(n, "generic_type"), child(n, c3, _), kind(c3, "type_parameter"),
+    child(c3, c4, _), ruf012_generic_item(c4), ruf012_immutable_annotation_u2(c4),
+    count : { precedes(s5, c4), ruf012_generic_item(s5) } = 0.
+
+.decl ruf012_alt_16_u4(n: node)
+ruf012_alt_16_u4(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    ruf012_immutable_annotation_u3(c1), count : { precedes(s2, c1), ruf012_generic_item(s2) } = 0.
+ruf012_alt_16_u4(n) :- kind(n, "generic_type"), child(n, c3, _), kind(c3, "type_parameter"),
+    child(c3, c4, _), ruf012_generic_item(c4), ruf012_immutable_annotation_u3(c4),
+    count : { precedes(s5, c4), ruf012_generic_item(s5) } = 0.
+
+.decl ruf012_alt_16_u5(n: node)
+ruf012_alt_16_u5(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    ruf012_immutable_annotation_u4(c1), count : { precedes(s2, c1), ruf012_generic_item(s2) } = 0.
+ruf012_alt_16_u5(n) :- kind(n, "generic_type"), child(n, c3, _), kind(c3, "type_parameter"),
+    child(c3, c4, _), ruf012_generic_item(c4), ruf012_immutable_annotation_u4(c4),
+    count : { precedes(s5, c4), ruf012_generic_item(s5) } = 0.
+
+.decl ruf012_alt_16_u6(n: node)
+ruf012_alt_16_u6(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    ruf012_immutable_annotation_u5(c1), count : { precedes(s2, c1), ruf012_generic_item(s2) } = 0.
+ruf012_alt_16_u6(n) :- kind(n, "generic_type"), child(n, c3, _), kind(c3, "type_parameter"),
+    child(c3, c4, _), ruf012_generic_item(c4), ruf012_immutable_annotation_u5(c4),
+    count : { precedes(s5, c4), ruf012_generic_item(s5) } = 0.
+
+.decl ruf012_alt_16_u7(n: node)
+ruf012_alt_16_u7(n) :- kind(n, "subscript"), child(n, c1, _), ruf012_generic_item(c1),
+    ruf012_immutable_annotation_u6(c1), count : { precedes(s2, c1), ruf012_generic_item(s2) } = 0.
+ruf012_alt_16_u7(n) :- kind(n, "generic_type"), child(n, c3, _), kind(c3, "type_parameter"),
+    child(c3, c4, _), ruf012_generic_item(c4), ruf012_immutable_annotation_u6(c4),
+    count : { precedes(s5, c4), ruf012_generic_item(s5) } = 0.
+
+.decl ruf012_alt_17_u1(n: node)
+ruf012_alt_17_u1(n) :- kind(n, "subscript"), !ruf012_tok_has_7(n), field(n, "subscript", c9),
+    ruf012_tuple_all_immutable_u0(c9).
+ruf012_alt_17_u1(n) :- kind(n, "generic_type"), child(n, c10, _), kind(c10, "type_parameter"),
+    !ruf012_tok_has_15(c10), child(c10, c19, _), ruf012_tuple_all_immutable_u0(c19).
+
+.decl ruf012_alt_17_u2(n: node)
+ruf012_alt_17_u2(n) :- kind(n, "subscript"), !ruf012_tok_has_7(n), field(n, "subscript", c9),
+    ruf012_tuple_all_immutable_u1(c9).
+ruf012_alt_17_u2(n) :- kind(n, "generic_type"), child(n, c10, _), kind(c10, "type_parameter"),
+    !ruf012_tok_has_15(c10), child(c10, c19, _), ruf012_tuple_all_immutable_u1(c19).
+
+.decl ruf012_alt_17_u3(n: node)
+ruf012_alt_17_u3(n) :- kind(n, "subscript"), !ruf012_tok_has_7(n), field(n, "subscript", c9),
+    ruf012_tuple_all_immutable_u2(c9).
+ruf012_alt_17_u3(n) :- kind(n, "generic_type"), child(n, c10, _), kind(c10, "type_parameter"),
+    !ruf012_tok_has_15(c10), child(c10, c19, _), ruf012_tuple_all_immutable_u2(c19).
+
+.decl ruf012_alt_17_u4(n: node)
+ruf012_alt_17_u4(n) :- kind(n, "subscript"), !ruf012_tok_has_7(n), field(n, "subscript", c9),
+    ruf012_tuple_all_immutable_u3(c9).
+ruf012_alt_17_u4(n) :- kind(n, "generic_type"), child(n, c10, _), kind(c10, "type_parameter"),
+    !ruf012_tok_has_15(c10), child(c10, c19, _), ruf012_tuple_all_immutable_u3(c19).
+
+.decl ruf012_alt_17_u5(n: node)
+ruf012_alt_17_u5(n) :- kind(n, "subscript"), !ruf012_tok_has_7(n), field(n, "subscript", c9),
+    ruf012_tuple_all_immutable_u4(c9).
+ruf012_alt_17_u5(n) :- kind(n, "generic_type"), child(n, c10, _), kind(c10, "type_parameter"),
+    !ruf012_tok_has_15(c10), child(c10, c19, _), ruf012_tuple_all_immutable_u4(c19).
+
+.decl ruf012_alt_17_u6(n: node)
+ruf012_alt_17_u6(n) :- kind(n, "subscript"), !ruf012_tok_has_7(n), field(n, "subscript", c9),
+    ruf012_tuple_all_immutable_u5(c9).
+ruf012_alt_17_u6(n) :- kind(n, "generic_type"), child(n, c10, _), kind(c10, "type_parameter"),
+    !ruf012_tok_has_15(c10), child(c10, c19, _), ruf012_tuple_all_immutable_u5(c19).
+
+.decl ruf012_alt_17_u7(n: node)
+ruf012_alt_17_u7(n) :- kind(n, "subscript"), !ruf012_tok_has_7(n), field(n, "subscript", c9),
+    ruf012_tuple_all_immutable_u6(c9).
+ruf012_alt_17_u7(n) :- kind(n, "generic_type"), child(n, c10, _), kind(c10, "type_parameter"),
+    !ruf012_tok_has_15(c10), child(c10, c19, _), ruf012_tuple_all_immutable_u6(c19).
+
+.decl ruf012_alt_18_u1(n: node)
+ruf012_alt_18_u1(n) :- kind(n, "subscript"), !ruf012_tok_has_7(n), field(n, "subscript", c9),
+    ruf012_tuple_first_immutable_u0(c9).
+ruf012_alt_18_u1(n) :- kind(n, "generic_type"), child(n, c10, _), kind(c10, "type_parameter"),
+    !ruf012_tok_has_15(c10), child(c10, c19, _), ruf012_tuple_first_immutable_u0(c19).
+
+.decl ruf012_alt_18_u2(n: node)
+ruf012_alt_18_u2(n) :- kind(n, "subscript"), !ruf012_tok_has_7(n), field(n, "subscript", c9),
+    ruf012_tuple_first_immutable_u1(c9).
+ruf012_alt_18_u2(n) :- kind(n, "generic_type"), child(n, c10, _), kind(c10, "type_parameter"),
+    !ruf012_tok_has_15(c10), child(c10, c19, _), ruf012_tuple_first_immutable_u1(c19).
+
+.decl ruf012_alt_18_u3(n: node)
+ruf012_alt_18_u3(n) :- kind(n, "subscript"), !ruf012_tok_has_7(n), field(n, "subscript", c9),
+    ruf012_tuple_first_immutable_u2(c9).
+ruf012_alt_18_u3(n) :- kind(n, "generic_type"), child(n, c10, _), kind(c10, "type_parameter"),
+    !ruf012_tok_has_15(c10), child(c10, c19, _), ruf012_tuple_first_immutable_u2(c19).
+
+.decl ruf012_alt_18_u4(n: node)
+ruf012_alt_18_u4(n) :- kind(n, "subscript"), !ruf012_tok_has_7(n), field(n, "subscript", c9),
+    ruf012_tuple_first_immutable_u3(c9).
+ruf012_alt_18_u4(n) :- kind(n, "generic_type"), child(n, c10, _), kind(c10, "type_parameter"),
+    !ruf012_tok_has_15(c10), child(c10, c19, _), ruf012_tuple_first_immutable_u3(c19).
+
+.decl ruf012_alt_18_u5(n: node)
+ruf012_alt_18_u5(n) :- kind(n, "subscript"), !ruf012_tok_has_7(n), field(n, "subscript", c9),
+    ruf012_tuple_first_immutable_u4(c9).
+ruf012_alt_18_u5(n) :- kind(n, "generic_type"), child(n, c10, _), kind(c10, "type_parameter"),
+    !ruf012_tok_has_15(c10), child(c10, c19, _), ruf012_tuple_first_immutable_u4(c19).
+
+.decl ruf012_alt_18_u6(n: node)
+ruf012_alt_18_u6(n) :- kind(n, "subscript"), !ruf012_tok_has_7(n), field(n, "subscript", c9),
+    ruf012_tuple_first_immutable_u5(c9).
+ruf012_alt_18_u6(n) :- kind(n, "generic_type"), child(n, c10, _), kind(c10, "type_parameter"),
+    !ruf012_tok_has_15(c10), child(c10, c19, _), ruf012_tuple_first_immutable_u5(c19).
+
+.decl ruf012_alt_18_u7(n: node)
+ruf012_alt_18_u7(n) :- kind(n, "subscript"), !ruf012_tok_has_7(n), field(n, "subscript", c9),
+    ruf012_tuple_first_immutable_u6(c9).
+ruf012_alt_18_u7(n) :- kind(n, "generic_type"), child(n, c10, _), kind(c10, "type_parameter"),
+    !ruf012_tok_has_15(c10), child(c10, c19, _), ruf012_tuple_first_immutable_u6(c19).
+
+.decl ruf012_alt_19_u0(n: node)
+ruf012_alt_19_u0(n) :- child(n, c1, _), ruf012_generic_head(c1), ruf012_immutable_generic(c1).
+ruf012_alt_19_u0(n) :- child(n, c2, _), ruf012_generic_head(c2), ruf012_ref_typing_union(c2), ruf012_alt_11(n).
+
+.decl ruf012_alt_19_u1(n: node)
+ruf012_alt_19_u1(n) :- child(n, c1, _), ruf012_generic_head(c1), ruf012_immutable_generic(c1).
+ruf012_alt_19_u1(n) :- child(n, c2, _), ruf012_generic_head(c2), ruf012_ref_typing_union(c2), ruf012_alt_11(n),
+    !ruf012_alt_12_u0(n).
+ruf012_alt_19_u1(n) :- child(n, c23, _), ruf012_generic_head(c23), ruf012_ref_typing_optional(c23),
+    !ruf012_alt_11(n), ruf012_alt_14_u0(n).
+ruf012_alt_19_u1(n) :- child(n, c44, _), ruf012_generic_head(c44), ruf012_ref_annotated(c44), ruf012_alt_11(n),
+    ruf012_alt_16_u0(n).
+ruf012_alt_19_u1(n) :- child(n, c67, _), ruf012_generic_head(c67), ruf012_ref_typing_union(c67),
+    ruf012_alt_17_u0(n).
+ruf012_alt_19_u1(n) :- child(n, c87, _), ruf012_generic_head(c87), ruf012_ref_annotated(c87), ruf012_alt_18_u0(n).
+
+.decl ruf012_alt_19_u2(n: node)
+ruf012_alt_19_u2(n) :- child(n, c1, _), ruf012_generic_head(c1), ruf012_immutable_generic(c1).
+ruf012_alt_19_u2(n) :- child(n, c2, _), ruf012_generic_head(c2), ruf012_ref_typing_union(c2), ruf012_alt_11(n),
+    !ruf012_alt_12_u1(n).
+ruf012_alt_19_u2(n) :- child(n, c23, _), ruf012_generic_head(c23), ruf012_ref_typing_optional(c23),
+    !ruf012_alt_11(n), ruf012_alt_14_u1(n).
+ruf012_alt_19_u2(n) :- child(n, c44, _), ruf012_generic_head(c44), ruf012_ref_annotated(c44), ruf012_alt_11(n),
+    ruf012_alt_16_u1(n).
+ruf012_alt_19_u2(n) :- child(n, c67, _), ruf012_generic_head(c67), ruf012_ref_typing_union(c67),
+    ruf012_alt_17_u1(n).
+ruf012_alt_19_u2(n) :- child(n, c87, _), ruf012_generic_head(c87), ruf012_ref_annotated(c87), ruf012_alt_18_u1(n).
+
+.decl ruf012_alt_19_u3(n: node)
+ruf012_alt_19_u3(n) :- child(n, c1, _), ruf012_generic_head(c1), ruf012_immutable_generic(c1).
+ruf012_alt_19_u3(n) :- child(n, c2, _), ruf012_generic_head(c2), ruf012_ref_typing_union(c2), ruf012_alt_11(n),
+    !ruf012_alt_12_u2(n).
+ruf012_alt_19_u3(n) :- child(n, c23, _), ruf012_generic_head(c23), ruf012_ref_typing_optional(c23),
+    !ruf012_alt_11(n), ruf012_alt_14_u2(n).
+ruf012_alt_19_u3(n) :- child(n, c44, _), ruf012_generic_head(c44), ruf012_ref_annotated(c44), ruf012_alt_11(n),
+    ruf012_alt_16_u2(n).
+ruf012_alt_19_u3(n) :- child(n, c67, _), ruf012_generic_head(c67), ruf012_ref_typing_union(c67),
+    ruf012_alt_17_u2(n).
+ruf012_alt_19_u3(n) :- child(n, c87, _), ruf012_generic_head(c87), ruf012_ref_annotated(c87), ruf012_alt_18_u2(n).
+
+.decl ruf012_alt_19_u4(n: node)
+ruf012_alt_19_u4(n) :- child(n, c1, _), ruf012_generic_head(c1), ruf012_immutable_generic(c1).
+ruf012_alt_19_u4(n) :- child(n, c2, _), ruf012_generic_head(c2), ruf012_ref_typing_union(c2), ruf012_alt_11(n),
+    !ruf012_alt_12_u3(n).
+ruf012_alt_19_u4(n) :- child(n, c23, _), ruf012_generic_head(c23), ruf012_ref_typing_optional(c23),
+    !ruf012_alt_11(n), ruf012_alt_14_u3(n).
+ruf012_alt_19_u4(n) :- child(n, c44, _), ruf012_generic_head(c44), ruf012_ref_annotated(c44), ruf012_alt_11(n),
+    ruf012_alt_16_u3(n).
+ruf012_alt_19_u4(n) :- child(n, c67, _), ruf012_generic_head(c67), ruf012_ref_typing_union(c67),
+    ruf012_alt_17_u3(n).
+ruf012_alt_19_u4(n) :- child(n, c87, _), ruf012_generic_head(c87), ruf012_ref_annotated(c87), ruf012_alt_18_u3(n).
+
+.decl ruf012_alt_19_u5(n: node)
+ruf012_alt_19_u5(n) :- child(n, c1, _), ruf012_generic_head(c1), ruf012_immutable_generic(c1).
+ruf012_alt_19_u5(n) :- child(n, c2, _), ruf012_generic_head(c2), ruf012_ref_typing_union(c2), ruf012_alt_11(n),
+    !ruf012_alt_12_u4(n).
+ruf012_alt_19_u5(n) :- child(n, c23, _), ruf012_generic_head(c23), ruf012_ref_typing_optional(c23),
+    !ruf012_alt_11(n), ruf012_alt_14_u4(n).
+ruf012_alt_19_u5(n) :- child(n, c44, _), ruf012_generic_head(c44), ruf012_ref_annotated(c44), ruf012_alt_11(n),
+    ruf012_alt_16_u4(n).
+ruf012_alt_19_u5(n) :- child(n, c67, _), ruf012_generic_head(c67), ruf012_ref_typing_union(c67),
+    ruf012_alt_17_u4(n).
+ruf012_alt_19_u5(n) :- child(n, c87, _), ruf012_generic_head(c87), ruf012_ref_annotated(c87), ruf012_alt_18_u4(n).
+
+.decl ruf012_alt_19_u6(n: node)
+ruf012_alt_19_u6(n) :- child(n, c1, _), ruf012_generic_head(c1), ruf012_immutable_generic(c1).
+ruf012_alt_19_u6(n) :- child(n, c2, _), ruf012_generic_head(c2), ruf012_ref_typing_union(c2), ruf012_alt_11(n),
+    !ruf012_alt_12_u5(n).
+ruf012_alt_19_u6(n) :- child(n, c23, _), ruf012_generic_head(c23), ruf012_ref_typing_optional(c23),
+    !ruf012_alt_11(n), ruf012_alt_14_u5(n).
+ruf012_alt_19_u6(n) :- child(n, c44, _), ruf012_generic_head(c44), ruf012_ref_annotated(c44), ruf012_alt_11(n),
+    ruf012_alt_16_u5(n).
+ruf012_alt_19_u6(n) :- child(n, c67, _), ruf012_generic_head(c67), ruf012_ref_typing_union(c67),
+    ruf012_alt_17_u5(n).
+ruf012_alt_19_u6(n) :- child(n, c87, _), ruf012_generic_head(c87), ruf012_ref_annotated(c87), ruf012_alt_18_u5(n).
+
+.decl ruf012_alt_19_u7(n: node)
+ruf012_alt_19_u7(n) :- child(n, c1, _), ruf012_generic_head(c1), ruf012_immutable_generic(c1).
+ruf012_alt_19_u7(n) :- child(n, c2, _), ruf012_generic_head(c2), ruf012_ref_typing_union(c2), ruf012_alt_11(n),
+    !ruf012_alt_12_u6(n).
+ruf012_alt_19_u7(n) :- child(n, c23, _), ruf012_generic_head(c23), ruf012_ref_typing_optional(c23),
+    !ruf012_alt_11(n), ruf012_alt_14_u6(n).
+ruf012_alt_19_u7(n) :- child(n, c44, _), ruf012_generic_head(c44), ruf012_ref_annotated(c44), ruf012_alt_11(n),
+    ruf012_alt_16_u6(n).
+ruf012_alt_19_u7(n) :- child(n, c67, _), ruf012_generic_head(c67), ruf012_ref_typing_union(c67),
+    ruf012_alt_17_u6(n).
+ruf012_alt_19_u7(n) :- child(n, c87, _), ruf012_generic_head(c87), ruf012_ref_annotated(c87), ruf012_alt_18_u6(n).
+
+.decl ruf012_alt_41_u0(n: node)
+ruf012_alt_41_u0(n) :- ruf012_alt_40(n).
+
+.decl ruf012_alt_41_u1(n: node)
+ruf012_alt_41_u1(n) :- ruf012_alt_40(n).
+ruf012_alt_41_u1(n) :- ruf012_immutable_annotation_u0(n).
+
+.decl ruf012_alt_41_u2(n: node)
+ruf012_alt_41_u2(n) :- ruf012_alt_40(n).
+ruf012_alt_41_u2(n) :- ruf012_immutable_annotation_u1(n).
+
+.decl ruf012_alt_41_u3(n: node)
+ruf012_alt_41_u3(n) :- ruf012_alt_40(n).
+ruf012_alt_41_u3(n) :- ruf012_immutable_annotation_u2(n).
+
+.decl ruf012_alt_41_u4(n: node)
+ruf012_alt_41_u4(n) :- ruf012_alt_40(n).
+ruf012_alt_41_u4(n) :- ruf012_immutable_annotation_u3(n).
+
+.decl ruf012_alt_41_u5(n: node)
+ruf012_alt_41_u5(n) :- ruf012_alt_40(n).
+ruf012_alt_41_u5(n) :- ruf012_immutable_annotation_u4(n).
+
+.decl ruf012_alt_41_u6(n: node)
+ruf012_alt_41_u6(n) :- ruf012_alt_40(n).
+ruf012_alt_41_u6(n) :- ruf012_immutable_annotation_u5(n).
+
+.decl ruf012_alt_41_u7(n: node)
+ruf012_alt_41_u7(n) :- ruf012_alt_40(n).
+ruf012_alt_41_u7(n) :- ruf012_immutable_annotation_u6(n).
+
+.decl ruf012_alt_9_u0(n: node)
+ruf012_alt_9_u0(n) :- ruf012_alt_10(n).
+ruf012_alt_9_u0(n) :- node(_, n, _, _, _), glob("|", n).
+
+.decl ruf012_alt_9_u1(n: node)
+ruf012_alt_9_u1(n) :- ruf012_alt_10(n).
+ruf012_alt_9_u1(n) :- node(_, n, _, _, _), glob("|", n).
+ruf012_alt_9_u1(n) :- ruf012_immutable_annotation_u0(n).
+
+.decl ruf012_alt_9_u2(n: node)
+ruf012_alt_9_u2(n) :- ruf012_alt_10(n).
+ruf012_alt_9_u2(n) :- node(_, n, _, _, _), glob("|", n).
+ruf012_alt_9_u2(n) :- ruf012_immutable_annotation_u1(n).
+
+.decl ruf012_alt_9_u3(n: node)
+ruf012_alt_9_u3(n) :- ruf012_alt_10(n).
+ruf012_alt_9_u3(n) :- node(_, n, _, _, _), glob("|", n).
+ruf012_alt_9_u3(n) :- ruf012_immutable_annotation_u2(n).
+
+.decl ruf012_alt_9_u4(n: node)
+ruf012_alt_9_u4(n) :- ruf012_alt_10(n).
+ruf012_alt_9_u4(n) :- node(_, n, _, _, _), glob("|", n).
+ruf012_alt_9_u4(n) :- ruf012_immutable_annotation_u3(n).
+
+.decl ruf012_alt_9_u5(n: node)
+ruf012_alt_9_u5(n) :- ruf012_alt_10(n).
+ruf012_alt_9_u5(n) :- node(_, n, _, _, _), glob("|", n).
+ruf012_alt_9_u5(n) :- ruf012_immutable_annotation_u4(n).
+
+.decl ruf012_alt_9_u6(n: node)
+ruf012_alt_9_u6(n) :- ruf012_alt_10(n).
+ruf012_alt_9_u6(n) :- node(_, n, _, _, _), glob("|", n).
+ruf012_alt_9_u6(n) :- ruf012_immutable_annotation_u5(n).
+
+.decl ruf012_alt_9_u7(n: node)
+ruf012_alt_9_u7(n) :- ruf012_alt_10(n).
+ruf012_alt_9_u7(n) :- node(_, n, _, _, _), glob("|", n).
+ruf012_alt_9_u7(n) :- ruf012_immutable_annotation_u6(n).
+
+.decl ruf012_immutable_annotation_u0(n: node)
+ruf012_immutable_annotation_u0(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ruf012_immutable_name(n).
+ruf012_immutable_annotation_u0(n) :- kind(n, "none").
+ruf012_immutable_annotation_u0(n) :- (kind(n, "union_type") ; kind(n, "binary_operator"), ruf012_tok_has_4(n)),
+    count : { child(n, c10, _) } = 0.
+
+.decl ruf012_immutable_annotation_u1(n: node)
+ruf012_immutable_annotation_u1(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c1, _), !ruf012_alt_10(c1), ruf012_immutable_annotation_u0(c1).
+ruf012_immutable_annotation_u1(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ruf012_immutable_name(n).
+ruf012_immutable_annotation_u1(n) :- kind(n, "none").
+ruf012_immutable_annotation_u1(n) :- (kind(n, "union_type") ; kind(n, "binary_operator"), ruf012_tok_has_4(n)),
+    count : { child(n, c10, _), !ruf012_alt_9_u0(c10) } = 0.
+ruf012_immutable_annotation_u1(n) :- (kind(n, "subscript") ; kind(n, "generic_type")),
+    ruf012_alt_19_u0(n).
+
+.decl ruf012_immutable_annotation_u2(n: node)
+ruf012_immutable_annotation_u2(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c1, _), !ruf012_alt_10(c1), ruf012_immutable_annotation_u1(c1).
+ruf012_immutable_annotation_u2(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ruf012_immutable_name(n).
+ruf012_immutable_annotation_u2(n) :- kind(n, "none").
+ruf012_immutable_annotation_u2(n) :- (kind(n, "union_type") ; kind(n, "binary_operator"), ruf012_tok_has_4(n)),
+    count : { child(n, c10, _), !ruf012_alt_9_u1(c10) } = 0.
+ruf012_immutable_annotation_u2(n) :- (kind(n, "subscript") ; kind(n, "generic_type")),
+    ruf012_alt_19_u1(n).
+
+.decl ruf012_immutable_annotation_u3(n: node)
+ruf012_immutable_annotation_u3(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c1, _), !ruf012_alt_10(c1), ruf012_immutable_annotation_u2(c1).
+ruf012_immutable_annotation_u3(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ruf012_immutable_name(n).
+ruf012_immutable_annotation_u3(n) :- kind(n, "none").
+ruf012_immutable_annotation_u3(n) :- (kind(n, "union_type") ; kind(n, "binary_operator"), ruf012_tok_has_4(n)),
+    count : { child(n, c10, _), !ruf012_alt_9_u2(c10) } = 0.
+ruf012_immutable_annotation_u3(n) :- (kind(n, "subscript") ; kind(n, "generic_type")),
+    ruf012_alt_19_u2(n).
+
+.decl ruf012_immutable_annotation_u4(n: node)
+ruf012_immutable_annotation_u4(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c1, _), !ruf012_alt_10(c1), ruf012_immutable_annotation_u3(c1).
+ruf012_immutable_annotation_u4(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ruf012_immutable_name(n).
+ruf012_immutable_annotation_u4(n) :- kind(n, "none").
+ruf012_immutable_annotation_u4(n) :- (kind(n, "union_type") ; kind(n, "binary_operator"), ruf012_tok_has_4(n)),
+    count : { child(n, c10, _), !ruf012_alt_9_u3(c10) } = 0.
+ruf012_immutable_annotation_u4(n) :- (kind(n, "subscript") ; kind(n, "generic_type")),
+    ruf012_alt_19_u3(n).
+
+.decl ruf012_immutable_annotation_u5(n: node)
+ruf012_immutable_annotation_u5(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c1, _), !ruf012_alt_10(c1), ruf012_immutable_annotation_u4(c1).
+ruf012_immutable_annotation_u5(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ruf012_immutable_name(n).
+ruf012_immutable_annotation_u5(n) :- kind(n, "none").
+ruf012_immutable_annotation_u5(n) :- (kind(n, "union_type") ; kind(n, "binary_operator"), ruf012_tok_has_4(n)),
+    count : { child(n, c10, _), !ruf012_alt_9_u4(c10) } = 0.
+ruf012_immutable_annotation_u5(n) :- (kind(n, "subscript") ; kind(n, "generic_type")),
+    ruf012_alt_19_u4(n).
+
+.decl ruf012_immutable_annotation_u6(n: node)
+ruf012_immutable_annotation_u6(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c1, _), !ruf012_alt_10(c1), ruf012_immutable_annotation_u5(c1).
+ruf012_immutable_annotation_u6(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ruf012_immutable_name(n).
+ruf012_immutable_annotation_u6(n) :- kind(n, "none").
+ruf012_immutable_annotation_u6(n) :- (kind(n, "union_type") ; kind(n, "binary_operator"), ruf012_tok_has_4(n)),
+    count : { child(n, c10, _), !ruf012_alt_9_u5(c10) } = 0.
+ruf012_immutable_annotation_u6(n) :- (kind(n, "subscript") ; kind(n, "generic_type")),
+    ruf012_alt_19_u5(n).
+
+.decl ruf012_immutable_annotation_u7(n: node)
+ruf012_immutable_annotation_u7(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c1, _), !ruf012_alt_10(c1), ruf012_immutable_annotation_u6(c1).
+ruf012_immutable_annotation_u7(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ruf012_immutable_name(n).
+ruf012_immutable_annotation_u7(n) :- kind(n, "none").
+ruf012_immutable_annotation_u7(n) :- (kind(n, "union_type") ; kind(n, "binary_operator"), ruf012_tok_has_4(n)),
+    count : { child(n, c10, _), !ruf012_alt_9_u6(c10) } = 0.
+ruf012_immutable_annotation_u7(n) :- (kind(n, "subscript") ; kind(n, "generic_type")),
+    ruf012_alt_19_u6(n).
+
+.decl ruf012_tuple_all_immutable_u0(n: node)
+ruf012_tuple_all_immutable_u0(n) :- kind(n, "tuple"), count : { child(n, c1, _) } = 0.
+
+.decl ruf012_tuple_all_immutable_u1(n: node)
+ruf012_tuple_all_immutable_u1(n) :- kind(n, "tuple"),
+    count : { child(n, c1, _), !ruf012_alt_41_u0(c1) } = 0.
+ruf012_tuple_all_immutable_u1(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c2, _), !ruf012_alt_40(c2), ruf012_tuple_all_immutable_u0(c2).
+
+.decl ruf012_tuple_all_immutable_u2(n: node)
+ruf012_tuple_all_immutable_u2(n) :- kind(n, "tuple"),
+    count : { child(n, c1, _), !ruf012_alt_41_u1(c1) } = 0.
+ruf012_tuple_all_immutable_u2(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c2, _), !ruf012_alt_40(c2), ruf012_tuple_all_immutable_u1(c2).
+
+.decl ruf012_tuple_all_immutable_u3(n: node)
+ruf012_tuple_all_immutable_u3(n) :- kind(n, "tuple"),
+    count : { child(n, c1, _), !ruf012_alt_41_u2(c1) } = 0.
+ruf012_tuple_all_immutable_u3(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c2, _), !ruf012_alt_40(c2), ruf012_tuple_all_immutable_u2(c2).
+
+.decl ruf012_tuple_all_immutable_u4(n: node)
+ruf012_tuple_all_immutable_u4(n) :- kind(n, "tuple"),
+    count : { child(n, c1, _), !ruf012_alt_41_u3(c1) } = 0.
+ruf012_tuple_all_immutable_u4(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c2, _), !ruf012_alt_40(c2), ruf012_tuple_all_immutable_u3(c2).
+
+.decl ruf012_tuple_all_immutable_u5(n: node)
+ruf012_tuple_all_immutable_u5(n) :- kind(n, "tuple"),
+    count : { child(n, c1, _), !ruf012_alt_41_u4(c1) } = 0.
+ruf012_tuple_all_immutable_u5(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c2, _), !ruf012_alt_40(c2), ruf012_tuple_all_immutable_u4(c2).
+
+.decl ruf012_tuple_all_immutable_u6(n: node)
+ruf012_tuple_all_immutable_u6(n) :- kind(n, "tuple"),
+    count : { child(n, c1, _), !ruf012_alt_41_u5(c1) } = 0.
+ruf012_tuple_all_immutable_u6(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c2, _), !ruf012_alt_40(c2), ruf012_tuple_all_immutable_u5(c2).
+
+.decl ruf012_tuple_all_immutable_u7(n: node)
+ruf012_tuple_all_immutable_u7(n) :- kind(n, "tuple"),
+    count : { child(n, c1, _), !ruf012_alt_41_u6(c1) } = 0.
+ruf012_tuple_all_immutable_u7(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c2, _), !ruf012_alt_40(c2), ruf012_tuple_all_immutable_u6(c2).
+
+.decl ruf012_tuple_first_immutable_u1(n: node)
+ruf012_tuple_first_immutable_u1(n) :- kind(n, "tuple"), child(n, c1, _), !ruf012_alt_40(c1),
+    ruf012_immutable_annotation_u0(c1), count : { precedes(s2, c1), !ruf012_alt_40(s2) } = 0.
+ruf012_tuple_first_immutable_u1(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c3, _), !ruf012_alt_40(c3), ruf012_tuple_first_immutable_u0(c3).
+
+.decl ruf012_tuple_first_immutable_u2(n: node)
+ruf012_tuple_first_immutable_u2(n) :- kind(n, "tuple"), child(n, c1, _), !ruf012_alt_40(c1),
+    ruf012_immutable_annotation_u1(c1), count : { precedes(s2, c1), !ruf012_alt_40(s2) } = 0.
+ruf012_tuple_first_immutable_u2(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c3, _), !ruf012_alt_40(c3), ruf012_tuple_first_immutable_u1(c3).
+
+.decl ruf012_tuple_first_immutable_u3(n: node)
+ruf012_tuple_first_immutable_u3(n) :- kind(n, "tuple"), child(n, c1, _), !ruf012_alt_40(c1),
+    ruf012_immutable_annotation_u2(c1), count : { precedes(s2, c1), !ruf012_alt_40(s2) } = 0.
+ruf012_tuple_first_immutable_u3(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c3, _), !ruf012_alt_40(c3), ruf012_tuple_first_immutable_u2(c3).
+
+.decl ruf012_tuple_first_immutable_u4(n: node)
+ruf012_tuple_first_immutable_u4(n) :- kind(n, "tuple"), child(n, c1, _), !ruf012_alt_40(c1),
+    ruf012_immutable_annotation_u3(c1), count : { precedes(s2, c1), !ruf012_alt_40(s2) } = 0.
+ruf012_tuple_first_immutable_u4(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c3, _), !ruf012_alt_40(c3), ruf012_tuple_first_immutable_u3(c3).
+
+.decl ruf012_tuple_first_immutable_u5(n: node)
+ruf012_tuple_first_immutable_u5(n) :- kind(n, "tuple"), child(n, c1, _), !ruf012_alt_40(c1),
+    ruf012_immutable_annotation_u4(c1), count : { precedes(s2, c1), !ruf012_alt_40(s2) } = 0.
+ruf012_tuple_first_immutable_u5(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c3, _), !ruf012_alt_40(c3), ruf012_tuple_first_immutable_u4(c3).
+
+.decl ruf012_tuple_first_immutable_u6(n: node)
+ruf012_tuple_first_immutable_u6(n) :- kind(n, "tuple"), child(n, c1, _), !ruf012_alt_40(c1),
+    ruf012_immutable_annotation_u5(c1), count : { precedes(s2, c1), !ruf012_alt_40(s2) } = 0.
+ruf012_tuple_first_immutable_u6(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c3, _), !ruf012_alt_40(c3), ruf012_tuple_first_immutable_u5(c3).
+
+.decl ruf012_tuple_first_immutable_u7(n: node)
+ruf012_tuple_first_immutable_u7(n) :- kind(n, "tuple"), child(n, c1, _), !ruf012_alt_40(c1),
+    ruf012_immutable_annotation_u6(c1), count : { precedes(s2, c1), !ruf012_alt_40(s2) } = 0.
+ruf012_tuple_first_immutable_u7(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c3, _), !ruf012_alt_40(c3), ruf012_tuple_first_immutable_u6(c3).
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_precedes_1(n: node)
+.stored ruf012_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_precedes_1(n) :- next_sibling(n, s1), glob("\\[", s1).
+ruf012_tok_precedes_1(n) :- structural_after(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, _, en7), o5 = en7 + strlen(g3), token(p4, _, t2, o5, _),
+    match("\\[", t2).
+ruf012_tok_precedes_1(n) :- structural_after(n, g3), match("(?s)^(?:\\s*(?:\\[).*)$", g3).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_follows_2(n: node)
+.stored ruf012_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_follows_2(n) :- precedes(s1, n), glob("\\[", s1).
+ruf012_tok_follows_2(n) :- child(p4, n, _), node(_, n, _, st6, _), token(p4, _, t2, _, en7),
+    en7 <= st6, match("\\[", t2).
+ruf012_tok_follows_2(n) :- structural_before(n, g3), match("(?s)^(?:.*(?:\\[).*)$", g3).
+ruf012_tok_follows_2(n) :- precedes(o5, n), structural_before(o5, g3),
+    match("(?s)^(?:.*(?:\\[).*)$", g3).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^\\|$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_3(n: node)
+.stored ruf012_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_3(n) :- child(n, c2, _), glob("|", c2).
+ruf012_tok_has_3(n) :- op(n, t3), match("\\|", t3).
+ruf012_tok_has_3(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+ruf012_tok_has_3(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+ruf012_tok_has_3(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^\\|$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_4(n: node)
+.stored ruf012_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_4(n) :- child(n, c1, _), glob("|", c1).
+ruf012_tok_has_4(n) :- op(n, t2), match("\\|", t2).
+ruf012_tok_has_4(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+ruf012_tok_has_4(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+ruf012_tok_has_4(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_5(n: node)
+.stored ruf012_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_5(n) :- child(n, c13, _), glob("\\,", c13).
+ruf012_tok_has_5(n) :- op(n, t14), match(",", t14).
+ruf012_tok_has_5(n) :- child(n, c20, _), structural_before(c20, g15),
+    match("(?s)^(?:.*(?:,).*)$", g15).
+ruf012_tok_has_5(n) :- child(n, c20, _), structural_after(c20, g15),
+    match("(?s)^(?:.*(?:,).*)$", g15).
+ruf012_tok_has_5(n) :- node_text(n, g15), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g15).
+
+// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_6(n: node)
+.stored ruf012_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_6(n) :- child(n, c22, _), glob("\\,", c22).
+ruf012_tok_has_6(n) :- op(n, t23), match(",", t23).
+ruf012_tok_has_6(n) :- child(n, c29, _), structural_before(c29, g24),
+    match("(?s)^(?:.*(?:,).*)$", g24).
+ruf012_tok_has_6(n) :- child(n, c29, _), structural_after(c29, g24),
+    match("(?s)^(?:.*(?:,).*)$", g24).
+ruf012_tok_has_6(n) :- node_text(n, g24), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g24).
+
+// tok_has_7(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_7(n: node)
+.stored ruf012_tok_has_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_7(n) :- child(n, c1, _), glob("\\,", c1).
+ruf012_tok_has_7(n) :- op(n, t2), match(",", t2).
+ruf012_tok_has_7(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+ruf012_tok_has_7(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+ruf012_tok_has_7(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// tok_has_8(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_8(n: node)
+.stored ruf012_tok_has_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_8(n) :- child(n, c10, _), glob("\\,", c10).
+ruf012_tok_has_8(n) :- op(n, t11), match(",", t11).
+ruf012_tok_has_8(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:.*(?:,).*)$", g12).
+ruf012_tok_has_8(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:.*(?:,).*)$", g12).
+ruf012_tok_has_8(n) :- node_text(n, g12), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g12).
+
+// tok_has_9(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_9(n: node)
+.stored ruf012_tok_has_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_9(n) :- child(n, c34, _), glob("\\,", c34).
+ruf012_tok_has_9(n) :- op(n, t35), match(",", t35).
+ruf012_tok_has_9(n) :- child(n, c41, _), structural_before(c41, g36),
+    match("(?s)^(?:.*(?:,).*)$", g36).
+ruf012_tok_has_9(n) :- child(n, c41, _), structural_after(c41, g36),
+    match("(?s)^(?:.*(?:,).*)$", g36).
+ruf012_tok_has_9(n) :- node_text(n, g36), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g36).
+
+// tok_has_10(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_10(n: node)
+.stored ruf012_tok_has_10 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_10(n) :- child(n, c43, _), glob("\\,", c43).
+ruf012_tok_has_10(n) :- op(n, t44), match(",", t44).
+ruf012_tok_has_10(n) :- child(n, c50, _), structural_before(c50, g45),
+    match("(?s)^(?:.*(?:,).*)$", g45).
+ruf012_tok_has_10(n) :- child(n, c50, _), structural_after(c50, g45),
+    match("(?s)^(?:.*(?:,).*)$", g45).
+ruf012_tok_has_10(n) :- node_text(n, g45), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g45).
+
+// tok_has_11(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_11(n: node)
+.stored ruf012_tok_has_11 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_11(n) :- child(n, c55, _), glob("\\,", c55).
+ruf012_tok_has_11(n) :- op(n, t56), match(",", t56).
+ruf012_tok_has_11(n) :- child(n, c62, _), structural_before(c62, g57),
+    match("(?s)^(?:.*(?:,).*)$", g57).
+ruf012_tok_has_11(n) :- child(n, c62, _), structural_after(c62, g57),
+    match("(?s)^(?:.*(?:,).*)$", g57).
+ruf012_tok_has_11(n) :- node_text(n, g57), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g57).
+
+// tok_has_12(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_12(n: node)
+.stored ruf012_tok_has_12 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_12(n) :- child(n, c64, _), glob("\\,", c64).
+ruf012_tok_has_12(n) :- op(n, t65), match(",", t65).
+ruf012_tok_has_12(n) :- child(n, c71, _), structural_before(c71, g66),
+    match("(?s)^(?:.*(?:,).*)$", g66).
+ruf012_tok_has_12(n) :- child(n, c71, _), structural_after(c71, g66),
+    match("(?s)^(?:.*(?:,).*)$", g66).
+ruf012_tok_has_12(n) :- node_text(n, g66), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g66).
+
+// tok_has_13(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_13(n: node)
+.stored ruf012_tok_has_13 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_13(n) :- child(n, c78, _), glob("\\,", c78).
+ruf012_tok_has_13(n) :- op(n, t79), match(",", t79).
+ruf012_tok_has_13(n) :- child(n, c85, _), structural_before(c85, g80),
+    match("(?s)^(?:.*(?:,).*)$", g80).
+ruf012_tok_has_13(n) :- child(n, c85, _), structural_after(c85, g80),
+    match("(?s)^(?:.*(?:,).*)$", g80).
+ruf012_tok_has_13(n) :- node_text(n, g80), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g80).
+
+// tok_has_14(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_14(n: node)
+.stored ruf012_tok_has_14 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_14(n) :- child(n, c88, _), glob("\\,", c88).
+ruf012_tok_has_14(n) :- op(n, t89), match(",", t89).
+ruf012_tok_has_14(n) :- child(n, c95, _), structural_before(c95, g90),
+    match("(?s)^(?:.*(?:,).*)$", g90).
+ruf012_tok_has_14(n) :- child(n, c95, _), structural_after(c95, g90),
+    match("(?s)^(?:.*(?:,).*)$", g90).
+ruf012_tok_has_14(n) :- node_text(n, g90), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g90).
+
+// tok_has_15(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_15(n: node)
+.stored ruf012_tok_has_15 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_15(n) :- child(n, c11, _), glob("\\,", c11).
+ruf012_tok_has_15(n) :- op(n, t12), match(",", t12).
+ruf012_tok_has_15(n) :- child(n, c18, _), structural_before(c18, g13),
+    match("(?s)^(?:.*(?:,).*)$", g13).
+ruf012_tok_has_15(n) :- child(n, c18, _), structural_after(c18, g13),
+    match("(?s)^(?:.*(?:,).*)$", g13).
+ruf012_tok_has_15(n) :- node_text(n, g13), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g13).
+
+// tok_has_16(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_16(n: node)
+.stored ruf012_tok_has_16 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_16(n) :- child(n, c98, _), glob("\\,", c98).
+ruf012_tok_has_16(n) :- op(n, t99), match(",", t99).
+ruf012_tok_has_16(n) :- child(n, c105, _), structural_before(c105, g100),
+    match("(?s)^(?:.*(?:,).*)$", g100).
+ruf012_tok_has_16(n) :- child(n, c105, _), structural_after(c105, g100),
+    match("(?s)^(?:.*(?:,).*)$", g100).
+ruf012_tok_has_16(n) :- node_text(n, g100), !child(n, _, _),
+    match("(?s)^(?:.*(?:,).*)$", g100).
+
+// tok_has_17(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_17(n: node)
+.stored ruf012_tok_has_17 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_17(n) :- child(n, c108, _), glob("\\,", c108).
+ruf012_tok_has_17(n) :- op(n, t109), match(",", t109).
+ruf012_tok_has_17(n) :- child(n, c115, _), structural_before(c115, g110),
+    match("(?s)^(?:.*(?:,).*)$", g110).
+ruf012_tok_has_17(n) :- child(n, c115, _), structural_after(c115, g110),
+    match("(?s)^(?:.*(?:,).*)$", g110).
+ruf012_tok_has_17(n) :- node_text(n, g110), !child(n, _, _),
+    match("(?s)^(?:.*(?:,).*)$", g110).
+
+// tok_has_18(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_18(n: node)
+.stored ruf012_tok_has_18 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_18(n) :- child(n, c3, _), glob("\\,", c3).
+ruf012_tok_has_18(n) :- op(n, t4), match(",", t4).
+ruf012_tok_has_18(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:.*(?:,).*)$", g5).
+ruf012_tok_has_18(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:.*(?:,).*)$", g5).
+ruf012_tok_has_18(n) :- node_text(n, g5), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g5).
+
+// tok_has_19(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_19(n: node)
+.stored ruf012_tok_has_19 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_19(n) :- child(n, c12, _), glob("\\,", c12).
+ruf012_tok_has_19(n) :- op(n, t13), match(",", t13).
+ruf012_tok_has_19(n) :- child(n, c19, _), structural_before(c19, g14),
+    match("(?s)^(?:.*(?:,).*)$", g14).
+ruf012_tok_has_19(n) :- child(n, c19, _), structural_after(c19, g14),
+    match("(?s)^(?:.*(?:,).*)$", g14).
+ruf012_tok_has_19(n) :- node_text(n, g14), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g14).
+
+// tok_has_20(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_20(n: node)
+.stored ruf012_tok_has_20 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_20(n) :- child(n, c24, _), glob("\\,", c24).
+ruf012_tok_has_20(n) :- op(n, t25), match(",", t25).
+ruf012_tok_has_20(n) :- child(n, c31, _), structural_before(c31, g26),
+    match("(?s)^(?:.*(?:,).*)$", g26).
+ruf012_tok_has_20(n) :- child(n, c31, _), structural_after(c31, g26),
+    match("(?s)^(?:.*(?:,).*)$", g26).
+ruf012_tok_has_20(n) :- node_text(n, g26), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g26).
+
+// tok_has_21(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_21(n: node)
+.stored ruf012_tok_has_21 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_21(n) :- child(n, c33, _), glob("\\,", c33).
+ruf012_tok_has_21(n) :- op(n, t34), match(",", t34).
+ruf012_tok_has_21(n) :- child(n, c40, _), structural_before(c40, g35),
+    match("(?s)^(?:.*(?:,).*)$", g35).
+ruf012_tok_has_21(n) :- child(n, c40, _), structural_after(c40, g35),
+    match("(?s)^(?:.*(?:,).*)$", g35).
+ruf012_tok_has_21(n) :- node_text(n, g35), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g35).
+
+// tok_has_22(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_22(n: node)
+.stored ruf012_tok_has_22 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_22(n) :- child(n, c45, _), glob("\\,", c45).
+ruf012_tok_has_22(n) :- op(n, t46), match(",", t46).
+ruf012_tok_has_22(n) :- child(n, c52, _), structural_before(c52, g47),
+    match("(?s)^(?:.*(?:,).*)$", g47).
+ruf012_tok_has_22(n) :- child(n, c52, _), structural_after(c52, g47),
+    match("(?s)^(?:.*(?:,).*)$", g47).
+ruf012_tok_has_22(n) :- node_text(n, g47), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g47).
+
+// tok_has_23(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_23(n: node)
+.stored ruf012_tok_has_23 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_23(n) :- child(n, c54, _), glob("\\,", c54).
+ruf012_tok_has_23(n) :- op(n, t55), match(",", t55).
+ruf012_tok_has_23(n) :- child(n, c61, _), structural_before(c61, g56),
+    match("(?s)^(?:.*(?:,).*)$", g56).
+ruf012_tok_has_23(n) :- child(n, c61, _), structural_after(c61, g56),
+    match("(?s)^(?:.*(?:,).*)$", g56).
+ruf012_tok_has_23(n) :- node_text(n, g56), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g56).
+
+// tok_has_24(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_24(n: node)
+.stored ruf012_tok_has_24 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_24(n) :- child(n, c68, _), glob("\\,", c68).
+ruf012_tok_has_24(n) :- op(n, t69), match(",", t69).
+ruf012_tok_has_24(n) :- child(n, c75, _), structural_before(c75, g70),
+    match("(?s)^(?:.*(?:,).*)$", g70).
+ruf012_tok_has_24(n) :- child(n, c75, _), structural_after(c75, g70),
+    match("(?s)^(?:.*(?:,).*)$", g70).
+ruf012_tok_has_24(n) :- node_text(n, g70), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g70).
+
+// all_expr: x is a module-level `__all__ =`, `+=` or `: T =` value, or a part of one that lists names
+//   (Ruff's extract_dunder_all_names: `+` chains, parentheses, walrus values, list(...) and tuple(...))
+.decl ruf012_all_expr(x: node)
+ruf012_all_expr(x) :- (kind(st, "assignment") ; kind(st, "augmented_assignment")),
+    field(st, "left", l), kind(l, "identifier"), text(l, "__all__"), child(es, st, _),
+    kind(es, "expression_statement"), child(m, es, _), kind(m, "module"),
+    field(st, "right", x).
+ruf012_all_expr(y) :- ruf012_all_expr(x), kind(x, "assignment"), field(x, "right", y).
+ruf012_all_expr(y) :- ruf012_all_expr(x), kind(x, "binary_operator"),
+    (field(x, "left", y) ; field(x, "right", y)).
+ruf012_all_expr(y) :- ruf012_all_expr(x), kind(x, "parenthesized_expression"), child(x, y, _),
+    !kind(y, "comment").
+ruf012_all_expr(y) :- ruf012_all_expr(x), kind(x, "named_expression"), field(x, "value", y).
+ruf012_all_expr(y) :- ruf012_all_expr(x), kind(x, "call"), field(x, "function", f),
+    kind(f, "identifier"), (text(f, "list") ; text(f, "tuple")),
+    field(x, "arguments", a), child(a, y, _).
+
+// all_entry: string e is an entry of a module `__all__` definition, exporting the name x
+.decl ruf012_all_entry(e: node, x: symbol)
+ruf012_all_entry(e, x) :- ruf012_all_expr(l), (kind(l, "list") ; kind(l, "tuple")), child(l, e, _),
+    (kind(e, "string") ; kind(e, "concatenated_string")),
+    count : { within(i, e), kind(i, "interpolation") } = 0, str(e, x).
+
+// tok_has_25(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf012_tok_has_25(n: node)
+.stored ruf012_tok_has_25 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf012_tok_has_25(n) :- child(n, c8, _), glob("\\,", c8).
+ruf012_tok_has_25(n) :- op(n, t9), match(",", t9).
+ruf012_tok_has_25(n) :- child(n, c15, _), structural_before(c15, g10),
+    match("(?s)^(?:.*(?:,).*)$", g10).
+ruf012_tok_has_25(n) :- child(n, c15, _), structural_after(c15, g10),
+    match("(?s)^(?:.*(?:,).*)$", g10).
+ruf012_tok_has_25(n) :- node_text(n, g10), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g10).
+
+// demand_plain_default: the nodes plain_default is asked at (its recursion looks at every descendant)
+.decl ruf012_demand_plain_default(n: node)
+ruf012_demand_plain_default(p9) :- ruf012_demand_plain_default(n), child(p9, n, _),
+    kind(p9, "parenthesized_expression").
+ruf012_demand_plain_default(n) :- ruf012_mutable_expression(n).
+
+// demand_copy_class: the nodes copy_class is asked at (its recursion looks at every descendant)
+.decl ruf012_demand_copy_class(n: node)
+ruf012_demand_copy_class(c2) :- ruf012_demand_copy_module_class(n), node(_, n, _, _, _), P = n,
+    inside(n, p1, "module"), within_stop(c2, p1, ruf012_stop_28),
+    kind(c2, "class_definition"), field(c2, "name", c3), node(_, c3, _, _, _), P = c3.
+ruf012_demand_copy_class(p7) :- field(p1, "right", n), kind(p1, "assignment"),
+    child(p1, c2, _), kind(c2, "type"), child(p5, p1, _),
+    kind(p5, "expression_statement"), child(p6, p5, _), kind(p6, "block"),
+    field(p7, "body", p6), kind(p7, "class_definition").
+ruf012_demand_copy_class(p8) :- ruf012_demand_plain_default(n), field(p1, "right", n),
+    kind(p1, "assignment"), within_stop(p1, p6, "expression_statement"),
+    kind(p6, "expression_statement"), child(p7, p6, _), kind(p7, "block"),
+    field(p8, "body", p7), kind(p8, "class_definition").
+
+// demand_copy_module_class: the nodes copy_module_class is asked at (its recursion looks at every descendant)
+.decl ruf012_demand_copy_module_class(n: node)
+ruf012_demand_copy_module_class(n) :- ruf012_demand_copy_ref(n), kind(n, "identifier"), node(_, n, _, _, _), B = n.
+
+// demand_copy_ref: the nodes copy_ref is asked at (its recursion looks at every descendant)
+.decl ruf012_demand_copy_ref(n: node)
+ruf012_demand_copy_ref(c2) :- ruf012_demand_copy_ref(n), kind(n, "subscript"), field(n, "value", c2).
+ruf012_demand_copy_ref(c3) :- ruf012_demand_copy_ref(n), kind(n, "parenthesized_expression"),
+    child(n, c3, _).
+ruf012_demand_copy_ref(c2) :- ruf012_demand_copy_class(n), kind(n, "class_definition"),
+    field(n, "superclasses", c1), child(c1, c2, _).
+
+// demand_ctypes_class: the nodes ctypes_class is asked at (its recursion looks at every descendant)
+.decl ruf012_demand_ctypes_class(n: node)
+ruf012_demand_ctypes_class(c2) :- ruf012_demand_ctypes_module_class(n), node(_, n, _, _, _), P = n,
+    inside(n, p1, "module"), within_stop(c2, p1, ruf012_stop_28),
+    kind(c2, "class_definition"), field(c2, "name", c3), node(_, c3, _, _, _), P = c3.
+ruf012_demand_ctypes_class(p6) :- kind(n, "expression_statement"), child(n, c1, _),
+    kind(c1, "assignment"), field(c1, "left", c3), kind(c3, "identifier"),
+    glob("_fields_", c3), field(c1, "right", c4), ruf012_assigned_mutable(c4),
+    child(p5, n, _), kind(p5, "block"), field(p6, "body", p5),
+    kind(p6, "class_definition").
+
+// demand_ctypes_module_class: the nodes ctypes_module_class is asked at (its recursion looks at every descendant)
+.decl ruf012_demand_ctypes_module_class(n: node)
+ruf012_demand_ctypes_module_class(n) :- ruf012_demand_ctypes_ref(n), kind(n, "identifier"), node(_, n, _, _, _), B = n.
+
+// demand_ctypes_ref: the nodes ctypes_ref is asked at (its recursion looks at every descendant)
+.decl ruf012_demand_ctypes_ref(n: node)
+ruf012_demand_ctypes_ref(c2) :- ruf012_demand_ctypes_ref(n), kind(n, "subscript"),
+    field(n, "value", c2).
+ruf012_demand_ctypes_ref(c3) :- ruf012_demand_ctypes_ref(n), kind(n, "parenthesized_expression"),
+    child(n, c3, _).
+ruf012_demand_ctypes_ref(c2) :- ruf012_demand_ctypes_class(n), kind(n, "class_definition"),
+    field(n, "superclasses", c1), child(c1, c2, _).
+
+// demand_class_var_import_follows: the nodes class_var_import_follows is asked at (it looks at every ancestor of every node)
+.decl ruf012_demand_class_var_import_follows(n: node)
+ruf012_demand_class_var_import_follows(n) :- kind(n, "identifier"), glob("ClassVar", n),
+    docof(n, d3), modnode(d3, m4).
+
+// demand_final_import_follows: the nodes final_import_follows is asked at (it looks at every ancestor of every node)
+.decl ruf012_demand_final_import_follows(n: node)
+ruf012_demand_final_import_follows(n) :- kind(n, "identifier"), glob("Final", n),
+    docof(n, d3), modnode(d3, m4).
+
+// alt_12_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf012_alt_12_u0_empty(n: node)
+
+// alt_14_u0: level -1 of an unrolled recursion, empty
+.decl ruf012_alt_14_u0(n: node)
+
+// alt_14_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf012_alt_14_u0_empty(n: node)
+
+// alt_16_u0: level -1 of an unrolled recursion, empty
+.decl ruf012_alt_16_u0(n: node)
+
+// alt_16_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf012_alt_16_u0_empty(n: node)
+
+// alt_17_u0: level -1 of an unrolled recursion, empty
+.decl ruf012_alt_17_u0(n: node)
+
+// alt_17_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf012_alt_17_u0_empty(n: node)
+
+// alt_18_u0: level -1 of an unrolled recursion, empty
+.decl ruf012_alt_18_u0(n: node)
+
+// alt_18_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf012_alt_18_u0_empty(n: node)
+
+// alt_19_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf012_alt_19_u0_empty(n: node)
+
+// alt_41_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf012_alt_41_u0_empty(n: node)
+
+// alt_9_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf012_alt_9_u0_empty(n: node)
+
+// immutable_annotation_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf012_immutable_annotation_u0_empty(n: node)
+
+// tuple_all_immutable_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf012_tuple_all_immutable_u0_empty(n: node)
+
+// tuple_first_immutable_u0: level -1 of an unrolled recursion, empty
+.decl ruf012_tuple_first_immutable_u0(n: node)
+
+// tuple_first_immutable_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf012_tuple_first_immutable_u0_empty(n: node)
+
+// set_1: names from the JSON `resolves.global`
+.decl ruf012_set_1(v: symbol)
+ruf012_set_1("bool"). ruf012_set_1("bytes"). ruf012_set_1("complex"). ruf012_set_1("float"). ruf012_set_1("int").
+ruf012_set_1("object"). ruf012_set_1("range"). ruf012_set_1("str"). ruf012_set_1("frozenset"). ruf012_set_1("tuple").
+ruf012_set_1("frozendict").
+
+// set_2: symbols from the JSON `resolves.import`
+.decl ruf012_set_2(v: symbol)
+ruf012_set_2("collections.abc.Sized"). ruf012_set_2("typing.LiteralString"). ruf012_set_2("typing.Sized").
+ruf012_set_2("builtins.frozenset"). ruf012_set_2("builtins.tuple"). ruf012_set_2("builtins.frozendict").
+ruf012_set_2("collections.abc.ByteString"). ruf012_set_2("collections.abc.Collection").
+ruf012_set_2("collections.abc.Container"). ruf012_set_2("collections.abc.Iterable").
+ruf012_set_2("collections.abc.Mapping"). ruf012_set_2("collections.abc.Reversible").
+ruf012_set_2("collections.abc.Sequence"). ruf012_set_2("collections.abc.Set").
+ruf012_set_2("typing.AbstractSet"). ruf012_set_2("typing.ByteString"). ruf012_set_2("typing.Callable").
+ruf012_set_2("typing.Collection"). ruf012_set_2("typing.Container"). ruf012_set_2("typing.FrozenSet").
+ruf012_set_2("typing.Iterable"). ruf012_set_2("typing.Literal"). ruf012_set_2("typing.Mapping").
+ruf012_set_2("typing.Never"). ruf012_set_2("typing.NoReturn"). ruf012_set_2("typing.Reversible").
+ruf012_set_2("typing.Sequence"). ruf012_set_2("typing.Tuple").
+
+// set_3: symbols from the JSON `resolves.import`
+.decl ruf012_set_3(v: symbol)
+ruf012_set_3("builtins.frozenset"). ruf012_set_3("builtins.tuple"). ruf012_set_3("builtins.frozendict").
+ruf012_set_3("collections.abc.ByteString"). ruf012_set_3("collections.abc.Collection").
+ruf012_set_3("collections.abc.Container"). ruf012_set_3("collections.abc.Iterable").
+ruf012_set_3("collections.abc.Mapping"). ruf012_set_3("collections.abc.Reversible").
+ruf012_set_3("collections.abc.Sequence"). ruf012_set_3("collections.abc.Set").
+ruf012_set_3("typing.AbstractSet"). ruf012_set_3("typing.ByteString"). ruf012_set_3("typing.Callable").
+ruf012_set_3("typing.Collection"). ruf012_set_3("typing.Container"). ruf012_set_3("typing.FrozenSet").
+ruf012_set_3("typing.Iterable"). ruf012_set_3("typing.Literal"). ruf012_set_3("typing.Mapping").
+ruf012_set_3("typing.Never"). ruf012_set_3("typing.NoReturn"). ruf012_set_3("typing.Reversible").
+ruf012_set_3("typing.Sequence"). ruf012_set_3("typing.Tuple").
+
+// stop_28: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf012_stop_28(kind: symbol)
+ruf012_stop_28("function_definition"). ruf012_stop_28("class_definition").
+
+// set_29: symbols from the JSON `resolves.import`
+.decl ruf012_set_29(v: symbol)
+ruf012_set_29("builtins.dict"). ruf012_set_29("builtins.list"). ruf012_set_29("builtins.set").
+ruf012_set_29("collections.Counter"). ruf012_set_29("collections.OrderedDict").
+ruf012_set_29("collections.defaultdict"). ruf012_set_29("collections.deque").
+
+// set_30: node kinds from a JSON `any`
+.decl ruf012_set_30(v: symbol)
+ruf012_set_30("list"). ruf012_set_30("dictionary"). ruf012_set_30("set"). ruf012_set_30("list_comprehension").
+ruf012_set_30("dictionary_comprehension"). ruf012_set_30("set_comprehension").
+
+// set_31: symbols from the JSON `resolves.import`
+.decl ruf012_set_31(v: symbol)
+ruf012_set_31("attrs.define"). ruf012_set_31("attrs.frozen"). ruf012_set_31("attrs.mutable").
+ruf012_set_31("attr.define"). ruf012_set_31("attr.frozen"). ruf012_set_31("attr.mutable"). ruf012_set_31("attr.s").
+ruf012_set_31("attr.attributes"). ruf012_set_31("attr.attrs").
+
+// set_33: symbols from the JSON `resolves.import`
+.decl ruf012_set_33(v: symbol)
+ruf012_set_33("pydantic.BaseModel"). ruf012_set_33("pydantic.RootModel").
+ruf012_set_33("pydantic.BaseSettings"). ruf012_set_33("pydantic.BaseConfig").
+ruf012_set_33("pydantic.generics.GenericModel"). ruf012_set_33("pydantic.v1.BaseModel").
+ruf012_set_33("pydantic.v1.BaseSettings"). ruf012_set_33("pydantic.v1.BaseConfig").
+ruf012_set_33("pydantic.v1.generics.GenericModel"). ruf012_set_33("pydantic_settings.BaseSettings").
+ruf012_set_33("msgspec.Struct"). ruf012_set_33("sqlmodel.SQLModel").
+
+// set_35: symbols from the JSON `resolves.import`
+.decl ruf012_set_35(v: symbol)
+ruf012_set_35("ctypes.Structure"). ruf012_set_35("ctypes.BigEndianStructure").
+ruf012_set_35("ctypes.LittleEndianStructure"). ruf012_set_35("ctypes.Union").
+ruf012_set_35("ctypes.BigEndianUnion"). ruf012_set_35("ctypes.LittleEndianUnion").
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf012_alt_10(n: node)
+ruf012_alt_10(n) :- node(_, n, _, _, _), match("[\\[\\],|]", n).
+ruf012_alt_10(n) :- kind(n, "comment").
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf012_alt_9(n: node)
+ruf012_alt_9(n) :- ruf012_alt_9_u7(n).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf012_alt_11(n: node)
+ruf012_alt_11(n) :- kind(n, "subscript"), ruf012_tok_has_7(n).
+ruf012_alt_11(n) :- kind(n, "generic_type"), child(n, c9, _), kind(c9, "type_parameter"),
+    ruf012_tok_has_8(c9).
+
+// alt_12(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf012_alt_12(n: node)
+ruf012_alt_12(n) :- ruf012_alt_12_u7(n).
+
+// alt_14(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf012_alt_14(n: node)
+ruf012_alt_14(n) :- ruf012_alt_14_u7(n).
+
+// alt_16(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf012_alt_16(n: node)
+ruf012_alt_16(n) :- ruf012_alt_16_u7(n).
+
+// alt_17(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf012_alt_17(n: node)
+ruf012_alt_17(n) :- ruf012_alt_17_u7(n).
+
+// alt_18(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf012_alt_18(n: node)
+ruf012_alt_18(n) :- ruf012_alt_18_u7(n).
+
+// alt_19(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf012_alt_19(n: node)
+ruf012_alt_19(n) :- ruf012_alt_19_u7(n).
+
+// alt_38(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf012_alt_38(n: node)
+ruf012_alt_38(n) :- ruf012_immutable_annotation(n).
+ruf012_alt_38(n) :- ruf012_class_var_annotation(n).
+ruf012_alt_38(n) :- ruf012_final_annotation(n).
+
+// alt_40(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf012_alt_40(n: node)
+ruf012_alt_40(n) :- node(_, n, _, _, _), match("[\\[\\](),|]", n).
+ruf012_alt_40(n) :- kind(n, "comment").
+
+// alt_41(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf012_alt_41(n: node)
+ruf012_alt_41(n) :- ruf012_alt_41_u7(n).

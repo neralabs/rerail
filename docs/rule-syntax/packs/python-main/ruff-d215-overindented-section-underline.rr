@@ -1,0 +1,132 @@
+.policy "ruff-d215-overindented-section-underline" revision 1
+.guests off
+.description "Align a docstring section's dashed underline with the docstring's own indentation, not deeper than it."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// doc_stmt(n): the JSON util `doc-stmt`, used where the JSON says `matches: "doc-stmt"`
+.decl d215_doc_stmt(n: node)
+d215_doc_stmt(n) :- kind(n, "expression_statement"), !d215_alt_1(n),
+    ( child(p1, n, _), kind(p1, "module")
+    ; child(p2, n, _), kind(p2, "block"), child(p3, p2, _), (kind(p3, "function_definition") ; kind(p3, "class_definition"))
+    ).
+
+
+// doc_holder(n): the JSON util `doc-holder`, used where the JSON says `matches: "doc-holder"`
+.decl d215_doc_holder(n: node)
+d215_doc_holder(n) :- d215_doc_stmt(n).
+d215_doc_holder(n) :- kind(n, "parenthesized_expression"), child(p1, n, _), d215_doc_holder(p1).
+
+// docstring(n): the JSON util `docstring`, used where the JSON says `matches: "docstring"`
+.decl d215_docstring(n: node)
+d215_docstring(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[bBfFtT]**", c1) } = 0,
+    child(p2, n, _), d215_doc_holder(p2).
+
+// directive_hidden(n): the JSON util `directive-hidden`, used where the JSON says `matches: "directive-hidden"`
+.decl d215_directive_hidden(n: node)
+d215_directive_hidden(n) :- value(n, v1), match("(?s:.*)\\n([ \\t]*)\\.\\. [^\\n]*(?:\\n(?:[ \\t]*\\n)*\\1[ \\t]+[^\\s][^\\n]*)*?\\n(?:[ \\t]*\\n)*\\1[ \\t]+(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*(?:\\n|\\z)(?s:.*)", v1).
+
+// owner(n): the JSON util `owner`, used where the JSON says `matches: "owner"`
+.decl d215_owner(n: node)
+d215_owner(n) :- (kind(n, "module") ; kind(n, "function_definition") ; kind(n, "class_definition")).
+
+// checked(n): the JSON util `checked`, used where the JSON says `matches: "checked"`
+.decl d215_checked(n: node)
+d215_checked(n) :- d215_docstring(n), !d215_directive_hidden(n),
+    inside(n, p1, "expression_statement"),
+    ( child(p2, p1, _), kind(p2, "module")
+    ; d215_code_before_line(p1, l1), line(p1, l2), k1 = l2 - l1, k1 >= 1
+    ).
+
+
+// D215(n): findings from clauses `indent-0`, `indent-1`, `indent-2`, `indent-3` and 9 more, which say the same.
+// Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation D215(at: node, name: node) "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name."
+    suppress noqa "D215"
+D215(NAME, n) :- d215_checked(n), d215_up_1(n, p1),
+    match("(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{0}[uUrR]*[\\\"'](?s:.*)", p1),
+    match("(?m)(?s:.*)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{1,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)(?s:.*)", n).
+D215(NAME, n) :- d215_checked(n), d215_up_1(n, p1),
+    match("(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{1}[uUrR]*[\\\"'](?s:.*)", p1),
+    match("(?m)(?s:.*)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{2,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)(?s:.*)", n).
+D215(NAME, n) :- d215_checked(n), d215_up_1(n, p1),
+    match("(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{2}[uUrR]*[\\\"'](?s:.*)", p1),
+    match("(?m)(?s:.*)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{3,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)(?s:.*)", n).
+D215(NAME, n) :- d215_checked(n), d215_up_1(n, p1),
+    match("(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{3}[uUrR]*[\\\"'](?s:.*)", p1),
+    match("(?m)(?s:.*)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{4,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)(?s:.*)", n).
+D215(NAME, n) :- d215_checked(n), d215_up_1(n, p1),
+    match("(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{4}[uUrR]*[\\\"'](?s:.*)", p1),
+    match("(?m)(?s:.*)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{5,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)(?s:.*)", n).
+D215(NAME, n) :- d215_checked(n), d215_up_1(n, p1),
+    match("(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{5}[uUrR]*[\\\"'](?s:.*)", p1),
+    match("(?m)(?s:.*)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{6,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)(?s:.*)", n).
+D215(NAME, n) :- d215_checked(n), d215_up_1(n, p1),
+    match("(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{6}[uUrR]*[\\\"'](?s:.*)", p1),
+    match("(?m)(?s:.*)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{7,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)(?s:.*)", n).
+D215(NAME, n) :- d215_checked(n), d215_up_1(n, p1),
+    match("(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{8}[uUrR]*[\\\"'](?s:.*)", p1),
+    match("(?m)(?s:.*)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{9,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)(?s:.*)", n).
+D215(NAME, n) :- d215_checked(n), d215_up_1(n, p1),
+    match("(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{9}[uUrR]*[\\\"'](?s:.*)", p1),
+    match("(?m)(?s:.*)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{10,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)(?s:.*)", n).
+D215(NAME, n) :- d215_checked(n), d215_up_1(n, p1),
+    match("(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{10}[uUrR]*[\\\"'](?s:.*)", p1),
+    match("(?m)(?s:.*)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{11,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)(?s:.*)", n).
+D215(NAME, n) :- d215_checked(n), d215_up_1(n, p1),
+    match("(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{12}[uUrR]*[\\\"'](?s:.*)", p1),
+    match("(?m)(?s:.*)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{13,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)(?s:.*)", n).
+D215(NAME, n) :- d215_checked(n), d215_up_1(n, p1),
+    match("(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{16}[uUrR]*[\\\"'](?s:.*)", p1),
+    match("(?m)(?s:.*)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{17,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)(?s:.*)", n).
+D215(NAME, n) :- d215_checked(n), d215_up_1(n, p1),
+    match("(?:[ \\t\\f(]*(?:[^ \\t\\f(uUrR\\\"'\\n][^\\n]*|[uUrR]+(?:[^uUrR\\\"'\\n][^\\n]*)?)?\\n)*[ \\t\\f(]{20}[uUrR]*[\\\"'](?s:.*)", p1),
+    match("(?m)(?s:.*)^[ \\t]*(?i:args|arguments|attention|attributes|caution|danger|error|examples?|extended summary|hint|important|keyword (?:args|arguments)|methods|notes?|other (?:args|arguments|params|parameters)|parameters|raises|receives|references|returns?|see also|short summary|tip|todo|warnings?|warns|yields?):?[ \\t]*\\r?\\n(?:[ \\t]*\\r?\\n)*[ \\t]{21,}(?P<NAME>-+)[ \\t]*(?:\\r?\\n|[\\\"']{3}\\z)(?s:.*)", n).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl d215_tok_has_1(n: node)
+.stored d215_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+d215_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+d215_tok_has_1(n) :- op(n, t2), match(",", t2).
+d215_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+d215_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+d215_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// code_comment_end(p, o): a comment child of p ends at offset o
+.decl d215_code_comment_end(p: node, o: number)
+d215_code_comment_end(p, o) :- child(p, c, _), comment(c, _), node(_, c, _, _, o).
+
+// code_before_line(x, l): the line of the code before x (main's token_before, comments passed over), read from the source gap: the tape leaves out the tokens its grammar implies
+.decl d215_code_before_line(x: node, l: number)
+d215_code_before_line(x, l) :- structural_before(x, g), match("(?s).*\\S\\s*", g),
+    ws = @replace_all(g, "(?s)^.*\\S", ""),
+    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), line(x, lx), l = lx - k.
+d215_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, s, _), o = s - strlen(g), token(p, _, _, _, o),
+    !d215_code_comment_end(p, o), k = strlen(g) - strlen(@replace_all(g, "\n", "")),
+    line(x, lx), l = lx - k.
+d215_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, s, _), node(_, p, _, ps, _), ps = s - strlen(g),
+    d215_code_before_line(p, l).
+d215_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, s, _), o = s - strlen(g), child(p, c, _), node(_, c, _, _, o),
+    comment(c, _), d215_code_before_line(c, l).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl d215_up_1(n: node, p: node)
+d215_up_1(n, p) :- d215_checked(n), within_stop(n, p, d215_stop_10), d215_owner(p).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl d215_alt_1(n: node)
+d215_alt_1(n) :- d215_tok_has_1(n).
+d215_alt_1(n) :- precedes(s9, n), !kind(s9, "comment").
+
+// stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl d215_stop_10(n: node)
+d215_stop_10(n) :- d215_owner(n).

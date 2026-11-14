@@ -1,0 +1,272 @@
+.policy "ruff-pyi030-unnecessary-literal-union" revision 1
+.guests off
+.description "Merge the Literal members of a union into a single Literal listing all the values; it means the same thing and is shorter."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PYI030(n): a finding at node n, from clause `unnecessary-literal-union`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI030(at: node, u: node) "Merge the `Literal[...]` members of this union into one `Literal[...]`, keeping the other members, e.g. `Literal[1, 2] | str`; leave it alone if fewer than two members are `Literal[...]`."
+    suppress noqa "PYI030"
+PYI030(U, n) :- pyi030_top_literal_union(n), node(_, n, _, _, _), U = n.
+PYI030(U, n) :- pyi030_string_union(n, U).
+
+// literal_name(n): the JSON util `literal-name`, used where the JSON says `matches: "literal-name"`
+.decl pyi030_literal_name(n: node)
+pyi030_literal_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Literal")
+    ; sym_of(n, "typing_extensions.Literal")
+    ; sym_of(n, "_typeshed.Literal")
+    ).
+
+pyi030_literal_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi030_literal_name(c1).
+
+// union_name(n): the JSON util `union-name`, used where the JSON says `matches: "union-name"`
+.decl pyi030_union_name(n: node)
+pyi030_union_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Union")
+    ; sym_of(n, "typing_extensions.Union")
+    ; sym_of(n, "_typeshed.Union")
+    ).
+
+pyi030_union_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi030_union_name(c1).
+
+// literal(n): the JSON util `literal`, used where the JSON says `matches: "literal"`
+.decl pyi030_literal(n: node)
+pyi030_literal(n) :- kind(n, "subscript"), field(n, "value", c1), pyi030_literal_name(c1).
+pyi030_literal(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "identifier"),
+    pyi030_literal_name(c2).
+
+// union_subscript(n): the JSON util `union-subscript`, used where the JSON says `matches: "union-subscript"`
+.decl pyi030_union_subscript(n: node)
+pyi030_union_subscript(n) :- kind(n, "subscript"), field(n, "value", c1), pyi030_union_name(c1).
+pyi030_union_subscript(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "identifier"),
+    pyi030_union_name(c2).
+
+// union_expr(n): the JSON util `union-expr`, used where the JSON says `matches: "union-expr"`
+.decl pyi030_union_expr(n: node)
+pyi030_union_expr(n) :- pyi030_bar(n).
+pyi030_union_expr(n) :- kind(n, "union_type").
+pyi030_union_expr(n) :- pyi030_union_subscript(n).
+
+// sole_slot(n): the JSON util `sole-slot`, used where the JSON says `matches: "sole-slot"`
+.decl pyi030_sole_slot(n: node)
+pyi030_sole_slot(n) :- pyi030_tok_follows_1(n), pyi030_tok_precedes_2(n).
+pyi030_sole_slot(n) :- child(p15, n, _),
+    (kind(p15, "type") ; kind(p15, "parenthesized_expression")), pyi030_sole_slot(p15).
+
+// sole_tuple(n): the JSON util `sole-tuple`, used where the JSON says `matches: "sole-tuple"`
+.decl pyi030_sole_tuple(n: node)
+pyi030_sole_tuple(n) :- kind(n, "tuple"), pyi030_sole_slot(n).
+
+// wrapper(n): the JSON util `wrapper`, used where the JSON says `matches: "wrapper"`
+.decl pyi030_wrapper(n: node)
+pyi030_wrapper(n) :- (kind(n, "type") ; kind(n, "type_parameter") ; kind(n, "parenthesized_expression")).
+pyi030_wrapper(n) :- pyi030_sole_tuple(n).
+
+// container(n): the JSON util `container`, used where the JSON says `matches: "container"`
+.decl pyi030_container(n: node)
+pyi030_container(n) :- pyi030_union_expr(n).
+pyi030_container(n) :- pyi030_wrapper(n).
+
+// top_literal_union(n): the JSON util `top-literal-union`, used where the JSON says `matches: "top-literal-union"`
+.decl pyi030_top_literal_union(n: node)
+pyi030_top_literal_union(n) :- pyi030_union_expr(n),
+    count : { pyi030_stop_1_within(n, p1), pyi030_union_expr(p1) } = 0,
+    k3 = count : { pyi030_stop_2_within(c2, n), pyi030_literal(c2) }, k3 >= 2.
+
+// string_union(n): the JSON util `string-union`, used where the JSON says `matches: "string-union"`
+//   U: metavariable this relation binds for the calling rule
+.decl pyi030_string_union(n: node, u: loc)
+pyi030_string_union(n, U) :- pyi030_simple_string(n, U).
+pyi030_string_union(n, U) :- pyi030_complex_string(n, U).
+
+// simple_string(n): the JSON util `simple-string`, used where the JSON says `matches: "simple-string"`
+//   U: metavariable this relation binds for the calling rule
+.decl pyi030_simple_string(n: node, u: loc)
+pyi030_simple_string(n, U) :- kind(n, "string"),
+    count : { has(n, c1, "escape_sequence"), node(_, c1, _, _, _) } = 0,
+    parsed(n, "annotation", r2), within(c3, r2), pyi030_alt_3(c3, U).
+
+// complex_string(n): the JSON util `complex-string`, used where the JSON says `matches: "complex-string"`
+//   U: metavariable this relation binds for the calling rule
+.decl pyi030_complex_string(n: node, u: loc)
+pyi030_complex_string(n, U) :-
+    ( kind(n, "concatenated_string")
+    ; kind(n, "string"), has(n, c1, "escape_sequence"), node(_, c1, _, _, _)
+    ),
+    parsed(n, "annotation", r2), pyi030_alt_11(r2, U).
+
+// bar(n): the JSON util `bar`, used where the JSON says `matches: "bar"`
+.decl pyi030_bar(n: node)
+pyi030_bar(n) :- kind(n, "binary_operator"), field(n, "operator", c1), glob("|", c1).
+
+// name_subscript(n): the JSON util `name-subscript`, used where the JSON says `matches: "name-subscript"`
+.decl pyi030_name_subscript(n: node)
+pyi030_name_subscript(n) :- kind(n, "subscript"), field(n, "value", c1),
+    kind(c1, "identifier").
+
+// name_ref(n): the JSON util `name-ref`, used where the JSON says `matches: "name-ref"`
+.decl pyi030_name_ref(n: node)
+pyi030_name_ref(n) :- kind(n, "identifier"), !pyi030_alt_18(n).
+
+// last_name(n): the JSON util `last-name`, used where the JSON says `matches: "last-name"`
+.decl pyi030_last_name(n: node)
+pyi030_last_name(n) :- pyi030_name_ref(n), !pyi030_alt_21(n).
+
+// attr_subscript(n): the JSON util `attr-subscript`, used where the JSON says `matches: "attr-subscript"`
+.decl pyi030_attr_subscript(n: node)
+pyi030_attr_subscript(n) :- kind(n, "subscript"), child(n, c1, _), kind(c1, "attribute"),
+    match("[^.\\s]+\\s*\\.\\s*Literal", c1), pyi030_tok_precedes_5(c1).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi030_tok_follows_1(n: node)
+.stored pyi030_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi030_tok_follows_1(n) :- next_sibling(s1, n), glob("\\[", s1).
+pyi030_tok_follows_1(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("\\[", t2).
+pyi030_tok_follows_1(n) :- structural_before(n, g3), match("(?s)^(?:.*(?:\\[)\\s*)$", g3).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^\\]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi030_tok_precedes_2(n: node)
+.stored pyi030_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi030_tok_precedes_2(n) :- next_sibling(n, s8), glob("\\]", s8).
+pyi030_tok_precedes_2(n) :- structural_after(n, g10), match("\\s*", g10), child(p11, n, _),
+    node(_, n, _, _, en14), o12 = en14 + strlen(g10), token(p11, _, t9, o12, _),
+    match("\\]", t9).
+pyi030_tok_precedes_2(n) :- structural_after(n, g10), match("(?s)^(?:\\s*(?:\\]).*)$", g10).
+
+// all_expr: x is a module-level `__all__ =`, `+=` or `: T =` value, or a part of one that lists names
+//   (Ruff's extract_dunder_all_names: `+` chains, parentheses, walrus values, list(...) and tuple(...))
+.decl pyi030_all_expr(x: node)
+pyi030_all_expr(x) :- (kind(st, "assignment") ; kind(st, "augmented_assignment")),
+    field(st, "left", l), kind(l, "identifier"), text(l, "__all__"), child(es, st, _),
+    kind(es, "expression_statement"), child(m, es, _), kind(m, "module"),
+    field(st, "right", x).
+pyi030_all_expr(y) :- pyi030_all_expr(x), kind(x, "assignment"), field(x, "right", y).
+pyi030_all_expr(y) :- pyi030_all_expr(x), kind(x, "binary_operator"),
+    (field(x, "left", y) ; field(x, "right", y)).
+pyi030_all_expr(y) :- pyi030_all_expr(x), kind(x, "parenthesized_expression"), child(x, y, _),
+    !kind(y, "comment").
+pyi030_all_expr(y) :- pyi030_all_expr(x), kind(x, "named_expression"), field(x, "value", y).
+pyi030_all_expr(y) :- pyi030_all_expr(x), kind(x, "call"), field(x, "function", f),
+    kind(f, "identifier"), (text(f, "list") ; text(f, "tuple")),
+    field(x, "arguments", a), child(a, y, _).
+
+// all_entry: string e is an entry of a module `__all__` definition, exporting the name x
+.decl pyi030_all_entry(e: node, x: symbol)
+pyi030_all_entry(e, x) :- pyi030_all_expr(l), (kind(l, "list") ; kind(l, "tuple")), child(l, e, _),
+    (kind(e, "string") ; kind(e, "concatenated_string")),
+    count : { within(i, e), kind(i, "interpolation") } = 0, str(e, x).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi030_tok_follows_3(n: node)
+.stored pyi030_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi030_tok_follows_3(n) :- next_sibling(s4, n), glob(".", s4).
+pyi030_tok_follows_3(n) :- structural_before(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, st9, _), o8 = st9 - strlen(g6), token(p7, _, t5, _, o8),
+    match("\\.", t5).
+pyi030_tok_follows_3(n) :- structural_before(n, g6),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g6).
+
+// tok_precedes_4(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi030_tok_precedes_4(n: node)
+.stored pyi030_tok_precedes_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi030_tok_precedes_4(n) :- next_sibling(n, s11), glob("=", s11).
+pyi030_tok_precedes_4(n) :- structural_after(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, _, en17), o15 = en17 + strlen(g13), token(p14, _, t12, o15, _),
+    match("=", t12).
+pyi030_tok_precedes_4(n) :- structural_after(n, g13),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g13).
+
+// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi030_tok_precedes_5(n: node)
+.stored pyi030_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi030_tok_precedes_5(n) :- next_sibling(n, s2), glob("\\[", s2).
+pyi030_tok_precedes_5(n) :- structural_after(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, _, en8), o6 = en8 + strlen(g4), token(p5, _, t3, o6, _),
+    match("\\[", t3).
+pyi030_tok_precedes_5(n) :- structural_after(n, g4), match("(?s)^(?:\\s*(?:\\[).*)$", g4).
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi030_stop_1(n: node)
+pyi030_stop_1(n) :- node(_, n, _, _, _), !pyi030_wrapper(n).
+
+// stop_2(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi030_stop_2(n: node)
+pyi030_stop_2(n) :- node(_, n, _, _, _), !pyi030_container(n).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+//   U: metavariable this relation binds for the calling rule
+.decl pyi030_alt_3(n: node, u: loc)
+pyi030_alt_3(n, U) :- pyi030_top_literal_union(n), U = n.
+pyi030_alt_3(n, U) :- pyi030_string_union(n, U).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi030_alt_10(n: node)
+pyi030_alt_10(n) :- pyi030_bar(n).
+pyi030_alt_10(n) :- kind(n, "parenthesized_expression").
+
+// stop_12(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi030_stop_12(n: node)
+pyi030_stop_12(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// stop_13(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi030_stop_13(n: node)
+pyi030_stop_13(n) :- node(_, n, _, _, _), !pyi030_alt_10(n).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+//   U: metavariable this relation binds for the calling rule
+.decl pyi030_alt_11(n: node, u: loc)
+pyi030_alt_11(n, U) :- within(c1, n), pyi030_string_union(c1, U).
+pyi030_alt_11(n, U) :- within(c2, n), pyi030_last_name(c2), pyi030_literal_name(c2), within(c3, n), pyi030_bar(c3),
+    count : { pyi030_stop_12_within(c3, p4), pyi030_bar(p4) } = 0,
+    k6 = count : { pyi030_stop_13_within(c5, c3), pyi030_name_subscript(c5) }, k6 >= 2, U = c3.
+pyi030_alt_11(n, U) :- within(c7, n), pyi030_last_name(c7),
+    (sym_of(c7, "typing") ; sym_of(c7, "typing_extensions") ; sym_of(c7, "_typeshed")),
+    within(c8, n), pyi030_bar(c8), count : { pyi030_stop_12_within(c8, p9), pyi030_bar(p9) } = 0,
+    k11 = count : { pyi030_stop_13_within(c10, c8), pyi030_attr_subscript(c10) }, k11 >= 2,
+    U = c8.
+
+// alt_18(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi030_alt_18(n: node)
+pyi030_alt_18(n) :- docof(n, d2), modnode(d2, m3),
+    ( kind(n, "identifier"), !bind_only(n), miss(n, x1)
+    ; (kind(n, "string") ; kind(n, "concatenated_string")), pyi030_all_entry(n, x1), !bound_in(m3, x1)
+    ),
+    !builtin(x1), !star(m3).
+pyi030_alt_18(n) :- pyi030_tok_follows_3(n).
+pyi030_alt_18(n) :- pyi030_tok_precedes_4(n).
+
+// alt_19(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi030_alt_19(n: node)
+pyi030_alt_19(n) :- pyi030_name_ref(n).
+pyi030_alt_19(n) :- within(c1, n), pyi030_name_ref(c1).
+
+// alt_21(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi030_alt_21(n: node)
+pyi030_alt_21(n) :- precedes(n, s1), pyi030_alt_19(s1).
+pyi030_alt_21(n) :- within(n, p3), precedes(p3, s4), pyi030_alt_19(s4).
+
+// stop_1_within: within_stop over the stop set stop_1, read inside an aggregate
+.decl pyi030_stop_1_within(n: node, a: node)
+pyi030_stop_1_within(x, y) :- within_stop(x, y, pyi030_stop_1).
+
+// stop_2_within: within_stop over the stop set stop_2, read inside an aggregate
+.decl pyi030_stop_2_within(n: node, a: node)
+pyi030_stop_2_within(x, y) :- within_stop(x, y, pyi030_stop_2).
+
+// stop_12_within: within_stop over the stop set stop_12, read inside an aggregate
+.decl pyi030_stop_12_within(n: node, a: node)
+pyi030_stop_12_within(x, y) :- within_stop(x, y, pyi030_stop_12).
+
+// stop_13_within: within_stop over the stop set stop_13, read inside an aggregate
+.decl pyi030_stop_13_within(n: node, a: node)
+pyi030_stop_13_within(x, y) :- within_stop(x, y, pyi030_stop_13).

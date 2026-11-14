@@ -1,0 +1,24 @@
+.policy "ruff-f541-f-string-missing-placeholders" revision 2
+.guests off
+.description "Remove the f prefix from Python f-strings that have no placeholders; it suggests interpolation that never happens."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F541(n): a finding at node n, from clause `f-string-missing-placeholders`.
+// Each rule below is one way the JSON `rule` can match.
+.violation F541(at: node) "Remove the `f` prefix and unescape doubled braces to keep this string's runtime value unchanged."
+    suppress noqa "F541"
+F541(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "string_start"),
+    match("[A-Za-z]*[fF].*", c1), !f541_alt_1(n).
+
+// has_placeholder(n): the JSON util `has-placeholder`, used where the JSON says `matches: "has-placeholder"`
+.decl f541_has_placeholder(n: node)
+f541_has_placeholder(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "interpolation").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl f541_alt_1(n: node)
+f541_alt_1(n) :- f541_has_placeholder(n).
+f541_alt_1(n) :- child(p1, n, _), kind(p1, "concatenated_string"), child(p1, c2, _),
+    f541_has_placeholder(c2).

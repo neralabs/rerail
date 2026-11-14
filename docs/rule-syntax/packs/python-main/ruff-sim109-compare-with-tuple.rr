@@ -1,0 +1,121 @@
+.policy "ruff-sim109-compare-with-tuple" revision 1
+.guests off
+.description "Use a membership test against a tuple instead of several or-chained equality checks of the same variable."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// SIM109(n): a finding at node n, from clause `compare-with-tuple`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation SIM109(at: node, first: loc, n: loc) "Use `{n} in (...)` instead of multiple equality comparisons"
+    suppress noqa "SIM109"
+SIM109(n, FIRST, N) :- kind(n, "boolean_operator"), sim109_or_op(n), !sim109_alt_1(n),
+    within_stop(c11, n, sim109_stop_10),
+    count : { sim109_or_op(c11) } = 0, count : { precedes(s1_2, c11), (!sim109_or_op(s1_2), sim109_eq_target(s1_2, N) ; sim109_or_op(s1_2), sim109_stop_10_within(c1_2, s1_2), !sim109_or_op(c1_2), sim109_eq_target(c1_2, N)) } = 0,
+    sim109_eq_target(c11, N), node(_, c11, _, _, _), FIRST = c11, within_stop(c11, p14, sim109_stop_10), sim109_or_op(p14),
+    count : { child(p15, p14, _), sim109_or_op(p15) } = 0, within_stop(c16, p14, sim109_stop_10),
+    !sim109_or_op(c16), sim109_eq_target(c16, N), node(_, c16, _, _, _), SECOND = c16,
+    text(SECOND, t17), text(FIRST, t18), t17 != t18.
+
+// or_op(n): the JSON util `or-op`, used where the JSON says `matches: "or-op"`
+.decl sim109_or_op(n: node)
+sim109_or_op(n) :- kind(n, "boolean_operator"), sim109_tok_has_1(n).
+
+// eq_target(n): the JSON util `eq-target`, used where the JSON says `matches: "eq-target"`
+//   N: metavariable this relation binds for the calling rule
+.decl sim109_eq_target(n: node, n_mv: loc)
+sim109_eq_target(n, N) :- kind(n, "comparison_operator"), k9 = count : { sim109_tok_has_2(n) },
+    k9 <= 3, child(n, c10, _), kind(c10, "identifier"), sim109_tok_precedes_3(c10),
+    node(_, c10, _, _, _), N = c10, child(n, c18, _), kind(c18, "identifier"), sim109_tok_follows_4(c18).
+sim109_eq_target(n, N) :- kind(n, "parenthesized_expression"), child(n, c26, _),
+    sim109_eq_target(c26, N).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim109_tok_has_1(n: node)
+.stored sim109_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim109_tok_has_1(n) :- child(n, c1, _), glob("or", c1).
+sim109_tok_has_1(n) :- op(n, t2), match("or", t2).
+sim109_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:or)(?:\\W.*)?)$", g3).
+sim109_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:or)(?:\\W.*)?)$", g3).
+sim109_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:or)(?:\\W.*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim109_tok_has_2(n: node)
+.stored sim109_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim109_tok_has_2(n) :- child(n, c1, _), match("(?s).*..*", c1).
+sim109_tok_has_2(n) :- op(n, t2), match("(?s).*..*", t2).
+sim109_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3), match("(?s)^.*\\S.*$", g3).
+sim109_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3), match("(?s)^.*\\S.*$", g3).
+sim109_tok_has_2(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^.*\\S.*$", g3).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^==$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim109_tok_precedes_3(n: node)
+.stored sim109_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim109_tok_precedes_3(n) :- next_sibling(n, s11), glob("==", s11).
+sim109_tok_precedes_3(n) :- structural_after(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, _, en17), o15 = en17 + strlen(g13), token(p14, _, t12, o15, _),
+    match("==", t12).
+sim109_tok_precedes_3(n) :- structural_after(n, g13),
+    match("(?s)^(?:\\s*(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g13).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^==$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim109_tok_follows_4(n: node)
+.stored sim109_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim109_tok_follows_4(n) :- next_sibling(s19, n), glob("==", s19).
+sim109_tok_follows_4(n) :- structural_before(n, g21), match("\\s*", g21), child(p22, n, _),
+    node(_, n, _, st24, _), o23 = st24 - strlen(g21), token(p22, _, t20, _, o23),
+    match("==", t20).
+sim109_tok_follows_4(n) :- structural_before(n, g21),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)\\s*)$", g21).
+
+// code_comment_start(p, o): a comment child of p starts at offset o
+.decl sim109_code_comment_start(p: node, o: number)
+sim109_code_comment_start(p, o) :- child(p, c, _), comment(c, _), node(_, c, _, o, _).
+
+// code_after_line_c(x, l): the line of the code after x (main's token_after, comments counted as code), read from the source gap: the tape leaves out the tokens its grammar implies
+.decl sim109_code_after_line_c(x: node, l: number)
+sim109_code_after_line_c(x, l) :- structural_after(x, g), match("(?s)\\s*\\S.*", g),
+    ws = @replace_all(g, "(?s)\\S.*", ""),
+    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), end_line(x, lx), l = lx + k.
+sim109_code_after_line_c(x, l) :- structural_after(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, _, e), o = e + strlen(g), token(p, _, _, o, _),
+    k = strlen(g) - strlen(@replace_all(g, "\n", "")), end_line(x, lx), l = lx + k.
+sim109_code_after_line_c(x, l) :- structural_after(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, _, e), node(_, p, _, _, pe), pe = e + strlen(g),
+    sim109_code_after_line_c(p, l).
+
+// code_after_line(x, l): the line of the code after x (main's token_after, comments passed over), read from the source gap: the tape leaves out the tokens its grammar implies
+.decl sim109_code_after_line(x: node, l: number)
+sim109_code_after_line(x, l) :- structural_after(x, g), match("(?s)\\s*\\S.*", g),
+    ws = @replace_all(g, "(?s)\\S.*", ""),
+    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), end_line(x, lx), l = lx + k.
+sim109_code_after_line(x, l) :- structural_after(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, _, e), o = e + strlen(g), token(p, _, _, o, _),
+    !sim109_code_comment_start(p, o), k = strlen(g) - strlen(@replace_all(g, "\n", "")),
+    end_line(x, lx), l = lx + k.
+sim109_code_after_line(x, l) :- structural_after(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, _, e), node(_, p, _, _, pe), pe = e + strlen(g),
+    sim109_code_after_line(p, l).
+sim109_code_after_line(x, l) :- structural_after(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, _, e), o = e + strlen(g), child(p, c, _), node(_, c, _, o, _),
+    comment(c, _), sim109_code_after_line(c, l).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl sim109_alt_1(n: node)
+sim109_alt_1(n) :- child(p1, n, _), sim109_or_op(p1).
+sim109_alt_1(n) :- has(n, c2, "comment").
+sim109_alt_1(n) :- sim109_code_after_line_c(n, l6), end_line(n, l5), k3 = l6 - l5, k3 = 0,
+    count : { sim109_code_after_line(n, l10), end_line(n, l9), k7 = l10 - l9, k7 = 0 } = 0.
+
+// stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl sim109_stop_10(n: node)
+sim109_stop_10(n) :- node(_, n, _, _, _), !sim109_or_op(n).
+
+// stop_10_within: within_stop over the stop set stop_10, read inside an aggregate
+.decl sim109_stop_10_within(n: node, a: node)
+sim109_stop_10_within(x, y) :- within_stop(x, y, sim109_stop_10).

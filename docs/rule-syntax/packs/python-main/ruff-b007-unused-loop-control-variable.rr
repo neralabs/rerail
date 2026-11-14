@@ -1,0 +1,168 @@
+.policy "ruff-b007-unused-loop-control-variable" revision 1
+.guests off
+.description "Rename for-loop variables the loop body never uses to start with an underscore; it shows the value is deliberately ignored."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// in_target(n): the JSON util `in-target`, used where the JSON says `matches: "in-target"`
+.decl b007_in_target(n: node)
+b007_in_target(n) :- b007_tok_precedes_1(n), child(p8, n, _), kind(p8, "for_statement"),
+    count : { child(p8, c9, _), kind(c9, "block"), has(c9, c10, "identifier"), node(_, c10, _, _, _), NAME = c10, !b007_not_a_name(c10) } = 0.
+b007_in_target(n) :- child(p11, n, _), kind(p11, k12), b007_set_1(k12), b007_in_target(p11).
+
+// magic(n): the JSON util `magic`, used where the JSON says `matches: "magic"`
+.decl b007_magic(n: node)
+b007_magic(n) :- kind(n, "call"), child(n, c1, _), kind(c1, "identifier"),
+    glob("{locals,globals,vars,exec,eval}", c1), next_sibling(c1, s2),
+    kind(s2, "argument_list").
+
+// not_a_name(n): the JSON util `not-a-name`, used where the JSON says `matches: "not-a-name"`
+.decl b007_not_a_name(n: node)
+b007_not_a_name(n) :- b007_tok_follows_2(n).
+b007_not_a_name(n) :- child(p8, n, _), kind(p8, "keyword_argument"), b007_tok_precedes_3(n).
+b007_not_a_name(n) :- b007_tok_follows_4(n).
+b007_not_a_name(n) :- child(p23, n, _),
+    (kind(p23, "parameters") ; kind(p23, "lambda_parameters")).
+b007_not_a_name(n) :- child(p24, n, _),
+    ( kind(p24, "default_parameter")
+    ; kind(p24, "typed_parameter")
+    ; kind(p24, "typed_default_parameter")
+    ),
+    child(p25, p24, _), (kind(p25, "parameters") ; kind(p25, "lambda_parameters")),
+    b007_tok_precedes_5(n).
+b007_not_a_name(n) :- child(p33, n, _),
+    (kind(p33, "list_splat_pattern") ; kind(p33, "dictionary_splat_pattern")),
+    child(p34, p33, _),
+    ( kind(p34, "parameters")
+    ; kind(p34, "lambda_parameters")
+    ; kind(p34, "typed_parameter")
+    ).
+
+b007_not_a_name(n) :- child(p35, n, _), kind(p35, "dotted_name"), !b007_tok_has_6(p35),
+    child(p44, p35, _), (kind(p44, "case_pattern") ; kind(p44, "keyword_pattern")).
+b007_not_a_name(n) :- child(p45, n, _), kind(p45, "keyword_pattern"), b007_tok_precedes_7(n).
+b007_not_a_name(n) :- child(p53, n, _), kind(p53, "splat_pattern").
+b007_not_a_name(n) :- b007_tok_follows_8(n), child(p61, n, _), kind(p61, "as_pattern"),
+    child(p62, p61, _), kind(p62, "case_pattern").
+b007_not_a_name(n) :- within(n, p63), kind(p63, k64), b007_set_2(k64).
+b007_not_a_name(n) :- child(p65, n, _), kind(p65, "as_pattern_target"), child(p66, p65, _),
+    kind(p66, "as_pattern"), child(p67, p66, _), kind(p67, "except_clause").
+
+// uncertain(n): the JSON util `uncertain`, used where the JSON says `matches: "uncertain"`
+.decl b007_uncertain(n: node)
+b007_uncertain(n) :- b007_demand_uncertain(n), b007_up_1(n, p1), child(p1, c2, _), kind(c2, "block"),
+    within(c3, c2), b007_magic(c3).
+
+// B007(n, detail): findings from clauses `unused-loop-control-variable`, `unused-loop-control-variable-uncertain`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation B007(at: node, name: loc, detail: symbol) "Loop control variable `{name}` {detail} used within loop body"
+    suppress noqa "B007"
+B007(n, NAME, "not") :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
+    !match("(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))", n), b007_in_target(n), !b007_uncertain(n).
+B007(n, NAME, "may not be") :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
+    !match("(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))", n), b007_in_target(n), b007_uncertain(n).
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^in$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b007_tok_precedes_1(n: node)
+.stored b007_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b007_tok_precedes_1(n) :- next_sibling(n, s1), glob("in", s1).
+b007_tok_precedes_1(n) :- structural_after(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, _, en7), o5 = en7 + strlen(g3), token(p4, _, t2, o5, _),
+    match("in", t2).
+b007_tok_precedes_1(n) :- structural_after(n, g3),
+    match("(?s)^(?:\\s*(?:in)(?:\\W.*)?)$", g3).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b007_tok_follows_2(n: node)
+.stored b007_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b007_tok_follows_2(n) :- next_sibling(s1, n), glob(".", s1).
+b007_tok_follows_2(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("\\.", t2).
+b007_tok_follows_2(n) :- structural_before(n, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g3).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b007_tok_precedes_3(n: node)
+.stored b007_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b007_tok_precedes_3(n) :- next_sibling(n, s9), glob("=", s9).
+b007_tok_precedes_3(n) :- structural_after(n, g11), match("\\s*", g11), child(p12, n, _),
+    node(_, n, _, _, en15), o13 = en15 + strlen(g11), token(p12, _, t10, o13, _),
+    match("=", t10).
+b007_tok_precedes_3(n) :- structural_after(n, g11),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g11).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^(def|class)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b007_tok_follows_4(n: node)
+.stored b007_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b007_tok_follows_4(n) :- next_sibling(s16, n), glob("{def,class}", s16).
+b007_tok_follows_4(n) :- structural_before(n, g18), match("\\s*", g18), child(p19, n, _),
+    node(_, n, _, st21, _), o20 = st21 - strlen(g18), token(p19, _, t17, _, o20),
+    match("(def|class)", t17).
+b007_tok_follows_4(n) :- structural_before(n, g18),
+    match("(?s)^(?:(?:.*\\W)?(?:def)\\s*|(?:.*\\W)?(?:class)\\s*)$", g18).
+
+// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^[=:]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b007_tok_precedes_5(n: node)
+.stored b007_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b007_tok_precedes_5(n) :- next_sibling(n, s26), glob("[=:]", s26).
+b007_tok_precedes_5(n) :- structural_after(n, g28), match("\\s*", g28), child(p29, n, _),
+    node(_, n, _, _, en32), o30 = en32 + strlen(g28), token(p29, _, t27, o30, _),
+    match("[=:]", t27).
+b007_tok_precedes_5(n) :- structural_after(n, g28),
+    match("(?s)^(?:\\s*(?:[=:])(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g28).
+
+// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b007_tok_has_6(n: node)
+.stored b007_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b007_tok_has_6(n) :- child(n, c36, _), glob(".", c36).
+b007_tok_has_6(n) :- op(n, t37), match("\\.", t37).
+b007_tok_has_6(n) :- child(n, c43, _), structural_before(c43, g38),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g38).
+b007_tok_has_6(n) :- child(n, c43, _), structural_after(c43, g38),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g38).
+b007_tok_has_6(n) :- node_text(n, g38), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g38).
+
+// tok_precedes_7(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b007_tok_precedes_7(n: node)
+.stored b007_tok_precedes_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b007_tok_precedes_7(n) :- next_sibling(n, s46), glob("=", s46).
+b007_tok_precedes_7(n) :- structural_after(n, g48), match("\\s*", g48), child(p49, n, _),
+    node(_, n, _, _, en52), o50 = en52 + strlen(g48), token(p49, _, t47, o50, _),
+    match("=", t47).
+b007_tok_precedes_7(n) :- structural_after(n, g48),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g48).
+
+// tok_follows_8(n): an earlier sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b007_tok_follows_8(n: node)
+.stored b007_tok_follows_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b007_tok_follows_8(n) :- next_sibling(s54, n), glob("as", s54).
+b007_tok_follows_8(n) :- structural_before(n, g56), match("\\s*", g56), child(p57, n, _),
+    node(_, n, _, st59, _), o58 = st59 - strlen(g56), token(p57, _, t55, _, o58),
+    match("as", t55).
+b007_tok_follows_8(n) :- structural_before(n, g56),
+    match("(?s)^(?:(?:.*\\W)?(?:as)\\s*)$", g56).
+
+// demand_uncertain: the nodes uncertain is asked at (it looks at every ancestor of every node)
+.decl b007_demand_uncertain(n: node)
+b007_demand_uncertain(n) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, b007_in_target(n).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl b007_up_1(n: node, p: node)
+b007_up_1(n, p) :- b007_demand_uncertain(n), within_stop(n, p, "for_statement"),
+    kind(p, "for_statement").
+
+// set_1: node kinds from a JSON `any`
+.decl b007_set_1(v: symbol)
+b007_set_1("pattern_list"). b007_set_1("tuple_pattern"). b007_set_1("list_pattern").
+b007_set_1("list_splat_pattern"). b007_set_1("parenthesized_expression").
+
+// set_2: node kinds from a JSON `any`
+.decl b007_set_2(v: symbol)
+b007_set_2("import_statement"). b007_set_2("import_from_statement").
+b007_set_2("future_import_statement"). b007_set_2("global_statement").
+b007_set_2("nonlocal_statement").

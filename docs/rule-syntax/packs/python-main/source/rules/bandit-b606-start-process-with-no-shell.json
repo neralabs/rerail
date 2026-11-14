@@ -1,0 +1,63 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b606-start-process-with-no-shell",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Validate input passed to the os exec, spawn and startfile functions; they start whatever program and arguments they receive.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit-b606",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "os.execl",
+                  "os.execle",
+                  "os.execlp",
+                  "os.execlpe",
+                  "os.execv",
+                  "os.execve",
+                  "os.execvp",
+                  "os.execvpe",
+                  "os.spawnl",
+                  "os.spawnle",
+                  "os.spawnlp",
+                  "os.spawnlpe",
+                  "os.spawnv",
+                  "os.spawnve",
+                  "os.spawnvp",
+                  "os.spawnvpe",
+                  "os.startfile"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B606",
+        "anchor": "witness.span",
+        "message": "Validate any untrusted input passed to this os exec, spawn or startfile call; it starts whatever program and arguments it receives.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B606"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

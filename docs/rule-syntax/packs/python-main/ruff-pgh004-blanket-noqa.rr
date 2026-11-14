@@ -1,0 +1,74 @@
+.policy "ruff-pgh004-blanket-noqa" revision 1
+.guests off
+.description "Name specific rule codes in noqa comments instead of suppressing every check, and put a colon before the codes; a blanket noqa hides unrelated problems."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// own_line(n): the JSON util `own-line`, used where the JSON says `matches: "own-line"`
+.decl pgh004_own_line(n: node)
+pgh004_own_line(n) :- node(_, n, _, _, _),
+    count : { pgh004_code_before_line(n, l3), line(n, l4), k1 = l4 - l3, k1 = 0 } = 0.
+
+// missing_colon(n): the JSON util `missing-colon`, used where the JSON says `matches: "missing-colon"`
+//   D: metavariable this relation binds for the calling rule
+.decl pgh004_missing_colon(n: node, d: loc)
+pgh004_missing_colon(n, D) :- kind(n, "comment"),
+    match("[^#]*(?:#\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)*(?<D>#\\s*(?i:noqa)\\s+)[\\s,]*[A-Z]+[0-9]+(?:[\\s,]*[A-Z]+[0-9]+)*(?:$|#|[\\s,]+(?:$|[^\\s,A-Z]|[A-Z]+(?:[^A-Z0-9]|$))).*", n).
+
+// exempt_file(n): the JSON util `exempt-file`, used where the JSON says `matches: "exempt-file"`
+.decl pgh004_exempt_file(n: node)
+pgh004_exempt_file(n) :- kind(n, "comment"), pgh004_own_line(n),
+    match("[^#]*(?:#\\s*(?:[^\\s#rf][^#]*|r(?:[^#u][^#]*)?|ru(?:[^#f][^#]*)?|ruf(?:[^#f][^#]*)?|f(?:[^#l][^#]*)?|fl(?:[^#a][^#]*)?|fla(?:[^#k][^#]*)?|flak(?:[^#e][^#]*)?|flake(?:[^#8][^#]*)?|(?:ruff|flake8)\\s*(?:[^\\s#:][^#]*)?|(?:ruff|flake8)\\s*:\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)?)*#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)\\s*:[\\s,]*(?:[A-Z]+[0-9]+[\\s,]*)*?PGH004(?:[\\s,]*[A-Z]+[0-9]+)*(?:$|#|[\\s,]+(?:$|[^\\s,A-Z]|[A-Z]+(?:[^A-Z0-9]|$))).*", n).
+
+// enabled(n): the JSON util `enabled`, used where the JSON says `matches: "enabled"`
+.decl pgh004_enabled(n: node)
+pgh004_enabled(n) :- pgh004_demand_enabled(n), inside(n, p1, "module"),
+    count : { within(c2, p1), pgh004_exempt_file(c2) } = 0.
+
+// PGH004(n, detail): findings from clauses `blanket-noqa`, `noqa-missing-colon`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PGH004(at: node, d: node, detail: symbol) "{detail}."
+PGH004(D, n, "Replace the blanket `noqa` with the codes it should silence, as in `# noqa: F401`, so other problems on this line still surface; delete it if nothing needs silencing") :- kind(n, "comment"),
+    match("[^#]*(?:#\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)*(?<D>#\\s*(?i:noqa))(?:$|#|\\s+(?:$|[^\\s:])).*", n),
+    !pgh004_missing_colon(n, D), pgh004_enabled(n).
+PGH004(D, n, "Add a colon after `noqa` before the codes, as in `# noqa: F401`; without it the comment silences every check on the line, not just those codes") :- pgh004_missing_colon(n, D),
+    pgh004_enabled(n).
+
+// PGH004_blanket_file_noqa(n): a finding at node n, from clause `blanket-file-noqa`.
+// Each rule below is one way the JSON `rule` can match.
+.violation PGH004_blanket_file_noqa(at: node) code "PGH004" "Name the specific rule codes in this file-wide `noqa` comment, as in `# ruff: noqa: F401`, instead of silencing every check for the whole file."
+PGH004_blanket_file_noqa(n) :- kind(n, "comment"),
+    match("[^#]*(?:#\\s*(?:[^\\s#rf][^#]*|r(?:[^#u][^#]*)?|ru(?:[^#f][^#]*)?|ruf(?:[^#f][^#]*)?|f(?:[^#l][^#]*)?|fl(?:[^#a][^#]*)?|fla(?:[^#k][^#]*)?|flak(?:[^#e][^#]*)?|flake(?:[^#8][^#]*)?|(?:ruff|flake8)\\s*(?:[^\\s#:][^#]*)?|(?:ruff|flake8)\\s*:\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)?)*#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)(?:$|#|\\s+(?:$|[^\\s:])).*", n),
+    pgh004_own_line(n), pgh004_enabled(n).
+
+// code_comment_end(p, o): a comment child of p ends at offset o
+.decl pgh004_code_comment_end(p: node, o: number)
+pgh004_code_comment_end(p, o) :- child(p, c, _), comment(c, _), node(_, c, _, _, o).
+
+// code_before_line(x, l): the line of the code before x (main's token_before, comments passed over), read from the source gap: the tape leaves out the tokens its grammar implies
+.decl pgh004_code_before_line(x: node, l: number)
+pgh004_code_before_line(x, l) :- structural_before(x, g), match("(?s).*\\S\\s*", g),
+    ws = @replace_all(g, "(?s)^.*\\S", ""),
+    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), line(x, lx), l = lx - k.
+pgh004_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, s, _), o = s - strlen(g), token(p, _, _, _, o),
+    !pgh004_code_comment_end(p, o), k = strlen(g) - strlen(@replace_all(g, "\n", "")),
+    line(x, lx), l = lx - k.
+pgh004_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, s, _), node(_, p, _, ps, _), ps = s - strlen(g),
+    pgh004_code_before_line(p, l).
+pgh004_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, s, _), o = s - strlen(g), child(p, c, _), node(_, c, _, _, o),
+    comment(c, _), pgh004_code_before_line(c, l).
+
+// demand_enabled: the nodes enabled is asked at (it looks at every ancestor of every node)
+.decl pgh004_demand_enabled(n: node)
+pgh004_demand_enabled(n) :- kind(n, "comment"),
+    match("[^#]*(?:#\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)*(?<D>#\\s*(?i:noqa))(?:$|#|\\s+(?:$|[^\\s:])).*", n).
+pgh004_demand_enabled(n) :- pgh004_missing_colon(n, D).
+pgh004_demand_enabled(n) :- kind(n, "comment"),
+    match("[^#]*(?:#\\s*(?:[^\\s#rf][^#]*|r(?:[^#u][^#]*)?|ru(?:[^#f][^#]*)?|ruf(?:[^#f][^#]*)?|f(?:[^#l][^#]*)?|fl(?:[^#a][^#]*)?|fla(?:[^#k][^#]*)?|flak(?:[^#e][^#]*)?|flake(?:[^#8][^#]*)?|(?:ruff|flake8)\\s*(?:[^\\s#:][^#]*)?|(?:ruff|flake8)\\s*:\\s*(?i:[^\\s#n][^#]*|n(?:[^#o][^#]*)?|no(?:[^#q][^#]*)?|noq(?:[^#a][^#]*)?)?)?)*#\\s*(?:ruff|flake8)\\s*:\\s*(?i:noqa)(?:$|#|\\s+(?:$|[^\\s:])).*", n),
+    pgh004_own_line(n).

@@ -15,8 +15,8 @@ use crate::code_rule_dsl::waves::owner::Lease;
 use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, SourceId, StoreError, StoreResult};
 use sha2::{Digest as _, Sha256};
 
-/// The memo's fact schema: bumped when the rows' meaning changes.
-const SCHEMA: u32 = 3;
+/// The memo's fact schema: bumped when the rows' meaning changes; never a retired corpus memo schema (it was 3).
+const SCHEMA: u32 = crate::content_store::live_fact_schema(108);
 
 /// One document's wave rows without its key: matches (clause, node) and spans (node, start, end).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

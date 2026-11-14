@@ -1,0 +1,74 @@
+.policy "ruff-b003-assignment-to-os-environ" revision 1
+.guests off
+.description "Don't assign a new value to os.environ; it doesn't change the real process environment, so update or clear the existing mapping instead."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B003(n): a finding at node n, from clause `assignment-to-os-environ`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B003(at: node) "Update `os.environ` in place with `.clear()` and `.update()` instead of assigning a new mapping to it."
+    suppress noqa "B003"
+B003(n) :- kind(n, "attribute"), n ~ `os.environ`, b003_sole_target(n).
+
+// single_target_assignment(n): the JSON util `single-target-assignment`, used where the JSON says `matches: "single-target-assignment"`
+.decl b003_single_target_assignment(n: node)
+b003_single_target_assignment(n) :- kind(n, "assignment"), !b003_alt_1(n).
+
+// sole_target(n): the JSON util `sole-target`, used where the JSON says `matches: "sole-target"`
+.decl b003_sole_target(n: node)
+b003_sole_target(n) :- b003_tok_precedes_2(n), child(p8, n, _), b003_single_target_assignment(p8).
+b003_sole_target(n) :- child(p9, n, _),
+    (kind(p9, "parenthesized_expression") ; kind(p9, "tuple_pattern"), !b003_tok_has_4(p9)),
+    b003_sole_target(p9).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b003_tok_has_1(n: node)
+.stored b003_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b003_tok_has_1(n) :- child(n, c1, _), glob(":", c1).
+b003_tok_has_1(n) :- op(n, t2), match(":", t2).
+b003_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+b003_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+b003_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b003_tok_precedes_2(n: node)
+.stored b003_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b003_tok_precedes_2(n) :- next_sibling(n, s1), glob("=", s1).
+b003_tok_precedes_2(n) :- structural_after(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, _, en7), o5 = en7 + strlen(g3), token(p4, _, t2, o5, _),
+    match("=", t2).
+b003_tok_precedes_2(n) :- structural_after(n, g3),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b003_tok_has_3(n: node)
+.stored b003_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b003_tok_has_3(n) :- child(n, c10, _), glob("\\,", c10).
+b003_tok_has_3(n) :- op(n, t11), match(",", t11).
+b003_tok_has_3(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:.*(?:,).*)$", g12).
+b003_tok_has_3(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:.*(?:,).*)$", g12).
+b003_tok_has_3(n) :- node_text(n, g12), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g12).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b003_tok_has_4(n: node)
+.stored b003_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b003_tok_has_4(n) :- child(n, c1, _), glob("\\,", c1).
+b003_tok_has_4(n) :- op(n, t2), match(",", t2).
+b003_tok_has_4(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+b003_tok_has_4(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+b003_tok_has_4(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl b003_alt_1(n: node)
+b003_alt_1(n) :- b003_tok_has_1(n).
+b003_alt_1(n) :- child(n, c9, _), kind(c9, "assignment").
+b003_alt_1(n) :- child(p10, n, _), kind(p10, "assignment").

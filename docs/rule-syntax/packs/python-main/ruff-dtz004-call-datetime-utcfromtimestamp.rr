@@ -1,0 +1,35 @@
+.policy "ruff-dtz004-call-datetime-utcfromtimestamp" revision 1
+.guests off
+.description "Use datetime.fromtimestamp with a timezone instead of utcfromtimestamp; utcfromtimestamp returns a naive datetime with no zone information."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// DTZ004(n): a finding at node n, from clause `call-datetime-utcfromtimestamp`.
+// Each rule below is one way the JSON `rule` can match.
+.violation DTZ004(at: node) "Replace `utcfromtimestamp(ts)` with `fromtimestamp(ts, tz=datetime.timezone.utc)` for an aware UTC datetime. Keep it only where the value is mixed with naive datetimes that cannot change too."
+    suppress noqa "DTZ004"
+DTZ004(n) :- kind(n, "call"), field(n, "function", c1), dtz004_callee(c1), !dtz004_astz_safe(n).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl dtz004_callee(n: node)
+dtz004_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "datetime.datetime.utcfromtimestamp").
+dtz004_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), dtz004_callee(c1).
+
+// astz_safe(n): the JSON util `astz-safe`, used where the JSON says `matches: "astz-safe"`
+.decl dtz004_astz_safe(n: node)
+dtz004_astz_safe(n) :- within_stop(n, p1, dtz004_stop_1), kind(p1, "attribute"), dtz004_alt_3(p1).
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl dtz004_stop_1(n: node)
+dtz004_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl dtz004_alt_3(n: node)
+dtz004_alt_3(n) :- field(n, "attribute", c1), glob("astimezone", c1).
+dtz004_alt_3(n) :- field(n, "attribute", c2), glob("replace", c2), within_stop(n, p3, dtz004_stop_1),
+    kind(p3, "call"), dtz004_astz_safe(p3).

@@ -1,0 +1,34 @@
+// OVERRIDE (hand-written, not generated): main's `pattern: {context, selector}` (a pattern parsed in a
+// context, matched at the selector's node) has no .rr form; the reader refuses `~ `...` at "kind"`.
+// The context `try: work()\nexcept: continue` selects a bare `except:` clause, so that alternative is
+// written as an except_clause with no child but its block. The rest is the generated translation.
+.policy "bandit-b112-try-except-continue" revision 1
+.guests off
+.description "Don't write a bare or catch-all Exception handler in a loop whose only statement is continue; log or handle the error, or catch the specific exception you expect."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B112(n): a finding at node n, from clause `try-except-continue`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B112(at: node) "This exception is silently discarded by continuing the loop. Handle or log it, or catch a specific expected exception before continuing."
+    suppress nosec "B112"
+B112(n) :- kind(n, "except_clause"),
+    ( count : { child(n, c0, _), !kind(c0, "block"), !kind(c0, "comment") } = 0
+    ; child(n, c1, _), b112_exception_type(c1)
+    ; child(n, c2, _), b112_exception_alias(c2)
+    ),
+    child(n, c3, _), kind(c3, "block"), child(c3, c4, _),
+    kind(c4, "continue_statement"), k6 = count : { child(c3, c5, _), node(_, c5, _, _, _) },
+    k6 >= 1, k6 <= 1.
+
+// exception_type(n): the JSON util `exception-type`, used where the JSON says `matches: "exception-type"`
+.decl b112_exception_type(n: node)
+b112_exception_type(n) :- n ~ `Exception`.
+b112_exception_type(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    b112_exception_type(c1).
+
+// exception_alias(n): the JSON util `exception-alias`, used where the JSON says `matches: "exception-alias"`
+.decl b112_exception_alias(n: node)
+b112_exception_alias(n) :- kind(n, "as_pattern"), child(n, c1, _), b112_exception_type(c1).

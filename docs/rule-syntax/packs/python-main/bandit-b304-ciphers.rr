@@ -1,0 +1,30 @@
+.policy "bandit-b304-ciphers" revision 1
+.guests off
+.description "Avoid weak ciphers such as DES, TripleDES, ARC2, ARC4, Blowfish, CAST5, IDEA, SEED, and XOR; use a modern cipher such as AES."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B304(n): a finding at node n, from clause `bandit:B304`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on F are added to every rule.
+.violation B304(at: node) "Replace this weak cipher with AES in an authenticated mode such as GCM."
+    suppress nosec "B304"
+B304(n) :- n ~ `$F($$$ARGS)`, sym_of(F, q1), b304_set_1(q1).
+
+// set_1: symbols from the JSON `resolves.import`
+.decl b304_set_1(v: symbol)
+b304_set_1("Crypto.Cipher.ARC2.new"). b304_set_1("Crypto.Cipher.ARC4.new").
+b304_set_1("Crypto.Cipher.Blowfish.new"). b304_set_1("Crypto.Cipher.DES.new").
+b304_set_1("Crypto.Cipher.XOR.new"). b304_set_1("Cryptodome.Cipher.ARC2.new").
+b304_set_1("Cryptodome.Cipher.ARC4.new"). b304_set_1("Cryptodome.Cipher.Blowfish.new").
+b304_set_1("Cryptodome.Cipher.DES.new"). b304_set_1("Cryptodome.Cipher.XOR.new").
+b304_set_1("cryptography.hazmat.primitives.ciphers.algorithms.ARC4").
+b304_set_1("cryptography.hazmat.primitives.ciphers.algorithms.Blowfish").
+b304_set_1("cryptography.hazmat.primitives.ciphers.algorithms.CAST5").
+b304_set_1("cryptography.hazmat.primitives.ciphers.algorithms.IDEA").
+b304_set_1("cryptography.hazmat.primitives.ciphers.algorithms.SEED").
+b304_set_1("cryptography.hazmat.primitives.ciphers.algorithms.TripleDES").

@@ -1,0 +1,164 @@
+.policy "ruff-sim102-collapsible-if" revision 1
+.guests off
+.description "Collapse an if whose only statement is another if without else into one if joined with and; version, platform and TYPE_CHECKING checks are exempt."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// bool_literal(n): the JSON util `bool-literal`, used where the JSON says `matches: "bool-literal"`
+.decl sim102_bool_literal(n: node)
+sim102_bool_literal(n) :- (kind(n, "true") ; kind(n, "false")).
+sim102_bool_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    sim102_bool_literal(c1).
+
+// main_check(n): the JSON util `main-check`, used where the JSON says `matches: "main-check"`
+.decl sim102_main_check(n: node)
+sim102_main_check(n) :- kind(n, "comparison_operator"),
+    k2 = count : { child(n, c1, _), !match("(==|!=|<|>|<=|>=|is|not|in|is\\s+not|not\\s+in)", c1) },
+    k2 >= 2, k2 <= 2, child(n, c3, _), kind(c3, "identifier"), glob("__name__", c3),
+    !sim102_tok_follows_1(c3), child(n, c11, _), kind(c11, "string"),
+    match("[uUrR]?(?:\"__main__\"|'__main__'|\\\"\\\"\\\"__main__\\\"\\\"\\\"|'''__main__''')", c11).
+
+// nests_if(n): the JSON util `nests-if`, used where the JSON says `matches: "nests-if"`
+.decl sim102_nests_if(n: node)
+sim102_nests_if(n) :- child(n, c1, _), kind(c1, "block"),
+    k3 = count : { child(c1, c2, _), !sim102_alt_1(c2) }, k3 >= 1, k3 <= 1, child(c1, c4, _),
+    !sim102_alt_1(c4), sim102_plain_if(c4).
+
+// plain_if(n): the JSON util `plain-if`, used where the JSON says `matches: "plain-if"`
+.decl sim102_plain_if(n: node)
+sim102_plain_if(n) :- kind(n, "if_statement"),
+    count : { child(n, c1, _), (kind(c1, "elif_clause") ; kind(c1, "else_clause")) } = 0.
+
+// skip_test(n): the JSON util `skip-test`, used where the JSON says `matches: "skip-test"`
+.decl sim102_skip_test(n: node)
+sim102_skip_test(n) :- sim102_bool_literal(n).
+sim102_skip_test(n) :- sim102_main_check(n).
+
+// sys_version(n): the JSON util `sys-version`, used where the JSON says `matches: "sys-version"`
+.decl sim102_sys_version(n: node)
+sim102_sys_version(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "sys.version_info") ; sym_of(n, "sys.platform")).
+
+// SIM102(n, detail): findings from clauses `collapsible-if`, `collapsible-elif`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+.violation SIM102(at: node, detail: symbol) "{detail}"
+    suppress noqa "SIM102"
+SIM102(n, "Use a single `if` statement instead of nested `if` statements") :- kind(n, "if_statement"),
+    child(n, c1, _), kind(c1, "block"), k3 = count : { child(c1, c2, _), !sim102_alt_1(c2) },
+    k3 >= 1, k3 <= 1, count : { child(n, c4, _), sim102_tok_follows_2(c4), sim102_alt_5(c4) } = 0,
+    count : { child(n, c21, _), (kind(c21, "elif_clause") ; kind(c21, "else_clause")) } = 0,
+    count : { child(n, c22, _), sim102_tok_follows_6(c22), sim102_skip_test(c22) } = 0, sim102_nests_if(n).
+SIM102(n, "Merge this `elif` and the `if` nested inside it into one `elif` whose conditions are joined with `and`.") :- kind(n, "elif_clause"),
+    count : { next_sibling(n, s1), (kind(s1, "elif_clause") ; kind(s1, "else_clause")) } = 0,
+    count : { child(n, c2, _), sim102_tok_follows_7(c2), sim102_skip_test(c2) } = 0, sim102_nests_if(n),
+    child(p10, n, _), kind(p10, "if_statement"), child(p10, c11, _),
+    kind(c11, "block"), k13 = count : { child(c11, c12, _), !sim102_alt_1(c12) }, k13 >= 1,
+    k13 <= 1, count : { child(p10, c14, _), sim102_tok_follows_8(c14), sim102_alt_5(c14) } = 0.
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim102_tok_follows_1(n: node)
+.stored sim102_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim102_tok_follows_1(n) :- next_sibling(s4, n), match("(?s).*..*", s4).
+sim102_tok_follows_1(n) :- structural_before(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, st9, _), o8 = st9 - strlen(g6), token(p7, _, t5, _, o8),
+    match("(?s).*..*", t5).
+sim102_tok_follows_1(n) :- structural_before(n, g6), match("(?s)^.*\\S\\s*$", g6).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim102_tok_follows_2(n: node)
+.stored sim102_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim102_tok_follows_2(n) :- next_sibling(s5, n), glob("if", s5).
+sim102_tok_follows_2(n) :- structural_before(n, g7), match("\\s*", g7), child(p8, n, _),
+    node(_, n, _, st10, _), o9 = st10 - strlen(g7), token(p8, _, t6, _, o9),
+    match("if", t6).
+sim102_tok_follows_2(n) :- structural_before(n, g7),
+    match("(?s)^(?:(?:.*\\W)?(?:if)\\s*)$", g7).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim102_tok_follows_3(n: node)
+.stored sim102_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim102_tok_follows_3(n) :- next_sibling(s14, n), glob(".", s14).
+sim102_tok_follows_3(n) :- structural_before(n, g16), match("\\s*", g16), child(p17, n, _),
+    node(_, n, _, st19, _), o18 = st19 - strlen(g16), token(p17, _, t15, _, o18),
+    match("\\.", t15).
+sim102_tok_follows_3(n) :- structural_before(n, g16),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g16).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim102_tok_follows_4(n: node)
+.stored sim102_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim102_tok_follows_4(n) :- next_sibling(s2, n), glob(".", s2).
+sim102_tok_follows_4(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("\\.", t3).
+sim102_tok_follows_4(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g4).
+
+// tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim102_tok_follows_5(n: node)
+.stored sim102_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim102_tok_follows_5(n) :- next_sibling(s3, n), glob(".", s3).
+sim102_tok_follows_5(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match("\\.", t4).
+sim102_tok_follows_5(n) :- structural_before(n, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g5).
+
+// tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim102_tok_follows_6(n: node)
+.stored sim102_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim102_tok_follows_6(n) :- next_sibling(s23, n), glob("if", s23).
+sim102_tok_follows_6(n) :- structural_before(n, g25), match("\\s*", g25), child(p26, n, _),
+    node(_, n, _, st28, _), o27 = st28 - strlen(g25), token(p26, _, t24, _, o27),
+    match("if", t24).
+sim102_tok_follows_6(n) :- structural_before(n, g25),
+    match("(?s)^(?:(?:.*\\W)?(?:if)\\s*)$", g25).
+
+// tok_follows_7(n): an earlier sibling of n, a named node or an anonymous token, matches "^elif$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim102_tok_follows_7(n: node)
+.stored sim102_tok_follows_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim102_tok_follows_7(n) :- next_sibling(s3, n), glob("elif", s3).
+sim102_tok_follows_7(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match("elif", t4).
+sim102_tok_follows_7(n) :- structural_before(n, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:elif)\\s*)$", g5).
+
+// tok_follows_8(n): an earlier sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim102_tok_follows_8(n: node)
+.stored sim102_tok_follows_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim102_tok_follows_8(n) :- next_sibling(s15, n), glob("if", s15).
+sim102_tok_follows_8(n) :- structural_before(n, g17), match("\\s*", g17), child(p18, n, _),
+    node(_, n, _, st20, _), o19 = st20 - strlen(g17), token(p18, _, t16, _, o19),
+    match("if", t16).
+sim102_tok_follows_8(n) :- structural_before(n, g17),
+    match("(?s)^(?:(?:.*\\W)?(?:if)\\s*)$", g17).
+
+// tok_follows_9(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim102_tok_follows_9(n: node)
+.stored sim102_tok_follows_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim102_tok_follows_9(n) :- next_sibling(s24, n), glob(".", s24).
+sim102_tok_follows_9(n) :- structural_before(n, g26), match("\\s*", g26), child(p27, n, _),
+    node(_, n, _, st29, _), o28 = st29 - strlen(g26), token(p27, _, t25, _, o28),
+    match("\\.", t25).
+sim102_tok_follows_9(n) :- structural_before(n, g26),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g26).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl sim102_alt_1(n: node)
+sim102_alt_1(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+sim102_alt_1(n) :- node(_, n, _, _, _), glob(";", n).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl sim102_alt_5(n: node)
+sim102_alt_5(n) :- within(c1, n), sim102_sys_version(c1).
+sim102_alt_5(n) :- sim102_sys_version(n).
+sim102_alt_5(n) :-
+    ( kind(n, "identifier"), glob("TYPE_CHECKING", n)
+    ; kind(n, "identifier"), (sym_of(n, "typing.TYPE_CHECKING") ; sym_of(n, "_typeshed.TYPE_CHECKING") ; sym_of(n, "typing_extensions.TYPE_CHECKING"))
+    ; kind(n, "attribute"), child(n, c1, _), kind(c1, "identifier"), glob("TYPE_CHECKING", c1), sim102_tok_follows_4(c1)
+    ).

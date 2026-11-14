@@ -1,0 +1,49 @@
+.policy "ruff-d212-multi-line-summary-first-line" revision 1
+.guests off
+.description "Start a multi-line docstring's summary right after the opening quotes, on the first line."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// D212(n): a finding at node n, from clause `multi-line-summary-first-line`.
+// Each rule below is one way the JSON `rule` can match.
+.violation D212(at: node) "Move this docstring's summary onto the line with the opening quotes, removing the line break after them."
+    suppress noqa "D212"
+D212(n) :- d212_docstring(n), match("[uUrR]*(?:\"{3}|'{3})[\\r\\n](?s:.*)", n),
+    child(n, c1, _), kind(c1, "string_content"), match(".*\\S.*", c1).
+
+// doc_stmt(n): the JSON util `doc-stmt`, used where the JSON says `matches: "doc-stmt"`
+.decl d212_doc_stmt(n: node)
+d212_doc_stmt(n) :- kind(n, "expression_statement"), !d212_alt_1(n),
+    ( child(p1, n, _), kind(p1, "module")
+    ; child(p2, n, _), kind(p2, "block"), child(p3, p2, _), (kind(p3, "function_definition") ; kind(p3, "class_definition"))
+    ).
+
+
+// doc_holder(n): the JSON util `doc-holder`, used where the JSON says `matches: "doc-holder"`
+.decl d212_doc_holder(n: node)
+d212_doc_holder(n) :- d212_doc_stmt(n).
+d212_doc_holder(n) :- kind(n, "parenthesized_expression"), child(p1, n, _), d212_doc_holder(p1).
+
+// docstring(n): the JSON util `docstring`, used where the JSON says `matches: "docstring"`
+.decl d212_docstring(n: node)
+d212_docstring(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[bBfFtT]**", c1) } = 0,
+    child(p2, n, _), d212_doc_holder(p2).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl d212_tok_has_1(n: node)
+.stored d212_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+d212_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+d212_tok_has_1(n) :- op(n, t2), match(",", t2).
+d212_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+d212_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+d212_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl d212_alt_1(n: node)
+d212_alt_1(n) :- d212_tok_has_1(n).
+d212_alt_1(n) :- precedes(s9, n), !kind(s9, "comment").

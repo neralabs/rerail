@@ -1,0 +1,98 @@
+.policy "ruff-ytt303-sys-version-slice1" revision 1
+.guests off
+.description "Read the major version from sys.version_info instead of slicing the first character of sys.version; the first digit is wrong for a two-digit major version."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// YTT303(n): a finding at node n, from clause `sys-version-slice1`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation YTT303(at: node, c: node) "Use `sys.version_info.major` (an int, so compare it to ints, not strings) instead of `sys.version[:1]`, which is only the first digit of a two-digit major version."
+    suppress noqa "YTT303"
+YTT303(C, n) :- ytt303_target(n), node(_, n, _, _, _), C = n.
+YTT303(C, n) :- ytt303_in_string(n, C).
+
+// one_literal(n): the JSON util `one-literal`, used where the JSON says `matches: "one-literal"`
+.decl ytt303_one_literal(n: node)
+ytt303_one_literal(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int"), v1 = 1.
+ytt303_one_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ytt303_one_literal(c2).
+
+// upper_one_slice(n): the JSON util `upper-one-slice`, used where the JSON says `matches: "upper-one-slice"`
+.decl ytt303_upper_one_slice(n: node)
+ytt303_upper_one_slice(n) :- kind(n, "slice"), child(n, c1, _), child(p2, c1, _), ytt303_counted(c1),
+    k4 = count : { child(p2, s3, _), precedes(s3, c1), ytt303_counted(s3) }, k4 = 0,
+    ytt303_one_literal(c1), ytt303_tok_follows_1(c1),
+    count : { precedes(s12, c1), glob(":", s12), ytt303_tok_follows_2(s12) } = 0,
+    count : { child(n, c20, _), child(p21, c20, _), ytt303_counted(c20), k23 = count : { child(p21, s22, _), precedes(s22, c20), ytt303_counted(s22) }, k23 = 1 } = 0.
+
+// slice_subscript(n): the JSON util `slice-subscript`, used where the JSON says `matches: "slice-subscript"`
+.decl ytt303_slice_subscript(n: node)
+ytt303_slice_subscript(n) :- kind(n, "subscript"), field(n, "subscript", c1),
+    ytt303_upper_one_slice(c1), !ytt303_tok_has_3(n).
+
+// subscripted(n): the JSON util `subscripted`, used where the JSON says `matches: "subscripted"`
+.decl ytt303_subscripted(n: node)
+ytt303_subscripted(n) :- child(p1, n, _), ytt303_counted(n),
+    k3 = count : { child(p1, s2, _), precedes(s2, n), ytt303_counted(s2) }, k3 = 0,
+    child(p4, n, _), ytt303_slice_subscript(p4).
+ytt303_subscripted(n) :- child(p5, n, _), kind(p5, "parenthesized_expression"),
+    ytt303_subscripted(p5).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl ytt303_target(n: node)
+ytt303_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "sys.version"),
+    ytt303_subscripted(n).
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   C: metavariable this relation binds for the calling rule
+.decl ytt303_in_string(n: node, c: loc)
+ytt303_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ytt303_alt_4(c2, C).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ytt303_tok_follows_1(n: node)
+.stored ytt303_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ytt303_tok_follows_1(n) :- precedes(s5, n), glob(":", s5).
+ytt303_tok_follows_1(n) :- child(p8, n, _), node(_, n, _, st10, _), token(p8, _, t6, _, en11),
+    en11 <= st10, match(":", t6).
+ytt303_tok_follows_1(n) :- structural_before(n, g7),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g7).
+ytt303_tok_follows_1(n) :- precedes(o9, n), structural_before(o9, g7),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g7).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ytt303_tok_follows_2(n: node)
+.stored ytt303_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ytt303_tok_follows_2(n) :- precedes(s13, n), glob(":", s13).
+ytt303_tok_follows_2(n) :- child(p16, n, _), node(_, n, _, st18, _),
+    token(p16, _, t14, _, en19), en19 <= st18, match(":", t14).
+ytt303_tok_follows_2(n) :- structural_before(n, g15),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g15).
+ytt303_tok_follows_2(n) :- precedes(o17, n), structural_before(o17, g15),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g15).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ytt303_tok_has_3(n: node)
+.stored ytt303_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ytt303_tok_has_3(n) :- child(n, c2, _), glob("\\,", c2).
+ytt303_tok_has_3(n) :- op(n, t3), match(",", t3).
+ytt303_tok_has_3(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+ytt303_tok_has_3(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+ytt303_tok_has_3(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// counted(n): 3 identical copies of one rule set (`counted_1`, `counted_2`, `counted_3`), folded into one.
+.decl ytt303_counted(n: node)
+ytt303_counted(n) :- node(_, n, _, _, _), !kind(n, "comment"), !kind(n, "line_continuation").
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl ytt303_alt_4(n: node, c: loc)
+ytt303_alt_4(n, C) :- ytt303_target(n), C = n.
+ytt303_alt_4(n, C) :- ytt303_in_string(n, C).

@@ -1,0 +1,22 @@
+.policy "bandit-b405-import-xml-etree" revision 1
+.guests off
+.description "Avoid importing xml.etree.ElementTree or cElementTree; use defusedxml instead, since the standard parsers are open to XML attacks on untrusted input."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B405(n): a finding at node n, from clause `B405`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B405(at: node) "ElementTree XML parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library."
+    suppress nosec "B405"
+B405(n) :- n ~ `import xml.etree.cElementTree`.
+B405(n) :- n ~ `import xml.etree.cElementTree as $ALIAS`.
+B405(n) :- n ~ `from xml.etree.cElementTree import $$$NAMES`.
+B405(n) :- n ~ `from xml.etree import cElementTree`.
+B405(n) :- n ~ `from xml.etree import cElementTree as $ALIAS`.
+B405(n) :- n ~ `import xml.etree.ElementTree`.
+B405(n) :- n ~ `import xml.etree.ElementTree as $ALIAS`.
+B405(n) :- n ~ `from xml.etree.ElementTree import $$$NAMES`.
+B405(n) :- n ~ `from xml.etree import ElementTree`.
+B405(n) :- n ~ `from xml.etree import ElementTree as $ALIAS`.

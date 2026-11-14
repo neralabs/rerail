@@ -1,0 +1,46 @@
+.policy "ruff-d403-first-word-uncapitalized" revision 1
+.guests off
+.description "Capitalize the first word of every function docstring."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// D403(n): a finding at node n, from clause `first-word-uncapitalized`.
+// Each rule below is one way the JSON `rule` can match.
+.violation D403(at: node) "Capitalize the first word of this docstring, for example `Return the total.` instead of `return the total.`"
+    suppress noqa "D403"
+D403(n) :- d403_docstring(n), child(n, c1, _), kind(c1, "string_content"),
+    match("\\s*[a-z][A-Za-z']*[.!?]*(?:\\s|\\z).*", c1).
+
+// doc_stmt(n): the JSON util `doc-stmt`, used where the JSON says `matches: "doc-stmt"`
+.decl d403_doc_stmt(n: node)
+d403_doc_stmt(n) :- kind(n, "expression_statement"), !d403_alt_1(n), child(p10, n, _),
+    kind(p10, "block"), child(p11, p10, _), kind(p11, "function_definition").
+
+// doc_holder(n): the JSON util `doc-holder`, used where the JSON says `matches: "doc-holder"`
+.decl d403_doc_holder(n: node)
+d403_doc_holder(n) :- d403_doc_stmt(n).
+d403_doc_holder(n) :- kind(n, "parenthesized_expression"), child(p1, n, _), d403_doc_holder(p1).
+
+// docstring(n): the JSON util `docstring`, used where the JSON says `matches: "docstring"`
+.decl d403_docstring(n: node)
+d403_docstring(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[bBfFtT]**", c1) } = 0,
+    child(p2, n, _), d403_doc_holder(p2).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl d403_tok_has_1(n: node)
+.stored d403_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+d403_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+d403_tok_has_1(n) :- op(n, t2), match(",", t2).
+d403_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+d403_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+d403_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl d403_alt_1(n: node)
+d403_alt_1(n) :- d403_tok_has_1(n).
+d403_alt_1(n) :- precedes(s9, n), !kind(s9, "comment").

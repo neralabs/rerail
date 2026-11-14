@@ -1,0 +1,21 @@
+.policy "bandit-b314-xml-bad-elementtree" revision 1
+.guests off
+.description "Use defusedxml instead of xml.etree.ElementTree to parse XML; the standard parser is open to entity-expansion and other XML attacks on untrusted input."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B314(n): a finding at node n, from clause `bandit:B314`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on F are added to every rule.
+.violation B314(at: node) "Using xml.etree.ElementTree to parse untrusted XML may permit XML attacks; use defusedxml."
+    suppress nosec "B314"
+B314(n) :- n ~ `$F($$$ARGS)`,
+    ( sym_of(F, "xml.etree.ElementTree.parse")
+    ; sym_of(F, "xml.etree.ElementTree.iterparse")
+    ; sym_of(F, "xml.etree.ElementTree.fromstring")
+    ; sym_of(F, "xml.etree.ElementTree.XMLParser")
+    ).

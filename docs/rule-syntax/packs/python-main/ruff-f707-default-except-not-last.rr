@@ -1,0 +1,24 @@
+.policy "ruff-f707-default-except-not-last" revision 2
+.guests off
+.description "Put a bare except handler last in its try statement; Python rejects any handler after it."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F707(n): a finding at node n, from clause `default-except-not-last`.
+// Each rule below is one way the JSON `rule` can match.
+.violation F707(at: node) "Move this bare `except:` handler after all typed handlers; a bare handler must be last."
+    suppress noqa "F707"
+F707(n) :- glob("except", n), f707_tok_precedes_1(n), child(p8, n, _),
+    kind(p8, "except_clause"), precedes(p8, s9), kind(s9, "except_clause").
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f707_tok_precedes_1(n: node)
+.stored f707_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f707_tok_precedes_1(n) :- next_sibling(n, s1), glob(":", s1).
+f707_tok_precedes_1(n) :- structural_after(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, _, en7), o5 = en7 + strlen(g3), token(p4, _, t2, o5, _),
+    match(":", t2).
+f707_tok_precedes_1(n) :- structural_after(n, g3),
+    match("(?s)^(?:\\s*(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).

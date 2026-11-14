@@ -1,0 +1,100 @@
+.policy "ruff-pth112-os-path-isdir" revision 1
+.guests off
+.description "Use Path.is_dir() instead of os.path.isdir(); path objects read better than string-based os.path calls."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PTH112(n): a finding at node n, from clause `os-path-isdir`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PTH112(at: node, f: node, s: loc) "Use `Path({s}).is_dir()` from pathlib instead of `os.path.isdir({s})`; leave it where the argument is a bytes path or a file descriptor."
+    suppress noqa "PTH112"
+PTH112(F, n, S) :- kind(n, "call"), field(n, "function", c1), pth112_callee(c1, F),
+    pth112_arg_s_1(n, a2), S = a2,
+    ( child(n, c2, _), kind(c2, "argument_list"), k1 = count : { child(c2, c3, _), !pth112_alt_1(c3) }, k1 >= 1, k1 <= 1
+    ; field(n, "arguments", c4), kind(c4, "generator_expression")
+    ).
+
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl pth112_target(n: node)
+pth112_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "os.path.isdir").
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth112_callee(n: node, f: loc)
+pth112_callee(n, F) :- pth112_target(n), node(_, n, _, _, _), F = n.
+pth112_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth112_callee(c1, F).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl pth112_args_plain(l: node, a: node, i: number)
+pth112_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl pth112_args_splat(l: node, i: number)
+pth112_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl pth112_args_pos(l: node, a: node, j: number)
+pth112_args_pos(l, a, j) :- pth112_args_plain(l, a, i), count : { pth112_args_splat(l, k), k < i } = 0,
+    j = count : { pth112_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl pth112_args_star(l: node, j: number)
+pth112_args_star(l, j) :- pth112_args_splat(l, i), count : { pth112_args_splat(l, k), k < i } = 0,
+    j = count : { pth112_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl pth112_args_kwp(l: node, k: symbol, v: node)
+pth112_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl pth112_args_lit_dict(s: node, d: node)
+pth112_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !pth112_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl pth112_args_str_pair(p: node)
+pth112_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl pth112_args_kw(l: node, k: symbol, v: node)
+pth112_args_kw(l, k, v) :- pth112_args_kwp(l, k, v).
+pth112_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), pth112_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl pth112_args_kw_spread(l: node)
+pth112_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !pth112_args_lit_dict(s, _).
+
+// arg_s_1: call n passes v for slot `s` of (s), syntactic: Ruff's find_argument
+.decl pth112_arg_s_1(n: node, v: node)
+pth112_arg_s_1(n, v) :- kind(n, "call"), field(n, "arguments", l), pth112_args_kwp(l, "s", v).
+pth112_arg_s_1(n, v) :- kind(n, "call"), field(n, "arguments", l), pth112_args_pos(l, v, 0),
+    !pth112_args_kwp(l, "s", _).
+pth112_arg_s_1(n, v) :- kind(n, "call"), field(n, "arguments", v),
+    kind(v, "generator_expression").
+
+// arg_no_s_1: call n does not pass slot `s` of (s), syntactic: Ruff's find_argument
+.decl pth112_arg_no_s_1(n: node)
+pth112_arg_no_s_1(n) :- kind(n, "call"), field(n, "arguments", l), !pth112_args_kwp(l, "s", _),
+    !pth112_args_pos(l, _, 0), !kind(l, "generator_expression").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pth112_alt_1(n: node)
+pth112_alt_1(n) :- node(_, n, _, _, _), glob("[(),\\[\\]{}]", n).
+pth112_alt_1(n) :- kind(n, "comment").

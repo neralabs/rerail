@@ -1,0 +1,203 @@
+.policy "ruff-pth106-os-rmdir" revision 1
+.guests off
+.description "Use Path.rmdir() instead of os.rmdir(); path objects read better than string-based os calls."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PTH106(n): a finding at node n, from clause `os-rmdir`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PTH106(at: node, f: node, s: loc) "Use `Path({s}).rmdir()` from pathlib instead of `os.rmdir({s})`; leave it where the argument is a bytes path."
+    suppress noqa "PTH106"
+PTH106(F, n, S) :- kind(n, "call"), field(n, "function", c1), pth106_callee(c1, F),
+    pth106_arg_path_1(n, a2), S = a2,
+    ( child(n, c2, _), kind(c2, "argument_list"), k1 = count : { child(c2, c3, _), !pth106_alt_1(c3) }, k1 >= 1, k1 <= 1
+    ; field(n, "arguments", c4), kind(c4, "generator_expression")
+    ).
+
+PTH106(F, n, S) :- pth106_ann_string(n, F, S).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl pth106_target(n: node)
+pth106_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "os.rmdir").
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth106_callee(n: node, f: loc)
+pth106_callee(n, F) :- pth106_target(n), node(_, n, _, _, _), F = n.
+pth106_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth106_callee(c1, F).
+
+// arg_name(n): the JSON util `arg-name`, used where the JSON says `matches: "arg-name"`
+.decl pth106_arg_name(n: node)
+pth106_arg_name(n) :- kind(n, "identifier"), !pth106_alt_9(n).
+
+// ann_string(n): the JSON util `ann-string`, used where the JSON says `matches: "ann-string"`
+//   F, S: metavariables this relation binds for the calling rule
+.decl pth106_ann_string(n: node, f: loc, s: loc)
+pth106_ann_string(n, F, S) :- kind(n, "string"),
+    count : { has(n, c1, "escape_sequence"), node(_, c1, _, _, _) } = 0,
+    parsed(n, "annotation", r2), within(c3, r2), pth106_alt_10(c3, F, S).
+pth106_ann_string(n, F, S) :-
+    ( kind(n, "concatenated_string")
+    ; kind(n, "string"), has(n, c1, "escape_sequence"), node(_, c1, _, _, _)
+    ),
+    parsed(n, "annotation", r5), within(c6, r5), pth106_alt_13(c6, F, S).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth106_tok_follows_1(n: node)
+.stored pth106_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth106_tok_follows_1(n) :- next_sibling(s1, n), glob(".", s1).
+pth106_tok_follows_1(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("\\.", t2).
+pth106_tok_follows_1(n) :- structural_before(n, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g3).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth106_tok_precedes_2(n: node)
+.stored pth106_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth106_tok_precedes_2(n) :- next_sibling(n, s8), glob("=", s8).
+pth106_tok_precedes_2(n) :- structural_after(n, g10), match("\\s*", g10), child(p11, n, _),
+    node(_, n, _, _, en14), o12 = en14 + strlen(g10), token(p11, _, t9, o12, _),
+    match("=", t9).
+pth106_tok_precedes_2(n) :- structural_after(n, g10),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g10).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth106_tok_follows_3(n: node)
+.stored pth106_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth106_tok_follows_3(n) :- next_sibling(s9, n), glob(".", s9).
+pth106_tok_follows_3(n) :- structural_before(n, g11), match("\\s*", g11), child(p12, n, _),
+    node(_, n, _, st14, _), o13 = st14 - strlen(g11), token(p12, _, t10, _, o13),
+    match("\\.", t10).
+pth106_tok_follows_3(n) :- structural_before(n, g11),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g11).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth106_tok_follows_4(n: node)
+.stored pth106_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth106_tok_follows_4(n) :- next_sibling(s2, n), glob(".", s2).
+pth106_tok_follows_4(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("\\.", t3).
+pth106_tok_follows_4(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g4).
+
+// tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth106_tok_follows_5(n: node)
+.stored pth106_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth106_tok_follows_5(n) :- next_sibling(s3, n), glob(".", s3).
+pth106_tok_follows_5(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match("\\.", t4).
+pth106_tok_follows_5(n) :- structural_before(n, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g5).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl pth106_args_plain(l: node, a: node, i: number)
+pth106_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl pth106_args_splat(l: node, i: number)
+pth106_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl pth106_args_pos(l: node, a: node, j: number)
+pth106_args_pos(l, a, j) :- pth106_args_plain(l, a, i), count : { pth106_args_splat(l, k), k < i } = 0,
+    j = count : { pth106_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl pth106_args_star(l: node, j: number)
+pth106_args_star(l, j) :- pth106_args_splat(l, i), count : { pth106_args_splat(l, k), k < i } = 0,
+    j = count : { pth106_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl pth106_args_kwp(l: node, k: symbol, v: node)
+pth106_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl pth106_args_lit_dict(s: node, d: node)
+pth106_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !pth106_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl pth106_args_str_pair(p: node)
+pth106_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl pth106_args_kw(l: node, k: symbol, v: node)
+pth106_args_kw(l, k, v) :- pth106_args_kwp(l, k, v).
+pth106_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), pth106_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl pth106_args_kw_spread(l: node)
+pth106_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !pth106_args_lit_dict(s, _).
+
+// arg_path_1: call n passes v for slot `path` of (path), syntactic: Ruff's find_argument
+.decl pth106_arg_path_1(n: node, v: node)
+pth106_arg_path_1(n, v) :- kind(n, "call"), field(n, "arguments", l), pth106_args_kwp(l, "path", v).
+pth106_arg_path_1(n, v) :- kind(n, "call"), field(n, "arguments", l), pth106_args_pos(l, v, 0),
+    !pth106_args_kwp(l, "path", _).
+pth106_arg_path_1(n, v) :- kind(n, "call"), field(n, "arguments", v),
+    kind(v, "generator_expression").
+
+// arg_no_path_1: call n does not pass slot `path` of (path), syntactic: Ruff's find_argument
+.decl pth106_arg_no_path_1(n: node)
+pth106_arg_no_path_1(n) :- kind(n, "call"), field(n, "arguments", l), !pth106_args_kwp(l, "path", _),
+    !pth106_args_pos(l, _, 0), !kind(l, "generator_expression").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pth106_alt_1(n: node)
+pth106_alt_1(n) :- node(_, n, _, _, _), glob("[(),\\[\\]{}]", n).
+pth106_alt_1(n) :- kind(n, "comment").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl pth106_alt_3(n: node)
+pth106_alt_3(n) :- (kind(n, "keyword_argument") ; kind(n, "list_splat") ; kind(n, "dictionary_splat")).
+pth106_alt_3(n) :- pth106_alt_1(n).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+//   S: metavariable this relation binds for the calling rule
+.decl pth106_alt_5(n: node, s: loc)
+pth106_alt_5(n, S) :- !pth106_alt_3(n), node(_, n, _, _, _), S = n.
+pth106_alt_5(n, S) :- kind(n, "keyword_argument"), child(n, c1, _), kind(c1, "identifier"),
+    glob("path", c1), next_sibling(c1, s2), glob("=", s2), next_sibling(s2, s3),
+    node(_, s3, _, _, _), S = s3.
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+.decl pth106_alt_9(n: node)
+pth106_alt_9(n) :- pth106_tok_follows_1(n).
+pth106_alt_9(n) :- pth106_tok_precedes_2(n), child(p15, n, _), kind(p15, "keyword_argument").
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+//   F, S: metavariables this relation binds for the calling rule
+.decl pth106_alt_10(n: node, f: loc, s: loc)
+// S: not bound by this rule, so empty (unset) here, as in ast-grep.
+pth106_alt_10(n, F, S) :- kind(n, "call"), child(n, c1_5, _), pth106_callee(c1_5, F), next_sibling(c1_5, s2_5), (kind(s2_5, "generator_expression") ; kind(s2_5, "argument_list"), k2_2_5 = count : { child(s2_5, c1_2_5, _), !pth106_alt_1(c1_2_5) }, k2_2_5 >= 1, k2_2_5 <= 1, child(s2_5, c3_2_5, _), pth106_alt_5(c3_2_5, S)),
+    unset(S).
+pth106_alt_10(n, F, S) :- pth106_ann_string(n, F, S).
+
+// alt_12(n): the JSON `any`: n matches if any one of these rules does
+.decl pth106_alt_12(n: node)
+pth106_alt_12(n) :- kind(n, "identifier"), node(_, n, _, _, _), H = n.
+pth106_alt_12(n) :- has(n, c1, "identifier"), !pth106_tok_follows_4(c1), node(_, c1, _, _, _), H = c1.
+
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+//   F, S: metavariables this relation binds for the calling rule
+.decl pth106_alt_13(n: node, f: loc, s: loc)
+pth106_alt_13(n, F, S) :- kind(n, "call"),child(n, c1_6, _),pth106_callee(c1_6, F),next_sibling(c1_6, s2_6), (kind(s2_6, "generator_expression"), unset(S) ; kind(s2_6, "argument_list"), k2_2_6 = count : { child(s2_6, c1_2_6, _), !pth106_alt_1(c1_2_6) }, k2_2_6 >= 1, k2_2_6 <= 1, child(s2_6, c3_2_6, _), pth106_alt_5(c3_2_6, S)),child(n, c1, _),pth106_callee(c1, F),pth106_alt_12(c1),count : { child(n, c10, _), (kind(c10, "generator_expression") ; kind(c10, "argument_list"), k2_4 = count : { child(c10, c1_4, _), !pth106_alt_1(c1_4) }, k2_4 >= 1, k2_4 <= 1, child(c10, c3_4, _), pth106_alt_5(c3_4, S)), within(c11, c10), pth106_arg_name(c11), count : { node(_, c11, _, _, _), H = c11 } = 0 } = 0.
+pth106_alt_13(n, F, S) :- pth106_ann_string(n, F, S).

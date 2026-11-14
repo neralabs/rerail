@@ -1,0 +1,201 @@
+.policy "ruff-f633-invalid-print-syntax" revision 1
+.guests off
+.description "Use print()'s file argument instead of Python 2's >> redirection, which raises TypeError with the print function."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// F633(n): a finding at node n, from clause `invalid-print-syntax`.
+// Each rule below is one way the JSON `rule` can match.
+.violation F633(at: node) "Replace `>>` with print()'s `file=` argument, as in `print(msg, file=sys.stderr)`."
+    suppress noqa "F633"
+F633(n) :- glob("print", n), child(p1, n, _), kind(p1, "print_statement"),
+    child(p1, c2, _), kind(c2, "chevron"), !f633_tok_follows_13(n),
+    count : { inside(n, p10, "module"), within(c11, p10), f633_print_binding(c11) } = 0.
+F633(n) :- (kind(n, "identifier") ; kind(n, "attribute")), f633_rshift_left(n),
+    global_ref(n, "print"), sym_of(n, "builtins.print").
+
+// print_binding(n): the JSON util `print-binding`, used where the JSON says `matches: "print-binding"`
+.decl f633_print_binding(n: node)
+f633_print_binding(n) :- kind(n, "identifier"), glob("print", n), f633_alt_3(n).
+
+// rshift_left(n): the JSON util `rshift-left`, used where the JSON says `matches: "rshift-left"`
+.decl f633_rshift_left(n: node)
+f633_rshift_left(n) :- !f633_tok_follows_11(n), f633_tok_precedes_12(n), child(p15, n, _),
+    kind(p15, "binary_operator").
+f633_rshift_left(n) :- child(p16, n, _), kind(p16, "parenthesized_expression"),
+    f633_rshift_left(p16).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f633_tok_follows_1(n: node)
+.stored f633_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f633_tok_follows_1(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+f633_tok_follows_1(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+f633_tok_follows_1(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^in$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f633_tok_precedes_2(n: node)
+.stored f633_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f633_tok_precedes_2(n) :- next_sibling(n, s12), glob("in", s12).
+f633_tok_precedes_2(n) :- structural_after(n, g14), match("\\s*", g14), child(p15, n, _),
+    node(_, n, _, _, en18), o16 = en18 + strlen(g14), token(p15, _, t13, o16, _),
+    match("in", t13).
+f633_tok_precedes_2(n) :- structural_after(n, g14),
+    match("(?s)^(?:\\s*(?:in)(?:\\W.*)?)$", g14).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^(def|class)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f633_tok_follows_3(n: node)
+.stored f633_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f633_tok_follows_3(n) :- next_sibling(s20, n), glob("{def,class}", s20).
+f633_tok_follows_3(n) :- structural_before(n, g22), match("\\s*", g22), child(p23, n, _),
+    node(_, n, _, st25, _), o24 = st25 - strlen(g22), token(p23, _, t21, _, o24),
+    match("(def|class)", t21).
+f633_tok_follows_3(n) :- structural_before(n, g22),
+    match("(?s)^(?:(?:.*\\W)?(?:def)\\s*|(?:.*\\W)?(?:class)\\s*)$", g22).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f633_tok_follows_4(n: node)
+.stored f633_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f633_tok_follows_4(n) :- next_sibling(s29, n), match("(?s).*..*", s29).
+f633_tok_follows_4(n) :- structural_before(n, g31), match("\\s*", g31), child(p32, n, _),
+    node(_, n, _, st34, _), o33 = st34 - strlen(g31), token(p32, _, t30, _, o33),
+    match("(?s).*..*", t30).
+f633_tok_follows_4(n) :- structural_before(n, g31), match("(?s)^.*\\S\\s*$", g31).
+
+// tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f633_tok_follows_5(n: node)
+.stored f633_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f633_tok_follows_5(n) :- next_sibling(s37, n), glob("as", s37).
+f633_tok_follows_5(n) :- structural_before(n, g39), match("\\s*", g39), child(p40, n, _),
+    node(_, n, _, st42, _), o41 = st42 - strlen(g39), token(p40, _, t38, _, o41),
+    match("as", t38).
+f633_tok_follows_5(n) :- structural_before(n, g39),
+    match("(?s)^(?:(?:.*\\W)?(?:as)\\s*)$", g39).
+
+// tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f633_tok_follows_6(n: node)
+.stored f633_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f633_tok_follows_6(n) :- next_sibling(s44, n), match("(?s).*..*", s44).
+f633_tok_follows_6(n) :- structural_before(n, g46), match("\\s*", g46), child(p47, n, _),
+    node(_, n, _, st49, _), o48 = st49 - strlen(g46), token(p47, _, t45, _, o48),
+    match("(?s).*..*", t45).
+f633_tok_follows_6(n) :- structural_before(n, g46), match("(?s)^.*\\S\\s*$", g46).
+
+// tok_follows_7(n): an earlier sibling of n, a named node or an anonymous token, matches "^import$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f633_tok_follows_7(n: node)
+.stored f633_tok_follows_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f633_tok_follows_7(n) :- precedes(s54, n), glob("import", s54).
+f633_tok_follows_7(n) :- child(p57, n, _), node(_, n, _, st59, _),
+    token(p57, _, t55, _, en60), en60 <= st59, match("import", t55).
+f633_tok_follows_7(n) :- structural_before(n, g56),
+    match("(?s)^(?:(?:.*\\W)?(?:import)(?:\\W.*)?)$", g56).
+f633_tok_follows_7(n) :- precedes(o58, n), structural_before(o58, g56),
+    match("(?s)^(?:(?:.*\\W)?(?:import)(?:\\W.*)?)$", g56).
+
+// tok_has_8(n): a child of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f633_tok_has_8(n: node)
+.stored f633_tok_has_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f633_tok_has_8(n) :- child(n, c61, _), glob(".", c61).
+f633_tok_has_8(n) :- op(n, t62), match("\\.", t62).
+f633_tok_has_8(n) :- child(n, c68, _), structural_before(c68, g63),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g63).
+f633_tok_has_8(n) :- child(n, c68, _), structural_after(c68, g63),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g63).
+f633_tok_has_8(n) :- node_text(n, g63), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g63).
+
+// tok_follows_9(n): an earlier sibling of n, a named node or an anonymous token, matches "^import$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f633_tok_follows_9(n: node)
+.stored f633_tok_follows_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f633_tok_follows_9(n) :- precedes(s3, n), glob("import", s3).
+f633_tok_follows_9(n) :- child(p6, n, _), node(_, n, _, st8, _), token(p6, _, t4, _, en9),
+    en9 <= st8, match("import", t4).
+f633_tok_follows_9(n) :- structural_before(n, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:import)(?:\\W.*)?)$", g5).
+f633_tok_follows_9(n) :- precedes(o7, n), structural_before(o7, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:import)(?:\\W.*)?)$", g5).
+
+// tok_has_10(n): a child of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f633_tok_has_10(n: node)
+.stored f633_tok_has_10 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f633_tok_has_10(n) :- child(n, c10, _), glob(".", c10).
+f633_tok_has_10(n) :- op(n, t11), match("\\.", t11).
+f633_tok_has_10(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g12).
+f633_tok_has_10(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g12).
+f633_tok_has_10(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g12).
+
+// tok_follows_11(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f633_tok_follows_11(n: node)
+.stored f633_tok_follows_11 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f633_tok_follows_11(n) :- next_sibling(s1, n), match("(?s).*..*", s1).
+f633_tok_follows_11(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("(?s).*..*", t2).
+f633_tok_follows_11(n) :- structural_before(n, g3), match("(?s)^.*\\S\\s*$", g3).
+
+// tok_precedes_12(n): a later sibling of n, a named node or an anonymous token, matches "^>>$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f633_tok_precedes_12(n: node)
+.stored f633_tok_precedes_12 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f633_tok_precedes_12(n) :- next_sibling(n, s8), glob(">>", s8).
+f633_tok_precedes_12(n) :- structural_after(n, g10), match("\\s*", g10), child(p11, n, _),
+    node(_, n, _, _, en14), o12 = en14 + strlen(g10), token(p11, _, t9, o12, _),
+    match(">>", t9).
+f633_tok_precedes_12(n) :- structural_after(n, g10),
+    match("(?s)^(?:\\s*(?:>>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g10).
+
+// tok_follows_13(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f633_tok_follows_13(n: node)
+.stored f633_tok_follows_13 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f633_tok_follows_13(n) :- next_sibling(s3, n), match("(?s).*..*", s3).
+f633_tok_follows_13(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match("(?s).*..*", t4).
+f633_tok_follows_13(n) :- structural_before(n, g5), match("(?s)^.*\\S\\s*$", g5).
+
+// set_1: node kinds from a JSON `any`
+.decl f633_set_1(v: symbol)
+f633_set_1("pattern_list"). f633_set_1("tuple_pattern"). f633_set_1("list_pattern").
+f633_set_1("list_splat_pattern"). f633_set_1("as_pattern_target").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl f633_alt_3(n: node)
+f633_alt_3(n) :- child(p1, n, _),
+    ( kind(p1, "assignment")
+    ; kind(p1, "augmented_assignment")
+    ; kind(p1, "named_expression")
+    ),
+    !f633_tok_follows_1(n).
+f633_alt_3(n) :- child(p9, n, _), kind(p9, k10), f633_set_1(k10).
+f633_alt_3(n) :- child(p11, n, _),
+    (kind(p11, "for_statement") ; kind(p11, "for_in_clause")), f633_tok_precedes_2(n).
+f633_alt_3(n) :- child(p19, n, _),
+    (kind(p19, "function_definition") ; kind(p19, "class_definition")),
+    f633_tok_follows_3(n).
+f633_alt_3(n) :- child(p27, n, _),
+    ( kind(p27, "parameters")
+    ; kind(p27, "lambda_parameters")
+    ; kind(p27, "dictionary_splat_pattern")
+    ).
+
+f633_alt_3(n) :- child(p28, n, _),
+    ( kind(p28, "default_parameter")
+    ; kind(p28, "typed_parameter")
+    ; kind(p28, "typed_default_parameter")
+    ),
+    !f633_tok_follows_4(n).
+f633_alt_3(n) :- child(p36, n, _), kind(p36, "aliased_import"), f633_tok_follows_5(n).
+f633_alt_3(n) :- !f633_tok_follows_6(n), child(p51, n, _), kind(p51, "dotted_name"),
+    ( child(p1, p51, _), kind(p1, "import_statement")
+    ; child(p2, p51, _), kind(p2, "import_from_statement"), f633_tok_follows_9(p51), !f633_tok_has_10(p51)
+    ).
+
+f633_alt_3(n) :- child(p69, n, _),
+    (kind(p69, "global_statement") ; kind(p69, "nonlocal_statement")).

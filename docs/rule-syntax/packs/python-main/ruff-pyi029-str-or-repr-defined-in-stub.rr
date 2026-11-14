@@ -1,0 +1,69 @@
+.policy "ruff-pyi029-str-or-repr-defined-in-stub" revision 1
+.guests off
+.description "Remove redundant __str__ and __repr__ definitions from stub files; their signatures match the defaults every class inherits, so they add nothing."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PYI029(n): a finding at node n, from clause `str-or-repr-defined-in-stub`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI029(at: node, name: node) "Remove this `{name}` definition from the stub; a `{name}` returning `str` is inherited from `object`, so declaring it is almost always redundant."
+    suppress noqa "PYI029"
+PYI029_raw(NAME, n) :- kind(n, "function_definition"), field(n, "name", c1),
+    glob("__{str,repr}__", c1), node(_, c1, _, _, _), NAME = c1, field(n, "return_type", c2),
+    kind(c2, "type"), child(c2, c3, _), pyi029_str_ref(c3), field(n, "parameters", c4),
+    kind(c4, "parameters"), count : { child(c4, c5, _), pyi029_arg_param(c5), pyi029_alt_1(c5) } = 0,
+    count : { child(p8, n, _), kind(p8, "decorated_definition"), child(p8, c9, _), kind(c9, "decorator"), child(c9, c10, _), pyi029_abstract_ref(c10) } = 0,
+    within_stop(n, p11, pyi029_stop_2), kind(p11, "class_definition").
+
+// str_ref(n): the JSON util `str-ref`, used where the JSON says `matches: "str-ref"`
+.decl pyi029_str_ref(n: node)
+pyi029_str_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "str"),
+    sym_of(n, "builtins.str").
+pyi029_str_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi029_str_ref(c1).
+
+// abstract_ref(n): the JSON util `abstract-ref`, used where the JSON says `matches: "abstract-ref"`
+.decl pyi029_abstract_ref(n: node)
+pyi029_abstract_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "abc.abstractmethod")
+    ; sym_of(n, "abc.abstractclassmethod")
+    ; sym_of(n, "abc.abstractstaticmethod")
+    ; sym_of(n, "abc.abstractproperty")
+    ).
+
+pyi029_abstract_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi029_abstract_ref(c1).
+
+// arg_param(n): the JSON util `arg-param`, used where the JSON says `matches: "arg-param"`
+.decl pyi029_arg_param(n: node)
+pyi029_arg_param(n) :-
+    ( kind(n, "identifier")
+    ; kind(n, "default_parameter")
+    ; kind(n, "typed_default_parameter")
+    ).
+
+pyi029_arg_param(n) :- kind(n, "typed_parameter"), child(n, c1, _), kind(c1, "identifier").
+
+// star_marker(n): the JSON util `star-marker`, used where the JSON says `matches: "star-marker"`
+.decl pyi029_star_marker(n: node)
+pyi029_star_marker(n) :- (kind(n, "keyword_separator") ; kind(n, "list_splat_pattern")).
+pyi029_star_marker(n) :- kind(n, "typed_parameter"), child(n, c1, _),
+    kind(c1, "list_splat_pattern").
+
+// stop_2: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi029_stop_2(kind: symbol)
+pyi029_stop_2("function_definition"). pyi029_stop_2("class_definition").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi029_alt_1(n: node)
+pyi029_alt_1(n) :- precedes(s1, n), pyi029_arg_param(s1).
+pyi029_alt_1(n) :- precedes(s2, n), pyi029_star_marker(s2).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI029_raw(at: node, name: node)
+PYI029(v0, v1) :- PYI029_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

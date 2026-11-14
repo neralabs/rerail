@@ -125,7 +125,7 @@ c(n, x) :- ast(d, n, {"language": "python", "rule": {"pattern": "f($X)"}}, X: x)
         assert_eq!(c.args, vec![Term::Var("n".into()), Term::Var("x".into())]);
         assert_eq!(columns("rr_ast_1_1"), &["n", "x1"]);
         assert_eq!(columns("rr_ast_0"), &["n"]);
-        assert!(prog.inputs.contains(rel) && prog.decls.contains_key(rel));
+        assert!(prog.inputs.contains(rel) && prog.decls.contains_key(rel.as_str()));
     }
 
     /// A `filePath` test below a matcher's root conjuncts (here in an `any`) is the document's: the matcher holds in

@@ -1,0 +1,26 @@
+.policy "bandit-b303-md5" revision 1
+.guests off
+.description "Avoid MD2, MD4, MD5, and SHA1 hashes from PyCrypto, PyCryptodome, or cryptography; they are broken for security, so use SHA-256 or a password hash."
+.language python
+.mode steer
+.scope include "**/*.py", "**/*.pyi"
+.scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B303(n): a finding at node n, from clause `weak-hash`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B303(at: node) "MD5 and SHA1 are broken for security use. Use SHA-256, or a password hash for passwords."
+    suppress nosec "B303"
+B303(n) :- kind(n, "call"), field(n, "function", c1),
+    (kind(c1, "identifier") ; kind(c1, "attribute")), sym_of(c1, q2), b303_set_1(q2).
+
+// set_1: symbols from the JSON `resolves.import`
+.decl b303_set_1(v: symbol)
+b303_set_1("Crypto.Hash.MD2.new"). b303_set_1("Crypto.Hash.MD4.new").
+b303_set_1("Crypto.Hash.MD5.new"). b303_set_1("Crypto.Hash.SHA.new").
+b303_set_1("Cryptodome.Hash.MD2.new"). b303_set_1("Cryptodome.Hash.MD4.new").
+b303_set_1("Cryptodome.Hash.MD5.new"). b303_set_1("Cryptodome.Hash.SHA.new").
+b303_set_1("cryptography.hazmat.primitives.hashes.MD5").
+b303_set_1("cryptography.hazmat.primitives.hashes.SHA1").

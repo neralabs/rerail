@@ -67,7 +67,7 @@ pub fn with_schema<T>(
                 .map_err(error)?;
             }
             if named.contains(&typed.to_ascii_lowercase())
-                && let Some(decl) = program.decls.get(&rel)
+                && let Some(decl) = program.decls.get(rel.as_str())
             {
                 let names = catalog::view_columns(decl)
                     .iter()

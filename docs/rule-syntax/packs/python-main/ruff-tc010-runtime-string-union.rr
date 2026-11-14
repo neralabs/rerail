@@ -1,0 +1,279 @@
+.policy "ruff-tc010-runtime-string-union" revision 1
+.guests off
+.description "Avoid quoted members in X | Y union types that Python evaluates at runtime; quote the whole union or remove the quotes, since a string cannot be an operand of the | operator."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// future_seen(n): the JSON util `future-seen`, used where the JSON says `matches: "future-seen"`
+.decl tc010_future_seen(n: node)
+tc010_future_seen(n) :- within(n, p1), precedes(s2, p1), kind(s2, "future_import_statement"),
+    within(c3, s2), glob("annotations", c3).
+
+// type_checking_name(n): the JSON util `type-checking-name`, used where the JSON says `matches: "type-checking-name"`
+.decl tc010_type_checking_name(n: node)
+tc010_type_checking_name(n) :- kind(n, "identifier"), glob("TYPE_CHECKING", n).
+tc010_type_checking_name(n) :- kind(n, "identifier"),
+    ( sym_of(n, "typing.TYPE_CHECKING")
+    ; sym_of(n, "typing_extensions.TYPE_CHECKING")
+    ; sym_of(n, "_typeshed.TYPE_CHECKING")
+    ).
+
+tc010_type_checking_name(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("TYPE_CHECKING", c1).
+
+// type_checking_test(n): the JSON util `type-checking-test`, used where the JSON says `matches: "type-checking-test"`
+.decl tc010_type_checking_test(n: node)
+tc010_type_checking_test(n) :- tc010_type_checking_name(n).
+tc010_type_checking_test(n) :- kind(n, "parenthesized_expression"),
+    within_stop(c1, n, tc010_stop_1), tc010_type_checking_name(c1).
+
+// in_type_checking_block(n): the JSON util `in-type-checking-block`, used where the JSON says `matches: "in-type-checking-block"`
+.decl tc010_in_type_checking_block(n: node)
+tc010_in_type_checking_block(n) :- inside(n, p1, "block"), field(p2, "consequence", p1),
+    kind(p2, "if_statement"), field(p2, "condition", c3), tc010_type_checking_test(c3).
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl tc010_plain_string(n: node)
+tc010_plain_string(n) :- kind(n, "string"), !match("[a-zA-Z]*[fFtT].*", n).
+tc010_plain_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), match("[a-zA-Z]*[fFtT].*", c1) } = 0.
+
+// annotation_root(n): the JSON util `annotation-root`, used where the JSON says `matches: "annotation-root"`
+.decl tc010_annotation_root(n: node)
+tc010_annotation_root(n) :- kind(n, "type"),
+    ( field(p1, "type", n), (kind(p1, "typed_parameter") ; kind(p1, "typed_default_parameter") ; kind(p1, "assignment"))
+    ; field(p2, "return_type", n), kind(p2, "function_definition")
+    ).
+
+
+// local_annotation(n): the JSON util `local-annotation`, used where the JSON says `matches: "local-annotation"`
+.decl tc010_local_annotation(n: node)
+tc010_local_annotation(n) :- within(n, p1), tc010_annotation_root(p1), child(p2, p1, _),
+    kind(p2, "assignment"), within_stop(p2, p3, tc010_stop_3),
+    kind(p3, "function_definition").
+
+// union_owner(n): the JSON util `union-owner`, used where the JSON says `matches: "union-owner"`
+.decl tc010_union_owner(n: node)
+tc010_union_owner(n) :- kind(n, "subscript"), field(n, "value", c1),
+    (kind(c1, "identifier") ; kind(c1, "attribute")),
+    ( sym_of(c1, "typing.Union")
+    ; sym_of(c1, "typing_extensions.Union")
+    ; sym_of(c1, "_typeshed.Union")
+    ).
+
+tc010_union_owner(n) :- kind(n, "type_parameter"), child(p2, n, _), kind(p2, "generic_type"),
+    child(p2, c3, _), (kind(c3, "identifier") ; kind(c3, "attribute")),
+    ( sym_of(c3, "typing.Union")
+    ; sym_of(c3, "typing_extensions.Union")
+    ; sym_of(c3, "_typeshed.Union")
+    ).
+
+
+// literal_owner(n): the JSON util `literal-owner`, used where the JSON says `matches: "literal-owner"`
+.decl tc010_literal_owner(n: node)
+tc010_literal_owner(n) :- kind(n, "subscript"), field(n, "value", c1),
+    (kind(c1, "identifier") ; kind(c1, "attribute")),
+    (sym_of(c1, "typing.Literal") ; sym_of(c1, "typing_extensions.Literal")).
+tc010_literal_owner(n) :- kind(n, "type_parameter"), child(p2, n, _),
+    kind(p2, "generic_type"), child(p2, c3, _),
+    (kind(c3, "identifier") ; kind(c3, "attribute")),
+    (sym_of(c3, "typing.Literal") ; sym_of(c3, "typing_extensions.Literal")).
+
+// union_member(n): the JSON util `union-member`, used where the JSON says `matches: "union-member"`
+.decl tc010_union_member(n: node)
+tc010_union_member(n) :- tc010_plain_string(n), parsed(n, "annotation", r1),
+    (kind(r1, "expression_statement") ; kind(r1, "ERROR")), tc010_union_position(n).
+
+// union_position(n): the JSON util `union-position`, used where the JSON says `matches: "union-position"`
+.decl tc010_union_position(n: node)
+tc010_union_position(n) :- tc010_demand_union_position(n), within_stop(n, p1, tc010_stop_10),
+    ( kind(p1, "union_type")
+    ; kind(p1, "binary_operator"), field(p1, "operator", c1), glob("|", c1)
+    ),
+    !tc010_alt_11(n).
+
+// unparsed_member(n): the JSON util `unparsed-member`, used where the JSON says `matches: "unparsed-member"`
+.decl tc010_unparsed_member(n: node)
+tc010_unparsed_member(n) :-
+    ( kind(n, "string"), match("[a-zA-Z]*[bB].*", n)
+    ; kind(n, "concatenated_string"), child(n, c1, _), kind(c1, "string"), match("[a-zA-Z]*[bB].*", c1)
+    ; tc010_plain_string(n), tc010_up_1(n, p1)
+    ),
+    tc010_union_position(n), count : { tc010_stop_28_within(n, p4), tc010_alt_29(p4) } = 0.
+
+// annotated_metadata(n): the JSON util `annotated-metadata`, used where the JSON says `matches: "annotated-metadata"`
+.decl tc010_annotated_metadata(n: node)
+tc010_annotated_metadata(n) :- !tc010_alt_30(n), child(p1, n, _), kind(p1, "subscript"),
+    field(p1, "value", c2), (kind(c2, "identifier") ; kind(c2, "attribute")),
+    (sym_of(c2, "typing.Annotated") ; sym_of(c2, "typing_extensions.Annotated")).
+tc010_annotated_metadata(n) :- !child(_, n, 0), child(p3, n, _), kind(p3, "tuple"),
+    within_stop(p3, p4, tc010_stop_31),
+    ( kind(p4, "subscript"), field(p4, "value", c1), (kind(c1, "identifier") ; kind(c1, "attribute")), (sym_of(c1, "typing.Annotated") ; sym_of(c1, "typing_extensions.Annotated"))
+    ; kind(p4, "type_parameter"), child(p1, p4, _), kind(p1, "generic_type"), child(p1, c2, _), (kind(c2, "identifier") ; kind(c2, "attribute")), (sym_of(c2, "typing.Annotated") ; sym_of(c2, "typing_extensions.Annotated"))
+    ).
+
+tc010_annotated_metadata(n) :- kind(n, "type"), !child(_, n, 0), child(p8, n, _),
+    kind(p8, "type_parameter"), child(p9, p8, _), kind(p9, "generic_type"),
+    child(p9, c10, _), (kind(c10, "identifier") ; kind(c10, "attribute")),
+    (sym_of(c10, "typing.Annotated") ; sym_of(c10, "typing_extensions.Annotated")).
+
+// typed_dict_call(n): the JSON util `typed-dict-call`, used where the JSON says `matches: "typed-dict-call"`
+.decl tc010_typed_dict_call(n: node)
+tc010_typed_dict_call(n) :- kind(n, "call"), field(n, "function", c1),
+    (kind(c1, "identifier") ; kind(c1, "attribute")),
+    ( sym_of(c1, "typing.TypedDict")
+    ; sym_of(c1, "typing_extensions.TypedDict")
+    ; sym_of(c1, "_typeshed.TypedDict")
+    ).
+
+
+// TC010(n): a finding at node n, from clause `runtime-string-union-in-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation TC010(at: node) "Quote the whole union instead of this member (`\"A | None\"`), or drop the quotes if the name already exists at runtime; a string cannot be an operand of `|`."
+    suppress noqa "TC010"
+TC010_raw(n) :- within(n, p1), tc010_annotation_root(p1), !tc010_alt_33(n),
+    (tc010_union_member(n) ; tc010_unparsed_member(n)).
+
+// TC010_runtime_string_union_in_expression(n): a finding at node n, from clause `runtime-string-union-in-expression`.
+// Each rule below is one way the JSON `rule` can match.
+.violation TC010_runtime_string_union_in_expression(at: node) code "TC010" "Quote the whole union instead of this member (`\"A | None\"`), or drop the quotes if the name already exists at runtime; a string cannot be an operand of `|`."
+    suppress noqa "TC010"
+TC010_runtime_string_union_in_expression(n) :- tc010_union_member(n),
+    count : { inside(n, p1, "type"), node(_, p1, _, _, _) } = 0.
+
+// TC010_runtime_string_union_in_legacy_typed_dict_field(n): a finding at node n, from clause `runtime-string-union-in-legacy-typed-dict-field`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation TC010_runtime_string_union_in_legacy_typed_dict_field(at: node) code "TC010" "Quote the whole union instead of this member (`\"A | None\"`), or drop the quotes if the name already exists at runtime; a string cannot be an operand of `|`."
+    suppress noqa "TC010"
+TC010_runtime_string_union_in_legacy_typed_dict_field(n) :- tc010_plain_string(n),
+    tc010_union_position(n), !tc010_union_member(n), tc010_up_2(n, p1),
+    count : { field(p1, "name", c2), glob("{total,extra_items}", c2) } = 0,
+    tc010_up_3(n, p3), child(p4, p3, _), tc010_typed_dict_call(p4),
+    count : { child(p3, c5, _), !tc010_alt_35(c5), tc010_alt_37(c5) } = 0, child(p3, c6, _),
+    child(_, c6, 0), !tc010_alt_35(c6),
+    count : { within_stop(n, p7, "argument_list"), tc010_annotated_metadata(p7) } = 0.
+
+// demand_union_position: the nodes union_position is asked at (it looks at every ancestor of every node)
+.decl tc010_demand_union_position(n: node)
+tc010_demand_union_position(n) :- tc010_plain_string(n), parsed(n, "annotation", r1),
+    (kind(r1, "expression_statement") ; kind(r1, "ERROR")).
+tc010_demand_union_position(n) :-
+    ( kind(n, "string"), match("[a-zA-Z]*[bB].*", n)
+    ; kind(n, "concatenated_string"), child(n, c1, _), kind(c1, "string"), match("[a-zA-Z]*[bB].*", c1)
+    ; tc010_plain_string(n), tc010_up_4(n, p1)
+    ).
+
+tc010_demand_union_position(n) :- tc010_plain_string(n), tc010_up_5(n, p1), tc010_up_6(n, p3),
+    child(p4, p3, _), tc010_typed_dict_call(p4), child(p3, c6, _), child(_, c6, 0).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl tc010_up_1(n: node, p: node)
+tc010_up_1(n, p) :- tc010_plain_string(n), tc010_union_position(n), within_stop(n, p, tc010_stop_12),
+    tc010_alt_20(p).
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl tc010_up_2(n: node, p: node)
+tc010_up_2(n, p) :- tc010_plain_string(n), tc010_union_position(n), within_stop(n, p, "argument_list"),
+    kind(p, "keyword_argument").
+
+// up_3(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl tc010_up_3(n: node, p: node)
+tc010_up_3(n, p) :- tc010_plain_string(n), tc010_union_position(n), within_stop(n, p, "argument_list"),
+    kind(p, "argument_list").
+
+// up_4(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl tc010_up_4(n: node, p: node)
+tc010_up_4(n, p) :- tc010_plain_string(n), within_stop(n, p, tc010_stop_12), tc010_alt_20(p).
+
+// up_5(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl tc010_up_5(n: node, p: node)
+tc010_up_5(n, p) :- tc010_plain_string(n), within_stop(n, p, "argument_list"),
+    kind(p, "keyword_argument").
+
+// up_6(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl tc010_up_6(n: node, p: node)
+tc010_up_6(n, p) :- tc010_plain_string(n), within_stop(n, p, "argument_list"),
+    kind(p, "argument_list").
+
+// stop_3: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl tc010_stop_3(kind: symbol)
+tc010_stop_3("function_definition"). tc010_stop_3("class_definition").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl tc010_stop_1(n: node)
+tc010_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl tc010_stop_10(n: node)
+tc010_stop_10(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression"),
+    !kind(n, "type").
+
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+.decl tc010_alt_13(n: node)
+tc010_alt_13(n) :- (kind(n, "parenthesized_expression") ; kind(n, "type") ; kind(n, "union_type")).
+tc010_alt_13(n) :- kind(n, "binary_operator"), field(n, "operator", c1), glob("|", c1).
+
+// stop_12(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl tc010_stop_12(n: node)
+tc010_stop_12(n) :- node(_, n, _, _, _), !tc010_alt_13(n).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl tc010_alt_11(n: node)
+tc010_alt_11(n) :- tc010_in_type_checking_block(n).
+tc010_alt_11(n) :- within_stop(n, p1, tc010_stop_12),
+    ( tc010_union_owner(p1)
+    ; kind(p1, "tuple"), within_stop(p1, p2, tc010_stop_10), tc010_union_owner(p2)
+    ).
+
+
+// alt_20(n): the JSON `any`: n matches if any one of these rules does
+.decl tc010_alt_20(n: node)
+tc010_alt_20(n) :- tc010_literal_owner(n).
+tc010_alt_20(n) :- kind(n, "tuple"), within_stop(n, p1, tc010_stop_10), tc010_literal_owner(p1).
+
+// stop_28(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl tc010_stop_28(n: node)
+tc010_stop_28(n) :- tc010_annotation_root(n).
+
+// alt_29(n): the JSON `any`: n matches if any one of these rules does
+.decl tc010_alt_29(n: node)
+tc010_alt_29(n) :- kind(n, "argument_list").
+tc010_alt_29(n) :- tc010_annotated_metadata(n).
+
+// alt_30(n): the JSON `any`: n matches if any one of these rules does
+.decl tc010_alt_30(n: node)
+tc010_alt_30(n) :- child(_, n, 0).
+tc010_alt_30(n) :- child(_, n, 1).
+
+// stop_31(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl tc010_stop_31(n: node)
+tc010_stop_31(n) :- node(_, n, _, _, _), !kind(n, "type").
+
+// alt_33(n): the JSON `any`: n matches if any one of these rules does
+.decl tc010_alt_33(n: node)
+tc010_alt_33(n) :- tc010_future_seen(n).
+tc010_alt_33(n) :- tc010_local_annotation(n).
+
+// alt_35(n): the JSON `any`: n matches if any one of these rules does
+.decl tc010_alt_35(n: node)
+tc010_alt_35(n) :- (kind(n, "keyword_argument") ; kind(n, "dictionary_splat") ; kind(n, "comment")).
+tc010_alt_35(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_37(n): the JSON `any`: n matches if any one of these rules does
+.decl tc010_alt_37(n: node)
+tc010_alt_37(n) :- node(_, n, _, _, _), !tc010_alt_30(n).
+tc010_alt_37(n) :- child(_, n, 1), !kind(n, "none").
+
+// stop_28_within: within_stop over the stop set stop_28, read inside an aggregate
+.decl tc010_stop_28_within(n: node, a: node)
+tc010_stop_28_within(x, y) :- within_stop(x, y, tc010_stop_28).
+
+// main's file condition {"notRegex": "\\.pyi$"}
+.decl TC010_raw(at: node)
+TC010(v0) :- TC010_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

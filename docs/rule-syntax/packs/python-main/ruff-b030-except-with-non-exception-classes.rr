@@ -1,0 +1,205 @@
+.policy "ruff-b030-except-with-non-exception-classes" revision 2
+.guests off
+.description "Use only exception classes, or tuples of them, in except clauses; other values such as literals or expressions are not valid exception types."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B030(n): a finding at node n, from clause `except-with-non-exception-classes`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B030(at: node) "`except` handlers should only be exception classes or tuples of exception classes"
+    suppress noqa "B030"
+B030(n) :- b030_flat(n), !kind(n, "identifier"), !kind(n, "attribute"),
+    !kind(n, "subscript"), !kind(n, "call"), inside(n, p1, "except_clause").
+
+// type_slot(n): the JSON util `type-slot`, used where the JSON says `matches: "type-slot"`
+.decl b030_type_slot(n: node)
+b030_type_slot(n) :- b030_tok_follows_1(n), !b030_tok_precedes_2(n), child(p15, n, _),
+    kind(p15, "except_clause").
+b030_type_slot(n) :- !b030_tok_follows_3(n), child(p23, n, _), kind(p23, "as_pattern"),
+    b030_type_slot(p23).
+b030_type_slot(n) :- child(p24, n, _), kind(p24, "parenthesized_expression"),
+    b030_type_slot(p24).
+
+// plus(n): the JSON util `plus`, used where the JSON says `matches: "plus"`
+.decl b030_plus(n: node)
+b030_plus(n) :- kind(n, "binary_operator"), b030_tok_has_4(n).
+
+// core(n): the JSON util `core`, used where the JSON says `matches: "core"`
+.decl b030_core(n: node)
+b030_core(n) :- node(_, n, _, _, _), !b030_alt_1(n).
+
+// comma_elem(n): the JSON util `comma-elem`, used where the JSON says `matches: "comma-elem"`
+.decl b030_comma_elem(n: node)
+b030_comma_elem(n) :- child(p1, n, _), kind(p1, "except_clause"),
+    (b030_tok_precedes_7(n) ; b030_tok_follows_8(n)).
+b030_comma_elem(n) :- child(p16, n, _), kind(p16, "parenthesized_expression"),
+    b030_comma_elem(p16).
+
+// queued_splat(n): the JSON util `queued-splat`, used where the JSON says `matches: "queued-splat"`
+.decl b030_queued_splat(n: node)
+b030_queued_splat(n) :- kind(n, "list_splat"), b030_queued(n).
+
+// queued_plus(n): the JSON util `queued-plus`, used where the JSON says `matches: "queued-plus"`
+.decl b030_queued_plus(n: node)
+b030_queued_plus(n) :- b030_plus(n), b030_queued(n).
+
+// elem_of_type_tuple(n): the JSON util `elem-of-type-tuple`, used where the JSON says `matches: "elem-of-type-tuple"`
+.decl b030_elem_of_type_tuple(n: node)
+b030_elem_of_type_tuple(n) :- child(p1, n, _), kind(p1, "tuple"), b030_type_slot(p1).
+b030_elem_of_type_tuple(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"),
+    b030_elem_of_type_tuple(p2).
+
+// elem_of_splat_seq(n): the JSON util `elem-of-splat-seq`, used where the JSON says `matches: "elem-of-splat-seq"`
+.decl b030_elem_of_splat_seq(n: node)
+b030_elem_of_splat_seq(n) :- child(p1, n, _), (kind(p1, "tuple") ; kind(p1, "list")),
+    child(p2, p1, _), b030_queued_splat(p2).
+b030_elem_of_splat_seq(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"),
+    b030_elem_of_splat_seq(p3).
+
+// value_of_queued_splat(n): the JSON util `value-of-queued-splat`, used where the JSON says `matches: "value-of-queued-splat"`
+.decl b030_value_of_queued_splat(n: node)
+b030_value_of_queued_splat(n) :- child(p1, n, _), b030_queued_splat(p1).
+b030_value_of_queued_splat(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"),
+    b030_value_of_queued_splat(p2).
+
+// side_of_queued_plus(n): the JSON util `side-of-queued-plus`, used where the JSON says `matches: "side-of-queued-plus"`
+.decl b030_side_of_queued_plus(n: node)
+b030_side_of_queued_plus(n) :- child(p1, n, _), b030_queued_plus(p1).
+b030_side_of_queued_plus(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"),
+    b030_side_of_queued_plus(p2).
+
+// elem_of_side_tuple(n): the JSON util `elem-of-side-tuple`, used where the JSON says `matches: "elem-of-side-tuple"`
+.decl b030_elem_of_side_tuple(n: node)
+b030_elem_of_side_tuple(n) :- child(p1, n, _), kind(p1, "tuple"), b030_side_of_queued_plus(p1).
+b030_elem_of_side_tuple(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"),
+    b030_elem_of_side_tuple(p2).
+
+// value_of_side_splat(n): the JSON util `value-of-side-splat`, used where the JSON says `matches: "value-of-side-splat"`
+.decl b030_value_of_side_splat(n: node)
+b030_value_of_side_splat(n) :- child(p1, n, _), kind(p1, "list_splat"),
+    b030_side_of_queued_plus(p1).
+b030_value_of_side_splat(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"),
+    b030_value_of_side_splat(p2).
+
+// queued(n): the JSON util `queued`, used where the JSON says `matches: "queued"`
+.decl b030_queued(n: node)
+b030_queued(n) :- b030_core(n), b030_alt_3(n).
+
+// flat(n): the JSON util `flat`, used where the JSON says `matches: "flat"`
+.decl b030_flat(n: node)
+b030_flat(n) :- b030_core(n),
+    ( b030_queued(n), !b030_alt_12(n)
+    ; b030_value_of_queued_splat(n), !b030_alt_10(n)
+    ; b030_side_of_queued_plus(n), !b030_alt_11(n)
+    ; b030_value_of_side_splat(n), !b030_alt_12(n)
+    ).
+
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^(except|\\*)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b030_tok_follows_1(n: node)
+.stored b030_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b030_tok_follows_1(n) :- next_sibling(s1, n), glob("{except,\\*}", s1).
+b030_tok_follows_1(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("(except|\\*)", t2).
+b030_tok_follows_1(n) :- structural_before(n, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:except)\\s*|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\*)\\s*)$", g3).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b030_tok_precedes_2(n: node)
+.stored b030_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b030_tok_precedes_2(n) :- next_sibling(n, s8), glob("\\,", s8).
+b030_tok_precedes_2(n) :- structural_after(n, g10), match("\\s*", g10), child(p11, n, _),
+    node(_, n, _, _, en14), o12 = en14 + strlen(g10), token(p11, _, t9, o12, _),
+    match(",", t9).
+b030_tok_precedes_2(n) :- structural_after(n, g10), match("(?s)^(?:\\s*(?:,).*)$", g10).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b030_tok_follows_3(n: node)
+.stored b030_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b030_tok_follows_3(n) :- next_sibling(s16, n), match("(?s).*..*", s16).
+b030_tok_follows_3(n) :- structural_before(n, g18), match("\\s*", g18), child(p19, n, _),
+    node(_, n, _, st21, _), o20 = st21 - strlen(g18), token(p19, _, t17, _, o20),
+    match("(?s).*..*", t17).
+b030_tok_follows_3(n) :- structural_before(n, g18), match("(?s)^.*\\S\\s*$", g18).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^\\+$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b030_tok_has_4(n: node)
+.stored b030_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b030_tok_has_4(n) :- child(n, c1, _), glob("+", c1).
+b030_tok_has_4(n) :- op(n, t2), match("\\+", t2).
+b030_tok_has_4(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+b030_tok_has_4(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+b030_tok_has_4(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b030_tok_precedes_5(n: node)
+.stored b030_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b030_tok_precedes_5(n) :- next_sibling(n, s2), glob("\\,", s2).
+b030_tok_precedes_5(n) :- structural_after(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, _, en8), o6 = en8 + strlen(g4), token(p5, _, t3, o6, _),
+    match(",", t3).
+b030_tok_precedes_5(n) :- structural_after(n, g4), match("(?s)^(?:\\s*(?:,).*)$", g4).
+
+// tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b030_tok_follows_6(n: node)
+.stored b030_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b030_tok_follows_6(n) :- next_sibling(s9, n), glob("\\,", s9).
+b030_tok_follows_6(n) :- structural_before(n, g11), match("\\s*", g11), child(p12, n, _),
+    node(_, n, _, st14, _), o13 = st14 - strlen(g11), token(p12, _, t10, _, o13),
+    match(",", t10).
+b030_tok_follows_6(n) :- structural_before(n, g11), match("(?s)^(?:.*(?:,)\\s*)$", g11).
+
+// tok_precedes_7(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b030_tok_precedes_7(n: node)
+.stored b030_tok_precedes_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b030_tok_precedes_7(n) :- next_sibling(n, s1), glob("\\,", s1).
+b030_tok_precedes_7(n) :- structural_after(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, _, en7), o5 = en7 + strlen(g3), token(p4, _, t2, o5, _),
+    match(",", t2).
+b030_tok_precedes_7(n) :- structural_after(n, g3), match("(?s)^(?:\\s*(?:,).*)$", g3).
+
+// tok_follows_8(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b030_tok_follows_8(n: node)
+.stored b030_tok_follows_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b030_tok_follows_8(n) :- next_sibling(s8, n), glob("\\,", s8).
+b030_tok_follows_8(n) :- structural_before(n, g10), match("\\s*", g10), child(p11, n, _),
+    node(_, n, _, st13, _), o12 = st13 - strlen(g10), token(p11, _, t9, _, o12),
+    match(",", t9).
+b030_tok_follows_8(n) :- structural_before(n, g10), match("(?s)^(?:.*(?:,)\\s*)$", g10).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl b030_alt_1(n: node)
+b030_alt_1(n) :- (kind(n, "parenthesized_expression") ; kind(n, "comment") ; kind(n, "as_pattern")).
+b030_alt_1(n) :- node(_, n, _, _, _), glob("[(),*+:\\[\\]]", n).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl b030_alt_3(n: node)
+b030_alt_3(n) :- b030_type_slot(n), !kind(n, "tuple").
+b030_alt_3(n) :- b030_elem_of_type_tuple(n).
+b030_alt_3(n) :- b030_comma_elem(n).
+b030_alt_3(n) :- b030_elem_of_splat_seq(n).
+b030_alt_3(n) :- b030_plus(n), b030_value_of_queued_splat(n).
+b030_alt_3(n) :- b030_plus(n), b030_side_of_queued_plus(n).
+b030_alt_3(n) :- b030_elem_of_side_tuple(n).
+b030_alt_3(n) :- b030_plus(n), b030_value_of_side_splat(n).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl b030_alt_10(n: node)
+b030_alt_10(n) :- (kind(n, "tuple") ; kind(n, "list")).
+b030_alt_10(n) :- b030_plus(n).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl b030_alt_11(n: node)
+b030_alt_11(n) :- (kind(n, "tuple") ; kind(n, "list_splat")).
+b030_alt_11(n) :- b030_plus(n).
+
+// alt_12(n): the JSON `any`: n matches if any one of these rules does
+.decl b030_alt_12(n: node)
+b030_alt_12(n) :- kind(n, "list_splat").
+b030_alt_12(n) :- b030_plus(n).

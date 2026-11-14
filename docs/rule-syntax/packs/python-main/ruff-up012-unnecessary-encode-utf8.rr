@@ -1,0 +1,103 @@
+.policy "ruff-up012-unnecessary-encode-utf8" revision 1
+.guests off
+.description "Use a bytes literal instead of encoding an ASCII string literal, and omit a redundant UTF-8 encoding argument; UTF-8 is already the default."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// plain_text(n): the JSON util `plain-text`, used where the JSON says `matches: "plain-text"`
+.decl up012_plain_text(n: node)
+up012_plain_text(n) :- kind(n, "string"), !match("[A-Za-z]*[bBfFtT].*", n).
+up012_plain_text(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), match("[A-Za-z]*[bBfFtT].*", c1) } = 0.
+up012_plain_text(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), up012_plain_text(c2).
+
+// f_text(n): the JSON util `f-text`, used where the JSON says `matches: "f-text"`
+.decl up012_f_text(n: node)
+up012_f_text(n) :- kind(n, "string"), match("[A-Za-z]*[fF].*", n).
+up012_f_text(n) :- kind(n, "concatenated_string"), child(n, c1, _), kind(c1, "string"),
+    match("[A-Za-z]*[fF].*", c1).
+up012_f_text(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), up012_f_text(c2).
+
+// string_only_escape(n): the JSON util `string-only-escape`, used where the JSON says `matches: "string-only-escape"`
+.decl up012_string_only_escape(n: node)
+up012_string_only_escape(n) :- kind(n, "string"), !match("[A-Za-z]*[rR].*", n),
+    has(n, c1, "escape_sequence"), glob("\\\\{[NuU],[4-7][0-7][0-7]}**", c1).
+up012_string_only_escape(n) :- kind(n, "concatenated_string"), child(n, c2, _),
+    up012_string_only_escape(c2).
+up012_string_only_escape(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    up012_string_only_escape(c3).
+
+// utf8_name(n): the JSON util `utf8-name`, used where the JSON says `matches: "utf8-name"`
+.decl up012_utf8_name(n: node)
+up012_utf8_name(n) :- up012_plain_text(n), value(n, v1), value_type(v1, "str"),
+    iglob("{utf-8,utf8,utf_8,u8,utf,cp65001}", v1).
+
+// arg_node(n): the JSON util `arg-node`, used where the JSON says `matches: "arg-node"`
+.decl up012_arg_node(n: node)
+up012_arg_node(n) :- node(_, n, _, _, _), !up012_alt_1(n).
+
+// encoding_arg(n): the JSON util `encoding-arg`, used where the JSON says `matches: "encoding-arg"`
+.decl up012_encoding_arg(n: node)
+up012_encoding_arg(n) :- up012_utf8_name(n).
+up012_encoding_arg(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("encoding", c1), field(n, "value", c2), up012_utf8_name(c2).
+
+// no_args(n): the JSON util `no-args`, used where the JSON says `matches: "no-args"`
+.decl up012_no_args(n: node)
+up012_no_args(n) :- kind(n, "argument_list"), count : { child(n, c1, _), up012_arg_node(c1) } = 0.
+
+// one_encoding_arg(n): the JSON util `one-encoding-arg`, used where the JSON says `matches: "one-encoding-arg"`
+.decl up012_one_encoding_arg(n: node)
+up012_one_encoding_arg(n) :- kind(n, "argument_list"),
+    k2 = count : { child(n, c1, _), up012_arg_node(c1) }, k2 >= 1, k2 <= 1, child(n, c3, _),
+    up012_encoding_arg(c3).
+
+// bytes_call(n): the JSON util `bytes-call`, used where the JSON says `matches: "bytes-call"`
+.decl up012_bytes_call(n: node)
+up012_bytes_call(n) :- kind(n, "call"), field(n, "function", c1), up012_bytes_encode(c1),
+    field(n, "arguments", c2), (up012_no_args(c2) ; up012_one_encoding_arg(c2)).
+
+// default_argument_call(n): the JSON util `default-argument-call`, used where the JSON says `matches: "default-argument-call"`
+.decl up012_default_argument_call(n: node)
+up012_default_argument_call(n) :- kind(n, "call"), field(n, "function", c1),
+    up012_default_encode(c1), field(n, "arguments", c2), up012_one_encoding_arg(c2).
+
+// bytes_encode(n): the JSON util `bytes-encode`, used where the JSON says `matches: "bytes-encode"`
+.decl up012_bytes_encode(n: node)
+up012_bytes_encode(n) :- kind(n, "attribute"), field(n, "attribute", c1), glob("encode", c1),
+    field(n, "object", c2), up012_plain_text(c2), value(c2, v3), match("[\\x00-\\x7F]*", v3),
+    !up012_string_only_escape(c2).
+up012_bytes_encode(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    up012_bytes_encode(c4).
+
+// default_encode(n): the JSON util `default-encode`, used where the JSON says `matches: "default-encode"`
+.decl up012_default_encode(n: node)
+up012_default_encode(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("encode", c1), field(n, "object", c2),
+    ( up012_plain_text(c2), value(c2, v1), match(".*[^\\x00-\\x7F].*", v1), !up012_string_only_escape(c2)
+    ; up012_f_text(c2)
+    ).
+
+up012_default_encode(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    up012_default_encode(c4).
+
+// UP012(n, detail): findings from clauses `bytes-literal`, `default-encoding-argument`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation UP012(at: node, call: node, detail: symbol) "{detail}."
+    suppress noqa "UP012"
+UP012(CALL, n, "Write this ASCII string as a bytes literal (`b\"...\"`) instead of calling `.encode()` on it; the result is the same bytes") :- kind(n, "call"),
+    node(_, n, _, _, _), CALL = n, up012_bytes_call(n).
+UP012(CALL, n, "Write this ASCII string as a bytes literal (`b\"...\"`) instead of calling `.encode()` on it; the result is the same bytes") :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), up012_bytes_call(c2), CALL = c2.
+UP012(CALL, n, "Drop the UTF-8 argument and call `.encode()` with no arguments; UTF-8 is already the default encoding") :- kind(n, "call"),
+    node(_, n, _, _, _), CALL = n, up012_default_argument_call(n).
+UP012(CALL, n, "Drop the UTF-8 argument and call `.encode()` with no arguments; UTF-8 is already the default encoding") :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), up012_default_argument_call(c2), CALL = c2.
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl up012_alt_1(n: node)
+up012_alt_1(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+up012_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).

@@ -1,0 +1,45 @@
+.policy "ruff-pt028-pytest-parameter-with-default-argument" revision 1
+.guests off
+.description "Don't give pytest test function parameters default values; the default always wins, so a fixture of the same name is never injected."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PT028(n): a finding at node n, from clause `test-parameter-default`.
+// Each rule below is one way the JSON `rule` can match.
+.violation PT028(at: node) "Remove this default: pytest never fills a parameter that has a default from a fixture or parametrize. Set fixed values in the test body, or keep it if pytest does not collect this function."
+    suppress noqa "PT028"
+PT028(n) :- pt028_default_value(n), !pt028_alt_6(n).
+
+// test_fn(n): the JSON util `test-fn`, used where the JSON says `matches: "test-fn"`
+.decl pt028_test_fn(n: node)
+pt028_test_fn(n) :- kind(n, "function_definition"), field(n, "name", c1), prefix("test", c1),
+    ( count : { within(n, p1), (kind(p1, "function_definition") ; kind(p1, "class_definition")) } = 0
+    ; within_stop(n, p2, pt028_stop_1), kind(p2, "class_definition"), field(p2, "name", c2), prefix("Test", c2), count : { field(p2, "body", c3), child(c3, c4, _), pt028_alt_2(c4) } = 0
+    ).
+
+
+// default_value(n): the JSON util `default-value`, used where the JSON says `matches: "default-value"`
+.decl pt028_default_value(n: node)
+pt028_default_value(n) :- field(p1, "value", n),
+    (kind(p1, "default_parameter") ; kind(p1, "typed_default_parameter")),
+    child(p2, p1, _), kind(p2, "parameters"), child(p3, p2, _),
+    kind(p3, "function_definition"), pt028_test_fn(p3).
+pt028_default_value(n) :- child(p4, n, _), kind(p4, "parenthesized_expression"),
+    pt028_default_value(p4).
+
+// stop_1: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pt028_stop_1(kind: symbol)
+pt028_stop_1("class_definition"). pt028_stop_1("function_definition").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pt028_alt_2(n: node)
+pt028_alt_2(n) :- kind(n, "function_definition"), field(n, "name", c1), glob("__init__", c1).
+pt028_alt_2(n) :- kind(n, "decorated_definition"), field(n, "definition", c2),
+    kind(c2, "function_definition"), field(c2, "name", c3), glob("__init__", c3).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl pt028_alt_6(n: node)
+pt028_alt_6(n) :- (kind(n, "parenthesized_expression") ; kind(n, "comment")).
+pt028_alt_6(n) :- node(_, n, _, _, _), glob("[()]", n).

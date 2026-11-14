@@ -1,0 +1,15 @@
+.policy "ruff-e401-multiple-imports-on-one-line" revision 1
+.guests off
+.description "Give each module its own import statement instead of comma-separating several in one; from-imports may still list several names."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// E401(n): a finding at node n, from clause `multiple-imports-on-one-line`.
+// Each rule below is one way the JSON `rule` can match.
+.violation E401(at: node) "Split this into one `import` statement per module, each on its own line (or separated by `;` on a line that already holds other statements)."
+    suppress noqa "E401"
+E401(n) :- kind(n, "import_statement"),
+    k2 = count : { child(n, c1, _), (kind(c1, "dotted_name") ; kind(c1, "aliased_import")) },
+    k2 >= 2.

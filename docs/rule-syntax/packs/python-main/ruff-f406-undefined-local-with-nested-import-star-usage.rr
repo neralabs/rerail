@@ -1,0 +1,17 @@
+.policy "ruff-f406-undefined-local-with-nested-import-star-usage" revision 1
+.guests off
+.description "Don't use from module import * inside a function or class; star imports are only allowed at module level."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F406(n): a finding at node n, from clause `undefined-local-with-nested-import-star-usage`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation F406(at: node, module: loc) "Import the needed names from `{module}` explicitly; a star import is only allowed at module level."
+    suppress noqa "F406"
+F406(n, MODULE) :- kind(n, "import_from_statement"), child(n, c1, _),
+    kind(c1, "wildcard_import"), precedes(s2, c1),
+    (kind(s2, "dotted_name") ; kind(s2, "relative_import")), node(_, s2, _, _, _), MODULE = s2,
+    within(n, p3), (kind(p3, "function_definition") ; kind(p3, "class_definition")).

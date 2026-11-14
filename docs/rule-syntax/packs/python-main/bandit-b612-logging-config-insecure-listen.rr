@@ -1,0 +1,82 @@
+.policy "bandit-b612-logging-config-insecure-listen" revision 1
+.guests off
+.description "Pass a verify callback to logging.config.listen; otherwise anyone who can reach the port can push logging config that runs code."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B612(n): a finding at node n, from clause `bandit-B612`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on F are added to every rule.
+.violation B612(at: node, f: node) "logging.config.listen is used without a verify callback; verify or decrypt received configuration bytes."
+    suppress nosec "B612"
+B612(F, n) :- n ~ `$F($$$ARGS)`, kind(n, "call"), b612_arg_no_verify_1(n),
+    sym_of(F, "logging.config.listen").
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl b612_args_plain(l: node, a: node, i: number)
+b612_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl b612_args_splat(l: node, i: number)
+b612_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl b612_args_pos(l: node, a: node, j: number)
+b612_args_pos(l, a, j) :- b612_args_plain(l, a, i), count : { b612_args_splat(l, k), k < i } = 0,
+    j = count : { b612_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl b612_args_star(l: node, j: number)
+b612_args_star(l, j) :- b612_args_splat(l, i), count : { b612_args_splat(l, k), k < i } = 0,
+    j = count : { b612_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl b612_args_kwp(l: node, k: symbol, v: node)
+b612_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl b612_args_lit_dict(s: node, d: node)
+b612_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !b612_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl b612_args_str_pair(p: node)
+b612_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl b612_args_kw(l: node, k: symbol, v: node)
+b612_args_kw(l, k, v) :- b612_args_kwp(l, k, v).
+b612_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), b612_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl b612_args_kw_spread(l: node)
+b612_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !b612_args_lit_dict(s, _).
+
+// arg_verify_1: call n passes v for slot `verify` of (port, verify), as Python binds the call
+.decl b612_arg_verify_1(n: node, v: node)
+b612_arg_verify_1(n, v) :- kind(n, "call"), field(n, "arguments", l), b612_args_pos(l, v, 1),
+    !b612_args_kw(l, "verify", _).
+b612_arg_verify_1(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    b612_args_kw(l, "verify", v), count : { b612_args_kw(l, "verify", _) } = 1,
+    !b612_args_pos(l, _, 1).
+
+// arg_no_verify_1: call n does not pass slot `verify` of (port, verify), as Python binds the call
+.decl b612_arg_no_verify_1(n: node)
+b612_arg_no_verify_1(n) :- kind(n, "call"), field(n, "arguments", l), !b612_args_pos(l, _, 1),
+    count : { b612_args_star(l, j), j <= 1 } = 0, !b612_args_kw(l, "verify", _),
+    !b612_args_kw_spread(l).

@@ -1,0 +1,116 @@
+.policy "ruff-pyi064-redundant-final-literal" revision 1
+.guests off
+.description "Use a bare Final annotation for constants instead of wrapping a single literal type in Final; type checkers already infer the literal type from the value."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// final_ref(n): the JSON util `final-ref`, used where the JSON says `matches: "final-ref"`
+.decl pyi064_final_ref(n: node)
+pyi064_final_ref(n) :-
+    ( kind(n, "identifier")
+    ; kind(n, "attribute")
+    ; kind(n, "parenthesized_expression")
+    ),
+
+    ( sym_of(n, "typing.Final")
+    ; sym_of(n, "typing_extensions.Final")
+    ; sym_of(n, "_typeshed.Final")
+    ).
+
+
+// literal_ref(n): the JSON util `literal-ref`, used where the JSON says `matches: "literal-ref"`
+.decl pyi064_literal_ref(n: node)
+pyi064_literal_ref(n) :-
+    ( kind(n, "identifier")
+    ; kind(n, "attribute")
+    ; kind(n, "parenthesized_expression")
+    ),
+
+    ( sym_of(n, "typing.Literal")
+    ; sym_of(n, "typing_extensions.Literal")
+    ; sym_of(n, "_typeshed.Literal")
+    ).
+
+
+// single(n): the JSON util `single`, used where the JSON says `matches: "single"`
+.decl pyi064_single(n: node)
+pyi064_single(n) :- node(_, n, _, _, _), !pyi064_tok_has_1(n).
+
+// plain_literal(n): the JSON util `plain-literal`, used where the JSON says `matches: "plain-literal"`
+.decl pyi064_plain_literal(n: node)
+pyi064_plain_literal(n) :- kind(n, k1), pyi064_set_1(k1).
+pyi064_plain_literal(n) :- kind(n, "string"), match("[rRbBuU]*['\"].*", n).
+pyi064_plain_literal(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), !match("[rRbBuU]*['\"].*", c2) } = 0.
+pyi064_plain_literal(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    pyi064_plain_literal(c3).
+
+// literal_of_plain(n): the JSON util `literal-of-plain`, used where the JSON says `matches: "literal-of-plain"`
+//   LIT: metavariable this relation binds for the calling rule
+.decl pyi064_literal_of_plain(n: node, lit: loc)
+pyi064_literal_of_plain(n, LIT) :- kind(n, "generic_type"), child(n, c1, _), pyi064_literal_ref(c1),
+    child(n, c2, _), kind(c2, "type_parameter"), pyi064_single(c2), child(c2, c3, _),
+    kind(c3, "type"), child(c3, c4, _), pyi064_plain_literal(c4), node(_, c4, _, _, _), LIT = c4.
+pyi064_literal_of_plain(n, LIT) :- kind(n, "subscript"), pyi064_single(n), field(n, "value", c5),
+    pyi064_literal_ref(c5), field(n, "subscript", c6), pyi064_plain_literal(c6), node(_, c6, _, _, _), LIT = c6.
+pyi064_literal_of_plain(n, LIT) :- kind(n, "parenthesized_expression"), child(n, c7, _),
+    pyi064_literal_of_plain(c7, LIT).
+
+// final_of_literal(n): the JSON util `final-of-literal`, used where the JSON says `matches: "final-of-literal"`
+//   LIT: metavariable this relation binds for the calling rule
+.decl pyi064_final_of_literal(n: node, lit: loc)
+pyi064_final_of_literal(n, LIT) :- kind(n, "generic_type"), child(n, c1, _), pyi064_final_ref(c1),
+    child(n, c2, _), kind(c2, "type_parameter"), pyi064_single(c2), child(c2, c3, _),
+    kind(c3, "type"), child(c3, c4, _), pyi064_literal_of_plain(c4, LIT).
+pyi064_final_of_literal(n, LIT) :- kind(n, "subscript"), pyi064_single(n), field(n, "value", c5),
+    pyi064_final_ref(c5), field(n, "subscript", c6), pyi064_literal_of_plain(c6, LIT).
+pyi064_final_of_literal(n, LIT) :- kind(n, "parenthesized_expression"), child(n, c7, _),
+    pyi064_final_of_literal(c7, LIT).
+
+// PYI064(n): a finding at node n, from clause `redundant-final-literal`.
+// Each rule below is one way the JSON `rule` can match.
+.violation PYI064(at: node) "Drop the `Literal[...]` and annotate with a bare `Final`; the type checker infers the literal type from the assigned value."
+    suppress noqa "PYI064"
+PYI064(n) :- kind(n, "assignment"), field(n, "type", c1), kind(c1, "type"),
+    child(c1, c2, _), pyi064_final_of_literal(c2, LIT), field(n, "right", c3), node(_, c3, _, _, _), VAL = c3,
+    value(LIT, t4), value(VAL, t4).
+
+// PYI064_redundant_final_literal_unassigned(n): a finding at node n, from clause `redundant-final-literal-unassigned`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI064_redundant_final_literal_unassigned(at: node, lit: loc) code "PYI064" "Annotate with a bare `Final` and assign `{lit}` as the value instead of writing `Final[Literal[{lit}]]`; leave it if `__init__` assigns this attribute instead."
+    suppress noqa "PYI064"
+PYI064_redundant_final_literal_unassigned(n, LIT) :- kind(n, "assignment"),
+    field(n, "type", c1), kind(c1, "type"), child(c1, c2, _),
+    pyi064_final_of_literal(c2, LIT),
+    count : { field(n, "right", c3), match("(?s).*..*", c3) } = 0.
+
+// PYI064_redundant_final_literal_mismatch(n): a finding at node n, from clause `redundant-final-literal-mismatch`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI064_redundant_final_literal_mismatch(at: node, lit: loc) code "PYI064" "The value differs from the literal `{lit}`: if it should be `{lit}` (or is a stub's `...` placeholder), assign `{lit}` and annotate with a bare `Final`; otherwise correct the `Literal[...]` type."
+    suppress noqa "PYI064"
+PYI064_redundant_final_literal_mismatch(n, LIT) :- kind(n, "assignment"),
+    field(n, "type", c1), kind(c1, "type"), child(c1, c2, _),
+    pyi064_final_of_literal(c2, LIT), field(n, "right", c3), node(_, c3, _, _, _), VAL = c3,
+    value(LIT, t4), value(VAL, t5), t4 != t5.
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi064_tok_has_1(n: node)
+.stored pyi064_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi064_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+pyi064_tok_has_1(n) :- op(n, t2), match(",", t2).
+pyi064_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+pyi064_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+pyi064_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// set_1: node kinds from a JSON `any`
+.decl pyi064_set_1(v: symbol)
+pyi064_set_1("integer"). pyi064_set_1("float"). pyi064_set_1("true"). pyi064_set_1("false"). pyi064_set_1("none").
+pyi064_set_1("ellipsis").

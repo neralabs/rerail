@@ -1,0 +1,33 @@
+.policy "ruff-f631-assert-tuple" revision 2
+.guests off
+.description "Don't use a tuple as an assert's condition; a non-empty tuple is always true, so the assert never fails."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F631(n): a finding at node n, from clause `assert-tuple`.
+// Each rule below is one way the JSON `rule` can match.
+.violation F631(at: node) "Assert test is a non-empty tuple, which is always `True`"
+    suppress noqa "F631"
+F631(n) :- kind(n, "assert_statement"), child(n, c1, _), f631_non_empty_tuple(c1),
+    precedes_stop(s2, c1, f631_stop_2), glob("assert", s2).
+
+// trivia(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl f631_trivia(n: node)
+f631_trivia(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+
+// non_empty_tuple(n): the JSON util `non-empty-tuple`, used where the JSON says `matches: "non-empty-tuple"`
+.decl f631_non_empty_tuple(n: node)
+f631_non_empty_tuple(n) :- kind(n, "tuple"), child(n, c1, _), !f631_alt_1(c1).
+f631_non_empty_tuple(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    f631_non_empty_tuple(c2).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl f631_alt_1(n: node)
+f631_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).
+f631_alt_1(n) :- f631_trivia(n).
+
+// stop_2(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl f631_stop_2(n: node)
+f631_stop_2(n) :- node(_, n, _, _, _), !f631_trivia(n).

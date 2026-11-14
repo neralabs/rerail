@@ -1,0 +1,270 @@
+.policy "ruff-pyi061-redundant-none-literal" revision 1
+.guests off
+.description "Write None as plain None or in a union with None, not inside a Literal type; the meaning is the same and the union reads more clearly."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// literal_name(n): the JSON util `literal-name`, used where the JSON says `matches: "literal-name"`
+.decl pyi061_literal_name(n: node)
+pyi061_literal_name(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Literal")
+    ; sym_of(n, "typing_extensions.Literal")
+    ; sym_of(n, "_typeshed.Literal")
+    ).
+
+pyi061_literal_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi061_literal_name(c1).
+
+// literal_sub(n): the JSON util `literal-sub`, used where the JSON says `matches: "literal-sub"`
+.decl pyi061_literal_sub(n: node)
+pyi061_literal_sub(n) :- kind(n, "subscript"), child(n, c1, _), pyi061_literal_name(c1),
+    !pyi061_tok_follows_1(c1).
+
+// literal_gen(n): the JSON util `literal-gen`, used where the JSON says `matches: "literal-gen"`
+.decl pyi061_literal_gen(n: node)
+pyi061_literal_gen(n) :- kind(n, "generic_type"), child(n, c1, _), kind(c1, "identifier"),
+    pyi061_literal_name(c1).
+
+// literal(n): the JSON util `literal`, used where the JSON says `matches: "literal"`
+.decl pyi061_literal(n: node)
+pyi061_literal(n) :- pyi061_literal_sub(n).
+pyi061_literal(n) :- pyi061_literal_gen(n).
+
+// direct_slot(n): the JSON util `direct-slot`, used where the JSON says `matches: "direct-slot"`
+.decl pyi061_direct_slot(n: node)
+pyi061_direct_slot(n) :- child(p1, n, _), pyi061_literal_sub(p1), node(_, n, _, _, _), !kind(n, "comment"),
+    pyi061_tok_follows_2(n).
+pyi061_direct_slot(n) :- kind(n, "type"), child(p9, n, _), kind(p9, "type_parameter"),
+    child(p10, p9, _), pyi061_literal_gen(p10).
+
+// tuple_slot(n): the JSON util `tuple-slot`, used where the JSON says `matches: "tuple-slot"`
+.decl pyi061_tuple_slot(n: node)
+pyi061_tuple_slot(n) :- pyi061_direct_slot(n),
+    (kind(n, "tuple") ; kind(n, "type"), child(n, c1, _), kind(c1, "tuple")),
+    !pyi061_alt_2(n).
+
+// slot(n): the JSON util `slot`, used where the JSON says `matches: "slot"`
+.decl pyi061_slot(n: node)
+pyi061_slot(n) :- pyi061_direct_slot(n).
+pyi061_slot(n) :- child(p1, n, _), kind(p1, "tuple"),
+    (pyi061_tuple_slot(p1) ; child(p2, p1, _), kind(p2, "type"), pyi061_tuple_slot(p2)), node(_, n, _, _, _),
+    !kind(n, "comment").
+
+// wraps_literal(n): the JSON util `wraps-literal`, used where the JSON says `matches: "wraps-literal"`
+.decl pyi061_wraps_literal(n: node)
+pyi061_wraps_literal(n) :- pyi061_literal(n).
+pyi061_wraps_literal(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c1, _), pyi061_wraps_literal(c1).
+
+// wraps_container(n): the JSON util `wraps-container`, used where the JSON says `matches: "wraps-container"`
+.decl pyi061_wraps_container(n: node)
+pyi061_wraps_container(n) :- (kind(n, "subscript") ; kind(n, "generic_type")).
+pyi061_wraps_container(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c1, _), pyi061_wraps_container(c1).
+
+// nested_slot(n): the JSON util `nested-slot`, used where the JSON says `matches: "nested-slot"`
+.decl pyi061_nested_slot(n: node)
+pyi061_nested_slot(n) :- pyi061_slot(n), pyi061_wraps_literal(n).
+
+// container_slot(n): the JSON util `container-slot`, used where the JSON says `matches: "container-slot"`
+.decl pyi061_container_slot(n: node)
+pyi061_container_slot(n) :- pyi061_slot(n), (pyi061_wraps_container(n) ; pyi061_tuple_slot(n)).
+
+// leaf_slot(n): the JSON util `leaf-slot`, used where the JSON says `matches: "leaf-slot"`
+.decl pyi061_leaf_slot(n: node)
+pyi061_leaf_slot(n) :- pyi061_slot(n), !pyi061_container_slot(n).
+
+// in_literal_chain(n): the JSON util `in-literal-chain`, used where the JSON says `matches: "in-literal-chain"`
+.decl pyi061_in_literal_chain(n: node)
+pyi061_in_literal_chain(n) :- pyi061_literal(n).
+pyi061_in_literal_chain(n) :- kind(n, "type_parameter"), child(p1, n, _), pyi061_literal_gen(p1).
+pyi061_in_literal_chain(n) :- pyi061_slot(n).
+pyi061_in_literal_chain(n) :- kind(n, "tuple"), child(p2, n, _), kind(p2, "type"),
+    pyi061_tuple_slot(p2).
+pyi061_in_literal_chain(n) :- kind(n, "parenthesized_expression").
+
+// none_expr(n): the JSON util `none-expr`, used where the JSON says `matches: "none-expr"`
+//   NONE: metavariable this relation binds for the calling rule
+.decl pyi061_none_expr(n: node, none: loc)
+pyi061_none_expr(n, NONE) :- kind(n, "none"), node(_, n, _, _, _), NONE = n.
+pyi061_none_expr(n, NONE) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c1, _), pyi061_none_expr(c1, NONE).
+
+// deep_slots_have_other(n): the JSON util `deep-slots-have-other`, used where the JSON says `matches: "deep-slots-have-other"`
+//   NONE: metavariable this relation binds for the calling rule
+.decl pyi061_deep_slots_have_other(n: node, none: loc)
+pyi061_deep_slots_have_other(n, NONE) :- pyi061_slots_have_other(n, NONE).
+pyi061_deep_slots_have_other(n, NONE) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c1, _), pyi061_deep_slots_have_other(c1, NONE).
+
+// slots_have_other(n): the JSON util `slots-have-other`, used where the JSON says `matches: "slots-have-other"`
+//   NONE: metavariable this relation binds for the calling rule
+.decl pyi061_slots_have_other(n: node, none: loc)
+pyi061_slots_have_other(n, NONE) :- pyi061_literal(n), pyi061_alt_5(n, NONE).
+pyi061_slots_have_other(n, NONE) :- pyi061_tuple_slot(n), kind(n, "tuple"), child(n, c4, _),
+    pyi061_contains_other(c4, NONE).
+pyi061_slots_have_other(n, NONE) :- pyi061_tuple_slot(n), kind(n, "type"), child(n, c5, _),
+    kind(c5, "tuple"), child(c5, c6, _), pyi061_contains_other(c6, NONE).
+
+// contains_other(n): the JSON util `contains-other`, used where the JSON says `matches: "contains-other"`
+//   NONE: metavariable this relation binds for the calling rule
+.decl pyi061_contains_other(n: node, none: loc)
+// NONE: not bound by this rule, so empty (unset) here, as in ast-grep.
+pyi061_contains_other(n, NONE) :- node(_, n, _, _, _), !kind(n, "comment"), pyi061_alt_6(n), !pyi061_none_expr(n, _),
+    !pyi061_wraps_container(n), !pyi061_tuple_slot(n), unset(NONE).
+pyi061_contains_other(n, NONE) :- node(_, n, _, _, _), !kind(n, "comment"), pyi061_alt_6(n),
+    ( (kind(n, "subscript") ; kind(n, "generic_type") ; kind(n, "tuple"))
+    ; (kind(n, "type") ; kind(n, "parenthesized_expression")), child(n, c1, _), kind(c1, k1), pyi061_set_10(k1)
+    ),
+    pyi061_deep_slots_have_other(n, NONE).
+
+// other_sibling(n): the JSON util `other-sibling`, used where the JSON says `matches: "other-sibling"`
+//   NONE: metavariable of the calling rule, passed in (bound by the caller)
+.decl pyi061_other_sibling(n: node, none: loc)
+pyi061_other_sibling(n, NONE) :- pyi061_demand_other_sibling(n, NONE), precedes(n, s1),
+    pyi061_contains_other(s1, NONE).
+pyi061_other_sibling(n, NONE) :- pyi061_demand_other_sibling(n, NONE), precedes(s2, n),
+    pyi061_contains_other(s2, NONE).
+
+// has_other(n): the JSON util `has-other`, used where the JSON says `matches: "has-other"`
+//   NONE: metavariable of the calling rule, passed in (bound by the caller)
+.decl pyi061_has_other(n: node, none: loc)
+pyi061_has_other(n, NONE) :- pyi061_demand_has_other(n, NONE), pyi061_other_sibling(n, NONE).
+pyi061_has_other(n, NONE) :- pyi061_demand_has_other(n, NONE), within_stop(n, p1, pyi061_stop_11),
+    pyi061_nested_slot(p1), pyi061_other_sibling(p1, NONE).
+
+// none_only(n): the JSON util `none-only`, used where the JSON says `matches: "none-only"`
+//   NONE: metavariable this relation binds for the calling rule
+.decl pyi061_none_only(n: node, none: loc)
+pyi061_none_only(n, NONE) :- pyi061_leaf_slot(n), pyi061_none_expr(n, NONE), !pyi061_has_other(n, NONE).
+
+// string_none_only(n): the JSON util `string-none-only`, used where the JSON says `matches: "string-none-only"`
+//   N: metavariable this relation binds for the calling rule
+.decl pyi061_string_none_only(n: node, n_mv: loc)
+pyi061_string_none_only(n, N) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), pyi061_alt_12(c2, N).
+
+// string_none_with_other(n): the JSON util `string-none-with-other`, used where the JSON says `matches: "string-none-with-other"`
+//   N: metavariable this relation binds for the calling rule
+.decl pyi061_string_none_with_other(n: node, n_mv: loc)
+pyi061_string_none_with_other(n, N) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), pyi061_alt_13(c2, N).
+
+// none_with_other(n): the JSON util `none-with-other`, used where the JSON says `matches: "none-with-other"`
+//   NONE: metavariable this relation binds for the calling rule
+.decl pyi061_none_with_other(n: node, none: loc)
+pyi061_none_with_other(n, NONE) :- pyi061_leaf_slot(n), pyi061_none_expr(n, NONE), pyi061_has_other(n, NONE).
+
+// PYI061(n, detail): findings from clauses `none-only-literal`, `none-with-other-members`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI061(at: node, none: node, detail: symbol) "{detail}. Leave it if runtime code reads this annotation's arguments."
+    suppress noqa "PYI061"
+PYI061(NONE, n, "This Literal holds only `None`; write plain `None` instead") :- pyi061_alt_14(n),
+    pyi061_none_only(n, NONE).
+PYI061(NONE, n, "Move `None` out of this Literal and write `Literal[...] | None` (`Optional[Literal[...]]` before Python 3.10)") :- pyi061_alt_14(n),
+    pyi061_none_with_other(n, NONE).
+
+// PYI061_none_only_literal_in_string(n, detail): findings from clauses `none-only-literal-in-string`, `none-with-other-members-in-string`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI061_none_only_literal_in_string(at: node, n: node, detail: symbol) code "PYI061" "{detail}. Leave it if runtime code reads this annotation's arguments."
+    suppress noqa "PYI061"
+PYI061_none_only_literal_in_string(N, n, "This Literal holds only `None`; write plain `None` instead") :- pyi061_string_none_only(n, N).
+PYI061_none_only_literal_in_string(N, n, "Move `None` out of this Literal and write `Literal[...] | None` (`Optional[Literal[...]]` before Python 3.10)") :- pyi061_string_none_with_other(n, N).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi061_tok_follows_1(n: node)
+.stored pyi061_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi061_tok_follows_1(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+pyi061_tok_follows_1(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+pyi061_tok_follows_1(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi061_tok_follows_2(n: node)
+.stored pyi061_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi061_tok_follows_2(n) :- precedes(s2, n), glob("\\[", s2).
+pyi061_tok_follows_2(n) :- child(p5, n, _), node(_, n, _, st7, _), token(p5, _, t3, _, en8),
+    en8 <= st7, match("\\[", t3).
+pyi061_tok_follows_2(n) :- structural_before(n, g4), match("(?s)^(?:.*(?:\\[).*)$", g4).
+pyi061_tok_follows_2(n) :- precedes(o6, n), structural_before(o6, g4),
+    match("(?s)^(?:.*(?:\\[).*)$", g4).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^[\\[(]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi061_tok_follows_3(n: node)
+.stored pyi061_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi061_tok_follows_3(n) :- precedes(s1, n), glob("[\\[(]", s1).
+pyi061_tok_follows_3(n) :- child(p4, n, _), node(_, n, _, st6, _), token(p4, _, t2, _, en7),
+    en7 <= st6, match("[\\[(]", t2).
+pyi061_tok_follows_3(n) :- structural_before(n, g3), match("(?s)^(?:.*(?:[\\[(]).*)$", g3).
+pyi061_tok_follows_3(n) :- precedes(o5, n), structural_before(o5, g3),
+    match("(?s)^(?:.*(?:[\\[(]).*)$", g3).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^[\\[(]$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi061_tok_follows_4(n: node)
+.stored pyi061_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi061_tok_follows_4(n) :- precedes(s8, n), glob("[\\[(]", s8).
+pyi061_tok_follows_4(n) :- child(p11, n, _), node(_, n, _, st13, _),
+    token(p11, _, t9, _, en14), en14 <= st13, match("[\\[(]", t9).
+pyi061_tok_follows_4(n) :- structural_before(n, g10), match("(?s)^(?:.*(?:[\\[(]).*)$", g10).
+pyi061_tok_follows_4(n) :- precedes(o12, n), structural_before(o12, g10),
+    match("(?s)^(?:.*(?:[\\[(]).*)$", g10).
+
+// demand_has_other: the rows of has_other its callers ask for (the metavariable columns they pass in)
+.decl pyi061_demand_has_other(n: node, none: loc)
+pyi061_demand_has_other(n, NONE) :- pyi061_leaf_slot(n), pyi061_none_expr(n, NONE).
+
+// demand_other_sibling: the rows of other_sibling its callers ask for (the metavariable columns they pass in)
+.decl pyi061_demand_other_sibling(n: node, none: loc)
+pyi061_demand_other_sibling(n, NONE) :- pyi061_demand_has_other(n, NONE).
+pyi061_demand_other_sibling(p1, NONE) :- pyi061_demand_has_other(n, NONE),
+    within_stop(n, p1, pyi061_stop_11), pyi061_nested_slot(p1).
+
+// set_10: node kinds from a JSON `any`
+.decl pyi061_set_10(v: symbol)
+pyi061_set_10("subscript"). pyi061_set_10("generic_type"). pyi061_set_10("tuple"). pyi061_set_10("type").
+pyi061_set_10("parenthesized_expression").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi061_alt_2(n: node)
+pyi061_alt_2(n) :- precedes(s1, n), pyi061_direct_slot(s1).
+pyi061_alt_2(n) :- precedes(n, s2), pyi061_direct_slot(s2).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+//   NONE: metavariable this relation binds for the calling rule
+.decl pyi061_alt_5(n: node, none: loc)
+pyi061_alt_5(n, NONE) :- kind(n, "subscript"), child(n, c1, _), pyi061_contains_other(c1, NONE).
+pyi061_alt_5(n, NONE) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "type_parameter"),
+    child(c2, c3, _), pyi061_contains_other(c3, NONE).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi061_alt_6(n: node)
+pyi061_alt_6(n) :- kind(n, "type").
+pyi061_alt_6(n) :- pyi061_tok_follows_3(n).
+
+// stop_11(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi061_stop_11(n: node)
+pyi061_stop_11(n) :- node(_, n, _, _, _), !pyi061_in_literal_chain(n).
+
+// alt_12(n): the JSON `any`: n matches if any one of these rules does
+//   N: metavariable this relation binds for the calling rule
+.decl pyi061_alt_12(n: node, n_mv: loc)
+pyi061_alt_12(n, N) :- pyi061_none_only(n, _), N = n.
+pyi061_alt_12(n, N) :- pyi061_string_none_only(n, N).
+
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+//   N: metavariable this relation binds for the calling rule
+.decl pyi061_alt_13(n: node, n_mv: loc)
+pyi061_alt_13(n, N) :- pyi061_none_with_other(n, _), N = n.
+pyi061_alt_13(n, N) :- pyi061_string_none_with_other(n, N).
+
+// alt_14(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi061_alt_14(n: node)
+pyi061_alt_14(n) :- child(p1, n, _), (kind(p1, "subscript") ; kind(p1, "tuple")), node(_, n, _, _, _).
+pyi061_alt_14(n) :- kind(n, "type"), child(p2, n, _), kind(p2, "type_parameter").

@@ -1,0 +1,137 @@
+.policy "bandit-b505-weak-cryptographic-key" revision 1
+.guests off
+.description "Use RSA and DSA keys of at least 2048 bits and elliptic curves of at least 224 bits; smaller keys can be broken."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B505(n): a finding at node n, from clause `weak-cryptographic-key`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on K, C are added to every rule.
+.violation B505(at: node) "Generate this key with at least 2048 bits for RSA or DSA, or a curve of at least 224 bits for EC; smaller keys can be broken."
+    suppress nosec "B505"
+B505(n) :- node(_, K, _, _, _), kind(n, "call"),
+    ( child(n, c1_1, _), (kind(c1_1, "identifier") ; kind(c1_1, "attribute")), sym_of(c1_1, "cryptography.hazmat.primitives.asymmetric.dsa.generate_private_key"), kind(n, "call"), b505_arg_key_size_1(n, a2_1), K = a2_1, unset(C)
+    ; child(n, c3_2, _), (kind(c3_2, "identifier") ; kind(c3_2, "attribute")), sym_of(c3_2, "cryptography.hazmat.primitives.asymmetric.rsa.generate_private_key"), kind(n, "call"), b505_arg_key_size_2(n, a4_2), K = a4_2, unset(C)
+    ; child(n, c5_3, _), (kind(c5_3, "identifier") ; kind(c5_3, "attribute")), sym_of(c5_3, "cryptography.hazmat.primitives.asymmetric.ec.generate_private_key"), kind(n, "call"), b505_arg_curve_3(n, a6_3), C = a6_3, unset(K)
+    ; child(n, c7_4, _), (kind(c7_4, "identifier") ; kind(c7_4, "attribute")), (sym_of(c7_4, "Crypto.PublicKey.DSA.generate") ; sym_of(c7_4, "Crypto.PublicKey.RSA.generate") ; sym_of(c7_4, "Cryptodome.PublicKey.DSA.generate") ; sym_of(c7_4, "Cryptodome.PublicKey.RSA.generate")), kind(n, "call"), b505_arg_bits_4(n, a8_4), K = a8_4, unset(C)
+    ),
+    value(K, v9), (value_type(v9, "int") ; value_type(v9, "float")),
+    to_number(v9) < 2048,
+    ( kind(C, "attribute"), glob("**.{SECP192R1,SECT163K1,SECT163R2}", C)
+    ; kind(C, "identifier"), glob("{SECP192R1,SECT163K1,SECT163R2}", C)
+    ).
+
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl b505_args_plain(l: node, a: node, i: number)
+b505_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl b505_args_splat(l: node, i: number)
+b505_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl b505_args_pos(l: node, a: node, j: number)
+b505_args_pos(l, a, j) :- b505_args_plain(l, a, i), count : { b505_args_splat(l, k), k < i } = 0,
+    j = count : { b505_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl b505_args_star(l: node, j: number)
+b505_args_star(l, j) :- b505_args_splat(l, i), count : { b505_args_splat(l, k), k < i } = 0,
+    j = count : { b505_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl b505_args_kwp(l: node, k: symbol, v: node)
+b505_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl b505_args_lit_dict(s: node, d: node)
+b505_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !b505_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl b505_args_str_pair(p: node)
+b505_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl b505_args_kw(l: node, k: symbol, v: node)
+b505_args_kw(l, k, v) :- b505_args_kwp(l, k, v).
+b505_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), b505_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl b505_args_kw_spread(l: node)
+b505_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !b505_args_lit_dict(s, _).
+
+// arg_key_size_1: call n passes v for slot `key_size` of (key_size, backend), as Python binds the call
+.decl b505_arg_key_size_1(n: node, v: node)
+b505_arg_key_size_1(n, v) :- kind(n, "call"), field(n, "arguments", l), b505_args_pos(l, v, 0),
+    !b505_args_kw(l, "key_size", _).
+b505_arg_key_size_1(n, v) :- kind(n, "call"), field(n, "arguments", v),
+    kind(v, "generator_expression").
+b505_arg_key_size_1(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    b505_args_kw(l, "key_size", v), count : { b505_args_kw(l, "key_size", _) } = 1,
+    !b505_args_pos(l, _, 0).
+
+// arg_no_key_size_1: call n does not pass slot `key_size` of (key_size, backend), as Python binds the call
+.decl b505_arg_no_key_size_1(n: node)
+b505_arg_no_key_size_1(n) :- kind(n, "call"), field(n, "arguments", l), !b505_args_pos(l, _, 0),
+    count : { b505_args_star(l, j), j <= 0 } = 0, !kind(l, "generator_expression"),
+    !b505_args_kw(l, "key_size", _), !b505_args_kw_spread(l).
+
+// arg_key_size_2: call n passes v for slot `key_size` of (public_exponent, key_size, backend), as Python binds the call
+.decl b505_arg_key_size_2(n: node, v: node)
+b505_arg_key_size_2(n, v) :- kind(n, "call"), field(n, "arguments", l), b505_args_pos(l, v, 1),
+    !b505_args_kw(l, "key_size", _).
+b505_arg_key_size_2(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    b505_args_kw(l, "key_size", v), count : { b505_args_kw(l, "key_size", _) } = 1,
+    !b505_args_pos(l, _, 1).
+
+// arg_no_key_size_2: call n does not pass slot `key_size` of (public_exponent, key_size, backend), as Python binds the call
+.decl b505_arg_no_key_size_2(n: node)
+b505_arg_no_key_size_2(n) :- kind(n, "call"), field(n, "arguments", l), !b505_args_pos(l, _, 1),
+    count : { b505_args_star(l, j), j <= 1 } = 0, !b505_args_kw(l, "key_size", _),
+    !b505_args_kw_spread(l).
+
+// arg_curve_3: call n passes v for slot `curve` of (curve, backend), as Python binds the call
+.decl b505_arg_curve_3(n: node, v: node)
+b505_arg_curve_3(n, v) :- kind(n, "call"), field(n, "arguments", l), b505_args_pos(l, v, 0),
+    !b505_args_kw(l, "curve", _).
+b505_arg_curve_3(n, v) :- kind(n, "call"), field(n, "arguments", v),
+    kind(v, "generator_expression").
+b505_arg_curve_3(n, v) :- kind(n, "call"), field(n, "arguments", l), b505_args_kw(l, "curve", v),
+    count : { b505_args_kw(l, "curve", _) } = 1, !b505_args_pos(l, _, 0).
+
+// arg_no_curve_3: call n does not pass slot `curve` of (curve, backend), as Python binds the call
+.decl b505_arg_no_curve_3(n: node)
+b505_arg_no_curve_3(n) :- kind(n, "call"), field(n, "arguments", l), !b505_args_pos(l, _, 0),
+    count : { b505_args_star(l, j), j <= 0 } = 0, !kind(l, "generator_expression"),
+    !b505_args_kw(l, "curve", _), !b505_args_kw_spread(l).
+
+// arg_bits_4: call n passes v for slot `bits` of (bits), as Python binds the call
+.decl b505_arg_bits_4(n: node, v: node)
+b505_arg_bits_4(n, v) :- kind(n, "call"), field(n, "arguments", l), b505_args_pos(l, v, 0),
+    !b505_args_kw(l, "bits", _).
+b505_arg_bits_4(n, v) :- kind(n, "call"), field(n, "arguments", v),
+    kind(v, "generator_expression").
+b505_arg_bits_4(n, v) :- kind(n, "call"), field(n, "arguments", l), b505_args_kw(l, "bits", v),
+    count : { b505_args_kw(l, "bits", _) } = 1, !b505_args_pos(l, _, 0).
+
+// arg_no_bits_4: call n does not pass slot `bits` of (bits), as Python binds the call
+.decl b505_arg_no_bits_4(n: node)
+b505_arg_no_bits_4(n) :- kind(n, "call"), field(n, "arguments", l), !b505_args_pos(l, _, 0),
+    count : { b505_args_star(l, j), j <= 0 } = 0, !kind(l, "generator_expression"),
+    !b505_args_kw(l, "bits", _), !b505_args_kw_spread(l).

@@ -1,0 +1,45 @@
+.policy "ruff-b005-strip-with-multi-characters" revision 1
+.guests off
+.description "Avoid strip, lstrip or rstrip with a multi-character string that repeats a character; the argument is a set of characters, not a substring to remove."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B005(n): a finding at node n, from clause `strip-with-multi-characters`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B005(at: node) "List each character once in this strip argument, or use `removeprefix()`/`removesuffix()` to remove a substring."
+    suppress noqa "B005"
+B005(n) :- kind(n, "call"), child(n, c1, _), kind(c1, "attribute"), child(c1, c2, _),
+    kind(c2, "identifier"), match("[lr]?strip", c2), b005_tok_follows_1(c2),
+    child(n, c10, _), kind(c10, "argument_list"),
+    k12 = count : { child(c10, c11, _), b005_positional(c11) }, k12 >= 1, k12 <= 1,
+    child(c10, c13, _), b005_literal(c13).
+
+// literal(n): the JSON util `literal`, used where the JSON says `matches: "literal"`
+.decl b005_literal(n: node)
+b005_literal(n) :-
+    ( kind(n, "string"), match("[rRuU]{0,2}['\"].*", n)
+    ; kind(n, "concatenated_string"), count : { child(n, c1, _), kind(c1, "string"), !match("[rRuU]{0,2}['\"].*", c1) } = 0
+    ),
+    value(n, v2), match("(?s).*(.).*\\1.*", v2).
+b005_literal(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), b005_literal(c3).
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl b005_positional(n: node)
+b005_positional(n) :- node(_, n, _, _, _), !b005_alt_2(n).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b005_tok_follows_1(n: node)
+.stored b005_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b005_tok_follows_1(n) :- next_sibling(s3, n), glob(".", s3).
+b005_tok_follows_1(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match("\\.", t4).
+b005_tok_follows_1(n) :- structural_before(n, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g5).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl b005_alt_2(n: node)
+b005_alt_2(n) :- (kind(n, "keyword_argument") ; kind(n, "dictionary_splat") ; kind(n, "comment")).
+b005_alt_2(n) :- node(_, n, _, _, _), glob("[(),]", n).

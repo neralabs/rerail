@@ -113,7 +113,7 @@ pub(super) fn split_negations(prog: &Program, model: &super::Model) -> Option<(P
     // Starts from every node: a `nearest_<set>`, `inside_<set>` or kind-free `node` atom on its key.
     let per_node = |rule: &Rule| -> bool {
         let Some(Term::Var(key)) = rule.head.args.first() else { return false };
-        let on_key = |a: &Atom, c: usize| a.args.get(c) == Some(&Term::Var(key.clone()));
+        let on_key = |a: &Atom, c: usize| a.args.get(c) == Some(&Term::Var(key.clone().into()));
         rule.body.iter().any(|l| match l {
             Literal::Atom(a) if !a.neg => {
                 ((a.rel.starts_with("nearest_") || a.rel.starts_with(super::super::front::AXIS)) && on_key(a, 0))
@@ -219,7 +219,7 @@ fn disconnected(rule: &Rule, cut: impl Fn(usize) -> bool) -> bool {
             Term::Var(v) => Some(v.clone()),
             _ => None,
         })
-        .collect();
+        .map(String::from).collect();
     let mut groups: Vec<BTreeSet<String>> = Vec::new();
     for (j, l) in rule.body.iter().enumerate() {
         let joins = match l {
@@ -355,7 +355,7 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
         };
         let pre = format!("pre_{ri}");
         let mut cols: Vec<(String, String)> = vars.iter().zip(&types).map(|(v, t)| (v.clone(), t.clone())).collect();
-        let mut args: Vec<Term> = vars.iter().map(|v| Term::Var(v.clone())).collect();
+        let mut args: Vec<Term> = vars.iter().map(|v| Term::Var(v.clone().into())).collect();
         // A split sharing no variable with its reads is a flag, encoded as every nullary relation is: one unit column
         // (`rr::lower::lower_boolean_relations`).
         if vars.is_empty() {
@@ -363,19 +363,19 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
             cols.push(("rr_unit".to_owned(), "int".to_owned()));
             args.push(Term::Int(1));
         }
-        out.decls.insert(pre.clone(), cols);
-        let pre_atom = Atom { rel: pre.into(), args, neg: false, gated: false };
+        out.decls.insert(pre.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
+        let pre_atom = Atom { rel: pre.into(), args: args.into(), neg: false, gated: false };
         rules.push(Rule { head: pre_atom.clone(), body: kept.into_iter().cloned().collect() });
         let mut body = vec![Literal::Atom(pre_atom.clone())];
         for l in cut {
             let Literal::Atom(read) = l else { unreachable!("a read atom") };
             demand_rules.push(Rule {
                 head: Atom { rel: format!("demand_{}", read.rel).into(), args: read.args.clone(), neg: false, gated: false },
-                body: vec![Literal::Atom(pre_atom.clone())],
+                body: [Literal::Atom(pre_atom.clone())].into(),
             });
             body.push(l.clone());
         }
-        rules.push(Rule { head: rule.head.clone(), body });
+        rules.push(Rule { head: rule.head.clone(), body: body.into() });
     }
     if !untyped.is_empty() {
         return Err(untyped);
@@ -383,7 +383,7 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
     let demanded: Vec<String> = candidates.iter().map(|r| (*r).to_owned()).collect();
     for rel in &demanded {
         let name = format!("demand_{rel}");
-        out.decls.insert(name.clone(), prog.decls[rel].clone());
+        out.decls.insert(name.clone().into(), prog.decls[rel.as_str()].clone());
         for rule in rules.iter_mut().filter(|r| &r.head.rel == rel) {
             let (atom, computed) = demand_atom(&name, &rule.head.args);
             rule.body.insert(0, Literal::Atom(atom));
@@ -428,8 +428,8 @@ fn demand_atom(name: &str, args: &[Term]) -> (Atom, Vec<Literal>) {
         .map(|(i, t)| match t {
             Term::Call(..) => {
                 let v = format!("rr_demanded{i}");
-                computed.push(Literal::Cmp { l: Term::Var(v.clone()), op: "=", r: t.clone() });
-                Term::Var(v)
+                computed.push(Literal::Cmp { l: Term::Var(v.clone().into()), op: "=", r: t.clone() });
+                Term::Var(v.into())
             }
             t => t.clone(),
         })
@@ -452,7 +452,7 @@ fn reached(prog: &Program, model: &super::Model, rule: &Rule, own: bool, cut: im
     }
     let lookup = |a: &Atom, bound: &BTreeSet<String>| {
         let on = |c: usize| match a.args.get(c) {
-            Some(Term::Var(v)) => bound.contains(v),
+            Some(Term::Var(v)) => bound.contains(v.as_str()),
             Some(Term::Wild) | None => false,
             Some(_) => true,
         };
@@ -533,9 +533,9 @@ fn var_type(prog: &Program, body: &[&Literal], var: &str) -> Option<String> {
     body.iter().find_map(|l| match l {
         Literal::Atom(a) if !a.neg => {
             let c = a.args.iter().position(|t| matches!(t, Term::Var(v) if v == var))?;
-            prog.decls.get(a.rel.as_str())?.get(c).map(|(_, t)| t.clone())
+            prog.decls.get(a.rel.as_str())?.get(c).map(|(_, t)| t.to_string())
         }
-        Literal::Nearest { n, a, .. } if n == var || a == var => Some("node".to_owned()),
+        Literal::Nearest { n, a, .. } if n == var || a == var => Some("node".into()),
         _ => None,
     })
 }

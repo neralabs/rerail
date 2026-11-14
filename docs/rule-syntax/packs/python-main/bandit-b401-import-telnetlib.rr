@@ -1,0 +1,15 @@
+.policy "bandit-b401-import-telnetlib" revision 1
+.guests off
+.description "Remove imports of telnetlib; Telnet sends credentials and data unencrypted, so use SSH or another encrypted protocol."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B401(n): a finding at node n, from clause `B401`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B401(at: node) "Remove this telnetlib import and use SSH or another encrypted protocol instead."
+    suppress nosec "B401"
+B401(n) :- n ~ `import telnetlib`.
+B401(n) :- n ~ `import telnetlib as $ALIAS`.
+B401(n) :- n ~ `from telnetlib import $$$NAMES`.

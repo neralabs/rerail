@@ -253,8 +253,10 @@ pub mod tests {
         // With a rule file's tests in the grammar (0130, More-ergonomic) on these calls: 413 states,
         // 3,004 arms, 3,773 words (the grammar's tests alone had taken it to 380 and 9,348). With
         // Parser-generators' tier 2 merged (token marks from the records, 0129; tier 1's checks at
-        // the token, 0133): 3,932 words, the states and arms the same.
-        assert!(states <= 413 && arms <= 3004 && c.program.words.len() <= 3932, "{states} states, {arms} arms, {} words", c.program.words.len());
+        // the token, 0133): 3,932 words, the states and arms the same. The token marks the grammar
+        // takes nowhere tested by `TOKEN`, once a token, not by each state (0139): 3,515. A
+        // number's 19 digits checked at its token (`CHECK`, 0133) in the arms that take one: 3,563.
+        assert!(states <= 413 && arms <= 3004 && c.program.words.len() <= 3563, "{states} states, {arms} arms, {} words", c.program.words.len());
         let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
         let cut = native_cpu_clusters::by_rules(&native);
         assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");
@@ -497,6 +499,96 @@ pub mod tests {
         }
         for (src, g) in files.iter().zip(&got) {
             assert_eq!(*g, super::tape(src), "{src:?}");
+        }
+    }
+
+    /// Tier 1's one pass on the CPU, split by what it makes: compiled as it is, without the
+    /// record pass, and without the extracts too, each run over the corpus as one batch; the
+    /// instructions retired, the least of five. A probe: run alone, one thread.
+    #[test]
+    #[ignore = "a probe: run by hand, --test-threads=1"]
+    fn rr_tier1_split() {
+        use rerail_compiler::{native_cpu_block, native_cpu_codegen::retired};
+        let c = crate::compiled().expect("compiles");
+        let corpus = corpus();
+        let files: Vec<&[u8]> = corpus.iter().map(|f| f.as_bytes()).collect();
+        let full = c.native.clone();
+        let mut no_records = full.clone();
+        no_records.records = None;
+        let mut no_extracts = no_records.clone();
+        no_extracts.extracts.clear();
+        if let Some(r) = &full.records {
+            let alone = r.marks.iter().filter(|m| m.0 == rerail_compiler::records::WORD_ALONE).count();
+            eprintln!("records: {} marks ({alone} of a word alone), {} words; the marks' outputs {:?}", r.marks.len(), r.words.len(), r.marks);
+            let labels: Vec<&str> = r.marks.iter().filter(|m| m.0 != rerail_compiler::records::WORD_ALONE).map(|m| c.labels.iter().find(|l| l.1 == m.0).map_or("?", |l| l.0.as_str())).collect();
+            eprintln!("  masked marks: {labels:?}");
+        }
+        let tokens: usize = files.iter().map(|f| c.parser.tier1.extract(f).codes.len()).sum();
+        eprintln!("{tokens} tokens");
+        let mut last = 0u64;
+        for (name, form) in [("as it is", &full), ("no record pass", &no_records), ("no extracts either", &no_extracts)] {
+            let compiled = native_cpu_block::compile(form).expect("compiles");
+            let mut batch = native_cpu_block::Batch::new(&compiled, &files);
+            let best = (0..5)
+                .map(|_| {
+                    let a = retired().0;
+                    batch.call(&compiled);
+                    retired().0 - a
+                })
+                .min()
+                .expect("rounds");
+            eprintln!("{name:>20}: {:7.1}M instructions{}", best as f64 / 1e6, if last > 0 { format!(" ({:+.1}M)", (best as f64 - last as f64) / 1e6) } else { String::new() });
+            last = best;
+        }
+    }
+
+    /// Tier 2's words as text, to `RR_WORDS` (a probe of what the marks cost).
+    #[test]
+    #[ignore = "a probe: run by hand with RR_WORDS"]
+    fn rr_words_text() {
+        let c = crate::compiled().expect("compiles");
+        std::fs::write(std::env::var("RR_WORDS").expect("set RR_WORDS"), format!("{}\n---\n{}", c.words, c.machine)).expect("writes");
+    }
+
+    /// The grammar's regions walked (the CPU's form, decision 0139) are its rounds' fixed point
+    /// (Metal's): every value of tier 1 the same, on a sample of the corpus and on regions whose
+    /// closers cross a block's end, and empty literals with and without a `` `` `` later.
+    #[test]
+    fn the_walks_are_the_rounds() {
+        let c = crate::compiled().expect("compiles");
+        assert_eq!(c.block.walks.len(), 1, "the grammar's regions are one walk");
+        let pad = |n: usize| "x".repeat(n);
+        let edges = [
+            format!("{}```a```", pad(55)),
+            format!("{}```a``` r(x).", pad(58)),
+            format!("{}\"{}\" r(x).", pad(40), "s".repeat(100)),
+            format!("{}/* {} */ r(x).", pad(61), "c".repeat(70)),
+            format!("{}// c\n r(x).", pad(62)),
+            format!("r(x) :- x = ``, y = ``.{}", pad(90)),
+            format!("r(x) :- x = ``, y = ``a``.{}``", pad(90)),
+            format!("{}`` {} ``", pad(30), pad(200)),
+            "r(x) :- `a\"b`, \"c`d\", `` `` ``.".to_owned(),
+            "\"open at the end".to_owned(),
+            "/* open at the end".to_owned(),
+            "``".to_owned(),
+        ];
+        let corpus = corpus();
+        let mut files: Vec<&[u8]> = corpus.iter().step_by(10).map(|f| f.as_bytes()).collect();
+        files.extend(edges.iter().map(|f| f.as_bytes()));
+        let (walked, spans) = c.block.all_values(&files);
+        let (rounds, _) = c.block.rounds_values(&files);
+        for (v, (w, r)) in walked.iter().zip(&rounds).enumerate() {
+            if w != r {
+                let b = w.iter().zip(r).position(|(x, y)| x != y).expect("a word differs");
+                let f = spans.iter().position(|s| s.contains(&b)).expect("a file's");
+                panic!("value {v} differs in file {f} block {}: walked {:#x}, rounds {:#x}", b - spans[f].start, w[b], r[b]);
+            }
+        }
+        // And the CPU's tier 1 (the walk lowered) gives the engine's tapes on the edges.
+        for f in &edges {
+            if let Ok(t) = c.parser.image(f.as_bytes()) {
+                assert_eq!(t, crate::engine_tape(f), "{f:?}");
+            }
         }
     }
 
@@ -841,6 +933,19 @@ pub mod tests {
     fn rr_tier1_shape() {
         use rerail_compiler::block_native::{BlockInst, Pass};
         let c = super::compiled().expect("compiles");
+        // The CPU's form (its walks walked, decision 0139), then Metal's (their rounds run).
+        let cpu = c.native.cpu_form();
+        let cpu_passes = cpu.passes();
+        eprintln!("the CPU's form: {} passes", cpu_passes.passes.len());
+        for (k, pass) in cpu_passes.passes.iter().enumerate() {
+            if let Pass::Forward { body, stores } = pass {
+                let count = |f: &dyn Fn(&BlockInst) -> bool| body.insts.iter().filter(|i| f(i)).count();
+                eprintln!("  pass {k}: forward, {} insts, {} walk values, {} fills, {} prevs, {} groups, {} outputs, {} stores", body.insts.len(), count(&|i| matches!(i, BlockInst::Walk { .. })), count(&|i| matches!(i, BlockInst::Fill(..))), count(&|i| matches!(i, BlockInst::Prev(..))), body.groups.len(), body.outputs.len(), stores.len());
+            } else {
+                eprintln!("  pass {k}: back");
+            }
+        }
+        eprintln!("Metal's form:");
         let passes = c.native.passes();
         let want: Option<(usize, usize)> = std::env::var("RR_PASS").ok().and_then(|p| Some((p.parse().ok()?, std::env::var("RR_CONE").ok()?.parse().ok()?)));
         for (k, pass) in passes.passes.iter().enumerate() {
@@ -1143,6 +1248,113 @@ pub mod tests {
                         assert_eq!(t, crate::engine_tape(&src), "{agg}: the engine's tape");
                     }
                     Err(_) => assert!(!taken, "{agg}: refused"),
+                }
+            }
+        }
+    }
+
+    /// The token marks the grammar takes nowhere (`TokenMark::refuses`): `TOKEN` tests them, once
+    /// a token, and no state does. A functor named, not called, before a token that can not
+    /// follow it; an I/O directive with no relation before an `#include` or at the end: refused
+    /// by every shape and the interpreter, comments between the tokens or none; else taken, as
+    /// the engine's tape.
+    #[test]
+    fn refusing_token_marks_refuse_at_any_level() {
+        let c = crate::compiled().expect("compiles");
+        let refusing = c.program.token_marks.iter().filter(|m| m.refuses).count();
+        assert_eq!(refusing, 3, "`no_value`, `fn_uncalled`, `io_bare`");
+        let words = c.program.words.iter().filter(|&&w| rerail_compiler::program::split(w).0 == rerail_compiler::program::MARK);
+        assert!(words.clone().all(|&w| !c.program.token_marks.iter().any(|m| m.refuses && m.order == rerail_compiler::program::split(w).1 % 32)), "no state tests a refusing mark");
+        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let head = ".decl a(x: number)\n";
+        let cases = [
+            (format!("{head}a(x) :- a(y), x = @f(y).\n"), true),
+            (format!("{head}a(x) :- a(y), x = @f /* c */ (y).\n"), true),
+            (format!("{head}a(x) :- a(y), x = @f.\n"), false),
+            (format!("{head}a(x) :- a(y), x = @f /* c */ .\n"), false),
+            (format!("{head}a(x) :- a(y), x = @f + 1.\n"), false),
+            (format!("{head}.input a\n"), true),
+            (format!("{head}.output a, a\n.input a\n"), true),
+            (format!("{head}.input\n.decl b(x: number)\n"), true),
+            (format!("{head}.input\n"), false),
+            (format!("{head}.output /* c */\n"), false),
+            (format!("{head}.input\n#include \"x.rr\"\n"), false),
+        ];
+        for (src, taken) in &cases {
+            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
+            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter");
+            for p in [&c.parser, &machine.parser] {
+                match p.image(src.as_bytes()) {
+                    Ok(t) => {
+                        assert!(*taken, "{src}: taken");
+                        assert_eq!(t, crate::engine_tape(src), "{src}: the engine's tape");
+                    }
+                    Err(_) => assert!(!*taken, "{src}: refused"),
+                }
+            }
+        }
+    }
+
+    /// A number of 19 digits or more goes to the engine, checked at its token (decision 0133's
+    /// local check: the token's first 19 bytes); 18 digits are taken, as the engine's tape. In
+    /// a block or across two, by every shape and the interpreter.
+    #[test]
+    fn long_numbers_go_to_the_engine() {
+        let c = crate::compiled().expect("compiles");
+        assert!(c.values.iter().all(|v| !["sig", "sig16", "long_int"].contains(&v.name.as_str())), "no mask counts digits");
+        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let d18 = "123456789012345678";
+        let d19 = "1234567890123456789";
+        let mut cases = Vec::new();
+        for pad in [0usize, 40, 50, 60] {
+            let head = format!(".decl a(x: number)\n// {}\n", "x".repeat(pad));
+            cases.push((format!("{head}a({d18}).\n"), true));
+            cases.push((format!("{head}a({d18}.5).\n"), true));
+            cases.push((format!("{head}a(x) :- a(y), x = y + {d18}.\n"), true));
+            cases.push((format!("{head}a({d19}).\n"), false));
+            cases.push((format!("{head}a({d19}0).\n"), false));
+            cases.push((format!("{head}a(x) :- a(y), x = y + {d19}.\n"), false));
+        }
+        for (src, taken) in &cases {
+            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
+            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter");
+            for p in [&c.parser, &machine.parser] {
+                match p.image(src.as_bytes()) {
+                    Ok(t) => {
+                        assert!(*taken, "{src}: taken");
+                        assert_eq!(t, crate::engine_tape(src), "{src}: the engine's tape");
+                    }
+                    Err(_) => assert!(!*taken, "{src}: refused"),
+                }
+            }
+        }
+    }
+
+    /// A float read as simdjson reads one: digits, a `.`, digits, then a byte that is not
+    /// one more `.` and digit. `1.2.3` goes to the engine; tier 1 iterates nothing for it.
+    #[test]
+    fn chained_floats_go_to_the_engine() {
+        let c = crate::compiled().expect("compiles");
+        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let mut cases = Vec::new();
+        for pad in [0usize, 40, 50, 55, 58, 60] {
+            let head = format!(".decl a(x: number)\n// {}\n", "x".repeat(pad));
+            cases.push((format!("{head}a(1.5).\n"), true));
+            cases.push((format!("{head}a(x) :- a(y), x = y + 12.25 * 3.0.\n"), true));
+            cases.push((format!("{head}a(x) :- a(y), x = y - 0.125.\n"), true));
+            cases.push((format!("{head}a(1.2.3).\n"), false));
+            cases.push((format!("{head}a(x) :- a(y), x = 10.25.5.\n"), false));
+        }
+        for (src, taken) in &cases {
+            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
+            assert_eq!(interp.is_ok(), *taken, "{src}: the interpreter");
+            for p in [&c.parser, &machine.parser] {
+                match p.image(src.as_bytes()) {
+                    Ok(t) => {
+                        assert!(*taken, "{src}: taken");
+                        assert_eq!(t, crate::engine_tape(src), "{src}: the engine's tape");
+                    }
+                    Err(_) => assert!(!*taken, "{src}: refused"),
                 }
             }
         }

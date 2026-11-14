@@ -1060,7 +1060,8 @@ PIN(s) :- spot(_, s).
     let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
     assert_eq!(
         read("violation"),
-        "t:places\tLONG\tFILE_LENGTH\ta.py\t0\nt:places\tLONG\tFILE_LENGTH\ta.py\t1\nt:places\tLONG\tFILE_LENGTH\ta.py\t3\nt:places\tLONG\tFILE_LENGTH\tmissing.json\t3\nt:places\tPIN\tPIN\ta.py\t7\n"
+        // The sixth column is the finding's (0165): a call's 0-based byte column, 0 for a place.
+        "t:places\tLONG\tFILE_LENGTH\ta.py\t0\t0\nt:places\tLONG\tFILE_LENGTH\ta.py\t1\t0\nt:places\tLONG\tFILE_LENGTH\ta.py\t3\t0\nt:places\tLONG\tFILE_LENGTH\tmissing.json\t3\t0\nt:places\tPIN\tPIN\ta.py\t7\t0\n"
     );
     // The violation's own rows show a place as one.
     assert_eq!(read("PIN"), "@place(\"a.py\", 7)\n");

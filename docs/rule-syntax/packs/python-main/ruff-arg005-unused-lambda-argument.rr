@@ -1,0 +1,81 @@
+.policy "ruff-arg005-unused-lambda-argument" revision 1
+.guests off
+.description "Remove lambda parameters the body never reads, or prefix them with an underscore when the caller passes them anyway."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+.options {"dummy-variable-rgx": {"type": "string", "default": "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$", "description": "Names of arguments that may be unused."}, "flake8-unused-arguments.ignore-variadic-names": {"type": "boolean", "default": false, "description": "Don't report unused *args and **kwargs."}}
+
+// ARG005(n): a finding at node n, from clause `unused-lambda-argument`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation ARG005(at: node, n: loc) "Remove `{n}` if no caller passes it, or prefix it with an underscore if the lambda must accept it; keep the name when callers pass it by keyword."
+    suppress noqa "ARG005"
+ARG005_raw(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, site_form(n, "parameter"),
+    site_scope(n, "lambda"), site_latest(n), !site_used(n),
+    inside(n, p1, "lambda_parameters"), child(p2, p1, _), kind(p2, "lambda"),
+    arg005_up_1(n, p3), !arg005_alt_7(n).
+
+// locals_call(n): the JSON util `locals-call`, used where the JSON says `matches: "locals-call"`
+.decl arg005_locals_call(n: node)
+arg005_locals_call(n) :- kind(n, "call"), within_stop(c1, n, arg005_stop_1),
+    ( kind(c1, "identifier"), glob("locals", c1)
+    ; kind(c1, "list_splat"), child(c1, c2, _), kind(c2, "identifier"), glob("locals", c2)
+    ).
+
+
+// other_scope(n): the JSON util `other-scope`, used where the JSON says `matches: "other-scope"`
+.decl arg005_other_scope(n: node)
+arg005_other_scope(n) :- field(p1, "body", n), kind(p1, "lambda").
+arg005_other_scope(n) :- field(p2, "left", n), kind(p2, "for_in_clause").
+arg005_other_scope(n) :- child(p3, n, _),
+    ( kind(p3, "list_comprehension")
+    ; kind(p3, "set_comprehension")
+    ; kind(p3, "dictionary_comprehension")
+    ; kind(p3, "generator_expression")
+    ),
+
+    count : { kind(n, "for_in_clause"), count : { precedes(s4, n), kind(s4, "for_in_clause") } = 0 } = 0.
+
+// own_locals(n): the JSON util `own-locals`, used where the JSON says `matches: "own-locals"`
+.decl arg005_own_locals(n: node)
+arg005_own_locals(n) :- arg005_locals_call(n), !arg005_other_scope(n).
+
+// lambda(n): the JSON util `lambda`, used where the JSON says `matches: "lambda"`
+.decl arg005_lambda(n: node)
+arg005_lambda(n) :- node(_, n, _, _, _), count : { field(n, "body", c1), arg005_alt_4(c1) } = 0.
+arg005_lambda(n) :- inside(n, p3, "block"), child(p4, p3, _), kind(p4, "class_definition").
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl arg005_up_1(n: node, p: node)
+arg005_up_1(n, p) :- site_latest(n), within_stop(n, p, "lambda"), kind(p, "lambda"),
+    arg005_lambda(p).
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl arg005_stop_1(n: node)
+arg005_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// stop_3(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl arg005_stop_3(n: node)
+arg005_stop_3(n) :- arg005_other_scope(n).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl arg005_alt_4(n: node)
+arg005_alt_4(n) :- arg005_locals_call(n).
+arg005_alt_4(n) :- within_stop(c1, n, arg005_stop_3), arg005_own_locals(c1).
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+.decl arg005_alt_7(n: node)
+arg005_alt_7(n) :- node(_, n, _, _, _), option("dummy-variable-rgx", o1), match(o1, n).
+arg005_alt_7(n) :- option("flake8-unused-arguments.ignore-variadic-names", "true"),
+    child(p1, n, _),
+    (kind(p1, "list_splat_pattern") ; kind(p1, "dictionary_splat_pattern")).
+
+// main's file condition {"notRegex": "\\.pyi$"}
+.decl ARG005_raw(at: node, n: loc)
+ARG005(v0, v1) :- ARG005_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

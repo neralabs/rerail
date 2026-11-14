@@ -1,0 +1,63 @@
+.policy "ruff-f407-future-feature-not-defined" revision 1
+.guests off
+.description "Import only real feature names from __future__; an unknown feature name is a syntax error."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F407(n): a finding at node n, from clause `future-feature-not-defined`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation F407(at: node, name: loc) "Future feature `{name}` is not defined"
+    suppress noqa "F407"
+F407(n, NAME) :- f407_alt_1(n, NAME), child(p2, n, _), f407_future_import(p2).
+
+// known_feature(n): the JSON util `known-feature`, used where the JSON says `matches: "known-feature"`
+.decl f407_known_feature(n: node)
+f407_known_feature(n) :- kind(n, "dotted_name"),
+    glob("{nested_scopes,generators,division,absolute_import,with_statement,print_function,unicode_literals,barry_as_FLUFL,generator_stop,annotations}", n).
+
+// future_import(n): the JSON util `future-import`, used where the JSON says `matches: "future-import"`
+.decl f407_future_import(n: node)
+f407_future_import(n) :- kind(n, "future_import_statement").
+f407_future_import(n) :- kind(n, "import_from_statement"), child(n, c1, _),
+    kind(c1, "relative_import"), child(c1, c2, _), kind(c2, "dotted_name"),
+    f407_statement_name(c2, q3), q3 = "__future__".
+
+// from_module: the module text of from-import s, read as `relative: "text"` does (dots dropped)
+.decl f407_from_module(s: node, m: symbol)
+f407_from_module(s, m) :- kind(s, "future_import_statement"), m = "__future__".
+f407_from_module(s, m) :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "dotted_name"), name(x, m).
+f407_from_module(s, m) :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "relative_import"), child(x, y, _), kind(y, "dotted_name"), name(y, m).
+f407_from_module(s, "") :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "relative_import"), count : { child(x, y, _), kind(y, "dotted_name") } = 0.
+
+// statement_name: dotted name n in an import statement imports q (relative modules by their text)
+.decl f407_statement_name(n: node, q: symbol)
+f407_statement_name(n, q) :- kind(n, "dotted_name"), child(s, n, _),
+    kind(s, "import_statement"), name(n, q).
+f407_statement_name(n, q) :- kind(n, "dotted_name"), child(s, n, _),
+    kind(s, "relative_import"), name(n, q).
+f407_statement_name(n, q) :- kind(n, "dotted_name"), field(a, "name", n),
+    kind(a, "aliased_import"), child(s, a, _), kind(s, "import_statement"), name(n, q).
+f407_statement_name(n, q) :- kind(n, "dotted_name"), field(a, "name", n),
+    kind(a, "aliased_import"), child(s, a, _),
+    (kind(s, "import_from_statement") ; kind(s, "future_import_statement")),
+    f407_from_module(s, m), name(n, x), q = @dot(m, x).
+f407_statement_name(n, m) :- kind(n, "dotted_name"), field(s, "module_name", n),
+    (kind(s, "import_from_statement") ; kind(s, "future_import_statement")),
+    f407_from_module(s, m).
+f407_statement_name(n, q) :- kind(n, "dotted_name"), child(s, n, _),
+    (kind(s, "import_from_statement") ; kind(s, "future_import_statement")),
+    !field(s, "module_name", n), f407_from_module(s, m), name(n, x), q = @dot(m, x).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   NAME: metavariable this relation binds for the calling rule
+.decl f407_alt_1(n: node, name: loc)
+f407_alt_1(n, NAME) :- kind(n, "dotted_name"), !f407_known_feature(n), node(_, n, _, _, _), NAME = n.
+f407_alt_1(n, NAME) :- kind(n, "aliased_import"), child(n, c1, _), kind(c1, "dotted_name"),
+    !f407_known_feature(c1), node(_, c1, _, _, _), NAME = c1.
+f407_alt_1(n, NAME) :- kind(n, "wildcard_import"), node(_, n, _, _, _), NAME = n.

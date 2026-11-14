@@ -1,0 +1,25 @@
+.policy "ruff-pyi048-stub-body-multiple-statements" revision 1
+.guests off
+.description "Give each function in a stub file a body of exactly one statement such as an ellipsis; stubs only declare types and are never executed."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PYI048(n): a finding at node n, from clause `stub-body-multiple-statements`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI048(at: node) "Reduce this stub function's body to a single statement, normally `...`; stub files only declare types and are never executed."
+    suppress noqa "PYI048"
+PYI048_raw(n) :- kind(n, "identifier"), field(p1, "name", n),
+    kind(p1, "function_definition"), field(p1, "body", c2), kind(c2, "block"),
+    child(c2, c3, _), !pyi048_filler(c3), precedes(s4, c3), !pyi048_filler(s4).
+
+// filler(n): the JSON util `filler`, used where the JSON says `matches: "filler"`
+.decl pyi048_filler(n: node)
+pyi048_filler(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pyi048_filler(n) :- node(_, n, _, _, _), glob(";", n).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI048_raw(at: node)
+PYI048(v0) :- PYI048_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

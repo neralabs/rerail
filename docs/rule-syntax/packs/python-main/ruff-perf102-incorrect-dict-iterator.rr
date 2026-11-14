@@ -1,0 +1,305 @@
+.policy "ruff-perf102-incorrect-dict-iterator" revision 1
+.guests off
+.description "Iterate over a dict's keys or values instead of its items when a for loop uses only the key or only the value of each pair."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// elt(n): the JSON util `elt`, used where the JSON says `matches: "elt"`
+.decl perf102_elt(n: node)
+perf102_elt(n) :- node(_, n, _, _, _), !perf102_alt_1(n).
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl perf102_positional(n: node)
+perf102_positional(n) :- node(_, n, _, _, _), !perf102_alt_2(n).
+
+// unused(n, …): the JSON util `unused`, called with `matches` and arguments N
+.decl perf102_unused(n: node, n_mv: node)
+perf102_unused(n, N) :- perf102_unused_u7(n, N).
+
+// keys_only(n): the JSON util `keys-only`, used where the JSON says `matches: "keys-only"`
+.decl perf102_keys_only(n: node)
+perf102_keys_only(n) :- perf102_demand_keys_only(n), kind(n, "tuple_pattern"), !perf102_tok_has_1(n),
+    child(n, c9, _), kind(c9, "tuple_pattern"), perf102_keys_only(c9).
+perf102_keys_only(n) :- perf102_demand_keys_only(n),
+    (kind(n, "pattern_list") ; kind(n, "tuple_pattern")),
+    k11 = count : { child(n, c10, _), perf102_elt(c10) }, k11 >= 2, k11 <= 2, child(n, c12, _),
+    child(p13, c12, _), perf102_counted(c12),
+    k15 = count : { child(p13, s14, _), precedes(s14, c12), perf102_counted(s14) }, k15 = 0,
+    perf102_elt(c12), !perf102_unused(c12, _), child(n, c16, _), child(p17, c16, _), perf102_counted(c16),
+    k19 = count : { child(p17, s18, _), precedes(s18, c16), perf102_counted(s18) }, k19 = 1,
+    perf102_unused(c16, A).
+
+// values_only(n): the JSON util `values-only`, used where the JSON says `matches: "values-only"`
+.decl perf102_values_only(n: node)
+perf102_values_only(n) :- perf102_demand_values_only(n), kind(n, "tuple_pattern"), !perf102_tok_has_1(n),
+    child(n, c9, _), kind(c9, "tuple_pattern"), perf102_values_only(c9).
+perf102_values_only(n) :- perf102_demand_values_only(n),
+    (kind(n, "pattern_list") ; kind(n, "tuple_pattern")),
+    k11 = count : { child(n, c10, _), perf102_elt(c10) }, k11 >= 2, k11 <= 2, child(n, c12, _),
+    child(p13, c12, _), perf102_counted(c12),
+    k15 = count : { child(p13, s14, _), precedes(s14, c12), perf102_counted(s14) }, k15 = 0,
+    perf102_unused(c12, E), child(n, c16, _), child(p17, c16, _), perf102_counted(c16),
+    k19 = count : { child(p17, s18, _), precedes(s18, c16), perf102_counted(s18) }, k19 = 1,
+    perf102_elt(c16), !perf102_unused(c16, _).
+
+// PERF102(n, detail): findings from clauses `unused-value`, `unused-key`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+.violation PERF102(at: node, detail: symbol) "The loop never uses the {detail}. Leave it if this object is not a dict."
+    suppress noqa "PERF102"
+PERF102(n, "value: iterate `.keys()` and bind only the key") :- kind(n, "attribute"),
+    field(n, "attribute", c1), glob("items", c1), within_stop(n, p2, perf102_stop_14),
+    field(_, "function", n), kind(p2, "call"), field(p2, "arguments", c3),
+    kind(c3, "argument_list"), count : { child(c3, c4, _), perf102_positional(c4) } = 0,
+    within_stop(p2, p5, perf102_stop_14), field(_, "right", p2), kind(p5, "for_statement"),
+    field(p5, "left", c6), perf102_keys_only(c6).
+PERF102(n, "key: iterate `.values()` and bind only the value") :- kind(n, "attribute"),
+    field(n, "attribute", c1), glob("items", c1), within_stop(n, p2, perf102_stop_14),
+    field(_, "function", n), kind(p2, "call"), field(p2, "arguments", c3),
+    kind(c3, "argument_list"), count : { child(c3, c4, _), perf102_positional(c4) } = 0,
+    within_stop(p2, p5, perf102_stop_14), field(_, "right", p2), kind(p5, "for_statement"),
+    field(p5, "left", c6), perf102_values_only(c6).
+
+.decl perf102_alt_6_u0(n: node, n_mv: loc)
+perf102_alt_6_u0(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, !site_used(n),
+    within_stop(n, p1, perf102_stop_3),
+    ( kind(p1, "function_definition")
+    ; kind(p1, "class_definition")
+    ; kind(p1, "module")
+    ),
+    within_stop(c2, p1, perf102_stop_4), perf102_alt_5(c2, N).
+// N: not bound by this rule, so empty (unset) here, as in ast-grep.
+perf102_alt_6_u0(n, N) :- perf102_demand_alt_6(n), kind(n, "tuple_pattern"),
+    count : { child(n, c4, _), perf102_elt(c4) } = 0, unset(N).
+
+.decl perf102_alt_6_u1(n: node, n_mv: loc)
+perf102_alt_6_u1(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, !site_used(n),
+    within_stop(n, p1, perf102_stop_3),
+    ( kind(p1, "function_definition")
+    ; kind(p1, "class_definition")
+    ; kind(p1, "module")
+    ),
+    within_stop(c2, p1, perf102_stop_4), perf102_alt_5(c2, N).
+// N: not bound by this rule, so empty (unset) here, as in ast-grep.
+perf102_alt_6_u1(n, N) :- perf102_demand_alt_6(n), kind(n, "tuple_pattern"),
+    count : { child(n, c4, _), perf102_elt(c4), !perf102_unused_u0(c4, _) } = 0, unset(N).
+
+.decl perf102_alt_6_u2(n: node, n_mv: loc)
+perf102_alt_6_u2(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, !site_used(n),
+    within_stop(n, p1, perf102_stop_3),
+    ( kind(p1, "function_definition")
+    ; kind(p1, "class_definition")
+    ; kind(p1, "module")
+    ),
+    within_stop(c2, p1, perf102_stop_4), perf102_alt_5(c2, N).
+// N: not bound by this rule, so empty (unset) here, as in ast-grep.
+perf102_alt_6_u2(n, N) :- perf102_demand_alt_6(n), kind(n, "tuple_pattern"),
+    count : { child(n, c4, _), perf102_elt(c4), !perf102_unused_u1(c4, _) } = 0, unset(N).
+
+.decl perf102_alt_6_u3(n: node, n_mv: loc)
+perf102_alt_6_u3(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, !site_used(n),
+    within_stop(n, p1, perf102_stop_3),
+    ( kind(p1, "function_definition")
+    ; kind(p1, "class_definition")
+    ; kind(p1, "module")
+    ),
+    within_stop(c2, p1, perf102_stop_4), perf102_alt_5(c2, N).
+// N: not bound by this rule, so empty (unset) here, as in ast-grep.
+perf102_alt_6_u3(n, N) :- perf102_demand_alt_6(n), kind(n, "tuple_pattern"),
+    count : { child(n, c4, _), perf102_elt(c4), !perf102_unused_u2(c4, _) } = 0, unset(N).
+
+.decl perf102_alt_6_u4(n: node, n_mv: loc)
+perf102_alt_6_u4(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, !site_used(n),
+    within_stop(n, p1, perf102_stop_3),
+    ( kind(p1, "function_definition")
+    ; kind(p1, "class_definition")
+    ; kind(p1, "module")
+    ),
+    within_stop(c2, p1, perf102_stop_4), perf102_alt_5(c2, N).
+// N: not bound by this rule, so empty (unset) here, as in ast-grep.
+perf102_alt_6_u4(n, N) :- perf102_demand_alt_6(n), kind(n, "tuple_pattern"),
+    count : { child(n, c4, _), perf102_elt(c4), !perf102_unused_u3(c4, _) } = 0, unset(N).
+
+.decl perf102_alt_6_u5(n: node, n_mv: loc)
+perf102_alt_6_u5(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, !site_used(n),
+    within_stop(n, p1, perf102_stop_3),
+    ( kind(p1, "function_definition")
+    ; kind(p1, "class_definition")
+    ; kind(p1, "module")
+    ),
+    within_stop(c2, p1, perf102_stop_4), perf102_alt_5(c2, N).
+// N: not bound by this rule, so empty (unset) here, as in ast-grep.
+perf102_alt_6_u5(n, N) :- perf102_demand_alt_6(n), kind(n, "tuple_pattern"),
+    count : { child(n, c4, _), perf102_elt(c4), !perf102_unused_u4(c4, _) } = 0, unset(N).
+
+.decl perf102_alt_6_u6(n: node, n_mv: loc)
+perf102_alt_6_u6(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, !site_used(n),
+    within_stop(n, p1, perf102_stop_3),
+    ( kind(p1, "function_definition")
+    ; kind(p1, "class_definition")
+    ; kind(p1, "module")
+    ),
+    within_stop(c2, p1, perf102_stop_4), perf102_alt_5(c2, N).
+// N: not bound by this rule, so empty (unset) here, as in ast-grep.
+perf102_alt_6_u6(n, N) :- perf102_demand_alt_6(n), kind(n, "tuple_pattern"),
+    count : { child(n, c4, _), perf102_elt(c4), !perf102_unused_u5(c4, _) } = 0, unset(N).
+
+.decl perf102_alt_6_u7(n: node, n_mv: loc)
+perf102_alt_6_u7(n, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n, !site_used(n),
+    within_stop(n, p1, perf102_stop_3),
+    ( kind(p1, "function_definition")
+    ; kind(p1, "class_definition")
+    ; kind(p1, "module")
+    ),
+    within_stop(c2, p1, perf102_stop_4), perf102_alt_5(c2, N).
+// N: not bound by this rule, so empty (unset) here, as in ast-grep.
+perf102_alt_6_u7(n, N) :- perf102_demand_alt_6(n), kind(n, "tuple_pattern"),
+    count : { child(n, c4, _), perf102_elt(c4), !perf102_unused_u6(c4, _) } = 0, unset(N).
+
+.decl perf102_unused_u1(n: node, n_mv: node)
+perf102_unused_u1(n, N) :- perf102_demand_unused(n), perf102_alt_6_u0(n, N).
+
+.decl perf102_unused_u2(n: node, n_mv: node)
+perf102_unused_u2(n, N) :- perf102_demand_unused(n), perf102_alt_6_u1(n, N).
+
+.decl perf102_unused_u3(n: node, n_mv: node)
+perf102_unused_u3(n, N) :- perf102_demand_unused(n), perf102_alt_6_u2(n, N).
+
+.decl perf102_unused_u4(n: node, n_mv: node)
+perf102_unused_u4(n, N) :- perf102_demand_unused(n), perf102_alt_6_u3(n, N).
+
+.decl perf102_unused_u5(n: node, n_mv: node)
+perf102_unused_u5(n, N) :- perf102_demand_unused(n), perf102_alt_6_u4(n, N).
+
+.decl perf102_unused_u6(n: node, n_mv: node)
+perf102_unused_u6(n, N) :- perf102_demand_unused(n), perf102_alt_6_u5(n, N).
+
+.decl perf102_unused_u7(n: node, n_mv: node)
+perf102_unused_u7(n, N) :- perf102_demand_unused(n), perf102_alt_6_u6(n, N).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf102_tok_has_1(n: node)
+.stored perf102_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf102_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+perf102_tok_has_1(n) :- op(n, t2), match(",", t2).
+perf102_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+perf102_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+perf102_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// demand_keys_only: the rows of keys_only its callers ask for (the metavariable columns they pass in)
+.decl perf102_demand_keys_only(n: node)
+perf102_demand_keys_only(c9) :- perf102_demand_keys_only(n), kind(n, "tuple_pattern"), child(n, c9, _),
+    kind(c9, "tuple_pattern").
+perf102_demand_keys_only(c6) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("items", c1), within_stop(n, p2, perf102_stop_14), field(_, "function", n),
+    kind(p2, "call"), field(p2, "arguments", c3), kind(c3, "argument_list"),
+    within_stop(p2, p5, perf102_stop_14), field(_, "right", p2), kind(p5, "for_statement"),
+    field(p5, "left", c6).
+
+// demand_values_only: the rows of values_only its callers ask for (the metavariable columns they pass in)
+.decl perf102_demand_values_only(n: node)
+perf102_demand_values_only(c9) :- perf102_demand_values_only(n), kind(n, "tuple_pattern"),
+    child(n, c9, _), kind(c9, "tuple_pattern").
+perf102_demand_values_only(c6) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("items", c1), within_stop(n, p2, perf102_stop_14), field(_, "function", n),
+    kind(p2, "call"), field(p2, "arguments", c3), kind(c3, "argument_list"),
+    within_stop(p2, p5, perf102_stop_14), field(_, "right", p2), kind(p5, "for_statement"),
+    field(p5, "left", c6).
+
+// demand_alt_6: the rows of alt_6 its callers ask for (the metavariable columns they pass in)
+.decl perf102_demand_alt_6(n: node)
+perf102_demand_alt_6(n) :- perf102_demand_unused(n).
+
+// demand_unused: the rows of unused its callers ask for (the metavariable columns they pass in)
+.decl perf102_demand_unused(n: node)
+perf102_demand_unused(c12) :- perf102_demand_keys_only(n),
+    (kind(n, "pattern_list") ; kind(n, "tuple_pattern")), child(n, c12, _),
+    child(p13, c12, _), perf102_counted(c12), perf102_elt(c12), child(n, c16, _), child(p17, c16, _),
+    perf102_counted(c16).
+perf102_demand_unused(c16) :- perf102_demand_keys_only(n),
+    (kind(n, "pattern_list") ; kind(n, "tuple_pattern")), child(n, c12, _),
+    child(p13, c12, _), perf102_counted(c12), perf102_elt(c12), child(n, c16, _), child(p17, c16, _),
+    perf102_counted(c16).
+perf102_demand_unused(c12) :- perf102_demand_values_only(n),
+    (kind(n, "pattern_list") ; kind(n, "tuple_pattern")), child(n, c12, _),
+    child(p13, c12, _), perf102_counted(c12), child(n, c16, _), child(p17, c16, _),
+    perf102_counted(c16), perf102_elt(c16).
+perf102_demand_unused(c16) :- perf102_demand_values_only(n),
+    (kind(n, "pattern_list") ; kind(n, "tuple_pattern")), child(n, c12, _),
+    child(p13, c12, _), perf102_counted(c12), child(n, c16, _), child(p17, c16, _),
+    perf102_counted(c16), perf102_elt(c16).
+perf102_demand_unused(c4) :- perf102_demand_alt_6(n), kind(n, "tuple_pattern"), child(n, c4, _),
+    perf102_elt(c4).
+
+// demand_alt_5: the rows of alt_5 its callers ask for (the metavariable columns they pass in)
+.decl perf102_demand_alt_5(n: node, n_mv: loc)
+perf102_demand_alt_5(c2, N) :- perf102_demand_alt_6(n), kind(n, "identifier"), node(_, n, _, _, _), N = n,
+    within_stop(n, p1, perf102_stop_3),
+    ( kind(p1, "function_definition")
+    ; kind(p1, "class_definition")
+    ; kind(p1, "module")
+    ),
+    within_stop(c2, p1, perf102_stop_4).
+
+// alt_6_u0_empty: level -1 of an unrolled recursion, empty
+.decl perf102_alt_6_u0_empty(n: node, n_mv: loc)
+
+// unused_u0: level -1 of an unrolled recursion, empty
+.decl perf102_unused_u0(n: node, n_mv: node)
+
+// unused_u0_empty: level -1 of an unrolled recursion, empty
+.decl perf102_unused_u0_empty(n: node, n_mv: node)
+
+// stop_3: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl perf102_stop_3(kind: symbol)
+perf102_stop_3("function_definition"). perf102_stop_3("class_definition"). perf102_stop_3("module").
+
+// stop_4: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl perf102_stop_4(kind: symbol)
+perf102_stop_4("function_definition"). perf102_stop_4("class_definition"). perf102_stop_4("lambda").
+perf102_stop_4("list_comprehension"). perf102_stop_4("set_comprehension").
+perf102_stop_4("dictionary_comprehension"). perf102_stop_4("generator_expression").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl perf102_alt_1(n: node)
+perf102_alt_1(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+perf102_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl perf102_alt_2(n: node)
+perf102_alt_2(n) :-
+    ( kind(n, "comment")
+    ; kind(n, "line_continuation")
+    ; kind(n, "keyword_argument")
+    ; kind(n, "dictionary_splat")
+    ).
+
+perf102_alt_2(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+//   N: metavariable of the calling rule, passed in (bound by the caller)
+.decl perf102_alt_5(n: node, n_mv: loc)
+perf102_alt_5(n, N) :- perf102_demand_alt_5(n, N), (kind(n, "identifier") ; kind(n, "dotted_name")),
+    text(n, t_n1), text(N, t_n1), site_latest(n), !site_used(n), @doc(n) = @doc(N).
+perf102_alt_5(n, N) :- perf102_demand_alt_5(n, N),
+    (kind(n, "function_definition") ; kind(n, "class_definition")),
+    field(n, "name", c1), text(c1, t_n2), text(N, t_n2), site_latest(c1),
+    !site_used(c1), @doc(c1) = @doc(N).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+//   N: metavariable this relation binds for the calling rule
+.decl perf102_alt_6(n: node, n_mv: loc)
+perf102_alt_6(n, N) :- perf102_alt_6_u7(n, N).
+
+// counted(n): 4 identical copies of one rule set (`counted_10`, `counted_11`, `counted_12` and 1 more), folded into one.
+.decl perf102_counted(n: node)
+perf102_counted(n) :- perf102_elt(n).
+
+// stop_14(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl perf102_stop_14(n: node)
+perf102_stop_14(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").

@@ -1,0 +1,52 @@
+.policy "bandit-b413-import-pycrypto" revision 1
+.guests off
+.description "Avoid importing the pyCrypto package; it is unmaintained and has known vulnerabilities, so use the cryptography package instead."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B413(n): a finding at node n, from clause `B413`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B413(at: node) "The pyCrypto library is deprecated and unmaintained; consider using pyca/cryptography."
+    suppress nosec "B413"
+B413(n) :- n ~ `import Crypto.Cipher`.
+B413(n) :- n ~ `import Crypto.Cipher as $ALIAS`.
+B413(n) :- n ~ `from Crypto.Cipher import $$$NAMES`.
+B413(n) :- n ~ `from Crypto import Cipher`.
+B413(n) :- n ~ `from Crypto import Cipher as $ALIAS`.
+B413(n) :- n ~ `import Crypto.Hash`.
+B413(n) :- n ~ `import Crypto.Hash as $ALIAS`.
+B413(n) :- n ~ `from Crypto.Hash import $$$NAMES`.
+B413(n) :- n ~ `from Crypto import Hash`.
+B413(n) :- n ~ `from Crypto import Hash as $ALIAS`.
+B413(n) :- n ~ `import Crypto.IO`.
+B413(n) :- n ~ `import Crypto.IO as $ALIAS`.
+B413(n) :- n ~ `from Crypto.IO import $$$NAMES`.
+B413(n) :- n ~ `from Crypto import IO`.
+B413(n) :- n ~ `from Crypto import IO as $ALIAS`.
+B413(n) :- n ~ `import Crypto.Protocol`.
+B413(n) :- n ~ `import Crypto.Protocol as $ALIAS`.
+B413(n) :- n ~ `from Crypto.Protocol import $$$NAMES`.
+B413(n) :- n ~ `from Crypto import Protocol`.
+B413(n) :- n ~ `from Crypto import Protocol as $ALIAS`.
+B413(n) :- n ~ `import Crypto.PublicKey`.
+B413(n) :- n ~ `import Crypto.PublicKey as $ALIAS`.
+B413(n) :- n ~ `from Crypto.PublicKey import $$$NAMES`.
+B413(n) :- n ~ `from Crypto import PublicKey`.
+B413(n) :- n ~ `from Crypto import PublicKey as $ALIAS`.
+B413(n) :- n ~ `import Crypto.Random`.
+B413(n) :- n ~ `import Crypto.Random as $ALIAS`.
+B413(n) :- n ~ `from Crypto.Random import $$$NAMES`.
+B413(n) :- n ~ `from Crypto import Random`.
+B413(n) :- n ~ `from Crypto import Random as $ALIAS`.
+B413(n) :- n ~ `import Crypto.Signature`.
+B413(n) :- n ~ `import Crypto.Signature as $ALIAS`.
+B413(n) :- n ~ `from Crypto.Signature import $$$NAMES`.
+B413(n) :- n ~ `from Crypto import Signature`.
+B413(n) :- n ~ `from Crypto import Signature as $ALIAS`.
+B413(n) :- n ~ `import Crypto.Util`.
+B413(n) :- n ~ `import Crypto.Util as $ALIAS`.
+B413(n) :- n ~ `from Crypto.Util import $$$NAMES`.
+B413(n) :- n ~ `from Crypto import Util`.
+B413(n) :- n ~ `from Crypto import Util as $ALIAS`.

@@ -1,0 +1,174 @@
+.policy "ruff-ann001-missing-type-function-argument" revision 1
+.guests off
+.description "Annotate every function parameter with a type so type checkers can verify calls and readers know what the function accepts."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// ANN001(n): a finding at node n, from clause `missing-type-function-argument`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation ANN001(at: node, name: loc) "Add a type annotation to parameter `{name}`."
+    suppress noqa "ANN001"
+ANN001(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
+    ( child(p1, n, _), kind(p1, "parameters"), ann001_reported_parameter(n)
+    ; field(p2, "name", n), kind(p2, "default_parameter"), ann001_reported_parameter(p2)
+    ).
+
+
+// overload_expr(n): the JSON util `overload-expr`, used where the JSON says `matches: "overload-expr"`
+.decl ann001_overload_expr(n: node)
+ann001_overload_expr(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.overload")
+    ; sym_of(n, "typing_extensions.overload")
+    ; sym_of(n, "_typeshed.overload")
+    ).
+
+ann001_overload_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ann001_overload_expr(c1).
+
+// imports_builtins(n): the JSON util `imports-builtins`, used where the JSON says `matches: "imports-builtins"`
+.decl ann001_imports_builtins(n: node)
+ann001_imports_builtins(n) :- inside(n, p1, "module"), within(c2, p1),
+    ( kind(c2, "import_statement"), has(c2, c1, "dotted_name"), match("builtins(\\.|$).*", c1)
+    ; kind(c2, "import_from_statement"), field(c2, "module_name", c3), kind(c3, "dotted_name"), match("builtins(\\.|$).*", c3)
+    ).
+
+
+// staticmethod_expr(n): the JSON util `staticmethod-expr`, used where the JSON says `matches: "staticmethod-expr"`
+.decl ann001_staticmethod_expr(n: node)
+ann001_staticmethod_expr(n) :- kind(n, "identifier"), glob("staticmethod", n), !ann001_alt_3(n).
+ann001_staticmethod_expr(n) :- ann001_imports_builtins(n),
+    (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "staticmethod"),
+    sym_of(n, "builtins.staticmethod").
+ann001_staticmethod_expr(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    ann001_staticmethod_expr(c3).
+
+// overload_decorated(n): the JSON util `overload-decorated`, used where the JSON says `matches: "overload-decorated"`
+.decl ann001_overload_decorated(n: node)
+ann001_overload_decorated(n) :- kind(n, "decorated_definition"), child(n, c1, _),
+    kind(c1, "decorator"), child(c1, c2, _), ann001_overload_expr(c2).
+
+// definition_statement(n): the JSON util `definition-statement`, used where the JSON says `matches: "definition-statement"`
+.decl ann001_definition_statement(n: node)
+ann001_definition_statement(n) :-
+    ( kind(n, "function_definition")
+    ; kind(n, "class_definition")
+    ; kind(n, "decorated_definition")
+    ).
+
+
+// holds_definition(n): the JSON util `holds-definition`, used where the JSON says `matches: "holds-definition"`
+.decl ann001_holds_definition(n: node)
+ann001_holds_definition(n) :- ann001_definition_statement(n).
+ann001_holds_definition(n) :- within_stop(c1, n, ann001_stop_5), ann001_definition_statement(c1).
+
+// last_definition_is_overload(n): the JSON util `last-definition-is-overload`, used where the JSON says `matches: "last-definition-is-overload"`
+//   FN: metavariable this relation binds for the calling rule
+.decl ann001_last_definition_is_overload(n: node, fn: loc)
+ann001_last_definition_is_overload(n, FN) :- ann001_overload_decorated(n), child(n, c1, _),
+    kind(c1, "function_definition"), child(c1, c2, _), kind(c2, "identifier"),
+    node(_, c2, _, _, _), FN = c2.
+ann001_last_definition_is_overload(n, FN) :- !ann001_alt_6(n), child(n, c4, _), ann001_holds_definition(c4),
+    count : { precedes(c4, s5), ann001_holds_definition(s5) } = 0,
+    ann001_last_definition_is_overload(c4, FN).
+
+// previous_overload(n): the JSON util `previous-overload`, used where the JSON says `matches: "previous-overload"`
+//   FN: metavariable this relation binds for the calling rule
+.decl ann001_previous_overload(n: node, fn: loc)
+ann001_previous_overload(n, FN) :- precedes_stop(s1, n, ann001_stop_7),
+    ann001_last_definition_is_overload(s1, FN).
+ann001_previous_overload(n, FN) :- count : { precedes(s2, n), ann001_holds_definition(s2) } = 0,
+    child(p3, n, _), !kind(p3, "function_definition"), !kind(p3, "class_definition"),
+    !kind(p3, "module"), ann001_previous_overload(p3, FN).
+
+// overload_implementation(n): the JSON util `overload-implementation`, used where the JSON says `matches: "overload-implementation"`
+//   FN: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann001_overload_implementation(n: node, fn: loc)
+ann001_overload_implementation(n, FN) :- ann001_demand_overload_implementation(n, FN),
+    count : { child(p1, n, _), ann001_overload_decorated(p1) } = 0, ann001_previous_overload(n, FN).
+
+// skips_first(n): the JSON util `skips-first`, used where the JSON says `matches: "skips-first"`
+.decl ann001_skips_first(n: node)
+ann001_skips_first(n) :- ann001_demand_skips_first(n), ann001_up_1(n, p1),
+    count : { child(p2, n, _), kind(p2, "decorated_definition"), child(p2, c3, _), kind(c3, "decorator"), child(c3, c4, _), ann001_staticmethod_expr(c4) } = 0.
+
+// non_variadic(n): the JSON util `non-variadic`, used where the JSON says `matches: "non-variadic"`
+.decl ann001_non_variadic(n: node)
+ann001_non_variadic(n) :-
+    ( kind(n, "identifier")
+    ; kind(n, "default_parameter")
+    ; kind(n, "typed_default_parameter")
+    ).
+
+ann001_non_variadic(n) :- kind(n, "typed_parameter"),
+    count : { child(n, c1, _), (kind(c1, "list_splat_pattern") ; kind(c1, "dictionary_splat_pattern")) } = 0.
+
+// reported_parameter(n): the JSON util `reported-parameter`, used where the JSON says `matches: "reported-parameter"`
+.decl ann001_reported_parameter(n: node)
+ann001_reported_parameter(n) :- child(p1, n, _), kind(p1, "parameters"), child(p2, p1, _),
+    kind(p2, "function_definition"), child(p2, c3, _), kind(c3, "identifier"),
+    node(_, c3, _, _, _), FN = c3, !ann001_overload_implementation(p2, FN),
+    ( count : { child(p3, n, _), ann001_counted_11(n), k1 = count : { child(p3, s1, _), precedes(s1, n), ann001_counted_11(s1) }, k1 = 0 } = 0
+    ; child(p4, n, _), kind(p4, "parameters"), child(p5, p4, _), kind(p5, "function_definition"), !ann001_skips_first(p5)
+    ).
+
+
+// demand_overload_implementation: the rows of overload_implementation its callers ask for (the metavariable columns they pass in)
+.decl ann001_demand_overload_implementation(n: node, fn: loc)
+ann001_demand_overload_implementation(p2, FN) :- child(p1, n, _), kind(p1, "parameters"),
+    child(p2, p1, _), kind(p2, "function_definition"), child(p2, c3, _),
+    kind(c3, "identifier"), node(_, c3, _, _, _), FN = c3.
+
+// demand_skips_first: the nodes skips_first is asked at (it looks at every ancestor of every node)
+.decl ann001_demand_skips_first(n: node)
+ann001_demand_skips_first(p5) :- child(p1, n, _), kind(p1, "parameters"), child(p2, p1, _),
+    kind(p2, "function_definition"), child(p2, c3, _), kind(c3, "identifier"),
+    node(_, c3, _, _, _), FN = c3, child(p4, n, _), kind(p4, "parameters"), child(p5, p4, _),
+    kind(p5, "function_definition").
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl ann001_up_1(n: node, p: node)
+ann001_up_1(n, p) :- ann001_demand_skips_first(n), within_stop(n, p, ann001_stop_8),
+    kind(p, "class_definition").
+
+// stop_8: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ann001_stop_8(kind: symbol)
+ann001_stop_8("function_definition"). ann001_stop_8("class_definition").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl ann001_alt_2(n: node)
+ann001_alt_2(n) :- site_form(n, "annotation").
+ann001_alt_2(n) :- site_form(n, "except").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl ann001_alt_3(n: node)
+ann001_alt_3(n) :- ann001_imports_builtins(n).
+ann001_alt_3(n) :- inside(n, p1, "module"), within(c2, p1),
+    (kind(c2, "identifier") ; kind(c2, "dotted_name")), glob("staticmethod", c2),
+    site_scope(c2, "module"), !ann001_alt_2(c2).
+
+// stop_5(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ann001_stop_5(n: node)
+ann001_stop_5(n) :- ann001_definition_statement(n).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl ann001_alt_6(n: node)
+ann001_alt_6(n) :- kind(n, "function_definition").
+ann001_alt_6(n) :- kind(n, "decorated_definition"), child(n, c1, _),
+    kind(c1, "function_definition").
+
+// stop_7(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ann001_stop_7(n: node)
+ann001_stop_7(n) :- ann001_holds_definition(n).
+
+// counted_9(n): the siblings the JSON `nthChild.ofRule` counts
+.decl ann001_counted_9(n: node)
+ann001_counted_9(n) :- ann001_non_variadic(n).
+
+// counted_11(n): the siblings the JSON `nthChild.ofRule` counts
+.decl ann001_counted_11(n: node)
+ann001_counted_11(n) :- ann001_non_variadic(n).

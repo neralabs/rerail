@@ -1,0 +1,42 @@
+.policy "ruff-pth122-os-path-splitext" revision 1
+.guests off
+.description "Use the suffix, stem and parent properties of a Path object instead of os.path.splitext; pathlib reads better than string-based os.path functions."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PTH122(n): a finding at node n, from clause `os-path-splitext`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PTH122(at: node, f: node) "Use `Path(...)` with `.suffix`, `.stem` and `.parent` instead of `os.path.splitext(...)`: the root is `p.parent / p.stem`, the extension `p.suffix`. Leave it for bytes paths, which `Path` rejects."
+    suppress noqa "PTH122"
+PTH122(F, n) :- pth122_target(n, F).
+PTH122(F, n) :- pth122_in_string(n, F).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth122_callee(n: node, f: loc)
+pth122_callee(n, F) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "os.path.splitext"), node(_, n, _, _, _), F = n.
+pth122_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth122_callee(c1, F).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth122_target(n: node, f: loc)
+pth122_target(n, F) :- kind(n, "call"), child(n, c1, _), pth122_callee(c1, F), precedes(c1, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")).
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth122_in_string(n: node, f: loc)
+pth122_in_string(n, F) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), pth122_alt_1(c2, F).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   F: metavariable this relation binds for the calling rule
+.decl pth122_alt_1(n: node, f: loc)
+pth122_alt_1(n, F) :- pth122_target(n, F).
+pth122_alt_1(n, F) :- pth122_in_string(n, F).

@@ -1,0 +1,158 @@
+.policy "ruff-pyi005-wrong-tuple-length-version-comparison" revision 1
+.guests off
+.description "Compare a sys.version_info slice only with a tuple of the same length in stub files; a tuple of another length is never equal."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// test_slot(n): the JSON util `test-slot`, used where the JSON says `matches: "test-slot"`
+.decl pyi005_test_slot(n: node)
+pyi005_test_slot(n) :- field(p1, "condition", n), kind(p1, "if_statement").
+pyi005_test_slot(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"), pyi005_test_slot(p2).
+
+// bool_and_top(n): the JSON util `bool-and-top`, used where the JSON says `matches: "bool-and-top"`
+.decl pyi005_bool_and_top(n: node)
+pyi005_bool_and_top(n) :- kind(n, "boolean_operator"), field(n, "operator", c1),
+    glob("and", c1), pyi005_alt_1(n).
+
+// bool_or_top(n): the JSON util `bool-or-top`, used where the JSON says `matches: "bool-or-top"`
+.decl pyi005_bool_or_top(n: node)
+pyi005_bool_or_top(n) :- kind(n, "boolean_operator"), field(n, "operator", c1),
+    glob("or", c1), pyi005_alt_2(n).
+
+// test_operand(n): the JSON util `test-operand`, used where the JSON says `matches: "test-operand"`
+.decl pyi005_test_operand(n: node)
+pyi005_test_operand(n) :- pyi005_test_slot(n).
+pyi005_test_operand(n) :- child(p1, n, _), (pyi005_bool_and_top(p1) ; pyi005_bool_or_top(p1)).
+pyi005_test_operand(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"),
+    pyi005_test_operand(p2).
+
+// sys_version_info(n): the JSON util `sys-version-info`, used where the JSON says `matches: "sys-version-info"`
+.decl pyi005_sys_version_info(n: node)
+pyi005_sys_version_info(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "sys.version_info").
+pyi005_sys_version_info(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi005_sys_version_info(c1).
+
+// slice_int(n): the JSON util `slice-int`, used where the JSON says `matches: "slice-int"`
+.decl pyi005_slice_int(n: node)
+pyi005_slice_int(n) :- kind(n, "integer").
+pyi005_slice_int(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi005_slice_int(c1).
+
+// version_slice(n): the JSON util `version-slice`, used where the JSON says `matches: "version-slice"`
+.decl pyi005_version_slice(n: node)
+pyi005_version_slice(n) :- kind(n, "subscript"), field(n, "value", c1), pyi005_sys_version_info(c1),
+    !pyi005_tok_has_1(n), field(n, "subscript", c10), kind(c10, "slice"), child(c10, c11, _),
+    pyi005_slice_int(c11), precedes_stop(s12, c11, pyi005_stop_11), glob(":", s12),
+    !pyi005_tok_follows_2(s12), k21 = count : { child(c10, c20, _), !pyi005_alt_5(c20) }, k21 >= 1,
+    k21 <= 1.
+pyi005_version_slice(n) :- kind(n, "parenthesized_expression"), child(n, c22, _),
+    pyi005_version_slice(c22).
+
+// tuple_not_1(n): the JSON util `tuple-not-1`, used where the JSON says `matches: "tuple-not-1"`
+.decl pyi005_tuple_not_1(n: node)
+pyi005_tuple_not_1(n) :- kind(n, "tuple"),
+    count : { k2 = count : { child(n, c1, _), !pyi005_alt_6(c1) }, k2 >= 1, k2 <= 1 } = 0.
+pyi005_tuple_not_1(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    pyi005_tuple_not_1(c3).
+
+// tuple_not_2(n): the JSON util `tuple-not-2`, used where the JSON says `matches: "tuple-not-2"`
+.decl pyi005_tuple_not_2(n: node)
+pyi005_tuple_not_2(n) :- kind(n, "tuple"),
+    count : { k2 = count : { child(n, c1, _), !pyi005_alt_6(c1) }, k2 >= 2, k2 <= 2 } = 0.
+pyi005_tuple_not_2(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    pyi005_tuple_not_2(c3).
+
+// PYI005(n, detail): findings from clauses `major-slice`, `major-minor-slice`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI005(at: node, detail: symbol) "Match the slice to the tuple length: use {detail}; as written the result ignores the version."
+    suppress noqa "PYI005"
+PYI005_raw(n, "`sys.version_info[:2]` for a tuple such as `(3, 9)`, or a one-element tuple such as `(3,)` with `[:1]`") :- kind(n, "comparison_operator"),
+    pyi005_test_operand(n), k2 = count : { child(n, c1, _), !pyi005_alt_10(c1) }, k2 >= 2, k2 <= 2,
+    pyi005_tok_has_3(n), child(n, c11, _), !pyi005_tok_follows_4(c11), pyi005_version_slice(c11),
+    has(c11, c19, "integer"), value(c19, "1"), child(n, c20, _),
+    precedes_stop(s21, c20, pyi005_stop_11), glob("{==,!=}", s21), pyi005_tuple_not_1(c20).
+PYI005_raw(n, "`sys.version_info[0] == 3` for the major version only, or a tuple such as `(3, 9)` with `[:2]`") :- kind(n, "comparison_operator"),
+    pyi005_test_operand(n), k2 = count : { child(n, c1, _), !pyi005_alt_10(c1) }, k2 >= 2, k2 <= 2,
+    pyi005_tok_has_3(n), child(n, c11, _), !pyi005_tok_follows_4(c11), pyi005_version_slice(c11),
+    has(c11, c19, "integer"), value(c19, "2"), child(n, c20, _),
+    precedes_stop(s21, c20, pyi005_stop_11), glob("{==,!=}", s21), pyi005_tuple_not_2(c20).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi005_tok_has_1(n: node)
+.stored pyi005_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi005_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
+pyi005_tok_has_1(n) :- op(n, t3), match(",", t3).
+pyi005_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pyi005_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pyi005_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi005_tok_follows_2(n: node)
+.stored pyi005_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi005_tok_follows_2(n) :- next_sibling(s13, n), match("(?s).*..*", s13).
+pyi005_tok_follows_2(n) :- structural_before(n, g15), match("\\s*", g15), child(p16, n, _),
+    node(_, n, _, st18, _), o17 = st18 - strlen(g15), token(p16, _, t14, _, o17),
+    match("(?s).*..*", t14).
+pyi005_tok_follows_2(n) :- structural_before(n, g15), match("(?s)^.*\\S\\s*$", g15).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^(==|!=)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi005_tok_has_3(n: node)
+.stored pyi005_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi005_tok_has_3(n) :- child(n, c3, _), glob("{==,!=}", c3).
+pyi005_tok_has_3(n) :- op(n, t4), match("(==|!=)", t4).
+pyi005_tok_has_3(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+pyi005_tok_has_3(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+pyi005_tok_has_3(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi005_tok_follows_4(n: node)
+.stored pyi005_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi005_tok_follows_4(n) :- next_sibling(s12, n), match("(?s).*..*", s12).
+pyi005_tok_follows_4(n) :- structural_before(n, g14), match("\\s*", g14), child(p15, n, _),
+    node(_, n, _, st17, _), o16 = st17 - strlen(g14), token(p15, _, t13, _, o16),
+    match("(?s).*..*", t13).
+pyi005_tok_follows_4(n) :- structural_before(n, g14), match("(?s)^.*\\S\\s*$", g14).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi005_alt_1(n: node)
+pyi005_alt_1(n) :- pyi005_test_slot(n).
+pyi005_alt_1(n) :- field(p1, "left", n), pyi005_bool_and_top(p1).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi005_alt_2(n: node)
+pyi005_alt_2(n) :- pyi005_test_slot(n).
+pyi005_alt_2(n) :- field(p1, "left", n), pyi005_bool_or_top(p1).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi005_alt_5(n: node)
+pyi005_alt_5(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pyi005_alt_5(n) :- node(_, n, _, _, _), glob(":", n).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi005_alt_6(n: node)
+pyi005_alt_6(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pyi005_alt_6(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi005_alt_10(n: node)
+pyi005_alt_10(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pyi005_alt_10(n) :- node(_, n, _, _, _),
+    match("(==|!=|<|>|<=|>=|is|not|in|is\\s+not|not\\s+in)", n).
+
+// stop_11(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi005_stop_11(n: node)
+pyi005_stop_11(n) :- node(_, n, _, _, _), !kind(n, "comment"), !kind(n, "line_continuation").
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI005_raw(at: node, detail: symbol)
+PYI005(v0, v1) :- PYI005_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

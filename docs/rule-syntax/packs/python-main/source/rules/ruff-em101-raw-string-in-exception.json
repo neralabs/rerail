@@ -1,0 +1,160 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-em101-raw-string-in-exception",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Assign an exception message to a variable before raising instead of passing a string literal; the traceback otherwise shows the message twice.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "raw-string-in-exception",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "raised": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "raise_statement"
+                  },
+                  "not": {
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "raise_statement",
+                      "field": "cause"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "raised"
+                  }
+                }
+              ]
+            },
+            "typing-cast": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.cast",
+                      "typing_extensions.cast",
+                      "_typeshed.cast"
+                    ]
+                  }
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "typing-cast"
+                  }
+                }
+              ]
+            },
+            "first-arg-of-raised-call": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "argument_list",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "kind": "call",
+                      "matches": "raised",
+                      "not": {
+                        "has": {
+                          "field": "function",
+                          "matches": "typing-cast"
+                        }
+                      }
+                    }
+                  },
+                  "not": {
+                    "follows": {
+                      "stopBy": "end",
+                      "regex": "^,$"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "first-arg-of-raised-call"
+                  }
+                }
+              ]
+            },
+            "plain-string": {
+              "kind": "string",
+              "not": {
+                "has": {
+                  "stopBy": "neighbor",
+                  "kind": "string_start",
+                  "regex": "^[^'\"]*[fFtT]"
+                }
+              }
+            },
+            "plain-string-literal": {
+              "any": [
+                {
+                  "matches": "plain-string"
+                },
+                {
+                  "kind": "concatenated_string",
+                  "not": {
+                    "has": {
+                      "stopBy": "neighbor",
+                      "kind": "string",
+                      "not": {
+                        "matches": "plain-string"
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "plain-string-literal",
+            "all": [
+              {
+                "matches": "first-arg-of-raised-call"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "EM101",
+        "message": "Assign this string literal to a new variable such as `msg` before the `raise`, then pass that variable to the exception instead.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "EM101"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

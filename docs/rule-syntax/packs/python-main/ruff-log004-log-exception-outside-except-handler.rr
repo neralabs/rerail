@@ -1,0 +1,82 @@
+.policy "ruff-log004-log-exception-outside-except-handler" revision 1
+.guests off
+.description "Use error instead of exception for logging calls made outside an except handler; there is no active exception to record there."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// LOG004(n): a finding at node n, from clause `log-exception-outside-except-handler`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation LOG004(at: node, c: node) "Call `error` instead of `exception` here: outside an except block there is no exception to attach. Leave it if this code only ever runs while an exception is being handled."
+    suppress noqa "LOG004"
+LOG004(C, n) :- count : { inside(n, p1, "except_clause"), node(_, p1, _, _, _) } = 0,
+    log004_alt_3(n, C).
+
+// logger_object(n): the JSON util `logger-object`, used where the JSON says `matches: "logger-object"`
+.decl log004_logger_object(n: node)
+log004_logger_object(n) :- kind(n, "call"), child(n, c1, _),
+    (sym_of(c1, "logging.getLogger") ; sym_of(c1, "logging.Logger")).
+log004_logger_object(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    log004_logger_object(c2).
+log004_logger_object(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "logging") ; sym_of(n, "flask.current_app.logger")).
+log004_logger_object(n) :-
+    ( kind(n, "identifier"), match(".*(?:^(log|LOG)|(logger|logging|LOGGER|LOGGING)$).*", n)
+    ; kind(n, "attribute"), match(".*(?:\\W(log|LOG)\\w*|(logger|logging|LOGGER|LOGGING))", n), child(n, c1, _), log004_name_chain(c1), !log004_tok_follows_2(c1)
+    ),
+    !sym_of(n, _).
+
+// name_chain(n): the JSON util `name-chain`, used where the JSON says `matches: "name-chain"`
+.decl log004_name_chain(n: node)
+log004_name_chain(n) :- kind(n, "identifier").
+log004_name_chain(n) :- kind(n, "attribute"), child(n, c1, _), log004_name_chain(c1),
+    !log004_tok_follows_2(c1).
+log004_name_chain(n) :- kind(n, "parenthesized_expression"), child(n, c9, _), log004_name_chain(c9).
+
+// exception_callee(n): the JSON util `exception-callee`, used where the JSON says `matches: "exception-callee"`
+.decl log004_exception_callee(n: node)
+log004_exception_callee(n) :- kind(n, "attribute"), match(".*\\Wexception", n),
+    child(n, c1, _), log004_logger_object(c1), !log004_tok_follows_2(c1).
+log004_exception_callee(n) :- kind(n, "identifier"), sym_of(n, "logging.exception").
+log004_exception_callee(n) :- kind(n, "parenthesized_expression"), child(n, c9, _),
+    log004_exception_callee(c9).
+
+// call_in_string(n): the JSON util `call-in-string`, used where the JSON says `matches: "call-in-string"`
+//   C: metavariable this relation binds for the calling rule
+.decl log004_call_in_string(n: node, c: loc)
+log004_call_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), log004_alt_2(c2, C).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl log004_tok_follows_1(n: node)
+.stored log004_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+log004_tok_follows_1(n) :- next_sibling(s4, n), match("(?s).*..*", s4).
+log004_tok_follows_1(n) :- structural_before(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, st9, _), o8 = st9 - strlen(g6), token(p7, _, t5, _, o8),
+    match("(?s).*..*", t5).
+log004_tok_follows_1(n) :- structural_before(n, g6), match("(?s)^.*\\S\\s*$", g6).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl log004_tok_follows_2(n: node)
+.stored log004_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+log004_tok_follows_2(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+log004_tok_follows_2(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+log004_tok_follows_2(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl log004_alt_2(n: node, c: loc)
+log004_alt_2(n, C) :- kind(n, "call"), child(n, c1, _), log004_exception_callee(c1), C = n.
+log004_alt_2(n, C) :- log004_call_in_string(n, C).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl log004_alt_3(n: node, c: loc)
+log004_alt_3(n, C) :- kind(n, "call"), child(n, c1, _), log004_exception_callee(c1), node(_, n, _, _, _), C = n.
+log004_alt_3(n, C) :- log004_call_in_string(n, C).

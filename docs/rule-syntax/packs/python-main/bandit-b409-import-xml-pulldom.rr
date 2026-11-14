@@ -1,0 +1,17 @@
+.policy "bandit-b409-import-xml-pulldom" revision 1
+.guests off
+.description "Avoid importing xml.dom.pulldom to parse XML; it is open to XML attacks, so use defusedxml."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B409(n): a finding at node n, from clause `B409`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B409(at: node) "xml.dom.pulldom parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library."
+    suppress nosec "B409"
+B409(n) :- n ~ `import xml.dom.pulldom`.
+B409(n) :- n ~ `import xml.dom.pulldom as $ALIAS`.
+B409(n) :- n ~ `from xml.dom.pulldom import $$$NAMES`.
+B409(n) :- n ~ `from xml.dom import pulldom`.
+B409(n) :- n ~ `from xml.dom import pulldom as $ALIAS`.

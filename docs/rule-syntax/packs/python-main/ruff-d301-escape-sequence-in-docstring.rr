@@ -1,0 +1,42 @@
+.policy "ruff-d301-escape-sequence-in-docstring" revision 1
+.guests off
+.description "Make docstrings that contain backslashes raw strings; a backslash in a plain string starts an escape sequence and can change the text."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// D301(n): a finding at node n, from clause `escape-sequence-in-docstring`.
+// Each rule below is one way the JSON `rule` can match.
+.violation D301(at: node) "Add an `r` prefix (replacing any `u`) so backslashes stay literal, writing each `\\\\` as one `\\`; keep the plain string if an escape like `\\t` or `\\x41` must take effect."
+    suppress noqa "D301"
+D301(n) :- kind(n, "string"), match("[uU]?['\"].*", n), child(n, c1, _),
+    kind(c1, "string_content"),
+    match("(?:[^\\\\]|\\\\[\\r\\nuUN]|\\\\\"\"\"|\\\\'''|\\\\\"\\\\\"\\\\\"|\\\\'\\\\'\\\\')*\\\\(?:[^\\r\\nuUN\"']|\"(?:$|[^\"\\\\]|\"(?:$|[^\"])|\\\\(?:$|[^\"]|\"(?:$|[^\\\\]|\\\\(?:$|[^\"]))))|'(?:$|[^'\\\\]|'(?:$|[^'])|\\\\(?:$|[^']|'(?:$|[^\\\\]|\\\\(?:$|[^'])))))(?s:.*)", c1),
+    within_stop(n, p2, d301_stop_1), kind(p2, "expression_statement"),
+    child(p3, p2, _), d301_counted_2(p2),
+    k5 = count : { child(p3, s4, _), precedes(s4, p2), d301_counted_2(s4) }, k5 = 0,
+    !d301_tok_has_1(p2),
+    ( child(p1, p2, _), kind(p1, "module")
+    ; child(p4, p2, _), kind(p4, "block"), child(p5, p4, _), (kind(p5, "function_definition") ; kind(p5, "class_definition"))
+    ).
+
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl d301_tok_has_1(n: node)
+.stored d301_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+d301_tok_has_1(n) :- child(n, c6, _), glob("\\,", c6).
+d301_tok_has_1(n) :- op(n, t7), match(",", t7).
+d301_tok_has_1(n) :- child(n, c13, _), structural_before(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+d301_tok_has_1(n) :- child(n, c13, _), structural_after(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+d301_tok_has_1(n) :- node_text(n, g8), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g8).
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl d301_stop_1(n: node)
+d301_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// counted_2(n): the siblings the JSON `nthChild.ofRule` counts
+.decl d301_counted_2(n: node)
+d301_counted_2(n) :- node(_, n, _, _, _), !kind(n, "comment").

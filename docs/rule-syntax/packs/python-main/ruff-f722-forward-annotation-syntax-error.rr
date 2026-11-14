@@ -1,0 +1,181 @@
+.policy "ruff-f722-forward-annotation-syntax-error" revision 2
+.guests off
+.description "Keep string type annotations and other forward references valid Python expressions; a syntax error there breaks type checking and runtime evaluation."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// F722(n): a finding at node n, from clause `forward-annotation-syntax-error`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation F722(at: node, c: node) "Syntax error in forward annotation"
+    suppress noqa "F722"
+F722(C, n) :- (kind(n, "string") ; kind(n, "concatenated_string")), f722_alt_2(n, C),
+    count : { value(n, v2), match("(?:\\\\\\r?\\n)+\\S(?s:.*)", v2) } = 0,
+    !f722_alt(n, "3").
+
+// error_within(n): the JSON util `error-within`, used where the JSON says `matches: "error-within"`
+//   C: metavariable this relation binds for the calling rule
+.decl f722_error_within(n: node, c: loc)
+f722_error_within(n, C) :- parsed(n, "annotation", r1), within(c2, r1), f722_alt_1(c2, C).
+
+// jaxtyping_shape_of(n): 3 identical copies of one rule set (`jaxtyping-shape`, `jaxtyping-shape`, `jaxtyping-shape`), folded into one.
+.decl f722_jaxtyping_shape_of(n: node)
+f722_jaxtyping_shape_of(n) :- f722_tok_follows_1(n), child(p8, n, _), kind(p8, "subscript"),
+    field(p8, "value", c9), (kind(c9, "identifier") ; kind(c9, "attribute")),
+    sym_of(c9, q10), match("(jaxtyping)(\\.|$).*", q10).
+f722_jaxtyping_shape_of(n) :- child(p11, n, _), kind(p11, "type"), f722_tok_follows_2(p11),
+    child(p19, p11, _), kind(p19, "type_parameter"), child(p20, p19, _),
+    kind(p20, "generic_type"), child(p20, c21, _),
+    (kind(c21, "identifier") ; kind(c21, "attribute")),
+    sym_of(c21, q22), match("(jaxtyping)(\\.|$).*", q22).
+
+// F722_forward_annotation_semantic_syntax_error(n): a finding at node n, from clause `forward-annotation-semantic-syntax-error`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation F722_forward_annotation_semantic_syntax_error(at: node, e: node) code "F722" "Syntax error in forward annotation"
+    suppress noqa "F722"
+F722_forward_annotation_semantic_syntax_error(E, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    f722_semantic_error(n, E), !f722_alt(n, "4").
+
+// semantic_error_within(n): the JSON util `semantic-error-within`, used where the JSON says `matches: "semantic-error-within"`
+//   E: metavariable this relation binds for the calling rule
+.decl f722_semantic_error_within(n: node, e: loc)
+f722_semantic_error_within(n, E) :- f722_demand_semantic_error_within(n),
+    parsed(n, "annotation", r1), within(c2, r1),
+    (kind(c2, "string") ; kind(c2, "concatenated_string")), f722_semantic_error(c2, E).
+
+// semantic_error(n): the JSON util `semantic-error`, used where the JSON says `matches: "semantic-error"`
+//   E: metavariable this relation binds for the calling rule
+.decl f722_semantic_error(n: node, e: loc)
+f722_semantic_error(n, E) :- f722_demand_semantic_error(n), parsed(n, "annotation", r1),
+    child(r1, c2, _), kind(c2, "ERROR"), E = c2.
+f722_semantic_error(n, E) :- f722_demand_semantic_error(n), f722_semantic_error_within(n, E).
+
+// F722_forward_annotation_await_outside_function(n): a finding at node n, from clause `forward-annotation-await-outside-function`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation F722_forward_annotation_await_outside_function(at: node, a: node) code "F722" "Remove the `await` from this string annotation; it is not valid outside a function."
+    suppress noqa "F722"
+F722_forward_annotation_await_outside_function(A, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    f722_await_outside_function(n, A),
+    count : { within_stop(n, p1, "class_definition"), field(_, "body", n), kind(p1, "function_definition") } = 0,
+    !f722_alt(n, "6").
+
+// await_outside_function_within(n): the JSON util `await-outside-function-within`, used where the JSON says `matches: "await-outside-function-within"`
+//   A: metavariable this relation binds for the calling rule
+.decl f722_await_outside_function_within(n: node, a: loc)
+f722_await_outside_function_within(n, A) :- f722_demand_await_outside_function_within(n),
+    parsed(n, "annotation", r1), within(c2, r1),
+    (kind(c2, "string") ; kind(c2, "concatenated_string")),
+    f722_await_outside_function(c2, A).
+
+// await_outside_function(n): the JSON util `await-outside-function`, used where the JSON says `matches: "await-outside-function"`
+//   A: metavariable this relation binds for the calling rule
+.decl f722_await_outside_function(n: node, a: loc)
+f722_await_outside_function(n, A) :- f722_demand_await_outside_function(n),
+    parsed(n, "annotation", r1), has(r1, c2, "await"), !f722_alt_5(c2), A = c2.
+f722_await_outside_function(n, A) :- f722_demand_await_outside_function(n),
+    f722_await_outside_function_within(n, A).
+
+// function_scoped(n): the JSON util `function-scoped`, used where the JSON says `matches: "function-scoped"`
+.decl f722_function_scoped(n: node)
+f722_function_scoped(n) :- f722_tok_follows_3(n), child(p8, n, _), kind(p8, "lambda").
+f722_function_scoped(n) :- precedes(n, s9), kind(s9, "for_in_clause"), child(p10, n, _),
+    kind(p10, "generator_expression").
+f722_function_scoped(n) :- kind(n, "if_clause"), child(p11, n, _),
+    kind(p11, "generator_expression").
+f722_function_scoped(n) :- kind(n, "for_in_clause"), child(p12, n, _),
+    kind(p12, "generator_expression"), precedes(s13, n), kind(s13, "for_in_clause").
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f722_tok_follows_1(n: node)
+.stored f722_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f722_tok_follows_1(n) :- next_sibling(s1, n), glob("\\,", s1).
+f722_tok_follows_1(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match(",", t2).
+f722_tok_follows_1(n) :- structural_before(n, g3), match("(?s)^(?:.*(?:,)\\s*)$", g3).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f722_tok_follows_2(n: node)
+.stored f722_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f722_tok_follows_2(n) :- next_sibling(s12, n), glob("\\,", s12).
+f722_tok_follows_2(n) :- structural_before(n, g14), match("\\s*", g14), child(p15, n, _),
+    node(_, n, _, st17, _), o16 = st17 - strlen(g14), token(p15, _, t13, _, o16),
+    match(",", t13).
+f722_tok_follows_2(n) :- structural_before(n, g14), match("(?s)^(?:.*(?:,)\\s*)$", g14).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f722_tok_follows_3(n: node)
+.stored f722_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f722_tok_follows_3(n) :- precedes(s1, n), glob(":", s1).
+f722_tok_follows_3(n) :- child(p4, n, _), node(_, n, _, st6, _), token(p4, _, t2, _, en7),
+    en7 <= st6, match(":", t2).
+f722_tok_follows_3(n) :- structural_before(n, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+f722_tok_follows_3(n) :- precedes(o5, n), structural_before(o5, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// demand_await_outside_function: the nodes await_outside_function is asked at (its recursion looks at every descendant)
+.decl f722_demand_await_outside_function(n: node)
+f722_demand_await_outside_function(n) :- (kind(n, "string") ; kind(n, "concatenated_string")).
+f722_demand_await_outside_function(c2) :- f722_demand_await_outside_function_within(n),
+    parsed(n, "annotation", r1), within(c2, r1),
+    (kind(c2, "string") ; kind(c2, "concatenated_string")).
+
+// demand_await_outside_function_within: the nodes await_outside_function_within is asked at (its recursion looks at every descendant)
+.decl f722_demand_await_outside_function_within(n: node)
+f722_demand_await_outside_function_within(n) :- f722_demand_await_outside_function(n).
+
+// demand_semantic_error: the nodes semantic_error is asked at (its recursion looks at every descendant)
+.decl f722_demand_semantic_error(n: node)
+f722_demand_semantic_error(n) :- (kind(n, "string") ; kind(n, "concatenated_string")).
+f722_demand_semantic_error(c2) :- f722_demand_semantic_error_within(n),
+    parsed(n, "annotation", r1), within(c2, r1),
+    (kind(c2, "string") ; kind(c2, "concatenated_string")).
+
+// demand_semantic_error_within: the nodes semantic_error_within is asked at (its recursion looks at every descendant)
+.decl f722_demand_semantic_error_within(n: node)
+f722_demand_semantic_error_within(n) :- f722_demand_semantic_error(n).
+
+// alt_case: one row per relation folded into alt: its key, then the strings that differed.
+.decl f722_alt_case(key: symbol, s1: symbol)
+f722_alt_case("3", "jaxtyping_shape").
+f722_alt_case("4", "jaxtyping_shape_forward_annotation_semantic_syntax_error").
+f722_alt_case("6", "jaxtyping_shape_forward_annotation_await_outside_function").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl f722_alt_1(n: node, c: loc)
+f722_alt_1(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), kind(r1, "ERROR"), C = n.
+f722_alt_1(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    f722_error_within(n, C).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl f722_alt_2(n: node, c: loc)
+f722_alt_2(n, C) :- parsed(n, "annotation", r1), kind(r1, "ERROR"), node(_, n, _, _, _), C = n.
+f722_alt_2(n, C) :- f722_error_within(n, C).
+
+// alt(n, key): 3 copies of one rule set (`alt_3`, `alt_4`, `alt_6`), folded into one: row `key` of
+// alt_case gives the strings each copy had.
+.decl f722_alt(n: node, key: symbol)
+f722_alt(n, q1) :- f722_alt_case(q1, s1), inside(n, p1, "function_definition"), child(p2, p1, _),
+    kind(p2, "decorated_definition"), child(p2, c3, _), kind(c3, "decorator"),
+    child(c3, c4, _), (kind(c4, "identifier") ; kind(c4, "attribute")),
+    ( sym_of(c4, "typing.no_type_check")
+    ; sym_of(c4, "_typeshed.no_type_check")
+    ; sym_of(c4, "typing_extensions.no_type_check")
+    ).
+
+f722_alt(n, q1) :- f722_alt_case(q1, s1), f722_jaxtyping_shape_of(n).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl f722_alt_5(n: node)
+f722_alt_5(n) :- f722_function_scoped(n).
+f722_alt_5(n) :- within(n, p1), f722_function_scoped(p1).

@@ -67,7 +67,7 @@ impl RoundProgram {
             }
         }
         let heads: BTreeSet<&str> = program.rules.iter().map(|r| r.head.rel.as_str()).collect();
-        let produced: Vec<(String, usize)> = load.answers.values().flatten().filter(|r| !per_file.contains(r)).filter_map(|r| Some((r.clone(), load.decls.get(r)?.len()))).collect::<BTreeSet<_>>().into_iter().collect();
+        let produced: Vec<(String, usize)> = load.answers.values().flatten().filter(|r| !per_file.contains(r)).filter_map(|r| Some((r.clone(), load.decls.get(r.as_str())?.len()))).collect::<BTreeSet<_>>().into_iter().collect();
         // An answer's relation that rules derive too is not an input.
         if produced.iter().any(|(r, _)| heads.contains(r.as_str())) {
             return None;
@@ -80,14 +80,14 @@ impl RoundProgram {
                 continue;
             }
             let input = fs_input(answer);
-            program.decls.insert(input.clone(), load.decls[answer].clone());
-            let vars: Vec<Term> = (0..width).map(|c| Term::Var(format!("rr_c{c}"))).collect();
+            program.decls.insert(input.clone().into(), load.decls[answer].clone());
+            let vars: Vec<Term> = (0..width).map(|c| Term::Var(format!("rr_c{c}").into())).collect();
             program.rules.push(Rule {
-                head: Atom { rel: (answer).to_owned().into(), args: vars.clone(), neg: false, gated: false },
+                head: Atom { rel: (answer).to_owned().into(), args: vars.clone().into(), neg: false, gated: false },
                 body: vec![
-                    Literal::Atom(Atom { rel: (req).to_owned().into(), args: vec![vars[0].clone()], neg: false, gated: false }),
-                    Literal::Atom(Atom { rel: input.clone().into(), args: vars, neg: false, gated: false }),
-                ],
+                    Literal::Atom(Atom { rel: (req).to_owned().into(), args: [vars[0].clone()].into(), neg: false, gated: false }),
+                    Literal::Atom(Atom { rel: input.clone().into(), args: vars.into(), neg: false, gated: false }),
+                ].into(),
             });
             // Read back by the rest of the cross part: kept, not inlined.
             program.qualifiers.entry((answer).to_owned()).or_default().insert("no_inline".to_owned());
@@ -105,7 +105,7 @@ impl RoundProgram {
                 program.inputs.push(rel);
             }
         }
-        let requests = load.answers.keys().filter_map(|r| Some((r.clone(), load.decls.get(r)?.len()))).collect();
+        let requests = load.answers.keys().filter_map(|r| Some((r.clone(), load.decls.get(r.as_str())?.len()))).collect();
         program.answers.clear();
         program.gates.clear();
         // The rounds hand on rows (requests to the driver, the cone's relations to the rest), never output lines: so
@@ -343,7 +343,7 @@ impl RoundProgram {
             for (done, ask) in &self.gates {
                 open.insert(done.clone(), match ask {
                     Some(ask) => asks.get(ask).cloned().unwrap_or_default(),
-                    None => vec![vec![0; self.program.decls[done].len()]],
+                    None => vec![vec![0; self.program.decls[done.as_str()].len()]],
                 });
             }
         }
@@ -410,7 +410,7 @@ impl RoundProgram {
             let s = crate::code_rule_dsl::logic::profile::span(|| "rounds/inputs".into());
             let fresh = std::mem::take(&mut dirty);
             for rel in fresh.iter().cloned() {
-                let width = self.program.decls[&rel].len();
+                let width = self.program.decls[rel.as_str()].len();
                 let source = if let Some(c) = inputs.constants.get(&rel) {
                     Arc::clone(c)
                 } else if let Some(keys) = open.get(&rel) {
@@ -485,7 +485,7 @@ impl RoundProgram {
             for (done, ask) in &self.gates {
                 let keys = match ask {
                     Some(ask) => next.read_derived(on.store, ask)?.ok_or_else(|| Gave::Up(format!("{ask} is not kept")))?,
-                    None => vec![vec![0; self.program.decls[done].len()]],
+                    None => vec![vec![0; self.program.decls[done.as_str()].len()]],
                 };
                 opened.insert(done.clone(), keys);
             }

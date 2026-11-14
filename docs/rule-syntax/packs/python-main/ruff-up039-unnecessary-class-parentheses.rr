@@ -1,0 +1,20 @@
+.policy "ruff-up039-unnecessary-class-parentheses" revision 1
+.guests off
+.description "Remove empty parentheses after a class name; they are unnecessary when the class has no base classes or keywords."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// UP039(n): a finding at node n, from clause `unnecessary-class-parentheses`.
+// Each rule below is one way the JSON `rule` can match.
+.violation UP039(at: node) "Write the class header without the empty parentheses (`class Name:` instead of `class Name():`); if a comment sits inside them, keep it on its own line."
+    suppress noqa "UP039"
+UP039(n) :- kind(n, "argument_list"), field(p1, "superclasses", n),
+    kind(p1, "class_definition"),
+    count : { child(n, c2, _), match("(?s).*..*", c2), !up039_alt_1(c2) } = 0.
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl up039_alt_1(n: node)
+up039_alt_1(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+up039_alt_1(n) :- node(_, n, _, _, _), glob("[()]", n).

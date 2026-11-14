@@ -1,0 +1,51 @@
+.policy "ruff-c411-unnecessary-list-call" revision 1
+.guests off
+.description "Remove the list call around a list comprehension; the comprehension already builds a new list."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// C411(n): a finding at node n, from clause `unnecessary-list-call`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation C411(at: node, call: node) "Remove the outer `list()` call and keep the list comprehension; it already builds a new list."
+    suppress noqa "C411"
+C411(CALL, n) :- c411_target(n), node(_, n, _, _, _), CALL = n.
+C411(CALL, n) :- c411_in_annotation(n, CALL).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl c411_callee(n: node)
+c411_callee(n) :- kind(n, "identifier"), global_ref(n, "list").
+c411_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), c411_callee(c1).
+
+// literal(n): the JSON util `literal`, used where the JSON says `matches: "literal"`
+.decl c411_literal(n: node)
+c411_literal(n) :- kind(n, "list_comprehension").
+c411_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), c411_literal(c1).
+
+// trivia(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl c411_trivia(n: node)
+c411_trivia(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+c411_trivia(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl c411_target(n: node)
+c411_target(n) :- kind(n, "call"), field(n, "function", c1), c411_callee(c1),
+    field(n, "arguments", c2), kind(c2, "argument_list"),
+    k4 = count : { child(c2, c3, _), !c411_trivia(c3) }, k4 >= 1, k4 <= 1, child(c2, c5, _),
+    c411_literal(c5).
+
+// in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl c411_in_annotation(n: node, call: loc)
+c411_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), c411_alt_1(c2, CALL).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   CALL: metavariable this relation binds for the calling rule
+.decl c411_alt_1(n: node, call: loc)
+c411_alt_1(n, CALL) :- c411_target(n), CALL = n.
+c411_alt_1(n, CALL) :- c411_in_annotation(n, CALL).

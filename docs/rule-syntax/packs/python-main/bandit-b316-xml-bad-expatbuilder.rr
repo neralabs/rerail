@@ -1,0 +1,19 @@
+.policy "bandit-b316-xml-bad-expatbuilder" revision 1
+.guests off
+.description "Use defusedxml instead of xml.dom.expatbuilder to parse XML; the standard parser is open to entity-expansion and other XML attacks on untrusted input."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B316(n): a finding at node n, from clause `bandit:B316`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on F are added to every rule.
+.violation B316(at: node) "Using xml.dom.expatbuilder to parse untrusted XML may permit XML attacks; use defusedxml."
+    suppress nosec "B316"
+B316(n) :- n ~ `$F($$$ARGS)`,
+    ( sym_of(F, "xml.dom.expatbuilder.parse")
+    ; sym_of(F, "xml.dom.expatbuilder.parseString")
+    ).

@@ -1,0 +1,65 @@
+.policy "ruff-em102-f-string-in-exception" revision 1
+.guests off
+.description "Assign an f-string exception message to a variable before raising instead of building it inline; the traceback otherwise shows the message twice."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+#include "python/names.rr"
+
+// EM102(n): a finding at node n, from clause `f-string-in-exception`.
+// Each rule below is one way the JSON `rule` can match.
+.violation EM102(at: node) "Assign this f-string to a new variable such as `msg` before the `raise`, then pass that variable to the exception instead."
+    suppress noqa "EM102"
+EM102(n) :- em102_first_arg_of_raised_call(n),
+    ( em102_f_string(n)
+    ; kind(n, "concatenated_string"), child(n, c1, _), em102_f_string(c1), count : { child(n, c2, _), em102_t_string(c2) } = 0
+    ).
+
+
+// raised(n): the JSON util `raised`, used where the JSON says `matches: "raised"`
+.decl em102_raised(n: node)
+em102_raised(n) :- child(p1, n, _), kind(p1, "raise_statement"),
+    count : { field(p2, "cause", n), kind(p2, "raise_statement") } = 0.
+em102_raised(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"), em102_raised(p3).
+
+// typing_cast(n): the JSON util `typing-cast`, used where the JSON says `matches: "typing-cast"`
+.decl em102_typing_cast(n: node)
+em102_typing_cast(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.cast")
+    ; sym_of(n, "typing_extensions.cast")
+    ; sym_of(n, "_typeshed.cast")
+    ).
+
+em102_typing_cast(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    em102_typing_cast(c1).
+
+// first_arg_of_raised_call(n): the JSON util `first-arg-of-raised-call`, used where the JSON says `matches: "first-arg-of-raised-call"`
+.decl em102_first_arg_of_raised_call(n: node)
+em102_first_arg_of_raised_call(n) :- child(p1, n, _), kind(p1, "argument_list"),
+    child(p2, p1, _), kind(p2, "call"), em102_raised(p2),
+    count : { field(p2, "function", c3), em102_typing_cast(c3) } = 0, !em102_tok_follows_1(n).
+em102_first_arg_of_raised_call(n) :- child(p11, n, _), kind(p11, "parenthesized_expression"),
+    em102_first_arg_of_raised_call(p11).
+
+// f_string(n): the JSON util `f-string`, used where the JSON says `matches: "f-string"`
+.decl em102_f_string(n: node)
+em102_f_string(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "string_start"),
+    match("[^'\"]*[fF].*", c1).
+
+// t_string(n): the JSON util `t-string`, used where the JSON says `matches: "t-string"`
+.decl em102_t_string(n: node)
+em102_t_string(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "string_start"),
+    match("[^'\"]*[tT].*", c1).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl em102_tok_follows_1(n: node)
+.stored em102_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+em102_tok_follows_1(n) :- precedes(s4, n), glob("\\,", s4).
+em102_tok_follows_1(n) :- child(p7, n, _), node(_, n, _, st9, _), token(p7, _, t5, _, en10),
+    en10 <= st9, match(",", t5).
+em102_tok_follows_1(n) :- structural_before(n, g6), match("(?s)^(?:.*(?:,).*)$", g6).
+em102_tok_follows_1(n) :- precedes(o8, n), structural_before(o8, g6),
+    match("(?s)^(?:.*(?:,).*)$", g6).

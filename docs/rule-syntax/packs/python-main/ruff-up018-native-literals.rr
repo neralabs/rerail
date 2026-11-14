@@ -1,0 +1,180 @@
+.policy "ruff-up018-native-literals" revision 1
+.guests off
+.description "Write the literal directly instead of calling str, bytes, int, float, bool or complex on a literal or with no arguments."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// not_argument(n): the JSON util `not-argument`, used where the JSON says `matches: "not-argument"`
+.decl up018_not_argument(n: node)
+up018_not_argument(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+up018_not_argument(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl up018_plain_string(n: node)
+up018_plain_string(n) :- kind(n, "string"), !match("[A-Za-z]*[fFtT].*", n).
+up018_plain_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), match("[A-Za-z]*[fFtT].*", c1) } = 0.
+
+// nested_fstring(n): the JSON util `nested-fstring`, used where the JSON says `matches: "nested-fstring"`
+.decl up018_nested_fstring(n: node)
+up018_nested_fstring(n) :- up018_demand_nested_fstring(n), inside(n, p1, "string"),
+    match("[A-Za-z]*[fF].*", p1), inside(p1, p2, "string"),
+    match("[A-Za-z]*[fF].*", p2).
+
+// literal_str(n): the JSON util `literal-str`, used where the JSON says `matches: "literal-str"`
+.decl up018_literal_str(n: node)
+up018_literal_str(n) :- up018_plain_string(n), value(n, v1), value_type(v1, "str").
+up018_literal_str(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    up018_literal_str(c2).
+
+// literal_bytes(n): the JSON util `literal-bytes`, used where the JSON says `matches: "literal-bytes"`
+.decl up018_literal_bytes(n: node)
+up018_literal_bytes(n) :- up018_plain_string(n), value(n, v1), value_type(v1, "bytes").
+up018_literal_bytes(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    up018_literal_bytes(c2).
+
+// callee_of(n, key): 6 copies of one rule set (`callee-bool`, `callee-bytes`, `callee-complex` and 3 more), folded into one: row `key` of
+// callee_of_case gives the strings each copy had.
+.decl up018_callee_of(n: node, key: symbol)
+up018_callee_of(n, q1) :- up018_callee_of_case(q1, s1),
+    (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, q1), sym_of(n, s1).
+up018_callee_of(n, q1) :- up018_callee_of_case(q1, s1), kind(n, "parenthesized_expression"),
+    child(n, c1, _), up018_callee_of(c1, q1).
+
+// literal_bool(n): the JSON util `literal-bool`, used where the JSON says `matches: "literal-bool"`
+.decl up018_literal_bool(n: node)
+up018_literal_bool(n) :- (kind(n, "true") ; kind(n, "false")).
+up018_literal_bool(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    up018_literal_bool(c1).
+
+// literal_of(n, key): 3 copies of one rule set (`literal-complex`, `literal-float`, `literal-int`), folded into one: row `key` of
+// literal_of_case gives the strings each copy had.
+.decl up018_literal_of(n: node, key: symbol)
+up018_literal_of(n, q1) :- up018_literal_of_case(q1), (kind(n, "integer") ; kind(n, "float")),
+    value(n, v1), value_type(v1, q1).
+up018_literal_of(n, q1) :- up018_literal_of_case(q1), kind(n, "parenthesized_expression"),
+    child(n, c2, _), up018_literal_of(c2, q1).
+
+// signed(n, key): 3 copies of one rule set (`signed-complex`, `signed-float`, `signed-int`), folded into one: row `key` of
+// signed_case gives the strings each copy had.
+.decl up018_signed(n: node, key: symbol)
+up018_signed(n, q1) :- up018_literal_of_case(q1), up018_literal_of(n, q1).
+up018_signed(n, q1) :- up018_literal_of_case(q1), kind(n, "unary_operator"),
+    field(n, "operator", c1), glob("[+-]", c1), field(n, "argument", c2),
+    up018_literal_of(c2, q1).
+up018_signed(n, q1) :- up018_literal_of_case(q1), kind(n, "parenthesized_expression"),
+    child(n, c3, _), up018_signed(c3, q1).
+
+// unnested_call(n): the JSON util `unnested-call`, used where the JSON says `matches: "unnested-call"`
+.decl up018_unnested_call(n: node)
+up018_unnested_call(n) :- kind(n, "call"), !up018_nested_fstring(n).
+
+// empty_arguments(n): the JSON util `empty-arguments`, used where the JSON says `matches: "empty-arguments"`
+.decl up018_empty_arguments(n: node)
+up018_empty_arguments(n) :- kind(n, "argument_list"),
+    count : { child(n, c1, _), !up018_not_argument(c1) } = 0.
+
+// single_argument(n): the JSON util `single-argument`, used where the JSON says `matches: "single-argument"`
+.decl up018_single_argument(n: node)
+up018_single_argument(n) :- kind(n, "argument_list"),
+    k2 = count : { child(n, c1, _), !up018_not_argument(c1) }, k2 >= 1, k2 <= 1.
+
+// callee_builtin(n): the JSON util `callee-builtin`, used where the JSON says `matches: "callee-builtin"`
+.decl up018_callee_builtin(n: node)
+up018_callee_builtin(n) :- up018_callee_of(n, "str").
+up018_callee_builtin(n) :- up018_callee_of(n, "bytes").
+up018_callee_builtin(n) :- up018_callee_of(n, "int").
+up018_callee_builtin(n) :- up018_callee_of(n, "float").
+up018_callee_builtin(n) :- up018_callee_of(n, "bool").
+up018_callee_builtin(n) :- up018_callee_of(n, "complex").
+
+// kw_object_str(n): the JSON util `kw-object-str`, used where the JSON says `matches: "kw-object-str"`
+.decl up018_kw_object_str(n: node)
+up018_kw_object_str(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("object", c1), field(n, "value", c2), up018_literal_str(c2).
+
+// kw_real_complex(n): the JSON util `kw-real-complex`, used where the JSON says `matches: "kw-real-complex"`
+.decl up018_kw_real_complex(n: node)
+up018_kw_real_complex(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("real", c1), field(n, "value", c2), up018_signed(c2, "complex").
+
+// empty_call(n): the JSON util `empty-call`, used where the JSON says `matches: "empty-call"`
+.decl up018_empty_call(n: node)
+up018_empty_call(n) :- up018_unnested_call(n), field(n, "function", c1), up018_callee_builtin(c1),
+    field(n, "arguments", c2), up018_empty_arguments(c2).
+
+// literal_call(n): the JSON util `literal-call`, used where the JSON says `matches: "literal-call"`
+.decl up018_literal_call(n: node)
+up018_literal_call(n) :- up018_unnested_call(n), field(n, "arguments", c1), up018_single_argument(c1),
+    up018_alt_3(n).
+
+// UP018(n, detail): findings from clauses `call-without-argument`, `call-on-literal`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation UP018(at: node, c: node, detail: symbol) "Replace this call with the {detail}."
+    suppress noqa "UP018"
+UP018(C, n, "empty literal of its type: `\"\"` for str, `b\"\"` for bytes, `0` for int, `0.0` for float, `False` for bool, `0j` for complex") :- up018_empty_call(n),
+    node(_, n, _, _, _), C = n.
+UP018(C, n, "empty literal of its type: `\"\"` for str, `b\"\"` for bytes, `0` for int, `0.0` for float, `False` for bool, `0j` for complex") :- up018_empty_call_in_string(n, C).
+UP018(C, n, "literal it wraps, keeping parentheses where needed, as in `(1).real`; converting a literal to its own type changes nothing") :- up018_literal_call(n),
+    node(_, n, _, _, _), C = n.
+UP018(C, n, "literal it wraps, keeping parentheses where needed, as in `(1).real`; converting a literal to its own type changes nothing") :- up018_literal_call_in_string(n, C).
+
+// empty_call_in_string(n): the JSON util `empty-call-in-string`, used where the JSON says `matches: "empty-call-in-string"`
+//   C: metavariable this relation binds for the calling rule
+.decl up018_empty_call_in_string(n: node, c: loc)
+up018_empty_call_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), up018_alt_6(c2, C).
+
+// literal_call_in_string(n): the JSON util `literal-call-in-string`, used where the JSON says `matches: "literal-call-in-string"`
+//   C: metavariable this relation binds for the calling rule
+.decl up018_literal_call_in_string(n: node, c: loc)
+up018_literal_call_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), up018_alt_7(c2, C).
+
+// demand_nested_fstring: the nodes nested_fstring is asked at (it looks at every ancestor of every node)
+.decl up018_demand_nested_fstring(n: node)
+up018_demand_nested_fstring(n) :- kind(n, "call").
+
+// callee_of_case: one row per relation folded into callee_of: its key, then the strings that differed.
+.decl up018_callee_of_case(key: symbol, s1: symbol)
+up018_callee_of_case("bool", "builtins.bool"). up018_callee_of_case("bytes", "builtins.bytes").
+up018_callee_of_case("complex", "builtins.complex").
+up018_callee_of_case("float", "builtins.float"). up018_callee_of_case("int", "builtins.int").
+up018_callee_of_case("str", "builtins.str").
+
+// literal_of_case: one row per relation folded into literal_of: its key, then the strings that differed.
+.decl up018_literal_of_case(key: symbol)
+up018_literal_of_case("complex"). up018_literal_of_case("float"). up018_literal_of_case("int").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl up018_alt_3(n: node)
+up018_alt_3(n) :- field(n, "function", c1), up018_callee_of(c1, "str"), field(n, "arguments", c2),
+    child(c2, c3, _), (up018_literal_str(c3) ; up018_kw_object_str(c3)).
+up018_alt_3(n) :- field(n, "function", c4), up018_callee_of(c4, "bytes"),
+    field(n, "arguments", c5), child(c5, c6, _), up018_literal_bytes(c6).
+up018_alt_3(n) :- field(n, "function", c7), up018_callee_of(c7, "int"), field(n, "arguments", c8),
+    child(c8, c9, _), up018_signed(c9, "int").
+up018_alt_3(n) :- field(n, "function", c10), up018_callee_of(c10, "float"),
+    field(n, "arguments", c11), child(c11, c12, _), up018_signed(c12, "float").
+up018_alt_3(n) :- field(n, "function", c13), up018_callee_of(c13, "bool"),
+    field(n, "arguments", c14), child(c14, c15, _), up018_literal_bool(c15).
+up018_alt_3(n) :- field(n, "function", c16), up018_callee_of(c16, "complex"),
+    field(n, "arguments", c17), child(c17, c18, _),
+    (up018_signed(c18, "complex") ; up018_kw_real_complex(c18)).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl up018_alt_6(n: node, c: loc)
+up018_alt_6(n, C) :- up018_empty_call(n), C = n.
+up018_alt_6(n, C) :- up018_empty_call_in_string(n, C).
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl up018_alt_7(n: node, c: loc)
+up018_alt_7(n, C) :- up018_literal_call(n), C = n.
+up018_alt_7(n, C) :- up018_literal_call_in_string(n, C).

@@ -1,0 +1,15 @@
+.policy "ruff-td007-missing-space-after-todo-colon" revision 1
+.guests off
+.description "Put a space after the colon that follows a TODO, FIXME or XXX tag, so the tag and its description stay readable."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// TD007(n): a finding at node n, from clause `missing-space-after-todo-colon`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation TD007(at: node, d: node) "Put a space between the colon after `{d}` (and its author, if any) and the description."
+    suppress noqa "TD007"
+TD007(D, n) :- kind(n, "comment"),
+    match("(?:#[#\\s]*(?:(?:[[\\p{Alphabetic}\\p{N}]--[FHTXfhtx]][\\p{Alphabetic}\\p{N}]*|[tT](?:[[\\p{Alphabetic}\\p{N}]--[oO]][\\p{Alphabetic}\\p{N}]*|[oO](?:[[\\p{Alphabetic}\\p{N}]--[dD]][\\p{Alphabetic}\\p{N}]*|[dD](?:[[\\p{Alphabetic}\\p{N}]--[oO]][\\p{Alphabetic}\\p{N}]*|[oO][\\p{Alphabetic}\\p{N}]+)?)?)?|[fF](?:[[\\p{Alphabetic}\\p{N}]--[iI]][\\p{Alphabetic}\\p{N}]*|[iI](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX](?:[[\\p{Alphabetic}\\p{N}]--[mM]][\\p{Alphabetic}\\p{N}]*|[mM](?:[[\\p{Alphabetic}\\p{N}]--[eE]][\\p{Alphabetic}\\p{N}]*|[eE][\\p{Alphabetic}\\p{N}]+)?)?)?)?|[hH](?:[[\\p{Alphabetic}\\p{N}]--[aA]][\\p{Alphabetic}\\p{N}]*|[aA](?:[[\\p{Alphabetic}\\p{N}]--[cC]][\\p{Alphabetic}\\p{N}]*|[cC](?:[[\\p{Alphabetic}\\p{N}]--[kK]][\\p{Alphabetic}\\p{N}]*|[kK][\\p{Alphabetic}\\p{N}]+)?)?)?|[xX](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX](?:[[\\p{Alphabetic}\\p{N}]--[xX]][\\p{Alphabetic}\\p{N}]*|[xX][\\p{Alphabetic}\\p{N}]+)?)?)(?:[^\\p{Alphabetic}\\p{N}#][^#]*)?|[^\\p{Alphabetic}\\p{N}#\\s][^#]*))*#[#\\s]*(?<D>[tT][oO][dD][oO]|[fF][iI][xX][mM][eE]|[xX][xX][xX])\\s*(?:\\([^\\)]*\\)|@[^\\s:]*)?:\\S.*", n).

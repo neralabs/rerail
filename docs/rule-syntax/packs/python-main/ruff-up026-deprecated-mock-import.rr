@@ -1,0 +1,120 @@
+.policy "ruff-up026-deprecated-mock-import" revision 1
+.guests off
+.description "Use the standard library unittest.mock instead of the separate mock package; it has been built into Python since version 3.3."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// UP026(n, detail): findings from clauses `import-mock`, `import-from-mock`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+.violation UP026(at: node, detail: symbol) "Import {detail}. Keep the separate package only if the code must still run on Python 2."
+    suppress noqa "UP026"
+UP026(n, "mock from the standard library with `from unittest import mock` (add `as NAME` if it is aliased)") :- kind(n, "dotted_name"),
+    match("mock(\\s*\\.\\s*mock)?", n), child(p1, n, _), kind(p1, "import_statement").
+UP026(n, "mock from the standard library with `from unittest import mock` (add `as NAME` if it is aliased)") :- kind(n, "aliased_import"),
+    child(p2, n, _), kind(p2, "import_statement"), field(n, "name", c3),
+    kind(c3, "dotted_name"), match("mock(\\s*\\.\\s*mock)?", c3).
+UP026(n, "from `unittest.mock` instead of `mock`; `from mock import mock` becomes `from unittest import mock`") :- kind(n, "import_from_statement"),
+    field(n, "module_name", c1), kind(c1, "dotted_name"), glob("mock", c1).
+
+// UP026_mock_attribute(n): a finding at node n, from clause `mock-attribute`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation UP026_mock_attribute(at: node, m: node) code "UP026" "Drop the redundant `.mock`: write `mock.NAME` instead of `mock.mock.NAME`."
+    suppress noqa "UP026"
+UP026_mock_attribute(M, n) :- kind(n, "attribute"), node(_, n, _, _, _), M = n, up026_seen(n),
+    field(n, "attribute", c1), glob("mock", c1), field(n, "object", c2),
+    match("[(\\s]*mock[\\s)]*", c2), up026_up_1(n, p3), field(_, "object", n).
+UP026_mock_attribute(M, n) :- up026_in_string(n, M), up026_anywhere(n).
+
+// mock_import(n): the JSON util `mock-import`, used where the JSON says `matches: "mock-import"`
+.decl up026_mock_import(n: node)
+up026_mock_import(n) :- kind(n, "import_statement"), child(n, c1, _),
+    ( kind(c1, "dotted_name"), match("mock(\\s*\\..*)?", c1)
+    ; kind(c1, "aliased_import"), field(c1, "name", c2), kind(c2, "dotted_name"), match("mock(\\s*\\..*)?", c2)
+    ).
+
+up026_mock_import(n) :- kind(n, "import_from_statement"), field(n, "module_name", c3),
+    kind(c3, "dotted_name"), match("mock(\\s*\\..*)?", c3).
+
+// body(n): the JSON util `body`, used where the JSON says `matches: "body"`
+.decl up026_body(n: node)
+up026_body(n) :- kind(n, "block"), child(p1, n, _), kind(p1, "function_definition").
+
+// fn_import(n): the JSON util `fn-import`, used where the JSON says `matches: "fn-import"`
+.decl up026_fn_import(n: node)
+up026_fn_import(n) :- kind(n, "function_definition"), child(n, c1, _), up026_body(c1),
+    within_stop(c2, c1, up026_stop_10), up026_mock_import(c2).
+
+// anywhere(n): the JSON util `anywhere`, used where the JSON says `matches: "anywhere"`
+.decl up026_anywhere(n: node)
+up026_anywhere(n) :- inside(n, p1, "module"), within(c2, p1), up026_mock_import(c2).
+
+// seen(n): the JSON util `seen`, used where the JSON says `matches: "seen"`
+.decl up026_seen(n: node)
+up026_seen(n) :- within(n, p1), precedes(s2, p1),
+    ( up026_mock_import(s2)
+    ; !kind(s2, "function_definition"), !kind(s2, "lambda"), within_stop(c1, s2, up026_stop_10), up026_mock_import(c1)
+    ).
+
+up026_seen(n) :- up026_anywhere(n),
+    ( inside(n, p1, "lambda"), field(_, "body", n), node(_, p1, _, _, _)
+    ; inside(n, p2, "type"), up026_alt_6(p2)
+    ).
+
+up026_seen(n) :- within(n, p9), up026_body(p9),
+    ( inside(n, p1, "module"), within_stop(c1, p1, up026_stop_10), up026_mock_import(c1)
+    ; within(n, p2), precedes(s1, p2), up026_alt_11(s1)
+    ; within(n, p3), up026_body(p3), within(p3, p4), up026_body(p4), inside(n, p5, "module"), within_stop(c2, p5, up026_stop_10), up026_fn_import(c2)
+    ).
+
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   M: metavariable this relation binds for the calling rule
+.decl up026_in_string(n: node, m: loc)
+up026_in_string(n, M) :- up026_demand_in_string(n),
+    (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
+    within(c2, r1), up026_alt_20(c2, M).
+
+// demand_alt_20: the nodes alt_20 is asked at (its recursion looks at every descendant)
+.decl up026_demand_alt_20(n: node)
+up026_demand_alt_20(c2) :- up026_demand_in_string(n),
+    (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
+    within(c2, r1).
+
+// demand_in_string: the nodes in_string is asked at (its recursion looks at every descendant)
+.decl up026_demand_in_string(n: node)
+up026_demand_in_string(n) :- up026_anywhere(n).
+up026_demand_in_string(n) :- up026_demand_alt_20(n).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl up026_up_1(n: node, p: node)
+up026_up_1(n, p) :- up026_seen(n), within_stop(n, p, up026_stop_21), kind(p, "attribute").
+
+// stop_10: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl up026_stop_10(kind: symbol)
+up026_stop_10("function_definition"). up026_stop_10("lambda").
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl up026_alt_6(n: node)
+up026_alt_6(n) :- child(p1, n, _), kind(p1, "type_alias_statement").
+up026_alt_6(n) :- inside(n, p2, "module"), child(p2, c3, _),
+    kind(c3, "future_import_statement"), match(".*\\bannotations\\b.*", c3).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl up026_alt_11(n: node)
+up026_alt_11(n) :- up026_fn_import(n).
+up026_alt_11(n) :- !kind(n, "function_definition"), !kind(n, "lambda"),
+    within_stop(c1, n, up026_stop_10), up026_fn_import(c1).
+
+// alt_20(n): the JSON `any`: n matches if any one of these rules does
+//   M: metavariable this relation binds for the calling rule
+.decl up026_alt_20(n: node, m: loc)
+up026_alt_20(n, M) :- up026_demand_alt_20(n), up026_in_string(n, M).
+up026_alt_20(n, M) :- up026_demand_alt_20(n), kind(n, "attribute"), child(n, c1, _),
+    kind(c1, "attribute"), c1 ~ `mock.mock`, M = c1.
+
+// stop_21(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl up026_stop_21(n: node)
+up026_stop_21(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").

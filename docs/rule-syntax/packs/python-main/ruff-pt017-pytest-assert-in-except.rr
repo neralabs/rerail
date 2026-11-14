@@ -1,0 +1,31 @@
+.policy "ruff-pt017-pytest-assert-in-except" revision 1
+.guests off
+.description "Assert on an exception with pytest.raises instead of inside an except block; the test silently passes when nothing is raised."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PT017(n): a finding at node n, from clause `pytest-assert-in-except`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PT017(at: node, a: node, n: loc) "Move this assert out of the `except`: wrap the raising call in `with pytest.raises(...) as exc_info:` and assert on `exc_info.value` instead of `{n}`; leave non-test code alone."
+    suppress noqa "PT017"
+PT017(A, n, N) :- kind(n, "except_clause"), child(n, c1, _), kind(c1, "as_pattern"),
+    child(c1, c2, _), kind(c2, "as_pattern_target"), child(c2, c3, _),
+    kind(c3, "identifier"), node(_, c3, _, _, _), N = c3, has(n, c4, "assert_statement"), node(_, c4, _, _, _), A = c4,
+    within(c5, c4), pt017_name_expr(c5), node(_, c5, _, _, _), M = c5, value(M, t6), value(N, t6).
+
+// name_expr(n): the JSON util `name-expr`, used where the JSON says `matches: "name-expr"`
+.decl pt017_name_expr(n: node)
+pt017_name_expr(n) :- kind(n, "identifier"), !pt017_alt_1(n).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pt017_alt_1(n: node)
+pt017_alt_1(n) :- field(p1, "attribute", n), kind(p1, "attribute").
+pt017_alt_1(n) :- field(p2, "name", n), kind(p2, "keyword_argument").
+pt017_alt_1(n) :- child(p3, n, _), kind(p3, "lambda_parameters").
+pt017_alt_1(n) :- field(p4, "name", n), kind(p4, "default_parameter").
+pt017_alt_1(n) :- child(p5, n, _),
+    (kind(p5, "list_splat_pattern") ; kind(p5, "dictionary_splat_pattern")),
+    child(p6, p5, _), kind(p6, "lambda_parameters").

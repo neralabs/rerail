@@ -1,0 +1,299 @@
+.policy "ruff-ruf028-invalid-formatter-suppression-comment" revision 1
+.guests off
+.description "Place formatter suppression comments between statements, not inside expressions or after decorators, keeping skip comments at a line's end and on comments on their own line."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// off_family(n, key): 3 copies of one rule set (`off`, `on`, `skip`), folded into one: row `key` of
+// off_family_case gives the strings each copy had.
+.decl ruf028_off_family(n: node, key: symbol)
+ruf028_off_family(n, q1) :- ruf028_off_family_case(q1, s1), kind(n, "comment"), match(s1, n).
+
+// suppression(n): the JSON util `suppression`, used where the JSON says `matches: "suppression"`
+.decl ruf028_suppression(n: node)
+ruf028_suppression(n) :- ruf028_off_family(n, "off").
+ruf028_suppression(n) :- ruf028_off_family(n, "on").
+ruf028_suppression(n) :- ruf028_off_family(n, "skip").
+
+// end_of_line(n): the JSON util `end-of-line`, used where the JSON says `matches: "end-of-line"`
+.decl ruf028_end_of_line(n: node)
+ruf028_end_of_line(n) :- ruf028_code_before_line(n, l3), line(n, l4), k1 = l4 - l3, k1 = 0.
+
+// statement_level(n): the JSON util `statement-level`, used where the JSON says `matches: "statement-level"`
+.decl ruf028_statement_level(n: node)
+ruf028_statement_level(n) :- kind(n, k1), ruf028_set_1(k1).
+
+// paren_parent(n): the JSON util `paren-parent`, used where the JSON says `matches: "paren-parent"`
+.decl ruf028_paren_parent(n: node)
+ruf028_paren_parent(n) :- kind(n, k1), ruf028_set_2(k1).
+ruf028_paren_parent(n) :- kind(n, "match_statement"), !ruf028_tok_has_1(n).
+ruf028_paren_parent(n) :- kind(n, "if_clause"), child(p10, n, _), kind(p10, "case_clause").
+ruf028_paren_parent(n) :- kind(n, "type"), child(p11, n, _),
+    ( kind(p11, "type_alias_statement")
+    ; kind(p11, "function_definition")
+    ; kind(p11, "assignment")
+    ).
+
+ruf028_paren_parent(n) :- kind(n, "case_pattern"), child(p12, n, _), kind(p12, "case_clause").
+ruf028_paren_parent(n) :- kind(n, "as_pattern"), child(p13, n, _), kind(p13, "except_clause").
+
+// trailing_in_paren(n): the JSON util `trailing-in-paren`, used where the JSON says `matches: "trailing-in-paren"`
+.decl ruf028_trailing_in_paren(n: node)
+ruf028_trailing_in_paren(n) :- precedes(s1, n), !ruf028_alt_3(s1).
+
+// prev_inline(n): the JSON util `prev-inline`, used where the JSON says `matches: "prev-inline"`
+.decl ruf028_prev_inline(n: node)
+ruf028_prev_inline(n) :- precedes_stop(s1, n, ruf028_stop_28), ruf028_code_before_line(s1, l4),
+    line(s1, l5), k2 = l5 - l4, k2 = 0.
+
+// grabbed(n): the JSON util `grabbed`, used where the JSON says `matches: "grabbed"`
+.decl ruf028_grabbed(n: node)
+ruf028_grabbed(n) :- ruf028_end_of_line(n).
+ruf028_grabbed(n) :- ruf028_prev_inline(n).
+
+// after_name(n): the JSON util `after-name`, used where the JSON says `matches: "after-name"`
+.decl ruf028_after_name(n: node)
+ruf028_after_name(n) :- precedes_stop(s1, n, ruf028_stop_28),
+    (kind(s1, "dotted_name") ; kind(s1, "aliased_import") ; kind(s1, "with_item")).
+
+// non_statement(n): the JSON util `non-statement`, used where the JSON says `matches: "non-statement"`
+.decl ruf028_non_statement(n: node)
+ruf028_non_statement(n) :- kind(n, "comment"),
+    ( count : { child(p1, n, _), ruf028_alt_13(p1) } = 0
+    ; child(p2, n, _), ruf028_paren(p2), ruf028_alt_16(n)
+    ; child(p3, n, _), (kind(p3, "import_from_statement") ; kind(p3, "with_clause")), ruf028_after_name(n), ruf028_grabbed(n)
+    ; ruf028_captured_after_statement(n)
+    ).
+
+
+// last_child(n): the JSON util `last-child`, used where the JSON says `matches: "last-child"`
+.decl ruf028_last_child(n: node)
+ruf028_last_child(n) :- node(_, n, _, _, _), !ruf028_alt_19(n).
+
+// tail_open(n): the JSON util `tail-open`, used where the JSON says `matches: "tail-open"`
+.decl ruf028_tail_open(n: node)
+ruf028_tail_open(n) :- child(n, c1, _), ruf028_last_child(c1), ruf028_alt_20(c1).
+
+// open_stmt(n): the JSON util `open-stmt`, used where the JSON says `matches: "open-stmt"`
+.decl ruf028_open_stmt(n: node)
+ruf028_open_stmt(n) :- kind(n, k1), ruf028_set_21(k1), within(c2, n), ruf028_suppression(c2), ruf028_tail_open(n).
+
+// mid_line_tail(n): the JSON util `mid-line-tail`, used where the JSON says `matches: "mid-line-tail"`
+.decl ruf028_mid_line_tail(n: node)
+ruf028_mid_line_tail(n) :- ruf028_open_stmt(n),
+    ( !kind(n, "expression_statement")
+    ; child(n, c1, _), (kind(c1, "assignment") ; kind(c1, "augmented_assignment"))
+    ; child(n, c2, _), ruf028_last_child(c2), kind(c2, k1), ruf028_set_22(k1), child(c2, c3, _), ruf028_last_child(c3), !kind(c3, "parenthesized_expression")
+    ; ruf028_tok_has_2(n), child(n, c4, _), ruf028_last_child(c4), !ruf028_alt_23(c4)
+    ).
+
+
+// ends_mid_line(n): the JSON util `ends-mid-line`, used where the JSON says `matches: "ends-mid-line"`
+.decl ruf028_ends_mid_line(n: node)
+ruf028_ends_mid_line(n) :- ruf028_mid_line_tail(n).
+ruf028_ends_mid_line(n) :- kind(n, k1), ruf028_set_27(k1), child(n, c2, _), ruf028_last_child(c2),
+    ruf028_ends_mid_line(c2).
+
+// paren(n): the JSON util `paren`, used where the JSON says `matches: "paren"`
+.decl ruf028_paren(n: node)
+ruf028_paren(n) :- kind(n, "parenthesized_expression").
+ruf028_paren(n) :- kind(n, "tuple_pattern"), !ruf028_tok_has_3(n).
+
+// captured_after_statement(n): the JSON util `captured-after-statement`, used where the JSON says `matches: "captured-after-statement"`
+.decl ruf028_captured_after_statement(n: node)
+ruf028_captured_after_statement(n) :- kind(n, "comment"),
+    ( ruf028_end_of_line(n), next_sibling(s1, n), ruf028_open_stmt(s1)
+    ; !ruf028_end_of_line(n), child(p1, n, _), kind(p1, "block"), precedes_stop(s2, n, ruf028_stop_28), ruf028_ends_mid_line(s2)
+    ; ruf028_end_of_line(n), child(p2, n, _), kind(p2, "decorator"), next_sibling(s3, n), !ruf028_paren(s3), within(c1, s3), ruf028_suppression(c1)
+    ).
+
+
+// RUF028(n, detail): findings from clauses `in-non-statement`, `attached-to-statement-above`, `skip-or-on-misplaced`, `off-or-on-after-decorator` and 2 more. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+.violation RUF028(at: node, detail: symbol) "{detail}."
+    suppress noqa "RUF028"
+RUF028(n, "Move this formatter comment out of the brackets or expression to a line between statements; the formatter ignores it where it stands") :- kind(n, "comment"),
+    ruf028_suppression(n), ruf028_non_statement(n), !ruf028_captured_after_statement(n).
+RUF028(n, "The statement above holds another formatter comment inside its brackets, so this one attaches to its last expression and is ignored; move that inner comment out of the statement") :- kind(n, "comment"),
+    ruf028_suppression(n), ruf028_captured_after_statement(n).
+RUF028(n, "Put a skip comment at the end of the line it applies to and an on comment on a line of its own; the other way round the formatter ignores them") :- kind(n, "comment"),
+    !ruf028_non_statement(n),
+    (ruf028_off_family(n, "skip"), !ruf028_end_of_line(n) ; ruf028_off_family(n, "on"), ruf028_end_of_line(n)).
+RUF028(n, "Move this comment above the first decorator; after a decorator the formatter ignores it") :- (ruf028_off_family(n, "off") ; ruf028_off_family(n, "on")),
+    !ruf028_end_of_line(n), child(p1, n, _), kind(p1, "decorated_definition"),
+    precedes(s2, n), kind(s2, "decorator").
+RUF028(n, "Indent this off comment to match the block above, or move it before the whole statement; directly above else, elif, except or finally the formatter ignores it") :- ruf028_off_family(n, "off"),
+    !ruf028_end_of_line(n), child(p1, n, _),
+    ( kind(p1, "if_statement")
+    ; kind(p1, "for_statement")
+    ; kind(p1, "while_statement")
+    ; kind(p1, "try_statement")
+    ),
+    precedes_stop(n, s2, ruf028_stop_28),
+    ( kind(s2, "else_clause"), !ruf028_alt_34(s2)
+    ; kind(s2, "finally_clause"), count : { ruf028_stop_28_precedes(s1, s2), kind(s1, "except_clause") } = 0
+    ; kind(s2, "elif_clause"), count : { precedes(s3, s2), kind(s3, "elif_clause") } = 0
+    ; kind(s2, "except_clause"), count : { precedes(s4, s2), kind(s4, "except_clause") } = 0
+    ).
+
+RUF028(n, "Move this off comment below the first statement of the else or finally block, or above the try statement; at the start of a block after except the formatter ignores it") :- ruf028_off_family(n, "off"),
+    !ruf028_end_of_line(n), child(p1, n, _),
+    (kind(p1, "else_clause") ; kind(p1, "finally_clause")),
+    precedes_stop(s2, p1, ruf028_stop_28), kind(s2, "except_clause").
+
+// code_comment_end(p, o): a comment child of p ends at offset o
+.decl ruf028_code_comment_end(p: node, o: number)
+ruf028_code_comment_end(p, o) :- child(p, c, _), comment(c, _), node(_, c, _, _, o).
+
+// code_before_line(x, l): the line of the code before x (main's token_before, comments passed over), read from the source gap: the tape leaves out the tokens its grammar implies
+.decl ruf028_code_before_line(x: node, l: number)
+ruf028_code_before_line(x, l) :- structural_before(x, g), match("(?s).*\\S\\s*", g),
+    ws = @replace_all(g, "(?s)^.*\\S", ""),
+    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), line(x, lx), l = lx - k.
+ruf028_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, s, _), o = s - strlen(g), token(p, _, _, _, o),
+    !ruf028_code_comment_end(p, o), k = strlen(g) - strlen(@replace_all(g, "\n", "")),
+    line(x, lx), l = lx - k.
+ruf028_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, s, _), node(_, p, _, ps, _), ps = s - strlen(g),
+    ruf028_code_before_line(p, l).
+ruf028_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, s, _), o = s - strlen(g), child(p, c, _), node(_, c, _, _, o),
+    comment(c, _), ruf028_code_before_line(c, l).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf028_tok_has_1(n: node)
+.stored ruf028_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf028_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
+ruf028_tok_has_1(n) :- op(n, t3), match(",", t3).
+ruf028_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+ruf028_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+ruf028_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf028_tok_has_2(n: node)
+.stored ruf028_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf028_tok_has_2(n) :- child(n, c5, _), glob("\\,", c5).
+ruf028_tok_has_2(n) :- op(n, t6), match(",", t6).
+ruf028_tok_has_2(n) :- child(n, c12, _), structural_before(c12, g7),
+    match("(?s)^(?:.*(?:,).*)$", g7).
+ruf028_tok_has_2(n) :- child(n, c12, _), structural_after(c12, g7),
+    match("(?s)^(?:.*(?:,).*)$", g7).
+ruf028_tok_has_2(n) :- node_text(n, g7), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g7).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf028_tok_has_3(n: node)
+.stored ruf028_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf028_tok_has_3(n) :- child(n, c1, _), glob("\\,", c1).
+ruf028_tok_has_3(n) :- op(n, t2), match(",", t2).
+ruf028_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+ruf028_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+ruf028_tok_has_3(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// set_1: node kinds from a JSON `any`
+.decl ruf028_set_1(v: symbol)
+ruf028_set_1("module"). ruf028_set_1("block"). ruf028_set_1("decorated_definition"). ruf028_set_1("decorator").
+ruf028_set_1("function_definition"). ruf028_set_1("class_definition"). ruf028_set_1("if_statement").
+ruf028_set_1("elif_clause"). ruf028_set_1("else_clause"). ruf028_set_1("for_statement").
+ruf028_set_1("while_statement"). ruf028_set_1("try_statement"). ruf028_set_1("except_clause").
+ruf028_set_1("finally_clause"). ruf028_set_1("with_statement"). ruf028_set_1("with_clause").
+ruf028_set_1("match_statement"). ruf028_set_1("case_clause"). ruf028_set_1("import_from_statement").
+
+// set_2: node kinds from a JSON `any`
+.decl ruf028_set_2(v: symbol)
+ruf028_set_2("assignment"). ruf028_set_2("augmented_assignment"). ruf028_set_2("return_statement").
+ruf028_set_2("assert_statement"). ruf028_set_2("raise_statement"). ruf028_set_2("expression_statement").
+ruf028_set_2("if_statement"). ruf028_set_2("elif_clause"). ruf028_set_2("while_statement").
+ruf028_set_2("for_statement"). ruf028_set_2("delete_statement"). ruf028_set_2("except_clause").
+ruf028_set_2("decorator"). ruf028_set_2("with_item").
+
+// set_21: node kinds from a JSON `any`
+.decl ruf028_set_21(v: symbol)
+ruf028_set_21("expression_statement"). ruf028_set_21("return_statement"). ruf028_set_21("delete_statement").
+ruf028_set_21("raise_statement"). ruf028_set_21("assert_statement"). ruf028_set_21("type_alias_statement").
+
+// set_22: node kinds from a JSON `any`
+.decl ruf028_set_22(v: symbol)
+ruf028_set_22("call"). ruf028_set_22("binary_operator"). ruf028_set_22("boolean_operator").
+ruf028_set_22("comparison_operator"). ruf028_set_22("not_operator"). ruf028_set_22("unary_operator").
+ruf028_set_22("conditional_expression"). ruf028_set_22("lambda"). ruf028_set_22("await"). ruf028_set_22("yield").
+
+// set_27: node kinds from a JSON `any`
+.decl ruf028_set_27(v: symbol)
+ruf028_set_27("block"). ruf028_set_27("if_statement"). ruf028_set_27("elif_clause"). ruf028_set_27("else_clause").
+ruf028_set_27("for_statement"). ruf028_set_27("while_statement"). ruf028_set_27("try_statement").
+ruf028_set_27("except_clause"). ruf028_set_27("finally_clause"). ruf028_set_27("with_statement").
+ruf028_set_27("function_definition"). ruf028_set_27("class_definition").
+ruf028_set_27("decorated_definition"). ruf028_set_27("match_statement"). ruf028_set_27("case_clause").
+
+// off_family_case: one row per relation folded into off_family: its key, then the strings that differed.
+.decl ruf028_off_family_case(key: symbol, s1: symbol)
+ruf028_off_family_case("off", "#[ \\t\\f]*(?:fmt:[ \\t\\f]*off|yapf:[ \\t\\f]*disable)[ \\t\\f]*\\r?").
+ruf028_off_family_case("on", "#[ \\t\\f]*(?:fmt:[ \\t\\f]*on|yapf:[ \\t\\f]*enable)[ \\t\\f]*\\r?").
+ruf028_off_family_case("skip", "(?s:.*)#[ \\t\\f]*fmt:[ \\t\\f]*skip[ \\t\\f]*(?:#|\\r?$)(?s:.*)").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf028_alt_3(n: node)
+ruf028_alt_3(n) :- (kind(n, "comment") ; kind(n, "parenthesized_expression")).
+ruf028_alt_3(n) :- node(_, n, _, _, _), glob("(", n).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf028_alt_11(n: node)
+ruf028_alt_11(n) :- ruf028_paren(n).
+ruf028_alt_11(n) :- kind(n, "case_pattern"), child(p1, n, _), ruf028_paren(p1).
+
+// stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf028_stop_10(n: node)
+ruf028_stop_10(n) :- node(_, n, _, _, _), !ruf028_alt_11(n).
+
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf028_alt_13(n: node)
+ruf028_alt_13(n) :- ruf028_statement_level(n).
+ruf028_alt_13(n) :- ruf028_paren(n).
+
+// alt_16(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf028_alt_16(n: node)
+ruf028_alt_16(n) :- ruf028_trailing_in_paren(n), ruf028_grabbed(n).
+ruf028_alt_16(n) :- node(_, n, _, _, _),
+    count : { ruf028_stop_10_within(n, p1), ruf028_paren_parent(p1) } = 0.
+
+// alt_19(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf028_alt_19(n: node)
+ruf028_alt_19(n) :- kind(n, "comment").
+ruf028_alt_19(n) :- precedes(n, s1), !kind(s1, "comment").
+
+// alt_20(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf028_alt_20(n: node)
+ruf028_alt_20(n) :- (kind(n, "assignment") ; kind(n, "augmented_assignment") ; kind(n, "type")),
+    ruf028_tail_open(n).
+ruf028_alt_20(n) :- node(_, n, _, _, _), !kind(n, "assignment"),
+    !kind(n, "augmented_assignment"), !kind(n, "type"),
+    !kind(n, "parenthesized_expression").
+
+// alt_23(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf028_alt_23(n: node)
+ruf028_alt_23(n) :- kind(n, "parenthesized_expression").
+ruf028_alt_23(n) :- node(_, n, _, _, _), glob("\\,", n).
+
+// stop_28(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf028_stop_28(n: node)
+ruf028_stop_28(n) :- node(_, n, _, _, _), !kind(n, "comment").
+
+// alt_34(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf028_alt_34(n: node)
+ruf028_alt_34(n) :- precedes(s1, n), kind(s1, "elif_clause").
+ruf028_alt_34(n) :- precedes(s2, n), kind(s2, "except_clause").
+
+// stop_28_precedes: precedes_stop over the stop set stop_28, read inside an aggregate
+.decl ruf028_stop_28_precedes(a: node, b: node)
+ruf028_stop_28_precedes(x, y) :- precedes_stop(x, y, ruf028_stop_28).
+
+// stop_10_within: within_stop over the stop set stop_10, read inside an aggregate
+.decl ruf028_stop_10_within(n: node, a: node)
+ruf028_stop_10_within(x, y) :- within_stop(x, y, ruf028_stop_10).

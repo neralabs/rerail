@@ -1,0 +1,162 @@
+.policy "ruff-pyi045-iter-method-return-iterable" revision 1
+.guests off
+.description "Annotate __iter__ as returning an Iterator and __aiter__ as returning an AsyncIterator, never the Iterable forms; callers must be able to advance the result."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PYI045(n, detail): findings from clauses `iter-returns-iterable`, `aiter-returns-async-iterable`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+.violation PYI045(at: node, detail: symbol) "Annotate {detail}."
+    suppress noqa "PYI045"
+PYI045(n, "`__iter__` as returning `Iterator` (from `collections.abc`) instead of `Iterable`; if the body returns a list or similar, return `iter(...)` of it") :- pyi045_return_position(n),
+    pyi045_iterable_annotation(n).
+PYI045(n, "`__aiter__` as returning `AsyncIterator` (from `collections.abc`) instead of `AsyncIterable`; the result must support `__anext__`") :- pyi045_return_position_aiter_returns_async_iterable(n),
+    pyi045_iterable_annotation_aiter_returns_async_iterable(n).
+
+// method_of(n): the JSON util `method-of`, used where the JSON says `matches: "method-of"`
+.decl pyi045_method_of(n: node)
+pyi045_method_of(n) :- kind(n, "function_definition"), field(n, "name", c1),
+    glob("__iter__", c1), within_stop(n, p2, pyi045_stop_1), kind(p2, "class_definition").
+
+// iterable_ref(n): the JSON util `iterable-ref`, used where the JSON says `matches: "iterable-ref"`
+.decl pyi045_iterable_ref(n: node)
+pyi045_iterable_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "typing.Iterable") ; sym_of(n, "collections.abc.Iterable")).
+pyi045_iterable_ref(n) :- pyi045_later_import_ref(n).
+
+// later_import_ref(n): the JSON util `later-import-ref`, used where the JSON says `matches: "later-import-ref"`
+.decl pyi045_later_import_ref(n: node)
+pyi045_later_import_ref(n) :- kind(n, "identifier"), node(_, n, _, _, _), LATE = n, docof(n, d2),
+    modnode(d2, m3),
+    ( kind(n, "identifier"), !bind_only(n), miss(n, x1)
+    ; (kind(n, "string") ; kind(n, "concatenated_string")), pyi045_all_entry(n, x1), !bound_in(m3, x1)
+    ),
+    !builtin(x1), !star(m3), inside(n, p4, "module"), within(c5, p4), node(_, c5, _, _, _), LATE = c5,
+    site_form(c5, "import"), site_scope(c5, "module"), site_latest(c5),
+    ( kind(c5, "dotted_name"), (imported_sym(c5, "typing.Iterable") ; imported_sym(c5, "collections.abc.Iterable"))
+    ; kind(c5, "identifier"), precedes(s1, c5), kind(s1, "dotted_name"), (imported_sym(s1, "typing.Iterable") ; imported_sym(s1, "collections.abc.Iterable"))
+    ).
+
+
+// ref_expr(n): the JSON util `ref-expr`, used where the JSON says `matches: "ref-expr"`
+.decl pyi045_ref_expr(n: node)
+pyi045_ref_expr(n) :- pyi045_iterable_ref(n).
+pyi045_ref_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi045_ref_expr(c1).
+
+// subscripted_ref(n): the JSON util `subscripted-ref`, used where the JSON says `matches: "subscripted-ref"`
+.decl pyi045_subscripted_ref(n: node)
+pyi045_subscripted_ref(n) :- kind(n, "generic_type"), child(n, c1, _), kind(c1, "identifier"),
+    pyi045_iterable_ref(c1).
+pyi045_subscripted_ref(n) :- kind(n, "subscript"), field(n, "value", c2), pyi045_ref_expr(c2).
+
+// subscripted_expr(n): the JSON util `subscripted-expr`, used where the JSON says `matches: "subscripted-expr"`
+.decl pyi045_subscripted_expr(n: node)
+pyi045_subscripted_expr(n) :- pyi045_subscripted_ref(n).
+pyi045_subscripted_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi045_subscripted_expr(c1).
+
+// iterable_annotation(n): the JSON util `iterable-annotation`, used where the JSON says `matches: "iterable-annotation"`
+.decl pyi045_iterable_annotation(n: node)
+pyi045_iterable_annotation(n) :- pyi045_iterable_ref(n).
+pyi045_iterable_annotation(n) :- pyi045_subscripted_ref(n).
+pyi045_iterable_annotation(n) :- kind(n, "subscript"), field(n, "value", c1),
+    pyi045_subscripted_expr(c1).
+
+// return_position(n): the JSON util `return-position`, used where the JSON says `matches: "return-position"`
+.decl pyi045_return_position(n: node)
+pyi045_return_position(n) :- child(p1, n, _), kind(p1, "type"), field(p2, "return_type", p1),
+    pyi045_method_of(p2).
+pyi045_return_position(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"),
+    pyi045_return_position(p3).
+
+// method_of_aiter_returns_async_iterable(n): the JSON util `method-of`, used where the JSON says `matches: "method-of"`
+.decl pyi045_method_of_aiter_returns_async_iterable(n: node)
+pyi045_method_of_aiter_returns_async_iterable(n) :- kind(n, "function_definition"),
+    field(n, "name", c1), glob("__aiter__", c1), within_stop(n, p2, pyi045_stop_1),
+    kind(p2, "class_definition").
+
+// iterable_ref_aiter_returns_async_iterable(n): the JSON util `iterable-ref`, used where the JSON says `matches: "iterable-ref"`
+.decl pyi045_iterable_ref_aiter_returns_async_iterable(n: node)
+pyi045_iterable_ref_aiter_returns_async_iterable(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "typing.AsyncIterable") ; sym_of(n, "collections.abc.AsyncIterable")).
+pyi045_iterable_ref_aiter_returns_async_iterable(n) :- pyi045_later_import_ref_aiter_returns_async_iterable(n).
+
+// later_import_ref_aiter_returns_async_iterable(n): the JSON util `later-import-ref`, used where the JSON says `matches: "later-import-ref"`
+.decl pyi045_later_import_ref_aiter_returns_async_iterable(n: node)
+pyi045_later_import_ref_aiter_returns_async_iterable(n) :- kind(n, "identifier"), node(_, n, _, _, _), LATE = n,
+    docof(n, d2), modnode(d2, m3),
+    ( kind(n, "identifier"), !bind_only(n), miss(n, x1)
+    ; (kind(n, "string") ; kind(n, "concatenated_string")), pyi045_all_entry(n, x1), !bound_in(m3, x1)
+    ),
+    !builtin(x1), !star(m3), inside(n, p4, "module"), within(c5, p4), node(_, c5, _, _, _), LATE = c5,
+    site_form(c5, "import"), site_scope(c5, "module"), site_latest(c5),
+    ( kind(c5, "dotted_name"), (imported_sym(c5, "typing.AsyncIterable") ; imported_sym(c5, "collections.abc.AsyncIterable"))
+    ; kind(c5, "identifier"), precedes(s1, c5), kind(s1, "dotted_name"), (imported_sym(s1, "typing.AsyncIterable") ; imported_sym(s1, "collections.abc.AsyncIterable"))
+    ).
+
+
+// ref_expr_aiter_returns_async_iterable(n): the JSON util `ref-expr`, used where the JSON says `matches: "ref-expr"`
+.decl pyi045_ref_expr_aiter_returns_async_iterable(n: node)
+pyi045_ref_expr_aiter_returns_async_iterable(n) :- pyi045_iterable_ref_aiter_returns_async_iterable(n).
+pyi045_ref_expr_aiter_returns_async_iterable(n) :- kind(n, "parenthesized_expression"),
+    child(n, c1, _), pyi045_ref_expr_aiter_returns_async_iterable(c1).
+
+// subscripted_ref_aiter_returns_async_iterable(n): the JSON util `subscripted-ref`, used where the JSON says `matches: "subscripted-ref"`
+.decl pyi045_subscripted_ref_aiter_returns_async_iterable(n: node)
+pyi045_subscripted_ref_aiter_returns_async_iterable(n) :- kind(n, "generic_type"),
+    child(n, c1, _), kind(c1, "identifier"),
+    pyi045_iterable_ref_aiter_returns_async_iterable(c1).
+pyi045_subscripted_ref_aiter_returns_async_iterable(n) :- kind(n, "subscript"),
+    field(n, "value", c2), pyi045_ref_expr_aiter_returns_async_iterable(c2).
+
+// subscripted_expr_aiter_returns_async_iterable(n): the JSON util `subscripted-expr`, used where the JSON says `matches: "subscripted-expr"`
+.decl pyi045_subscripted_expr_aiter_returns_async_iterable(n: node)
+pyi045_subscripted_expr_aiter_returns_async_iterable(n) :- pyi045_subscripted_ref_aiter_returns_async_iterable(n).
+pyi045_subscripted_expr_aiter_returns_async_iterable(n) :- kind(n, "parenthesized_expression"),
+    child(n, c1, _), pyi045_subscripted_expr_aiter_returns_async_iterable(c1).
+
+// iterable_annotation_aiter_returns_async_iterable(n): the JSON util `iterable-annotation`, used where the JSON says `matches: "iterable-annotation"`
+.decl pyi045_iterable_annotation_aiter_returns_async_iterable(n: node)
+pyi045_iterable_annotation_aiter_returns_async_iterable(n) :- pyi045_iterable_ref_aiter_returns_async_iterable(n).
+pyi045_iterable_annotation_aiter_returns_async_iterable(n) :- pyi045_subscripted_ref_aiter_returns_async_iterable(n).
+pyi045_iterable_annotation_aiter_returns_async_iterable(n) :- kind(n, "subscript"),
+    field(n, "value", c1), pyi045_subscripted_expr_aiter_returns_async_iterable(c1).
+
+// return_position_aiter_returns_async_iterable(n): the JSON util `return-position`, used where the JSON says `matches: "return-position"`
+.decl pyi045_return_position_aiter_returns_async_iterable(n: node)
+pyi045_return_position_aiter_returns_async_iterable(n) :- child(p1, n, _), kind(p1, "type"),
+    field(p2, "return_type", p1), pyi045_method_of_aiter_returns_async_iterable(p2).
+pyi045_return_position_aiter_returns_async_iterable(n) :- child(p3, n, _),
+    kind(p3, "parenthesized_expression"),
+    pyi045_return_position_aiter_returns_async_iterable(p3).
+
+// all_expr: x is a module-level `__all__ =`, `+=` or `: T =` value, or a part of one that lists names
+//   (Ruff's extract_dunder_all_names: `+` chains, parentheses, walrus values, list(...) and tuple(...))
+.decl pyi045_all_expr(x: node)
+pyi045_all_expr(x) :- (kind(st, "assignment") ; kind(st, "augmented_assignment")),
+    field(st, "left", l), kind(l, "identifier"), text(l, "__all__"), child(es, st, _),
+    kind(es, "expression_statement"), child(m, es, _), kind(m, "module"),
+    field(st, "right", x).
+pyi045_all_expr(y) :- pyi045_all_expr(x), kind(x, "assignment"), field(x, "right", y).
+pyi045_all_expr(y) :- pyi045_all_expr(x), kind(x, "binary_operator"),
+    (field(x, "left", y) ; field(x, "right", y)).
+pyi045_all_expr(y) :- pyi045_all_expr(x), kind(x, "parenthesized_expression"), child(x, y, _),
+    !kind(y, "comment").
+pyi045_all_expr(y) :- pyi045_all_expr(x), kind(x, "named_expression"), field(x, "value", y).
+pyi045_all_expr(y) :- pyi045_all_expr(x), kind(x, "call"), field(x, "function", f),
+    kind(f, "identifier"), (text(f, "list") ; text(f, "tuple")),
+    field(x, "arguments", a), child(a, y, _).
+
+// all_entry: string e is an entry of a module `__all__` definition, exporting the name x
+.decl pyi045_all_entry(e: node, x: symbol)
+pyi045_all_entry(e, x) :- pyi045_all_expr(l), (kind(l, "list") ; kind(l, "tuple")), child(l, e, _),
+    (kind(e, "string") ; kind(e, "concatenated_string")),
+    count : { within(i, e), kind(i, "interpolation") } = 0, str(e, x).
+
+// stop_1: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi045_stop_1(kind: symbol)
+pyi045_stop_1("function_definition"). pyi045_stop_1("class_definition").

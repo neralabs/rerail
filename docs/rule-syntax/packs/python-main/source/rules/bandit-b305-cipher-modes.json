@@ -1,0 +1,47 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b305-cipher-modes",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Avoid the ECB cipher mode; it encrypts identical blocks to identical output and leaks patterns in the data, so use an authenticated mode such as GCM.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "bandit:B305",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$F($$$ARGS)"
+          },
+          "constraints": {
+            "F": {
+              "resolves": {
+                "import": [
+                  "cryptography.hazmat.primitives.ciphers.modes.ECB"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B305",
+        "anchor": "witness.span",
+        "message": "Replace ECB with an authenticated mode such as GCM; ECB leaks patterns in the data.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B305"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

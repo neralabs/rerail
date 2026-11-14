@@ -1,0 +1,104 @@
+.policy "ruff-pyi002-complex-if-statement-in-stub" revision 1
+.guests off
+.description "Use only simple comparisons of sys.version_info or sys.platform as if tests in stub files; type checkers cannot evaluate other conditions."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// in_test(n): the JSON util `in-test`, used where the JSON says `matches: "in-test"`
+.decl pyi002_in_test(n: node)
+pyi002_in_test(n) :- field(p1, "condition", n), kind(p1, "if_statement").
+pyi002_in_test(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"), pyi002_in_test(p2).
+
+// chain_and(n): the JSON util `chain-and`, used where the JSON says `matches: "chain-and"`
+.decl pyi002_chain_and(n: node)
+pyi002_chain_and(n) :- kind(n, "boolean_operator"), field(n, "operator", c1), glob("and", c1),
+    pyi002_alt_1(n).
+
+// chain_or(n): the JSON util `chain-or`, used where the JSON says `matches: "chain-or"`
+.decl pyi002_chain_or(n: node)
+pyi002_chain_or(n) :- kind(n, "boolean_operator"), field(n, "operator", c1), glob("or", c1),
+    pyi002_alt_2(n).
+
+// operand_slot(n): the JSON util `operand-slot`, used where the JSON says `matches: "operand-slot"`
+.decl pyi002_operand_slot(n: node)
+pyi002_operand_slot(n) :- field(p1, "left", n), kind(p1, "boolean_operator"), pyi002_alt_3(p1),
+    !pyi002_alt_3(n).
+pyi002_operand_slot(n) :- field(p2, "right", n), kind(p2, "boolean_operator"), pyi002_alt_3(p2),
+    !pyi002_alt_3(n).
+pyi002_operand_slot(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"),
+    pyi002_operand_slot(p3), !pyi002_alt_7(n).
+
+// test_value(n): the JSON util `test-value`, used where the JSON says `matches: "test-value"`
+.decl pyi002_test_value(n: node)
+pyi002_test_value(n) :- !pyi002_alt_8(n),
+    (!kind(n, "boolean_operator"), pyi002_in_test(n) ; pyi002_operand_slot(n)).
+
+// sys_test(n): the JSON util `sys-test`, used where the JSON says `matches: "sys-test"`
+.decl pyi002_sys_test(n: node)
+pyi002_sys_test(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "sys.version_info") ; sym_of(n, "sys.platform")).
+
+// plain_left(n): the JSON util `plain-left`, used where the JSON says `matches: "plain-left"`
+.decl pyi002_plain_left(n: node)
+pyi002_plain_left(n) :- kind(n, "subscript").
+pyi002_plain_left(n) :- pyi002_sys_test(n).
+pyi002_plain_left(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi002_plain_left(c1).
+
+// PYI002(n): a finding at node n, from clause `complex-if-statement-in-stub`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI002(at: node) "Rewrite this stub `if` test as unchained comparisons of `sys.version_info` or `sys.platform` joined by `and`/`or`, or keep only one branch; type checkers cannot evaluate other tests."
+    suppress noqa "PYI002"
+PYI002_raw(n) :- pyi002_test_value(n),
+    ( !kind(n, "comparison_operator")
+    ; kind(n, "comparison_operator"), k1 = count : { pyi002_tok_has_1(n) }, k1 >= 2
+    ; kind(n, "comparison_operator"), count : { child(n, c1, _), child(_, c1, 0), pyi002_plain_left(c1) } = 0
+    ).
+
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi002_tok_has_1(n: node)
+.stored pyi002_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi002_tok_has_1(n) :- child(n, c1, _),
+    match("(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)", c1).
+pyi002_tok_has_1(n) :- op(n, t2),
+    match("(==|!=|<|<=|>|>=|<>|in|is|not\\s[\\s\\S]*in|is\\s[\\s\\S]*not)", t2).
+pyi002_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:not\\s[\\s\\S]*in)(?:\\W.*)?|(?:.*\\W)?(?:is\\s[\\s\\S]*not)(?:\\W.*)?)$", g3).
+pyi002_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:not\\s[\\s\\S]*in)(?:\\W.*)?|(?:.*\\W)?(?:is\\s[\\s\\S]*not)(?:\\W.*)?)$", g3).
+pyi002_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:not\\s[\\s\\S]*in)(?:\\W.*)?|(?:.*\\W)?(?:is\\s[\\s\\S]*not)(?:\\W.*)?)$", g3).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi002_alt_1(n: node)
+pyi002_alt_1(n) :- pyi002_in_test(n).
+pyi002_alt_1(n) :- field(p1, "left", n), kind(p1, "boolean_operator"), pyi002_chain_and(p1).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi002_alt_2(n: node)
+pyi002_alt_2(n) :- pyi002_in_test(n).
+pyi002_alt_2(n) :- field(p1, "left", n), kind(p1, "boolean_operator"), pyi002_chain_or(p1).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi002_alt_3(n: node)
+pyi002_alt_3(n) :- pyi002_chain_and(n).
+pyi002_alt_3(n) :- pyi002_chain_or(n).
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi002_alt_7(n: node)
+pyi002_alt_7(n) :- kind(n, "comment").
+pyi002_alt_7(n) :- node(_, n, _, _, _), glob("[()]", n).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi002_alt_8(n: node)
+pyi002_alt_8(n) :- (kind(n, "parenthesized_expression") ; kind(n, "comment")).
+pyi002_alt_8(n) :- node(_, n, _, _, _), glob("[()]", n).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI002_raw(at: node)
+PYI002(v0) :- PYI002_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

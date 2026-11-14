@@ -1,0 +1,393 @@
+.policy "ruff-up031-printf-string-formatting" revision 1
+.guests off
+.description "Prefer an f-string or str.format() over printf-style percent formatting; it is more readable and avoids tuple-versus-value surprises."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl up031_plain_string(n: node)
+up031_plain_string(n) :- kind(n, "string"), !match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", n).
+up031_plain_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", c1) } = 0.
+
+// seg_err(n): the JSON util `seg-err`, used where the JSON says `matches: "seg-err"`
+.decl up031_seg_err(n: node)
+up031_seg_err(n) :- kind(n, "string"), parsed(n, "percentFormat", r1), child(r1, c2, _),
+    kind(c2, "error").
+
+// seg_nonconv(n): the JSON util `seg-nonconv`, used where the JSON says `matches: "seg-nonconv"`
+.decl up031_seg_nonconv(n: node)
+up031_seg_nonconv(n) :- kind(n, "string"), parsed(n, "percentFormat", r1),
+    count : { child(r1, c2, _), kind(c2, "error") } = 0, child(r1, c3, _),
+    kind(c3, "placeholder"), up031_alt_1(c3).
+
+// seg_nonconv_dict(n): the JSON util `seg-nonconv-dict`, used where the JSON says `matches: "seg-nonconv-dict"`
+.decl up031_seg_nonconv_dict(n: node)
+up031_seg_nonconv_dict(n) :- up031_seg_nonconv(n).
+up031_seg_nonconv_dict(n) :- kind(n, "string"), parsed(n, "percentFormat", r1),
+    count : { child(r1, c2, _), kind(c2, "error") } = 0, child(r1, c3, _),
+    kind(c3, "placeholder"), count : { child(c3, c4, _), kind(c4, "mapping_key") } = 0.
+
+// seg_bad(n): the JSON util `seg-bad`, used where the JSON says `matches: "seg-bad"`
+.decl up031_seg_bad(n: node)
+up031_seg_bad(n) :- up031_seg_err(n).
+up031_seg_bad(n) :- up031_seg_nonconv(n).
+
+// seg_bad_dict(n): the JSON util `seg-bad-dict`, used where the JSON says `matches: "seg-bad-dict"`
+.decl up031_seg_bad_dict(n: node)
+up031_seg_bad_dict(n) :- up031_seg_err(n).
+up031_seg_bad_dict(n) :- up031_seg_nonconv_dict(n).
+
+// identifier_literal(n): the JSON util `identifier-literal`, used where the JSON says `matches: "identifier-literal"`
+.decl up031_identifier_literal(n: node)
+up031_identifier_literal(n) :-
+    ( kind(n, "string"), match("[rRuU]{0,2}['\"].*", n)
+    ; kind(n, "concatenated_string"), count : { child(n, c1, _), kind(c1, "string"), !match("[rRuU]{0,2}['\"].*", c1) } = 0
+    ),
+    value(n, v2), match("[\\p{XID_Start}_]\\p{XID_Continue}*", v2),
+    count : { value(n, v3), glob("{False,None,True,and,as,assert,async,await,break,class,continue,def,del,elif,else,except,finally,for,from,global,if,import,in,is,lambda,nonlocal,not,or,pass,raise,return,try,while,with,yield}", v3) } = 0.
+up031_identifier_literal(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    up031_identifier_literal(c4).
+
+// clean_dict(n): the JSON util `clean-dict`, used where the JSON says `matches: "clean-dict"`
+.decl up031_clean_dict(n: node)
+up031_clean_dict(n) :- up031_dict_keys_ok(n),
+    ( line(n, l1), end_line(n, l2), k1 = l2 - l1, k1 = 0
+    ; child(n, c1, _), kind(c1, "pair"), field(c1, "key", c2), up031_code_before_line(c2, l3), line(c2, l4), k2 = l4 - l3, k2 >= 1
+    ).
+
+
+// r_dict(n): the JSON util `r-dict`, used where the JSON says `matches: "r-dict"`
+.decl up031_r_dict(n: node)
+up031_r_dict(n) :- kind(n, "dictionary").
+up031_r_dict(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), up031_r_dict(c1).
+
+// r_clean_dict(n): the JSON util `r-clean-dict`, used where the JSON says `matches: "r-clean-dict"`
+.decl up031_r_clean_dict(n: node)
+up031_r_clean_dict(n) :- up031_clean_dict(n).
+up031_r_clean_dict(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    up031_r_clean_dict(c1).
+
+// r_simple(n): the JSON util `r-simple`, used where the JSON says `matches: "r-simple"`
+.decl up031_r_simple(n: node)
+up031_r_simple(n) :-
+    ( kind(n, k1), up031_set_4(k1)
+    ; kind(n, "string"), !match("[A-Za-z]*[tT][A-Za-z]*['\"].*", n)
+    ; kind(n, "concatenated_string"), count : { child(n, c1, _), kind(c1, "string"), match("[A-Za-z]*[tT][A-Za-z]*['\"].*", c1) } = 0
+    ).
+
+up031_r_simple(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), up031_r_simple(c3).
+
+// first_nonconv(n): the JSON util `first-nonconv`, used where the JSON says `matches: "first-nonconv"`
+//   AT: metavariable this relation binds for the calling rule
+.decl up031_first_nonconv(n: node, at: loc)
+up031_first_nonconv(n, AT) :- up031_plain_string(n),
+    ( kind(n, "string"), up031_seg_nonconv(n)
+    ; kind(n, "concatenated_string"), child(n, c1, _), kind(c1, "string"), up031_seg_nonconv(c1), count : { precedes(s1, c1), kind(s1, "string"), up031_seg_err(s1) } = 0
+    ),
+    node(_, n, _, _, _), AT = n.
+up031_first_nonconv(n, AT) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    up031_first_nonconv(c3, AT).
+
+// first_nonconv_dict(n): the JSON util `first-nonconv-dict`, used where the JSON says `matches: "first-nonconv-dict"`
+//   AT: metavariable this relation binds for the calling rule
+.decl up031_first_nonconv_dict(n: node, at: loc)
+up031_first_nonconv_dict(n, AT) :- up031_plain_string(n),
+    ( kind(n, "string"), up031_seg_nonconv_dict(n)
+    ; kind(n, "concatenated_string"), child(n, c1, _), kind(c1, "string"), up031_seg_nonconv_dict(c1), count : { precedes(s1, c1), kind(s1, "string"), up031_seg_err(s1) } = 0
+    ),
+    node(_, n, _, _, _), AT = n.
+up031_first_nonconv_dict(n, AT) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    up031_first_nonconv_dict(c3, AT).
+
+// good(n): the JSON util `good`, used where the JSON says `matches: "good"`
+//   AT: metavariable this relation binds for the calling rule
+.decl up031_good(n: node, at: loc)
+up031_good(n, AT) :- up031_plain_string(n),
+    ( kind(n, "string"), !up031_seg_bad(n)
+    ; kind(n, "concatenated_string"), count : { child(n, c1, _), kind(c1, "string"), up031_seg_bad(c1) } = 0
+    ),
+    node(_, n, _, _, _), AT = n.
+up031_good(n, AT) :- kind(n, "parenthesized_expression"), child(n, c2, _), up031_good(c2, AT).
+
+// good_dict(n): the JSON util `good-dict`, used where the JSON says `matches: "good-dict"`
+//   AT: metavariable this relation binds for the calling rule
+.decl up031_good_dict(n: node, at: loc)
+up031_good_dict(n, AT) :- up031_plain_string(n),
+    ( kind(n, "string"), !up031_seg_bad_dict(n)
+    ; kind(n, "concatenated_string"), count : { child(n, c1, _), kind(c1, "string"), up031_seg_bad_dict(c1) } = 0
+    ),
+    node(_, n, _, _, _), AT = n.
+up031_good_dict(n, AT) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    up031_good_dict(c2, AT).
+
+// dict_keys_ok(n): the JSON util `dict-keys-ok`, used where the JSON says `matches: "dict-keys-ok"`
+.decl up031_dict_keys_ok(n: node)
+up031_dict_keys_ok(n) :- kind(n, "dictionary"), child(n, c1, _),
+    (kind(c1, "pair") ; kind(c1, "dictionary_splat")),
+    count : { child(n, c2, _), kind(c2, "pair"), count : { child(c2, c3, _), up031_identifier_literal(c3), up031_tok_precedes_1(c3) } = 0 } = 0,
+    count : { child(n, c11, _), kind(c11, "pair"), child(c11, c12, _), node(_, c12, _, _, _), K1 = c12, up031_tok_precedes_2(c12), precedes(c11, s20), kind(s20, "pair"), child(s20, c21, _), node(_, c21, _, _, _), K2 = c21, up031_tok_precedes_3(c21), value(K1, t29), value(K2, t29) } = 0.
+
+// a_clean_dict(n): the JSON util `a-clean-dict`, used where the JSON says `matches: "a-clean-dict"`
+.decl up031_a_clean_dict(n: node)
+up031_a_clean_dict(n) :- up031_dict_keys_ok(n).
+up031_a_clean_dict(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    up031_a_clean_dict(c1).
+
+// UP031(n): a finding at node n, from clause `printf-string-formatting`.
+// Each rule below is one way the JSON `rule` can match.
+.violation UP031(at: node) "Replace this percent-format with an f-string or `.format()`; if the right side is a name that may hold a tuple, leave it or unpack it explicitly."
+    suppress noqa "UP031"
+UP031(n) :- n ~ `$S % $R`,
+    ( field(n, "right", c1), up031_r_simple(c1), field(n, "left", c2), up031_good(c2, AT)
+    ; field(n, "right", c3), up031_r_clean_dict(c3), field(n, "left", c4), up031_good_dict(c4, AT)
+    ).
+
+
+// UP031_printf_string_formatting_manual(n): findings from clauses `printf-string-formatting-manual`, `printf-string-formatting-annotation-manual`, which say the same.
+// Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation UP031_printf_string_formatting_manual(at: node, at: loc) code "UP031" "Rewrite this percent-format string as an f-string or `.format()` by hand: `%d`, `%i`, `%u`, `%c`, `*` widths and unusual dict keys need explicit conversion."
+    suppress noqa "UP031"
+UP031_printf_string_formatting_manual(n, AT) :- n ~ `$S % $R`,
+    ( count : { field(n, "right", c1), up031_r_dict(c1) } = 0, field(n, "left", c2), up031_first_nonconv(c2, AT)
+    ; field(n, "right", c3), up031_r_dict(c3), field(n, "left", c4), up031_first_nonconv_dict(c4, AT)
+    ; field(n, "right", c5), up031_r_dict(c5), count : { field(n, "right", c6), up031_r_clean_dict(c6) } = 0, field(n, "left", c7), up031_good_dict(c7, AT)
+    ).
+
+UP031_printf_string_formatting_manual(n, AT) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), has(r1, c2, "binary_operator"), c2 ~ `$S % $R`,
+    BIN = c2, up031_alt_14(c2, AT).
+
+// UP031_printf_string_formatting_annotation(n): a finding at node n, from clause `printf-string-formatting-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation UP031_printf_string_formatting_annotation(at: node, bin: node) code "UP031" "Replace this percent-format with an f-string or `.format()`; if the right side is a name that may hold a tuple, leave it or unpack it explicitly."
+    suppress noqa "UP031"
+UP031_printf_string_formatting_annotation(BIN, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), has(r1, c2, "binary_operator"), c2 ~ `$S % $R`,
+    BIN = c2,
+    ( child(c2, c1, _), up031_good(c1, AT), up031_tok_precedes_8(c1), child(c2, c3, _), up031_r_simple(c3), up031_tok_follows_9(c3)
+    ; child(c2, c4, _), up031_good_dict(c4, AT), up031_tok_precedes_10(c4), child(c2, c5, _), up031_a_clean_dict(c5), up031_tok_follows_11(c5)
+    ).
+
+
+// code_comment_end(p, o): a comment child of p ends at offset o
+.decl up031_code_comment_end(p: node, o: number)
+up031_code_comment_end(p, o) :- child(p, c, _), comment(c, _), node(_, c, _, _, o).
+
+// code_before_line(x, l): the line of the code before x (main's token_before, comments passed over), read from the source gap: the tape leaves out the tokens its grammar implies
+.decl up031_code_before_line(x: node, l: number)
+up031_code_before_line(x, l) :- structural_before(x, g), match("(?s).*\\S\\s*", g),
+    ws = @replace_all(g, "(?s)^.*\\S", ""),
+    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), line(x, lx), l = lx - k.
+up031_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, s, _), o = s - strlen(g), token(p, _, _, _, o),
+    !up031_code_comment_end(p, o), k = strlen(g) - strlen(@replace_all(g, "\n", "")),
+    line(x, lx), l = lx - k.
+up031_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, s, _), node(_, p, _, ps, _), ps = s - strlen(g),
+    up031_code_before_line(p, l).
+up031_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, s, _), o = s - strlen(g), child(p, c, _), node(_, c, _, _, o),
+    comment(c, _), up031_code_before_line(c, l).
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up031_tok_precedes_1(n: node)
+.stored up031_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up031_tok_precedes_1(n) :- next_sibling(n, s4), glob(":", s4).
+up031_tok_precedes_1(n) :- structural_after(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, _, en10), o8 = en10 + strlen(g6), token(p7, _, t5, o8, _),
+    match(":", t5).
+up031_tok_precedes_1(n) :- structural_after(n, g6),
+    match("(?s)^(?:\\s*(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up031_tok_precedes_2(n: node)
+.stored up031_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up031_tok_precedes_2(n) :- next_sibling(n, s13), glob(":", s13).
+up031_tok_precedes_2(n) :- structural_after(n, g15), match("\\s*", g15), child(p16, n, _),
+    node(_, n, _, _, en19), o17 = en19 + strlen(g15), token(p16, _, t14, o17, _),
+    match(":", t14).
+up031_tok_precedes_2(n) :- structural_after(n, g15),
+    match("(?s)^(?:\\s*(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g15).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up031_tok_precedes_3(n: node)
+.stored up031_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up031_tok_precedes_3(n) :- next_sibling(n, s22), glob(":", s22).
+up031_tok_precedes_3(n) :- structural_after(n, g24), match("\\s*", g24), child(p25, n, _),
+    node(_, n, _, _, en28), o26 = en28 + strlen(g24), token(p25, _, t23, o26, _),
+    match(":", t23).
+up031_tok_precedes_3(n) :- structural_after(n, g24),
+    match("(?s)^(?:\\s*(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g24).
+
+// tok_precedes_4(n): a later sibling of n, a named node or an anonymous token, matches "^%$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up031_tok_precedes_4(n: node)
+.stored up031_tok_precedes_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up031_tok_precedes_4(n) :- next_sibling(n, s4), glob("%", s4).
+up031_tok_precedes_4(n) :- structural_after(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, _, en10), o8 = en10 + strlen(g6), token(p7, _, t5, o8, _),
+    match("%", t5).
+up031_tok_precedes_4(n) :- structural_after(n, g6),
+    match("(?s)^(?:\\s*(?:%)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+
+// tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "^%$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up031_tok_follows_5(n: node)
+.stored up031_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up031_tok_follows_5(n) :- next_sibling(s12, n), glob("%", s12).
+up031_tok_follows_5(n) :- structural_before(n, g14), match("\\s*", g14), child(p15, n, _),
+    node(_, n, _, st17, _), o16 = st17 - strlen(g14), token(p15, _, t13, _, o16),
+    match("%", t13).
+up031_tok_follows_5(n) :- structural_before(n, g14),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:%)\\s*)$", g14).
+
+// tok_precedes_6(n): a later sibling of n, a named node or an anonymous token, matches "^%$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up031_tok_precedes_6(n: node)
+.stored up031_tok_precedes_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up031_tok_precedes_6(n) :- next_sibling(n, s20), glob("%", s20).
+up031_tok_precedes_6(n) :- structural_after(n, g22), match("\\s*", g22), child(p23, n, _),
+    node(_, n, _, _, en26), o24 = en26 + strlen(g22), token(p23, _, t21, o24, _),
+    match("%", t21).
+up031_tok_precedes_6(n) :- structural_after(n, g22),
+    match("(?s)^(?:\\s*(?:%)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g22).
+
+// tok_follows_7(n): an earlier sibling of n, a named node or an anonymous token, matches "^%$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up031_tok_follows_7(n: node)
+.stored up031_tok_follows_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up031_tok_follows_7(n) :- next_sibling(s28, n), glob("%", s28).
+up031_tok_follows_7(n) :- structural_before(n, g30), match("\\s*", g30), child(p31, n, _),
+    node(_, n, _, st33, _), o32 = st33 - strlen(g30), token(p31, _, t29, _, o32),
+    match("%", t29).
+up031_tok_follows_7(n) :- structural_before(n, g30),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:%)\\s*)$", g30).
+
+// tok_precedes_8(n): a later sibling of n, a named node or an anonymous token, matches "^%$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up031_tok_precedes_8(n: node)
+.stored up031_tok_precedes_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up031_tok_precedes_8(n) :- next_sibling(n, s2), glob("%", s2).
+up031_tok_precedes_8(n) :- structural_after(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, _, en8), o6 = en8 + strlen(g4), token(p5, _, t3, o6, _),
+    match("%", t3).
+up031_tok_precedes_8(n) :- structural_after(n, g4),
+    match("(?s)^(?:\\s*(?:%)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// tok_follows_9(n): an earlier sibling of n, a named node or an anonymous token, matches "^%$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up031_tok_follows_9(n: node)
+.stored up031_tok_follows_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up031_tok_follows_9(n) :- next_sibling(s10, n), glob("%", s10).
+up031_tok_follows_9(n) :- structural_before(n, g12), match("\\s*", g12), child(p13, n, _),
+    node(_, n, _, st15, _), o14 = st15 - strlen(g12), token(p13, _, t11, _, o14),
+    match("%", t11).
+up031_tok_follows_9(n) :- structural_before(n, g12),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:%)\\s*)$", g12).
+
+// tok_precedes_10(n): a later sibling of n, a named node or an anonymous token, matches "^%$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up031_tok_precedes_10(n: node)
+.stored up031_tok_precedes_10 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up031_tok_precedes_10(n) :- next_sibling(n, s18), glob("%", s18).
+up031_tok_precedes_10(n) :- structural_after(n, g20), match("\\s*", g20), child(p21, n, _),
+    node(_, n, _, _, en24), o22 = en24 + strlen(g20), token(p21, _, t19, o22, _),
+    match("%", t19).
+up031_tok_precedes_10(n) :- structural_after(n, g20),
+    match("(?s)^(?:\\s*(?:%)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g20).
+
+// tok_follows_11(n): an earlier sibling of n, a named node or an anonymous token, matches "^%$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up031_tok_follows_11(n: node)
+.stored up031_tok_follows_11 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up031_tok_follows_11(n) :- next_sibling(s26, n), glob("%", s26).
+up031_tok_follows_11(n) :- structural_before(n, g28), match("\\s*", g28), child(p29, n, _),
+    node(_, n, _, st31, _), o30 = st31 - strlen(g28), token(p29, _, t27, _, o30),
+    match("%", t27).
+up031_tok_follows_11(n) :- structural_before(n, g28),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:%)\\s*)$", g28).
+
+// tok_precedes_12(n): a later sibling of n, a named node or an anonymous token, matches "^%$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up031_tok_precedes_12(n: node)
+.stored up031_tok_precedes_12 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up031_tok_precedes_12(n) :- next_sibling(n, s36), glob("%", s36).
+up031_tok_precedes_12(n) :- structural_after(n, g38), match("\\s*", g38), child(p39, n, _),
+    node(_, n, _, _, en42), o40 = en42 + strlen(g38), token(p39, _, t37, o40, _),
+    match("%", t37).
+up031_tok_precedes_12(n) :- structural_after(n, g38),
+    match("(?s)^(?:\\s*(?:%)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g38).
+
+// tok_follows_13(n): an earlier sibling of n, a named node or an anonymous token, matches "^%$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up031_tok_follows_13(n: node)
+.stored up031_tok_follows_13 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up031_tok_follows_13(n) :- next_sibling(s44, n), glob("%", s44).
+up031_tok_follows_13(n) :- structural_before(n, g46), match("\\s*", g46), child(p47, n, _),
+    node(_, n, _, st49, _), o48 = st49 - strlen(g46), token(p47, _, t45, _, o48),
+    match("%", t45).
+up031_tok_follows_13(n) :- structural_before(n, g46),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:%)\\s*)$", g46).
+
+// tok_follows_14(n): an earlier sibling of n, a named node or an anonymous token, matches "^%$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up031_tok_follows_14(n: node)
+.stored up031_tok_follows_14 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up031_tok_follows_14(n) :- next_sibling(s52, n), glob("%", s52).
+up031_tok_follows_14(n) :- structural_before(n, g54), match("\\s*", g54), child(p55, n, _),
+    node(_, n, _, st57, _), o56 = st57 - strlen(g54), token(p55, _, t53, _, o56),
+    match("%", t53).
+up031_tok_follows_14(n) :- structural_before(n, g54),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:%)\\s*)$", g54).
+
+// tok_precedes_15(n): a later sibling of n, a named node or an anonymous token, matches "^%$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up031_tok_precedes_15(n: node)
+.stored up031_tok_precedes_15 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up031_tok_precedes_15(n) :- next_sibling(n, s34), glob("%", s34).
+up031_tok_precedes_15(n) :- structural_after(n, g36), match("\\s*", g36), child(p37, n, _),
+    node(_, n, _, _, en40), o38 = en40 + strlen(g36), token(p37, _, t35, o38, _),
+    match("%", t35).
+up031_tok_precedes_15(n) :- structural_after(n, g36),
+    match("(?s)^(?:\\s*(?:%)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g36).
+
+// tok_follows_16(n): an earlier sibling of n, a named node or an anonymous token, matches "^%$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up031_tok_follows_16(n: node)
+.stored up031_tok_follows_16 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up031_tok_follows_16(n) :- next_sibling(s42, n), glob("%", s42).
+up031_tok_follows_16(n) :- structural_before(n, g44), match("\\s*", g44), child(p45, n, _),
+    node(_, n, _, st47, _), o46 = st47 - strlen(g44), token(p45, _, t43, _, o46),
+    match("%", t43).
+up031_tok_follows_16(n) :- structural_before(n, g44),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:%)\\s*)$", g44).
+
+// tok_follows_17(n): an earlier sibling of n, a named node or an anonymous token, matches "^%$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up031_tok_follows_17(n: node)
+.stored up031_tok_follows_17 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up031_tok_follows_17(n) :- next_sibling(s50, n), glob("%", s50).
+up031_tok_follows_17(n) :- structural_before(n, g52), match("\\s*", g52), child(p53, n, _),
+    node(_, n, _, st55, _), o54 = st55 - strlen(g52), token(p53, _, t51, _, o54),
+    match("%", t51).
+up031_tok_follows_17(n) :- structural_before(n, g52),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:%)\\s*)$", g52).
+
+// set_4: node kinds from a JSON `any`
+.decl up031_set_4(v: symbol)
+up031_set_4("integer"). up031_set_4("float"). up031_set_4("true"). up031_set_4("false"). up031_set_4("none").
+up031_set_4("ellipsis"). up031_set_4("identifier"). up031_set_4("attribute"). up031_set_4("subscript").
+up031_set_4("call"). up031_set_4("tuple").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl up031_alt_1(n: node)
+up031_alt_1(n) :- child(n, c1, _), (kind(c1, "width") ; kind(c1, "precision")),
+    child(c1, c2, _), kind(c2, "star").
+up031_alt_1(n) :- child(n, c3, _), kind(c3, "conversion"), value(c3, v4), glob("[diuc]", v4).
+up031_alt_1(n) :- child(n, c5, _), kind(c5, "mapping_key"), value(c5, "").
+up031_alt_1(n) :- child(n, c6, _), kind(c6, "conversion"), value(c6, v7), glob("[ar%]", v7),
+    child(n, c8, _), (kind(c8, "flags") ; kind(c8, "width") ; kind(c8, "precision")).
+up031_alt_1(n) :- child(n, c9, _), kind(c9, "width"), child(n, c10, _),
+    kind(c10, "conversion"), value(c10, "s").
+
+// alt_14(n): the JSON `any`: n matches if any one of these rules does
+//   AT: metavariable this relation binds for the calling rule
+.decl up031_alt_14(n: node, at: loc)
+up031_alt_14(n, AT) :- child(n, c1, _), up031_first_nonconv(c1, AT), up031_tok_precedes_8(c1),
+    count : { child(n, c9, _), up031_r_dict(c9), up031_tok_follows_9(c9) } = 0.
+up031_alt_14(n, AT) :- child(n, c17, _), up031_first_nonconv_dict(c17, AT), up031_tok_precedes_10(c17),
+    child(n, c25, _), up031_r_dict(c25), up031_tok_follows_11(c25).
+up031_alt_14(n, AT) :- child(n, c33, _), up031_good_dict(c33, AT), up031_tok_precedes_15(c33),
+    child(n, c41, _), up031_r_dict(c41), up031_tok_follows_16(c41),
+    count : { child(n, c49, _), up031_a_clean_dict(c49), up031_tok_follows_17(c49) } = 0.

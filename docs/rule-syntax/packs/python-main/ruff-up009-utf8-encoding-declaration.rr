@@ -1,0 +1,54 @@
+.policy "ruff-up009-utf8-encoding-declaration" revision 1
+.guests off
+.description "Remove the UTF-8 encoding declaration comment at the top of a Python file; UTF-8 is already the default source encoding."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// UP009(n): a finding at node n, from clause `utf8-encoding-declaration`.
+// Each rule below is one way the JSON `rule` can match.
+.violation UP009(at: node) "Delete this UTF-8 encoding declaration comment; Python 3 reads source as UTF-8 by default. Keep it only if the file must also run on Python 2."
+    suppress noqa "UP009"
+UP009(n) :- kind(n, "comment"), child(p1, n, _), kind(p1, "module"),
+    count : { precedes(s2, n), !kind(s2, "comment") } = 0,
+    ( up009_code_before_line(n, l5), line(n, l6), k3 = l6 - l5, k3 <= 1
+    ; count : { up009_code_before_line(n, l5) } = 0, line(n, l6), k3 = l6 - 1, k3 <= 1
+    ),
+    count : { precedes(s7, n), up009_coding(s7) } = 0,
+    count : { next_sibling(n, s8), up009_other_coding(s8) } = 0,
+    count : { next_sibling(n, s9), kind(s9, "comment"), !up009_coding(s9), next_sibling(s9, s10), up009_other_coding(s10) } = 0,
+    up009_utf8_coding(n).
+
+// coding(n): the JSON util `coding`, used where the JSON says `matches: "coding"`
+.decl up009_coding(n: node)
+up009_coding(n) :- kind(n, "comment"), match("#.*?coding[:=][ \\t]*[-_.a-zA-Z0-9]+.*", n).
+
+// utf8_coding(n): the JSON util `utf8-coding`, used where the JSON says `matches: "utf8-coding"`
+.decl up009_utf8_coding(n: node)
+up009_utf8_coding(n) :- kind(n, "comment"),
+    match("#(?:[^c]|(?:c(?:o(?:d(?:i(?:n(?:g)?)?)?)?)?)*c(?:[^co]|o(?:[^cd]|d(?:[^ci]|i(?:[^cn]|n(?:[^cg]|g(?:[^c:=]|[:=][ \\t]*[^-_.a-zA-Z0-9 \\t])))))))*(?:c(?:o(?:d(?:i(?:n(?:g)?)?)?)?)?)*coding[:=][ \\t]*(?:utf-8|utf8)(?:[^-_.a-zA-Z0-9]|$).*", n).
+
+// other_coding(n): the JSON util `other-coding`, used where the JSON says `matches: "other-coding"`
+.decl up009_other_coding(n: node)
+up009_other_coding(n) :- up009_coding(n), !up009_utf8_coding(n).
+
+// code_comment_end(p, o): a comment child of p ends at offset o
+.decl up009_code_comment_end(p: node, o: number)
+up009_code_comment_end(p, o) :- child(p, c, _), comment(c, _), node(_, c, _, _, o).
+
+// code_before_line(x, l): the line of the code before x (main's token_before, comments passed over), read from the source gap: the tape leaves out the tokens its grammar implies
+.decl up009_code_before_line(x: node, l: number)
+up009_code_before_line(x, l) :- structural_before(x, g), match("(?s).*\\S\\s*", g),
+    ws = @replace_all(g, "(?s)^.*\\S", ""),
+    k = strlen(ws) - strlen(@replace_all(ws, "\n", "")), line(x, lx), l = lx - k.
+up009_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, s, _), o = s - strlen(g), token(p, _, _, _, o),
+    !up009_code_comment_end(p, o), k = strlen(g) - strlen(@replace_all(g, "\n", "")),
+    line(x, lx), l = lx - k.
+up009_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, s, _), node(_, p, _, ps, _), ps = s - strlen(g),
+    up009_code_before_line(p, l).
+up009_code_before_line(x, l) :- structural_before(x, g), match("\\s*", g), child(p, x, _),
+    node(_, x, _, s, _), o = s - strlen(g), child(p, c, _), node(_, c, _, _, o),
+    comment(c, _), up009_code_before_line(c, l).

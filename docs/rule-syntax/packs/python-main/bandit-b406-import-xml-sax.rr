@@ -1,0 +1,29 @@
+.policy "bandit-b406-import-xml-sax" revision 2
+.guests off
+.description "Avoid parsing XML with xml.sax (importing only its saxutils helpers is fine); it is open to XML attacks, so use defusedxml."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B406(n): a finding at node n, from clause `B406`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B406(at: node) "xml.sax parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library."
+    suppress nosec "B406"
+B406(n) :- b406_alt_1(n), !b406_alt_2(n).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl b406_alt_1(n: node)
+b406_alt_1(n) :- n ~ `import xml.sax`.
+b406_alt_1(n) :- n ~ `import xml.sax as $ALIAS`.
+b406_alt_1(n) :- n ~ `from xml.sax import $$$NAMES`.
+b406_alt_1(n) :- n ~ `from xml import sax`.
+b406_alt_1(n) :- n ~ `from xml import sax as $ALIAS`.
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl b406_alt_2(n: node)
+b406_alt_2(n) :- n ~ `from xml.sax.saxutils import $$$NAMES`.
+b406_alt_2(n) :- n ~ `from xml.sax import saxutils`.
+b406_alt_2(n) :- n ~ `from xml.sax import saxutils as $ALIAS`.
+b406_alt_2(n) :- n ~ `from xml.sax import (saxutils)`.
+b406_alt_2(n) :- n ~ `from xml.sax import (saxutils as $ALIAS)`.

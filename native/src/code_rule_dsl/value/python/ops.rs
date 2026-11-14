@@ -270,7 +270,7 @@ fn sequence(operator: &str, left: &Value, right: &Value) -> Value {
             if left.len() + right.len() > MAX_STRING_BYTES {
                 return Value::Unknown;
             }
-            Value::Str(format!("{left}{right}"))
+            Value::Str(format!("{left}{right}").into())
         }
         ("+", Value::Bytes(left), Value::Bytes(right)) => {
             if left.len() + right.len() > MAX_STRING_BYTES {

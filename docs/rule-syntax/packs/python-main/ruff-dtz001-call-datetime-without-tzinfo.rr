@@ -1,0 +1,107 @@
+.policy "ruff-dtz001-call-datetime-without-tzinfo" revision 1
+.guests off
+.description "Pass a real timezone when constructing a datetime; a naive datetime carries no zone information and causes subtle bugs."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl dtz001_callee(n: node)
+dtz001_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "datetime.datetime").
+dtz001_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), dtz001_callee(c1).
+
+// astz_safe(n): the JSON util `astz-safe`, used where the JSON says `matches: "astz-safe"`
+.decl dtz001_astz_safe(n: node)
+dtz001_astz_safe(n) :- within_stop(n, p1, dtz001_stop_1), kind(p1, "attribute"), dtz001_alt_3(p1).
+
+// none_lit(n): the JSON util `none-lit`, used where the JSON says `matches: "none-lit"`
+.decl dtz001_none_lit(n: node)
+dtz001_none_lit(n) :- kind(n, "none").
+dtz001_none_lit(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), dtz001_none_lit(c1).
+
+// DTZ001(n, detail): findings from clauses `no-tzinfo`, `tzinfo-none`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// The JSON `constraints` on TZ are added to every rule.
+.violation DTZ001(at: node, detail: symbol) "{detail} only if the code receiving it requires a naive value."
+    suppress noqa "DTZ001"
+DTZ001(n, "Add `tzinfo=` with a timezone, such as `tzinfo=datetime.timezone.utc`, so this datetime is aware. Leave it naive") :- kind(n, "call"),
+    field(n, "function", c1), dtz001_callee(c1), !dtz001_astz_safe(n), dtz001_arg_no_tzinfo_1(n).
+DTZ001(n, "Replace `tzinfo=None` with a real timezone, such as `datetime.timezone.utc`, so this datetime is aware. Keep `None`") :- kind(n, "call"),
+    field(n, "function", c1), dtz001_callee(c1), !dtz001_astz_safe(n), dtz001_arg_tzinfo_1(n, a2), TZ = a2,
+    dtz001_none_lit(TZ).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl dtz001_args_plain(l: node, a: node, i: number)
+dtz001_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl dtz001_args_splat(l: node, i: number)
+dtz001_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl dtz001_args_pos(l: node, a: node, j: number)
+dtz001_args_pos(l, a, j) :- dtz001_args_plain(l, a, i), count : { dtz001_args_splat(l, k), k < i } = 0,
+    j = count : { dtz001_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl dtz001_args_star(l: node, j: number)
+dtz001_args_star(l, j) :- dtz001_args_splat(l, i), count : { dtz001_args_splat(l, k), k < i } = 0,
+    j = count : { dtz001_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl dtz001_args_kwp(l: node, k: symbol, v: node)
+dtz001_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl dtz001_args_lit_dict(s: node, d: node)
+dtz001_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !dtz001_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl dtz001_args_str_pair(p: node)
+dtz001_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl dtz001_args_kw(l: node, k: symbol, v: node)
+dtz001_args_kw(l, k, v) :- dtz001_args_kwp(l, k, v).
+dtz001_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), dtz001_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl dtz001_args_kw_spread(l: node)
+dtz001_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !dtz001_args_lit_dict(s, _).
+
+// arg_tzinfo_1: call n passes v for slot `tzinfo` of (year, month, day, hour, minute, second, microsecond, tzinfo), syntactic: Ruff's find_argument
+.decl dtz001_arg_tzinfo_1(n: node, v: node)
+dtz001_arg_tzinfo_1(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    dtz001_args_kwp(l, "tzinfo", v).
+dtz001_arg_tzinfo_1(n, v) :- kind(n, "call"), field(n, "arguments", l), dtz001_args_pos(l, v, 7),
+    !dtz001_args_kwp(l, "tzinfo", _).
+
+// arg_no_tzinfo_1: call n does not pass slot `tzinfo` of (year, month, day, hour, minute, second, microsecond, tzinfo), syntactic: Ruff's find_argument
+.decl dtz001_arg_no_tzinfo_1(n: node)
+dtz001_arg_no_tzinfo_1(n) :- kind(n, "call"), field(n, "arguments", l),
+    !dtz001_args_kwp(l, "tzinfo", _), !dtz001_args_pos(l, _, 7).
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl dtz001_stop_1(n: node)
+dtz001_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl dtz001_alt_3(n: node)
+dtz001_alt_3(n) :- field(n, "attribute", c1), glob("astimezone", c1).
+dtz001_alt_3(n) :- field(n, "attribute", c2), glob("replace", c2), within_stop(n, p3, dtz001_stop_1),
+    kind(p3, "call"), dtz001_astz_safe(p3).

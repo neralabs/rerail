@@ -1,0 +1,417 @@
+.policy "ruff-ann202-missing-return-type-private-function" revision 1
+.guests off
+.description "Add a return type annotation to private and nested functions so type checkers can verify what they return."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// overload_expr(n): the JSON util `overload-expr`, used where the JSON says `matches: "overload-expr"`
+.decl ann202_overload_expr(n: node)
+ann202_overload_expr(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.overload")
+    ; sym_of(n, "typing_extensions.overload")
+    ; sym_of(n, "_typeshed.overload")
+    ).
+
+ann202_overload_expr(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ann202_overload_expr(c1).
+
+// overload_decorated(n): the JSON util `overload-decorated`, used where the JSON says `matches: "overload-decorated"`
+.decl ann202_overload_decorated(n: node)
+ann202_overload_decorated(n) :- kind(n, "decorated_definition"), child(n, c1, _),
+    kind(c1, "decorator"), child(c1, c2, _), ann202_overload_expr(c2).
+
+// definition_statement(n): the JSON util `definition-statement`, used where the JSON says `matches: "definition-statement"`
+.decl ann202_definition_statement(n: node)
+ann202_definition_statement(n) :-
+    ( kind(n, "function_definition")
+    ; kind(n, "class_definition")
+    ; kind(n, "decorated_definition")
+    ).
+
+
+// holds_definition(n): the JSON util `holds-definition`, used where the JSON says `matches: "holds-definition"`
+.decl ann202_holds_definition(n: node)
+ann202_holds_definition(n) :- ann202_definition_statement(n).
+ann202_holds_definition(n) :- within_stop(c1, n, ann202_stop_1), ann202_definition_statement(c1).
+
+// last_definition_is_overload(n): the JSON util `last-definition-is-overload`, used where the JSON says `matches: "last-definition-is-overload"`
+//   FN: metavariable this relation binds for the calling rule
+.decl ann202_last_definition_is_overload(n: node, fn: loc)
+ann202_last_definition_is_overload(n, FN) :- ann202_overload_decorated(n), child(n, c1, _),
+    kind(c1, "function_definition"), child(c1, c2, _), kind(c2, "identifier"),
+    node(_, c2, _, _, _), FN = c2.
+ann202_last_definition_is_overload(n, FN) :- !ann202_alt_2(n), child(n, c4, _), ann202_holds_definition(c4),
+    count : { precedes(c4, s5), ann202_holds_definition(s5) } = 0,
+    ann202_last_definition_is_overload(c4, FN).
+
+// previous_overload(n): the JSON util `previous-overload`, used where the JSON says `matches: "previous-overload"`
+//   FN: metavariable this relation binds for the calling rule
+.decl ann202_previous_overload(n: node, fn: loc)
+ann202_previous_overload(n, FN) :- precedes_stop(s1, n, ann202_stop_3),
+    ann202_last_definition_is_overload(s1, FN).
+ann202_previous_overload(n, FN) :- count : { precedes(s2, n), ann202_holds_definition(s2) } = 0,
+    child(p3, n, _), !kind(p3, "function_definition"), !kind(p3, "class_definition"),
+    !kind(p3, "module"), ann202_previous_overload(p3, FN).
+
+// overload_implementation(n): the JSON util `overload-implementation`, used where the JSON says `matches: "overload-implementation"`
+//   FN: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann202_overload_implementation(n: node, fn: loc)
+ann202_overload_implementation(n, FN) :- ann202_demand_overload_implementation(n, FN),
+    count : { child(p1, n, _), ann202_overload_decorated(p1) } = 0, ann202_previous_overload(n, FN).
+
+// imports_builtins(n): the JSON util `imports-builtins`, used where the JSON says `matches: "imports-builtins"`
+.decl ann202_imports_builtins(n: node)
+ann202_imports_builtins(n) :- inside(n, p1, "module"), within(c2, p1),
+    ( kind(c2, "import_statement"), has(c2, c1, "dotted_name"), match("builtins(\\.|$).*", c1)
+    ; kind(c2, "import_from_statement"), field(c2, "module_name", c3), kind(c3, "dotted_name"), match("builtins(\\.|$).*", c3)
+    ).
+
+
+// static_or_class_expr(n): the JSON util `static-or-class-expr`, used where the JSON says `matches: "static-or-class-expr"`
+.decl ann202_static_or_class_expr(n: node)
+ann202_static_or_class_expr(n) :- kind(n, "identifier"), glob("staticmethod", n), !ann202_alt_6(n).
+ann202_static_or_class_expr(n) :- kind(n, "identifier"), glob("classmethod", n), !ann202_alt_9(n).
+ann202_static_or_class_expr(n) :- ann202_imports_builtins(n),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    (global_ref(n, "staticmethod") ; global_ref(n, "classmethod")),
+    (sym_of(n, "builtins.staticmethod") ; sym_of(n, "builtins.classmethod")).
+ann202_static_or_class_expr(n) :- kind(n, "parenthesized_expression"), child(n, c5, _),
+    ann202_static_or_class_expr(c5).
+
+// accessor_expr(n): the JSON util `accessor-expr`, used where the JSON says `matches: "accessor-expr"`
+//   FN: metavariable this relation binds for the calling rule
+.decl ann202_accessor_expr(n: node, fn: loc)
+ann202_accessor_expr(n, FN) :- kind(n, "attribute"), field(n, "object", c1),
+    ann202_accessor_object(c1, FN), field(n, "attribute", c2), glob("{setter,deleter}", c2).
+ann202_accessor_expr(n, FN) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    ann202_accessor_expr(c3, FN).
+
+// underscore_named(n): the JSON util `underscore-named`, used where the JSON says `matches: "underscore-named"`
+.decl ann202_underscore_named(n: node)
+ann202_underscore_named(n) :- child(n, c1, _), kind(c1, "identifier"), prefix("_", c1).
+
+// all_assignment(n): the JSON util `all-assignment`, used where the JSON says `matches: "all-assignment"`
+.decl ann202_all_assignment(n: node)
+ann202_all_assignment(n) :- kind(n, "assignment"),
+    count : { field(p1, "right", n), kind(p1, "assignment") } = 0,
+    field(n, "left", c2), ann202_all_target(c2).
+ann202_all_assignment(n) :- kind(n, "augmented_assignment"), field(n, "left", c3),
+    ann202_all_target(c3).
+
+// all_target(n): the JSON util `all-target`, used where the JSON says `matches: "all-target"`
+.decl ann202_all_target(n: node)
+ann202_all_target(n) :- kind(n, "identifier"), glob("__all__", n).
+ann202_all_target(n) :- kind(n, "tuple_pattern"), match("[(\\s]*__all__[\\s)]*", n).
+
+// declares_all(n): the JSON util `declares-all`, used where the JSON says `matches: "declares-all"`
+.decl ann202_declares_all(n: node)
+ann202_declares_all(n) :- within_stop(c1, n, ann202_stop_11), ann202_all_assignment(c1).
+
+// export_string(n): the JSON util `export-string`, used where the JSON says `matches: "export-string"`
+//   DEFNAME: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann202_export_string(n: node, defname: loc)
+ann202_export_string(n, DEFNAME) :- ann202_demand_export_string(n, DEFNAME), kind(n, "string"),
+    child(n, c1, _), kind(c1, "string_content"), node(_, c1, _, _, _), EXPORT = c1,
+    text(EXPORT, t2), text(DEFNAME, t2),
+    count : { child(n, c4, _), kind(c4, "string_start"), glob("**[fFbBtT]**", c4) } = 0, @doc(EXPORT) = @doc(DEFNAME).
+
+// all_elements(n): the JSON util `all-elements`, used where the JSON says `matches: "all-elements"`
+//   DEFNAME: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann202_all_elements(n: node, defname: loc)
+ann202_all_elements(n, DEFNAME) :- ann202_demand_all_elements(n, DEFNAME),
+    (kind(n, "list") ; kind(n, "tuple") ; kind(n, "expression_list")), child(n, c1, _),
+    ann202_export_entry(c1, DEFNAME).
+ann202_all_elements(n, DEFNAME) :- ann202_demand_all_elements(n, DEFNAME),
+    kind(n, "parenthesized_expression"), child(n, c2, _), ann202_all_elements(c2, DEFNAME).
+ann202_all_elements(n, DEFNAME) :- ann202_demand_all_elements(n, DEFNAME),
+    kind(n, "named_expression"), field(n, "value", c3), ann202_all_elements(c3, DEFNAME).
+ann202_all_elements(n, DEFNAME) :- ann202_demand_all_elements(n, DEFNAME), kind(n, "call"),
+    field(n, "function", c4),
+    ( ann202_list_or_tuple(c4)
+    ; kind(c4, "subscript"), field(c4, "value", c1), ann202_list_or_tuple(c1)
+    ),
+    field(n, "arguments", c6), kind(c6, "argument_list"), child(c6, c7, _),
+    child(_, c7, 0),
+    child(p8, c7, _), k10 = count : { child(p8, s9, _), precedes(c7, s9) }, k10 = 0,
+    ann202_all_arg(c7, DEFNAME).
+
+// all_arg(n): the JSON util `all-arg`, used where the JSON says `matches: "all-arg"`
+//   DEFNAME: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann202_all_arg(n: node, defname: loc)
+ann202_all_arg(n, DEFNAME) :- ann202_demand_all_arg(n, DEFNAME),
+    (kind(n, "list") ; kind(n, "set") ; kind(n, "tuple")), child(n, c1, _),
+    ann202_export_entry(c1, DEFNAME).
+ann202_all_arg(n, DEFNAME) :- ann202_demand_all_arg(n, DEFNAME), kind(n, "parenthesized_expression"),
+    child(n, c2, _), ann202_all_arg(c2, DEFNAME).
+
+// list_or_tuple(n): the JSON util `list-or-tuple`, used where the JSON says `matches: "list-or-tuple"`
+.decl ann202_list_or_tuple(n: node)
+ann202_list_or_tuple(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (global_ref(n, "list") ; global_ref(n, "tuple")),
+    (sym_of(n, "builtins.list") ; sym_of(n, "builtins.tuple")).
+
+// all_value(n): the JSON util `all-value`, used where the JSON says `matches: "all-value"`
+//   DEFNAME: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann202_all_value(n: node, defname: loc)
+ann202_all_value(n, DEFNAME) :- ann202_demand_all_value(n, DEFNAME), ann202_all_elements(n, DEFNAME).
+ann202_all_value(n, DEFNAME) :- ann202_demand_all_value(n, DEFNAME), kind(n, "binary_operator"),
+    ann202_all_binop(n, DEFNAME).
+ann202_all_value(n, DEFNAME) :- ann202_demand_all_value(n, DEFNAME),
+    kind(n, "parenthesized_expression"), child(n, c1, _), ann202_all_value(c1, DEFNAME).
+ann202_all_value(n, DEFNAME) :- ann202_demand_all_value(n, DEFNAME), kind(n, "assignment"),
+    field(n, "right", c2), ann202_all_value(c2, DEFNAME).
+
+// all_binop(n): the JSON util `all-binop`, used where the JSON says `matches: "all-binop"`
+//   DEFNAME: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann202_all_binop(n: node, defname: loc)
+ann202_all_binop(n, DEFNAME) :- ann202_demand_all_binop(n, DEFNAME), field(n, "right", c1),
+    ann202_all_elements(c1, DEFNAME).
+ann202_all_binop(n, DEFNAME) :- ann202_demand_all_binop(n, DEFNAME), field(n, "left", c2),
+    ann202_all_left(c2, DEFNAME).
+
+// all_left(n): the JSON util `all-left`, used where the JSON says `matches: "all-left"`
+//   DEFNAME: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann202_all_left(n: node, defname: loc)
+ann202_all_left(n, DEFNAME) :- ann202_demand_all_left(n, DEFNAME), ann202_all_elements(n, DEFNAME).
+ann202_all_left(n, DEFNAME) :- ann202_demand_all_left(n, DEFNAME), kind(n, "binary_operator"),
+    ann202_all_binop(n, DEFNAME).
+ann202_all_left(n, DEFNAME) :- ann202_demand_all_left(n, DEFNAME),
+    kind(n, "parenthesized_expression"), child(n, c1, _), kind(c1, "binary_operator"),
+    ann202_all_binop(c1, DEFNAME).
+
+// listed(n): the JSON util `listed`, used where the JSON says `matches: "listed"`
+.decl ann202_listed(n: node)
+ann202_listed(n) :- node(_, n, _, _, _),
+    count : { inside(n, p1, "module"), ann202_declares_all(p1) } = 0.
+ann202_listed(n) :- child(n, c2, _), kind(c2, "identifier"), node(_, c2, _, _, _), DEFNAME = c2,
+    inside(n, p3, "module"), within_stop(c4, p3, ann202_stop_11), ann202_all_assignment(c4),
+    field(c4, "right", c5), ann202_all_value(c5, DEFNAME).
+
+// public_class(n): the JSON util `public-class`, used where the JSON says `matches: "public-class"`
+.decl ann202_public_class(n: node)
+ann202_public_class(n) :- !ann202_alt_15(n),
+    ( inside(n, p1, "class_definition"), count : { inside(p1, p2, "class_definition"), node(_, p2, _, _, _) } = 0, ann202_listed(p1)
+    ; count : { inside(n, p3, "class_definition"), node(_, p3, _, _, _) } = 0, ann202_listed(n)
+    ).
+
+
+// method(n): the JSON util `method`, used where the JSON says `matches: "method"`
+.decl ann202_method(n: node)
+ann202_method(n) :- ann202_demand_method(n), ann202_up_1(n, p1).
+
+// accessor_object(n): the JSON util `accessor-object`, used where the JSON says `matches: "accessor-object"`
+//   FN: metavariable this relation binds for the calling rule
+.decl ann202_accessor_object(n: node, fn: loc)
+ann202_accessor_object(n, FN) :- kind(n, "identifier"), node(_, n, _, _, _), FN = n.
+ann202_accessor_object(n, FN) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ann202_accessor_object(c1, FN).
+
+// export_entry(n): the JSON util `export-entry`, used where the JSON says `matches: "export-entry"`
+//   DEFNAME: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann202_export_entry(n: node, defname: loc)
+ann202_export_entry(n, DEFNAME) :- ann202_demand_export_entry(n, DEFNAME), ann202_export_string(n, DEFNAME).
+ann202_export_entry(n, DEFNAME) :- ann202_demand_export_entry(n, DEFNAME),
+    kind(n, "parenthesized_expression"), child(n, c1, _), ann202_export_entry(c1, DEFNAME).
+
+// ANN202(n): a finding at node n, from clause `missing-return-type-private-function`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation ANN202(at: node, fn: loc) "Add a return type annotation to `{fn}` (for example `-> None` if it returns nothing)."
+    suppress noqa "ANN202"
+ANN202(n, FN) :- kind(n, "identifier"), node(_, n, _, _, _), FN = n, ann202_alt_27(n, FN).
+
+// ANN202_missing_return_type_function_in_private_module(n): a finding at node n, from clause `missing-return-type-function-in-private-module`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation ANN202_missing_return_type_function_in_private_module(at: node, fn: loc) code "ANN202" "Add a return type annotation to `{fn}` (for example `-> None` if it returns nothing)."
+    suppress noqa "ANN202"
+ANN202_missing_return_type_function_in_private_module(n, FN) :- kind(n, "identifier"),
+    node(_, n, _, _, _), FN = n, ann202_alt_36(n, FN).
+
+// demand_all_value: the rows of all_value its callers ask for (the metavariable columns they pass in)
+.decl ann202_demand_all_value(n: node, defname: loc)
+ann202_demand_all_value(c1, DEFNAME) :- ann202_demand_all_value(n, DEFNAME),
+    kind(n, "parenthesized_expression"), child(n, c1, _).
+ann202_demand_all_value(c2, DEFNAME) :- ann202_demand_all_value(n, DEFNAME), kind(n, "assignment"),
+    field(n, "right", c2).
+ann202_demand_all_value(c5, DEFNAME) :- child(n, c2, _), kind(c2, "identifier"),
+    node(_, c2, _, _, _), DEFNAME = c2, inside(n, p3, "module"), within_stop(c4, p3, ann202_stop_11),
+    ann202_all_assignment(c4), field(c4, "right", c5).
+
+// demand_alt_27: the rows of alt_27 its callers ask for (the metavariable columns they pass in)
+.decl ann202_demand_alt_27(n: node, fn: loc)
+ann202_demand_alt_27(n, FN) :- kind(n, "identifier"), node(_, n, _, _, _), FN = n.
+
+// demand_alt_36: the rows of alt_36 its callers ask for (the metavariable columns they pass in)
+.decl ann202_demand_alt_36(n: node, fn: loc)
+ann202_demand_alt_36(n, FN) :- kind(n, "identifier"), node(_, n, _, _, _), FN = n.
+
+// demand_all_binop: the rows of all_binop its callers ask for (the metavariable columns they pass in)
+.decl ann202_demand_all_binop(n: node, defname: loc)
+ann202_demand_all_binop(n, DEFNAME) :- ann202_demand_all_value(n, DEFNAME),
+    kind(n, "binary_operator").
+ann202_demand_all_binop(n, DEFNAME) :- ann202_demand_all_left(n, DEFNAME),
+    kind(n, "binary_operator").
+ann202_demand_all_binop(c1, DEFNAME) :- ann202_demand_all_left(n, DEFNAME),
+    kind(n, "parenthesized_expression"), child(n, c1, _), kind(c1, "binary_operator").
+
+// demand_all_left: the rows of all_left its callers ask for (the metavariable columns they pass in)
+.decl ann202_demand_all_left(n: node, defname: loc)
+ann202_demand_all_left(c2, DEFNAME) :- ann202_demand_all_binop(n, DEFNAME), field(n, "left", c2).
+
+// demand_overload_implementation: the rows of overload_implementation its callers ask for (the metavariable columns they pass in)
+.decl ann202_demand_overload_implementation(n: node, fn: loc)
+ann202_demand_overload_implementation(p1, FN) :- ann202_demand_alt_27(n, FN), field(p1, "name", n),
+    kind(p1, "function_definition"), ann202_method(p1).
+ann202_demand_overload_implementation(p10, FN) :- ann202_demand_alt_27(n, FN), field(p10, "name", n),
+    kind(p10, "function_definition").
+ann202_demand_overload_implementation(p1, FN) :- ann202_demand_alt_36(n, FN), field(p1, "name", n),
+    kind(p1, "function_definition"), ann202_method(p1).
+ann202_demand_overload_implementation(p6, FN) :- ann202_demand_alt_36(n, FN), field(p6, "name", n),
+    kind(p6, "function_definition").
+
+// demand_all_elements: the rows of all_elements its callers ask for (the metavariable columns they pass in)
+.decl ann202_demand_all_elements(n: node, defname: loc)
+ann202_demand_all_elements(c2, DEFNAME) :- ann202_demand_all_elements(n, DEFNAME),
+    kind(n, "parenthesized_expression"), child(n, c2, _).
+ann202_demand_all_elements(c3, DEFNAME) :- ann202_demand_all_elements(n, DEFNAME),
+    kind(n, "named_expression"), field(n, "value", c3).
+ann202_demand_all_elements(n, DEFNAME) :- ann202_demand_all_value(n, DEFNAME).
+ann202_demand_all_elements(c1, DEFNAME) :- ann202_demand_all_binop(n, DEFNAME),
+    field(n, "right", c1).
+ann202_demand_all_elements(n, DEFNAME) :- ann202_demand_all_left(n, DEFNAME).
+
+// demand_all_arg: the rows of all_arg its callers ask for (the metavariable columns they pass in)
+.decl ann202_demand_all_arg(n: node, defname: loc)
+ann202_demand_all_arg(c7, DEFNAME) :- ann202_demand_all_elements(n, DEFNAME), kind(n, "call"),
+    field(n, "function", c4),
+    ( ann202_list_or_tuple(c4)
+    ; kind(c4, "subscript"), field(c4, "value", c1), ann202_list_or_tuple(c1)
+    ),
+    field(n, "arguments", c6), kind(c6, "argument_list"), child(c6, c7, _),
+    child(_, c7, 0), child(p8, c7, _).
+ann202_demand_all_arg(c2, DEFNAME) :- ann202_demand_all_arg(n, DEFNAME),
+    kind(n, "parenthesized_expression"), child(n, c2, _).
+
+// demand_export_entry: the rows of export_entry its callers ask for (the metavariable columns they pass in)
+.decl ann202_demand_export_entry(n: node, defname: loc)
+ann202_demand_export_entry(c1, DEFNAME) :- ann202_demand_all_elements(n, DEFNAME),
+    (kind(n, "list") ; kind(n, "tuple") ; kind(n, "expression_list")), child(n, c1, _).
+ann202_demand_export_entry(c1, DEFNAME) :- ann202_demand_all_arg(n, DEFNAME),
+    (kind(n, "list") ; kind(n, "set") ; kind(n, "tuple")), child(n, c1, _).
+ann202_demand_export_entry(c1, DEFNAME) :- ann202_demand_export_entry(n, DEFNAME),
+    kind(n, "parenthesized_expression"), child(n, c1, _).
+
+// demand_export_string: the rows of export_string its callers ask for (the metavariable columns they pass in)
+.decl ann202_demand_export_string(n: node, defname: loc)
+ann202_demand_export_string(n, DEFNAME) :- ann202_demand_export_entry(n, DEFNAME).
+
+// demand_method: the nodes method is asked at (it looks at every ancestor of every node)
+.decl ann202_demand_method(n: node)
+ann202_demand_method(p1) :- ann202_demand_alt_27(n, FN), field(p1, "name", n),
+    kind(p1, "function_definition").
+ann202_demand_method(p1) :- ann202_demand_alt_36(n, FN), field(p1, "name", n),
+    kind(p1, "function_definition").
+ann202_demand_method(p6) :- ann202_demand_alt_36(n, FN), field(p6, "name", n),
+    kind(p6, "function_definition").
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl ann202_up_1(n: node, p: node)
+ann202_up_1(n, p) :- ann202_demand_method(n), within_stop(n, p, ann202_stop_11),
+    kind(p, "class_definition").
+
+// stop_11: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ann202_stop_11(kind: symbol)
+ann202_stop_11("function_definition"). ann202_stop_11("class_definition").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ann202_stop_1(n: node)
+ann202_stop_1(n) :- ann202_definition_statement(n).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl ann202_alt_2(n: node)
+ann202_alt_2(n) :- kind(n, "function_definition").
+ann202_alt_2(n) :- kind(n, "decorated_definition"), child(n, c1, _),
+    kind(c1, "function_definition").
+
+// stop_3(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ann202_stop_3(n: node)
+ann202_stop_3(n) :- ann202_holds_definition(n).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl ann202_alt_6(n: node)
+ann202_alt_6(n) :- ann202_imports_builtins(n).
+ann202_alt_6(n) :- inside(n, p1, "module"), within(c2, p1),
+    (kind(c2, "identifier") ; kind(c2, "dotted_name")), glob("staticmethod", c2),
+    site_scope(c2, "module"), !ann202_alt_10(c2).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl ann202_alt_10(n: node)
+ann202_alt_10(n) :- site_form(n, "annotation").
+ann202_alt_10(n) :- site_form(n, "except").
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+.decl ann202_alt_9(n: node)
+ann202_alt_9(n) :- ann202_imports_builtins(n).
+ann202_alt_9(n) :- inside(n, p1, "module"), within(c2, p1),
+    (kind(c2, "identifier") ; kind(c2, "dotted_name")), glob("classmethod", c2),
+    site_scope(c2, "module"), !ann202_alt_10(c2).
+
+// alt_15(n): the JSON `any`: n matches if any one of these rules does
+.decl ann202_alt_15(n: node)
+ann202_alt_15(n) :- ann202_underscore_named(n).
+ann202_alt_15(n) :- within(n, p1),
+    ( kind(p1, "function_definition")
+    ; kind(p1, "class_definition"), ann202_underscore_named(p1)
+    ).
+
+
+// alt_23(n): the JSON `any`: n matches if any one of these rules does
+.decl ann202_alt_23(n: node)
+ann202_alt_23(n) :- ann202_underscore_named(n).
+ann202_alt_23(n) :- node(_, n, _, _, _), !ann202_listed(n).
+
+// alt_24(n): the JSON `any`: n matches if any one of these rules does
+.decl ann202_alt_24(n: node)
+ann202_alt_24(n) :- within_stop(n, p1, ann202_stop_11), kind(p1, "function_definition").
+ann202_alt_24(n) :- count : { within(n, p2), (kind(p2, "function_definition") ; kind(p2, "class_definition")) } = 0,
+    ann202_alt_23(n).
+
+// alt_27(n): the JSON `any`: n matches if any one of these rules does
+//   FN: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann202_alt_27(n: node, fn: loc)
+ann202_alt_27(n, FN) :- ann202_demand_alt_27(n, FN),
+    count : { prefix("__", n), suffix("__", n) } = 0, field(p1, "name", n),
+    kind(p1, "function_definition"),
+    count : { field(p1, "return_type", c2), kind(c2, "type") } = 0,
+    !ann202_overload_implementation(p1, FN), ann202_method(p1),
+    count : { child(p3, p1, _), kind(p3, "decorated_definition"), child(p3, c4, _), kind(c4, "decorator"), child(c4, c5, _), ann202_static_or_class_expr(c5) } = 0,
+    ( within_stop(p1, p1_1, ann202_stop_11), kind(p1_1, "class_definition"), !ann202_public_class(p1_1)
+    ; ann202_underscore_named(p1)
+    ; child(p2_3, p1, _), kind(p2_3, "decorated_definition"), child(p2_3, c3_3, _), kind(c3_3, "decorator"), child(c3_3, c4_3, _), ann202_accessor_expr(c4_3, FN)
+    ).
+
+ann202_alt_27(n, FN) :- ann202_demand_alt_27(n, FN), field(p10, "name", n),
+    kind(p10, "function_definition"),
+    count : { field(p10, "return_type", c11), kind(c11, "type") } = 0,
+    !ann202_overload_implementation(p10, FN), ann202_alt_24(p10).
+
+// alt_36(n): the JSON `any`: n matches if any one of these rules does
+//   FN: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann202_alt_36(n: node, fn: loc)
+ann202_alt_36(n, FN) :- ann202_demand_alt_36(n, FN),
+    count : { prefix("__", n), suffix("__", n) } = 0, field(p1, "name", n),
+    kind(p1, "function_definition"),
+    count : { field(p1, "return_type", c2), kind(c2, "type") } = 0,
+    !ann202_overload_implementation(p1, FN), ann202_method(p1),
+    count : { child(p3, p1, _), kind(p3, "decorated_definition"), child(p3, c4, _), kind(c4, "decorator"), child(c4, c5, _), ann202_static_or_class_expr(c5) } = 0.
+ann202_alt_36(n, FN) :- ann202_demand_alt_36(n, FN), field(p6, "name", n),
+    kind(p6, "function_definition"),
+    count : { field(p6, "return_type", c7), kind(c7, "type") } = 0,
+    !ann202_overload_implementation(p6, FN), !ann202_method(p6).

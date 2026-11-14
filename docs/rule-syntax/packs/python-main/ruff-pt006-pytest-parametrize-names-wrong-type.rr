@@ -1,0 +1,126 @@
+.policy "ruff-pt006-pytest-parametrize-names-wrong-type" revision 1
+.guests off
+.description "Pass pytest.mark.parametrize names as a tuple of strings, or a plain string for a single name, not a comma-separated string or a list."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// parametrize(n): the JSON util `parametrize`, used where the JSON says `matches: "parametrize"`
+.decl pt006_parametrize(n: node)
+pt006_parametrize(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt006_parametrize(c1).
+pt006_parametrize(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "pytest.mark.parametrize").
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl pt006_positional(n: node)
+pt006_positional(n) :- node(_, n, _, _, _), !pt006_alt_1(n).
+
+// pos0(n): the JSON util `pos0`, used where the JSON says `matches: "pos0"`
+.decl pt006_pos0(n: node)
+pt006_pos0(n) :- pt006_positional(n), !pt006_alt_2(n).
+
+// pos1(n): the JSON util `pos1`, used where the JSON says `matches: "pos1"`
+.decl pt006_pos1(n: node)
+pt006_pos1(n) :- pt006_positional(n), child(p1, n, _), pt006_counted_3(n),
+    k3 = count : { child(p1, s2, _), precedes(s2, n), pt006_counted_3(s2) }, k3 = 1,
+    !pt006_alt_4(n).
+
+// kw_names(n): the JSON util `kw-names`, used where the JSON says `matches: "kw-names"`
+.decl pt006_kw_names(n: node)
+pt006_kw_names(n) :- kind(n, "keyword_argument"), field(n, "name", c1), glob("argnames", c1).
+
+// kw_values(n): the JSON util `kw-values`, used where the JSON says `matches: "kw-values"`
+.decl pt006_kw_values(n: node)
+pt006_kw_values(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("argvalues", c1).
+
+// param_call(n): the JSON util `param-call`, used where the JSON says `matches: "param-call"`
+.decl pt006_param_call(n: node)
+pt006_param_call(n) :- kind(n, "call"), field(n, "function", c1), pt006_parametrize(c1),
+    field(n, "arguments", c2), kind(c2, "argument_list"), child(c2, c3, _),
+    (pt006_kw_names(c3) ; pt006_pos0(c3)), child(c2, c4, _), (pt006_kw_values(c4) ; pt006_pos1(c4)).
+
+// plain_str(n): the JSON util `plain-str`, used where the JSON says `matches: "plain-str"`
+.decl pt006_plain_str(n: node)
+pt006_plain_str(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[bBfFtT]**", c1) } = 0.
+pt006_plain_str(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), child(c2, c3, _), kind(c3, "string_start"), glob("**[bBfFtT]**", c3) } = 0.
+pt006_plain_str(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), pt006_plain_str(c4).
+
+// multi_str(n): the JSON util `multi-str`, used where the JSON says `matches: "multi-str"`
+.decl pt006_multi_str(n: node)
+pt006_multi_str(n) :- pt006_plain_str(n), (kind(n, "string") ; kind(n, "concatenated_string")),
+    value(n, v1), match(".*[^ \\t\\f,][^,]*,[ \\t\\f,]*[^ \\t\\f,].*", v1).
+pt006_multi_str(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pt006_multi_str(c2).
+
+// elem(n): the JSON util `elem`, used where the JSON says `matches: "elem"`
+.decl pt006_elem(n: node)
+pt006_elem(n) :- node(_, n, _, _, _), !pt006_alt_7(n).
+
+// single_seq(n): the JSON util `single-seq`, used where the JSON says `matches: "single-seq"`
+.decl pt006_single_seq(n: node)
+pt006_single_seq(n) :- (kind(n, "tuple") ; kind(n, "list")), child(n, c1, _), pt006_elem(c1),
+    count : { child(n, c2, _), pt006_elem(c2), precedes(s3, c2), pt006_elem(s3) } = 0.
+
+// names_slot(n): the JSON util `names-slot`, used where the JSON says `matches: "names-slot"`
+.decl pt006_names_slot(n: node)
+pt006_names_slot(n) :- field(p1, "value", n), pt006_kw_names(p1), child(p2, p1, _),
+    kind(p2, "argument_list"), field(p3, "arguments", p2), pt006_param_call(p3).
+pt006_names_slot(n) :- pt006_pos0(n), child(p4, n, _), kind(p4, "argument_list"),
+    field(p5, "arguments", p4), pt006_param_call(p5),
+    count : { child(p4, c6, _), pt006_kw_names(c6) } = 0.
+
+// names_expr(n): the JSON util `names-expr`, used where the JSON says `matches: "names-expr"`
+.decl pt006_names_expr(n: node)
+pt006_names_expr(n) :- pt006_names_slot(n).
+pt006_names_expr(n) :- child(p1, n, _), kind(p1, "parenthesized_expression"), pt006_names_expr(p1).
+
+// PT006(n, detail): findings from clauses `csv-names`, `single-name-sequence`, `list-names`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+.violation PT006(at: node, detail: symbol) "Pass {detail}."
+    suppress noqa "PT006"
+PT006(n, "several parametrize names as a tuple of strings, `(\"a\", \"b\")`, instead of one comma-separated string") :-
+    ( kind(n, "string")
+    ; kind(n, "concatenated_string")
+    ; kind(n, "parenthesized_expression")
+    ),
+    pt006_multi_str(n), pt006_names_slot(n).
+PT006(n, "a single parametrize name as a plain string and unpack each one-item row of values the same way; leave it if the rows are not literal one-item sequences") :- pt006_single_seq(n),
+    pt006_names_expr(n).
+PT006(n, "the parametrize names as a tuple, `(\"a\", \"b\")`, instead of a list") :- kind(n, "list"),
+    !pt006_single_seq(n), pt006_names_expr(n).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pt006_alt_1(n: node)
+pt006_alt_1(n) :-
+    ( kind(n, "keyword_argument")
+    ; kind(n, "dictionary_splat")
+    ; kind(n, "comment")
+    ; kind(n, "line_continuation")
+    ).
+
+pt006_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pt006_alt_2(n: node)
+pt006_alt_2(n) :- kind(n, "list_splat").
+pt006_alt_2(n) :- precedes(s1, n), pt006_positional(s1).
+
+// counted_3(n): the siblings the JSON `nthChild.ofRule` counts
+.decl pt006_counted_3(n: node)
+pt006_counted_3(n) :- pt006_positional(n).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl pt006_alt_4(n: node)
+pt006_alt_4(n) :- kind(n, "list_splat").
+pt006_alt_4(n) :- precedes(s1, n), kind(s1, "list_splat").
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+.decl pt006_alt_7(n: node)
+pt006_alt_7(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pt006_alt_7(n) :- node(_, n, _, _, _), glob("[\\[\\](),]", n).

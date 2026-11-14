@@ -99,11 +99,11 @@ pub(super) fn as_outputs(prog: &mut Program, wanted: &[String]) {
     use crate::code_rule_dsl::logic::front::{Atom, Rule, Term};
     prog.outputs.clear();
     for rel in wanted {
-        let Some(cols) = prog.decls.get(rel).cloned() else { continue };
-        let args: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("c{i}"))).collect();
-        let atom = |r: String| Atom { rel: r.into(), args: args.clone(), neg: false, gated: false };
-        prog.decls.insert(copy(rel), cols);
-        prog.rules.push(Rule { head: atom(copy(rel)), body: vec![Literal::Atom(atom(rel.clone()))] });
+        let Some(cols) = prog.decls.get(rel.as_str()).cloned() else { continue };
+        let args: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("c{i}").into())).collect();
+        let atom = |r: String| Atom { rel: r.into(), args: args.clone().into(), neg: false, gated: false };
+        prog.decls.insert(copy(rel).into(), cols);
+        prog.rules.push(Rule { head: atom(copy(rel)), body: [Literal::Atom(atom(rel.clone()))].into() });
         prog.outputs.push(copy(rel));
     }
 }
@@ -144,14 +144,14 @@ pub(super) fn fold(
     };
     for rel in &wanted {
         let text = texts.get(rel).map_or("", String::as_str);
-        let types: Vec<String> = prog.decls.get(rel).map(|d| d.iter().map(|(_, t)| t.clone()).collect()).unwrap_or_default();
+        let types: Vec<String> = prog.decls.get(rel.as_str()).map(|d| d.iter().map(|(_, t)| t.clone()).map(String::from).collect()).unwrap_or_default();
         let mut rows = Vec::new();
         for line in text.lines() {
             let vals: Vec<&str> = line.split('\t').collect();
             if vals.len() != types.len() {
                 return Err(super::super::Error::Plan(format!("the run's constant {rel}: a row of {} values, not {}: {line:?}", vals.len(), types.len())));
             }
-            rows.push(vals.iter().zip(&types).map(|(v, t)| if t == "number" || t == "int" { v.parse::<i64>().map_or_else(|_| Value::Str((*v).to_owned()), Value::Int) } else { Value::Str((*v).to_owned()) }).collect());
+            rows.push(vals.iter().zip(&types).map(|(v, t)| if t == "number" || t == "int" { v.parse::<i64>().map_or_else(|_| Value::Str((*v).to_owned().into()), Value::Int) } else { Value::Str((*v).to_owned().into()) }).collect());
         }
         prog.facts.insert(rel.clone(), rows);
     }

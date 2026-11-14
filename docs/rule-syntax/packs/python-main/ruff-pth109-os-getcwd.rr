@@ -1,0 +1,181 @@
+.policy "ruff-pth109-os-getcwd" revision 1
+.guests off
+.description "Use Path.cwd() instead of os.getcwd() or os.getcwdb(); path objects read better than string-based os calls."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PTH109(n, detail): findings from clauses `os-getcwd`, `os-getcwdb`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PTH109(at: node, f: node, detail: symbol) "Use `Path.cwd()` from pathlib instead of {detail} is required."
+    suppress noqa "PTH109"
+PTH109(F, n, "`os.getcwd()`; it returns a `Path`, so wrap it in `str()` or adjust the code where a string") :- kind(n, "call"),
+    field(n, "function", c1), pth109_callee(c1, F).
+PTH109(F, n, "`os.getcwd()`; it returns a `Path`, so wrap it in `str()` or adjust the code where a string") :- pth109_ann_string(n, F).
+PTH109(F, n, "`os.getcwdb()`; it returns a `Path`, not bytes, so leave it where a bytes value") :- kind(n, "call"),
+    field(n, "function", c1), pth109_callee_os_getcwdb(c1, F).
+PTH109(F, n, "`os.getcwdb()`; it returns a `Path`, not bytes, so leave it where a bytes value") :- pth109_ann_string_os_getcwdb(n, F).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl pth109_target(n: node)
+pth109_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "os.getcwd").
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth109_callee(n: node, f: loc)
+pth109_callee(n, F) :- pth109_target(n), node(_, n, _, _, _), F = n.
+pth109_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth109_callee(c1, F).
+
+// ann_args(n): the JSON util `ann-args`, used where the JSON says `matches: "ann-args"`
+.decl pth109_ann_args(n: node)
+pth109_ann_args(n) :- (kind(n, "argument_list") ; kind(n, "generator_expression")).
+
+// ann_call(n): the JSON util `ann-call`, used where the JSON says `matches: "ann-call"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth109_ann_call(n: node, f: loc)
+pth109_ann_call(n, F) :- kind(n, "call"), child(n, c1, _), pth109_callee(c1, F),
+    next_sibling(c1, s2), pth109_ann_args(s2).
+
+// arg_name(n): the JSON util `arg-name`, used where the JSON says `matches: "arg-name"`
+.decl pth109_arg_name(n: node)
+pth109_arg_name(n) :- kind(n, "identifier"), !pth109_alt_1(n).
+
+// ann_string(n): the JSON util `ann-string`, used where the JSON says `matches: "ann-string"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth109_ann_string(n: node, f: loc)
+pth109_ann_string(n, F) :- kind(n, "string"),
+    count : { has(n, c1, "escape_sequence"), node(_, c1, _, _, _) } = 0,
+    parsed(n, "annotation", r2), within(c3, r2), pth109_alt_2(c3, F).
+pth109_ann_string(n, F) :- pth109_alt_3(n), parsed(n, "annotation", r5), within(c6, r5),
+    pth109_alt_5(c6, F).
+
+// target_os_getcwdb(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl pth109_target_os_getcwdb(n: node)
+pth109_target_os_getcwdb(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "os.getcwdb").
+
+// callee_os_getcwdb(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth109_callee_os_getcwdb(n: node, f: loc)
+pth109_callee_os_getcwdb(n, F) :- pth109_target_os_getcwdb(n), node(_, n, _, _, _), F = n.
+pth109_callee_os_getcwdb(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pth109_callee_os_getcwdb(c1, F).
+
+// ann_args_os_getcwdb(n): the JSON util `ann-args`, used where the JSON says `matches: "ann-args"`
+.decl pth109_ann_args_os_getcwdb(n: node)
+pth109_ann_args_os_getcwdb(n) :- (kind(n, "argument_list") ; kind(n, "generator_expression")).
+
+// ann_call_os_getcwdb(n): the JSON util `ann-call`, used where the JSON says `matches: "ann-call"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth109_ann_call_os_getcwdb(n: node, f: loc)
+pth109_ann_call_os_getcwdb(n, F) :- kind(n, "call"), child(n, c1, _),
+    pth109_callee_os_getcwdb(c1, F), next_sibling(c1, s2), pth109_ann_args_os_getcwdb(s2).
+
+// arg_name_os_getcwdb(n): the JSON util `arg-name`, used where the JSON says `matches: "arg-name"`
+.decl pth109_arg_name_os_getcwdb(n: node)
+pth109_arg_name_os_getcwdb(n) :- kind(n, "identifier"), !pth109_alt_1(n).
+
+// ann_string_os_getcwdb(n): the JSON util `ann-string`, used where the JSON says `matches: "ann-string"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth109_ann_string_os_getcwdb(n: node, f: loc)
+pth109_ann_string_os_getcwdb(n, F) :- kind(n, "string"),
+    count : { has(n, c1, "escape_sequence"), node(_, c1, _, _, _) } = 0,
+    parsed(n, "annotation", r2), within(c3, r2), pth109_alt_8(c3, F).
+pth109_ann_string_os_getcwdb(n, F) :- pth109_alt_3(n), parsed(n, "annotation", r5), within(c6, r5),
+    pth109_alt_11(c6, F).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth109_tok_follows_1(n: node)
+.stored pth109_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth109_tok_follows_1(n) :- next_sibling(s1, n), glob(".", s1).
+pth109_tok_follows_1(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("\\.", t2).
+pth109_tok_follows_1(n) :- structural_before(n, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g3).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth109_tok_precedes_2(n: node)
+.stored pth109_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth109_tok_precedes_2(n) :- next_sibling(n, s8), glob("=", s8).
+pth109_tok_precedes_2(n) :- structural_after(n, g10), match("\\s*", g10), child(p11, n, _),
+    node(_, n, _, _, en14), o12 = en14 + strlen(g10), token(p11, _, t9, o12, _),
+    match("=", t9).
+pth109_tok_precedes_2(n) :- structural_after(n, g10),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g10).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth109_tok_follows_3(n: node)
+.stored pth109_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth109_tok_follows_3(n) :- next_sibling(s9, n), glob(".", s9).
+pth109_tok_follows_3(n) :- structural_before(n, g11), match("\\s*", g11), child(p12, n, _),
+    node(_, n, _, st14, _), o13 = st14 - strlen(g11), token(p12, _, t10, _, o13),
+    match("\\.", t10).
+pth109_tok_follows_3(n) :- structural_before(n, g11),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g11).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth109_tok_follows_4(n: node)
+.stored pth109_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth109_tok_follows_4(n) :- next_sibling(s2, n), glob(".", s2).
+pth109_tok_follows_4(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("\\.", t3).
+pth109_tok_follows_4(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g4).
+
+// tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth109_tok_follows_5(n: node)
+.stored pth109_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth109_tok_follows_5(n) :- next_sibling(s3, n), glob(".", s3).
+pth109_tok_follows_5(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match("\\.", t4).
+pth109_tok_follows_5(n) :- structural_before(n, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g5).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pth109_alt_1(n: node)
+pth109_alt_1(n) :- pth109_tok_follows_1(n).
+pth109_alt_1(n) :- pth109_tok_precedes_2(n), child(p15, n, _), kind(p15, "keyword_argument").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   F: metavariable this relation binds for the calling rule
+.decl pth109_alt_2(n: node, f: loc)
+pth109_alt_2(n, F) :- pth109_ann_call(n, F).
+pth109_alt_2(n, F) :- pth109_ann_string(n, F).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl pth109_alt_3(n: node)
+pth109_alt_3(n) :- kind(n, "concatenated_string").
+pth109_alt_3(n) :- kind(n, "string"), has(n, c1, "escape_sequence").
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+//   F: metavariable this relation binds for the calling rule
+.decl pth109_alt_5(n: node, f: loc)
+pth109_alt_5(n, F) :- pth109_ann_call(n, F), child(n, c1, _), pth109_callee(c1, F), pth109_alt_10(c1),
+    count : { child(n, c10, _), pth109_ann_args(c10), within(c11, c10), pth109_arg_name(c11), count : { node(_, c11, _, _, _), H = c11 } = 0 } = 0.
+pth109_alt_5(n, F) :- pth109_ann_string(n, F).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+//   F: metavariable this relation binds for the calling rule
+.decl pth109_alt_8(n: node, f: loc)
+pth109_alt_8(n, F) :- pth109_ann_call_os_getcwdb(n, F).
+pth109_alt_8(n, F) :- pth109_ann_string_os_getcwdb(n, F).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl pth109_alt_10(n: node)
+pth109_alt_10(n) :- kind(n, "identifier"), node(_, n, _, _, _), H = n.
+pth109_alt_10(n) :- has(n, c1, "identifier"), !pth109_tok_follows_4(c1), node(_, c1, _, _, _), H = c1.
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+//   F: metavariable this relation binds for the calling rule
+.decl pth109_alt_11(n: node, f: loc)
+pth109_alt_11(n, F) :- pth109_ann_call_os_getcwdb(n, F), child(n, c1, _), pth109_callee_os_getcwdb(c1, F),
+    pth109_alt_10(c1),
+    count : { child(n, c10, _), pth109_ann_args_os_getcwdb(c10), within(c11, c10), pth109_arg_name_os_getcwdb(c11), count : { node(_, c11, _, _, _), H = c11 } = 0 } = 0.
+pth109_alt_11(n, F) :- pth109_ann_string_os_getcwdb(n, F).

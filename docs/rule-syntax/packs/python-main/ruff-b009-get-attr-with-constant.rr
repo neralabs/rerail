@@ -1,0 +1,58 @@
+.policy "ruff-b009-get-attr-with-constant" revision 1
+.guests off
+.description "Use plain attribute access instead of getattr() with a constant attribute name; it is no safer and harder to read."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B009(n): a finding at node n, from clause `getattr-with-constant`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on FUNC, OBJ, NAME are added to every rule.
+.violation B009(at: node) "Do not call `getattr` with a constant attribute value. It is not any safer than normal property access."
+    suppress noqa "B009"
+B009(n) :- kind(n, "call"), n ~ `$FUNC($OBJ, $NAME)`, child(n, c1, _), b009_no_keywords(c1),
+    b009_callee(FUNC), b009_positional(OBJ), b009_identifier_literal(NAME).
+
+// ref_getattr(n): the JSON util `ref-getattr`, used where the JSON says `matches: "ref-getattr"`
+.decl b009_ref_getattr(n: node)
+b009_ref_getattr(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "getattr"), sym_of(n, "builtins.getattr").
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl b009_callee(n: node)
+b009_callee(n) :- b009_ref_getattr(n).
+b009_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), b009_callee(c1).
+
+// identifier_literal(n): the JSON util `identifier-literal`, used where the JSON says `matches: "identifier-literal"`
+.decl b009_identifier_literal(n: node)
+b009_identifier_literal(n) :-
+    ( kind(n, "string"), match("[rRuU]{0,2}['\"].*", n)
+    ; kind(n, "concatenated_string"), count : { child(n, c1, _), kind(c1, "string"), !match("[rRuU]{0,2}['\"].*", c1) } = 0
+    ),
+    value(n, v2), match("[\\p{XID_Start}_]\\p{XID_Continue}*", v2), !b009_alt_2(n).
+b009_identifier_literal(n) :- kind(n, "parenthesized_expression"), child(n, c6, _),
+    b009_identifier_literal(c6).
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl b009_positional(n: node)
+b009_positional(n) :- node(_, n, _, _, _), !kind(n, "keyword_argument"),
+    !kind(n, "dictionary_splat"), !kind(n, "list_splat").
+
+// argument(n): the JSON util `argument`, used where the JSON says `matches: "argument"`
+.decl b009_argument(n: node)
+b009_argument(n) :- node(_, n, _, _, _), !kind(n, "keyword_argument"),
+    !kind(n, "dictionary_splat").
+
+// no_keywords(n): the JSON util `no-keywords`, used where the JSON says `matches: "no-keywords"`
+.decl b009_no_keywords(n: node)
+b009_no_keywords(n) :- kind(n, "argument_list"),
+    count : { child(n, c1, _), (kind(c1, "keyword_argument") ; kind(c1, "dictionary_splat")) } = 0.
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl b009_alt_2(n: node)
+b009_alt_2(n) :- value(n, v1), glob("{False,None,True,and,as,assert,async,await,break,class,continue,def,del,elif,else,except,finally,for,from,global,if,import,in,is,lambda,nonlocal,not,or,pass,raise,return,try,while,with,yield}", v1).
+b009_alt_2(n) :- value(n, v2), prefix("__", v2),
+    count : { value(n, v3), suffix("__", v3) } = 0.

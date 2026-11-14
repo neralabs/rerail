@@ -1,0 +1,40 @@
+.policy "ruff-up005-deprecated-unittest-alias" revision 1
+.guests off
+.description "Use the current unittest assertion methods instead of their deprecated aliases; the aliases were removed in Python 3.12."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// UP005(n): a finding at node n, from clause `deprecated-unittest-alias`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes T0, T1, T2, T3, T4, T5, T6, T7, T8, TARGET from other metavariables' text; its literals end each rule.
+.violation UP005(at: node, alias: loc, target: symbol) "Replace `self.{alias}` with `self.{target}`; the alias is deprecated and was removed in Python 3.12. Leave it if this class defines its own `{alias}`."
+    suppress noqa "UP005"
+UP005(n, ALIAS, TARGET) :- kind(n, "attribute"), up005_callee_position(n),
+    field(n, "object", c2), up005_self_name(c2), field(n, "attribute", c3),
+    kind(c3, "identifier"),
+    glob("{assertAlmostEquals,assertEquals,assertNotAlmostEquals,assertNotEquals,assertNotRegexpMatches,assertRaisesRegexp,assertRegexpMatches,assert_,failIf,failIfAlmostEqual,failIfEqual,failUnless,failUnlessAlmostEqual,failUnlessEqual,failUnlessRaises}", c3),
+    node(_, c3, _, _, _), ALIAS = c3, text(ALIAS, t1),
+    T0 = @replace_all(t1, "^(?:assertAlmostEquals|failUnlessAlmostEqual)$", "assertAlmostEqual"),
+    T1 = @replace_all(T0, "^(?:assertEquals|failUnlessEqual)$", "assertEqual"),
+    T2 = @replace_all(T1, "^(?:assertNotAlmostEquals|failIfAlmostEqual)$", "assertNotAlmostEqual"),
+    T3 = @replace_all(T2, "^(?:assertNotEquals|failIfEqual)$", "assertNotEqual"),
+    T4 = @replace_all(T3, "^(?:assertNotRegexpMatches)$", "assertNotRegex"),
+    T5 = @replace_all(T4, "^(?:assertRaisesRegexp)$", "assertRaisesRegex"),
+    T6 = @replace_all(T5, "^(?:assertRegexpMatches)$", "assertRegex"),
+    T7 = @replace_all(T6, "^(?:assert_|failUnless)$", "assertTrue"),
+    T8 = @replace_all(T7, "^(?:failIf)$", "assertFalse"),
+    TARGET = @replace_all(T8, "^(?:failUnlessRaises)$", "assertRaises").
+
+// self_name(n): the JSON util `self-name`, used where the JSON says `matches: "self-name"`
+.decl up005_self_name(n: node)
+up005_self_name(n) :- kind(n, "identifier"), glob("self", n).
+up005_self_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), up005_self_name(c1).
+
+// callee_position(n): the JSON util `callee-position`, used where the JSON says `matches: "callee-position"`
+.decl up005_callee_position(n: node)
+up005_callee_position(n) :- field(p1, "function", n), kind(p1, "call").
+up005_callee_position(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"),
+    up005_callee_position(p2).

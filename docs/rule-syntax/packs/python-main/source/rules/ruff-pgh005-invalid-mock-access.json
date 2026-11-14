@@ -1,0 +1,150 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pgh005-invalid-mock-access",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Call mock assertion methods instead of only referencing them, and use their real assert-prefixed names; a bare attribute or an invented method name verifies nothing.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "uncalled-mock-method",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "statement-expression": {
+              "inside": {
+                "stopBy": "neighbor",
+                "any": [
+                  {
+                    "kind": "expression_statement",
+                    "not": {
+                      "has": {
+                        "stopBy": "neighbor",
+                        "regex": "^,$"
+                      }
+                    }
+                  },
+                  {
+                    "kind": "parenthesized_expression",
+                    "matches": "statement-expression"
+                  }
+                ]
+              }
+            }
+          },
+          "rule": {
+            "kind": "attribute",
+            "pattern": "$OBJ.$METHOD",
+            "matches": "statement-expression"
+          },
+          "constraints": {
+            "METHOD": {
+              "regex": "^(?:assert_any_call|assert_called|assert_called_once|assert_called_once_with|assert_called_with|assert_has_calls|assert_not_called|assert_awaited|assert_awaited_once|assert_awaited_with|assert_awaited_once_with|assert_any_await|assert_has_awaits|assert_not_awaited)$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PGH005",
+        "message": "Call `$METHOD(...)` with the expected arguments; written as a bare attribute it only reads the method and asserts nothing.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PGH005"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "non-existent-mock-method",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "assert-test": {
+              "any": [
+                {
+                  "follows": {
+                    "stopBy": {
+                      "not": {
+                        "kind": "line_continuation"
+                      }
+                    },
+                    "regex": "^assert$"
+                  },
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "assert_statement"
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "assert-test"
+                  }
+                }
+              ]
+            },
+            "callee": {
+              "any": [
+                {
+                  "kind": "attribute",
+                  "pattern": "$OBJ.$METHOD"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "callee"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "matches": "assert-test",
+            "any": [
+              {
+                "kind": "attribute",
+                "pattern": "$OBJ.$METHOD"
+              },
+              {
+                "kind": "call",
+                "has": {
+                  "field": "function",
+                  "matches": "callee"
+                }
+              }
+            ]
+          },
+          "constraints": {
+            "METHOD": {
+              "regex": "^(?:any_call|called_once|called_once_with|called_with|has_calls|not_called|awaited|awaited_once|awaited_with|awaited_once_with|any_await|has_awaits|not_awaited)$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PGH005",
+        "message": "`$METHOD` is not a mock method, so on a mock this assert always passes; call `assert_$METHOD(...)` as a plain statement. Leave it if the object is not a mock and defines `$METHOD`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PGH005"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

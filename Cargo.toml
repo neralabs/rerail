@@ -1,5 +1,5 @@
 [workspace]
-members = ["native", "accel", "forest", "native/crates/compiler", "native/crates/rr_syntax", "native/crates/tape_format", "native/crates/parser_tests", "native/crates/prof", "native/crates/metal", "native/crates/rr_parser", "native/crates/store", "native/crates/device_metal", "native/crates/facts", "native/crates/lang", "native/crates/lang_ecma", "native/crates/lang_json", "native/crates/lang_php", "native/crates/lang_python", "native/crates/lang_rust", "native/crates/lang_sql", "native/crates/logic", "native/crates/rr", "native/crates/sessions", "native/crates/transducer", "native/crates/w", "native/crates/rr_aot", "native/crates/rr_aot_gen", "native/crates/simdjson", "native/crates/simdjson_native"]
+members = ["native", "accel", "forest", "native/crates/compiler", "native/crates/rr_syntax", "native/crates/tape_format", "native/crates/parser_tests", "native/crates/prof", "native/crates/metal", "native/crates/rr_parser", "native/crates/store", "native/crates/device_metal", "native/crates/facts", "native/crates/lang", "native/crates/lang_ecma", "native/crates/lang_json", "native/crates/lang_php", "native/crates/lang_python", "native/crates/lang_rust", "native/crates/lang_sql", "native/crates/logic", "native/crates/rr", "native/crates/sessions", "native/crates/transducer", "native/crates/w", "native/crates/rr_aot", "native/crates/rr_aot_gen", "native/crates/simdjson", "native/crates/simdjson_native", "native/crates/python_lean", "native/crates/simd8"]
 # The Bitlex evaluator keeps its own workspace (its tree-sitter oracle); the engine uses its library.
 exclude = ["scripts/profiling/reachability", "scripts/profiling/preparation", "tools/bitlex"]
 resolver = "2"
@@ -21,6 +21,20 @@ opt-level = 3
 opt-level = 3
 
 [profile.dev.package.rerail-simdjson-native]
+opt-level = 3
+
+# The lean Python parser (`rerail-python-lean`) runs a step per token of every Python file, as simdjson's does.
+[profile.dev.package.rerail-python-lean]
+opt-level = 3
+
+# simdjson's operations (`rerail-simd8`) are each a few instructions, inlined into the kernels that use them.
+[profile.dev.package.rerail-simd8]
+opt-level = 3
+
+# The tape writer (`rerail-tape-format`) runs a step per node of every parser that writes the tape
+# directly (the lean Python parser, `.rr`'s): its non-generic code (`block`, `put`) unoptimized was
+# most of the lean parser's time in dev builds.
+[profile.dev.package.rerail-tape-format]
 opt-level = 3
 
 # Dev and test builds keep file and line numbers (panics, backtraces) but not full debug info: the

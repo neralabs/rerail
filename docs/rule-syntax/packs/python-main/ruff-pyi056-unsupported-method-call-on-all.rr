@@ -1,0 +1,72 @@
+.policy "ruff-pyi056-unsupported-method-call-on-all" revision 1
+.guests off
+.description "Use += to add names to the module's export list instead of calling append, extend or remove on it; type checkers do not all support those method calls."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PYI056(n, detail): findings from clauses `add-to-all`, `remove-from-all`, `method-call-on-all-in-string-annotation`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI056(at: node, attr: node, detail: symbol) "{detail}."
+    suppress noqa "PYI056"
+PYI056(ATTR, n, "Add names with `__all__ += [...]` instead of calling `.append()` or `.extend()` on `__all__`; type checkers support `+=` reliably but not every method call") :- kind(n, "attribute"),
+    pyi056_callee(n), field(n, "object", c1), pyi056_all_ref(c1), field(n, "attribute", c2),
+    glob("{append,extend}", c2),
+    match("(?:\\*(?:\\s|#[^\\n]*)*)?(?P<ATTR>[^*][\\s\\S]*)", n).
+PYI056(ATTR, n, "Build `__all__` without that name instead of calling `.remove()`; if it depends on a condition, add the name back with `__all__ += [...]` under the opposite condition") :- kind(n, "attribute"),
+    pyi056_callee_remove_from_all(n), field(n, "object", c1), pyi056_all_ref_remove_from_all(c1),
+    field(n, "attribute", c2), glob("remove", c2),
+    match("(?:\\*(?:\\s|#[^\\n]*)*)?(?P<ATTR>[^*][\\s\\S]*)", n).
+PYI056(ATTR, n, "Change `__all__` with `+=` (or build it without the name) instead of calling `.append()`, `.extend()` or `.remove()` on it; type checkers do not all support those calls") :- pyi056_in_annotation(n, ATTR).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl pyi056_callee(n: node)
+pyi056_callee(n) :- field(p1, "function", n), kind(p1, "call").
+pyi056_callee(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"), pyi056_callee(p2).
+pyi056_callee(n) :- child(p3, n, _), kind(p3, "list_splat"), field(p4, "function", p3),
+    kind(p4, "call").
+
+// all_ref(n): the JSON util `all-ref`, used where the JSON says `matches: "all-ref"`
+.decl pyi056_all_ref(n: node)
+pyi056_all_ref(n) :- kind(n, "identifier"), glob("__all__", n).
+pyi056_all_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi056_all_ref(c1).
+pyi056_all_ref(n) :- kind(n, "list_splat"), child(n, c2, _), pyi056_all_ref(c2).
+
+// callee_remove_from_all(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl pyi056_callee_remove_from_all(n: node)
+pyi056_callee_remove_from_all(n) :- field(p1, "function", n), kind(p1, "call").
+pyi056_callee_remove_from_all(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"),
+    pyi056_callee_remove_from_all(p2).
+pyi056_callee_remove_from_all(n) :- child(p3, n, _), kind(p3, "list_splat"),
+    field(p4, "function", p3), kind(p4, "call").
+
+// all_ref_remove_from_all(n): the JSON util `all-ref`, used where the JSON says `matches: "all-ref"`
+.decl pyi056_all_ref_remove_from_all(n: node)
+pyi056_all_ref_remove_from_all(n) :- kind(n, "identifier"), glob("__all__", n).
+pyi056_all_ref_remove_from_all(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi056_all_ref_remove_from_all(c1).
+pyi056_all_ref_remove_from_all(n) :- kind(n, "list_splat"), child(n, c2, _),
+    pyi056_all_ref_remove_from_all(c2).
+
+// callee_method_call_on_all_in_string_annotation(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl pyi056_callee_method_call_on_all_in_string_annotation(n: node)
+pyi056_callee_method_call_on_all_in_string_annotation(n) :- child(p1, n, _), kind(p1, "call").
+pyi056_callee_method_call_on_all_in_string_annotation(n) :- child(p2, n, _),
+    kind(p2, "parenthesized_expression"),
+    pyi056_callee_method_call_on_all_in_string_annotation(p2).
+
+// in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   ATTR: metavariable this relation binds for the calling rule
+.decl pyi056_in_annotation(n: node, attr: loc)
+pyi056_in_annotation(n, ATTR) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), pyi056_alt_1(c2, ATTR).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   ATTR: metavariable this relation binds for the calling rule
+.decl pyi056_alt_1(n: node, attr: loc)
+pyi056_alt_1(n, ATTR) :- kind(n, "attribute"),
+    pyi056_callee_method_call_on_all_in_string_annotation(n),
+    match("[(\\s]*__all__[)\\s]*\\.\\s*(append|extend|remove)", n), ATTR = n.
+pyi056_alt_1(n, ATTR) :- pyi056_in_annotation(n, ATTR).

@@ -1,0 +1,39 @@
+.policy "ruff-pt018-pytest-composite-assertion" revision 1
+.guests off
+.description "Split an assert that joins conditions with and, or negates conditions joined with or, into one assert per condition; a failure then names the one that failed."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PT018(n): a finding at node n, from clause `pytest-composite-assertion`.
+// Each rule below is one way the JSON `rule` can match.
+.violation PT018(at: node) "Break this assertion into one `assert` per condition so a failure shows which one failed; for `not (a or b)`, write `assert not a` and `assert not b`."
+    suppress noqa "PT018"
+PT018(n) :- kind(n, "assert_statement"), child(n, c1, _), pt018_test(c1), pt018_composite(c1).
+
+// test(n): the JSON util `test`, used where the JSON says `matches: "test"`
+.decl pt018_test(n: node)
+pt018_test(n) :- precedes_stop(s1, n, pt018_stop_1), glob("assert", s1).
+
+// bool_op_and(n): the JSON util `bool-op-and`, used where the JSON says `matches: "bool-op-and"`
+.decl pt018_bool_op_and(n: node)
+pt018_bool_op_and(n) :- kind(n, "boolean_operator"), field(n, "operator", c1),
+    glob("and", c1).
+pt018_bool_op_and(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt018_bool_op_and(c2).
+
+// bool_op_or(n): the JSON util `bool-op-or`, used where the JSON says `matches: "bool-op-or"`
+.decl pt018_bool_op_or(n: node)
+pt018_bool_op_or(n) :- kind(n, "boolean_operator"), field(n, "operator", c1), glob("or", c1).
+pt018_bool_op_or(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pt018_bool_op_or(c2).
+
+// composite(n): the JSON util `composite`, used where the JSON says `matches: "composite"`
+.decl pt018_composite(n: node)
+pt018_composite(n) :- pt018_bool_op_and(n).
+pt018_composite(n) :- kind(n, "not_operator"), field(n, "argument", c1), pt018_bool_op_or(c1).
+pt018_composite(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pt018_composite(c2).
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pt018_stop_1(n: node)
+pt018_stop_1(n) :- node(_, n, _, _, _), !kind(n, "comment"), !kind(n, "line_continuation").

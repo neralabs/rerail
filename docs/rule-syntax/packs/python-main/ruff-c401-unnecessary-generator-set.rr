@@ -1,0 +1,145 @@
+.policy "ruff-c401-unnecessary-generator-set" revision 1
+.guests off
+.description "Use a set comprehension instead of passing a generator expression to set, or pass the iterable itself when the generator yields its items unchanged."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// trivia(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl c401_trivia(n: node)
+c401_trivia(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+c401_trivia(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl c401_callee(n: node)
+c401_callee(n) :- kind(n, "identifier"), global_ref(n, "set").
+c401_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), c401_callee(c1).
+
+// gen(n): the JSON util `gen`, used where the JSON says `matches: "gen"`
+.decl c401_gen(n: node)
+c401_gen(n) :- kind(n, "generator_expression").
+c401_gen(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), c401_gen(c1).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+//   TARGET: metavariable this relation binds for the calling rule
+.decl c401_target(n: node, c401_target: loc)
+c401_target(n, TARGET) :- node(_, n, _, _, _), TARGET = n, !c401_paren_target(n).
+c401_target(n, TARGET) :- c401_paren_target(n), child(n, c1, _), !c401_trivia(c1), c401_target(c1, TARGET).
+
+// paren_target(n): the JSON util `paren-target`, used where the JSON says `matches: "paren-target"`
+.decl c401_paren_target(n: node)
+c401_paren_target(n) :- kind(n, "tuple_pattern"), !c401_tok_has_1(n), child(n, c9, _),
+    !c401_trivia(c9).
+
+// gen_identity(n): the JSON util `gen-identity`, used where the JSON says `matches: "gen-identity"`
+//   TARGET: metavariable this relation binds for the calling rule
+.decl c401_gen_identity(n: node, c401_target: loc)
+c401_gen_identity(n, TARGET) :- kind(n, "generator_expression"), field(n, "body", c1),
+    node(_, c1, _, _, _), ELT = c1, child(n, c2, _), kind(c2, "for_in_clause"), !c401_tok_has_2(c2),
+    field(c2, "left", c11), c401_target(c11, TARGET),
+    k13 = count : { child(n, c12, _), (kind(c12, "for_in_clause") ; kind(c12, "if_clause")) },
+    k13 >= 1, k13 <= 1, value(ELT, t14), value(TARGET, t14).
+c401_gen_identity(n, TARGET) :- kind(n, "parenthesized_expression"), child(n, c16, _),
+    c401_gen_identity(c16, TARGET).
+
+// args_gen(n): the JSON util `args-gen`, used where the JSON says `matches: "args-gen"`
+.decl c401_args_gen(n: node)
+c401_args_gen(n) :- kind(n, "generator_expression").
+c401_args_gen(n) :- kind(n, "argument_list"), k2 = count : { child(n, c1, _), !c401_trivia(c1) },
+    k2 >= 1, k2 <= 1, child(n, c3, _), c401_gen(c3).
+
+// args_identity(n): the JSON util `args-identity`, used where the JSON says `matches: "args-identity"`
+.decl c401_args_identity(n: node)
+c401_args_identity(n) :- c401_gen_identity(n, _).
+c401_args_identity(n) :- kind(n, "argument_list"),
+    k2 = count : { child(n, c1, _), !c401_trivia(c1) }, k2 >= 1, k2 <= 1, child(n, c3, _),
+    c401_gen_identity(c3, _).
+
+// call(n): the JSON util `call`, used where the JSON says `matches: "call"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl c401_call(n: node, c401_call: loc)
+c401_call(n, CALL) :- kind(n, "call"), c401_alt_1(n, CALL).
+
+// identity_call(n): the JSON util `identity-call`, used where the JSON says `matches: "identity-call"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl c401_identity_call(n: node, c401_call: loc)
+c401_identity_call(n, CALL) :- c401_call(n, CALL), field(n, "arguments", c1), c401_args_identity(c1).
+
+// comprehension_call(n): the JSON util `comprehension-call`, used where the JSON says `matches: "comprehension-call"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl c401_comprehension_call(n: node, c401_call: loc)
+c401_comprehension_call(n, CALL) :- c401_call(n, CALL), field(n, "arguments", c1), c401_args_gen(c1),
+    count : { field(n, "arguments", c2), c401_args_identity(c2) } = 0.
+
+// identity_in_annotation(n): the JSON util `identity-in-annotation`, used where the JSON says `matches: "identity-in-annotation"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl c401_identity_in_annotation(n: node, c401_call: loc)
+c401_identity_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), c401_alt_2(c2, CALL).
+
+// comprehension_in_annotation(n): the JSON util `comprehension-in-annotation`, used where the JSON says `matches: "comprehension-in-annotation"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl c401_comprehension_in_annotation(n: node, c401_call: loc)
+c401_comprehension_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), c401_alt_3(c2, CALL).
+
+// C401(n): a finding at node n, from clause `generator-set-identity`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation C401(at: node, c401_call: node) "Replace with `set(<iterable>)`; the generator passes each item through unchanged. Keep it if the target unpacks or assigns to an attribute or subscript, where the rewrite changes behavior."
+    suppress noqa "C401"
+C401(CALL, n) :- c401_identity_call(n, CALL).
+C401(CALL, n) :- c401_identity_in_annotation(n, CALL).
+
+// C401_generator_set(n): a finding at node n, from clause `generator-set`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation C401_generator_set(at: node, c401_call: node) code "C401" "Rewrite `set(<generator>)` as a set comprehension: `{{expr for ...}}` instead of `set(expr for ...)`."
+    suppress noqa "C401"
+C401_generator_set(CALL, n) :- c401_comprehension_call(n, CALL).
+C401_generator_set(CALL, n) :- c401_comprehension_in_annotation(n, CALL).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl c401_tok_has_1(n: node)
+.stored c401_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+c401_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+c401_tok_has_1(n) :- op(n, t2), match(",", t2).
+c401_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+c401_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+c401_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^async$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl c401_tok_has_2(n: node)
+.stored c401_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+c401_tok_has_2(n) :- child(n, c3, _), glob("async", c3).
+c401_tok_has_2(n) :- op(n, t4), match("async", t4).
+c401_tok_has_2(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g5).
+c401_tok_has_2(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g5).
+c401_tok_has_2(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g5).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   CALL: metavariable this relation binds for the calling rule
+.decl c401_alt_1(n: node, c401_call: loc)
+c401_alt_1(n, CALL) :- field(n, "function", c1), c401_callee(c1), node(_, n, _, _, _), CALL = n.
+c401_alt_1(n, CALL) :- field(n, "function", c2), kind(c2, "list_splat"), child(c2, c3, _),
+    c401_callee(c3), match("\\*(?:\\s|\\\\\\r?\\n|#[^\\r\\n]*)*(?<CALL>[\\s\\S]+)", n).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   CALL: metavariable this relation binds for the calling rule
+.decl c401_alt_2(n: node, c401_call: loc)
+c401_alt_2(n, CALL) :- c401_identity_call(n, CALL).
+c401_alt_2(n, CALL) :- c401_identity_in_annotation(n, CALL).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+//   CALL: metavariable this relation binds for the calling rule
+.decl c401_alt_3(n: node, c401_call: loc)
+c401_alt_3(n, CALL) :- c401_comprehension_call(n, CALL).
+c401_alt_3(n, CALL) :- c401_comprehension_in_annotation(n, CALL).

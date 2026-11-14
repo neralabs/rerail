@@ -239,7 +239,7 @@ impl LiteralGrammar for Chars {
         for (at, c) in text.char_indices() {
             root.children.push(
                 PNode::new(grammar, "char", at, at + c.len_utf8())
-                    .with_value(Value::Str(c.to_string())),
+                    .with_value(Value::Str(c.to_string().into())),
             );
         }
         root

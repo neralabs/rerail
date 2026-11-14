@@ -85,7 +85,7 @@ impl ValueRules for Python {
     }
 
     fn string(text: &str) -> Value {
-        Value::Str(text.to_owned())
+        Value::Str(text.to_owned().into())
     }
 
     /// A JSON integer is an `int`.

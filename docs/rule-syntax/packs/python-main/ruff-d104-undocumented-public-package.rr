@@ -1,0 +1,44 @@
+.policy "ruff-d104-undocumented-public-package" revision 1
+.guests off
+.description "Give each public Python package a docstring at the top of its init module that describes what the package provides."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// D104(n): a finding at node n, from clause `undocumented-public-package`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation D104(at: node) "Add a docstring as the first statement of this package's `__init__.py`, summarizing what the package provides."
+    // anchor file.start: at the witness, the module, which starts the file
+    suppress noqa "D104"
+D104_raw(n) :- kind(n, "module"), count : { child(n, c1, _), d104_docstring(c1) } = 0.
+
+// doc_string(n): the JSON util `doc-string`, used where the JSON says `matches: "doc-string"`
+.decl d104_doc_string(n: node)
+d104_doc_string(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[bBfFtT]**", c1) } = 0.
+d104_doc_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), child(c2, c3, _), kind(c3, "string_start"), glob("**[bBfFtT]**", c3) } = 0.
+d104_doc_string(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), d104_doc_string(c4).
+
+// docstring(n): the JSON util `docstring`, used where the JSON says `matches: "docstring"`
+.decl d104_docstring(n: node)
+d104_docstring(n) :- kind(n, "expression_statement"),
+    count : { precedes(s1, n), !kind(s1, "comment") } = 0, child(n, c2, _),
+    d104_doc_string(c2), !d104_tok_has_1(n).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl d104_tok_has_1(n: node)
+.stored d104_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+d104_tok_has_1(n) :- child(n, c3, _), glob("\\,", c3).
+d104_tok_has_1(n) :- op(n, t4), match(",", t4).
+d104_tok_has_1(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:.*(?:,).*)$", g5).
+d104_tok_has_1(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:.*(?:,).*)$", g5).
+d104_tok_has_1(n) :- node_text(n, g5), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g5).
+
+// main's file condition {"regex": "(?:^|/)__init__\\.py$"}
+.decl D104_raw(at: node)
+D104(v0) :- D104_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("(?:^|/)__init__\\.py$", rr_p).

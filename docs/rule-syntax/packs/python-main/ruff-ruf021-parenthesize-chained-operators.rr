@@ -1,0 +1,56 @@
+.policy "ruff-ruf021-parenthesize-chained-operators" revision 1
+.guests off
+.description "Parenthesize an and expression that is chained with or, so the operator precedence is explicit."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// RUF021(n): a finding at node n, from clause `unparenthesized-and-in-or`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF021(at: node, c: node) "Wrap this `and` expression in parentheses, as `(a and b)`, so its precedence under `or` is explicit; the result is unchanged."
+    suppress noqa "RUF021"
+RUF021(C, n) :- ruf021_and_in_or(n), node(_, n, _, _, _), C = n.
+RUF021(C, n) :- ruf021_and_in_or_in_string(n, C).
+
+// and_in_or(n): the JSON util `and-in-or`, used where the JSON says `matches: "and-in-or"`
+.decl ruf021_and_in_or(n: node)
+ruf021_and_in_or(n) :- kind(n, "boolean_operator"), ruf021_tok_has_1(n), child(p9, n, _),
+    kind(p9, "boolean_operator"), ruf021_tok_has_2(p9).
+
+// and_in_or_in_string(n): the JSON util `and-in-or-in-string`, used where the JSON says `matches: "and-in-or-in-string"`
+//   C: metavariable this relation binds for the calling rule
+.decl ruf021_and_in_or_in_string(n: node, c: loc)
+ruf021_and_in_or_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ruf021_alt_1(c2, C).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^and$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf021_tok_has_1(n: node)
+.stored ruf021_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf021_tok_has_1(n) :- child(n, c1, _), glob("and", c1).
+ruf021_tok_has_1(n) :- op(n, t2), match("and", t2).
+ruf021_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:and)(?:\\W.*)?)$", g3).
+ruf021_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:and)(?:\\W.*)?)$", g3).
+ruf021_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:and)(?:\\W.*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf021_tok_has_2(n: node)
+.stored ruf021_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf021_tok_has_2(n) :- child(n, c10, _), glob("or", c10).
+ruf021_tok_has_2(n) :- op(n, t11), match("or", t11).
+ruf021_tok_has_2(n) :- child(n, c17, _), structural_before(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:or)(?:\\W.*)?)$", g12).
+ruf021_tok_has_2(n) :- child(n, c17, _), structural_after(c17, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:or)(?:\\W.*)?)$", g12).
+ruf021_tok_has_2(n) :- node_text(n, g12), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:or)(?:\\W.*)?)$", g12).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl ruf021_alt_1(n: node, c: loc)
+ruf021_alt_1(n, C) :- ruf021_and_in_or(n), node(_, n, _, _, _), C = n, C = n.
+ruf021_alt_1(n, C) :- ruf021_and_in_or_in_string(n, C).

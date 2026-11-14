@@ -1,0 +1,51 @@
+.policy "ruff-pyi057-byte-string-usage" revision 1
+.guests off
+.description "Avoid ByteString from typing and collections.abc; it is deprecated and unclear, so use Buffer or a union of bytes types instead."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PYI057(n): findings from clauses `byte-string-attribute`, `byte-string-import`, which say the same.
+// Each rule is one way a JSON `rule` can match.
+.violation PYI057(at: node) "Use `collections.abc.Buffer` (`typing_extensions.Buffer` before Python 3.12) or `bytes | bytearray | memoryview` instead of `ByteString`; it is deprecated and has unclear semantics."
+    suppress noqa "PYI057"
+PYI057(n) :- kind(n, "attribute"),
+    (sym_of(n, "typing.ByteString") ; sym_of(n, "collections.abc.ByteString")).
+PYI057(n) :-
+    ( kind(n, "dotted_name"), glob("ByteString", n)
+    ; kind(n, "aliased_import"), field(n, "name", c1), kind(c1, "dotted_name"), glob("ByteString", c1)
+    ),
+    child(p2, n, _), kind(p2, "import_from_statement"), field(p2, "module_name", c3),
+    ( kind(c3, "dotted_name"), match("(typing|collections[\\s\\\\]*\\.[\\s\\\\]*abc)", c3)
+    ; kind(c3, "relative_import"), child(c3, c2, _), kind(c2, "dotted_name"), match("(typing|collections[\\s\\\\]*\\.[\\s\\\\]*abc)", c2)
+    ).
+
+
+// PYI057_byte_string_in_match_pattern(n): findings from clauses `byte-string-in-match-pattern`, `byte-string-in-string-annotation`, which say the same.
+// Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI057_byte_string_in_match_pattern(at: node, bs: node) code "PYI057" "Use `collections.abc.Buffer` (`typing_extensions.Buffer` before Python 3.12) or `bytes | bytearray | memoryview` instead of `ByteString`; it is deprecated and has unclear semantics."
+    suppress noqa "PYI057"
+PYI057_byte_string_in_match_pattern(BS, n) :- kind(n, "dotted_name"),
+    inside(n, p1, "case_pattern"),
+    ( child(n, c1, _), kind(c1, "identifier"), (sym_of(c1, "typing") ; sym_of(c1, "collections.abc")), match("(?P<BS>[^.]+\\.[\\s\\\\]*ByteString)[\\s\\\\]*(\\.|$).*", n)
+    ; child(n, c2, _), kind(c2, "identifier"), sym_of(c2, "collections"), match("(?P<BS>[^.]+\\.[\\s\\\\]*abc[\\s\\\\]*\\.[\\s\\\\]*ByteString)[\\s\\\\]*(\\.|$).*", n)
+    ).
+
+PYI057_byte_string_in_match_pattern(BS, n) :- pyi057_in_annotation(n, BS).
+
+// in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   BS: metavariable this relation binds for the calling rule
+.decl pyi057_in_annotation(n: node, bs: loc)
+pyi057_in_annotation(n, BS) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), pyi057_alt_4(c2, BS).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+//   BS: metavariable this relation binds for the calling rule
+.decl pyi057_alt_4(n: node, bs: loc)
+pyi057_alt_4(n, BS) :- kind(n, "attribute"),
+    (sym_of(n, "typing.ByteString") ; sym_of(n, "collections.abc.ByteString")), BS = n.
+pyi057_alt_4(n, BS) :- pyi057_in_annotation(n, BS).

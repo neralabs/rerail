@@ -1,0 +1,81 @@
+.policy "ruff-async222-wait-for-process-in-async-function" revision 2
+.guests off
+.description "Don't call os.wait, os.waitpid or the other blocking os.wait functions inside async functions; they block the event loop."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// ASYNC222(n): a finding at node n, from clause `wait-for-process`.
+// Each rule below is one way the JSON `rule` can match.
+.violation ASYNC222(at: node) "Offload the wait with `await asyncio.to_thread(wait_fn, ...)`; preserve arguments and status. Await `proc.wait()` only for an async process."
+    suppress noqa "ASYNC222"
+ASYNC222(n) :- async222_callee_position(n), async222_async_context(n), async222_target(n).
+
+// scope_body(n): the JSON util `scope-body`, used where the JSON says `matches: "scope-body"`
+.decl async222_scope_body(n: node)
+async222_scope_body(n) :- kind(n, "block"), child(p1, n, _),
+    (kind(p1, "function_definition") ; kind(p1, "class_definition")).
+
+// lambda_body(n): the JSON util `lambda-body`, used where the JSON says `matches: "lambda-body"`
+.decl async222_lambda_body(n: node)
+async222_lambda_body(n) :- child(p1, n, _), kind(p1, "lambda"), async222_tok_follows_1(n).
+
+// callee_position(n): the JSON util `callee-position`, used where the JSON says `matches: "callee-position"`
+.decl async222_callee_position(n: node)
+async222_callee_position(n) :- child(p1, n, _), kind(p1, "call"), next_sibling(n, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")).
+async222_callee_position(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"),
+    async222_callee_position(p3).
+
+// async_context(n): the JSON util `async-context`, used where the JSON says `matches: "async-context"`
+.decl async222_async_context(n: node)
+async222_async_context(n) :- async222_demand_async_context(n), async222_up_1(n, p1), child(p2, p1, _),
+    kind(p2, "function_definition"), async222_tok_has_2(p2).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl async222_target(n: node)
+async222_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, q1), async222_set_2(q1).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl async222_tok_follows_1(n: node)
+.stored async222_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+async222_tok_follows_1(n) :- precedes(s2, n), glob(":", s2).
+async222_tok_follows_1(n) :- child(p5, n, _), node(_, n, _, st7, _), token(p5, _, t3, _, en8),
+    en8 <= st7, match(":", t3).
+async222_tok_follows_1(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+async222_tok_follows_1(n) :- precedes(o6, n), structural_before(o6, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^async$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl async222_tok_has_2(n: node)
+.stored async222_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+async222_tok_has_2(n) :- child(n, c3, _), glob("async", c3).
+async222_tok_has_2(n) :- op(n, t4), match("async", t4).
+async222_tok_has_2(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g5).
+async222_tok_has_2(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g5).
+async222_tok_has_2(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g5).
+
+// demand_async_context: the nodes async_context is asked at (it looks at every ancestor of every node)
+.decl async222_demand_async_context(n: node)
+async222_demand_async_context(n) :- async222_callee_position(n), async222_target(n).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl async222_up_1(n: node, p: node)
+async222_up_1(n, p) :- async222_demand_async_context(n), within_stop(n, p, async222_stop_1), kind(p, "block").
+
+// set_2: symbols from the JSON `resolves.import`
+.decl async222_set_2(v: symbol)
+async222_set_2("os.wait"). async222_set_2("os.wait3"). async222_set_2("os.wait4"). async222_set_2("os.waitid").
+async222_set_2("os.waitpid").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl async222_stop_1(n: node)
+async222_stop_1(n) :- async222_scope_body(n).
+async222_stop_1(n) :- async222_lambda_body(n).

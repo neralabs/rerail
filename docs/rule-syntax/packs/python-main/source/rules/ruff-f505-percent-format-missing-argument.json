@@ -1,0 +1,49 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-f505-percent-format-missing-argument",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Supply a value for every %(key) placeholder in a %-format string; a missing key raises KeyError at run time.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "percent-format-missing-argument",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$S % $R",
+            "formatArgs": {
+              "style": "percent",
+              "string": "S",
+              "args": "R",
+              "missing": {
+                "kind": "placeholder",
+                "has": {
+                  "kind": "mapping_key"
+                }
+              }
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "F505",
+        "message": "`%`-format string is missing argument(s) for placeholder(s)",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "F505"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

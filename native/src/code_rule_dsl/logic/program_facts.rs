@@ -25,12 +25,13 @@
 //! Each list is indexed (`k`, `i`, `row`), so a row's place is in the row itself: the rows are a set, and any order
 //! of them reads back as the same program. Ids (`r`, `l`, `a`, `t`) are numbered per program.
 
+use super::front::Name;
 use super::front::{AggOp, Atom, LatticeDecl, Literal, Native, Program, Rule, SpanIn, Term, Value};
 use super::magic::{Gate, Report};
 use std::collections::BTreeMap;
 
 /// Rows by relation, as a program's `facts` holds them.
-pub type Facts = BTreeMap<String, Vec<Vec<Value>>>;
+pub type Facts = BTreeMap<String, Vec<crate::code_rule_dsl::logic::front::name::List<Value>>>;
 
 /// A value of a fact row, as a reader takes it.
 pub trait Cell {
@@ -54,7 +55,7 @@ impl Cell for Value {
 }
 
 /// Each relation of the schema and its columns (`int` or `sym`).
-pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
+pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name, Name)>> {
     const SCHEMA: &[(&str, &[&str])] = &[
         ("program", &["p:sym"]),
         ("rule", &["p:sym", "r:int", "head:int"]),
@@ -126,14 +127,14 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
     SCHEMA
         .iter()
         .map(|(rel, cols)| {
-            let cols = cols.iter().map(|c| c.split_once(':').expect("name:type")).map(|(n, t)| (n.to_owned(), t.to_owned())).collect();
-            ((*rel).to_owned(), cols)
+            let cols = cols.iter().map(|c| c.split_once(':').expect("name:type")).map(|(n, t)| (n.into(), t.into())).collect();
+            ((*rel).into(), cols)
         })
         .collect()
 }
 
 fn s(x: &str) -> Value {
-    Value::Str(x.to_owned())
+    Value::Str(x.to_owned().into())
 }
 
 fn n(x: impl TryInto<i64>) -> Value {
@@ -159,9 +160,9 @@ impl Writer<'_> {
         row.push(s(&self.p));
         row.extend(values);
         match self.facts.get_mut(rel) {
-            Some(rows) => rows.push(row),
+            Some(rows) => rows.push(row.into()),
             None => {
-                self.facts.insert(rel.to_owned(), vec![row]);
+                self.facts.insert(rel.to_owned(), vec![row.into()]);
             }
         }
     }
@@ -555,14 +556,14 @@ impl<'a, C: Cell> Reader<'a, C> {
     fn term(&self, t: i64) -> Result<Term, String> {
         let row = self.terms.get(t).ok_or_else(|| bad(format!("no term {t}")))?;
         Ok(match str_of(&row[1])? {
-            "var" => Term::Var(text(&row[3])?),
+            "var" => Term::Var(text(&row[3])?.into()),
             "wild" => Term::Wild,
             "int" => Term::Int(int(&row[2])?),
-            "str" => Term::Str(text(&row[3])?),
+            "str" => Term::Str(text(&row[3])?.into()),
             "top" => Term::Top,
             "call" => {
                 let args = self.call_args.of_owner(t).iter().map(|u| self.term(*u)).collect::<Result<Vec<_>, _>>()?;
-                Term::Call(text(&row[3])?, args)
+                Term::Call(text(&row[3])?.into(), args.into())
             }
             other => return Err(bad(format!("no term kind {other}"))),
         })
@@ -571,7 +572,7 @@ impl<'a, C: Cell> Reader<'a, C> {
     fn atom(&self, a: i64) -> Result<Atom, String> {
         let row = self.atoms.get(a).ok_or_else(|| bad(format!("no atom {a}")))?;
         let args = self.args.of_owner(a).iter().map(|t| self.term(*t)).collect::<Result<Vec<_>, _>>()?;
-        Ok(Atom { rel: text(&row[1])?.into(), args, neg: int(&row[2])? != 0, gated: int(&row[3])? != 0 })
+        Ok(Atom { rel: text(&row[1])?.into(), args: args.into(), neg: int(&row[2])? != 0, gated: int(&row[3])? != 0 })
     }
 
     /// Rows of `rel` keyed by their first column (an id), each row less that column.
@@ -633,7 +634,7 @@ impl<'a, C: Cell> Reader<'a, C> {
         for row in self.get("rule") {
             let r = int(&row[0])?;
             let body = self.bodies.of_owner(r).iter().map(|l| literals.take(*l).ok_or_else(|| bad(format!("rule {r}: a literal twice or none")))).collect::<Result<Vec<_>, String>>()?;
-            rules.push((r, Rule { head: self.atom(int(&row[1])?)?, body }));
+            rules.push((r, Rule { head: self.atom(int(&row[1])?)?, body: body.into() }));
         }
         prog.rules = ordered(rules);
         let decls = self.by_id_text("decl")?;
@@ -643,7 +644,7 @@ impl<'a, C: Cell> Reader<'a, C> {
             if cols.len() as i64 != int(&row[1])? {
                 return Err(bad(format!("{rel} has {} of its {} columns", cols.len(), int(&row[1])?)));
             }
-            prog.decls.insert(rel, cols);
+            prog.decls.insert(rel.into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
         }
         prog.nullary = self.get("nullary").iter().map(|r| text(&r[0])).collect::<Result<_, _>>()?;
         for row in self.get("qualifier") {
@@ -665,7 +666,7 @@ impl<'a, C: Cell> Reader<'a, C> {
         for row in self.get("fact") {
             let v = match str_of(&row[3])? {
                 "int" => Value::Int(int(&row[4])?),
-                _ => Value::Str(text(&row[5])?),
+                _ => Value::Str(text(&row[5])?.into()),
             };
             values.entry((str_of(&row[0])?, int(&row[1])?)).or_default().push((int(&row[2])?, v));
         }
@@ -681,7 +682,7 @@ impl<'a, C: Cell> Reader<'a, C> {
             }
             facts.entry(rel).or_default().push((k, row_values));
         }
-        prog.facts = facts.into_iter().map(|(rel, rows)| (rel, ordered(rows))).collect();
+        prog.facts = facts.into_iter().map(|(rel, rows)| (rel, ordered(rows).into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect())).collect();
         let list = |rel: &str| -> Result<Vec<String>, String> { Ok(ordered(self.get(rel).iter().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?)) };
         prog.inputs = list("input")?;
         prog.outputs = list("output")?;
@@ -810,7 +811,7 @@ pub fn program(facts: &Facts, p: &str) -> Result<Program, String> {
 
 /// `facts` as a `.rr` document: the schema's declarations and every row as a fact. `rr::parse` reads it back as the
 /// same rows.
-pub fn document(facts: &Facts, extra: &BTreeMap<String, Vec<(String, String)>>) -> Result<String, String> {
+pub fn document(facts: &Facts, extra: &BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name, Name)>>) -> Result<String, String> {
     let mut decls = schema();
     decls.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
     let prog = Program { decls, facts: facts.clone(), ..Program::default() };
@@ -900,11 +901,11 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
             for _ in 0..width {
                 row.push(match at.take(1)?[0] {
                     0 => Value::Int(i64::from_le_bytes(at.take(8)?.try_into().expect("eight bytes"))),
-                    1 => Value::Str(string(at.u64()?)?),
+                    1 => Value::Str(string(at.u64()?)?.into()),
                     tag => return Err(bad(format!("no value tag {tag}"))),
                 });
             }
-            rows.push(row);
+            rows.push(row.into());
         }
         facts.insert(rel, rows);
     }
@@ -922,8 +923,8 @@ pub mod tests {
     fn facts_encode_as_two_passes_did_and_decode_back() {
         use super::{Facts, Value};
         let mut facts = Facts::new();
-        facts.insert("b".into(), vec![vec![Value::Str("x".into()), Value::Int(-3)], vec![Value::Str("b".into()), Value::Str("y".into())]]);
-        facts.insert("a".into(), vec![vec![Value::Str("y".into()), Value::Str("z".into()), Value::Int(7)]]);
+        facts.insert("b".into(), vec![vec![Value::Str("x".into()), Value::Int(-3)].into(), vec![Value::Str("b".into()), Value::Str("y".into())].into()]);
+        facts.insert("a".into(), vec![vec![Value::Str("y".into()), Value::Str("z".into()), Value::Int(7)].into()]);
         let mut want = Vec::new();
         let u = |out: &mut Vec<u8>, x: u64| out.extend_from_slice(&x.to_le_bytes());
         // Strings by first use: a, y, z, b, x.
@@ -989,7 +990,7 @@ pub mod tests {
             };
             let mut rows: Vec<Vec<Value>> = rows.iter().map(|r| r.iter().enumerate().map(|(c, v)| if ids.contains(&c) { spread(v) } else { v.clone() }).collect()).collect();
             rows.reverse();
-            far.insert(rel.clone(), rows);
+            far.insert(rel.clone(), rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
         }
         let bytes = super::encode(&far);
         assert_eq!(format!("{:?}", super::program(&super::decode(&bytes).unwrap(), "q").unwrap()), format!("{owned:?}"));
@@ -1031,7 +1032,7 @@ pub mod tests {
     fn a_relation_of_no_facts_reads_back_as_one() {
         let mut prog = crate::code_rule_dsl::logic::front::Program::default();
         prog.facts.insert("none".into(), Vec::new());
-        prog.facts.insert("one".into(), vec![vec![crate::code_rule_dsl::logic::front::Value::Int(1)]]);
+        prog.facts.insert("one".into(), vec![vec![crate::code_rule_dsl::logic::front::Value::Int(1)].into()]);
         let mut facts = super::Facts::new();
         super::write(&mut facts, "p", &prog);
         assert_eq!(super::program(&facts, "p").unwrap().facts, prog.facts);

@@ -1,0 +1,33 @@
+.policy "ruff-pyi025-unaliased-collections-abc-set-import" revision 1
+.guests off
+.description "Import Set from collections.abc under the alias AbstractSet; the bare name is easily mistaken for the builtin set."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PYI025(n): a finding at node n, from clause `unaliased-collections-abc-set-import`.
+// Each rule below is one way the JSON `rule` can match.
+.violation PYI025(at: node) "Import `Set` as `AbstractSet` and rename its uses, so it isn't mistaken for the builtin `set`; keep the name if other modules import `Set` from this file."
+    suppress noqa "PYI025"
+PYI025(n) :- pyi025_abc_set(n), child(p1, n, _), kind(p1, "import_from_statement"),
+    !pyi025_tok_follows_1(n).
+PYI025(n) :- kind(n, "identifier"), !glob("AbstractSet", n), field(p9, "alias", n),
+    kind(p9, "aliased_import"), child(p9, c10, _), pyi025_abc_set(c10), child(p11, p9, _),
+    kind(p11, "import_from_statement").
+
+// abc_set(n): the JSON util `abc-set`, used where the JSON says `matches: "abc-set"`
+.decl pyi025_abc_set(n: node)
+pyi025_abc_set(n) :- kind(n, "dotted_name"), imported_sym(n, "collections.abc.Set").
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^from$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi025_tok_follows_1(n: node)
+.stored pyi025_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi025_tok_follows_1(n) :- next_sibling(s2, n), glob("from", s2).
+pyi025_tok_follows_1(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("from", t3).
+pyi025_tok_follows_1(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:from)\\s*)$", g4).

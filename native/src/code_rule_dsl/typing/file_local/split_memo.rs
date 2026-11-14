@@ -72,7 +72,7 @@ fn keys(prog: &Program, index: &RuleIndex<'_>, derived: &BTreeSet<&str>) -> Keys
         let mut h = hasher();
         b"base".hash(&mut h);
         cols.hash(&mut h);
-        heads.insert(rel.clone(), h.finish());
+        heads.insert(rel.to_string(), h.finish());
     }
     Keys { global: g.finish(), heads }
 }

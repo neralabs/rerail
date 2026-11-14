@@ -1,0 +1,15 @@
+.policy "ruff-b026-star-arg-unpacking-after-keyword-arg" revision 1
+.guests off
+.description "Put star-argument unpacking before keyword arguments in calls; placing it after is legal but misleading about argument order."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B026(n): a finding at node n, from clause `star-arg-unpacking-after-keyword-arg`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B026(at: node) "Star-arg unpacking after a keyword argument is strongly discouraged"
+    suppress noqa "B026"
+B026(n) :- kind(n, "list_splat"), child(p1, n, _), kind(p1, "argument_list"),
+    child(p2, p1, _), kind(p2, "call"), precedes(s3, n),
+    (kind(s3, "keyword_argument") ; kind(s3, "dictionary_splat")).

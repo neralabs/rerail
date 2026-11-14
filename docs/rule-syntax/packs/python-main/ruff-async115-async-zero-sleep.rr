@@ -1,0 +1,135 @@
+.policy "ruff-async115-async-zero-sleep" revision 1
+.guests off
+.description "Use lowlevel.checkpoint() instead of sleep(0) in trio and anyio code; it states the intent of yielding to the scheduler."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// number(n): the JSON util `number`, used where the JSON says `matches: "number"`
+.decl async115_number(n: node)
+async115_number(n) :- (kind(n, "integer") ; kind(n, "float")), value(n, v1),
+    value_type(v1, "int"), v1 = 0.
+async115_number(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), async115_number(c2).
+
+// ASYNC115(n, detail): findings from clauses `trio-sleep`, `anyio-sleep`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// The JSON `constraints` on S are added to every rule.
+.violation ASYNC115(at: node, detail: symbol) "Use {detail}.sleep(0)`"
+    suppress noqa "ASYNC115"
+ASYNC115(n, "`trio.lowlevel.checkpoint()` instead of `trio") :- kind(n, "call"),
+    child(n, c1, _), async115_callee_of_target(c1), next_sibling(c1, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")),
+    async115_arg_seconds_1(n, a3), S = a3, child(n, c4, _), kind(c4, "argument_list"),
+    k6 = count : { child(c4, c5, _), !async115_alt_1(c5) }, k6 >= 1, k6 <= 1, async115_number(S).
+ASYNC115(n, "`anyio.lowlevel.checkpoint()` instead of `anyio") :- kind(n, "call"),
+    child(n, c1, _), async115_callee_of_target_anyio_sleep(c1), next_sibling(c1, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")),
+    async115_arg_delay_2(n, a3), S = a3, child(n, c4, _), kind(c4, "argument_list"),
+    k6 = count : { child(c4, c5, _), !async115_alt_1(c5) }, k6 >= 1, k6 <= 1, async115_number(S).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl async115_target(n: node)
+async115_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "trio.sleep").
+
+// callee_of_target(n): the JSON util `callee-of-target`, used where the JSON says `matches: "callee-of-target"`
+.decl async115_callee_of_target(n: node)
+async115_callee_of_target(n) :- async115_target(n).
+async115_callee_of_target(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    async115_callee_of_target(c1).
+
+// target_anyio_sleep(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl async115_target_anyio_sleep(n: node)
+async115_target_anyio_sleep(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "anyio.sleep").
+
+// callee_of_target_anyio_sleep(n): the JSON util `callee-of-target`, used where the JSON says `matches: "callee-of-target"`
+.decl async115_callee_of_target_anyio_sleep(n: node)
+async115_callee_of_target_anyio_sleep(n) :- async115_target_anyio_sleep(n).
+async115_callee_of_target_anyio_sleep(n) :- kind(n, "parenthesized_expression"),
+    child(n, c1, _), async115_callee_of_target_anyio_sleep(c1).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl async115_args_plain(l: node, a: node, i: number)
+async115_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl async115_args_splat(l: node, i: number)
+async115_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl async115_args_pos(l: node, a: node, j: number)
+async115_args_pos(l, a, j) :- async115_args_plain(l, a, i), count : { async115_args_splat(l, k), k < i } = 0,
+    j = count : { async115_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl async115_args_star(l: node, j: number)
+async115_args_star(l, j) :- async115_args_splat(l, i), count : { async115_args_splat(l, k), k < i } = 0,
+    j = count : { async115_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl async115_args_kwp(l: node, k: symbol, v: node)
+async115_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl async115_args_lit_dict(s: node, d: node)
+async115_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !async115_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl async115_args_str_pair(p: node)
+async115_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl async115_args_kw(l: node, k: symbol, v: node)
+async115_args_kw(l, k, v) :- async115_args_kwp(l, k, v).
+async115_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), async115_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl async115_args_kw_spread(l: node)
+async115_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !async115_args_lit_dict(s, _).
+
+// arg_seconds_1: call n passes v for slot `seconds` of (seconds), syntactic: Ruff's find_argument
+.decl async115_arg_seconds_1(n: node, v: node)
+async115_arg_seconds_1(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    async115_args_kwp(l, "seconds", v).
+async115_arg_seconds_1(n, v) :- kind(n, "call"), field(n, "arguments", l), async115_args_pos(l, v, 0),
+    !async115_args_kwp(l, "seconds", _).
+async115_arg_seconds_1(n, v) :- kind(n, "call"), field(n, "arguments", v),
+    kind(v, "generator_expression").
+
+// arg_no_seconds_1: call n does not pass slot `seconds` of (seconds), syntactic: Ruff's find_argument
+.decl async115_arg_no_seconds_1(n: node)
+async115_arg_no_seconds_1(n) :- kind(n, "call"), field(n, "arguments", l),
+    !async115_args_kwp(l, "seconds", _), !async115_args_pos(l, _, 0), !kind(l, "generator_expression").
+
+// arg_delay_2: call n passes v for slot `delay` of (delay), syntactic: Ruff's find_argument
+.decl async115_arg_delay_2(n: node, v: node)
+async115_arg_delay_2(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    async115_args_kwp(l, "delay", v).
+async115_arg_delay_2(n, v) :- kind(n, "call"), field(n, "arguments", l), async115_args_pos(l, v, 0),
+    !async115_args_kwp(l, "delay", _).
+async115_arg_delay_2(n, v) :- kind(n, "call"), field(n, "arguments", v),
+    kind(v, "generator_expression").
+
+// arg_no_delay_2: call n does not pass slot `delay` of (delay), syntactic: Ruff's find_argument
+.decl async115_arg_no_delay_2(n: node)
+async115_arg_no_delay_2(n) :- kind(n, "call"), field(n, "arguments", l),
+    !async115_args_kwp(l, "delay", _), !async115_args_pos(l, _, 0), !kind(l, "generator_expression").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl async115_alt_1(n: node)
+async115_alt_1(n) :- node(_, n, _, _, _), glob("[(),\\[\\]{}]", n).
+async115_alt_1(n) :- kind(n, "comment").

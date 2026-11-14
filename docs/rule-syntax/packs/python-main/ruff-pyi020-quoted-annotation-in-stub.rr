@@ -1,0 +1,48 @@
+.policy "ruff-pyi020-quoted-annotation-in-stub" revision 1
+.guests off
+.description "Write type annotations in stub files without quotes; stubs resolve forward references natively, so quotes are never needed."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PYI020(n): a finding at node n, from clause `quoted-annotation-in-stub`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI020(at: node) "Remove the quotes from this annotation and write the type directly; a stub resolves forward references, so quoting adds nothing."
+    suppress noqa "PYI020"
+PYI020_raw(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), kind(r1, "expression_statement").
+
+// PYI020_nested_quoted_annotation_in_stub(n): a finding at node n, from clause `nested-quoted-annotation-in-stub`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI020_nested_quoted_annotation_in_stub(at: node, q: node) code "PYI020" "Remove the quotes from this annotation and write the type directly; a stub resolves forward references, so quoting adds nothing."
+    suppress noqa "PYI020"
+PYI020_nested_quoted_annotation_in_stub_raw(Q, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    pyi020_quoted_within(n, Q).
+
+// quoted_within(n): the JSON util `quoted-within`, used where the JSON says `matches: "quoted-within"`
+//   Q: metavariable this relation binds for the calling rule
+.decl pyi020_quoted_within(n: node, q: loc)
+pyi020_quoted_within(n, Q) :- pyi020_demand_quoted_within(n), parsed(n, "annotation", r1),
+    within(c2, r1), (kind(c2, "string") ; kind(c2, "concatenated_string")),
+    parsed(c2, "annotation", r3), kind(r3, "expression_statement"), Q = c2.
+pyi020_quoted_within(n, Q) :- pyi020_demand_quoted_within(n), parsed(n, "annotation", r4),
+    within(c5, r4), (kind(c5, "string") ; kind(c5, "concatenated_string")),
+    pyi020_quoted_within(c5, Q).
+
+// demand_quoted_within: the nodes quoted_within is asked at (its recursion looks at every descendant)
+.decl pyi020_demand_quoted_within(n: node)
+pyi020_demand_quoted_within(n) :- (kind(n, "string") ; kind(n, "concatenated_string")).
+pyi020_demand_quoted_within(c5) :- pyi020_demand_quoted_within(n), parsed(n, "annotation", r4),
+    within(c5, r4), (kind(c5, "string") ; kind(c5, "concatenated_string")).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI020_raw(at: node)
+PYI020(v0) :- PYI020_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI020_nested_quoted_annotation_in_stub_raw(at: node, q: node)
+PYI020_nested_quoted_annotation_in_stub(v0, v1) :- PYI020_nested_quoted_annotation_in_stub_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

@@ -239,8 +239,14 @@ pub fn print(prog: &Program) -> Result<String, String> {
 }
 
 /// The program `text` (`print`) holds: its tape image (the lean parser's) walked straight into the program's parts.
+/// Its lists are its own; a run reads with `read_in`, so that its programs share theirs.
 pub fn read(text: &str) -> Result<Program, String> {
-    assemble(from_tape::parts(text, &rerail_rr_syntax::tape(text))?)
+    read_in(text, &crate::code_rule_dsl::logic::front::Lists::default())
+}
+
+/// `read`, each list taken from the run's `lists` (decision 0172).
+pub fn read_in(text: &str, lists: &crate::code_rule_dsl::logic::front::Lists) -> Result<Program, String> {
+    assemble(from_tape::parts(text, &rerail_rr_syntax::tape(text), lists)?)
 }
 
 /// The program of `parts`: the gated atoms marked, the rest of it read from the `.about` rows.
@@ -253,7 +259,7 @@ fn assemble(parts: Parts) -> Result<Program, String> {
         let rule = rules.get_mut(*r as usize).ok_or_else(|| bad(format!("gated: no rule {r}")))?;
         let atom = match *k {
             -1 => &mut rule.head,
-            k => match rule.body.get_mut(k as usize) {
+            k => match rule.body.make_mut().get_mut(k as usize) {
                 Some(Literal::Atom(a) | Literal::Agg { atom: a, .. }) => a,
                 _ => return Err(bad(format!("gated: rule {r} has no atom {k}"))),
             },
@@ -305,9 +311,9 @@ pub fn texts(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<std::col
 }
 
 /// The program `store` keeps as the text of sha256 `digest` (`store`), and its source; `None` when the store has
-/// lost it, or it no longer reads.
-pub fn load(store: &ContentStore, digest: &[u8; 32]) -> StoreResult<Option<(Program, SourceId)>> {
+/// lost it, or it no longer reads. Its lists are taken from the run's `lists`.
+pub fn load(store: &ContentStore, digest: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Program, SourceId)>> {
     let Some(source) = store.held_source_by_hash(HashKey::from_sha256_digest(*digest))? else { return Ok(None) };
     let Ok(text) = String::from_utf8(store.get_source(source)?) else { return Ok(None) };
-    Ok(read(&text).ok().map(|p| (p, source)))
+    Ok(read_in(&text, lists).ok().map(|p| (p, source)))
 }

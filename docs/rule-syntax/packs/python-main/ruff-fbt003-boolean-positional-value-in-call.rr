@@ -1,0 +1,89 @@
+.policy "ruff-fbt003-boolean-positional-value-in-call" revision 1
+.guests off
+.description "Pass True and False to Python calls as keyword arguments rather than positionally; a bare boolean does not say what it switches."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+.options {"flake8-boolean-trap.extend-allowed-calls": {"type": "array", "items": "string", "default": [], "description": "Qualified names of further calls that may take positional boolean arguments."}}
+
+// FBT003(n): a finding at node n, from clause `boolean-positional-value-in-call`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation FBT003(at: node, b: node) "Pass this boolean by keyword (`name=True`) so the call says what it switches; leave it when the callee only accepts it positionally, such as a builtin or C-extension function."
+    suppress noqa "FBT003"
+FBT003(B, n) :- (kind(n, "true") ; kind(n, "false")), node(_, n, _, _, _), B = n, fbt003_argument_position(n).
+FBT003(B, n) :- fbt003_string_booleans(n, B).
+
+// allowed_name(n): the JSON util `allowed-name`, used where the JSON says `matches: "allowed-name"`
+.decl fbt003_allowed_name(n: node)
+fbt003_allowed_name(n) :- kind(n, "identifier"),
+    glob("{__setattr__,append,assertEqual,assertEquals,assertNotEqual,assertNotEquals,bool,bytes,coalesce,count,failIfEqual,failUnlessEqual,float,fromkeys,get,getattr,getboolean,getfloat,getint,ifnull,index,insert,int,is_,is_not,isnull,next,nvl,param,pop,remove,set_blocking,set_enabled,setattr,setdefault,str}", n).
+fbt003_allowed_name(n) :- kind(n, "attribute"), child(n, c1, _), kind(c1, "identifier"),
+    fbt003_tok_follows_1(c1), fbt003_allowed_name(c1).
+fbt003_allowed_name(n) :- kind(n, "parenthesized_expression"), child(n, c9, _),
+    fbt003_allowed_name(c9).
+
+// setter_name(n): the JSON util `setter-name`, used where the JSON says `matches: "setter-name"`
+.decl fbt003_setter_name(n: node)
+fbt003_setter_name(n) :- kind(n, "identifier"), glob("set{[_A-Z]**,}", n).
+fbt003_setter_name(n) :- kind(n, "attribute"), child(n, c1, _), kind(c1, "identifier"),
+    fbt003_tok_follows_1(c1), fbt003_setter_name(c1).
+fbt003_setter_name(n) :- kind(n, "parenthesized_expression"), child(n, c9, _),
+    fbt003_setter_name(c9).
+
+// positional_argument(n): the JSON util `positional-argument`, used where the JSON says `matches: "positional-argument"`
+.decl fbt003_positional_argument(n: node)
+fbt003_positional_argument(n) :- child(p1, n, _), kind(p1, "argument_list"), !fbt003_alt_1(n).
+
+// allowed_call(n): the JSON util `allowed-call`, used where the JSON says `matches: "allowed-call"`
+.decl fbt003_allowed_call(n: node)
+fbt003_allowed_call(n) :- kind(n, "call"), child(n, c1, _),
+    ( fbt003_allowed_name(c1)
+    ; (kind(c1, "identifier") ; kind(c1, "attribute") ; kind(c1, "parenthesized_expression")), sym_of(c1, q1), fbt003_set_2(q1)
+    ; fbt003_setter_name(c1), precedes(c1, s1), kind(s1, "argument_list"), k1 = count : { child(s1, c2, _), fbt003_positional_argument(c2) }, k1 <= 1
+    ).
+
+
+// argument_position(n): the JSON util `argument-position`, used where the JSON says `matches: "argument-position"`
+.decl fbt003_argument_position(n: node)
+fbt003_argument_position(n) :- fbt003_positional_argument(n), child(p1, n, _),
+    kind(p1, "argument_list"), child(p2, p1, _), kind(p2, "call"), !fbt003_allowed_call(p2).
+fbt003_argument_position(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"),
+    fbt003_argument_position(p3).
+
+// string_booleans(n): the JSON util `string-booleans`, used where the JSON says `matches: "string-booleans"`
+//   B: metavariable this relation binds for the calling rule
+.decl fbt003_string_booleans(n: node, b: loc)
+fbt003_string_booleans(n, B) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), fbt003_alt_5(c2, B).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl fbt003_tok_follows_1(n: node)
+.stored fbt003_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+fbt003_tok_follows_1(n) :- precedes(s2, n), glob(".", s2).
+fbt003_tok_follows_1(n) :- child(p5, n, _), node(_, n, _, st7, _), token(p5, _, t3, _, en8),
+    en8 <= st7, match("\\.", t3).
+fbt003_tok_follows_1(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+fbt003_tok_follows_1(n) :- precedes(o6, n), structural_before(o6, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// set_2: symbols from the JSON `resolves.import`
+.decl fbt003_set_2(v: symbol)
+fbt003_set_2("multiprocessing.Value").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl fbt003_alt_1(n: node)
+fbt003_alt_1(n) :- (kind(n, "keyword_argument") ; kind(n, "dictionary_splat") ; kind(n, "comment")).
+fbt003_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).
+fbt003_set_2(x) :- option_item("flake8-boolean-trap.extend-allowed-calls", _, x).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+//   B: metavariable this relation binds for the calling rule
+.decl fbt003_alt_5(n: node, b: loc)
+fbt003_alt_5(n, B) :- (kind(n, "true") ; kind(n, "false")), fbt003_argument_position(n), B = n.
+fbt003_alt_5(n, B) :- fbt003_string_booleans(n, B).

@@ -1,0 +1,151 @@
+.policy "ruff-f704-yield-outside-function" revision 1
+.guests off
+.description "Use yield and await only inside function bodies; Python rejects them at module or class level, and yield inside a comprehension."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F704(n): a finding at node n, from clause `yield-outside-function`.
+// Each rule below is one way the JSON `rule` can match.
+.violation F704(at: node) "`yield` or `await` outside of a function"
+    suppress noqa "F704"
+F704(n) :- kind(n, "yield"), f704_tok_has_7(n), !f704_yield_ok(n).
+F704(n) :- kind(n, "await"), f704_tok_has_8(n), !f704_await_ok(n).
+
+// yield_ok(n): the JSON util `yield-ok`, used where the JSON says `matches: "yield-ok"`
+.decl f704_yield_ok(n: node)
+f704_yield_ok(n) :- child(p1, n, _), kind(p1, "block"), child(p2, p1, _),
+    kind(p2, "function_definition").
+f704_yield_ok(n) :- f704_tok_follows_1(n), child(p10, n, _), kind(p10, "lambda").
+f704_yield_ok(n) :- f704_tok_follows_2(n), child(p18, n, _), kind(p18, "for_in_clause"),
+    count : { precedes(s19, p18), kind(s19, "for_in_clause") } = 0, child(p20, p18, _),
+    ( kind(p20, "list_comprehension")
+    ; kind(p20, "set_comprehension")
+    ; kind(p20, "dictionary_comprehension")
+    ; kind(p20, "generator_expression")
+    ),
+    f704_yield_ok(p20).
+f704_yield_ok(n) :- !f704_tok_follows_3(n), child(p28, n, _), kind(p28, "lambda"), f704_yield_ok(p28).
+f704_yield_ok(n) :- count : { f704_tok_follows_4(n), child(p36, n, _), kind(p36, "for_in_clause"), count : { precedes(s37, p36), kind(s37, "for_in_clause") } = 0 } = 0,
+    child(p38, n, _), !f704_alt_2(p38), f704_yield_ok(p38).
+
+// await_ok(n): the JSON util `await-ok`, used where the JSON says `matches: "await-ok"`
+.decl f704_await_ok(n: node)
+f704_await_ok(n) :- child(p1, n, _), kind(p1, "block"), child(p2, p1, _),
+    kind(p2, "function_definition").
+f704_await_ok(n) :- f704_tok_follows_1(n), child(p10, n, _), kind(p10, "lambda").
+f704_await_ok(n) :- f704_tok_follows_2(n), child(p18, n, _), kind(p18, "for_in_clause"),
+    count : { precedes(s19, p18), kind(s19, "for_in_clause") } = 0, child(p20, p18, _),
+    ( kind(p20, "list_comprehension")
+    ; kind(p20, "set_comprehension")
+    ; kind(p20, "dictionary_comprehension")
+    ; kind(p20, "generator_expression")
+    ),
+    f704_await_ok(p20).
+f704_await_ok(n) :- child(p21, n, _), kind(p21, "generator_expression").
+f704_await_ok(n) :- child(p22, n, _),
+    ( kind(p22, "list_comprehension")
+    ; kind(p22, "set_comprehension")
+    ; kind(p22, "dictionary_comprehension")
+    ),
+    f704_await_ok(p22).
+f704_await_ok(n) :- !f704_tok_follows_5(n), child(p30, n, _), kind(p30, "lambda"), f704_await_ok(p30).
+f704_await_ok(n) :- count : { f704_tok_follows_6(n), child(p38, n, _), kind(p38, "for_in_clause"), count : { precedes(s39, p38), kind(s39, "for_in_clause") } = 0 } = 0,
+    child(p40, n, _), !f704_alt_2(p40), f704_await_ok(p40).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f704_tok_follows_1(n: node)
+.stored f704_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f704_tok_follows_1(n) :- next_sibling(s3, n), glob(":", s3).
+f704_tok_follows_1(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match(":", t4).
+f704_tok_follows_1(n) :- structural_before(n, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)\\s*)$", g5).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^in$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f704_tok_follows_2(n: node)
+.stored f704_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f704_tok_follows_2(n) :- next_sibling(s11, n), glob("in", s11).
+f704_tok_follows_2(n) :- structural_before(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, st16, _), o15 = st16 - strlen(g13), token(p14, _, t12, _, o15),
+    match("in", t12).
+f704_tok_follows_2(n) :- structural_before(n, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:in)\\s*)$", g13).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f704_tok_follows_3(n: node)
+.stored f704_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f704_tok_follows_3(n) :- next_sibling(s21, n), glob(":", s21).
+f704_tok_follows_3(n) :- structural_before(n, g23), match("\\s*", g23), child(p24, n, _),
+    node(_, n, _, st26, _), o25 = st26 - strlen(g23), token(p24, _, t22, _, o25),
+    match(":", t22).
+f704_tok_follows_3(n) :- structural_before(n, g23),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)\\s*)$", g23).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^in$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f704_tok_follows_4(n: node)
+.stored f704_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f704_tok_follows_4(n) :- next_sibling(s29, n), glob("in", s29).
+f704_tok_follows_4(n) :- structural_before(n, g31), match("\\s*", g31), child(p32, n, _),
+    node(_, n, _, st34, _), o33 = st34 - strlen(g31), token(p32, _, t30, _, o33),
+    match("in", t30).
+f704_tok_follows_4(n) :- structural_before(n, g31),
+    match("(?s)^(?:(?:.*\\W)?(?:in)\\s*)$", g31).
+
+// tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f704_tok_follows_5(n: node)
+.stored f704_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f704_tok_follows_5(n) :- next_sibling(s23, n), glob(":", s23).
+f704_tok_follows_5(n) :- structural_before(n, g25), match("\\s*", g25), child(p26, n, _),
+    node(_, n, _, st28, _), o27 = st28 - strlen(g25), token(p26, _, t24, _, o27),
+    match(":", t24).
+f704_tok_follows_5(n) :- structural_before(n, g25),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)\\s*)$", g25).
+
+// tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "^in$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f704_tok_follows_6(n: node)
+.stored f704_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f704_tok_follows_6(n) :- next_sibling(s31, n), glob("in", s31).
+f704_tok_follows_6(n) :- structural_before(n, g33), match("\\s*", g33), child(p34, n, _),
+    node(_, n, _, st36, _), o35 = st36 - strlen(g33), token(p34, _, t32, _, o35),
+    match("in", t32).
+f704_tok_follows_6(n) :- structural_before(n, g33),
+    match("(?s)^(?:(?:.*\\W)?(?:in)\\s*)$", g33).
+
+// tok_has_7(n): a child of n, a named node or an anonymous token, matches "^yield$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f704_tok_has_7(n: node)
+.stored f704_tok_has_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f704_tok_has_7(n) :- child(n, c1, _), glob("yield", c1).
+f704_tok_has_7(n) :- op(n, t2), match("yield", t2).
+f704_tok_has_7(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:yield)(?:\\W.*)?)$", g3).
+f704_tok_has_7(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:yield)(?:\\W.*)?)$", g3).
+f704_tok_has_7(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:yield)(?:\\W.*)?)$", g3).
+
+// tok_has_8(n): a child of n, a named node or an anonymous token, matches "^await$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f704_tok_has_8(n: node)
+.stored f704_tok_has_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f704_tok_has_8(n) :- child(n, c9, _), glob("await", c9).
+f704_tok_has_8(n) :- op(n, t10), match("await", t10).
+f704_tok_has_8(n) :- child(n, c16, _), structural_before(c16, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:await)(?:\\W.*)?)$", g11).
+f704_tok_has_8(n) :- child(n, c16, _), structural_after(c16, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:await)(?:\\W.*)?)$", g11).
+f704_tok_has_8(n) :- node_text(n, g11), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:await)(?:\\W.*)?)$", g11).
+
+// set_1: node kinds from a JSON `any`
+.decl f704_set_1(v: symbol)
+f704_set_1("lambda"). f704_set_1("module"). f704_set_1("list_comprehension").
+f704_set_1("set_comprehension"). f704_set_1("dictionary_comprehension").
+f704_set_1("generator_expression").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl f704_alt_2(n: node)
+f704_alt_2(n) :- kind(n, k1), f704_set_1(k1).
+f704_alt_2(n) :- kind(n, "block"), child(p2, n, _),
+    (kind(p2, "function_definition") ; kind(p2, "class_definition")).

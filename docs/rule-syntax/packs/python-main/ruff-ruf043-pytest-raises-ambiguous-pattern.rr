@@ -1,0 +1,33 @@
+.policy "ruff-ruf043-pytest-raises-ambiguous-pattern" revision 1
+.guests off
+.description "Use a raw string or re.escape for the match pattern of pytest.raises; a plain string with regex special characters hides whether a regex or literal text was meant."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// RUF043(n): a finding at node n, from clause `ambiguous-pattern`.
+// Each rule below is one way the JSON `rule` can match.
+.violation RUF043(at: node) "This `match=` string has regex special characters: make it a raw string (writing doubled backslashes once) if it is a regex, or wrap it in `re.escape(...)` if it is literal text."
+    suppress noqa "RUF043"
+RUF043(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    count : { has(n, c1, "string_start"), glob("**[rRbBfFtT]**", c1) } = 0,
+    value(n, v2), match("(?:[^\\\\.^$*+?{\\[|()]|\\\\[^AbBdDsSwWzZ])*(?:[.^$*+?{\\[|()]|\\\\[AbBdDsSwWzZ]).*", v2),
+    ruf043_match_slot(n).
+
+// raises(n): the JSON util `raises`, used where the JSON says `matches: "raises"`
+.decl ruf043_raises(n: node)
+ruf043_raises(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf043_raises(c1).
+ruf043_raises(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "pytest.raises").
+
+// match_slot(n): the JSON util `match-slot`, used where the JSON says `matches: "match-slot"`
+.decl ruf043_match_slot(n: node)
+ruf043_match_slot(n) :- field(p1, "value", n), kind(p1, "keyword_argument"),
+    field(p1, "name", c2), glob("match", c2),
+    count : { precedes(s3, p1), kind(s3, "keyword_argument"), field(s3, "name", c4), glob("match", c4) } = 0,
+    child(p5, p1, _), kind(p5, "argument_list"), field(p6, "arguments", p5),
+    kind(p6, "call"), field(p6, "function", c7), ruf043_raises(c7).
+ruf043_match_slot(n) :- child(p8, n, _), kind(p8, "parenthesized_expression"), ruf043_match_slot(p8).

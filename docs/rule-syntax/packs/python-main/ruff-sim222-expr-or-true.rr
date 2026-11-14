@@ -1,0 +1,745 @@
+.policy "ruff-sim222-expr-or-true" revision 1
+.guests off
+.description "Simplify an or expression holding an always-truthy value such as True or a non-empty literal; the operands after it never run."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// SIM222(n): a finding at node n, from clause `expr-or-true`.
+// Each rule below is one way the JSON `rule` can match.
+.violation SIM222(at: node) "Drop the operands after the always-truthy value in this `or`; they never run, so the result is that value."
+    suppress noqa "SIM222"
+SIM222(n) :- sim222_value(n), !sim222_skip(n), (sim222_tok_precedes_11(n) ; sim222_prev_skip(n)),
+    ( sim222_tok_precedes_11(n)
+    ; next_sibling(s1, n), glob("or", s1), next_sibling(s2, s1), sim222_clean(s2)
+    ),
+    sim222_run_has_trigger(n).
+
+// or_op(n): the JSON util `or-op`, used where the JSON says `matches: "or-op"`
+.decl sim222_or_op(n: node)
+sim222_or_op(n) :- kind(n, "boolean_operator"), sim222_tok_has_1(n).
+
+// or_top(n): the JSON util `or-top`, used where the JSON says `matches: "or-top"`
+.decl sim222_or_top(n: node)
+sim222_or_top(n) :- sim222_or_op(n), count : { child(p1, n, _), sim222_or_op(p1) } = 0.
+
+// not_or_op(n): the JSON util `not-or-op`, used where the JSON says `matches: "not-or-op"`
+.decl sim222_not_or_op(n: node)
+sim222_not_or_op(n) :- node(_, n, _, _, _), !sim222_or_op(n).
+
+// safe_binop_operand(n): the JSON util `safe-binop-operand`, used where the JSON says `matches: "safe-binop-operand"`
+.decl sim222_safe_binop_operand(n: node)
+sim222_safe_binop_operand(n) :- kind(n, k1), sim222_set_1(k1).
+sim222_safe_binop_operand(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    sim222_safe_binop_operand(c2).
+
+// effect(n): the JSON util `effect`, used where the JSON says `matches: "effect"`
+.decl sim222_effect(n: node)
+sim222_effect(n) :- kind(n, k1), sim222_set_2(k1).
+sim222_effect(n) :- kind(n, "call"),
+    count : { child(n, c2, _), kind(c2, "identifier"), global_ref(c2, g3), sim222_set_25(g3), child(n, c4, _), kind(c4, "argument_list"), match("\\(\\s*\\)", c4) } = 0.
+sim222_effect(n) :- kind(n, "binary_operator"), child(n, c5, _), !sim222_alt_4(c5).
+
+// part(n, key): 3 copies of one rule set (`part-b`, `part-f`, `part-t`), folded into one: row `key` of
+// part_case gives the strings each copy had.
+.decl sim222_part(n: node, key: symbol)
+sim222_part(n, q1) :- sim222_part_case(q1, s1), child(n, c1, _), kind(c1, "string_start"),
+    match(s1, c1).
+
+// part_has_text(n): the JSON util `part-has-text`, used where the JSON says `matches: "part-has-text"`
+.decl sim222_part_has_text(n: node)
+sim222_part_has_text(n) :- child(n, c1, _), kind(c1, "string_content"),
+    !match("(\\\\\\r?\\n)+", c1).
+
+// part_no_text(n): the JSON util `part-no-text`, used where the JSON says `matches: "part-no-text"`
+.decl sim222_part_no_text(n: node)
+sim222_part_no_text(n) :- node(_, n, _, _, _), !sim222_part_has_text(n).
+
+// t_string(n): the JSON util `t-string`, used where the JSON says `matches: "t-string"`
+.decl sim222_t_string(n: node)
+sim222_t_string(n) :- kind(n, "string"), sim222_part(n, "t").
+sim222_t_string(n) :- kind(n, "concatenated_string"), child(n, c1, _), kind(c1, "string"),
+    sim222_part(c1, "t").
+
+// f_string(n): the JSON util `f-string`, used where the JSON says `matches: "f-string"`
+.decl sim222_f_string(n: node)
+sim222_f_string(n) :- !sim222_t_string(n),
+    ( kind(n, "string"), sim222_part(n, "f")
+    ; kind(n, "concatenated_string"), child(n, c1, _), kind(c1, "string"), sim222_part(c1, "f")
+    ).
+
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl sim222_plain_string(n: node)
+sim222_plain_string(n) :- (kind(n, "string") ; kind(n, "concatenated_string")), !sim222_alt_6(n).
+
+// bytes_string(n): the JSON util `bytes-string`, used where the JSON says `matches: "bytes-string"`
+.decl sim222_bytes_string(n: node)
+sim222_bytes_string(n) :- sim222_plain_string(n),
+    ( kind(n, "string"), sim222_part(n, "b")
+    ; kind(n, "concatenated_string"), child(n, c1, _), kind(c1, "string"), sim222_part(c1, "b")
+    ).
+
+
+// plain_nonempty(n): the JSON util `plain-nonempty`, used where the JSON says `matches: "plain-nonempty"`
+.decl sim222_plain_nonempty(n: node)
+sim222_plain_nonempty(n) :- sim222_plain_string(n),
+    ( kind(n, "string"), sim222_part_has_text(n)
+    ; kind(n, "concatenated_string"), child(n, c1, _), kind(c1, "string"), sim222_part_has_text(c1)
+    ).
+
+
+// plain_empty(n): the JSON util `plain-empty`, used where the JSON says `matches: "plain-empty"`
+.decl sim222_plain_empty(n: node)
+sim222_plain_empty(n) :- sim222_plain_string(n),
+    ( kind(n, "string"), sim222_part_no_text(n)
+    ; kind(n, "concatenated_string"), count : { child(n, c1, _), kind(c1, "string"), !sim222_part_no_text(c1) } = 0
+    ).
+
+
+// f_nonempty(n): the JSON util `f-nonempty`, used where the JSON says `matches: "f-nonempty"`
+.decl sim222_f_nonempty(n: node)
+sim222_f_nonempty(n) :- sim222_f_string(n), sim222_alt_12(n).
+
+// interp_nonempty(n): the JSON util `interp-nonempty`, used where the JSON says `matches: "interp-nonempty"`
+.decl sim222_interp_nonempty(n: node)
+sim222_interp_nonempty(n) :- sim222_tok_has_2(n).
+sim222_interp_nonempty(n) :- count : { child(n, c9, _), kind(c9, "format_specifier") } = 0,
+    child(n, c10, _), sim222_tok_follows_3(c10), sim222_fexpr_nonempty(c10).
+
+// fexpr_nonempty(n): the JSON util `fexpr-nonempty`, used where the JSON says `matches: "fexpr-nonempty"`
+.decl sim222_fexpr_nonempty(n: node)
+sim222_fexpr_nonempty(n) :- sim222_alt_16(n).
+sim222_fexpr_nonempty(n) :- kind(n, "parenthesized_expression"), child(n, c26, _),
+    sim222_fexpr_nonempty(c26).
+
+// f_empty(n): the JSON util `f-empty`, used where the JSON says `matches: "f-empty"`
+.decl sim222_f_empty(n: node)
+sim222_f_empty(n) :- sim222_f_empty_u7(n).
+
+// interp_empty(n): the JSON util `interp-empty`, used where the JSON says `matches: "interp-empty"`
+.decl sim222_interp_empty(n: node)
+sim222_interp_empty(n) :- sim222_interp_empty_u7(n).
+
+// fexpr_empty(n): the JSON util `fexpr-empty`, used where the JSON says `matches: "fexpr-empty"`
+.decl sim222_fexpr_empty(n: node)
+sim222_fexpr_empty(n) :- sim222_fexpr_empty_u7(n).
+
+// opaque_arg(n): the JSON util `opaque-arg`, used where the JSON says `matches: "opaque-arg"`
+.decl sim222_opaque_arg(n: node)
+sim222_opaque_arg(n) :- (kind(n, k1), sim222_set_21(k1) ; sim222_t_string(n)).
+sim222_opaque_arg(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), sim222_opaque_arg(c2).
+
+// truthy(n): the JSON util `truthy`, used where the JSON says `matches: "truthy"`
+.decl sim222_truthy(n: node)
+sim222_truthy(n) :- sim222_alt_27(n).
+sim222_truthy(n) :- kind(n, "parenthesized_expression"), child(n, c11, _), sim222_truthy(c11).
+
+// falsy(n): the JSON util `falsy`, used where the JSON says `matches: "falsy"`
+.decl sim222_falsy(n: node)
+sim222_falsy(n) :- sim222_alt_34(n).
+sim222_falsy(n) :- kind(n, "parenthesized_expression"), child(n, c14, _), sim222_falsy(c14).
+
+// known(n): the JSON util `known`, used where the JSON says `matches: "known"`
+.decl sim222_known(n: node)
+sim222_known(n) :- sim222_truthy(n).
+sim222_known(n) :- sim222_falsy(n).
+
+// boolean_test(n): the JSON util `boolean-test`, used where the JSON says `matches: "boolean-test"`
+.decl sim222_boolean_test(n: node)
+sim222_boolean_test(n) :- child(p1, n, _), kind(p1, "not_operator").
+sim222_boolean_test(n) :- sim222_tok_follows_8(n), child(p9, n, _),
+    ( kind(p9, "if_statement")
+    ; kind(p9, "elif_clause")
+    ; kind(p9, "while_statement")
+    ; kind(p9, "conditional_expression")
+    ).
+
+sim222_boolean_test(n) :- sim222_tok_follows_9(n).
+sim222_boolean_test(n) :- child(p17, n, _), kind(p17, "if_clause").
+sim222_boolean_test(n) :- sim222_tok_follows_10(n), child(p25, n, _), kind(p25, "argument_list"),
+    child(p26, p25, _), kind(p26, "call"), child(p26, c27, _),
+    (kind(c27, "identifier") ; kind(c27, "attribute")), global_ref(c27, "bool"),
+    sym_of(c27, "builtins.bool").
+sim222_boolean_test(n) :- child(p28, n, _),
+    (kind(p28, "parenthesized_expression") ; kind(p28, "boolean_operator")),
+    sim222_boolean_test(p28).
+
+// short(n): the JSON util `short`, used where the JSON says `matches: "short"`
+.decl sim222_short(n: node)
+sim222_short(n) :- sim222_truthy(n).
+
+// value(n): the JSON util `value`, used where the JSON says `matches: "value"`
+.decl sim222_value(n: node)
+sim222_value(n) :- !sim222_alt_38(n), child(p1, n, _), sim222_or_op(p1).
+
+// has_next(n): the JSON util `has-next`, used where the JSON says `matches: "has-next"`
+.decl sim222_has_next(n: node)
+sim222_has_next(n) :- sim222_tok_precedes_11(n).
+sim222_has_next(n) :- sim222_tok_follows_12(n), child(p15, n, _), sim222_or_op(p15), sim222_tok_precedes_13(p15).
+
+// next_short(n): the JSON util `next-short`, used where the JSON says `matches: "next-short"`
+.decl sim222_next_short(n: node)
+sim222_next_short(n) :- next_sibling(n, s1), glob("or", s1), next_sibling(s1, s2), sim222_short(s2).
+sim222_next_short(n) :- sim222_tok_follows_14(n), child(p10, n, _), sim222_or_op(p10),
+    next_sibling(p10, s11), glob("or", s11), next_sibling(s11, s12), sim222_short(s12).
+
+// trigger(n): the JSON util `trigger`, used where the JSON says `matches: "trigger"`
+.decl sim222_trigger(n: node)
+sim222_trigger(n) :- sim222_value(n), (sim222_short(n), sim222_has_next(n) ; !sim222_skip(n), sim222_next_short(n)).
+
+// clean(n): the JSON util `clean`, used where the JSON says `matches: "clean"`
+.decl sim222_clean(n: node)
+sim222_clean(n) :- node(_, n, _, _, _), !sim222_trigger(n),
+    count : { sim222_stop_40_within(c1, n), sim222_trigger(c1) } = 0.
+
+// prev_skip(n): the JSON util `prev-skip`, used where the JSON says `matches: "prev-skip"`
+.decl sim222_prev_skip(n: node)
+sim222_prev_skip(n) :- next_sibling(s1, n), glob("or", s1), next_sibling(s2, s1),
+    (!sim222_or_op(s2), sim222_skip(s2) ; sim222_or_op(s2), child(s2, c1, _), sim222_tok_follows_16(c1), sim222_skip(c1)).
+
+// run_has_trigger(n): the JSON util `run-has-trigger`, used where the JSON says `matches: "run-has-trigger"`
+.decl sim222_run_has_trigger(n: node)
+sim222_run_has_trigger(n) :- sim222_trigger(n).
+sim222_run_has_trigger(n) :- within_stop(n, p1, sim222_stop_42), sim222_or_op(p1), child(p1, c2, _),
+    sim222_tok_follows_14(c2), sim222_trigger(c2).
+
+// in_boolean_test(n): the JSON util `in-boolean-test`, used where the JSON says `matches: "in-boolean-test"`
+.decl sim222_in_boolean_test(n: node)
+sim222_in_boolean_test(n) :- within_stop(n, p1, sim222_stop_43), sim222_or_top(p1), sim222_boolean_test(p1).
+
+// skip(n): the JSON util `skip`, used where the JSON says `matches: "skip"`
+.decl sim222_skip(n: node)
+sim222_skip(n) :- node(_, n, _, _, _), !sim222_known(n),
+    (!sim222_in_boolean_test(n) ; sim222_effect(n) ; within(c1, n), sim222_effect(c1)).
+
+.decl sim222_alt_18_u0(n: node)
+sim222_alt_18_u0(n) :- kind(n, "string"), sim222_part_no_text(n),
+    count : { child(n, c1, _), kind(c1, "interpolation") } = 0.
+sim222_alt_18_u0(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), count : { sim222_part_no_text(c2), count : { child(c2, c3, _), kind(c3, "interpolation") } = 0 } = 0 } = 0.
+
+.decl sim222_alt_18_u1(n: node)
+sim222_alt_18_u1(n) :- kind(n, "string"), sim222_part_no_text(n),
+    count : { child(n, c1, _), kind(c1, "interpolation"), !sim222_interp_empty_u0(c1) } = 0.
+sim222_alt_18_u1(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), count : { sim222_part_no_text(c2), count : { child(c2, c3, _), kind(c3, "interpolation"), !sim222_interp_empty_u0(c3) } = 0 } = 0 } = 0.
+
+.decl sim222_alt_18_u2(n: node)
+sim222_alt_18_u2(n) :- kind(n, "string"), sim222_part_no_text(n),
+    count : { child(n, c1, _), kind(c1, "interpolation"), !sim222_interp_empty_u1(c1) } = 0.
+sim222_alt_18_u2(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), count : { sim222_part_no_text(c2), count : { child(c2, c3, _), kind(c3, "interpolation"), !sim222_interp_empty_u1(c3) } = 0 } = 0 } = 0.
+
+.decl sim222_alt_18_u3(n: node)
+sim222_alt_18_u3(n) :- kind(n, "string"), sim222_part_no_text(n),
+    count : { child(n, c1, _), kind(c1, "interpolation"), !sim222_interp_empty_u2(c1) } = 0.
+sim222_alt_18_u3(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), count : { sim222_part_no_text(c2), count : { child(c2, c3, _), kind(c3, "interpolation"), !sim222_interp_empty_u2(c3) } = 0 } = 0 } = 0.
+
+.decl sim222_alt_18_u4(n: node)
+sim222_alt_18_u4(n) :- kind(n, "string"), sim222_part_no_text(n),
+    count : { child(n, c1, _), kind(c1, "interpolation"), !sim222_interp_empty_u3(c1) } = 0.
+sim222_alt_18_u4(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), count : { sim222_part_no_text(c2), count : { child(c2, c3, _), kind(c3, "interpolation"), !sim222_interp_empty_u3(c3) } = 0 } = 0 } = 0.
+
+.decl sim222_alt_18_u5(n: node)
+sim222_alt_18_u5(n) :- kind(n, "string"), sim222_part_no_text(n),
+    count : { child(n, c1, _), kind(c1, "interpolation"), !sim222_interp_empty_u4(c1) } = 0.
+sim222_alt_18_u5(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), count : { sim222_part_no_text(c2), count : { child(c2, c3, _), kind(c3, "interpolation"), !sim222_interp_empty_u4(c3) } = 0 } = 0 } = 0.
+
+.decl sim222_alt_18_u6(n: node)
+sim222_alt_18_u6(n) :- kind(n, "string"), sim222_part_no_text(n),
+    count : { child(n, c1, _), kind(c1, "interpolation"), !sim222_interp_empty_u5(c1) } = 0.
+sim222_alt_18_u6(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), count : { sim222_part_no_text(c2), count : { child(c2, c3, _), kind(c3, "interpolation"), !sim222_interp_empty_u5(c3) } = 0 } = 0 } = 0.
+
+.decl sim222_alt_18_u7(n: node)
+sim222_alt_18_u7(n) :- kind(n, "string"), sim222_part_no_text(n),
+    count : { child(n, c1, _), kind(c1, "interpolation"), !sim222_interp_empty_u6(c1) } = 0.
+sim222_alt_18_u7(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), count : { sim222_part_no_text(c2), count : { child(c2, c3, _), kind(c3, "interpolation"), !sim222_interp_empty_u6(c3) } = 0 } = 0 } = 0.
+
+.decl sim222_alt_20_u0(n: node)
+sim222_alt_20_u0(n) :- sim222_plain_empty(n), !sim222_bytes_string(n).
+
+.decl sim222_alt_20_u1(n: node)
+sim222_alt_20_u1(n) :- sim222_plain_empty(n), !sim222_bytes_string(n).
+sim222_alt_20_u1(n) :- sim222_f_empty_u0(n).
+
+.decl sim222_alt_20_u2(n: node)
+sim222_alt_20_u2(n) :- sim222_plain_empty(n), !sim222_bytes_string(n).
+sim222_alt_20_u2(n) :- sim222_f_empty_u1(n).
+
+.decl sim222_alt_20_u3(n: node)
+sim222_alt_20_u3(n) :- sim222_plain_empty(n), !sim222_bytes_string(n).
+sim222_alt_20_u3(n) :- sim222_f_empty_u2(n).
+
+.decl sim222_alt_20_u4(n: node)
+sim222_alt_20_u4(n) :- sim222_plain_empty(n), !sim222_bytes_string(n).
+sim222_alt_20_u4(n) :- sim222_f_empty_u3(n).
+
+.decl sim222_alt_20_u5(n: node)
+sim222_alt_20_u5(n) :- sim222_plain_empty(n), !sim222_bytes_string(n).
+sim222_alt_20_u5(n) :- sim222_f_empty_u4(n).
+
+.decl sim222_alt_20_u6(n: node)
+sim222_alt_20_u6(n) :- sim222_plain_empty(n), !sim222_bytes_string(n).
+sim222_alt_20_u6(n) :- sim222_f_empty_u5(n).
+
+.decl sim222_alt_20_u7(n: node)
+sim222_alt_20_u7(n) :- sim222_plain_empty(n), !sim222_bytes_string(n).
+sim222_alt_20_u7(n) :- sim222_f_empty_u6(n).
+
+.decl sim222_f_empty_u1(n: node)
+sim222_f_empty_u1(n) :- sim222_f_string(n), sim222_alt_18_u0(n).
+
+.decl sim222_f_empty_u2(n: node)
+sim222_f_empty_u2(n) :- sim222_f_string(n), sim222_alt_18_u1(n).
+
+.decl sim222_f_empty_u3(n: node)
+sim222_f_empty_u3(n) :- sim222_f_string(n), sim222_alt_18_u2(n).
+
+.decl sim222_f_empty_u4(n: node)
+sim222_f_empty_u4(n) :- sim222_f_string(n), sim222_alt_18_u3(n).
+
+.decl sim222_f_empty_u5(n: node)
+sim222_f_empty_u5(n) :- sim222_f_string(n), sim222_alt_18_u4(n).
+
+.decl sim222_f_empty_u6(n: node)
+sim222_f_empty_u6(n) :- sim222_f_string(n), sim222_alt_18_u5(n).
+
+.decl sim222_f_empty_u7(n: node)
+sim222_f_empty_u7(n) :- sim222_f_string(n), sim222_alt_18_u6(n).
+
+.decl sim222_fexpr_empty_u1(n: node)
+sim222_fexpr_empty_u1(n) :- sim222_alt_20_u0(n).
+sim222_fexpr_empty_u1(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    sim222_fexpr_empty_u0(c1).
+
+.decl sim222_fexpr_empty_u2(n: node)
+sim222_fexpr_empty_u2(n) :- sim222_alt_20_u1(n).
+sim222_fexpr_empty_u2(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    sim222_fexpr_empty_u1(c1).
+
+.decl sim222_fexpr_empty_u3(n: node)
+sim222_fexpr_empty_u3(n) :- sim222_alt_20_u2(n).
+sim222_fexpr_empty_u3(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    sim222_fexpr_empty_u2(c1).
+
+.decl sim222_fexpr_empty_u4(n: node)
+sim222_fexpr_empty_u4(n) :- sim222_alt_20_u3(n).
+sim222_fexpr_empty_u4(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    sim222_fexpr_empty_u3(c1).
+
+.decl sim222_fexpr_empty_u5(n: node)
+sim222_fexpr_empty_u5(n) :- sim222_alt_20_u4(n).
+sim222_fexpr_empty_u5(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    sim222_fexpr_empty_u4(c1).
+
+.decl sim222_fexpr_empty_u6(n: node)
+sim222_fexpr_empty_u6(n) :- sim222_alt_20_u5(n).
+sim222_fexpr_empty_u6(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    sim222_fexpr_empty_u5(c1).
+
+.decl sim222_fexpr_empty_u7(n: node)
+sim222_fexpr_empty_u7(n) :- sim222_alt_20_u6(n).
+sim222_fexpr_empty_u7(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    sim222_fexpr_empty_u6(c1).
+
+.decl sim222_interp_empty_u1(n: node)
+sim222_interp_empty_u1(n) :- count : { child(n, c1, _), sim222_alt_19(c1) } = 0, child(n, c2, _),
+    sim222_tok_follows_7(c2), sim222_fexpr_empty_u0(c2).
+
+.decl sim222_interp_empty_u2(n: node)
+sim222_interp_empty_u2(n) :- count : { child(n, c1, _), sim222_alt_19(c1) } = 0, child(n, c2, _),
+    sim222_tok_follows_7(c2), sim222_fexpr_empty_u1(c2).
+
+.decl sim222_interp_empty_u3(n: node)
+sim222_interp_empty_u3(n) :- count : { child(n, c1, _), sim222_alt_19(c1) } = 0, child(n, c2, _),
+    sim222_tok_follows_7(c2), sim222_fexpr_empty_u2(c2).
+
+.decl sim222_interp_empty_u4(n: node)
+sim222_interp_empty_u4(n) :- count : { child(n, c1, _), sim222_alt_19(c1) } = 0, child(n, c2, _),
+    sim222_tok_follows_7(c2), sim222_fexpr_empty_u3(c2).
+
+.decl sim222_interp_empty_u5(n: node)
+sim222_interp_empty_u5(n) :- count : { child(n, c1, _), sim222_alt_19(c1) } = 0, child(n, c2, _),
+    sim222_tok_follows_7(c2), sim222_fexpr_empty_u4(c2).
+
+.decl sim222_interp_empty_u6(n: node)
+sim222_interp_empty_u6(n) :- count : { child(n, c1, _), sim222_alt_19(c1) } = 0, child(n, c2, _),
+    sim222_tok_follows_7(c2), sim222_fexpr_empty_u5(c2).
+
+.decl sim222_interp_empty_u7(n: node)
+sim222_interp_empty_u7(n) :- count : { child(n, c1, _), sim222_alt_19(c1) } = 0, child(n, c2, _),
+    sim222_tok_follows_7(c2), sim222_fexpr_empty_u6(c2).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_has_1(n: node)
+.stored sim222_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_has_1(n) :- child(n, c1, _), glob("or", c1).
+sim222_tok_has_1(n) :- op(n, t2), match("or", t2).
+sim222_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:or)(?:\\W.*)?)$", g3).
+sim222_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:or)(?:\\W.*)?)$", g3).
+sim222_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:or)(?:\\W.*)?)$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_has_2(n: node)
+.stored sim222_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_has_2(n) :- child(n, c1, _), glob("=", c1).
+sim222_tok_has_2(n) :- op(n, t2), match("=", t2).
+sim222_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+sim222_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+sim222_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\{$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_follows_3(n: node)
+.stored sim222_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_follows_3(n) :- next_sibling(s11, n), glob("\\{", s11).
+sim222_tok_follows_3(n) :- structural_before(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, st16, _), o15 = st16 - strlen(g13), token(p14, _, t12, _, o15),
+    match("\\{", t12).
+sim222_tok_follows_3(n) :- structural_before(n, g13), match("(?s)^(?:.*(?:\\{)\\s*)$", g13).
+
+// tok_precedes_4(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_precedes_4(n: node)
+.stored sim222_tok_precedes_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_precedes_4(n) :- next_sibling(n, s3), glob("if", s3).
+sim222_tok_precedes_4(n) :- structural_after(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, _, en9), o7 = en9 + strlen(g5), token(p6, _, t4, o7, _),
+    match("if", t4).
+sim222_tok_precedes_4(n) :- structural_after(n, g5),
+    match("(?s)^(?:\\s*(?:if)(?:\\W.*)?)$", g5).
+
+// tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_follows_5(n: node)
+.stored sim222_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_follows_5(n) :- next_sibling(s11, n), glob("else", s11).
+sim222_tok_follows_5(n) :- structural_before(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, st16, _), o15 = st16 - strlen(g13), token(p14, _, t12, _, o15),
+    match("else", t12).
+sim222_tok_follows_5(n) :- structural_before(n, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:else)\\s*)$", g13).
+
+// tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "^:=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_follows_6(n: node)
+.stored sim222_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_follows_6(n) :- next_sibling(s19, n), glob(":=", s19).
+sim222_tok_follows_6(n) :- structural_before(n, g21), match("\\s*", g21), child(p22, n, _),
+    node(_, n, _, st24, _), o23 = st24 - strlen(g21), token(p22, _, t20, _, o23),
+    match(":=", t20).
+sim222_tok_follows_6(n) :- structural_before(n, g21),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::=)\\s*)$", g21).
+
+// tok_follows_7(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\{$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_follows_7(n: node)
+.stored sim222_tok_follows_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_follows_7(n) :- next_sibling(s3, n), glob("\\{", s3).
+sim222_tok_follows_7(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match("\\{", t4).
+sim222_tok_follows_7(n) :- structural_before(n, g5), match("(?s)^(?:.*(?:\\{)\\s*)$", g5).
+
+// truthy_value: b is "true" when n's value is truthy (Python's bool(v)), "false" when it is falsy
+.decl sim222_truthy_value(n: node, b: symbol)
+sim222_truthy_value(n, "false") :- sim222_value(n, x), value_type(x, "NoneType").
+sim222_truthy_value(n, b) :- sim222_value(n, x), value_type(x, "boolean"), b = x.
+sim222_truthy_value(n, "false") :- sim222_value(n, x),
+    (value_type(x, "int") ; value_type(x, "float")),
+    (x = "0" ; x = "0.0" ; x = "-0.0").
+sim222_truthy_value(n, "true") :- sim222_value(n, x),
+    (value_type(x, "int") ; value_type(x, "float")), x != "0", x != "0.0", x != "-0.0".
+sim222_truthy_value(n, "false") :- sim222_value(n, x),
+    (value_type(x, "str") ; value_type(x, "bytes")), x = "".
+sim222_truthy_value(n, "true") :- sim222_value(n, x),
+    (value_type(x, "str") ; value_type(x, "bytes")), x != "".
+
+// tok_follows_8(n): an earlier sibling of n, a named node or an anonymous token, matches "^(if|elif|while)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_follows_8(n: node)
+.stored sim222_tok_follows_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_follows_8(n) :- next_sibling(s2, n), glob("{if,elif,while}", s2).
+sim222_tok_follows_8(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(if|elif|while)", t3).
+sim222_tok_follows_8(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:if)\\s*|(?:.*\\W)?(?:elif)\\s*|(?:.*\\W)?(?:while)\\s*)$", g4).
+
+// tok_follows_9(n): an earlier sibling of n, a named node or an anonymous token, matches "^assert$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_follows_9(n: node)
+.stored sim222_tok_follows_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_follows_9(n) :- next_sibling(s10, n), glob("assert", s10).
+sim222_tok_follows_9(n) :- structural_before(n, g12), match("\\s*", g12), child(p13, n, _),
+    node(_, n, _, st15, _), o14 = st15 - strlen(g12), token(p13, _, t11, _, o14),
+    match("assert", t11).
+sim222_tok_follows_9(n) :- structural_before(n, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:assert)\\s*)$", g12).
+
+// tok_follows_10(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\($": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_follows_10(n: node)
+.stored sim222_tok_follows_10 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_follows_10(n) :- next_sibling(s18, n), glob("(", s18).
+sim222_tok_follows_10(n) :- structural_before(n, g20), match("\\s*", g20), child(p21, n, _),
+    node(_, n, _, st23, _), o22 = st23 - strlen(g20), token(p21, _, t19, _, o22),
+    match("\\(", t19).
+sim222_tok_follows_10(n) :- structural_before(n, g20), match("(?s)^(?:.*(?:\\()\\s*)$", g20).
+
+// tok_precedes_11(n): a later sibling of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_precedes_11(n: node)
+.stored sim222_tok_precedes_11 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_precedes_11(n) :- next_sibling(n, s1), glob("or", s1).
+sim222_tok_precedes_11(n) :- structural_after(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, _, en7), o5 = en7 + strlen(g3), token(p4, _, t2, o5, _),
+    match("or", t2).
+sim222_tok_precedes_11(n) :- structural_after(n, g3),
+    match("(?s)^(?:\\s*(?:or)(?:\\W.*)?)$", g3).
+
+// tok_follows_12(n): an earlier sibling of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_follows_12(n: node)
+.stored sim222_tok_follows_12 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_follows_12(n) :- next_sibling(s8, n), glob("or", s8).
+sim222_tok_follows_12(n) :- structural_before(n, g10), match("\\s*", g10), child(p11, n, _),
+    node(_, n, _, st13, _), o12 = st13 - strlen(g10), token(p11, _, t9, _, o12),
+    match("or", t9).
+sim222_tok_follows_12(n) :- structural_before(n, g10),
+    match("(?s)^(?:(?:.*\\W)?(?:or)\\s*)$", g10).
+
+// tok_precedes_13(n): a later sibling of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_precedes_13(n: node)
+.stored sim222_tok_precedes_13 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_precedes_13(n) :- next_sibling(n, s16), glob("or", s16).
+sim222_tok_precedes_13(n) :- structural_after(n, g18), match("\\s*", g18), child(p19, n, _),
+    node(_, n, _, _, en22), o20 = en22 + strlen(g18), token(p19, _, t17, o20, _),
+    match("or", t17).
+sim222_tok_precedes_13(n) :- structural_after(n, g18),
+    match("(?s)^(?:\\s*(?:or)(?:\\W.*)?)$", g18).
+
+// tok_follows_14(n): an earlier sibling of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_follows_14(n: node)
+.stored sim222_tok_follows_14 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_follows_14(n) :- next_sibling(s3, n), glob("or", s3).
+sim222_tok_follows_14(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match("or", t4).
+sim222_tok_follows_14(n) :- structural_before(n, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:or)\\s*)$", g5).
+
+// tok_follows_15(n): an earlier sibling of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_follows_15(n: node)
+.stored sim222_tok_follows_15 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_follows_15(n) :- next_sibling(s4, n), glob("or", s4).
+sim222_tok_follows_15(n) :- structural_before(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, st9, _), o8 = st9 - strlen(g6), token(p7, _, t5, _, o8),
+    match("or", t5).
+sim222_tok_follows_15(n) :- structural_before(n, g6),
+    match("(?s)^(?:(?:.*\\W)?(?:or)\\s*)$", g6).
+
+// tok_follows_16(n): an earlier sibling of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_follows_16(n: node)
+.stored sim222_tok_follows_16 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_follows_16(n) :- next_sibling(s2, n), glob("or", s2).
+sim222_tok_follows_16(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("or", t3).
+sim222_tok_follows_16(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:or)\\s*)$", g4).
+
+// tok_precedes_17(n): a later sibling of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim222_tok_precedes_17(n: node)
+.stored sim222_tok_precedes_17 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim222_tok_precedes_17(n) :- next_sibling(n, s8), glob("or", s8).
+sim222_tok_precedes_17(n) :- structural_after(n, g10), match("\\s*", g10), child(p11, n, _),
+    node(_, n, _, _, en14), o12 = en14 + strlen(g10), token(p11, _, t9, o12, _),
+    match("or", t9).
+sim222_tok_precedes_17(n) :- structural_after(n, g10),
+    match("(?s)^(?:\\s*(?:or)(?:\\W.*)?)$", g10).
+
+// alt_18_u0_empty: level -1 of an unrolled recursion, empty
+.decl sim222_alt_18_u0_empty(n: node)
+
+// alt_20_u0_empty: level -1 of an unrolled recursion, empty
+.decl sim222_alt_20_u0_empty(n: node)
+
+// f_empty_u0: level -1 of an unrolled recursion, empty
+.decl sim222_f_empty_u0(n: node)
+
+// f_empty_u0_empty: level -1 of an unrolled recursion, empty
+.decl sim222_f_empty_u0_empty(n: node)
+
+// fexpr_empty_u0: level -1 of an unrolled recursion, empty
+.decl sim222_fexpr_empty_u0(n: node)
+
+// fexpr_empty_u0_empty: level -1 of an unrolled recursion, empty
+.decl sim222_fexpr_empty_u0_empty(n: node)
+
+// interp_empty_u0: level -1 of an unrolled recursion, empty
+.decl sim222_interp_empty_u0(n: node)
+
+// interp_empty_u0_empty: level -1 of an unrolled recursion, empty
+.decl sim222_interp_empty_u0_empty(n: node)
+
+// set_1: node kinds from a JSON `any`
+.decl sim222_set_1(v: symbol)
+sim222_set_1("string"). sim222_set_1("concatenated_string"). sim222_set_1("integer"). sim222_set_1("float").
+sim222_set_1("true"). sim222_set_1("false"). sim222_set_1("none"). sim222_set_1("ellipsis"). sim222_set_1("list").
+sim222_set_1("tuple"). sim222_set_1("set"). sim222_set_1("dictionary"). sim222_set_1("list_comprehension").
+sim222_set_1("set_comprehension"). sim222_set_1("dictionary_comprehension").
+
+// set_2: node kinds from a JSON `any`
+.decl sim222_set_2(v: symbol)
+sim222_set_2("named_expression"). sim222_set_2("await"). sim222_set_2("yield"). sim222_set_2("subscript").
+sim222_set_2("list_comprehension"). sim222_set_2("set_comprehension").
+sim222_set_2("dictionary_comprehension"). sim222_set_2("generator_expression").
+
+// set_15: node kinds from a JSON `any`
+.decl sim222_set_15(v: symbol)
+sim222_set_15("lambda"). sim222_set_15("dictionary"). sim222_set_15("set"). sim222_set_15("list_comprehension").
+sim222_set_15("set_comprehension"). sim222_set_15("dictionary_comprehension"). sim222_set_15("integer").
+sim222_set_15("float"). sim222_set_15("true"). sim222_set_15("false"). sim222_set_15("none"). sim222_set_15("ellipsis").
+sim222_set_15("list"). sim222_set_15("tuple").
+
+// set_21: node kinds from a JSON `any`
+.decl sim222_set_21(v: symbol)
+sim222_set_21("integer"). sim222_set_21("float"). sim222_set_21("true"). sim222_set_21("false"). sim222_set_21("none").
+sim222_set_21("ellipsis"). sim222_set_21("lambda"). sim222_set_21("generator_expression").
+
+// set_25: names from the JSON `resolves.global`
+.decl sim222_set_25(v: symbol)
+sim222_set_25("list"). sim222_set_25("tuple"). sim222_set_25("set"). sim222_set_25("dict"). sim222_set_25("frozenset").
+
+// part_case: one row per relation folded into part: its key, then the strings that differed.
+.decl sim222_part_case(key: symbol, s1: symbol)
+sim222_part_case("b", "[A-Za-z]*[bB].*"). sim222_part_case("f", "[A-Za-z]*[fF].*").
+sim222_part_case("t", "[A-Za-z]*[tT].*").
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl sim222_alt_4(n: node)
+sim222_alt_4(n) :- sim222_safe_binop_operand(n).
+sim222_alt_4(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,<<,>>,&,|,^,@}", n).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl sim222_alt_6(n: node)
+sim222_alt_6(n) :- sim222_t_string(n).
+sim222_alt_6(n) :- sim222_f_string(n).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl sim222_alt_10(n: node)
+sim222_alt_10(n) :- sim222_part_has_text(n).
+sim222_alt_10(n) :- sim222_part(n, "f"), child(n, c1, _), kind(c1, "interpolation"),
+    sim222_interp_nonempty(c1).
+
+// alt_12(n): the JSON `any`: n matches if any one of these rules does
+.decl sim222_alt_12(n: node)
+sim222_alt_12(n) :- kind(n, "string"), sim222_alt_10(n).
+sim222_alt_12(n) :- kind(n, "concatenated_string"), child(n, c2, _), kind(c2, "string"),
+    sim222_alt_10(c2).
+
+// alt_16(n): the JSON `any`: n matches if any one of these rules does
+.decl sim222_alt_16(n: node)
+sim222_alt_16(n) :- kind(n, k1), sim222_set_15(k1).
+sim222_alt_16(n) :- sim222_t_string(n).
+sim222_alt_16(n) :- sim222_f_nonempty(n).
+sim222_alt_16(n) :- sim222_plain_nonempty(n).
+sim222_alt_16(n) :- sim222_bytes_string(n).
+sim222_alt_16(n) :- kind(n, "conditional_expression"), child(n, c2, _), sim222_fexpr_nonempty(c2),
+    sim222_tok_precedes_4(c2), child(n, c10, _), sim222_fexpr_nonempty(c10), sim222_tok_follows_5(c10).
+sim222_alt_16(n) :- kind(n, "named_expression"), child(n, c18, _), sim222_tok_follows_6(c18),
+    sim222_fexpr_nonempty(c18).
+
+// alt_18(n): the JSON `any`: n matches if any one of these rules does
+.decl sim222_alt_18(n: node)
+sim222_alt_18(n) :- sim222_alt_18_u7(n).
+
+// alt_19(n): the JSON `any`: n matches if any one of these rules does
+.decl sim222_alt_19(n: node)
+sim222_alt_19(n) :- (kind(n, "type_conversion") ; kind(n, "format_specifier")).
+sim222_alt_19(n) :- node(_, n, _, _, _), glob("=", n).
+
+// alt_20(n): the JSON `any`: n matches if any one of these rules does
+.decl sim222_alt_20(n: node)
+sim222_alt_20(n) :- sim222_alt_20_u7(n).
+
+// alt_24(n): the JSON `any`: n matches if any one of these rules does
+.decl sim222_alt_24(n: node)
+sim222_alt_24(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim222_alt_24(n) :- kind(n, "list_splat").
+
+// alt_26(n): the JSON `any`: n matches if any one of these rules does
+.decl sim222_alt_26(n: node)
+sim222_alt_26(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+sim222_alt_26(n) :- sim222_opaque_arg(n).
+
+// alt_27(n): the JSON `any`: n matches if any one of these rules does
+.decl sim222_alt_27(n: node)
+sim222_alt_27(n) :-
+    ( kind(n, "true")
+    ; kind(n, "lambda")
+    ; kind(n, "generator_expression")
+    ; kind(n, "ellipsis")
+    ).
+
+sim222_alt_27(n) :- sim222_t_string(n).
+sim222_alt_27(n) :- sim222_plain_nonempty(n).
+sim222_alt_27(n) :- sim222_f_nonempty(n).
+sim222_alt_27(n) :- (kind(n, "integer") ; kind(n, "float")), sim222_value(n, v1),
+    sim222_truthy_value(n, "true").
+sim222_alt_27(n) :- (kind(n, "list") ; kind(n, "set") ; kind(n, "tuple")), child(n, c2, _),
+    !sim222_alt_24(c2).
+sim222_alt_27(n) :- kind(n, "dictionary"), child(n, c3, _), kind(c3, "pair").
+sim222_alt_27(n) :- kind(n, "call"), child(n, c4, _), kind(c4, "identifier"),
+    global_ref(c4, g5), sim222_set_25(g5), child(n, c6, _), kind(c6, "argument_list"),
+    k8 = count : { child(c6, c7, _), !glob("[\\[\\](){},]", c7) }, k8 >= 1, k8 <= 1,
+    count : { child(c6, c9, _), (kind(c9, "keyword_argument") ; kind(c9, "dictionary_splat")) } = 0,
+    child(c6, c10, _), !sim222_alt_26(c10), sim222_truthy(c10).
+
+// alt_34(n): the JSON `any`: n matches if any one of these rules does
+.decl sim222_alt_34(n: node)
+sim222_alt_34(n) :- (kind(n, "false") ; kind(n, "none")).
+sim222_alt_34(n) :- sim222_plain_empty(n).
+sim222_alt_34(n) :- sim222_f_empty(n).
+sim222_alt_34(n) :- (kind(n, "integer") ; kind(n, "float")), sim222_value(n, v1),
+    sim222_truthy_value(n, "false").
+sim222_alt_34(n) :- (kind(n, "list") ; kind(n, "tuple") ; kind(n, "dictionary")),
+    count : { child(n, c2, _), !glob("[\\[\\](){},]", c2) } = 0.
+sim222_alt_34(n) :- kind(n, "call"), child(n, c3, _), kind(c3, "identifier"),
+    global_ref(c3, g4), sim222_set_25(g4), child(n, c5, _), kind(c5, "argument_list"),
+    count : { child(c5, c6, _), !glob("[\\[\\](){},]", c6) } = 0.
+sim222_alt_34(n) :- kind(n, "call"), child(n, c7, _), kind(c7, "identifier"),
+    global_ref(c7, g8), sim222_set_25(g8), child(n, c9, _), kind(c9, "argument_list"),
+    k11 = count : { child(c9, c10, _), !glob("[\\[\\](){},]", c10) }, k11 >= 1,
+    k11 <= 1,
+    count : { child(c9, c12, _), (kind(c12, "keyword_argument") ; kind(c12, "dictionary_splat")) } = 0,
+    child(c9, c13, _), !sim222_alt_26(c13), sim222_falsy(c13).
+
+// alt_38(n): the JSON `any`: n matches if any one of these rules does
+.decl sim222_alt_38(n: node)
+sim222_alt_38(n) :- sim222_or_op(n).
+sim222_alt_38(n) :- node(_, n, _, _, _), glob("or", n).
+sim222_alt_38(n) :- kind(n, "comment").
+
+// stop_40(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl sim222_stop_40(n: node)
+sim222_stop_40(n) :- sim222_not_or_op(n).
+
+// stop_42(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl sim222_stop_42(n: node)
+sim222_stop_42(n) :- sim222_not_or_op(n).
+sim222_stop_42(n) :- sim222_or_op(n), child(n, c1, _), sim222_tok_follows_16(c1), sim222_skip(c1).
+
+// stop_43(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl sim222_stop_43(n: node)
+sim222_stop_43(n) :- sim222_or_top(n).
+
+// stop_40_within: within_stop over the stop set stop_40, read inside an aggregate
+.decl sim222_stop_40_within(n: node, a: node)
+sim222_stop_40_within(x, y) :- within_stop(x, y, sim222_stop_40).

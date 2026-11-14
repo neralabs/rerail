@@ -1,0 +1,272 @@
+// OVERRIDE (hand-written, not generated): util model-value compares the caller's NAME with the model's
+// text (`(!plain_string(m) ; text(NAME, MODELTEXT))`). NAME is passed in by the caller, which Datalog cannot
+// do, so the reader refuses NAME as ungrounded; here NAME ranges over the nodes of the model's file (main
+// compares within one file), and the caller's join on NAME keeps its own. The rest is the generated translation.
+.policy "ruff-n806-non-lowercase-variable-in-function" revision 1
+.guests off
+.description "Name local variables inside functions in lowercase snake_case, as PEP 8 recommends, so they read differently from classes and constants."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+.options {"pep8-naming.ignore-names": {"type": "array", "items": "string", "default": ["setUp", "tearDown", "setUpClass", "tearDownClass", "setUpModule", "tearDownModule", "asyncSetUp", "asyncTearDown", "setUpTestData", "failureException", "longMessage", "maxDiff"], "description": "Names exempt from the check, each a regex over the whole name (a Ruff glob: `*` is `.*`, `?` is `.`)."}}
+
+// N806(n): a finding at node n, from clause `non-lowercase-variable-in-function`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes LAST, MODELTEXT, PATHTEXT from other metavariables' text; its literals end each rule.
+.violation N806(at: node, name: loc) "Rename `{name}` to lowercase snake_case and update its uses; keep the name if it holds a class."
+    suppress noqa "N806"
+N806(n, NAME) :- node(_, MODEL, _, _, _), node(_, PATH, _, _, _),
+    kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
+    match(".*[\\x{149}\\x{2E4}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{1E9A}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}\\x{107B6}-\\x{107B9}[\\p{Alphabetic}--\\p{Lowercase}--\\x{FF9E}--\\x{FF9F}]].*", n),
+    site_form(n, f3), n806_set_27(f3), site_scope(n, "function"),
+    count : { (option("pep8-naming.ignore-names", "[]"), match(".*[^\\s\\S].*", n) ; !option("pep8-naming.ignore-names", "[]"), option("pep8-naming.ignore-names", o_pep8_naming_ignore_names_7), match(o_pep8_naming_ignore_names_7, n)) } = 0, count : { n806_in_comprehension(n) } = 0, count : { n806_in_type_scope(n) } = 0, count : { n806_global_declared(n, NAME) } = 0, count : { inside(n, p1_11, "assignment"), (n806_typed_assign(p1_11) ; n806_alias_assign(p1_11) ; n806_model_assign(p1_11, LAST, MODEL, MODELTEXT, NAME, PATH)) } = 0,
+    text(MODEL, t1),
+    MODELTEXT = @replace_all(t1, "(?s)[rRuU]{0,2}(?:\"\"\"((?:[^\\\\]|\\\\.)*?)\"\"\"|'''((?:[^\\\\]|\\\\.)*?)'''|\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^'\\\\]|\\\\.)*)')\\s*", "${1}${2}${3}${4}"),
+    text(PATH, t2),
+    PATHTEXT = @replace_all(t2, "(?s)[rRuU]{0,2}(?:\"\"\"((?:[^\\\\]|\\\\.)*?)\"\"\"|'''((?:[^\\\\]|\\\\.)*?)'''|\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^'\\\\]|\\\\.)*)')\\s*", "${1}${2}${3}${4}"),
+    LAST = @replace_all(PATHTEXT, "(?s)^(?:.*\\.(.*)|.*)$", "${1}").
+
+// typed_callee(n): the JSON util `typed-callee`, used where the JSON says `matches: "typed-callee"`
+.decl n806_typed_callee(n: node)
+n806_typed_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), n806_set_1(q1).
+n806_typed_callee(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    n806_typed_callee(c2).
+
+// typed_call(n): the JSON util `typed-call`, used where the JSON says `matches: "typed-call"`
+.decl n806_typed_call(n: node)
+n806_typed_call(n) :- kind(n, "call"), field(n, "function", c1), n806_typed_callee(c1).
+n806_typed_call(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), n806_typed_call(c2).
+
+// typed_assign(n): the JSON util `typed-assign`, used where the JSON says `matches: "typed-assign"`
+.decl n806_typed_assign(n: node)
+n806_typed_assign(n) :- kind(n, "assignment"),
+    count : { field(n, "type", c1), kind(c1, "type") } = 0, field(n, "right", c2),
+    n806_alt_2(c2).
+
+// alias_annotation(n): the JSON util `alias-annotation`, used where the JSON says `matches: "alias-annotation"`
+.decl n806_alias_annotation(n: node)
+n806_alias_annotation(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.TypeAlias")
+    ; sym_of(n, "typing_extensions.TypeAlias")
+    ; sym_of(n, "_typeshed.TypeAlias")
+    ).
+
+n806_alias_annotation(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    n806_alias_annotation(c1).
+
+// alias_assign(n): the JSON util `alias-assign`, used where the JSON says `matches: "alias-assign"`
+.decl n806_alias_assign(n: node)
+n806_alias_assign(n) :- kind(n, "assignment"), field(n, "type", c1), kind(c1, "type"),
+    child(c1, c2, _), n806_alias_annotation(c2).
+
+// in_comprehension(n): the JSON util `in-comprehension`, used where the JSON says `matches: "in-comprehension"`
+.decl n806_in_comprehension(n: node)
+n806_in_comprehension(n) :- n806_demand_in_comprehension(n), n806_up_1(n, p1).
+
+// global_declared(n): the JSON util `global-declared`, used where the JSON says `matches: "global-declared"`
+//   NAME: metavariable of the calling rule, passed in (bound by the caller)
+.decl n806_global_declared(n: node, name: loc)
+n806_global_declared(n, NAME) :- n806_demand_global_declared(n, NAME),
+    within_stop(n, p1, "function_definition"), kind(p1, "function_definition"),
+    within_stop(c2, p1, n806_stop_4), kind(c2, "global_statement"), child(c2, c3, _),
+    kind(c3, "identifier"), text(c3, t_name1), text(NAME, t_name1), @doc(c3) = @doc(NAME).
+
+// dotted_name(n): the JSON util `dotted-name`, used where the JSON says `matches: "dotted-name"`
+.decl n806_dotted_name(n: node)
+n806_dotted_name(n) :- kind(n, "identifier").
+n806_dotted_name(n) :- kind(n, "attribute"), field(n, "object", c1), n806_dotted_name(c1).
+n806_dotted_name(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    n806_dotted_name(c2).
+
+// get_model_callee(n): the JSON util `get-model-callee`, used where the JSON says `matches: "get-model-callee"`
+.decl n806_get_model_callee(n: node)
+n806_get_model_callee(n) :- kind(n, "identifier"), glob("get_model", n).
+n806_get_model_callee(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    kind(c1, "identifier"), glob("get_model", c1), field(n, "object", c2),
+    n806_dotted_name(c2).
+n806_get_model_callee(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    n806_get_model_callee(c3).
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl n806_plain_string(n: node)
+n806_plain_string(n) :- kind(n, "string"), match("[rRuU]{0,2}['\"].*", n).
+n806_plain_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !match("[rRuU]{0,2}['\"].*", c1) } = 0.
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl n806_positional(n: node)
+n806_positional(n) :- node(_, n, _, _, _), !n806_alt_5(n).
+
+// import_string_call(n): the JSON util `import-string-call`, used where the JSON says `matches: "import-string-call"`
+//   LAST, NAME: metavariables of the calling rule, passed in (bound by the caller)
+//   PATH: metavariable this relation binds for the calling rule
+.decl n806_import_string_call(n: node, last: symbol, name: loc, path: loc)
+n806_import_string_call(n, LAST, NAME, PATH) :- kind(n, "call"), field(n, "function", c1),
+    (kind(c1, "identifier") ; kind(c1, "attribute")),
+    sym_of(c1, "django.utils.module_loading.import_string"), field(n, "arguments", c2),
+    kind(c2, "argument_list"), n806_alt_21(c2, LAST, NAME, PATH), text(PATH, t2_td),
+    PATHTEXT = @replace_all(t2_td, "(?s)[rRuU]{0,2}(?:\"\"\"((?:[^\\\\]|\\\\.)*?)\"\"\"|'''((?:[^\\\\]|\\\\.)*?)'''|\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^'\\\\]|\\\\.)*)')\\s*", "${1}${2}${3}${4}"),
+    LAST = @replace_all(PATHTEXT, "(?s)^(?:.*\\.(.*)|.*)$", "${1}").
+
+// model_value(n): the JSON util `model-value`, used where the JSON says `matches: "model-value"`
+//   LAST, MODELTEXT, NAME: metavariables of the calling rule, passed in (bound by the caller)
+//   MODEL, PATH: metavariables this relation binds for the calling rule
+.decl n806_model_value(n: node, last: symbol, model: loc, modeltext: symbol, name: loc, path: loc)
+// PATH: not bound by this rule, so empty (unset) here, as in ast-grep.
+n806_model_value(n, LAST, MODEL, MODELTEXT, NAME, PATH) :- node(_, MODEL, _, _, _),kind(n, "call"), docof(n, d_n), node(d_n, NAME, _, _, _),field(n, "function", c1_12),n806_get_model_callee(c1_12),(field(n, "arguments", c2_12), kind(c2_12, "argument_list"), (child(c2_12, c1_5_12, _), kind(c1_5_12, "keyword_argument"), field(c1_5_12, "name", c2_5_12), glob("model_name", c2_5_12), field(c1_5_12, "value", c3_5_12), node(_, c3_5_12, _, _, _), MODEL = c3_5_12, (!n806_plain_string(c3_5_12) ; text(NAME, MODELTEXT)) ; !n806_alt_11(c2_12), child(c2_12, c9_6_12, _), n806_positional(c9_6_12), count : { precedes(c9_6_12, s10_6_12), n806_positional(s10_6_12) } = 0, node(_, c9_6_12, _, _, _), MODEL = c9_6_12, (!n806_plain_string(c9_6_12) ; text(NAME, MODELTEXT))) ; field(n, "arguments", c3_12), kind(c3_12, "generator_expression")),text(MODEL, t1_td),MODELTEXT = @replace_all(t1_td, "(?s)[rRuU]{0,2}(?:\"\"\"((?:[^\\\\]|\\\\.)*?)\"\"\"|'''((?:[^\\\\]|\\\\.)*?)'''|\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^'\\\\]|\\\\.)*)')\\s*", "${1}${2}${3}${4}"),unset(PATH), unset(LAST).
+// MODEL: not bound by this rule, so empty (unset) here, as in ast-grep.
+n806_model_value(n, LAST, MODEL, MODELTEXT, NAME, PATH) :- n806_import_string_call(n, LAST, NAME, PATH),text(PATH, t2_td),PATHTEXT = @replace_all(t2_td, "(?s)[rRuU]{0,2}(?:\"\"\"((?:[^\\\\]|\\\\.)*?)\"\"\"|'''((?:[^\\\\]|\\\\.)*?)'''|\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^'\\\\]|\\\\.)*)')\\s*", "${1}${2}${3}${4}"),LAST = @replace_all(PATHTEXT, "(?s)^(?:.*\\.(.*)|.*)$", "${1}"),unset(MODEL), unset(MODELTEXT).
+n806_model_value(n, LAST, MODEL, MODELTEXT, NAME, PATH) :- kind(n, "parenthesized_expression"),
+    child(n, c1, _), n806_model_value(c1, LAST, MODEL, MODELTEXT, NAME, PATH),
+    text(PATH, t2_td),
+    PATHTEXT = @replace_all(t2_td, "(?s)[rRuU]{0,2}(?:\"\"\"((?:[^\\\\]|\\\\.)*?)\"\"\"|'''((?:[^\\\\]|\\\\.)*?)'''|\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^'\\\\]|\\\\.)*)')\\s*", "${1}${2}${3}${4}"),
+    LAST = @replace_all(PATHTEXT, "(?s)^(?:.*\\.(.*)|.*)$", "${1}"),
+    text(MODEL, t1_td),
+    MODELTEXT = @replace_all(t1_td, "(?s)[rRuU]{0,2}(?:\"\"\"((?:[^\\\\]|\\\\.)*?)\"\"\"|'''((?:[^\\\\]|\\\\.)*?)'''|\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^'\\\\]|\\\\.)*)')\\s*", "${1}${2}${3}${4}").
+
+// model_assign(n): the JSON util `model-assign`, used where the JSON says `matches: "model-assign"`
+//   LAST, MODELTEXT, NAME: metavariables of the calling rule, passed in (bound by the caller)
+//   MODEL, PATH: metavariables this relation binds for the calling rule
+.decl n806_model_assign(n: node, last: symbol, model: loc, modeltext: symbol, name: loc, path: loc)
+n806_model_assign(n, LAST, MODEL, MODELTEXT, NAME, PATH) :- kind(n, "assignment"),
+    field(n, "right", c1), n806_alt_22(c1, LAST, MODEL, MODELTEXT, NAME, PATH),
+    text(PATH, t2_td),
+    PATHTEXT = @replace_all(t2_td, "(?s)[rRuU]{0,2}(?:\"\"\"((?:[^\\\\]|\\\\.)*?)\"\"\"|'''((?:[^\\\\]|\\\\.)*?)'''|\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^'\\\\]|\\\\.)*)')\\s*", "${1}${2}${3}${4}"),
+    LAST = @replace_all(PATHTEXT, "(?s)^(?:.*\\.(.*)|.*)$", "${1}"),
+    text(MODEL, t1_td),
+    MODELTEXT = @replace_all(t1_td, "(?s)[rRuU]{0,2}(?:\"\"\"((?:[^\\\\]|\\\\.)*?)\"\"\"|'''((?:[^\\\\]|\\\\.)*?)'''|\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^'\\\\]|\\\\.)*)')\\s*", "${1}${2}${3}${4}").
+
+// comprehension_scope_part(n): the JSON util `comprehension-scope-part`, used where the JSON says `matches: "comprehension-scope-part"`
+.decl n806_comprehension_scope_part(n: node)
+n806_comprehension_scope_part(n) :- !kind(n, "for_in_clause"), child(p1, n, _),
+    ( kind(p1, "list_comprehension")
+    ; kind(p1, "set_comprehension")
+    ; kind(p1, "dictionary_comprehension")
+    ; kind(p1, "generator_expression")
+    ).
+
+n806_comprehension_scope_part(n) :- kind(n, "for_in_clause"), precedes(s2, n),
+    kind(s2, "for_in_clause").
+n806_comprehension_scope_part(n) :- field(p3, "left", n), kind(p3, "for_in_clause").
+
+// in_type_scope(n): the JSON util `in-type-scope`, used where the JSON says `matches: "in-type-scope"`
+.decl n806_in_type_scope(n: node)
+n806_in_type_scope(n) :- n806_demand_in_type_scope(n), within_stop(n, p1, n806_stop_23),
+    ( kind(p1, "argument_list"), field(p2, "superclasses", p1), kind(p2, "class_definition")
+    ; kind(p1, "type"), n806_alt_24(p1)
+    ).
+
+
+// demand_global_declared: the rows of global_declared its callers ask for (the metavariable columns they pass in)
+.decl n806_demand_global_declared(n: node, name: loc)
+n806_demand_global_declared(n, NAME) :- node(_, MODEL, _, _, _), node(_, PATH, _, _, _),
+    kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
+    match(".*[\\x{149}\\x{2E4}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{1E9A}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}\\x{107B6}-\\x{107B9}[\\p{Alphabetic}--\\p{Lowercase}--\\x{FF9E}--\\x{FF9F}]].*", n),
+    site_form(n, f3), n806_set_27(f3), site_scope(n, "function"), text(MODEL, t1),
+    text(PATH, t2).
+
+// demand_in_comprehension: the nodes in_comprehension is asked at (it looks at every ancestor of every node)
+.decl n806_demand_in_comprehension(n: node)
+n806_demand_in_comprehension(n) :- node(_, MODEL, _, _, _), node(_, PATH, _, _, _),
+    kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
+    match(".*[\\x{149}\\x{2E4}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{1E9A}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}\\x{107B6}-\\x{107B9}[\\p{Alphabetic}--\\p{Lowercase}--\\x{FF9E}--\\x{FF9F}]].*", n),
+    site_form(n, f3), n806_set_27(f3), site_scope(n, "function"), text(MODEL, t1),
+    text(PATH, t2).
+
+// demand_in_type_scope: the nodes in_type_scope is asked at (it looks at every ancestor of every node)
+.decl n806_demand_in_type_scope(n: node)
+n806_demand_in_type_scope(n) :- node(_, MODEL, _, _, _), node(_, PATH, _, _, _),
+    kind(n, "identifier"), node(_, n, _, _, _), NAME = n,
+    match(".*[\\x{149}\\x{2E4}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{1E9A}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}\\x{107B6}-\\x{107B9}[\\p{Alphabetic}--\\p{Lowercase}--\\x{FF9E}--\\x{FF9F}]].*", n),
+    site_form(n, f3), n806_set_27(f3), site_scope(n, "function"), text(MODEL, t1),
+    text(PATH, t2).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl n806_up_1(n: node, p: node)
+n806_up_1(n, p) :- n806_demand_in_comprehension(n), within_stop(n, p, n806_stop_23),
+    n806_comprehension_scope_part(p).
+
+// set_1: symbols from the JSON `resolves.import`
+.decl n806_set_1(v: symbol)
+n806_set_1("collections.namedtuple"). n806_set_1("typing.NamedTuple").
+n806_set_1("typing_extensions.NamedTuple"). n806_set_1("_typeshed.NamedTuple").
+n806_set_1("typing.TypedDict"). n806_set_1("typing_extensions.TypedDict").
+n806_set_1("_typeshed.TypedDict"). n806_set_1("typing.TypeVar").
+n806_set_1("typing_extensions.TypeVar"). n806_set_1("_typeshed.TypeVar"). n806_set_1("typing.NewType").
+n806_set_1("typing_extensions.NewType"). n806_set_1("_typeshed.NewType").
+
+// stop_4: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl n806_stop_4(kind: symbol)
+n806_stop_4("function_definition"). n806_stop_4("class_definition").
+
+// stop_23: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl n806_stop_23(kind: symbol)
+n806_stop_23("function_definition"). n806_stop_23("class_definition"). n806_stop_23("lambda").
+
+// set_27: binding forms the JSON accepts
+.decl n806_set_27(v: symbol)
+n806_set_27("assignment"). n806_set_27("annotated"). n806_set_27("annotation"). n806_set_27("augmented").
+n806_set_27("named"). n806_set_27("for"). n806_set_27("with"). n806_set_27("match").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl n806_alt_2(n: node)
+n806_alt_2(n) :- n806_typed_call(n).
+n806_alt_2(n) :- kind(n, "assignment"), n806_typed_assign(n).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl n806_alt_5(n: node)
+n806_alt_5(n) :- (kind(n, "comment") ; kind(n, "keyword_argument") ; kind(n, "dictionary_splat")).
+n806_alt_5(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl n806_alt_11(n: node)
+n806_alt_11(n) :- child(n, c1, _), kind(c1, "keyword_argument"), field(c1, "name", c2),
+    glob("model_name", c2).
+n806_alt_11(n) :- child(n, c3, _), kind(c3, "list_splat").
+
+// alt_21(n): the JSON `any`: n matches if any one of these rules does
+//   LAST, NAME: metavariables of the calling rule, passed in (bound by the caller)
+//   PATH: metavariable this relation binds for the calling rule
+.decl n806_alt_21(n: node, last: symbol, name: loc, path: loc)
+n806_alt_21(n, LAST, NAME, PATH) :- node(_, NAME, _, _, _), child(n, c1, _),
+    kind(c1, "keyword_argument"), field(c1, "name", c2), glob("dotted_path", c2),
+    field(c1, "value", c3), node(_, c3, _, _, _), PATH = c3, n806_plain_string(c3), text(NAME, LAST),
+    text(PATH, t2_td),
+    PATHTEXT = @replace_all(t2_td, "(?s)[rRuU]{0,2}(?:\"\"\"((?:[^\\\\]|\\\\.)*?)\"\"\"|'''((?:[^\\\\]|\\\\.)*?)'''|\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^'\\\\]|\\\\.)*)')\\s*", "${1}${2}${3}${4}"),
+    LAST = @replace_all(PATHTEXT, "(?s)^(?:.*\\.(.*)|.*)$", "${1}").
+n806_alt_21(n, LAST, NAME, PATH) :- node(_, NAME, _, _, _),
+    count : { child(n, c6, _), kind(c6, "keyword_argument"), field(c6, "name", c7), glob("dotted_path", c7) } = 0,
+    child(n, c8, _), n806_positional(c8), count : { precedes(s9, c8), n806_positional(s9) } = 0,
+    node(_, c8, _, _, _), PATH = c8, n806_plain_string(c8), text(NAME, LAST), text(PATH, t2_td),
+    PATHTEXT = @replace_all(t2_td, "(?s)[rRuU]{0,2}(?:\"\"\"((?:[^\\\\]|\\\\.)*?)\"\"\"|'''((?:[^\\\\]|\\\\.)*?)'''|\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^'\\\\]|\\\\.)*)')\\s*", "${1}${2}${3}${4}"),
+    LAST = @replace_all(PATHTEXT, "(?s)^(?:.*\\.(.*)|.*)$", "${1}").
+
+// alt_22(n): the JSON `any`: n matches if any one of these rules does
+//   LAST, MODELTEXT, NAME: metavariables of the calling rule, passed in (bound by the caller)
+//   MODEL, PATH: metavariables this relation binds for the calling rule
+.decl n806_alt_22(n: node, last: symbol, model: loc, modeltext: symbol, name: loc, path: loc)
+n806_alt_22(n, LAST, MODEL, MODELTEXT, NAME, PATH) :- n806_model_value(n, LAST, MODEL, MODELTEXT, NAME, PATH),
+    text(PATH, t2_td),
+    PATHTEXT = @replace_all(t2_td, "(?s)[rRuU]{0,2}(?:\"\"\"((?:[^\\\\]|\\\\.)*?)\"\"\"|'''((?:[^\\\\]|\\\\.)*?)'''|\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^'\\\\]|\\\\.)*)')\\s*", "${1}${2}${3}${4}"),
+    LAST = @replace_all(PATHTEXT, "(?s)^(?:.*\\.(.*)|.*)$", "${1}"),
+    text(MODEL, t1_td),
+    MODELTEXT = @replace_all(t1_td, "(?s)[rRuU]{0,2}(?:\"\"\"((?:[^\\\\]|\\\\.)*?)\"\"\"|'''((?:[^\\\\]|\\\\.)*?)'''|\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^'\\\\]|\\\\.)*)')\\s*", "${1}${2}${3}${4}").
+n806_alt_22(n, LAST, MODEL, MODELTEXT, NAME, PATH) :- kind(n, "assignment"),
+    n806_model_assign(n, LAST, MODEL, MODELTEXT, NAME, PATH), text(PATH, t2_td),
+    PATHTEXT = @replace_all(t2_td, "(?s)[rRuU]{0,2}(?:\"\"\"((?:[^\\\\]|\\\\.)*?)\"\"\"|'''((?:[^\\\\]|\\\\.)*?)'''|\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^'\\\\]|\\\\.)*)')\\s*", "${1}${2}${3}${4}"),
+    LAST = @replace_all(PATHTEXT, "(?s)^(?:.*\\.(.*)|.*)$", "${1}"),
+    text(MODEL, t1_td),
+    MODELTEXT = @replace_all(t1_td, "(?s)[rRuU]{0,2}(?:\"\"\"((?:[^\\\\]|\\\\.)*?)\"\"\"|'''((?:[^\\\\]|\\\\.)*?)'''|\"((?:[^\"\\\\]|\\\\.)*)\"|'((?:[^'\\\\]|\\\\.)*)')\\s*", "${1}${2}${3}${4}").
+
+// alt_24(n): the JSON `any`: n matches if any one of these rules does
+.decl n806_alt_24(n: node)
+n806_alt_24(n) :- field(p1, "return_type", n), kind(p1, "function_definition").
+n806_alt_24(n) :- child(p2, n, _),
+    (kind(p2, "typed_parameter") ; kind(p2, "typed_default_parameter")),
+    child(p3, p2, _), kind(p3, "parameters").

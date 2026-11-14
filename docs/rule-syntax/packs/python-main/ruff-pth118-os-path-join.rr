@@ -1,0 +1,94 @@
+.policy "ruff-pth118-os-path-join" revision 1
+.guests off
+.description "Use Path objects with the slash operator or joinpath instead of os.path.join or os.sep.join; pathlib reads better than joining path strings."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PTH118(n, detail): findings from clauses `os-path-join`, `os-path-join-unpacked`, `os-sep-join`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PTH118(at: node, f: node, detail: symbol) "{detail}."
+    suppress noqa "PTH118"
+PTH118(F, n, "Build the path with `Path(first) / second` instead of `os.path.join(first, second)`; wrap it in `str()` where a string is needed. Leave it for bytes paths, which `Path` rejects") :- pth118_target(n, F).
+PTH118(F, n, "Build the path with `Path(first) / second` instead of `os.path.join(first, second)`; wrap it in `str()` where a string is needed. Leave it for bytes paths, which `Path` rejects") :- pth118_in_string(n, F).
+PTH118(F, n, "Use `Path(first).joinpath(*parts)` instead of `os.path.join(first, *parts)`; wrap it in `str()` where a string is needed. Leave it for bytes paths, which `Path` rejects") :- pth118_target_os_path_join_unpacked(n, F).
+PTH118(F, n, "Use `Path(first).joinpath(*parts)` instead of `os.path.join(first, *parts)`; wrap it in `str()` where a string is needed. Leave it for bytes paths, which `Path` rejects") :- pth118_in_string_os_path_join_unpacked(n, F).
+PTH118(F, n, "Use `Path(*parts)` instead of `os.sep.join(parts)`, with `str()` where a string is needed. Leave it if the result is not a filesystem path or a part may be empty or absolute") :- pth118_target_os_sep_join(n, F).
+PTH118(F, n, "Use `Path(*parts)` instead of `os.sep.join(parts)`, with `str()` where a string is needed. Leave it if the result is not a filesystem path or a part may be empty or absolute") :- pth118_in_string_os_sep_join(n, F).
+
+// callee_of(n, key): 3 copies of one rule set (`callee`, `callee`, `callee`), folded into one: row `key` of
+// callee_of_case gives the strings each copy had.
+//   F: metavariable this relation binds for the calling rule
+.decl pth118_callee_of(n: node, key: symbol, f: loc)
+pth118_callee_of(n, q1, F) :- pth118_callee_of_case(q1, s1),
+    (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, s1), node(_, n, _, _, _), F = n.
+pth118_callee_of(n, q1, F) :- pth118_callee_of_case(q1, s1), kind(n, "parenthesized_expression"),
+    child(n, c1, _), pth118_callee_of(c1, q1, F).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth118_target(n: node, f: loc)
+pth118_target(n, F) :- kind(n, "call"), child(n, c1, _), pth118_callee_of(c1, "callee", F),
+    precedes(c1, s2), (kind(s2, "argument_list") ; kind(s2, "generator_expression")),
+    count : { child(n, c3, _), kind(c3, "argument_list"), child(c3, c4, _), kind(c4, "list_splat") } = 0.
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth118_in_string(n: node, f: loc)
+pth118_in_string(n, F) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), pth118_alt_1(c2, F).
+
+// target_os_path_join_unpacked(n): the JSON util `target`, used where the JSON says `matches: "target"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth118_target_os_path_join_unpacked(n: node, f: loc)
+pth118_target_os_path_join_unpacked(n, F) :- kind(n, "call"), child(n, c1, _),
+    pth118_callee_of(c1, "callee_os_path_join_unpacked", F), precedes(c1, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")), child(n, c3, _),
+    kind(c3, "argument_list"), child(c3, c4, _), kind(c4, "list_splat").
+
+// in_string_os_path_join_unpacked(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth118_in_string_os_path_join_unpacked(n: node, f: loc)
+pth118_in_string_os_path_join_unpacked(n, F) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), pth118_alt_2(c2, F).
+
+// target_os_sep_join(n): the JSON util `target`, used where the JSON says `matches: "target"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth118_target_os_sep_join(n: node, f: loc)
+pth118_target_os_sep_join(n, F) :- kind(n, "call"), child(n, c1, _),
+    pth118_callee_of(c1, "callee_os_sep_join", F), precedes(c1, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")).
+
+// in_string_os_sep_join(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth118_in_string_os_sep_join(n: node, f: loc)
+pth118_in_string_os_sep_join(n, F) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), pth118_alt_3(c2, F).
+
+// callee_of_case: one row per relation folded into callee_of: its key, then the strings that differed.
+.decl pth118_callee_of_case(key: symbol, s1: symbol)
+pth118_callee_of_case("callee", "os.path.join").
+pth118_callee_of_case("callee_os_path_join_unpacked", "os.path.join").
+pth118_callee_of_case("callee_os_sep_join", "os.sep.join").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   F: metavariable this relation binds for the calling rule
+.decl pth118_alt_1(n: node, f: loc)
+pth118_alt_1(n, F) :- pth118_target(n, F).
+pth118_alt_1(n, F) :- pth118_in_string(n, F).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   F: metavariable this relation binds for the calling rule
+.decl pth118_alt_2(n: node, f: loc)
+pth118_alt_2(n, F) :- pth118_target_os_path_join_unpacked(n, F).
+pth118_alt_2(n, F) :- pth118_in_string_os_path_join_unpacked(n, F).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+//   F: metavariable this relation binds for the calling rule
+.decl pth118_alt_3(n: node, f: loc)
+pth118_alt_3(n, F) :- pth118_target_os_sep_join(n, F).
+pth118_alt_3(n, F) :- pth118_in_string_os_sep_join(n, F).

@@ -1,0 +1,23 @@
+.policy "ruff-f706-return-outside-function" revision 1
+.guests off
+.description "Keep return inside a function; at module level or directly in a class body it is a Python syntax error."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F706(n): a finding at node n, from clause `return-outside-function`.
+// Each rule below is one way the JSON `rule` can match.
+.violation F706(at: node) "`return` statement outside of a function/method"
+    suppress noqa "F706"
+F706(n) :- kind(n, "return_statement"),
+    count : { f706_stop_1_within(n, p1), kind(p1, "block"), child(p2, p1, _), kind(p2, "function_definition") } = 0.
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl f706_stop_1(n: node)
+f706_stop_1(n) :- kind(n, "block"), child(p1, n, _),
+    (kind(p1, "function_definition") ; kind(p1, "class_definition")).
+
+// stop_1_within: within_stop over the stop set stop_1, read inside an aggregate
+.decl f706_stop_1_within(n: node, a: node)
+f706_stop_1_within(x, y) :- within_stop(x, y, f706_stop_1).

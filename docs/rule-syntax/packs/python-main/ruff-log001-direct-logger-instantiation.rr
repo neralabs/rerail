@@ -1,0 +1,20 @@
+.policy "ruff-log001-direct-logger-instantiation" revision 1
+.guests off
+.description "Use logging.getLogger() instead of instantiating Logger directly; a directly created logger is not part of the logger tree and bypasses logging configuration."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// LOG001(n): a finding at node n, from clause `direct-logger-instantiation`.
+// Each rule below is one way the JSON `rule` can match.
+.violation LOG001(at: node) "Use `logging.getLogger(name)` instead of `Logger(...)`; a direct instance skips the logger tree and its configuration. Keep it only if a detached logger is intended."
+    suppress noqa "LOG001"
+LOG001(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "logging.Logger"), within_stop(n, p1, log001_stop_1), kind(p1, "call").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl log001_stop_1(n: node)
+log001_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").

@@ -1,0 +1,16 @@
+.policy "bandit-b308-mark-safe" revision 1
+.guests off
+.description "Avoid Django's mark_safe(); it turns off autoescaping and can expose cross-site scripting when the content isn't fully trusted."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B308(n): a finding at node n, from clause `bandit:B308`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on F are added to every rule.
+.violation B308(at: node) "Build this HTML with format_html() instead of mark_safe so any untrusted parts get escaped."
+    suppress nosec "B308"
+B308(n) :- n ~ `$F($$$ARGS)`, sym_of(F, "django.utils.safestring.mark_safe").
