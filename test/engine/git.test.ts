@@ -268,14 +268,15 @@ describe("gitModifiedOrUntrackedListing", () => {
  * Git's stderr after Git exits while a file is there, and answers what the read answered within `waitMs`, or that it was
  * still waiting. Git runs the filter to compare a.py, changed on disk, with the index. The wait ends once the listing is
  * answered, and so does removing the repository. Each run of the filter writes `+` to `loops` before it starts its
- * process, which writes `-` there as it ends: the test waits for that, so no process outlives it.
+ * process, which writes `-` there as it ends: the test waits for that, so no process outlives it. The process looks for
+ * the file every 20 ms, so that wait is short.
  */
 async function heldListing(waitMs: number): Promise<unknown> {
   const root = await repository({ ".gitattributes": "a.py filter=held\n", "a.py": "print(1)\n" });
   const held = join(root, ".git", "held");
   const loops = join(root, ".git", "loops");
   const [heldPath, loopsPath] = [held, loops].map(path => path.replaceAll("\\", "/"));
-  const loop = `while [ -e '${heldPath}' ]; do sleep 0.1; done; echo - >> '${loopsPath}'`;
+  const loop = `while [ -e '${heldPath}' ]; do sleep 0.02; done; echo - >> '${loopsPath}'`;
   git(root, "config", "filter.held.clean", `echo + >> '${loopsPath}'; (cd / && ${loop}) </dev/null >/dev/null & cat`);
   await writeFile(held, "");
   await writeFile(join(root, "a.py"), "print(2)\n");
@@ -286,7 +287,7 @@ async function heldListing(waitMs: number): Promise<unknown> {
   } finally {
     clearTimeout(late);
     await rm(held, { force: true });
-    await vi.waitFor(async () => expect(await loopsRunning(loops)).toBe(0), { timeout: 5_000, interval: 20 });
+    await vi.waitFor(async () => expect(await loopsRunning(loops)).toBe(0), { timeout: 5_000, interval: 10 });
   }
 }
 
