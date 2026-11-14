@@ -88,7 +88,12 @@ export function gitSearchEnds(workspace: string): RepositoryIdentityLocation[] |
   return top === undefined ? [nonGitLocation(requested)] : [top, nonGitLocation(requested)];
 }
 
-/** `workspace` as a hook asks the daemon about it, its real path spelled as stored; undefined where it has none. */
+/**
+ * `workspace` as a hook asks the daemon about it, undefined where it has no real path. The hook asks with
+ * `fs/promises`' realpath (`readRepositoryState`), which Node gives the native realpath's semantics, so this reads it
+ * with the native one too ({@link storedPath}): on macOS and Windows each name as the disk stores it, whatever case it
+ * was typed in. The daemon keys a folder outside Git by that spelling (`lookupAt`), and so does the end built here.
+ */
 function realFolder(workspace: string): string | undefined {
   try {
     return existsSync(workspace) ? storedPath(workspace) : undefined;
