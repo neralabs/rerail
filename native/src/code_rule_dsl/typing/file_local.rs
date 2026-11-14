@@ -1409,6 +1409,11 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
     let mut level: BTreeMap<usize, u8> = BTreeMap::new();
     // The program is changed only when a round succeeds, so its split is found once.
     let local = split(prog);
+    // Each helper's name, by its rule and component, kept from round to round: a round that retries a few rules
+    // changes only their helpers, so the next split computes again only what they reach (`split_memo`). Numbered
+    // from a counter, a retried rule's helpers renamed every helper after it, and each round split half the program.
+    let mut names: BTreeMap<(usize, usize), String> = BTreeMap::new();
+    let mut number = prog.decls.len();
     loop {
         let mut next = prog.clone();
         let mut made: Vec<(usize, String)> = Vec::new();
@@ -1441,7 +1446,7 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
             let mut body = rule.body.clone();
             let mut taken: BTreeSet<usize> = BTreeSet::new();
             let mut replaced: Vec<(usize, Literal)> = Vec::new();
-            for (mut lits, vars) in comps {
+            for (component, (mut lits, vars)) in comps.into_iter().enumerate() {
                 let atoms: Vec<&Atom> = lits.iter().filter_map(|&j| rule.body[j].atom()).collect();
                 // A join of file-local relations alone is pushed too: exported, each would be held whole by the
                 // cross part (`la_leaf_target`, a row per node, for the 311 rows its join with `la_target` makes).
@@ -1541,7 +1546,16 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                     })
                     .collect();
                 let Some(typed) = typed else { continue };
-                let name = format!("fl{}_{}", next.decls.len(), rule.head.rel);
+                let name = names
+                    .entry((i, component))
+                    .or_insert_with(|| loop {
+                        let name = format!("fl{number}_{}", rule.head.rel);
+                        number += 1;
+                        if !prog.decls.contains_key(&name) {
+                            break name;
+                        }
+                    })
+                    .clone();
                 next.decls.insert(name.clone(), typed);
                 let head = Atom { rel: name.clone().into(), args: iface.iter().map(|v| Term::Var(v.clone())).collect(), neg: false, gated: false };
                 helpers.push(Rule { head: head.clone(), body: lits.iter().map(|&j| rule.body[j].clone()).collect() });

@@ -90,10 +90,9 @@ pub fn simplify(prog: &mut Program) -> Report {
     report.constants += ground_rules(prog);
     report.constants += decided_fact_tests(prog);
     // `RERAIL_EXISTENCE_COUNTS=off`: existence counts stay counts, for comparison.
+    use rayon::prelude::*;
     if std::env::var("RERAIL_EXISTENCE_COUNTS").map_or(true, |v| v != "off") {
-        for rule in &mut prog.rules {
-            report.existence += existence_as_reads(rule);
-        }
+        report.existence += prog.rules.par_iter_mut().map(existence_as_reads).sum::<usize>();
     }
     report.inlined = inline_node_tests(prog);
     // `RERAIL_INLINE_FILTERS=off`: filters are built, for comparison.
@@ -102,18 +101,32 @@ pub fn simplify(prog: &mut Program) -> Report {
     }
     // `RERAIL_JOIN_KEYS=off`: no concatenation runs backwards and no relation is keyed by a function, for comparison.
     let join_keys = std::env::var("RERAIL_JOIN_KEYS").map_or(true, |v| v != "off");
-    for rule in &mut prog.rules {
-        if join_keys {
-            report.inverses += concat_inverses(rule);
-        }
-        cat_variables(rule);
-        report.constants += fold_constants(rule);
-        report.within += span_containment(rule);
-        report.keyed += merge_keyed(rule);
-        report.singletons += wild_singletons(rule);
-        report.kind_tests += drop_kind_tests(rule, &prog.kindsets, &prog.decls);
-        report.implied += drop_implied(rule);
-    }
+    // Each rule rewritten alone, on the pool's threads: each pass reads only its rule (and the kind sets and
+    // declarations, which none changes).
+    let (kindsets, decls) = (&prog.kindsets, &prog.decls);
+    let counts = prog
+        .rules
+        .par_iter_mut()
+        .map(|rule| {
+            let inverses = if join_keys { concat_inverses(rule) } else { 0 };
+            cat_variables(rule);
+            let constants = fold_constants(rule);
+            let within = span_containment(rule);
+            let keyed = merge_keyed(rule);
+            let singletons = wild_singletons(rule);
+            let kind_tests = drop_kind_tests(rule, kindsets, decls);
+            let implied = drop_implied(rule);
+            [inverses, constants, within, keyed, singletons, kind_tests, implied]
+        })
+        .reduce(|| [0; 7], |a, b| std::array::from_fn(|i| a[i] + b[i]));
+    let [inverses, constants, within, keyed, singletons, kind_tests, implied] = counts;
+    report.inverses += inverses;
+    report.constants += constants;
+    report.within += within;
+    report.keyed += keyed;
+    report.singletons += singletons;
+    report.kind_tests += kind_tests;
+    report.implied += implied;
     if report.within > 0 && !prog.decls.contains_key(SPAN_WITHIN) {
         prog.decls.insert(SPAN_WITHIN.to_owned(), vec![("inner".to_owned(), "node".to_owned()), ("outer".to_owned(), "node".to_owned())]);
         prog.inputs.push(SPAN_WITHIN.to_owned());
@@ -125,9 +138,7 @@ pub fn simplify(prog: &mut Program) -> Report {
     report.climbs = climbs_as_axes(prog);
     if merge(prog, &mut report) {
         // A merge can leave a literal twice (`!m1($n), !m2($n)` became `!m1($n), !m1($n)`).
-        for rule in &mut prog.rules {
-            report.implied += drop_implied(rule);
-        }
+        report.implied += prog.rules.par_iter_mut().map(drop_implied).sum::<usize>();
         if super::profile::on() {
             similar_relations(prog, &mut report);
         }

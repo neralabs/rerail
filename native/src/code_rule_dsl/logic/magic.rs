@@ -14,7 +14,7 @@
 //! - Gated negations (`Options::gate`): a negation that demand puts inside its own component waits for its relation's
 //!   `done_` gate, which the native engine opens once what the relation reads is quiet.
 
-use super::front::{AggOp, Atom, Error, Literal, Program, Rule, Term, Value, cmp_binds, join, strata, tarjan};
+use super::front::{AggOp, Atom, Edges, Error, Literal, Program, Rule, Term, Value, cmp_binds, join, strata, tarjan};
 use std::collections::{BTreeMap, BTreeSet};
 pub use crate::code_rule_dsl::logic::front::ast::{Gate, Report};
 
@@ -721,61 +721,66 @@ impl Adorn<'_> {
         add_magic_true(&mut self.prog);
         let mut keep: Vec<Vec<bool>> = magic.iter().map(|(_, pre)| pre.iter().map(|(_, extra)| !extra).collect()).collect();
         let views: Vec<Rule> = self.prog.rules.iter().filter(|r| !self.idb.contains(r.head.rel.as_str())).cloned().collect();
+        // One magic rule's body, as `ks` keeps its literals.
+        let one = |mh: &Atom, pre: &[(Literal, bool)], ks: &[bool]| -> Result<Vec<Literal>, Error> {
+            // A left-out literal that binds a key variable, or what such a literal needs, stays.
+            let key = vars_all(&mh.args);
+            let (mut ks, mut need) = (ks.to_vec(), key.clone());
+            for i in (0..pre.len()).rev() {
+                let l = &pre[i].0;
+                let gives = match l {
+                    Literal::Atom(a) if !a.neg => l.vars(),
+                    Literal::Nearest { .. } => l.vars(),
+                    Literal::Cmp { l: Term::Var(_), op: "=", r } if r.is_cat() => l.vars(),
+                    Literal::Cmp { l: Term::Var(v), op: "=", .. } => BTreeSet::from([v.clone()]),
+                    _ => BTreeSet::new(),
+                };
+                if gives.is_disjoint(&need) {
+                    continue;
+                }
+                ks[i] = true;
+                // A split gives its parts from the whole, and the whole from its parts.
+                let split = match l {
+                    Literal::Cmp { l: Term::Var(v), r, .. } if r.is_cat() && !vars(r).is_disjoint(&need) => BTreeSet::from([v.clone()]),
+                    _ => BTreeSet::new(),
+                };
+                let climb = matches!(l, Literal::Nearest { a, .. } if need.contains(a));
+                need.retain(|v| !gives.contains(v));
+                match l {
+                    Literal::Nearest { n, a, .. } => {
+                        need.insert(if climb { n.clone() } else { a.clone() });
+                    }
+                    Literal::Cmp { r, .. } => need.extend(if split.is_empty() { vars(r) } else { split }),
+                    _ => {}
+                }
+            }
+            let (mut bound, mut body) = (BTreeSet::new(), Vec::new());
+            for ((l, _), k) in pre.iter().zip(&ks) {
+                if !k {
+                    continue;
+                }
+                if let Some(a) = positive(l) {
+                    body.push(l.clone());
+                    bound.extend(a.vars());
+                } else if let Some(b) = binds(l, &bound) {
+                    body.push(l.clone());
+                    bound.extend(b);
+                }
+            }
+            if !key.is_subset(&bound) {
+                let pre: Vec<Literal> = pre.iter().map(|p| p.0.clone()).collect();
+                return Err(Error::UnboundDemand {
+                    message: format!("demand for {} is unbound: [{}]", mh.rel, join(&pre)),
+                    relation: mh.rel.to_string(),
+                });
+            }
+            Ok(body)
+        };
         let build = |keep: &[Vec<bool>]| -> Result<Vec<Rule>, Error> {
             // Keyed by T's repr of (head, body): the first of equal magic rules stays.
             let (mut out, mut keys) = (Vec::new(), BTreeSet::new());
             for ((mh, pre), ks) in magic.iter().zip(keep) {
-                // A left-out literal that binds a key variable, or what such a literal needs, stays.
-                let key = vars_all(&mh.args);
-                let (mut ks, mut need) = (ks.clone(), key.clone());
-                for i in (0..pre.len()).rev() {
-                    let l = &pre[i].0;
-                    let gives = match l {
-                        Literal::Atom(a) if !a.neg => l.vars(),
-                        Literal::Nearest { .. } => l.vars(),
-                        Literal::Cmp { l: Term::Var(_), op: "=", r } if r.is_cat() => l.vars(),
-                        Literal::Cmp { l: Term::Var(v), op: "=", .. } => BTreeSet::from([v.clone()]),
-                        _ => BTreeSet::new(),
-                    };
-                    if gives.is_disjoint(&need) {
-                        continue;
-                    }
-                    ks[i] = true;
-                    // A split gives its parts from the whole, and the whole from its parts.
-                    let split = match l {
-                        Literal::Cmp { l: Term::Var(v), r, .. } if r.is_cat() && !vars(r).is_disjoint(&need) => BTreeSet::from([v.clone()]),
-                        _ => BTreeSet::new(),
-                    };
-                    let climb = matches!(l, Literal::Nearest { a, .. } if need.contains(a));
-                    need.retain(|v| !gives.contains(v));
-                    match l {
-                        Literal::Nearest { n, a, .. } => {
-                            need.insert(if climb { n.clone() } else { a.clone() });
-                        }
-                        Literal::Cmp { r, .. } => need.extend(if split.is_empty() { vars(r) } else { split }),
-                        _ => {}
-                    }
-                }
-                let (mut bound, mut body) = (BTreeSet::new(), Vec::new());
-                for ((l, _), k) in pre.iter().zip(&ks) {
-                    if !k {
-                        continue;
-                    }
-                    if let Some(a) = positive(l) {
-                        body.push(l.clone());
-                        bound.extend(a.vars());
-                    } else if let Some(b) = binds(l, &bound) {
-                        body.push(l.clone());
-                        bound.extend(b);
-                    }
-                }
-                if !key.is_subset(&bound) {
-                    let pre: Vec<Literal> = pre.iter().map(|p| p.0.clone()).collect();
-                    return Err(Error::UnboundDemand {
-                        message: format!("demand for {} is unbound: [{}]", mh.rel, join(&pre)),
-                        relation: mh.rel.to_string(),
-                    });
-                }
+                let mut body = one(mh, pre, ks)?;
                 if keys.insert(format!("{mh} {}", join(&body))) {
                     if body.is_empty() {
                         body.push(magic_true());
@@ -787,7 +792,7 @@ impl Adorn<'_> {
             out.extend(views.iter().cloned());
             Ok(out)
         };
-        let settle = |this: &mut Self, keep: &[Vec<bool>]| -> Result<(), Error> {
+        let settle = |this: &mut Self, keep: &[Vec<bool>]| -> Result<(Vec<BTreeSet<String>>, Edges), Error> {
             this.prog.rules = build(keep)?;
             this.prog.gates.clear();
             match strata(&this.prog) {
@@ -796,12 +801,12 @@ impl Adorn<'_> {
                         return Err(e);
                     }
                     this.gate_negations(&full, &coarse)?;
-                    strata(&this.prog).map(drop)
+                    strata(&this.prog)
                 }
-                other => other.map(drop),
+                other => other,
             }
         };
-        if let Err(error) = settle(&mut self, &keep) {
+        let settled = match settle(&mut self, &keep) { Ok(settled) => settled, Err(error) => {
             let Some((scc, _)) = error.unstratified() else { return Err(Attempt::Failed(error)) };
             let negs = self
                 .prog
@@ -815,16 +820,60 @@ impl Adorn<'_> {
                 .map(|a| a.rel.to_string())
                 .collect();
             return Err(Attempt::Cycle { error, negs });
-        }
+        } };
+        // Each trial keeps one more literal of one magic rule, which adds edges from that rule's head. The last whole
+        // check's components, dependencies first, tell which edges leave them as they were: one into an earlier
+        // component (nothing there reaches the head), or a positive one inside a component no negation closes. A
+        // literal whose new edges are all such keeps the program stratified, as that check found it, and is kept
+        // without building and stratifying the program again. Any other literal is checked whole, as before (and every
+        // one is with gates, which a positive edge can unsettle). `RERAIL_MAGIC_CHECK=1` checks every one whole too.
+        let places = |settled: &(Vec<BTreeSet<String>>, Edges)| -> (BTreeMap<String, usize>, BTreeSet<usize>) {
+            let (sccs, edges) = settled;
+            let comp: BTreeMap<String, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.clone(), i))).collect();
+            let negated = edges
+                .iter()
+                .filter_map(|(v, ws)| comp.get(v).map(|c| (*c, ws)))
+                .filter(|(c, ws)| ws.iter().any(|(w, neg)| *neg && comp.get(w) == Some(c)))
+                .map(|(c, _)| c)
+                .collect();
+            (comp, negated)
+        };
+        let (mut comp, mut negated) = places(&settled);
+        let whole_check = std::env::var_os("RERAIL_MAGIC_CHECK").is_some();
+        let edges_of = |body: &[Literal], comp: &BTreeMap<String, usize>| -> BTreeSet<(String, bool)> {
+            body.iter()
+                .filter_map(|l| l.atom().filter(|a| comp.contains_key(a.rel.as_str())).map(|a| (a.rel.to_string(), a.neg || matches!(l, Literal::Agg { .. }))))
+                .collect()
+        };
         for i in 0..magic.len() {
             for j in 0..magic[i].1.len() {
                 if !magic[i].1[j].1 {
                     continue;
                 }
+                let (mh, pre) = &magic[i];
+                let before = one(mh, pre, &keep[i]);
                 keep[i][j] = true;
+                let after = one(mh, pre, &keep[i]);
+                let unchanged = !self.options.gate
+                    && comp.get(mh.rel.as_str()).is_some_and(|&head| match (&before, &after) {
+                        (Ok(before), Ok(after)) => {
+                            let was = edges_of(before, &comp);
+                            edges_of(after, &comp).difference(&was).all(|(w, neg)| {
+                                let at = comp[w];
+                                at < head || (at == head && !*neg && !negated.contains(&head))
+                            })
+                        }
+                        _ => false,
+                    });
+                if unchanged && !whole_check {
+                    continue;
+                }
                 match settle(&mut self, &keep) {
-                    Ok(()) => {}
-                    Err(e) if e.unstratified().is_some() => keep[i][j] = false,
+                    Ok(settled) => (comp, negated) = places(&settled),
+                    Err(e) if e.unstratified().is_some() => {
+                        assert!(!unchanged, "magic: a literal kept without a whole check unstratifies the program: {e}");
+                        keep[i][j] = false
+                    }
                     Err(e) => return Err(Attempt::Failed(e)),
                 }
             }

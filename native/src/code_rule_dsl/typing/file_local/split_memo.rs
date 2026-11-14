@@ -21,8 +21,8 @@ use std::sync::{Arc, Mutex};
 const KEPT: usize = 2;
 
 /// What a split reads of a program: one digest of what every relation's place reads besides rules (the inputs, the
-/// facts' relations, the natives, the lattices and the base relations' declarations), and one per derived relation
-/// of its rules, in order, and its declaration.
+/// facts' relations, the natives and the lattices), one per derived relation of its rules, in order, and its
+/// declaration, and one per base relation of its declaration.
 struct Keys {
     global: u64,
     heads: HashMap<String, u64>,
@@ -41,14 +41,16 @@ fn hasher() -> std::collections::hash_map::DefaultHasher {
 
 fn keys(prog: &Program, index: &RuleIndex<'_>, derived: &BTreeSet<&str>) -> Keys {
     let mut g = hasher();
-    prog.inputs.hash(&mut g);
+    // Only the inputs a split asks about: whether a derived relation, a fact or a phase's export is an input
+    // (`split_constants`, `run_constant`, the constant facts). An input that is none of them is read as a base relation
+    // either way, so dropping one no rule reads (`corpus`, before the last split) leaves the kept splits usable.
+    prog.inputs
+        .iter()
+        .filter(|i| derived.contains(i.as_str()) || prog.facts.contains_key(i.as_str()) || crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(i))
+        .for_each(|i| i.hash(&mut g));
     prog.facts.keys().for_each(|k| k.hash(&mut g));
     prog.lattice.keys().for_each(|k| k.hash(&mut g));
     format!("{:?}", prog.natives).hash(&mut g);
-    for (rel, cols) in prog.decls.iter().filter(|(rel, _)| !derived.contains(rel.as_str())) {
-        rel.hash(&mut g);
-        cols.hash(&mut g);
-    }
     // Each relation's digest on the pool's threads (a pack's program has thousands).
     use rayon::prelude::*;
     let heads = derived
@@ -62,7 +64,16 @@ fn keys(prog: &Program, index: &RuleIndex<'_>, derived: &BTreeSet<&str>) -> Keys
             index.rules_of(rel).for_each(|r| r.hash(&mut h));
             ((*rel).to_owned(), h.finish())
         })
-        .collect();
+        .collect::<HashMap<String, u64>>();
+    // A base relation's declaration is its own key, as a derived relation's rules are: a relation that stops being
+    // derived (factorizing hands an export on as its parts) changes only what reads it, not every relation.
+    let mut heads = heads;
+    for (rel, cols) in prog.decls.iter().filter(|(rel, _)| !derived.contains(rel.as_str())) {
+        let mut h = hasher();
+        b"base".hash(&mut h);
+        cols.hash(&mut h);
+        heads.insert(rel.clone(), h.finish());
+    }
     Keys { global: g.finish(), heads }
 }
 
