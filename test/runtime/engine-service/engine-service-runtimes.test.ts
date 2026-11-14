@@ -402,6 +402,7 @@ describe("the engine service's idle close", () => {
     const startedFrom = Date.now();
     await nextService(Date.now);
     const startedBy = Date.now();
+    expect(ended("at-work")).toEqual(expect.any(Number));
     expect(ended("at-work")).toBeGreaterThanOrEqual(startedFrom);
     expect(ended("at-work")).toBeLessThanOrEqual(startedBy);
     expect([ended("quiet-here"), live("quiet-here")]).toEqual([null, true]);

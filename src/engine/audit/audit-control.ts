@@ -106,7 +106,11 @@ function parseSettings(value: unknown): AuditSettings { return auditSettingsSche
 function request(row: typeof auditRequests.$inferSelect): AuditRequest {
   return auditRequestSchema.parse({ ...row, paths: row.paths, auditIds: row.auditIds });
 }
-function processIsLive(processId: number): boolean {
+/**
+ * Whether the process an owner row names still runs: this one, or one not gone. A row naming any other is the row of a
+ * runtime that ended without releasing its sessions.
+ */
+export function processIsLive(processId: number): boolean {
   return processId === process.pid || processState(processId) !== "gone";
 }
 

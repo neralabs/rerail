@@ -247,6 +247,9 @@ are not waited for further: that edit is checked by the first pass once they ope
 - A scan asked for a quiet session that cannot be opened again (its folder gone, say) fails at once, saying why.
 - Stopping the daemon ends the session, as it ends every open one. Its history shows it ended when its memory was
   freed, the last the daemon heard of it, not when the daemon stopped.
+- A daemon that ends without being stopped (the machine restarts or shuts down, it is killed) ends no session. The next
+  daemon to start ends each session it left open, at 30 minutes after the session's last event, or at that start when
+  sooner, unless a process that still runs owns it.
 
 </details>
 

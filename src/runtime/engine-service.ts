@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { lstat, mkdir, unlink } from "node:fs/promises";
 import { createServer, request, type Server, type ServerResponse } from "node:http";
 import { connect } from "node:net";
@@ -20,6 +21,7 @@ import {
   endSuspendedSessions, failQueuedScans, RerailRuntime, type RerailRuntimeOptions, type SessionSuspension, type SuspendedSessions,
 } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
+import { SqliteSessionStore } from "./session-store.js";
 
 export interface EngineService {
   /** Where it listens: the socket path it was given, or its `pipeFallback` when another process held that pipe. */
@@ -50,12 +52,12 @@ export interface EngineService {
  * hook 1.5 s, which a hook on a busy Windows machine outlasts. A session whose end was lost kept its state (its own copy
  * of its checkout's source walk, its conversation history, its evaluator) until the daemon stopped. A quiet session's
  * agent may as well still be open (a person away, a long think), so a suspended session stays open in the database and
- * keeps its owner claim until its daemon stops: it reads as live, a scan asked for it opens it again to run
- * (`resumeSession`), and its next event opens it again from its ledger, where its source walks stood
- * (`RerailRuntime.closeIdleSession`). A session waiting on a tool call, holding a steer or a finding for its agent, or
- * running a check stays as it is for up to a day (`OWING_SESSION_IDLE_MS`). A reopened session's code-rule boundaries
- * wait for its rules to open again (`REOPENED_RULES_WAIT_MS` in runtime.ts), so its first edit is still steered at its
- * own result.
+ * keeps its owner claim until its daemon stops, or the next daemon starts after one that died (`endAbandonedSessions`):
+ * it reads as live, a scan asked for it opens it again to run (`resumeSession`), and its next event opens it again from
+ * its ledger, where its source walks stood (`RerailRuntime.closeIdleSession`). A session waiting on a tool call, holding
+ * a steer or a finding for its agent, or running a check stays as it is for up to a day (`OWING_SESSION_IDLE_MS`). A
+ * reopened session's code-rule boundaries wait for its rules to open again (`REOPENED_RULES_WAIT_MS` in runtime.ts), so
+ * its first edit is still steered at its own result.
  */
 export const IDLE_SESSION_MS = 30 * 60_000;
 /**
@@ -771,7 +773,30 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
     throw error;
   }
+  // In the same turn as the listen, before any request is read: a session this service opens is its own.
+  const databasePath = resolvePath(options.databasePath ?? defaultRerailDatabasePath());
+  endAbandonedSessions(databasePath, options.idleSessionMs ?? IDLE_SESSION_MS, options.now ?? Date.now);
   return engineService;
+}
+
+/**
+ * Ends the sessions a daemon that ended without its stop left open in the service's database: one stopped by a machine
+ * restart, its heap limit or a kill ends none of the sessions it held or had suspended while quiet, and no later daemon
+ * holds them, so each read as open for good. Each ends at the idle limit after it was last heard from, as the idle close
+ * would have ended it, and at the latest now (`SqliteSessionStore.endSessionsOfGoneOwners`). A database not made yet
+ * holds none. A failure is reported, and the service runs all the same.
+ */
+function endAbandonedSessions(databasePath: string, idleMs: number, now: () => number): void {
+  if (!existsSync(databasePath)) return;
+  let store: SqliteSessionStore | undefined;
+  try {
+    store = new SqliteSessionStore(databasePath);
+    store.endSessionsOfGoneOwners(idleMs, now());
+  } catch (error) {
+    process.stderr.write(`rerail: ending the sessions a stopped daemon left open failed: ${error instanceof Error ? error.message : String(error)}\n`);
+  } finally {
+    store?.close();
+  }
 }
 
 export async function ingestEngineEvent(

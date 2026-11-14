@@ -1,0 +1,1 @@
+A session the daemon held when it ended without being stopped (a machine restart, a kill) no longer shows as open for good: the next daemon to start ends it 30 minutes after its last event, or at that start when sooner.
