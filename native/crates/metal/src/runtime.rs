@@ -745,10 +745,14 @@ pub fn pipeline_ready(source: &str, name: &str) -> Option<ComputePipelineState> 
     if let Some(cached) = PIPELINES.lock().ok()?.get(&key).cloned() {
         return Some(cached);
     }
+    let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+    rerail_accel::forms::interpreted("msl-pipeline", &hex, name, 1);
     if COMPILING.lock().ok()?.insert(key) {
         let (source, name) = (source.to_owned(), name.to_owned());
         let spawned = rerail_accel::exec::service("rerail-msl-compile", None, move || {
-            let _ = pipeline_named(&source, &name);
+            let started = std::time::Instant::now();
+            let ok = pipeline_named(&source, &name).is_ok();
+            rerail_accel::forms::compiled("msl-pipeline", &hex, &name, started.elapsed().as_secs_f64(), ok);
             if let Ok(mut compiling) = COMPILING.lock() {
                 compiling.remove(&key);
             }

@@ -4829,6 +4829,26 @@ corpus tests pass with it, but none makes this case.
 **Closure:** a test with a produced relation that also has `.rr` facts, read by a native stratum and by a SQL
 stratum above it, which sees both the facts and the answers.
 
+## O162. Metal forms of the matcher wave and of block programs with rounds, back fills and loads
+
+Decision 0191 (a). `kernel_forms` ranks them by batches. **Closure:** generated MSL for each, compiled in upkeep at
+idle, with the record's `metal-form` entries gone.
+
+## O163. IR forms of the clauses the lowering refuses, and of the logic natives
+
+Decision 0191 (b). **Closure:** the `ir-form` entries lowered, most batches first, each with a test that the
+program's findings equal the native ones.
+
+## O164. A compiled form a later process can reuse
+
+Decision 0191 (c, d). A `Program` has no byte form. **Closure:** a first compile's split measured (MSL front end
+and pipeline); then stored programs (0173) or `MTLBinaryArchive`s keyed by `pipeline_key`, whichever pays.
+
+## O165. Upkeep's compiles are released by the residency's drop
+
+Decision 0191. `drop_pipelines` clears every pipeline two minutes after a full execution. **Closure:** pipelines
+compiled ahead of need exempted, or persisted (O164).
+
 ## O160. Re-sorting stored rows is not an upkeep job yet
 
 Decision 0190 §5: once 0164's frames keep sorted orders, their compaction past the dead-row bound (and an order for a

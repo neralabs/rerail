@@ -654,7 +654,15 @@ pub(in crate::code_rule_dsl) fn lower_with(policies: &[(String, CompiledCodeRule
             let mut python = matchers.iter().enumerate().filter(|(_, m)| m.language == GrammarDialect::Python);
             let (grammar_at, grammar) = python.next()?;
             let (tree, paths) = gated_match_tree(grammar).ok()?;
-            let lowered = LoweredMatcher::lower(&tree).ok()?;
+            let lowered = match LoweredMatcher::lower(&tree) {
+                Ok(lowered) => lowered,
+                Err(e) => {
+                    // A clause the IR refuses runs on W's matcher, natively (decision 0191's `ir-form` list).
+                    let name = format!("{policy}/{}", clause.id);
+                    rerail_accel::forms::missing("ir-form", &name, &name, &format!("{e:?}"), 1);
+                    return None;
+                }
+            };
             clauses.push(Clause {
                 paths,
                 name: format!("{policy}/{}", clause.id),

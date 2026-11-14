@@ -55,6 +55,16 @@ enum Binding {
     MetalJit,
 }
 
+impl Binding {
+    /// Its kind of form in the record of forms (`rerail_accel::forms`, decision 0191).
+    fn form(self) -> &'static str {
+        match self {
+            Binding::CpuJit => "cpu-jit",
+            Binding::MetalJit => "metal-jit",
+        }
+    }
+}
+
 #[derive(Default)]
 struct Requests {
     running: BTreeSet<(Binding, PlanId)>,
@@ -72,6 +82,7 @@ fn ready(binding: Binding, plan: PlanId) -> bool {
 /// Starts `compile` as a job on the pool unless a request for (`binding`, `plan`) runs, finished
 /// or failed.
 fn request(binding: Binding, plan: PlanId, compile: impl FnOnce() -> Result<(), Error> + Send + 'static) {
+    let kind = binding.form();
     let Ok(mut requests) = REQUESTS.lock() else { return };
     let key = (binding, plan);
     if requests.running.contains(&key) || requests.ready.contains(&key) || requests.failed.contains(&key) {
@@ -81,7 +92,9 @@ fn request(binding: Binding, plan: PlanId, compile: impl FnOnce() -> Result<(), 
     requests.running.insert(key);
     rayon::spawn(move || {
         // A panic is a failed compilation (a job's panic would end the process).
+        let started = std::time::Instant::now();
         let done = rerail_accel::exec::as_job("a compilation", || std::panic::catch_unwind(std::panic::AssertUnwindSafe(compile))).unwrap_or(Err(Error::BackendFailure));
+        rerail_accel::forms::compiled(kind, &plan.hex(), "", started.elapsed().as_secs_f64(), done.is_ok());
         if let Ok(mut requests) = REQUESTS.lock() {
             requests.running.remove(&key);
             if done.is_ok() {
@@ -128,6 +141,10 @@ pub fn resolve_plan(backend: ExecutionBackend, plan: PlanId, programs: &[Program
         }
         other => return Ok(other),
     };
+    if matches!(resolved, ExecutionBackend::CpuInterpreter | ExecutionBackend::MetalInterpreter) {
+        let kind = if resolved == ExecutionBackend::CpuInterpreter { Binding::CpuJit } else { Binding::MetalJit }.form();
+        rerail_accel::forms::interpreted(kind, &plan.hex(), &format!("{} programs", programs.len()), 1);
+    }
     crate::code_rule_dsl::prof::count(
         match resolved {
             ExecutionBackend::CpuJit | ExecutionBackend::MetalJit => "compilation.batches_compiled",

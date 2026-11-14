@@ -217,6 +217,9 @@ pub fn run_batch(
     // frame, within `block::MAX_ROUNDS`, to the same values.
     // A `back_fill` likewise: a backward pass over the groups' summaries, not generated yet.
     if programs.iter().any(|p| !p.groups.is_empty() || p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_)))) {
+        // Decision 0191's `metal-form` list: what the program needs that Metal lacks.
+        let reason = if programs.iter().any(|p| !p.groups.is_empty()) { "a fixed point (rounds)" } else { "a back fill or a load" };
+        rerail_accel::forms::missing("metal-form", "block program", "block program", reason, files.len() as u64);
         return Err(Error::UnsupportedBackend);
     }
     METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;

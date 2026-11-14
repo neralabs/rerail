@@ -71,7 +71,10 @@ pub fn open(path: &PathBuf) -> rusqlite::Result<rusqlite::Connection> {
            cold INTEGER, ok INTEGER, load REAL);
          CREATE INDEX IF NOT EXISTS samples_by_machine ON samples(machine, at);
          CREATE INDEX IF NOT EXISTS samples_by_form ON samples(machine, lane, forms, at);
-         CREATE TABLE IF NOT EXISTS models(machine TEXT PRIMARY KEY, at REAL, trained_on INTEGER, comparison TEXT, model BLOB);",
+         CREATE TABLE IF NOT EXISTS models(machine TEXT PRIMARY KEY, at REAL, trained_on INTEGER, comparison TEXT, model BLOB);
+         CREATE TABLE IF NOT EXISTS kernel_forms(
+           machine TEXT, kind TEXT, key TEXT, name TEXT, interpreted INTEGER, compiled INTEGER, compile_seconds REAL,
+           failed INTEGER, missing TEXT, first_at REAL, last_at REAL, PRIMARY KEY(machine, kind, key));",
     )?;
     sql_plans::create(&db)?;
     Ok(db)
@@ -86,7 +89,8 @@ fn write() {
     let mut w = WRITER.lock().unwrap_or_else(|p| p.into_inner());
     let (samples, dropped) = rerail_accel::score::take_samples();
     let plans = sql_plans::take();
-    if samples.is_empty() && plans.is_empty() {
+    let forms = rerail_accel::forms::drain();
+    if samples.is_empty() && plans.is_empty() && forms.is_empty() {
         return;
     }
     if w.is_none() {
@@ -115,6 +119,19 @@ fn write() {
         } else {
             sql_plans::insert(&tx, &machine, threads, at, &plans)?
         };
+        // The forms' record, summed over runs (decision 0191).
+        if !forms.is_empty() {
+            let mut up = tx.prepare_cached(
+                "INSERT INTO kernel_forms VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)
+                 ON CONFLICT(machine, kind, key) DO UPDATE SET interpreted = interpreted + excluded.interpreted,
+                   compiled = compiled + excluded.compiled, compile_seconds = compile_seconds + excluded.compile_seconds,
+                   failed = failed + excluded.failed, missing = coalesce(excluded.missing, missing),
+                   name = CASE WHEN excluded.name = '' THEN name ELSE excluded.name END, last_at = excluded.last_at",
+            )?;
+            for f in &forms {
+                up.execute(rusqlite::params![machine, f.kind, f.key, f.name, f.interpreted as i64, f.compiled as i64, f.compile_seconds, f.failed as i64, f.missing, at])?;
+            }
+        }
         tx.commit()?;
         Ok(ids)
     })();
@@ -518,6 +535,22 @@ pub fn upkeep_jobs() -> Vec<rerail_accel::upkeep::Registered> {
         jobs.push(rerail_accel::upkeep::register(Box::new(Retrain)));
     }
     jobs
+}
+
+/// The forms this machine's runs went without (decision 0191), most batches first: (kind, name, batches run
+/// without the form, compiles, their seconds, failures, why missing).
+pub fn kernel_forms(limit: usize) -> Vec<(String, String, i64, i64, f64, i64, Option<String>)> {
+    let Some(path) = path() else { return Vec::new() };
+    let Ok(db) = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else { return Vec::new() };
+    let Ok(mut st) = db.prepare(
+        "SELECT kind, name, interpreted, compiled, compile_seconds, failed, missing FROM kernel_forms WHERE machine = ?1
+         ORDER BY interpreted DESC, compile_seconds DESC LIMIT ?2",
+    ) else {
+        return Vec::new();
+    };
+    st.query_map(rusqlite::params![machine(), limit as i64], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?)))
+        .map(|rows| rows.filter_map(Result::ok).collect())
+        .unwrap_or_default()
 }
 
 /// Writes what is left: a run's end.
