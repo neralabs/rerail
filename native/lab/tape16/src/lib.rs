@@ -21,7 +21,6 @@ pub mod codec;
 pub mod edits;
 pub mod huff;
 pub mod inplace;
-pub mod inplace_gpu;
 pub mod events;
 pub mod layout;
 pub mod lp;
@@ -35,6 +34,8 @@ pub mod v15;
 pub mod writer;
 #[cfg(target_os = "macos")]
 pub mod gpu;
+#[cfg(target_os = "macos")]
+pub mod inplace_gpu;
 #[cfg(target_os = "macos")]
 pub mod scan;
 #[cfg(target_os = "macos")]

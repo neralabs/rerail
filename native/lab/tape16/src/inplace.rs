@@ -812,6 +812,7 @@ static SELECT8: std::sync::LazyLock<[[u8; 8]; 256]> = std::sync::LazyLock::new(|
 /// The position of the `r`-th one (from 0) in `x`, which has more than `r` ones, with no branch: byte counts
 /// by broadword steps, the byte by a comparison of all eight at once, then a table (Vigna, "Broadword
 /// implementation of rank/select queries").
+#[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2")))]
 #[inline(always)]
 fn select_in_word(x: u64, r: u32) -> u32 {
     const L8: u64 = 0x0101_0101_0101_0101;
@@ -825,6 +826,15 @@ fn select_in_word(x: u64, r: u32) -> u32 {
     let rank = u64::from(r) - (((s << 8) >> place) & 0xff);
     // SAFETY: the byte and the rank within it index the 256 × 8 table.
     place + u32::from(unsafe { *SELECT8.get_unchecked(((x >> place) & 0xff) as usize).get_unchecked(rank as usize) })
+}
+
+/// x86 with BMI2: the r-th one is where PDEP deposits a single bit (fast from Haswell and Zen 3; Zen 1
+/// and 2 run PDEP in microcode, so their builds leave BMI2 off and take the broadword select).
+#[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
+#[inline(always)]
+fn select_in_word(x: u64, r: u32) -> u32 {
+    // SAFETY: the build enables BMI2.
+    unsafe { core::arch::x86_64::_pdep_u64(1u64 << r, x).trailing_zeros() }
 }
 
 impl Image for Ef {

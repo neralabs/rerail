@@ -1222,6 +1222,7 @@ fn cmd_inplace(path: &str, f11: bool) {
         }
         Ok(())
     }).unwrap_or_else(|e| die(&e));
+    println!("{}\n", rerail_tape_lab::measure::machine());
     println!("{path}: {files} files, {nodes} nodes; codes a language: {}\n", codes.iter().map(|(t, c)| format!("{} {} ({} bits)", capture::language(*t), c.table.len(), c.width())).collect::<Vec<_>>().join(", "));
     println!("| | {} |", names.join(" | "));
     println!("|---|{}", "---|".repeat(names.len()));
@@ -1274,6 +1275,7 @@ fn cmd_inplace(path: &str, f11: bool) {
 }
 
 /// E10 on Metal: the corpus as one forest, each candidate's image in one buffer, every question a kernel.
+#[cfg(target_os = "macos")]
 fn cmd_inplace_gpu(path: &str) {
     use rerail_tape_lab::inplace::{Codes, forest};
     let files = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e));
@@ -1328,6 +1330,7 @@ fn main() {
         "scan" => cmd_scan(path),
         "textrel" => cmd_textrel(path),
         "inplace" => cmd_inplace(path, flag("--f11")),
+        #[cfg(target_os = "macos")]
         "inplace-gpu" => cmd_inplace_gpu(path),
         "base" => cmd_base(path, args.iter().position(|a| a == "--dump").map(|i| args[i + 1].as_str())),
         #[cfg(target_os = "macos")]
