@@ -1495,6 +1495,17 @@ pub mod tests {
         assert!(made.is_empty(), "the CPU's body makes {made:?}");
     }
 
+    /// The token tests a first byte decides (`native_cpu_block::test_filter`, from what their
+    /// masks need of the bytes): the `-` not before a digit, the leading `0`. Each a bit of the
+    /// token's entry on the CPU, as the lean lexer tests those at those bytes alone.
+    #[test]
+    fn a_tests_first_byte_filters_it() {
+        let c = crate::compiled().expect("compiles");
+        let r = c.native.records.as_ref().expect("records");
+        let filtered: Vec<Vec<u8>> = r.checks.iter().filter_map(|k| rerail_compiler::native_cpu_block::test_filter(&c.native, k)).map(|n| (0..=255u8).filter(|&b| n.has(b)).collect()).collect();
+        assert_eq!(filtered, vec![b"-".to_vec(), b"0".to_vec()]);
+    }
+
     /// The code bits of the gap marks tier 2 on the CPU tests itself
     /// (`native_cpu_block::lazy_marks`): the CPU's tier 1 sets none of them.
     fn lazy_bits(block: &rerail_compiler::block_native::BlockNative) -> u32 {

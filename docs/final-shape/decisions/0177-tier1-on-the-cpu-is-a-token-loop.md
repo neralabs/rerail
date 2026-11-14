@@ -557,3 +557,41 @@ Measured (`jit_against_aot`, load average 120): tier 1 ahead of time 298 instruc
 marks' 59 a token stays: it is not the line marks' gap. It is the checks' marks (`json_bad`'s
 `after string when …`, `float_after`): their hits at a token, the bits a token leaves the
 next, the extras' select. Those go with the token tests, next.
+
+## The token tests, by what they need of the bytes
+
+The lean lexer tests a `-` only at a `-`, and counts a number's dots as it reads the digits.
+The loop tested every punctuation token for `-` (56% of `.rr`'s tokens). Each count test
+called its mask's window function, a full 64-byte classification, once per test per word.
+
+The compiler now asks what each test's mask needs of the bytes (`native_cpu_bytes::needs`).
+That is an over-approximation from the instructions: a bit at `p` only where a byte from
+`p + lo` to `p + hi` is in a set.
+
+```text
+byte test, class, pair      its bytes, at 0 (a pair: the cheaper of its two)
+a & b                       the cheaper of the two (either is sound)
+a & ~b                      a's
+a | b                       the union, the offsets' span
+prev(a, k), escaped(a)      a's, k (or 1) bytes back
+not, carried, position      none: anything
+```
+
+Three tricks follow from it:
+
+- **A first-byte filter.** A run test whose mask needs only the token's first byte gets a
+  bit in that byte's entry (`TOKEN_TESTS`, bits 17 to 23), set for the bytes it can hold at.
+  The loop skips the test on one bit of the load it already has. For `.rr`: the `-` not
+  before a digit, the leading `0`. A filter that every first byte of its rule passes (a
+  number's digits) decides nothing, and is dropped.
+- **A length bound.** A count of `n` needs `n` bytes: a token shorter skips it (a second `.`
+  in a one-digit number).
+- **Fusion.** A rule's count tests are one function (`tests_fn`, called from the loop): one
+  loop over the token's words, each word's masks from one window (`Bytewise::words`, its
+  vectors and its `escaped` shared), a popcount per test. A string's two tests classify its
+  bytes once.
+
+Guard: `a_tests_first_byte_filters_it` names the filtered tests (`-`, `0`).
+
+Measured (`jit_against_aot`, load average 119): tier 1 ahead of time 279 instructions a
+node, from 298; the JIT 362, from 409; tier 1 + 2 ahead of time 521, from 540.

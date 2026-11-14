@@ -132,6 +132,33 @@ impl<'a> Bytewise<'a> {
         f.ins().band(m, cut)
     }
 
+    /// Outputs `os`' bits for the file's bytes `p .. p + 64`, none past its end, as `word`'s
+    /// each: one window's vectors and words shared among them, as a lexer classifies a byte
+    /// once for every test that reads it.
+    pub fn words(&self, f: &mut FunctionBuilder<'_>, at: &File, os: &[u16], p: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Vec<Value> {
+        let mut windows: HashMap<i64, Lanes<'_>> = HashMap::new();
+        let mut memo = HashMap::new();
+        let rem = f.ins().isub(at.len, p);
+        let zero = f.ins().iconst(types::I64, 0);
+        let sixty_four = f.ins().iconst(types::I64, 64);
+        let rem = f.ins().smax(rem, zero);
+        let full = f.ins().icmp(IntCC::SignedGreaterThanOrEqual, rem, sixty_four);
+        let one = f.ins().iconst(types::I64, 1);
+        let low = f.ins().ishl(one, rem);
+        let low = f.ins().iadd_imm(low, -1);
+        let ones = f.ins().iconst(types::I64, -1);
+        let cut = f.ins().select(full, ones, low);
+        os.iter()
+            .map(|&o| {
+                let x = usize::from(self.native.outputs[usize::from(o)]);
+                // A delay `d` reads from `p + d`: `d` bytes ahead of the shared start.
+                let d = i64::from(self.native.output_delays[usize::from(o)]);
+                let m = self.mask_at(f, at, x, p, -d, &mut windows, &mut memo, heads);
+                f.ins().band(m, cut)
+            })
+            .collect()
+    }
+
     /// Output `o` at the file's byte `p`, 0 or 1 (0 past its end).
     pub fn bit(&self, f: &mut FunctionBuilder<'_>, at: &File, o: u16, p: Value, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> Value {
         let x = usize::from(self.native.outputs[usize::from(o)]);
@@ -432,4 +459,92 @@ fn in_set(f: &mut FunctionBuilder<'_>, b: Value, set: [u64; 4]) -> Value {
     };
     let bit = f.ins().ushr(word, b);
     f.ins().band_imm(bit, 1)
+}
+
+/// What an output needs of the bytes (`needs`): a bit at `p` only where some byte from
+/// `p + lo` to `p + hi` is in `set` (256 bits). An over-approximation, from the program's
+/// instructions: a test that can hold only so is skipped where the bytes say it cannot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Needs {
+    pub set: [u64; 4],
+    pub lo: i32,
+    pub hi: i32,
+}
+
+impl Needs {
+    fn bytes(f: impl Fn(u8) -> bool, at: i32) -> Needs {
+        let mut set = [0u64; 4];
+        for b in 0..=255u8 {
+            if f(b) {
+                set[usize::from(b >> 6)] |= 1 << (b & 63);
+            }
+        }
+        Needs { set, lo: at, hi: at }
+    }
+
+    fn shift(self, k: i32) -> Needs {
+        Needs { lo: self.lo + k, hi: self.hi + k, ..self }
+    }
+
+    /// Its cost as a filter: the bytes it lets through times the places it looks at.
+    fn width(&self) -> u32 {
+        self.set.iter().map(|w| w.count_ones()).sum::<u32>() * (self.hi - self.lo + 1) as u32
+    }
+
+    /// Whether byte `b` is in the set.
+    pub fn has(&self, b: u8) -> bool {
+        self.set[usize::from(b >> 6)] >> (b & 63) & 1 == 1
+    }
+}
+
+/// What output `o` needs of the bytes (`Needs`), where its instructions say: byte tests, their
+/// logic, `prev`s and `escaped` (a bit only after a byte of its run). None where it can hold
+/// whatever the bytes near it (a negation, a carried value, a position).
+pub fn needs(native: &BlockNative, o: u16) -> Option<Needs> {
+    let x = usize::from(*native.outputs.get(usize::from(o))?);
+    let d = i32::from(native.output_delays[usize::from(o)]);
+    let mut memo = HashMap::new();
+    // The output at `p` is its instruction at `p + d` (`word`'s `start`).
+    needs_at(native, x, &mut memo).map(|n| n.shift(d))
+}
+
+fn needs_at(native: &BlockNative, x: usize, memo: &mut HashMap<usize, Option<Needs>>) -> Option<Needs> {
+    if let Some(&n) = memo.get(&x) {
+        return n;
+    }
+    let t = |table: u16, bits: u8| {
+        let c = native.tables[usize::from(table)];
+        move |b: u8| c.member(b, bits)
+    };
+    let n = match native.insts[x] {
+        BlockInst::EqByte(c) => Some(Needs::bytes(|b| b == c, 0)),
+        BlockInst::Class { table, bits } => Some(Needs::bytes(t(table, bits), 0)),
+        BlockInst::Plane(k) => Some(Needs::bytes(|b| b >> k & 1 == 1, 0)),
+        BlockInst::PlaneBefore(k) => Some(Needs::bytes(|b| b >> k & 1 == 1, -1)),
+        BlockInst::Pair { before, table, bits } => {
+            let (a, b) = (Needs::bytes(t(table, bits), 0), Needs::bytes(t(before, bits), -1));
+            Some(if b.width() < a.width() { b } else { a })
+        }
+        BlockInst::Const(0) => Some(Needs { set: [0; 4], lo: 0, hi: 0 }),
+        BlockInst::And(a, b) => match (needs_at(native, usize::from(a), memo), needs_at(native, usize::from(b), memo)) {
+            (Some(p), Some(q)) => Some(if q.width() < p.width() { q } else { p }),
+            (p, q) => p.or(q),
+        },
+        BlockInst::AndNot(a, _) => needs_at(native, usize::from(a), memo),
+        BlockInst::Or(a, b) => match (needs_at(native, usize::from(a), memo), needs_at(native, usize::from(b), memo)) {
+            (Some(p), Some(q)) => {
+                let mut set = p.set;
+                for (s, w) in set.iter_mut().zip(q.set) {
+                    *s |= w;
+                }
+                Some(Needs { set, lo: p.lo.min(q.lo), hi: p.hi.max(q.hi) })
+            }
+            _ => None,
+        },
+        BlockInst::Prev(a, k) => needs_at(native, usize::from(a), memo).map(|n| n.shift(-i32::from(k))),
+        BlockInst::Escaped(a) => needs_at(native, usize::from(a), memo).map(|n| n.shift(-1)),
+        _ => None,
+    };
+    memo.insert(x, n);
+    n
 }
