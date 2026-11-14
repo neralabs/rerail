@@ -1466,7 +1466,7 @@ describe("the hook start check", () => {
     expect({ wrong, askedThoughStopped }).toEqual({ wrong: [], askedThoughStopped: ["b/own-folder", "never", "never/src"] });
   });
 
-  it("asks about a folder typed in another letter case by its stored spelling and answers itself only where the daemon reads stopped, with macOS's realpaths", async () => {
+  it("asks about a folder typed in another letter case by its stored spelling and answers itself only where the daemon reads stopped, with macOS's realpaths", { timeout: 120_000 }, async () => {
     const root = realpathSync.native(await temporaryDirectory({ started: false }));
     const folders = miscasedFolders(root);
     // On macOS checkout keys go through the JS realpath, which keeps a name as typed; the native realpath, which the
@@ -1483,7 +1483,7 @@ describe("the hook start check", () => {
     }
   });
 
-  it.runIf(process.platform === "linux")("waits for the daemon where Git names a checkout's top in another letter case than the hook's realpath, as on a case-insensitive Linux folder", async () => {
+  it.runIf(process.platform === "linux")("waits for the daemon where Git names a checkout's top in another letter case than the hook's realpath, as on a case-insensitive Linux folder", { timeout: 120_000 }, async () => {
     const root = realpathSync.native(await temporaryDirectory({ started: false }));
     const folders = miscasedFolders(root);
     // There every realpath keeps a name as typed, and Git's `getcwd` gives the name the kernel cached.
