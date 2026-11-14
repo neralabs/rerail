@@ -36,7 +36,8 @@ export interface EngineService {
   openRuntimes(): number;
   /**
    * Suspends every session that has sent no event for the idle limit and owes its agent nothing, and every one quiet for
-   * a day whatever it owes (`RerailRuntime.closeIdleSession`); the service also does this every minute.
+   * a day whatever it owes (`RerailRuntime.closeIdleSession`), then ends what a daemon that died since left open
+   * (`endAbandonedSessions`); the service also does this every minute.
    */
   closeIdleSessions(): Promise<void>;
   /**
@@ -442,6 +443,18 @@ async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now:
 }
 
 /**
+ * One idle sweep: suspends this service's quiet sessions (`closeIdleSessions`), then ends what a daemon that died since
+ * left open (`endAbandonedSessions`), as a start does: another daemon on the same records can run on for days after one
+ * dies, with no start to end them.
+ */
+async function sweepIdle(state: EngineRoutingState, options: EngineServiceOptions, databasePath: string): Promise<void> {
+  const idleMs = options.idleSessionMs ?? IDLE_SESSION_MS;
+  const now = options.now ?? Date.now;
+  await closeIdleSessions(state, idleMs, now);
+  endAbandonedSessions(databasePath, idleMs, now);
+}
+
+/**
  * Keeps a suspended session, with how to make its runtime again, for its next open. Its runtime keeps it as the close
  * begins (`RerailRuntime.closeIdleSession`), so a scan asked for it meanwhile opens it again behind the close, in its
  * lane, and a close that fails leaves it here to end at the service's close.
@@ -710,7 +723,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     suspended: new Map(),
     ownerLockId: ownerLock.id,
   };
-  const sweepIdleSessions = (): Promise<void> => closeIdleSessions(routing, options.idleSessionMs ?? IDLE_SESSION_MS, options.now ?? Date.now);
+  const sweepIdleSessions = (): Promise<void> => sweepIdle(routing, options, databasePath);
   const server = createServer(async (incoming, response) => {
     response.setHeader("Content-Type", "application/json");
     if (incoming.method === "POST" && incoming.url === ENGINE_PROOF_PATH && options.accessToken !== undefined) {

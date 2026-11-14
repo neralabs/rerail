@@ -249,8 +249,9 @@ are not waited for further: that edit is checked by the first pass once they ope
   freed, the last the daemon heard of it, not when the daemon stopped.
 - A daemon that ends without being stopped (the machine restarts or shuts down, it is killed) ends no session. The next
   daemon to start ends each session it left open, at 30 minutes after the session's last event, or at that start when
-  sooner, also when another process now has the process id the stopped daemon had. The session's next event opens it
-  again. A session that a daemon still running holds, such as a second one on the same Rerail home, is left as it is.
+  sooner, also when another process now has the process id the stopped daemon had. A second daemon already running on
+  the same Rerail home does the same within a minute. The session's next event opens it again. A session that a daemon
+  still running holds is left as it is.
 
 </details>
 

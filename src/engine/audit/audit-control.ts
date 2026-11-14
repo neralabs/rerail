@@ -323,6 +323,9 @@ export class SqliteAuditControlStore {
       if (owner !== undefined) this.#interruptOwned(sessionId, "Owning runtime was replaced before scan could complete");
       this.#database.insert(policySessionOwners).values({ sessionId, delivery, active: true, processId: process.pid, token, updatedAt: Date.now() })
         .onConflictDoUpdate({ target: policySessionOwners.sessionId, set: { delivery, active: true, processId: process.pid, token, updatedAt: Date.now() } }).run();
+      // The runtime opened the record just before this claim; another daemon's sweep may have ended it in between, as
+      // the row this claim replaces was a writer's that ended (`endSessionsOfEndedOwners`). The session is open.
+      this.#database.update(sessions).set({ endedAt: null }).where(eq(sessions.sessionId, sessionId)).run();
     });
     return { token };
   }
