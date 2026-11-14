@@ -183,3 +183,23 @@ and takes 6.7 G instructions and 0.58 s user, against 8.0 G and 0.72 s over `dl1
 
   After: no stream starts from far back, the warm batch over `dl1g` writes nothing it may not, and its 6 asks waited
   0.57 to 1.23 s at load 115.
+- **The observer's store kept everything, and every process read it all.** Nothing was ever dropped from it, and
+  each process loads all of it as it opens (`read_all`). In the `dl1g` store: 3 of 7 root cursors were of names no
+  run asks any more, 7 of 86 answers and 8 of 81 canonical forms were under them, and 54 whole-run cutoff records
+  (975 KB) were mostly of earlier builds (the engine's id is in their key). Its database file was 4 KB, with
+  everything in a 2.9 MB WAL that was never folded in. Fixed:
+  - `observe::collect`, in the content store's collection pass (behind the run, never in a warm run), drops:
+    - a root's cursor whose name has a `.` or `..`, is gone, lies under another root kept, or is another name of a
+      kept root's directory with an older cursor;
+    - an answer, a canonical form or a Git file list under no root kept (every path read is under a root);
+    - a cutoff record (now keyed `cutoff:…`) none of whose plans is live in the content store, and one from before
+      records named their plans.
+
+    Then it folds the WAL in and truncates it. `constants:` and `cone-rounds:` records stay.
+  - The outermost run's end folds the WAL in (`wal_checkpoint(PASSIVE)`: it waits for no reader, commits nothing).
+  - The journal's cookies are written in `<store>.cookies`, a directory holding nothing else. Beside the store, each
+    stream was told every write there: 2,596 events in one warm batch's first ask, the harness's outputs and the
+    store's own writes, all replayed and dropped.
+- **Loading the observer's store at open** (`read_all`) rather than by key as asked is left: a lookup in the waves is a
+  statement there, which the strict mode refuses, so it needs the keys known before the first wave.
+

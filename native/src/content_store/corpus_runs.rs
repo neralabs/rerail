@@ -464,6 +464,15 @@ impl ContentStore {
     /// Whether a pass under `policy` at unix second `now` has work: a decision's rows being collected, or a decision
     /// due that can change something (`corpus_decision_worth`). A due decision that cannot is cleared here, so a run
     /// of fresh roots neither decides nor sweeps the store after each run.
+    /// The plans a kept manifest names or a run holds (`corpus_plans`, live): what the observer's store keeps a
+    /// whole-run cutoff's record for (`observe::collect`).
+    pub fn live_plans(&self) -> StoreResult<HashSet<[u8; 32]>> {
+        let connection = self.connection.lock().expect("content store connection unavailable");
+        let mut st = connection.prepare("SELECT plan_digest FROM corpus_plans WHERE live=1")?;
+        let plans = st.query_map([], |r| r.get::<_, Vec<u8>>(0))?.filter_map(|p| p.ok()?.try_into().ok()).collect();
+        Ok(plans)
+    }
+
     pub fn corpus_pass_wanted(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<bool> {
         if self.retired_memo_rows_left()? {
             return Ok(true);

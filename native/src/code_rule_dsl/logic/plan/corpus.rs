@@ -1670,6 +1670,10 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
                 kept = pass.kept.or(kept);
                 (plan_rows, tapes, sources) = (plan_rows + pass.plan_rows, tapes + pass.collection.tapes, sources + pass.collection.sources);
             }
+            // The observer's store, with what the passes left live (`observe::collect`).
+            let live = store.live_plans()?;
+            let swept = crate::content_store::observe::collect(&crate::content_store::observe::store_beside(&path), |plan| live.contains(plan)).map_err(crate::content_store::StoreError::from)?;
+            let swept = format!("; the observer's store: {} cursors, {} answers and {} records dropped", swept.cursors, swept.answers, swept.records);
             Ok(match kept {
                 Some(k) => format!(
                     "{} manifests kept, {} evicted; history {:.1} MB (high water {} MB), protected {:.1} MB; {tapes} tapes, {sources} sources and {plan_rows} memo rows of dead plans deleted{}",
@@ -1679,8 +1683,8 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
                     policy.high_water >> 20,
                     k.protected_bytes as f64 / 1048576.0,
                     if idle < 2 { "; more left for later passes" } else { "" }
-                ),
-                None => format!("no decision due; {tapes} tapes, {sources} sources and {plan_rows} memo rows deleted"),
+                ) + &swept,
+                None => format!("no decision due; {tapes} tapes, {sources} sources and {plan_rows} memo rows deleted{swept}"),
             })
         })()
         .map_err(|e| e.to_string());

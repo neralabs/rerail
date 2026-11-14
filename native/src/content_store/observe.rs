@@ -297,7 +297,10 @@ impl Observer {
         // file once: two in the same second check the same slice, and coverage holds over seconds rather than runs.
         let epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         let validate_every = std::env::var("RERAIL_VALIDATE_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(VALIDATE_EVERY);
-        let cookies = path.and_then(|p| p.parent()).map(Path::to_path_buf);
+        // The journal's cookies in a directory of their own: a stream watches it with its roots, and is told every
+        // event in it. Beside the store, it was told every write of the store, its outputs and logs (2,596 events in
+        // one warm batch's first ask, all of them replayed and dropped).
+        let cookies = path.map(cookie_dir).filter(|d| std::fs::create_dir_all(d).is_ok());
         let stored_roots: Vec<PathBuf> = db
             .as_ref()
             .map(|k| k.meta.keys().filter(|k| k.starts_with("journal:")).filter_map(|k| k.splitn(3, ':').nth(2)).map(PathBuf::from).collect())
@@ -894,6 +897,14 @@ impl Observer {
         if self.open == 0 {
             self.settle_roots();
             self.flushes += 1;
+            // What this run wrote folded into the database (the writer's connection lives as long as the process, so
+            // its close never does it, and the WAL stayed under SQLite's 1000 pages: 2.9 MB of history every process
+            // read through). Passive: it waits for no reader; it commits nothing.
+            if let Some(k) = &self.db {
+                k.writer.send(|db| {
+                    let _ = db.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()));
+                });
+            }
         }
     }
 
@@ -1143,6 +1154,128 @@ fn plain(path: &Path) -> bool {
 /// Where a root's journal cursor is kept (`observer_meta`): `journal:<volume>:<root>`.
 fn cursor_key(root: &Path, volume: [u8; 16]) -> String {
     format!("journal:{}:{}", volume.iter().map(|b| format!("{b:02x}")).collect::<String>(), root.display())
+}
+
+/// Where the observer of the store at `path` writes the journal's cookies: `<store>.cookies`, holding nothing else.
+fn cookie_dir(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".cookies");
+    PathBuf::from(name)
+}
+
+/// What `collect` dropped from an observer's store.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Swept {
+    pub cursors: usize,
+    pub answers: usize,
+    pub records: usize,
+}
+
+/// Collects the observer's store at `path` (`store_beside`), with the content store's collection (decision 0053),
+/// behind the run: nothing ever left it before, and every process reads all of it as it opens. Dropped:
+///
+/// - a root's cursor where the root's name has a `.` or `..`, or is gone, or lies under another root kept; of two
+///   names of one directory (`/var/…`, `/private/var/…`), all but the one with the newest cursor;
+/// - an answer, a canonical form or a Git file list under no root kept: every path the observer reads is under a
+///   root (`watch_above`), so one under none is of a name no run uses;
+/// - a whole-run cutoff's record (`reuse::CUTOFF`) that names no plan `live` says is live (a run of another build,
+///   whose manifests the content store no longer keeps), and one from before records named their plans.
+///
+/// Then the WAL is folded into the database and truncated. Other records (`constants:`, `cone-rounds:`) stay.
+pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Result<Swept> {
+    let mut swept = Swept::default();
+    if !path.exists() {
+        return Ok(swept);
+    }
+    let mut db = Connection::open(path)?;
+    db.busy_timeout(std::time::Duration::from_secs(10))?;
+    // The roots, by volume: (key, root, its directory's real path, cursor).
+    let mut roots: Vec<(String, String, PathBuf, Option<PathBuf>, Option<u64>)> = {
+        let mut st = db.prepare("SELECT key, value FROM observer_meta WHERE key LIKE 'journal:%'")?;
+        st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, rusqlite::types::Value>(1)?)))?
+            .flatten()
+            .filter_map(|(key, value)| {
+                let mut parts = key.splitn(3, ':');
+                let (_, volume, root) = (parts.next()?, parts.next()?.to_owned(), PathBuf::from(parts.next()?));
+                let real = plain(&root).then(|| std::fs::canonicalize(&root).ok()).flatten();
+                let cursor = text_cursor(&value).and_then(|c| c.parse().ok());
+                Some((key, volume, root, real, cursor))
+            })
+            .collect()
+    };
+    // Newest cursor first: of two names of one directory, the first is kept.
+    roots.sort_by(|a, b| b.4.cmp(&a.4));
+    let mut kept: Vec<(String, PathBuf, PathBuf)> = Vec::new();
+    let mut dropped: Vec<String> = Vec::new();
+    for (key, volume, root, real, _) in &roots {
+        match real {
+            Some(real) if !kept.iter().any(|(v, _, r)| v == volume && r == real) => kept.push((volume.clone(), root.clone(), real.clone())),
+            _ => dropped.push(key.clone()),
+        }
+    }
+    // A root under another kept is asked as part of it (`watch_above` takes the widest).
+    let under: Vec<usize> = (0..kept.len()).filter(|&i| kept.iter().enumerate().any(|(j, (v, _, r))| j != i && *v == kept[i].0 && kept[i].2.starts_with(r) && kept[i].2 != *r)).collect();
+    for &i in under.iter().rev() {
+        let (volume, root, _) = kept.remove(i);
+        dropped.push(cursor_key_text(&volume, &root));
+    }
+    let held = |path: &Path| plain(path) && kept.iter().any(|(_, root, _)| path.starts_with(root));
+    let answers: Vec<String> = {
+        let mut st = db.prepare("SELECT path FROM observed")?;
+        st.query_map([], |r| r.get::<_, String>(0))?.flatten().filter(|p| !held(Path::new(p))).collect()
+    };
+    let records: Vec<String> = {
+        let mut st = db.prepare("SELECT key, consulted FROM run_record")?;
+        st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+            .flatten()
+            .filter(|(key, consulted)| {
+                if let Some(path) = key.strip_prefix(CANONICAL).or_else(|| key.strip_prefix("git-files:")) {
+                    return !held(Path::new(path));
+                }
+                if key.starts_with(CUTOFF) {
+                    return !consulted.lines().filter_map(|l| l.strip_prefix("plan\t\t")).filter_map(unhex).any(|plan| live(&plan));
+                }
+                // A cutoff's record from before they were prefixed: its key alone, a digest.
+                key.len() == 64 && key.bytes().all(|b| b.is_ascii_hexdigit())
+            })
+            .map(|(key, _)| key)
+            .collect()
+    };
+    let tx = db.transaction()?;
+    for key in &dropped {
+        swept.cursors += tx.execute("DELETE FROM observer_meta WHERE key = ?1", [key])?;
+    }
+    for path in &answers {
+        swept.answers += tx.execute("DELETE FROM observed WHERE path = ?1", [path])?;
+    }
+    for key in &records {
+        swept.records += tx.execute("DELETE FROM run_record WHERE key = ?1", [key])?;
+    }
+    tx.commit()?;
+    // The WAL folded in and emptied: a process that opens the store reads the database, not its history.
+    db.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
+    Ok(swept)
+}
+
+/// The prefix of a whole-run cutoff's record (`reuse::CUTOFF`, in the engine).
+const CUTOFF: &str = "cutoff:";
+
+/// `cursor_key`, of a volume given as its hex.
+fn cursor_key_text(volume: &str, root: &Path) -> String {
+    format!("journal:{volume}:{}", root.display())
+}
+
+/// A 32-byte digest from its hex (`hex`).
+fn unhex(text: &str) -> Option<[u8; 32]> {
+    let bytes = text.as_bytes();
+    if bytes.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, pair) in bytes.chunks(2).enumerate() {
+        out[i] = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(out)
 }
 
 /// The P0 store beside a content store: `<content store>.files`.
@@ -1506,6 +1639,60 @@ mod tests {
         drop(o);
         assert_eq!(Observer::open(Some(&store)).run_record("git-files:/r"), Some(want));
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// `collect` drops what no run asks any more, and keeps the rest.
+    #[test]
+    fn collection_drops_what_no_run_asks_any_more() {
+        let given = std::env::temp_dir().join(format!("rerail-observer-collect-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&given);
+        std::fs::create_dir_all(given.join("root/inner")).unwrap();
+        let real = std::fs::canonicalize(&given).unwrap();
+        let store = real.join("store.files");
+        Observer::open(Some(&store)).written();
+        let (root, inner, gone) = (real.join("root"), real.join("root/inner"), real.join("gone"));
+        let dotted = real.join("root/../root");
+        let s = |p: &Path| p.to_string_lossy().into_owned();
+        let db = Connection::open(&store).unwrap();
+        let meta = |root: &Path, cursor: &str| db.execute("INSERT INTO observer_meta VALUES (?1, ?2)", params![cursor_key_text("aa", root), cursor]).unwrap();
+        meta(&root, "100");
+        meta(&inner, "50");
+        meta(&gone, "10");
+        meta(&dotted, "5");
+        // Another name of the same directory, with an older cursor (`/var/…` beside `/private/var/…` on macOS).
+        let alias = (given != real).then(|| given.join("root"));
+        if let Some(a) = &alias {
+            meta(a, "20");
+        }
+        let answer = |p: &Path| db.execute("INSERT INTO observed VALUES (?1, 1, 0, 0, 0, 0, 0, x'', NULL, 0)", [s(p)]).unwrap();
+        answer(&root.join("a.py"));
+        answer(&real.join("elsewhere/b.py"));
+        answer(&gone.join("c.py"));
+        if let Some(a) = &alias {
+            answer(&a.join("a.py"));
+        }
+        let (live, dead) = ([1u8; 32], [2u8; 32]);
+        let record = |key: &str, consulted: &str| db.execute("INSERT INTO run_record VALUES (?1, ?2, x'')", params![key, consulted]).unwrap();
+        record(&format!("{CANONICAL}{}", s(&root.join("a.py"))), "");
+        record(&format!("{CANONICAL}{}", s(&real.join("elsewhere"))), "");
+        record("cutoff:kept", &format!("rule\tx.rr\tab\nplan\t\t{}\nplan\t\t{}", hex(&dead), hex(&live)));
+        record("cutoff:dead", &format!("plan\t\t{}", hex(&dead)));
+        record(&"ab".repeat(32), "rule\tx.rr\tab");
+        record("constants:k", "");
+        drop(db);
+        let swept = collect(&store, |plan| *plan == live).unwrap();
+        let db = Connection::open(&store).unwrap();
+        let keys = |sql: &str| -> Vec<String> { db.prepare(sql).unwrap().query_map([], |r| r.get(0)).unwrap().flatten().collect() };
+        assert_eq!(keys("SELECT key FROM observer_meta WHERE key LIKE 'journal:%'"), [cursor_key_text("aa", &root)], "one root: inner is under it, gone is gone, dotted and the alias are other names");
+        assert_eq!(keys("SELECT path FROM observed"), [s(&root.join("a.py"))]);
+        let mut records = keys("SELECT key FROM run_record");
+        records.sort();
+        assert_eq!(records, [format!("{CANONICAL}{}", s(&root.join("a.py"))), "constants:k".to_owned(), "cutoff:kept".to_owned()]);
+        let n = usize::from(alias.is_some());
+        assert_eq!(swept, Swept { cursors: 3 + n, answers: 2 + n, records: 3 });
+        assert_eq!(std::fs::metadata(real.join("store.files-wal")).map_or(0, |m| m.len()), 0, "the WAL folded in");
+        drop(db);
+        let _ = std::fs::remove_dir_all(&given);
     }
 
     #[test]
