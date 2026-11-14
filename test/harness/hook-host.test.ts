@@ -830,7 +830,11 @@ async function startCheckHost(proof?: (workspace: string) => boolean): Promise<S
       seen.opened.push(path);
       return actual.openRerailDatabase(path, options);
     };
-    return { ...actual, openRerailDatabase };
+    const openRerailDatabaseAsIs: typeof actual.openRerailDatabaseAsIs = path => {
+      seen.opened.push(path);
+      return actual.openRerailDatabaseAsIs(path);
+    };
+    return { ...actual, openRerailDatabase, openRerailDatabaseAsIs };
   });
   vi.doMock("../../src/engine/catalog/repository-identity.js", async () => {
     const actual = await vi.importActual<typeof import("../../src/engine/catalog/repository-identity.js")>("../../src/engine/catalog/repository-identity.js");
@@ -918,6 +922,32 @@ function inDatabase<T>(change: (database: ReturnType<typeof openRerailDatabase>)
     return change(database);
   } finally {
     database.$client.close();
+  }
+}
+
+/**
+ * Marks the newest schema step the Rerail database records as not run, as in a file an older build wrote last, and
+ * gives its id: a read-only open by this build, which reads the file in this build's shape, runs it first over a
+ * writable connection.
+ */
+function newestStepNotRun(): string {
+  const database = new Database(defaultRerailDatabasePath());
+  try {
+    const { id } = database.prepare("SELECT id FROM schema_migrations ORDER BY rowid DESC LIMIT 1").get() as { id: string };
+    database.prepare("DELETE FROM schema_migrations WHERE id = ?").run(id);
+    return id;
+  } finally {
+    database.close();
+  }
+}
+
+/** Whether the Rerail database records the schema step `id` as run. */
+function stepRun(id: string): boolean {
+  const database = new Database(defaultRerailDatabasePath(), { readonly: true });
+  try {
+    return database.prepare("SELECT 1 FROM schema_migrations WHERE id = ?").get(id) !== undefined;
+  } finally {
+    database.close();
   }
 }
 
@@ -1184,6 +1214,21 @@ describe("the hook start check", () => {
     }
     await rm(join(home, "daemon.json"));
     await expect(host.hookRerailStarted("claude-code", app)).rejects.toThrow("not a database");
+  });
+
+  it("waits for a late daemon where the database lacks one of this version's schema steps, and leaves the file as it is", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const step = newestStepNotRun();
+    const host = await startCheckHost();
+    // A daemon that would say started: an answer of stopped would be the hook's own.
+    const daemon = await daemonAnsweringAfterProof(host, "started");
+    try {
+      expect({ started: await host.hookRerailStarted("claude-code", app), proofs: host.proofs.found, requests: daemon.requests, stepRun: stepRun(step) })
+        .toEqual({ started: true, proofs: [false], requests: ["/api/presentation"], stepRun: false });
+    } finally {
+      await daemon.close();
+    }
   });
 
   it.each(readFailures)("$what: $outcome", async ({ error, asked }) => {
