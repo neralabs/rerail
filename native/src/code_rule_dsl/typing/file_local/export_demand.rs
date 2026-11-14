@@ -598,6 +598,11 @@ pub fn demand_exports(prog: &mut Program) -> Vec<String> {
     }
     prog.rules.extend(made);
     prog.decls.extend(decls);
+    // A key is a filter that tests a row exists, stored so it holds each value once: inlined, its reader joins the
+    // atom it was made from and enumerates every row per key again (`key_rel`). So it is never inlined.
+    for key in keys_of.keys() {
+        prog.qualifiers.entry(key.clone()).or_default().insert("no_inline".to_owned());
+    }
     // The cut and its supersets must split as file-local, or the cut would hand on more than before.
     let (local_after, _, _) = super::split_located(prog);
     let stray: Vec<String> = cut.iter().map(|r| format!("xd_{r}")).chain(needed.iter().map(may_name)).chain(keys_of.keys().cloned()).filter(|r| !local_after.contains(r)).collect();
