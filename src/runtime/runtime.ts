@@ -702,6 +702,11 @@ export interface SessionSuspension {
   readonly walk: SessionWalkResume | undefined;
   /** The database that records the session, whose record `endSuspendedSessions` ends if it never opens again. */
   readonly databasePath: string;
+  /**
+   * When the idle close let the session go. A record no runtime opens again ends at this time when its daemon stops
+   * (`endSuspendedSessions`), not at the stop, which can come days after the session went quiet.
+   */
+  readonly suspendedAt: number;
 }
 
 /**
@@ -744,21 +749,23 @@ function heldCallsOf(restored: ReadonlyMap<string, RestoredCall>): HeldCall[] {
 }
 
 /**
- * Ends suspended sessions no runtime opened again, as `closeSession` ends an open one when its daemon stops: their queued
- * scans are interrupted, their owner released and their record ended now. One that fails is reported and the rest are
- * still ended, as a runtime's close ends each of its sessions whatever another's does.
+ * Ends suspended sessions no runtime opened again, as `closeSession` ends an open one: their queued scans are
+ * interrupted, their owner released and their record ended at `endedAt`, the time their end came. Without one, as when
+ * the daemon stops, each record ends when its session was suspended (`suspendedAt`): nothing was heard from it after. One
+ * that fails is reported and the rest are still ended, as a runtime's close ends each of its sessions whatever another's
+ * does.
  */
-export function endSuspendedSessions(databasePath: string, suspensions: readonly SessionSuspension[]): void {
+export function endSuspendedSessions(databasePath: string, suspensions: readonly SessionSuspension[], endedAt?: number): void {
   const sessions = new SqliteSessionStore(databasePath);
   const controls = new SqliteAuditControlStore(databasePath);
   try {
-    for (const { descriptor, ownerClaim } of suspensions) {
+    for (const { descriptor, ownerClaim, suspendedAt } of suspensions) {
       try {
         if (ownerClaim !== undefined) {
           controls.interrupt(descriptor.sessionId);
           controls.releaseOwner(descriptor.sessionId, ownerClaim);
         }
-        sessions.closeSession(descriptor.sessionId);
+        sessions.closeSession(descriptor.sessionId, endedAt ?? suspendedAt);
       } catch (error) {
         process.stderr.write(`rerail: ending quiet session ${descriptor.sessionId} failed: ${error instanceof Error ? error.message : String(error)}\n`);
       }
@@ -2143,15 +2150,17 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * it queues for it (`SessionSuspension`). A session that still owes its agent something (`#owesAgent`) stays as it is,
    * unless `evenIfOwing`: the engine service suspends it anyway once it has been quiet a day (`OWING_SESSION_IDLE_MS` in
    * engine-service.ts). The steers it has not delivered and the findings it holds then wait in its ledger, and go out
-   * with its next event while their files still hold what they spoke for (`#takeOwed`).
+   * with its next event while their files still hold what they spoke for (`#takeOwed`). `at` is the time by the
+   * caller's clock, now by default: the time the session's record ends at if it never opens again
+   * (`SessionSuspension.suspendedAt`).
    */
-  closeIdleSession(sessionId: string, options: { evenIfOwing?: boolean } = {}): Promise<IdleClose> {
+  closeIdleSession(sessionId: string, options: { evenIfOwing?: boolean; at?: number } = {}): Promise<IdleClose> {
     return this.#ingestLanes.run(sessionId, async (): Promise<IdleClose> => {
       const state = this.#sessions.get(sessionId);
       if (state === undefined) return { kind: "not-held" };
       const owing = (): boolean => options.evenIfOwing !== true && this.#owesAgent(state);
       if (owing()) return { kind: "owing" };
-      const suspension = await this.#suspension(state);
+      const suspension = await this.#suspension(state, options.at ?? Date.now());
       // Asked again: the control timer may have claimed a scan while the walks were read, which the session now runs.
       if (owing()) return { kind: "owing" };
       await this.#suspend(state, suspension);
@@ -2171,10 +2180,13 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     await this.#router(state.descriptor.host).stop(state.descriptor.sessionId);
   }
 
-  /** What `state`'s session keeps while suspended: its owner claim, and where its walks stand once its evaluator is open. */
-  async #suspension(state: RuntimeSessionState): Promise<SessionSuspension> {
+  /**
+   * What `state`'s session keeps while suspended from `suspendedAt` on: its owner claim, and where its walks stand once its
+   * evaluator is open.
+   */
+  async #suspension(state: RuntimeSessionState, suspendedAt: number): Promise<SessionSuspension> {
     const walk = state.codeRuleReady ? await state.codeRuleBridge?.walkResume() : undefined;
-    return { descriptor: state.descriptor, ownerClaim: state.ownerClaim, walk, databasePath: this.#sessionStore.path };
+    return { descriptor: state.descriptor, ownerClaim: state.ownerClaim, walk, databasePath: this.#sessionStore.path, suspendedAt };
   }
 
   /**

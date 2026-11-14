@@ -245,7 +245,8 @@ are not waited for further: that edit is checked by the first pass once they ope
   it.
 - A session running a scan, or with one waiting to start, keeps its memory until the scan has run, for up to a day.
 - A scan asked for a quiet session that cannot be opened again (its folder gone, say) fails at once, saying why.
-- Stopping the daemon ends the session, as it ends every open one.
+- Stopping the daemon ends the session, as it ends every open one. Its history shows it ended when its memory was
+  freed, the last the daemon heard of it, not when the daemon stopped.
 
 </details>
 

@@ -413,8 +413,9 @@ async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now:
       const quiet = quietFor(lane);
       if (quiet < idleMs) return false;
       const evenIfOwing = quiet >= OWING_SESSION_IDLE_MS;
-      // A suspended session's runtime has kept its suspension (`SuspendedSessions.keep`) before closing it.
-      const idle = await state.runtimes.get(runtimeKey)?.closeIdleSession(sessionId, { evenIfOwing });
+      // A suspended session's runtime has kept its suspension (`SuspendedSessions.keep`) before closing it, with the time
+      // its record ends at if no runtime opens it again.
+      const idle = await state.runtimes.get(runtimeKey)?.closeIdleSession(sessionId, { evenIfOwing, at: now() });
       if (idle?.kind === "owing") return false;
       state.lastEventAt.delete(lane);
       return true;
@@ -477,7 +478,8 @@ function failScans(suspension: SessionSuspension, reason: string): void {
 
 /**
  * Ends every session still suspended as the service closes, as closing a runtime ends each session open in it: a
- * suspended session is live only while its daemon runs.
+ * suspended session is live only while its daemon runs. Each record ends when its session was suspended, the last the
+ * daemon heard of it.
  */
 function endSuspended(state: EngineRoutingState): void {
   const entries = [...state.suspended.values()];
@@ -485,19 +487,25 @@ function endSuspended(state: EngineRoutingState): void {
   endEntries(entries);
 }
 
-/** Ends `sessionId`'s record when it is still suspended after its end came, which its runtime did not open it for. */
+/**
+ * Ends `sessionId`'s record when it is still suspended after its end came, which its runtime did not open it for: at
+ * the time the end came, as the runtime ends an open session's.
+ */
 function endIfSuspended(state: EngineRoutingState, sessionId: string): void {
   const entry = state.suspended.get(sessionId);
   if (entry === undefined) return;
   state.suspended.delete(sessionId);
-  endEntries([entry]);
+  endEntries([entry], Date.now());
 }
 
-/** Ends the suspended sessions of `entries` (`endSuspendedSessions`), each in the database that records it; a failure is reported. */
-function endEntries(entries: readonly SuspendedEntry[]): void {
+/**
+ * Ends the suspended sessions of `entries` (`endSuspendedSessions`), each in the database that records it, at `endedAt`
+ * or else when each was suspended; a failure is reported.
+ */
+function endEntries(entries: readonly SuspendedEntry[], endedAt?: number): void {
   for (const [databasePath, suspensions] of byDatabase(entries)) {
     try {
-      endSuspendedSessions(databasePath, suspensions);
+      endSuspendedSessions(databasePath, suspensions, endedAt);
     } catch (error) {
       process.stderr.write(`rerail: ending quiet sessions failed: ${error instanceof Error ? error.message : String(error)}\n`);
     }
