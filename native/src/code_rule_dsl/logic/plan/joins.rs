@@ -1002,9 +1002,8 @@ pub fn walk_width() -> usize {
     *W
 }
 
-/// Decision 0232: the probes a line's walks may make, over all its orders and parts (`RERAIL_WALK_PROBES`, 20,000);
-/// past them, a key not walked takes its key rows' size, scaled by the walked keys' ratio.
-pub fn walk_probes() -> u64 {
-    static P: std::sync::LazyLock<u64> = std::sync::LazyLock::new(|| std::env::var("RERAIL_WALK_PROBES").ok().and_then(|v| v.parse().ok()).unwrap_or(20_000));
-    *P
+/// Decision 0233: the rows of each part a line's first-phase walk samples (`RERAIL_WALK_ROWS`, 128).
+pub fn walk_rows() -> usize {
+    static R: std::sync::LazyLock<usize> = std::sync::LazyLock::new(|| std::env::var("RERAIL_WALK_ROWS").ok().and_then(|v| v.parse().ok()).unwrap_or(128));
+    *R
 }

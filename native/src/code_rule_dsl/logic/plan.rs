@@ -6325,12 +6325,11 @@ impl<'a> Run<'a, '_> {
     fn heavy_parts(&self, name: &str, line: usize, r: &Rule, lead: usize) -> Result<Option<HeavyParts>> {
         use super::native::component as engine;
         let Literal::Atom(la) = &r.body[lead] else { return Ok(None) };
-        // (the linking relation, its key column, its column of the lead's variable and that variable's lead column,
-        // the key's variable)
-        let mut found: Option<(String, usize, Option<(usize, usize)>, Term)> = None;
+        // (the linking relation, its key column, its column of the lead's variable and that variable's lead column)
+        let mut found: Option<(String, usize, Option<(usize, usize)>)> = None;
         for (cv, t) in la.args.iter().enumerate() {
             if let Term::Var(_) = t && self.model.heavy_of(&la.rel, cv).is_some() {
-                found = Some((la.rel.to_string(), cv, None, t.clone()));
+                found = Some((la.rel.to_string(), cv, None));
                 break;
             }
         }
@@ -6345,13 +6344,13 @@ impl<'a> Run<'a, '_> {
                     let Term::Var(u) = t2 else { continue };
                     if u == v { continue }
                     if let Some(lc) = la.args.iter().position(|t| matches!(t, Term::Var(x) if x == u)) {
-                        found = Some((a.rel.to_string(), cv, Some((cu, lc)), t.clone()));
+                        found = Some((a.rel.to_string(), cv, Some((cu, lc))));
                         break 'find;
                     }
                 }
             }
         }
-        let Some((link, cv, via, key_var)) = found else { return Ok(None) };
+        let Some((link, cv, via)) = found else { return Ok(None) };
         // The heavy values reported: the `HEAVY` largest of those kept.
         let heavy: HashSet<i64> = {
             let h = self.model.heavy_of(&link, cv).expect("found");
@@ -6360,21 +6359,12 @@ impl<'a> Run<'a, '_> {
             top.into_iter().take(table::HEAVY).map(|t| t.0).collect()
         };
         let (Some(ids), Some(lsrc)) = (engine::trial_ids(self.db, name, line)?, engine::derived(self.db, &la.rel)) else { return Ok(None) };
-        // A row's size (decision 0223): its key's rows raised to the joins on the key past the first, the work a
-        // self-join of `m` atoms on it does per row being about count^(m-1).
-        let h = self.model.heavy_of(&link, cv).expect("found");
-        let m = r.body.iter().filter(|l| matches!(l, Literal::Atom(a) if !a.neg && a.args.contains(&key_var))).count();
-        let e = m.saturating_sub(1).max(1) as i32;
-        let size = |v: i64| h.rows_of(v).powi(e);
-        let mut parts = HeavyParts { link: link.clone(), cv, hot: Vec::new(), cold: Vec::new(), hot_x: Vec::new(), cold_x: Vec::new(), hot_keys: Vec::new(), cold_keys: Vec::new(), key_var: key_var.clone() };
-        let put = |p: &mut HeavyParts, id: u32, vs: Vec<i64>| {
-            let x = vs.iter().map(|&v| size(v)).sum::<f64>().max(1.0);
-            if vs.iter().any(|v| heavy.contains(v)) { p.hot.push(id); p.hot_x.push(x); p.hot_keys.push(vs) } else { p.cold.push(id); p.cold_x.push(x); p.cold_keys.push(vs) }
-        };
+        let mut parts = HeavyParts { link: link.clone(), cv, hot: Vec::new(), cold: Vec::new() };
+        let put = |p: &mut HeavyParts, id: u32, vs: &[i64]| if vs.iter().any(|v| heavy.contains(v)) { p.hot.push(id) } else { p.cold.push(id) };
         match via {
             None => {
                 for &id in &ids {
-                    put(&mut parts, id, vec![lsrc.value(id as usize, cv)]);
+                    put(&mut parts, id, &[lsrc.value(id as usize, cv)]);
                 }
             }
             Some((cu, lc)) => {
@@ -6383,7 +6373,7 @@ impl<'a> Run<'a, '_> {
                 let mut keys: HashMap<i64, Vec<i64>> = HashMap::new();
                 for &id in &ids {
                     let u = lsrc.value(id as usize, lc);
-                    let vs = keys.entry(u).or_insert_with(|| { let mut vs = Vec::new(); lrel.probe_each(&[cu], &[u], &mut |row| vs.push(row(cv))); vs }).clone();
+                    let vs = keys.entry(u).or_insert_with(|| { let mut vs = Vec::new(); lrel.probe_each(&[cu], &[u], &mut |row| vs.push(row(cv))); vs });
                     put(&mut parts, id, vs);
                 }
             }
@@ -8214,17 +8204,18 @@ impl<'a> Run<'a, '_> {
                     // Decision 0223: each part's work is estimated by ratio to its rows' sizes (`heavy_parts`), not
                     // by its rows: a heavy row's work grows with its key's rows, and a part's few sampled rows
                     // stood for all of its rows at their mean.
-                    // Decision 0232: a row's size is its order's work at its key, sampled by a walk from the line's
-                    // own rows at that key (`Walker`): filters, chains and the atoms closing cycles and triangles are
-                    // measured at the key, not over the relation.
+                    // Decision 0233, two-phase sampling: an order's work over a part is its trial's, scaled by the
+                    // ratio of two walks (`Walker`): over a uniform sample of the part's rows (the first phase), and
+                    // over the rows its trial ran (the second). The walk measures a row's work at its key through
+                    // filters, chains and the atoms closing cycles and triangles; its cost is fixed by the sample.
                     let t_model = std::time::Instant::now();
                     let hp = self.heavy_parts(&name, line, r, lead)?.filter(|hp| !hp.hot.is_empty() && !hp.cold.is_empty());
                     let parts_s = t_model.elapsed().as_secs_f64();
                     let parts = hp.as_ref().map(|hp| {
-                        // (the rows picked, the part's rows, the picked rows' places in the part)
-                        let stride = |ids: &[u32], k: usize| -> (Vec<u32>, usize, usize) {
+                        // (the rows picked, the part's rows)
+                        let stride = |ids: &[u32], k: usize| -> (Vec<u32>, usize) {
                             let st = ids.len().div_ceil(k.max(1)).max(1);
-                            (ids.iter().step_by(st).copied().collect(), ids.len(), st)
+                            (ids.iter().step_by(st).copied().collect(), ids.len())
                         };
                         let kh = (sample / 4).max(2).min(hp.hot.len());
                         let kc = sample.saturating_sub(kh).max(1).min(hp.cold.len());
@@ -8235,64 +8226,35 @@ impl<'a> Run<'a, '_> {
                         let db = self.db;
                         Walker::new(r, lead, joins::walk_width(), &|rel| super::native::component::held(db, rel), &|x| super::native::component::symbol_id(db, x).ok().flatten())
                     });
-                    // Each part's rows grouped by their keys: (the keys, the rows' places in the part).
-                    let groups: Option<[Vec<(Vec<i64>, Vec<usize>)>; 2]> = hp.as_ref().filter(|_| walker.is_some()).map(|hp| {
-                        let group = |keys: &[Vec<i64>]| {
-                            let mut at: HashMap<&[i64], usize> = HashMap::new();
-                            let mut out: Vec<(Vec<i64>, Vec<usize>)> = Vec::new();
-                            for (j, k) in keys.iter().enumerate() {
-                                let g = *at.entry(k.as_slice()).or_insert_with(|| { out.push((k.clone(), Vec::new())); out.len() - 1 });
-                                out[g].1.push(j);
-                            }
-                            out
-                        };
-                        [group(&hp.hot_keys), group(&hp.cold_keys)]
-                    });
-                    // An order's sizes summed over a part's picked rows and over all its rows. The groups walked are
-                    // at a stride where all of them would pass the walk's budget of probes; a group not walked takes
-                    // its key rows' size times the walked groups' ratio of walk to key rows.
-                    let walk_s = std::cell::Cell::new(0.0f64);
-                    let size_memo: std::cell::RefCell<HashMap<(Vec<usize>, usize), (f64, f64)>> = Default::default();
-                    let sizes = |o: &[Step], p: usize| -> (f64, f64) {
-                        let memo_key = (o.iter().map(|s| s.at).collect::<Vec<_>>(), p);
-                        if let Some(&got) = size_memo.borrow().get(&memo_key) { return got }
-                        let t_walk = std::time::Instant::now();
-                        let hp = hp.as_ref().expect("parts");
-                        let (ids, raw) = if p == 0 { (&hp.hot, &hp.hot_x) } else { (&hp.cold, &hp.cold_x) };
-                        let st = parts.as_ref().expect("parts")[p].2;
-                        let xs: Vec<f64> = match (&walker, &groups, &lead_src) {
-                            (Some(w), Some(gs), Some(src)) => {
-                                let gs = &gs[p];
-                                let k = match &r.body[lead] { Literal::Atom(a) => a.args.len(), _ => 0 };
-                                let mut x = vec![f64::NAN; ids.len()];
-                                let (mut walked, mut walked_raw) = (0.0f64, 0.0f64);
-                                // The groups the trial ran rows of first, then the rest in a random order, until the
-                                // walk's budget of probes is spent.
-                                let mut by: Vec<(bool, u64, usize)> = gs.iter().enumerate().map(|(g, (_, rows))| (!rows.iter().any(|&j| j % st == 0), (g as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15), g)).collect();
-                                by.sort_unstable();
-                                // One budget for the line's walks, every order and part and the wide walks.
-                                let budget = joins::walk_probes();
-                                for (rest, _, g) in by {
-                                    let over = w.probes() >= budget;
-                                    if rest && over { break }
-                                    let rows = &gs[g].1;
-                                    // A group the trial ran a row of is walked wide (4 times the width, within the
-                                    // budget): its size is the ratio's denominator, where a walk's noise is not
-                                    // averaged out.
-                                    let starts: Vec<Vec<i64>> = rows.iter().step_by(rows.len().div_ceil(4).max(1)).map(|&j| (0..k).map(|c| src.value(ids[j] as usize, c)).collect()).collect();
-                                    let v = w.work_at(o, &starts, if rest || over { joins::walk_width() } else { 4 * joins::walk_width() }).max(1.0);
-                                    for &j in rows { x[j] = v; walked += v; walked_raw += raw[j]; }
-                                }
-                                let scale = if walked_raw > 0.0 { walked / walked_raw } else { 1.0 };
-                                x.iter().zip(raw.iter()).map(|(&v, &rw)| if v.is_nan() { rw * scale } else { v }).collect()
-                            }
-                            _ => raw.clone(),
-                        };
-                        let got = (xs.iter().step_by(st).sum(), xs.iter().sum());
-                        size_memo.borrow_mut().insert(memo_key, got);
-                        walk_s.set(walk_s.get() + t_walk.elapsed().as_secs_f64());
-                        got
+                    let lead_cols = match &r.body[lead] { Literal::Atom(a) => a.args.len(), _ => 0 };
+                    let values = |ids: &[u32]| -> Vec<Vec<i64>> {
+                        let src = lead_src.as_ref().expect("a walker");
+                        ids.iter().map(|&id| (0..lead_cols).map(|c| src.value(id as usize, c)).collect()).collect()
                     };
+                    // The first phase's rows: a uniform sample of each part (seeded), as lead rows.
+                    let phase1: Option<[Vec<Vec<i64>>; 2]> = hp.as_ref().filter(|_| walker.is_some()).map(|hp| {
+                        let pick = |ids: &[u32], salt: u64| -> Vec<u32> {
+                            let mut v: Vec<(u64, u32)> = ids.iter().map(|&id| ((id as u64 + salt).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 7, id)).collect();
+                            v.sort_unstable();
+                            v.into_iter().take(joins::walk_rows()).map(|x| x.1).collect()
+                        };
+                        [values(&pick(&hp.hot, 1)), values(&pick(&hp.cold, 2))]
+                    });
+                    let walk_s = std::cell::Cell::new(0.0f64);
+                    // An order's estimated work over part `p`, from its trial `run` over the rows `pick` (in order: a
+                    // cut trial ran their first `run.rows`): `None` without a walker.
+                    let two_phase = |o: &[Step], p: usize, run: &super::native::component::TrialRun, pick: &[u32], size: usize| -> Option<(f64, f64, f64)> {
+                        let (w, ph) = (walker.as_ref()?, phase1.as_ref()?);
+                        let t = std::time::Instant::now();
+                        let ran = &pick[..(run.rows as usize).clamp(1, pick.len())];
+                        let x1 = w.work(o, &ph[p]);
+                        let x2 = w.work_at(o, &values(ran), 4 * joins::walk_width());
+                        walk_s.set(walk_s.get() + t.elapsed().as_secs_f64());
+                        let y = run.work as f64 / run.rows.max(1) as f64;
+                        Some((size as f64 * y * if x2 > 0.0 { x1 / x2 } else { 1.0 }, x1, x2))
+                    };
+                    // The running order's walks, for the log: (first phase, second) per part.
+                    let ratios: std::cell::RefCell<Vec<(usize, f64, f64)>> = Default::default();
                     let t_trials = std::time::Instant::now();
                     let mut measured: Vec<(Vec<Step>, super::native::component::TrialRun)> = Vec::new();
                     let mut least: [Option<u64>; 2] = [None; 2];
@@ -8316,23 +8278,23 @@ impl<'a> Run<'a, '_> {
                             }
                             Some(ps) => {
                                 let mut got = Vec::new();
-                                for (p, (pick, ..)) in ps.iter().enumerate() {
+                                for (p, (pick, _)) in ps.iter().enumerate() {
                                     let Some(run) = one(self, Ok(pick), budget(least[p], cap / 2))? else { break };
                                     if !run.cut { least[p] = Some(least[p].map_or(run.work, |w| w.min(run.work))); }
                                     got.push(run);
                                 }
                                 if got.len() < 2 { continue; }
                                 let all = (ps[0].1 + ps[1].1) as f64;
-                                // A part's work: its sample's over the sizes of the rows it ran (a cut part ran a
-                                // share of them), times all its rows' sizes.
                                 // A cut order cannot win: it is weighted by its parts' rows (decision 0221), and
                                 // not walked.
                                 let cut = got.iter().any(|run| run.cut);
-                                let total: f64 = got.iter().zip(ps).enumerate().map(|(p, (run, (pick, size, _)))| {
-                                    if cut { return *size as f64 * run.work as f64 / run.rows.max(1) as f64 }
-                                    let (xs, xall) = sizes(o, p);
-                                    let ran = xs * (run.rows as f64 / pick.len().max(1) as f64).min(1.0);
-                                    if ran > 0.0 { run.work as f64 * xall / ran } else { 0.0 }
+                                let total: f64 = got.iter().zip(ps).enumerate().map(|(p, (run, (pick, size)))| {
+                                    let by_rows = *size as f64 * run.work as f64 / run.rows.max(1) as f64;
+                                    if cut { return by_rows }
+                                    match two_phase(o, p, run, pick, *size) {
+                                        Some((est, x1, x2)) => { if same_order(o, &running) { ratios.borrow_mut().push((p, x1, x2)); } est }
+                                        None => by_rows,
+                                    }
                                 }).sum();
                                 let per_row = total / all;
                                 let rows = got[0].rows + got[1].rows;
@@ -8342,10 +8304,8 @@ impl<'a> Run<'a, '_> {
                         measured.push((o.clone(), run));
                     }
                     if let Some(ps) = &parts {
-                        // Only sizes already walked (an order not cut): the log walks nothing.
-                        let walked = |p: usize| size_memo.borrow().get(&(running.iter().map(|s| s.at).collect::<Vec<_>>(), p)).copied().unwrap_or((f64::NAN, f64::NAN));
-                        let (h, c) = (walked(0), walked(1));
-                        joins::log(|| format!("trials {}: stratified, {} of {} rows of heavy keys and {} of {} of the rest; the running order's sizes {:.0} of {:.0} and {:.0} of {:.0}, by {} ({:.1} ms to split, {:.1} ms to walk; {} probes)", r.head.rel, ps[0].0.len(), ps[0].1, ps[1].0.len(), ps[1].1, h.0, h.1, c.0, c.1, if walker.is_some() { "walks" } else { "key rows" }, parts_s * 1e3, walk_s.get() * 1e3, walker.as_ref().map_or(0, |w| w.probes())));
+                        let rs = ratios.borrow().iter().map(|(p, x1, x2)| format!("{} {x1:.0} / {x2:.0}", if *p == 0 { "heavy" } else { "rest" })).collect::<Vec<_>>().join(", ");
+                        joins::log(|| format!("trials {}: stratified, {} of {} rows of heavy keys and {} of {} of the rest; the running order's walks per row, a sample over the trial's rows: {} ({:.1} ms to split, {:.1} ms to walk; {} probes)", r.head.rel, ps[0].0.len(), ps[0].1, ps[1].0.len(), ps[1].1, if rs.is_empty() { "none (cut)".to_owned() } else { rs }, parts_s * 1e3, walk_s.get() * 1e3, walker.as_ref().map_or(0, |w| w.probes())));
                         if let Some(w) = &walker { joins::log(|| format!("walks {}: {}", r.head.rel, w.spent())); }
                     }
                     let rule = order_rules[line];
@@ -9666,10 +9626,9 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let reused = chosen_key.as_ref().and_then(|k| choices::lookup(k, model.stats.nodes));
     let chosen: Option<std::sync::Arc<Program>>;
     // The relations inlined, for the outcome (a session stores, never inlines, what it keeps: decision 0099).
-    let mut inlined_rels: BTreeSet<String> = BTreeSet::new();
+    let inlined_rels: BTreeSet<String>;
     let prog: &Program = match reused {
         Some(c) => {
-            inlined_rels = c.inlined.iter().cloned().collect();
             let nodes = model.stats.nodes;
             super::profile::decision("planning choices (decision 0090 §5)", || format!("kept: inline or store and demand as chosen at {:.0} nodes, taken at {nodes:.0}", c.nodes));
             inlined_rels = c.inlined.iter().cloned().collect();
@@ -11784,18 +11743,12 @@ mod search_tests {
 }
 
 /// A checked line's rows left, split by its key's heavy values (`Run::heavy_parts`): the linking relation and its key
-/// column; the rows of heavy keys and the rest, with each row's size (decision 0223).
+/// column; the rows of heavy keys and the rest.
 struct HeavyParts {
     link: String,
     cv: usize,
     hot: Vec<u32>,
     cold: Vec<u32>,
-    hot_x: Vec<f64>,
-    cold_x: Vec<f64>,
-    /// Each row's key values (one, or those its link reaches), and the key's variable (O173).
-    hot_keys: Vec<Vec<i64>>,
-    cold_keys: Vec<Vec<i64>>,
-    key_var: Term,
 }
 
 /// Decision 0232: an order's work per lead row, sampled. The walk starts from lead rows (their bindings), and carries

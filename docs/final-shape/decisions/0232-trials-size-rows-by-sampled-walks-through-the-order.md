@@ -115,6 +115,8 @@ The larger step (328 files) is not run: it passes the run cap.
 
 ## Open
 
+Decision 0233 (2026-11-14) replaces §3's grouping, group budget and key-row sizes with two-phase sampling.
+
 - **Comparisons and assignments are taken at 1.** A variable bound by one (`w = x + y`) is treated as unbound by
   a later atom.
 - **The walk's time on a line whose trials finish, at scale, is not measured.** On the 50 files every order was
