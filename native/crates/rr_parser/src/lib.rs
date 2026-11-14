@@ -477,14 +477,14 @@ pub mod tests {
         let native = &c.native;
         let got = run_serial_split(&[native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
         let mut differ = 0;
-        // The CPU's form leaves out the lasts' mask (`BlockNative::ruled_lasts`).
-        let unmade = native.ruled_lasts();
-        let same_outputs = |g: &[Vec<u64>], w: &[Vec<u64>]| g.len() == w.len() && (0..w.len()).all(|o| Some(o) == unmade || g[o] == w[o]);
+        // The CPU's form leaves out the masks its record pass makes (`BlockNative::records_made`).
+        let unmade = native.records_made();
+        let same_outputs = |g: &[Vec<u64>], w: &[Vec<u64>]| g.len() == w.len() && (0..w.len()).all(|o| unmade.contains(&o) || g[o] == w[o]);
         for (k, (g, w)) in got.run.files.iter().zip(&want).enumerate() {
             if !same_outputs(&g.outputs, &w.outputs) || g.positions != w.positions || g.totals != w.totals || g.codes != w.codes {
                 differ += 1;
                 if differ < 4 {
-                    let o = (0..w.outputs.len()).find(|&o| Some(o) != unmade && g.outputs.get(o) != w.outputs.get(o));
+                    let o = (0..w.outputs.len()).find(|&o| !unmade.contains(&o) && g.outputs.get(o) != w.outputs.get(o));
                     eprintln!("file {k} ({} bytes) differs: output {o:?}, positions equal {}, totals {:?} / {:?}", refs[k].len(), g.positions == w.positions, g.totals, w.totals);
                 }
             }
@@ -1390,6 +1390,39 @@ pub mod tests {
         eprintln!("{} files, {tokens} tokens: the rules' lasts are the masks'", inputs.len());
     }
 
+    /// Decision 0177, stage 2a: the tokens by the loop, each at the first byte after the one
+    /// before that `skip` does not hold, are the starts' and lasts' masks, on every file the
+    /// masks take (a file they refuse, its totals' flag set, is the engine's either way).
+    #[test]
+    fn the_loops_tokens_are_the_masks() {
+        let c = crate::compiled().expect("compiles");
+        let block = &c.program.block_programs[0];
+        let r = block.records.as_ref().expect("records");
+        assert!(r.skip.is_some(), "the records have the bytes between tokens");
+        let outs = block.extract_outputs();
+        let (starts_out, lasts_out) = (outs[usize::from(r.starts)], outs[usize::from(r.lasts)]);
+        let files = corpus();
+        let mut inputs: Vec<&[u8]> = files.iter().map(|f| f.as_bytes()).collect();
+        inputs.extend(crate::SAMPLES.iter().map(|s| s.as_bytes()));
+        let (mut tokens, mut refused) = (0, 0);
+        for f in &inputs {
+            let run = block.run(f);
+            if run.totals.iter().any(|&t| t != 0) {
+                refused += 1;
+                continue;
+            }
+            let mask = |o: usize| {
+                let words = &run.outputs[o];
+                rerail_compiler::block::extract::positions(words, words.iter().map(|w| w.count_ones() as usize).sum())
+            };
+            let starts = mask(starts_out);
+            assert_eq!(run.positions[usize::from(r.starts)], starts, "the loop's starts");
+            assert_eq!(run.positions[usize::from(r.lasts)], mask(lasts_out), "the loop's lasts");
+            tokens += starts.len();
+        }
+        eprintln!("{} files ({refused} refused), {tokens} tokens: the loop's are the masks'", inputs.len());
+    }
+
     /// Decision 0177's guard for stage 1: on the CPU, no token's last byte comes from a mask
     /// extract. The records have end rules, and the CPU's form makes the lasts' output a zero
     /// constant, so the last-byte masks only it read are not made.
@@ -1402,6 +1435,18 @@ pub mod tests {
         assert!(matches!(cpu.insts[usize::from(cpu.outputs[k])], BlockInst::Const(0)), "the CPU makes the lasts' mask");
         assert!(cpu.insts.len() < c.native.insts.len(), "the last-byte masks pruned");
         eprintln!("the CPU's form: {} operations, the bit-parallel form's {}", cpu.insts.len(), c.native.insts.len());
+    }
+
+    /// Decision 0177's guard for stage 2a: on the CPU, no token's first byte comes from a mask
+    /// extract. The loop finds each start, so the starts' output is the zero constant too.
+    #[test]
+    fn the_cpu_makes_no_starts_mask() {
+        use rerail_compiler::block_native::BlockInst;
+        let c = crate::compiled().expect("compiles");
+        let k = c.native.walked_starts().expect("the records' starts by the loop");
+        let cpu = c.native.cpu_form();
+        assert!(matches!(cpu.insts[usize::from(cpu.outputs[k])], BlockInst::Const(0)), "the CPU makes the starts' mask");
+        assert_eq!(c.native.records_made().len(), c.native.extracts.len(), "every extract the record pass's");
     }
 
     /// A float read as simdjson reads one: digits, a `.`, digits, then a byte that is not

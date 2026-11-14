@@ -1,7 +1,7 @@
 # 0177: Tier 1 on the CPU is a token loop, as the lean lexer is
 
 Status: decided (2026-11-13); stage 1 landed (the rules, their meaning, the CPU's ends from
-them; see Stage 1); stage 2 next.
+them; see Stage 1); stage 2a landed (the starts by the loop); 2b next.
 Replaces 0139's way on the CPU (its constructs stay; its "take operations out of the one
 pass" does not). Metal keeps the bit-parallel form.
 The design: docs/parser-generators/36; the log: docs/parser-generators/35.
@@ -124,3 +124,15 @@ In between: the ends are found in the record pass, after the blocks, which reloa
 mask's word. The lean lexer finds them inside the block loop, from the word mask in a
 register (`end = pos + max(run, n1)`); that is where the token loop goes once stages 2 and
 3 have shrunk the body (the decision's "loop over a block's starts").
+
+## Stage 2a
+
+Built: the records' `skip` (an output: the bytes between tokens), the interpreter's loop
+(`records::walk`: each token at the first byte after the one before that `skip` does not
+hold), and the CPU's: the record pass finds each start in `skip`'s words and writes the
+starts column, so the CPU makes no starts extract (guard: `the_cpu_makes_no_starts_mask`).
+A byte no token begins with has no rule (`NO_RULE`): its token is the byte alone. The loop's
+tokens are the masks' over the corpus (1,473 files, 2,567,918 tokens,
+`the_loops_tokens_are_the_masks`). The CPU's form: 329 operations, from 334; the start masks
+are still made for their other readers (marks, row modes), which 2b takes on.
+

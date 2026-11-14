@@ -406,7 +406,11 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
                 let v = low.program.masks[usize::from(m.0)];
                 m.0 = low.program.outputs.iter().position(|&o| o == v).ok_or("a mark's mask not an output")? as u16;
             }
-            // Each end rule's likewise.
+            // The skip's and each end rule's likewise.
+            if let Some(k) = r.skip.as_mut() {
+                let v = low.program.masks[usize::from(*k)];
+                *k = low.program.outputs.iter().position(|&o| o == v).ok_or("the skip's mask not an output")? as u16;
+            }
             for rule in r.rules.iter_mut() {
                 let (crate::records::EndRule::Run(k) | crate::records::EndRule::Pair(k) | crate::records::EndRule::Last(k)) = rule;
                 let v = low.program.masks[usize::from(*k)];
@@ -2392,7 +2396,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // other, by the first bit at or after its start of its kinds' last-byte masks. Each rule's
     // mask a mask output, as a mark's (its index among them, made an output's below).
     let mut rules: Vec<crate::records::EndRule> = Vec::new();
-    let mut ends = vec![0u8; 256];
+    let mut ends = vec![crate::records::NO_RULE; 256];
     if !low.token_rules.is_empty() {
         let mask_of = |low: &mut Lowering, v: Val, mark_masks: &mut Vec<Val>| -> u16 {
             match mark_masks.iter().position(|m: &Val| m.v == v.v && m.d == v.d) {
@@ -2437,7 +2441,18 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             ends[b] = u8::try_from(at).map_err(|_| "more than 256 end rules")?;
         }
     }
-    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules };
+    // The bytes between tokens, the loop's (stage 2a): with end rules, every token's.
+    let skip = match low.skip {
+        Some(v) if !rules.is_empty() => Some(match mark_masks.iter().position(|m: &Val| m.v == v.v && m.d == v.d) {
+            Some(k) => k as u16,
+            None => {
+                mark_masks.push(v);
+                (mark_masks.len() - 1) as u16
+            }
+        }),
+        _ => None,
+    };
+    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip };
     crate::records::WordTable::new(&records.words)?;
     Ok((grammar::text(&states, &arms), lowered.text, takes_last, mark_masks, records))
 }

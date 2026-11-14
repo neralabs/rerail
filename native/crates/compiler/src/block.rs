@@ -946,8 +946,13 @@ impl BlockProgram {
                     })
                     .collect();
                 let mut positions = positions;
-                // The lasts by the end rules (decision 0177): each token's from its first byte.
-                if let Some(r) = self.records.as_ref().filter(|r| !r.rules.is_empty()) {
+                // The tokens by the loop (decision 0177, stage 2a): its starts and lasts.
+                if let Some((r, skip)) = self.records.as_ref().and_then(|r| r.skip.map(|k| (r, k))) {
+                    let (s, l) = crate::records::walk(r, skip, bytes, &outputs);
+                    positions[usize::from(r.starts)] = s;
+                    positions[usize::from(r.lasts)] = l;
+                } else if let Some(r) = self.records.as_ref().filter(|r| !r.rules.is_empty()) {
+                    // The lasts by the end rules: each token's from its first byte.
                     match crate::records::lasts(r, bytes, &positions[usize::from(r.starts)], &outputs) {
                         Some(l) => positions[usize::from(r.lasts)] = l,
                         None => any = true,
@@ -1718,6 +1723,10 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                 };
                 let _ = writeln!(out, "  block {at} recrule {how} {o}");
             }
+        }
+        // `block N recskip O`: the bytes between tokens, the loop's (stage 2a).
+        if let Some(o) = r.skip {
+            let _ = writeln!(out, "  block {at} recskip {o}");
         }
     }
 }

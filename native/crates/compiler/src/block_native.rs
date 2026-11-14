@@ -190,18 +190,20 @@ impl BlockNative {
     /// goes, and with it whatever only the rounds read (an `else`'s `back_fill`, and the
     /// backward pass it took). Metal runs the program as it is.
     pub fn cpu_form(&self) -> BlockNative {
-        let ruled = self.ruled_lasts();
-        if self.walks.is_empty() && ruled.is_none() {
+        let made = self.records_made();
+        if self.walks.is_empty() && made.is_empty() {
             return self.clone();
         }
         let mut insts = self.insts.clone();
-        // The records' lasts by their end rules (decision 0177): the record pass finds each
-        // token's last from its first, so the lasts' extract reads a zero, and the masks only it
-        // read are pruned below.
+        // The extracts the record pass makes (decision 0177): the lasts by the end rules, the
+        // starts by the loop. Each reads a zero, and the masks only they read are pruned below.
         let mut outputs = self.outputs.clone();
-        if let Some(k) = ruled {
+        let zero = made.first().map(|_| {
             insts.push(BlockInst::Const(0));
-            outputs[k] = (insts.len() - 1) as u16;
+            (insts.len() - 1) as u16
+        });
+        for &k in &made {
+            outputs[k] = zero.expect("a zero");
         }
         let mut walked = vec![false; self.groups.len()];
         for (w, walk) in self.walks.iter().enumerate() {
@@ -249,7 +251,7 @@ impl BlockNative {
             }
         }
         for x in 0..insts.len() {
-            if keep[x] && (x < n || ruled.is_some_and(|k| usize::from(outputs[k]) == x)) {
+            if keep[x] && (x < n || zero.is_some_and(|z| usize::from(z) == x)) {
                 place(x, &insts, &mut placed, &mut order);
             }
         }
@@ -289,6 +291,19 @@ impl BlockNative {
     pub fn ruled_lasts(&self) -> Option<usize> {
         let r = self.records.as_ref().filter(|r| !r.rules.is_empty())?;
         self.extracts.get(usize::from(r.lasts)).copied()
+    }
+
+    /// The output of the records' starts extract, where the loop gives the starts instead
+    /// (decision 0177, stage 2a): the CPU makes no start mask for it.
+    pub fn walked_starts(&self) -> Option<usize> {
+        let r = self.records.as_ref().filter(|r| r.skip.is_some())?;
+        self.extracts.get(usize::from(r.starts)).copied()
+    }
+
+    /// The extracts' outputs the CPU's record pass makes, not a mask (`ruled_lasts`,
+    /// `walked_starts`).
+    pub fn records_made(&self) -> Vec<usize> {
+        self.ruled_lasts().into_iter().chain(self.walked_starts()).collect()
     }
 
     /// The same program with every `class` written as a boolean formula of the eight bit-planes

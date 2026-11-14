@@ -41,7 +41,15 @@ pub struct Records {
     /// Empty: every token's last byte is the `lasts` extract's.
     pub ends: Vec<u8>,
     pub rules: Vec<EndRule>,
+    /// The bytes between tokens (decision 0177, stage 2a), an output: with it, the tokens are
+    /// the loop's (`walk`), each at the first byte after the one before that it does not hold,
+    /// not the starts' extract's.
+    pub skip: Option<u16>,
 }
+
+/// A byte's end rule (`Records::ends`) when no token begins with it: its token is the byte
+/// alone, which the grammar's checks refuse.
+pub const NO_RULE: u8 = u8::MAX;
 
 /// How a token's last byte is found from its first (`Records::rules`), each by an output's
 /// words (an index into the program's outputs):
@@ -96,10 +104,48 @@ pub fn lasts(records: &Records, bytes: &[u8], starts: &[u32], outputs: &[Vec<u64
         .iter()
         .map(|&s| {
             let first = bytes.get(s as usize).copied().unwrap_or(0);
-            let rule = records.rules[usize::from(records.ends[usize::from(first)])];
-            last_by_rule(rule, s as usize, outputs).map(|l| l as u32)
+            match records.rules.get(usize::from(records.ends[usize::from(first)])) {
+                Some(&rule) => last_by_rule(rule, s as usize, outputs).map(|l| l as u32),
+                None => Some(s),
+            }
         })
         .collect()
+}
+
+/// The tokens by the loop (decision 0177, stage 2a), as the lean lexer's: each starts at the
+/// first byte from the end of the one before that `skip` (an output) does not hold, a word of
+/// it at a time, and ends by its first byte's rule (`last_by_rule`; no rule, the byte alone).
+/// A region's token ends at its region's last byte, so the loop never starts one inside it.
+/// The starts and the lasts.
+pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) -> (Vec<u32>, Vec<u32>) {
+    let n = bytes.len();
+    let blank = outputs.get(usize::from(skip)).map_or(&[][..], |v| v.as_slice());
+    let held = |q: usize| !blank.get(q).copied().unwrap_or(0);
+    let (mut starts, mut lasts) = (Vec::new(), Vec::new());
+    let mut at = 0usize;
+    'tokens: while at < n {
+        let mut q = at / 64;
+        let mut x = held(q) & (!0u64 << (at % 64));
+        while x == 0 {
+            q += 1;
+            if 64 * q >= n {
+                break 'tokens;
+            }
+            x = held(q);
+        }
+        let s = 64 * q + x.trailing_zeros() as usize;
+        if s >= n {
+            break;
+        }
+        let l = match records.rules.get(usize::from(records.ends[usize::from(bytes[s])])) {
+            Some(&rule) => last_by_rule(rule, s, outputs).unwrap_or(s).max(s),
+            None => s,
+        };
+        starts.push(s as u32);
+        lasts.push(l as u32);
+        at = l + 1;
+    }
+    (starts, lasts)
 }
 
 /// The most marks a code holds.
