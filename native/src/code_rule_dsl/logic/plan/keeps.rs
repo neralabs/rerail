@@ -62,6 +62,8 @@ pub(super) const COPIES: usize = 8;
 /// A relation estimated under this many rows is stored without pricing: its rows cost little either way.
 const SMALL: f64 = 1024.0;
 
+mod inline;
+
 /// The choices, and the program with the inlined relations unfolded into their readers; `None` when nothing is
 /// inlined. `Err` names a `.decl r(…) inline` that cannot be honoured.
 pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Program, Vec<String>)>, String> {
@@ -276,79 +278,22 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
     if inline.is_empty() {
         return Ok(None);
     }
-    // Each rule's origin: the program's rule it was unfolded from, and the relations unfolded into it, so what a
-    // copy does when it runs is the inlined side's observation of that reader (`copied`).
-    let (rules, origin) = unfold_reads(prog.rules.clone(), &inline);
-    let unfinished: BTreeSet<String> = rules
-        .iter()
-        .filter(|r| !inline.contains(r.head.rel.as_str()))
-        .flat_map(|r| r.body.iter().filter_map(Literal::atom))
-        .filter(|a| inline.contains(a.rel.as_str()))
-        .map(|a| a.rel.to_string())
-        .collect();
-    // An inlined relation some reader still reads (a chain deeper than the passes) keeps its rules.
+    // The inlining, an overlay of the program's version (`inline::inline`). Each rule's origin is the program's rule
+    // it was unfolded from, and the relations unfolded into it, so what a copy does when it runs is the inlined side's
+    // observation of that reader (`copied`).
+    let base = super::body::made(&prog.rules).map_err(|e| e.to_string())?;
+    let got = inline::inline(&base, &inline)?;
+    copied(got.rules.iter().filter(|(_, _, into)| !into.is_empty()).map(|(id, o, into)| (super::body::Body::of(&got.v, got.v.rule(*id).expect("a rule")).observed_key(), super::body::Body::of(&base, base.rule(*o).expect("a base rule")).observed_key(), into)));
+    // The program as inlining left it, for the run (until the run reads the version: t36 item 6, step 5).
+    let lists = crate::code_rule_dsl::logic::front::Lists::default();
+    let mut tree = crate::code_rule_dsl::logic::program_image::Tree::new(&got.v, &lists);
     let mut out = prog.clone();
-    let kept: Vec<(Rule, (usize, BTreeSet<String>))> = rules.into_iter().zip(origin).filter(|(r, _)| !inline.contains(r.head.rel.as_str()) || unfinished.contains(r.head.rel.as_str())).collect();
-    copied(kept.iter().filter(|(_, (_, into))| !into.is_empty()).map(|(r, (o, into))| (super::obs_rule(&r.head, &r.body), super::obs_rule(&prog.rules[*o].head, &prog.rules[*o].body), into)));
-    out.rules = kept.into_iter().map(|(r, _)| r).collect();
-    let done: Vec<String> = inline.into_iter().filter(|r| !unfinished.contains(r)).collect();
+    out.rules = got.rules.iter().map(|(id, _, _)| tree.rule(got.v.rule(*id).expect("a rule"))).collect();
+    let done: Vec<String> = inline.into_iter().filter(|r| !got.unfinished.contains(r)).collect();
     if done.is_empty() {
         return Ok(None);
     }
     Ok(Some((out, done)))
-}
-
-/// `rules` with the reads of the `inline` relations unfolded into their readers (`unfold`), and each rule's origin:
-/// the index in `rules` of the rule it was unfolded from, and the relations unfolded into it. A relation inlined into
-/// another inlined one is unfolded into its copies in turn; one inlined relation reading another is unfolded first,
-/// readers after, so a pass takes one level. A chain deeper than the passes leaves its reads (the caller stores the
-/// rest). A pass unfolds a rule's first such read, so a rule reading two is unfolded over two passes: a copy's
-/// variables are named by its pass, or the second read's copy takes the first's names (`layer_num(gf, f),
-/// layer_num(gt, t)` would join the two numbers' digits as one). A first pass's copy is so named as the one priced
-/// (`unfold(…, 0)`), and an earlier chunk's observation of it is found by its text.
-fn unfold_reads(mut rules: Vec<Rule>, inline: &BTreeSet<String>) -> (Vec<Rule>, Vec<(usize, BTreeSet<String>)>) {
-    let mut origin: Vec<(usize, BTreeSet<String>)> = (0..rules.len()).map(|i| (i, BTreeSet::new())).collect();
-    for pass in 0..8 {
-        let bodies: BTreeMap<String, Vec<Rule>> = inline
-            .iter()
-            .map(|r| (r.clone(), rules.iter().filter(|x| x.head.rel == *r).cloned().collect()))
-            .collect();
-        let mut changed = false;
-        let mut next = Vec::with_capacity(rules.len());
-        let mut next_origin = Vec::with_capacity(rules.len());
-        for (rule, from) in rules.into_iter().zip(origin) {
-            let at = rule.body.iter().position(|l| l.atom().is_some_and(|a| inline.contains(a.rel.as_str())));
-            match at {
-                Some(i) => {
-                    let rel = rule.body[i].atom().map(|a| a.rel.clone()).unwrap_or_default();
-                    let defs: Vec<&Rule> = bodies[rel.as_str()].iter().collect();
-                    match unfold(&rule, i, &defs, pass) {
-                        Some(copies) => {
-                            let mut into = from.1.clone();
-                            into.insert(rel.to_string());
-                            next_origin.extend(copies.iter().map(|_| (from.0, into.clone())));
-                            next.extend(copies);
-                            changed = true;
-                        }
-                        None => {
-                            next.push(rule);
-                            next_origin.push(from);
-                        }
-                    }
-                }
-                None => {
-                    next.push(rule);
-                    next_origin.push(from);
-                }
-            }
-        }
-        rules = next;
-        origin = next_origin;
-        if !changed {
-            break;
-        }
-    }
-    (rules, origin)
 }
 
 /// A candidate's price (`price_all`): too small to price, a reader copy that does not plan, or weighed.
@@ -1107,40 +1052,42 @@ pub(super) fn observe(rules: &[(u64, &[(u64, u64)])], rels: &[Seen], nodes: f64)
 /// A step's pattern, what its selectivity is pooled by: an atom's relation, negation and binding pattern (its bound
 /// columns, constants by value, as the planner's `Stats::obs` keys it); a comparison's operator, constants and which
 /// sides are bound; a `nearest`'s kinds and direction.
-fn pattern(l: &Literal, bound: &BTreeSet<String>) -> Option<String> {
-    let term = |t: &Term| match t {
-        Term::Var(v) if bound.contains(v.as_str()) => "_".to_owned(),
-        Term::Var(_) => "?".to_owned(),
-        Term::Wild => "*".to_owned(),
-        t => t.to_string(),
+fn pattern(b: &super::body::Body<'_>, i: usize, bound: &super::body::VarSet) -> Option<String> {
+    use super::super::program_image::{Lit, TermRef};
+    let term = |t: TermRef<'_>| match t {
+        TermRef::Var(v) if bound.contains(v) => "_".to_owned(),
+        TermRef::Var(_) => "?".to_owned(),
+        TermRef::Wild => "*".to_owned(),
+        t => b.v.show_term(b.rule, t),
     };
-    Some(match l {
-        Literal::Atom(a) => {
-            let (rel, cols) = super::atom_sig(a, bound);
-            format!("{}{rel}{cols:?}", if a.neg { "!" } else { "" })
+    Some(match b.view(i) {
+        Lit::Atom(a) => {
+            let (rel, cols) = b.sig(i, bound);
+            format!("{}{rel}{cols:?}", if a.neg() { "!" } else { "" })
         }
-        Literal::Cmp { l, op, r } => format!("{} {op} {}", term(l), term(r)),
-        Literal::Nearest { n, kindset, .. } => format!("nearest {kindset} {}", if bound.contains(n) { "climb" } else { "descend" }),
+        Lit::Cmp { l, op, r } => format!("{} {} {}", term(l), op.as_str(), term(r)),
+        Lit::Nearest { n, kindset, .. } => format!("nearest {} {}", b.v.text(kindset), if bound.contains(n) { "climb" } else { "descend" }),
         _ => return None,
     })
 }
 
 /// A native stratum's steps for one plan of `rule` (`order`), each with its rows (in, out): kept per pattern.
-pub(super) fn observe_steps(rule: u64, order: super::Order<'_>, counts: &[(i64, i64)]) {
+pub(super) fn observe_steps(rule: u64, order: super::Order<'_, '_>, counts: &[(i64, i64)]) {
+    let b = order.b;
     observing_into(|o, _| {
-        let mut bound = BTreeSet::new();
-        for (i, ((_, l), &(n_in, n_out))) in order.iter().zip(counts).enumerate() {
+        let mut bound = super::body::VarSet::new();
+        for (i, (s, &(n_in, n_out))) in order.steps.iter().zip(counts).enumerate() {
             if i > 0
                 && n_in > 0
-                && let Some(p) = pattern(l, &bound)
+                && let Some(p) = pattern(b, s.at, &bound)
             {
                 for e in [o.steps.entry((rule, p.clone())).or_default(), o.pooled.entry(p).or_default()] {
                     e[0] += n_in as f64;
                     e[1] += n_out as f64;
                 }
             }
-            if !matches!(l, Literal::Atom(l) if l.neg) {
-                bound.extend(l.vars());
+            if !b.plain_atom(s.at).is_some_and(|a| a.neg()) {
+                bound.extend(b.vars(s.at));
             }
         }
     });
@@ -1171,7 +1118,8 @@ fn calibrated_rows(prog: &Program, model: &Model, rule: &Rule) -> Option<(f64, f
 /// `calibrated_rows`, with body literal `first` read first.
 fn calibrated_rows_at(prog: &Program, model: &Model, rule: &Rule, first: Option<usize>) -> Option<(f64, f64)> {
     let made = super::body::alone(rule).ok()?;
-    let ((order, _, out), step_rows) = model.plan_rule_step_rows(prog, &super::body::nth(&made, 0), first).ok()?;
+    let b = super::body::nth(&made, 0);
+    let ((order, _, out), step_rows) = model.plan_rule_step_rows(prog, &b, first).ok()?;
     if step_rows.len() != order.len() {
         return None;
     }
@@ -1183,17 +1131,17 @@ fn calibrated_rows_at(prog: &Program, model: &Model, rule: &Rule, first: Option<
             let e = o.steps.get(&(key, p.to_owned())).filter(|e| e[0] >= STEP_MIN).or_else(|| o.pooled.get(p).filter(|e| e[0] >= STEP_MIN))?;
             Some(e[1] / e[0])
         };
-        let mut bound = BTreeSet::new();
+        let mut bound = super::body::VarSet::new();
         let (mut rows, mut work, mut before) = (1.0f64, 0.0f64, 1.0f64);
-        for (i, (l, &st_rows)) in super::Order::new(&rule.body, &order).lits().zip(&step_rows).enumerate() {
+        for (i, (s, &st_rows)) in order.iter().zip(&step_rows).enumerate() {
             let estimated = if before > 0.0 { st_rows / before } else { 1.0 };
             before = st_rows;
-            let factor = if i == 0 { st_rows } else { pattern(l, &bound).and_then(|p| seen(&p)).unwrap_or(estimated) };
+            let factor = if i == 0 { st_rows } else { pattern(&b, s.at, &bound).and_then(|p| seen(&p)).unwrap_or(estimated) };
             let out = rows * factor;
             work += rows + out;
             rows = out;
-            if !matches!(l, Literal::Atom(l) if l.neg) {
-                bound.extend(l.vars());
+            if !b.plain_atom(s.at).is_some_and(|a| a.neg()) {
+                bound.extend(b.vars(s.at));
             }
         }
         Some((work, out))
@@ -1680,7 +1628,9 @@ pub mod tests {
         // The stored side ran: the reader and the build, with the rows each step made.
         let nodes = model.stats.nodes;
         let ran = |rule: &Rule, factors: &dyn Fn(&Literal) -> f64| -> Vec<(u64, u64)> {
-            let (order, _, _) = model.plan_rule(&prog, &super::super::body::nth(&super::super::body::alone(rule).unwrap(), 0), None).unwrap();
+            let made = super::super::body::alone(rule).unwrap();
+            let b = super::super::body::nth(&made, 0);
+            let (order, _, _) = model.plan_rule(&prog, &b, None).unwrap();
             let mut rows = 2_000.0;
             let mut counts = vec![(1u64, 2_000u64)];
             for s in &order[1..] {
@@ -1688,7 +1638,7 @@ pub mod tests {
                 counts.push((rows as u64, out as u64));
                 rows = out;
             }
-            observe_steps(super::super::obs_rule(&rule.head, &rule.body), super::super::Order::new(&rule.body, &order), &counts.iter().map(|&(a, b)| (a as i64, b as i64)).collect::<Vec<_>>());
+            observe_steps(super::super::obs_rule(&rule.head, &rule.body), super::super::Order::new(&b, &order), &counts.iter().map(|&(a, b)| (a as i64, b as i64)).collect::<Vec<_>>());
             counts
         };
         // What the copy's steps did in other rules: `look` by name and scope 4 rows a binding, `x != 7` all of them.
@@ -1697,7 +1647,9 @@ pub mod tests {
             Literal::Atom(a) if a.rel == "binding" => 3.0,
             _ => 1.0,
         };
-        let (order, _, _) = model.plan_rule(&prog, &super::super::body::nth(&super::super::body::alone(&copy).unwrap(), 0), None).unwrap();
+        let made = super::super::body::alone(&copy).unwrap();
+        let b = super::super::body::nth(&made, 0);
+        let (order, _, _) = model.plan_rule(&prog, &b, None).unwrap();
         let mut rows = 2_000.0;
         let mut counts = vec![(1i64, 2_000i64)];
         for s in &order[1..] {
@@ -1705,7 +1657,7 @@ pub mod tests {
             counts.push((rows as i64, out as i64));
             rows = out;
         }
-        observe_steps(0, super::super::Order::new(&copy.body, &order), &counts);
+        observe_steps(0, super::super::Order::new(&b, &order), &counts);
         let own = ran(reader, &|l| if matches!(l, Literal::Atom(a) if a.rel == "binding") { 3.0 } else { 0.75 });
         let build = ran(def, &|_| 1.0);
         observe(&[(super::super::obs_rule(&reader.head, &reader.body), &own), (super::super::obs_rule(&def.head, &def.body), &build)], &[Seen { rel: "ctx", rows: 2_000.0, cols: vec![(Some(2_000.0), Some(1.0)), (Some(300.0), Some(7.0)), (Some(250.0), Some(8.0))] }], nodes);
@@ -1747,8 +1699,11 @@ pub mod tests {
     fn two_reads_of_one_relation_unfold_apart() {
         let reader = rule("o(x) :- a(y), r(x), r(y).");
         let def = rule("r(z) :- b(z, w), a(w).");
-        let (rules, _) = unfold_reads(vec![reader, def], &BTreeSet::from(["r".to_owned()]));
-        assert_eq!(rules[0].to_string(), "o($x) :- a($y), b($x, $w_i0_1), a($w_i0_1), b($y, $w_i1_1), a($w_i1_1)");
+        let base = super::super::body::made(&[reader, def]).unwrap();
+        let got = super::inline::inline(&base, &BTreeSet::from(["r".to_owned()])).unwrap();
+        let lists = crate::code_rule_dsl::logic::front::Lists::default();
+        let first = crate::code_rule_dsl::logic::program_image::Tree::new(&got.v, &lists).rule(got.v.rule(got.rules[0].0).unwrap());
+        assert_eq!(first.to_string(), "o($x) :- a($y), b($x, $w_i0_1), a($w_i0_1), b($y, $w_i1_1), a($w_i1_1)");
     }
 
     /// A model of `prog` whose inputs have the rows and distinct values by column given.

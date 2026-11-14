@@ -241,14 +241,12 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
         if !needed.contains(rel) || prog.inputs.contains(rel) {
             continue;
         }
-        let mut rules: Vec<_> = prog.rules.iter().filter(|r| r.head.rel == *rel).collect();
+        // The relation's rules, by key, read by their handles.
+        let reads_itself = |b: &super::body::Body<'_>| (0..b.len()).filter_map(|i| b.atom(i)).any(|a| b.rel(a) == rel.as_str());
+        let mut rules: Vec<super::body::Body<'_>> =
+            prog.rules.iter().enumerate().filter(|(_, r)| r.head.rel == *rel).map(|(k, _)| vs.at(super::body::RuleKey::program(k))).collect();
         // SQLite requires every seed before every recursive arm. UNION provides the visited set.
-        rules.sort_by_key(|r| {
-            r.body
-                .iter()
-                .filter_map(Literal::atom)
-                .any(|a| a.rel == *rel)
-        });
+        rules.sort_by_key(|b| reads_itself(b));
         if rules.is_empty() {
             continue;
         }
@@ -290,10 +288,9 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
                 .unwrap_or_default();
             arms.push(format!("SELECT DISTINCT {cols} FROM {} AS demanded CROSS JOIN rr_batch_python_{kind} WHERE frame=demanded.handle{target}{parameters}",frames[input]));
         } else {
-            for rule in rules {
-                let ((order, _, _), _) =
-                    model.plan_rule_reused(prog, &vs.body(rule)?, None)?;
-                let mut q = model.checked_query(prog, &rule.head, super::Order::new(&rule.body, &order), None, None)?;
+            for b in rules {
+                let ((order, _, _), _) = model.plan_rule_reused(prog, &b, None)?;
+                let mut q = model.checked_query(prog, &b, &order, None, None)?;
                 count_reads(&mut q.body, &mut dependencies);
                 for cte in &mut q.ctes { for arm in &mut cte.arms { count_reads(arm, &mut dependencies); } }
                 bind_names(&mut q.body, &names);
@@ -305,13 +302,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
                 }
                 // Keep the statistics-driven plan's demand anchors. The session-table
                 // sqlite_order policy loses native posting selectivity behind these CTEs.
-                if !q.ctes.is_empty()
-                    && rule
-                        .body
-                        .iter()
-                        .filter_map(Literal::atom)
-                        .any(|a| a.rel == *rel)
-                {
+                if !q.ctes.is_empty() && reads_itself(&b) {
                     return Err(Error::Plan(format!(
                         "{rel}: recursive walk needs a separate physical plan"
                     )));
