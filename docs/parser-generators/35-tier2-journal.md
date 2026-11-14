@@ -177,3 +177,12 @@ Numbers are tier 2's for `.rr`. Each step's commit is listed.
 | 0177 stage 2c: skip, runs and pair read no `code`: skip 1 op, runs 1 and 9, pair 31 (from 111); body 331, held by the fallback and the marks (stage 3) | | | |
 | 0177: the token loop in the block loop: a part after each block over the final blocks, waiting at a token past them; one pass, no per-file record pass for `.rr` | | | |
 | 0177: marks from the gap (records lift a mark's bits to the next grammar token), no start masks for marks, no any-mark mask; 285 operations from 331 | | | |
+| 0177: `error … by tokens`: a byte no token takes refused by the loop on the CPU (a first byte with no rule), the mask Metal's; 276 operations | | | |
+| 0177: the marks' own checks in the gap pass: `newline` `unless after ","`, `float_after` `else escape` at the file's end; `starts_g`, `after_comma` gone; 259 operations | | | |
+| 0177: a number's checks at its token (`escape … at number when count(dot)`, `run(digit)`): the token loop's, not an escape mask and a tier 2 `CHECK`; 249 operations | | | |
+| 0177: readers: a string, comment or backtick literal read from its opener to its closer's first bit after it (`read K`), not by its region's last-byte mask; open-at-end and four backticks the loop's; 204 operations | | | |
+| 0177: a reader says its kind: the comment's kind and extra mark from the reader that read it, not the `ROW` mask (comment rows on a free byte for tier 2's view); 191 operations | | | |
+| 0177: pairs from the next byte: `pairs two_start = ":-" …` one list; on the CPU a rule a first byte (`next`), one load of the byte after and a compare a byte, not the pair mask; 162 operations | | | |
+| 0177: marks from checks at the token (`at`/`after KIND when …`): `float_after` and `json_bad`; the `\u` checks tier 2's at the string by its kind, no `f_str`; the CPU reads no region, its form calls no walk; 57 operations | | | |
+| 0177: the end rule by a jump table (`br_table`, a `match` in the Rust); the pairs one table, all punctuation one rule; 11 rules to 7; tier 1's Rust 260 KB to 250 KB | | | |
+| 0177: the token loop in the block loop: no call a block, its state the block loop's values; tier 1's Rust 3 functions (block loop, general body, the file's end), 250 KB to 253 KB | | | |

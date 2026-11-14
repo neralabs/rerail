@@ -65,8 +65,9 @@ INSERT INTO node_order VALUES(100,0),(101,1),(102,262144),(103,262145),(104,5242
                 mode: matches!(lit, Literal::Nearest { .. }).then_some(Mode::Descend),
             })
             .collect::<Vec<_>>();
+        let vs = body::Versions::of(&p).unwrap();
         let query = model
-            .checked_query(&p, &rule.head, Order::new(&rule.body, &order), None, None)
+            .checked_query(&p, &vs.body(rule).unwrap(), &order, None, None)
             .unwrap();
         let sql = query.render();
         let mut rows = db
@@ -2294,7 +2295,8 @@ fn projection_statistics_keep_demanded_constants_only_when_rows_are_preserved() 
 fn statistics_versions_accumulate_drift_and_publish_changed_keys() {
     let p=parse(".decl a(x:number,y:number)\n.decl b(x:number)\n.decl p(x:number)\np(x) :- a(x,_), b(x).\n").unwrap();
     let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),input_set:Default::default(),stats:Stats::empty(&p),ndv:HashMap::new(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Default::default()};
-    let mut watch=replanning::Watch::new(&BTreeMap::from([("a".into(),0)]),&[(&p.rules[0],0,vec![])]);
+    let made=body::made(&p.rules).unwrap();
+    let mut watch=replanning::Watch::new(&BTreeMap::from([("a".into(),0)]),&[(body::nth(&made,0),0)]);
     watch.delta(0,5);
     model.stats.card.insert("a".into(),100.0); watch.record(0,0,&model,"a"); watch.record(0,1,&model,"a");
     assert!(watch.take(0));
@@ -2410,7 +2412,8 @@ fn o148_plans_and_their_work() {
 fn empty_required_inputs_defer_both_plan_shapes_until_growth() {
     let program = crate::code_rule_dsl::logic::rr::parse(
         ".decl a(x:number)\n.decl b(x:number)\n.decl p(x:number)\np(x) :- a(x), b(x).\n").unwrap();
-    let mut w = replanning::Watch::new(&BTreeMap::from([("a".into(),0),("b".into(),1)]), &[(&program.rules[0],0,vec![])]);
+    let made = body::made(&program.rules).unwrap();
+    let mut w = replanning::Watch::new(&BTreeMap::from([("a".into(),0),("b".into(),1)]), &[(body::nth(&made,0),0)]);
     w.rows(0,100); w.rows(1,0); w.delta(0,100);
     assert!(!w.take(0));
     assert!(!w.take_whole(0), "a whole join over an empty input needs no search");
@@ -2516,4 +2519,36 @@ fn a_join_shape_directive_holds_a_join_back_in_the_rule_and_its_forms() {
     let no_posarg: Vec<(&str, f64, Vec<f64>)> = sizes.iter().filter(|s| s.0 != "posarg").cloned().collect();
     let guarded = order_of(rule, &no_posarg, None, Some(0));
     assert!(at(&guarded, "retparam") > at(&guarded, "posarg"), "{guarded:?}");
+}
+
+/// A computed value waits for the atoms still to join that read its arguments and not the value: they only narrow the
+/// rows, so the value is computed (and its text interned) for the rows kept. `def_name`'s long-text twin read the text
+/// of every node past the bound, then kept none at `field($f, "name", $n)`.
+#[test]
+fn a_computed_value_waits_for_the_atoms_that_narrow_its_arguments() {
+    let p = parse(
+        ".decl p(s: symbol)\n.decl q(s: symbol)\n.decl o(s: symbol, n: number)\n\
+         p(\"a\"). p(\"bb\"). p(\"ccc\"). q(\"bb\").\n\
+         o(s, n) :- p(s), n = @strlen(s), q(s).\n.output o\n",
+    )
+    .unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let mut stats = Stats::empty(&p);
+    stats.card.insert("p".into(), 10.0);
+    stats.card.insert("q".into(), 14_000.0);
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(stats);
+    let model = make_plan(&p, &db, inputs).unwrap();
+    let r = &p.rules[0];
+    let (order, _, _) = model.plan_rule(&p, &body::nth(&body::alone(r).unwrap(), 0), None).unwrap();
+    let shown: Vec<String> = order.iter().map(|s| r.body[s.at].to_string()).collect();
+    let at = |prefix: &str| shown.iter().position(|s| s.starts_with(prefix)).unwrap_or_else(|| panic!("{prefix} in {shown:?}"));
+    assert_eq!(at("p("), 0, "{shown:?}");
+    assert!(at("$n = ") > at("q("), "the value is computed after q narrows: {shown:?}");
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(Stats::empty(&p));
+    let out = run(&p, &db, inputs, None, Hooks::default()).unwrap();
+    assert_eq!(out.outputs["o"].len(), 1, "{:?}", out.outputs["o"]);
 }

@@ -181,7 +181,7 @@ up029_alt_3(n, N) :- up029_demand_alt_3(n, N),
     (kind(n, "function_definition") ; kind(n, "class_definition")),
     field(n, "name", c1), kind(c1, "identifier"), node(_, c1, _, _, _), J = c1, text(J, t2), text(N, t2), @doc(J) = @doc(N).
 up029_alt_3(n, N) :- up029_demand_alt_3(n, N), (kind(n, "identifier") ; kind(n, "dotted_name")),
-    node(_, n, _, _, _), J = n, (bind_only(n) ; aug_target(n)), text(J, t4), text(N, t4),
+    node(_, n, _, _, _), J = n, bind_name(n, _), text(J, t4), text(N, t4),
     count : { child(p6, n, _), kind(p6, "assignment"), !up029_tok_has_2(p6) } = 0, @doc(J) = @doc(N).
 up029_alt_3(n, N) :- up029_demand_alt_3(n, N), kind(n, "identifier"), node(_, n, _, _, _), J = n,
     text(J, t15), text(N, t15), child(p17, n, _),

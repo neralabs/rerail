@@ -181,9 +181,47 @@ thread_local! {
     static OWN: std::cell::OnceCell<Store> = const { std::cell::OnceCell::new() };
 }
 
-/// The store of the test on this thread, made on first use. Off a test's thread (one the harness did not name after a
-/// test: a pool's), `None`, said once per thread name.
+thread_local! {
+    /// The store of the test whose run a job on this thread works for (`carried`).
+    static HANDED: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Carries the test's store to a job on another thread (`run_state`): the job's runs use the store of the test that
+/// started it, not the process's.
+pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
+    let named = std::thread::current().name().is_some_and(|n| n.contains("::"));
+    // The store this thread's runs use: the one its test names (`TEST_TAPE_CACHE`), else the one it was handed, else
+    // its own.
+    let mine = super::TEST_TAPE_CACHE
+        .with(|p| p.borrow().clone())
+        .or_else(|| handed())
+        .or_else(|| named.then(|| OWN.with(|own| own.get_or_init(copy).path.clone())));
+    c.part(&["OWN", "HANDED"], crate::code_rule_dsl::logic::run_state::Shared(mine, hand));
+}
+
+/// The store this thread was handed (`carried`), if any.
+pub(super) fn handed() -> Option<PathBuf> {
+    HANDED.with(|h| h.borrow().clone())
+}
+
+/// While the guard lives, this thread's runs use `store` (another thread's test's).
+fn hand(store: Option<PathBuf>) -> impl Drop {
+    struct Handed(Option<PathBuf>);
+    impl Drop for Handed {
+        fn drop(&mut self) {
+            HANDED.with(|h| h.replace(self.0.take()));
+        }
+    }
+    Handed(HANDED.with(|h| h.replace(store)))
+}
+
+/// The store of the test on this thread, made on first use; on a job's thread, the store of the test that started it
+/// (`carried`). Off a test's thread (one the harness did not name after a test: a pool's), `None`, said once per
+/// thread name.
 pub(super) fn own() -> Option<PathBuf> {
+    if let Some(handed) = HANDED.with(|h| h.borrow().clone()) {
+        return Some(handed);
+    }
     let thread = std::thread::current();
     let name = thread.name().unwrap_or("");
     if !name.contains("::") {

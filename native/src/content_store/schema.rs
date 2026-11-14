@@ -698,6 +698,9 @@ END;
 CREATE TABLE IF NOT EXISTS frames(space BLOB NOT NULL, rel TEXT NOT NULL, ident BLOB NOT NULL,
     part INTEGER NOT NULL, digest INTEGER NOT NULL, reads BLOB NOT NULL, width INTEGER NOT NULL, rows INTEGER NOT NULL,
     types BLOB NOT NULL, data BLOB NOT NULL, used INTEGER NOT NULL, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID;
+-- A memo frame's digest is its document's key, a function of its path (`memo::doc_keys`): a path's contents are found
+-- by it, without reading every frame of the relation (each a page, its rows inline).
+CREATE INDEX IF NOT EXISTS frames_by_digest ON frames(space, rel, digest);
 -- The run each frame was last used by (decision 0138): apart from `frames`, whose records hold the frame's encoded
 -- rows, since SQLite rewrites a whole record (its overflow pages too) to change one column, and reads past `data`
 -- to read `used`. Every frame has its row here: put with it, forgotten with it. `frames.used` is the run that put

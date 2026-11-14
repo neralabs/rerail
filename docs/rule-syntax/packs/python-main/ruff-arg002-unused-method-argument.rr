@@ -16,11 +16,11 @@
 // `options` carries JSON settings that have no .rr form yet.
 .violation ARG002(at: node, n: loc) "Remove `{n}` if no caller passes it. If the signature must stay, such as to match a base class, prefix it with an underscore, but keep the name when callers pass it by keyword."
     suppress noqa "ARG002"
-ARG002_raw(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, site_form(n, "parameter"),
-    site_scope(n, "function"), site_latest(n), !site_used(n),
-    inside(n, p1, "parameters"), child(p2, p1, _), kind(p2, "function_definition"),
-    arg002_method(p2), !arg002_alt_117(n),
-    ( child(p3, n, _), (kind(p3, "list_splat_pattern") ; kind(p3, "dictionary_splat_pattern"))
+ARG002_raw(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),
+    main_form(b1, "parameter"), site_scope(b1, "function"), site_latest(b1),
+    !site_used(b1), inside(n, p2, "parameters"), child(p3, p2, _),
+    kind(p3, "function_definition"), arg002_method(p3), !arg002_alt_117(n),
+    ( child(p1, n, _), (kind(p1, "list_splat_pattern") ; kind(p1, "dictionary_splat_pattern"))
     ; precedes(s1, n), arg002_plain_parameter(s1)
     ; child(p4, n, _), (kind(p4, "default_parameter") ; kind(p4, "typed_default_parameter") ; kind(p4, "typed_parameter")), precedes(s2, p4), arg002_plain_parameter(s2)
     ).
@@ -181,9 +181,9 @@ arg002_demand_alt_54(c6, VAR) :- precedes_stop(s1, n, arg002_stop_51), child(s1,
 
 // demand_method: the nodes method is asked at (it looks at every ancestor of every node)
 .decl arg002_demand_method(n: node)
-arg002_demand_method(p2) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, site_form(n, "parameter"),
-    site_scope(n, "function"), site_latest(n), inside(n, p1, "parameters"),
-    child(p2, p1, _), kind(p2, "function_definition").
+arg002_demand_method(p3) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),
+    main_form(b1, "parameter"), site_scope(b1, "function"), site_latest(b1),
+    inside(n, p2, "parameters"), child(p3, p2, _), kind(p3, "function_definition").
 
 // up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
 .decl arg002_up_1(n: node, p: node)

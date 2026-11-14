@@ -330,7 +330,7 @@ impl<'v> Body<'v> {
         d.u64(a.args().count() as u64);
         a.args().for_each(|t| self.digest_term(d, t));
     }
-    fn digest_lit(&self, d: &mut super::super::derived::Inputs, l: LitRef<'_>) {
+    pub(in crate::code_rule_dsl) fn digest_lit(&self, d: &mut super::super::derived::Inputs, l: LitRef<'_>) {
         match l.view() {
             Lit::Atom(a) => {
                 d.u64(0);
@@ -404,7 +404,7 @@ impl std::fmt::Display for HeadText<'_, '_> {
 }
 
 /// An equality of a bound variable or constant with an unbound variable assigns the right side (`plan::binds_right`).
-fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &VarSet) -> Option<Slot> {
+pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &VarSet) -> Option<Slot> {
     static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *OFF.get_or_init(|| std::env::var("RERAIL_EQUALITY_BINDS").is_ok_and(|v| v == "off")) || op != CmpOp::Eq {
         return None;
@@ -425,12 +425,31 @@ fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &VarSet) -> Opt
 #[derive(Clone, Default)]
 pub struct Versions(Vec<(usize, usize, Arc<Version>)>);
 
+/// A rule of a run: the version it is a rule of (its place in the run's `Versions`; the program's is 0) and its id
+/// there. What the run holds of a rule across waves and suspensions, in place of the rule.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub struct RuleKey {
+    v: u32,
+    id: u32,
+}
+
+impl RuleKey {
+    /// Rule `k` of the program (version 0).
+    pub fn program(k: usize) -> RuleKey {
+        RuleKey { v: 0, id: k as u32 }
+    }
+    /// The rule's number in the program, a rule of the program's version (a maintained form's has none).
+    pub fn number(self) -> Option<usize> {
+        (self.v == 0).then_some(self.id as usize)
+    }
+}
+
 impl Versions {
-    /// The version of `prog` alone.
+    /// The version of `prog` alone, the run's version 0 (rule numbers are its ids).
     pub fn of(prog: &Program) -> Result<Versions> {
-        let mut vs = Versions::default();
-        vs.add(prog)?;
-        Ok(vs)
+        let rules = &prog.rules;
+        let start = rules.as_ptr() as usize;
+        Ok(Versions(vec![(start, start + std::mem::size_of_val(rules.as_slice()), made(rules)?)]))
     }
     /// Adds `prog`'s rules, encoded (the planner reads its rules alone; the rest of a program it reads from the tree
     /// until item 7, and a maintained form's parts have no image).
@@ -449,9 +468,23 @@ impl Versions {
     }
     /// The version `r` is a rule of, and its id there.
     pub fn find(&self, r: &Rule) -> Option<(&Arc<Version>, RuleId)> {
+        let k = self.key(r)?;
+        Some((&self.0[k.v as usize].2, RuleId(k.id)))
+    }
+    /// `r`'s key, a rule of a program the run holds.
+    pub fn key(&self, r: &Rule) -> Option<RuleKey> {
         let at = r as *const Rule as usize;
-        let (start, _, v) = self.0.iter().find(|e| e.0 <= at && at < e.1)?;
-        Some((v, RuleId(((at - start) / std::mem::size_of::<Rule>()) as u32)))
+        let v = self.0.iter().position(|e| e.0 <= at && at < e.1)?;
+        Some(RuleKey { v: v as u32, id: ((at - self.0[v].0) / std::mem::size_of::<Rule>()) as u32 })
+    }
+    /// `r`'s key, or an error naming it (a rule of no program the run holds).
+    pub fn key_of(&self, r: &Rule) -> Result<RuleKey> {
+        self.key(r).ok_or_else(|| Error::Plan(format!("{} :- …: a rule of no program the run holds", r.head)))
+    }
+    /// The rule `k` names, as the planner reads it.
+    pub fn at(&self, k: RuleKey) -> Body<'_> {
+        let v = &self.0[k.v as usize].2;
+        Body::of(v, v.rule(RuleId(k.id)).expect("a rule of its version"))
     }
     /// Rule `r` as the planner reads it.
     pub fn body(&self, r: &Rule) -> Result<Body<'_>> {

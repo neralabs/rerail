@@ -1350,12 +1350,28 @@ pub mod tests {
             .replace("start hash & directive run word", "start hash & directive last hashword & ~next(hashword & ~directive)")
             .replace("start alpha & ident & ~prev(ident) run word", "start alpha & ident & ~prev(ident) last ident & ~next(ident)")
             .replace("start digit & int & ~prev(int) run num_run", "start digit & int & ~prev(int) last numeral & ~next(numeral)")
-            .replace("start punct & p_start pair two_start", "start punct & p_start last p_last");
-        assert!(old.lines().filter(|l| l.starts_with("token ")).all(|l| !l.contains(" run ") && !l.contains(" pair ")), "every rule written back as its mask");
+            .replace("start punct & p_start pair two_start", "start punct & p_start last p_last")
+            .replace("read str", "last prev(f_str) & ~f_str")
+            .replace("read line | block", "last (f_line & ~next(f_line)) | (prev(f_block) & ~f_block)")
+            .replace("read t1 | t2 | t3", "last (prev(f_t1) & ~f_t1) | (prev(f_t2, 2) & ~prev(f_t2)) | (prev(f_t3, 3) & ~prev(f_t3, 2)) | prev(e_t2)")
+            // The gap pass's clauses need the loop; this compares the starts and lasts alone.
+            .replace("lf unless after \",\", end", "lf, end")
+            .replace(", else escape \"a float the file ends with\"", "")
+            // The marks' token tests need the loop too: their masks alone.
+            .replace(", after number when count(dot) at least 1", "")
+            .replace("mark json_bad    = ff,", "mark json_bad    = ff")
+            .lines()
+            .filter(|l| !(l.starts_with("escape ") && l.contains(" at number when ")))
+            .filter(|l| !(l.starts_with("                   after ") || l.starts_with("                   at ")))
+            .map(|l| format!("{l}\n"))
+            .collect::<String>();
+        assert!(old.lines().filter(|l| l.starts_with("token ")).all(|l| !l.contains(" run ") && !l.contains(" pair ") && !l.contains(" read ")), "every rule written back as its mask");
         let (a, b) = (crate::compiled().expect("compiles"), crate::compile_text(&old, rerail_compiler::bitlex_masks::Shape::Rules).expect("the old form compiles"));
         let files = corpus();
         let mut inputs: Vec<&[u8]> = files.iter().step_by(7).map(|f| f.as_bytes()).collect();
         inputs.extend(crate::SAMPLES.iter().map(|s| s.as_bytes()));
+        // Runs of two-byte spellings, and one at the end: the next byte read, against the mask.
+        inputs.extend([":->", "a :-- b.", "x<:y", "a<=:b", "!=>=", "->->", "a <", "b :", "-", "=>=>="].map(str::as_bytes));
         let (ra, rb) = (a.program.block_programs[0].records.as_ref().expect("records"), b.program.block_programs[0].records.as_ref().expect("records"));
         for f in &inputs {
             let (x, y) = (a.program.block_programs[0].run(f), b.program.block_programs[0].run(f));
@@ -1452,7 +1468,8 @@ pub mod tests {
         let k = c.native.walked_starts().expect("the records' starts by the loop");
         let cpu = c.native.cpu_form();
         assert!(matches!(cpu.insts[usize::from(cpu.outputs[k])], BlockInst::Const(0)), "the CPU makes the starts' mask");
-        assert_eq!(c.native.records_made().len(), c.native.extracts.len(), "every extract the record pass's");
+        let made = c.native.records_made();
+        assert!(c.native.extracts.iter().all(|e| made.contains(e)), "every extract the record pass's");
     }
 
     /// The CPU's tier 1 (the JIT) makes the interpreter's records: each file's starts, lasts,
@@ -1469,6 +1486,14 @@ pub mod tests {
             inputs.push(format!("r(x) :- a(x), {}.\n", "b".repeat(n)).into_bytes());
             inputs.push(format!("{}\"open", " ".repeat(n)).into_bytes());
         }
+        // Two-byte spellings (`pairs`): runs of them, and one at the file's end. The CPU reads
+        // the next byte (`EndRule::Next`); the interpreter's rule is the same, its mask Metal's.
+        for t in [":->", "a :-- b.", "x<:y", "a<=:b", "!=>=", "->->", "a <", "b :", "-", "=>=>="] {
+            inputs.push(t.as_bytes().to_vec());
+            inputs.push(format!("{}{t}", " ".repeat(62)).into_bytes());
+        }
+        assert!(!r.rules.iter().any(|x| matches!(x, rerail_compiler::records::EndRule::Pair(_))), "a pair rule reads a mask: the pairs are read from the bytes");
+        assert!(r.rules.iter().any(|x| matches!(x, rerail_compiler::records::EndRule::Next(_))), "no pair read from the bytes");
         let refs: Vec<&[u8]> = inputs.iter().map(|f| f.as_slice()).collect();
         let got = c.parser.tier1.run_files(&refs);
         for (k, (f, g)) in refs.iter().zip(&got).enumerate() {
@@ -1495,6 +1520,10 @@ pub mod tests {
         let c = crate::compiled().expect("compiles");
         let cpu = c.native.cpu_form();
         let n = cpu.insts.len();
+        if let Some(r) = &c.native.records {
+            let bytes = |k: usize| (0..256).filter(|&b| usize::from(r.ends[b]) == k).count();
+            eprintln!("{} end rules: {}", r.rules.len(), r.rules.iter().enumerate().map(|(k, x)| format!("{x:?} ({} bytes)", bytes(k))).collect::<Vec<_>>().join(", "));
+        }
         let reach = |o: usize| {
             let mut seen = vec![false; n];
             let mut todo = vec![usize::from(cpu.outputs[o])];
@@ -1523,6 +1552,12 @@ pub mod tests {
                         _ => {}
                     }
                 }
+                for t in r.checks.iter().filter(|t| usize::from(t.o) == o) {
+                    let l = format!("test {:?}", t.then);
+                    if !label.contains(&l) {
+                        label.push(l);
+                    }
+                }
                 if r.skip.map(usize::from) == Some(o) {
                     label.push("skip".into());
                 }
@@ -1532,6 +1567,16 @@ pub mod tests {
                     }
                 }
             }
+            for (i, &m) in c.native.masks.iter().enumerate() {
+                if m == o {
+                    let uses: Vec<&str> = c.words.lines().filter(|l| l.ends_with(&format!(" {i}")) && (l.contains(" ROW") || l.contains(" CHECK") || l.contains(" MARK"))).map(|l| if l.contains(" ROW") { "ROW" } else if l.contains(" CHECK") { "CHECK" } else { "MARK" }).collect();
+                    label.push(format!("mask{i}{:?}", uses.first()));
+                }
+            }
+            let d = c.native.output_delays.get(o).copied().unwrap_or(0);
+            if d > 0 {
+                label.push(format!("delay{d}"));
+            }
             rows.push((only, mine, o, label.join(",")));
         }
         rows.sort_by(|a, b| b.cmp(a));
@@ -1539,6 +1584,47 @@ pub mod tests {
         for (only, mine, o, label) in rows {
             eprintln!("  output {o:3} {label:30} reads {mine:4}, only it {only:4}");
         }
+    }
+
+    /// Decision 0177: an error by tokens holds where the token loop refuses, and nowhere else: a
+    /// byte no token begins with (`a byte no token takes`), a reader's region open at the file's
+    /// end, four backticks where a literal's reader finds no opener. Its mask, which Metal makes,
+    /// and the loop, which the CPU runs, refuse the same files.
+    #[test]
+    fn the_loops_errors_are_the_masks() {
+        let c = crate::compiled().expect("compiles");
+        let block = &c.program.block_programs[0];
+        let r = block.records.as_ref().expect("records");
+        assert!(!r.untaken.is_empty(), "an error by tokens");
+        let files = corpus();
+        let mut inputs: Vec<Vec<u8>> = files.iter().map(|f| f.as_bytes().to_vec()).collect();
+        for bad in ["\\", "\u{e9}", "'", "$", "?", "\x01", "\\\"x\"", "\u{1F600}"] {
+            for pad in [0usize, 61, 63, 64] {
+                inputs.push(format!("{}r(x) :- a(x) {bad} b(x).\n", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("{}r(x) :- a(x), \"{bad}\" = x.\n", " ".repeat(pad)).into_bytes());
+            }
+        }
+        // Open at the end, and the backticks' runs, across a block's edge.
+        for tail in ["\"abc", "/* abc", "`abc", "```abc", "``abc", "``", "````a````", "`a`````", "// abc", "\"a\\\"", "/*/", "`a``b`"] {
+            for pad in [0usize, 50, 58, 61, 62, 63, 64, 70] {
+                inputs.push(format!("r(x) :- a(x).\n{}{tail}", " ".repeat(pad)).into_bytes());
+                inputs.push(format!("r(x) :- a(x).\n{}{tail}\nr(y) :- a(y).\n", " ".repeat(pad)).into_bytes());
+            }
+        }
+        let skip = r.skip.expect("the loop's skip");
+        let (mut refused, mut both) = (0, 0);
+        for f in &inputs {
+            let run = block.run(f);
+            let fires = |o: usize| run.outputs[o].iter().any(|&w| w != 0);
+            let others = block.total_outputs().into_iter().any(|o| !r.untaken.iter().any(|&u| usize::from(u) == o) && fires(o));
+            let mask = others || r.untaken.iter().any(|&o| fires(usize::from(o)));
+            let (_, _, untaken, read, _) = rerail_compiler::records::walk(r, skip, f, &run.outputs);
+            let loop_ = others || untaken || read;
+            assert_eq!(mask, loop_, "{:?}: refused by the masks {mask}, with the loop's error {loop_}", String::from_utf8_lossy(&f[..f.len().min(80)]));
+            refused += usize::from(mask);
+            both += 1;
+        }
+        eprintln!("{both} files, {refused} refused by both");
     }
 
     /// Decision 0177's guard for the marks: none is a start mask. The marks between tokens are
@@ -1553,6 +1639,162 @@ pub mod tests {
         // `TOKEN m=1+k` would read mask `k` for any mark; `m=128` is the extras' alone.
         let any_mark = |l: &&str| l.contains(" TOKEN m=") && !l.contains(" TOKEN m=128 ");
         assert!(!c.words.lines().any(|l| any_mark(&l)), "tier 2 reads no mask of any mark");
+        assert!(!r.unless.is_empty(), "a line break after a `,` is the gap pass's, not a mask's");
+        assert!(r.unplaced != 0, "a float the file ends with is the gap pass's, not a mask's");
+    }
+
+    /// The marks' token tests (decision 0177): `float_after` and `json_bad` from checks at their
+    /// tokens, as a lexer marks what it reads, are the masks they replace. The old form (the
+    /// masks, from the regions; a `-` a pair's second byte, as `:-`, none: the tests take a `-`
+    /// token) and the new give the same tape or refusal through tier 2; the CPU's and Metal's
+    /// codes are the interpreter's, over the corpus and each case's edges: a JSON string's bad
+    /// bytes, a comment, a `-`, a leading zero, a form feed, a float before a comment and at the
+    /// file's end.
+    #[test]
+    fn the_marks_tests_are_the_masks() {
+        let new = crate::compiled().expect("compiles");
+        let old_text = crate::GRAMMAR
+            .replace("mark float_after = empty, after number when count(dot) at least 1,", "mask frac_last  = frac & ~next(frac)\nmark float_after = frac_last,")
+            .lines()
+            .filter(|l| !(l.starts_with("                   after ") || l.starts_with("                   at ")))
+            .map(|l| if l.starts_with("mark json_bad ") { "mask in_str      = f_str & ~o_str\nmark json_bad    = (in_str & ctl) | (in_str & escaped & ~jesc) | (in_str & uesc & ~h4) | o_line | o_block | (code & ff) | (code & minus & ~next(digit) & ~second) | (int & zero & ~prev(int) & next(int))\n".to_string() } else { format!("{l}\n") })
+            .collect::<String>();
+        assert!(!old_text.contains(" after string when"), "the old form has the masks alone");
+        let old = crate::compile_text(&old_text, rerail_compiler::bitlex_masks::Shape::Rules).expect("the old form compiles");
+        let r = new.program.block_programs[0].records.as_ref().expect("records");
+        assert!(r.checks.iter().any(|c| matches!(c.then, rerail_compiler::records::CheckThen::After(_))), "a mark after its token");
+        assert!(r.checks.iter().any(|c| matches!(c.then, rerail_compiler::records::CheckThen::At(_))), "a mark at its token");
+        assert!(r.tested_only != 0, "float_after reads no mask");
+        // No region on the CPU: its form calls no walk (the readers read them, decision 0177).
+        assert!(new.native.cpu_form().walks.is_empty(), "the CPU walks the regions");
+        let mut inputs: Vec<Vec<u8>> = Vec::new();
+        let cases = [
+            "r(x) :- x = ps - fe.\n",
+            "r(x) :- x = ps - fe, y = \"\\\\s*\".\n",
+            "r(x) :- x = {\"a\": \"b\tc\"}.\n",
+            "r(x) :- x = {\"a\": \"b\\qc\"}.\n",
+            "r(x) :- x = {\"a\": \"\\u12\"}.\n",
+            "r(x) :- x = {\"a\": \"\\u12ab\", \"b\": 1}.\n",
+            "r(x) :- x = {\"a\": // c\n 1}.\n",
+            "r(x) :- x = {\"a\": /* c */ 1}.\n",
+            "r(x) :- x = {\"a\": -1, \"b\": - 1}.\n",
+            "r(x) :- x = {\"a\": 01, \"b\": 0.5, \"c\": 0}.\n",
+            "r(x) :- x = {\"a\":\x0c1}.\n",
+            "r(x) :- x = 1.5 /* c */ , y = 2.\n",
+            "r(x) :- x = 1.5",
+            "r(x) :- x = 1.5 // c",
+            "r(x) :- x = -0.25.\n",
+            "r(x) :- x = \"a-b\", y = \"0\\\\\".\n",
+            "r(x) :- x = 1. // \\u12\n",
+            "r(x) :- x = {\"a\": 1 /* \\u12 */}.\n",
+            "r(x) :- x = \"\\u12\".\n",
+        ];
+        for pad in [0usize, 40, 55, 60, 63] {
+            for c in cases {
+                inputs.push(format!("{}{c}", " ".repeat(pad)).into_bytes());
+            }
+        }
+        let files = corpus();
+        inputs.extend(files.iter().step_by(5).map(|f| f.as_bytes().to_vec()));
+        inputs.extend(crate::SAMPLES.iter().map(|s| s.as_bytes().to_vec()));
+        let refs: Vec<&[u8]> = inputs.iter().map(|f| f.as_slice()).collect();
+        let cpu = new.parser.tier1.run_files(&refs);
+        let mut taken = [0usize; 2];
+        for (k, f) in refs.iter().enumerate() {
+            let (a, b) = (new.program.block_programs[0].run(f), old.program.block_programs[0].run(f));
+            // Tier 2's result, the tape or the refusal: the old form checks some of `json_bad`'s
+            // alternatives in tier 2 (`CHECK`, a look-ahead), the new marks their tokens.
+            let (x, y) = (rerail_compiler::stream::run(&new.program, f, &a), rerail_compiler::stream::run(&old.program, f, &b));
+            assert_eq!(x.is_ok(), y.is_ok(), "file {k} {:?}: taken by the tests' marks as by the masks", String::from_utf8_lossy(&f[..f.len().min(80)]));
+            if let (Ok(x), Ok(y)) = (&x, &y) {
+                assert!(x == y, "file {k}: the same tape");
+            }
+            if k < 5 * cases.len() {
+                taken[usize::from(x.is_ok())] += 1;
+            }
+            assert_eq!(cpu[k].codes, a.codes, "file {k}: the CPU's codes");
+            assert_eq!(cpu[k].totals, a.totals, "file {k}: the CPU's refusals");
+        }
+        #[cfg(target_os = "macos")]
+        {
+            use rerail_metal::block_program::serial::{Segments, run_serial_split};
+            let batch: Vec<rerail_compiler::block::BatchFile<'_>> = refs.iter().map(|b| rerail_compiler::block::BatchFile { bytes: b, program: 0 }).collect();
+            let got = run_serial_split(&[&new.native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
+            for (k, m) in got.run.files.iter().enumerate() {
+                assert_eq!(m.codes, cpu[k].codes, "file {k}: Metal's codes");
+                assert_eq!(m.totals, cpu[k].totals, "file {k}: Metal's refusals");
+            }
+        }
+        assert!(taken[0] > 0 && taken[1] > 0, "the cases both refused and taken: {taken:?}");
+        eprintln!("{} files: the same marks; of the cases {} refused, {} taken", refs.len(), taken[0], taken[1]);
+    }
+
+    /// A number's checks at its token (`escape … at number when …`, decision 0177): a second
+    /// `.` and 19 digits from its first refuse the file, on the interpreter, the CPU and Metal
+    /// alike, with the token across a block's edge and longer than a block.
+    #[test]
+    fn a_numbers_checks_are_at_its_token() {
+        use rerail_compiler::block;
+        let c = crate::compiled().expect("compiles");
+        let r = c.native.records.as_ref().expect("records");
+        assert_eq!(r.checks.iter().filter(|c| c.then == rerail_compiler::records::CheckThen::Escape).count(), 2, "a count and a run, the number rule's");
+        let mut cases: Vec<(String, bool)> = Vec::new();
+        for pad in [0usize, 30, 40, 44, 50, 55, 58, 60, 63] {
+            let head = format!(".decl a(x: number)\n// {}\n", "x".repeat(pad));
+            cases.push((format!("{head}a(123456789012345678).\n"), true));
+            cases.push((format!("{head}a(1234567890123456789).\n"), false));
+            cases.push((format!("{head}a(0000000000000000001).\n"), false));
+            cases.push((format!("{head}a(123456789012345678.5).\n"), true));
+            cases.push((format!("{head}a(1234567890123456789.5).\n"), false));
+            cases.push((format!("{head}a(1.{}).\n", "7".repeat(80)), true));
+            cases.push((format!("{head}a(1.{}.5).\n", "7".repeat(80)), false));
+            cases.push((format!("{head}a(1.2.3).\n"), false));
+        }
+        let refs: Vec<&[u8]> = cases.iter().map(|(s, _)| s.as_bytes()).collect();
+        for (src, taken) in &cases {
+            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
+            assert_eq!(interp.is_ok(), *taken, "{src:?}: the interpreter");
+            assert_eq!(c.parser.image(src.as_bytes()).is_ok(), *taken, "{src:?}: the CPU");
+        }
+        #[cfg(target_os = "macos")]
+        {
+            use rerail_metal::block_program::serial::{Segments, run_serial_split};
+            let want = c.parser.tier1.run_files(&refs);
+            let batch: Vec<block::BatchFile<'_>> = refs.iter().map(|b| block::BatchFile { bytes: b, program: 0 }).collect();
+            let got = run_serial_split(&[&c.native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
+            for ((g, w), (src, _)) in got.run.files.iter().zip(&want).zip(&cases) {
+                assert_eq!(g.totals.iter().any(|&t| t != 0), w.totals.iter().any(|&t| t != 0), "{src:?}: Metal refuses as the CPU");
+            }
+        }
+    }
+
+    /// A line break after a `,` is none (`mark newline = lf unless after ","`): a list goes on
+    /// over lines, comments between, as the engine reads it; a break after any other token ends
+    /// a setting.
+    #[test]
+    fn a_line_break_after_a_comma_is_none() {
+        let c = crate::compiled().expect("compiles");
+        let cases = [
+            ".decl a(x: number, y: number)\na(x, y) :- b(x),\n  c(y).\n",
+            ".decl a(x: number,\n  y: number)\n",
+            ".decl a(x: number, // first\n  y: number)\n",
+            ".decl a(x: number, /* a\n b */\n  y: number)\n",
+            ".decl a(x: number) // a\n\n.output a\n",
+            "\n\n// head\n.decl a(x: number)\n.limit 3,\n",
+            ".limit 3\n.decl a(x: number)\n",
+        ];
+        for src in cases {
+            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
+            let engine = std::panic::catch_unwind(|| crate::engine_tape(src)).ok();
+            match (c.parser.image(src.as_bytes()), engine) {
+                (Ok(t), Some(e)) => {
+                    assert!(interp.is_ok(), "{src:?}: the interpreter takes it");
+                    assert_eq!(t, e, "{src:?}: the engine's tape");
+                }
+                (Ok(_), None) => panic!("{src:?}: taken, the engine refuses it"),
+                (Err(_), _) => assert!(interp.is_err(), "{src:?}: refused, the interpreter takes it"),
+            }
+        }
     }
 
     /// A float read as simdjson reads one: digits, a `.`, digits, then a byte that is not

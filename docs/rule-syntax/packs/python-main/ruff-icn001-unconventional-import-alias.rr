@@ -15,36 +15,37 @@
 .violation ICN001(at: node, mod: loc, e: symbol) "Write `import {mod} as {e}` and rename its uses to match; keep the current name only if `{e}` already means something else in this module."
     suppress noqa "ICN001"
 ICN001(n, MOD, E) :- icn001_key(n), node(_, n, _, _, _), MOD = n, child(p2, n, _), kind(p2, "import_statement"),
+    E = @replace_all(E14, "^xml[\\s\\\\]*\\.[\\s\\\\]*etree[\\s\\\\]*\\.[\\s\\\\]*ElementTree$", "ET"),
     text(MOD, t1), E0 = @replace_all(t1, "^altair$", "alt"),
     E1 = @replace_all(E0, "^matplotlib$", "mpl"),
-    E2 = @replace_all(E1, "^matplotlib[\\s\\\\]*\\.[\\s\\\\]*pyplot$", "plt"),
-    E3 = @replace_all(E2, "^networkx$", "nx"), E4 = @replace_all(E3, "^numpy$", "np"),
-    E5 = @replace_all(E4, "^numpy[\\s\\\\]*\\.[\\s\\\\]*typing$", "npt"),
-    E6 = @replace_all(E5, "^pandas$", "pd"), E7 = @replace_all(E6, "^seaborn$", "sns"),
-    E8 = @replace_all(E7, "^tensorflow$", "tf"),
-    E9 = @replace_all(E8, "^tkinter$", "tk"),
     E10 = @replace_all(E9, "^holoviews$", "hv"),
     E11 = @replace_all(E10, "^panel$", "pn"),
     E12 = @replace_all(E11, "^plotly[\\s\\\\]*\\.[\\s\\\\]*express$", "px"),
     E13 = @replace_all(E12, "^polars$", "pl"),
     E14 = @replace_all(E13, "^pyarrow$", "pa"),
-    E = @replace_all(E14, "^xml[\\s\\\\]*\\.[\\s\\\\]*etree[\\s\\\\]*\\.[\\s\\\\]*ElementTree$", "ET").
+    E2 = @replace_all(E1, "^matplotlib[\\s\\\\]*\\.[\\s\\\\]*pyplot$", "plt"),
+    E3 = @replace_all(E2, "^networkx$", "nx"), E4 = @replace_all(E3, "^numpy$", "np"),
+    E5 = @replace_all(E4, "^numpy[\\s\\\\]*\\.[\\s\\\\]*typing$", "npt"),
+    E6 = @replace_all(E5, "^pandas$", "pd"), E7 = @replace_all(E6, "^seaborn$", "sns"),
+    E8 = @replace_all(E7, "^tensorflow$", "tf"),
+    E9 = @replace_all(E8, "^tkinter$", "tk").
 ICN001(n, MOD, E) :- kind(n, "identifier"), node(_, n, _, _, _), ALIAS = n, field(p3, "alias", n),
     kind(p3, "aliased_import"), field(p3, "name", c4), icn001_key(c4), node(_, c4, _, _, _), MOD = c4,
-    text(ALIAS, t5), t5 != E, text(MOD, t1), E0 = @replace_all(t1, "^altair$", "alt"),
+    text(ALIAS, t5), t5 != E,
+    E = @replace_all(E14, "^xml[\\s\\\\]*\\.[\\s\\\\]*etree[\\s\\\\]*\\.[\\s\\\\]*ElementTree$", "ET"),
+    text(MOD, t1), E0 = @replace_all(t1, "^altair$", "alt"),
     E1 = @replace_all(E0, "^matplotlib$", "mpl"),
-    E2 = @replace_all(E1, "^matplotlib[\\s\\\\]*\\.[\\s\\\\]*pyplot$", "plt"),
-    E3 = @replace_all(E2, "^networkx$", "nx"), E4 = @replace_all(E3, "^numpy$", "np"),
-    E5 = @replace_all(E4, "^numpy[\\s\\\\]*\\.[\\s\\\\]*typing$", "npt"),
-    E6 = @replace_all(E5, "^pandas$", "pd"), E7 = @replace_all(E6, "^seaborn$", "sns"),
-    E8 = @replace_all(E7, "^tensorflow$", "tf"),
-    E9 = @replace_all(E8, "^tkinter$", "tk"),
     E10 = @replace_all(E9, "^holoviews$", "hv"),
     E11 = @replace_all(E10, "^panel$", "pn"),
     E12 = @replace_all(E11, "^plotly[\\s\\\\]*\\.[\\s\\\\]*express$", "px"),
     E13 = @replace_all(E12, "^polars$", "pl"),
     E14 = @replace_all(E13, "^pyarrow$", "pa"),
-    E = @replace_all(E14, "^xml[\\s\\\\]*\\.[\\s\\\\]*etree[\\s\\\\]*\\.[\\s\\\\]*ElementTree$", "ET").
+    E2 = @replace_all(E1, "^matplotlib[\\s\\\\]*\\.[\\s\\\\]*pyplot$", "plt"),
+    E3 = @replace_all(E2, "^networkx$", "nx"), E4 = @replace_all(E3, "^numpy$", "np"),
+    E5 = @replace_all(E4, "^numpy[\\s\\\\]*\\.[\\s\\\\]*typing$", "npt"),
+    E6 = @replace_all(E5, "^pandas$", "pd"), E7 = @replace_all(E6, "^seaborn$", "sns"),
+    E8 = @replace_all(E7, "^tensorflow$", "tf"),
+    E9 = @replace_all(E8, "^tkinter$", "tk").
 
 // key(n): the JSON util `key`, used where the JSON says `matches: "key"`
 .decl icn001_key(n: node)
@@ -58,14 +59,12 @@ icn001_key(n) :- kind(n, "dotted_name"),
 // The JSON `transform` computes E, E0, E1, E2 from other metavariables' text; its literals end each rule.
 .violation ICN001_from_import(at: node, pkg: loc, mod: loc, e: symbol) code "ICN001" "Write `from {pkg} import {mod} as {e}` and rename its uses to match; keep the current name only if `{e}` already means something else in this module."
     suppress noqa "ICN001"
-ICN001_from_import(n, PKG, MOD, E) :- node(_, MOD, _, _, _),
-    inside(n, p2, "import_from_statement"), field(p2, "module_name", c3), node(_, c3, _, _, _), PKG = c3,
+ICN001_from_import(n, PKG, MOD, E) :- inside(n, p2, "import_from_statement"),
+    field(p2, "module_name", c3), node(_, c3, _, _, _), PKG = c3,
     ( icn001_member(n), node(_, n, _, _, _), MOD = n, child(p1_1, n, _), kind(p1_1, "import_from_statement")
     ; kind(n, "identifier"), node(_, n, _, _, _), ALIAS = n, field(p2_2, "alias", n), kind(p2_2, "aliased_import"), field(p2_2, "name", c3_2), icn001_member(c3_2), node(_, c3_2, _, _, _), MOD = c3_2, text(ALIAS, t4_2), t4_2 != E
     ),
-    text(MOD, t1), E0 = @replace_all(t1, "^pyplot$", "plt"),
-    E1 = @replace_all(E0, "^typing$", "npt"), E2 = @replace_all(E1, "^express$", "px"),
-    E = @replace_all(E2, "^ElementTree$", "ET").
+    unset(E).
 
 // member(n): the JSON util `member`, used where the JSON says `matches: "member"`
 .decl icn001_member(n: node)

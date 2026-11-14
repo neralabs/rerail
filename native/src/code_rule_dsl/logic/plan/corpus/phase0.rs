@@ -201,13 +201,28 @@ fn quote(s: &str) -> String {
 
 impl Graph {
     /// The part of a run's graph one seed reaches (its `k`, its place among the run's seeds), a text's key named
-    /// [`TEXT`].
+    /// [`TEXT`]: the graph a run of `bootstrap.rr` over that seed alone gives, whatever seeds shared the run. A module
+    /// names `core.rr` only as a file seed (`p0_from(f, -1, "core.rr") :- p0_file(f), …`), so another seed's module
+    /// does not here; and `p0_absent` names no includer, so the seed's absent candidates are those of the names its
+    /// modules ask (`p0_cand`). Taken whole, a text's graph held every seed's absent files and the implicit includes
+    /// of the modules that were seeds too, and its digest depended on the run it was derived in.
     pub fn of(&self, seed: &Seed, k: usize) -> Graph {
         let start = match seed {
             Seed::Text { .. } => text_key(k),
             Seed::File(p) => p.to_string_lossy().into_owned(),
         };
-        let mut g = Graph { absent: self.absent.clone(), plans: self.plans.clone(), ..Graph::default() };
+        let lib = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok().map(|l| l.to_string_lossy().into_owned());
+        let mut candidates: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+        let mut candidate = |from: &str, name: &str| {
+            if let Some(l) = &lib {
+                candidates.insert(PathBuf::from(format!("{l}/{name}")));
+            }
+            if !from.starts_with("text:") && from != "engine" && let Some((dir, _)) = from.rsplit_once('/') {
+                candidates.insert(PathBuf::from(format!("{dir}/{name}")));
+            }
+        };
+        let own = |from: &str, at: i64, name: &str| from == start || !(at == -1 && name == "core.rr");
+        let mut g = Graph { plans: self.plans.clone(), ..Graph::default() };
         let mut pending = vec![start.clone(), "engine".to_owned()];
         let mut seen = std::collections::BTreeSet::new();
         while let Some(from) = pending.pop() {
@@ -216,16 +231,24 @@ impl Graph {
             }
             let name = if from == start && matches!(seed, Seed::Text { .. }) { TEXT.to_owned() } else { from.clone() };
             if let Some(to) = self.includes.get(&from) {
-                for (_, _, path) in to {
+                let to: Vec<(i64, String, PathBuf)> = to.iter().filter(|(at, n, _)| own(&from, *at, n)).cloned().collect();
+                for (_, n, path) in &to {
+                    candidate(&from, n);
                     pending.push(path.to_string_lossy().into_owned());
                     if let Some(d) = self.digests.get(path) {
                         g.digests.insert(path.clone(), *d);
                     }
                 }
-                g.includes.insert(name.clone(), to.clone());
+                if !to.is_empty() {
+                    g.includes.insert(name.clone(), to);
+                }
             }
-            g.missing.extend(self.missing.iter().filter(|(f, _, _)| *f == from).map(|(_, at, n)| (name.clone(), *at, n.clone())));
+            for (_, at, n) in self.missing.iter().filter(|(f, at, n)| *f == from && own(&from, *at, n)) {
+                candidate(&from, n);
+                g.missing.push((name.clone(), *at, n.clone()));
+            }
         }
+        g.absent = self.absent.iter().filter(|p| candidates.contains(*p)).cloned().collect();
         if let Seed::File(p) = seed
             && let Some(d) = self.digests.get(p)
         {

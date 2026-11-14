@@ -187,6 +187,12 @@ const V_EXPR: V = V_LOGICAL_OR | V_LBRACKET | V_LPAREN | V_STAR | V_PLUS | V_MIN
 
 const MAX_DEPTH: u32 = 300;
 
+/// The most operators one left-associative chain (`a + b + c …`) takes. Each wraps the chain so
+/// far, inserted before it on the tape (`Writer::insert`): past this, a chain's inserts cost its
+/// length squared (200,000 terms: 20 s), and the file is refused to tree-sitter, as a nesting past
+/// `MAX_DEPTH` is. A tree this deep is tree-sitter's too.
+const MAX_CHAIN: u32 = 4096;
+
 /// `kinds::DROPPED` as open-addressed tables, built at compile time: a key's slot by one
 /// multiply-shift, then the next slots to an empty one. At a quarter full, a lookup is 1.2 probes
 /// on average, where the binary search was 8 dependent loads.
@@ -1659,6 +1665,15 @@ impl<'a> P<'a> {
     }
 
     fn object_pattern(&mut self, s: Slot) -> R<()> {
+        // A pattern nests as an expression does (`{ a: [ { a: [ …`): refused past `MAX_DEPTH`, not
+        // read until the stack runs out.
+        self.deeper()?;
+        let r = self.object_pattern_body(s);
+        self.depth -= 1;
+        r
+    }
+
+    fn object_pattern_body(&mut self, s: Slot) -> R<()> {
         let n = self.open_in(K::ObjectPattern, s);
         self.bump()?;
         let saved = self.asi;
@@ -1723,8 +1738,11 @@ impl<'a> P<'a> {
     }
 
     fn array_pattern(&mut self, s: Slot) -> R<()> {
+        self.deeper()?;
         let n = self.open_in(K::ArrayPattern, s);
-        self.bracket_list(n, Self::array_pattern_element)?;
+        let r = self.bracket_list(n, Self::array_pattern_element);
+        self.depth -= 1;
+        r?;
         self.close(n);
         Ok(())
     }
@@ -2531,6 +2549,7 @@ impl<'a> P<'a> {
     fn binary_as(&mut self, s: Slot, min: u8, allow: bool) -> R<N> {
         let start = self.here();
         let mut left = self.unary(s, false)?;
+        let mut chain = 0u32;
         loop {
             let t = self.tok();
             if self.ts && allow && t.kind == T::Name && matches!(t.word, w::AS | w::SATISFIES) && !self.stops() {
@@ -2540,6 +2559,10 @@ impl<'a> P<'a> {
             let Some((prec, op, right_assoc)) = binop(t) else { break };
             if prec < min || self.stops() {
                 break;
+            }
+            chain += 1;
+            if chain > MAX_CHAIN {
+                return self.refuse();
             }
             let n = self.wrap(N { at: start, kind: left.kind }, K::BinaryExpression, s, slot(f::LEFT, Ctx::Expr));
             self.leaf(op, f::OPERATOR, C_NONE)?;

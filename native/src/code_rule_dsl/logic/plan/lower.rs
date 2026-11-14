@@ -115,6 +115,17 @@ fn expand_memberships(prog: &Program) -> Result<Option<Program>> {
 /// Each relation's column domains.
 pub(in crate::code_rule_dsl) type Domains = BTreeMap<String, Vec<Domain>>;
 
+/// Which of relation `rel`'s columns hold atoms (decision 0170: what a forked process maps, what an entry may name):
+/// its `sym` columns whose values are names, not a grammar's kind or field ids (`Domain::Kind`, `Domain::Field`:
+/// `field_atom`'s `tag << 16 | code`, which no store numbers). A relation `domains` does not cover keeps every `sym`
+/// column.
+pub(in crate::code_rule_dsl) fn atom_columns(prog: &Program, domains: &Domains, rel: &str) -> Vec<bool> {
+    let ds = domains.get(rel);
+    prog.decls.get(rel).map_or_else(Vec::new, |cols| {
+        cols.iter().enumerate().map(|(c, (_, t))| t == "sym" && ds.and_then(|d| d.get(c)).is_none_or(|d| *d == Domain::Name)).collect()
+    })
+}
+
 /// A base relation's symbol column that is not a name.
 fn base_domain(rel: &str, col: usize) -> Option<Domain> {
     match (rel, col) {

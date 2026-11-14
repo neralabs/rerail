@@ -463,8 +463,8 @@ impl crate::code_rule_dsl::text::vocabulary::DfaCache for StoredDfas<'_> {
         // Stored by the store's writer, behind the run (decision 0104); its source reaches the manifest, queued after.
         // A group not kept is compiled again by the next process.
         let (key, sources) = (key.to_owned(), std::sync::Arc::clone(&self.1));
-        self.0.write_back(
-            "a group of automata",
+        self.0.write_back_syms(
+            crate::content_store::write_back::Syms::None, "a group of automata",
             entry.len() + key.len(),
             Vec::new(),
             Box::new(move |store| {

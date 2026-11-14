@@ -25,25 +25,6 @@ ret508_analysed_function(n) :- kind(n, "function_definition"),
     count : { ret508_stop_1_within(c1, n), kind(c1, "yield") } = 0,
     count : { child(n, c2, _), kind(c2, "block"), child(c2, c3, _), kind(c3, "return_statement"), count : { child(c2, c4, _), !kind(c4, "return_statement"), !kind(c4, "comment") } = 0 } = 0.
 
-// none_literal(n): the JSON util `none-literal`, used where the JSON says `matches: "none-literal"`
-.decl ret508_none_literal(n: node)
-ret508_none_literal(n) :- kind(n, "none").
-ret508_none_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
-    ret508_none_literal(c1).
-
-// value_return(n): the JSON util `value-return`, used where the JSON says `matches: "value-return"`
-.decl ret508_value_return(n: node)
-ret508_value_return(n) :- kind(n, "return_statement"), child(n, c1, _),
-    match("(?s).*..*", c1), !ret508_alt_2(c1).
-
-// own_return(n): the JSON util `own-return`, used where the JSON says `matches: "own-return"`
-.decl ret508_own_return(n: node)
-ret508_own_return(n) :- kind(n, "return_statement").
-
-// has_result(n): the JSON util `has-result`, used where the JSON says `matches: "has-result"`
-.decl ret508_has_result(n: node)
-ret508_has_result(n) :- within_stop(c1, n, ret508_stop_1), ret508_value_return(c1).
-
 // tok_lead_1(n): n starts with the token "^(?<BRANCH>elif|else)$": a token the tape stores, or one it leaves out, read from the source before n's first stored child
 .decl ret508_tok_lead_1(n: node, branch: symbol)
 .stored ret508_tok_lead_1 "its token read is of the parent's first token where the tape stores it; one the tape leaves out is read from the source before the parent's first stored child, in its own rule"
@@ -56,12 +37,6 @@ ret508_tok_lead_1(n, BRANCH) :- !child(n, _, _), node_text(n, g2),
 // stop_1: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
 .decl ret508_stop_1(kind: symbol)
 ret508_stop_1("function_definition"). ret508_stop_1("class_definition").
-
-// alt_2(n): the JSON `any`: n matches if any one of these rules does
-.decl ret508_alt_2(n: node)
-ret508_alt_2(n) :- node(_, n, _, _, _), glob("return", n).
-ret508_alt_2(n) :- kind(n, "comment").
-ret508_alt_2(n) :- ret508_none_literal(n).
 
 // stop_1_within: within_stop over the stop set stop_1, read inside an aggregate
 .decl ret508_stop_1_within(n: node, a: node)

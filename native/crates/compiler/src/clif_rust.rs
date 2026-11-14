@@ -679,6 +679,18 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             let InstructionData::Brif { blocks, .. } = data else { return Err("a branch with no blocks".into()) };
             format!("if {} != 0 {} else {}", args[0], goto(f, &blocks[0], 0, name, jump)?, goto(f, &blocks[1], 1, name, jump)?)
         }
+        // A jump table: a `match`, its arms the table's (successors 1 on), the rest the default
+        // (successor 0), as `successors` lists them; rustc makes it a table again.
+        Opcode::BrTable => {
+            let InstructionData::BranchTable { table, .. } = data else { return Err("a jump table of nothing".into()) };
+            let jt = &f.dfg.jump_tables[*table];
+            let mut s = format!("match {} {{ ", args[0]);
+            for (i, call) in jt.as_slice().iter().enumerate() {
+                write!(s, "{i} => {} ", goto(f, call, i + 1, name, jump)?).unwrap();
+            }
+            write!(s, "_ => {} }}", goto(f, &jt.default_block(), 0, name, jump)?).unwrap();
+            s
+        }
         op => return Err(format!("the opcode {op}")),
     })
 }

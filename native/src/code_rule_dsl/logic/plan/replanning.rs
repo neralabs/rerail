@@ -1,6 +1,8 @@
 //! Dependency-directed invalidation of live join plans. Slot zero is a relation's row count;
 //! slot c + 1 is column c's distribution (NDV, fanout and complete value frequencies).
+use super::body::Body;
 use super::{Constant, Literal, Model, Rule, Step, Term, near};
+use crate::code_rule_dsl::logic::program_image::TermRef;
 use std::collections::{BTreeMap, HashMap};
 
 #[derive(Default)]
@@ -25,7 +27,7 @@ pub struct Watch {
 }
 
 impl Watch {
-    pub fn new(rels: &BTreeMap<String, usize>, probes: &[(&Rule, usize, Vec<Step>)]) -> Self {
+    pub fn new(rels: &BTreeMap<String, usize>, probes: &[(Body<'_>, usize)]) -> Self {
         let mut watch = Self {
             versions: (0..rels.len()).map(|_| Vec::new()).collect(),
             delta_of: Vec::new(),
@@ -35,22 +37,18 @@ impl Watch {
             whole_pending: vec![true; probes.len()],
             required: Vec::new(), rows: vec![None; rels.len()],
         };
-        for (p, (rule, delta, _)) in probes.iter().enumerate() {
-            let delta_rel = rule.body[*delta].atom().and_then(|a| rels.get(a.rel.as_str())).copied();
+        for (p, (b, delta)) in probes.iter().enumerate() {
+            let delta_rel = b.atom(*delta).and_then(|a| rels.get(b.rel(a))).copied();
             watch.delta_of.push(delta_rel);
-            watch.required.push(rule.body.iter().filter_map(|lit| match lit {
-                Literal::Atom(a) if !a.neg => rels.get(a.rel.as_str()).copied(),
-                _ => None,
-            }).collect());
+            watch.required.push((0..b.len()).filter_map(|i| b.plain_atom(i)).filter(|a| !a.neg()).filter_map(|a| rels.get(b.rel(a)).copied()).collect());
             if let Some(r) = delta_rel { watch.delta_readers[r].push(p); }
-            for atom in rule.body.iter().filter_map(|l| match l {
-                Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a), _ => None,
-            }) {
-                let Some(&r) = rels.get(atom.rel.as_str()) else { continue };
+            for atom in (0..b.len()).filter_map(|i| b.atom(i)) {
+                let Some(&r) = rels.get(b.rel(atom)) else { continue };
                 let slots = &mut watch.versions[r];
-                slots.resize_with(slots.len().max(atom.args.len() + 1), Version::default);
-                let used = std::iter::once(0).chain(atom.args.iter().enumerate()
-                    .filter(|(_, t)| !matches!(t, Term::Wild)).map(|(c, _)| c + 1));
+                let args: Vec<TermRef<'_>> = atom.args().collect();
+                slots.resize_with(slots.len().max(args.len() + 1), Version::default);
+                let used = std::iter::once(0).chain(args.iter().enumerate()
+                    .filter(|(_, t)| !matches!(t, TermRef::Wild)).map(|(c, _)| c + 1));
                 for slot in used {
                     if !slots[slot].readers.contains(&p) { slots[slot].readers.push(p); }
                 }
@@ -143,7 +141,8 @@ pub mod tests {
         let program = crate::code_rule_dsl::logic::rr::parse(
             ".decl a(x:number,y:number)\n.decl b(x:number)\n.decl c(x:number)\n.decl p(x:number)\n.decl q(x:number)\np(x) :- a(x,_), b(x).\nq(x) :- c(x).\n").unwrap();
         let rels = BTreeMap::from([("a".into(),0),("b".into(),1),("c".into(),2)]);
-        let probes = vec![(&program.rules[0],0,vec![]),(&program.rules[1],0,vec![])];
+        let made = super::super::body::made(&program.rules).unwrap();
+        let probes = vec![(super::super::body::nth(&made,0),0),(super::super::body::nth(&made,1),0)];
         let mut w = Watch::new(&rels,&probes);
         assert!(!w.take(0), "empty deltas defer planning, including the first wave");
         w.delta(0,5); w.delta(2,2);
