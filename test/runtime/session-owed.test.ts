@@ -3,7 +3,7 @@ import { appendFile, mkdtemp, readFile, realpath, writeFile } from "node:fs/prom
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderSteer, type CodeRuleViolation, type RuleSteerDelivery } from "../../src/engine/index.js";
+import { CodeRuleBridge, renderSteer, type CodeRuleViolation, type RuleSteerDelivery } from "../../src/engine/index.js";
 import type { FileDigests } from "../../src/runtime/owed-ledger.js";
 import { RerailRuntime, type SessionSuspension, type SuspendedSessions } from "../../src/runtime/runtime.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -32,6 +32,21 @@ function holdNextLook() {
     await released.promise;
   };
   return { entered: entered.promise, release: () => released.resolve() };
+}
+
+/**
+ * Holds the reopened session's begin of each call its ledger held open (a begin given the call's captured preimages)
+ * until its first walk has run, that is until its walks stand past `since`, where they stood at the suspension: the
+ * order a loaded host can give, in which that walk reaches the call's file before the call claims it again.
+ */
+function beginAfterFirstWalk(since: number) {
+  const begin = CodeRuleBridge.prototype.begin;
+  return vi.spyOn(CodeRuleBridge.prototype, "begin").mockImplementation(async function (this: CodeRuleBridge, ...args: Parameters<CodeRuleBridge["begin"]>) {
+    if (args[3] !== undefined) {
+      await vi.waitFor(async () => expect((await this.walkResume())?.since).toBeGreaterThan(since), { timeout: 10_000, interval: 20 });
+    }
+    return await begin.apply(this, args);
+  });
 }
 
 /**
@@ -246,7 +261,8 @@ describe("what a session owes its agent while it is closed", () => {
   });
 
   // The suspension keeps where the session's walks stood, and the waiting call's check reads the file once the rules are
-  // open: the edit is the call's, read once in the session's mode, not again as another writer's change.
+  // open: the edit is the call's, read once in the session's mode, not again as another writer's change. The reopened
+  // session's first walk runs before the call is begun again, as on a loaded host: it must leave the call's file alone.
   it.each(WAITS_FOR_RULES)("checks once, as the call's own, the edit a call that waited across the day's close made to a file the session had edited, its result in $host", async ({ host, atResult, atNext }) => {
     const owing = await owingSession({ host });
     const { session } = owing;
@@ -255,6 +271,7 @@ describe("what a session owes its agent while it is closed", () => {
       kind: "call", eventId: `${toolCallId}:call`, ...tool(toolCallId), input: { file_path: join(owing.root, "a.ts"), content: "" },
     });
     const result = (toolCallId: string) => owing.runtime.ingest({ kind: "result", eventId: `${toolCallId}:result`, ...tool(toolCallId), output: "ok" });
+    let begins: ReturnType<typeof beginAfterFirstWalk> | undefined;
     try {
       await call("t0");
       await writeFile(join(owing.root, "a.ts"), "export const a = 1;\nconst ok = 1;\n");
@@ -262,7 +279,9 @@ describe("what a session owes its agent while it is closed", () => {
       await owing.turnEnd("turn-1");
       await call("t1");
       // Left at the permission prompt past the day, then allowed: the write lands, and its result opens the session again.
-      expect(await owing.runtime.closeIdleSession(session.sessionId, { evenIfOwing: true })).toMatchObject({ kind: "suspended" });
+      const idle = await owing.runtime.closeIdleSession(session.sessionId, { evenIfOwing: true });
+      if (idle.kind !== "suspended" || idle.suspension.walk === undefined) throw new Error(`expected a suspension with its walks, got ${idle.kind}`);
+      begins = beginAfterFirstWalk(idle.suspension.walk.since);
       await writeFile(join(owing.root, "a.ts"), BAD);
       expect((await result("t1")).map(delivery => delivery.content)).toEqual(atResult);
       await waitForCheck(owing, () => expect(owing.reads.some(read => read.bad)).toBe(true));
@@ -270,6 +289,7 @@ describe("what a session owes its agent while it is closed", () => {
       expect(await owing.turnEnd("turn-2")).toEqual([]);
       expect(owing.reads.filter(read => read.bad)).toEqual([{ path: "a.ts", mode: "session", bad: true }]);
     } finally {
+      begins?.mockRestore();
       await owing.runtime.dispose();
     }
   });

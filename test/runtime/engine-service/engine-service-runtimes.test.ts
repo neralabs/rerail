@@ -693,9 +693,10 @@ describe("the engine service's idle close", () => {
 
   // After a long think the agent's first event can be a command that rewrites a file it edited. The event was answered
   // before the reopened session had read the file's text back, so a command that ran first left nothing to measure from.
-  it("answers the event that opens a quiet session again once the text of the files its agent edited is read back", async () => {
+  // In Claude Code the call also waits for the reopened session's rules, which open after the read back; OMP's does not.
+  it.each(["claude-code", "omp"] as const)("answers the event that opens a quiet session again once the text of the files its agent edited is read back, in %s", async (host) => {
     const { create, batches, looked } = recordingAuditor();
-    const { first, clock, service, session, send, start, writes, turnEnd } = await idleService({ createAuditor: create });
+    const { first, clock, service, session, send, start, writes, turnEnd } = await idleService({ createAuditor: create }, { host });
     const app = join(first, "app.py");
     await writeFile(app, "x = 1\n");
     await start("a");
