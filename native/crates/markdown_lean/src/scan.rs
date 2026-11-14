@@ -135,6 +135,13 @@ struct Scalars {
     fenced_code_block_delimiter_length: u8,
 }
 
+/// The scanner's state between tokens (`Scanner::save`).
+pub struct Saved {
+    v: Scalars,
+    open_blocks: Vec<u8>,
+    unsure: bool,
+}
+
 /// The scanner, and the lexer it reads with.
 pub struct Scanner<'s> {
     src: &'s [u8],
@@ -245,6 +252,18 @@ impl<'s> Scanner<'s> {
             debug_assert_eq!(self.open_blocks.len(), saved.1);
             None
         }
+    }
+
+    /// The scanner's state between tokens, to go back to (`restore`): a parse tried and dropped.
+    pub fn save(&self) -> Saved {
+        Saved { v: self.v, open_blocks: self.open_blocks.clone(), unsure: self.unsure }
+    }
+
+    /// The state `save` gave.
+    pub fn restore(&mut self, s: Saved) {
+        self.v = s.v;
+        self.open_blocks = s.open_blocks;
+        self.unsure = s.unsure;
     }
 
     fn push_block(&mut self, b: u8) {

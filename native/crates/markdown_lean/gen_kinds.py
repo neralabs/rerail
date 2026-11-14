@@ -105,5 +105,14 @@ out += ['/// The tokens a tape leaves out: `kind | token << 9 | field << 18`, so
 for i in range(0, len(keys), 12):
     out.append('    ' + ' '.join(f'{k},' for k in keys[i:i + 12]))
 out += ['];', '']
+# The names `entity_reference` takes (`&name;`), sorted for a binary search.
+pattern = g['rules']['entity_reference']['value']
+assert pattern.startswith('&(') and pattern.endswith(');'), pattern[:40]
+names = sorted(set(pattern[2:-2].split('|')))
+assert all(re.fullmatch(r'[A-Za-z0-9]+', n) for n in names)
+out += ['/// The names an `entity_reference` takes (`&name;`, the grammar\'s pattern), sorted.', 'pub static ENTITIES: &[&str] = &[']
+for i in range(0, len(names), 12):
+    out.append('    ' + ' '.join(f'"{n}",' for n in names[i:i + 12]))
+out += ['];', '']
 open(os.path.join(here, 'src', 'kinds.rs'), 'w').write('\n'.join(out))
 print(len(rows), 'kinds,', len(fields), 'fields,', len(keys), 'dropped')

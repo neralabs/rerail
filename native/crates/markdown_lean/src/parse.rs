@@ -127,6 +127,15 @@ struct P<'a> {
     title_at: usize,
 }
 
+/// The parse's state, to go back to (`P::save`).
+struct Saved {
+    at: usize,
+    last: usize,
+    nodes: usize,
+    open: usize,
+    sc: crate::scan::Saved,
+}
+
 /// `src` parsed.
 pub fn parse(src: &[u8]) -> R<Tape> {
     if let Some(at) = src.iter().position(|&c| c == 0) {
@@ -274,6 +283,21 @@ impl<'a> P<'a> {
             }
         }
         gap.clear();
+    }
+
+    /// The character reference at `at` (an `&`), if one is there: `entity_reference` (`&name;`,
+    /// a name the grammar lists) or `numeric_character_reference` (`&#…;`, `&#x…;`), and its end.
+    fn reference_at(&self, at: usize) -> Option<(K, usize)> {
+        let rest = &self.src[at + 1..];
+        if rest.first() == Some(&b'#') {
+            let (hex, from) = if matches!(rest.get(1), Some(b'x' | b'X')) { (true, 2) } else { (false, 1) };
+            let digits = rest[from..].iter().take_while(|c| if hex { c.is_ascii_hexdigit() } else { c.is_ascii_digit() }).count();
+            let max = if hex { 6 } else { 7 };
+            return (1..=max).contains(&digits).then_some(()).filter(|_| rest.get(from + digits) == Some(&b';')).map(|_| (K::NumericCharacterReference, at + 1 + from + digits + 1));
+        }
+        let n = rest.iter().take_while(|c| c.is_ascii_alphanumeric()).count();
+        let name = std::str::from_utf8(&rest[..n]).ok()?;
+        (n > 0 && rest.get(n) == Some(&b';') && crate::kinds::ENTITIES.binary_search(&name).is_ok()).then_some((K::EntityReference, at + 1 + n + 1))
     }
 
     /// The task-list word at the parse (`task_list_marker_checked`, `…_unchecked`), if any.
@@ -476,22 +500,23 @@ impl<'a> P<'a> {
     fn paragraph(&mut self) -> R<(Option<Tok>, Option<usize>)> {
         // A paragraph that may be a link reference definition (`[`, white space before it or
         // not): tree-sitter tries both, and the definition wins where it holds (its dynamic
-        // precedence).
+        // precedence). So does the parser: the definition is read from a saved state, and the
+        // paragraph from that state where it does not hold.
         {
             let mut q = self.at;
             while matches!(self.byte(q), b' ' | b'\t') {
                 q += 1;
             }
             if self.byte(q) == b'[' && !(self.byte(q + 2) == b']' && matches!(self.byte(q + 1), b'x' | b'X' | b' ' | b'\t')) {
-                match self.link_definition_at(q) {
-                    Some(true) => return self.link_reference_definition(),
-                    // A label that starts with an escape and is not a definition: tree-sitter's
-                    // parse has an error.
-                    Some(false) if self.byte(q + 1) == b'\\' && punct(self.byte(q + 2)).is_some() => {
-                        return Err(Refusal::Parse(q as u32));
-                    }
-                    Some(false) => {}
-                    None => return Err(Refusal::Parse(q as u32)),
+                let saved = self.save();
+                if let Some(done) = self.link_reference_definition()? {
+                    return Ok(done);
+                }
+                self.restore(saved);
+                // A label that starts with an escape and is not a definition: tree-sitter's parse
+                // has an error.
+                if self.byte(q + 1) == b'\\' && punct(self.byte(q + 2)).is_some() {
+                    return Err(Refusal::Parse(q as u32));
                 }
             }
         }
@@ -522,178 +547,181 @@ impl<'a> P<'a> {
         }
     }
 
-    /// Whether a link reference definition starts at `q` (its `[`) and ends on this line:
-    /// `Some(false)` where it does not hold (a paragraph), `None` where it would go on past the
-    /// line or holds a reference (`&`): not read.
-    fn link_definition_at(&self, q: usize) -> Option<bool> {
-        let line_end = |c: u8, at: usize| at >= self.src.len() || c == b'\n' || c == b'\r';
-        let blank = |c: u8| c == b' ' || c == b'\t';
-        // The label: no `[` or `]` but escaped, not empty.
-        let mut at = q + 1;
-        loop {
-            let c = self.byte(at);
-            if line_end(c, at) {
-                return None;
-            }
-            match c {
-                b']' => break,
-                b'[' => return Some(false),
-                b'&' => return None,
-                b'\\' if punct(self.byte(at + 1)).is_some() => at += 2,
-                _ => at += 1,
-            }
-        }
-        if at == q + 1 || self.byte(at + 1) != b':' {
-            return Some(false);
-        }
-        at += 2;
-        while blank(self.byte(at)) {
-            at += 1;
-        }
-        if line_end(self.byte(at), at) {
-            return None;
-        }
-        // The destination.
-        if self.byte(at) == b'<' {
-            at += 1;
-            loop {
-                let c = self.byte(at);
-                if line_end(c, at) || c == b'<' {
-                    return Some(false);
-                }
-                match c {
-                    b'>' => break,
-                    b'&' => return None,
-                    b'\\' if punct(self.byte(at + 1)).is_some() => at += 2,
-                    _ => at += 1,
-                }
-            }
-            at += 1;
-        } else {
-            if matches!(self.byte(at), b'(' | b')') {
-                // A destination may start with a group, not a `)`.
-                if self.byte(at) == b')' {
-                    return Some(false);
-                }
-            }
-            let mut depth = 0usize;
-            let from = at;
-            loop {
-                let c = self.byte(at);
-                if line_end(c, at) || blank(c) {
-                    break;
-                }
-                match c {
-                    b'(' => depth += 1,
-                    b')' if depth == 0 => break,
-                    b')' => depth -= 1,
-                    b'&' => return None,
-                    b'\\' if punct(self.byte(at + 1)).is_some() => {
-                        at += 2;
-                        continue;
-                    }
-                    _ => {}
-                }
-                at += 1;
-            }
-            if depth > 0 || at == from {
-                return Some(false);
-            }
-        }
-        // A title, after white space.
-        let space = blank(self.byte(at));
-        while blank(self.byte(at)) {
-            at += 1;
-        }
-        if line_end(self.byte(at), at) {
-            return Some(true);
-        }
-        let open = self.byte(at);
-        if !space || !matches!(open, b'"' | b'\'' | b'(') {
-            return Some(false);
-        }
-        let close = if open == b'(' { b')' } else { open };
-        at += 1;
-        loop {
-            let c = self.byte(at);
-            if line_end(c, at) {
-                return None;
-            }
-            if c == close {
-                break;
-            }
-            match c {
-                b'(' if open == b'(' => return Some(false),
-                b'&' => return None,
-                b'\\' if punct(self.byte(at + 1)).is_some() => at += 2,
-                _ => at += 1,
-            }
-        }
-        at += 1;
-        while blank(self.byte(at)) {
-            at += 1;
-        }
-        Some(line_end(self.byte(at), at))
+    /// The parse's state, to go back to (`restore`): the writer's nodes, the open nodes, the
+    /// position and the scanner's.
+    fn save(&self) -> Saved {
+        Saved { at: self.at, last: self.last, nodes: self.w.len(), open: self.open.len(), sc: self.sc.save() }
     }
 
-    /// A link reference definition on one line (`link_definition_at` holds): white space, the
-    /// label, `:`, the destination, the title, and the line's end.
-    fn link_reference_definition(&mut self) -> R<(Option<Tok>, Option<usize>)> {
+    fn restore(&mut self, s: Saved) {
+        self.at = s.at;
+        self.last = s.last;
+        self.w.truncate(s.nodes);
+        self.open.truncate(s.open);
+        self.sc.restore(s.sc);
+    }
+
+    /// A link reference definition from the parse: white space, the label, `:`, the
+    /// destination, the title, and the line's end, any of them after a soft line break (one
+    /// before the destination, one before the title; the label and the title may hold more).
+    /// `None` where it does not hold: the parse is to go back, and read a paragraph. A title on
+    /// a line of its own that does not hold leaves the definition ending before it, as
+    /// tree-sitter's parse does. A reference (`&`) is not read.
+    fn link_reference_definition(&mut self) -> R<Option<(Option<Tok>, Option<usize>)>> {
         self.open(K::LinkReferenceDefinition, 0, self.at);
         // The parts, in order: 0 before the label, 1 the label, 2 before the destination, 3 the
         // destination, 4 before the title, 5 the title, 6 after it.
         let mut part = 0;
         let mut depth = 0usize;
+        let mut angle = false;
         let mut close_title = 0u8;
         let mut gap = Vec::new();
-        loop {
-            match self.next(V_PARAGRAPH)? {
-                Some(t) if t.tok == LINE_ENDING || t.tok == SOFT_LINE_ENDING || t.tok == TOKEN_EOF => {
-                    if part == 3 || part == 5 {
-                        let parent = if part == 3 { K::LinkDestination } else { K::LinkTitle };
-                        self.flush_gap(&mut gap, parent);
-                        self.close();
-                    }
-                    self.flush_gap(&mut gap, K::LinkReferenceDefinition);
-                    self.take(t);
-                    let n = self.next(V_BLOCK)?;
+        // A soft line break taken before the destination, and where the definition ends if a
+        // title after a line break does not hold (the state before that break).
+        let mut broken = false;
+        let mut before_title: Option<Saved> = None;
+        // Ends the definition at line end `t`.
+        macro_rules! end {
+            ($t:expr) => {{
+                let t = $t;
+                if part == 3 || part == 5 {
+                    let parent = if part == 3 { K::LinkDestination } else { K::LinkTitle };
+                    self.flush_gap(&mut gap, parent);
                     self.close();
-                    return Ok((n, None));
                 }
+                self.flush_gap(&mut gap, K::LinkReferenceDefinition);
+                self.take(t);
+                let n = self.next(V_BLOCK)?;
+                self.close();
+                return Ok(Some((n, None)));
+            }};
+        }
+        // The definition does not hold here: before a title on its own line, it ends there;
+        // otherwise there is none.
+        macro_rules! fail {
+            () => {{
+                match before_title.take() {
+                    Some(s) => {
+                        self.restore(s);
+                        part = 4;
+                        gap.clear();
+                        let t = self.next(V_PARAGRAPH)?.expect("the soft line break");
+                        end!(t)
+                    }
+                    None => return Ok(None),
+                }
+            }};
+        }
+        loop {
+            let at_line = self.at;
+            match self.next(V_PARAGRAPH)? {
+                Some(t) if t.tok == SOFT_LINE_ENDING => match part {
+                    1 | 5 => {
+                        self.take(t);
+                        continue;
+                    }
+                    2 if !broken => {
+                        broken = true;
+                        self.take(t);
+                        continue;
+                    }
+                    3 | 4 if before_title.is_none() => {
+                        // The destination ends; a title may follow on the next line. The state
+                        // before the break: where the definition ends if it does not.
+                        if part == 3 {
+                            if depth > 0 {
+                                return Ok(None);
+                            }
+                            self.flush_gap(&mut gap, K::LinkDestination);
+                            self.close();
+                        }
+                        self.flush_gap(&mut gap, K::LinkReferenceDefinition);
+                        part = 4;
+                        let mut s = self.save();
+                        s.at = at_line;
+                        before_title = Some(s);
+                        self.take(t);
+                        continue;
+                    }
+                    6 => end!(t),
+                    _ => fail!(),
+                },
+                Some(t) if t.tok == LINE_ENDING || t.tok == TOKEN_EOF => match part {
+                    3 if depth > 0 => return Ok(None),
+                    3 | 4 | 6 => end!(t),
+                    _ => fail!(),
+                },
                 Some(t) => return Err(Refusal::Parse(t.start as u32)),
                 None => {}
             }
             let Some((lexed, end)) = self.line_token() else { return self.refuse() };
             let c = self.byte(self.at);
+            let reference = if c == b'&' { self.reference_at(self.at) } else { None };
             match part {
-                0 if c == b'[' => {
+                0 if lexed == Lexed::Space => {}
+                0 => {
+                    debug_assert_eq!(c, b'[');
                     self.flush_gap(&mut gap, K::LinkReferenceDefinition);
                     self.open(K::LinkLabel, 0, self.at);
                     self.gap_token(&mut gap, lexed, end);
                     part = 1;
                     continue;
                 }
+                1 if c == b'[' => return Ok(None),
                 1 if c == b']' => {
+                    let empty = self.w.len() == self.open.last().expect("the label").0 + 1 && gap.len() == 1 && gap[0].1 + 1 == self.at;
+                    if empty || self.byte(self.at + 1) != b':' {
+                        return Ok(None);
+                    }
                     self.gap_token(&mut gap, lexed, end);
                     self.flush_gap(&mut gap, K::LinkLabel);
                     self.close();
-                    // `:` right after.
                     let (colon, cend) = self.line_token().expect("a colon");
                     self.gap_token(&mut gap, colon, cend);
                     part = 2;
                     continue;
                 }
                 2 if lexed != Lexed::Space => {
+                    if c == b')' {
+                        return Ok(None);
+                    }
                     self.flush_gap(&mut gap, K::LinkReferenceDefinition);
                     self.open(K::LinkDestination, 0, self.at);
+                    angle = c == b'<';
                     part = 3;
+                    if angle {
+                        self.gap_token(&mut gap, lexed, end);
+                        continue;
+                    }
                 }
-                3 if lexed == Lexed::Space && depth == 0 => {
+                3 if angle && c == b'<' => return Ok(None),
+                3 if angle && c == b'>' => {
+                    self.gap_token(&mut gap, lexed, end);
+                    self.flush_gap(&mut gap, K::LinkDestination);
+                    self.close();
+                    // White space or the line's end next.
+                    if !matches!(self.byte(self.at), b' ' | b'\t' | b'\n' | b'\r') && self.at < self.src.len() {
+                        return Ok(None);
+                    }
+                    part = 4;
+                    continue;
+                }
+                3 if !angle && lexed == Lexed::Space => {
+                    if depth > 0 {
+                        return Ok(None);
+                    }
                     self.flush_gap(&mut gap, K::LinkDestination);
                     self.close();
                     part = 4;
                 }
-                4 if lexed != Lexed::Space => {
+                3 if !angle && c == b')' && depth == 0 => return Ok(None),
+                4 if lexed == Lexed::Space => {}
+                4 => {
+                    // A title, after white space or a line break.
+                    let spaced = before_title.is_some() || matches!(self.byte(self.at.wrapping_sub(1)), b' ' | b'\t');
+                    if !spaced || !matches!(c, b'"' | b'\'' | b'(') {
+                        fail!();
+                    }
                     self.flush_gap(&mut gap, K::LinkReferenceDefinition);
                     self.open(K::LinkTitle, 0, self.at);
                     self.title_at = self.at;
@@ -709,6 +737,9 @@ impl<'a> P<'a> {
                     part = 6;
                     continue;
                 }
+                5 if close_title == b')' && c == b'(' => fail!(),
+                6 if lexed == Lexed::Space => {}
+                6 => fail!(),
                 _ => {}
             }
             let parent = match part {
@@ -717,10 +748,10 @@ impl<'a> P<'a> {
                 5 => K::LinkTitle,
                 _ => K::LinkReferenceDefinition,
             };
-            if part == 3 {
+            if part == 3 && !angle {
                 match c {
                     b'(' => depth += 1,
-                    b')' => depth = depth.saturating_sub(1),
+                    b')' => depth -= 1,
                     _ => {}
                 }
             }
@@ -729,6 +760,13 @@ impl<'a> P<'a> {
                 self.leaf(K::BackslashEscape, 0, self.at, self.at + 2);
                 self.at += 2;
                 self.last = self.at;
+                continue;
+            }
+            if let Some((k, e)) = reference {
+                self.flush_gap(&mut gap, parent);
+                self.leaf(k, 0, self.at, e);
+                self.at = e;
+                self.last = e;
                 continue;
             }
             self.gap_token(&mut gap, lexed, end);
@@ -970,10 +1008,9 @@ impl<'a> P<'a> {
                 None => {
                     let Some((lexed, end)) = self.line_token() else { return self.refuse() };
                     let c = self.byte(self.at);
-                    if c == b'&' {
-                        // An entity or a numeric reference: not read.
-                        return self.refuse();
-                    }
+                    // A character reference is a node of the info string, read as a word is.
+                    let reference = if c == b'&' { self.reference_at(self.at) } else { None };
+                    let (lexed, end) = if let Some((_, e)) = reference { (Lexed::Word, e) } else { (lexed, end) };
                     if first && lexed == Lexed::Space {
                         // White space before the info string: outside it.
                         self.at = end;
@@ -1014,6 +1051,12 @@ impl<'a> P<'a> {
                         self.leaf(K::BackslashEscape, 0, self.at, self.at + 2);
                         self.at += 2;
                         self.last = self.at;
+                        continue;
+                    }
+                    if let Some((k, e)) = reference {
+                        self.leaf(k, 0, self.at, e);
+                        self.at = e;
+                        self.last = e;
                         continue;
                     }
                     let parent = if language { K::Language } else { K::InfoString };

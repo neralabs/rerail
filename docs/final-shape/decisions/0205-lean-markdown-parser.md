@@ -61,7 +61,7 @@ refused, and tree-sitter reads it with its own recovery.
   look at the next line. A scan that finds nothing leaves the scanner as it was.
 - `parse`: the document and its sections (by heading level), paragraphs, setext and ATX headings,
   lists and items (task markers), block quotes, fenced code (info strings: a language, the brace
-  form), indented code, HTML blocks, link reference definitions on one line, pipe tables, metadata.
+  form), indented code, HTML blocks, link reference definitions, pipe tables, metadata.
 - `gen_kinds.py`: writes `kinds.rs` from the block grammar and `implied.tsv`.
 
 ### Where tree-sitter's choices are kept
@@ -72,7 +72,20 @@ These were found by the oracle, and the parser keeps each as tree-sitter reads i
   has no extras): a paragraph holds its line ending, a section runs to the next heading of its level
   or above.
 - **A link reference definition wins over a paragraph** where it holds (its dynamic precedence in
-  tree-sitter's GLR parse): a paragraph starting with `[` is read ahead as a definition first.
+  tree-sitter's GLR parse). A paragraph starting with `[` is read as a definition first, from a
+  saved state (the writer's length, the open nodes, the scanner's state between tokens); where the
+  definition does not hold, the parse goes back to that state and reads a paragraph. This is the
+  one place the parser goes back, and it goes back at most once a paragraph.
+  - Its parts may each follow a soft line break: the destination on the line after the label, the
+    title on the line after the destination; the label and the title may span lines. A container's
+    continuation (`> `) on those lines is written in the definition.
+  - A title on a line of its own that does not hold (`"t" x`) leaves the definition ending at the
+    line before, and the title's line is a paragraph, as tree-sitter reads it.
+  - `[a]:` with nothing after it, or with a blank line or a block after it, is a paragraph.
+- **Character references** in a definition and an info string are nodes:
+  `entity_reference` for `&name;` with a name the grammar lists (2,231, generated into
+  `kinds::ENTITIES`), `numeric_character_reference` for `&#…;` and `&#x…;`. Any other `&` is a
+  token.
 - **Tokens stored by the gap, not by the kinds.** The automata drop a gap's implied tokens (a
   label's `[` and `]`, a definition's `:`) only where every token of the gap is implied: `[a]` stores
   no bracket, `[a-b]` stores all three tokens. A title's opening quote is always stored, and so is
@@ -89,8 +102,6 @@ A file is refused where the lean parser does not read the construct exactly:
   - an HTML block that a blank line ends inside a list item or a block quote;
   - a label that starts with an escape (`[\<b>]`) and is not a definition;
   - a list marker that ends the text.
-- a link reference definition that goes on past its line, or holds a `&` (an entity, which the
-  grammar reads in its own way);
 - an info string that starts with `,`;
 - bytes that are not UTF-8, a NUL.
 
@@ -112,12 +123,13 @@ tree-sitter's, line by line. Its sets:
 
 | set | clean texts: same / differ / refused | texts with errors: as tree-sitter / differ / refused |
 |---|---|---|
-| corpus (800) | 787 / 0 / 11 | 0 / 0 / 2 |
-| cut and edited (1,230) | 1,194 / 0 / 16 | 0 / 0 / 20 |
-| second sample (400) | 389 / 0 / 11 | 0 / 0 / 0 |
+| corpus (800) | 798 / 0 / 0 | 0 / 0 / 2 |
+| cut and edited (1,230) | 1,210 / 0 / 0 | 0 / 0 / 20 |
+| second sample (400) | 400 / 0 / 0 | 0 / 0 / 0 |
 
-No tape differs. The refused clean texts are multi-line link reference definitions (the Rails
-guides' `` [`name`]:`` then the URL on the next line) and definitions holding `&`.
+No tape differs, and every clean text is read. The first build refused 38 clean texts: link
+reference definitions over several lines (the Rails guides' `` [`name`]:`` with the URL on the next
+line), and definitions holding `&` (query strings in URLs). Both are read now (above).
 
 **Engine tests:**
 
@@ -141,7 +153,6 @@ The lean tape costs about a twenty-second of tree-sitter's, in cycles.
 ## Open
 
 - **The refusals listed above.** Each is a file tree-sitter reads instead; none is a wrong tape.
-  Multi-line link reference definitions are the most common.
 - **Markdown's inline content** (tree-sitter-md's inline grammar, as guest documents of the
   `inline` nodes): open, as in 0199.
 - **The scanner's remaining byte loops** (a line's start, the table row count) run over a few bytes a
