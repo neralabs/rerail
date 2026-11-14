@@ -27,6 +27,12 @@ const C_DS: u8 = 4;
 const C_S: u8 = 5;
 const C_PAT: u8 = 6;
 const C_D: u8 = 7;
+const C_TP: u8 = 8;
+const C_T: u8 = 9;
+const C_PT: u8 = 10;
+
+mod ts;
+use ts::{is_primary_type, is_type_only};
 
 /// The context a node stands in: which supertypes its kind is in there.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -44,6 +50,10 @@ enum Ctx {
     Decl,
     /// A `pattern`.
     Pattern,
+    /// A `type`: a primary type is in both supertypes.
+    Type,
+    /// A `primary_type` alone (an array type's element, a lookup's object, `keyof`'s operand).
+    PrimaryType,
     /// None: a kind named directly by its parent's rule.
     Bare,
 }
@@ -87,6 +97,7 @@ fn is_primary(k: K) -> bool {
             | Class
             | MetaProperty
             | CallExpression
+            | NonNullExpression
     )
 }
 
@@ -105,17 +116,39 @@ fn is_expression_only(k: K) -> bool {
             | UpdateExpression
             | NewExpression
             | YieldExpression
+            | AsExpression
+            | SatisfiesExpression
+            | InstantiationExpression
+            | TypeAssertion
+            | InternalModule
     )
 }
 
 fn is_declaration(k: K) -> bool {
     use K::*;
-    matches!(k, FunctionDeclaration | GeneratorFunctionDeclaration | ClassDeclaration | LexicalDeclaration | VariableDeclaration | UsingDeclaration)
+    matches!(
+        k,
+        FunctionDeclaration
+            | GeneratorFunctionDeclaration
+            | ClassDeclaration
+            | LexicalDeclaration
+            | VariableDeclaration
+            | UsingDeclaration
+            | FunctionSignature
+            | AbstractClassDeclaration
+            | Module
+            | InternalModule
+            | TypeAliasDeclaration
+            | EnumDeclaration
+            | InterfaceDeclaration
+            | ImportAlias
+            | AmbientDeclaration
+    )
 }
 
 fn is_pattern(k: K) -> bool {
     use K::*;
-    matches!(k, MemberExpression | SubscriptExpression | Identifier | Undefined | ObjectPattern | ArrayPattern | RestPattern | ParenthesizedExpression)
+    matches!(k, MemberExpression | SubscriptExpression | Identifier | Undefined | ObjectPattern | ArrayPattern | RestPattern | ParenthesizedExpression | NonNullExpression)
 }
 
 fn class(k: K, ctx: Ctx) -> u8 {
@@ -129,6 +162,9 @@ fn class(k: K, ctx: Ctx) -> u8 {
         Ctx::Stmt => C_S,
         Ctx::Decl if is_declaration(k) => C_D,
         Ctx::Pattern if is_pattern(k) => C_PAT,
+        Ctx::Type if is_primary_type(k) => C_TP,
+        Ctx::Type if is_type_only(k) => C_T,
+        Ctx::PrimaryType if is_primary_type(k) => C_PT,
         _ => C_NONE,
     }
 }
@@ -144,6 +180,8 @@ const V_MINUS: V = 32;
 const V_ARROW_BODY_END: V = 64;
 const V_NO_LT: V = 128;
 const V_MEMBER_NAME: V = 256;
+/// TypeScript's `_function_signature_automatic_semicolon` (after an overload's signature).
+const V_FN_SIG: V = 512;
 /// After an expression, where it may go on.
 const V_EXPR: V = V_LOGICAL_OR | V_LBRACKET | V_LPAREN | V_STAR | V_PLUS | V_MINUS;
 
@@ -189,13 +227,16 @@ struct P<'a> {
     pieces: Vec<(u32, u32, bool)>,
     /// The furthest refusal (a speculation's included): where a refused file is reported.
     far: u32,
+    /// The tokens the dialect's tapes leave out (`kinds::DROPPED`).
+    dropped: &'static [u32],
+    /// TypeScript's grammar (`.ts` and `.tsx`).
+    ts: bool,
+    /// In a class's `extends` (TypeScript): a `<` after the value is its type arguments.
+    in_extends: bool,
 }
 
 /// `src` parsed in `dialect`.
 pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
-    if dialect != Dialect::JavaScript {
-        return Err(Refusal::Parse(0));
-    }
     let lx = Lexer::new(src);
     let mut widths = Widths::guess(src.len());
     loop {
@@ -215,6 +256,9 @@ pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
             asi: false,
             pieces: Vec::new(),
             far: 0,
+            dropped: crate::kinds::DROPPED[dialect as usize],
+            ts: dialect != Dialect::JavaScript,
+            in_extends: false,
         };
         if let Err(r) = p.program() {
             return Err(match r {
@@ -314,6 +358,12 @@ impl<'a> P<'a> {
         Err(Refusal::Parse(at))
     }
 
+    /// A refusal at byte `at` (a piece read in another mode).
+    fn refuse_at<X>(&mut self, at: usize) -> R<X> {
+        self.far = self.far.max(at as u32);
+        Err(Refusal::Parse(at as u32))
+    }
+
     /// The buffer cut at token `i`, and lexing resumed at `pos`: a piece read in another mode
     /// ends there. Extras from `pos` on are lexed again.
     fn relex_at(&mut self, pos: usize) {
@@ -399,6 +449,39 @@ impl<'a> P<'a> {
 
     fn leaf_in(&mut self, kind: K, s: Slot) -> R<N> {
         self.leaf(kind, s.field, class(kind, s.ctx))
+    }
+
+    /// Whether the dialect's tapes store token `tok` under `parent` in `field`: a token other than
+    /// a delimiter is stored wherever its kind does not imply it (the engine's automata,
+    /// `kinds::DROPPED`); a delimiter the table names is implied only in some gaps, which its
+    /// caller tells apart.
+    #[inline]
+    fn stores(&self, parent: K, tok: K, field: u8) -> bool {
+        self.dropped.binary_search(&(parent as u32 | (tok as u32) << 9 | u32::from(field) << 18)).is_err()
+    }
+
+    /// The next token, `tok`, under `parent`: a leaf where the tape stores it.
+    #[inline]
+    fn tk(&mut self, parent: K, tok: K, field: u8) -> R<()> {
+        if self.stores(parent, tok, field) {
+            self.leaf(tok, field, C_NONE)?;
+        } else {
+            self.bump()?;
+        }
+        Ok(())
+    }
+
+    /// `?.` as an `optional_chain`: a leaf in JavaScript, a node holding its `?.` token in
+    /// TypeScript (whose grammar reads `?.` as a token elsewhere too).
+    fn optional_chain(&mut self) -> R<()> {
+        if self.dialect == Dialect::JavaScript {
+            self.leaf(K::OptionalChain, f::OPTIONAL_CHAIN, C_NONE)?;
+            return Ok(());
+        }
+        let n = self.open(K::OptionalChain, f::OPTIONAL_CHAIN, C_NONE);
+        self.leaf(K::TQDot, f::NONE, C_NONE)?;
+        self.close(n);
+        Ok(())
     }
 
     /// A leaf over `start..end` (a piece read in another mode).
@@ -540,8 +623,149 @@ impl<'a> P<'a> {
         }
     }
 
-    /// `scan_automatic_semicolon` from `p`.
-    fn scan_asi(&self, mut p: usize, v: V, scanned: &mut bool) -> bool {
+    /// `scan_automatic_semicolon` from `p`: tree-sitter-javascript's, or -typescript's.
+    fn scan_asi(&self, p: usize, v: V, scanned: &mut bool) -> bool {
+        if self.dialect == Dialect::JavaScript { self.scan_asi_js(p, v, scanned) } else { self.scan_asi_ts(p, v) }
+    }
+
+    /// tree-sitter-typescript's `scan_automatic_semicolon` (`common/scanner.h`, patched) from `p`.
+    fn scan_asi_ts(&self, mut p: usize, v: V) -> bool {
+        let or = v & V_LOGICAL_OR != 0;
+        loop {
+            if p >= self.src.len() {
+                return true;
+            }
+            let c = self.at(p);
+            if c == b'}' {
+                // `({a}: {a: number}) => …`: no semicolon before a type's `:`.
+                p += 1;
+                loop {
+                    let (c, n) = self.ch(p);
+                    if n == 0 || !Self::is_space(c) {
+                        break;
+                    }
+                    p += n;
+                }
+                if self.at(p) == b':' {
+                    return or;
+                }
+                return true;
+            }
+            if c == b'/' {
+                // A block comment holding a line terminator reads as one; any other comment, no.
+                if self.at(p + 1) != b'*' {
+                    return false;
+                }
+                let mut q = p + 2;
+                let mut saw = false;
+                loop {
+                    if q >= self.src.len() {
+                        return false;
+                    }
+                    if self.at(q) == b'*' && self.at(q + 1) == b'/' {
+                        q += 2;
+                        break;
+                    }
+                    let (c, n) = self.ch(q);
+                    saw |= Self::is_lt(c);
+                    q += n.max(1);
+                }
+                if !saw {
+                    return false;
+                }
+                p = q;
+                break;
+            }
+            let (c, n) = self.ch(p);
+            if !Self::is_space(c) {
+                return false;
+            }
+            p += n;
+            if Self::is_lt(c) {
+                break;
+            }
+        }
+        let restricted = v & V_NO_LT != 0;
+        // `scan_whitespace_and_comments`.
+        loop {
+            loop {
+                let (c, n) = self.ch(p);
+                if n == 0 || !Self::is_space(c) {
+                    break;
+                }
+                p += n;
+            }
+            if self.at(p) != b'/' {
+                break;
+            }
+            match self.at(p + 1) {
+                b'/' => {
+                    p += 2;
+                    loop {
+                        let (c, n) = self.ch(p);
+                        if n == 0 || Self::is_lt(c) {
+                            break;
+                        }
+                        p += n;
+                    }
+                }
+                b'*' => {
+                    p += 2;
+                    while p < self.src.len() {
+                        if self.at(p) == b'*' && self.at(p + 1) == b'/' {
+                            p += 2;
+                            break;
+                        }
+                        p += self.ch(p).1.max(1);
+                    }
+                }
+                _ => return restricted,
+            }
+        }
+        let c = self.at(p);
+        if restricted && matches!(c, b'`' | b'<' | b'[' | b'(' | b'*' | b'+' | b'-') {
+            return true;
+        }
+        if v & V_ARROW_BODY_END != 0 {
+            return c != b',' && c != b':' && c != b';';
+        }
+        if v & V_MEMBER_NAME != 0 && (is_identifier_char(c) || matches!(c, b'\\' | b'#' | b'[' | b'"' | b'\'') || c > 0x7f) {
+            return false;
+        }
+        match c {
+            b'`' | b',' | b'.' | b';' | b'%' | b'>' | b'=' | b'?' | b'^' | b'|' | b'&' | b'/' | b':' => false,
+            b'<' => !or,
+            b'{' if v & V_FN_SIG != 0 => false,
+            b'(' | b'[' | b'*' if or => false,
+            b'+' => self.at(p + 1) == b'+' || !or,
+            b'-' => self.at(p + 1) == b'-' || !or,
+            b'!' => self.at(p + 1) != b'=',
+            b'i' => {
+                if self.at(p + 1) != b'n' {
+                    return true;
+                }
+                if !is_identifier_char(self.at(p + 2)) {
+                    // `in` then `:` or `?`: a member named `in`.
+                    let mut q = p + 2;
+                    while matches!(self.at(q), b' ' | b'\t') {
+                        q += 1;
+                    }
+                    return !or && matches!(self.at(q), b':' | b'?');
+                }
+                if self.src.get(p + 2..p + 10) != Some(b"stanceof") {
+                    return true;
+                }
+                if !is_identifier_char(self.at(p + 10)) {
+                    return !or;
+                }
+                true
+            }
+            _ => true,
+        }
+    }
+
+    /// tree-sitter-javascript's `scan_automatic_semicolon` from `p`.
+    fn scan_asi_js(&self, mut p: usize, v: V, scanned: &mut bool) -> bool {
         let comment_condition = v & V_LOGICAL_OR == 0;
         loop {
             if p >= self.src.len() {
@@ -750,6 +974,11 @@ impl<'a> P<'a> {
             T::Name => {}
             _ => return self.expression_statement(s),
         }
+        if self.ts {
+            if let Some(r) = self.ts_statement(s, t) {
+                return r;
+            }
+        }
         match t.word {
             w::VAR => self.variable_declaration(s),
             w::CONST => self.lexical_declaration(s, K::TConst),
@@ -789,7 +1018,7 @@ impl<'a> P<'a> {
             w::SWITCH => self.switch_statement(s),
             w::RETURN => {
                 let n = self.open_in(K::ReturnStatement, s);
-                self.leaf(K::TReturn, f::NONE, C_NONE)?;
+                self.tk(K::ReturnStatement, K::TReturn, f::NONE)?;
                 self.after = V_NO_LT;
                 if self.peek() != T::Semi && !self.asi(V_NO_LT) {
                     self.expressions(EXPR)?;
@@ -809,7 +1038,7 @@ impl<'a> P<'a> {
             w::BREAK | w::CONTINUE => {
                 let (kind, tk) = if t.word == w::BREAK { (K::BreakStatement, K::TBreak) } else { (K::ContinueStatement, K::TContinue) };
                 let n = self.open_in(kind, s);
-                self.leaf(tk, f::NONE, C_NONE)?;
+                self.tk(kind, tk, f::NONE)?;
                 self.after = 0;
                 if self.peek() == T::Name && !self.asi(0) {
                     self.leaf(K::StatementIdentifier, f::LABEL, C_NONE)?;
@@ -909,7 +1138,7 @@ impl<'a> P<'a> {
 
     fn lexical_declaration(&mut self, s: Slot, kind: K) -> R<()> {
         let n = self.open_in(K::LexicalDeclaration, s);
-        self.leaf(kind, f::KIND, C_NONE)?;
+        self.tk(K::LexicalDeclaration, kind, f::KIND)?;
         self.declarators()?;
         self.semicolon()?;
         self.close(n);
@@ -930,6 +1159,15 @@ impl<'a> P<'a> {
         let n = self.open(K::VariableDeclarator, f::NONE, C_NONE);
         self.binding(slot(f::NAME, Ctx::Bare))?;
         self.after = 0;
+        if self.ts {
+            if self.peek() == T::Bang {
+                self.tk(K::VariableDeclarator, K::TBang, f::NONE)?;
+            }
+            if self.peek() == T::Colon {
+                self.type_annotation(f::TYPE)?;
+                self.after = 0;
+            }
+        }
         if self.peek() == T::Eq {
             self.bump()?;
             self.assignment(slot(f::VALUE, Ctx::Expr))?;
@@ -944,7 +1182,7 @@ impl<'a> P<'a> {
             T::LBrace => self.object_pattern(s),
             T::LBracket => self.array_pattern(s),
             T::Name => {
-                let kind = if self.is_word(w::UNDEFINED) { K::Undefined } else { K::Identifier };
+                let kind = if !self.ts && self.is_word(w::UNDEFINED) { K::Undefined } else { K::Identifier };
                 self.leaf_in(kind, s)?;
                 Ok(())
             }
@@ -980,6 +1218,9 @@ impl<'a> P<'a> {
             if self.peek() == T::LParen {
                 self.bump()?;
                 self.binding(slot(f::PARAMETER, Ctx::Bare))?;
+                if self.ts && self.peek() == T::Colon {
+                    self.type_annotation(f::TYPE)?;
+                }
                 self.expect(T::RParen)?;
             }
             if self.peek() != T::LBrace {
@@ -1049,9 +1290,9 @@ impl<'a> P<'a> {
         if is_await || self.for_in_head()? {
             self.restore(m);
             let n = self.open_in(K::ForInStatement, s);
-            self.leaf(K::TFor, f::NONE, C_NONE)?;
+            self.tk(K::ForInStatement, K::TFor, f::NONE)?;
             if is_await {
-                self.leaf(K::TAwait, f::NONE, C_NONE)?;
+                self.tk(K::ForInStatement, K::TAwait, f::NONE)?;
             }
             // The `(` is stored after `await`, or before a declaration's kind.
             let declares = self.is_word_at(1, w::VAR) || self.is_word_at(1, w::CONST) || (self.is_word_at(1, w::LET) && {
@@ -1073,16 +1314,16 @@ impl<'a> P<'a> {
                     w::CONST => K::TConst,
                     _ => K::TLet,
                 };
-                self.leaf(k, f::KIND, C_NONE)?;
+                self.tk(K::ForInStatement, k, f::KIND)?;
                 self.binding(slot(f::LEFT, Ctx::Bare))?;
             } else {
                 self.lhs(slot(f::LEFT, Ctx::Bare))?;
             }
             if self.is_word(w::IN) {
-                self.leaf(K::TIn, f::OPERATOR, C_NONE)?;
+                self.tk(K::ForInStatement, K::TIn, f::OPERATOR)?;
                 self.expressions(slot(f::RIGHT, Ctx::Expr))?;
             } else if self.is_word(w::OF) {
-                self.leaf(K::TOf, f::OPERATOR, C_NONE)?;
+                self.tk(K::ForInStatement, K::TOf, f::OPERATOR)?;
                 self.assignment(slot(f::RIGHT, Ctx::Expr))?;
             } else {
                 return self.refuse();
@@ -1114,7 +1355,7 @@ impl<'a> P<'a> {
         } else if self.is_word(w::CONST) || (self.is_word(w::LET) && self.let_declares()) {
             let d = self.open(K::LexicalDeclaration, f::INITIALIZER, C_NONE);
             let k = if self.is_word(w::CONST) { K::TConst } else { K::TLet };
-            self.leaf(k, f::KIND, C_NONE)?;
+            self.tk(K::LexicalDeclaration, k, f::KIND)?;
             self.declarators()?;
             if self.peek() != T::Semi {
                 return self.refuse();
@@ -1201,20 +1442,31 @@ impl<'a> P<'a> {
         };
         let n = self.open_in(kind, s);
         if is_async {
-            self.leaf(K::TAsync, f::NONE, C_NONE)?;
+            self.tk(kind, K::TAsync, f::NONE)?;
         }
-        self.leaf(K::TFunction, f::NONE, C_NONE)?;
+        self.tk(kind, K::TFunction, f::NONE)?;
         if star {
-            self.leaf(K::TStar, f::NONE, C_NONE)?;
+            self.tk(kind, K::TStar, f::NONE)?;
         }
         if self.peek() == T::Name {
             self.leaf(K::Identifier, f::NAME, C_NONE)?;
         } else if decl {
             return self.refuse();
         }
-        self.formal_parameters()?;
+        self.signature()?;
         if self.peek() != T::LBrace {
-            return self.refuse();
+            if !self.ts || !decl || star {
+                return self.refuse();
+            }
+            // An overload's signature: `function_signature`, its `;` stored.
+            self.rekey_kind(n.at, K::FunctionSignature);
+            if self.peek() == T::Semi {
+                self.leaf(K::TSemi, f::NONE, C_NONE)?;
+            } else if !self.asi_end(V_FN_SIG) {
+                return self.refuse();
+            }
+            self.close(n);
+            return Ok(());
         }
         let saved = self.asi;
         self.statement_block(slot(f::BODY, Ctx::Bare), true)?;
@@ -1224,13 +1476,28 @@ impl<'a> P<'a> {
         Ok(())
     }
 
+    /// A function's parameters, and in TypeScript its type parameters and return type.
+    fn signature(&mut self) -> R<()> {
+        if self.ts { self.call_signature() } else { self.formal_parameters() }
+    }
+
+    /// The node at `at` made a `kind`, its field and slot kept.
+    fn rekey_kind(&mut self, at: usize, kind: K) {
+        let (_, field, class, extra) = unkey(self.w.key(at));
+        self.w.set_key(at, key(kind, field, class, extra));
+    }
+
     fn formal_parameters(&mut self) -> R<()> {
         let n = self.open(K::FormalParameters, f::PARAMETERS, C_NONE);
         self.expect(T::LParen)?;
         let saved = self.asi;
         self.asi = false;
         while self.peek() != T::RParen {
-            self.parameter()?;
+            if self.ts {
+                self.ts_parameter()?;
+            } else {
+                self.parameter()?;
+            }
             if self.peek() == T::Comma {
                 let c = self.tok();
                 self.bump()?;
@@ -1467,12 +1734,16 @@ impl<'a> P<'a> {
         if self.peek() == T::At {
             return self.refuse();
         }
-        let n = self.open_in(K::ClassDeclaration, s);
-        self.bump()?;
-        if self.peek() != T::Name || self.is_word(w::EXTENDS) {
+        let kind = if self.is_word(w::ABSTRACT) { K::AbstractClassDeclaration } else { K::ClassDeclaration };
+        let n = self.open_in(kind, s);
+        if kind == K::AbstractClassDeclaration {
+            self.tk(kind, K::TAbstract, f::NONE)?;
+        }
+        self.tk(kind, K::TClass, f::NONE)?;
+        if self.peek() != T::Name || self.is_word(w::EXTENDS) || self.is_word(w::IMPLEMENTS) && self.ts {
             return self.refuse();
         }
-        self.leaf(K::Identifier, f::NAME, C_NONE)?;
+        self.leaf(if self.ts { K::TypeIdentifier } else { K::Identifier }, f::NAME, C_NONE)?;
         self.class_rest()?;
         self.close(n);
         self.after = V_EXPR;
@@ -1483,7 +1754,12 @@ impl<'a> P<'a> {
     fn class_rest(&mut self) -> R<()> {
         let saved = self.asi;
         self.asi = false;
-        if self.is_word(w::EXTENDS) {
+        if self.ts && self.peek() == T::Lt {
+            self.type_parameters()?;
+        }
+        if self.ts && (self.is_word(w::EXTENDS) || self.is_word(w::IMPLEMENTS)) {
+            self.ts_class_heritage()?;
+        } else if self.is_word(w::EXTENDS) {
             let h = self.open(K::ClassHeritage, f::NONE, C_NONE);
             self.bump()?;
             self.assignment(EXPR)?;
@@ -1501,6 +1777,7 @@ impl<'a> P<'a> {
                     self.leaf(K::TSemi, f::NONE, C_NONE)?;
                 }
                 T::At => return self.refuse(),
+                _ if self.ts => self.ts_class_member()?,
                 _ => self.class_member()?,
             }
         }
@@ -1520,7 +1797,7 @@ impl<'a> P<'a> {
         // `static {`: a static block.
         if self.is_word(w::STATIC) && self.peek_at(1).kind == T::LBrace {
             let n = self.open(K::ClassStaticBlock, f::MEMBER, C_NONE);
-            self.leaf(K::TStatic, f::NONE, C_NONE)?;
+            self.tk(K::ClassStaticBlock, K::TStatic, f::NONE)?;
             self.statement_block(slot(f::BODY, Ctx::Bare), true)?;
             self.close(n);
             return Ok(());
@@ -1530,22 +1807,22 @@ impl<'a> P<'a> {
         let mut is_static = false;
         let mut modifiers = 0;
         if self.is_word(w::STATIC) && self.member_modifier() {
-            self.leaf(K::TStatic, f::NONE, C_NONE)?;
+            self.tk(K::MethodDefinition, K::TStatic, f::NONE)?;
             is_static = true;
             modifiers += 1;
         }
         let _ = is_static;
         if self.is_word(w::ASYNC) && self.member_modifier() && !self.peek_at(1).nl {
-            self.leaf(K::TAsync, f::NONE, C_NONE)?;
+            self.tk(K::MethodDefinition, K::TAsync, f::NONE)?;
             modifiers += 1;
         }
         let mut star = false;
         if (self.is_word(w::GET) || self.is_word(w::SET)) && self.member_modifier() {
             let k = if self.is_word(w::GET) { K::TGet } else { K::TSet };
-            self.leaf(k, f::NONE, C_NONE)?;
+            self.tk(K::MethodDefinition, k, f::NONE)?;
             modifiers += 1;
         } else if self.peek() == T::Star {
-            self.leaf(K::TStar, f::NONE, C_NONE)?;
+            self.tk(K::MethodDefinition, K::TStar, f::NONE)?;
             star = true;
         }
         let _ = (modifiers, star);
@@ -1672,8 +1949,17 @@ impl<'a> P<'a> {
     // ---- Modules.
 
     fn import_statement(&mut self, s: Slot) -> R<()> {
+        if self.ts && self.peek_at(1).kind == T::Name && self.peek_at(2).kind == T::Eq && !self.is_word_at(1, w::TYPE) {
+            return self.import_alias(s);
+        }
         let n = self.open_in(K::ImportStatement, s);
-        self.bump()?;
+        self.tk(K::ImportStatement, K::TImport, f::NONE)?;
+        if self.ts && self.is_word(w::TYPE) {
+            let n1 = self.peek_at(1);
+            if matches!(n1.kind, T::LBrace | T::Star) || n1.kind == T::Name && n1.word != w::FROM {
+                self.tk(K::ImportStatement, K::TType, f::NONE)?;
+            }
+        }
         if self.peek() == T::Str {
             self.string(slot(f::SOURCE, Ctx::Bare))?;
         } else {
@@ -1698,14 +1984,67 @@ impl<'a> P<'a> {
             if !self.is_word(w::FROM) {
                 return self.refuse();
             }
-            self.bump()?;
+            self.tk(K::ImportStatement, K::TFrom, f::NONE)?;
             self.string(slot(f::SOURCE, Ctx::Bare))?;
         }
-        if self.is_word(w::WITH) || self.is_word(w::ASSERT) {
+        if self.is_word(w::WITH) && self.peek_at(1).kind == T::LBrace {
+            self.import_attribute()?;
+        } else if self.is_word(w::WITH) || self.is_word(w::ASSERT) {
             return self.refuse();
         }
         self.after = 0;
         self.semicolon()?;
+        self.close(n);
+        Ok(())
+    }
+
+    /// `import A = B.C;` (`import_alias`) and `import A = require("b");` (an `import_statement`).
+    fn import_alias(&mut self, s: Slot) -> R<()> {
+        if self.is_word_at(3, w::REQUIRE) && self.peek_at(4).kind == T::LParen {
+            let n = self.open_in(K::ImportStatement, s);
+            self.tk(K::ImportStatement, K::TImport, f::NONE)?;
+            let c = self.open(K::ImportRequireClause, f::NONE, C_NONE);
+            self.leaf(K::Identifier, f::NONE, C_NONE)?;
+            self.bump()?;
+            self.bump()?;
+            self.bump()?;
+            if self.peek() != T::Str {
+                return self.refuse();
+            }
+            self.string(slot(f::SOURCE, Ctx::Bare))?;
+            self.expect(T::RParen)?;
+            self.close(c);
+            self.after = 0;
+            self.semicolon()?;
+            self.close(n);
+            return Ok(());
+        }
+        let n = self.open_in(K::ImportAlias, s);
+        self.tk(K::ImportAlias, K::TImport, f::NONE)?;
+        self.leaf(K::Identifier, f::NONE, C_NONE)?;
+        self.tk(K::ImportAlias, K::TEq, f::NONE)?;
+        let mut k = 0;
+        while self.peek_at(2 * k + 1).kind == T::Dot && self.peek_at(2 * k + 2).kind == T::Name {
+            k += 1;
+        }
+        if self.peek() != T::Name {
+            return self.refuse();
+        }
+        self.nested_identifier(k, f::NONE, K::NestedIdentifier)?;
+        self.after = 0;
+        self.semicolon()?;
+        self.close(n);
+        Ok(())
+    }
+
+    /// `with { type: "json" }`.
+    fn import_attribute(&mut self) -> R<()> {
+        let n = self.open(K::ImportAttribute, f::NONE, C_NONE);
+        self.tk(K::ImportAttribute, K::TWith, f::NONE)?;
+        let saved = self.asi;
+        self.asi = false;
+        self.object(BARE)?;
+        self.asi = saved;
         self.close(n);
         Ok(())
     }
@@ -1730,8 +2069,11 @@ impl<'a> P<'a> {
                 T::RBrace => break,
                 T::Name | T::Str => {
                     let sp = self.open(K::ImportSpecifier, f::NONE, C_NONE);
+                    if self.ts && self.is_word(w::TYPE) && matches!(self.peek_at(1).kind, T::Name | T::Str) && !self.is_word_at(1, w::AS) {
+                        self.tk(K::ImportSpecifier, K::TType, f::NONE)?;
+                    }
                     if self.is_word_at(1, w::AS) {
-                        self.module_export_name(f::NAME)?;
+                        self.module_export_name(K::ImportSpecifier, f::NAME)?;
                         self.bump()?;
                         self.leaf(K::Identifier, f::ALIAS, C_NONE)?;
                     } else if self.peek() == T::Name {
@@ -1762,11 +2104,11 @@ impl<'a> P<'a> {
     }
 
     /// `_module_export_name`: an identifier, a string, or `default`.
-    fn module_export_name(&mut self, field: u8) -> R<()> {
+    fn module_export_name(&mut self, parent: K, field: u8) -> R<()> {
         match self.peek() {
             T::Str => self.string(slot(field, Ctx::Bare)),
-            T::Name if self.is_word(w::DEFAULT) => {
-                self.leaf(K::TDefault, field, C_NONE)?;
+            T::Name if self.is_word(w::DEFAULT) && !self.ts => {
+                self.tk(parent, K::TDefault, field)?;
                 Ok(())
             }
             T::Name => {
@@ -1779,17 +2121,40 @@ impl<'a> P<'a> {
 
     fn export_statement(&mut self, s: Slot) -> R<()> {
         let n = self.open_in(K::ExportStatement, s);
-        self.leaf(K::TExport, f::NONE, C_NONE)?;
+        self.tk(K::ExportStatement, K::TExport, f::NONE)?;
+        if self.ts {
+            if self.is_word(w::TYPE) && matches!(self.peek_at(1).kind, T::LBrace | T::Star) {
+                self.tk(K::ExportStatement, K::TType, f::NONE)?;
+            } else if self.peek() == T::Eq {
+                self.tk(K::ExportStatement, K::TEq, f::NONE)?;
+                self.expressions(EXPR)?;
+                self.semicolon()?;
+                self.close(n);
+                return Ok(());
+            } else if self.is_word(w::AS) && self.is_word_at(1, w::NAMESPACE) {
+                self.tk(K::ExportStatement, K::TAs, f::NONE)?;
+                self.tk(K::ExportStatement, K::TNamespace, f::NONE)?;
+                self.leaf(K::Identifier, f::NONE, C_NONE)?;
+                self.after = 0;
+                self.semicolon()?;
+                self.close(n);
+                return Ok(());
+            } else if self.is_word(w::IMPORT) {
+                self.import_alias(slot(f::DECLARATION, Ctx::Decl))?;
+                self.close(n);
+                return Ok(());
+            }
+        }
         match self.peek() {
             T::Star => {
                 if self.is_word_at(1, w::AS) {
                     let ns = self.open(K::NamespaceExport, f::NONE, C_NONE);
-                    self.bump()?;
-                    self.bump()?;
-                    self.module_export_name(f::NONE)?;
+                    self.tk(K::NamespaceExport, K::TStar, f::NONE)?;
+                    self.tk(K::NamespaceExport, K::TAs, f::NONE)?;
+                    self.module_export_name(K::NamespaceExport, f::NONE)?;
                     self.close(ns);
                 } else {
-                    self.bump()?;
+                    self.tk(K::ExportStatement, K::TStar, f::NONE)?;
                 }
                 self.from_clause()?;
                 self.after = 0;
@@ -1804,8 +2169,13 @@ impl<'a> P<'a> {
                 self.semicolon()?;
             }
             T::Name if self.is_word(w::DEFAULT) => {
-                self.leaf(K::TDefault, f::NONE, C_NONE)?;
+                self.tk(K::ExportStatement, K::TDefault, f::NONE)?;
                 let t = self.tok();
+                if self.ts && t.kind == T::Name && (t.word == w::INTERFACE && self.peek_at(1).kind == T::Name || t.word == w::ABSTRACT && self.is_word_at(1, w::CLASS)) {
+                    self.declaration(slot(f::DECLARATION, Ctx::Decl))?;
+                    self.close(n);
+                    return Ok(());
+                }
                 let declares = t.kind == T::Name
                     && (t.word == w::FUNCTION && true || t.word == w::CLASS || (t.word == w::ASYNC && self.is_word_at(1, w::FUNCTION) && !self.peek_at(1).nl));
                 if declares {
@@ -1821,9 +2191,10 @@ impl<'a> P<'a> {
                         }
                     };
                     if !named {
-                        return self.refuse();
-                    }
-                    if t.word == w::CLASS {
+                        // A function or class without a name: an expression, the `value`.
+                        self.assignment(slot(f::VALUE, Ctx::Expr))?;
+                        self.semicolon()?;
+                    } else if t.word == w::CLASS {
                         self.class_declaration(slot(f::DECLARATION, Ctx::Decl))?;
                     } else {
                         self.function(slot(f::DECLARATION, Ctx::Decl), true, t.word == w::ASYNC)?;
@@ -1833,19 +2204,7 @@ impl<'a> P<'a> {
                     self.semicolon()?;
                 }
             }
-            T::Name => {
-                let d = slot(f::DECLARATION, Ctx::Decl);
-                let t = self.tok();
-                match t.word {
-                    w::VAR => self.variable_declaration(d)?,
-                    w::CONST => self.lexical_declaration(d, K::TConst)?,
-                    w::LET => self.lexical_declaration(d, K::TLet)?,
-                    w::FUNCTION => self.function(d, true, false)?,
-                    w::ASYNC if self.is_word_at(1, w::FUNCTION) => self.function(d, true, true)?,
-                    w::CLASS => self.class_declaration(d)?,
-                    _ => return self.refuse(),
-                }
-            }
+            T::Name => self.declaration(slot(f::DECLARATION, Ctx::Decl))?,
             _ => return self.refuse(),
         }
         self.close(n);
@@ -1856,9 +2215,11 @@ impl<'a> P<'a> {
         if !self.is_word(w::FROM) {
             return self.refuse();
         }
-        self.bump()?;
+        self.tk(K::ExportStatement, K::TFrom, f::NONE)?;
         self.string(slot(f::SOURCE, Ctx::Bare))?;
-        if self.is_word(w::WITH) || self.is_word(w::ASSERT) {
+        if self.is_word(w::WITH) && self.peek_at(1).kind == T::LBrace {
+            self.import_attribute()?;
+        } else if self.is_word(w::WITH) || self.is_word(w::ASSERT) {
             return self.refuse();
         }
         Ok(())
@@ -1872,10 +2233,13 @@ impl<'a> P<'a> {
                 T::RBrace => break,
                 T::Name | T::Str => {
                     let sp = self.open(K::ExportSpecifier, f::NONE, C_NONE);
-                    self.module_export_name(f::NAME)?;
+                    if self.ts && self.is_word(w::TYPE) && matches!(self.peek_at(1).kind, T::Name | T::Str) && !self.is_word_at(1, w::AS) {
+                        self.tk(K::ExportSpecifier, K::TType, f::NONE)?;
+                    }
+                    self.module_export_name(K::ExportSpecifier, f::NAME)?;
                     if self.is_word(w::AS) {
-                        self.leaf(K::TAs, f::NONE, C_NONE)?;
-                        self.module_export_name(f::ALIAS)?;
+                        self.tk(K::ExportSpecifier, K::TAs, f::NONE)?;
+                        self.module_export_name(K::ExportSpecifier, f::ALIAS)?;
                     }
                     self.close(sp);
                 }
@@ -1940,7 +2304,7 @@ impl<'a> P<'a> {
                 if n1.kind == T::Name && !self.is_word_at(1, w::FUNCTION) && self.peek_at(2).kind == T::Arrow {
                     return self.arrow(s, true);
                 }
-                if n1.kind == T::LParen {
+                if n1.kind == T::LParen || self.ts && n1.kind == T::Lt {
                     let m = self.mark();
                     if let Ok(n) = self.arrow(s, true) {
                         return Ok(n);
@@ -1952,7 +2316,11 @@ impl<'a> P<'a> {
                 return self.yield_expression(s);
             }
         }
-        if t.kind == T::LParen {
+        // `<T>(x) => …`; in TSX, `<T,>` or `<T extends …>` (else `<` opens an element).
+        let generic = self.ts
+            && t.kind == T::Lt
+            && (self.dialect == Dialect::TypeScript || self.peek_at(2).kind == T::Comma || self.is_word_at(2, w::EXTENDS));
+        if t.kind == T::LParen || generic {
             let m = self.mark();
             if let Ok(n) = self.arrow(s, false) {
                 return Ok(n);
@@ -2013,12 +2381,12 @@ impl<'a> P<'a> {
     fn arrow(&mut self, s: Slot, is_async: bool) -> R<N> {
         let n = self.open_in(K::ArrowFunction, s);
         if is_async {
-            self.leaf(K::TAsync, f::NONE, C_NONE)?;
+            self.tk(K::ArrowFunction, K::TAsync, f::NONE)?;
         }
         if self.peek() == T::Name {
             self.leaf(K::Identifier, f::PARAMETER, C_NONE)?;
         } else {
-            self.formal_parameters()?;
+            self.signature()?;
         }
         let a = self.tok();
         if a.kind != T::Arrow || a.nl {
@@ -2044,11 +2412,11 @@ impl<'a> P<'a> {
 
     fn yield_expression(&mut self, s: Slot) -> R<N> {
         let n = self.open_in(K::YieldExpression, s);
-        self.leaf(K::TYield, f::NONE, C_NONE)?;
+        self.tk(K::YieldExpression, K::TYield, f::NONE)?;
         self.after = V_NO_LT;
         let t = self.tok();
         if t.kind == T::Star && !t.nl {
-            self.leaf(K::TStar, f::NONE, C_NONE)?;
+            self.tk(K::YieldExpression, K::TStar, f::NONE)?;
             self.assignment(EXPR)?;
         } else if can_start_expression(t.kind) && !(self.asi && self.asi(V_NO_LT)) && !matches!(t.kind, T::Star) {
             if t.nl && !self.asi {
@@ -2084,22 +2452,65 @@ impl<'a> P<'a> {
 
     /// Binary operators by precedence climbing, at `min` and above.
     fn binary(&mut self, s: Slot, min: u8) -> R<N> {
+        self.binary_as(s, min, true)
+    }
+
+    /// `binary`; with `allow`, `as` and `satisfies` taken where they follow (TypeScript): after a
+    /// left-associative chain, on the chain read (`(a + b) as T`); in a right-associative
+    /// operand, on the operand (`a ** (b as T)`).
+    fn binary_as(&mut self, s: Slot, min: u8, allow: bool) -> R<N> {
         let start = self.here();
         let mut left = self.unary(s, false)?;
         loop {
             let t = self.tok();
+            if self.ts && allow && t.kind == T::Name && matches!(t.word, w::AS | w::SATISFIES) && !self.stops() {
+                left = self.as_expression(start, left, s)?;
+                continue;
+            }
             let Some((prec, op, right_assoc)) = binop(t) else { break };
             if prec < min || self.stops() {
                 break;
             }
             let n = self.wrap(N { at: start, kind: left.kind }, K::BinaryExpression, s, slot(f::LEFT, Ctx::Expr));
             self.leaf(op, f::OPERATOR, C_NONE)?;
-            self.binary(slot(f::RIGHT, Ctx::Expr), if right_assoc { prec } else { prec + 1 })?;
+            self.binary_as(slot(f::RIGHT, Ctx::Expr), if right_assoc { prec } else { prec + 1 }, right_assoc)?;
             self.close(n);
             self.after = V_EXPR;
             left = n;
         }
         Ok(left)
+    }
+
+    /// `left as T`, `left as const`, `left satisfies T`, `left` written at `start`.
+    fn as_expression(&mut self, start: usize, left: N, s: Slot) -> R<N> {
+        let is_as = self.is_word(w::AS);
+        let (kind, tok) = if is_as { (K::AsExpression, K::TAs) } else { (K::SatisfiesExpression, K::TSatisfies) };
+        let n = self.wrap(N { at: start, kind: left.kind }, kind, s, EXPR);
+        self.tk(kind, tok, f::NONE)?;
+        let mut members = 0;
+        if is_as && self.is_word(w::CONST) {
+            self.tk(kind, K::TConst, f::NONE)?;
+        } else if self.peek() == T::Name && self.peek_at(1).kind == T::Dot && {
+            members = self.dotted_names();
+            self.asi && members >= 2 && !matches!(self.peek_at(2 * members + 1).kind, T::Lt | T::LBracket | T::Pipe | T::Amp)
+        } {
+            // `x as A.B.C`: tree-sitter reads `(x as A.B).C`.
+            self.type_reference_k(slot(f::NONE, Ctx::Type), members - 1)?;
+        } else {
+            members = 0;
+            self.ty(slot(f::NONE, Ctx::Type))?;
+        }
+        self.close(n);
+        let mut e = n;
+        if members > 0 {
+            let m = self.wrap(N { at: start, kind: e.kind }, K::MemberExpression, s, slot(f::OBJECT, Ctx::Object));
+            self.tk(K::MemberExpression, K::TDot, f::NONE)?;
+            self.leaf(K::PropertyIdentifier, f::PROPERTY, C_NONE)?;
+            self.close(m);
+            e = m;
+        }
+        self.after = V_EXPR;
+        Ok(e)
     }
 
     /// Unary operators, `await`, prefix `++`/`--`, then a postfix expression. With `no_in`, a
@@ -2127,6 +2538,17 @@ impl<'a> P<'a> {
             self.after = V_EXPR;
             return Ok(n);
         }
+        if t.kind == T::Lt && self.dialect == Dialect::TypeScript {
+            // `<T>x`.
+            self.deeper()?;
+            let n = self.open_in(K::TypeAssertion, s);
+            self.type_arguments(f::NONE)?;
+            self.unary(EXPR, false)?;
+            self.close(n);
+            self.depth -= 1;
+            self.after = V_EXPR;
+            return Ok(n);
+        }
         if matches!(t.kind, T::PlusPlus | T::MinusMinus) {
             self.deeper()?;
             let n = self.open_in(K::UpdateExpression, s);
@@ -2144,7 +2566,11 @@ impl<'a> P<'a> {
                 self.deeper()?;
                 let n = self.open_in(K::AwaitExpression, s);
                 self.bump()?;
-                let arg = self.unary(EXPR, false)?;
+                let arg_start = self.here();
+                let mut arg = self.unary(EXPR, false)?;
+                while self.ts && (self.is_word(w::AS) || self.is_word(w::SATISFIES)) && !self.stops() {
+                    arg = self.as_expression(arg_start, arg, EXPR)?;
+                }
                 // `await (…)` and a postfix: tree-sitter reads a call of a name `await`.
                 if next.kind == T::LParen && arg.kind != K::ParenthesizedExpression {
                     return self.refuse();
@@ -2187,7 +2613,7 @@ impl<'a> P<'a> {
                     if self.peek_at(1).kind == T::LBracket {
                         // `a?.[i]`.
                         let n = self.wrap(N { at: start, kind: e.kind }, K::SubscriptExpression, s, slot(f::OBJECT, Ctx::Object));
-                        self.leaf(K::OptionalChain, f::OPTIONAL_CHAIN, C_NONE)?;
+                        self.optional_chain()?;
                         self.bump()?;
                         let saved = self.asi;
                         self.asi = false;
@@ -2199,7 +2625,11 @@ impl<'a> P<'a> {
                     } else {
                         // `f?.(…)`: the function a `primary_expression` alone.
                         let n = self.wrap(N { at: start, kind: e.kind }, K::CallExpression, s, slot(f::FUNCTION, Ctx::Primary));
-                        self.leaf(K::OptionalChain, f::OPTIONAL_CHAIN, C_NONE)?;
+                        if self.ts {
+                            self.leaf(K::TQDot, f::NONE, C_NONE)?;
+                        } else {
+                            self.optional_chain()?;
+                        }
                         self.arguments()?;
                         self.close(n);
                         e = n;
@@ -2211,9 +2641,9 @@ impl<'a> P<'a> {
                     }
                     let n = self.wrap(N { at: start, kind: e.kind }, K::MemberExpression, s, slot(f::OBJECT, Ctx::Object));
                     if t.kind == T::QDot {
-                        self.leaf(K::OptionalChain, f::OPTIONAL_CHAIN, C_NONE)?;
+                        self.optional_chain()?;
                     } else {
-                        self.bump()?;
+                        self.tk(K::MemberExpression, K::TDot, f::NONE)?;
                     }
                     match self.peek() {
                         T::Name => {
@@ -2249,6 +2679,47 @@ impl<'a> P<'a> {
                     self.arguments()?;
                     self.close(n);
                     e = n;
+                }
+                T::Bang if self.ts && !t.nl => {
+                    let n = self.wrap(N { at: start, kind: e.kind }, K::NonNullExpression, s, slot(f::NONE, Ctx::Primary));
+                    self.tk(K::NonNullExpression, K::TBang, f::NONE)?;
+                    self.close(n);
+                    e = n;
+                }
+                T::Lt if self.ts && !self.in_extends => {
+                    if self.stops() {
+                        break;
+                    }
+                    // `f<T>(…)`, `f<T>`: type arguments if they read as such and a call or an
+                    // instantiation's end follows; else `<` is an operator.
+                    let m = self.mark();
+                    if self.type_arguments(f::TYPE_ARGUMENTS).is_err() {
+                        self.restore(m);
+                        break;
+                    }
+                    let next = self.tok();
+                    match next.kind {
+                        T::LParen if !self.stops() => {
+                            let n = self.wrap(N { at: start, kind: e.kind }, K::CallExpression, s, slot(f::FUNCTION, Ctx::Primary));
+                            self.arguments()?;
+                            self.close(n);
+                            e = n;
+                        }
+                        T::Semi | T::RParen | T::RBracket | T::RBrace | T::Comma | T::Colon | T::Eof => {
+                            let n = self.wrap(N { at: start, kind: e.kind }, K::InstantiationExpression, s, slot(f::NONE, Ctx::Primary));
+                            self.close(n);
+                            e = n;
+                        }
+                        _ if next.nl && self.stops() => {
+                            let n = self.wrap(N { at: start, kind: e.kind }, K::InstantiationExpression, s, slot(f::NONE, Ctx::Primary));
+                            self.close(n);
+                            e = n;
+                        }
+                        _ => {
+                            self.restore(m);
+                            break;
+                        }
+                    }
                 }
                 T::Backtick => {
                     if self.stops() {
@@ -2319,12 +2790,12 @@ impl<'a> P<'a> {
         if self.peek_at(1).kind == T::Dot {
             // `new.target`.
             let n = self.open_in(K::MetaProperty, s);
-            self.leaf(K::TNew, f::NONE, C_NONE)?;
-            self.leaf(K::TDot, f::NONE, C_NONE)?;
+            self.tk(K::MetaProperty, K::TNew, f::NONE)?;
+            self.tk(K::MetaProperty, K::TDot, f::NONE)?;
             if !self.is_word(w::TARGET) {
                 return self.refuse();
             }
-            self.leaf(K::TTarget, f::NONE, C_NONE)?;
+            self.tk(K::MetaProperty, K::TTarget, f::NONE)?;
             self.close(n);
             self.depth -= 1;
             return Ok(n);
@@ -2342,7 +2813,7 @@ impl<'a> P<'a> {
             match t.kind {
                 T::Dot => {
                     let m = self.wrap(N { at: start, kind: e.kind }, K::MemberExpression, slot(f::CONSTRUCTOR, Ctx::Primary), slot(f::OBJECT, Ctx::Object));
-                    self.bump()?;
+                    self.tk(K::MemberExpression, K::TDot, f::NONE)?;
                     match self.peek() {
                         T::Name => {
                             self.leaf(K::PropertyIdentifier, f::PROPERTY, C_NONE)?;
@@ -2369,6 +2840,9 @@ impl<'a> P<'a> {
                 T::QDot | T::Backtick => return self.refuse(),
                 _ => break,
             }
+        }
+        if self.ts && self.peek() == T::Lt {
+            self.type_arguments(f::TYPE_ARGUMENTS)?;
         }
         if self.peek() == T::LParen && !self.stops() {
             self.arguments()?;
@@ -2417,9 +2891,9 @@ impl<'a> P<'a> {
                 }
                 w::CLASS => {
                     let n = self.open_in(K::Class, s);
-                    self.bump()?;
-                    if self.peek() == T::Name && !self.is_word(w::EXTENDS) {
-                        self.leaf(K::Identifier, f::NAME, C_NONE)?;
+                    self.tk(K::Class, K::TClass, f::NONE)?;
+                    if self.peek() == T::Name && !self.is_word(w::EXTENDS) && !(self.ts && self.is_word(w::IMPLEMENTS)) {
+                        self.leaf(if self.ts { K::TypeIdentifier } else { K::Identifier }, f::NAME, C_NONE)?;
                     }
                     self.class_rest()?;
                     self.close(n);
@@ -2429,19 +2903,19 @@ impl<'a> P<'a> {
                     let next = self.peek_at(1).kind;
                     if next == T::Dot {
                         let n = self.open_in(K::MetaProperty, s);
-                        self.leaf(K::TImport, f::NONE, C_NONE)?;
-                        self.leaf(K::TDot, f::NONE, C_NONE)?;
+                        self.tk(K::MetaProperty, K::TImport, f::NONE)?;
+                        self.tk(K::MetaProperty, K::TDot, f::NONE)?;
                         if !self.is_word(w::META) {
                             return self.refuse();
                         }
-                        self.leaf(K::TMeta, f::NONE, C_NONE)?;
+                        self.tk(K::MetaProperty, K::TMeta, f::NONE)?;
                         self.close(n);
                         return Ok(n);
                     }
                     if next == T::LParen {
                         // `import(…)`: the named `import`, holding its token.
                         let n = self.open(K::Import, f::FUNCTION, C_NONE);
-                        self.leaf(K::TImport, f::NONE, C_NONE)?;
+                        self.tk(K::Import, K::TImport, f::NONE)?;
                         self.close(n);
                         let start = n.at;
                         let c = self.wrap(n, K::CallExpression, s, slot(f::FUNCTION, Ctx::Bare));
@@ -2454,6 +2928,9 @@ impl<'a> P<'a> {
                 }
                 // Keywords that start no expression.
                 w::IF | w::FOR | w::WHILE | w::DO | w::RETURN | w::VAR | w::CONST | w::SWITCH | w::CASE | w::DEFAULT | w::TRY | w::CATCH | w::FINALLY | w::THROW | w::BREAK | w::CONTINUE | w::ELSE | w::EXPORT | w::DEBUGGER | w::WITH | w::NEW | w::DELETE | w::TYPEOF | w::VOID | w::IN | w::INSTANCEOF | w::EXTENDS | w::ENUM => self.refuse(),
+                // tree-sitter's lexer reads `using` as its declarations' keyword where one may
+                // start, and a name `using` can fail to parse: refused.
+                w::USING => self.refuse(),
                 _ => self.leaf_in(K::Identifier, s),
             },
             _ => self.refuse(),
@@ -2618,21 +3095,22 @@ impl<'a> P<'a> {
         }
         // A method: `name(`, `get name(`, `async name(`, `*name(`.
         let method = next == T::LParen
+            || self.ts && next == T::Lt
             || t.kind == T::Star
             || (t.kind == T::Name && matches!(t.word, w::GET | w::SET | w::ASYNC) && matches!(next, T::Name | T::Str | T::Number | T::LBracket | T::Private | T::Star));
         if method {
             let n = self.open(K::MethodDefinition, f::NONE, C_NONE);
             if self.is_word(w::ASYNC) && self.peek_at(1).kind != T::LParen {
-                self.leaf(K::TAsync, f::NONE, C_NONE)?;
+                self.tk(K::MethodDefinition, K::TAsync, f::NONE)?;
             }
             if (self.is_word(w::GET) || self.is_word(w::SET)) && self.peek_at(1).kind != T::LParen {
                 let k = if self.is_word(w::GET) { K::TGet } else { K::TSet };
-                self.leaf(k, f::NONE, C_NONE)?;
+                self.tk(K::MethodDefinition, k, f::NONE)?;
             } else if self.peek() == T::Star {
-                self.leaf(K::TStar, f::NONE, C_NONE)?;
+                self.tk(K::MethodDefinition, K::TStar, f::NONE)?;
             }
             self.property_name(f::NAME)?;
-            self.formal_parameters()?;
+            self.signature()?;
             if self.peek() != T::LBrace {
                 return self.refuse();
             }
@@ -2646,7 +3124,7 @@ impl<'a> P<'a> {
             // `[name](…) {}`: a method after all.
             self.w.set_key(n.at, key(K::MethodDefinition, f::NONE, C_NONE, false));
             self.retag_field(n.at + 1, f::NAME);
-            self.formal_parameters()?;
+            self.signature()?;
             if self.peek() != T::LBrace {
                 return self.refuse();
             }
@@ -2679,6 +3157,14 @@ impl<'a> P<'a> {
         let fragment = self.at(pos) == b'>';
         if !fragment {
             pos = self.jsx_element_name(pos, f::NAME)?;
+            // `<C<T> …>`: type arguments, read in normal mode.
+            let (q, _) = self.jsx_skip(pos)?;
+            if self.ts && self.at(q) == b'<' {
+                self.relex_at(q);
+                self.type_arguments(f::TYPE_ARGUMENTS)?;
+                pos = self.last_end as usize;
+                self.relex_at(pos);
+            }
         }
         // Attributes, written in the element: the opening tag is put around them at its `>`.
         loop {
@@ -2698,7 +3184,7 @@ impl<'a> P<'a> {
                 }
                 b'{' => pos = self.jsx_expression(pos, f::ATTRIBUTE)?,
                 _ if !fragment => pos = self.jsx_attribute(pos)?,
-                _ => return Err(Refusal::Parse(pos as u32)),
+                _ => return self.refuse_at(pos),
             }
         }
         self.w.insert(el.at + 1, key(K::JsxOpeningElement, f::OPEN_TAG, C_NONE, false), t.start);
@@ -2724,7 +3210,7 @@ impl<'a> P<'a> {
                         self.leaf_span(K::HtmlCharacterReference, f::NONE, q as u32, end as u32);
                         pos = end;
                     }
-                    None => return Err(Refusal::Parse(q as u32)),
+                    None => return self.refuse_at(q),
                 },
                 b'{' => pos = self.jsx_expression(q, f::NONE)?,
                 b'<' if self.at(q + 1) == b'/' => {
@@ -2734,16 +3220,16 @@ impl<'a> P<'a> {
                     p = r;
                     if self.at(p) != b'>' {
                         if fragment {
-                            return Err(Refusal::Parse(p as u32));
+                            return self.refuse_at(p);
                         }
                         p = self.jsx_element_name(p, f::NAME)?;
                         let (r, _) = self.jsx_skip(p)?;
                         p = r;
                     } else if !fragment {
-                        return Err(Refusal::Parse(p as u32));
+                        return self.refuse_at(p);
                     }
                     if self.at(p) != b'>' {
-                        return Err(Refusal::Parse(p as u32));
+                        return self.refuse_at(p);
                     }
                     self.last_end = p as u32 + 1;
                     self.close(close);
@@ -2759,7 +3245,7 @@ impl<'a> P<'a> {
                     self.asi = saved;
                     pos = self.last_end as usize;
                 }
-                _ => return Err(Refusal::Parse(q as u32)),
+                _ => return self.refuse_at(q),
             }
         }
         self.relex_at(pos);
@@ -2792,7 +3278,7 @@ impl<'a> P<'a> {
         let start = self.w.len();
         let (end, _) = self.lx.jsx_name_end(p)?;
         if end == p {
-            return Err(Refusal::Parse(p as u32));
+            return self.refuse_at(p);
         }
         let (q, _) = self.jsx_skip(end)?;
         if self.at(q) == b':' {
@@ -2811,9 +3297,12 @@ impl<'a> P<'a> {
             let (r, _) = self.jsx_skip(q + 1)?;
             let e2 = self.lx.name_end(r)?;
             if e2 == r {
-                return Err(Refusal::Parse(r as u32));
+                return self.refuse_at(r);
             }
             let m = self.wrap(e, K::MemberExpression, slot(field, Ctx::Bare), slot(f::OBJECT, Ctx::Bare));
+            if self.stores(K::MemberExpression, K::TDot, f::NONE) {
+                self.leaf_span(K::TDot, f::NONE, q as u32, q as u32 + 1);
+            }
             self.leaf_span(K::PropertyIdentifier, f::PROPERTY, r as u32, e2 as u32);
             self.close(m);
             e = m;
@@ -2828,7 +3317,7 @@ impl<'a> P<'a> {
         let (r, _) = self.jsx_skip(colon + 1)?;
         let (e2, _) = self.lx.jsx_name_end(r)?;
         if e2 == r {
-            return Err(Refusal::Parse(r as u32));
+            return self.refuse_at(r);
         }
         self.leaf_span(K::Identifier, f::NONE, r as u32, e2 as u32);
         self.close(n);
@@ -2839,7 +3328,7 @@ impl<'a> P<'a> {
     fn jsx_attribute(&mut self, p: usize) -> R<usize> {
         let (end, _) = self.lx.jsx_name_end(p)?;
         if end == p {
-            return Err(Refusal::Parse(p as u32));
+            return self.refuse_at(p);
         }
         let a = self.open_span(K::JsxAttribute, f::ATTRIBUTE, p as u32);
         let (q, _) = self.jsx_skip(end)?;
@@ -2869,7 +3358,7 @@ impl<'a> P<'a> {
                     pos = close + 1;
                 }
                 b'{' => pos = self.jsx_expression(v, f::NONE)?,
-                _ => return Err(Refusal::Parse(v as u32)),
+                _ => return self.refuse_at(v),
             }
         }
         self.last_end = pos as u32;

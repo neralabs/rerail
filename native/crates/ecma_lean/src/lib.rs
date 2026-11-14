@@ -52,8 +52,9 @@ pub const CLASSES: &[&[&str]] = &[
     &["statement"],
     &["pattern"],
     &["declaration"],
-    &["primary_type", "type"],
+    &["type", "primary_type"],
     &["type"],
+    &["primary_type"],
 ];
 
 /// The supertype-set value that marks an extra (a comment: no field, no supertypes). The writer's

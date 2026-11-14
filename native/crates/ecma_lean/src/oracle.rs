@@ -120,7 +120,16 @@ fn oracle() {
                     let (g, w): (Vec<_>, Vec<_>) = (got.lines().collect(), want.lines().collect());
                     let k = g.iter().zip(&w).position(|(a, b)| a != b).unwrap_or(g.len().min(w.len()));
                     let strip = |l: &str| l.trim().rsplit_once(" [").map_or(l.trim().to_owned(), |(a, _)| a.to_owned());
-                    writeln!(out, "D\t{}\t{}\t{}", p.file_name().unwrap().to_string_lossy(), strip(w.get(k).unwrap_or(&"(end)")), strip(g.get(k).unwrap_or(&"(end)"))).unwrap();
+                    // The source of the node the tapes part at (its parent's, for a leaf's context).
+                    let span = |l: &str| {
+                        let (a, b) = l.trim_end().rsplit_once(" [")?.1.trim_end_matches(']').split_once("..")?;
+                        Some((a.parse::<usize>().ok()?, b.parse::<usize>().ok()?))
+                    };
+                    let ctx = (0..=k.min(w.len().saturating_sub(1))).rev().filter_map(|j| span(w[j])).find(|(a, b)| b > a).map_or(String::new(), |(a, b)| {
+                        let (a, b) = (a.saturating_sub(20).min(src.len()), (b + 20).min(src.len()).min(a + 160));
+                        String::from_utf8_lossy(&src[a..b]).replace(['\n', '\t'], "~")
+                    });
+                    writeln!(out, "D\t{}\t{}\t{}\t{ctx}", p.file_name().unwrap().to_string_lossy(), strip(w.get(k).unwrap_or(&"(end)")), strip(g.get(k).unwrap_or(&"(end)"))).unwrap();
                 }
                 if shown < show {
                     shown += 1;

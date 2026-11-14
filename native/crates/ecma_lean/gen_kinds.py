@@ -3,6 +3,11 @@ vendored, patched grammars), named and anonymous, as the lean parser's `K` and `
 
     python3 native/crates/ecma_lean/gen_kinds.py
 
+With them, `DROPPED`: per dialect, the tokens its tapes leave out under each kind, from
+`implied.tsv`, which the engine's automata write (`cargo test … ecma_implied_tokens --ignored` with
+`RERAIL_ECMA_IMPLIED=native/crates/ecma_lean/implied.tsv`): the parser stores a token by the grammar,
+as the engine's tape writer does, not by hand.
+
 A dev tool: the generated file is checked in, and the build does not run this."""
 import json, os, re
 
@@ -84,5 +89,24 @@ out += [f'    "{f}",' for f in fields]
 out += ['];', '', '/// Field ids, in `FIELDS`\' order.', 'pub mod f {', '    pub const NONE: u8 = 0;']
 out += [f'    pub const {f.upper()}: u8 = {i + 1};' for i, f in enumerate(fields)]
 out += ['}', '']
+index = {(n, b): i for i, (_, n, b) in enumerate(rows)}
+dialects = ['javascript', 'typescript', 'tsx']
+dropped = {d: set() for d in dialects}
+for line in open(os.path.join(here, 'implied.tsv')):
+    d, kind, token, field = line.rstrip('\n').split('\t')
+    parent = index[(kind, True)]
+    tok = index.get((token, False))
+    assert tok is not None, (kind, token)
+    fid = 0 if field == '' else fields.index(field) + 1
+    dropped[d].add(parent | tok << 9 | fid << 18)
+out += ['/// Per dialect (JavaScript, TypeScript, TSX), the tokens its tapes leave out: `kind | token << 9 |',
+        '/// field << 18`, sorted (`implied.tsv`, the engine\'s automata).', 'pub const DROPPED: [&[u32]; 3] = [']
+for d in dialects:
+    keys = sorted(dropped[d])
+    out.append('    &[')
+    for i in range(0, len(keys), 12):
+        out.append('        ' + ' '.join(f'{k},' for k in keys[i:i + 12]))
+    out.append('    ],')
+out += ['];', '']
 open(os.path.join(here, 'src', 'kinds.rs'), 'w').write('\n'.join(out))
 print(len(rows), 'kinds')

@@ -2512,6 +2512,25 @@ pub(crate) fn python_tape_text(image: &TapeImage, grammar: &Grammar, source: &st
 /// `RERAIL_PY_FILES` (a list of paths), its tape as `python_tape_plain` writes it, to
 /// `RERAIL_PY_OUT/<n>.txt` (the path on the first line; then an `ERROR` line where
 /// tree-sitter-python's tree has an error).
+/// The tokens the tapes of JavaScript, TypeScript and TSX leave out, per kind (the automata's
+/// `implied_tokens`): `rerail-ecma-lean`'s `gen_kinds.py` reads them into its tables, so the lean
+/// parser stores the tokens the tape does, by the grammar, not by hand.
+#[test]
+#[ignore = "writes the ECMAScript grammars' implied tokens to RERAIL_ECMA_IMPLIED"]
+fn ecma_implied_tokens() {
+    let out = std::env::var("RERAIL_ECMA_IMPLIED").expect("set RERAIL_ECMA_IMPLIED");
+    let mut text = String::new();
+    for (name, dialect) in [("javascript", GrammarDialect::JavaScript), ("typescript", GrammarDialect::TypeScript), ("tsx", GrammarDialect::Tsx)] {
+        let grammar = tokens::TokenGrammar::of_dialect(dialect).expect("a token grammar");
+        for (kind, dropped) in grammar.implied_tokens() {
+            for (token, field) in dropped {
+                text.push_str(&format!("{name}\t{kind}\t{token}\t{field}\n"));
+            }
+        }
+    }
+    std::fs::write(out, text).unwrap();
+}
+
 #[test]
 #[ignore = "writes the oracle's expected tapes; needs RERAIL_PY_FILES and RERAIL_PY_OUT"]
 fn python_tape_expect() {
