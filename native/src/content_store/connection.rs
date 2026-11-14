@@ -3,7 +3,7 @@
 
 use super::{ContentStore, StoreError, StoreResult};
 use parking_lot::{ArcMutexGuard, Mutex as ParkingMutex, RawMutex};
-use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior};
+use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{BuildHasher, RandomState};
@@ -57,6 +57,9 @@ thread_local! {
         const { std::cell::Cell::new(Duration::ZERO) };
     /// Whether this thread's SQLite waits give up at once (`immediate_transaction_no_wait`).
     static NO_BUSY_WAIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Whether this thread runs an attempt of `retry_busy`, or one attempt its caller retries
+    /// (`immediate_transaction_once`): a `begin` inside one leaves the retry to it.
+    static IN_RETRY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 thread_local! {
@@ -129,7 +132,10 @@ pub(super) fn retry_busy<T>(
     loop {
         ATTEMPT_WAITED.set(Duration::ZERO);
         let attempt_started = Instant::now();
-        match attempt() {
+        let outer = IN_RETRY.replace(true);
+        let outcome = attempt();
+        IN_RETRY.set(outer);
+        match outcome {
             Err(StoreError::Busy) => {
                 let attempted = attempt_started.elapsed();
                 waited = waited.saturating_add(attempted);
@@ -539,7 +545,11 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store connection unavailable");
-        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
+        // One attempt: its caller retries, or runs it again later (`begin` leaves the retry to it).
+        let outer = IN_RETRY.replace(true);
+        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate);
+        IN_RETRY.set(outer);
+        let transaction = transaction?;
         let value = operation(&transaction)?;
         self.commit(transaction)?;
         Ok(value)
@@ -577,8 +587,37 @@ pub(super) fn in_batch() -> bool {
 /// A store write's transaction: its own, or a savepoint inside the writer's batch, which commits every job it
 /// drained at once.
 pub(super) enum Tx<'c> {
-    Top(Transaction<'c>),
+    Top(Begun<'c>),
     Inner(rusqlite::Savepoint<'c>),
+}
+
+/// A transaction of its own on a connection (`begin`): committed by `commit`, rolled back when dropped otherwise.
+pub(super) struct Begun<'c> {
+    connection: &'c mut Connection,
+    open: bool,
+}
+
+impl std::ops::Deref for Begun<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        self.connection
+    }
+}
+
+impl Begun<'_> {
+    pub(super) fn commit(mut self) -> rusqlite::Result<()> {
+        self.connection.execute_batch("COMMIT")?;
+        self.open = false;
+        Ok(())
+    }
+}
+
+impl Drop for Begun<'_> {
+    fn drop(&mut self) {
+        if self.open && !self.connection.is_autocommit() {
+            let _ = self.connection.execute_batch("ROLLBACK");
+        }
+    }
 }
 
 impl std::ops::Deref for Tx<'_> {
@@ -603,11 +642,26 @@ impl Tx<'_> {
 
 /// `connection`'s transaction for one store write: a savepoint when the writer's batch holds it open on this
 /// thread, else a transaction of its own with `behavior`.
-pub(super) fn begin(connection: &mut Connection, behavior: TransactionBehavior) -> rusqlite::Result<Tx<'_>> {
+///
+/// A write's `BEGIN` waits for another writer as every store write does (`retry_busy`): nothing has run yet, so it
+/// is tried again until the write's deadline. Callers that began one here and failed it after one busy timeout
+/// (a collection pass, a pin, a snapshot file) failed under load, while every other write waited.
+pub(super) fn begin(connection: &mut Connection, behavior: TransactionBehavior) -> StoreResult<Tx<'_>> {
     if BATCH.with(std::cell::Cell::get) && !connection.is_autocommit() {
-        return connection.savepoint().map(Tx::Inner);
+        return Ok(connection.savepoint().map(Tx::Inner)?);
     }
-    connection.transaction_with_behavior(behavior).map(Tx::Top)
+    if !matches!(behavior, TransactionBehavior::Deferred) {
+        let sql = if matches!(behavior, TransactionBehavior::Exclusive) { "BEGIN EXCLUSIVE" } else { "BEGIN IMMEDIATE" };
+        if NO_BUSY_WAIT.get() || IN_RETRY.get() {
+            // A write that must not wait (`NoBusyWait`) tries once; one inside a retry leaves it to that retry.
+            connection.execute_batch(sql)?;
+        } else {
+            retry_busy(&mut BusyRetries::default(), || Ok(connection.execute_batch(sql)?))?;
+        }
+    } else {
+        connection.execute_batch("BEGIN DEFERRED")?;
+    }
+    Ok(Tx::Top(Begun { connection, open: true }))
 }
 
 impl ContentStore {

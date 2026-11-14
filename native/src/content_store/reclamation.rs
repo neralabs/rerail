@@ -498,7 +498,13 @@ impl ContentStore {
         )?;
         self.commit(transaction)?;
         connection.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()))?;
-        incremental_vacuum(&connection, 4096)?;
+        // Free pages back to the file system, a write of its own after the pass committed: another writer holding
+        // the store leaves them to the next pass. Failing the pass for it failed a collector whose rows were
+        // already collected (under load, a writer held the lock past one busy timeout).
+        match incremental_vacuum(&connection, 4096) {
+            Ok(()) | Err(StoreError::Busy) => {}
+            Err(error) => return Err(error),
+        }
         drop(connection);
         self.decompressed_cache
             .lock()
