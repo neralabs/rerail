@@ -50,7 +50,7 @@ by its own reader, its checks made at it. The CPU's tier 1 is generated to that 
 | Part | The lean lexer | The CPU's tier 1 | Built |
 |---|---|---|---|
 | A block's masks | space, word, rare, pair | `skip`, the runs, the pair (1, 1 and 9, 31 operations) | yes (2c) |
-| The token loop | in the block loop | a part after each block, over the blocks whose outputs are final (`part_fn`) | yes |
+| The token loop | in the block loop | in the block loop, after each block, over the blocks whose outputs are final; its state the loop's values | yes |
 | A token's start | the first non-space after the one before | `skip`'s words after the token before (`records::walk`) | yes (2a) |
 | A token's end | its run, its pair | its first byte's rule (`run`, `pair`, `last`) | yes (1) |
 | A rare token | its reader, which moves the cursor | its region's last byte, by the walk's masks | masks for now |
@@ -324,3 +324,16 @@ and the pairs had a rule a first byte (eleven rules). Now:
 
 Open: `u_ok`'s look-ahead is tier 2's, but `str_bad` and the punctuation and number tests are
 tier 1 masks a block; the lean lexer reads them at the token's bytes alone.
+
+## The token loop in the block loop
+
+The lean lexer has one loop: a block's masks, then its tokens. The token loop was a function
+of its own, called after each block, its state stored and loaded each time. Now it is in the
+block loop's function, once: the full body and the general one both go on to it, and from it
+to the next block. Its four state words are the block loop's values, passed round it as its
+carries are. Only the file's end (its counts, the marks of any word) is still a call, once a
+file. Tier 1's Rust is three functions, from four.
+
+Next: the loop reads the masks from the block's rows in memory. A mask with no delay is in a
+register at the loop; a delayed one is the word before and this one, joined.
+

@@ -1573,6 +1573,10 @@ pub mod tests {
                     label.push(format!("mask{i}{:?}", uses.first()));
                 }
             }
+            let d = c.native.output_delays.get(o).copied().unwrap_or(0);
+            if d > 0 {
+                label.push(format!("delay{d}"));
+            }
             rows.push((only, mine, o, label.join(",")));
         }
         rows.sort_by(|a, b| b.cmp(a));

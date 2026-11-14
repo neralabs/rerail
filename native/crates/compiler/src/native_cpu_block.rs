@@ -1805,11 +1805,10 @@ fn words_signature(module: &JITModule, n: usize) -> cranelift_codegen::ir::Signa
     sig
 }
 
-/// A part of a file's token loop (`(slot, ready)`), or its end (`(slot)`), as functions of
-/// their own: the block loop calls a part after each block, over the blocks whose outputs are
-/// final, and the part and the end at the file's end. The slot holds the file's columns and
-/// the loop's state (`REC_SLOT`).
-fn part_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Records, t: &RecordTables, extracts: usize, outputs: usize, end: bool) -> Result<(), Error> {
+/// A file's token loop's end (`(slot)`), a function of its own: the block loop runs the token
+/// loop after each block, over the blocks whose outputs are final, and calls this at the
+/// file's end. The slot holds the file's columns and the loop's state (`REC_SLOT`).
+fn end_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Records, extracts: usize, outputs: usize) -> Result<(), Error> {
     let mut builder_context = FunctionBuilderContext::new();
     let mut f = FunctionBuilder::new(func, &mut builder_context);
     let (entry, done) = (f.create_block(), f.create_block());
@@ -1821,14 +1820,10 @@ fn part_fn(func: &mut cranelift_codegen::ir::Function, r: &crate::records::Recor
     let cols = FileCols::of(&vals);
     let state = f.ins().iadd_imm(p[0], 8 * RECORD_PARAMS as i64);
     let mut heads = vec![];
-    if end {
-        let n = f.ins().load(types::I64, fl, state, 0);
-        let bad = f.ins().load(types::I64, fl, state, 16);
-        let zero = f.ins().iconst(types::I64, 0);
-        record_end(&mut f, r, extracts, outputs, &cols, bad, n, zero, done, &mut heads);
-    } else {
-        record_tokens(&mut f, r, t, extracts, outputs, &cols, Some(RecPart { ready: p[1], state }), done, &mut heads);
-    }
+    let n = f.ins().load(types::I64, fl, state, 0);
+    let bad = f.ins().load(types::I64, fl, state, 16);
+    let zero = f.ins().iconst(types::I64, 0);
+    record_end(&mut f, r, extracts, outputs, &cols, bad, n, zero, done, &mut heads);
     f.switch_to_block(done);
     f.ins().return_(&[]);
     f.seal_all_blocks();
@@ -2380,11 +2375,11 @@ fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Rec
 const STATE_WORDS: usize = 4;
 
 /// A part of a file's token loop (decision 0177): the tokens whose words are in the `ready`
-/// blocks, from the state at `state` and back to it.
+/// blocks, from the state `init`; it goes on to `then` with the state it stops at.
 #[derive(Clone, Copy)]
 struct RecPart {
     ready: Value,
-    state: Value,
+    init: [Value; STATE_WORDS],
 }
 
 /// A file's token loop: the whole file's (`part` none), then its end (`record_end`); or a
@@ -2430,7 +2425,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let wait = part.map(|_| f.create_block());
     let limit = match (part, wait) {
         (Some(p), Some(wait)) => {
-            let init: Vec<BlockArg> = (0..STATE_WORDS).map(|k| BlockArg::from(f.ins().load(types::I64, fl, p.state, 8 * k as i32))).collect();
+            let init: Vec<BlockArg> = p.init.iter().map(|&v| BlockArg::from(v)).collect();
             let last = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, p.ready, c.blocks);
             f.ins().jump(head, &init);
             Some(Limit { ready: p.ready, last, wait })
@@ -2445,13 +2440,11 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     f.switch_to_block(head);
     let h = f.block_params(head).to_vec();
     // Waiting: the state as the head has it, for the next part.
-    if let (Some(p), Some(wait)) = (part, wait) {
+    if let Some(wait) = wait {
         f.switch_to_block(wait);
         f.set_cold_block(wait);
-        for (k, &v) in h.iter().enumerate() {
-            f.ins().store(stores, v, p.state, 8 * k as i32);
-        }
-        f.ins().jump(then, &[]);
+        let args: Vec<BlockArg> = h.iter().map(|&v| BlockArg::from(v)).collect();
+        f.ins().jump(then, &args);
         f.switch_to_block(head);
     }
     match walked {
@@ -2660,12 +2653,9 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         bad
     };
     // A part at the file's end: its count and refusal stored, for the end.
-    if let Some(p) = part {
+    if part.is_some() {
         // The loop is past the file's last byte: a part after this one finds no token.
-        f.ins().store(stores, n, p.state, 0);
-        f.ins().store(stores, c.len, p.state, 8);
-        f.ins().store(stores, bad, p.state, 16);
-        f.ins().jump(then, &[]);
+        f.ins().jump(then, &[n.into(), c.len.into(), bad.into(), zero.into()]);
         return;
     }
     record_end(f, r, extracts, outputs, c, bad, n, differ, then, heads);
@@ -3207,16 +3197,12 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     // The file's records: a function of its own (`record_fn`), called once a file; or, where
     // the loop finds the starts (decision 0177), a part after each block and the file's end.
     let part_calls = match records {
-        Some((rec, t, outputs)) if rec.skip.is_some() => {
-            let mut made = Vec::new();
-            for (end, n, what) in [(false, 2, "part"), (true, 1, "end")] {
-                let sig = words_signature(module, n);
-                let id = module.declare_function(&format!("{name}_records_{what}"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;
-                let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), sig.clone());
-                part_fn(&mut func, rec, t, native.extracts.len(), outputs, end)?;
-                made.push((id, sig, func));
-            }
-            made
+        Some((rec, _, outputs)) if rec.skip.is_some() => {
+            let sig = words_signature(module, 1);
+            let id = module.declare_function(&format!("{name}_records_end"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;
+            let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), sig.clone());
+            end_fn(&mut func, rec, native.extracts.len(), outputs)?;
+            vec![(id, sig, func)]
         }
         _ => Vec::new(),
     };
@@ -3255,13 +3241,25 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         let finish = f.create_block();
         let exit = f.create_block();
         let done = f.create_block();
+        // The token loop after each block (decision 0177), in this loop as the lean lexer's:
+        // `tokens` runs it over the blocks whose outputs are final, `after` goes on to the next
+        // block, `row_end` calls the file's end. Its state goes round the block loop.
+        let tokened = records.is_some() && !part_calls.is_empty();
+        let (tokens, after, row_end) = (f.create_block(), f.create_block(), f.create_block());
+        let states = if tokened { STATE_WORDS } else { 0 };
         f.append_block_params_for_function_params(entry);
         f.append_block_param(row, types::I64);
         // The carried state, packed (decision 0070): each carry holds only its bits, in a field
         // of a few loop-carried words, never a word per bit. Each loop block's parameters
-        // (`Loop::params`): every load and store is `[pointer, #offset]`.
-        for b in [body_block, general, head, finish] {
-            for _ in 0..params {
+        // (`Loop::params`): every load and store is `[pointer, #offset]`. Then the token loop's.
+        for b in [body_block, general, head, finish, tokens] {
+            for _ in 0..params + states {
+                f.append_block_param(b, types::I64);
+            }
+        }
+        f.append_block_param(tokens, types::I64);
+        for b in [after, row_end] {
+            for _ in 0..states {
                 f.append_block_param(b, types::I64);
             }
         }
@@ -3325,6 +3323,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             .chain(std::iter::repeat_n(zero.into(), carried))
             .chain((0..counted.len()).map(|c| extract_base.get(c).copied().unwrap_or(zero).into()))
             .chain(rowed.then_some(scratch.into()))
+            .chain(std::iter::repeat_n(zero.into(), states))
             .collect();
         // The row's record slot (`REC_SLOT`): its columns, and the token loop's state at zero.
         let rec_slot = (!part_calls.is_empty()).then(|| f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * REC_SLOT as u32, 3)));
@@ -3334,8 +3333,8 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             let signature = f.import_signature(sig.clone());
             f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true })
         };
-        let parts = rec_slot.map(|slot| (slot, callee_of(&mut f, 0), callee_of(&mut f, 1)));
-        if let (Some((slot, _, _)), Some((rec, t, _))) = (parts, records) {
+        let parts = rec_slot.map(|slot| (slot, callee_of(&mut f, 0)));
+        if let (Some((slot, _)), Some((rec, t, _))) = (parts, records) {
             let counts_all = reload(&mut f, 5);
             let cols = file_cols(&mut f, rec, t, native.extracts.len(), r, rows, arena, out_all, pos_all, counts_all);
             for (k, v) in cols.values().into_iter().enumerate() {
@@ -3346,15 +3345,15 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
                 f.ins().stack_store(zero, slot, 8 * (RECORD_PARAMS + k) as i32);
             }
         }
-        // A part of the token loop after a block (`next` the block after it): the blocks before
-        // it are final (an output's delayed bits go into the row before).
-        let call_part = |f: &mut FunctionBuilder<'_>, next: Value| {
-            if let Some((slot, part, _)) = parts {
-                let pointer = f.func.dfg.value_type(next);
-                let address = f.ins().stack_addr(pointer, slot, 0);
-                let ready = f.ins().iadd_imm(next, -1);
-                f.ins().call(part, &[address, ready]);
-            }
+        // After a block (`next` the block after it), its parameters and the token loop's: the
+        // blocks before it are final (an output's delayed bits go into the row before).
+        let to_tokens = |f: &mut FunctionBuilder<'_>, block: &[BlockArg], st: &[Value]| -> Vec<BlockArg> {
+            let next = match block[0] {
+                BlockArg::Value(v) => v,
+                _ => unreachable!("a value"),
+            };
+            let ready = f.ins().iadd_imm(next, -1);
+            block.iter().copied().chain(st.iter().map(|&v| v.into())).chain([ready.into()]).collect()
         };
         // Blocks 1 .. len / 64 are full.
         let full_end = f.ins().ushr_imm(len, 6);
@@ -3380,8 +3379,9 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         let made_from = f.func.dfg.num_blocks();
         f.switch_to_block(body_block);
         let p = f.block_params(body_block).to_vec();
+        let st = p[params..].to_vec();
         let again;
-        (again, gate_branches, round_branches) = step(&mut f, &lp, &consts, &p, len, true, scratch, Some(&calls), &mut heads);
+        (again, gate_branches, round_branches) = step(&mut f, &lp, &consts, &p[..params], len, true, scratch, Some(&calls), &mut heads);
         let again: Vec<BlockArg> = again.into_iter().map(BlockArg::from).collect();
         // The hot loop's back edge: to itself while the next block is full.
         hot.push(body_block);
@@ -3390,15 +3390,20 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             BlockArg::Value(v) => v,
             _ => unreachable!("a value"),
         };
-        call_part(&mut f, next);
-        let more = f.ins().icmp(IntCC::UnsignedLessThan, next, full_end);
-        f.ins().brif(more, body_block, &again, head, &again);
+        if tokened {
+            let args = to_tokens(&mut f, &again, &st);
+            f.ins().jump(tokens, &args);
+        } else {
+            let more = f.ins().icmp(IntCC::UnsignedLessThan, next, full_end);
+            f.ins().brif(more, body_block, &again, head, &again);
+        }
 
         // The other blocks: the general body's call, the parameters through a stack slot.
         f.switch_to_block(general);
         let p = f.block_params(general).to_vec();
+        let st = p[params..].to_vec();
         let slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * params as u32, 3));
-        for (k, &v) in p.iter().enumerate() {
+        for (k, &v) in p[..params].iter().enumerate() {
             f.ins().stack_store(v, slot, 8 * k as i32);
         }
         let pointer = f.func.dfg.value_type(arena);
@@ -3408,10 +3413,44 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
         f.ins().call(callee, &[address, len]);
         let back: Vec<BlockArg> = (0..params).map(|k| BlockArg::from(f.ins().stack_load(types::I64, slot, 8 * k as i32))).collect();
-        if let Some(BlockArg::Value(next)) = back.first().copied() {
-            call_part(&mut f, next);
+        if tokened {
+            let args = to_tokens(&mut f, &back, &st);
+            f.ins().jump(tokens, &args);
+        } else {
+            f.ins().jump(head, &back);
         }
-        f.ins().jump(head, &back);
+
+        // The token loop over the final blocks, from the file's columns in the record slot;
+        // then the next block, or at the file's end (every block final) its end.
+        if let (Some((slot, end)), Some((rec, t, outputs))) = (parts, records) {
+            f.switch_to_block(tokens);
+            let tp = f.block_params(tokens).to_vec();
+            let vals: Vec<Value> = (0..RECORD_PARAMS).map(|k| f.ins().stack_load(types::I64, slot, 8 * k as i32)).collect();
+            let cols = FileCols::of(&vals);
+            let ready = tp[params + STATE_WORDS];
+            let init: [Value; STATE_WORDS] = std::array::from_fn(|k| tp[params + k]);
+            record_tokens(&mut f, rec, t, native.extracts.len(), outputs, &cols, Some(RecPart { ready, init }), after, &mut heads);
+            f.switch_to_block(after);
+            let st = f.block_params(after).to_vec();
+            let last = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, ready, cols.blocks);
+            let go = f.create_block();
+            let st_args: Vec<BlockArg> = st.iter().map(|&v| v.into()).collect();
+            f.ins().brif(last, row_end, &st_args, go, &[]);
+            f.switch_to_block(go);
+            let args: Vec<BlockArg> = tp[..params].iter().chain(&st).map(|&v| v.into()).collect();
+            let more = f.ins().icmp(IntCC::UnsignedLessThan, tp[0], full_end);
+            f.ins().brif(more, body_block, &args, head, &args);
+
+            // The file's end: the loop's count and refusal for the end's function.
+            f.switch_to_block(row_end);
+            let st = f.block_params(row_end).to_vec();
+            f.ins().stack_store(st[0], slot, 8 * RECORD_PARAMS as i32);
+            f.ins().stack_store(st[2], slot, 8 * (RECORD_PARAMS + 2) as i32);
+            let pointer = f.func.dfg.value_type(st[0]);
+            let address = f.ins().stack_addr(pointer, slot, 0);
+            f.ins().call(end, &[address]);
+            f.ins().jump(exit, &[]);
+        }
 
         // The row's end: each delayed output's last word, and the counts.
         let stores = MemFlags::new().with_notrap();
@@ -3458,12 +3497,10 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         // The file's records, in the same pass (the last forward one): its positions and mask
         // words just made, still in the cache.
         // The token loop's last part, every block final, and its end.
-        if let Some((slot, part, end)) = parts {
-            let pointer = f.func.dfg.value_type(r);
-            let address = f.ins().stack_addr(pointer, slot, 0);
+        if tokened {
             let blocks = f.ins().load(types::I64, MemFlags::trusted().with_readonly(), at, 8);
-            f.ins().call(part, &[address, blocks]);
-            f.ins().call(end, &[address]);
+            let args: Vec<BlockArg> = p.iter().map(|&v| v.into()).chain([blocks.into()]).collect();
+            f.ins().jump(tokens, &args);
         }
         if let (Some((rec, t, _)), Some((id, sig, _))) = (records, &record_call) {
             let (arena, out_all) = (reload(&mut f, 0), reload(&mut f, 3));
@@ -3473,7 +3510,9 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
             f.ins().call(callee, &cols.values());
         }
-        f.ins().jump(exit, &[]);
+        if !tokened {
+            f.ins().jump(exit, &[]);
+        }
 
         f.switch_to_block(exit);
         let (r, nrows) = (reload(&mut f, ROW_INDEX), reload(&mut f, 2));
