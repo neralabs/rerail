@@ -148,7 +148,7 @@ fn renumber(parent: &Version, removed: &[RuleId], added: &[RuleId], made: Made, 
 }
 
 /// Each rule's id after a fold of the edit (`renumber`), or `None` where it was not folded.
-fn renumbered(parent: &Version, removed: &[RuleId], added: &[RuleId], made: Made) -> Option<BTreeMap<RuleId, RuleId>> {
+pub(in crate::code_rule_dsl::logic::plan) fn renumbered(parent: &Version, removed: &[RuleId], added: &[RuleId], made: Made) -> Option<BTreeMap<RuleId, RuleId>> {
     if !matches!(made, Made::Folded) {
         return None;
     }
@@ -356,7 +356,7 @@ fn subst<'v>(v: &'v Version, t: TermRef<'_>, to: &BTreeMap<Slot, Sub<'_>>, reade
 }
 
 /// Term `t` as the builder writes it, each variable by its name `var` gives.
-fn named<'v>(v: &'v Version, t: TermRef<'_>, var: &dyn Fn(Slot) -> &'v str) -> T<'v> {
+pub(in crate::code_rule_dsl::logic::plan) fn named<'v>(v: &'v Version, t: TermRef<'_>, var: &dyn Fn(Slot) -> &'v str) -> T<'v> {
     match t {
         TermRef::Var(s) => T::Var(var(s)),
         TermRef::Call(f, args) => T::Call(v.text(f), args.map(|a| named(v, a, var)).collect()),

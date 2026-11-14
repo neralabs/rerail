@@ -213,3 +213,11 @@ the tree pass's program, over the planner's, corpus, session, `rr` and keeps tes
     `inline::unfold_rules`). dl1: the 48 findings are equal; cold 44.4 G, warm 1.8 G. Still to come in step 2: the
     version is the run's, passed in, not made from the tree (step 5), and `refusals`, `bounds` and `factorizable`
     read trees.
+  - Step 3 in part: the split `split_negations` makes is an overlay of the program's version (`demand::overlaid`):
+    each reader removed and its `pre_<i>` and itself over that added, each demanded relation's rules rewritten to
+    read its demand first (its head's computed columns fresh variables, checked after), then the demands. The rules
+    keep the tree's order. The choice of candidates, the guards and the types still read the tree, and the strata
+    check is still `front::unstratified` over the decoded program (stratification over a version: step 1).
+    Checked while porting: the overlay, decoded, equalled the tree's split over the planner's, demand, corpus and
+    session tests and dl1; the check and the tree's split are gone. dl1: the 48 findings are equal; cold 43.6 G,
+    warm 1.8 G.

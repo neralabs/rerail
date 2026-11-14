@@ -65,7 +65,7 @@ pub(super) const COPIES: usize = 8;
 /// A relation estimated under this many rows is stored without pricing: its rows cost little either way.
 const SMALL: f64 = 1024.0;
 
-mod inline;
+pub(super) mod inline;
 
 /// The choices, and the program with the inlined relations unfolded into their readers; `None` when nothing is
 /// inlined. `Err` names a `.decl r(…) inline` that cannot be honoured.

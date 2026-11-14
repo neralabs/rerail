@@ -59,7 +59,10 @@
 //! `m132($n) :- pre_i($n), m131($n)`. Corpus runs only, so the golden plans are unchanged.
 
 use super::super::front::{Atom, Literal, Program, Rule, Term};
+use super::super::program_image::{Builder, CmpOp, RuleId, RuleRef, T, TermRef, Version};
+use super::keeps::inline::{named, renumbered};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 thread_local! {
     /// Set while a session evaluates its cross-file part (decision 0077): the rows it keeps are each relation's whole
@@ -305,11 +308,9 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
     // Every rule whose split has a variable of no known type, found in one pass (one round each made 126 rounds of
     // the whole program's split and strata on the Python pack).
     let mut untyped: BTreeSet<String> = BTreeSet::new();
-    let mut rules: Vec<Rule> = Vec::new();
-    let mut demand_rules: Vec<Rule> = Vec::new();
+    let mut splits: BTreeMap<usize, Split> = BTreeMap::new();
     for (ri, rule) in prog.rules.iter().enumerate() {
         if !is_reader.contains(&ri) {
-            rules.push(rule.clone());
             continue;
         }
         let (mut cut, mut kept): (Vec<&Literal>, Vec<&Literal>) = (Vec::new(), Vec::new());
@@ -333,7 +334,6 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
         // Nothing left to bind the demand (every literal is a negated read): a `pre_<i>` of an empty body is no
         // relation any engine makes, so the rule stays as it is.
         if kept.is_empty() {
-            rules.push(rule.clone());
             continue;
         }
         let mut bound = BTreeSet::new();
@@ -355,27 +355,14 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
         };
         let pre = format!("pre_{ri}");
         let mut cols: Vec<(String, String)> = vars.iter().zip(&types).map(|(v, t)| (v.clone(), t.clone())).collect();
-        let mut args: Vec<Term> = vars.iter().map(|v| Term::Var(v.clone().into())).collect();
         // A split sharing no variable with its reads is a flag, encoded as every nullary relation is: one unit column
         // (`rr::lower::lower_boolean_relations`).
         if vars.is_empty() {
             out.nullary.insert(pre.clone());
             cols.push(("rr_unit".to_owned(), "int".to_owned()));
-            args.push(Term::Int(1));
         }
         out.decls.insert(pre.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
-        let pre_atom = Atom { rel: pre.into(), args: args.into(), neg: false, gated: false };
-        rules.push(Rule { head: pre_atom.clone(), body: kept.into_iter().cloned().collect() });
-        let mut body = vec![Literal::Atom(pre_atom.clone())];
-        for l in cut {
-            let Literal::Atom(read) = l else { unreachable!("a read atom") };
-            demand_rules.push(Rule {
-                head: Atom { rel: format!("demand_{}", read.rel).into(), args: read.args.clone(), neg: false, gated: false },
-                body: [Literal::Atom(pre_atom.clone())].into(),
-            });
-            body.push(l.clone());
-        }
-        rules.push(Rule { head: rule.head.clone(), body: body.into() });
+        splits.insert(ri, Split { pre, vars, cut: (0..rule.body.len()).filter(|&i| negated(rule, i)).collect() });
     }
     if !untyped.is_empty() {
         return Err(untyped);
@@ -383,15 +370,12 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
     let demanded: Vec<String> = candidates.iter().map(|r| (*r).to_owned()).collect();
     for rel in &demanded {
         let name = format!("demand_{rel}");
-        out.decls.insert(name.clone().into(), prog.decls[rel.as_str()].clone());
-        for rule in rules.iter_mut().filter(|r| &r.head.rel == rel) {
-            let (atom, computed) = demand_atom(&name, &rule.head.args);
-            rule.body.insert(0, Literal::Atom(atom));
-            rule.body.extend(computed);
-        }
+        out.decls.insert(name.into(), prog.decls[rel.as_str()].clone());
     }
-    rules.extend(demand_rules);
-    out.rules = rules;
+    // The split as an overlay of the program's version (t36 item 6, step 3), decoded for the run (until it reads the
+    // version: step 5). A demanded relation's rules read its demand first (`overlaid`).
+    let base = super::body::made(&prog.rules).map_err(|e| BTreeSet::from([e.to_string()]))?;
+    out.rules = overlaid(&base, prog, candidates, &splits).map_err(|e| BTreeSet::from([e]))?;
     // A split that closes a cycle through a negation (a reader's body reading what the negated relation depends on)
     // leaves the program as it was.
     // Every failing component at once, not the first: a round per component was a split and strata per round.
@@ -415,6 +399,121 @@ fn split_with(prog: &Program, model: &super::Model, candidates: &BTreeSet<&str>)
         failed.extend(mine);
     }
     Err(failed)
+}
+
+/// A reader's split (`split_with`): its `pre_<i>`, the variables it hands on, and the places of the reads it cuts.
+struct Split {
+    pre: String,
+    vars: Vec<String>,
+    cut: BTreeSet<usize>,
+}
+
+/// The split as an overlay of `base`, the program's version (its rule `k` the program's rule `k`), its rules in the
+/// tree's order: each reader replaced by its `pre_<i>` and itself over that, each demanded relation's rules reading
+/// its demand first, then the demands.
+fn overlaid(base: &Arc<Version>, prog: &Program, candidates: &BTreeSet<&str>, splits: &BTreeMap<usize, Split>) -> Result<Vec<Rule>, String> {
+    let v: &Version = base;
+    let mut b = Builder::on(base);
+    let (mut seq, mut removed, mut added, mut demands) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for (ri, rule) in prog.rules.iter().enumerate() {
+        let id = RuleId(ri as u32);
+        let r = v.rule(id).expect("a program rule");
+        let own = candidates.contains(rule.head.rel.as_str());
+        let demand = format!("demand_{}", rule.head.rel);
+        let fresh: Vec<String> = (0..r.head().arity()).map(|i| format!("rr_demanded{i}")).collect();
+        let (own_args, computed) = demand_terms(v, r, &fresh);
+        let Some(s) = splits.get(&ri) else {
+            if !own {
+                seq.push(id);
+                continue;
+            }
+            b.remove(id);
+            removed.push(id);
+            let mut rb = b.rule().head_from(v, r, r.head()).atom(demand.as_str(), &own_args);
+            for l in r.body() {
+                rb = rb.lit(v, r, l);
+            }
+            for (x, t) in &computed {
+                rb = rb.cmp(T::Var(x), CmpOp::Eq, t.clone());
+            }
+            let n = rb.finish()?;
+            seq.push(n);
+            added.push(n);
+            continue;
+        };
+        b.remove(id);
+        removed.push(id);
+        // A split sharing no variable with its reads is a flag: one unit column.
+        let pre_args: Vec<T<'_>> = if s.vars.is_empty() { vec![T::Int(1)] } else { s.vars.iter().map(|x| T::Var(x)).collect() };
+        let mut rb = b.rule().head(s.pre.as_str(), &pre_args);
+        if own {
+            rb = rb.atom(demand.as_str(), &own_args);
+        }
+        for (i, l) in r.body().enumerate() {
+            if !s.cut.contains(&i) {
+                rb = rb.lit(v, r, l);
+            }
+        }
+        if own {
+            for (x, t) in &computed {
+                rb = rb.cmp(T::Var(x), CmpOp::Eq, t.clone());
+            }
+        }
+        let pre = rb.finish()?;
+        let mut rb = b.rule().head_from(v, r, r.head());
+        if own {
+            rb = rb.atom(demand.as_str(), &own_args);
+        }
+        rb = rb.atom(s.pre.as_str(), &pre_args);
+        for (i, l) in r.body().enumerate() {
+            if s.cut.contains(&i) {
+                rb = rb.lit(v, r, l);
+            }
+        }
+        if own {
+            for (x, t) in &computed {
+                rb = rb.cmp(T::Var(x), CmpOp::Eq, t.clone());
+            }
+        }
+        let reader = rb.finish()?;
+        seq.extend([pre, reader]);
+        added.extend([pre, reader]);
+        for &i in &s.cut {
+            let read = r.body().nth(i).and_then(|l| l.atom()).expect("a cut read");
+            let name = format!("demand_{}", v.rel_name(read.rel()));
+            let args: Vec<T<'_>> = read.args().map(|t| named(v, t, &|x| v.text(r.var(x)))).collect();
+            let d = b.rule().head(name.as_str(), &args).atom(s.pre.as_str(), &pre_args).finish()?;
+            demands.push(d);
+            added.push(d);
+        }
+    }
+    let (out, made) = b.finish()?;
+    seq.extend(demands);
+    if let Some(order) = renumbered(base, &removed, &added, made) {
+        seq.iter_mut().for_each(|id| *id = order[id]);
+    }
+    let lists = super::super::front::Lists::default();
+    let mut tree = super::super::program_image::Tree::new(&out, &lists);
+    Ok(seq.iter().map(|&id| tree.rule(out.rule(id).expect("a split rule"))).collect())
+}
+
+/// `demand_atom`'s arguments over the version: the head's, each computed one a fresh variable, and the checks that
+/// each equals its term.
+fn demand_terms<'a>(v: &'a Version, r: RuleRef<'a>, fresh: &'a [String]) -> (Vec<T<'a>>, Vec<(&'a str, T<'a>)>) {
+    let mut computed = Vec::new();
+    let args = r
+        .head()
+        .args()
+        .enumerate()
+        .map(|(i, t)| match t {
+            TermRef::Call(..) => {
+                computed.push((fresh[i].as_str(), named(v, t, &|s| v.text(r.var(s)))));
+                T::Var(&fresh[i])
+            }
+            t => named(v, t, &|s| v.text(r.var(s))),
+        })
+        .collect::<Vec<_>>();
+    (args, computed)
 }
 
 /// A demanded rule's read of its demand: the head's arguments, with each computed one (`@add(l, 1)`) a fresh variable
