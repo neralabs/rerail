@@ -1,10 +1,10 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, copyFileSync, mkdirSync, realpathSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, realpathSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import Database from "better-sqlite3";
@@ -494,6 +494,8 @@ describe("hook host durable state", () => {
 interface CountingDaemon {
   /** The path of every request it got, in order. */
   requests: string[];
+  /** The folder each start check asked about, as the hook spelled it, in order. */
+  asked: string[];
   /** How many start checks (`/api/presentation`) it held were ended by the hook before it answered them. */
   ended: () => number;
   close: () => Promise<void>;
@@ -512,6 +514,7 @@ async function countingDaemon(
   answerWhen?: () => Promise<unknown>,
 ): Promise<CountingDaemon> {
   const requests: string[] = [];
+  const asked: string[] = [];
   let ended = 0;
   const closing = Promise.withResolvers<void>();
   const answers: Record<string, (url: URL) => unknown> = {
@@ -524,6 +527,7 @@ async function countingDaemon(
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     requests.push(url.pathname);
+    if (url.pathname === "/api/presentation") asked.push(url.searchParams.get("repository") ?? "");
     if (url.pathname === "/api/presentation" && answerWhen !== undefined) {
       let gone = false;
       response.on("close", () => {
@@ -548,6 +552,7 @@ async function countingDaemon(
   }));
   return {
     requests,
+    asked,
     ended: () => ended,
     close: async () => {
       closing.resolve();
@@ -801,15 +806,68 @@ interface StartCheckHost {
   /** Each folder whose Git search it walks on disk (`gitSearchEnds`). */
   walked: string[];
   proofs: ProofLog;
+  /** What the daemon answers for `folder` (`startStateReader`), with the folders' names spelled as this host spells them. */
+  daemonReads: (folder: string) => string;
+}
+
+/**
+ * Folders reached under another letter case than the disk stores, and the system whose realpaths a test reads them
+ * with: `macos`, where the native realpath gives each name as stored and the JS realpath, which checkout keys go
+ * through there, keeps it as typed; or `linux-case-insensitive`, a case-insensitive folder on Linux, where every
+ * realpath keeps it as typed and only the kernel (Git's `getcwd`) names it as it cached it.
+ */
+interface Spelling {
+  readonly system: "macos" | "linux-case-insensitive";
+  /** Each folder as typed and as stored. On a case-sensitive filesystem the typed one is a link to the stored one. */
+  readonly folders: ReadonlyArray<{ readonly typed: string; readonly stored: string }>;
+}
+
+/** `path` and below. */
+function under(path: string, root: string): boolean {
+  return path === root || path.startsWith(root + sep);
+}
+
+/**
+ * What a realpath gave for `input` (`output`), read as `spelling`'s system gives it: a name typed in another letter
+ * case stays as typed. Windows and macOS give that themselves; on a case-sensitive filesystem the typed name is a link
+ * the realpath followed, and this puts the typed name back.
+ */
+function asTyped(spelling: Spelling, input: string, output: string): string {
+  const folder = spelling.folders.find(({ typed, stored }) => under(resolve(input), typed) && under(output, stored));
+  return folder === undefined ? output : folder.typed + output.slice(folder.stored.length);
+}
+
+/** The realpaths of `node:fs/promises` and `checkout-control.ts` as `spelling`'s system answers them. */
+function mockSpelling(spelling: Spelling): void {
+  vi.doMock("../../src/engine/catalog/checkout-control.js", async () => {
+    const actual = await vi.importActual<typeof import("../../src/engine/catalog/checkout-control.js")>("../../src/engine/catalog/checkout-control.js");
+    const keys = spelling.system === "macos" ? "darwin" : "linux";
+    const stored = spelling.system === "macos" ? actual.storedPath : (path: string) => asTyped(spelling, path, actual.storedPath(path));
+    return {
+      ...actual,
+      physicalPath: (path: string) => asTyped(spelling, path, actual.physicalPath(path, keys)),
+      // Every system but Windows keys checkouts through the JS realpath.
+      checkoutRealpath: (path: string) => asTyped(spelling, path, realpathSync(path)),
+      storedPath: stored,
+    };
+  });
+  if (spelling.system === "macos") return;
+  vi.doMock("node:fs/promises", async () => {
+    const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    const realpath = async (path: string): Promise<string> => asTyped(spelling, path, await actual.realpath(path));
+    return { ...actual, default: { ...actual, realpath }, realpath };
+  });
 }
 
 /**
  * The hook host over this machine's Git, database and folders, loaded afresh with its start check's seams recorded:
- * Git commands, database opens, walks of Git's search and proofs, which `proof` replaces when given.
+ * Git commands, database opens, walks of Git's search and proofs, which `proof` replaces when given. With `spelling`,
+ * its realpaths answer as that system's do.
  */
-async function startCheckHost(proof?: (workspace: string) => boolean): Promise<StartCheckHost> {
+async function startCheckHost(proof?: (workspace: string) => boolean, spelling?: Spelling): Promise<StartCheckHost> {
   const seen = { git: [] as string[], opened: [] as string[], walked: [] as string[], proofs: proofLog() };
   vi.resetModules();
+  if (spelling !== undefined) mockSpelling(spelling);
   vi.doMock("../../src/engine/git.js", async () => {
     const actual = await vi.importActual<typeof import("../../src/engine/git.js")>("../../src/engine/git.js");
     return {
@@ -851,7 +909,16 @@ async function startCheckHost(proof?: (workspace: string) => boolean): Promise<S
     return { ...actual, stoppedWithoutGit };
   });
   const host = await import("../../src/harness/hook-host.js");
-  return { ...seen, hookRerailStarted: host.hookRerailStarted };
+  const { startStateReader: reader } = await import("../../src/runtime/index.js");
+  const daemonReads = (folder: string): string => {
+    const database = openRerailDatabase(defaultRerailDatabasePath(), { readonly: true });
+    try {
+      return reader(database)(folder);
+    } finally {
+      database.$client.close();
+    }
+  };
+  return { ...seen, hookRerailStarted: host.hookRerailStarted, daemonReads };
 }
 
 /**
@@ -1121,6 +1188,85 @@ function generatedTrees(root: string): Array<[string, string]> {
   return folders;
 }
 
+/** A folder a person reaches under another letter case than the disk stores, and where in it a hook runs. */
+interface MiscasedFolder {
+  readonly name: string;
+  /** The checkout's top folder, spelled as typed and as stored. */
+  readonly typed: string;
+  readonly stored: string;
+  /** Where the hook runs, as typed and as stored. */
+  readonly workspace: string;
+  readonly storedWorkspace: string;
+}
+
+/**
+ * Under `root`, each started as stored: `Notes`, outside Git, typed `notes`; the `src` folder of a Git checkout `Repo`,
+ * typed `repo/src`; and `Wt`, a linked worktree of `Base`, typed `wt`. Where the filesystem tells letter case apart the
+ * typed name is a link to the stored one, which `Spelling` has the realpaths read as typed.
+ */
+function miscasedFolders(root: string): MiscasedFolder[] {
+  mkdirSync(join(root, "Notes"));
+  mkdirSync(join(gitRepository(join(root, "Repo")), "src"));
+  git(gitRepository(join(root, "Base")), "worktree", "add", "-q", join(root, "Wt"));
+  const folders = [["outside Git", "Notes", []], ["Git checkout", "Repo", ["src"]], ["linked worktree", "Wt", []]] as const;
+  return folders.map(([name, folder, inside]) => {
+    const stored = join(root, folder);
+    const typed = join(root, folder.toLowerCase());
+    // A case-insensitive filesystem (macOS's, Windows') already finds the folder under its typed name.
+    if (!existsSync(typed)) folderLink(stored, typed);
+    startTestRepository(stored);
+    return { name, typed, stored, workspace: join(typed, ...inside), storedWorkspace: join(stored, ...inside) };
+  });
+}
+
+/**
+ * Each way the rows of a checkout typed in another case can stand: the stored spelling's own on/off (null: none), a
+ * row under the typed spelling with its own (none where undefined), and its repository's on/off.
+ */
+const SPELLING_ROWS = [true, false, null].flatMap(stored =>
+  [true, false, undefined].flatMap(typed => [true, false].map(repository => ({ stored, typed, repository }))));
+
+/** Sets the rows of `folder`'s checkout and its repository as `rows` says. */
+function plantRows(folder: MiscasedFolder, rows: (typeof SPELLING_ROWS)[number]): void {
+  inDatabase(({ $client: db }) => {
+    const row = db.prepare("SELECT repository_key AS key, clone_id AS cloneId FROM checkouts WHERE checkout_path = ?").get(folder.stored) as
+      { key: string; cloneId: string };
+    db.prepare("UPDATE repositories SET started = ? WHERE repository_key = ?").run(Number(rows.repository), row.key);
+    db.prepare("UPDATE checkouts SET started = ? WHERE checkout_path = ?").run(rows.stored === null ? null : Number(rows.stored), folder.stored);
+    db.prepare("DELETE FROM checkouts WHERE checkout_path = ?").run(folder.typed);
+    if (rows.typed === undefined) return;
+    db.prepare("INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at) VALUES (?, ?, ?, ?, 1, 1)")
+      .run(folder.typed, row.key, row.cloneId, Number(rows.typed));
+  });
+}
+
+/**
+ * The hook's start check in each of `folders`, typed in another case, under each of `SPELLING_ROWS`, beside a daemon
+ * that answers late as a live one reads the folder it was asked about: where the hook answered stopped itself though the
+ * daemon reads otherwise or took another answer (`wrong`), where it waited though the daemon reads stopped, and the
+ * folders it answered itself in.
+ */
+async function startChecksTypedOtherwise(host: StartCheckHost, daemon: CountingDaemon, folders: readonly MiscasedFolder[]): Promise<{
+  wrong: string[]; askedThoughStopped: string[]; answeredItselfIn: string[];
+}> {
+  const found = { wrong: [] as string[], askedThoughStopped: [] as string[], answeredItselfIn: new Set<string>() };
+  for (const folder of folders) {
+    for (const rows of SPELLING_ROWS) {
+      plantRows(folder, rows);
+      const proofsBefore = host.proofs.found.length;
+      host.proofs.nextCheck();
+      const started = await host.hookRerailStarted("claude-code", folder.workspace);
+      const reads = host.daemonReads(daemon.asked.at(-1)!);
+      const answeredItself = host.proofs.found.length > proofsBefore && host.proofs.found.at(-1) === true;
+      const name = `${folder.name}: stored ${String(rows.stored)}, typed ${String(rows.typed)}, repository ${String(rows.repository)}: ${reads}`;
+      if (answeredItself ? reads !== "stopped" : started !== (reads !== "stopped")) found.wrong.push(name);
+      if (!answeredItself && reads === "stopped") found.askedThoughStopped.push(name);
+      if (answeredItself) found.answeredItselfIn.add(folder.name);
+    }
+  }
+  return { ...found, answeredItselfIn: [...found.answeredItselfIn] };
+}
+
 /** The Git variables the test setup sets (`setup-rerail-home.ts`); a shell's others reach no test of the start check. */
 const TEST_SETUP_GIT_VARIABLES = new Set(["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"]);
 
@@ -1137,6 +1283,8 @@ describe("the hook start check", () => {
     vi.doUnmock("../../src/runtime/repository-start.js");
     vi.doUnmock("../../src/engine/storage/database.js");
     vi.doUnmock("../../src/engine/catalog/repository-identity.js");
+    vi.doUnmock("../../src/engine/catalog/checkout-control.js");
+    vi.doUnmock("node:fs/promises");
     vi.resetModules();
     vi.unstubAllEnvs();
   });
@@ -1316,5 +1464,22 @@ describe("the hook start check", () => {
       await daemon.close();
     }
     expect({ wrong, askedThoughStopped }).toEqual({ wrong: [], askedThoughStopped: ["b/own-folder", "never", "never/src"] });
+  });
+
+  it("asks about a folder typed in another letter case by its stored spelling and answers itself only where the daemon reads stopped, with macOS's realpaths", async () => {
+    const root = realpathSync.native(await temporaryDirectory({ started: false }));
+    const folders = miscasedFolders(root);
+    // On macOS checkout keys go through the JS realpath, which keeps a name as typed; the native realpath, which the
+    // hook asks the daemon with, gives it as stored.
+    const host = await startCheckHost(undefined, { system: "macos", folders });
+    const daemon = await daemonAnsweringAfterProof(host, repository => host.daemonReads(repository));
+    try {
+      const found = await startChecksTypedOtherwise(host, daemon, folders);
+      expect({ ...found, asked: [...new Set(daemon.asked)] }).toEqual({
+        wrong: [], askedThoughStopped: [], answeredItselfIn: folders.map(folder => folder.name), asked: folders.map(folder => folder.storedWorkspace),
+      });
+    } finally {
+      await daemon.close();
+    }
   });
 });
