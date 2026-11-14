@@ -640,11 +640,16 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     w => return Err(format!("block {at} recrule: `run`, `pair`, `last`, `read` or `next`, not {w}")),
                 });
             } else if first == "recnext" {
-                // `recnext HEX`: an `EndRule::Next`'s second bytes, in order (none: `-`).
+                // `recnext ROWS`: an `EndRule::Next`'s table's rows, a byte a first byte.
                 let r = program.records.as_mut().ok_or(format!("block {at} recnext before its records"))?;
                 let hex = line.word()?;
-                let hex = if hex == "-" { "" } else { hex.as_str() };
-                r.nexts.push((0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().map_err(|_| "a bad pair byte")?);
+                let row = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<Vec<u8>, _>>().map_err(|_| "a bad pair row")?;
+                r.nexts.push(crate::records::PairTable { row, sets: Vec::new() });
+            } else if first == "recpairs" {
+                // `recpairs W0 W1 W2 W3`: a set of the last table's (`PairTable::sets`).
+                let r = program.records.as_mut().ok_or(format!("block {at} recpairs before its records"))?;
+                let set = [line.number("")?, line.number("")?, line.number("")?, line.number("")?];
+                r.nexts.last_mut().ok_or(format!("block {at} recpairs before its table"))?.sets.push(set);
             } else if first == "recreader" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recreader before its records"))?;
                 let other: u8 = line.number("")?;

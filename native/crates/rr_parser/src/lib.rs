@@ -1520,6 +1520,10 @@ pub mod tests {
         let c = crate::compiled().expect("compiles");
         let cpu = c.native.cpu_form();
         let n = cpu.insts.len();
+        if let Some(r) = &c.native.records {
+            let bytes = |k: usize| (0..256).filter(|&b| usize::from(r.ends[b]) == k).count();
+            eprintln!("{} end rules: {}", r.rules.len(), r.rules.iter().enumerate().map(|(k, x)| format!("{x:?} ({} bytes)", bytes(k))).collect::<Vec<_>>().join(", "));
+        }
         let reach = |o: usize| {
             let mut seen = vec![false; n];
             let mut todo = vec![usize::from(cpu.outputs[o])];

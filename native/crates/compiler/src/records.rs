@@ -69,8 +69,8 @@ pub struct Records {
     /// The readers' kinds by their start masks (`Retag`), for the record passes that read the
     /// masks (Metal's, the interpreter's).
     pub retags: Vec<Retag>,
-    /// The second bytes of each `EndRule::Next`'s pairs.
-    pub nexts: Vec<Vec<u8>>,
+    /// The pairs of each `EndRule::Next` (`PairTable`).
+    pub nexts: Vec<PairTable>,
     /// The gap marks (bits of `marks`) made by token tests alone (`CheckThen`): no mask to read.
     pub tested_only: u32,
 }
@@ -138,9 +138,26 @@ pub enum EndRule {
     Last(u16),
     /// A region's token, by a reader (`Records::readers`, an index): `read K | …`.
     Read(u16),
-    /// The first byte, and the next where it is one of the bytes of `Records::nexts` (an
-    /// index): `pair "AB" …`, as a lexer reads its next byte.
+    /// The first byte, and the next where its pair is one of `Records::nexts`' table (an
+    /// index): `pair P`, as a lexer reads its next byte.
     Next(u16),
+}
+
+/// A kind's two-byte spellings (`EndRule::Next`): by a token's first byte its row (`row`, 256
+/// of them; row 0 none), and by the next byte, its bit in the row's set (`sets`, 256 bits): a
+/// two-byte token where it holds, one load each, as the lean lexer's table of tokens.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct PairTable {
+    pub row: Vec<u8>,
+    pub sets: Vec<[u64; 4]>,
+}
+
+impl PairTable {
+    /// Whether `a` then `b` is one of the pairs.
+    pub fn holds(&self, a: u8, b: u8) -> bool {
+        let row = usize::from(self.row.get(usize::from(a)).copied().unwrap_or(0));
+        self.sets.get(row).is_some_and(|set| set[usize::from(b) / 64] >> (b % 64) & 1 == 1)
+    }
 }
 
 /// A reader (`EndRule::Read`, decision 0177): a lexer's reader of a string or a comment. The
@@ -248,8 +265,8 @@ pub fn last_by_rule(records: &Records, rule: EndRule, s: usize, bytes: &[u8], ou
         // A reader's (`read_last`): not by a rule's words alone.
         EndRule::Read(_) => None,
         EndRule::Next(i) => {
-            let seconds = records.nexts.get(usize::from(i)).map_or(&[][..], |v| v.as_slice());
-            Some(s + usize::from(bytes.get(s + 1).is_some_and(|b| seconds.contains(b))))
+            let t = records.nexts.get(usize::from(i))?;
+            Some(s + usize::from(bytes.get(s + 1).is_some_and(|&b| t.holds(bytes[s], b))))
         }
         EndRule::Last(o) => {
             let w = words(o);

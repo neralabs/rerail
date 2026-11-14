@@ -2660,7 +2660,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // with tests is its kind's alone.
     let mut rule_tests: Vec<Vec<usize>> = Vec::new();
     let mut readers: Vec<crate::records::Reader> = Vec::new();
-    let mut nexts: Vec<Vec<u8>> = Vec::new();
+    let mut nexts: Vec<crate::records::PairTable> = Vec::new();
+    // Each table's pairs, to find it again.
+    let mut tabled: Vec<Vec<[u8; 2]>> = Vec::new();
     let mut ends = vec![crate::records::NO_RULE; 256];
     if !low.token_escapes.is_empty() && !(looped && (!low.token_rules.is_empty() || !low.token_reads.is_empty())) {
         return Err("token tests (`escape … at KIND`) need the token loop".into());
@@ -2676,18 +2678,35 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 }
             }
         };
-        // A byte whose kinds have pairs (`pair "AB" …`): its own rule, the second bytes of its
-        // pairs (`EndRule::Next`), as a lexer reads the next byte.
-        let next_of = |low: &Lowering, rows: &[usize], b: usize, nexts: &mut Vec<Vec<u8>>| -> Option<crate::records::EndRule> {
+        // A byte whose kinds have pairs (`pair P`): the kind's rule, its pairs' table
+        // (`EndRule::Next`), one for all its first bytes, as a lexer's table of tokens.
+        let mut next_of = |low: &Lowering, rows: &[usize], _b: usize, nexts: &mut Vec<crate::records::PairTable>| -> Option<crate::records::EndRule> {
             let pairs = low.token_pairs.get(&token_rows[*rows.first()?].0)?;
             if rows.iter().any(|&r| low.token_pairs.get(&token_rows[r].0) != Some(pairs)) {
                 return None;
             }
-            let seconds: Vec<u8> = pairs.iter().filter(|p| usize::from(p[0]) == b).map(|p| p[1]).collect();
-            let at = nexts.iter().position(|x| *x == seconds).unwrap_or_else(|| {
-                nexts.push(seconds);
-                nexts.len() - 1
-            });
+            let at = match tabled.iter().position(|x| x == pairs) {
+                Some(at) => at,
+                None => {
+                    let mut t = crate::records::PairTable { row: vec![0; 256], sets: vec![[0; 4]] };
+                    for first in 0..256usize {
+                        let mut set = [0u64; 4];
+                        for p in pairs.iter().filter(|p| usize::from(p[0]) == first) {
+                            set[usize::from(p[1]) / 64] |= 1 << (p[1] % 64);
+                        }
+                        if set != [0; 4] {
+                            let k = t.sets.iter().position(|x| *x == set).unwrap_or_else(|| {
+                                t.sets.push(set);
+                                t.sets.len() - 1
+                            });
+                            t.row[first] = k as u8;
+                        }
+                    }
+                    nexts.push(t);
+                    tabled.push(pairs.clone());
+                    nexts.len() - 1
+                }
+            };
             Some(crate::records::EndRule::Next(at as u16))
         };
         for b in 0..256usize {

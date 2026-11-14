@@ -1726,9 +1726,13 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                 };
                 let _ = writeln!(out, "  block {at} recrule {how} {o}");
             }
-            // `block N recnext HEX` each `next` rule's second bytes (`-`: none).
+            // `block N recnext ROWS` each `next` rule's table's rows (a byte a first byte), then
+            // `block N recpairs W0 W1 W2 W3` each of its sets (`PairTable`).
             for n in &r.nexts {
-                let _ = writeln!(out, "  block {at} recnext {}", if n.is_empty() { "-".to_string() } else { hex(n) });
+                let _ = writeln!(out, "  block {at} recnext {}", hex(&n.row));
+                for set in &n.sets {
+                    let _ = writeln!(out, "  block {at} recpairs {} {} {} {}", set[0], set[1], set[2], set[3]);
+                }
             }
             // `block N recreader OTHER` each reader, then `block N recarm K OPENER CLOSER OFF
             // refuse|end|bytesM` each of its regions (`Records::readers`).

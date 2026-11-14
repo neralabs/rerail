@@ -310,5 +310,17 @@ byte (`:-`) is no JSON minus, and a form feed in a backtick literal marks the to
 Nothing on the CPU reads the regions now: its form calls no walk (a walk no value of which is
 read goes, `cpu_form`). 57 operations, from 162.
 
+## A rule by a jump table; one rule for the pairs
+
+The lean lexer gives a common token's kind and length by one load of a table, and reads a
+rare first byte by a `match`. The token loop chose a token's end rule by a compare a rule,
+and the pairs had a rule a first byte (eleven rules). Now:
+
+- The rule is a jump table on `Records::ends`' byte (`br_table`). The translation to Rust
+  writes it as a `match` (`clif_rust`), which rustc makes a table again.
+- A kind's pairs are one table (`PairTable`): a row a first byte, and in the row the set of
+  second bytes. All the punctuation is one rule: the row's load by the first byte, then the
+  set's word by the next. Seven rules.
+
 Open: `u_ok`'s look-ahead is tier 2's, but `str_bad` and the punctuation and number tests are
 tier 1 masks a block; the lean lexer reads them at the token's bytes alone.

@@ -1661,6 +1661,9 @@ pub struct RecordTables {
     pub lasts: u16,
     /// Where each byte's end rule is (`Records::ends`), a byte each.
     pub ends: usize,
+    /// Where each pair table's rows (a byte a first byte) and sets (four words each) are
+    /// (`Records::nexts`).
+    pub pairs: Vec<(usize, usize)>,
 }
 
 impl RecordTables {
@@ -1690,7 +1693,15 @@ impl RecordTables {
         if !r.rules.is_empty() {
             words.extend(r.ends.chunks(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 rules"))));
         }
-        Ok(RecordTables { words, keys, meta, tails, ends, table, starts: r.starts, lasts: r.lasts })
+        let mut pairs = Vec::new();
+        for t in &r.nexts {
+            let rows = 8 * words.len();
+            words.extend(t.row.chunks(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 rows"))));
+            let sets = 8 * words.len();
+            words.extend(t.sets.iter().flatten());
+            pairs.push((rows, sets));
+        }
+        Ok(RecordTables { words, keys, meta, tails, ends, table, starts: r.starts, lasts: r.lasts, pairs })
     }
 }
 
@@ -1960,19 +1971,17 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     let q0 = f.ins().ushr_imm(s, 6);
     let sh = f.ins().band_imm(s, 63);
     let blocks: Vec<cranelift_codegen::ir::Block> = r.rules.iter().map(|_| f.create_block()).collect();
-    // A compare a rule (the translation to Rust has no jump table); none, the byte alone
-    // (`records::NO_RULE`).
-    for (k, &b) in blocks.iter().enumerate() {
-        let is = f.ins().icmp_imm(IntCC::Equal, rule, k as i64);
-        let other = f.create_block();
-        f.ins().brif(is, b, &[], other, &[]);
-        f.switch_to_block(other);
-        if k + 1 == blocks.len() {
-            f.set_cold_block(other);
-            let refuse = f.ins().iconst(types::I64, if r.untaken.is_empty() || r.skip.is_none() { 0 } else { -1 });
-            f.ins().jump(done, &[s.into(), refuse.into(), untag.into(), nohits.into()]);
-        }
-    }
+    // The rule by a jump table, as the lean lexer's `match` on the first byte; none, the byte
+    // alone (`records::NO_RULE`, past the table).
+    let none = f.create_block();
+    let calls: Vec<_> = blocks.iter().map(|&b| f.func.dfg.block_call(b, &[])).collect();
+    let default = f.func.dfg.block_call(none, &[]);
+    let jt = f.create_jump_table(cranelift_codegen::ir::JumpTableData::new(default, &calls));
+    f.ins().br_table(rule, jt);
+    f.switch_to_block(none);
+    f.set_cold_block(none);
+    let refuse = f.ins().iconst(types::I64, if r.untaken.is_empty() || r.skip.is_none() { 0 } else { -1 });
+    f.ins().jump(done, &[s.into(), refuse.into(), untag.into(), nohits.into()]);
     for (k, (&rule, &b)) in r.rules.iter().zip(&blocks).enumerate() {
         f.switch_to_block(b);
         // A rule with token tests (`Records::checks`) ends at a block of its own, which tests
@@ -1981,25 +1990,28 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         let ended = if tests.is_empty() { ended } else { tested(f, &tests, outputs, c, s, done, heads) };
         match rule {
             // `pair "AB" …`: the next byte, if inside the file, one of the pairs' seconds.
+            // `pair P`: the first byte's row, then the next byte's bit in the row's set, if
+            // inside the file (`PairTable`): two loads, as the lean lexer's table of tokens.
             EndRule::Next(i) => {
-                let seconds = &r.nexts[usize::from(i)];
-                if seconds.is_empty() {
-                    f.ins().jump(ended, &[s.into(), untag.into()]);
-                    continue;
-                }
+                let (rows, sets) = t.pairs[usize::from(i)];
                 let i1 = f.ins().iadd_imm(s, 1);
                 let inside = f.ins().icmp(IntCC::UnsignedLessThan, i1, c.len);
                 let at = f.ins().select(inside, i1, s);
                 let p = c.bytes_at(f, at);
-                let b = f.ins().uload8(types::I32, ro, p, 0);
-                let mut hit = f.ins().icmp_imm(IntCC::Equal, b, i64::from(seconds[0]));
-                for &x in &seconds[1..] {
-                    let y = f.ins().icmp_imm(IntCC::Equal, b, i64::from(x));
-                    hit = f.ins().bor(hit, y);
-                }
-                let hit = f.ins().band(hit, inside);
-                let hit = f.ins().uextend(types::I64, hit);
-                let l = f.ins().iadd(s, hit);
+                let b = f.ins().uload8(types::I64, ro, p, 0);
+                let ra = f.ins().iadd(c.tables, first);
+                let row = f.ins().uload8(types::I64, ro, ra, rows as i32);
+                let w = f.ins().ishl_imm(row, 2);
+                let hi = f.ins().ushr_imm(b, 6);
+                let w = f.ins().iadd(w, hi);
+                let w = f.ins().ishl_imm(w, 3);
+                let wa = f.ins().iadd(c.tables, w);
+                let set = f.ins().load(types::I64, ro, wa, sets as i32);
+                let bit = f.ins().ushr(set, b);
+                let bit = f.ins().band_imm(bit, 1);
+                let inside = f.ins().uextend(types::I64, inside);
+                let bit = f.ins().band(bit, inside);
+                let l = f.ins().iadd(s, bit);
                 f.ins().jump(ended, &[l.into(), untag.into()]);
             }
             EndRule::Pair(o) => {
