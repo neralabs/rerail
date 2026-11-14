@@ -5360,11 +5360,14 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         bump(0, s.rows as u64);
                         let added = std::cell::Cell::new(s.rows as u64);
                         let words = f.run(s, |m, n| if m + 1 < f.steps { bump(m + 1, n); added.set(added.get() + n) }).to_vec();
-                        cx.work += added.get();
-                        if cx.work > cx.budget { cx.stop = true; }
-                        for (w, &word) in words.iter().enumerate() {
+                        // The chunk's filter work is charged after its rows run (below): charged first, a chunk
+                        // whose filters alone spend the budget cut before its first row, every run (no progress).
+                        'rows: for (w, &word) in words.iter().enumerate() {
                             let mut m = word;
                             while m != 0 {
+                                // Cut (decision 0206): the rows from here on are left, so the row the cut stopped at
+                                // (`at0`) is the last one run, not one of these never run.
+                                if cx.stop { break 'rows; }
                                 let r = 64 * w + m.trailing_zeros() as usize;
                                 m &= m - 1;
                                 for &(slot, b) in &f.binds {
@@ -5374,6 +5377,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                                 go(cx, i + 1 + f.steps, slots);
                             }
                         }
+                        cx.work += added.get();
+                        if cx.work > cx.budget { cx.stop = true; }
                         s.rows = 0;
                         s.ids.clear();
                         s.columns.iter_mut().for_each(Vec::clear);
@@ -5602,7 +5607,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             out.clear();
             slots[y] = v;
             go(&mut cx, 0, &mut slots);
-            if cx.error.is_some() { break; }
+            if cx.error.is_some() || cx.stop { break; }
         },
         // The first two steps' pairs from a level's batch: each left row binds the first atom's slots (its rows
         // passed its tests already), each right row is checked as the walk checks it and binds the second's.
@@ -5612,7 +5617,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             c0[0].set(c0[0].get() + 1);
             let mut last = u32::MAX;
             for (li, rid) in p.pairs.iter() {
-                if cx.error.is_some() { break; }
+                // At a cut the pairs after it are left: `at0` stays at the row it stopped at.
+                if cx.error.is_some() || cx.stop { break; }
                 if li != last {
                     last = li;
                     let id0 = p.lids[li as usize];

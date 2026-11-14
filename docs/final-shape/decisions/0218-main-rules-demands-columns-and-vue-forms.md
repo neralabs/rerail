@@ -113,3 +113,14 @@ Over 62 small React and TypeScript files, that one relation did 1.0 G rows of wo
   `ignoreTypeValueShadow`): open. The 62 React/TS files give the same findings.
 - eslint-no-unused-vars (candidate) runs; on its probe it reports the 10 variables ESLint does, at ESLint's nodes.
 - 187 Python rules translate differently; all 537 pass the reader and the Ruff comparison is unchanged.
+
+## A node's attributes do not bind an aggregate's helper (2026-11-14)
+
+A nested aggregate's helper takes the variables it shares with the rule. When a literal of the rule's body binds
+such a variable, the variable is left free; otherwise a context relation restricts it. `node`, `line` and
+`end_line` counted as binders, but they hold of every node. RUF018's
+`count : { t = R, node(_, c, …), node(_, R, …), s >= e, end_line(c, …), line(…), … } = 0` became a helper over every
+pair of the corpus's nodes: 53 M rows from 7,303 nodes, and over 2 GB on 95 files. Those three are now tests, as
+`match_all` and `match` are, and the context restricts the variables to the rule's own rows. RUF018 on the 95 files
+peaks at 294 MB, with the same findings on its probe. The Ruff comparison and no-shadow's findings over the 62 files
+are unchanged.

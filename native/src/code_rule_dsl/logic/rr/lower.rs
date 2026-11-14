@@ -3260,7 +3260,14 @@ impl Lowerer {
         // a context relation: the rule's other literals, projected on those variables.
         let bound: BTreeSet<String> = body_vars(
             // `match_all` over a text the rule binds reads it, as a test does: its spans or texts come from the context.
-            &body.iter().filter(|l| binds_columns(l) && !matches!(l, Lit::Atom { rel, .. } if matches!(rel.as_str(), "match_all" | "match"))).cloned().collect::<Vec<_>>(),
+            // Nor does a node's attribute (`node`, `line`, `end_line`): it holds of every node, so bound by it alone
+            // the helper was every pair of the corpus's nodes (RUF018's `count : { node(_, c, …), node(_, R, …),
+            // s >= e, … }`, 53 M rows of 7,303 nodes); the context restricts the variable to the rule's own rows.
+            &body
+                .iter()
+                .filter(|l| binds_columns(l) && !matches!(l, Lit::Atom { rel, .. } if matches!(rel.as_str(), "match_all" | "match" | "node" | "line" | "end_line")))
+                .cloned()
+                .collect::<Vec<_>>(),
         );
         let needed: Vec<String> = inner.iter().filter(|v| outer.contains(*v) && !bound.contains(*v)).cloned().collect();
         if !needed.is_empty() {

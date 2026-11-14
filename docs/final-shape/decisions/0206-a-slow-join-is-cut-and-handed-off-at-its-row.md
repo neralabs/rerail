@@ -122,3 +122,19 @@ rows. At the default 100,000 there are fewer.
 
 - **O168, whole plans are not cut.** A probe run as its whole plan (its delta is all of its relation, in the first
   wave) has no budget. The driver plans whole plans apart, and its handoff would need that plan's own replacement.
+
+## A cut inside a fused chunk (2026-11-14)
+
+A first step fused with the tests after it (`rowcode`) runs a chunk of rows at a time. Two faults lost or stalled
+rows at a cut there:
+
+- After the cut, the chunk's loop went on, so the row it stopped at (`at0`) moved to the chunk's last row. The rows
+  between were reported done but never run. The fixpoint was short of rows. With joins on, typescript-eslint's
+  no-shadow flagged six or seven valid fixtures (018, 028–033), varying from run to run, because its
+  `count : { … } = 0` missed rows. The loop now stops at the cut. The paired-batch and per-value loops stop there
+  too.
+- The chunk's filter work was charged before its rows ran. A chunk whose filters alone spent the budget was cut
+  before its first row on every run, so no run made progress. The work is now charged after the rows run, so each
+  run makes progress.
+
+Test: `a_cut_inside_a_fused_chunk_leaves_the_rows_it_did_not_run` (cut_tests.rs). It fails without the stop.
