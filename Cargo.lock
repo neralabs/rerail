@@ -3331,6 +3331,7 @@ dependencies = [
  "rerail-lang-rust",
  "rerail-lang-sql",
  "rerail-logic",
+ "rerail-markdown-lean",
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-php-lean",
@@ -3516,6 +3517,7 @@ dependencies = [
  "rerail-html-lean",
  "rerail-java-lean",
  "rerail-lang",
+ "rerail-markdown-lean",
  "rerail-php-lean",
  "rerail-prof",
  "rerail-python-lean",
@@ -4038,6 +4040,14 @@ dependencies = [
  "unicode-normalization",
  "windows-sys 0.61.2",
  "zstd",
+]
+
+[[package]]
+name = "rerail-markdown-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]

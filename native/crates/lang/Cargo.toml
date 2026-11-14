@@ -102,6 +102,8 @@ rerail-php-lean = { path = "../php_lean" }
 rerail-html-lean = { path = "../html_lean" }
 # CSS's lean parser: tree-sitter-css's tape, written as the parse goes (`tape::css_lean`).
 rerail-css-lean = { path = "../css_lean" }
+# Markdown's lean parser: tree-sitter-md's block tape, written as the parse goes (`tape::markdown_lean`).
+rerail-markdown-lean = { path = "../markdown_lean" }
 rerail-store = { path = "../store" }
 rerail-accel = { path = "../../../accel" }
 rerail-compiler = { path = "../compiler" }
