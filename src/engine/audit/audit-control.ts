@@ -215,22 +215,23 @@ export class SqliteAuditControlStore {
     const parsed = auditSettingsPatchSchema.parse(patch);
     this.#database.transaction(() => {
       const { cwd } = requireSession(this.#database, sessionId);
-      this.#saveSettings(canonicalWorkspace(cwd), cwd, parsed);
+      this.#saveSettings(canonicalWorkspace(cwd), parsed, cwd);
     });
     return this.getSettings(sessionId);
   }
   /** `updateSettings` for a checkout by its folder, before any session there exists: what its sessions start with. */
   updateWorkspaceSettings(workspaceRoot: string, patch: z.input<typeof auditSettingsPatchSchema>): AuditSettings {
     const parsed = auditSettingsPatchSchema.parse(patch);
-    return this.#database.transaction(() => this.#saveSettings(canonicalWorkspace(workspaceRoot), workspaceRoot, parsed));
+    return this.#database.transaction(() => this.#saveSettings(canonicalWorkspace(workspaceRoot), parsed));
   }
   /**
-   * Merges `patch` over the checkout's saved settings as {@link getWorkspaceSettings} reads them, else the defaults, and
-   * saves the result under the canonical key; a row Rerail 0.1.4 saved under its own key stays for it to read. The
-   * default strategy, `message`, is left out of the row, as rows read before the key existed, so a release that reads
-   * `{ scope, mode }` strictly still reads every row that does not opt into an experimental strategy.
+   * Merges `patch` over the checkout's saved settings, else the defaults, and saves the result under the canonical key.
+   * The saved settings are read as the folder spelt `spelled` finds them, so a session's own spelling starts from what
+   * Rerail 0.1.4 saved under it; that row stays for 0.1.4 to read. The default strategy, `message`, is left out of the
+   * row, as rows read before the key existed, so a release that reads `{ scope, mode }` strictly still reads every row
+   * that does not opt into an experimental strategy.
    */
-  #saveSettings(workspaceRoot: string, spelled: string, patch: AuditSettingsPatch): AuditSettings {
+  #saveSettings(workspaceRoot: string, patch: AuditSettingsPatch, spelled = workspaceRoot): AuditSettings {
     const previous = this.#settingsRow(workspaceRoot, spelled);
     const settings = auditSettingsSchema.parse({ ...DEFAULT_AUDIT_SETTINGS, ...(previous === undefined ? {} : parseSettings(previous.settings)), ...patch });
     const { steerStrategy, ...saved } = settings;
