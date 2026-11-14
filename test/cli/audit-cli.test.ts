@@ -286,10 +286,18 @@ describe("rerail scan and settings CLI", () => {
     execFileSync("git", ["add", "api"], { cwd: root });
     execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-m", "generated"], { cwd: root });
     let output = "";
-    expect(await runAuditCommand("scan", ["--session", "s1", "--scope", "repository", "--wait", "--json"], {
+    // Not --wait, which gives up after 10 s: the clause runs to the end of its allowance, 5 to 7 s alone on a Windows
+    // machine and 12 to 26 s on a busy one. The test waits for the scan to end, as the daemon records it.
+    expect(await runAuditCommand("scan", ["--session", "s1", "--scope", "repository", "--json"], {
       home, stdout: { write: text => { output += text; return true; } },
     })).toBe(0);
-    const request = auditRequestSchema.parse(JSON.parse(output));
+    const { id } = auditRequestSchema.parse(JSON.parse(output));
+    const request = await vi.waitFor(async () => {
+      const { auditRequests } = await (await fetch(new URL("/api/sessions/s1/audit-requests", daemon.url))).json();
+      const scan = auditRequestSchema.parse(auditRequests.find((listed: { id: string }) => listed.id === id));
+      expect(scan.status).not.toMatch(/^(queued|running)$/u);
+      return scan;
+    }, { timeout: 50_000, interval: 250 });
     expect(request).toMatchObject({ status: "completed", error: null });
     const { audits } = await (await fetch(new URL(`/api/audits?auditId=${request.auditIds[0]}`, daemon.url))).json();
     expect(audits).toEqual([expect.objectContaining({
@@ -300,7 +308,7 @@ describe("rerail scan and settings CLI", () => {
     })]);
     // The other files are read: the baseline's and the one added beside the generated file.
     expect(new Set(audits[0].violations.map((violation: { path: string }) => violation.path))).toEqual(new Set(["api/clean.py", "api/noisy.py"]));
-  }, 30_000);
+  }, 60_000);
 
   it("fails a repository scan where a rule finds more than it may report on a file, which is no coverage gap", async () => {
     const { root, home, daemon, runtime } = await fixture();
