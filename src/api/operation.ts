@@ -13,6 +13,7 @@ import type { CodingAgentState } from "../engine/adapter-contract.js";
 import type { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
 import type { SqliteSessionReader, SqliteSessionStore } from "../runtime/session-store.js";
 import type { presentationDaemonSchema } from "./session-contracts.js";
+import type { MergeAssistService } from "../runtime/merge-assist/service.js";
 import { InvalidCursorError } from "../engine/storage/page-cursor.js";
 
 export interface RerailApiStores {
@@ -51,6 +52,8 @@ export interface RerailApiStores {
    * fails with why. A process that runs no sessions has none.
    */
   resumeSession?(sessionId: string): void;
+  /** Merge Assist for one checkout at a time: its in-flight conflicts, settings, and the changes people make. */
+  mergeAssist(): MergeAssistService;
 }
 
 export type OperationMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";

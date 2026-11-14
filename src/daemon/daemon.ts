@@ -19,6 +19,7 @@ import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.j
 import { chooseEngineSocketPath, startEngineService, type EngineService } from "../runtime/engine-service.js";
 import { engineIdentity, enginePipeName, fallbackPipe } from "../runtime/engine-pipe.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
+import { createMergeAssistService, type MergeAssistRuntime } from "../runtime/merge-assist/service.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
@@ -30,7 +31,8 @@ import { DatabaseApiStores } from "../api/stores.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/native/native.js";
 import { modelStatus } from "../engine/native/model-status.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
-import { defaultRerailDatabasePath } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, type RerailDatabase } from "../engine/storage/database.js";
+import { mergeAssistExperimentEnabled } from "../engine/experimental-features.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { openToOthers, type AccessReader } from "../engine/storage/private-files.js";
 import { acquireMainInstance } from "../engine/native/main-instance.js";
@@ -407,6 +409,14 @@ async function closeAfterFailedStart({ engineService, nativeServer, server }: St
   }
 }
 
+/**
+ * The Merge Assist a daemon shares between its API and sessions, over the database `database` opens; none while the
+ * experiment is off ({@link mergeAssistExperimentEnabled}), so nothing of it runs in this daemon.
+ */
+function daemonMergeAssist(database: () => RerailDatabase): { mergeAssist?: MergeAssistRuntime } {
+  return mergeAssistExperimentEnabled() ? { mergeAssist: createMergeAssistService({ database }) } : {};
+}
+
 export class RerailDaemon {
   readonly host: string;
   readonly port: number;
@@ -426,10 +436,12 @@ export class RerailDaemon {
   readonly #accessToken: string;
   readonly #tlsFingerprint256: string | undefined;
   #closed = false;
+  /** The Merge Assist the API and every session share, while the experiment is on: stopped before the database closes. */
+  readonly #mergeAssist: MergeAssistRuntime | undefined;
   #remoteSink: RemoteSinkLoop | undefined;
 
   private constructor({
-    server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken,
+    server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken, mergeAssist,
     tlsFingerprint256,
   }: {
     server: DaemonServer;
@@ -444,6 +456,7 @@ export class RerailDaemon {
     nativeServer: NativeSessionServer;
     nativeToken: string;
     accessToken: string;
+    mergeAssist?: MergeAssistRuntime;
     tlsFingerprint256: string | undefined;
   }) {
     const address = server.address() as AddressInfo;
@@ -463,6 +476,7 @@ export class RerailDaemon {
     this.#nativeServer = nativeServer;
     this.#nativeToken = nativeToken;
     this.#accessToken = accessToken;
+    this.#mergeAssist = mergeAssist;
     this.#tlsFingerprint256 = tlsFingerprint256;
   }
 
@@ -485,6 +499,9 @@ export class RerailDaemon {
     const { storageRoot, modelPath } = resolveSessionPaths(workspaceRoot);
     let daemon: RerailDaemon | undefined;
     const started: StartedServices = {};
+    // One Merge Assist for the API and every session this daemon runs, so a scan runs once per checkout and gh's
+    // readiness is read once; its database opens with the stores', on first use.
+    const sharedMergeAssist = daemonMergeAssist(() => stores.database());
     // Open the database before binding anything: a refused open (a file this build cannot read, say) must leave no
     // engine socket behind, or every later start fails with EADDRINUSE.
     const stores = new DatabaseApiStores(databasePath, {
@@ -494,6 +511,7 @@ export class RerailDaemon {
       // The server listens only once the engine service runs, so a scan request always finds it. The engine service
       // reports a failure itself, and its close waits for the open.
       resumeSession: sessionId => void started.engineService?.resumeSession(sessionId),
+      ...sharedMergeAssist,
     });
     try {
       const engineService = await startEngineService({
@@ -503,6 +521,7 @@ export class RerailDaemon {
         databasePath,
         workspaceRoot,
         accessToken,
+        ...sharedMergeAssist,
         // On Windows any local user can create the default pipe first; the engine then listens on a random name.
         ...(options.kernelSocketPath === undefined
           ? { pipeFallback: () => fallbackPipe(kernelSocketPath) }
@@ -510,7 +529,7 @@ export class RerailDaemon {
       });
       started.engineService = engineService;
       const nativeToken = randomBytes(32).toString("hex");
-      const sessions = new NativeSessionServer({ workspaceRoot, modelPath, databasePath });
+      const sessions = new NativeSessionServer({ workspaceRoot, modelPath, databasePath, ...sharedMergeAssist });
       started.nativeServer = sessions;
       const app = daemonApp({ stores, options, publicHosts, accessToken, nativeToken, sessions, workspaceRoot, uiRoot, health: () => daemon!.health() });
       const server = createDaemonServer(options, app);
@@ -519,7 +538,7 @@ export class RerailDaemon {
       await listenPreferred(server, options.port, remembered, bindHost);
       daemon = new RerailDaemon({
         server, engineService, kernelSocketPath: engineService.socketPath, stores, options, databasePath, native, ui, workspaceRoot,
-        nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256,
+        nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256, ...sharedMergeAssist,
       });
       await daemon.#announce(remembered);
       return daemon;
@@ -589,6 +608,7 @@ export class RerailDaemon {
         await this.#nativeServer.close();
         await this.#engineService.close();
       } finally {
+        await this.#mergeAssist?.stop();
         this.#stores.close();
         if (this.#options.stateFile !== undefined) await rm(this.#options.stateFile, { force: true });
       }

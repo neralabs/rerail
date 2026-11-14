@@ -289,20 +289,25 @@ function resolveRuntimeRoute(
     }
     return { runtimeKey: configuredRuntimeKey ?? candidates!.values().next().value! };
   }
+  const serviceDatabasePath = resolvePath(options.databasePath ?? defaultRerailDatabasePath());
   const { accessToken: _accessToken, ...serviceDefaults } = options;
   const runtimeOptions: RerailRuntimeOptions = configuration === undefined
     ? {
         ...serviceDefaults,
         storageRoot: resolvePath(options.storageRoot),
-        databasePath: resolvePath(options.databasePath ?? defaultRerailDatabasePath()),
+        databasePath: serviceDatabasePath,
         workspaceRoot: resolvePath(workspaceRoot),
       }
     : {
         storageRoot: resolvePath(configuration.storageRoot),
         modelPath: resolvePath(configuration.modelPath),
-        databasePath: resolvePath(configuration.databasePath ?? options.databasePath ?? defaultRerailDatabasePath()),
+        databasePath: resolvePath(configuration.databasePath ?? serviceDatabasePath),
         workspaceRoot: resolvePath(workspaceRoot),
       };
+  // The service's Merge Assist is over its own database; a runtime over another makes its own.
+  if (configuration !== undefined && options.mergeAssist !== undefined && runtimeOptions.databasePath === serviceDatabasePath) {
+    runtimeOptions.mergeAssist = options.mergeAssist;
+  }
   const runtimeKey = JSON.stringify([
     runtimeOptions.storageRoot,
     runtimeOptions.modelPath,

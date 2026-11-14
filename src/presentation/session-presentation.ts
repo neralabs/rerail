@@ -6,6 +6,7 @@ import {
   presentationDaemonSchema,
   presentationReadSchema,
   rulesDashboardUrl,
+  sessionHudSchema,
   type PresentationRead,
   type PresentedSession,
   type RulesDashboardScope,
@@ -16,7 +17,8 @@ import {
 } from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { PresentationPresence } from "../engine/storage/presentation-presence.js";
-import { ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
+import { cappedLine, ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
+import { conflictUrl } from "../engine/merge-assist/conflict-note.js";
 import { colourDepth, RERAIL_MARK_TEXT, rerailMark, stateMark, type TerminalEnv } from "./rerail-mark.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 
@@ -193,10 +195,22 @@ async function readAnswer<Schema extends z.ZodType>(
   return schema.parse(JSON.parse(Buffer.concat(chunks, size).toString("utf8")));
 }
 
+/** The longest conflict line the footer shows: as long as the conflict hook's status may be. */
+const FOOTER_CONFLICT_CHARS = 90;
+
+/**
+ * Merge Assist's footer segment, linked to the conflict's card: `◐ <line>` for the newest open one, cut to
+ * {@link FOOTER_CONFLICT_CHARS}, with `(+N)` for the others open.
+ */
+function conflictSegment(dashboard: URL, { conflicts, summary }: NonNullable<z.infer<typeof sessionHudSchema>["mergeAssist"]>): SessionPresentation["parts"][number] {
+  return { text: `◐ ${cappedLine(summary.text, FOOTER_CONFLICT_CHARS)}${conflicts > 1 ? ` (+${conflicts - 1})` : ""}`, url: conflictUrl(dashboard.href, summary.id) };
+}
+
 /**
  * `R E R A I L ● 26 rules · worktree · 2 to approve`, with each rule overlay in force in the checkout after the count
- * (linked to its pack page), what runs in Log waiting for a person's approval (linked to Overview, which lists it), and
- * `steered N×` only once Rerail has steered in this session (A1f).
+ * (linked to its pack page), what runs in Log waiting for a person's approval (linked to Overview, which lists it),
+ * `steered N×` only once Rerail has steered in this session (A1f), and Merge Assist's segment while the checkout has an
+ * open conflict that is not quiet (`conflictSegment`).
  */
 function onPresentation(
   origin: URL,
@@ -219,6 +233,11 @@ function onPresentation(
   if ((hud.awaitingApproval ?? 0) > 0) items.push({ text: `${hud.awaitingApproval} to approve`, url: rulesDashboardUrl(origin, scope) });
   if (hud.steeringCount === null) items.push({ text: "steering unavailable", url: sessionUrl });
   else if (hud.steeringCount > 0) items.push({ text: `steered ${hud.steeringCount}×`, url: sessionUrl });
+  if (hud.mergeAssist !== undefined) {
+    const dashboard = new URL(rulesDashboardUrl(origin, scope));
+    dashboard.hash = "";
+    items.push(conflictSegment(dashboard, hud.mergeAssist));
+  }
   items.push(...health.map(text => ({ text, url: null })));
   return presentation({
     status: "on", brandUrl: sessionUrl, items, presence, repositoryState: "started",
@@ -238,15 +257,20 @@ export async function dashboardOrigin(cwd: string): Promise<string | undefined> 
 
 /**
  * Deliveries with each of their rules linked to its page on `cwd`'s dashboard, scoped to its repository: the link the
- * person's `why?` opens. The runtime records no link; each coding agent's adapter links the rules as it hands them over,
- * and without a dashboard leaves them unlinked.
+ * person's `why?` opens; and the conflict a note surfaces linked to its card on the Merge Assist page (`open`). The
+ * runtime records no link; each coding agent's adapter links them as it hands them over, and without a dashboard
+ * leaves them unlinked.
  */
 export async function linkDeliveries<Delivery extends AdapterDelivery>(deliveries: readonly Delivery[], cwd: string | undefined): Promise<Delivery[]> {
   // Hooks call this on every event, and most events deliver nothing: only a rule to link is worth asking the daemon.
   const linksRules = deliveries.some(delivery => delivery.rules.length > 0);
   const dashboard = cwd === undefined || !linksRules ? undefined : await steerDashboard(cwd);
   if (dashboard === undefined) return deliveries.map(delivery => ({ ...delivery }));
-  return deliveries.map(delivery => ({ ...delivery, rules: delivery.rules.map(rule => ({ ...rule, url: ruleUrl(dashboard, rule.id) })) }));
+  return deliveries.map(delivery => ({
+    ...delivery,
+    rules: delivery.rules.map(rule => ({ ...rule, url: ruleUrl(dashboard, rule.id) })),
+    ...(delivery.conflict === undefined ? {} : { conflict: { ...delivery.conflict, url: conflictUrl(dashboard, delivery.conflict.id) } }),
+  }));
 }
 
 /**

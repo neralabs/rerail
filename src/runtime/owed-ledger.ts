@@ -8,7 +8,7 @@ import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { SECRET_FILE_FINDING_MESSAGE, type CodeRuleViolation, type SteerSourceOf } from "../engine/code-rule/code-rule.js";
 import type { SteerRuleSource } from "../engine/code-rule/steer-origin.js";
 import { scrubSecrets } from "../engine/secret-scrub.js";
-import { SteerRuleSchema } from "./event-protocol.js";
+import { ConflictNoticeSchema, SteerRuleSchema } from "./event-protocol.js";
 
 /*
  * What a session owes its agent while it is closed. A session that closes without its end (quiet past the idle limit,
@@ -38,6 +38,7 @@ export const LedgerDeliverySchema = z.object({
   strategy: z.enum(STEER_STRATEGIES).optional(),
   toolCallId: z.string().optional(),
   rewound: z.array(z.string()).optional(),
+  conflict: ConflictNoticeSchema.optional(),
 });
 
 const SpanSchema = z.object({

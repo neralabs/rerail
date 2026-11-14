@@ -54,6 +54,8 @@ export interface AdapterCapabilityProfile {
   delivery: Readonly<Record<RuleMode, DeliveryMechanism>>;
   lifecycleEvents: readonly string[];
   sampleEvents: Readonly<Record<"user" | "assistant" | "tool" | "turn", string>>;
+  /** Whether it draws Rerail's footer: Claude Code's status line, OMP's and Pi's widget. */
+  statusLine: boolean;
   /** What Rerail's commands start with in this coding agent, in every text that names one. */
   commandSigil: CommandSigil;
   /** How this coding agent writes a file so that Rerail's hooks see the edit. */
@@ -72,6 +74,7 @@ export const ADAPTER_CAPABILITIES = {
     assistantObservation: "streaming",
     toolSurface: "native",
     persistence: "session-entries",
+    statusLine: true,
     delivery: {
       log: "observe",
       steer: "native-queue",
@@ -93,6 +96,7 @@ export const ADAPTER_CAPABILITIES = {
     assistantObservation: "streaming",
     toolSurface: "native",
     persistence: "session-entries",
+    statusLine: true,
     delivery: {
       log: "observe",
       steer: "native-queue",
@@ -114,6 +118,7 @@ export const ADAPTER_CAPABILITIES = {
     assistantObservation: "streaming",
     toolSurface: "event",
     persistence: "jsonl-ledger",
+    statusLine: true,
     delivery: {
       log: "observe",
       steer: "additional-context",
@@ -135,6 +140,7 @@ export const ADAPTER_CAPABILITIES = {
     assistantObservation: "completed",
     toolSurface: "event",
     persistence: "jsonl-ledger",
+    statusLine: false,
     delivery: {
       log: "observe",
       steer: "additional-context",
@@ -156,6 +162,7 @@ export const ADAPTER_CAPABILITIES = {
     assistantObservation: "completed",
     toolSurface: "event",
     persistence: "jsonl-ledger",
+    statusLine: false,
     delivery: {
       log: "observe",
       steer: "deferred-context",
@@ -343,6 +350,8 @@ export interface AdapterDelivery {
    */
   toolCallId?: string;
   rewound?: readonly string[];
+  /** The in-flight conflict a Merge Assist note surfaces: the person's line for it (`conflictLine`); never the agent's text. */
+  conflict?: ConflictNotice;
 }
 
 /** One rule a delivery steered (or logged) about, for the person's line and the dashboard; the coding agent never reads it. */
@@ -355,6 +364,14 @@ export interface SteerRule {
   readonly url?: string | undefined;
 }
 
+/** A conflict a delivery surfaces to the person: its id, the line's words, and its card's page once an adapter links it. */
+export interface ConflictNotice {
+  readonly id: string;
+  /** `your edit overlaps PR #398 (Tim): model.rs · GrammarMatcher`. */
+  readonly text: string;
+  readonly url?: string | undefined;
+}
+
 /** Whether `value`, read back from a file or a host's transcript, is a `SteerRule`. */
 export function isSteerRule(value: unknown): value is SteerRule {
   if (value === null || typeof value !== "object") return false;
@@ -363,6 +380,13 @@ export function isSteerRule(value: unknown): value is SteerRule {
     && (rule.state === "steered" || rule.state === "logged")
     && (rule.origin === undefined || typeof rule.origin === "string")
     && (rule.url === undefined || typeof rule.url === "string");
+}
+
+/** Whether `value`, read back from a file, is a `ConflictNotice`. */
+export function isConflictNotice(value: unknown): value is ConflictNotice {
+  if (value === null || typeof value !== "object") return false;
+  const notice = value as Partial<ConflictNotice>;
+  return typeof notice.id === "string" && typeof notice.text === "string" && (notice.url === undefined || typeof notice.url === "string");
 }
 
 /** The `customType` every host records Rerail rule guidance under in its own session transcript. */
@@ -411,7 +435,8 @@ export async function sendNativeDeliveries(
         { deliverAs: "steer" },
       );
     }
-    if (delivery.content.trim() === "") continue;
+    // A note that names no rule (a Merge Assist note) shows the person no steer line, so it is not counted as a steer.
+    if (delivery.content.trim() === "" || delivery.ruleIds.length === 0) continue;
     try {
       await record(delivery.sessionId, randomUUID(), delivery.ruleIds);
     } catch (error) {

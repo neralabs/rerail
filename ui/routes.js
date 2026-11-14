@@ -6,13 +6,14 @@
  * `#overview` (the default), `#pack/<packId>`, `#created` (rules created by you), `#packs` (the catalog),
  * `#packs?review=1` (the review before starting), `#create`, `#history` (`?rule=<id>` narrows it to one rule,
  * `?outcome=steered|logged` sets its chip), `#sessions` (`?filter=violations|in-progress` sets its chip), `#settings`,
+ * `#merge` (Merge Assist; `?conflict=<id>` brings that conflict into view, as the session's line links it),
  * and `#rule/<id>`: a rule's sheet over the current view (the coding agent's steer links here). Links from steers,
  * the CLI and the status line written before v8 keep working: `#rules` is Overview, `#activity` History,
  * `#rule-packs` the catalog and `#rule-packs?review=1` the review.
  */
 
 /**
- * @typedef {"overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings"} ViewName
+ * @typedef {"overview" | "pack" | "created" | "packs" | "review" | "create" | "history" | "sessions" | "settings" | "merge"} ViewName
  * @typedef {"all" | "steered" | "logged"} Outcome   History by rule's chips.
  * @typedef {"all" | "corr" | "open"} SessionFilter History by session's chips: All, With violations, In progress.
  * @typedef {object} Route
@@ -24,12 +25,13 @@
  * @property {string} [rule]         The rule whose sheet is open.
  * @property {string} [session]      The session Sessions selects.
  * @property {boolean} [jump]        Sessions scrolls to the selected session's first violation.
+ * @property {string} [conflict]     The conflict Merge Assist shows (`merge` routes only).
  */
 
 /** Hashes that name a view by themselves, the legacy ones included. */
 const PLAIN = {
   overview: "overview", rules: "overview",
-  created: "created", create: "create", sessions: "sessions", settings: "settings",
+  created: "created", create: "create", sessions: "sessions", settings: "settings", merge: "merge",
   packs: "packs", "rule-packs": "packs",
   history: "history", activity: "history",
 };
@@ -71,6 +73,8 @@ export function parseRoute(hash) {
   }
   const sessionFilter = own(SESSION_FILTER, params.get("filter"));
   if (view === "sessions" && sessionFilter) return { view, sessionFilter };
+  const conflict = params.get("conflict");
+  if (view === "merge" && conflict) return { view, conflict };
   return { view };
 }
 
@@ -88,6 +92,7 @@ export function hashOf(route) {
     case "review": return "packs?review=1";
     case "history": return `history${query([["outcome", own(OUTCOMES, route.outcome) ? route.outcome : undefined], ["rule", route.filterRule || undefined]])}`;
     case "sessions": return `sessions${query([["filter", own(SESSION_FILTER_PARAM, route.sessionFilter)]])}`;
+    case "merge": return `merge${query([["conflict", route.conflict || undefined]])}`;
     default: return route.view ?? "overview";
   }
 }
