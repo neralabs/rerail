@@ -667,7 +667,10 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
           ruleRevisions: input.ruleRevisions,
           paths: input.paths,
           ruleProvenance: [],
-          ruleProvenanceId: provenance.length === 0 ? null : storedRuleProvenanceId(this.#database, provenance),
+          // Every audit names a stored copy, `[]` included (one row for all that ran no rules): an audit that names none
+          // is one a Rerail older than `audit-rule-provenance-once` wrote, and the daemon's move of older audits'
+          // provenance waits while such audits come (`rule-provenance-move.ts`).
+          ruleProvenanceId: storedRuleProvenanceId(this.#database, provenance),
           startedAt: Date.now(),
           finishedAt: null,
           status: "running",

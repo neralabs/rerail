@@ -122,6 +122,26 @@ function inlineAudits(path: string): number {
   }
 }
 
+/** The text of each stored copy of a rule provenance, sorted. */
+function storedTexts(path: string): string[] {
+  const database = new Database(path, { readonly: true });
+  try {
+    return (database.prepare("SELECT rule_provenance_json FROM audit_rule_provenances").pluck().all() as string[]).sort();
+  } finally {
+    database.close();
+  }
+}
+
+/** How many audits name no stored copy of their provenance, as a Rerail older than this one writes each audit. */
+function auditsNamingNoCopy(path: string): number {
+  const database = new Database(path, { readonly: true });
+  try {
+    return database.prepare("SELECT count(*) FROM audits WHERE rule_provenance_id IS NULL").pluck().get() as number;
+  } finally {
+    database.close();
+  }
+}
+
 /** An audit an older Rerail sharing the file records at `now` (epoch ms), its provenance in its row; when it began. */
 function recordAsOlder(path: string, auditId: string, provenance: readonly AuditRuleProvenance[], now = Date.now()): number {
   const older = new Database(path);
@@ -253,17 +273,21 @@ describe("audit rule provenance", () => {
       // One copy and twenty audits' own rows, not twenty copies.
       expect(bytesInUse(path) - empty).toBeLessThan(2 * size);
 
-      // Another checkout's provenance is its own copy.
+      // Another checkout's provenance is its own copy. Audits that ran no rules name one stored copy of `[]`, so an audit
+      // that names none is one a Rerail older than this one wrote.
       const worktree = provenanceOf("/home/dev/app-worktree", 200);
       const other = store.start(auditInput("/home/dev/app-worktree", worktree));
       const none = store.start(auditInput("/home/dev/app", []));
+      store.finish(store.start(auditInput("/home/dev/app", [])), { status: "completed" });
       expect(bytesInUse(path) - empty).toBeLessThan(3 * size);
+      expect(storedTexts(path)).toEqual([JSON.stringify(provenance), JSON.stringify(worktree), "[]"].sort());
+      expect(auditsNamingNoCopy(path)).toBe(0);
 
       for (const auditId of audited) expect(store.get(auditId)?.ruleProvenance).toEqual(provenance);
       expect(store.get(other)?.ruleProvenance).toEqual(worktree);
       expect(store.get(none)?.ruleProvenance).toEqual([]);
       const listed = new Map(store.list({ limit: 200 }).audits.map(audit => [audit.auditId, audit.ruleProvenance]));
-      expect(listed.size).toBe(22);
+      expect(listed.size).toBe(23);
       for (const auditId of audited) expect(listed.get(auditId)).toEqual(provenance);
       expect(listed.get(other)).toEqual(worktree);
       expect(listed.get(none)).toEqual([]);
@@ -349,9 +373,12 @@ describe("audit rule provenance", () => {
     let ids: string[];
     let current: (AuditRecord | undefined)[];
     try {
+      // A later audit of the same rules, and one that ran none.
       const later = store.start(auditInput("/home/dev/app", app));
       store.finish(later, { status: "completed" });
-      ids = [...olderIds, later];
+      const none = store.start(auditInput("/home/dev/app", []));
+      store.finish(none, { status: "completed" });
+      ids = [...olderIds, later, none];
       current = ids.map(auditId => store.get(auditId));
     } finally {
       store.close();
@@ -363,7 +390,7 @@ describe("audit rule provenance", () => {
     expect(provenanceTexts(after)).toEqual(ids.map(() => "[]"));
     expect(withoutProvenance(after.slice(0, olderIds.length))).toEqual(withoutProvenance(before));
     expect(withoutProvenance(after)).toEqual(withoutProvenance(current));
-    expect(provenanceTexts(current)).toEqual([...written.map(({ text }) => text), JSON.stringify(app)]);
+    expect(provenanceTexts(current)).toEqual([...written.map(({ text }) => text), JSON.stringify(app), "[]"]);
   });
 
   it("leaves each audit's provenance inline on the open that upgrades, and moves it a batch per write transaction", async () => {
@@ -374,8 +401,9 @@ describe("audit rule provenance", () => {
     // The open added the step's table and column, and moved nothing.
     expect(inlineAudits(path)).toBe(30);
 
-    // An older Rerail recording audits that never waits for the lock: between two batches it is free.
-    const older = new Database(path, { timeout: 0 });
+    // Another process writing that never waits for the lock: between two batches it is free. It records sessions, since
+    // an older Rerail's audit would stop the move.
+    const writer = new Database(path, { timeout: 0 });
     const store = new SqliteAuditStore(path);
     try {
       let pauses = 0;
@@ -383,8 +411,8 @@ describe("audit rule provenance", () => {
         perBatch: 10,
         pause: () => {
           pauses += 1;
-          const now = Date.now();
-          older.prepare(INLINE_AUDIT).run(`between-${pauses}`, "session-a", "/home/dev/app", "[]", now + 1, now + 2);
+          writer.prepare("INSERT INTO sessions (session_id, host, cwd, repository_id, started_at, ended_at) VALUES (?, 'codex', '/w', ?, 1, 2)")
+            .run(`between-${pauses}`, REPOSITORY);
           return Promise.resolve();
         },
       });
@@ -395,7 +423,7 @@ describe("audit rule provenance", () => {
       for (const { auditId, text } of written) expect(JSON.stringify(store.get(auditId)?.ruleProvenance), auditId).toBe(text);
     } finally {
       store.close();
-      older.close();
+      writer.close();
     }
   });
 
@@ -434,21 +462,58 @@ describe("audit rule provenance", () => {
     const from = Date.now() - 3_600_000;
     const written = writeInlineAudits(path, Array.from({ length: 30 }, () => app), from);
     const last = from + written.length - 1;
+    const store = new SqliteAuditStore(path);
+    const day = 24 * 3_600_000;
+    try {
+      // This build records audits from the upgrade on, two of them with no rules on: each names its stored copy, an
+      // empty one included, so none of them holds the move back.
+      for (const provenance of [app, [], []]) store.finish(store.start(auditInput("/home/dev/app", provenance)), { status: "completed" });
+
+      // An hour on, and a millisecond before the week since the last of them ends, the move takes nothing: a Rerail that
+      // recorded them may still run beside this one, and it reads each recorded audit's provenance in its row.
+      for (const later of [3_600_000, 7 * day - 1]) expect(await move(path, { clock: () => last + later })).toBe(0);
+      expect(provenanceTexts(readAsOlder(path, written.map(({ auditId }) => auditId)))).toEqual(written.map(({ text }) => text));
+      expect(inlineAudits(path)).toBe(30);
+
+      // A week after the last of them, the move takes them all, and this build reads each in full.
+      expect(await move(path, { clock: () => last + 7 * day })).toBe(30);
+      expect(inlineAudits(path)).toBe(0);
+      for (const { auditId, text } of written) expect(JSON.stringify(store.get(auditId)?.ruleProvenance), auditId).toBe(text);
+    } finally {
+      store.close();
+    }
+  });
+
+  it("moves nothing while an older Rerail sharing the file records audits that run no rules, so it reads every recorded audit's provenance, and moves a week after its last", async () => {
+    const path = await fileOfTheBuildBefore();
+    const app = provenanceOf("/home/dev/app", 200);
+    const from = Date.now() - 3_600_000;
+    const written = writeInlineAudits(path, Array.from({ length: 30 }, () => app), from);
+    const recorded = written.map(({ auditId }) => auditId);
+    const last = from + written.length - 1;
     openRerailDatabase(path).$client.close();
     const day = 24 * 3_600_000;
 
-    // An hour on, and a millisecond before the week since the last of them ends, the move takes nothing: a Rerail that
-    // recorded them may still run beside this one, and it reads each recorded audit's provenance in its row.
-    for (const later of [3_600_000, 7 * day - 1]) expect(await move(path, { clock: () => last + later })).toBe(0);
-    expect(provenanceTexts(readAsOlder(path, written.map(({ auditId }) => auditId)))).toEqual(written.map(({ text }) => text));
+    // The Rerail that recorded them runs on beside this one with no rules on, in a checkout with none or with a catalog
+    // it could not prepare: each audit it records holds `[]` in its row, as this build's rule-less audits did before.
+    // It records one 6 days after the last recorded audit, and another 6 days after that; a day after each, past the
+    // week since the audit before, the move takes nothing, and it reads every recorded audit's provenance in its row.
+    let previous = last;
+    for (const index of [0, 1]) {
+      previous = recordAsOlder(path, `ruleless-${index}`, [], previous + 6 * day);
+      expect(await move(path, { clock: () => previous + day })).toBe(0);
+      expect(provenanceTexts(readAsOlder(path, recorded))).toEqual(written.map(({ text }) => text));
+    }
+    expect(await move(path, { clock: () => previous + 7 * day - 1 })).toBe(0);
     expect(inlineAudits(path)).toBe(30);
 
-    // A week after the last of them, the move takes them all, and this build reads each in full.
-    expect(await move(path, { clock: () => last + 7 * day })).toBe(30);
-    expect(inlineAudits(path)).toBe(0);
+    // It records none for a week: the move takes the recorded audits. Both versions read its own audits as `[]`.
+    expect(await move(path, { clock: () => previous + 7 * day })).toBe(30);
+    expect(provenanceTexts(readAsOlder(path, ["ruleless-0", "ruleless-1"]))).toEqual(["[]", "[]"]);
     const store = new SqliteAuditStore(path);
     try {
       for (const { auditId, text } of written) expect(JSON.stringify(store.get(auditId)?.ruleProvenance), auditId).toBe(text);
+      expect(provenanceTexts(["ruleless-0", "ruleless-1"].map(auditId => store.get(auditId)))).toEqual(["[]", "[]"]);
     } finally {
       store.close();
     }
@@ -496,8 +561,8 @@ describe("audit rule provenance", () => {
     }
 
     const waits = logged.split("\n").filter(line => line.includes(WAITS_FOR_OLDER));
-    expect(waits).toEqual([`rerail: ${path}: ${WAITS_FOR_OLDER} ${new Date(last + 3_000).toISOString()}: the last audit that `
-      + "holds its rule provenance in its own row, as a Rerail older than this one writes it and reads it only there, began at "
+    expect(waits).toEqual([`rerail: ${path}: ${WAITS_FOR_OLDER} ${new Date(last + 3_000).toISOString()}: the last audit a `
+      + "Rerail older than this one recorded, which reads each audit's rule provenance only from the audit's own row, began at "
       + `${new Date(last).toISOString()}. The move starts once no such audit has begun for 3 s.`]);
     expect(inlineAudits(path)).toBe(0);
   }, 60_000);
@@ -549,8 +614,8 @@ describe("audit rule provenance", () => {
 
     const waits = logged.split("\n").filter(line => line.includes(WAITS_FOR_OLDER));
     expect(waits).toHaveLength(2);
-    expect(waits[1]).toContain(`waits until ${new Date(second + 3_000).toISOString()}: the last audit that holds its rule `
-      + `provenance in its own row, as a Rerail older than this one writes it and reads it only there, began at `
+    expect(waits[1]).toContain(`waits until ${new Date(second + 3_000).toISOString()}: the last audit a Rerail older than `
+      + `this one recorded, which reads each audit's rule provenance only from the audit's own row, began at `
       + `${new Date(second).toISOString()}.`);
     expect(waits[1]).toContain("The move starts once no such audit has begun for 3 s.");
     // The older Rerail's two audits stay in their rows; the recorded ones moved.
