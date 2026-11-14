@@ -5137,7 +5137,7 @@ fn run_observed(
                 let cursors: Vec<String> = lines.next()?.split('\t').map(str::to_owned).collect();
                 let roots: Vec<std::path::PathBuf> = lines.next()?.split('\t').map(std::path::PathBuf::from).collect();
                 let world: u64 = lines.next()?.parse().ok()?;
-                let named = o.changed_since(&roots, &cursors)?;
+                let named = o.changed_since(key, &roots, &cursors)?;
                 Some((roots.into_iter().zip(cursors).collect(), named, world))
             })
         });
@@ -8518,7 +8518,7 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
         let cursors: Vec<String> = lines.next()?.split('\t').map(str::to_owned).collect();
         let watched: Vec<PathBuf> = lines.next()?.split('\t').map(PathBuf::from).collect();
         let read: Vec<PathBuf> = lines.map(PathBuf::from).collect();
-        let named = o.changed_since(&watched, &cursors)?;
+        let named = o.changed_since(&key, &watched, &cursors)?;
         // The repository's own directories, of which only what `read` names counts (not its objects).
         let git_dirs: Vec<PathBuf> = watched.iter().skip(2).cloned().collect();
         Some((read, git_dirs, named, String::from_utf8(files).ok()?))

@@ -56,6 +56,7 @@ both before every commit (the commit hook runs it beside the cache and thread-st
   | a source's pin | A lock: a lease on a source the run reads, until its manifest names it (O95) |
   | the combined program's pins released | The release of the combined program's leases |
   | the run's manifest | Timestamps, only for a manifest identical to one stored: its last run and time move, by which collection keeps a root's last two. A new manifest is a fault (`a new manifest recorded`) |
+  | the journal's aged cursor | A timestamp: a root's journal cursor, or a cutoff record's (`git-files:`, `cone-rounds:`), stored again once it is `observe::CURSOR_AGE` (2^20) events behind with nothing named since. Added with the user's approval (2026-11-14) |
 
   Neither the queued job nor its commit is a fault, and only when every job in the writer's transaction is
   listed. The writer opens a scope around each transaction (`profile::warm_scope`), each job marks it
@@ -169,7 +170,16 @@ and takes 6.7 G instructions and 0.58 s user, against 8.0 G and 0.72 s over `dl1
   of each library stream (0.6 to 0.9 s): they replay from cursors 7 million events old (below).
 - **An old cursor is slow to replay after all, at 7 million events.** It was not at 2 million (above). The first ask
   of a stream started from a cursor that old waited 0.6 to 2 s, against 0.04 to 0.17 s for the same stream's later
-  asks. A cursor stays where it was while the journal names nothing under its root, so a root that never changes
-  ages without bound. Moving it again is a write a warm run would make, a timestamp, so it is not done without the
-  user's approval: a cursor older than a bound (a million events, say) would be stored again, at most once in that
-  many events.
+  asks; a cutoff record's check from 4 million events back timed out, and the record was made again. A cursor stayed
+  where it was while the journal named nothing under its root, so a root or a record that never changes aged without
+  bound. Fixed, with the user's approval of the write:
+  - a root's stored cursor `CURSOR_AGE` (2^20) events behind, with nothing named, is stored again (`forget`);
+  - so is a cutoff record's cursor line, where its check (`changed_since`) finds nothing named under its roots: it
+    holds as of the journal's cursors now;
+  - a stream started as the process opens (`journal::prepare`) starts from its outermost root's cursor (the newest,
+    for two names of one directory), no longer from the oldest of the roots under it. Those held cursors no run asks
+    any more (`lib` under `rule-syntax`, `/var/…` beside `/private/var/…`). A root asked with an older cursor than its
+    stream's starts its own, as before.
+
+  After: no stream starts from far back, the warm batch over `dl1g` writes nothing it may not, and its 6 asks waited
+  0.57 to 1.23 s at load 115.

@@ -288,7 +288,8 @@ impl Observer {
         let (mut entries, mut aliases, mut canon) = (BTreeMap::new(), HashMap::new(), BTreeMap::new());
         let db = path.map(|p| {
             let (records, meta) = read_all(p, &mut entries, &mut aliases, &mut canon);
-            Kept { records, meta, writer: Writer::open(p) }
+            let stored = meta.iter().filter(|(k, _)| k.starts_with("journal:")).filter_map(|(k, v)| Some((k.clone(), text_cursor(v)?))).collect();
+            Kept { records, meta, stored, writer: Writer::open(p) }
         });
         // Each process checks another slice of the trusted files, by the second it opened in: consecutive processes
         // take consecutive slices, as a stored counter's would, and no process writes to say which it took (a warm run
@@ -615,12 +616,18 @@ impl Observer {
 
     /// What the journal names as changed under each of `roots` since its cursor in `cursors` (`mark`'s), decision
     /// 0105: `None` where it cannot say.
-    pub fn changed_since(&mut self, roots: &[PathBuf], cursors: &[String]) -> Option<Vec<PathBuf>> {
+    ///
+    /// `record` is the run record (`run_record`) whose first line the cursors are. Where the journal names nothing
+    /// under any of its roots and a cursor is `CURSOR_AGE` behind, the record holds as of the journal's cursors now:
+    /// its first line is stored again with them (a timestamp, `profile::WARM_WRITES_ALLOWED`), so its next check does
+    /// not replay from far back (4 million events back, a check timed out and the record was made again).
+    pub fn changed_since(&mut self, record: &str, roots: &[PathBuf], cursors: &[String]) -> Option<Vec<PathBuf>> {
         let cookies = self.cookies.clone().filter(|_| self.db.is_some())?;
         if roots.len() != cursors.len() {
             return None;
         }
         let mut named = Vec::new();
+        let mut now: Vec<Option<String>> = vec![None; roots.len()];
         for (i, (root, cursor)) in roots.iter().zip(cursors).enumerate() {
             // A root under another of `roots` with the same cursor (one ask gave both, `mark`: a corpus and its
             // `.git`, a `.git` named as the repository's own and its common one) is named in the other's answer.
@@ -629,11 +636,40 @@ impl Observer {
                 continue;
             }
             match super::journal::since(std::slice::from_ref(root), Some(cursor), &cookies) {
-                super::journal::Since::Changed { paths, .. } => named.extend(paths),
+                super::journal::Since::Changed { paths, cursor } => {
+                    named.extend(paths);
+                    now[i] = Some(cursor);
+                }
                 super::journal::Since::Lost { .. } => return None,
             }
         }
+        // A covered root's cursor moves with the one that covers it.
+        for i in 0..roots.len() {
+            if now[i].is_none() {
+                now[i] = (0..roots.len()).find(|&j| now[j].is_some() && cursors[j] == cursors[i] && roots[i].starts_with(&roots[j])).and_then(|j| now[j].clone());
+            }
+        }
+        let aged = cursors.iter().zip(&now).any(|(c, n)| c.parse::<u64>().ok().zip(n.as_deref().and_then(|n| n.parse::<u64>().ok())).is_some_and(|(c, n)| n.saturating_sub(c) >= CURSOR_AGE));
+        if named.is_empty() && aged && now.iter().all(Option::is_some) {
+            self.refresh_record(record, &now.into_iter().flatten().collect::<Vec<_>>());
+        }
         Some(named)
+    }
+
+    /// Stores `record` again with `cursors` as its first line (`changed_since`), the rest as it was.
+    fn refresh_record(&mut self, record: &str, cursors: &[String]) {
+        let Some(k) = self.db.as_mut() else { return };
+        let Some((consulted, outputs)) = k.records.get(record).cloned() else { return };
+        let rest = consulted.split_once('\n').map_or("", |(_, rest)| rest);
+        let consulted = format!("{}\n{rest}", cursors.join("\t"));
+        k.records.insert(record.to_owned(), (consulted.clone(), outputs.clone()));
+        let key = record.to_owned();
+        k.writer.send(move |db| {
+            // A write a warm run may make (`profile::WARM_WRITES_ALLOWED`).
+            let _scope = super::hazards::warm_scope();
+            super::hazards::warm_job("the journal's aged cursor");
+            let _ = db.execute("INSERT OR REPLACE INTO run_record VALUES (?1, ?2, ?3)", params![key, consulted, outputs]);
+        });
     }
 
     /// Watches the root above `path` when no root this run watches holds it: the stored root above it (one the
@@ -686,15 +722,32 @@ impl Observer {
             // Nothing named, nothing written: the store's cursor stays where it was (memory's moves on, for this
             // process's later asks), and the next process replays from there, a superset of what changed since: no
             // change is missed. A warm run then writes no cursor (`RERAIL_WARM`), where it wrote one for every root it
-            // asked, every run. Replaying from a cursor 2M events old measured no slower than from a fresh one (each
-            // ask's time is the wait for its cookie's event, 0.0-0.7 s at load 50-95). A root the journal names paths
+            // asked, every run, until it is `CURSOR_AGE` behind (a replay from 2M events back cost nothing measurable, from
+            // 7M back 0.6-2 s for the first ask). A root the journal names paths
             // under keeps its cursor moving: a replay from a kept cursor names every path changed since, and matching
             // them against every answer kept grew each run (971 paths named in the work tree's root, 8 -> 53 G
             // instructions a warm batch, when the cursor stayed whenever nothing was forgotten).
             if paths.is_empty() {
+                // Unless the store's cursor has aged (`CURSOR_AGE`): only an FSEvents id has an age.
+                let Some(key) = volume.map(|v| cursor_key(root, v)) else { return };
+                let aged = k.stored.get(&key).and_then(|s| s.parse::<u64>().ok()).zip(cursor.parse::<u64>().ok()).is_some_and(|(s, now)| now.saturating_sub(s) >= CURSOR_AGE);
+                if !aged {
+                    return;
+                }
+                k.stored.insert(key.clone(), cursor.to_owned());
+                let cursor = cursor.to_owned();
+                k.writer.send(move |db| {
+                    // A write a warm run may make (`profile::WARM_WRITES_ALLOWED`).
+                    let _scope = super::hazards::warm_scope();
+                    super::hazards::warm_job("the journal's aged cursor");
+                    let _ = db.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![key, cursor]);
+                });
                 return;
             }
             let (gone, listings, at) = (gone.clone(), listings.clone(), volume.map(|v| (cursor_key(root, v), cursor.to_owned())));
+            if let Some((key, cursor)) = &at {
+                k.stored.insert(key.clone(), cursor.clone());
+            }
             super::hazards::warm_fault("the observer forgot answers the journal named changed", || {
                 format!("{}: {} paths named changed ({}), {forgotten} answers forgotten", root.display(), paths.len(), paths.iter().take(3).map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "))
             });
@@ -921,6 +974,7 @@ impl Observer {
             });
             if let Some((key, cursor)) = &at {
                 k.meta.insert(key.clone(), rusqlite::types::Value::Text(cursor.clone()));
+                k.stored.insert(key.clone(), cursor.clone());
             }
             k.writer.send(move |db| {
                 let Ok(tx) = db.transaction() else { return };
@@ -948,8 +1002,25 @@ impl Observer {
 struct Kept {
     records: HashMap<String, (String, Vec<u8>)>,
     meta: HashMap<String, rusqlite::types::Value>,
+    /// Each root's cursor as the store holds it (`meta` holds memory's, which moves on ahead of it): how far behind
+    /// the journal the store's is (`CURSOR_AGE`).
+    stored: HashMap<String, String>,
     writer: Writer,
 }
+
+/// A cursor as the journal's text (an FSEvents id, a Watchman clock); one kept as a number is an id.
+fn text_cursor(v: &rusqlite::types::Value) -> Option<String> {
+    match v {
+        rusqlite::types::Value::Text(t) => Some(t.clone()),
+        rusqlite::types::Value::Integer(i) => Some(i.to_string()),
+        _ => None,
+    }
+}
+
+/// How many events a stored cursor may fall behind while the journal names nothing under its root: it is then
+/// stored again (a timestamp, `profile::WARM_WRITES_ALLOWED`), at most once in this many events. A replay from a
+/// cursor 2 million events old cost nothing measurable, from one 7 million old 0.6 to 2 s for its first ask.
+const CURSOR_AGE: u64 = 1 << 20;
 
 /// Reads everything the store at `path` keeps, at once: its entries, aliases and canonical forms into the maps given,
 /// its run records and settings returned. A store not made yet holds nothing.
@@ -1388,6 +1459,53 @@ mod tests {
         let canon: Vec<&str> = o.canon.keys().map(|k| k.to_str().unwrap()).collect();
         assert_eq!(canon, ["/q/a/x", "/r", "/r/a.txt", "/r/a0/x", "/r/b"], "a canonical form goes only under a path named");
         assert_eq!(o.counts.forgotten, 6);
+    }
+
+    /// A root the journal names nothing under keeps its stored cursor, until the cursor is `CURSOR_AGE` events
+    /// behind: it is then stored again, once.
+    #[test]
+    fn an_aged_cursor_is_stored_again() {
+        let base = std::env::temp_dir().join(format!("rerail-aged-cursor-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let store = base.join("store.files");
+        let (root, volume) = (Path::new("/r"), [7u8; 16]);
+        let key = cursor_key(root, volume);
+        let stored = || -> Option<String> {
+            let db = Connection::open(&store).ok()?;
+            db.query_row("SELECT value FROM observer_meta WHERE key = ?1", [&key], |r| r.get::<_, rusqlite::types::Value>(0)).ok().as_ref().and_then(text_cursor)
+        };
+        let mut o = Observer::open(Some(&store));
+        o.db.as_mut().unwrap().stored.insert(key.clone(), "1000".into());
+        o.forget(root, &[], Some(volume), &(1000 + CURSOR_AGE - 1).to_string());
+        o.written();
+        assert_eq!(stored(), None, "not yet aged: nothing written");
+        o.forget(root, &[], Some(volume), &(1000 + CURSOR_AGE).to_string());
+        o.written();
+        assert_eq!(stored(), Some((1000 + CURSOR_AGE).to_string()));
+        o.forget(root, &[], Some(volume), &(1000 + CURSOR_AGE + 5).to_string());
+        o.written();
+        assert_eq!(stored(), Some((1000 + CURSOR_AGE).to_string()), "stored again once, then aged from there");
+        drop(o);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// A record refreshed for its aged cursors keeps everything but its first line, in memory and in the store.
+    #[test]
+    fn a_refreshed_record_moves_only_its_cursors() {
+        let base = std::env::temp_dir().join(format!("rerail-refreshed-record-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let store = base.join("store.files");
+        let mut o = Observer::open(Some(&store));
+        o.put_run_record("git-files:/r", "1\t1\n/r\t/r/.git\n/r/.git/HEAD", b"2\na.py");
+        o.refresh_record("git-files:/r", &["9".into(), "9".into()]);
+        o.written();
+        let want = ("9\t9\n/r\t/r/.git\n/r/.git/HEAD".to_owned(), b"2\na.py".to_vec());
+        assert_eq!(o.run_record("git-files:/r"), Some(want.clone()));
+        drop(o);
+        assert_eq!(Observer::open(Some(&store)).run_record("git-files:/r"), Some(want));
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

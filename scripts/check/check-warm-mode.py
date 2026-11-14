@@ -32,6 +32,7 @@ ALLOWED = [
     "a source's pin",
     "the combined program's pins released",
     "the run's manifest",
+    "the journal's aged cursor",
 ]
 
 READ = re.compile(r"(?<![A-Za-z0-9_.])(?:profile::)?warm(?:_mode)?\(\)|\bWarm::|\"RERAIL_WARM\"")
@@ -56,6 +57,9 @@ def code(line):
 
 
 def main():
+    # Paths are the repository's: run from its top, wherever called from.
+    import os
+    os.chdir(git("rev-parse", "--show-toplevel").strip())
     faults = []
     counts = {}
     for path in git("ls-files", "*.rs").split():

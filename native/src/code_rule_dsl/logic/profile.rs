@@ -874,6 +874,7 @@ pub const WARM_WRITES_ALLOWED: &[(&str, &str)] = &[
     ("a source's pin", "a lock: a lease on a source the run reads, until its manifest names it (O95)"),
     ("the combined program's pins released", "a lock: the release of the combined program's leases"),
     ("the run's manifest", "a timestamp, only for a manifest identical to one stored: its last run and time move, by which collection keeps a root's last two. A new manifest is a fault (`warm_fault`, in the job)"),
+    ("the journal's aged cursor", "a timestamp: a root's journal cursor, or a run record's (the cutoff's checks), stored again once it is a million events behind with nothing named since (`observe::CURSOR_AGE`), as a replay from far back is slow"),
 ];
 
 /// Whether the store's writer may run a job called `what` in a warm run (`WARM_WRITES_ALLOWED`).
