@@ -4887,6 +4887,13 @@ pub(crate) const PROBE_B: u8 = 4;
 pub(crate) const UNREAD_OUT: u8 = 8;
 pub(crate) const UNREAD_A: u8 = 16;
 pub(crate) const UNREAD_B: u8 = 32;
+/// Read only as text (decision 0223): every later reader is a `cat`'s part or a text function's text argument, so
+/// the text is held in the join's scratch for its branch (`Ctx::texts`, a value `SCRATCH + i`), as the device holds
+/// one in its arena, and needs no atom. The findings' JSON is one text of thirty pieces: each piece was an atom.
+pub(crate) const TEXT_OUT: u8 = 64;
+
+/// The first value of a text held in a join's scratch (`TEXT_OUT`): below every atom and every integer a rule reads.
+const SCRATCH: i64 = i64::MIN / 2;
 
 /// Which texts the steps make only to look them up: a `@dot`, a text function's result or a split's part whose slot no
 /// head reads, and every later step reads only as a key of a positive atom. Such a text needs no atom of its own: one
@@ -4908,11 +4915,24 @@ fn probes(steps: &[Step], out: &[Term]) -> Vec<u8> {
         }
         if readers.all(|step| matches!(step, Step::Atom { neg: false, .. })) { probe } else { 0 }
     };
+    // Whether every reader of slot `x` after step `from` reads it as text alone (`TEXT_OUT`).
+    let as_text = |from: usize, x: usize| {
+        let me = |k: &Key| matches!(k, Key::Slot(s) if *s == x);
+        let mut readers = steps[from + 1..].iter().filter(|step| step.mentions(x)).peekable();
+        !in_head(x) && readers.peek().is_some() && readers.all(|step| match step {
+            Step::Cat { out, a, b, .. } => *out != x && (me(a) || me(b)),
+            Step::Func { kinds, args, out, .. } => {
+                *out != x && args.iter().zip(kinds.iter()).all(|(a, k)| !me(a) || matches!(k, crate::code_rule_dsl::logic::strings::functions::Kind::Text))
+            }
+            _ => false,
+        })
+    };
     steps
         .iter()
         .enumerate()
         .map(|(i, step)| match step {
             Step::Cat { bind: false, .. } | Step::Func { bind: false, .. } => PROBE_OUT,
+            Step::Cat { out, bind: true, .. } | Step::Func { out, bind: true, .. } if as_text(i, *out) => TEXT_OUT,
             Step::Cat { out, bind: true, .. } | Step::Func { out, bind: true, .. } => use_of(i, *out, UNREAD_OUT, PROBE_OUT),
             Step::Split { a, b, .. } => a.map_or(0, |x| use_of(i, x, UNREAD_A, PROBE_A)) | b.map_or(0, |x| use_of(i, x, UNREAD_B, PROBE_B)),
             _ => 0,
@@ -5222,6 +5242,9 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     }
     struct Ctx<'a, 'c> { j: &'a JoinRule, head: usize, store: &'a Store, syms: &'a mut Interner, fresh: &'a mut [Fresh], n: u64,
                      key: Vec<i64>, row: Vec<i64>, error: Option<Error>, pending: Vec<(usize,i128)>, scratch: Vec<rowcode::Scratch>,
+                     /// The texts the branch being walked holds as text alone (`TEXT_OUT`), by `value - SCRATCH`: each
+                     /// dropped as its step's branch returns.
+                     texts: Vec<String>,
                      /// Each step's place in the runs of the order it probes (`Index::find_at`): the step's keys come
                      /// in a sorted batch where they can (`scan_order`), so each probe starts where the last ended.
                      hints: Vec<[u32; runs::HINTS]>,
@@ -5329,6 +5352,29 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         let taken = runs::sort_pieces(&mut order, &known, |v| { runs::sort_keyed(v, tagged, m, |q, i| vals[q as usize * m + i], cmp); }, |a, b| key_cmp(a, b).is_le());
         runs::presorted::site_known(runs::presorted::SCAN, taken as u64);
         Some(order.into_iter().map(|q| lo + q).collect())
+    }
+    /// The text a scratch value names (`TEXT_OUT`), if `v` is one.
+    fn scratch<'s>(cx: &'s Ctx<'_, '_>, v: i64) -> Option<&'s str> {
+        let at = v.checked_sub(SCRATCH).filter(|&at| at >= 0 && v < 0)?;
+        cx.texts.get(at as usize).map(String::as_str)
+    }
+    /// Value `v`'s text: a scratch text's, or an atom's.
+    fn text(cx: &Ctx<'_, '_>, v: i64) -> String {
+        scratch(cx, v).map_or_else(|| cx.syms.name(v), str::to_owned)
+    }
+    /// The value a step's made text `t` gets, by how its slot is read (`probes`): held as text, none, looked up
+    /// (-1: no atom, so no row holds it), or interned.
+    fn text_value(cx: &mut Ctx<'_, '_>, probe: u8, t: String) -> i64 {
+        if probe & TEXT_OUT != 0 {
+            cx.texts.push(t);
+            SCRATCH + cx.texts.len() as i64 - 1
+        } else if probe & UNREAD_OUT != 0 {
+            0
+        } else if probe & PROBE_OUT != 0 {
+            cx.syms.held(&t).unwrap_or(-1)
+        } else {
+            cx.syms.id(&t)
+        }
     }
     fn go<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
         if cx.error.is_some() || cx.stop { return; }
@@ -5610,6 +5656,22 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 let (x, y) = (val(slots, *a), val(slots, *b));
                 if x < y || (*or_eq && x == y) { go(cx, i + 1, slots) }
             }
+            Step::Cat { out, a, b, bind } if j.probes[i] & TEXT_OUT != 0 || [val(slots, *a), val(slots, *b)].iter().any(|v| scratch(cx, *v).is_some()) => {
+                // A part or the whole held as text (`TEXT_OUT`): `@dot` of the texts, as `cat` makes it.
+                let (x, y) = (val(slots, *a), val(slots, *b));
+                let first = text(cx, x);
+                let joined = if first.is_empty() { None } else { Some(format!("{first}.{}", text(cx, y))) };
+                let mark = cx.texts.len();
+                let v = match joined {
+                    None if j.probes[i] & TEXT_OUT != 0 || scratch(cx, y).is_none() => y,
+                    None => text_value(cx, j.probes[i], text(cx, y)),
+                    Some(t) => text_value(cx, j.probes[i], t),
+                };
+                if v == -1 && j.probes[i] & PROBE_OUT != 0 { return }
+                if *bind { slots[*out] = v } else if slots[*out] != v { return }
+                go(cx, i + 1, slots);
+                cx.texts.truncate(mark);
+            }
             Step::Cat { out, a, b, bind } => {
                 let v = if j.probes[i] & UNREAD_OUT != 0 {
                     0
@@ -5647,23 +5709,27 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
             Step::Func { name, kinds, args, out, bind } => {
                 use crate::code_rule_dsl::logic::strings::functions::{eval, Kind};
                 let value = {
-                    let mut text = Vec::new();
+                    let mut texts = Vec::new();
                     let mut numbers = Vec::new();
                     for (k, a) in kinds.iter().zip(args) {
-                        match k { Kind::Text => text.push(cx.syms.name(val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
+                        match k { Kind::Text => texts.push(text(cx, val(slots, *a))), Kind::Number => numbers.push(val(slots, *a)) }
                     }
-                    let text: Vec<&str> = text.iter().map(String::as_str).collect();
-                    eval(name, &text, &numbers)
+                    let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+                    eval(name, &texts, &numbers)
                 };
+                let mark = cx.texts.len();
                 let v = match value {
                     rusqlite::types::Value::Integer(n) => n,
-                    rusqlite::types::Value::Text(_) if j.probes[i] & UNREAD_OUT != 0 => 0,
-                    rusqlite::types::Value::Text(s) if j.probes[i] & PROBE_OUT != 0 => match cx.syms.held(&s) { Some(v) => v, None => return },
-                    rusqlite::types::Value::Text(s) => cx.syms.id(&s),
+                    // Looked up and no atom: no row holds it.
+                    rusqlite::types::Value::Text(s) => match text_value(cx, j.probes[i], s) {
+                        -1 if j.probes[i] & PROBE_OUT != 0 => return,
+                        v => v,
+                    },
                     _ => return,
                 };
                 if *bind { slots[*out] = v } else if slots[*out] != v { return }
                 go(cx, i + 1, slots);
+                cx.texts.truncate(mark);
             }
             Step::Doc { a, b, eq } => if ((val(slots, *a) >> 32) == (val(slots, *b) >> 32)) == *eq { go(cx, i + 1, slots) },
             Step::DocOf { out, n, bind } => {
@@ -5692,7 +5758,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     let scratch = j.steps.iter().map(|_| rowcode::Scratch::default()).collect();
     let factor = factored(j);
     let failed = factor.iter().map(|_| Default::default()).collect();
-    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch, collect, at0: 0, hints: vec![[0; runs::HINTS]; j.steps.len()],
+    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch, texts: Vec::new(), collect, at0: 0, hints: vec![[0; runs::HINTS]; j.steps.len()],
                        factor, failed, snap: Vec::new(), skipped: 0, deep: 0,
                        work: 0, budget: limit.as_ref().map_or(u64::MAX, |l| l.budget), stop: false,
                        only_step: limit.as_ref().and_then(|l| l.only.as_ref()).map_or(usize::MAX, |o| o.0), only: limit.and_then(|l| l.only).map(|o| o.1), list0: None };

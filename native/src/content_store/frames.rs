@@ -118,7 +118,14 @@ pub struct Put {
 pub struct Admitted {
     pub stored: Stored,
     data: Data,
+    /// How many runs its space counted since a run last marked it used (`frame_part_used`), as read from the store:
+    /// 0 for a frame this process made (its writer marks it). A reader marks a frame only once it ages (`ages`).
+    age: i64,
 }
+
+/// How a stored frame's age is read beside it (`Admitted::age`), in a statement over `frames` aliased `f`. A frame
+/// with no use recorded is 2^40 runs old: past every window, so a reader marks it.
+const AGE: &str = "coalesce((SELECT s.runs FROM frame_spaces s WHERE s.space = f.space) - (SELECT u.used FROM frame_part_used u WHERE u.space = f.space AND u.rel = f.rel AND u.ident = f.ident AND u.part = f.part), 1099511627776)";
 
 #[derive(Clone)]
 enum Data {
@@ -193,6 +200,13 @@ fn rows_of(data: &Data) -> StoreResult<Rows> {
 }
 
 impl Admitted {
+    /// Whether a run that reads it marks it used (decision 0223): once it is `keep / 2` runs of its space old, so a
+    /// part read at least that often never reaches `keep` and is never forgotten. A warm run after a counted one finds
+    /// every part it reads young, and writes no mark.
+    pub fn ages(&self, keep: i64) -> bool {
+        self.age >= keep / 2
+    }
+
     /// The deltas after its base frame (decision 0117 step 4): how many, and their rows.
     pub fn chain(&self) -> (u32, usize) {
         match &self.data {
@@ -208,7 +222,7 @@ impl Admitted {
             other => (Box::new(other.clone()), Vec::new(), self.len().unwrap_or(0), 0),
         };
         deltas.push(delta);
-        Admitted { stored, data: Data::Chain { base, deltas, n: (n + added).saturating_sub(gone), delta_rows: delta_rows + gone + added } }
+        Admitted { stored, age: self.age, data: Data::Chain { base, deltas, n: (n + added).saturating_sub(gone), delta_rows: delta_rows + gone + added } }
     }
 
     pub fn rows(&self) -> StoreResult<Rows> {
@@ -271,7 +285,7 @@ impl Admitted {
         match &self.data {
             Data::Encoded { bytes, .. } => bytes.len(),
             Data::Chain { base, deltas, .. } => {
-                let b = Admitted { stored: self.stored.clone(), data: (**base).clone() };
+                let b = Admitted { stored: self.stored.clone(), data: (**base).clone(), age: self.age };
                 b.encoded_bytes() + deltas.iter().map(|d| d.encoded_bytes()).sum::<usize>()
             }
             Data::Metadata => 0,
@@ -292,6 +306,18 @@ struct Snapshot {
     frames: HashMap<[u8; 32], HashMap<(Rel, i64), Arc<Admitted>>>,
     confirmed: Confirms,
     admitted: HashSet<[u8; 32]>,
+    uses: HashMap<[u8; 32], Uses>,
+}
+
+/// A space's count of runs and each program's newest use of it (`frame_program_used`): read with the frames, and
+/// kept current by each use this process queues. Whether a run's use is news to collection (`use_is_news`).
+#[derive(Default)]
+struct Uses {
+    runs: i64,
+    /// The run (token) this process last counted, as `count_run` counts it.
+    token: u64,
+    /// Each program's newest use: its run, and the relations it used (`used_key`).
+    newest: HashMap<[u8; 32], (i64, HashSet<u64>)>,
 }
 
 impl std::ops::Deref for Snapshot {
@@ -373,7 +399,7 @@ fn compose_chains(held: &mut HashMap<(Rel, i64), Arc<Admitted>>, chains: Option<
 
 impl Admitted {
     fn clone_frame(&self) -> Admitted {
-        Admitted { stored: self.stored.clone(), data: self.data.clone() }
+        Admitted { stored: self.stored.clone(), data: self.data.clone(), age: self.age }
     }
 }
 
@@ -431,7 +457,8 @@ impl ContentStore {
                 wanted.push((*space, newest_by_path(&connection, space, MEMO_RELS[1])?.into_iter().map(|(rel, _, part)| (rel, part)).collect()));
             }
             let all = memos.is_none();
-            let mut st = connection.prepare("SELECT space, rel, ident, part, digest, reads, rows, types, data FROM frames WHERE ?3 OR rel NOT IN (?1, ?2)")?;
+            // A memo's frame read here (`all`, a test's store) with its age, as `read_frame_parts_from` reads one.
+            let mut st = connection.prepare(&format!("SELECT f.space, f.rel, f.ident, f.part, f.digest, f.reads, f.rows, f.types, f.data, CASE WHEN f.rel IN (?1, ?2) THEN {AGE} ELSE 0 END FROM frames f WHERE ?3 OR f.rel NOT IN (?1, ?2)"))?;
             let mut chains: HashMap<[u8; 32], HashMap<Rel, u32>> = HashMap::new();
             let rows = st.query_map(params![MEMO_RELS[0], MEMO_RELS[1], all], |row| {
                 let (space, ident): (Vec<u8>, Vec<u8>) = (row.get(0)?, row.get(2)?);
@@ -441,6 +468,7 @@ impl ContentStore {
                 let (reads, k) = decode_reads_chain(&row.get::<_, Vec<u8>>(5)?);
                 Ok((space, (Rel { name: row.get(1)?, ident }, row.get::<_, i64>(3)?), k, Arc::new(Admitted {
                     stored: Stored { digest: row.get::<_, i64>(4)? as u64, reads },
+                    age: row.get(9)?,
                     data: Data::Encoded { n: row.get::<_, i64>(6)? as usize, types: row.get(7)?, bytes: Arc::new(data), store: Some(self.atoms_handle()) },
                 })))
             })?;
@@ -468,6 +496,25 @@ impl ContentStore {
                 }
             }
             snapshot.confirmed = confirmed;
+            // The spaces' runs and their programs' newest uses, read with the frames (`use_is_news`).
+            {
+                let mut st = connection.prepare("SELECT space, runs FROM frame_spaces")?;
+                for row in st.query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?)))? {
+                    let (space, runs) = row?;
+                    if let Ok(space) = <[u8; 32]>::try_from(space.as_slice()) {
+                        snapshot.uses.entry(space).or_default().runs = runs;
+                    }
+                }
+                let mut st = connection.prepare("SELECT space, program, run, rels FROM frame_program_used")?;
+                for row in st.query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?, r.get::<_, i64>(2)?, r.get::<_, Vec<u8>>(3)?)))? {
+                    let (space, program, run, rels) = row?;
+                    let (Ok(space), Ok(program)) = (<[u8; 32]>::try_from(space.as_slice()), <[u8; 32]>::try_from(program.as_slice())) else { continue };
+                    let newest = snapshot.uses.entry(space).or_default().newest.entry(program).or_insert((i64::MIN, HashSet::new()));
+                    if run > newest.0 {
+                        *newest = (run, decode_keys(&rels).into_iter().collect());
+                    }
+                }
+            }
             drop(connection);
             hold_symbols(&self.atoms, read.iter(), None)?;
             for (space, held) in snapshot.iter_mut() {
@@ -553,9 +600,10 @@ impl ContentStore {
         for batch in missing.chunks(READ_BATCH) {
             let values = (0..batch.len()).map(|i| format!("(?{}, ?{}, ?{})", 2 + 3*i, 3 + 3*i, 4 + 3*i)).collect::<Vec<_>>().join(",");
             let columns = if payload { ", f.rows, f.types, f.data" } else { "" };
+            let age_at = if payload { 8 } else { 5 };
             // Keep demand rows outside full-key probes; a space-first scan multiplies retained rows by demands.
             let sql = format!("WITH demanded(rel, ident, part) AS (VALUES {values}) \
-                SELECT f.rel, f.ident, f.part, f.digest, f.reads{columns} FROM demanded d \
+                SELECT f.rel, f.ident, f.part, f.digest, f.reads{columns}, {AGE} FROM demanded d \
                 CROSS JOIN frames f ON f.space = ?1 AND f.rel = d.rel AND f.ident = d.ident AND f.part = d.part");
             let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into()];
             for (rel, part) in batch { args.extend([rel.name.clone().into(), rel.ident.to_vec().into(), (*part).into()]); }
@@ -566,6 +614,7 @@ impl ContentStore {
                 let (reads, k) = decode_reads_chain(&row.get::<_, Vec<u8>>(4)?);
                 Ok(((Rel { name: row.get(0)?, ident }, row.get(2)?), k, Arc::new(Admitted {
                     stored: Stored { digest: row.get::<_, i64>(3)? as u64, reads },
+                    age: row.get(age_at)?,
                     data: if payload { Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: Arc::new(row.get(7)?), store: Some(self.atoms_handle()) } } else { Data::Metadata },
                 })))
             })?;
@@ -594,6 +643,7 @@ impl ContentStore {
                     let ident: [u8; 32] = ident.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
                     Ok((Rel { name: row.get(0)?, ident }, row.get::<_, i64>(2)?, Arc::new(Admitted {
                         stored: Stored { digest: row.get::<_, i64>(3)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(4)?) },
+                        age: 0,
                         data: Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: Arc::new(row.get(7)?), store: Some(self.atoms_handle()) },
                     })))
                 })?;
@@ -718,6 +768,38 @@ impl ContentStore {
     pub fn queue_frame_parts_used(&self, space: [u8; 32], rel: Rel, parts: Vec<i64>, token: u64, keep: i64) {
         let bytes = parts.len() * 8;
         self.write_back_syms(crate::content_store::write_back::Syms::None, "the frames' parts used", bytes, Vec::new(), Box::new(move |store| store.use_frame_parts(&space, &rel, &parts, token, keep)));
+    }
+
+    /// Whether a run's use of `space` (`used`: the relations, the run's token, its program) changes what collection
+    /// keeps (decision 0223): the program's newest use, as the snapshot holds it, misses one of the relations, or is
+    /// `ABANDON / 2` runs of the space old. Collection keeps the relations a program's last `RUNS` uses name, none of
+    /// them `ABANDON` runs old: a use that repeats a young one moves neither, and a warm run writes none. Without a
+    /// snapshot, or a use known, every use is news.
+    fn use_is_news(&self, space: &[u8; 32], used: &Used) -> bool {
+        let Some(snapshot) = self.snapshot() else { return true };
+        let snapshot = snapshot.lock().expect("the frames' snapshot");
+        let Some(uses) = snapshot.uses.get(space) else { return true };
+        let Some((run, rels)) = uses.newest.get(&used.2) else { return true };
+        uses.runs - run >= ABANDON / 2 || used.0.iter().any(|r| !rels.contains(&used_key(r)))
+    }
+
+    /// The snapshot's uses after `used` is queued: the run counted as `count_run` counts it, and the program's newest
+    /// use this one.
+    fn note_use(&self, space: &[u8; 32], used: &Used) {
+        let Some(snapshot) = self.snapshot() else { return };
+        let mut snapshot = snapshot.lock().expect("the frames' snapshot");
+        let uses = snapshot.uses.entry(*space).or_default();
+        let (rels, token, program) = used;
+        if *token == 0 || uses.token != *token {
+            uses.runs += 1;
+            uses.token = *token;
+        }
+        let runs = uses.runs;
+        let newest = uses.newest.entry(*program).or_insert((runs, HashSet::new()));
+        if newest.0 != runs {
+            *newest = (runs, HashSet::new());
+        }
+        newest.1.extend(rels.iter().map(used_key));
     }
 
     /// Forgets `rel`'s frames in `space` but each path's newest `keep` (a memo relation, `MEMO_RELS`: an edited
@@ -891,9 +973,14 @@ impl ContentStore {
         }
         let mut gone = gone;
         gone.extend(self.ended_deltas(&space, frames.iter().map(|f| (&f.rel, f.part))));
-        // Nothing to write is no write: a warm run's kept part queues no empty job (decision 0211).
-        if frames.is_empty() && delta_frames.is_empty() && retags.is_empty() && heads.is_empty() && gone.is_empty() && used.is_none() {
+        // Nothing to write is no write: a warm run's kept part queues no empty job (decision 0211). A use alone is
+        // written only when it is news to collection (decision 0223).
+        let only_use = frames.is_empty() && delta_frames.is_empty() && retags.is_empty() && heads.is_empty() && gone.is_empty();
+        if only_use && used.as_ref().is_none_or(|u| !self.use_is_news(&space, u)) {
             return;
+        }
+        if let Some(u) = &used {
+            self.note_use(&space, u);
         }
         let mut keys: Vec<(super::write_back::Key, Option<Arc<dyn std::any::Any + Send + Sync>>)> = frames
             .iter()
@@ -912,7 +999,7 @@ impl ContentStore {
             // A retagged frame keeps its rows (shared) and digest, with its new reads.
             for r in &retags {
                 if let Some(was) = held.get(&(r.rel.clone(), r.part)).cloned() {
-                    let frame = Arc::new(Admitted { stored: Stored { digest: was.stored.digest, reads: r.reads.clone() }, data: was.data.clone() });
+                    let frame = Arc::new(Admitted { stored: Stored { digest: was.stored.digest, reads: r.reads.clone() }, data: was.data.clone(), age: was.age });
                     keys.push((frame_key(&space, &r.rel, r.part), Some(Arc::new(Some(Arc::clone(&frame))) as Arc<dyn std::any::Any + Send + Sync>)));
                     held.insert((r.rel.clone(), r.part), frame);
                 }
@@ -983,7 +1070,7 @@ impl ContentStore {
             let mut snapshot = snapshot.lock().expect("the frames' snapshot");
             let held = snapshot.entry(*space).or_default();
             for ((p, block), stored) in puts.iter().zip(blocks).zip(stored) {
-                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored, data: Data::Encoded { types: p.rows.types.clone(), n: p.rows.n, bytes: Arc::new(block), store: None } }));
+                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored, data: Data::Encoded { types: p.rows.types.clone(), n: p.rows.n, bytes: Arc::new(block), store: None }, age: 0 }));
             }
             for key in &gone {
                 held.remove(key);
@@ -1232,7 +1319,7 @@ impl Put {
         let bytes = super::cross_rows::encode(rows.types.len(), &rows.rows);
         let Rows { types, n, rows } = rows;
         drop(rows);
-        Encoded { rel, part, frame: Arc::new(Admitted { stored: Stored { digest, reads }, data: Data::Encoded { types, n, bytes: Arc::new(bytes), store: None } }) }
+        Encoded { rel, part, frame: Arc::new(Admitted { stored: Stored { digest, reads }, data: Data::Encoded { types, n, bytes: Arc::new(bytes), store: None }, age: 0 }) }
     }
 }
 
@@ -1330,6 +1417,7 @@ fn admitted_part(row: &rusqlite::Row<'_>, atoms: &Arc<super::atoms::Atoms>) -> r
     Ok((row.get(0)?, Arc::new(Admitted {
         stored: Stored { digest: row.get::<_, i64>(1)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(2)?) },
         data: Data::Encoded { n: row.get::<_, i64>(3)? as usize, types: row.get(4)?, bytes: Arc::new(row.get(5)?), store: Some(Arc::clone(atoms)) },
+        age: 0,
     })))
 }
 
@@ -1800,6 +1888,59 @@ mod tests {
         }
         let got = store.frames(&space, &[kept.clone(), old.clone()], 0).unwrap();
         assert!(got.contains_key(&kept) && !got.contains_key(&old));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Decision 0223: a stored part carries its age, the runs of its space since one last marked it used. A reader
+    /// marks it once it is half the window old.
+    #[test]
+    fn a_part_read_is_marked_only_once_it_ages() {
+        let dir = std::env::temp_dir().join(format!("rerail-frames-age-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
+        let space = [5u8; 32];
+        let (local, other) = (rel("local", 1), rel("local", 2));
+        let put = |r: &Rel, part| Put { rel: r.clone(), part, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
+        let keep = 8;
+        store.keep_frames(&space, &[put(&local, 3), put(&other, 4)], &[], None).unwrap();
+        let ages = |store: &ContentStore| store.admit_parts_stored(&space, &local, &[3]).unwrap()[&3].ages(keep);
+        assert!(!ages(&store), "just written: its use is the run's");
+        store.use_frame_parts(&space, &local, &[3], 1, keep).unwrap();
+        assert!(!ages(&store), "just used");
+        // Runs that use only the other part age it.
+        for token in 2..2 + (keep / 2 - 1) as u64 {
+            store.use_frame_parts(&space, &other, &[4], token, keep).unwrap();
+        }
+        assert!(!ages(&store), "{} runs old: younger than half the window", keep / 2 - 1);
+        store.use_frame_parts(&space, &other, &[4], 100, keep).unwrap();
+        assert!(ages(&store), "half the window old: marked when read");
+        assert!(store.admit_parts_stored(&space, &local, &[3]).unwrap().contains_key(&3), "and still kept");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Decision 0223: a program's use of a space alone is written only when it is news to collection: a relation its
+    /// newest use misses, or a newest use `ABANDON / 2` runs old.
+    #[test]
+    fn a_use_that_repeats_a_young_one_is_no_news() {
+        let dir = std::env::temp_dir().join(format!("rerail-frames-news-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
+        let space = [6u8; 32];
+        let (a, b) = (rel("a", 1), rel("b", 1));
+        let (p, q) = ([1u8; 32], [2u8; 32]);
+        let put = |r: &Rel| Put { rel: r.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
+        let used = |rels: &[&Rel], token: u64, program: [u8; 32]| -> Used { (rels.iter().map(|r| (*r).clone()).collect(), token, program) };
+        assert!(store.use_is_news(&space, &used(&[&a], 1, p)), "no snapshot: every use is news");
+        store.keep_frames(&space, &[put(&a), put(&b)], &[], Some((&[a.clone()][..], 1, p))).unwrap();
+        store.preload_frames().unwrap();
+        assert!(!store.use_is_news(&space, &used(&[&a], 2, p)), "the same relations, its newest use young");
+        assert!(store.use_is_news(&space, &used(&[&a, &b], 2, p)), "a relation its newest use misses");
+        assert!(store.use_is_news(&space, &used(&[&a], 2, q)), "another program's first use");
+        // Other programs' runs age `p`'s newest use.
+        for token in 3..3 + (ABANDON / 2) as u64 {
+            store.note_use(&space, &used(&[&b], token, q));
+        }
+        assert!(store.use_is_news(&space, &used(&[&a], 1000, p)), "its newest use half of ABANDON old");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

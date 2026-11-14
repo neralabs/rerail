@@ -283,7 +283,7 @@ fn an_inputs_missing_granule_is_a_miss_not_a_failure() {
     assert!(why.contains(&format!("granule {} of its rows is not stored", granule(2, None))), "{why}");
 }
 
-/// Decision 0198: a kept frame's digests and granules are of its rows' content, not of a process's numbering of their
+/// Decision 0212: a kept frame's digests and granules are of its rows' content, not of a process's numbering of their
 /// atoms. Two stores that numbered the same strings otherwise (as a forked process and the store do) digest the same
 /// rows alike, part a text-owned input's owners alike, and still tell other rows apart; a kind column (no atom) is
 /// read as it is.

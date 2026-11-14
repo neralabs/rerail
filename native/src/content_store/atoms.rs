@@ -790,7 +790,7 @@ impl Atoms {
     }
 
     /// Each of `ids` (atoms) replaced by its content key: its string's hash (`hash_str`), the same in every process
-    /// whichever id it gave the string (decision 0198). A digest of rows that hold atoms reads them so: by id, a
+    /// whichever id it gave the string (decision 0212). A digest of rows that hold atoms reads them so: by id, a
     /// process that numbered a string otherwise (a fork, decision 0170) digested the same rows otherwise, and every
     /// frame it kept was stale to the next. Under one read of the atoms; an atom not held (none, where every row a run
     /// holds names held atoms) is read with its segment. A value that is no atom here (an in-memory store's test

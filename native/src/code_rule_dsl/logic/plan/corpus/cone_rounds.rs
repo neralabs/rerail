@@ -185,7 +185,7 @@ pub(in crate::code_rule_dsl) struct LoadLedger {
 
 impl Inputs<'_> {
     /// The constants' digests: the inputs a round binds as they are, which the frames' reads record; of their
-    /// content (`retain::cells_of`, decision 0198), as `program` types them.
+    /// content (`retain::cells_of`, decision 0212), as `program` types them.
     pub(in crate::code_rule_dsl) fn constant_digests(&self, atoms: &crate::content_store::atoms::Atoms, program: &crate::code_rule_dsl::logic::front::Program, domains: &super::lower::Domains) -> HashMap<String, u64> {
         self.constants.iter().map(|(rel, source)| (rel.clone(), retain::digest(source.as_ref(), &retain::cells_of(atoms, program, domains, rel, source.columns().len())))).collect()
     }
@@ -349,7 +349,7 @@ impl RoundProgram {
             }
         }
         let closing = closing.is_some();
-        // Each round's inputs digested by content (decision 0198), as the frames' reads record them.
+        // Each round's inputs digested by content (decision 0212), as the frames' reads record them.
         let domains = super::lower::domains(&self.program).unwrap_or_default();
         let atoms = on.store.atoms_handle();
         // What the store holds of the program before the rounds: what the rounds write back is compared with it.

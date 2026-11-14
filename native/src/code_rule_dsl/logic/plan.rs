@@ -7924,7 +7924,7 @@ fn kept_strata_hold(ks: &mut dyn KeptStrata, db: &Connection, run: &mut Run, rel
     Ok(n)
 }
 
-/// How a digest reads a relation's cells (decision 0198): an atom column (`b's'`, as frames type it) by its atoms'
+/// How a digest reads a relation's cells (decision 0212): an atom column (`b's'`, as frames type it) by its atoms'
 /// content keys (`Atoms::content_keys`: their strings' hashes), any other as it is. So a kept frame's digest, and the
 /// read digests its readers record, are of its rows' content: the same in every process, whichever ids it gave the
 /// strings. By id, a process whose atoms forked from the store's (decision 0170) digested the same rows otherwise, and

@@ -78,7 +78,7 @@ pub(in crate::code_rule_dsl) struct Kept<'s> {
     inputs: HashMap<String, Arc<dyn Source>>,
     pub(in crate::code_rule_dsl) loaded: Rc<RefCell<HashMap<String, Arc<dyn Source>>>>,
     digests: HashMap<String, u64>,
-    /// Each input's column types (`retain::types_of`): its digest is of its content (`Cells`, decision 0198).
+    /// Each input's column types (`retain::types_of`): its digest is of its content (`Cells`, decision 0212).
     types: HashMap<String, Vec<u8>>,
     puts: Vec<FramePut>,
     values: usize,
@@ -408,7 +408,7 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         let Some(rows) = held.live_rows() else { continue };
         let n = held.rows();
         // Its symbols typed as declared (the engine holds them as integers), so the writer maps them; its digest of
-        // its content (decision 0198).
+        // its content (decision 0212).
         let Some(types) = part.types.get(rel).filter(|t| t.len() == width).cloned() else { continue };
         let digest = crate::code_rule_dsl::logic::plan::rows_digest(&crate::code_rule_dsl::logic::plan::Cells::new(&store.atoms_handle(), &types), &rows, n);
         if was.as_ref().is_some_and(|w| w.digest == digest && w.reads == reads) {

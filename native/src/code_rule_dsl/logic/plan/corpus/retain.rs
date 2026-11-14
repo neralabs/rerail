@@ -141,7 +141,7 @@ pub(in crate::code_rule_dsl) fn key(prepared: &[u8; 32], cross: &front::Program)
 }
 
 /// An order-independent digest of `source`'s rows (a set: rows are distinct), with its row count, of their content
-/// (`Cells`, decision 0198): the same in every process, whichever ids it gave their atoms.
+/// (`Cells`, decision 0212): the same in every process, whichever ids it gave their atoms.
 pub(in crate::code_rule_dsl) fn digest(source: &dyn Source, cells: &Cells) -> u64 {
     let mut sum: u64 = 0;
     each_row(source, cells, |_, h| sum = sum.wrapping_add(h));
@@ -1429,7 +1429,7 @@ pub(in crate::code_rule_dsl) fn renamed(source: Arc<dyn Source>, names: Vec<Stri
     Arc::new(Renamed(source, names))
 }
 
-/// The frame part that holds owner `doc`'s rows (decision 0198): by the owner's content key where owners are atoms
+/// The frame part that holds owner `doc`'s rows (decision 0212): by the owner's content key where owners are atoms
 /// (`atoms`, `Owners`), so every process parts an input's rows alike; a document (a node's owner) by its number, the
 /// store's own.
 fn granule(doc: i64, atoms: Option<&crate::content_store::atoms::Atoms>) -> i64 {
@@ -1811,7 +1811,7 @@ impl Retained {
         let mut puts: Vec<EncodedFrame> = Vec::new();
         let mut now: HashMap<String, u64> = HashMap::new();
         let mut written = 0;
-        // Digests of content and granules by content (decision 0198): what every process reads back alike.
+        // Digests of content and granules by content (decision 0212): what every process reads back alike.
         let atoms = store.atoms_handle();
         // Inputs first: their digests are what the relations derived from them record.
         for (rel, source) in inputs {
@@ -1993,7 +1993,7 @@ impl Retained {
         }
         // Behind the run (decision 0104): the part's fixpoint is reached, and these are its results for the next run;
         // a wait for the writer's room here holds no wave. Each frame was encoded as it was made (`FramePut::encoded`).
-        // Mapped (decision 0198): every atom a frame holds is in an `s` column (a text-owned input's owners too, in its
+        // Mapped (decision 0212): every atom a frame holds is in an `s` column (a text-owned input's owners too, in its
         // documents' table), its digests and granules are of content, so a forked process's frames are written as the
         // store numbers them, and read back as the reader does. Keyed by this process's numbering, they were dropped
         // after a fork, and every next run derived the cross part again.

@@ -541,6 +541,11 @@ impl ContentStore {
         s.keys.get(key).and_then(|(_, held)| held.clone()).and_then(|h| h.downcast::<T>().ok())
     }
 
+    /// Whether a job that writes `key` is queued (not written yet).
+    pub fn queued(&self, key: &Key) -> bool {
+        self.writer().is_some_and(|w| w.shared.state.lock().expect("the writer's state").keys.contains_key(key))
+    }
+
     /// Waits for the jobs that write `key`, if any is queued; a read of anything else never waits.
     pub fn settle(&self, key: &Key) {
         let Some(w) = self.writer() else { return };
