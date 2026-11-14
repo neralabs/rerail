@@ -213,9 +213,10 @@ which runs every other compile.
 | a second worktree, cache filled by the first | 170 s | 402 s (293 + 110) | 376 of 378 |
 
 - Sharing is the large saving: a new worktree, or one that switches branches, compiles almost
-  nothing. The two misses are `rerail_lang` and `libmimalloc_sys`. Each bundles a static C library
-  built by its build script, whose archive names and debug info hold the checkout's path. That
-  needs the C builds to be path-independent (open).
+  nothing. The two misses were `rerail_lang` and `libmimalloc_sys`. Each bundles a static C library
+  built by its build script, whose archive names and debug info held the checkout's path. Since
+  `f9fb75060` those archives are byte-identical across checkouts (`-ffile-prefix-map`,
+  `SOURCE_DATE_EPOCH`); the end-to-end rerun is still to do.
 - Remote compiles cut this machine's CPU by 42% on a cold cache, but not the wall time under this
   load. Small crates pay ssh and tar per compile, and the workspace crates on the critical path
   compile here when the hosts are full.
@@ -225,6 +226,30 @@ which runs every other compile.
   the rlib, so `-L native=` directories must be copied.
 - Not yet done: the farm is set up for this worktree only. Turning it on for every worktree is one
   line in a `.cargo/config.toml` above them (README).
+
+#### Getting a compile's inputs to the host
+
+A remote compile reads the checkout, its dependencies' `.rmeta` files and its `OUT_DIR`, and its
+outputs must come back. Three ways, measured on the same build: `-p rerail-lang` with every compile
+forced to miss (`SCCACHE_RECACHE=1`), `-j 36`, load about 70 from other sessions, 358 compiles
+remote in each.
+
+| Mode | Wall | CPU here | Moving files, per compile (mean, p90) | Compile there (mean) |
+|---|---|---|---|---|
+| copy: ssh and tar per compile, only what changed | 87.6 s | 377 s | 0.77 s, 1.60 s | 0.84 s |
+| shared volume: the hosts mount the checkouts over NFS, no attribute cache | 404 s | 368 s | none | 7.3 s; 16 stale reads |
+| live mirror: one open connection per host, only what changed | **76.5 s** | 364 s | **0.44 s, 1.05 s** | 0.96 s |
+
+- NFS loses: each `stat` costs about 10 server calls, one per path component, and rustc stats a
+  great deal. At this load a call takes 0.5–3 ms. With the attribute cache on, a host read a
+  dependency directory listed before cargo wrote the new `.rmeta` (E0463). The farm now checks
+  every file a compile read against this machine's and compiles here when one differs. The server
+  tuning (16 nfsd threads at a higher priority, 1 s directory caching) is not yet measured.
+- The mirror wins on moving files: no ssh session or tar per compile, and one scan of the checkout
+  (11,298 files, 0.36 s) serves every compile that starts while it runs. The first compile on a
+  fresh host sends the whole checkout (346 MB, 13 s). Its daemon used 5 s of CPU.
+- In both copy modes the CPU here is about the same: cargo's own work (build scripts, proc macros,
+  the binaries) and sccache dominate it, not the transfers.
 
 What else the idle machines can do:
 

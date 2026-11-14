@@ -91,7 +91,7 @@ scripts/build/farm/shared-volume server ADDRESS PREFIX     # here
 scripts/build/farm/shared-volume client ADDRESS SERVER     # on each host
 ```
 
-Each gives the link between the machines (the "Thunderbolt Bridge" service) a static address on a
+Each gives the link between the machines (the network service `FARM_NETWORK_SERVICE` names) a static address on a
 private subnet of its own, and the export reaches only that subnet. The hosts mount with attribute
 caching off, so a dependency's `.rmeta` written here is seen there at once. cargo's registry
 sources stay copied (`setup`); a host's own `~/.cargo` is its own.

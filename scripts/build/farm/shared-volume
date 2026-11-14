@@ -10,14 +10,15 @@
 #   shared-volume client-off                              on each host: unmount, for copy mode
 #
 # SUBNET_ADDRESS is this machine's address on the link between the machines (a private subnet of
-# its own, such as 10.x.y.z, set on the "Thunderbolt Bridge" network service). Both need sudo.
+# its own, such as 10.x.y.z, set on the network service FARM_NETWORK_SERVICE names, as
+# `networksetup -listallnetworkservices` lists it). Both need sudo.
 # Files' attributes are never cached on the hosts, nor missing names (nonegnamecache): a file cargo
 # writes here (a dependency's .rmeta) is seen there at once, and one written there at once here.
 # Directories' attributes are cached for 1 s: otherwise each lookup revalidates every directory on
 # its path, ~10 calls to the server. The farm checks what a compile read against this machine's
 # files and compiles here when one was stale (README).
 set -eu
-service=${FARM_NETWORK_SERVICE:-Thunderbolt Bridge}
+service=${FARM_NETWORK_SERVICE:-}
 exported="$HOME/orca"
 
 subnet_mask() {
@@ -26,6 +27,7 @@ subnet_mask() {
 
 case "${1:-}" in
 server)
+  [ -n "$service" ] || { echo "set FARM_NETWORK_SERVICE to the link's network service" >&2; exit 2; }
   address=$2 prefix=$3
   mask=$(subnet_mask "$prefix")
   network=$(python3 -c 'import ipaddress,sys; print(ipaddress.ip_interface(sys.argv[1] + "/" + sys.argv[2]).network.network_address)' "$address" "$prefix")
@@ -65,6 +67,7 @@ client-off)
   echo "unmounted: $exported"
   ;;
 client)
+  [ -n "$service" ] || { echo "set FARM_NETWORK_SERVICE to the link's network service" >&2; exit 2; }
   address=$2 server=$3
   sudo networksetup -setmanual "$service" "$address" 255.255.255.0
   options=${FARM_NFS_OPTIONS:-vers=3,tcp,rsize=1048576,wsize=1048576,readahead=128,acregmin=0,acregmax=0,acdirmin=1,acdirmax=1,nonegnamecache,locallocks,soft,timeo=50,retrans=3,nosuid}
@@ -84,7 +87,7 @@ client)
   ls "$HOME/orca" >/dev/null && echo "mounted: $exported"
   ;;
 *)
-  sed -n '2,13p' "$0"
+  sed -n '2,14p' "$0"
   exit 2
   ;;
 esac
