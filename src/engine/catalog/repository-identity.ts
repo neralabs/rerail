@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  accessSync,
   existsSync,
   chmodSync,
   closeSync,
@@ -162,9 +163,9 @@ function takenGitDirectory(gitDirectory: string): DotGit {
     : OPEN_DOT_GIT;
 }
 
-/** Git's `is_git_directory`: a HEAD Git reads in `gitDirectory`, and `objects` and `refs` in its common folder. */
+/** Git's `is_git_directory`: a HEAD Git reads in `gitDirectory`, and `objects` and `refs` it may search in its common folder. */
 function isGitDirectory(gitDirectory: string, commonDirectory: string): boolean {
-  return headGitReads(join(gitDirectory, "HEAD")) && isFolder(join(commonDirectory, "objects")) && isFolder(join(commonDirectory, "refs"));
+  return headGitReads(join(gitDirectory, "HEAD")) && gitMaySearch(join(commonDirectory, "objects")) && gitMaySearch(join(commonDirectory, "refs"));
 }
 
 /** The common folder Git reads for `gitDirectory`: the one its `commondir` file names, else itself; undefined where Git cannot read that file. */
@@ -192,9 +193,15 @@ function headGitReads(head: string): boolean {
   }
 }
 
-function isFolder(path: string): boolean {
+/**
+ * Whether Git takes `path` as `objects` or `refs`: `is_git_directory` asks `access` with `X_OK` and nothing more, so
+ * a folder without its search bit is refused and so is a plain file without an execute bit. Node on Windows reads
+ * `X_OK` as existence alone, as Git for Windows does.
+ */
+function gitMaySearch(path: string): boolean {
   try {
-    return statSync(path).isDirectory();
+    accessSync(path, fsConstants.X_OK);
+    return true;
   } catch {
     return false;
   }

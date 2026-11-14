@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { copyFileSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdirSync, realpathSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -927,16 +927,70 @@ function passedOverGitFolder(app: string, name: string, part: "HEAD" | "ref" | "
   return folder;
 }
 
+type RefusedShape = "objects-file" | "head-link" | "objects-unsearchable";
+
+/**
+ * Shapes of a whole `.git` folder that Git refuses all the same on POSIX: `objects` a plain file with no execute bit, an
+ * `objects` folder with no search bit (Git asks `access` with `X_OK` of both), and a HEAD that is a link outside
+ * `refs/`. On Windows, where `X_OK` means existence, Git takes the first, and the other two cannot be made there.
+ */
+const REFUSED_SHAPES: readonly RefusedShape[] = process.platform === "win32" ? ["objects-file"] : ["objects-file", "head-link", "objects-unsearchable"];
+
+/** A Git folder at `<app>/<shape>/.git`, refused by Git as `shape` says, holding `stopped`'s clone id: Git finds `app`. */
+function refusedGitFolder(app: string, shape: RefusedShape, stopped: string): string {
+  const folder = passedOverGitFolder(app, shape, shape === "head-link" ? "HEAD" : "objects", stopped);
+  const gitFolder = join(folder, ".git");
+  if (shape === "head-link") symlinkSync(join("..", "not-refs", "main"), join(gitFolder, "HEAD"));
+  if (shape === "objects-file") writeFileSync(join(gitFolder, "objects"), "");
+  if (shape === "objects-unsearchable") {
+    mkdirSync(join(gitFolder, "objects"));
+    chmodSync(join(gitFolder, "objects"), 0o600);
+  }
+  return folder;
+}
+
+/**
+ * A clone of `startedApp`'s repository, recorded, then moved aside to `<root>/moved-clone` while a fresh clone is
+ * recorded in its place, which takes over its row: it keeps a clone id no row holds, so only its remote, which Git
+ * reads, names its repository.
+ */
+function movedAsideClone(root: string): string {
+  const place = join(root, "clone-place");
+  inDatabase(database => recordCheckout(database, newClone(place)));
+  const moved = join(root, "moved-clone");
+  renameSync(place, moved);
+  inDatabase(database => recordCheckout(database, newClone(place)));
+  return moved;
+}
+
+/**
+ * G, stopped as a whole, with two linked worktrees beside it: `g-s` started by itself, and `g-w`, whose own
+ * `config.worktree` puts its checkout at `g-s`. Returns `g-w`, which Git reads as `g-s`.
+ */
+function worktreeConfigToStarted(root: string): string {
+  const g = gitRepository(join(root, "g"));
+  startTestRepository(g);
+  for (const name of ["g-w", "g-s"]) git(g, "worktree", "add", "-q", join(root, name));
+  stopRerail(g, silently, { repository: true });
+  inDatabase(database => setCheckoutStarted(database, recordCheckout(database, join(root, "g-s")), true));
+  git(g, "config", "extensions.worktreeConfig", "true");
+  git(join(root, "g-w"), "config", "--worktree", "core.worktree", realpathSync.native(join(root, "g-s")));
+  return join(root, "g-w");
+}
+
 const silently = { lane: "terminal" as const, say: (): void => undefined };
 
 /**
  * Checkouts as people keep them, and the odd shapes Git's search meets, under `root`, each folder named. A is started as
  * a whole; B started, then stopped in its checkout (`rerail stop`); C and E stopped as a whole; D and F are clones nested
- * in B and A; a repository is never started, and two folders are outside Git.
+ * in B and A; G is stopped as a whole, one of its worktrees started; a repository is never started, and two folders are
+ * outside Git.
  */
 function generatedTrees(root: string): Array<[string, string]> {
-  // A: folders, a linked worktree inside it and one beside it, and F, a clone inside A stopped in its checkout.
+  // A: folders, a linked worktree inside it and one beside it, a clone of A moved aside after it was recorded, and F, a
+  // clone inside A stopped in its checkout.
   const a = startedApp(root);
+  const moved = movedAsideClone(root);
   mkdirSync(join(a, "src"));
   git(a, "worktree", "add", "-q", join(a, ".wt", "inner"));
   git(a, "worktree", "add", "-q", join(root, "a-beside"));
@@ -971,9 +1025,14 @@ function generatedTrees(root: string): Array<[string, string]> {
   stopRerail(e, silently, { repository: true });
   mkdirSync(join(e, "src"));
   git(e, "config", "core.worktree", realpathSync.native(join(root, "b-own-started")));
-  // Inside A, Git folders Git passes over that hold C's clone id. Inside B, a bare repository whose config puts its
-  // checkout at A, and a folder recorded as outside Git (recorded while a ceiling hid B), then started.
-  const passedOver = (["HEAD", "ref", "objects", "refs"] as const).map(part => passedOverGitFolder(a, `no-${part}`, part, c));
+  // G, whose worktree's own config puts its checkout at a worktree started by itself.
+  const g = worktreeConfigToStarted(root);
+  // Inside A, Git folders Git passes over or refuses that hold C's clone id. Inside B, a bare repository whose config
+  // puts its checkout at A, and a folder recorded as outside Git (recorded while a ceiling hid B), then started.
+  const passedOver = [
+    ...(["HEAD", "ref", "objects", "refs"] as const).map(part => passedOverGitFolder(a, `no-${part}`, part, c)),
+    ...REFUSED_SHAPES.map(shape => refusedGitFolder(a, shape, c)),
+  ];
   git(b, "init", "-q", "--bare", "mirror.git");
   git(join(b, "mirror.git"), "config", "core.bare", "false");
   git(join(b, "mirror.git"), "config", "core.worktree", realpathSync.native(a));
@@ -1001,6 +1060,7 @@ function generatedTrees(root: string): Array<[string, string]> {
     ["b/own-folder", own], ["c", c], ["c/src", join(c, "src")], ["c-beside", join(root, "c-beside")], ["e", e], ["e/src", join(e, "src")],
     ["never", join(root, "never")], ["never/src", join(root, "never", "src")], ["plain", join(root, "plain")],
     ["plain-started", join(root, "plain-started")], ["plain-started/sub", join(root, "plain-started", "sub")],
+    ["moved-clone", moved], ["g-w", g],
   ];
   // On Windows a folder named in another letter case is the same folder.
   if (process.platform === "win32") folders.push(["B/SRC", join(root.toUpperCase(), "B", "SRC")], ["APP", join(root.toUpperCase(), "APP")]);
