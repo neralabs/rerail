@@ -440,7 +440,8 @@ that event, it goes on with the count of all of them: `K hook events failed, of 
 last 24 hours`. When events were recorded after the last failure, the line reads `Hooks: N hook events could not be
 recorded in the last 24 hours` instead. Once the log has moved aside and holds nothing from 24 hours ago, failures from
 before `hook-failures.jsonl.1` began may be gone, so the line counts the failures since it began and says when that
-was: `since <time>, as far back as the log goes`. When every failure it still holds came after the last recorded
+was: `since <time>, as far back as the log goes`; when another program keeps `hook-failures.jsonl.1` from being read,
+it counts from when `hook-failures.jsonl` began. When every failure it still holds came after the last recorded
 event, hooks may have failed before the time it leads with, and the lead says `as far back as the log goes` too.
 
 With `RERAIL_AUTOSTART=0` (or `false`) hooks start no daemon, and a hook that finds none logs nothing, since that is

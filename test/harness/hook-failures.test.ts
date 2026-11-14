@@ -536,13 +536,15 @@ describe("the hook failure log", () => {
     expect(countOf(said)).toBe(full);
   });
 
+  // A part of the log as a hook that moved the one before aside begins it: its start, then failures at `ats`.
+  const partText = (startedAt: number, ...ats: number[]): string => [{ startedAt }, ...ats.map(at => failure(at))].map(line => `${JSON.stringify(line)}\n`).join("");
+
   // A hook on Windows can move `.1` on to its own name for a moment, and back. Here it does so as status lists the home:
   // away just after the first listing, back just before the third, so the second finds it under the hook's name.
   it("says since when it counts when a hook holds .1 under its own name as status lists the home", async () => {
     const rerailHome = await home();
-    const part = (startedAt: number, ...ats: number[]): string => [{ startedAt }, ...ats.map(at => failure(at))].map(line => `${JSON.stringify(line)}\n`).join("");
-    writeFileSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`), part(5_000, 5_000, 6_000));
-    writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), part(9_000, 9_000));
+    writeFileSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`), partText(5_000, 5_000, 6_000));
+    writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), partText(9_000, 9_000));
     const [movedAside, held] = [join(rerailHome, `${HOOK_FAILURES_FILE}.1`), takenName(rerailHome, 1_000)];
     const said = await statusWhileListing(rerailHome, `readdir => (...args) => {
       if (String(args[0]) !== HOME) return readdir(...args);
@@ -553,6 +555,24 @@ describe("the hook failure log", () => {
       return names;
     }`);
     expect(said).toMatch(/^Hooks: 3 hook events could not be recorded since 1970-01-01T00:00:05\.000Z, as far back as the log goes; /u);
+  });
+
+  // Another program can hold `.1` open on Windows so that no other program can read it, as a backup can.
+  it("says since when it counts from the live part, at once, when .1 cannot be read", async () => {
+    const rerailHome = await home();
+    writeFileSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`), partText(5_000, 5_000, 6_000));
+    // The live part's start, not its oldest failure, is the time from which every failure is in it.
+    writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), partText(9_000, 9_500, 10_000));
+    const { said, listings } = await statusWith(rerailHome, {
+      openSync: `open => (path, ...rest) => {
+        if (String(path).endsWith(".1")) throw Object.assign(new Error("EBUSY: resource busy or locked, open"), { code: "EBUSY" });
+        return open(path, ...rest);
+      }`,
+    });
+    expect({ said, listings }).toEqual({
+      said: expect.stringMatching(/^Hooks: 2 hook events could not be recorded since 1970-01-01T00:00:09\.000Z, as far back as the log goes; /u),
+      listings: 1,
+    });
   });
 
   // A hook takes the full log while it is also the live log under a second name, cannot move it to `.1`, and gives it
@@ -667,13 +687,24 @@ async function recordWithWrapped(rerailHome: string, at: number | undefined, wra
 }
 
 /**
- * What `rerail status` says of the hook failures in `rerailHome` (an event recorded after all of them), when a process of
- * its own reads them whose `fs.readdirSync` is the function `wrapListing`, a function's source, makes of the real one: a
- * hook moving the log while status lists the Rerail home, `HOME` in that source.
+ * What `rerail status` says of the hook failures in `rerailHome` (an event recorded after all of them), and how many
+ * times it listed the Rerail home, when a process of its own reads them with each `node:fs` function `wraps` names made
+ * by the function source given for it: a hook moving the log, or another program holding a file, as status reads it.
+ * `HOME` in those sources is the Rerail home.
  */
+async function statusWith(rerailHome: string, wraps: Wraps): Promise<{ said: string; listings: number }> {
+  const say = `const list = fs.readdirSync;
+let listings = 0;
+fs.readdirSync = (...args) => { if (String(args[0]) === HOME) listings += 1; return list(...args); };
+syncBuiltinESMExports();
+const said = hookFailures.hookFailureLines(hookFailures.readHookFailures(HOME, 0), Number.MAX_SAFE_INTEGER).join("");
+fs.writeSync(1, JSON.stringify({ said, listings }));`;
+  return JSON.parse(await outputOf(rerailHome, say, wraps)) as { said: string; listings: number };
+}
+
+/** What {@link statusWith} says when `fs.readdirSync` is the function `wrapListing` makes of the real one. */
 async function statusWhileListing(rerailHome: string, wrapListing: string): Promise<string> {
-  const say = "fs.writeSync(1, hookFailures.hookFailureLines(hookFailures.readHookFailures(HOME, 0), Number.MAX_SAFE_INTEGER).join(\"\"));";
-  return await outputOf(rerailHome, say, { readdirSync: wrapListing });
+  return (await statusWith(rerailHome, { readdirSync: wrapListing })).said;
 }
 
 /**

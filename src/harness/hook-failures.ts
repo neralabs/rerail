@@ -390,13 +390,14 @@ const RELISTING_PAUSES_MS = [1, 2, 4, 8, 16, 32, 64, 128];
  * Hooks move the log by renames, which keep the file: from the live name to a hook's own and on to `.1`, and back to the
  * live name when a hook gives it back. A read takes the live log first, so a log a hook takes from there while the read
  * goes on was met already. Then it lists the files of the log, takes each one's file id and reads each file it has not
- * met. When a file moved under it (a name gone by the time it looked, a file it found but could not read, another file
- * at the live name or `.1`), it pauses and lists them again, until a listing finds nothing moved. On Windows a rename
- * opens the file by name and then renames what it opened, so every hook that opened the full log by name as it filled
- * moves it on in turn, from one hook's name to the next and from `.1` to a hook's name, until the last of them moves it
- * to `.1`: a burst of hooks keeps the log moving for many milliseconds, faster than a listing and its reads, and the
- * pauses let that end. After the last pause the read stands: a log still moving then is missed by that status, and a
- * status that no move overlaps counts it.
+ * met. When a file moved under it (a name gone by the time it looked or opened it, another file at the live name or
+ * `.1`), it pauses and lists them again, until a listing finds nothing moved. A file it cannot read for another reason,
+ * as one another program holds on Windows, counts as holding nothing ({@link readLogFile}). On Windows a rename opens
+ * the file by name and then renames what it opened, so every hook that opened the full log by name as it filled moves
+ * it on in turn, from one hook's name to the next and from `.1` to a hook's name, until the last of them moves it to
+ * `.1`: a burst of hooks keeps the log moving for many milliseconds, faster than a listing and its reads, and the pauses
+ * let that end. After the last pause the read stands: a log still moving then is missed by that status, and a status
+ * that no move overlaps counts it.
  *
  * A give-back by copy moves lines, not a file. Between the removal of the taken name and the append to the live log the
  * lines are under no name, so a read in that moment misses them; a read that met the taken log, then a live log it had
@@ -436,8 +437,8 @@ function readPart(home: string, name: string, parts: Map<string, LogPart>): void
 
 /**
  * Lists the files of the log in `home`, reads each one `parts` has not met, and says whether a file moved under it: a
- * name gone by the time it looked, a file it found but could not read, another file under the live name or `.1` than
- * the one last found there, or no file known as `.1` while a part says a hook moved one there.
+ * name gone by the time it looked or opened it, another file under the live name or `.1` than the one last found there,
+ * or no file known as `.1` while a part says a hook moved one there.
  */
 function readUnmet(home: string, parts: Map<string, LogPart>): boolean {
   const names = listLog(home);
@@ -519,8 +520,22 @@ function awaitingMovedAside(parts: ReadonlyMap<string, LogPart>): boolean {
 function keptSinceOf(parts: readonly LogPart[], since: number): number | null {
   const movedAside = parts.find(part => part.name === MOVED_ASIDE_FILE);
   if (movedAside === undefined) return null;
-  const start = movedAside.startedAt ?? oldestOf(parts.filter(part => part === movedAside || part.name === HOOK_FAILURES_FILE));
+  const start = startOf(firstParts(movedAside, parts));
   return start !== undefined && start >= since ? start : null;
+}
+
+/**
+ * The parts the period begins with: `.1` and the live part. A `.1` that holds nothing, as one another program keeps from
+ * being read, adds nothing to the count, so the period begins with the live part.
+ */
+function firstParts(movedAside: LogPart, parts: readonly LogPart[]): LogPart[] {
+  const live = parts.filter(part => part.name === HOOK_FAILURES_FILE);
+  return movedAside.failures.length === 0 && movedAside.startedAt === undefined ? live : [movedAside, ...live];
+}
+
+/** When the first of `parts` began: the start written in it, else the oldest failure they hold; undefined with neither. */
+function startOf(parts: readonly LogPart[]): number | undefined {
+  return parts[0]?.startedAt ?? oldestOf(parts);
 }
 
 /** The time of the oldest failure the parts hold, epoch ms; undefined when they hold none. */
@@ -552,21 +567,30 @@ function takenLogs(home: string): TakenLog[] {
   });
 }
 
-/** What the file at `path` holds, with its {@link fileId}; null when it is missing or unreadable. */
+/**
+ * What the file at `path` holds, with its {@link fileId}; null when it is missing. A file there that cannot be read, as
+ * one another program holds on Windows, holds nothing: a status read counts without it and does not wait for it to move.
+ */
 function readLogFile(path: string): { id: string; log: LogText } | null {
   let descriptor: number;
   try {
     descriptor = openSync(path, "r");
-  } catch {
-    return null;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? null : unreadLog(path);
   }
   try {
     return { id: fileId(fstatSync(descriptor, { bigint: true }), path), log: parseLog(readFileSync(descriptor, "utf8")) };
   } catch {
-    return null;
+    return unreadLog(path);
   } finally {
     closeSync(descriptor);
   }
+}
+
+/** The file at `path` as holding nothing, under its {@link fileId}; null when it is missing. */
+function unreadLog(path: string): { id: string; log: LogText } | null {
+  const id = fileIdAt(path);
+  return id === undefined ? null : { id, log: { failures: [], startedAt: undefined } };
 }
 
 /** What a file of the log holds: its failures, and the latest start of a part written in it ({@link PartStart}). */
