@@ -98,16 +98,17 @@ pub fn merge(run: &Run<'_, '_>, rel: &str, select: &str) -> Result<usize> {
 pub fn component(
     run: &mut Run<'_, '_>,
     scc: &BTreeSet<String>,
-    rules: &[&Rule],
-    planned: &[(&Rule, Vec<Step>)],
+    planned: &[(super::body::RuleKey, Vec<Step>)],
     recursive: bool,
 ) -> Result<u32> {
     let mut p = program_for(run, scc)?;
     let mut queries = Vec::new();
+    let vs = std::sync::Arc::clone(&run.versions);
     for (rule, order) in planned {
-        let q = run.model.checked_query(run.prog, &run.versions.body(rule)?, order, None, None)?;
+        let b = vs.at(*rule);
+        let q = run.model.checked_query(run.prog, &b, order, None, None)?;
         p.steps.push(schedule::Step {
-            output: rule.head.rel.to_string(),
+            output: b.rel(b.head()).to_string(),
             stratum: 0,
             reads: vec![],
             sql: String::new(),
@@ -116,20 +117,20 @@ pub fn component(
     }
     if recursive {
         run.model.stats.solve(scc.clone());
-        for rule in rules {
-            for (i, l) in rule.body.iter().enumerate() {
-                if let Literal::Atom(a) = l
-                    && !a.neg
-                    && scc.contains(a.rel.as_str())
+        for (rule, _) in planned {
+            let b = vs.at(*rule);
+            for i in 0..b.len() {
+                if let Some(a) = b.plain_atom(i)
+                    && !a.neg()
+                    && scc.contains(b.rel(a))
                 {
-                    let b = run.versions.body(rule)?;
                     let (order, _, _) = run.model.plan_rule(run.prog, &b, Some(i))?;
                     let at = order.iter().position(|s| s.at == i).expect("delta atom");
                     let q = run.model.checked_query(run.prog, &b, &order, Some(at), None)?;
                     p.steps.push(schedule::Step {
-                        output: rule.head.rel.to_string(),
+                        output: b.rel(b.head()).to_string(),
                         stratum: 0,
-                        reads: vec![a.rel.to_string()],
+                        reads: vec![b.rel(a).to_string()],
                         sql: String::new(),
                     });
                     queries.push(Some(q));

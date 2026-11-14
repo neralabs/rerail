@@ -146,3 +146,20 @@ Leaves first. Each item leaves every caller working.
     and warm; they never differed. The check, the tree lowering and the tree `sql_term` are gone.
   - dl1 (images required, profiling build, a fresh store): the 48 findings are equal; cold 55.1 G instructions, warm
     19.8 G (56.8 G and 19.3 G with the check on).
+- **Item 5, the run holds rules by key** (2026-11-13).
+  - `body::RuleKey` names a rule of the run: its version (its place in the run's `Versions`; the program's is 0)
+    and its id there. A rule's number is its id in version 0 (`RuleKey::number`), so `Run::numbers` (a map by
+    address) and the position scans for rule numbers are gone.
+  - `Order` holds the rule's `Body` beside its steps. Its readers read handles: `ensure_indexes`, `observe`,
+    `observed_fans`, `delta_sources`, `shown`, keeps' `pattern` and `observe_steps`, the device placement's
+    `Shape::add` and `add_joins` (the head's terms read from the body), emit's reads and recursion test, and
+    `decline_class`.
+  - `Driving` holds keys (`orders`, `probes`, `seeds`), and its driver reads each line's body, found once when it
+    starts. `Driving`, `Native` and `Asked` no longer borrow the program. `replanning::Watch` is made from the
+    probes' bodies, `sql_kernel::component` takes the planned rules by key, and `emit` and `compose` read a
+    stratum's rules by key (`RuleKey::program`).
+  - Still trees, for items 6 and 7: the run's per-stratum rule lists (`rules_by`, the strands, the forms), the
+    stratum's filters before its plans (gates, survivors, empty reads), and the set fixpoint's probes, held only
+    within one call. A key is found from such a rule by address (`Versions::key`) until `run` takes a version.
+  - dl1 (images required, profiling build, a fresh store): the 48 findings are equal; cold 55.5 G and warm 20.2 G
+    after the `Order` step, 56.0 G and 20.0 G after the keys (the spread between runs is about ±1.5 G).
