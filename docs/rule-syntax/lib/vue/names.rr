@@ -1,0 +1,18 @@
+// vue/names: main's binding terms (rerail.policy/v1 `binds`, `resolves.binding`) for a Vue single-file component.
+//
+// Main reads a component's names in one ECMAScript program, the view: its `<script>` and `<script setup>` blocks
+// as one module, and each template expression in the scope compiler-dom gives it (a v-for's alias as an arrow's
+// parameters, `(SRC), (ALIAS) => { … }`; a slot's parameters as `(P) => { … }`). vue-eslint-parser reads the
+// scripts as one module too, so a `<script>` function sees what `<script setup>` declares. The names in that
+// program are TypeScript's, so this library is lib/tsx/names.rr read over the view:
+//   bind_name(n, site), main_form(site, f), ref_site(r, site), site_scope(site, k), site_only(site),
+//   site_occurrence(site, o), global_ref(r, x) and the other site filters, as tsx/names defines them.
+//   <div v-for="(item, i) in items">   view: (items), (item, i) => { … };
+//     bind_name(<item>, <item>), main_form(<item>, "parameter"), site_scope(<item>, "function")
+//
+// A component's script is always a module, whatever its package says (vue-eslint-parser's default), so its top
+// level is site_scope "module", unless a policy sets sourceType "script" itself.
+//
+// The view is a guest program the rules reach through their own relations (docof, guest): no relation here builds
+// it. The `.vue` tree's own nodes bind nothing.
+#include "tsx/names.rr"

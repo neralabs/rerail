@@ -4,6 +4,24 @@ Every notable change to this rule pack, latest first. Each release says how many
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.
 
+## 0.1.9 (2026-11-12)
+
+51 rules, 32 of them on by default.
+
+### Added
+
+- `react-practice-cache-update-in-mutate-call` (starts in Steer): Update the query cache in a mutation's own options, not in callbacks passed to mutate(); those are dropped if the component unmounts before the mutation finishes.
+- `react-practice-callback-for-dom-only` (starts in Steer): Don't wrap a function in useCallback when it is only called or passed to built-in elements' event props; nothing reads its identity, so the memo is wasted work.
+- `react-practice-fresh-dependency` (starts in Steer): Keep values rebuilt on every render, such as filter or map results and the props object, out of effect, memo and callback dependency arrays.
+- `react-practice-hoist-static-value` (starts in Steer): Move objects, arrays and functions that read nothing from a component or hook to module scope when they are passed to child components, custom hooks or dependency arrays.
+- `react-practice-lifecycle-hook` (starts in Steer): Use useEffect instead of once-on-mount hooks from hook libraries when the callback reads props or state; those hooks hide the reads from dependency checks.
+- `react-practice-memo-trivial-expression` (starts in Steer): Don't wrap a dependency, or a cheap operator or property-read expression over only the dependencies, in useMemo; use or compute it during render.
+- `react-practice-mounted-ref-never-reset` (starts in Steer): Set a mount ref back to true in the effect's setup when its cleanup sets it false; a Strict Mode re-run or an Activity re-show otherwise leaves it false for good.
+- `react-practice-selector-returns-new-collection` (starts in Steer): Avoid selectors on the app's own store hooks that return a new object or array without a shallow comparison; the component may re-render on every store change.
+- `react-practice-side-effect-in-render` (starts in Steer): Don't navigate, send analytics events or dispatch store actions in the body of a component or hook; do it in an event handler or an effect, since render can run many times.
+- `react-practice-then-without-stale-guard` (starts in Steer): Ignore stale results when an effect with dependencies writes a .then result to state; an earlier, slower response can overwrite the state of the latest run.
+- `react-practice-request-beside-data-library` (starts in Log): Fetch server data with a query hook in files that already use a data-fetching library, not with a request in useEffect saved to useState; the library handles caching and races.
+
 ## 0.1.8 (2026-11-06)
 
 40 rules, 21 of them on by default.

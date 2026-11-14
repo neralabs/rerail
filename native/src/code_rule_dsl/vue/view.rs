@@ -136,7 +136,7 @@ impl View {
     pub(crate) fn into_program(self) -> Program {
         Program {
             dialect: self.dialect,
-            tree: self.tree,
+            parse: crate::code_rule_dsl::embed::Parse::Tree(self.tree),
             text: self.text,
             segments: self.segments,
             host_errors: Vec::new(),

@@ -224,6 +224,9 @@ pub(in crate::code_rule_dsl) struct Part {
     frames: HashMap<String, (FrameRel, Option<FrameStored>)>,
     /// Each derived relation's inputs (`cone`).
     cones: HashMap<String, std::collections::BTreeSet<String>>,
+    /// Each input's and relation's column types as its frame keeps them, from its declaration: `s` a symbol, which
+    /// the store's writer maps to the store's atoms (decision 0170), else `i`.
+    types: HashMap<String, Vec<u8>>,
 }
 
 /// Whether a new process maintains its cross-file part from the store (`RERAIL_KEPT_PART=off`: the per-stratum
@@ -267,6 +270,7 @@ pub(in crate::code_rule_dsl) fn load(
     root: &Path,
     key: [u8; 32],
     prog: &crate::code_rule_dsl::logic::front::Program,
+    domains: &super::lower::Domains,
     sccs: &[std::collections::BTreeSet<String>],
     inputs: &[(String, Arc<dyn Source>)],
     now: &HashMap<String, u64>,
@@ -298,7 +302,8 @@ pub(in crate::code_rule_dsl) fn load(
             e.1 = Some(s);
         }
     }
-    load_from_snapshot(store, key, inputs, now, Part { space, key, frames, cones })
+    let types = frames.keys().map(|rel| (rel.clone(), super::retain::types_of(prog, domains, rel))).collect();
+    load_from_snapshot(store, key, inputs, now, Part { space, key, frames, cones, types })
 }
 
 fn load_from_snapshot(
@@ -329,7 +334,8 @@ fn restore(
         let rows = admitted.get(f)?.rows().ok()?;
         let names = source.columns();
         let w = rows.types.len();
-        if names.len() != w { return None; }
+        // Kept under other column types (untyped, before decision 0170): its symbols may be another numbering's.
+        if names.len() != w || part.types.get(rel).is_none_or(|t| *t != rows.types) { return None; }
         let values = (0..w).map(|c| Some((0..rows.n).map(|i| rows.rows[i * w + c]).collect())).collect();
         kept_inputs.push((rel.clone(), was.digest, crate::code_rule_dsl::logic::native::component::columns_source(names, values)));
     }
@@ -355,7 +361,9 @@ fn restore(
     let mut rels = Vec::new();
     for rel in &asked {
         let rows = admitted.get(rel)?.rows().ok()?;
-        rels.push((rel.name.clone(), rows.types.len(), crate::code_rule_dsl::logic::native::component::InRel::kept(rows.types, rows.rows, rows.n)));
+        // Kept under other column types (untyped, before decision 0170): its symbols may be another numbering's.
+        if part.types.get(&rel.name).is_none_or(|t| *t != rows.types) { return None; }
+        rels.push((rel.name.clone(), rows.types.len(), crate::code_rule_dsl::logic::native::component::InRel::kept(super::retain::engine_types(rows.types), rows.rows, rows.n)));
     }
     crate::code_rule_dsl::logic::profile::decision("cross-file part kept across processes (t32 4.1)", || {
         format!("{} relations and {} inputs admitted in batches, {} rows; {stale} kept of other inputs, not read", rels.len(), kept_inputs.len(), rels.iter().map(|(_, _, r)| r.rows()).sum::<usize>())
@@ -377,13 +385,15 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
             continue;
         }
         let w = source.columns().len();
+        // Its symbols typed, so the writer maps them; an input of no declared width is not kept.
+        let Some(types) = part.types.get(rel).filter(|t| t.len() == w).cloned() else { continue };
         let n = source.len();
         let mut rows = Vec::with_capacity(n * w);
         for i in 0..n {
             rows.extend((0..w).map(|c| source.value(i, c)));
         }
         written += n;
-        puts.push(FramePut { rel: f.clone(), part: 0, digest, reads: Vec::new(), rows: FrameRows { types: vec![0; w], rows, n } });
+        puts.push(FramePut { rel: f.clone(), part: 0, digest, reads: Vec::new(), rows: FrameRows { types, rows, n } });
     }
     for (rel, width, held) in rels {
         let Some((f, was)) = part.frames.get(rel) else { continue };
@@ -395,8 +405,10 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         if was.as_ref().is_some_and(|w| w.digest == digest && w.reads == reads) {
             continue;
         }
+        // Its symbols typed as declared (the engine holds them as integers), so the writer maps them.
+        let Some(types) = part.types.get(rel).filter(|t| t.len() == width).cloned() else { continue };
         written += n;
-        puts.push(FramePut { rel: f.clone(), part: 0, digest, reads, rows: FrameRows { types: held.types().to_vec(), rows, n } });
+        puts.push(FramePut { rel: f.clone(), part: 0, digest, reads, rows: FrameRows { types, rows, n } });
     }
     crate::code_rule_dsl::logic::profile::decision("cross-file part kept across processes (t32 4.1)", || format!("{} frames, {written} rows, written to the store", puts.len()));
     let used: Vec<FrameRel> = part.frames.into_values().map(|(f, _)| f).collect();

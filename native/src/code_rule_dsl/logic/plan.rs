@@ -952,8 +952,6 @@ fn plan_fresh() -> bool {
 thread_local! {
     /// Where a plan is being made, for the profile's account of the planning budget's misses.
     static PLAN_SITE: std::cell::Cell<&'static str> = const { std::cell::Cell::new("elsewhere") };
-    /// The keys planned in this run (profiled), for the same account.
-    static PLANNED_NOW: std::cell::RefCell<rustc_hash::FxHashSet<PlanKey>> = std::cell::RefCell::new(Default::default());
 }
 fn plan_site(site: &'static str) {
     PLAN_SITE.with(|c| c.set(site));
@@ -1258,6 +1256,14 @@ type SharedPlans = Arc<parking_lot::RwLock<RunPlans>>;
 struct RunPlans {
     kept: rustc_hash::FxHashMap<PlanKey, Kept>,
     stored: Arc<StoredPlans>,
+    /// The keys planned in this run (profiled), for the profile's account of the planning budget's misses: the run's,
+    /// shared with its jobs as the plans are.
+    planned_now: rustc_hash::FxHashSet<PlanKey>,
+}
+
+/// Whether `key` was planned in this thread's run (`RunPlans::planned_now`).
+fn planned_now(key: &PlanKey) -> bool {
+    PLANS.with(|p| p.borrow().as_ref().is_some_and(|s| s.read().planned_now.contains(key)))
 }
 
 impl std::ops::Deref for RunPlans {
@@ -1523,9 +1529,8 @@ thread_local! {
 impl KeepPlans {
     pub fn start(across: Option<u64>) -> Self {
         compose::clear();
-        PLANNED_NOW.with(|p| p.borrow_mut().clear());
         let kept = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _)| *k == g).map(|(_, p)| p)));
-        PLANS.with(|p| *p.borrow_mut() = Some(Arc::new(parking_lot::RwLock::new(RunPlans { kept: kept.unwrap_or_default(), stored: Arc::default() }))));
+        PLANS.with(|p| *p.borrow_mut() = Some(Arc::new(parking_lot::RwLock::new(RunPlans { kept: kept.unwrap_or_default(), stored: Arc::default(), planned_now: Default::default() }))));
         keeps::observing(true);
         KeepPlans(across)
     }
@@ -1570,6 +1575,17 @@ thread_local! {
 thread_local! {
     /// Whether the planner reads its statistics skewed (`Model::plan_inner`, `RERAIL_STATS_SKEW`).
     static SKEWING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Carries the run's kept plans and the planner's settings to a job on another thread (`run_state`): the plans are
+/// shared (what the job plans is taken into them as it ends, `enter_plans`), the settings copied.
+pub(in crate::code_rule_dsl) fn carried(c: &mut super::run_state::Capture) {
+    c.part(&["PLANS", "OWN_PLANS"], super::run_state::Shared(share_plans(), enter_plans));
+    c.copy(&["PLAN_SITE"], &PLAN_SITE);
+    c.copy(&["EXPLAIN_ALWAYS"], &EXPLAIN_ALWAYS);
+    c.copy(&["NO_SHAPES"], &NO_SHAPES);
+    c.copy(&["SKEWING"], &SKEWING);
+    c.copy(&["STEP_ROWS"], &STEP_ROWS);
 }
 
 /// `RERAIL_STATS_SKEW=f[:seed]`: the largest factor a statistic is skewed by, and the seed of the factors.
@@ -1813,7 +1829,7 @@ impl Model {
         }
         Some(match (&kept.4, kept.5) {
             (None, _) => "no price",
-            (_, None) if PLANNED_NOW.with(|p| p.borrow().contains(&key)) => "never ran, planned before in this run",
+            (_, None) if planned_now(&key) => "never ran, planned before in this run",
             (_, None) => "never ran",
             (_, Some(r)) if r >= SEARCH_WORK => "ran over a search",
             _ => "inputs grew",
@@ -1933,7 +1949,11 @@ impl Model {
         };
         let sizes = self.live_sizes(b, first);
         if super::profile::on() {
-            PLANNED_NOW.with(|p| { p.borrow_mut().insert(key); });
+            PLANS.with(|p| {
+                if let Some(s) = p.borrow().as_ref() {
+                    s.write().planned_now.insert(key);
+                }
+            });
         }
         let remember = |key: &PlanKey, got: &(Plan, Option<super::profile::RulePlan>)| {
             plans_update(key, |k| k.4 = Some(Arc::new(Priced { sizes: sizes.clone(), got: got.clone() })));
@@ -1959,7 +1979,7 @@ impl Model {
             };
             BUDGET_MISS[why].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if why == 1 && super::profile::on() {
-                let again = PLANNED_NOW.with(|p| p.borrow().contains(&key));
+                let again = planned_now(&key);
                 super::profile::decision("planning budget missed: never ran (decision 0122)", || format!("planned by {}, {}", PLAN_SITE.with(std::cell::Cell::get), if again { "planned before in this run" } else { "kept from an earlier run" }));
             }
             // What grew, by kind of size and how far (the profile's decisions).
@@ -2814,6 +2834,25 @@ impl Model {
                 _ => None,
             }
         };
+        // A computed value (`$s = @rr_node_text($n)`) waits while a positive atom still to join reads its arguments
+        // and not the value: that atom only narrows the rows, so computing it first computes (and interns) values for
+        // rows it drops. `def_name`'s long-text twin seeded every node past the text bound and read each one's text
+        // before `field($f, "name", $n)` kept none: 77 MB of module, class and function texts in a posthog store.
+        let call_waits = |f: usize, bound: &dyn Fn(VarSlot) -> bool, open: &dyn Fn(usize) -> bool| -> bool {
+            let Lit::Cmp { l, op: CmpOp::Eq, r } = b.view(f) else { return false };
+            let (out, call) = match (l, r) {
+                (TermRef::Var(v), c @ TermRef::Call(..)) | (c @ TermRef::Call(..), TermRef::Var(v)) if !bound(v) => (v, c),
+                _ => return false,
+            };
+            let mut ins = VarSet::new();
+            body::term_vars(call, &mut ins);
+            (0..b.len()).filter(|&j| b.is_join(j)).any(|j| {
+                open(j) && matches!(b.view(j), Lit::Atom(a) if !a.neg()) && {
+                    let vs = b.vars(j);
+                    !vs.contains(out) && !vs.is_disjoint(&ins)
+                }
+            })
+        };
         // Applies every filter (negation, comparison, aggregate) whose variables are bound.
         let close = |order: &mut Vec<Step>, mut rows: f64, bound: &mut VarSet, rest: &mut Vec<usize>| -> f64 {
             let mut progressed = true;
@@ -2821,7 +2860,7 @@ impl Model {
                 progressed = false;
                 for i in rest.clone() {
                     let l = i;
-                    if !b.is_join(l) && b.ready(l, bound) {
+                    if !b.is_join(l) && b.ready(l, bound) && !call_waits(i, &|v| bound.contains(v), &|j: usize| !order.iter().any(|s| s.at == j)) {
                         order.push(Step { at: i, mode: None });
                         rest.retain(|&j| j != i);
                         bound.extend(b.vars(l));
@@ -3041,7 +3080,7 @@ impl Model {
             while progressed {
                 progressed = false;
                 for (k, &f) in filters.iter().enumerate() {
-                    if !placed[k] && ready_at(f, bound) {
+                    if !placed[k] && ready_at(f, bound) && !call_waits(f, &|v: VarSlot| var_ids[v.index()].is_some_and(|k| bound >> k & 1 == 1), &|j: usize| joins.iter().position(|&x| x == j).is_none_or(|i| mask & (1 << i) == 0)) {
                         placed[k] = true;
                         bound |= lit_bits[f];
                         progressed = true;
@@ -4748,6 +4787,17 @@ fn sym_char(inputs: &Inputs, t: &str) -> char {
     if t == "sym" && inputs.atoms.is_none() { 's' } else { 'i' }
 }
 
+/// A relation's column types as the store keeps its rows: `s` where it declares a symbol, whatever the engine holds
+/// the column as (over atoms, an integer). The store maps a forked process's symbols by them (decision 0170); rows of
+/// another width than declared keep the engine's types.
+fn stored_types(prog: &Program, rel: &str, engine: Vec<u8>) -> Vec<u8> {
+    let declared = prog_types(prog, rel);
+    if declared.len() != engine.len() {
+        return engine;
+    }
+    declared.iter().map(|t| if *t == "sym" { b's' } else { b'i' }).collect()
+}
+
 fn prog_types<'p>(prog: &'p Program, r: &str) -> Vec<&'p str> {
     prog.decls.get(r).unwrap_or_else(|| panic!("no declaration of {r}")).iter().map(|(_, t)| t.as_str()).collect()
 }
@@ -5099,37 +5149,23 @@ struct Strand<'a>(Run<'a, 'static>, Arc<crate::content_store::atoms::Atoms>, (u6
 // program, the views, the projections, the inputs, and the rules' numbers, whose addresses are keys only.
 unsafe impl Send for Strand<'_> {}
 
-/// What a stratum's job takes from the run's thread (decision 0113 §4): the run's kept plans, derived values and
-/// observations, which it shares, and the thread's settings, which it copies.
-struct Ambient {
-    plans: Option<SharedPlans>,
-    memo: Option<super::derived::Shared>,
-    observed: keeps::SharedObserved,
-    device: placement::Binding,
-    explain: bool,
-    /// The profile's span open where the run issued it: a job's span is under it, on whichever thread runs it, and
-    /// each member it runs is a span under that (`stratum … (in a job)`).
-    under: Option<String>,
-}
+/// What a stratum's job takes from the run's thread (decision 0113 §4): the run's context (`run_state::Carry`): its
+/// kept plans, derived values and observations, which it shares, and the thread's settings, which it copies.
+struct Ambient(super::run_state::Carry);
 
 impl Ambient {
     fn here() -> Self {
-        let explain = explaining(false);
-        explaining(explain);
-        Ambient { plans: share_plans(), memo: super::derived::share(), observed: keeps::share_observed(), device: placement::binding(), explain, under: super::profile::here() }
+        Ambient(super::run_state::Carry::here())
     }
 
     /// While the guard lives, this thread works in the run's ambient.
     fn enter(&self) -> impl Drop {
-        struct Entered(placement::Binding, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>, super::profile::Span);
+        struct Entered(super::run_state::Entered, super::profile::Span);
         impl Drop for Entered {
-            fn drop(&mut self) {
-                placement::set_binding(self.0);
-                explaining(self.1);
-            }
+            fn drop(&mut self) {}
         }
-        let span = super::profile::span_at(self.under.as_deref(), || "issued components (stream job)".into());
-        Entered(placement::set_binding(self.device), explaining(self.explain), Box::new(enter_plans(self.plans.clone())), Box::new(super::derived::enter(self.memo.clone())), Box::new(keeps::enter_observed(self.observed.clone())), span)
+        let span = super::profile::span_at(self.0.under(), || "issued components (stream job)".into());
+        Entered(self.0.enter(), span)
     }
 }
 
@@ -7154,7 +7190,7 @@ fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &BT
         let digest = got.as_ref().map(|(types, rows, n)| rows_digest(types.len(), rows, *n));
         fresh.insert(r.clone(), digest);
         members.push((r.clone(), digest));
-        ks.ran(r, got.zip(reads).map(|((types, rows, n), reads)| (digest.expect("rows give a digest"), types, rows, n, reads.clone())));
+        ks.ran(r, got.zip(reads).map(|((types, rows, n), reads)| (digest.expect("rows give a digest"), stored_types(run.prog, r, types), rows, n, reads.clone())));
     }
     for v in scc.iter().filter(|r| run.views.contains(*r)) {
         fresh.insert(v.clone(), view_digest(reads.map(Vec::as_slice), &members));
@@ -7261,7 +7297,12 @@ fn postings(values: impl Iterator<Item = i64>) -> (f64, f64) {
 }
 
 fn kept_strata_hold(ks: &mut dyn KeptStrata, db: &Connection, run: &mut Run, rel: &str) -> Result<usize> {
-    let (types, rows, n) = ks.rows(rel).ok_or_else(|| Error::Plan(format!("{rel}: kept as clean, but its rows are not kept")))?;
+    let (stored, rows, n) = ks.rows(rel).ok_or_else(|| Error::Plan(format!("{rel}: kept as clean, but its rows are not kept")))?;
+    // Held as this run's engine holds the relation's columns (over atoms a symbol is an integer column).
+    let types: Vec<u8> = prog_types(run.prog, rel).iter().map(|t| sym_char(&run.model.inputs, t) as u8).collect();
+    if types.len() != stored.len() {
+        return Err(Error::Plan(format!("{rel}: kept {} columns wide, declared {}", stored.len(), types.len())));
+    }
     let k = types.len();
     let cols: Vec<(f64, f64)> = (0..k).map(|c| postings(rows.iter().skip(c).step_by(k).copied())).collect();
     super::native::component::hold_rows(db, rel, types, rows, n);

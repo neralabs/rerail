@@ -39,8 +39,7 @@ try004_rebound_in_if(n, FN) :- try004_demand_rebound_in_if(n, FN), kind(n, "iden
     count : { node(d1, n, _, st2, _), try004_seen_import(s3, h5, ks6), (h5 = "builtins"), node(d1, s3, _, so4, _), kn7 = count : { within(n, b8), field(f8, "body", b8), kind(f8, "function_definition") }, (ks6 < kn7 ; ks6 = kn7, so4 < st2 ; count : { within(n, l8), field(m8, "body", l8), kind(m8, "lambda") } > 0) } = 0,
     within_stop(n, p9, "if_statement"), kind(p9, "if_statement"),
     within_stop(c10, p9, try004_stop_1), (kind(c10, "identifier") ; kind(c10, "dotted_name")),
-    (bind_only(c10) ; aug_target(c10)), node(_, c10, _, _, _), BOUND = c10,
-    text(FN, t11), text(BOUND, t11), @doc(FN) = @doc(BOUND).
+    bind_name(c10, _), node(_, c10, _, _, _), BOUND = c10, text(FN, t11), text(BOUND, t11), @doc(FN) = @doc(BOUND).
 
 // type_test(n): the JSON util `type-test`, used where the JSON says `matches: "type-test"`
 .decl try004_type_test(n: node)

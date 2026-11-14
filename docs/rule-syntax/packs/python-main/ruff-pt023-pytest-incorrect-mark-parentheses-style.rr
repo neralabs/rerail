@@ -47,7 +47,7 @@ pt023_deeper_import_site(n) :- child(p3, n, _), kind(p3, "import_from_statement"
 // alt_1(n): the JSON `any`: n matches if any one of these rules does
 .decl pt023_alt_1(n: node)
 pt023_alt_1(n) :- sym_of(n, "pytest.mark").
-pt023_alt_1(n) :- ref_site(n, b1), site_form(b1, "import"), (st2 = b1 ; within(b1, st2)),
+pt023_alt_1(n) :- ref_site(n, b1), main_form(b1, "import"), (st2 = b1 ; within(b1, st2)),
     pt023_deeper_import_site(st2).
 
 // alt_2(n): the JSON `any`: n matches if any one of these rules does

@@ -148,3 +148,83 @@ every mark from the codes: the any-mark mask goes (`the_marks_are_not_start_mask
 form: 285 operations, from 331. What still reads `code` and the regions among the marks:
 `newline` (its `after_comma`, a fill to the next start), `float_after` and `json_bad`.
 
+## Checks at the token
+
+`error "WHY" by tokens when E`: an error whose bytes are the ones the token loop starts a
+token at that no token begins with (`NO_RULE`). Its mask is an output of its own among the
+totals (`Records::untaken`): Metal makes it; the CPU makes a zero and its loop refuses the
+file at such a byte. The interpreter does both. Over the corpus and stray bytes at the blocks'
+edges, the two refuse the same files with the other errors (`the_loops_errors_are_the_masks`,
+1,525 files). The `.rr` grammar's `a byte no token takes` is one. CPU form: 276 operations.
+
+
+## The marks' own checks
+
+Two marks read the token starts only to ask about the token before or after them. Both are
+now the gap pass's, as lean's parser asks them of its tokens:
+
+- `mark newline = lf unless after ","`: a line break is none where the grammar token before
+  it is a `,`, a list going on over lines. It was `lf & ~after_comma`, `after_comma` a fill
+  from a `,` to the next grammar start (`starts_g`). The gap pass knows the token before:
+  `Records::unless`, each mark's words.
+- `mark float_after = frac_last, else escape "a float the file ends with"`: a bit with no
+  grammar token at or after it sends the file to the fallback. It was an escape of its own,
+  `last_byte & fill(frac_last, starts_g)`. The gap pass knows what is past the last token:
+  `Records::unplaced`.
+
+`starts_g` and `after_comma` go. The interpreter, the CPU's late marks and Metal's record
+kernel each do both (`a_line_break_after_a_comma_is_none`, `chained_floats_go_to_the_engine`).
+CPU form: 259 operations, from 276; the fallback reads 130, from 189.
+
+## A number's checks at its token
+
+The lean lexer checks a number where it reads it. So does the token loop now:
+
+```text
+# a second `.` (`1.2.3`): the engine reads it
+escape "a float's `.` after a fraction" at number when count(dot) at least 2
+# 19 digits from its first: the engine checks the i64
+escape "a number of 19 digits or more" at number when run(digit) at least 19
+```
+
+`escape "WHY" at KIND when count(E) at least N` tests each token of the kind over its own
+bytes: `E`'s bits in it (`count`), or `E` at each of its first `N` bytes (`run`). A token that
+passes it sends the file to the fallback. The tests are the end rule's (`Records::checks`): a
+rule with tests is its kind's alone, and the CPU's rule block ends at a block that tests the
+token, a popcount over its words or one window compare. Metal's record kernel and the
+interpreter test each token the same way.
+
+They replace the escape over `f_dot & prev(frac)` and the 19 digits' tier 2 `CHECK` (one
+local check fewer). CPU form: 249 operations, from 259; the fallback reads 85, from 130
+(`a_numbers_checks_are_at_its_token`).
+
+## Readers
+
+The lean lexer reads a string, a comment or a backtick literal from its start: to the next
+`"` past escapes, to the `\n`, to the `*/`, to the fence. A region's token is now read so:
+
+```text
+# the region whose opener holds at the token's first byte,
+# then its closer's first byte after it
+token string       = start quote & o_str read str
+token comment      = start slash & (o_line | o_block) read line | block
+token code_literal = start tick & o_tick read t1 | t2 | t3
+```
+
+`read K | …` (`TokenRule::Read`) names regions of the `regions` statement. Its meaning, which
+Metal and the interpreter's masks keep, is each region's last byte from its fill. On the CPU
+it is a reader (`EndRule::Read`, `Records::readers`): the first region whose opener's bit holds
+at the token's first byte, then the first bit of its closer after it, a word at a time. The
+last byte is the closer's last (`off`), or the byte before an `outside` closer. With no closer
+after the opener, what the region says: the file is refused (open at the end), the file's last
+byte (a line comment), or the `else` bytes (` `` `, the empty literal). No opener holds: the
+byte's other rule (`/` as punctuation), or the file is refused (four backticks).
+
+The token loop never starts inside a region, so the opener's bit at the start is the region's
+opening, as the walk's. The errors the readers make are the grammar's: the regions open at the
+end and the four backticks are `error … by tokens` and `escape … by tokens`, masks Metal makes
+and the CPU does not (`the_loops_errors_are_the_masks`: 1,717 files and edge cases, 152
+refused by both). The regions' last-byte masks go from the CPU: 204 operations, from 249.
+
+What still reads the region walk and `code` on the CPU: the `json_bad` mark, the `ROW` mask
+(a comment or a `/`), `float_after`, JSON's checks, and the comments' extra mark.
