@@ -154,7 +154,7 @@ function live(databasePath: string, sessionId: string): boolean {
 }
 
 /** A scan asked for the session, as `rerail scan --session` asks the daemon for one. */
-function askScan(databasePath: string, sessionId: string): { status: string; error: string | null } {
+function askScan(databasePath: string, sessionId: string): { id: string; status: string; error: string | null } {
   const controls = new SqliteAuditControlStore(databasePath);
   try {
     return controls.requestAudit(sessionId, { scope: "repository" });
@@ -162,6 +162,20 @@ function askScan(databasePath: string, sessionId: string): { status: string; err
     controls.close();
   }
 }
+
+/** What became of the scan `id` asked for the session: its status and error. */
+function scanOf(databasePath: string, sessionId: string, id: string): { status: string; error: string | null } | undefined {
+  const controls = new SqliteAuditControlStore(databasePath);
+  try {
+    const request = controls.listAuditRequests(sessionId).find(item => item.id === id);
+    return request === undefined ? undefined : { status: request.status, error: request.error };
+  } finally {
+    controls.close();
+  }
+}
+
+/** How a scan queued for a session of a daemon that died ends once a later daemon ends that session. */
+const INTERRUPTED = { status: "interrupted", error: "Owning runtime exited before scan could complete" };
 
 /** Rewrites the owner row of `sessionId`, through a connection of its own. */
 function setOwner(databasePath: string, sessionId: string, row: { processId: number; token?: string; updatedAt?: number }): void {
@@ -190,6 +204,9 @@ describe("the next daemon's start after a daemon that died", () => {
       await daemon.send(start("q"));
       await daemon.send(prompt("q", "last"));
       const closedAt = await daemon.idleClose(IDLE_MS + 1_000);
+      // Asked while the daemon held the session: it waits for the session's next open, which never comes there.
+      const queued = askScan(databasePath, "q");
+      expect(queued.status).toBe("queued");
       await daemon.kill();
       setOwner(databasePath, "q", { processId: await pidHolder() });
       const next = await service(root, databasePath, () => Date.now() + 3 * DAY);
@@ -198,6 +215,7 @@ describe("the next daemon's start after a daemon that died", () => {
       expect(endedAt).toBeGreaterThanOrEqual(heardAt + IDLE_MS);
       expect(endedAt).toBeLessThanOrEqual(closedAt);
       expect(live(databasePath, "q")).toBe(false);
+      expect(scanOf(databasePath, "q", queued.id)).toEqual(INTERRUPTED);
       // A scan asked for it is refused at once, rather than queued for a daemon that is gone.
       expect(askScan(databasePath, "q")).toMatchObject({ status: "failed", error: "Session is inactive" });
       // Its next event opens it again here, rather than finding it owned by a runtime that runs.
@@ -250,6 +268,8 @@ describe("a daemon that runs on after another on the same records died", () => {
     await daemon.send(prompt("q", "last"));
     const closedAt = await daemon.idleClose(IDLE_MS + 1_000);
     const other = await service(root, databasePath, () => Date.now() + 3 * DAY);
+    const queued = askScan(databasePath, "q");
+    expect(queued.status).toBe("queued");
     await daemon.kill();
     setOwner(databasePath, "q", { processId: await runningProcess() });
     await other.closeIdleSessions();
@@ -258,6 +278,7 @@ describe("a daemon that runs on after another on the same records died", () => {
     expect(endedAt).toBeGreaterThanOrEqual(heardAt + IDLE_MS);
     expect(endedAt).toBeLessThanOrEqual(closedAt);
     expect(live(databasePath, "q")).toBe(false);
+    expect(scanOf(databasePath, "q", queued.id)).toEqual(INTERRUPTED);
   });
 
   // A runtime opens a session's record again, then claims it in a second write. Another daemon's sweep can end the record
