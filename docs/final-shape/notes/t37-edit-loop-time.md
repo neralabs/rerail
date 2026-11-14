@@ -217,7 +217,7 @@ which runs every other compile.
   nothing. The two misses were `rerail_lang` and `libmimalloc_sys`. Each bundles a static C library
   built by its build script, whose archive names and debug info held the checkout's path. Since
   `f9fb75060` those archives are byte-identical across checkouts (`-ffile-prefix-map`,
-  `SOURCE_DATE_EPOCH`). Rerun: 378 of 378 hits, 142 s wall and 366 s CPU here (271 + 93) against
+  `SOURCE_DATE_EPOCH`). Rerun: 378 of 378 hits, 142 s wall and 366 s CPU here (273 + 93) against
   170 s and 402 s.
 - What a fully cached build still compiles is what sccache never caches: 61 build-script binaries,
   21 proc macros and the final binary. That, and the link, is the rest of its 142 s. The farm
