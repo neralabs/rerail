@@ -697,6 +697,56 @@ describe("CodeRuleBridge", () => {
     })]);
   });
 
+  it("keeps the first sight of a file a later walk saw first, whose listing ran late while the one asked again waited", async () => {
+    const root = await workspace();
+    const dirty = join(root, "src", "dirty.py");
+    const draft = join(root, "deep", "draft.py");
+    await writeFile(dirty, "committed\n");
+    commitAll(root);
+    await writeFile(dirty, "uncommitted\n");
+    await mkdir(join(root, "deep"));
+    await writeFile(draft, "draft\n");
+    await awaitClockAfter(dirty, draft);
+    // The baseline walk cannot read `deep`, so the walk after it is the first to see draft.py there.
+    discovery.directories.set(join(root, "deep"), [async () => { throw new Error("EMFILE: too many open files"); }]);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    // Both walks' listings run past their time limit, and the listing asked again after the first waits until both walks
+    // are applied: the second walk hands it draft.py rather than asking Git again.
+    const asked = holdListingsAgain();
+    listings.late.push(root, root);
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    asked.release();
+    await bridge.settleListingsAgain();
+    expect(listings.calls).toEqual([`walk ${root}`, `again ${root}`, `walk ${root}`]);
+    await shell(bridge, () => writeFile(draft, "draft\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "deep/draft.py", language: "python", previousText: "draft\n", generatedText: "draft\nmine\n" }],
+    ]);
+  });
+
+  it("closes with no Git a listing asked again started still running in the folder", async () => {
+    const root = await workspace();
+    const dirty = join(root, "src", "dirty.py");
+    await writeFile(dirty, "committed\n");
+    commitAll(root);
+    await writeFile(dirty, "uncommitted\n");
+    await awaitClockAfter(dirty);
+    const bridge = new CodeRuleBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))));
+    // The baseline walk's listing runs past its time limit; the one asked again starts a Git that never finishes.
+    listings.late.push(root);
+    asyncGitCalls.hanging = ["--modified"];
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await vi.waitFor(() => expect(runningIn(root).filter(entry => entry.includes("--batch"))).toHaveLength(1), { timeout: 10_000 });
+    await bridge.close();
+
+    expect(runningIn(root)).toEqual([]);
+    // One try: on Windows a process still running in the folder keeps it from being removed.
+    await removeFolder(root, { retry: false });
+  });
+
   it("audits nothing Git wrote over a file changed before the session, and measures the next shell edit from Git's text", async () => {
     const root = await workspace();
     const dirty = join(root, "src", "dirty.py");
