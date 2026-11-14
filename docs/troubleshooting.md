@@ -555,6 +555,14 @@ The following lines are what this start wrote to `~/.rerail/daemon.log`, and say
 A second daemon, from another `RERAIL_HOME` or left behind, holds Rerail's machine-wide lock. Stop it
 (`rerail daemon stop` from its home, or end its pid), then start again.
 
+### `Another Rerail daemon (pid …) runs in …`
+
+Another daemon holds this Rerail home's lock (`locks/daemon.lock`). A daemon started there waits a second for it, then
+writes this line to the home's `daemon.log` and exits; a `rerail daemon start` that launched it prints the line under
+`Rerail daemon exited with code 1 before it was ready`. While the daemon it names answers, the next
+`rerail daemon start` finds it. If it does not, `rerail daemon stop` stops it once `daemon.json` names it, or gives the
+pid to end; if the stop finds none and a start prints this line again, end the process it names and start again.
+
 ### Containers: the dashboard does not open from the host
 
 The daemon listens on the container's loopback only, so a published port (`-p 4737:4737`) gets an empty reply. Set-up

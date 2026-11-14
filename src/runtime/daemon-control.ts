@@ -1,6 +1,6 @@
 import type { SpawnOptions } from "node:child_process";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { mkdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { Agent as HttpsAgent, request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
 import { homedir } from "node:os";
@@ -11,14 +11,21 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { spawn, spawnShown } from "../engine/child-process.js";
 import { programOnPath, windowsSystemProgram } from "../engine/system-programs.js";
 import { loadNativeBinding } from "../engine/native/native.js";
+import { forgetHomeDaemonHolder, homeDaemonHolder, homeDaemonLockHeld } from "../engine/native/home-daemon-lock.js";
 import { forgetMainInstanceHolder, mainInstanceLockHeld } from "../engine/native/main-instance.js";
 import { withHomeLock } from "../engine/native/file-lock.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
 import { engineCapabilityProof, type EngineProofAnswer } from "./engine-proof.js";
-import { enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./engine-pipe.js";
+import { databasePipeListed, enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./engine-pipe.js";
 import { processState, type ProcessSignal } from "../engine/process-liveness.js";
-import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, defaultRerailHome } from "../engine/storage/rerail-home.js";
+import {
+  DAEMON_ACCESS_TOKEN_FILE,
+  DAEMON_LOG_FILE,
+  DAEMON_STATE_FILE,
+  defaultRerailHome,
+  RERAIL_DATABASE_FILE,
+} from "../engine/storage/rerail-home.js";
 import { keepFolderPrivate, makeRerailHome } from "../engine/storage/private-files.js";
 import type { ModelStatus } from "../engine/native/model-status.js";
 
@@ -267,8 +274,15 @@ const START_LOCK = "start";
  * names it there as one of Rerail's own entries (`RERAIL_HOME_ENTRIES` in setup-cli.ts).
  */
 export const START_LOCK_DIR = "start.lock";
+/** In the Rerail home: the claim of the one autostart launch in progress, holding its launcher's pid (`claimAutostart`). */
+export const AUTOSTART_CLAIM_FILE = "autostart.claim";
 
 const START_TIMEOUT_MS = 15_000;
+/**
+ * The longest an autostart claim holds, even while the pid it names is alive: a launcher's whole life, its wait for the
+ * start lock and then for the daemon. Past it that pid can be another process, which Windows gave a dead launcher's pid.
+ */
+const AUTOSTART_CLAIM_MS = 2 * START_TIMEOUT_MS;
 const STOP_TIMEOUT_MS = 10_000;
 const KILL_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
@@ -502,6 +516,11 @@ export interface DaemonMachine {
    * binding does not load.
    */
   mainInstanceLockHeld(directory: string): boolean | undefined;
+  /**
+   * Whether a daemon holds the Rerail home `home` (`homeDaemonLockHeld`), its daemon.json or not; undefined when the
+   * lock cannot be asked.
+   */
+  homeDaemonLockHeld(home: string): boolean | undefined;
   /** The Node binary Rerail's own processes run under ({@link nodeExecutable}). */
   nodeExecutable(): string;
   /** Windows: starts a process through the native module's spawn ({@link launchDetached} says why). */
@@ -528,6 +547,7 @@ const THIS_MACHINE: DaemonMachine = {
   capabilityProof: async (socketPath, accessToken, timeoutMs) => await engineCapabilityProof(socketPath, accessToken, timeoutMs),
   forgetMainInstanceHolder: pid => forgetMainInstanceHolder(pid),
   mainInstanceLockHeld: directory => mainInstanceLockHeld(directory),
+  homeDaemonLockHeld: home => homeDaemonLockHeld(home),
   nodeExecutable: () => nodeExecutable(),
   spawnDetached: nativeSpawnDetached,
   spawn: (command, args, options) => spawn(command, args, options),
@@ -714,14 +734,93 @@ async function repairSqlite(control: DaemonControl, machine: DaemonMachine): Pro
   if (result.rebuilt) process.stderr.write(`Rebuilt better-sqlite3 in ${result.prefix}\n`);
 }
 
+/**
+ * Runs `start` under the start lock in `home`, then ends the autostart claim (`claimAutostart`) if it names this
+ * process, the launcher an autostart started, however the start ended: the launch it held other processes off for is
+ * over, so the next process to find the daemon down launches again at once, after a start that failed too. While the
+ * daemon cannot start, that is one launch after another, never one per process that finds it down. A claim naming
+ * another process is that launcher's, still running its start: a start that gave up waiting for the start lock it
+ * holds, or one a person ran beside it, leaves the claim to it.
+ */
+async function startUnderLock(home: string, start: () => Promise<StartDaemonResult>): Promise<StartDaemonResult> {
+  makeRerailHome(home);
+  try {
+    return await withStartLock(home, start);
+  } finally {
+    await endOwnClaim(home);
+  }
+}
+
+/**
+ * Removes the autostart claim in `home` when it names this process. A launcher that hands its start to the active
+ * version's CLI leaves the claim to end with its own exit (`claimHolds`), and a claim that cannot be read or removed
+ * holds only while its launcher runs, and 30 s at most.
+ */
+async function endOwnClaim(home: string): Promise<void> {
+  const claim = join(home, AUTOSTART_CLAIM_FILE);
+  const named = await readFile(claim, "utf8").catch(() => "");
+  if (named.trim() === String(process.pid)) await rm(claim, { force: true }).catch(() => undefined);
+}
+
+/**
+ * Whether the holder `pid` recorded in `home` may still be the home's daemon, asked without loading anything: a live
+ * process, and on Windows only while the engine pipe of the home's database is there, under its own name or its
+ * fallback, which the daemon binds before daemon.json can name it and holds until it exits. Windows ends a daemon
+ * without its exit handler at a logoff, a restart or a stop's kill, so its record outlives it and soon names a pid
+ * Windows has given to another process. A daemon that has taken the lock and not yet bound its pipe is not counted:
+ * a start then launches another, which exits naming it.
+ */
+function homeHolderMayRun(home: string, pid: number, machine: DaemonMachine): boolean {
+  if (!processAlive(pid, machine.kill)) return false;
+  return machine.platform !== "win32" || databasePipeListed(join(home, RERAIL_DATABASE_FILE), () => machine.pipes());
+}
+
+/**
+ * Whether a daemon holds `home`, its daemon.json or not. As for the main instance ({@link mainInstanceHolderRuns}), a
+ * rule that loads nothing answers first ({@link homeHolderMayRun}): the holder records its pid beside the lock and
+ * removes the record when it lets go, so a home whose daemon stopped, was killed or never ran is answered without the
+ * engine. Asking the lock loads the engine from the running version's folder, and Windows keeps a loaded DLL from being
+ * deleted: the uninstall, which stops the daemon before it removes `versions/`, could not have removed it. Only a holder
+ * that may run is asked about by its lock, which tells it from a process that took its pid since. A lock that cannot be
+ * asked (the engine does not load, or the lock file does not open) counts as free, so no start or stop waits on it: the
+ * daemon a start launches asks the lock itself and exits, naming the holder, when another daemon holds it.
+ */
+function homeDaemonRuns(home: string, machine: DaemonMachine): boolean {
+  const pid = homeDaemonHolder(home);
+  if (pid === undefined || !homeHolderMayRun(home, pid, machine)) return false;
+  return machine.homeDaemonLockHeld(home) ?? false;
+}
+
+/**
+ * The daemon a start or a stop acts on in `home`: the one daemon.json records, else the one that holds the home
+ * ({@link homeDaemonRuns}) once it has recorded itself again. The daemon of a home writes daemon.json back within a
+ * second of finding it gone or naming another process, so it is waited for, never started beside: a second daemon
+ * would refuse to run beside it, as would every start after it, and `rerail daemon stop` would find none to stop.
+ */
+async function lookupHomeDaemon(home: string, machine: DaemonMachine): Promise<DaemonLookup> {
+  const deadline = Date.now() + START_TIMEOUT_MS;
+  for (;;) {
+    const lookup = await lookupDaemon(home, machine);
+    if (lookup.status !== "absent" || !homeDaemonRuns(home, machine)) return lookup;
+    if (Date.now() >= deadline) throw new Error(unrecordedDaemonProblem(home));
+    await sleep(POLL_INTERVAL_MS);
+  }
+}
+
+/** What to tell the person when a daemon holds `home` and never records itself: which process to end. */
+function unrecordedDaemonProblem(home: string): string {
+  const pid = homeDaemonHolder(home);
+  return `A Rerail daemon${pid === undefined ? "" : ` (pid ${pid})`} holds ${home} but has not written ${DAEMON_STATE_FILE} `
+    + `within ${START_TIMEOUT_MS / 1_000}s; end that process, then run rerail daemon start.`;
+}
+
 export async function startDaemon(
   control: DaemonControl,
   options: DaemonLaunchOptions,
   machine: DaemonMachine = THIS_MACHINE,
 ): Promise<StartDaemonResult> {
-  makeRerailHome(control.home);
-  return await withStartLock(control.home, async () => {
-    const lookup = await lookupDaemon(control.home, machine);
+  return await startUnderLock(control.home, async () => {
+    const lookup = await lookupHomeDaemon(control.home, machine);
     if (lookup.status === "running") return { started: false, daemon: { state: lookup.state, health: lookup.health } };
     if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
     return await spawnDaemon(control, options, machine);
@@ -738,9 +837,8 @@ export async function startDaemonForPackage(
   options: DaemonLaunchOptions,
   machine: DaemonMachine = THIS_MACHINE,
 ): Promise<StartDaemonResult> {
-  makeRerailHome(control.home);
-  return await withStartLock(control.home, async () => {
-    const lookup = await lookupDaemon(control.home, machine);
+  return await startUnderLock(control.home, async () => {
+    const lookup = await lookupHomeDaemon(control.home, machine);
     if (lookup.status === "running") {
       if (await daemonUsesPackageRoot(lookup.state, control.packageRoot)) {
         return { started: false, daemon: { state: lookup.state, health: lookup.health } };
@@ -1043,9 +1141,73 @@ async function answeringDaemon(stateFile: string, pid: number | undefined, platf
 
 let autostartAttempted = false;
 
+/** Creates the claim at `path`, naming this process, if nothing is there; whether this call made it. */
+function createClaim(path: string): boolean {
+  let claim: number;
+  try {
+    claim = openSync(path, "wx", 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw error;
+  }
+  try {
+    writeSync(claim, String(process.pid));
+  } finally {
+    closeSync(claim);
+  }
+  return true;
+}
+
+/**
+ * Whether the claim at `path` still holds: it is under `AUTOSTART_CLAIM_MS` from now, either way, so a claim made before
+ * the clock moved back expires too, and the process it names runs (`kill`'s signal 0). A claim with no pid in it yet is
+ * being written by the process that created it, and holds.
+ */
+function claimHolds(path: string, kill: ProcessSignal): boolean {
+  let made: number;
+  let text: string;
+  try {
+    made = statSync(path).mtimeMs;
+    text = readFileSync(path, "utf8").trim();
+  } catch (error) {
+    // A start ended it between this process's create and its look.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  if (Math.abs(Date.now() - made) >= AUTOSTART_CLAIM_MS) return false;
+  return text === "" || (/^[1-9]\d*$/u.test(text) && processAlive(Number(text), kill));
+}
+
+/**
+ * Whether this process launches the autostart: it created the claim in `home`, or replaced one that no longer holds
+ * (`claimHolds`), such as one whose launcher died before its start. Sessions and hooks each run in a process of their
+ * own, and the ones that find the daemon gone arrive together; the claim is created exclusively, so one launches and the
+ * rest leave the start to it. The launcher's start ends the claim as it ends (`startUnderLock`). Two processes that both
+ * replace a claim at once can both launch; the start lock still lets only one launcher start a daemon.
+ */
+function claimAutostart(home: string, kill: ProcessSignal): boolean {
+  const claim = join(home, AUTOSTART_CLAIM_FILE);
+  if (createClaim(claim)) return true;
+  if (claimHolds(claim, kill)) return false;
+  rmSync(claim, { force: true });
+  return createClaim(claim);
+}
+
+/**
+ * Hands the claim in `home` to the launcher this process started, so it holds while that launch runs; with no launcher
+ * (the launch started no process), removes it, so the next process to find the daemon down launches.
+ */
+function handOverClaim(home: string, launcher: number | undefined): void {
+  const claim = join(home, AUTOSTART_CLAIM_FILE);
+  if (launcher === undefined) rmSync(claim, { force: true });
+  else writeFileSync(claim, String(launcher), { mode: 0o600 });
+}
+
 /**
  * Bring the daemon up from inside a host session so the browser view is
- * live without anyone running `rerail daemon start`. One attempt per process;
+ * live without anyone running `rerail daemon start`. One launch per process,
+ * and one per Rerail home while its claim holds (`claimAutostart`): a process
+ * that left the start to another asks again at its next call.
  * `RERAIL_AUTOSTART=0` disables it ({@link autostartOff}).
  *
  * Truly fire-and-forget: the work is handed to a detached `rerail daemon start`
@@ -1065,18 +1227,23 @@ let autostartAttempted = false;
  * engine service and status.
  */
 export function autostartDaemon(machine: DaemonMachine = THIS_MACHINE): void {
-  if (autostartAttempted) return;
-  autostartAttempted = true;
-  if (autostartOff(machine.env)) return;
+  if (autostartAttempted || autostartOff(machine.env)) return;
   const home = defaultRerailHome(machine.env);
   try {
     makeRerailHome(home);
-    launchDetached({
-      args: [join(PACKAGE_ROOT, ENTRY_POINTS.cli), "daemon", "start", "--workspace-root", process.cwd()],
-      cwd: home,
-      env: machine.env,
-      logFile: join(home, DAEMON_LOG_FILE),
-    }, machine);
+    if (!claimAutostart(home, machine.kill)) return;
+    autostartAttempted = true;
+    let launcher: number | undefined;
+    try {
+      launcher = launchDetached({
+        args: [join(PACKAGE_ROOT, ENTRY_POINTS.cli), "daemon", "start", "--workspace-root", process.cwd()],
+        cwd: home,
+        env: machine.env,
+        logFile: join(home, DAEMON_LOG_FILE),
+      }, machine).pid;
+    } finally {
+      handOverClaim(home, launcher);
+    }
   } catch {
     // Autostart is a convenience; the session must never notice it failing.
   }
@@ -1144,7 +1311,7 @@ async function goneWithin(alive: () => boolean, ms: number): Promise<boolean> {
  * {@link STOP_TIMEOUT_MS} is killed.
  */
 export async function stopDaemon(home: string, machine: DaemonMachine = THIS_MACHINE): Promise<StopDaemonResult> {
-  const lookup = await lookupDaemon(home, machine);
+  const lookup = await lookupHomeDaemon(home, machine);
   if (lookup.status === "absent") return "not-running";
   await stopFoundDaemon(home, lookup, machine);
   return "stopped";
@@ -1163,10 +1330,14 @@ export async function stopFoundDaemon(home: string, found: FoundDaemon, machine:
     // The state file stays, so a later stop can find the process again.
     if (!(await goneWithin(alive, KILL_TIMEOUT_MS))) throw new Error(stillRunningMessage(pid, machine.platform));
   }
-  // The daemon removes its own state file and main-instance record on a clean shutdown; one killed, as Windows
-  // always does, leaves both behind, and a record naming a pid Windows reuses would keep the uninstall from the cache.
+  // The daemon removes its own state file, main-instance record and home lock record on a clean shutdown; one killed, as
+  // Windows always does, leaves them behind. A record naming a pid Windows reuses would keep the uninstall from the
+  // cache, or have a later stop ask the home's lock, which loads the engine.
   await rm(join(home, DAEMON_STATE_FILE), { force: true });
-  if (machine.platform === "win32") machine.forgetMainInstanceHolder(pid);
+  if (machine.platform === "win32") {
+    machine.forgetMainInstanceHolder(pid);
+    forgetHomeDaemonHolder(home, pid);
+  }
 }
 
 /**

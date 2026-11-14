@@ -1,11 +1,12 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { createServer, type AddressInfo, type Socket } from "node:net";
-import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultEngineSocketPath, RerailDaemon } from "../../src/daemon/index.js";
 import {
@@ -13,6 +14,7 @@ import {
   type DaemonState,
   type NativeLaunch,
   type StartedChild,
+  AUTOSTART_CLAIM_FILE,
   AutostartOffError,
   autostartDaemon,
   autostartOff,
@@ -41,8 +43,10 @@ import {
   stopFoundDaemon,
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
+import { LOCKS_DIR } from "../../src/engine/index.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/engine-pipe.js";
 import { engineCapabilityProof } from "../../src/runtime/engine-proof.js";
+import { olderDaemon, until } from "../support/processes/daemon-home.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -253,6 +257,93 @@ describe("Rerail daemon control", () => {
     expect(await findRunningDaemon(home)).toBeUndefined();
   });
 
+  it("writes its record back when it is removed, names another process or holds what this daemon did not write, and removes it for good when it closes", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const daemon = await RerailDaemon.start({
+      version: "0.0.0-test",
+      databasePath: join(home, "rerail.sqlite"),
+      workspaceRoot: home,
+      port: 0,
+      stateFile,
+      recordCheckMs: 20,
+      nativeHealth: () => ({ ok: true, kernelVersion: "1" }),
+    });
+    const written = readFileSync(stateFile, "utf8");
+    const restored = (): boolean => {
+      try {
+        return readFileSync(stateFile, "utf8") === written;
+      } catch {
+        return false;
+      }
+    };
+    try {
+      await rm(stateFile);
+      await until(restored);
+      expect(await readDaemonState(stateFile)).toEqual(daemon.state());
+      await writeFile(stateFile, JSON.stringify(stateFor({ pid: DEAD_PID })));
+      await until(restored);
+      // This daemon's pid with a capability it does not accept: every hook and start reading it would be refused (401).
+      await writeFile(stateFile, JSON.stringify({ ...daemon.state(), accessToken: "not-this-daemons" }));
+      await until(restored);
+    } finally {
+      await daemon.close();
+    }
+    expect(existsSync(stateFile)).toBe(false);
+    await delay(100);
+    expect(existsSync(stateFile)).toBe(false);
+  }, 20_000);
+
+  // Asking the home's lock loads the engine from the running version's folder, and Windows keeps a loaded DLL from being
+  // deleted: the uninstall stops the daemon, then removes `versions/`.
+  it("asks the home's lock only of a recorded holder that runs, so a stop where no daemon runs loads no engine", async () => {
+    const asked: string[] = [];
+    const machine = (platform: NodeJS.Platform, pipes: readonly string[] = []): DaemonMachine => fakeMachine(platform, {
+      kill: (pid, signal) => process.kill(pid, signal),
+      pipes: () => pipes,
+      homeDaemonLockHeld: asking => {
+        asked.push(asking);
+        return false;
+      },
+    });
+    // What a home keeps once a daemon of this build has run there: the lock file, and no holder once it stopped.
+    await mkdir(join(home, LOCKS_DIR), { recursive: true });
+    await writeFile(join(home, LOCKS_DIR, "daemon.lock"), "");
+    expect(await stopDaemon(home, machine("win32"))).toBe("not-running");
+    // A holder killed outright left its record, naming a pid that is gone.
+    await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: DEAD_PID }));
+    expect(await stopDaemon(home, machine("win32"))).toBe("not-running");
+    // A record Windows left at a logoff, a restart or a stop's kill, naming a pid it has given to another process since:
+    // no engine pipe of this home is there, and another home's daemon holds only its own.
+    await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: process.pid }));
+    expect(await stopDaemon(home, machine("win32"))).toBe("not-running");
+    const otherHomes = pipeNameOf(enginePipeName(join(home, "other", "rerail.sqlite")));
+    expect(await stopDaemon(home, machine("win32", [otherHomes]))).toBe("not-running");
+    expect(asked).toEqual([]);
+    // With this home's engine pipe there, or the fallback its daemon moves to, the recorded pid may be the holder or a
+    // process that took the pid since: the lock tells. On macOS and Linux a library loads and is deleted as any file.
+    const pipe = enginePipeName(join(home, "rerail.sqlite"));
+    expect(await stopDaemon(home, machine("win32", [pipeNameOf(pipe).toUpperCase()]))).toBe("not-running");
+    expect(await stopDaemon(home, machine("win32", [pipeNameOf(fallbackPipe(pipe))]))).toBe("not-running");
+    expect(await stopDaemon(home, machine("linux"))).toBe("not-running");
+    expect(asked).toEqual([home, home, home]);
+  });
+
+  // The lock cannot be asked where the engine does not load or the lock file does not open (`posix` asks none). The
+  // daemon a start launches then takes the lock itself, or exits naming the daemon that holds it.
+  it("takes a home lock it cannot ask as free: a stop answers at once, and a start goes on to launch", async () => {
+    await mkdir(join(home, LOCKS_DIR), { recursive: true });
+    await writeFile(join(home, LOCKS_DIR, "daemon.lock"), "");
+    // The record a holder killed outright left, naming a pid another process that runs has taken since.
+    await writeFile(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid: process.pid }));
+    const asked = Date.now();
+    expect(await stopDaemon(home, posix)).toBe("not-running");
+    const launching = new Error("the start went on to launch a daemon");
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    await expect(startDaemon({ home, packageRoot, ensureSqlite: async () => { throw launching; } }, { dev: true, port: 0 }, posix))
+      .rejects.toBe(launching);
+    expect(Date.now() - asked).toBeLessThan(5_000);
+  }, 40_000);
+
   it("repairs the SQLite binding before spawning, and surfaces an unrepairable binding instead of a daemon crash", async () => {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
     const repaired: string[] = [];
@@ -278,6 +369,47 @@ describe("Rerail daemon control", () => {
     expect(await withStartLock(home, async () => "the start lock is free")).toBe("the start lock is free");
   });
 
+  it("ends the autostart claim when its start ends, whether it fails or leaves a daemon answering", async () => {
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const control = { home, packageRoot, ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+    const claim = join(home, AUTOSTART_CLAIM_FILE);
+    // The claim names its launcher, here this process, which runs the start.
+    await writeFile(claim, String(process.pid));
+    const failure = new Error("better-sqlite3 cannot load");
+    await expect(startDaemon({ ...control, ensureSqlite: async () => { throw failure; } }, { dev: true, port: 0 })).rejects.toBe(failure);
+    // The launch is over and no daemon came up: the next process to find it down launches again at once.
+    expect(existsSync(claim)).toBe(false);
+    try {
+      await writeFile(claim, String(process.pid));
+      expect((await startDaemon(control, { dev: true, port: 0 })).started).toBe(true);
+      expect(existsSync(claim)).toBe(false);
+      await writeFile(claim, String(process.pid));
+      // A launch that finds the daemon running ends its claim too.
+      expect((await startDaemon(control, { dev: true, port: 0 })).started).toBe(false);
+      expect(existsSync(claim)).toBe(false);
+    } finally {
+      await stopDaemon(home);
+    }
+  }, 30_000);
+
+  it("leaves the autostart claim of another launcher to it, whether this start got the start lock or not", async () => {
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const failure = new Error("better-sqlite3 cannot load");
+    const failing = { home, packageRoot, ensureSqlite: async () => { throw failure; } };
+    const claim = join(home, AUTOSTART_CLAIM_FILE);
+    // The launcher an autostart started, which runs while its start does: here a process that runs, this one's parent.
+    const launcher = String(process.ppid);
+    await writeFile(claim, launcher);
+    // A start that waits out the start lock the launcher holds for its whole start, and gives up.
+    await withStartLock(home, async () => {
+      await expect(startDaemon(failing, { dev: true, port: 0 })).rejects.toThrow(/Another Rerail start/u);
+    });
+    expect(await readFile(claim, "utf8")).toBe(launcher);
+    // A `rerail daemon start` someone runs, which gets the start lock before the launcher does.
+    await expect(startDaemon(failing, { dev: true, port: 0 })).rejects.toBe(failure);
+    expect(await readFile(claim, "utf8")).toBe(launcher);
+  }, 40_000);
+
   it("shows only this start's output when the daemon exits before it is ready, not earlier runs' log", async () => {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
     await writeFile(join(home, DAEMON_LOG_FILE), "rerail daemon 0.0.0-earlier listening at http://127.0.0.1:1/ (pid 1)\n");
@@ -299,12 +431,12 @@ describe("Rerail daemon control", () => {
 
   it("replaces a healthy daemon from the previous managed package before using the active package", async () => {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-    const first = await startDaemon({ home, packageRoot }, { dev: true, port: 0 });
+    // The daemon of an earlier build keeps the record written over its own here; the daemon this build starts would
+    // write its own back within a second, as it does for any record it did not write.
+    const previous = await olderDaemon(home, { ...process.env, RERAIL_HOME: home });
     try {
-      await writeFile(
-        join(home, DAEMON_STATE_FILE),
-        JSON.stringify({ ...first.daemon.state, packageRoot: join(home, "versions", "0.0.0-old") }),
-      );
+      const stateFile = join(home, DAEMON_STATE_FILE);
+      await writeFile(stateFile, JSON.stringify({ ...await readDaemonState(stateFile), packageRoot: join(home, "versions", "0.0.0-old") }));
 
       const replacement = await startDaemonForPackage(
         { home, packageRoot },
@@ -312,12 +444,13 @@ describe("Rerail daemon control", () => {
       );
 
       expect(replacement.started).toBe(true);
-      expect(replacement.daemon.state.pid).not.toBe(first.daemon.state.pid);
+      expect(replacement.daemon.state.pid).not.toBe(previous.pid);
       expect(await daemonUsesPackageRoot(replacement.daemon.state, packageRoot)).toBe(true);
     } finally {
       await stopDaemon(home);
+      if (previous.exitCode === null && previous.signalCode === null) previous.kill("SIGKILL");
     }
-  }, 15_000);
+  }, 30_000);
 });
 
 describe("openDashboard", () => {
@@ -689,6 +822,37 @@ describe("a state file Windows left behind", () => {
     expect(existsSync(stateFile)).toBe(false);
   });
 
+  /**
+   * Stops the daemon daemon.json names (DEAD_PID), which Windows ends with no exit handler, while the home lock's
+   * record names `holder`; whether that record is still there after the stop.
+   */
+  async function holderRecordAfterStop(holder: number): Promise<boolean> {
+    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE })));
+    const record = join(home, LOCKS_DIR, "daemon.json");
+    await mkdir(join(home, LOCKS_DIR), { recursive: true });
+    await writeFile(record, JSON.stringify({ pid: holder }));
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ status: "ok", pid: DEAD_PID })));
+    let running = true;
+    const machine = {
+      ...windows([PIPE_NAME]),
+      // No native token, so no shutdown request: SIGTERM is TerminateProcess on Windows.
+      kill: (_pid: number, signal?: string | number) => {
+        if (signal === "SIGTERM") running = false;
+        if (signal === 0 && !running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        return true;
+      },
+    };
+    expect(await stopDaemon(home, machine)).toBe("stopped");
+    return existsSync(record);
+  }
+
+  it("forgets the home lock's record of the daemon a stop ended, which Windows ends with no exit handler", async () => {
+    // Left there, it names a pid Windows soon reuses, and a later stop would ask the lock, loading the engine.
+    expect(await holderRecordAfterStop(DEAD_PID)).toBe(false);
+    // A record naming another pid is another daemon's, written once it took the lock: it holds the home still.
+    expect(await holderRecordAfterStop(DEAD_PID - 1)).toBe(true);
+  });
+
   it("stops the daemon a lookup found without looking it up, or probing it, again", async () => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     await writeFile(stateFile, JSON.stringify(stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", nativeToken: "native" })));
@@ -883,4 +1047,165 @@ describe("autostartDaemon", () => {
       await removeFolder(home);
     }
   });
+
+  const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const daemonControlModule = pathToFileURL(join(packageRoot, "src", "runtime", "daemon-control.ts")).href;
+
+  /**
+   * A process of its own, as every hook is, that finds no daemon in `home`: it prints `ready`, and on each line on stdin
+   * calls autostartDaemon and prints how many processes it has launched, exiting after `calls` lines. Its machine counts
+   * launches and starts nothing; the launcher it reports is `launcher`, by default the test's own process, which runs for
+   * the whole test as a real launcher runs for its start, and null reports none. Its pid checks are real.
+   */
+  function hookProcess(home: string, { calls = 1, launcher = process.pid }: { calls?: number; launcher?: number | null } = {}): {
+    child: ChildProcess;
+    ready: Promise<void>;
+    go: () => void;
+    /** Sends one line and resolves with the launches counted after it. */
+    call: () => Promise<number>;
+    launches: Promise<number>;
+  } {
+    const child = spawn(process.execPath, [
+      "--import", "tsx", "--input-type=module", "-e",
+      `import { EventEmitter } from "node:events";
+       import { createInterface } from "node:readline";
+       const { autostartDaemon } = await import(${JSON.stringify(daemonControlModule)});
+       let launches = 0;
+       const launcher = ${launcher ?? "undefined"};
+       const started = () => {
+         launches += 1;
+         return Object.assign(new EventEmitter(), { pid: launcher, unref() {} });
+       };
+       const machine = {
+         platform: process.platform,
+         env: process.env,
+         kill: (pid, signal) => process.kill(pid, signal),
+         pipes: () => [],
+         holdsCapability: async () => false,
+         forgetMainInstanceHolder: () => undefined,
+         mainInstanceLockHeld: () => undefined,
+         homeDaemonLockHeld: () => undefined,
+         nodeExecutable: () => process.execPath,
+         spawnDetached: () => { launches += 1; return { pid: launcher }; },
+         spawn: started,
+         spawnShown: started,
+       };
+       process.stdout.write("ready\\n");
+       let calls = ${calls};
+       for await (const _line of createInterface({ input: process.stdin })) {
+         autostartDaemon(machine);
+         process.stdout.write("launches " + launches + "\\n");
+         if (--calls === 0) process.exit(0);
+       }`,
+    ], { cwd: packageRoot, env: { ...process.env, RERAIL_HOME: home, RERAIL_AUTOSTART: "1" }, stdio: ["pipe", "pipe", "pipe"] });
+    let output = "";
+    let errors = "";
+    child.stdout!.setEncoding("utf8").on("data", (chunk: string) => { output += chunk; });
+    child.stderr!.setEncoding("utf8").on("data", (chunk: string) => { errors += chunk; });
+    const exited = once(child, "exit");
+    const counts = (): number[] => [...output.matchAll(/launches (\d+)/gu)].map(match => Number(match[1]));
+    const ready = (async () => {
+      while (!output.includes("ready\n")) {
+        if (child.exitCode !== null) throw new Error(`hook process exited before it was ready: ${errors}`);
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    })();
+    let sent = 0;
+    const call = async (): Promise<number> => {
+      sent += 1;
+      child.stdin!.write("go\n");
+      while (counts().length < sent) {
+        if (child.exitCode !== null) throw new Error(`hook process exited before it answered: ${errors}`);
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      return counts()[sent - 1]!;
+    };
+    const launches = exited.then(() => {
+      const counted = counts().at(-1);
+      if (counted === undefined) throw new Error(`hook process printed no count: ${errors}`);
+      return counted;
+    });
+    launches.catch(() => undefined);
+    return { child, ready, go: () => child.stdin!.write("go\n"), call, launches };
+  }
+
+  it("launches one `rerail daemon start` when several hooks find no daemon at the same moment", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-autostart-"));
+    // After a daemon stops, every hook in flight finds it gone; each is its own process, so a flag in a process
+    // cannot keep the others from launching.
+    const hooks = Array.from({ length: 6 }, () => hookProcess(home));
+    try {
+      await Promise.all(hooks.map(async hook => await hook.ready));
+      for (const hook of hooks) hook.go();
+      const launches = await Promise.all(hooks.map(async hook => await hook.launches));
+      expect(launches.reduce((sum, count) => sum + count, 0)).toBe(1);
+      // The claim names the launcher, so it holds for as long as that launch runs and no longer.
+      expect(await readFile(join(home, AUTOSTART_CLAIM_FILE), "utf8")).toBe(String(process.pid));
+    } finally {
+      for (const { child } of hooks) if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      await removeFolder(home);
+    }
+  }, 60_000);
+
+  it("leaves the start to a launcher that runs, and launches past a claim whose launcher is gone or that is more than 30 s from now", async () => {
+    const claims: Array<{ content: string; at?: Date }> = [
+      { content: String(process.pid) },
+      // Just created, its launcher's pid not written yet.
+      { content: "" },
+      // Its launcher died, or was killed, without a daemon.
+      { content: String(DEAD_PID) },
+      // A pid alive now can be another process Windows gave a dead launcher's pid to.
+      { content: String(process.pid), at: new Date(Date.now() - 60_000) },
+      // Made before the clock moved back a minute: without the distance both ways it would hold until the clock caught up.
+      { content: String(process.pid), at: new Date(Date.now() + 60_000) },
+    ];
+    const homes = await Promise.all(claims.map(async () => await mkdtemp(join(tmpdir(), "rerail-autostart-"))));
+    for (const [index, { content, at }] of claims.entries()) {
+      const claim = join(homes[index]!, AUTOSTART_CLAIM_FILE);
+      await writeFile(claim, content);
+      if (at !== undefined) await utimes(claim, at, at);
+    }
+    const hooks = homes.map(home => hookProcess(home));
+    try {
+      await Promise.all(hooks.map(async hook => await hook.ready));
+      for (const hook of hooks) hook.go();
+      expect(await Promise.all(hooks.map(async hook => await hook.launches))).toEqual([0, 0, 1, 1, 1]);
+    } finally {
+      for (const { child } of hooks) if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      await Promise.all(homes.map(async home => await removeFolder(home)));
+    }
+  }, 60_000);
+
+  it("launches at a later session start once the launch it left the start to has ended without a daemon", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-autostart-"));
+    const claim = join(home, AUTOSTART_CLAIM_FILE);
+    // A long-lived process, as a Pi session running Rerail in-process is, that asks once per session start.
+    const session = hookProcess(home, { calls: 2 });
+    try {
+      await session.ready;
+      await writeFile(claim, String(process.pid));
+      expect(await session.call()).toBe(0);
+      // That launch failed and ended its claim; the daemon is still down.
+      await rm(claim);
+      expect(await session.call()).toBe(1);
+    } finally {
+      if (session.child.exitCode === null && session.child.signalCode === null) session.child.kill("SIGKILL");
+      await removeFolder(home);
+    }
+  }, 60_000);
+
+  it("ends its claim when the launch starts no process, so the next process to find the daemon down launches", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-autostart-"));
+    // A launch that could not start reports no pid (Node's spawn on ENOENT or EAGAIN), and its error comes later.
+    const hook = hookProcess(home, { launcher: null });
+    try {
+      await hook.ready;
+      hook.go();
+      expect(await hook.launches).toBe(1);
+      expect(existsSync(join(home, AUTOSTART_CLAIM_FILE))).toBe(false);
+    } finally {
+      if (hook.child.exitCode === null && hook.child.signalCode === null) hook.child.kill("SIGKILL");
+      await removeFolder(home);
+    }
+  }, 60_000);
 });
