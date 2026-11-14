@@ -1,7 +1,8 @@
+import Database from "better-sqlite3";
 import type { AdapterEvent, AdapterSession, RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { readRepositoryState } from "../presentation/session-presentation.js";
-import { isRerailStarted } from "../runtime/repository-start.js";
+import { isRerailStarted, stoppedWithoutGit } from "../runtime/repository-start.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import { ingestEngineEvent } from "../runtime/engine-service.js";
 import {
@@ -25,7 +26,7 @@ import {
 import type { SemanticEmbedder } from "../engine/native/semantic-types.js";
 import { SqliteSessionStore } from "../runtime/session-store.js";
 import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
-import { rerailRunsIn } from "../engine/catalog/repository-model.js";
+import { rerailRunsIn, type RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { lookupCheckout } from "../engine/catalog/repository-registry.js";
 
 export * from "./hook-adapter.js";
@@ -57,16 +58,85 @@ function recordLocalReceipt(session: AdapterSession, databasePath: string): (rec
 }
 
 /**
- * The check one-shot hooks make. A running daemon answers first, from its own environment and open
- * database; without one, the hook reads the database itself, which never starts a daemon. An
- * explicit database path (tests, embedded hosts) is always read directly.
+ * Whether this process can tell, without Git, that the daemon would read `workspace` as stopped (`stoppedWithoutGit`).
+ * A database SQLite cannot read (SQLite's error, or Drizzle's query error carrying it) leaves the answer to the daemon,
+ * which reads its own connection; any other failure is a fault of this read and is thrown.
  */
-export async function hookRerailStarted(host: RerailHost, workspace: string, databasePath?: string): Promise<boolean> {
+function knownStopped(workspace: string): boolean {
+  try {
+    return stoppedWithoutGit(workspace);
+  } catch (error) {
+    const cause = error instanceof Error && error.cause !== undefined ? error.cause : error;
+    if (cause instanceof Database.SqliteError) return false;
+    throw error;
+  }
+}
+
+/**
+ * How long a one-shot hook waits for the daemon's answer to its start check before it reads the database and the
+ * folders on disk itself (`stoppedWithoutGit`). An idle daemon answers a hook's first ask inside it every time measured
+ * on Linux (at most 26 ms) and 99 times in 100 on Windows 11, so beside one the hook only asks, as it always did. A
+ * daemon busy with other checkouts misses it, and a hook in a stopped checkout then answers without waiting for it.
+ */
+const DAEMON_ANSWER_GRACE_MS = 75;
+
+/**
+ * The check one-shot hooks make before anything else. A running daemon answers, from its own environment and open
+ * database. Where it has not answered within `DAEMON_ANSWER_GRACE_MS` and the database and the folders on disk alone
+ * show that it would say stopped (`stoppedWithoutGit`), the hook answers stopped itself and ends its request: no Git
+ * runs, and a busy daemon does not hold it. Without a daemon that answers, the hook reads the database itself, which
+ * never starts a daemon: with none recorded the daemon's read comes back empty at once, well inside the grace. An
+ * explicit database path (tests, embedded hosts) is always read directly. `graceMs` is the grace; a test that needs the
+ * daemon's answer first, however slow its machine, holds it open longer.
+ */
+export async function hookRerailStarted(
+  host: RerailHost, workspace: string, databasePath?: string, graceMs = DAEMON_ANSWER_GRACE_MS,
+): Promise<boolean> {
   if (databasePath === undefined) {
-    const answered = await readRepositoryState(workspace, host);
+    const answered = await daemonAnswer(host, workspace, graceMs);
     if (answered !== null) return rerailRunsIn(answered);
   }
   return isRerailStarted(workspace, databasePath);
+}
+
+/**
+ * The daemon's answer to the start check (`readRepositoryState`), null where none came; or `stopped` where the daemon
+ * has not answered within `graceMs` and `knownStopped` holds.
+ */
+async function daemonAnswer(host: RerailHost, workspace: string, graceMs: number): Promise<RepositoryStartState | null> {
+  const request = new AbortController();
+  const answer = readRepositoryState(workspace, host, request.signal);
+  if (await settlesWithin(answer, graceMs) || !stoppedEndingRequest(workspace, request)) return await answer;
+  return "stopped";
+}
+
+/**
+ * `knownStopped`, ending `request` where it holds or throws: the hook then answers without the daemon, and a request
+ * left open would keep its process alive until the daemon or the read's time limit ended it. A request the daemon
+ * answered, or one the hook goes on waiting for, is left alone.
+ */
+function stoppedEndingRequest(workspace: string, request: AbortController): boolean {
+  // Stays true when the proof throws, so the request ends then too.
+  let stopped = true;
+  try {
+    stopped = knownStopped(workspace);
+    return stopped;
+  } finally {
+    if (stopped) request.abort();
+  }
+}
+
+/** Whether `pending` settles within `ms`; the timer ends either way. */
+async function settlesWithin(pending: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<false>(resolve => {
+    timer = setTimeout(resolve, ms, false);
+  });
+  try {
+    return await Promise.race([pending.then(() => true), late]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export interface HookOptions {

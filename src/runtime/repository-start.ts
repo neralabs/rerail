@@ -1,9 +1,15 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { and, asc, eq, getTableName, inArray, sql } from "drizzle-orm";
-import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, openRerailDatabase, openRerailDatabaseAsIs, type RerailDatabase } from "../engine/storage/database.js";
 import { rerailRunsIn, type CheckoutContext, type EffectiveRule, type RepositoryKey, type RepositoryStartState, type RepositoryStatus } from "../engine/catalog/repository-model.js";
-import { repositoryFolderName, repositoryIdentityLocation } from "../engine/catalog/repository-identity.js";
+import {
+  gitSearchEnds,
+  readCloneIdAt,
+  repositoryFolderName,
+  repositoryIdentityLocation,
+  type RepositoryIdentityLocation,
+} from "../engine/catalog/repository-identity.js";
 import {
   checkoutStatus,
   createCheckoutResolver,
@@ -11,6 +17,7 @@ import {
   nestedCheckouts,
   parentCheckouts,
   recordCheckout,
+  statusWithoutRemote,
 } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules } from "../engine/catalog/rule-configuration.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
@@ -87,11 +94,37 @@ export function readOnlyStartState(workspace: string, databasePath = defaultRera
     hasStartTables(database) ? stateOf(checkoutStatus(database, lookupCheckout(database, workspace))) : undefined);
 }
 
-/** `read` over a read-only connection; undefined when the database cannot be opened or read. */
-function readOnly<T>(databasePath: string, read: (database: RerailDatabase) => T): T | undefined {
+/**
+ * Whether the daemon would read `workspace` as stopped (`startStateReader`), told without running Git: true only where
+ * the database reads stopped, without the checkout's remote, at each place Git's search can end there
+ * (`gitSearchEnds`). False wherever that is not certain, so the caller asks the daemon: a search the filesystem leaves
+ * open, a checkout only its remote could place, one that reads started, or a database this process cannot open as it
+ * is. The database is opened as it is (`openRerailDatabaseAsIs`), so this never writes it and never waits on its write
+ * lock: a file that needs this build's schema steps first is left to the daemon. SQLite's error for a database it
+ * opened and cannot read, one without the start tables among them, is thrown.
+ */
+export function stoppedWithoutGit(workspace: string, databasePath = defaultRerailDatabasePath()): boolean {
+  const ends = gitSearchEnds(workspace);
+  return ends !== undefined && !ends.some(placedByRemote)
+    && readOnly(databasePath, database => ends.every(end => statusWithoutRemote(database, end)?.started === false), openRerailDatabaseAsIs) === true;
+}
+
+/**
+ * A Git checkout with no clone id yet, as a repository Rerail never recorded and a new clone are: the daemon places it by
+ * its remote, which only Git reads, so the database is not opened to answer there.
+ */
+function placedByRemote(end: RepositoryIdentityLocation): boolean {
+  return end.git && readCloneIdAt(end.identityPath) === undefined;
+}
+
+/**
+ * `read` over a read-only connection `open` gives: by default one that first runs this build's schema steps over a
+ * writable one where the file lacks them (`openRerailDatabase`). Undefined when the database cannot be opened or read.
+ */
+function readOnly<T>(databasePath: string, read: (database: RerailDatabase) => T, open = openReadOnly): T | undefined {
   let database: RerailDatabase;
   try {
-    database = openRerailDatabase(databasePath, { readonly: true });
+    database = open(databasePath);
   } catch {
     return undefined;
   }
@@ -100,6 +133,10 @@ function readOnly<T>(databasePath: string, read: (database: RerailDatabase) => T
   } finally {
     database.$client.close();
   }
+}
+
+function openReadOnly(databasePath: string): RerailDatabase {
+  return openRerailDatabase(databasePath, { readonly: true });
 }
 
 const NOT_SET_UP: SessionNoteRules = { setUp: false };

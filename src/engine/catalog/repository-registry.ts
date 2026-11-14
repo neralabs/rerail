@@ -204,10 +204,29 @@ export function lookupCheckout(db: Reader, workspace: string): CheckoutContext |
 function lookupAt(db: Reader, location: RepositoryIdentityLocation, remoteKeys: Map<string, RepositoryKey | undefined>): CheckoutContext | undefined {
   const cloneId = readCloneIdAt(location.identityPath) ?? null;
   const checkoutPath = physicalPath(location.workspaceRoot);
-  const repositoryKey = recordedRepositoryAt(db, checkoutPath, cloneId)
-    ?? (cloneId === null ? undefined : cloneRepository(db, cloneId))
-    ?? remoteRepository(db, location, checkoutPath, remoteKeys);
+  const repositoryKey = repositoryWithoutRemote(db, checkoutPath, cloneId) ?? remoteRepository(db, location, checkoutPath, remoteKeys);
   return repositoryKey === undefined ? undefined : contextOf(location, checkoutPath, repositoryKey, cloneId);
+}
+
+/**
+ * The repository {@link lookupAt} finds before it reads the remote: the one of the row recorded at `checkoutPath`, else
+ * of a recorded checkout of the same clone, else the one keyed by the clone id.
+ */
+function repositoryWithoutRemote(db: Reader, checkoutPath: string, cloneId: string | null): RepositoryKey | undefined {
+  return recordedRepositoryAt(db, checkoutPath, cloneId) ?? (cloneId === null ? undefined : cloneRepository(db, cloneId));
+}
+
+/**
+ * {@link checkoutStatus} of the checkout at `location` as {@link lookupCheckout} finds it there, read from the database
+ * and the clone id file alone, without Git. Undefined where only the checkout's remote, which Git reads, could still name
+ * its repository; a folder outside Git has no remote, so there it is never undefined.
+ */
+export function statusWithoutRemote(db: Reader, location: RepositoryIdentityLocation): RepositoryStatus | undefined {
+  const cloneId = readCloneIdAt(location.identityPath) ?? null;
+  const checkoutPath = physicalPath(location.workspaceRoot);
+  const repositoryKey = repositoryWithoutRemote(db, checkoutPath, cloneId);
+  if (repositoryKey === undefined && location.git) return undefined;
+  return checkoutStatus(db, repositoryKey === undefined ? undefined : contextOf(location, checkoutPath, repositoryKey, cloneId));
 }
 
 /** The repository of the row recorded at `checkoutPath`. Without an id file that row still names the checkout; a different id is a re-clone. */

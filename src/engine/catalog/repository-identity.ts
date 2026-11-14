@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  accessSync,
   existsSync,
   chmodSync,
   closeSync,
@@ -8,14 +9,18 @@ import {
   linkSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   readSync,
+  statSync,
   unlinkSync,
   writeFileSync,
+  type Stats,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { physicalPath } from "./checkout-control.js";
+import { physicalPath, storedPath } from "./checkout-control.js";
 import { openNoFollowSync } from "../no-follow.js";
 import { GitUnavailableError, gitText, runGit } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
@@ -59,7 +64,212 @@ function gitLocation(requested: string, stdout: string): RepositoryIdentityLocat
   if (top === undefined || commonDirectory === undefined || gitDirectory === undefined) {
     throw new Error(`could not resolve Git common directory for ${requested}`);
   }
+  return checkoutLocation(top, commonDirectory, gitDirectory);
+}
+
+function checkoutLocation(top: string, commonDirectory: string, gitDirectory: string): RepositoryIdentityLocation {
   return { git: true, workspaceRoot: top, identityPath: join(commonDirectory, "rerail-repository-id"), main: commonDirectory === gitDirectory };
+}
+
+/**
+ * Where Git's own search for the checkout of `workspace` can end, read from the filesystem alone: no Git runs and no
+ * environment variable is read. Git looks in the folder and in each one above it for a `.git` and stops at the first one
+ * it takes, so the search ends at that folder's checkout, or outside Git where something that folder does not hold
+ * refuses the checkout (`safe.directory`, a ceiling, a filesystem boundary, `core.bare`); with no `.git` above, it ends
+ * outside Git. Each end is the location {@link repositoryIdentityLocation} gives there, for the folder's real path, which
+ * is what a hook asks the daemon about. Undefined where the filesystem leaves the end open: a folder with no real path, a
+ * `.git` Git would pass over or refuse, a Git folder on the way (inside `.git`, a bare repository), a `core.worktree`
+ * that puts the checkout elsewhere, or a checkout whose top Git would name otherwise than this walk spells it.
+ */
+export function gitSearchEnds(workspace: string): RepositoryIdentityLocation[] | undefined {
+  const requested = realFolder(workspace);
+  if (requested === undefined) return undefined;
+  const top = nearestGitTop(requested);
+  if (top === "open") return undefined;
+  return top === undefined ? [nonGitLocation(requested)] : [top, nonGitLocation(requested)];
+}
+
+/**
+ * `workspace` as a hook asks the daemon about it, undefined where it has no real path. The hook asks with
+ * `fs/promises`' realpath (`readRepositoryState`), which Node gives the native realpath's semantics, so this reads it
+ * with the native one too ({@link storedPath}): on macOS and Windows each name as the disk stores it, whatever case it
+ * was typed in. The daemon keys a folder outside Git by that spelling (`lookupAt`), and so does the end built here.
+ */
+function realFolder(workspace: string): string | undefined {
+  try {
+    return existsSync(workspace) ? storedPath(workspace) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The checkout Git's search from `start` up finds: undefined where it finds none, "open" where the filesystem leaves it
+ * open or Git names its top otherwise than this walk spells it.
+ */
+function nearestGitTop(start: string): RepositoryIdentityLocation | "open" | undefined {
+  for (let folder = start; ; folder = dirname(folder)) {
+    const step = dotGitIn(folder);
+    if (step.kind === "taken") return topAsGitNamesIt(folder, step);
+    // A folder that is a Git folder itself (inside `.git`, a bare repository) ends Git's search with no checkout.
+    if (step.kind === "open" || existsSync(join(folder, "HEAD"))) return "open";
+    if (dirname(folder) === folder) return undefined;
+  }
+}
+
+/**
+ * The checkout at `folder`, whose `.git` Git takes as `taken`, keyed as the daemon keys it: by the top Git names. "open"
+ * where Git would name it otherwise than this walk spells it.
+ */
+function topAsGitNamesIt(folder: string, taken: TakenDotGit): RepositoryIdentityLocation | "open" {
+  return spelledAsGitNamesIt(folder) ? checkoutLocation(folder, taken.commonDirectory, taken.gitDirectory) : "open";
+}
+
+/**
+ * Whether Git names the top of a checkout at `folder` as this walk spells it. Git names a top as `getcwd` gives it
+ * there. On Windows and macOS that is each name as the disk stores it, as the native realpath the walk starts from
+ * gives it (`realFolder`). On Linux it is the kernel's name for each folder on the way, which the realpath can spell
+ * otherwise: on a case-insensitive folder (ext4 or tmpfs with casefold, a FAT or SMB mount) the realpath keeps the case
+ * a name was typed in, and the kernel gives the one it cached. The process's own link to the open folder
+ * (`/proc/self/fd`) gives the kernel's name.
+ */
+function spelledAsGitNamesIt(folder: string): boolean {
+  return process.platform === "win32" || process.platform === "darwin" || kernelName(folder) === folder;
+}
+
+/** `folder` as the kernel names it, as `getcwd` would give it there; undefined where it gives no name. */
+function kernelName(folder: string): string | undefined {
+  let descriptor: number;
+  try {
+    descriptor = openSync(folder, "r");
+  } catch {
+    return undefined;
+  }
+  try {
+    return readlinkSync(`/proc/self/fd/${descriptor}`);
+  } catch {
+    return undefined;
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+/** What a `.git` gives Git's search in one folder: nothing, a Git folder Git takes, or one the filesystem cannot settle. */
+type DotGit = { readonly kind: "none" | "open" } | TakenDotGit;
+
+/** A Git folder Git takes for the checkout its `.git` is in, and its common folder. */
+type TakenDotGit = { readonly kind: "taken"; readonly gitDirectory: string; readonly commonDirectory: string };
+
+const NO_DOT_GIT: DotGit = { kind: "none" };
+const OPEN_DOT_GIT: DotGit = { kind: "open" };
+
+/** The `.git` in `folder`: the `.git` folder itself, or the folder a `gitdir:` file names, when Git takes it. */
+function dotGitIn(folder: string): DotGit {
+  const dotGit = join(folder, ".git");
+  const kind = entryKind(dotGit);
+  if (kind === "none") return NO_DOT_GIT;
+  const gitDirectory = kind === "folder" ? dotGit : kind === "file" ? gitfileTarget(dotGit) : undefined;
+  return gitDirectory === undefined ? OPEN_DOT_GIT : takenGitDirectory(gitDirectory);
+}
+
+/** `path` followed through links, as Git's `stat` follows them: missing, a folder, a file, or anything else. */
+function entryKind(path: string): "none" | "folder" | "file" | "other" {
+  let stats: Stats | undefined;
+  try {
+    stats = statSync(path, { throwIfNoEntry: false });
+  } catch {
+    return "other";
+  }
+  if (stats === undefined) return "none";
+  if (stats.isDirectory()) return "folder";
+  return stats.isFile() ? "file" : "other";
+}
+
+/** A `gitdir:` file as Git reads it: the whole file, its line ends trimmed. */
+const GITFILE = /^gitdir: (.+?)[\r\n]*$/;
+
+/** The folder a `gitdir:` file names, relative to the file's own folder; undefined where Git refuses the file. */
+function gitfileTarget(file: string): string | undefined {
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+  const named = GITFILE.exec(text)?.[1];
+  return named === undefined ? undefined : resolve(dirname(file), named);
+}
+
+/**
+ * `gitDirectory` and its common folder where Git takes it as the Git folder of the checkout its `.git` is in: a HEAD Git
+ * reads and `objects` and `refs` in the common folder (Git's `is_git_directory`), and no `core.worktree` in the
+ * repository's own config. Otherwise open: Git passes over such a `.git` folder and refuses such a file.
+ */
+function takenGitDirectory(gitDirectory: string): DotGit {
+  const commonDirectory = commonDirectoryOf(gitDirectory);
+  return commonDirectory !== undefined && isGitDirectory(gitDirectory, commonDirectory) && !setsWorktree(gitDirectory, commonDirectory)
+    ? { kind: "taken", gitDirectory, commonDirectory }
+    : OPEN_DOT_GIT;
+}
+
+/** Git's `is_git_directory`: a HEAD Git reads in `gitDirectory`, and `objects` and `refs` it may search in its common folder. */
+function isGitDirectory(gitDirectory: string, commonDirectory: string): boolean {
+  return headGitReads(join(gitDirectory, "HEAD")) && gitMaySearch(join(commonDirectory, "objects")) && gitMaySearch(join(commonDirectory, "refs"));
+}
+
+/** The common folder Git reads for `gitDirectory`: the one its `commondir` file names, else itself; undefined where Git cannot read that file. */
+function commonDirectoryOf(gitDirectory: string): string | undefined {
+  const file = join(gitDirectory, "commondir");
+  if (!existsSync(file)) return gitDirectory;
+  try {
+    const named = readFileSync(file, "utf8").replace(/[\r\n]+$/, "");
+    return named === "" ? undefined : resolve(gitDirectory, named);
+  } catch {
+    return undefined;
+  }
+}
+
+/** A HEAD file Git reads: a ref under `refs/` (spaces as Git's `isspace` allows after `ref:`) or a commit id. */
+const HEAD_TEXT = /^(?:ref:[ \t\n\r]*refs\/|[0-9a-fA-F]{40})/;
+
+/** Whether Git reads `head` as a HEAD (`validate_headref`): a link into `refs/`, or a file {@link HEAD_TEXT} matches. */
+function headGitReads(head: string): boolean {
+  try {
+    if (lstatSync(head).isSymbolicLink()) return readlinkSync(head).startsWith("refs/");
+    return HEAD_TEXT.test(readFileSync(head, "utf8"));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether Git takes `path` as `objects` or `refs`: `is_git_directory` asks `access` with `X_OK` and nothing more, so
+ * a folder without its search bit is refused and so is a plain file without an execute bit. Node on Windows reads
+ * `X_OK` as existence alone, as Git for Windows does.
+ */
+function gitMaySearch(path: string): boolean {
+  try {
+    accessSync(path, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** A `worktree` key anywhere in a config file; a commented-out one counts too, which only sends more folders to Git. */
+const WORKTREE_KEY = /\bworktree\s*=/i;
+
+/** Whether the repository's own config (`config`, and a linked worktree's `config.worktree`) sets `core.worktree`. */
+function setsWorktree(gitDirectory: string, commonDirectory: string): boolean {
+  return [join(commonDirectory, "config"), join(gitDirectory, "config.worktree")].some(file => WORKTREE_KEY.test(textOf(file)));
+}
+
+function textOf(file: string): string {
+  try {
+    return readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
 }
 
 /** A recorded checkout's Git registry, as `git worktree list` last gave it, and what the registry then held. */

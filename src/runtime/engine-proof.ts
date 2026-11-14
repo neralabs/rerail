@@ -55,13 +55,14 @@ export type EngineProofAnswer = "proved" | "refused" | "silent";
 /**
  * Asks the process listening on `socketPath` (a Unix socket or a Windows named pipe) to prove it holds `accessToken`: it
  * answers a fresh challenge with {@link engineProof}. Only the challenge is sent; the capability never leaves this
- * process.
+ * process. `stop` ends the request at once, as `refused`, for a caller that no longer needs the answer.
  */
 export async function engineCapabilityProof(
   socketPath: string,
   accessToken: string,
   timeoutMs = 2_000,
   challenge: string = randomBytes(32).toString("hex"),
+  stop?: AbortSignal,
 ): Promise<EngineProofAnswer> {
   const expected = engineProof(accessToken, challenge);
   const { promise, resolve } = Promise.withResolvers<EngineProofAnswer>();
@@ -72,6 +73,7 @@ export async function engineCapabilityProof(
     path: ENGINE_PROOF_PATH,
     agent: false,
     headers: { [ENGINE_CHALLENGE_HEADER]: challenge, "content-length": 0 },
+    signal: stop,
   }, (response) => {
     answered = true;
     const chunks: Buffer[] = [];

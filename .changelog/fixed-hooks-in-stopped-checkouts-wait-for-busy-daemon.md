@@ -1,0 +1,1 @@
+Claude Code, Codex and Cursor hooks in a checkout where Rerail is stopped no longer wait for a daemon busy with other checkouts: when it has not answered within 75 ms, the hook reads the checkout's state from the database and the folders on disk, without running Git, and answers at once where they show Rerail is stopped.

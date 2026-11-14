@@ -151,22 +151,30 @@ class NotAnswering extends Error {}
 
 /**
  * Whether the daemon `state` records may be read now (`recordedDaemonStatus`): false when it is gone. One whose engine
- * stayed silent to the proof runs but is busy: it is sent nothing, and this throws `NotAnswering`.
+ * stayed silent to the proof runs but is busy: it is sent nothing, and this throws `NotAnswering`. `stop` ends the
+ * proof early, as gone.
  */
-async function readableDaemon(state: DaemonState): Promise<boolean> {
-  const recorded = await recordedDaemonStatus(state);
+async function readableDaemon(state: DaemonState, stop?: AbortSignal): Promise<boolean> {
+  const recorded = await recordedDaemonStatus(state, undefined, stop);
   if (recorded === "silent") throw new NotAnswering("The Rerail daemon's engine did not answer in time");
   return recorded === "alive";
 }
 
+/** `limit`, ended early as well by `stop` when the caller gives one. */
+function endedBy(limit: AbortSignal, stop: AbortSignal | undefined): AbortSignal {
+  return stop === undefined ? limit : AbortSignal.any([limit, stop]);
+}
+
 /**
  * Validate responses with the same contracts used by the daemon, without opening a database. Throws `NotAnswering`
- * once the read's time runs out, whatever the transport threw then.
+ * once the read's time runs out, whatever the transport threw then. `stop` ends the read early.
  */
-async function get<Schema extends z.ZodType>(daemon: Pick<VerifiedDaemon, "origin" | "state">, path: string, schema: Schema): Promise<z.infer<Schema>> {
+async function get<Schema extends z.ZodType>(
+  daemon: Pick<VerifiedDaemon, "origin" | "state">, path: string, schema: Schema, stop?: AbortSignal,
+): Promise<z.infer<Schema>> {
   const signal = AbortSignal.timeout(READ_TIMEOUT_MS);
   try {
-    return await readAnswer(daemon, new URL(path, daemon.origin), schema, signal);
+    return await readAnswer(daemon, new URL(path, daemon.origin), schema, endedBy(signal, stop));
   } catch (error) {
     throw signal.aborted ? new NotAnswering("The Rerail daemon did not answer in time", { cause: error }) : error;
   }
@@ -426,10 +434,11 @@ export async function readRulesDashboard({ cwd }: RulesDashboardRequest): Promis
  * Whether Rerail is started in `cwd`'s repository, from the live host daemon, or null when none
  * answers. One request: the recorded pid must be alive and the reply must parse as a presentation.
  * Passive, and free of SQLite, so hooks and hosts that cannot load the binding (OMP runs on Bun)
- * ask this first.
+ * ask this first. `stop` ends the request, as null, for a caller that no longer needs the answer: a one-shot hook that
+ * found out by itself that the daemon would say stopped (`hookRerailStarted`).
  */
-export async function readRepositoryState(cwd: string, host: RerailHost): Promise<RepositoryStartState | null> {
-  const state = await daemonRepositoryState(cwd, host);
+export async function readRepositoryState(cwd: string, host: RerailHost, stop?: AbortSignal): Promise<RepositoryStartState | null> {
+  const state = await daemonRepositoryState(cwd, host, stop);
   return state === "not-answering" ? null : state;
 }
 
@@ -439,12 +448,15 @@ export async function readRepositoryState(cwd: string, host: RerailHost): Promis
  */
 export type SummaryState = RepositoryStartState | "not-answering" | null;
 
-/** Like `readRepositoryState`, but says `not-answering` when the live daemon gave no answer in time (`NotAnswering`). */
-async function daemonRepositoryState(cwd: string, host: RerailHost): Promise<SummaryState> {
+/**
+ * Like `readRepositoryState`, but says `not-answering` when the live daemon gave no answer in time (`NotAnswering`).
+ * `stop` ends the request, as null.
+ */
+async function daemonRepositoryState(cwd: string, host: RerailHost, stop?: AbortSignal): Promise<SummaryState> {
   try {
     const daemon = await verifyDaemon(cwd);
-    if (typeof daemon === "string" || !(await readableDaemon(daemon.state))) return null;
-    const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationReadSchema);
+    if (typeof daemon === "string" || !(await readableDaemon(daemon.state, stop))) return null;
+    const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationReadSchema, stop);
     return response.repositoryState;
   } catch (error) {
     return error instanceof NotAnswering ? "not-answering" : null;
