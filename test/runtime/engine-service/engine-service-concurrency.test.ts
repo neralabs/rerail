@@ -274,14 +274,20 @@ describe("engine service session concurrency", () => {
       const eventId = `restart-${"x".repeat(600_000)}`;
       const big = await handHook(held.engine.socketPath, JSON.stringify({ event: { kind: "session-start", eventId, session: busySession(root) } }));
       const closing = held.service.close();
-      held.release();
-      // Once the answer begins to arrive the server has ended it; the close looks for stalled requests at least once
-      // more before the hook reads the rest.
-      await vi.waitFor(() => expect(big.waiting()).toBeGreaterThan(0), { timeout: 10_000, interval: 20 });
-      await sleep(1_200);
-      const answer = wholeAnswer(await big.answer(), eventId);
-      await closing;
-      expect({ end: await end, big: answer }).toEqual({ end: "answered", big: "whole" });
+      try {
+        held.release();
+        // Once the answer begins to arrive the server has ended it; the close looks for stalled requests at least once
+        // more before the hook reads the rest.
+        await vi.waitFor(() => expect(big.waiting()).toBeGreaterThan(0), { timeout: 10_000, interval: 20 });
+        await sleep(1_200);
+        const answer = wholeAnswer(await big.answer(), eventId);
+        await closing;
+        expect({ end: await end, big: answer }).toEqual({ end: "answered", big: "whole" });
+      } finally {
+        big.destroy();
+        held.release();
+        await closing;
+      }
     } finally {
       held.release();
       await removeFolder(root);
@@ -296,14 +302,20 @@ describe("engine service session concurrency", () => {
       const late = await handHook(held.engine.socketPath, body, Math.floor(body.length / 2));
       const began = performance.now();
       const closing = held.service.close();
-      // 0.7 s in, a check phase writes the rest and holds the loop to 1.3 s, past the look due at 1 s: no poll phase
-      // has read the rest when that look's timer fires, as when a daemon's loop is held while a hook's bytes arrive.
-      await sleep(700);
-      const wroteAt = await busyFromCheckPhase(() => late.finish(), began + 1_300) - began;
-      held.release();
-      const answer = wholeAnswer(await late.answer(), "late");
-      await closing;
-      expect({ wroteBeforeTheLook: wroteAt < 1_000, late: answer }).toEqual({ wroteBeforeTheLook: true, late: "whole" });
+      try {
+        // 0.7 s in, a check phase writes the rest and holds the loop to 1.3 s, past the look due at 1 s: no poll phase
+        // has read the rest when that look's timer fires, as when a daemon's loop is held while a hook's bytes arrive.
+        await sleep(700);
+        const wroteAt = await busyFromCheckPhase(() => late.finish(), began + 1_300) - began;
+        held.release();
+        const answer = wholeAnswer(await late.answer(), "late");
+        await closing;
+        expect({ wroteBeforeTheLook: wroteAt < 1_000, late: answer }).toEqual({ wroteBeforeTheLook: true, late: "whole" });
+      } finally {
+        late.destroy();
+        held.release();
+        await closing;
+      }
       expect(recorded(held.databasePath)).toContain("late");
     } finally {
       held.release();
@@ -356,6 +368,8 @@ interface HandHook {
   waiting(): number;
   /** Reads the answer until the connection closes. */
   answer(): Promise<string>;
+  /** Closes the connection, so a test that fails leaves no connection for the close to wait on. */
+  destroy(): void;
 }
 
 /**
@@ -383,6 +397,7 @@ async function handHook(socketPath: string, body: string, sent = body.length): P
       await closed;
       return Buffer.concat(chunks).toString("utf8");
     },
+    destroy: () => socket.destroy(),
   };
 }
 
