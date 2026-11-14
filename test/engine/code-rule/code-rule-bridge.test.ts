@@ -815,12 +815,25 @@ describe("CodeRuleBridge", () => {
     // The first ones asked filled every slot at once, and no listing was asked while every slot was held: by a listing
     // asked and not answered yet, and asked less than the wait before. This holds however slow Git is.
     expect(mostHoldingSlots(listings.asked)).toBe(LISTINGS_AGAIN_AT_ONCE - 1);
+    // Each asked Git in the order the walk found its checkout late: a slot goes to the listing that has waited longest.
+    const walked = listings.calls.filter(call => call.startsWith("walk ")).map(call => call.slice("walk ".length));
+    expect(listings.asked.map(listing => listing.checkout)).toEqual(walked);
     await shell(bridge, async () => { await Promise.all(changed.map(path => writeFile(path, "uncommitted\nmine\n"))); });
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([firstSightEdits(root, changed)]);
   });
 
-  it("asks Git again for the checkouts behind slow listings asked again once one has run a second, and keeps what it first saw in them", async () => {
+  it("asks Git again for the checkouts behind slow listings asked again once one has run a second, keeps what it first saw in them, and hands each slot on once", async () => {
     const { root, checkouts, changed, sourceRoot } = await changedCheckouts(LISTINGS_AGAIN_AT_ONCE + 2);
+    // Every walk until the last one below fails to list each checkout's `deep`, so that walk is the first to see a file
+    // there and lists each checkout again.
+    const deep = checkouts.map(checkout => join(checkout, "deep"));
+    await Promise.all(deep.map(async folder => {
+      await mkdir(folder);
+      await writeFile(join(folder, "d.py"), "d\n");
+    }));
+    await awaitClockAfter(...deep.map(folder => join(folder, "d.py")));
+    const failing = async () => { throw new Error("EMFILE: too many open files"); };
+    for (const folder of deep) discovery.directories.set(folder, Array.from({ length: 20 }, () => failing));
     const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
     const bridge = createBridge(root, { ...auditor(auditGeneratedEdits), sourceRoot });
     // The baseline walk's listing of each checkout runs past its time limit. The first listings asked again, one in each
@@ -841,6 +854,22 @@ describe("CodeRuleBridge", () => {
     await bridge.settleListingsAgain();
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([firstSightEdits(root, behind)]);
     expect(asked).toHaveLength(checkouts.length);
+    // Those behind asked Git once the first slot's wait had run out, and well before a wait twice as long would have.
+    const heldAt = listings.asked.slice(0, LISTINGS_AGAIN_AT_ONCE).map(listing => listing.asked);
+    for (const { asked: at } of listings.asked.slice(LISTINGS_AGAIN_AT_ONCE)) {
+      expect(at - Math.min(...heldAt)).toBeGreaterThanOrEqual(LISTING_AGAIN_WAIT_MS - 50);
+      expect(at - Math.max(...heldAt)).toBeLessThan(2 * LISTING_AGAIN_WAIT_MS - 100);
+    }
+    // Each slow listing handed its slot on once, at the wait, and each behind once, at its answer: a later late walk
+    // finds the four slots free again, and no more.
+    const before = listings.asked.length;
+    listings.late.push(...checkouts);
+    listings.delayMs = 50;
+    for (const folder of deep) discovery.directories.delete(folder);
+    await bridge.checkpoint("turn");
+    await bridge.settleListingsAgain();
+    expect(listings.asked).toHaveLength(before + checkouts.length);
+    expect(mostHoldingSlots(listings.asked.slice(before))).toBe(LISTINGS_AGAIN_AT_ONCE - 1);
   }, 30_000);
 
   it("asks Git for the next checkout once a listing asked again has answered, while an audit holds the bridge's queue", async () => {
