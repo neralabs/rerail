@@ -2804,6 +2804,25 @@ impl Model {
                 _ => None,
             }
         };
+        // A computed value (`$s = @rr_node_text($n)`) waits while a positive atom still to join reads its arguments
+        // and not the value: that atom only narrows the rows, so computing it first computes (and interns) values for
+        // rows it drops. `def_name`'s long-text twin seeded every node past the text bound and read each one's text
+        // before `field($f, "name", $n)` kept none: 77 MB of module, class and function texts in a posthog store.
+        let call_waits = |f: usize, bound: &dyn Fn(VarSlot) -> bool, open: &dyn Fn(usize) -> bool| -> bool {
+            let Lit::Cmp { l, op: CmpOp::Eq, r } = b.view(f) else { return false };
+            let (out, call) = match (l, r) {
+                (TermRef::Var(v), c @ TermRef::Call(..)) | (c @ TermRef::Call(..), TermRef::Var(v)) if !bound(v) => (v, c),
+                _ => return false,
+            };
+            let mut ins = VarSet::new();
+            body::term_vars(call, &mut ins);
+            (0..b.len()).filter(|&j| b.is_join(j)).any(|j| {
+                open(j) && matches!(b.view(j), Lit::Atom(a) if !a.neg()) && {
+                    let vs = b.vars(j);
+                    !vs.contains(out) && !vs.is_disjoint(&ins)
+                }
+            })
+        };
         // Applies every filter (negation, comparison, aggregate) whose variables are bound.
         let close = |order: &mut Vec<Step>, mut rows: f64, bound: &mut VarSet, rest: &mut Vec<usize>| -> f64 {
             let mut progressed = true;
@@ -2811,7 +2830,7 @@ impl Model {
                 progressed = false;
                 for i in rest.clone() {
                     let l = i;
-                    if !b.is_join(l) && b.ready(l, bound) {
+                    if !b.is_join(l) && b.ready(l, bound) && !call_waits(i, &|v| bound.contains(v), &|j: usize| !order.iter().any(|s| s.at == j)) {
                         order.push(Step { at: i, mode: None });
                         rest.retain(|&j| j != i);
                         bound.extend(b.vars(l));
@@ -3031,7 +3050,7 @@ impl Model {
             while progressed {
                 progressed = false;
                 for (k, &f) in filters.iter().enumerate() {
-                    if !placed[k] && ready_at(f, bound) {
+                    if !placed[k] && ready_at(f, bound) && !call_waits(f, &|v: VarSlot| var_ids[v.index()].is_some_and(|k| bound >> k & 1 == 1), &|j: usize| joins.iter().position(|&x| x == j).is_none_or(|i| mask & (1 << i) == 0)) {
                         placed[k] = true;
                         bound |= lit_bits[f];
                         progressed = true;
@@ -5272,6 +5291,17 @@ fn observed_fans(stats: &Stats, rule: u64, order: Order<'_>) -> Vec<Option<f64>>
 /// atoms every column is an integer (a name, kind or field atom), as the planner's SQL holds it (O13).
 fn sym_char(inputs: &Inputs, t: &str) -> char {
     if t == "sym" && inputs.atoms.is_none() { 's' } else { 'i' }
+}
+
+/// A relation's column types as the store keeps its rows: `s` where it declares a symbol, whatever the engine holds
+/// the column as (over atoms, an integer). The store maps a forked process's symbols by them (decision 0170); rows of
+/// another width than declared keep the engine's types.
+fn stored_types(prog: &Program, rel: &str, engine: Vec<u8>) -> Vec<u8> {
+    let declared = prog_types(prog, rel);
+    if declared.len() != engine.len() {
+        return engine;
+    }
+    declared.iter().map(|t| if *t == "sym" { b's' } else { b'i' }).collect()
 }
 
 fn prog_types<'p>(prog: &'p Program, r: &str) -> Vec<&'p str> {
@@ -8148,7 +8178,7 @@ fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &BT
         let digest = got.as_ref().map(|(types, rows, n)| rows_digest(types.len(), rows, *n));
         fresh.insert(r.clone(), digest);
         members.push((r.clone(), digest));
-        ks.ran(r, got.zip(reads).map(|((types, rows, n), reads)| (digest.expect("rows give a digest"), types, rows, n, reads.clone())));
+        ks.ran(r, got.zip(reads).map(|((types, rows, n), reads)| (digest.expect("rows give a digest"), stored_types(run.prog, r, types), rows, n, reads.clone())));
     }
     for v in scc.iter().filter(|r| run.views.contains(*r)) {
         fresh.insert(v.clone(), view_digest(reads.map(Vec::as_slice), &members));
@@ -8255,7 +8285,12 @@ fn postings(values: impl Iterator<Item = i64>) -> (f64, f64) {
 }
 
 fn kept_strata_hold(ks: &mut dyn KeptStrata, db: &Connection, run: &mut Run, rel: &str) -> Result<usize> {
-    let (types, rows, n) = ks.rows(rel).ok_or_else(|| Error::Plan(format!("{rel}: kept as clean, but its rows are not kept")))?;
+    let (stored, rows, n) = ks.rows(rel).ok_or_else(|| Error::Plan(format!("{rel}: kept as clean, but its rows are not kept")))?;
+    // Held as this run's engine holds the relation's columns (over atoms a symbol is an integer column).
+    let types: Vec<u8> = prog_types(run.prog, rel).iter().map(|t| sym_char(&run.model.inputs, t) as u8).collect();
+    if types.len() != stored.len() {
+        return Err(Error::Plan(format!("{rel}: kept {} columns wide, declared {}", stored.len(), types.len())));
+    }
     let k = types.len();
     let cols: Vec<(f64, f64)> = (0..k).map(|c| postings(rows.iter().skip(c).step_by(k).copied())).collect();
     super::native::component::hold_rows(db, rel, types, rows, n);

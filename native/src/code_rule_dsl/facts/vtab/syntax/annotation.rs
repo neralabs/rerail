@@ -113,7 +113,15 @@ impl Annotations {
         if tape.transducer_len() != f.len() {
             return Err(StoreError::Invalid(format!("{}: the tape is not the one the facts were read off", d.path)));
         }
-        let found = string_annotations(tape).map_err(|e| StoreError::Invalid(format!("{}: {e}", d.path)))?;
+        // A file whose scope table cannot be built (nesting past the build's depth or stack) gives no rows, and the
+        // run goes on: one file ended a 30k-file run before. Its strings' names are then read as plain strings.
+        let found = match string_annotations(tape) {
+            Ok(found) => found,
+            Err(e) => {
+                eprintln!("rerail: {}: its string annotations are not read ({e})", d.path);
+                return Ok(());
+            }
+        };
         // Each annotation's nested ones: an outer one comes before its nested ones, so the innermost are placed first.
         let mut nested: Vec<Vec<Nested>> = vec![Vec::new(); found.len()];
         for k in (0..found.len()).rev() {

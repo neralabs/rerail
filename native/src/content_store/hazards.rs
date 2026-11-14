@@ -16,6 +16,10 @@ pub(crate) fn statement(conn: &'static str, text: &str) {
     profile::strict_statement(conn, text);
 }
 
+pub(crate) fn inside_waves() -> bool {
+    profile::inside_waves()
+}
+
 pub(crate) fn wait_in_wave(what: &str, wall: f64) {
     profile::wait_in_wave(what, wall);
 }

@@ -280,6 +280,7 @@ mod wave_tests {
     /// Smoking gun 7 (t34, 2026-11-13): a level's strata may run as a job off the run's thread (decision 0113 §4), and
     /// the wave their launches join is flushed there. The job takes its waves off its thread's count (`since`) and
     /// the run's thread credits them when it takes the job back (`credit`, in `absorb`): the run counts them.
+    /// A thread outside the run, whose waves nothing credits, counts into its own.
     #[test]
     fn a_jobs_waves_are_credited_to_the_run_that_takes_it_back() {
         let before = wave::flushed();
@@ -296,6 +297,13 @@ mod wave_tests {
         assert_eq!(wave::flushed(), before, "not the run's until it takes the job back");
         wave::credit(waves);
         assert_eq!(wave::flushed().0 - before.0, 1, "the job's wave is the run's");
+        std::thread::spawn(|| {
+            wave::defer(Box::new(|| Ok(())));
+            wave::flush(1).unwrap();
+        })
+        .join()
+        .unwrap();
+        assert_eq!(wave::flushed().0 - before.0, 1, "another thread's wave is not the run's");
     }
 }
 

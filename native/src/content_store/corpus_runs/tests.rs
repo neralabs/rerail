@@ -173,7 +173,7 @@ fn parallel_writers_and_a_collector_share_one_store() {
     drop(store);
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let collector = {
-        let (path, stop) = (path.clone(), stop.clone());
+        let (path, stop) = (path.to_path_buf(), stop.clone());
         std::thread::spawn(move || {
             let store = ContentStore::open(&path).unwrap();
             let policy = CorpusPolicy::default();
@@ -187,7 +187,7 @@ fn parallel_writers_and_a_collector_share_one_store() {
     };
     let writers: Vec<_> = (0..3u64)
         .map(|w| {
-            let path = path.clone();
+            let path = path.to_path_buf();
             std::thread::spawn(move || {
                 let store = ContentStore::open(&path).unwrap();
                 for i in 0..40u64 {

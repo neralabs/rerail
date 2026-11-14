@@ -54,7 +54,10 @@ impl<'s> Jobs<'s, '_> {
         {
             // The job's span is under the one open where it was started, on whichever thread runs it.
             let under = crate::code_rule_dsl::logic::profile::here();
+            // And the run it is of: its frames' uses count that run, not one of their own.
+            let run = crate::code_rule_dsl::logic::plan::corpus::current_run();
             self.0.spawn(move |s| {
+                let _run = crate::code_rule_dsl::logic::plan::corpus::carry_run(run);
                 let _span = crate::code_rule_dsl::logic::profile::span_at(under.as_deref(), || format!("{name} (job)"));
                 rerail_accel::exec::as_job(name, || f(&Jobs(s)))
             });
