@@ -783,3 +783,29 @@ The token loop held three column bases for its records, and they were among
 the values it spilled each token. The records' layout is now the compiler's
 choice (decision 0231): rows on the CPU for rr, so the loop's stores share
 one base, as the lean lexer's `Tok`; columns on Metal.
+
+## The common tokens' state (2026-11-14)
+
+The lean lexer's run loop takes a word or a punctuation by its table and
+its masks: no rule is compared, no mark is merged. Tier 1's loop did both
+at every token. Now:
+
+- **The fused rules by the entry's bits.** A first byte's entry is 8 bytes
+  (it was 4), with a bit where the byte's rule is the fused pair rule and
+  one where it is the fused run rule (`TOKEN_FUSED_*`,
+  `RecordTables::fused`). The loop tests a bit of the entry it loaded.
+  The rule's number is compared only off that path, and only where the
+  loop's choice differs from the table's.
+- **No marks' merge where there is nothing to merge.** The refill sets a
+  flag in the marks so far where the block has a gap mark's bit
+  (`GAP_FLAG`). A token whose marks so far and hits are zero keeps its
+  code and leaves the state untouched; the merge is a cold block.
+- **The word before only where an `unless` is the loop's.** rr's
+  `unless after ","` is a lazy mark, so its loop keeps no word.
+- **No extra's mark on the fused path.** The fused rules' first bytes
+  never start an extra (`fused_rules`), so their tokens read no mark
+  word at their first byte (`never_at`).
+
+Tier 1 AOT 186 to 171 instructions a node, JIT 259 to 251. The loop
+still spills around its dispatch: see decision 0231, "Why the spills
+stay".

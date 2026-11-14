@@ -1686,6 +1686,10 @@ pub struct RecordTables {
     pub filters: Vec<Option<i64>>,
     /// Where the records are (`record_layout`): rows where the token loop writes them all.
     pub layout: crate::records::RecordLayout,
+    /// The fused rules the entries' bits name (`TOKEN_FUSED_*`): the pair rule and the run
+    /// rule `fused_rules` takes with the main run's word in a register. The loop tests the
+    /// bits where its own choice is this one, else it compares the rule.
+    pub fused: Option<(usize, usize)>,
 }
 
 /// The records' layout the compiler chooses for a program (decision 0231): rows where the
@@ -1720,6 +1724,12 @@ pub fn test_filter(made: &crate::block_native::BlockNative, c: &crate::records::
 const TOKEN_RULE: i64 = 8;
 const TOKEN_WORDY: i64 = 16;
 const TOKEN_PAIR_ROW: i64 = 24;
+/// Past the pair row: 1 where the byte's rule is the fused pair rule, and where it is the fused
+/// run rule (`RecordTables::fused`), so the loop takes its common tokens by a bit of the entry
+/// it loaded, no compare of the rule, as the lean lexer's `TOKEN` gives a punctuation's
+/// length and a word's run is its mask's.
+const TOKEN_FUSED_PAIR: i64 = 32;
+const TOKEN_FUSED_RUN: i64 = 33;
 
 impl RecordTables {
     pub fn new(r: &crate::records::Records, made: &crate::block_native::BlockNative) -> Result<Self, Error> {
@@ -1767,7 +1777,16 @@ impl RecordTables {
                 None => filters.push(None),
             }
         }
-        let mut entries = [0u32; 256];
+        // The fused rules, as the loop chooses them with the main run's word in a register (as
+        // `record_tokens` puts it there).
+        let first_bytes = |k: usize| (0..256).filter(|&b| r.ends.get(b).is_some_and(|&e| usize::from(e) == k)).count();
+        let main = (0..r.rules.len()).filter(|&k| matches!(r.rules[k], crate::records::EndRule::Run(_))).max_by_key(|&k| first_bytes(k));
+        let main_run: Vec<u16> = main.into_iter().filter_map(|k| match r.rules[k] {
+            crate::records::EndRule::Run(o) => Some(o),
+            _ => None,
+        }).collect();
+        let fused = if r.skip.is_some() { fused_of(r, &filters, Some(made), &main_run) } else { None };
+        let mut entries = [0u64; 256];
         for (b, e) in entries.iter_mut().enumerate() {
             let rule = r.ends.get(b).copied().unwrap_or(crate::records::NO_RULE);
             let wordy = r.words.iter().any(|w| w.first() == Some(&(b as u8)));
@@ -1778,10 +1797,11 @@ impl RecordTables {
             // A bit only on its rule's bytes: a test then runs wherever its bit is set, on a path
             // that more than one rule takes (`rule_last`'s fused rules).
             let tests = sets.iter().filter(|(_, n, k)| n.has(b as u8) && *k == rule).fold(0u32, |a, &(k, _, _)| a | 1 << k);
-            *e = u32::from(r.kinds[b]) | u32::from(rule) << TOKEN_RULE | u32::from(wordy) << TOKEN_WORDY | tests | u32::from(row) << TOKEN_PAIR_ROW;
+            let (fp, fr) = fused.map_or((false, false), |(kn, kr)| (usize::from(rule) == kn, usize::from(rule) == kr));
+            *e = u64::from(r.kinds[b]) | u64::from(rule) << TOKEN_RULE | u64::from(wordy) << TOKEN_WORDY | u64::from(tests) | u64::from(row) << TOKEN_PAIR_ROW | u64::from(fp) << TOKEN_FUSED_PAIR | u64::from(fr) << TOKEN_FUSED_RUN;
         }
-        words.extend(entries.chunks(2).map(|c| u64::from(c[0]) | u64::from(c[1]) << 32));
-        Ok(RecordTables { words, slots, tails, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns })
+        words.extend(entries);
+        Ok(RecordTables { words, slots, tails, table, starts: r.starts, lasts: r.lasts, pairs, token, filters, layout: crate::records::RecordLayout::Columns, fused })
     }
 }
 
@@ -2349,9 +2369,21 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         }
         fused_exit = Some(fdone);
         let (go, table, on) = (f.create_block(), f.create_block(), f.create_block());
-        let is_n = f.ins().icmp_imm(IntCC::Equal, rule, kn as i64);
-        let is_r = f.ins().icmp_imm(IntCC::Equal, rule, kr as i64);
-        let either = f.ins().bor(is_n, is_r);
+        // By the entry's bits where they name these rules (`TOKEN_FUSED_*`): a bit test, no
+        // compare of the rule, which a compiler would make one switch with the table's.
+        let (is_n, is_r, either) = if t.fused == Some((kn, kr)) {
+            let bit = |f: &mut FunctionBuilder<'_>, b: i64| {
+                let x = f.ins().band_imm(entry, 1 << b);
+                f.ins().icmp_imm(IntCC::NotEqual, x, 0)
+            };
+            let (n, r) = (bit(f, TOKEN_FUSED_PAIR), bit(f, TOKEN_FUSED_RUN));
+            let x = f.ins().band_imm(entry, 1 << TOKEN_FUSED_PAIR | 1 << TOKEN_FUSED_RUN);
+            (n, r, x)
+        } else {
+            let n = f.ins().icmp_imm(IntCC::Equal, rule, kn as i64);
+            let r = f.ins().icmp_imm(IntCC::Equal, rule, kr as i64);
+            (n, r, f.ins().bor(n, r))
+        };
         f.ins().brif(either, go, &[], table, &[]);
         f.switch_to_block(go);
         // The pair's second byte: the block's pair word's bit (`PAIR_WORD`), as the lean
@@ -2658,18 +2690,32 @@ pub fn pair_nibbles(r: &crate::records::Records, t: &crate::records::PairTable, 
 /// of its form, where their tests are all by first-byte bits; where no token of the two can be
 /// an extra (its mark needs a first byte neither rule has).
 fn fused_rules(r: &crate::records::Records, t: &RecordTables, rd: &Reads<'_>, runs: &[u16]) -> Option<(usize, usize)> {
+    fused_of(r, &t.filters, rd.bytes.map(|(b, _)| b.native), runs)
+}
+
+/// `fused_rules` from the tests' filters and the program whose bytes make the loop's words
+/// (none where they are not the bytes').
+fn fused_of(r: &crate::records::Records, filters: &[Option<i64>], native: Option<&crate::block_native::BlockNative>, runs: &[u16]) -> Option<(usize, usize)> {
     use crate::records::EndRule;
     let first_bytes = |k: usize| (0..256).filter(|&b| r.ends.get(b).is_some_and(|&e| usize::from(e) == k)).count();
-    let filtered = |k: usize| r.checks.iter().zip(&t.filters).all(|(x, b)| usize::from(x.rule) != k || b.is_some());
+    let filtered = |k: usize| r.checks.iter().zip(filters).all(|(x, b)| usize::from(x.rule) != k || b.is_some());
     let kn = (0..r.rules.len()).filter(|&k| matches!(r.rules[k], EndRule::Next(_)) && filtered(k) && first_bytes(k) > 0).max_by_key(|&k| first_bytes(k));
     let kr = (0..r.rules.len()).filter(|&k| matches!(r.rules[k], EndRule::Run(o) if runs.contains(&o)) && filtered(k) && first_bytes(k) > 0).max_by_key(|&k| first_bytes(k));
     let no_extra = |ks: [usize; 2]| match r.extra {
         None => true,
-        Some(e) => rd.bytes.zip(r.marks.get(usize::from(e))).and_then(|((b, _), &(o, _))| crate::native_cpu_bytes::needs(b.native, o)).is_some_and(|n| {
+        Some(e) => native.zip(r.marks.get(usize::from(e))).and_then(|(b, &(o, _))| crate::native_cpu_bytes::needs(b, o)).is_some_and(|n| {
             n.lo == 0 && n.hi == 0 && (0..=255u8).all(|x| !n.has(x) || ks.iter().all(|&k| r.ends.get(usize::from(x)).is_none_or(|&e| usize::from(e) != k)))
         }),
     };
     kn.zip(kr).filter(|&(a, b)| no_extra([a, b]))
+}
+
+/// Whether output `o` is never set at a first byte of rules `ks`: it needs the byte alone
+/// (`native_cpu_bytes::needs`) and none of the rules' first bytes has it.
+fn never_at(r: &crate::records::Records, native: Option<&crate::block_native::BlockNative>, o: u16, ks: [usize; 2]) -> bool {
+    native.and_then(|b| crate::native_cpu_bytes::needs(b, o)).is_some_and(|n| {
+        n.lo == 0 && n.hi == 0 && (0..=255u8).all(|x| !n.has(x) || ks.iter().all(|&k| r.ends.get(usize::from(x)).is_none_or(|&e| usize::from(e) != k)))
+    })
 }
 
 /// The pair rule's word for the block at byte `p` (`PAIR_WORD`), as the lean lexer's window
@@ -2715,6 +2761,7 @@ fn next_last(f: &mut FunctionBuilder<'_>, t: &RecordTables, c: &FileCols, s: Val
     let b = f.ins().ushr_imm(raw, 8);
     let b = f.ins().band_imm(b, 0xff);
     let row = f.ins().ushr_imm(entry, TOKEN_PAIR_ROW);
+    let row = f.ins().band_imm(row, 0xff);
     let w = f.ins().ishl_imm(row, 2);
     let hi = f.ins().ushr_imm(b, 6);
     let w = f.ins().iadd(w, hi);
@@ -2970,6 +3017,11 @@ fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Rec
 /// yet in `pending` (`from`), and the word of the grammar token before (`unless after`); six.
 const STATE_WORDS: usize = 6;
 
+/// In the marks so far (`pending`): the cursor's block has a gap mark's bit (`loop_marks`'
+/// lift), set by the refill. A token whose `pending` and hits are zero then takes no merge of
+/// the marks, and its gap test reads no word (`record_tokens`). Past every mark's bit.
+const GAP_FLAG: i64 = 1 << 62;
+
 /// The gap marks tier 2 on the CPU tests itself, where a state asks (decision 0177): each
 /// `(mark, output)`, a gap mark of its mask alone (no token test, no `else escape`, not the
 /// extras'), made from the bytes. The token loop sets none of them; tier 2 reads the mask from
@@ -3168,6 +3220,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         crate::records::EndRule::Next(i) => r.nexts.get(usize::from(i)).and_then(|pt| pair_nibbles(r, pt, kn)),
         _ => None,
     });
+    let fused_ks = if rd.bytes.is_some() { fused_rules(r, t, &rd, &runs) } else { None };
     let runs: Vec<u16> = runs.into_iter().chain(pairs.map(|_| PAIR_WORD)).collect();
     let outs: Vec<u16> = runs.iter().copied().filter(|&o| o != PAIR_WORD).collect();
     if walked.is_some() {
@@ -3301,6 +3354,20 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             let q64 = f.ins().ishl_imm(q, 6);
             let tz = f.ins().ctz(x);
             let s1 = f.ins().iadd(q64, tz);
+            // Whether the block has a gap mark's bit (`GAP_FLAG`), in the marks so far.
+            let pend_q = if folded {
+                let mut any = zero;
+                for &(_, mo) in &lift {
+                    any = f.ins().bor(any, words[runs.iter().position(|&k| k == mo).expect("a mark's word in the registers")]);
+                }
+                let has = f.ins().icmp_imm(IntCC::NotEqual, any, 0);
+                let has = f.ins().uextend(types::I64, has);
+                let flag = f.ins().ishl_imm(has, 62);
+                let kept = f.ins().band_imm(pend_q, !GAP_FLAG);
+                f.ins().bor(kept, flag)
+            } else {
+                pend_q
+            };
             let found: Vec<Value> = if folded { vec![pend_q, from_q] } else { Vec::new() };
             let args: Vec<BlockArg> = [s1, x].iter().chain(&words).chain(&found).map(|&v| v.into()).collect();
             f.ins().brif(x, from_word, &args, next, &[]);
@@ -3359,9 +3426,9 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let from = f.ins().iadd(c.bytes, s);
     let raw = f.ins().load(types::I64, fl, from, 0);
     let first = f.ins().band_imm(raw, 0xff);
-    let ea = f.ins().ishl_imm(first, 2);
+    let ea = f.ins().ishl_imm(first, 3);
     let ea = f.ins().iadd(tables, ea);
-    let entry = f.ins().uload32(ro, ea, t.token as i32);
+    let entry = f.ins().load(types::I64, ro, ea, t.token as i32);
     // The rules' exits (`rule_last`): every rule's, and the fused rules' of their own, whose
     // tail is made again knowing their tokens are no reader's and no extra (the lean lexer's
     // run loop, apart from its rare tokens).
@@ -3554,8 +3621,9 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let (mut from, mut word_before) = (cv[4], cv[5]);
     let base = f.ins().band_imm(s, !63);
     let in_regs = regs.as_ref().map(|g| (g, base));
-    // The marks at a token's first byte the loop sets (`loop_marks`): its word's bit there.
-    for &(m, o) in &at_marks {
+    // The marks at a token's first byte the loop sets (`loop_marks`): its word's bit there. On
+    // the fused rules' path, none whose first bytes they never have (an extra's, `fused_rules`).
+    for &(m, o) in at_marks.iter().filter(|&&(_, o)| !common || !fused_ks.is_some_and(|(kn, kr)| never_at(r, rd.bytes.map(|(b, _)| b.native), o, [kn, kr]))) {
         let w = regs.as_ref().and_then(|g| g.runs.iter().find(|&&(k, _)| k == o)).map(|&(_, v)| v).expect("a mark's word in the registers");
         let sh = f.ins().band_imm(s, 63);
         let bit = f.ins().ushr(w, sh);
@@ -3570,16 +3638,57 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let tests = r.checks.iter().any(|c| c.then != crate::records::CheckThen::Escape);
     if tests || !lift.is_empty() {
         let h = cv[STATE_WORDS + 1];
+        // `unless after`: of the gap marks the loop sets alone. The word before is only kept
+        // where one is.
+        let unless: Vec<(u8, u16)> = r.unless.iter().copied().filter(|&(k, _)| lift.iter().any(|&(m, _)| m == k)).collect();
+        let gapped = !lift.is_empty();
+        let kept_word = gapped && !unless.is_empty();
+        let extra = r.extra.filter(|_| !common);
+        // The word before, as this token leaves it: its word, but an extra's leaves it.
+        let next_word = |f: &mut FunctionBuilder<'_>, code: Value, word_before: Value| {
+            let word = f.ins().ushr_imm(code, i64::from(crate::records::KIND_BITS));
+            let word = f.ins().band_imm(word, (1i64 << (crate::records::MARK_SHIFT - crate::records::KIND_BITS)) - 1);
+            match extra {
+                Some(e) => {
+                    let is_extra = f.ins().ushr_imm(code, i64::from(crate::records::MARK_SHIFT) + i64::from(e));
+                    let is_extra = f.ins().band_imm(is_extra, 1);
+                    f.ins().select(is_extra, word_before, word)
+                }
+                None => word,
+            }
+        };
+        // Most tokens have no mark from the tokens before, no test's hit and no gap mark's
+        // bit in their block (the refill folds a block's bits past the last grammar token,
+        // and every passed block's, into `pending`): the bits are all zero, the code is the
+        // token's, and the state goes on untouched, as the lean lexer's run loop has no
+        // marks. Else the merge below, cold.
+        let quiet = regs.is_some() && (!gapped || folded);
+        let join = if quiet {
+            let any = f.ins().bor(pending, h);
+            let (merge, join) = (f.create_block(), f.create_block());
+            for _ in 0..4 {
+                f.append_block_param(join, types::I64);
+            }
+            let wb = if kept_word { next_word(&mut *f, code, word_before) } else { word_before };
+            f.ins().brif(any, merge, &[], join, &[code.into(), pending.into(), from.into(), wb.into()]);
+            f.switch_to_block(merge);
+            f.set_cold_block(merge);
+            Some(join)
+        } else {
+            None
+        };
         let at_bits = f.ins().band_imm(h, (1i64 << crate::records::AFTER_SHIFT) - 1);
         let after_bits = f.ins().ushr_imm(h, i64::from(crate::records::AFTER_SHIFT));
-        let mut mine = f.ins().bor(pending, at_bits);
-        if !lift.is_empty() {
+        // The block's flag (`GAP_FLAG`) stays for its tokens after this one; no mark's bit.
+        let flag = if folded { f.ins().band_imm(pending, GAP_FLAG) } else { zero };
+        let pending_marks = if folded { f.ins().band_imm(pending, !GAP_FLAG) } else { pending };
+        let after_bits_kept = if folded { f.ins().bor(after_bits, flag) } else { after_bits };
+        let mut mine = f.ins().bor(pending_marks, at_bits);
+        if gapped {
             let bits = marks_in(f, &rd, c, &lift, from, s, in_regs, folded, heads);
             mine = f.ins().bor(mine, bits);
         }
-        // `unless after`: of the gap marks the loop sets alone.
-        let unless: Vec<(u8, u16)> = r.unless.iter().copied().filter(|&(k, _)| lift.iter().any(|&(m, _)| m == k)).collect();
-        let held = if !lift.is_empty() && !unless.is_empty() {
+        let held = if kept_word {
             let mut none = zero;
             for &(k, w) in &unless {
                 let same = f.ins().icmp_imm(IntCC::Equal, word_before, i64::from(w));
@@ -3593,32 +3702,30 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         };
         let placed = f.ins().ishl_imm(held, i64::from(crate::records::MARK_SHIFT));
         let marked = f.ins().bor(code, placed);
-        // The gap's start and the word before only where a gap mark is the loop's.
-        let gapped = !lift.is_empty();
-        match r.extra.filter(|_| !common) {
+        if kept_word {
+            word_before = next_word(&mut *f, code, word_before);
+        }
+        match extra {
             Some(e) => {
                 let is_extra = f.ins().ushr_imm(code, i64::from(crate::records::MARK_SHIFT) + i64::from(e));
                 let is_extra = f.ins().band_imm(is_extra, 1);
-                let left = f.ins().bor(mine, after_bits);
-                if gapped {
-                    let word = f.ins().ushr_imm(code, i64::from(crate::records::KIND_BITS));
-                    let word = f.ins().band_imm(word, (1i64 << (crate::records::MARK_SHIFT - crate::records::KIND_BITS)) - 1);
-                    word_before = f.ins().select(is_extra, word_before, word);
-                }
+                let left = f.ins().bor(mine, after_bits_kept);
                 code = f.ins().select(is_extra, code, marked);
-                pending = f.ins().select(is_extra, left, after_bits);
+                pending = f.ins().select(is_extra, left, after_bits_kept);
             }
             None => {
-                if gapped {
-                    let word = f.ins().ushr_imm(code, i64::from(crate::records::KIND_BITS));
-                    word_before = f.ins().band_imm(word, (1i64 << (crate::records::MARK_SHIFT - crate::records::KIND_BITS)) - 1);
-                }
                 code = marked;
-                pending = after_bits;
+                pending = after_bits_kept;
             }
         }
         if gapped {
             from = f.ins().iadd_imm(s, 1);
+        }
+        if let Some(join) = join {
+            f.ins().jump(join, &[code.into(), pending.into(), from.into(), word_before.into()]);
+            f.switch_to_block(join);
+            let p = f.block_params(join).to_vec();
+            (code, pending, from, word_before) = (p[0], p[1], p[2], p[3]);
         }
     }
     let (ca, co) = c.at(f, crate::records::FIELD_CODE, cv[0]);
