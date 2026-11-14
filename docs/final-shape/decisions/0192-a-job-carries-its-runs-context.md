@@ -131,12 +131,12 @@ the typing run's 0.07–0.1 s now runs inside phase 1's span.
 
 ## What stays
 
-- **The cross-file cone enters no kept plans.** The cone's job (`beside("the cone of requests")`) ran without the
-  run's kept plans before this change. Given them, a run after an edited library misses the library's new import
-  (`phases::tests::phase_1_loads_the_libraries_the_imports_reach_and_a_reader_takes_them`). A plan should change only
-  the cost, so a kept plan changes a result there. The cone keeps its old behaviour (`enter_plans(None)`), and
-  O-cone-kept-plans holds the bug.
-
+- **The cross-file cone keeps whole relations.** Given the run's kept plans, the cone's job is a corpus run, and a
+  corpus run makes the negation split: a relation computed only for the keys its readers reach. The cone keeps its
+  strata for the next run (`cone_kept`), so after an edit a key the next run demands (an edited library's new
+  import) had no rows and no delta to derive them. Before this decision the cone ran with no plans, so it never
+  split. It now enters `demand::whole_relations` whenever it keeps its strata, as a session's cross-file part does,
+  and takes the run's plans like every other job (O-cone-kept-plans, closed).
 - **The split memo is process-wide** (`split_memo::SPLITS`). Two runs at once still give exact results: an entry is
   keyed by every input it reads. But they can push each other's entries out. The O-run-state-threads closure keeps
   this open.
