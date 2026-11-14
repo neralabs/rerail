@@ -111,7 +111,7 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
     ]);
   });
 
-  it("reads past lines that hold no failure, and fills in the fields a failure's line lacks", async () => {
+  it("reads past lines that hold no failure, and fills in the fields a failure's line lacks or does not hold as text", async () => {
     const rerailHome = await home();
     writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), [
       "",
@@ -119,10 +119,12 @@ describe("the hook failure log", { timeout: PROCESS_TEST_TIMEOUT_MS }, () => {
       '{"at":2000,"host":"codex","reason":"no event"}',
       '{"startedAt":2500}',
       '{"at":3000,"event":"Stop","reason":"no host, agent or version"}',
+      '{"at":4000,"host":{},"event":"Stop","agent":5,"rerail":["0.1.3"],"reason":"host, agent and version not text"}',
       "",
     ].join("\n"));
     expect(readHookFailures(rerailHome, 0).failures).toEqual([
       { at: 3_000, host: "unknown", event: "Stop", agent: null, rerail: "unknown", reason: "no host, agent or version" },
+      { at: 4_000, host: "unknown", event: "Stop", agent: null, rerail: "unknown", reason: "host, agent and version not text" },
     ]);
   });
 

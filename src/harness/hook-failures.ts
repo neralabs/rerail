@@ -620,7 +620,7 @@ function parseLine(line: string): HookFailure | PartStart | null {
   if (line.trim() === "") return null;
   try {
     // Parsed from the log's own text; each field is checked before it is used.
-    const value = JSON.parse(line) as Partial<HookFailure & PartStart>;
+    const value = JSON.parse(line) as Partial<Record<keyof (HookFailure & PartStart), unknown>>;
     return typeof value.startedAt === "number" ? { startedAt: value.startedAt } : failureOf(value);
   } catch {
     // A line cut short by a concurrent write.
@@ -628,8 +628,13 @@ function parseLine(line: string): HookFailure | PartStart | null {
   }
 }
 
-/** The failure a parsed line holds, with the optional fields it lacks filled in; null when it holds none. */
-function failureOf(value: Partial<HookFailure>): HookFailure | null {
+/** The failure a parsed line holds, with the optional fields it lacks or holds as other than text filled in; null when it holds none. */
+function failureOf(value: Partial<Record<keyof HookFailure, unknown>>): HookFailure | null {
   if (typeof value.at !== "number" || typeof value.event !== "string" || typeof value.reason !== "string") return null;
-  return { at: value.at, host: value.host ?? "unknown", event: value.event, agent: value.agent ?? null, rerail: value.rerail ?? "unknown", reason: value.reason };
+  return { at: value.at, host: textOr(value.host, "unknown"), event: value.event, agent: textOr(value.agent, null), rerail: textOr(value.rerail, "unknown"), reason: value.reason };
+}
+
+/** `value` when it is text, else `otherwise`. */
+function textOr<T>(value: unknown, otherwise: T): string | T {
+  return typeof value === "string" ? value : otherwise;
 }
