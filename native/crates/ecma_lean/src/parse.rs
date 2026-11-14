@@ -204,6 +204,8 @@ struct Mark {
     depth: u32,
     after: V,
     asi: bool,
+    /// `P::relexes` at the mark.
+    relexes: u32,
 }
 
 struct P<'a> {
@@ -214,6 +216,9 @@ struct P<'a> {
     i: usize,
     /// Where the next token is lexed into the buffer.
     next: usize,
+    /// The times the buffer was cut for another mode (`relex_at`): a restore keeps the tokens
+    /// lexed after its mark unless one was.
+    relexes: u32,
     extras: Vec<Extra>,
     e: usize,
     w: Writer<Widths>,
@@ -247,6 +252,7 @@ pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
             toks: Vec::with_capacity(src.len() / 4 + 4),
             i: 0,
             next: 0,
+            relexes: 0,
             extras: Vec::new(),
             e: 0,
             w: Writer::new(0, widths, src.len() / 3 + 16),
@@ -367,6 +373,7 @@ impl<'a> P<'a> {
     /// The buffer cut at token `i`, and lexing resumed at `pos`: a piece read in another mode
     /// ends there. Extras from `pos` on are lexed again.
     fn relex_at(&mut self, pos: usize) {
+        self.relexes += 1;
         self.toks.truncate(self.i);
         self.next = pos;
         let keep = self.extras.partition_point(|x| (x.start as usize) < pos);
@@ -376,17 +383,21 @@ impl<'a> P<'a> {
 
     fn mark(&mut self) -> Mark {
         self.fill(0);
-        Mark { i: self.i, n: self.w.len(), e: self.e, last_end: self.last_end, depth: self.depth, after: self.after, asi: self.asi }
+        Mark { i: self.i, n: self.w.len(), e: self.e, last_end: self.last_end, depth: self.depth, after: self.after, asi: self.asi, relexes: self.relexes }
     }
 
-    /// Back to `m`: the token at the mark kept, all after it lexed again.
+    /// Back to `m`. The tokens lexed since are kept where every one was lexed in normal mode
+    /// (no `relex_at` since the mark): lexing has no state, so they are the tokens lexed again.
+    /// Otherwise the token at the mark is kept and all after it lexed again.
     fn restore(&mut self, m: Mark) {
         self.i = m.i;
-        let t = self.toks[m.i];
-        self.toks.truncate(m.i + 1);
-        self.next = t.end as usize;
-        let keep = self.extras.partition_point(|x| x.start < t.end);
-        self.extras.truncate(keep);
+        if self.relexes != m.relexes {
+            let t = self.toks[m.i];
+            self.toks.truncate(m.i + 1);
+            self.next = t.end as usize;
+            let keep = self.extras.partition_point(|x| x.start < t.end);
+            self.extras.truncate(keep);
+        }
         self.e = m.e;
         self.w.truncate(m.n);
         self.last_end = m.last_end;
