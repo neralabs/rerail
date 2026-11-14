@@ -1,0 +1,13 @@
+#!/usr/bin/python3
+"""Runs one rustc compile that another Mac's farm-rustc sent here (scripts/build/farm/README.md).
+
+Reads a JSON request on stdin: {"cwd", "argv", "env", "dirs"}. The paths are the sender's: this machine
+keeps a copy of its checkout and target files at the same absolute paths. Creates `dirs`, runs `argv`
+in `cwd` with exactly `env`, and passes rustc's output and exit status through."""
+import json, os, subprocess, sys
+
+request = json.load(sys.stdin)
+for d in request["dirs"]:
+    os.makedirs(d, exist_ok=True)
+done = subprocess.run(request["argv"], cwd=request["cwd"], env=request["env"], stdin=subprocess.DEVNULL)
+sys.exit(done.returncode)
