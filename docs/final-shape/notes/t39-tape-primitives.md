@@ -210,6 +210,16 @@ Every answer is right on all three corpora (rerail: functions 0.3–0.6 ns on ev
 | nearest / has, every node (fn), data-layer | 2.1 / 4.6 | 0.4 / 0.3 | 6.0 / 10.8 | 0.4 / 0.5 |
 | nearest / has, every node (string, 24% of nodes), data-layer | | 2.3 / 3.1 | | 3.2 / 7.5 |
 
+On the M3 Max (quiet, `target-cpu=native`), 0 wrong on all three corpora, ns a node, before → now:
+
+| | XF, data-layer | BE, data-layer | XF, rerail | BE, rerail |
+|---|---|---|---|---|
+| nearest, every node (fn) | 1.4 → **0.3** | 4.2 → **0.4** | 1.5 → 0.4 | 4.2 → 0.4 |
+| has, every node (fn), against backwards | 2.6 → **0.3** | 7.7 → **0.4** | 2.6 → 0.4 | 8.1 → 0.5 |
+| every node of the set (fn) | 0.9 → 0.3 | 0.9 → 0.3 | | |
+| nearest, every node (string) | 2.5 → 2.0 | 5.3 → 2.6 | 2.1 → 1.3 | 4.9 → 1.7 |
+| has, every node (string) | 2.6 → 2.2 | 8.7 → 5.2 | 2.6 → 1.5 | 8.5 → 4.1 |
+
 - **The code sweep is 5× faster:** 7 instructions a node instead of 28. That is within 0.2 ns of
   the per-kind position lists (0.1 ns, 2.39 B a node), with no bytes stored. The first try, not
   unrolled, was 22 instructions: its shifts were variable. Unrolling the 64 steps made each shift
@@ -218,10 +228,26 @@ Every answer is right on all three corpora (rerail: functions 0.3–0.6 ns on ev
   nodes) the three axes cost 0.3–0.8 ns a node: the time to write the answer, plus the sweep.
 - **BE gets most of the gap back.** It reads a subtree end, or a parent, only at S-nodes and their
   ancestors. So its 2.5–3× cost (t38, E12) shrinks to 1.0–2.4× on the bulk axes.
-- **Dense sets stay output-bound.** Strings are 24% of the data-layer's nodes, so there the S-node
-  methods cost about what the plain sweep costs.
+- **Dense sets are output-bound.** Strings are 13–24% of the nodes, and the S-node methods still
+  win there, by less: 2.0 against 2.5 ns on the data-layer.
 - So the bulk axes no longer need the plain sweeps. The plain sweeps stay in the lab as the
   baseline.
+
+### Step 3, third item: a code table a block does not pay
+
+Each block keeps a table of its distinct codes (at the file's width) and its codes as indexes into
+the table, at the block's own width. Bytes a node for the codes:
+
+| | one width a file (now) | a table a block of 64 | of 256 | of 1,024 |
+|---|---|---|---|---|
+| impl/sqlite | 1.12 | 1.20 | 1.05 | 0.99 |
+| data-layer | 0.70 | 0.67 | 0.62 | 0.61 |
+| rerail | 0.78 | 0.70 | 0.66 | 0.66 |
+
+- **It saves 0.08–0.13 B a node, 2–3% of the tape.** A block of 256 holds 40–60 distinct codes, so
+  its width is only 2–3 bits below the file's, and the table takes back most of the gain.
+- **It costs the sweep its one width.** The 64-codes-at-a-time sweep would need the set translated
+  into each block's table first. So it is dropped, and the codes stay one width a file.
 
 ## 4. The plan
 
@@ -246,8 +272,8 @@ In order. Each step is measured on all three corpora, every answer checked.
    - ~~Interleave each block's arrays~~: measured as XR, 1.3–1.7× slower; dropped.
    - Done: the code sweep 64 codes at a time, and bulk `nearest`, `outermost` and `has` driven by
      the S-nodes (0.3–0.8 ns a node for sparse sets).
-   - Narrower codes a block: each block gets its own small code table (0.70 B a node today), so
-     repeated structure gives repeated bits.
+   - ~~Narrower codes a block~~: saves 0.08–0.13 B a node (2–3%) and breaks the one-width sweep;
+     dropped.
    - MF's gap end with the gap stored beside the next start.
 4. **BE.** A two-level range min-max tree for `findclose` and `enclose` (Navarro–Sadakane), and
    Elias–Fano select by sampling.

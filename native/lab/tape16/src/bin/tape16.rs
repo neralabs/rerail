@@ -1349,6 +1349,8 @@ fn cmd_prim(path: &str) {
     let mut wrong = vec![0usize; C.len()];
     let mut sum_bytes = vec![[0usize; 3]; C.len()];
     let mut line_bytes = 0usize;
+    // Codes' bits: the file's one width, and a table of each block's distinct codes (blocks of 64, 256, 1,024).
+    let mut code_bits = [0usize; 4];
     let (mut nodes, mut files) = (0usize, 0usize);
     // Sets' share of nodes, for the table.
     let mut share = vec![0usize; SETS.len()];
@@ -1486,6 +1488,18 @@ fn cmd_prim(path: &str) {
         }
         let lines = prim::Lines::new(&f.source);
         line_bytes += lines.bytes();
+        let wf = (32 - code.iter().max().unwrap().leading_zeros()).max(1) as usize;
+        code_bits[0] += n * wf + 8;
+        for (q, b) in [64usize, 256, 1024].into_iter().enumerate() {
+            for blk in code.chunks(b) {
+                let mut d = blk.to_vec();
+                d.sort_unstable();
+                d.dedup();
+                let wl = (usize::BITS - (d.len() - 1).leading_zeros()) as usize;
+                // A header byte (the local width), the table at the file's width, the codes at the local width.
+                code_bits[q + 1] += 8 + d.len() * wf + blk.len() * wl;
+            }
+        }
         let nl: Vec<u64> = f.source.iter().enumerate().filter(|e| *e.1 == b'\n').map(|e| e.0 as u64).collect();
         let line_truth: Vec<u32> = tree.nodes.iter().map(|x| nl.partition_point(|&v| v < x.start) as u32).collect();
         // One node in 16, at random.
@@ -1507,6 +1521,8 @@ fn cmd_prim(path: &str) {
     }).unwrap_or_else(|e| die(&e));
     println!("{}\n", rerail_tape_lab::measure::machine());
     println!("{path}: {files} files, {nodes} nodes; sets' share of nodes: {}\n", SETS.iter().zip(&share).map(|((s, _), &k)| format!("{s} {:.2}%", 100.0 * k as f64 / nodes as f64)).collect::<Vec<_>>().join(", "));
+    println!("\ncodes, bytes a node: one width a file {:.3}; a table a block of 64 {:.3}, of 256 {:.3}, of 1,024 {:.3}.\n",
+        code_bits[0] as f64 / 8.0 / nodes as f64, code_bits[1] as f64 / 8.0 / nodes as f64, code_bits[2] as f64 / 8.0 / nodes as f64, code_bits[3] as f64 / 8.0 / nodes as f64);
     println!("| ns a node (every node) or a call (one node, 1 in 16 at random; F15 1 in 1,024); instructions | {} |", C.join(" | "));
     println!("|---|{}", "---|".repeat(C.len()));
     println!("| answers wrong | {} |", wrong.iter().map(|w| w.to_string()).collect::<Vec<_>>().join(" | "));
