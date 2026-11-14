@@ -1,44 +1,24 @@
-//! A program's versions (decision 0173 §7): a base image, a view of its rules (ranges), or an overlay (a parent,
+//! A program's versions (decision 0173 §7): a base image, a view of a base's rules (ranges), or an overlay (a parent
 //! and a delta image: the rules it adds, the parent's it removes, the parts it replaces). A shared image is never
-//! changed; a version is made by an edit, and costs the edit. An overlay whose edit reaches half its parent is folded
-//! into a new base.
+//! changed; a version is made by an edit (`build::Builder`) and costs the edit. An overlay whose edit reaches half its
+//! parent is folded into a new base, which keeps the stack's atom and relation ids.
 //!
-//! Rule ids are global to a stack: a base's are its rules' indexes; an overlay's added rules follow its parent's id
-//! space (`rule_base`). Rule hashes are of the rules' contents, so two images' equal rules hash the same.
-use super::{Encoder, Image, Parts, R, Reader, assemble, bad, hash, meta};
-use crate::code_rule_dsl::logic::front::{List, Lists, Name, Program, Rule, Value};
-use crate::code_rule_dsl::logic::program_facts::Facts;
-use std::collections::{BTreeMap, HashMap};
+//! Everything is looked up by id, through the stack: texts, relations, rules (by id, by head, by the literals that
+//! read a relation), declarations, facts, inputs and outputs. A version's digest is kept as it is made: its parent's,
+//! less what the edit removes or replaces, plus what it adds.
+use super::handles::{AtomRef, RuleRef};
+use super::{AtomId, Cell, Image, RelId, RuleId, bad};
+use crate::code_rule_dsl::logic::front::{Lists, Program};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 /// Most ranges a view may have; past it a subset is an overlay.
 pub const MAX_RANGES: usize = 32;
 
 pub enum Version {
-    Base(Arc<Image>),
-    View { base: Arc<Image>, ranges: Vec<(u32, u32)>, size: usize },
-    Overlay { parent: Arc<Version>, delta: Arc<Image>, size: usize, depth: usize },
-}
-
-/// One version's change from its parent.
-#[derive(Default)]
-pub struct Edit<'a> {
-    /// Global ids of the parent's rules removed.
-    pub removed: Vec<u32>,
-    pub added: Vec<&'a Rule>,
-    pub parts: Parts<'a>,
-}
-
-impl Edit<'_> {
-    fn changes_parts(&self) -> bool {
-        let p = &self.parts;
-        !p.decls.is_empty() || !p.decls_gone.is_empty() || !p.facts.is_empty() || !p.facts_gone.is_empty() || p.inputs.is_some() || p.outputs.is_some() || p.about.is_some()
-    }
-    /// The edit's size: rules and part rows it states.
-    pub fn size(&self) -> usize {
-        let p = &self.parts;
-        self.removed.len() + self.added.len() + p.decls.len() + p.decls_gone.len() + p.facts.iter().map(|f| f.1.len().max(1)).sum::<usize>() + p.facts_gone.len()
-    }
+    Base { image: Arc<Image>, digest: u64 },
+    View { base: Arc<Image>, ranges: Vec<(u32, u32)>, size: usize, digest: u64 },
+    Overlay { parent: Arc<Version>, delta: Arc<Image>, size: usize, depth: usize, digest: u64 },
 }
 
 /// What made a version: which form an edit took.
@@ -49,290 +29,376 @@ pub enum Made {
     Folded,
 }
 
-/// A program's parts other than its rules, merged down a stack.
-struct Merged {
-    decls: BTreeMap<String, (Name, List<(Name, Name)>, u64)>,
-    facts: BTreeMap<(bool, String), (Vec<List<Value>>, u64)>,
-    inputs: (Vec<String>, u64),
-    outputs: (Vec<String>, u64),
+/// A declaration: its relation's name, and its columns' names and types.
+#[derive(Clone, Copy)]
+pub struct DeclRef<'v> {
+    im: &'v Image,
+    k: usize,
 }
 
-fn image_hash(im: &Image, r: R, k: usize) -> u64 {
-    im.u64s(r)[k]
+impl<'v> DeclRef<'v> {
+    pub fn name(self) -> AtomId {
+        self.im.decl_name(self.k)
+    }
+    pub fn cols(self) -> impl ExactSizeIterator<Item = (AtomId, AtomId)> + 'v {
+        self.im.decl_cols(self.k)
+    }
+    pub fn arity(self) -> usize {
+        self.cols().len()
+    }
+    pub fn hash(self) -> u64 {
+        self.im.decl_hash(self.k)
+    }
+}
+
+/// A fact relation: its name, whether it is one of the `.about` rows, and its rows.
+#[derive(Clone, Copy)]
+pub struct FactsRef<'v> {
+    im: &'v Image,
+    k: usize,
+}
+
+impl<'v> FactsRef<'v> {
+    pub fn name(self) -> AtomId {
+        self.im.fact_key(self.k).0
+    }
+    pub fn about(self) -> bool {
+        self.im.fact_key(self.k).1
+    }
+    pub fn rows(self) -> impl ExactSizeIterator<Item = impl ExactSizeIterator<Item = Cell> + 'v> + 'v {
+        self.im.fact_rows(self.k)
+    }
+    pub fn hash(self) -> u64 {
+        self.im.fact_hash(self.k)
+    }
+}
+
+/// A version's images, its own first, then its parent's.
+struct Down<'v>(Option<&'v Version>);
+
+impl<'v> Iterator for Down<'v> {
+    type Item = &'v Image;
+    fn next(&mut self) -> Option<&'v Image> {
+        match self.0? {
+            Version::Base { image, .. } | Version::View { base: image, .. } => {
+                self.0 = None;
+                Some(image)
+            }
+            Version::Overlay { parent, delta, .. } => {
+                self.0 = Some(parent);
+                Some(delta)
+            }
+        }
+    }
 }
 
 impl Version {
+    /// The base `bytes` hold.
     pub fn open(bytes: &[u8]) -> Result<Arc<Version>, String> {
         let image = Image::open(bytes)?;
         if image.is_delta() {
-            return Err(bad("a delta has no parent here"));
+            return Err(bad("a delta is opened over its parent (`Version::over`)"));
         }
-        Ok(Arc::new(Version::Base(Arc::new(image))))
+        let digest = image.own_sum();
+        Ok(Arc::new(Version::Base { image: Arc::new(image), digest }))
+    }
+
+    /// The overlay of `parent` and the delta `bytes` hold: the delta's bases must be `parent`'s id spaces, and what
+    /// it removes `parent`'s rules.
+    pub fn over(parent: &Arc<Version>, bytes: &[u8]) -> Result<Arc<Version>, String> {
+        let delta = Image::open(bytes)?;
+        if !delta.is_delta() || delta.atom_base() != parent.atom_end() || delta.rel_base() != parent.rel_end() || delta.rule_base() != parent.rule_end() {
+            return Err(bad("a delta over another parent"));
+        }
+        let removed = delta.removed();
+        if !removed.iter().all(|&g| parent.contains(RuleId(g))) {
+            return Err(bad("a delta removes a rule its parent does not have"));
+        }
+        let mut d = parent.digest();
+        for &g in removed {
+            d = d.wrapping_sub(parent.rule(RuleId(g)).expect("checked").hash());
+        }
+        for k in 0..delta.decl_count() {
+            if let Some(old) = parent.decl(delta.decl_name(k)) {
+                d = d.wrapping_sub(old.hash());
+            }
+        }
+        for &a in delta.u32s(super::R::DeclGone) {
+            if let Some(old) = parent.decl(AtomId(a)) {
+                d = d.wrapping_sub(old.hash());
+            }
+        }
+        for k in 0..delta.fact_count() {
+            let (a, about) = delta.fact_key(k);
+            if !about && let Some(old) = parent.facts(a) {
+                d = d.wrapping_sub(old.hash());
+            }
+        }
+        for &key in delta.u32s(super::R::FactGone) {
+            if let Some(old) = parent.facts(AtomId(key)) {
+                d = d.wrapping_sub(old.hash());
+            }
+        }
+        if delta.owns() & 1 != 0 {
+            d = d.wrapping_sub(parent.inputs_hash());
+        }
+        if delta.owns() & 2 != 0 {
+            d = d.wrapping_sub(parent.outputs_hash());
+        }
+        if delta.owns() & 4 != 0 {
+            for f in parent.about_facts() {
+                d = d.wrapping_sub(f.hash());
+            }
+        }
+        d = d.wrapping_add(delta.own_sum());
+        let size = parent.size() - removed.len() + delta.rules();
+        Ok(Arc::new(Version::Overlay { parent: parent.clone(), size, depth: parent.depth() + 1, digest: d, delta: Arc::new(delta) }))
+    }
+
+    /// A view of `base`'s rules in `ranges`, of `size` rules and digest `digest` (the builder's).
+    pub(crate) fn view(base: &Arc<Image>, ranges: Vec<(u32, u32)>, digest: u64) -> Arc<Version> {
+        let size = ranges.iter().map(|(s, e)| (e - s) as usize).sum();
+        Arc::new(Version::View { base: base.clone(), ranges, size, digest })
+    }
+
+    fn down(&self) -> Down<'_> {
+        Down(Some(self))
+    }
+    /// The image this version's own ids are numbered in: a base's, a view's base, an overlay's delta.
+    fn top(&self) -> &Image {
+        self.down().next().expect("a version has an image")
+    }
+    /// The base image this version is over, at the bottom of its stack.
+    pub(crate) fn root(&self) -> &Arc<Image> {
+        match self {
+            Version::Base { image, .. } | Version::View { base: image, .. } => image,
+            Version::Overlay { parent, .. } => parent.root(),
+        }
+    }
+    /// Whether `im` is one of this version's images: its ids are this version's.
+    pub(crate) fn holds_image(&self, im: &Image) -> bool {
+        self.down().any(|x| std::ptr::eq(x, im))
     }
 
     /// The number of rules.
     pub fn size(&self) -> usize {
         match self {
-            Version::Base(im) => im.rules(),
+            Version::Base { image, .. } => image.rules(),
             Version::View { size, .. } | Version::Overlay { size, .. } => *size,
         }
     }
-    /// The index in `stack` of this version's top image: a view reads its base's.
+    /// How many deltas are stacked on the base.
     pub fn depth(&self) -> usize {
         match self {
-            Version::Base(_) | Version::View { .. } => 0,
+            Version::Base { .. } | Version::View { .. } => 0,
             Version::Overlay { depth, .. } => *depth,
         }
     }
-    /// The rule ids this version's rules are numbered within.
-    pub fn id_space(&self) -> u32 {
+    /// One past the last id of each id space: atoms, relations, rules.
+    pub fn atom_end(&self) -> u32 {
+        self.top().atom_end()
+    }
+    pub fn rel_end(&self) -> u32 {
+        self.top().rel_end()
+    }
+    pub fn rule_end(&self) -> u32 {
+        self.top().rule_end()
+    }
+    /// The version's digest: the sum of its rules', declarations', fact relations' hashes, and its inputs' and
+    /// outputs'. Kept as the version is made; equal programs have equal digests, whatever their stacks.
+    pub fn digest(&self) -> u64 {
         match self {
-            Version::Base(im) | Version::View { base: im, .. } => im.rules() as u32,
-            Version::Overlay { delta, .. } => delta.rule_base() + delta.rules() as u32,
+            Version::Base { digest, .. } | Version::View { digest, .. } | Version::Overlay { digest, .. } => *digest,
         }
     }
-    /// The images of this version, the root first.
-    pub fn stack(&self) -> Vec<Arc<Image>> {
+
+    // -- names --
+
+    /// The text of atom `a`.
+    pub fn text(&self, a: AtomId) -> &str {
+        self.down().find(|im| a.0 >= im.atom_base()).expect("an atom of the stack").text(a)
+    }
+    /// The atom of `text`, if the version holds it.
+    pub fn find(&self, text: &str) -> Option<AtomId> {
+        self.down().find_map(|im| im.find(text))
+    }
+    /// The relation atom `a` names, if it names one.
+    pub fn rel_of(&self, a: AtomId) -> Option<RelId> {
+        self.down().find_map(|im| im.rel_of(a)).flatten()
+    }
+    /// The relation named `name`.
+    pub fn rel(&self, name: &str) -> Option<RelId> {
+        self.rel_of(self.find(name)?)
+    }
+    /// The atom naming relation `r`.
+    pub fn rel_atom(&self, r: RelId) -> AtomId {
+        self.down().find(|im| r.0 >= im.rel_base()).expect("a relation of the stack").rel_atom(r)
+    }
+    pub fn rel_name(&self, r: RelId) -> &str {
+        self.text(self.rel_atom(r))
+    }
+
+    // -- rules --
+
+    /// Each rule, in order: a base's, then each delta's added rules after what is left of its parent's.
+    pub fn rules(&self) -> Box<dyn Iterator<Item = RuleRef<'_>> + '_> {
         match self {
-            Version::Base(im) | Version::View { base: im, .. } => vec![im.clone()],
+            Version::Base { image, .. } => Box::new((0..image.rules() as u32).map(move |k| RuleRef::new(image, k, RuleId(k)))),
+            Version::View { base, ranges, .. } => Box::new(ranges.iter().flat_map(move |&(s, e)| (s..e).map(move |k| RuleRef::new(base, k, RuleId(k))))),
             Version::Overlay { parent, delta, .. } => {
-                let mut s = parent.stack();
-                s.push(delta.clone());
-                s
+                let removed = delta.removed();
+                let base = delta.rule_base();
+                Box::new(parent.rules().filter(move |r| removed.binary_search(&r.id().0).is_err()).chain((0..delta.rules() as u32).map(move |k| RuleRef::new(delta, k, RuleId(base + k)))))
             }
         }
     }
-    /// Each rule in order, as (its image in `stack`, its index there, its global id).
-    pub fn each_rule(&self, f: &mut dyn FnMut(usize, u32, u32)) {
-        match self {
-            Version::Base(im) => (0..im.rules() as u32).for_each(|k| f(0, k, k)),
-            Version::View { ranges, .. } => ranges.iter().for_each(|&(s, e)| (s..e).for_each(|k| f(0, k, k))),
-            Version::Overlay { parent, delta, depth, .. } => {
-                let removed = delta.u32s(R::Removed);
-                parent.each_rule(&mut |i, k, g| {
-                    if removed.binary_search(&g).is_err() {
-                        f(i, k, g)
-                    }
-                });
-                let at = *depth;
-                (0..delta.rules() as u32).for_each(|k| f(at, k, delta.rule_base() + k));
-            }
-        }
+    /// Whether rule `id` is one of this version's.
+    pub fn contains(&self, id: RuleId) -> bool {
+        self.rule(id).is_some()
     }
-    /// The rules whose head is `rel`, as `each_rule` gives them, by each image's index.
-    pub fn by_head(&self, rel: &str, f: &mut dyn FnMut(usize, u32, u32)) {
+    /// Rule `id`, if it is one of this version's.
+    pub fn rule(&self, id: RuleId) -> Option<RuleRef<'_>> {
         match self {
-            Version::Base(im) => {
-                if let Some(r) = im.rel(rel) {
-                    im.by_head(r).iter().for_each(|&k| f(0, k, k));
-                }
-            }
+            Version::Base { image, .. } => (id.index() < image.rules()).then(|| RuleRef::new(image, id.0, id)),
             Version::View { base, ranges, .. } => {
-                if let Some(r) = base.rel(rel) {
-                    for &k in base.by_head(r) {
-                        let at = ranges.partition_point(|&(s, _)| s <= k);
-                        if at > 0 && k < ranges[at - 1].1 {
-                            f(0, k, k);
-                        }
-                    }
-                }
+                let at = ranges.partition_point(|&(s, _)| s <= id.0);
+                (at > 0 && id.0 < ranges[at - 1].1).then(|| RuleRef::new(base, id.0, id))
             }
-            Version::Overlay { parent, delta, depth, .. } => {
-                let removed = delta.u32s(R::Removed);
-                parent.by_head(rel, &mut |i, k, g| {
-                    if removed.binary_search(&g).is_err() {
-                        f(i, k, g)
-                    }
-                });
-                if let Some(r) = delta.rel(rel) {
-                    let at = *depth;
-                    delta.by_head(r).iter().for_each(|&k| f(at, k, delta.rule_base() + k));
-                }
-            }
-        }
-    }
-    /// The hash of the rule of global id `g`.
-    pub fn rule_hash(&self, g: u32) -> u64 {
-        match self {
-            Version::Base(im) | Version::View { base: im, .. } => im.rule_hash(g as usize),
             Version::Overlay { parent, delta, .. } => {
-                if g >= delta.rule_base() {
-                    delta.rule_hash((g - delta.rule_base()) as usize)
+                if id.0 >= delta.rule_base() {
+                    (id.0 < delta.rule_end()).then(|| RuleRef::new(delta, id.0 - delta.rule_base(), id))
+                } else if delta.removed().binary_search(&id.0).is_ok() {
+                    None
                 } else {
-                    parent.rule_hash(g)
+                    parent.rule(id)
                 }
             }
         }
     }
-
-    fn merged(&self, lists: &Lists) -> Result<Merged, String> {
+    /// The rules whose head is relation `rel`, in the order `rules` gives them.
+    pub fn heads(&self, rel: RelId) -> Box<dyn Iterator<Item = RuleRef<'_>> + '_> {
         match self {
-            Version::Base(im) | Version::View { base: im, .. } => {
-                let mut m = Merged { decls: BTreeMap::new(), facts: BTreeMap::new(), inputs: (Vec::new(), 0), outputs: (Vec::new(), 0) };
-                apply(&mut m, im, lists);
-                Ok(m)
-            }
+            Version::Base { image, .. } => Box::new(image.heads(rel).iter().map(move |&k| RuleRef::new(image, k, RuleId(k)))),
+            Version::View { base, ranges, .. } => Box::new(base.heads(rel).iter().filter(move |&&k| {
+                let at = ranges.partition_point(|&(s, _)| s <= k);
+                at > 0 && k < ranges[at - 1].1
+            }).map(move |&k| RuleRef::new(base, k, RuleId(k)))),
             Version::Overlay { parent, delta, .. } => {
-                let mut m = parent.merged(lists)?;
-                apply(&mut m, delta, lists);
-                Ok(m)
+                let removed = delta.removed();
+                let base = delta.rule_base();
+                Box::new(parent.heads(rel).filter(move |r| removed.binary_search(&r.id().0).is_err()).chain(delta.heads(rel).iter().map(move |&k| RuleRef::new(delta, k, RuleId(base + k)))))
+            }
+        }
+    }
+    /// The atoms in rules' bodies that read relation `rel` (an aggregate's included), each with its rule.
+    pub fn readers(&self, rel: RelId) -> Box<dyn Iterator<Item = (RuleRef<'_>, AtomRef<'_>)> + '_> {
+        match self {
+            Version::Base { image, .. } => Box::new(image.reads(rel).map(move |(k, n)| (RuleRef::new(image, k, RuleId(k)), AtomRef::new(image, n)))),
+            Version::View { base, ranges, .. } => Box::new(base.reads(rel).filter(move |&(k, _)| {
+                let at = ranges.partition_point(|&(s, _)| s <= k);
+                at > 0 && k < ranges[at - 1].1
+            }).map(move |(k, n)| (RuleRef::new(base, k, RuleId(k)), AtomRef::new(base, n)))),
+            Version::Overlay { parent, delta, .. } => {
+                let removed = delta.removed();
+                let base = delta.rule_base();
+                Box::new(parent.readers(rel).filter(move |(r, _)| removed.binary_search(&r.id().0).is_err()).chain(delta.reads(rel).map(move |(k, n)| (RuleRef::new(delta, k, RuleId(base + k)), AtomRef::new(delta, n)))))
             }
         }
     }
 
-    /// The program this version is.
-    pub fn program(&self, lists: &Lists) -> Result<Program, String> {
-        let stack = self.stack();
-        let mut readers: Vec<Reader<'_>> = stack.iter().map(|im| Reader::new(im, lists)).collect();
-        let mut at = Vec::with_capacity(self.size());
-        self.each_rule(&mut |i, k, _| at.push((i, k)));
-        let mut rules = Vec::with_capacity(at.len());
-        for (i, k) in at {
-            rules.push(readers[i].rule(k as usize)?);
-        }
-        drop(readers);
-        let m = self.merged(lists)?;
-        let mut facts = BTreeMap::new();
-        let mut about = Facts::new();
-        for ((is_about, rel), (rows, _)) in m.facts {
-            if is_about {
-                about.insert(rel, rows);
-            } else {
-                facts.insert(rel, rows);
+    // -- parts --
+
+    /// The declaration of the relation named `a`.
+    pub fn decl(&self, a: AtomId) -> Option<DeclRef<'_>> {
+        for im in self.down() {
+            if let Some(k) = im.decl(a) {
+                return Some(DeclRef { im, k });
+            }
+            if im.decl_gone(a) {
+                return None;
             }
         }
-        let decls = m.decls.into_values().map(|(n, c, _)| (n, c)).collect();
-        assemble(rules, decls, facts, about, m.inputs.0, m.outputs.0)
+        None
     }
-
-    /// The version's digest: its rules' hashes and its parts' hashes, summed. An edit's digest is its parent's, less
-    /// what it removes, plus what it adds (`edit` keeps it so; here it is read whole).
-    pub fn digest(&self, lists: &Lists) -> Result<u64, String> {
-        let mut d = 0u64;
-        self.each_rule(&mut |_, _, g| d = d.wrapping_add(self.rule_hash(g)));
-        let m = self.merged(lists)?;
-        for (_, _, h) in m.decls.values() {
-            d = d.wrapping_add(*h);
-        }
-        for (_, h) in m.facts.values() {
-            d = d.wrapping_add(*h);
-        }
-        Ok(d.wrapping_add(m.inputs.1).wrapping_add(m.outputs.1))
+    pub fn decl_of(&self, name: &str) -> Option<DeclRef<'_>> {
+        self.decl(self.find(name)?)
     }
-
-    /// The version `edit` makes of `parent`: a view when it only drops rules of a base, in few ranges; else an
-    /// overlay; folded into a new base when the edit reaches half the parent.
-    pub fn edit(parent: &Arc<Version>, edit: Edit<'_>, lists: &Lists) -> Result<(Arc<Version>, Made), String> {
-        let mut removed = edit.removed.clone();
-        removed.sort_unstable();
-        removed.dedup();
-        let size = parent.size() - removed.len() + edit.added.len();
-        if edit.added.is_empty() && !edit.changes_parts()
-            && let Version::Base(base) = &**parent
-        {
-            let mut ranges = Vec::new();
-            let mut start = 0u32;
-            for &r in &removed {
-                if r > start {
-                    ranges.push((start, r));
+    /// Every declaration, by atom.
+    pub fn decls(&self) -> Vec<DeclRef<'_>> {
+        let mut out: BTreeMap<u32, DeclRef<'_>> = BTreeMap::new();
+        let mut hidden: HashSet<u32> = HashSet::new();
+        for im in self.down() {
+            for k in 0..im.decl_count() {
+                let a = im.decl_name(k).0;
+                if !hidden.contains(&a) {
+                    out.entry(a).or_insert(DeclRef { im, k });
                 }
-                start = r + 1;
             }
-            if (start as usize) < base.rules() {
-                ranges.push((start, base.rules() as u32));
+            for k in 0..im.decl_count() {
+                hidden.insert(im.decl_name(k).0);
             }
-            if ranges.len() <= MAX_RANGES {
-                return Ok((Arc::new(Version::View { base: base.clone(), ranges, size }), Made::View));
+            hidden.extend(im.u32s(super::R::DeclGone).iter().copied());
+        }
+        out.into_values().collect()
+    }
+    /// The facts of relation `a` (not the `.about` rows).
+    pub fn facts(&self, a: AtomId) -> Option<FactsRef<'_>> {
+        for im in self.down() {
+            if let Some(k) = im.fact(a, false) {
+                return Some(FactsRef { im, k });
+            }
+            if im.fact_gone(a, false) {
+                return None;
             }
         }
-        let mut e = Encoder::default();
-        for r in &edit.added {
-            e.rule(r)?;
+        None
+    }
+    /// Every fact relation (not the `.about` rows), by atom.
+    pub fn all_facts(&self) -> Vec<FactsRef<'_>> {
+        let mut out: BTreeMap<u32, FactsRef<'_>> = BTreeMap::new();
+        let mut hidden: HashSet<u32> = HashSet::new();
+        for im in self.down() {
+            for k in 0..im.fact_count() {
+                let (a, about) = im.fact_key(k);
+                if !about && !hidden.contains(&a.0) {
+                    out.entry(a.0).or_insert(FactsRef { im, k });
+                }
+            }
+            for k in 0..im.fact_count() {
+                hidden.insert(im.fact_key(k).0.0);
+            }
+            hidden.extend(im.u32s(super::R::FactGone).iter().copied());
         }
-        let bytes = e.finish(&edit.parts, Some((parent.id_space(), &removed)));
-        let delta = Arc::new(Image::open(&bytes)?);
-        let overlay = Arc::new(Version::Overlay { parent: parent.clone(), delta, size, depth: parent.depth() + 1 });
-        if 2 * edit.size() >= parent.size().max(1) {
-            let folded = super::encode(&overlay.program(lists)?)?;
-            return Ok((Version::open(&folded)?, Made::Folded));
-        }
-        Ok((overlay, Made::Overlay))
+        out.into_values().collect()
+    }
+    /// The `.about` rows: the program's other fields, as facts; all of them the image's that owns them.
+    pub fn about_facts(&self) -> Vec<FactsRef<'_>> {
+        let im = self.down().find(|im| im.owns() & 4 != 0).expect("a base owns its `.about` rows");
+        (0..im.fact_count()).filter(|&k| im.fact_key(k).1).map(|k| FactsRef { im, k }).collect()
+    }
+    fn owner(&self, bit: u64) -> &Image {
+        self.down().find(|im| im.owns() & bit != 0).expect("a base owns its inputs and outputs")
+    }
+    pub fn inputs(&self) -> impl ExactSizeIterator<Item = AtomId> + '_ {
+        self.owner(1).inputs().iter().map(|&a| AtomId(a))
+    }
+    pub fn outputs(&self) -> impl ExactSizeIterator<Item = AtomId> + '_ {
+        self.owner(2).outputs().iter().map(|&a| AtomId(a))
+    }
+    pub(crate) fn inputs_hash(&self) -> u64 {
+        self.owner(1).inputs_hash()
+    }
+    pub(crate) fn outputs_hash(&self) -> u64 {
+        self.owner(2).outputs_hash()
     }
 
-    /// `to` as an edit of this version: its rules matched by hash, its parts by relation. For a caller that holds
-    /// both programs (a test, the trace's replay); a pass states its edit instead.
-    pub fn diff<'p>(&self, to: &'p Program, about: &'p Facts, lists: &Lists) -> Result<Edit<'p>, String> {
-        let mut want: HashMap<u64, Vec<usize>> = HashMap::new();
-        for (k, r) in to.rules.iter().enumerate() {
-            want.entry(hash(r)).or_default().push(k);
-        }
-        let mut kept = vec![false; to.rules.len()];
-        let mut removed = Vec::new();
-        self.each_rule(&mut |_, _, g| match want.get_mut(&self.rule_hash(g)).and_then(Vec::pop) {
-            Some(k) => kept[k] = true,
-            None => removed.push(g),
-        });
-        let added = to.rules.iter().zip(&kept).filter(|(_, k)| !**k).map(|(r, _)| r).collect();
-        let m = self.merged(lists)?;
-        let mut parts = Parts::default();
-        for (n, c) in &to.decls {
-            if m.decls.get(n.as_str()).is_none_or(|(_, _, h)| *h != hash(&(n.as_str(), c.as_slice()))) {
-                parts.decls.push((n, c.as_slice()));
-            }
-        }
-        for n in m.decls.keys() {
-            if !to.decls.contains_key(n.as_str()) {
-                parts.decls_gone.push(n.clone());
-            }
-        }
-        let mut facts: Vec<(bool, &str, &[List<Value>])> = to.facts.iter().map(|(r, rows)| (false, r.as_str(), rows.as_slice())).collect();
-        facts.extend(about.iter().map(|(r, rows)| (true, r.as_str(), rows.as_slice())));
-        for &(is_about, rel, rows) in &facts {
-            if m.facts.get(&(is_about, rel.to_owned())).is_none_or(|(_, h)| *h != hash(&(rel, rows, is_about))) {
-                parts.facts.push((rel, rows, is_about));
-            }
-        }
-        for (is_about, rel) in m.facts.keys() {
-            if !facts.iter().any(|(a, r, _)| a == is_about && r == rel) {
-                parts.facts_gone.push((rel.clone(), *is_about));
-            }
-        }
-        if m.inputs.1 != hash(&to.inputs) {
-            parts.inputs = Some(&to.inputs);
-        }
-        if m.outputs.1 != hash(&to.outputs) {
-            parts.outputs = Some(&to.outputs);
-        }
-        Ok(Edit { removed, added, parts })
+    /// The program this version is, as the tree.
+    pub fn program(&self, lists: &Lists) -> Result<Program, String> {
+        super::Tree::new(self, lists).program()
     }
-}
 
-/// `im`'s parts over `m`: its declarations and fact relations replace those of their names, its gone ones go, and its
-/// inputs and outputs replace the parent's where it has its own.
-fn apply(m: &mut Merged, im: &Image, lists: &Lists) {
-    let mut r = Reader::new(im, lists);
-    let (decls, gone) = r.decls();
-    for g in gone {
-        m.decls.remove(&g);
-    }
-    for (k, (n, c)) in decls.into_iter().enumerate() {
-        m.decls.insert(n.to_string(), (n, c, image_hash(im, R::DeclHash, k)));
-    }
-    let (facts, gone) = r.facts();
-    for (rel, about) in gone {
-        m.facts.remove(&(about, rel));
-    }
-    let owns = im.u64s(R::Meta)[meta::OWNS];
-    if owns & 4 != 0 {
-        m.facts.retain(|(about, _), _| !about);
-    }
-    for (k, (rel, about, rows)) in facts.into_iter().enumerate() {
-        m.facts.insert((about, rel), (rows, image_hash(im, R::FactHash, k)));
-    }
-    if owns & 1 != 0 {
-        m.inputs = (r.names(R::Inputs), im.u64s(R::Meta)[meta::INPUTS_HASH]);
-    }
-    if owns & 2 != 0 {
-        m.outputs = (r.names(R::Outputs), im.u64s(R::Meta)[meta::OUTPUTS_HASH]);
+    /// A new base of this version's program, keeping its atom and relation ids (rule ids are renumbered from 0).
+    pub fn fold(&self) -> Result<Arc<Version>, String> {
+        super::Builder::folding(self).finish().map(|(v, _)| v)
     }
 }

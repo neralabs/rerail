@@ -871,12 +871,11 @@ fn reads(dir: &Path) {
     }
 }
 
-/// Every making of the trace, made by the real `program_image::Version::edit` from its parent's version (each
-/// `to` stated as an edit of its `from`, by `diff`): each version must be its program, rule for rule (an overlay
+/// Every making of the trace, made by the real `program_image::Builder` from its parent's version (each `to`
+/// stated as an edit of its `from`, by `diff`): each version must be its program, rule for rule (an overlay
 /// appends what it adds, so rules are compared as a multiset) and part for part, and its digest the digest of that
 /// program made whole.
 fn validate(dir: &Path) {
-    use rerail_logic::code_rule_dsl::logic::program_facts;
     use rerail_logic::code_rule_dsl::logic::program_image::{self, version::Made, Version};
     let text = std::fs::read_to_string(dir.join("trace.tsv")).expect("trace.tsv");
     let ops: Vec<(String, String, String)> = text.lines().filter_map(|l| {
@@ -885,7 +884,7 @@ fn validate(dir: &Path) {
     }).collect();
     let lists = Lists::default();
     let mut progs: HashMap<String, Program> = HashMap::new();
-    let mut load = |d: &str, progs: &mut HashMap<String, Program>| {
+    let load = |d: &str, progs: &mut HashMap<String, Program>| {
         if !progs.contains_key(d) {
             let t = std::fs::read_to_string(dir.join(format!("{d}.rr"))).expect("program text");
             progs.insert(d.to_owned(), program_text::read_in(&t, &lists).expect("reads"));
@@ -906,12 +905,7 @@ fn validate(dir: &Path) {
         load(to, &mut progs);
         let (f, t) = (&progs[from], &progs[to]);
         let parent = versions.entry(from.clone()).or_insert_with(|| Version::open(&program_image::encode(f).expect("encodes")).expect("opens")).clone();
-        let mut about = program_facts::Facts::new();
-        program_facts::write_about(&mut about, "a", t);
-        let ((v, made), c) = measure(|| {
-            let edit = parent.diff(t, &about, &lists).expect("diff");
-            Version::edit(&parent, edit, &lists).expect("edit")
-        });
+        let ((v, made), c) = measure(|| parent.diff(t).expect("diff").finish().expect("edit"));
         edit_insn += c.insn;
         let (_, c) = measure(|| {
             let mut p = f.clone();
@@ -927,12 +921,12 @@ fn validate(dir: &Path) {
         let got = v.program(&lists).expect("reads");
         assert_eq!(key(&got), key(t), "{site}: {from} → {to}");
         let whole = Version::open(&program_image::encode(t).expect("encodes")).expect("opens");
-        assert_eq!(v.digest(&lists).unwrap(), whole.digest(&lists).unwrap(), "{site}: {from} → {to}: digest");
+        assert_eq!(v.digest(), whole.digest(), "{site}: {from} → {to}: digest");
         let _ = Made::View;
         versions.insert(to.clone(), v);
         ok += 1;
     }
-    println!("\n==== {}: {ok} of {} makings made by Version::edit are their programs, digests equal", dir.display(), ops.len());
+    println!("\n==== {}: {ok} of {} makings made by the Builder are their programs, digests equal", dir.display(), ops.len());
     for (k, n) in &made_count {
         println!("  {k:<36} {n:>6}");
     }

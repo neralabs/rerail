@@ -405,6 +405,67 @@ the regions (the tape vtabs' pattern), with no copy. Then the engine's own rules
 
 That is the "phases, not new evaluators" shape applied to the compiler itself.
 
+### 11. One way in, one way out
+
+An image is read and written only through the module's abstractions, so no caller hand-rolls access to regions.
+`R`, the region list, is public only so that tests can damage a chosen region. The typed slices are private to the
+module.
+
+**Ids hold through a whole stack.** A delta's atoms, relations and rules are numbered after its parent's
+(`atom_base`, `rel_base`, `rule_base`). A text is held once in a stack, by the first image that needs it. So an id
+means the same thing in every version of a stack, and a planner keyed on `RelId` reads a base, a view and an overlay
+alike.
+
+- A parent's atom that a delta makes a relation (a constant used as a relation's name) keeps its atom id. The delta's
+  `Promoted` region records its relation number.
+- A delta's indexes are keyed by the relations it touches (`HeadKeys`, `ReadKeys`). So a delta's index is the size
+  of its edit.
+- A fold lays its stack's string and relation tables end to end. So it keeps every atom and relation id, and
+  renumbers only the rules.
+
+**Reading** goes through `Version` and the handles:
+
+| | |
+|---|---|
+| names | `text(AtomId)`, `find(&str)`, `rel(&str)`, `rel_of(AtomId)`, `rel_name(RelId)` |
+| rules | `rules()`, `rule(RuleId)`, `heads(RelId)`, `readers(RelId)` (each with the atom that reads), `contains` |
+| a rule | `RuleRef`: `id`, `hash`, `head()`, `body()`, `var(Slot)`, `reads()` |
+| a literal | `LitRef`: `node`, `offset` (from its rule's first node, the same wherever the rule is copied), `atom()`, `view()` |
+| a literal's form | `Lit::Atom` / `Cmp` / `Agg` / `Nearest` / `Ast` |
+| a term | `TermRef::Var(Slot)` / `Wild` / `Top` / `Int` / `Str(AtomId)` / `Call(AtomId, args)` |
+| parts | `decl(AtomId)`, `decls()`, `facts(AtomId)`, `all_facts()`, `about_facts()`, `inputs()`, `outputs()` |
+| identity | `digest()`, kept as the version is made |
+| the tree | `program()` and `Tree::rule(RuleRef)`, for callers that have not moved yet |
+
+`Image::open` checks every rule's nodes against the grammar, so a handle never fails and never panics on a damaged
+image.
+
+**Writing** goes through `Builder`, the one way an image is made: a base, a delta, or a fold.
+
+```text
+let mut b = Builder::on(&parent);       // or Builder::base(), Builder::of_program(&tree)
+b.remove(rule.id());                    // or b.retain(|r| ...)
+b.add(&tree_rule)?;                     // from the tree
+b.copy(&other, other_rule);             // a rule of any version: its nodes where the ids are the same, else by text
+b.rule().head("p", &[T::Var("x")])      // term by term, names by text or by id
+        .atom(rel_id, &[T::Var("x"), T::Wild])
+        .lit(&other, rule, lit)         // a literal copied from another rule
+        .finish()?;
+b.declare("p", &[("x", "int")]);  b.set_facts(..);  b.set_inputs(..);  b.set_about(..);
+let (v, made) = b.finish()?;            // View, Overlay or Folded, by the edit's size
+```
+
+- The builder chooses the form:
+  - a view when the edit only removes rules of a base or a view, and few ranges are left;
+  - an overlay otherwise;
+  - a fold at half the parent.
+- It keeps the digest: the parent's, less what the edit removes or replaces, plus the delta's own sum.
+- A rule refused, or dropped unfinished, is not written.
+- `Version::diff(&tree)` states one program as an edit of another, for tests and the trace's replay. A pass states
+  its own edit instead.
+- Hashes are of texts, never of ids. So a rule written term by term, a rule from the tree, and a copy into an image of
+  other ids all hash the same, and digests agree across stacks.
+
 ## Stages
 
 Each stage leaves the engine whole, its tests green, and dl1's findings the same.
@@ -548,6 +609,38 @@ and its zstd are not counted. Those cost the same for a text and an image.
   and are not worth tuning before then.
 - **Peak memory.** Peak memory needs to be measured on an idle machine. The copy into the image's aligned buffer
   at open (§3) can be released once the tree is built.
+
+### Stage 2, step 1: the access layer (§11)
+
+Built 2026-11-13: image format 2, ids stable through a stack, handles, and `Builder`.
+
+The module's files:
+
+| File | What it holds |
+|---|---|
+| `program_image.rs` | regions, ids, the open check |
+| `encoder.rs` | the only writer |
+| `handles.rs` | rules, atoms, literals, terms |
+| `version.rs` | lookups by id and by name |
+| `build.rs` | `Builder` and `RuleBuilder` |
+| `tree.rs` | the tree, read through the handles |
+| `csr.rs` | dense and keyed indexes |
+
+The tree reader and `diff` are rewritten on these. So is a fold, which now copies rule nodes as they are.
+
+- **Tests.** All 20 pass. Three are new:
+  - ids are the same through a stack and a fold (including a parent's constant that a delta makes a relation);
+  - the builder writes what the tree writes, hash for hash, including copies into a version of other ids and copied
+    literals; a refused or dropped rule is not written;
+  - the handles agree with the tree, by rule, by head and by reader, on every sampled pack program and on every
+    version in the stacking test.
+- **Trace replay.** All 426 warm and 4,593 cold versions equal their programs and digests. The cold replay's diff
+  and edit fell from 17.0 G to 8.8 G instructions, because folds now copy nodes instead of going through the tree.
+- **dl1** (images required, profiling build): findings are the same as the previous build's, cold (54.8 G insn)
+  and warm (19.8 G).
+- **Open.** An image's open now checks every node: 108 M instructions on the warm trace's 276 programs, against
+  28 M for the regions alone. That is still 15× cheaper than parsing. The check could run once when an image is
+  stored, with the store's sha256 guarding it after that.
 
 ## The open questions, simulated
 

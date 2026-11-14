@@ -46,6 +46,18 @@ impl<T: Copy> Extents<T> {
             self.len += n;
         }
     }
+    /// Drops the items from `n` on (a write abandoned part way); what is left keeps its addresses.
+    pub fn truncate(&mut self, n: usize) {
+        while self.len > n {
+            let last = self.ext.last_mut().expect("an extent");
+            let cut = (self.len - n).min(last.len());
+            last.truncate(last.len() - cut);
+            self.len -= cut;
+            if last.is_empty() {
+                self.ext.pop();
+            }
+        }
+    }
     /// Extent and offset of index `i`: extent k holds [(2^k − 1)·first, (2^(k+1) − 1)·first).
     #[inline]
     fn place(&self, i: usize) -> (usize, usize) {

@@ -148,6 +148,15 @@ impl Strings {
         let start = if id == 0 { 0 } else { self.ends[id as usize - 1] as usize };
         &self.bytes[start..self.ends[id as usize] as usize]
     }
+    /// The text of `id`.
+    pub fn text(&self, id: u32) -> &str {
+        // SAFETY: every entry was interned from a `&str`.
+        unsafe { std::str::from_utf8_unchecked(self.get(id)) }
+    }
+    /// The hash of `id`'s text (`hash`), as the table keeps it.
+    pub fn hash_of(&self, id: u32) -> u64 {
+        self.hashes[id as usize]
+    }
     pub fn find(&self, s: &str) -> Option<u32> {
         let t = &self.table;
         find_in(&t.buckets, &t.over, t.level, t.split, hash(s.as_bytes()), |id| self.get(id) == s.as_bytes())

@@ -291,7 +291,8 @@ fn images() -> &'static str {
 /// stays its text's digest, which the rows that name a program hold, and the image's source is its own bytes' sha256,
 /// as every source's is. The format is in the key, so another format's image is never found for it.
 pub fn image_key(digest: &[u8; 32]) -> HashKey {
-    HashKey::sha256(&[b"rerail program image 1\0".as_slice(), digest.as_slice()].concat())
+    let format = crate::code_rule_dsl::logic::program_image::FORMAT;
+    HashKey::sha256(&[format!("rerail program image {format}\0").as_bytes(), digest.as_slice()].concat())
 }
 
 /// What the store keeps of a program, as read: its image (decision 0173), or its text where it has no image.

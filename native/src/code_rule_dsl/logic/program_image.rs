@@ -1,4 +1,4 @@
-//! A program as a flat image (decision 0173): a fixed set of regions, every reference an index, the bytes kept in the
+//! A program as a flat image (decision 0173): a fixed set of regions, every reference an id, the bytes kept in the
 //! store's database as a source, and read by viewing them in place.
 //!
 //! ```text
@@ -7,8 +7,8 @@
 //! rels     relation number → its atom; atom → relation number + 1 (0: none)
 //! nodes    kind (u8), size (u32), val (u32), in preorder; ints (i64) for the values past 31 bits
 //! rules    each rule's first node, its variables' range, its hash
-//! parts    declarations, facts (and the `.about` rows), inputs, outputs, each with its hash
-//! indexes  rules by head relation, and the literals that read each relation, as CSR
+//! parts    declarations and facts (sorted by atom), inputs, outputs, each with its hash
+//! indexes  rules by head relation, and the literals that read each relation: CSR, keyed in a delta
 //! delta    the parent's rules removed, its declarations and facts gone (an overlay's image only)
 //! ```
 //!
@@ -27,31 +27,75 @@
 //! //   9     int   1     3         small, so held in val
 //! ```
 //!
-//! Every name is an id into the image's own string table (the store's atoms take its place in a later stage). A
-//! program read from an image is the program written, field by field: `encode` refuses what it cannot keep, as
-//! `program_text::print` does.
-use super::front::{AggOp, Atom, Literal, Lists, Name, Program, Rule, Term, Value};
+//! **Ids are global to a stack.** An image's atoms, relations and rules are numbered after its parent's
+//! (`atom_base`, `rel_base`, `rule_base`): a delta holds only the strings, relations and rules it adds, and every id
+//! means the same thing in every version of the stack. A text is held once in a stack, by the first image that needs
+//! it. A fold keeps the atoms' and relations' ids (its tables are its stack's, laid end to end).
+//!
+//! The image is read through handles (`handles`: rules, atoms, literals, terms), versions (`version`: lookups by
+//! id and by name, rules by head and by reader) and written through `build::Builder`, never by indexing regions:
+//! the regions and their layout are this module's.
+use super::front::{Lists, Name, Program, Value};
 use super::program_facts::{self, Facts};
-use std::collections::{BTreeMap, HashMap};
-use std::hash::BuildHasher;
-use std::sync::Arc;
+use std::collections::BTreeMap;
 
+pub mod build;
+pub mod csr;
+mod encoder;
 pub mod extents;
 pub mod grouped;
+pub mod handles;
 pub mod strings;
+mod tree;
 pub mod version;
 
+pub use build::{Builder, Rel, RuleBuilder, T};
 pub use extents::Extents;
 pub use grouped::Grouped;
+pub use handles::{AggRef, AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
 pub use strings::Strings;
-pub use version::Version;
+pub use tree::Tree;
+pub use version::{DeclRef, FactsRef, Made, Version};
 
-pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x01";
-pub const FORMAT: u32 = 1;
+pub const MAGIC: [u8; 8] = *b"RRPIMG\x00\x02";
+pub const FORMAT: u32 = 2;
 /// The program the `.about` rows are written as (`program_facts`), as the text has them.
 const ABOUT: &str = "a";
 
-/// The regions, in their order in the image.
+// ---- ids ----
+
+macro_rules! id {
+    ($(#[$m:meta])* $name:ident) => {
+        $(#[$m])*
+        #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+        #[repr(transparent)]
+        pub struct $name(pub u32);
+        impl $name {
+            pub fn index(self) -> usize {
+                self.0 as usize
+            }
+        }
+    };
+}
+id!(
+    /// A string: a name, a constant, a type. Global to a stack.
+    AtomId
+);
+id!(
+    /// A relation's number. Global to a stack.
+    RelId
+);
+id!(
+    /// A rule's number. Global to a stack: an overlay's added rules follow its parent's.
+    RuleId
+);
+id!(
+    /// A variable of one rule: its first appearance's order in the rule.
+    Slot
+);
+
+/// The regions, in their order in the image. Named here for the image's own code and for tests that damage one;
+/// everything else reads an image by its handles and versions.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(usize)]
 pub enum R {
@@ -90,32 +134,40 @@ pub enum R {
     Removed,
     DeclGone,
     FactGone,
+    /// A delta's index keys: the relations its `HeadStart` and `ReadStart` are over (empty in a base: dense).
+    HeadKeys,
+    ReadKeys,
+    /// A delta's atoms of its parent's that it makes relations: (atom << 32 | relation), sorted.
+    Promoted,
 }
-pub const REGIONS: usize = 35;
+pub(crate) const REGIONS: usize = 38;
 /// Each region's item width in bytes. Buckets are 64-byte records.
-const WIDTH: [u32; REGIONS] = [8, 1, 4, 64, 64, 4, 4, 1, 4, 4, 8, 4, 4, 8, 4, 4, 4, 4, 8, 4, 4, 4, 1, 8, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4];
+const WIDTH: [u32; REGIONS] = [8, 1, 4, 64, 64, 4, 4, 1, 4, 4, 8, 4, 4, 8, 4, 4, 4, 4, 8, 4, 4, 4, 1, 8, 8, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 8];
 const HEADER: usize = 16 + 24 * REGIONS;
 
 /// `Meta`'s words.
-mod meta {
+pub(crate) mod meta {
     /// 0: a base; 1: an overlay's delta.
     pub const KIND: usize = 0;
-    /// The rule ids an overlay's added rules start at: the parent's id space.
+    /// Where this image's rules, atoms and relations are numbered from: its parent's id spaces.
     pub const RULE_BASE: usize = 1;
-    pub const HASH_LEVEL: usize = 2;
-    pub const HASH_SPLIT: usize = 3;
-    pub const HASH_COUNT: usize = 4;
+    pub const ATOM_BASE: usize = 2;
+    pub const REL_BASE: usize = 3;
+    pub const HASH_LEVEL: usize = 4;
+    pub const HASH_SPLIT: usize = 5;
+    pub const HASH_COUNT: usize = 6;
     /// Bit 0: the inputs are this image's; bit 1, the outputs; bit 2, the `.about` rows. A base has all three.
-    pub const OWNS: usize = 5;
-    /// The hashes of the inputs, the outputs and the `.about` rows.
-    pub const INPUTS_HASH: usize = 6;
-    pub const OUTPUTS_HASH: usize = 7;
-    pub const ABOUT_HASH: usize = 8;
-    pub const WORDS: usize = 9;
+    pub const OWNS: usize = 7;
+    pub const INPUTS_HASH: usize = 8;
+    pub const OUTPUTS_HASH: usize = 9;
+    /// The sum of this image's own hashes: its rules', declarations', fact relations', and its inputs' and outputs'
+    /// where it owns them. A base's digest; an overlay's part of its own.
+    pub const OWN_SUM: usize = 10;
+    pub const WORDS: usize = 11;
 }
 
 /// Node kinds (the low five bits of `Kind`; the high three are the kind's flags).
-pub mod kind {
+pub(crate) mod kind {
     pub const RULE: u8 = 1;
     pub const ATOM: u8 = 2;
     pub const CMP: u8 = 3;
@@ -134,16 +186,20 @@ pub mod kind {
     pub const GATED: u8 = 0x40;
     /// An int's flag: `val` indexes `Ints`.
     pub const BIG: u8 = 0x80;
+    /// Whether `val` of a node of kind `k` is an atom id (a string, a call's function, a kindset, a matcher).
+    pub fn val_is_atom(k: u8) -> bool {
+        matches!(k & MASK, STR | CALL | NEAREST | AST)
+    }
 }
-const OPS: [&str; 6] = ["=", "!=", "<", "<=", ">", ">="];
 /// A fact relation's flag in `FactRel`: one of the `.about` rows.
-const ABOUT_BIT: u32 = 1 << 31;
+pub(crate) const ABOUT_BIT: u32 = 1 << 31;
 
 pub fn hash<T: std::hash::Hash + ?Sized>(x: &T) -> u64 {
+    use std::hash::BuildHasher;
     foldhash::quality::FixedState::with_seed(0x0173).hash_one(x)
 }
 
-fn bad(what: impl std::fmt::Display) -> String {
+pub(crate) fn bad(what: impl std::fmt::Display) -> String {
     format!("program image: {what}")
 }
 
@@ -157,7 +213,8 @@ pub struct Image {
 }
 
 impl Image {
-    /// The image of `bytes`, copied to an aligned buffer and checked: its header, every region's width and bounds.
+    /// The image of `bytes`, copied to an aligned buffer and checked: its header, every region's width and bounds,
+    /// every reference, and every rule's node tree. A checked image's handles read it without further checks.
     pub fn open(bytes: &[u8]) -> Result<Image, String> {
         let mut buf = vec![0u128; bytes.len().div_ceil(16)];
         // SAFETY: `buf` holds at least `bytes.len()` bytes.
@@ -207,19 +264,19 @@ impl Image {
         // buffer; every T here is a plain integer (or an array of them) with no invalid bit patterns.
         unsafe { std::slice::from_raw_parts(self.bytes().as_ptr().add(offset).cast::<T>(), count) }
     }
-    pub fn u8s(&self, r: R) -> &[u8] {
+    pub(crate) fn u8s(&self, r: R) -> &[u8] {
         self.slice(r)
     }
-    pub fn u32s(&self, r: R) -> &[u32] {
+    pub(crate) fn u32s(&self, r: R) -> &[u32] {
         self.slice(r)
     }
-    pub fn u64s(&self, r: R) -> &[u64] {
+    pub(crate) fn u64s(&self, r: R) -> &[u64] {
         self.slice(r)
     }
-    pub fn buckets(&self, r: R) -> &[[u64; 8]] {
+    fn buckets(&self, r: R) -> &[[u64; 8]] {
         self.slice(r)
     }
-    /// Region `r`'s byte offset and item count.
+    /// Region `r`'s byte offset and item count (a test's way to damage one).
     pub fn region(&self, r: R) -> (usize, usize) {
         self.regions[r as usize]
     }
@@ -232,14 +289,176 @@ impl Image {
     pub fn rule_base(&self) -> u32 {
         self.meta(meta::RULE_BASE) as u32
     }
+    pub fn atom_base(&self) -> u32 {
+        self.meta(meta::ATOM_BASE) as u32
+    }
+    pub fn rel_base(&self) -> u32 {
+        self.meta(meta::REL_BASE) as u32
+    }
+    /// The rules this image holds.
     pub fn rules(&self) -> usize {
         self.u32s(R::RuleNode).len()
     }
+    /// The atoms this image holds (its own; its parent's are below `atom_base`).
+    pub fn atoms(&self) -> usize {
+        self.u32s(R::StrEnds).len()
+    }
+    pub fn rels(&self) -> usize {
+        self.u32s(R::Rels).len()
+    }
+    /// One past the last atom id, relation and rule of this image's id spaces.
+    pub fn atom_end(&self) -> u32 {
+        self.atom_base() + self.atoms() as u32
+    }
+    pub fn rel_end(&self) -> u32 {
+        self.rel_base() + self.rels() as u32
+    }
+    pub fn rule_end(&self) -> u32 {
+        self.rule_base() + self.rules() as u32
+    }
+    pub(crate) fn own_sum(&self) -> u64 {
+        self.meta(meta::OWN_SUM)
+    }
+    pub(crate) fn owns(&self) -> u64 {
+        self.meta(meta::OWNS)
+    }
+    pub(crate) fn inputs_hash(&self) -> u64 {
+        self.meta(meta::INPUTS_HASH)
+    }
+    pub(crate) fn outputs_hash(&self) -> u64 {
+        self.meta(meta::OUTPUTS_HASH)
+    }
+
+    // -- strings and relations, by global id; each answers for its own ids only --
+
+    fn atom_bytes(&self, local: usize) -> &[u8] {
+        let ends = self.u32s(R::StrEnds);
+        let start = if local == 0 { 0 } else { ends[local - 1] as usize };
+        &self.u8s(R::StrBytes)[start..ends[local] as usize]
+    }
+    /// The text of atom `a`, one of this image's own.
+    pub(crate) fn text(&self, a: AtomId) -> &str {
+        // SAFETY: `check` found every string UTF-8.
+        unsafe { std::str::from_utf8_unchecked(self.atom_bytes((a.0 - self.atom_base()) as usize)) }
+    }
+    /// The atom of `text`, if this image holds it.
+    pub(crate) fn find(&self, text: &str) -> Option<AtomId> {
+        let h = strings::hash(text.as_bytes());
+        strings::find_in(self.buckets(R::StrBuckets), self.buckets(R::StrOver), self.meta(meta::HASH_LEVEL) as u32, self.meta(meta::HASH_SPLIT) as u32, h, |a| {
+            self.atom_bytes(a as usize) == text.as_bytes()
+        })
+        .map(|a| AtomId(a + self.atom_base()))
+    }
+    /// What this image says of atom `a`'s relation: `Some(Some(r))` or `Some(None)` when it knows (it holds the atom,
+    /// or makes it a relation); `None` when the answer is its parent's.
+    pub(crate) fn rel_of(&self, a: AtomId) -> Option<Option<RelId>> {
+        if a.0 >= self.atom_base() {
+            return Some(self.u32s(R::AtomRel)[(a.0 - self.atom_base()) as usize].checked_sub(1).map(RelId));
+        }
+        let p = self.u64s(R::Promoted);
+        p.binary_search_by_key(&a.0, |&x| (x >> 32) as u32).ok().map(|k| Some(RelId(p[k] as u32)))
+    }
+    /// The atom naming relation `r`, one of this image's own.
+    pub(crate) fn rel_atom(&self, r: RelId) -> AtomId {
+        AtomId(self.u32s(R::Rels)[(r.0 - self.rel_base()) as usize])
+    }
+
+    // -- rules --
+
+    pub(crate) fn rule_node(&self, k: u32) -> u32 {
+        self.u32s(R::RuleNode)[k as usize]
+    }
+    pub(crate) fn rule_vars(&self, k: u32) -> &[u32] {
+        let v = self.u32s(R::RuleVars);
+        &self.u32s(R::Vars)[v[k as usize] as usize..v[k as usize + 1] as usize]
+    }
+    pub(crate) fn rule_hash(&self, k: u32) -> u64 {
+        self.u64s(R::RuleHash)[k as usize]
+    }
+    pub(crate) fn node(&self, at: u32) -> (u8, u32, u32) {
+        let at = at as usize;
+        (self.u8s(R::Kind)[at], self.u32s(R::Size)[at], self.u32s(R::Val)[at])
+    }
+    pub(crate) fn big(&self, k: u32) -> i64 {
+        self.u64s(R::Ints)[k as usize] as i64
+    }
+    /// The rules (local indexes) whose head is relation `rel`.
+    pub(crate) fn heads(&self, rel: RelId) -> &[u32] {
+        let r = csr::Csr::new(self.u32s(R::HeadKeys), self.u32s(R::HeadStart)).range(rel.0);
+        &self.u32s(R::HeadRules)[r]
+    }
+    /// The (local rule, literal node) pairs that read relation `rel` in their bodies.
+    pub(crate) fn reads(&self, rel: RelId) -> impl Iterator<Item = (u32, u32)> + '_ {
+        let r = csr::Csr::new(self.u32s(R::ReadKeys), self.u32s(R::ReadStart)).range(rel.0);
+        self.u32s(R::ReadRule)[r.clone()].iter().copied().zip(self.u32s(R::ReadNode)[r].iter().copied())
+    }
+    /// The parent's rules this delta removes (global ids, sorted).
+    pub(crate) fn removed(&self) -> &[u32] {
+        self.u32s(R::Removed)
+    }
+
+    // -- parts --
+
+    /// This image's declaration of the relation named `a`, by its index here.
+    pub(crate) fn decl(&self, a: AtomId) -> Option<usize> {
+        self.u32s(R::DeclName).binary_search(&a.0).ok()
+    }
+    pub(crate) fn decl_gone(&self, a: AtomId) -> bool {
+        self.u32s(R::DeclGone).binary_search(&a.0).is_ok()
+    }
+    pub(crate) fn decl_count(&self) -> usize {
+        self.u32s(R::DeclName).len()
+    }
+    pub(crate) fn decl_name(&self, k: usize) -> AtomId {
+        AtomId(self.u32s(R::DeclName)[k])
+    }
+    pub(crate) fn decl_cols(&self, k: usize) -> impl ExactSizeIterator<Item = (AtomId, AtomId)> + '_ {
+        let e = self.u32s(R::DeclCols);
+        let c = self.u32s(R::Cols);
+        (e[k]..e[k + 1]).map(move |i| (AtomId(c[2 * i as usize]), AtomId(c[2 * i as usize + 1])))
+    }
+    pub(crate) fn decl_hash(&self, k: usize) -> u64 {
+        self.u64s(R::DeclHash)[k]
+    }
+    pub(crate) fn fact(&self, a: AtomId, about: bool) -> Option<usize> {
+        self.u32s(R::FactRel).binary_search(&(a.0 | if about { ABOUT_BIT } else { 0 })).ok()
+    }
+    pub(crate) fn fact_gone(&self, a: AtomId, about: bool) -> bool {
+        self.u32s(R::FactGone).binary_search(&(a.0 | if about { ABOUT_BIT } else { 0 })).is_ok()
+    }
+    pub(crate) fn fact_count(&self) -> usize {
+        self.u32s(R::FactRel).len()
+    }
+    /// Fact relation `k`'s name and whether it is one of the `.about` rows.
+    pub(crate) fn fact_key(&self, k: usize) -> (AtomId, bool) {
+        let a = self.u32s(R::FactRel)[k];
+        (AtomId(a & !ABOUT_BIT), a & ABOUT_BIT != 0)
+    }
+    pub(crate) fn fact_hash(&self, k: usize) -> u64 {
+        self.u64s(R::FactHash)[k]
+    }
+    /// Fact relation `k`'s rows, each its cells: an int, or a string's atom.
+    pub(crate) fn fact_rows(&self, k: usize) -> impl ExactSizeIterator<Item = impl ExactSizeIterator<Item = Cell> + '_> + '_ {
+        let (rows, cells, kinds, vals) = (self.u32s(R::FactRows), self.u32s(R::RowCells), self.u8s(R::CellKind), self.u64s(R::CellVal));
+        (rows[k]..rows[k + 1]).map(move |row| {
+            (cells[row as usize]..cells[row as usize + 1]).map(move |c| if kinds[c as usize] == 0 { Cell::Int(vals[c as usize] as i64) } else { Cell::Str(AtomId(vals[c as usize] as u32)) })
+        })
+    }
+    pub(crate) fn inputs(&self) -> &[u32] {
+        self.u32s(R::Inputs)
+    }
+    pub(crate) fn outputs(&self) -> &[u32] {
+        self.u32s(R::Outputs)
+    }
+
+    // -- the check --
 
     /// The image's references, each inside what it names: offsets ascending and in bounds, every atom, relation and
-    /// slot an index of its table. Node trees are checked as they are read (`decode`).
+    /// slot an id this image or its parent holds, tables sorted where they are searched, and every rule's nodes a
+    /// tree of the grammar (`check_rule`). A delta's references below its bases are its parent's, checked when it is
+    /// stacked on one (`Version::over`).
     fn check(&self) -> Result<(), String> {
-        let atoms = self.u32s(R::StrEnds).len();
+        let atoms = self.atoms();
         let mut last = 0;
         for &e in self.u32s(R::StrEnds) {
             if e < last || e as usize > self.u8s(R::StrBytes).len() {
@@ -248,23 +467,38 @@ impl Image {
             last = e;
         }
         for k in 0..atoms {
-            if std::str::from_utf8(self.atom_bytes(k as u32)).is_err() {
+            if std::str::from_utf8(self.atom_bytes(k)).is_err() {
                 return Err(bad("a string is not UTF-8"));
             }
         }
-        let in_atoms = |r: R| self.u32s(r).iter().all(|&a| (a as usize) < atoms);
+        if !self.is_delta() && (self.atom_base() != 0 || self.rel_base() != 0 || self.rule_base() != 0) {
+            return Err(bad("a base numbers from 0"));
+        }
+        let atom_end = self.atom_end();
+        let rel_end = self.rel_end();
+        let in_atoms = |r: R| self.u32s(r).iter().all(|&a| a < atom_end);
         for r in [R::Rels, R::Vars, R::Cols, R::DeclName, R::Inputs, R::Outputs, R::DeclGone] {
             if !in_atoms(r) {
                 return Err(bad(format!("{r:?} names no string")));
             }
         }
         for r in [R::FactRel, R::FactGone] {
-            if !self.u32s(r).iter().all(|&a| ((a & !ABOUT_BIT) as usize) < atoms) {
+            if !self.u32s(r).iter().all(|&a| (a & !ABOUT_BIT) < atom_end) {
                 return Err(bad(format!("{r:?} names no string")));
             }
         }
-        if self.u32s(R::AtomRel).len() != atoms || !self.u32s(R::AtomRel).iter().all(|&r| (r as usize) <= self.u32s(R::Rels).len()) {
+        let sorted = |v: &[u32]| v.windows(2).all(|w| w[0] < w[1]);
+        for r in [R::DeclName, R::DeclGone, R::FactRel, R::FactGone, R::Removed, R::HeadKeys, R::ReadKeys] {
+            if !sorted(self.u32s(r)) {
+                return Err(bad(format!("{r:?} is not sorted")));
+            }
+        }
+        if self.u32s(R::AtomRel).len() != atoms || !self.u32s(R::AtomRel).iter().all(|&r| r <= rel_end) {
             return Err(bad("atom → relation"));
+        }
+        let promoted = self.u64s(R::Promoted);
+        if !promoted.windows(2).all(|w| w[0] >> 32 < w[1] >> 32) || !promoted.iter().all(|&p| ((p >> 32) as u32) < self.atom_base() && (p as u32) >= self.rel_base() && (p as u32) < rel_end) {
+            return Err(bad("promoted atoms"));
         }
         let offsets = |r: R, n: usize, of: usize| {
             let v = self.u32s(r);
@@ -278,31 +512,34 @@ impl Image {
         if !offsets(R::RuleVars, rules, self.u32s(R::Vars).len()) || !self.u32s(R::RuleNode).iter().all(|&n| (n as usize) < nodes) {
             return Err(bad("rules"));
         }
-        let decls = self.u32s(R::DeclName).len();
+        let decls = self.decl_count();
         if !offsets(R::DeclCols, decls, self.u32s(R::Cols).len() / 2) || self.u32s(R::Cols).len() % 2 != 0 || self.u64s(R::DeclHash).len() != decls {
             return Err(bad("declarations"));
         }
-        let facts = self.u32s(R::FactRel).len();
+        let facts = self.fact_count();
         let rows = self.u32s(R::RowCells).len().saturating_sub(1);
         let cells = self.u8s(R::CellKind).len();
         if !offsets(R::FactRows, facts, rows) || !offsets(R::RowCells, rows, cells) || self.u64s(R::CellVal).len() != cells || self.u64s(R::FactHash).len() != facts {
             return Err(bad("facts"));
         }
         for (k, &v) in self.u8s(R::CellKind).iter().zip(self.u64s(R::CellVal)) {
-            if *k > 1 || (*k == 1 && v as usize >= atoms) {
+            if *k > 1 || (*k == 1 && v >= atom_end as u64) {
                 return Err(bad("a fact's cell"));
             }
         }
-        let rels = self.u32s(R::Rels).len();
-        if !offsets(R::HeadStart, rels, self.u32s(R::HeadRules).len()) || !self.u32s(R::HeadRules).iter().all(|&r| (r as usize) < rules) {
-            return Err(bad("rules by head"));
+        // The indexes: dense over this image's relations in a base, keyed in a delta.
+        for (keys, start, values, what) in [(R::HeadKeys, R::HeadStart, R::HeadRules, "rules by head"), (R::ReadKeys, R::ReadStart, R::ReadRule, "reads")] {
+            let k = self.u32s(keys);
+            let n = if self.is_delta() { k.len() } else { self.rels() };
+            if (!self.is_delta() && !k.is_empty()) || !k.iter().all(|&r| r < rel_end) || !offsets(start, n, self.u32s(values).len()) || !self.u32s(values).iter().all(|&r| (r as usize) < rules) {
+                return Err(bad(what));
+            }
         }
-        let reads = self.u32s(R::ReadRule).len();
-        if !offsets(R::ReadStart, rels, reads) || self.u32s(R::ReadNode).len() != reads || !self.u32s(R::ReadRule).iter().all(|&r| (r as usize) < rules) {
+        if self.u32s(R::ReadNode).len() != self.u32s(R::ReadRule).len() || !self.u32s(R::ReadNode).iter().all(|&n| (n as usize) < nodes) {
             return Err(bad("reads"));
         }
-        let removed = self.u32s(R::Removed);
-        if !removed.windows(2).all(|w| w[0] < w[1]) || (!self.is_delta() && !removed.is_empty()) || removed.last().is_some_and(|&r| r >= self.rule_base()) {
+        let removed = self.removed();
+        if (!self.is_delta() && !removed.is_empty()) || removed.last().is_some_and(|&r| r >= self.rule_base()) {
             return Err(bad("removed rules"));
         }
         let level = self.meta(meta::HASH_LEVEL);
@@ -310,56 +547,162 @@ impl Image {
         if level > 31 || buckets != (1u64 << level) + self.meta(meta::HASH_SPLIT) || self.meta(meta::HASH_COUNT) != atoms as u64 {
             return Err(bad("string table"));
         }
+        let mut next = 0u32;
+        for k in 0..rules as u32 {
+            let at = self.rule_node(k);
+            if at != next {
+                return Err(bad(format!("rule {k} does not follow the rule before it")));
+            }
+            next = self.check_rule(k)?;
+        }
+        if next as usize != nodes {
+            return Err(bad("nodes past the last rule"));
+        }
         Ok(())
     }
 
-    pub fn atoms(&self) -> usize {
-        self.u32s(R::StrEnds).len()
-    }
-    fn atom_bytes(&self, a: u32) -> &[u8] {
-        let ends = self.u32s(R::StrEnds);
-        let start = if a == 0 { 0 } else { ends[a as usize - 1] as usize };
-        &self.u8s(R::StrBytes)[start..ends[a as usize] as usize]
-    }
-    /// The text of atom `a`.
-    pub fn atom(&self, a: u32) -> &str {
-        // SAFETY: `check` found every string UTF-8.
-        unsafe { std::str::from_utf8_unchecked(self.atom_bytes(a)) }
-    }
-    /// The atom of `text`, by the string table's hash.
-    pub fn find(&self, text: &str) -> Option<u32> {
-        let h = strings::hash(text.as_bytes());
-        strings::find_in(self.buckets(R::StrBuckets), self.buckets(R::StrOver), self.meta(meta::HASH_LEVEL) as u32, self.meta(meta::HASH_SPLIT) as u32, h, |a| self.atom_bytes(a) == text.as_bytes())
-    }
-    /// The relation number of relation `name`.
-    pub fn rel(&self, name: &str) -> Option<u32> {
-        let a = self.find(name)?;
-        self.u32s(R::AtomRel)[a as usize].checked_sub(1)
-    }
-    /// The rules (local indexes) whose head is relation `rel`.
-    pub fn by_head(&self, rel: u32) -> &[u32] {
-        let s = self.u32s(R::HeadStart);
-        &self.u32s(R::HeadRules)[s[rel as usize] as usize..s[rel as usize + 1] as usize]
-    }
-    /// The (rule, literal node) pairs that read relation `rel` in their bodies.
-    pub fn reads(&self, rel: u32) -> impl Iterator<Item = (u32, u32)> + '_ {
-        let s = self.u32s(R::ReadStart);
-        let (a, b) = (s[rel as usize] as usize, s[rel as usize + 1] as usize);
-        self.u32s(R::ReadRule)[a..b].iter().copied().zip(self.u32s(R::ReadNode)[a..b].iter().copied())
-    }
-    pub fn rule_hash(&self, k: usize) -> u64 {
-        self.u64s(R::RuleHash)[k]
-    }
-    /// The image's rules' hashes, summed: a part of its digest.
-    pub fn rules_digest(&self) -> u64 {
-        self.u64s(R::RuleHash).iter().fold(0u64, |a, &h| a.wrapping_add(h))
+    /// Rule `k`'s nodes, as the grammar has them; the node after them.
+    ///
+    /// ```text
+    /// rule  := RULE atom lit*
+    /// lit   := atom | CMP term term | AGG (VAR | WILD) [VAR* STR, a join] atom | NEAREST VAR VAR | AST VAR VAR (STR VAR)*
+    /// atom  := ATOM term*
+    /// term  := VAR | WILD | TOP | INT | STR | CALL term*
+    /// ```
+    fn check_rule(&self, k: u32) -> Result<u32, String> {
+        let c = Check { im: self, vars: self.rule_vars(k).len() as u32, nodes: self.u8s(R::Kind).len() as u32, atom_end: self.atom_end(), rel_end: self.rel_end() };
+        let at = self.rule_node(k);
+        let (kd, size, _) = c.node(at, c.nodes)?;
+        if kd != kind::RULE {
+            return Err(bad(format!("rule {k} starts at no rule node")));
+        }
+        let end = at + size;
+        let mut p = c.atom(at + 1, end)?;
+        while p < end {
+            p = c.literal(p, end)?;
+        }
+        Ok(end)
     }
 }
 
-// ---- writing ----
+/// A fact's cell, by id.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Cell {
+    Int(i64),
+    Str(AtomId),
+}
+
+struct Check<'i> {
+    im: &'i Image,
+    vars: u32,
+    nodes: u32,
+    atom_end: u32,
+    rel_end: u32,
+}
+
+impl Check<'_> {
+    /// Node `at`, inside `end`: its kind (flags masked), size and value.
+    fn node(&self, at: u32, end: u32) -> Result<(u8, u32, u32), String> {
+        if at >= end || at >= self.nodes {
+            return Err(bad(format!("node {at} past its parent")));
+        }
+        let (k, size, val) = self.im.node(at);
+        if size == 0 || at.checked_add(size).is_none_or(|e| e > end) {
+            return Err(bad(format!("node {at} overruns its parent")));
+        }
+        Ok((k & kind::MASK, size, val))
+    }
+    fn leaf(&self, at: u32, end: u32, want: u8) -> Result<u32, String> {
+        let (k, size, val) = self.node(at, end)?;
+        if k != want || size != 1 {
+            return Err(bad(format!("node {at}: kind {k}, not {want}")));
+        }
+        if (k == kind::VAR && val >= self.vars) || (k == kind::STR && val >= self.atom_end) {
+            return Err(bad(format!("node {at}'s value {val}")));
+        }
+        Ok(at + 1)
+    }
+    fn term(&self, at: u32, end: u32) -> Result<u32, String> {
+        let (k, size, val) = self.node(at, end)?;
+        let flags = self.im.node(at).0 & !kind::MASK;
+        match k {
+            kind::VAR | kind::STR => self.leaf(at, end, k),
+            kind::WILD | kind::TOP if size == 1 => Ok(at + 1),
+            kind::INT if size == 1 => {
+                if flags & kind::BIG != 0 && val as usize >= self.im.u64s(R::Ints).len() {
+                    return Err(bad(format!("node {at}: an int past the table")));
+                }
+                Ok(at + 1)
+            }
+            kind::CALL if val < self.atom_end => {
+                let e = at + size;
+                let mut p = at + 1;
+                while p < e {
+                    p = self.term(p, e)?;
+                }
+                Ok(e)
+            }
+            _ => Err(bad(format!("node {at}: no term (kind {k})"))),
+        }
+    }
+    fn atom(&self, at: u32, end: u32) -> Result<u32, String> {
+        let (k, size, val) = self.node(at, end)?;
+        if k != kind::ATOM || val >= self.rel_end {
+            return Err(bad(format!("node {at}: no atom")));
+        }
+        let e = at + size;
+        let mut p = at + 1;
+        while p < e {
+            p = self.term(p, e)?;
+        }
+        Ok(e)
+    }
+    fn literal(&self, at: u32, end: u32) -> Result<u32, String> {
+        let (k, size, val) = self.node(at, end)?;
+        let e = at + size;
+        let done = |p: u32| if p == e { Ok(e) } else { Err(bad(format!("node {at}: more than its literal"))) };
+        match k {
+            kind::ATOM => self.atom(at, end),
+            kind::CMP if (val as usize) < handles::CmpOp::ALL.len() => {
+                let p = self.term(at + 1, e)?;
+                done(self.term(p, e)?)
+            }
+            kind::AGG if self.im.node(at).0 >> 5 <= 5 && val < self.vars => {
+                let mut p = at + 1;
+                p = match self.node(p, e)?.0 {
+                    kind::WILD => self.leaf(p, e, kind::WILD)?,
+                    _ => self.leaf(p, e, kind::VAR)?,
+                };
+                if self.im.node(at).0 >> 5 == 5 {
+                    while self.node(p, e)?.0 == kind::VAR {
+                        p = self.leaf(p, e, kind::VAR)?;
+                    }
+                    p = self.leaf(p, e, kind::STR)?;
+                }
+                done(self.atom(p, e)?)
+            }
+            kind::NEAREST if val < self.atom_end => {
+                let p = self.leaf(at + 1, e, kind::VAR)?;
+                done(self.leaf(p, e, kind::VAR)?)
+            }
+            kind::AST if val < self.atom_end => {
+                let mut p = self.leaf(at + 1, e, kind::VAR)?;
+                p = self.leaf(p, e, kind::VAR)?;
+                while p < e {
+                    p = self.leaf(p, e, kind::STR)?;
+                    p = self.leaf(p, e, kind::VAR)?;
+                }
+                Ok(e)
+            }
+            _ => Err(bad(format!("node {at}: no literal (kind {k})"))),
+        }
+    }
+}
+
+// ---- writing an image's regions ----
 
 /// The regions of an image being written, each appended to, then laid out once.
-pub struct Writer {
+pub(crate) struct Writer {
     regions: Vec<Vec<u8>>,
 }
 
@@ -382,6 +725,13 @@ impl Writer {
     pub fn u32s(&mut self, r: R, v: &[u32]) {
         let out = &mut self.regions[r as usize];
         out.reserve(v.len() * 4);
+        for x in v {
+            out.extend_from_slice(&x.to_le_bytes());
+        }
+    }
+    pub fn u64s(&mut self, r: R, v: &[u64]) {
+        let out = &mut self.regions[r as usize];
+        out.reserve(v.len() * 8);
         for x in v {
             out.extend_from_slice(&x.to_le_bytes());
         }
@@ -411,652 +761,34 @@ impl Writer {
     }
 }
 
-/// What an image holds of a program's parts besides its rules, for an overlay's delta: each `Some` is the delta's.
-#[derive(Default)]
-pub struct Parts<'p> {
-    pub decls: Vec<(&'p Name, &'p [(Name, Name)])>,
-    pub decls_gone: Vec<String>,
-    pub facts: Vec<(&'p str, &'p [super::front::List<Value>], bool)>,
-    pub facts_gone: Vec<(String, bool)>,
-    pub inputs: Option<&'p [String]>,
-    pub outputs: Option<&'p [String]>,
-    pub about: Option<&'p Facts>,
-}
-
-/// The rules and parts of one image, encoded.
-pub struct Encoder {
-    w: Writer,
-    strings: Strings,
-    rels: Vec<u32>,
-    rel_of: HashMap<u32, u32>,
-    kind: Extents<u8>,
-    size: Extents<u32>,
-    val: Extents<u32>,
-    ints: Vec<i64>,
-    rule_node: Vec<u32>,
-    rule_vars: Vec<u32>,
-    vars: Vec<u32>,
-    rule_hash: Vec<u64>,
-    heads: Grouped,
-    reads: Grouped,
-    read_nodes: Vec<u32>,
-    read_rules: Vec<u32>,
-    slots: HashMap<String, u32>,
-    slot_names: Vec<u32>,
-    decl_cols: Vec<u32>,
-    decl_ends: Vec<u32>,
-    cells: u32,
-    row_ends: Vec<u32>,
-    fact_ends: Vec<u32>,
-}
-
-impl Default for Encoder {
-    fn default() -> Self {
-        Encoder {
-            w: Writer::default(),
-            strings: Strings::default(),
-            rels: Vec::new(),
-            rel_of: HashMap::new(),
-            kind: Extents::new(12),
-            size: Extents::new(12),
-            val: Extents::new(12),
-            ints: Vec::new(),
-            rule_node: Vec::new(),
-            rule_vars: vec![0],
-            vars: Vec::new(),
-            rule_hash: Vec::new(),
-            heads: Grouped::default(),
-            reads: Grouped::default(),
-            read_nodes: Vec::new(),
-            read_rules: Vec::new(),
-            slots: HashMap::new(),
-            slot_names: Vec::new(),
-            decl_cols: Vec::new(),
-            decl_ends: vec![0],
-            cells: 0,
-            row_ends: vec![0],
-            fact_ends: vec![0],
-        }
-    }
-}
-
-impl Encoder {
-    fn atom_id(&mut self, s: &str) -> u32 {
-        self.strings.intern(s)
-    }
-    fn rel(&mut self, s: &str) -> u32 {
-        let a = self.atom_id(s);
-        let n = self.rels.len() as u32;
-        *self.rel_of.entry(a).or_insert_with(|| {
-            self.rels.push(a);
-            n
-        })
-    }
-    fn open(&mut self, k: u8, val: u32) -> usize {
-        let at = self.kind.len();
-        self.kind.push(k);
-        self.size.push(0);
-        self.val.push(val);
-        at
-    }
-    fn close(&mut self, at: usize) {
-        self.size.set(at, (self.kind.len() - at) as u32);
-    }
-    fn leaf(&mut self, k: u8, val: u32) {
-        self.kind.push(k);
-        self.size.push(1);
-        self.val.push(val);
-    }
-    fn slot(&mut self, v: &str) -> u32 {
-        if let Some(&s) = self.slots.get(v) {
-            return s;
-        }
-        let s = self.slot_names.len() as u32;
-        let a = self.atom_id(v);
-        self.slot_names.push(a);
-        self.slots.insert(v.to_owned(), s);
-        s
-    }
-    fn var(&mut self, v: &str) {
-        let s = self.slot(v);
-        self.leaf(kind::VAR, s);
-    }
-    fn int(&mut self, i: i64) {
-        if (0..1 << 31).contains(&i) {
-            self.leaf(kind::INT, i as u32);
-        } else {
-            let at = self.ints.len() as u32;
-            self.ints.push(i);
-            self.leaf(kind::INT | kind::BIG, at);
-        }
-    }
-    fn term(&mut self, t: &Term) {
-        match t {
-            Term::Var(v) => self.var(v),
-            Term::Wild => self.leaf(kind::WILD, 0),
-            Term::Top => self.leaf(kind::TOP, 0),
-            Term::Int(i) => self.int(*i),
-            Term::Str(s) => {
-                let a = self.atom_id(s);
-                self.leaf(kind::STR, a)
-            }
-            Term::Call(f, args) => {
-                let a = self.atom_id(f);
-                let at = self.open(kind::CALL, a);
-                for x in args.iter() {
-                    self.term(x);
-                }
-                self.close(at);
-            }
-        }
-    }
-    fn atom(&mut self, a: &Atom, rule: u32, body: bool) {
-        let flags = if a.neg { kind::NEG } else { 0 } | if a.gated { kind::GATED } else { 0 };
-        let r = self.rel(&a.rel);
-        let at = self.open(kind::ATOM | flags, r);
-        if body {
-            let e = self.read_nodes.len() as u32;
-            self.reads.push(r, e);
-            self.read_nodes.push(at as u32);
-            self.read_rules.push(rule);
-        }
-        for x in a.args.iter() {
-            self.term(x);
-        }
-        self.close(at);
-    }
-    fn literal(&mut self, l: &Literal, rule: u32) -> Result<(), String> {
-        match l {
-            Literal::Atom(a) => self.atom(a, rule, true),
-            Literal::Cmp { l, op, r } => {
-                let o = OPS.iter().position(|x| x == op).ok_or_else(|| bad(format!("comparison {op:?}")))? as u32;
-                let at = self.open(kind::CMP, o);
-                self.term(l);
-                self.term(r);
-                self.close(at);
-            }
-            Literal::Agg { var, op, over, atom } => {
-                let code = match op {
-                    AggOp::Count => 0,
-                    AggOp::Min => 1,
-                    AggOp::Max => 2,
-                    AggOp::Sum => 3,
-                    AggOp::Product => 4,
-                    AggOp::Join { .. } => 5,
-                };
-                let s = self.slot(var);
-                let at = self.open(kind::AGG | code << 5, s);
-                match over {
-                    Some(v) => self.var(v),
-                    None => self.leaf(kind::WILD, 0),
-                }
-                if let AggOp::Join { by, sep } = op {
-                    for b in by {
-                        self.var(b);
-                    }
-                    let a = self.atom_id(sep);
-                    self.leaf(kind::STR, a);
-                }
-                self.atom(atom, rule, true);
-                self.close(at);
-            }
-            Literal::Nearest { n, a, kindset } => {
-                let k = self.atom_id(kindset);
-                let at = self.open(kind::NEAREST, k);
-                self.var(n);
-                self.var(a);
-                self.close(at);
-            }
-            Literal::Ast { document, node, matcher, captures } => {
-                let m = self.atom_id(matcher);
-                let at = self.open(kind::AST, m);
-                self.var(document);
-                self.var(node);
-                for (n, v) in captures {
-                    let a = self.atom_id(n);
-                    self.leaf(kind::STR, a);
-                    self.var(v);
-                }
-                self.close(at);
-            }
-        }
-        Ok(())
-    }
-    /// Appends `rule`: its nodes, its variables, its hash, and its index entries.
-    pub fn rule(&mut self, rule: &Rule) -> Result<(), String> {
-        let k = self.rule_node.len() as u32;
-        self.slots.clear();
-        self.slot_names.clear();
-        let at = self.open(kind::RULE, 0);
-        self.rule_node.push(at as u32);
-        self.atom(&rule.head, k, false);
-        let head = self.rel(&rule.head.rel);
-        self.heads.push(head, k);
-        for l in rule.body.iter() {
-            self.literal(l, k)?;
-        }
-        self.close(at);
-        self.vars.extend_from_slice(&self.slot_names);
-        self.rule_vars.push(self.vars.len() as u32);
-        self.rule_hash.push(hash(rule));
-        Ok(())
-    }
-    fn facts(&mut self, rel: &str, rows: &[super::front::List<Value>], about: bool) {
-        let a = self.atom_id(rel);
-        self.w.u32(R::FactRel, a | if about { ABOUT_BIT } else { 0 });
-        self.w.u64(R::FactHash, hash(&(rel, rows, about)));
-        for row in rows {
-            for v in row.iter() {
-                match v {
-                    Value::Int(i) => {
-                        self.w.u8(R::CellKind, 0);
-                        self.w.u64(R::CellVal, *i as u64);
-                    }
-                    Value::Str(s) => {
-                        let a = self.atom_id(s);
-                        self.w.u8(R::CellKind, 1);
-                        self.w.u64(R::CellVal, a as u64);
-                    }
-                }
-                self.cells += 1;
-            }
-            self.row_ends.push(self.cells);
-        }
-        self.fact_ends.push(self.row_ends.len() as u32 - 1);
-    }
-    fn decl(&mut self, rel: &str, cols: &[(Name, Name)]) {
-        let a = self.atom_id(rel);
-        self.w.u32(R::DeclName, a);
-        self.w.u64(R::DeclHash, hash(&(rel, cols)));
-        for (n, t) in cols {
-            let (n, t) = (self.atom_id(n), self.atom_id(t));
-            self.decl_cols.push(n);
-            self.decl_cols.push(t);
-        }
-        self.decl_ends.push(self.decl_cols.len() as u32 / 2);
-    }
-    fn names(&mut self, r: R, names: &[String]) -> u64 {
-        for n in names {
-            let a = self.atom_id(n);
-            self.w.u32(r, a);
-        }
-        hash(names)
-    }
-
-    /// The image: `rules`, and `parts`; a delta when `delta` is the parent's rule id space and the rules it removes.
-    pub fn finish(mut self, parts: &Parts<'_>, delta: Option<(u32, &[u32])>) -> Vec<u8> {
-        for (rel, cols) in &parts.decls {
-            self.decl(rel, cols);
-        }
-        for rel in &parts.decls_gone {
-            let a = self.atom_id(rel);
-            self.w.u32(R::DeclGone, a);
-        }
-        for (rel, rows, about) in &parts.facts {
-            self.facts(rel, rows, *about);
-        }
-        for (rel, about) in &parts.facts_gone {
-            let a = self.atom_id(rel);
-            self.w.u32(R::FactGone, a | if *about { ABOUT_BIT } else { 0 });
-        }
-        let mut owns = 0u64;
-        let (mut ih, mut oh, mut ah) = (0, 0, 0);
-        if let Some(i) = parts.inputs {
-            owns |= 1;
-            ih = self.names(R::Inputs, i);
-        }
-        if let Some(o) = parts.outputs {
-            owns |= 2;
-            oh = self.names(R::Outputs, o);
-        }
-        if let Some(about) = parts.about {
-            owns |= 4;
-            ah = hash(about);
-            for (rel, rows) in about.iter() {
-                self.facts(rel, rows, true);
-            }
-        }
-        let Encoder { mut w, strings, rels, kind, size, val, ints, rule_node, rule_vars, vars, rule_hash, heads, reads, read_nodes, read_rules, decl_cols, decl_ends, row_ends, fact_ends, .. } = self;
-        // Strings, and each atom's relation.
-        let atoms = strings.len();
-        let mut atom_rel = vec![0u32; atoms];
-        for (r, &a) in rels.iter().enumerate() {
-            atom_rel[a as usize] = r as u32 + 1;
-        }
-        let (bytes, ends, table) = strings.into_parts();
-        w.raw(R::StrBytes, &bytes);
-        w.u32s(R::StrEnds, &ends);
-        for b in &table.buckets {
-            for x in b {
-                w.u64(R::StrBuckets, *x);
-            }
-        }
-        for b in &table.over {
-            for x in b {
-                w.u64(R::StrOver, *x);
-            }
-        }
-        w.u32s(R::Rels, &rels);
-        w.u32s(R::AtomRel, &atom_rel);
-        // Nodes, one region a column, each extent in turn.
-        for e in kind.extents() {
-            w.raw(R::Kind, e);
-        }
-        for e in size.extents() {
-            w.u32s(R::Size, e);
-        }
-        for e in val.extents() {
-            w.u32s(R::Val, e);
-        }
-        for i in &ints {
-            w.u64(R::Ints, *i as u64);
-        }
-        w.u32s(R::RuleNode, &rule_node);
-        w.u32s(R::RuleVars, &rule_vars);
-        for h in &rule_hash {
-            w.u64(R::RuleHash, *h);
-        }
-        w.u32s(R::Vars, &vars);
-        w.u32s(R::DeclCols, &decl_ends);
-        w.u32s(R::Cols, &decl_cols);
-        w.u32s(R::FactRows, &fact_ends);
-        w.u32s(R::RowCells, &row_ends);
-        // Indexes: rules by head, and reads, each as CSR over the relation numbers.
-        let (starts, values) = heads.freeze(rels.len());
-        w.u32s(R::HeadStart, &starts);
-        w.u32s(R::HeadRules, &values);
-        let (starts, entries) = reads.freeze(rels.len());
-        w.u32s(R::ReadStart, &starts);
-        let (rules, nodes): (Vec<u32>, Vec<u32>) = entries.iter().map(|&e| (read_rules[e as usize], read_nodes[e as usize])).unzip();
-        w.u32s(R::ReadRule, &rules);
-        w.u32s(R::ReadNode, &nodes);
-        let (rule_base, removed) = delta.unwrap_or((0, &[]));
-        w.u32s(R::Removed, removed);
-        let m = [delta.is_some() as u64, rule_base as u64, table.level as u64, table.split as u64, table.count, owns, ih, oh, ah];
-        for x in m {
-            w.u64(R::Meta, x);
-        }
-        w.finish()
-    }
-}
+// ---- a program to and from its image ----
 
 /// The image of `prog`: a base, every part its own. Refuses what the image has no form for (maintenance's parts,
 /// which the text refuses too) and a comparison it does not know.
 pub fn encode(prog: &Program) -> Result<Vec<u8>, String> {
-    if !prog.again.is_empty() || !prog.together.is_empty() || !prog.shapes.is_empty() {
-        return Err(bad("maintenance's parts (again, together, shapes) have no image"));
-    }
-    let mut e = Encoder::default();
-    for r in &prog.rules {
-        e.rule(r)?;
-    }
-    let mut about = Facts::new();
-    program_facts::write_about(&mut about, ABOUT, prog);
-    let parts = Parts {
-        decls: prog.decls.iter().map(|(n, c)| (n, c.as_slice())).collect(),
-        facts: prog.facts.iter().map(|(r, rows)| (r.as_str(), rows.as_slice(), false)).collect(),
-        inputs: Some(&prog.inputs),
-        outputs: Some(&prog.outputs),
-        about: Some(&about),
-        ..Parts::default()
-    };
-    Ok(e.finish(&parts, None))
-}
-
-// ---- reading ----
-
-/// Reads one image's rules and parts, its atoms made `Name`s once each.
-pub struct Reader<'i> {
-    pub image: &'i Image,
-    names: Vec<Option<Name>>,
-    lists: &'i Lists,
-    /// Scratch for the terms of the lists being read, nested ones above their parent's (a call's inside an atom's):
-    /// each list is interned from its slice and the slice popped, so a read allocates no list of its own.
-    terms: Vec<Term>,
-    literals: Vec<Literal>,
-}
-
-impl<'i> Reader<'i> {
-    pub fn new(image: &'i Image, lists: &'i Lists) -> Reader<'i> {
-        Reader { image, names: vec![None; image.atoms()], lists, terms: Vec::new(), literals: Vec::new() }
-    }
-    fn name(&mut self, a: u32) -> Name {
-        let slot = &mut self.names[a as usize];
-        slot.get_or_insert_with(|| Name::new(self.image.atom(a))).clone()
-    }
-    fn text(&self, a: u32) -> String {
-        self.image.atom(a).to_owned()
-    }
-    /// Local rule `k`.
-    pub fn rule(&mut self, k: usize) -> Result<Rule, String> {
-        let im = self.image;
-        let (kinds, sizes, vals) = (im.u8s(R::Kind), im.u32s(R::Size), im.u32s(R::Val));
-        let at = im.u32s(R::RuleNode)[k] as usize;
-        let vs = im.u32s(R::RuleVars);
-        let vars = &im.u32s(R::Vars)[vs[k] as usize..vs[k + 1] as usize];
-        if kinds.get(at) != Some(&kind::RULE) {
-            return Err(bad(format!("rule {k} starts at no rule node")));
-        }
-        let end = at + sizes[at] as usize;
-        if end > kinds.len() || sizes[at] < 2 {
-            return Err(bad(format!("rule {k}'s size")));
-        }
-        let mut cur = Cursor { at: at + 1, end, kinds, sizes, vals, ints: im.u64s(R::Ints), vars };
-        // A failed read leaves its partial lists behind.
-        self.terms.clear();
-        self.literals.clear();
-        let head = self.atom(&mut cur)?;
-        while cur.at < end {
-            let l = self.literal(&mut cur)?;
-            self.literals.push(l);
-        }
-        let body = self.lists.literals(&self.literals);
-        self.literals.clear();
-        Ok(Rule { head, body })
-    }
-    fn slot(&mut self, cur: &Cursor<'_>, s: u32) -> Result<u32, String> {
-        cur.vars.get(s as usize).copied().ok_or_else(|| bad(format!("slot {s}")))
-    }
-    fn var_name(&mut self, cur: &mut Cursor<'_>) -> Result<String, String> {
-        let (k, _, v) = cur.next(kind::VAR)?;
-        let _ = k;
-        let a = self.slot(cur, v)?;
-        Ok(self.text(a))
-    }
-    fn term(&mut self, cur: &mut Cursor<'_>) -> Result<Term, String> {
-        let (k, size, v) = cur.peek()?;
-        cur.at += 1;
-        Ok(match k & kind::MASK {
-            kind::VAR => {
-                let a = self.slot(cur, v)?;
-                Term::Var(self.name(a))
-            }
-            kind::WILD => Term::Wild,
-            kind::TOP => Term::Top,
-            kind::INT if k & kind::BIG != 0 => Term::Int(*cur.ints.get(v as usize).ok_or_else(|| bad("an int"))? as i64),
-            kind::INT => Term::Int(v as i64),
-            kind::STR => Term::Str(self.atom_name(v)?),
-            kind::CALL => {
-                let end = cur.at - 1 + size as usize;
-                let f = self.atom_name(v)?;
-                Term::Call(f, self.term_list(cur, end)?)
-            }
-            other => return Err(bad(format!("term kind {other}"))),
-        })
-    }
-    /// The terms from the cursor up to `end`, as a shared list.
-    fn term_list(&mut self, cur: &mut Cursor<'_>, end: usize) -> Result<super::front::List<Term>, String> {
-        let start = self.terms.len();
-        while cur.at < end {
-            let t = self.term(cur)?;
-            self.terms.push(t);
-        }
-        let list = self.lists.terms(&self.terms[start..]);
-        self.terms.truncate(start);
-        Ok(list)
-    }
-    fn atom_name(&mut self, a: u32) -> Result<Name, String> {
-        if (a as usize) < self.image.atoms() { Ok(self.name(a)) } else { Err(bad(format!("atom {a}"))) }
-    }
-    fn atom(&mut self, cur: &mut Cursor<'_>) -> Result<Atom, String> {
-        let (k, size, v) = cur.peek()?;
-        if k & kind::MASK != kind::ATOM {
-            return Err(bad("no atom"));
-        }
-        let end = cur.at + size as usize;
-        cur.at += 1;
-        let rel = *self.image.u32s(R::Rels).get(v as usize).ok_or_else(|| bad(format!("relation {v}")))?;
-        let rel = self.name(rel);
-        let args = self.term_list(cur, end)?;
-        Ok(Atom { rel, args, neg: k & kind::NEG != 0, gated: k & kind::GATED != 0 })
-    }
-    fn literal(&mut self, cur: &mut Cursor<'_>) -> Result<Literal, String> {
-        let (k, size, v) = cur.peek()?;
-        let end = cur.at + size as usize;
-        Ok(match k & kind::MASK {
-            kind::ATOM => Literal::Atom(self.atom(cur)?),
-            kind::CMP => {
-                cur.at += 1;
-                let op = *OPS.get(v as usize).ok_or_else(|| bad(format!("operator {v}")))?;
-                let l = self.term(cur)?;
-                let r = self.term(cur)?;
-                Literal::Cmp { l, op, r }
-            }
-            kind::AGG => {
-                cur.at += 1;
-                let a = self.slot(cur, v)?;
-                let var = self.text(a);
-                let over = match cur.peek()?.0 & kind::MASK {
-                    kind::WILD => {
-                        cur.at += 1;
-                        None
-                    }
-                    _ => Some(self.var_name(cur)?),
-                };
-                let op = match k >> 5 {
-                    0 => AggOp::Count,
-                    1 => AggOp::Min,
-                    2 => AggOp::Max,
-                    3 => AggOp::Sum,
-                    4 => AggOp::Product,
-                    5 => {
-                        let mut by = Vec::new();
-                        while cur.peek()?.0 & kind::MASK == kind::VAR {
-                            by.push(self.var_name(cur)?);
-                        }
-                        let (_, _, s) = cur.next(kind::STR)?;
-                        AggOp::Join { by, sep: self.text(s) }
-                    }
-                    other => return Err(bad(format!("aggregate {other}"))),
-                };
-                let atom = self.atom(cur)?;
-                Literal::Agg { var, op, over, atom }
-            }
-            kind::NEAREST => {
-                cur.at += 1;
-                let n = self.var_name(cur)?;
-                let a = self.var_name(cur)?;
-                Literal::Nearest { n, a, kindset: self.text(v) }
-            }
-            kind::AST => {
-                cur.at += 1;
-                let document = self.var_name(cur)?;
-                let node = self.var_name(cur)?;
-                let mut captures = Vec::new();
-                while cur.at < end {
-                    let (_, _, s) = cur.next(kind::STR)?;
-                    captures.push((self.text(s), self.var_name(cur)?));
-                }
-                Literal::Ast { document, node, matcher: self.text(v), captures }
-            }
-            other => return Err(bad(format!("literal kind {other}"))),
-        })
-    }
-
-    /// The declarations, by name, and those this image removes.
-    pub fn decls(&mut self) -> (Vec<(Name, super::front::List<(Name, Name)>)>, Vec<String>) {
-        let im = self.image;
-        let ends = im.u32s(R::DeclCols);
-        let cols = im.u32s(R::Cols);
-        let mut out = Vec::new();
-        for (k, &n) in im.u32s(R::DeclName).iter().enumerate() {
-            let c: Vec<(Name, Name)> = (ends[k]..ends[k + 1]).map(|i| (self.name(cols[2 * i as usize]), self.name(cols[2 * i as usize + 1]))).collect();
-            let name = self.name(n);
-            out.push((name, self.lists.columns(&c)));
-        }
-        (out, im.u32s(R::DeclGone).iter().map(|&a| self.text(a)).collect())
-    }
-    /// The fact relations (`.about`'s flagged), each with its rows, and those this image removes.
-    #[allow(clippy::type_complexity)]
-    pub fn facts(&mut self) -> (Vec<(String, bool, Vec<super::front::List<Value>>)>, Vec<(String, bool)>) {
-        let im = self.image;
-        let (rows, cells, kinds, vals) = (im.u32s(R::FactRows), im.u32s(R::RowCells), im.u8s(R::CellKind), im.u64s(R::CellVal));
-        let mut out = Vec::new();
-        for (k, &r) in im.u32s(R::FactRel).iter().enumerate() {
-            let mut list = Vec::with_capacity((rows[k + 1] - rows[k]) as usize);
-            for row in rows[k]..rows[k + 1] {
-                let vs: Vec<Value> = (cells[row as usize]..cells[row as usize + 1])
-                    .map(|c| if kinds[c as usize] == 0 { Value::Int(vals[c as usize] as i64) } else { Value::Str(self.name(vals[c as usize] as u32)) })
-                    .collect();
-                list.push(self.lists.values(&vs));
-            }
-            out.push((self.text(r & !ABOUT_BIT), r & ABOUT_BIT != 0, list));
-        }
-        (out, im.u32s(R::FactGone).iter().map(|&a| (self.text(a & !ABOUT_BIT), a & ABOUT_BIT != 0)).collect())
-    }
-    pub fn names(&self, r: R) -> Vec<String> {
-        self.image.u32s(r).iter().map(|&a| self.text(a)).collect()
-    }
-}
-
-struct Cursor<'c> {
-    at: usize,
-    end: usize,
-    kinds: &'c [u8],
-    sizes: &'c [u32],
-    vals: &'c [u32],
-    ints: &'c [u64],
-    vars: &'c [u32],
-}
-impl Cursor<'_> {
-    fn peek(&self) -> Result<(u8, u32, u32), String> {
-        if self.at >= self.end {
-            return Err(bad("a rule ends early"));
-        }
-        let size = self.sizes[self.at];
-        if size == 0 || self.at + size as usize > self.end {
-            return Err(bad(format!("node {} overruns its rule", self.at)));
-        }
-        Ok((self.kinds[self.at], size, self.vals[self.at]))
-    }
-    fn next(&mut self, want: u8) -> Result<(u8, u32, u32), String> {
-        let n = self.peek()?;
-        if n.0 & kind::MASK != want || n.1 != 1 {
-            return Err(bad(format!("node {}: kind {}, not {want}", self.at, n.0 & kind::MASK)));
-        }
-        self.at += 1;
-        Ok(n)
-    }
+    Builder::of_program(prog)?.finish_bytes()
 }
 
 /// The program image `bytes` holds, its lists taken from the run's `lists`.
 pub fn decode(bytes: &[u8], lists: &Lists) -> Result<Program, String> {
-    let image = Arc::new(Image::open(bytes)?);
-    if image.is_delta() {
-        return Err(bad("a delta is read through its parent (`Version`)"));
-    }
-    Version::Base(image).program(lists)
+    Version::open(bytes)?.program(lists)
 }
 
-/// The program of a base image's parts and rules, assembled as the text's reader assembles it.
-pub(crate) fn assemble(rules: Vec<Rule>, decls: BTreeMap<Name, super::front::List<(Name, Name)>>, facts: BTreeMap<String, Vec<super::front::List<Value>>>, about: Facts, inputs: Vec<String>, outputs: Vec<String>) -> Result<Program, String> {
+/// The program of a version's parts and rules, assembled as the text's reader assembles it: the `.about` rows give
+/// the program's other fields; its facts are the facts' own (the rows' `fact_rel` restates their names).
+pub(crate) fn assemble(rules: Vec<super::front::Rule>, decls: BTreeMap<Name, super::front::List<(Name, Name)>>, facts: BTreeMap<String, Vec<super::front::List<Value>>>, about: Facts, inputs: Vec<String>, outputs: Vec<String>) -> Result<Program, String> {
     let mut prog = program_facts::program(&about, ABOUT)?;
-    for (rel, rows) in facts {
-        prog.facts.entry(rel).or_default().extend(rows);
-    }
+    prog.facts = facts;
     prog.decls = decls;
     prog.inputs = inputs;
     prog.outputs = outputs;
     prog.rules = rules;
     Ok(prog)
+}
+
+/// The `.about` rows of `prog`: its fields besides rules, declarations, facts, inputs and outputs, as facts.
+pub fn about_of(prog: &Program) -> Facts {
+    let mut about = Facts::new();
+    program_facts::write_about(&mut about, ABOUT, prog);
+    about
 }
