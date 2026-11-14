@@ -701,9 +701,10 @@ describe("CodeRuleBridge", () => {
     ]), { timeout: 10_000, interval: 20 });
     await bridge.settleListingsAgain();
     await shell(bridge, () => writeFile(draft, "draft\nmine\n"));
-    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+    // The shell call's boundary waits 100 ms for its walk; a slower walk is audited once it ends.
+    await vi.waitFor(() => expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
       [{ path: "deep/draft.py", language: "python", previousText: "draft\n", generatedText: "draft\nmine\n" }],
-    ]);
+    ]), { timeout: 10_000, interval: 20 });
     expect(afterThrow.failures).toEqual([expect.objectContaining({
       code: "source-incomplete", message: expect.stringContaining(".: Git could not list the checkout's changed files when asked again: "),
     })]);
