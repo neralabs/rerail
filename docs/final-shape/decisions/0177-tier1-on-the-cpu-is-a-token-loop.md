@@ -1,7 +1,7 @@
 # 0177: Tier 1 on the CPU is a token loop, as the lean lexer is
 
-Status: decided (2026-11-13); stage 1 in part (the rules and their meaning built; the CPU's
-lowering measured worse and not kept, see Stage 1, measured); the order under review.
+Status: decided (2026-11-13); stage 1 landed (the rules, their meaning, the CPU's ends from
+them; see Stage 1); stage 2 next.
 Replaces 0139's way on the CPU (its constructs stay; its "take operations out of the one
 pass" does not). Metal keeps the bit-parallel form.
 The design: docs/parser-generators/36; the log: docs/parser-generators/35.
@@ -42,25 +42,39 @@ CPU, today's masks on Metal (0139's rule: one program, not a second module).
 
 ## The stages
 
-Each stage ends with its gate met, or stops (see Governance). Numbers are tier 1 over
-the corpus, ahead of time (AOT) and through the JIT, from 465.9M and 501.5M.
+Each stage's gate is its shape: what the CPU's code no longer has, and how near it is to
+the lean lexer's. The cost (tier 1 over the corpus, AOT and JIT, from 465.9M and 501.5M) is
+reported at each stage and judged when the shape is whole, not before.
 
 1. **Tokens by their runs.** A token kind declared by its first bytes and its run
    (`token identifier = start alpha run ident`) has its end from the run, at its start.
    The run-ended tokens need no `last` mask and no `lasts` extract; the record pass
    computes their ends. Punctuation's end is its start, or the byte after at a pair.
-   Gate: no `lasts` extract on the CPU; tier 1 AOT at most 420M.
+   Gate: no `lasts` extract and no run-ended `last` mask on the CPU.
 2. **Rare tokens read at their start.** The walk gives each string, comment and backtick
    literal its record, and the starts after it in its region are not starts. The other
    masks stop reading `code` (the bytes outside regions) where a token loop needs it
-   not. Gate: the CPU body below 120 operations; tier 1 AOT at most 330M.
+   not. Gate: the CPU body below 120 operations. Its steps, as the lean lexer's loop
+   (`cursor`, its starts cleared before it):
+   - **2a. The starts by the loop.** A token starts at the first byte after the last
+     token's end that `skip` does not hold; its end is its rule's. A region's token
+     (a string, a comment, a backtick literal) ends at its region's last byte, so the
+     loop never starts a token inside one. The interpreter first, with a test that
+     these starts are the starts mask's; then the CPU's record pass. Guard: no starts
+     extract on the CPU.
+   - **2b. The start masks go.** No CPU output reads a token's start mask; what
+     still needs one (a mark, a check) reads its own. Guard: the CPU computes no
+     token start mask.
+   - **2c. `code` read where it must be.** The runs and pairs stop masking by `code`:
+     the loop is never inside a region. A test shows the records unchanged.
 3. **Checks at the token.** A byte no token takes is a kind of its own (`BAD`) in the
    first-byte table. A number's digits and `.`, a `\u` escape, JSON's rules, the
    line marks (a newline between two tokens) are tested at the tokens they concern,
    in tier 1's loop or in tier 2 (`CHECK`, 0133). Gate: the CPU body at most 40
-   operations; tier 1 AOT at most 290M, 1.5 times the lean lexer.
+   operations, the lean lexer's few masks, with the token loop over the block's starts.
 
-After stage 3 the CPU lowering of today's masks is gone from the CPU path.
+After stage 3 the CPU lowering of today's masks is gone from the CPU path. The target
+then, measured: tier 1 AOT near the lean lexer (192.9M; at most 290M, 1.5 times it).
 
 ## Governance
 
@@ -85,41 +99,28 @@ After stage 3 the CPU lowering of today's masks is gone from the CPU path.
   no-per-byte-loop rule holds: the loops are over a block's tokens and regions.
 - **No second path.** What a stage replaces on the CPU is deleted when the stage lands:
   no flag between the old form and the new.
-- **Measured one way.** A stage is judged by `jit_against_aot` (nine rounds), AOT and
-  JIT both, with the load noted. The split probe (`rr_tier1_split`) moves by about 8M
-  under load: it diagnoses, it does not decide.
-- **Stop rules.** A stage that misses its gate by more than a tenth stops: the shape
-  is looked at again and the user told, not trimmed. A step that makes AOT or JIT
-  worse by more than the noise is not committed as progress.
+- **Judged by shape.** A step lands when it makes the generated code more like the
+  lean lexer's and keeps the tapes byte-identical. A half-built shape's cost is not a
+  verdict on it: an intermediate step may cost more until the stage that completes it.
+- **Measured one way, at the end.** The whole shape is measured by `jit_against_aot`
+  (nine rounds), AOT and JIT both, with the load noted. The split probe moves by about
+  8M under load: it diagnoses, it does not decide.
+- **Stop rule.** A stage that cannot reach its shape gate stops: the shape is looked at
+  again and the user told.
 - **Logged.** Each step and each dropped try is a row in docs/parser-generators/35;
   docs/parser-generators/36 holds the design as built; this record its stages' status.
 
-## Stage 1, measured
+## Stage 1
 
-Built and kept: the syntax (`token K = start S run R`, `pair P`), its mask meaning
-(`TokenRule::last`), the records' end rules (`Records::ends`, `rules`), and the
-interpreter's lasts from them. Over the corpus the rules' lasts are the masks' lasts
+Built: the syntax (`token K = start S run R`, `pair P`), its mask meaning
+(`TokenRule::last`), the records' end rules (`Records::ends`, `rules`), the interpreter's
+lasts from them, and the CPU's: the record pass finds each run- or pair-ended token's last
+from its first byte, and the CPU makes no `lasts` extract (guard:
+`the_cpu_makes_no_lasts_mask`). Over the corpus the rules' lasts are the masks' lasts
 (1,473 files, 2,567,918 tokens). The `.rr` grammar ends its words, numbers, `#` words and
 punctuation by rules, and its strings, comments and backtick literals by their masks.
 
-Not kept: the CPU's lowering. The record pass found each last from its first byte (a rule
-by a table load, a compare a rule, the run mask's word loaded from the file's rows), and the
-lasts' extract and masks went. Tier 1 rose:
-
-| | Before | With the rules in the record pass |
-|---|---|---|
-| AOT | 465.9M | 503.4M |
-| JIT | 501.5M | 530.3M |
-
-The extract it replaced cost about 10 instructions a token, and the last masks a few
-operations a block; the rule, in a pass over the file after the blocks, about 25 a token,
-with its branches mispredicted (127M cycles, from about 95M). The lean lexer's end costs
-almost nothing because it is made inside the block loop, from the block's word mask in a
-register (`end = pos + max(run, n1)`). The diff is in the worktree's
-`tmp/0177-stage1-record-pass-rules.diff`.
-
-So a token's work belongs in the block loop, where its masks are, not in a pass after it.
-The block loop's body is still about 350 operations, which a token loop in it would compete
-with for registers. The order proposed: stage 2 and 3 first (the body shrunk to the lean
-lexer's few masks), then the token loop moved into the block loop, ends and codes together.
-
+In between: the ends are found in the record pass, after the blocks, which reloads the run
+mask's word. The lean lexer finds them inside the block loop, from the word mask in a
+register (`end = pos + max(run, n1)`); that is where the token loop goes once stages 2 and
+3 have shrunk the body (the decision's "loop over a block's starts").

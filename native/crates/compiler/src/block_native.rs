@@ -190,10 +190,19 @@ impl BlockNative {
     /// goes, and with it whatever only the rounds read (an `else`'s `back_fill`, and the
     /// backward pass it took). Metal runs the program as it is.
     pub fn cpu_form(&self) -> BlockNative {
-        if self.walks.is_empty() {
+        let ruled = self.ruled_lasts();
+        if self.walks.is_empty() && ruled.is_none() {
             return self.clone();
         }
         let mut insts = self.insts.clone();
+        // The records' lasts by their end rules (decision 0177): the record pass finds each
+        // token's last from its first, so the lasts' extract reads a zero, and the masks only it
+        // read are pruned below.
+        let mut outputs = self.outputs.clone();
+        if let Some(k) = ruled {
+            insts.push(BlockInst::Const(0));
+            outputs[k] = (insts.len() - 1) as u16;
+        }
         let mut walked = vec![false; self.groups.len()];
         for (w, walk) in self.walks.iter().enumerate() {
             walked[usize::from(walk.group)] = true;
@@ -224,7 +233,7 @@ impl BlockNative {
             order.push(x);
         }
         let mut keep = vec![false; insts.len()];
-        let mut todo: Vec<usize> = self.outputs.iter().map(|&v| usize::from(v)).collect();
+        let mut todo: Vec<usize> = outputs.iter().map(|&v| usize::from(v)).collect();
         for (_, group) in self.groups.iter().enumerate().filter(|(g, _)| !walked[*g]) {
             todo.extend(group.carries.iter().flat_map(|&(c, x)| [c, x]));
         }
@@ -240,7 +249,7 @@ impl BlockNative {
             }
         }
         for x in 0..insts.len() {
-            if keep[x] && x < n {
+            if keep[x] && (x < n || ruled.is_some_and(|k| usize::from(outputs[k]) == x)) {
                 place(x, &insts, &mut placed, &mut order);
             }
         }
@@ -253,7 +262,7 @@ impl BlockNative {
         BlockNative {
             tables: self.tables.clone(),
             insts: order.iter().map(|&x| Self::renamed(insts[x], m)).collect(),
-            outputs: self.outputs.iter().map(|&v| m(v)).collect(),
+            outputs: outputs.iter().map(|&v| m(v)).collect(),
             extracts: self.extracts.clone(),
             totals: self.totals.clone(),
             masks: self.masks.clone(),
@@ -273,6 +282,13 @@ impl BlockNative {
                 .collect(),
             walks: self.walks.iter().map(|w| Self::walk_renamed(w, m)).collect(),
         }
+    }
+
+    /// The output of the records' lasts extract, where their end rules give the lasts instead
+    /// (decision 0177): the CPU makes no last-byte mask for it.
+    pub fn ruled_lasts(&self) -> Option<usize> {
+        let r = self.records.as_ref().filter(|r| !r.rules.is_empty())?;
+        self.extracts.get(usize::from(r.lasts)).copied()
     }
 
     /// The same program with every `class` written as a boolean formula of the eight bit-planes

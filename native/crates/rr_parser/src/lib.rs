@@ -459,8 +459,10 @@ pub mod tests {
     }
 
     /// Tier 1 of the grammar on Metal (the forward carry: its fixed points, its passes for the
-    /// `back_fill`s, its position planes) equals Cranelift's over the corpus as one batch: every
-    /// output word, every position, every total. Prints the GPU time.
+    /// `back_fill`s, its position planes) equals Cranelift's over the corpus as one batch: the
+    /// records (every position, every code), every total, and every output word but the last-byte
+    /// mask the CPU does not make (its lasts are by the end rules, decision 0177: the contract
+    /// between the tiers is the records). Prints the GPU time.
     #[test]
     #[cfg(target_os = "macos")]
     #[ignore = "the corpus on Metal: run by hand"]
@@ -475,11 +477,14 @@ pub mod tests {
         let native = &c.native;
         let got = run_serial_split(&[native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
         let mut differ = 0;
+        // The CPU's form leaves out the lasts' mask (`BlockNative::ruled_lasts`).
+        let unmade = native.ruled_lasts();
+        let same_outputs = |g: &[Vec<u64>], w: &[Vec<u64>]| g.len() == w.len() && (0..w.len()).all(|o| Some(o) == unmade || g[o] == w[o]);
         for (k, (g, w)) in got.run.files.iter().zip(&want).enumerate() {
-            if g.outputs != w.outputs || g.positions != w.positions || g.totals != w.totals || g.codes != w.codes {
+            if !same_outputs(&g.outputs, &w.outputs) || g.positions != w.positions || g.totals != w.totals || g.codes != w.codes {
                 differ += 1;
                 if differ < 4 {
-                    let o = (0..w.outputs.len()).find(|&o| g.outputs.get(o) != w.outputs.get(o));
+                    let o = (0..w.outputs.len()).find(|&o| Some(o) != unmade && g.outputs.get(o) != w.outputs.get(o));
                     eprintln!("file {k} ({} bytes) differs: output {o:?}, positions equal {}, totals {:?} / {:?}", refs[k].len(), g.positions == w.positions, g.totals, w.totals);
                 }
             }
@@ -1383,6 +1388,20 @@ pub mod tests {
             tokens += masks.len();
         }
         eprintln!("{} files, {tokens} tokens: the rules' lasts are the masks'", inputs.len());
+    }
+
+    /// Decision 0177's guard for stage 1: on the CPU, no token's last byte comes from a mask
+    /// extract. The records have end rules, and the CPU's form makes the lasts' output a zero
+    /// constant, so the last-byte masks only it read are not made.
+    #[test]
+    fn the_cpu_makes_no_lasts_mask() {
+        use rerail_compiler::block_native::BlockInst;
+        let c = crate::compiled().expect("compiles");
+        let k = c.native.ruled_lasts().expect("the records' lasts by end rules");
+        let cpu = c.native.cpu_form();
+        assert!(matches!(cpu.insts[usize::from(cpu.outputs[k])], BlockInst::Const(0)), "the CPU makes the lasts' mask");
+        assert!(cpu.insts.len() < c.native.insts.len(), "the last-byte masks pruned");
+        eprintln!("the CPU's form: {} operations, the bit-parallel form's {}", cpu.insts.len(), c.native.insts.len());
     }
 
     /// A float read as simdjson reads one: digits, a `.`, digits, then a byte that is not

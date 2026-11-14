@@ -2394,7 +2394,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let mut rules: Vec<crate::records::EndRule> = Vec::new();
     let mut ends = vec![0u8; 256];
     if !low.token_rules.is_empty() {
-        let mut mask_of = |low: &mut Lowering, v: Val, mark_masks: &mut Vec<Val>| -> u16 {
+        let mask_of = |low: &mut Lowering, v: Val, mark_masks: &mut Vec<Val>| -> u16 {
             match mark_masks.iter().position(|m: &Val| m.v == v.v && m.d == v.d) {
                 Some(k) => k as u16,
                 None => {
