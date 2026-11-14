@@ -884,23 +884,53 @@ export function loopbackOnlyNotice(reason: string): string {
   return `This daemon serves this computer alone, over plain http on loopback, until its TLS key is fixed: ${reason}`;
 }
 
+/** The daemon argument that names why a daemon serves this computer alone, as its loopback restart leaves it. */
+const REMOTE_REFUSED = "--remote-refused";
+
+/** The arguments of a daemon that serves this computer alone for `reason`: `argv`'s loopback ones, then why. */
+export function loopbackCommandLine(argv: readonly string[], reason: string): string[] {
+  return [...loopbackArguments(argv), REMOTE_REFUSED, reason];
+}
+
+/** Why a daemon started with `argv` serves this computer alone (`--remote-refused <why>`), and its other arguments. */
+export function remoteRefusal(argv: readonly string[]): { argv: string[]; reason: string } | undefined {
+  const at = argv.indexOf(REMOTE_REFUSED);
+  const reason = at === -1 ? undefined : argv[at + 1];
+  return reason === undefined ? undefined : { argv: [...argv.slice(0, at), ...argv.slice(at + 2)], reason };
+}
+
 /**
  * The daemon process: `runRerailDaemon`, except that a TLS key it may not serve with (`TlsKeyExposedError`), which keeps
  * it from serving https and from other machines, no longer keeps it from this one. The daemon starts again without the
- * options that reach other machines (`loopbackArguments`): on loopback, over http, as a daemon started with no options
- * is, so hooks keep recording and steering, and the state file, daemon.log, `rerail daemon start` and `rerail status`
- * say why (`loopbackOnlyNotice`). The refusal comes before anything is opened, so the second start begins from nothing.
+ * options that reach other machines (`serveLoopback`): on loopback, over http, as a daemon started with no options is,
+ * so hooks keep recording and steering, and the state file, daemon.log, `rerail daemon start` and `rerail status` say
+ * why (`loopbackOnlyNotice`). The refusal comes before anything is opened, so the second start begins from nothing. A
+ * daemon launched with `--remote-refused`, as a restart of such a daemon is, serves this computer alone from the start.
  * Its caller supplies only the services of the layers above: why the daemon serves this computer alone is this
  * function's alone to say, so no caller can record a daemon other machines reach as one they cannot.
  */
-export async function serveRerailDaemon(argv: readonly string[], services: Pick<RerailDaemonOptions, "codingAgents"> = {}): Promise<void> {
+export async function serveRerailDaemon(argv: readonly string[], services: Omit<RerailDaemonServices, "remoteRefused"> = {}): Promise<void> {
+  const relaunched = remoteRefusal(argv);
+  if (relaunched !== undefined) return await serveLoopback(relaunched.argv, relaunched.reason, services);
   try {
     await runRerailDaemon(argv, services);
   } catch (error) {
     if (!(error instanceof TlsKeyExposedError)) throw error;
     process.stderr.write(`rerail daemon: ${loopbackOnlyNotice(error.message)}\n`);
-    await runRerailDaemon(loopbackArguments(argv), { ...services, remoteRefused: error.message });
+    await serveLoopback(argv, error.message, services);
   }
+}
+
+/**
+ * Runs the daemon for this computer alone, for `reason`: with `argv` less what reaches other machines
+ * (`loopbackArguments`). The process takes the arguments of such a daemon (`loopbackCommandLine`) as if it had been
+ * started with them, as the hook launcher runs a hook: a restart at the heap ceiling relaunches the daemon with this
+ * process's arguments (`runRerailDaemon`), so the next daemon serves this computer alone too, saying why, even once the
+ * key is fixed, until someone starts it again.
+ */
+async function serveLoopback(argv: readonly string[], reason: string, services: Omit<RerailDaemonServices, "remoteRefused">): Promise<void> {
+  process.argv.splice(2, process.argv.length - 2, ...loopbackCommandLine(argv, reason));
+  await runRerailDaemon(loopbackArguments(argv), { ...services, remoteRefused: reason });
 }
 
 async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
