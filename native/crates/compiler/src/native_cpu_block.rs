@@ -2189,7 +2189,7 @@ impl Reads<'_> {
 /// that finds no last gives `s - 1`, which the order check refuses.
 #[allow(clippy::too_many_arguments)]
 #[allow(clippy::too_many_arguments)]
-fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, rd: &Reads<'_>, c: &FileCols, s: Value, raw: Value, entry: Value, limit: Option<Limit>, regs: Option<&BlockRegs>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Value, Value, Value, Value) {
+fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, rd: &Reads<'_>, c: &FileCols, s: Value, raw: Value, entry: Value, limit: Option<Limit>, regs: Option<&BlockRegs>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Value, Value, Value, Value, Option<cranelift_codegen::ir::Block>) {
     use crate::records::EndRule;
     // The last, and a refusal (its sign bit): a byte with no rule, where errors by tokens refuse.
     let (ended, done) = (f.create_block(), f.create_block());
@@ -2222,8 +2222,24 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     let filtered = |k: usize| r.checks.iter().zip(&t.filters).all(|(x, b)| usize::from(x.rule) != k || b.is_some());
     let kn = (0..r.rules.len()).filter(|&k| matches!(r.rules[k], EndRule::Next(_)) && filtered(k) && first_bytes(k) > 0).max_by_key(|&k| first_bytes(k));
     let kr = (0..r.rules.len()).filter(|&k| matches!(r.rules[k], EndRule::Run(o) if reg_of(o).is_some()) && filtered(k) && first_bytes(k) > 0).max_by_key(|&k| first_bytes(k));
-    if let (Some(kn), Some(kr)) = (kn, kr) {
+    // The fused rules' exit of their own (`fdone`, as `done`'s): their tokens are never a
+    // reader's or an extra, so the loop's tail for them knows it (the lean lexer's run loop).
+    let mut fused_exit = None;
+    // Sound only where no token of the two can be an extra: the extra's mark (`Records::extra`)
+    // needs a first byte (`native_cpu_bytes::needs`) that neither rule's bytes are.
+    let no_extra = |ks: [usize; 2]| match r.extra {
+        None => true,
+        Some(e) => rd.bytes.zip(r.marks.get(usize::from(e))).and_then(|((b, _), &(o, _))| crate::native_cpu_bytes::needs(b.native, o)).is_some_and(|n| {
+            n.lo == 0 && n.hi == 0 && (0..=255u8).all(|x| !n.has(x) || ks.iter().all(|&k| r.ends.get(usize::from(x)).is_none_or(|&e| usize::from(e) != k)))
+        }),
+    };
+    if let Some((kn, kr)) = kn.zip(kr).filter(|&(a, b)| no_extra([a, b])) {
         let (EndRule::Next(pi), EndRule::Run(o)) = (r.rules[kn], r.rules[kr]) else { unreachable!("the forms chosen") };
+        let fdone = f.create_block();
+        for _ in 0..4 {
+            f.append_block_param(fdone, types::I64);
+        }
+        fused_exit = Some(fdone);
         let (go, table, on) = (f.create_block(), f.create_block(), f.create_block());
         let is_n = f.ins().icmp_imm(IntCC::Equal, rule, kn as i64);
         let is_r = f.ins().icmp_imm(IntCC::Equal, rule, kr as i64);
@@ -2248,9 +2264,15 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
         f.switch_to_block(on);
         // The tests' blocks first (`tested` is built from an empty block), then the select.
         let tests: Vec<(crate::records::TokenCheck, Option<i64>)> = r.checks.iter().zip(&t.filters).filter(|(x, _)| usize::from(x.rule) == kn || usize::from(x.rule) == kr).map(|(x, &b)| (*x, b)).collect();
-        let to = if tests.is_empty() { ended } else { tested(f, &tests, rd, c, s, entry, done, heads) };
-        let l = f.ins().select(is_n, l_n, l_r);
-        f.ins().jump(to, &[l.into(), untag.into()]);
+        let l_sel;
+        if tests.is_empty() {
+            l_sel = f.ins().select(is_n, l_n, l_r);
+            f.ins().jump(fdone, &[l_sel.into(), nohits.into(), untag.into(), nohits.into()]);
+        } else {
+            let to = tested(f, &tests, rd, c, s, entry, fdone, heads);
+            l_sel = f.ins().select(is_n, l_n, l_r);
+            f.ins().jump(to, &[l_sel.into(), untag.into()]);
+        }
         f.switch_to_block(table);
     }
     // The rule by a jump table, as the lean lexer's `match` on the first byte; none, the byte
@@ -2483,7 +2505,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     let zero = f.ins().iconst(types::I64, 0);
     f.ins().jump(done, &[l.into(), zero.into(), tag.into(), zero.into()]);
     f.switch_to_block(done);
-    (f.block_params(done)[0], f.block_params(done)[1], f.block_params(done)[2], f.block_params(done)[3])
+    (f.block_params(done)[0], f.block_params(done)[1], f.block_params(done)[2], f.block_params(done)[3], fused_exit)
 }
 
 /// A pair's last (`EndRule::Next`, table `i`): the first byte's row (its entry's), then the
@@ -2894,16 +2916,12 @@ struct RecPart {
 #[allow(clippy::too_many_arguments)]
 fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &RecordTables, extracts: usize, outputs: usize, c: &FileCols, part: Option<RecPart>, bw: Option<(&crate::native_cpu_bytes::Bytewise<'_>, &Consts, &[ByteCall])>, then: cranelift_codegen::ir::Block, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) {
     let rd = Reads { bytes: bw.map(|(b, k, _)| (b, crate::native_cpu_bytes::File { bytes: c.bytes, len: c.len, nibble: k.nibble, weights: k.weights, even: k.even })), outputs, calls: bw.map_or(&[][..], |x| x.2) };
-    let (head, token, long, coded, finish) = (f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block());
+    let (head, token, finish) = (f.create_block(), f.create_block(), f.create_block());
     // The loop's values: the token, the end of the token before, the refusal so far, and the
     // marks' tests' bits for the next grammar token (`CheckThen`).
     for _ in 0..STATE_WORDS {
         f.append_block_param(head, types::I64);
-        f.append_block_param(coded, types::I64);
     }
-    // At `coded`, the token's code and its tests' hits too.
-    f.append_block_param(coded, types::I64);
-    f.append_block_param(coded, types::I64);
     // At `finish`, the refusal, the tokens' count, the marks' bits left and where the gap
     // marks' bits not in them start.
     for _ in 0..4 {
@@ -3075,19 +3093,34 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let ea = f.ins().ishl_imm(first, 2);
     let ea = f.ins().iadd(tables, ea);
     let entry = f.ins().uload32(ro, ea, t.token as i32);
-    let mut refused = None;
-    let mut retag = None;
-    let mut hits = zero;
-    let l = if ruled {
-        let (l, refuse, tag, h) = rule_last(f, r, t, &rd, c, s, raw, entry, limit, regs.as_ref(), heads);
-        refused = Some(refuse);
-        retag = Some(tag);
-        hits = h;
-        f.ins().istore32(stores, l, la, 0);
-        l
+    // The rules' exits (`rule_last`): every rule's, and the fused rules' of their own, whose
+    // tail is made again knowing their tokens are no reader's and no extra (the lean lexer's
+    // run loop, apart from its rare tokens).
+    let (general, fused_exit) = if ruled {
+        let (l, refuse, tag, h, fx) = rule_last(f, r, t, &rd, c, s, raw, entry, limit, regs.as_ref(), heads);
+        (Some((l, refuse, tag, h)), fx)
     } else {
-        f.ins().uload32(fl, la, 0)
+        (None, None)
     };
+    for common in std::iter::once(false).chain(fused_exit.map(|_| true)) {
+    let (l, refused, retag, hits) = if common {
+        let fb = fused_exit.expect("the fused exit");
+        f.switch_to_block(fb);
+        let p = f.block_params(fb).to_vec();
+        (p[0], Some(p[1]), None, p[3])
+    } else {
+        match general {
+            Some((l, refuse, tag, h)) => (l, Some(refuse), Some(tag), h),
+            None => (f.ins().uload32(fl, la, 0), None, None, zero),
+        }
+    };
+    if ruled {
+        f.ins().istore32(stores, l, la, 0);
+    }
+    let (long, coded) = (f.create_block(), f.create_block());
+    for _ in 0..STATE_WORDS + 2 {
+        f.append_block_param(coded, types::I64);
+    }
     // Out of order (a last before its start, a start inside the token before): a difference
     // below zero. The columns are 32 bits wide, so a difference's sign is its 64th bit.
     // With the loop's starts (`records::walk`) neither can be: a start is past the token
@@ -3280,7 +3313,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         let marked = f.ins().bor(code, placed);
         // The gap's start and the word before only where a gap mark is the loop's.
         let gapped = !lift.is_empty();
-        match r.extra {
+        match r.extra.filter(|_| !common) {
             Some(e) => {
                 let is_extra = f.ins().ushr_imm(code, i64::from(crate::records::MARK_SHIFT) + i64::from(e));
                 let is_extra = f.ins().band_imm(is_extra, 1);
@@ -3325,6 +3358,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         back.extend(g.runs.iter().map(|&(_, v)| BlockArg::from(v)));
     }
     f.ins().jump(head, &back);
+    }
 
     // The file's end: a refusal sets the totals' flag, the count after the extracts'. A bit
     // left of an `else escape` mark (`Records::unplaced`) has no grammar token: it refuses.

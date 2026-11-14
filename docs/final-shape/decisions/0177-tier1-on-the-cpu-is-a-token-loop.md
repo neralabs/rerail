@@ -696,3 +696,18 @@ Read side by side, the generated Rust and the lean lexer differed most in four p
 
 Measured (`jit_against_aot`, load average 141): tier 1 ahead of time 232 instructions and 67
 cycles a node, from 274 and 77; the JIT 331 and 80; tier 1 + 2 ahead of time 474 and 116.
+
+## The common tokens' tail apart
+
+The lean lexer's run loop writes a word or a punctuation token and nothing else; strings and
+comments are read apart. The generated loop sent every token through one tail: a reader's
+retag selects, an extra's selects (the gap state kept, the marks left to the next token),
+for tokens that can be neither.
+
+Now the fused rules (`rule_last`'s pair and run) leave by an exit of their own, and the loop's
+tail is made again for it, knowing a token there is no reader's and no extra: none of those
+selects. Every other rule keeps the general tail. Sound only where the extra's mark needs a
+first byte neither fused rule has (a comment's `/` is its reader's).
+
+Measured (`jit_against_aot`): tier 1 ahead of time 212 instructions and 66 cycles a node,
+from 232; the JIT 285 and 75, from 331; tier 1 + 2 ahead of time 454.
