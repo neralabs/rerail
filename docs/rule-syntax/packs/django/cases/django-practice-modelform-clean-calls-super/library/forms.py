@@ -62,6 +62,25 @@ class GoodBookFormSet(BookFormSetBase):
             raise ValidationError("at least one")
 
 
+class UniqueBookFormSet(BookFormSetBase):
+    # Does by hand all that BaseModelFormSet.clean() does: the uniqueness check runs.
+    def clean(self):
+        self.validate_unique()
+        if not self.forms:
+            raise ValidationError("at least one")
+
+
+class LooseUniqueForm(forms.ModelForm):
+    class Meta:
+        model = Author
+        fields = ["name"]
+
+    # In a form, validate_unique() alone still skips the constraint checks that ModelForm.clean() turns on.
+    def clean(self):  # caught
+        self.validate_unique()
+        return self.cleaned_data
+
+
 class ChapterFormSet(ChapterInlineBase):
     def clean(self):  # caught
         for form in self.forms:

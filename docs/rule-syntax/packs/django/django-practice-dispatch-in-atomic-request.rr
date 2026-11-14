@@ -9,12 +9,17 @@
 // Celery `.delay()`/`.apply_async()`/`send_task()`, a Django 6 task `.enqueue()`, django-q `async_task()` or a mail
 // (send_mail, mail_admins, EmailMessage.send) in a view, or in code a view calls (the cross-file call graph), then
 // runs before the commit: the worker may read rows that are not committed yet, or act on a request that rolls back.
-// Views: a def whose first parameter is `request` (not a method), and every method of a Django or DRF view class;
-// not async views (Django refuses ATOMIC_REQUESTS for them) and not views marked non_atomic_requests (a decorator on
-// the def, the class or one of its methods, `non_atomic_requests(...)` in the class's `as_view`, or a urls-level
-// `non_atomic_requests(views.f)`). Task sends are not reported when the run's Task class already defers them (a
-// class defining `apply_async` that calls on_commit, as `Celery(task_cls=...)`). A top-level `ATOMIC_REQUESTS = True`
-// is not a Django setting and turns nothing on.
+// Views: a def whose first parameter is `request` (not a method, and not the inner `def middleware(request)` of a
+// function-style middleware `def m(get_response)`, which runs outside the view's transaction), and every method of a
+// Django or DRF view class; not async views (Django refuses ATOMIC_REQUESTS for them) and not views marked
+// non_atomic_requests (a decorator on the def, the class or one of its methods, `non_atomic_requests(...)` in the
+// class's `as_view`, or a urls-level `non_atomic_requests(views.f)`). What counts as a dispatch, and what is left
+// alone, is django-practice-enqueue-on-commit's: `.delay()` on a parameter or local (`client.delay(2.0)`) is not
+// known to be a task; a task whose `base=X` class, or the run's `Celery(task_cls=X)` class, sends through on_commit
+// already waits for the commit; a call in an except handler that always re-raises stays (the request rolls back, so
+// on_commit would drop the failure mail); `r = task.apply_async(...)` whose result the function reads afterwards
+// stays. Calls inside an atomic block are enqueue-on-commit's. A top-level `ATOMIC_REQUESTS = True` is not a Django
+// setting and turns nothing on.
 //   def place(request): notify.delay(order.pk)                                  reported
 //   def place(request): helpers.notify_later(order)   # which calls .delay()    reported, at the .delay()
 //   def place(request): transaction.on_commit(partial(notify.delay, order.pk))  not reported
@@ -25,16 +30,17 @@
 #include "python/django.rr"
 
 .violation DispatchInAtomicRequest(at: node, what: symbol) "`{what}` runs inside a request while ATOMIC_REQUESTS wraps every view in a transaction (here or in a view that calls this code): a worker can pick the task up (or the mail goes out) before the request commits, so it may read rows that are not committed yet or act on changes that roll back. Run it after commit: `transaction.on_commit(partial(...))`, or Celery's `.delay_on_commit()`."
-DispatchInAtomicRequest(c, w) :- dar_on(), dar_side_effect(c, w), owner(c, f), dar_live(f), !dar_after_commit(c),
-    !dar_held(c), !dj_in_atomic(c, _), docof(c, d), !dj_test_doc(d).
+// What a dispatch is, and which ones stay, is python/django's side-effect vocabulary, shared with
+// django-practice-enqueue-on-commit; a call in a transaction its own function opens (dj_in_transaction) is that
+// rule's.
+DispatchInAtomicRequest(c, w) :- dar_on(), dj_side_effect(c, w), owner(c, f), dar_live(f), !dar_after_commit(c),
+    !dj_task_waits_for_commit(c), !dj_dispatch_in_failing_handler(c), !dj_dispatch_result_used(c),
+    !dj_in_transaction(c), docof(c, d), !dj_test_doc(d).
 
-// dar_on(): some settings module turns ATOMIC_REQUESTS on, with the literal True (an env-driven value is unknown).
+// dar_on(): some settings module turns ATOMIC_REQUESTS on (dj_atomic_requests_value), with the literal True or a
+// parameter defaulting to it (an env-driven value is unknown).
 .decl dar_on()
-dar_on() :- kind(p, "pair"), field(p, "key", k), str(k, "ATOMIC_REQUESTS"), field(p, "value", v), dar_true(v),
-    docof(p, d), !dj_test_doc(d).
-dar_on() :- kind(a, "assignment"), field(a, "left", l), kind(l, "subscript"), field(l, "subscript", s),
-    str(s, "ATOMIC_REQUESTS"), field(a, "right", v), dar_true(v), docof(a, d), !dj_test_doc(d).
-dar_on() :- call_arg(_, -1, "ATOMIC_REQUESTS", v), dar_true(v), docof(v, d), !dj_test_doc(d).
+dar_on() :- dj_atomic_requests_value(v), dar_true(v).
 // dar_true(v): v is True, or names a parameter of its def whose default is True (`def db(atomic_requests=True)`).
 .decl dar_true(v: node)
 dar_true(v) :- kind(v, "true").
@@ -44,12 +50,17 @@ dar_true(v) :- kind(v, "identifier"), text(v, x), nearest(v, f, fdef), sig_param
 // dar_view(f): f is a sync view that ATOMIC_REQUESTS wraps; dar_live(f): f runs inside one, by calls.
 .decl dar_view(f: node)
 dar_view(f) :- param(f, "request", 0), nearest(f, s, scope), !kind(s, "class_definition"), !is_async(f),
-    !dar_non_atomic(f), !dar_non_atomic_wrapped(f), docof(f, d), !dj_test_doc(d).
+    !dar_middleware(f), !dar_non_atomic(f), !dar_non_atomic_wrapped(f), docof(f, d), !dj_test_doc(d).
 dar_view(f) :- dj_view_class(k), kind(f, "function_definition"), nearest(f, k, scope), !is_async(f),
     !dar_non_atomic(k), !dar_non_atomic_member(k), docof(f, d), !dj_test_doc(d).
 .decl dar_live(f: node)
 dar_live(f) :- dar_on(), dar_view(f).
 dar_live(g) :- dar_live(f), owner(c, f), call_target(c, g), !dar_after_commit(c).
+// dar_middleware(f): f is the inner def of a function-style middleware, `def m(get_response): def middleware(request)`.
+// Django wraps only the resolved view in the request's transaction (BaseHandler.make_view_atomic).
+.decl dar_middleware(f: node)
+dar_middleware(f) :- kind(f, "function_definition"), nearest(f, g, scope), kind(g, "function_definition"),
+    param(g, "get_response", _).
 // dar_non_atomic(o): def or class o has a decorator that mentions transaction.non_atomic_requests
 // (`@non_atomic_requests`, `@method_decorator(transaction.non_atomic_requests, name="dispatch")`).
 .decl dar_non_atomic_ref(n: node)
@@ -64,14 +75,6 @@ dar_non_atomic_member(k) :- kind(k, "class_definition"), field(k, "body", b), wi
 .decl dar_non_atomic_wrapped(f: node)
 dar_non_atomic_wrapped(f) :- kind(c, "call"), field(c, "function", n), dar_non_atomic_ref(n), posarg(c, 0, a),
     sym_of(a, q), qualname(f, q).
-// dar_held(c): c is a Celery send, and the run's Task class sends through on_commit already: some class defines
-// `apply_async` with an on_commit call in its body (addons-server's AMOTask, `Celery(..., task_cls=AMOTask)`).
-.decl dar_held(c: node)
-dar_held(c) :- dar_commit_task(), kind(c, "call"), field(c, "function", f), attr_of(f, _, m),
-    (m = "delay" ; m = "apply_async").
-.decl dar_commit_task()
-dar_commit_task() :- kind(f, "function_definition"), def_name(f, "apply_async"), nearest(f, k, scope),
-    kind(k, "class_definition"), dar_on_commit(oc), within(oc, f).
 // dar_on_commit(oc): oc is `transaction.on_commit(...)`, or `.on_commit(...)` on a connection
 // (`connection.on_commit(...)`, `connections["x"].on_commit(...)`); dar_after_commit(n): n is in its arguments.
 .decl dar_on_commit(oc: node)
@@ -79,28 +82,3 @@ dar_on_commit(oc) :- kind(oc, "call"), field(oc, "function", f), sym_of(f, "djan
 dar_on_commit(oc) :- kind(oc, "call"), field(oc, "function", f), attr_of(f, _, "on_commit").
 .decl dar_after_commit(n: node)
 dar_after_commit(n) :- dar_on_commit(oc), within(n, oc).
-
-// dar_side_effect(c, what): call c enqueues a task or sends mail (as django-practice-enqueue-on-commit's eoc_side_effect).
-.decl dar_task_method(m: symbol)
-dar_task_method("delay"). dar_task_method("apply_async"). dar_task_method("send_task").
-dar_task_method("enqueue"). dar_task_method("aenqueue").
-.decl dar_mail_fn(q: symbol)
-dar_mail_fn("django.core.mail.send_mail"). dar_mail_fn("django.core.mail.send_mass_mail").
-dar_mail_fn("django.core.mail.mail_admins"). dar_mail_fn("django.core.mail.mail_managers").
-dar_mail_fn("django_q.tasks.async_task").
-.decl dar_message_class(q: symbol)
-dar_message_class("django.core.mail.EmailMessage"). dar_message_class("django.core.mail.EmailMultiAlternatives").
-dar_message_class("django.core.mail.message.EmailMessage").
-dar_message_class("django.core.mail.message.EmailMultiAlternatives").
-.decl dar_side_effect(c: node, what: symbol)
-dar_side_effect(c, cat(cat(".", m), "()")) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m),
-    dar_task_method(m).
-dar_side_effect(c, cat(x, "()")) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), dar_mail_fn(q),
-    split_dot(q, _, x).
-dar_side_effect(c, "EmailMessage.send()") :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "send"),
-    unparen(o, m), dar_message(m).
-dar_side_effect(c, "EmailMessage.send()") :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "send"),
-    kind(o, "identifier"), text(o, v), def_frame(c, fr), kind(a, "assignment"), field(a, "left", l), text(l, v),
-    field(a, "right", r), dar_message(r), def_frame(a, fr).
-.decl dar_message(m: node)
-dar_message(m) :- kind(m, "call"), field(m, "function", f), sym_of(f, q), dar_message_class(q).

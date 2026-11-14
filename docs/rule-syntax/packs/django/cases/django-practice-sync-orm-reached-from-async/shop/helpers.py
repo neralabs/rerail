@@ -62,6 +62,11 @@ def later():
     return lambda: Book.objects.count()
 
 
+def defer():
+    # The lambda calls total() later, not defer().
+    return lambda: total()
+
+
 @sync_to_async
 def atotal():
     return Book.objects.count()

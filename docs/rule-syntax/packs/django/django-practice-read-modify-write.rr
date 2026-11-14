@@ -10,15 +10,19 @@
 // bound in the function from a queryset of a model (`M.objects...get()/first()/last()/latest()/earliest()`,
 // `obj, created = M.objects...get_or_create(...)`, `get_object_or_404(M, ...)`, `for obj in M.objects...`). It leaves
 // alone a function that calls select_for_update() anywhere, and a new instance (`obj = M(...)`), which is inserted,
-// not updated.
+// not updated. The message offers both F() forms: on the instance, which still runs M's save() and its signals, and
+// `update()`, which skips them (django-practice-bulk-write-skips-hooks leaves such a counter update alone).
 //   a = Article.objects.get(pk=pk); a.hits += 1; a.save()           reported
 //   def like(self): self.likes += 1; self.save()                     reported (in a model method)
+//   a.hits = F("hits") + 1; a.save()                                 not reported
 //   Article.objects.filter(pk=pk).update(hits=F("hits") + 1)         not reported
 //   a = Article.objects.select_for_update().get(pk=pk); a.hits += 1; a.save()   not reported
+// Gaps: obj as an attribute chain (`self.object.hits += 1`), a parameter whose model only callers know, a save()
+// in a helper; a model method is reported even when every caller locks the row.
 
 #include "python/django.rr"
 
-.violation ReadModifyWrite(at: node, o: symbol, x: symbol, model: symbol) "{o}.{x} is read into Python, changed and saved back with {o}.save(): two concurrent requests both read the old value and one change is lost. Let the database do the arithmetic, `{model}.objects.filter(pk={o}.pk).update({x}=F(\"{x}\") + n)` (or `{o}.{x} = F(\"{x}\") + n` before save()), or lock the row with select_for_update() inside transaction.atomic()."
+.violation ReadModifyWrite(at: node, o: symbol, x: symbol, model: symbol) "{o}.{x} is read into Python, changed and saved back with {o}.save(): two concurrent requests both read the old value and one change is lost. Let the database do the arithmetic: `{o}.{x} = F(\"{x}\") + n` before {o}.save() (save() and its signals still run; call {o}.refresh_from_db() before reading {o}.{x} again), or `{model}.objects.filter(pk={o}.pk).update({x}=F(\"{x}\") + n)`, which skips them; or lock the row with select_for_update() inside transaction.atomic()."
 ReadModifyWrite(s, o, x, m) :- rmw_change(f, s, o, x), rmw_save(f, sv, o), earlier(s, sv), !rmw_locked(f),
     rmw_model(f, o, mc), rmw_numeric(mc, x), def_name(mc, m), docof(s, d), !dj_test_doc(d).
 
@@ -41,36 +45,25 @@ rmw_save(f, c, o) :- kind(c, "call"), field(c, "function", e), attr_of(e, on, "s
 rmw_locked(f) :- kind(f, "function_definition"), kind(c, "call"), within(c, f), field(c, "function", e),
     attr_of(e, _, "select_for_update").
 
-// rmw_model(f, o, mc): in function f, o holds an instance of model mc read from the database.
+// rmw_model(f, o, mc): in function f, o holds an instance of model mc read from the database (not created: a new
+// instance is inserted, so `M(...)` and `create()` are left out).
 .decl rmw_model(f: node, o: symbol, mc: node)
 rmw_model(f, "self", mc) :- dj_model_method(mc, f, _).
-rmw_model(f, o, mc) :- asg(f, o, r, _), unparen(r, c), dj_qs_call(c, m), rmw_get(m), field(c, "function", e),
-    attr_of(e, q, _), rmw_qs_model(q, mc).
+rmw_model(f, o, mc) :- asg(f, o, r, _), unparen(r, c), dj_qs_call(c, m), dj_row_method(m), m != "create",
+    field(c, "function", e), attr_of(e, q, _), dj_qs_model(q, mc).
 rmw_model(f, o, mc) :- asg(f, o, r, _), unparen(r, c), kind(c, "call"), field(c, "function", g),
-    sym_of(g, "django.shortcuts.get_object_or_404"), posarg(c, 0, a), (rmw_qs_model(a, mc) ; rmw_class(a, mc)).
+    sym_of(g, "django.shortcuts.get_object_or_404"), posarg(c, 0, a), (dj_qs_model(a, mc) ; rmw_class(a, mc)).
 rmw_model(f, o, mc) :- kind(a, "assignment"), nearest(a, f, fdef), field(a, "left", l),
     (kind(l, "pattern_list") ; kind(l, "tuple_pattern")), child(l, n, 0), kind(n, "identifier"), text(n, o),
     field(a, "right", r), unparen(r, c), (dj_qs_call(c, "get_or_create") ; dj_qs_call(c, "update_or_create")),
-    field(c, "function", e), attr_of(e, q, _), rmw_qs_model(q, mc).
+    field(c, "function", e), attr_of(e, q, _), dj_qs_model(q, mc).
 rmw_model(f, o, mc) :- kind(s, "for_statement"), nearest(s, f, fdef), field(s, "left", l), kind(l, "identifier"),
-    text(l, o), field(s, "right", r), unparen(r, q), rmw_qs_model(q, mc).
-.decl rmw_get(m: symbol)
-rmw_get("get"). rmw_get("first"). rmw_get("last"). rmw_get("latest"). rmw_get("earliest").
-// rmw_qs_model(q, mc): queryset chain q starts at `M.objects`, M model class mc of the run.
-.decl rmw_root(q: node, r: node)
-rmw_root(q, o) :- dj_manager(q), attr_of(q, o, _).
-rmw_root(q, r) :- dj_qs(q), kind(q, "call"), field(q, "function", f), attr_of(f, o, _), rmw_root(o, r).
-.decl rmw_qs_model(q: node, mc: node)
-rmw_qs_model(q, mc) :- rmw_root(q, r), rmw_class(r, mc).
+    text(l, o), field(s, "right", r), unparen(r, q), dj_qs_model(q, mc).
+// rmw_class(e, mc): e names model class mc of the run.
 .decl rmw_class(e: node, mc: node)
 rmw_class(e, mc) :- sym_of(e, q), class_def(mc, q), dj_model(mc).
 
-// rmw_numeric(mc, x): model mc has numeric field x, declared in its body or in a base class of the run.
-.decl rmw_num(t: symbol)
-rmw_num("IntegerField"). rmw_num("SmallIntegerField"). rmw_num("BigIntegerField"). rmw_num("PositiveIntegerField").
-rmw_num("PositiveSmallIntegerField"). rmw_num("PositiveBigIntegerField"). rmw_num("DecimalField").
-rmw_num("FloatField"). rmw_num("DurationField").
+// rmw_numeric(mc, x): model mc has numeric field x (python/django's dj_number_field, or a DurationField), declared in
+// its body or in a base class of the run.
 .decl rmw_numeric(mc: node, x: symbol)
-rmw_numeric(mc, x) :- dj_field(mc, x, _, t), rmw_num(t).
-rmw_numeric(mc, x) :- dj_model(mc), class_def(mc, q), subclass(q, b), class_def(cb, b), dj_class_field(cb, x, _, t),
-    rmw_num(t).
+rmw_numeric(mc, x) :- dj_has_field(mc, x, _, t), (dj_number_field(t) ; t = "DurationField").

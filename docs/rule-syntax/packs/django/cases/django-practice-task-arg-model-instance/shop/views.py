@@ -36,6 +36,11 @@ def ship(request, pk):
     ship_order.delay(row)
     count = Order.objects.count()
     ship_order.delay(count)
+    # A loop over values()/values_list() rows yields pks and dicts, not instances: the shape this rule asks for.
+    for pk in Order.objects.filter(email="").values_list("pk", flat=True):
+        ship_order.delay(pk)
+    for line in Order.objects.filter(email="").values("pk", "email"):
+        ship_order.delay(line)
 
 
 class ShipView(View):

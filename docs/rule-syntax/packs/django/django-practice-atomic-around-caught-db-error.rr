@@ -28,9 +28,11 @@
 #include "python/django.rr"
 
 .violation CaughtDbErrorInAtomic(at: node, err: symbol) "This `except {err}` sits inside transaction.atomic, and its try body runs a database query with no savepoint (atomic block) of its own: after the error the transaction is broken, so later queries in the block fail or are silently rolled back. Wrap the try body in `with transaction.atomic():` so the error rolls back only that savepoint."
+// A handler that always re-raises (python/django's py_reraising_handler) lets the error leave the atomic block and
+// roll it back.
 CaughtDbErrorInAtomic(x, e) :- kind(t, "try_statement"), dj_in_atomic(t, _), field(t, "body", b), child(t, x, _),
     kind(x, "except_clause"), catches(x, q), split_dot(q, m, e), adb_error_module(m), adb_error(e),
-    adb_unguarded_db(b), !adb_reraises(x), !adb_savepoint(x), docof(t, d), !dj_test_doc(d).
+    adb_unguarded_db(b), !py_reraising_handler(x), !adb_savepoint(x), docof(t, d), !dj_test_doc(d).
 
 // adb_error: django.db's DatabaseError and its subclasses, as django.db and django.db.utils export them.
 .decl adb_error_module(m: symbol)
@@ -76,28 +78,6 @@ adb_guarded(c, b) :- kind(t, "try_statement"), field(t, "body", b), adb_db_call(
 adb_no_savepoint(w) :- dj_atomic_with(w, wb), kind(e, "call"), within(e, w), !within(e, wb), dj_atomic(e),
     call_arg(e, _, "savepoint", v), text(v, "False").
 
-// adb_reraises(x): every path through handler x ends in `raise`, so the error still leaves the atomic block and
-// rolls it back.
-.decl adb_reraises(x: node)
-adb_reraises(x) :- kind(x, "except_clause"), child(x, hb, _), kind(hb, "block"), !adb_may_end(hb).
-// adb_may_end(b): block b (a handler's, or a branch of an if in one) can finish without raising: its last statement
-// is not `raise`, or is an if that has no else, or one of whose if/elif/else branches can finish.
-.decl adb_raise_block(b: node)
-adb_raise_block(b) :- kind(x, "except_clause"), child(x, b, _), kind(b, "block").
-adb_raise_block(b) :- adb_raise_block(p), body_len(p, k), j = k - 1, body_stmt(p, s, j), kind(s, "if_statement"),
-    adb_branch(s, b).
-.decl adb_branch(s: node, b: node)
-adb_branch(s, b) :- kind(s, "if_statement"), field(s, "consequence", b).
-adb_branch(s, b) :- kind(s, "if_statement"), field(s, "alternative", e), kind(e, "elif_clause"), field(e, "consequence", b).
-adb_branch(s, b) :- kind(s, "if_statement"), field(s, "alternative", e), kind(e, "else_clause"), field(e, "body", b).
-.decl adb_has_else(s: node)
-adb_has_else(s) :- kind(s, "if_statement"), field(s, "alternative", e), kind(e, "else_clause").
-.decl adb_may_end(b: node)
-adb_may_end(b) :- adb_raise_block(b), body_len(b, k), j = k - 1, body_stmt(b, s, j), !kind(s, "raise_statement"),
-    !kind(s, "if_statement").
-adb_may_end(b) :- adb_raise_block(b), body_len(b, k), j = k - 1, body_stmt(b, s, j), kind(s, "if_statement"),
-    !adb_has_else(s).
-adb_may_end(b) :- adb_raise_block(b), body_len(b, k), j = k - 1, body_stmt(b, s, j), adb_branch(s, cb), adb_may_end(cb).
 // adb_savepoint(x): handler x rolls back by hand: `transaction.savepoint_rollback(sid)` or `set_rollback(True)`.
 .decl adb_savepoint(x: node)
 adb_savepoint(x) :- kind(x, "except_clause"), kind(c, "call"), within(c, x), field(c, "function", f), sym_of(f, q),

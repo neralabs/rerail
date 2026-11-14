@@ -70,12 +70,13 @@ cfr_block(b) :- cfr_clean(f, _, _), field(f, "body", b).
 cfr_block(b) :- cfr_clean(f, _, _), field(f, "body", fb), within(b, fb), kind(b, "block").
 .decl cfr_stmt(s: node)
 cfr_stmt(s) :- cfr_block(b), child(b, s, _), !kind(s, "comment").
-// cfr_s_open(s): statement s can complete normally. A simple statement or loop can; return and raise cannot; an
-// if, try, with, `while True` or match can when one of its ways through can.
+// cfr_s_open(s): statement s can complete normally. A simple statement can; return and raise cannot; an if, try or
+// with can when one of its ways through can; a for or while loop can unless it has an else that cannot and no
+// break (`while True` only by a break); a match can when a case body can or no case catches every value.
 .decl cfr_compound(k: symbol)
 cfr_compound("return_statement"). cfr_compound("raise_statement"). cfr_compound("if_statement").
 cfr_compound("try_statement"). cfr_compound("with_statement"). cfr_compound("while_statement").
-cfr_compound("match_statement").
+cfr_compound("for_statement"). cfr_compound("match_statement").
 .decl cfr_s_open(s: node)
 cfr_s_open(s) :- cfr_stmt(s), kind(s, k), !cfr_compound(k).
 cfr_s_open(s) :- cfr_stmt(s), kind(s, "if_statement"), field(s, "consequence", b), cfr_open(b).
@@ -85,10 +86,26 @@ cfr_s_open(s) :- cfr_stmt(s), kind(s, "if_statement"), field(s, "alternative", a
 cfr_s_open(s) :- cfr_stmt(s), kind(s, "if_statement"), field(s, "alternative", a), kind(a, "else_clause"),
     field(a, "body", b), cfr_open(b).
 cfr_s_open(s) :- cfr_stmt(s), kind(s, "with_statement"), field(s, "body", b), cfr_open(b).
-cfr_s_open(s) :- cfr_stmt(s), kind(s, "while_statement"), field(s, "condition", c), !kind(c, "true").
-cfr_s_open(s) :- cfr_stmt(s), kind(s, "while_statement"), kind(k, "break_statement"), nearest(k, s, cfr_loop).
+// A loop's else runs when the loop ends without a break; `while True` never ends that way.
+cfr_s_open(s) :- cfr_stmt(s), cfr_ending_loop(s), !cfr_has_else(s).
+cfr_s_open(s) :- cfr_stmt(s), cfr_ending_loop(s), field(s, "alternative", a), kind(a, "else_clause"),
+    field(a, "body", b), cfr_open(b).
+cfr_s_open(s) :- cfr_stmt(s), (kind(s, "while_statement") ; kind(s, "for_statement")), kind(k, "break_statement"),
+    nearest(k, s, cfr_loop).
 cfr_s_open(s) :- cfr_stmt(s), kind(s, "match_statement"), within(b, s), kind(b, "block"), child(cc, b, _),
     kind(cc, "case_clause"), nearest(cc, s, "match_statement"), cfr_open(b).
+cfr_s_open(s) :- cfr_stmt(s), kind(s, "match_statement"), !cfr_match_total(s).
+.decl cfr_ending_loop(s: node)
+cfr_ending_loop(s) :- kind(s, "for_statement").
+cfr_ending_loop(s) :- kind(s, "while_statement"), field(s, "condition", c), !kind(c, "true").
+// cfr_match_total(s): some case of match s catches every value: `case _:` or a bare capture name, with no guard.
+.decl cfr_match_total(s: node)
+cfr_match_total(s) :- kind(s, "match_statement"), child(s, mb, _), kind(mb, "block"), child(mb, cc, _),
+    kind(cc, "case_clause"), !field(cc, "guard", _), child(cc, p, _), kind(p, "case_pattern"), text(p, t),
+    match("[A-Za-z_][A-Za-z0-9_]*", t), t != "None", t != "True", t != "False", !cfr_multi_pattern(cc).
+.decl cfr_multi_pattern(cc: node)
+cfr_multi_pattern(cc) :- kind(cc, "case_clause"), child(cc, p, i), kind(p, "case_pattern"), child(cc, q, j),
+    kind(q, "case_pattern"), i != j.
 // A try completes when its finally (if any) does, and its body (then else) or some handler does.
 cfr_s_open(s) :- cfr_stmt(s), kind(s, "try_statement"), cfr_try_tail_open(s), cfr_try_main_open(s).
 .decl cfr_try_tail_open(t: node)

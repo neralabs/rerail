@@ -7,7 +7,7 @@ from django.utils.decorators import method_decorator
 from django.views import View
 
 from shop.models import Order
-from shop.tasks import notify_after_commit, notify_later, notify_order
+from shop.tasks import notify_after_commit, notify_later, notify_order, notify_when_committed
 
 
 def place_order(request):
@@ -89,4 +89,33 @@ class ImportView(View):
 
 def upload(request):
     notify_order.delay(4)
+    return HttpResponse("ok")
+
+
+def place_or_alert(request):
+    try:
+        order = Order.objects.create(email=request.POST["email"])
+    except KeyError:
+        # The request fails and rolls back: an on_commit callback here would never run.
+        mail_admins("Order failed", "no email")
+        raise
+    if not order.email:
+        mail_admins("Order", "no email")  # caught
+    return HttpResponse(str(order.pk))
+
+
+def place_tracked(request):
+    order = Order.objects.create(email=request.POST["email"])
+    # The task id is stored on the row: on_commit returns nothing, so the call cannot simply move there.
+    result = notify_order.apply_async(args=[order.pk])
+    order.task_id = result.id
+    order.save()
+    return HttpResponse("ok")
+
+
+def place_throttled(request, client):
+    # `.delay()` on a parameter is not known to be a task.
+    client.delay(2.0)
+    # A task whose base class already sends through transaction.on_commit.
+    notify_when_committed.delay(1)
     return HttpResponse("ok")

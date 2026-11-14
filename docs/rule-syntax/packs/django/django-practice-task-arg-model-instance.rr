@@ -12,7 +12,7 @@
 // constructor `M(...)`, `M.objects.get/create/first/...(...)` (not after values()/values_list()),
 // `get_object_or_404(M, ...)`, a parameter annotated with a model class, or a name the same function assigns from one
 // of those or loops over a queryset with. Not through calls: `x = make_order()` is not followed (the typing program's
-// proven_type would, at the cost of running it; see the notes).
+// proven_type would, at the cost of running it on every file; README.md lists this under the rule's Gaps).
 //   order = Order.objects.get(pk=pk); ship_order.delay(order)           reported
 //   ship_order.delay(request.user)                                      reported
 //   ship_order.delay(order.pk)                                          not reported
@@ -58,17 +58,13 @@ tam_instance(a) :- unparen(a, e), kind(e, "identifier"), text(e, x), look(e, x, 
     text(nm, x), (m = t ; child(t, m, 0)), sym_of(m, q), class_def(k, q), dj_model(k).
 tam_instance(a) :- unparen(a, e), kind(e, "identifier"), text(e, x), look(e, x, s), kind(l, "for_statement"),
     nearest(l, s, scope), field(l, "left", t), kind(t, "identifier"), text(t, x), field(l, "right", r), unparen(r, q),
-    dj_qs(q), field(l, "body", b), within(e, b).
-// tam_instance_value(v): v makes or fetches one model instance.
-.decl tam_fetch(m: symbol)
-tam_fetch("get"). tam_fetch("create"). tam_fetch("first"). tam_fetch("last"). tam_fetch("earliest").
-tam_fetch("latest").
+    dj_qs(q), !tam_rows(q), field(l, "body", b), within(e, b).
+// tam_instance_value(v): v makes or fetches one model instance (python/django's dj_row_method).
 .decl tam_instance_value(v: node)
-tam_instance_value(v) :- dj_qs_call(v, m), tam_fetch(m), field(v, "function", f), attr_of(f, o, _), !tam_rows(o).
+tam_instance_value(v) :- dj_qs_call(v, m), dj_row_method(m), field(v, "function", f), attr_of(f, o, _), !tam_rows(o).
 // tam_rows(q): queryset q went through values()/values_list(), so its get() returns a dict or a tuple, not a model.
 .decl tam_rows(q: node)
-tam_rows(q) :- dj_qs_call(q, m), (m = "values" ; m = "values_list").
-tam_rows(q) :- dj_qs(q), kind(q, "call"), field(q, "function", f), attr_of(f, o, _), tam_rows(o).
+tam_rows(q) :- dj_qs_has(q, m), (m = "values" ; m = "values_list").
 tam_instance_value(v) :- kind(v, "call"), field(v, "function", f), sym_of(f, q), class_def(k, q), dj_model(k).
 tam_instance_value(v) :- kind(v, "call"), field(v, "function", f), sym_of(f, "django.shortcuts.get_object_or_404").
 tam_instance_value(v) :- attr_of(v, o, "user"), unparen(o, r), (text(r, "request") ; attr_of(r, _, "request")).

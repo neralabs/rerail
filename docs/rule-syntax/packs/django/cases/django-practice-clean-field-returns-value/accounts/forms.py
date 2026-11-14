@@ -155,3 +155,65 @@ class ImportForm(PrevalidatedForm):
     def clean_repo(self):  # caught
         if "github" not in self.cleaned_data["repo"]:
             raise ValidationError("GitHub only")
+
+
+class MatchForm(forms.Form):
+    kind = forms.CharField()
+    code = forms.CharField()
+    name = forms.CharField()
+    note = forms.CharField()
+    word = forms.CharField()
+    flag = forms.CharField()
+    text = forms.CharField()
+
+    def clean_kind(self):  # caught
+        # No case catches every value: neither "a" nor "b" falls off the end.
+        match self.cleaned_data["kind"]:
+            case "a":
+                return "A"
+            case "b":
+                return "B"
+
+    def clean_code(self):  # caught
+        # The catch-all cases have guards.
+        match self.cleaned_data["code"]:
+            case c if c.isdigit():
+                return c
+            case _ if False:
+                raise ValidationError("x")
+
+    def clean_name(self):
+        match self.cleaned_data["name"]:
+            case "":
+                raise ValidationError("empty")
+            case other:
+                return other
+
+    def clean_flag(self):  # caught
+        # `case None:` is a literal pattern, not a capture.
+        match self.cleaned_data["flag"]:
+            case None:
+                return ""
+
+    def clean_note(self):
+        # No break: the else always runs, and returns.
+        for ch in self.cleaned_data["note"]:
+            if ch == "!":
+                raise ValidationError("no bangs")
+        else:
+            return self.cleaned_data["note"]
+
+    def clean_word(self):  # caught
+        # A break skips the else and falls off the end.
+        for ch in self.cleaned_data["word"]:
+            if ch == " ":
+                break
+        else:
+            return self.cleaned_data["word"]
+
+    def clean_text(self):  # caught
+        # The else does not return.
+        while self.cleaned_data["text"].startswith(" "):
+            raise ValidationError("leading space")
+        else:
+            self.cleaned_data["text"].strip()

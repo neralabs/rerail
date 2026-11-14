@@ -13,6 +13,9 @@ code, evidence, the workaround used, and a suggested fix. "Not confirmed" marks 
 | 4 | `sym_of` drops relative imports of two or more dots | `lib/python/imports.rr` | Reproduced; root cause found |
 | 5 | One tape cache per machine: concurrent runs fail | engine `tape_cache_path` | Reproduced |
 | 6 | Very large repositories do not finish | engine, scale | Observed once (PostHog) |
+| 7 | `sym_of` has no row for an attribute of a class of the same module | `lib/python/names.rr` | Reproduced with a probe; cause found |
+| 8 | A call to a def under an outside decorator has no call target | `lib/python/calls.rr` | Reproduced with a probe |
+| 9 | Rules that read the call graph take hours on large repositories | `python/calls` typing program, scale | Observed; not profiled |
 
 ---
 
@@ -132,7 +135,9 @@ to the scanned root. Python resolves `shop.base` from the source root (`src/`), 
 (`src/backend/InvenTree/common/settings.py` is `src.backend.InvenTree.common.settings`), plane
 (`apps/api/plane/db/models` is `apps.api.plane.db.models`), netbox (`netbox/netbox/settings.py` is
 `netbox.netbox.settings`). In pretix, Celery task classes defined in the repository were invisible to
-`django-practice-enqueue-on-commit` until it matched by name suffix.
+`django-practice-enqueue-on-commit` until it matched by name suffix. In allegro/ralph (`src/ralph/...`), an
+`AppConfig` subclass's base `ralph.apps.RalphAppConfig` did not resolve to the run's `src.ralph.apps.RalphAppConfig`,
+which broke a first version of the dropped `django-practice-receiver-never-connected`.
 
 **Workarounds used (rule-local).** `django-practice-enqueue-on-commit` matches a class by name suffix;
 `django-practice-settings-module-import` (`smi_resolves`) tries the imported name under each package prefix of the
@@ -169,6 +174,20 @@ four, correctly resolved (`a.b.c.d.x`, `a.b.c.x`, `a.b.x`).
 python/names' `ibind` → `qn` → `sym_of`, handles only single-dot relative imports (its comment says so, line 28).
 Two or more dots fall to `irel_open` (lines 51-57) and bind the name as an unknown target (`rotgt`). Yet `rel_base`
 (lines 66-71) already resolves any number of dots with `@pkg_up`, and `module_text`/`import_alias` use it.
+
+The same holds for `from .. import X` (no module after the dots). Probe, in `a/b/c/views.py` with `BaseAPIView`
+defined in `a/b/base.py` and re-exported by `a/b/__init__.py`:
+
+```python
+from .. import BaseAPIView            # import_alias: a.b BaseAPIView
+from ..base import BaseAPIView as B2  # import_alias: a.b.base BaseAPIView
+class V(BaseAPIView): pass            # no sym_of, no class_base row
+class W(B2): pass                     # no sym_of, no class_base row
+```
+
+So a class whose base is imported this way is neither a view nor a model to `python/django`: makeplane/plane's
+`from .. import BaseAPIView` views are invisible to `django-practice-get-handler-writes` and
+`django-practice-sync-orm-reached-from-async`.
 
 (An earlier note blamed tree-sitter reading `...` as an ellipsis. That is wrong: the module name node's text is
 `..x`, `...x`, `....x`, and `import_alias` resolves them.)
@@ -222,3 +241,91 @@ and bug 1 may account for it.
 
 **Suggested fix.** Profile with `RERAIL_PROFILE=<dir>` first. Note that `RERAIL_PROFILE=1` writes the profile into a
 directory named `1` under the working directory.
+
+---
+
+## 7. `sym_of` has no row for an attribute of a class of the same module
+
+**Symptom.** `Base.Meta`, `Base.f` or `Base.X`, where `Base` is a class defined in the same module, has no `sym_of`
+row, while the same expression with `Base` imported from another module resolves. A rule that follows a model's
+`class Meta(Base.Meta)` to the base's Meta options (`django-practice-get-or-create-needs-unique`) lost it when the base
+sat in the same file.
+
+**Reproduce.** `pkg/m.py`:
+
+```python
+class Base:
+    X = 1
+    class Meta:
+        abstract = True
+    def f(self):
+        pass
+
+a = Base.Meta     # no sym_of
+b = Base.f        # no sym_of
+c = Base.X        # no sym_of
+d = Base          # sym_of pkg.m.Base
+```
+
+A rule reporting `sym_of` of each right-hand side gives only `pkg.m.Base`; `qualname` has `pkg.m.Base.Meta` and
+`pkg.m.Base.f`. With `class Other` in `shop/base.py` and `from shop.base import Other` in `shop/models.py`,
+`class Meta(Other.Meta)` gives `sym_of` `shop.base.Other.Meta` and the `class_base` row `shop.base.Other.Meta`; the
+same-module `class Meta(Base.Meta)` gives neither.
+
+**Where.** `docs/rule-syntax/lib/python/names.rr`, `sym_of` (lines 359-362). Rule 1 goes through `qn` (lines 273-275),
+which extends a name along an attribute chain (`qn(n, @dot(q, a)) :- attr_of(n, o, a), qn(o, q)`) but starts only
+from an import binding (`ibind`). Rule 2, a local def or class, matches only the bare name (`look(n, x, s), defn(s, x,
+f), qualname(f, q)`), with no attribute step.
+
+**Workaround used.** get-or-create-needs-unique resolves the Meta base through its object:
+`attr_of(e, o, "Meta"), sym_of(o, bq)`.
+
+**Suggested fix.** Extend rule 2 along attributes as `qn` does, for a name that resolves to a class of the run:
+`sym_of(n, @dot(q, a)) :- attr_of(n, o, a), sym_of(o, q), class_def(_, q)` (then `class_base` follows).
+
+---
+
+## 8. A call to a def under an outside decorator has no call target
+
+**Symptom.** In `python/calls`, a call to a def of the run decorated by a function from outside the run is
+`call_open`, with no `call_target`, even for decorators that keep the def's code on the call path
+(`@contextlib.contextmanager`, `@functools.lru_cache`). A rule walking callers or callees through such a def stops
+there.
+
+**Reproduce.** In one module: `@contextmanager def held(): yield 1`, `@functools.lru_cache def cached(): ...`, a
+decorator of the run `def mine(f)` that returns a `functools.wraps(f)` wrapper, `@mine def wrapped(): ...`, and
+`def plain(): ...`; then `with held(): pass; wrapped(); cached(); plain()`. A rule reporting `call_target`/`call_open`
+per call gives: `held()` open, `cached()` open, `wrapped()` → `w` (the run's wrapper), `plain()` → `plain`.
+
+**Where.** `docs/rule-syntax/lib/python/calls.rr`: a decorator outside the run makes the decorated name's value
+unknown, so the call is left open. That is sound for an arbitrary decorator; for the standard ones above it loses
+edges a rule needs.
+
+**Workaround used.** `django-practice-select-for-update-outside-atomic` (`sfu_target`, `sfu_cm_call`) falls back, for
+an open call, to the def its callee's name resolves to by import.
+
+**Suggested fix.** Treat a short list of standard decorators that keep the def's code on the call path
+(`contextlib.contextmanager`, `contextlib.asynccontextmanager`, `functools.lru_cache`, `functools.cache`) as passing
+the def through, so the call targets the decorated def. (A decorator of the run, such as `mine` above, already
+resolves to its wrapper.)
+
+---
+
+## 9. Rules that read the call graph take hours on large repositories
+
+**Symptom.** The four rules that include `python/calls` and read `call_target` (get-handler-writes,
+dispatch-in-atomic-request, select-for-update-outside-atomic, sync-orm-reached-from-async) are far slower than the
+others. get-handler-writes took 2.8 h on WeblateOrg/weblate, 3.1 h on openedx/edx-platform and 3.8 h on saleor/saleor
+(with restarts after bug 1 stalls), on a machine at load 15 to 50; dispatch-in-atomic-request timed out on openedx
+(4,459 Python files) at 900 s and 3,600 s in early runs.
+
+**Evidence.** A probe rule that reads only `call_target` costs most of a reach rule's time: on paperless-ngx 88 s of
+user time against 101 s for sync-orm-reached-from-async, on umap 16 s against 25 s. So the typing program behind the
+call graph, not the rules' own relations, dominates. The same program runs for any rule that reads `proven_type`
+(python/types): a version of task-arg-model-instance that read it ran over 60 minutes on DefectDojo/django-DefectDojo
+(timed out) against 2 min 20 s without it. Not profiled.
+
+**Workaround used.** Long per-repository timeouts (up to 5,400 s) and re-running stalled repositories alone.
+
+**Suggested fix.** Profile the typing program on one large repository (`RERAIL_PROFILE=<dir>`); running several
+call-graph rules in one `run-policies` call may share its cost (not measured).

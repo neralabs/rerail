@@ -1,4 +1,6 @@
-from .models import Archive, Book, Chapter, Counter, Label, Note, Plain, Tag
+from django.db.models import F
+
+from .models import Archive, Book, Chapter, Counter, Label, Note, OldStyle, Plain, Tag
 
 
 def edit(request):
@@ -19,3 +21,6 @@ def edit(request):
     Label.objects.filter(name="").delete()
     books = Book.objects.filter(title="x")
     books.update(title="y")
+    OldStyle.objects.update(name="")
+    Book.objects.filter(title="x").update(views=F("views") - 1)
+    Counter.objects.update(n=F("n") + 1)

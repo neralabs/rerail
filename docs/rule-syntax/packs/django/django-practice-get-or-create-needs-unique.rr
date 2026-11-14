@@ -9,11 +9,14 @@
 // classmethod of a concrete model), whose lookup (every keyword but `defaults` and `create_defaults`) holds no field
 // the database keeps unique for M: no lookup is `pk` or `id`, or a field declared with unique=True or
 // primary_key=True or as a OneToOneField, and no unique_together group or UniqueConstraint(fields=[...]) in M's Meta
-// lies within the lookup (one with condition= is unknown: the row may meet it). Fields, Meta and bases resolve across the run's files (`x_id` is
-// field x). A lookup it cannot read is unknown and not reported: `__` in a keyword, `**kwargs`, a positional Q, a
-// field the run does not declare, a Meta with an expression UniqueConstraint or an option it cannot read, an unmanaged
-// model (`managed = False`: its table and indexes are made outside Django), a manager of the model whose class (or
-// queryset class) in the run overrides the method (it may look up a unique hash instead).
+// lies within the lookup (one with condition= is unknown: the row may meet it). Fields, Meta and bases resolve across
+// the run's files (`x_id` is field x). M's Meta options are its own Meta's, a concrete base's (its table's constraints
+// hold for M's rows too), and an abstract base's only when M declares no Meta or its Meta subclasses the base's
+// (`class Meta(Base.Meta)`), as Django inherits them. A lookup it cannot read is unknown and not reported: `__` in a
+// keyword, `**kwargs`, a positional Q, a field the run does not declare, a Meta with an expression UniqueConstraint
+// or an option it cannot read, an unmanaged model (`managed = False`: its table and indexes are made outside
+// Django), a manager of the model whose class, queryset class (`as_manager()`, `from_queryset()`) or the class its
+// get_queryset() returns overrides the method in the run (it may look up a unique hash instead).
 //   Author.objects.get_or_create(name=n)                     reported: name is not unique
 //   Author.objects.get_or_create(email=e, defaults={...})    not reported: email = EmailField(unique=True)
 //   Book.objects.get_or_create(author=a, title=t)            not reported: UniqueConstraint(fields=["author", "title"])
@@ -45,20 +48,21 @@ goc_mgr(q, mn) :- kind(q, "call"), field(q, "function", f), attr_of(f, o, m), go
 // goc_mgr_def(mc, mn, r): model mc, or a base class of the run, sets manager `mn = r` in its body.
 .decl goc_mgr_def(mc: node, mn: symbol, r: node)
 goc_mgr_def(mc, mn, r) :- dj_model(mc), goc_body_asg(mc, mn, r).
-goc_mgr_def(mc, mn, r) :- dj_model(mc), class_def(mc, q), subclass(q, b), class_def(cb, b), goc_body_asg(cb, mn, r).
+goc_mgr_def(mc, mn, r) :- dj_model_super(mc, cb), goc_body_asg(cb, mn, r).
 .decl goc_body_asg(c: node, x: symbol, r: node)
 goc_body_asg(c, x, r) :- kind(c, "class_definition"), field(c, "body", b), body_stmt(b, s, _), child(s, a, 0),
     kind(a, "assignment"), field(a, "left", l), kind(l, "identifier"), text(l, x), field(a, "right", r).
+// goc_abstract(mc): mc's own Meta says abstract = True (Django does not pass abstract on to subclasses).
 .decl goc_abstract(mc: node)
-goc_abstract(mc) :- goc_meta_opt(mc, "abstract", v), text(v, "True").
+goc_abstract(mc) :- goc_meta_of(mc, "abstract", v), text(v, "True").
 
 // goc_key(c, k, f): lookup keyword k of call c names field f of its model (`x_id` names ForeignKey x).
 .decl goc_kw(c: node, k: symbol)
 goc_kw(c, k) :- goc_call(c, _, _), call_arg(c, -1, k, _), k != "defaults", k != "create_defaults".
 .decl goc_key(c: node, k: symbol, f: symbol)
-goc_key(c, k, k) :- goc_kw(c, k), goc_call(c, _, mc), goc_field(mc, k, _, _).
-goc_key(c, k, x) :- goc_kw(c, k), goc_call(c, _, mc), goc_field(mc, x, _, t), (t = "ForeignKey" ; t = "OneToOneField"),
-    k = cat(x, "_id").
+goc_key(c, k, k) :- goc_kw(c, k), goc_call(c, _, mc), dj_has_field(mc, k, _, _).
+goc_key(c, k, x) :- goc_kw(c, k), goc_call(c, _, mc), dj_has_field(mc, x, _, t),
+    (t = "ForeignKey" ; t = "OneToOneField"), k = cat(x, "_id").
 // goc_unknown(c): the lookup holds something the rule cannot read.
 .decl goc_unknown(c: node)
 goc_unknown(c) :- goc_kw(c, k), !goc_key(c, k, _), k != "pk", k != "id".
@@ -67,30 +71,47 @@ goc_unknown(c) :- goc_call(c, _, _), field(c, "arguments", al), child(al, s, _),
 goc_unknown(c) :- goc_call(c, _, mc), goc_opaque(mc).
 // A conditional UniqueConstraint within the lookup may hold for the row (`condition=~Q(engine="")` with `engine=x`).
 goc_unknown(c) :- goc_call(c, _, mc), goc_cond_group(mc, g), !goc_missing(c, g).
-// The manager is the model's own and its class (or queryset class) in the run defines the method: it may add a key.
+// The manager is the model's own and its class (or queryset class, or the queryset class its get_queryset() builds)
+// in the run defines the method: it may add a key.
 goc_unknown(c) :- goc_call(c, m, mc), field(c, "function", f), attr_of(f, o, m), goc_mgr(o, mn), goc_mgr_def(mc, mn, r),
-    (e = r ; within(e, r)), sym_of(e, q), mro_method(q, m, _).
+    (e = r ; within(e, r)), sym_of(e, q), goc_mgr_class(q, k), mro_method(k, m, _).
+// goc_mgr_class(q, k): manager class q runs queries through class k: itself, or the class of a call in its
+// get_queryset() (`return SlugQuerySet(self.model, using=self._db)`).
+.decl goc_mgr_class(q: symbol, k: symbol)
+goc_mgr_class(q, q) :- class_def(_, q).
+goc_mgr_class(q, k) :- class_def(_, q), mro_method(q, "get_queryset", g), kind(x, "call"), within(x, g),
+    field(x, "function", fn), sym_of(fn, k), class_def(_, k).
 // An unmanaged model's table (Meta.managed = False) is made outside Django, with indexes the model does not show.
 goc_unknown(c) :- goc_call(c, _, mc), goc_meta_opt(mc, "managed", v), !text(v, "True").
 
-// goc_field(mc, x, call, t): model mc has field x, declared in its body or in a base class of the run.
-.decl goc_field(mc: node, x: symbol, call: node, t: symbol)
-goc_field(mc, x, call, t) :- dj_field(mc, x, call, t).
-goc_field(mc, x, call, t) :- dj_model(mc), class_def(mc, q), subclass(q, b), class_def(cb, b), dj_class_field(cb, x, call, t).
-// goc_meta_opt(mc, k, v): `k = v` in the Meta of model mc or of a base class of the run.
+// goc_meta_opt(mc, k, v): `k = v` in the Meta options of model mc: its own Meta, an abstract base's it inherits
+// (goc_meta_from), or those of a concrete base (multi-table inheritance or a proxy: that table's constraints hold
+// for mc's rows too).
 .decl goc_meta_opt(mc: node, k: symbol, v: node)
 goc_meta_opt(mc, k, v) :- dj_model(mc), goc_meta_of(mc, k, v).
-goc_meta_opt(mc, k, v) :- dj_model(mc), class_def(mc, q), subclass(q, b), class_def(cb, b), goc_meta_of(cb, k, v).
+goc_meta_opt(mc, k, v) :- dj_model(mc), goc_meta_from(mc, cb), goc_abstract(cb), goc_meta_of(cb, k, v).
+goc_meta_opt(mc, k, v) :- dj_model(mc), class_base(mc, bq), class_def(cb, bq), !goc_abstract(cb),
+    goc_meta_opt(cb, k, v).
+// goc_meta_from(c, b): class c takes the Meta of class b, a base of the run, as Django does: c declares no Meta
+// (and so inherits its bases' Meta attribute) or c's Meta subclasses `B.Meta`; through a chain of such classes.
+.decl goc_meta_from(c: node, b: node)
+goc_meta_from(c, cb) :- class_base(c, bq), class_def(cb, bq), !goc_meta_class(c, _).
+goc_meta_from(c, cb) :- class_base(c, bq), class_def(cb, bq), goc_meta_class(c, mt), field(mt, "superclasses", al),
+    child(al, e, _), attr_of(e, o, "Meta"), sym_of(o, bq).
+goc_meta_from(c, a) :- goc_meta_from(c, b), goc_meta_from(b, a).
+// goc_meta_class(c, mt): class c's body declares `class Meta` mt.
+.decl goc_meta_class(c: node, mt: node)
+goc_meta_class(c, mt) :- kind(c, "class_definition"), kind(mt, "class_definition"), def_name(mt, "Meta"),
+    nearest(mt, c, scope).
 .decl goc_meta_of(c: node, k: symbol, v: node)
-goc_meta_of(c, k, v) :- kind(c, "class_definition"), kind(mt, "class_definition"), def_name(mt, "Meta"),
-    nearest(mt, c, scope), field(mt, "body", b), body_stmt(b, s, _), child(s, a, 0), kind(a, "assignment"),
-    field(a, "left", l), text(l, k), field(a, "right", r), unparen(r, v).
+goc_meta_of(c, k, v) :- goc_meta_class(c, mt), field(mt, "body", b), body_stmt(b, s, _), child(s, a, 0),
+    kind(a, "assignment"), field(a, "left", l), text(l, k), field(a, "right", r), unparen(r, v).
 
 // goc_unique(c, mc): the database keeps some subset of c's lookup unique.
 .decl goc_unique(c: node, mc: node)
 goc_unique(c, mc) :- goc_call(c, _, mc), (goc_kw(c, "pk") ; goc_kw(c, "id")).
-goc_unique(c, mc) :- goc_call(c, _, mc), goc_key(c, _, x), goc_field(mc, x, _, "OneToOneField").
-goc_unique(c, mc) :- goc_call(c, _, mc), goc_key(c, _, x), goc_field(mc, x, call, _), call_arg(call, -1, o, v),
+goc_unique(c, mc) :- goc_call(c, _, mc), goc_key(c, _, x), dj_has_field(mc, x, _, "OneToOneField").
+goc_unique(c, mc) :- goc_call(c, _, mc), goc_key(c, _, x), dj_has_field(mc, x, call, _), call_arg(call, -1, o, v),
     (o = "unique" ; o = "primary_key"), !text(v, "False").
 goc_unique(c, mc) :- goc_call(c, _, mc), goc_group(mc, g), !goc_missing(c, g).
 .decl goc_missing(c: node, g: node)

@@ -1,4 +1,5 @@
-from celery import shared_task
+from celery import Task, shared_task
+from django.db import transaction
 from django.core.mail import send_mail
 
 
@@ -17,3 +18,13 @@ def notify_after_commit(order):
 
 def nightly_digest():
     notify_order.delay(0)
+
+
+class TransactionAwareTask(Task):
+    def apply_async(self, *args, **kwargs):
+        transaction.on_commit(lambda: super(TransactionAwareTask, self).apply_async(*args, **kwargs))
+
+
+@shared_task(base=TransactionAwareTask)
+def notify_when_committed(order_id):
+    pass

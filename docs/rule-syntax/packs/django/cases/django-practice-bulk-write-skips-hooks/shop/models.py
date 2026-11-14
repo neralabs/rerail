@@ -24,7 +24,14 @@ class Book(models.Model):
         super().save(*args, **kwargs)
 
     def bump(self):
-        Book.objects.filter(pk=self.pk).update(views=F("views") + 1)  # caught
+        # A counter bump: the database does the arithmetic, the write Django documents for counters.
+        Book.objects.filter(pk=self.pk).update(views=F("views") + 1)
+
+    def bump_and_rename(self):
+        Book.objects.filter(pk=self.pk).update(views=F("views") + 1, title="x")  # caught
+
+    def copy_count(self):
+        Book.objects.filter(pk=self.pk).update(views=F("pk") + 1)  # caught
 
 
 class Chapter(Stamped):
@@ -59,6 +66,14 @@ class Archive(models.Model):
     def delete(self, *args, **kwargs):
         self.name = "gone"
         self.save()
+
+
+class OldStyle(models.Model):
+    name = models.CharField(max_length=10)
+
+    def save(self, *args, **kwargs):
+        # Only calls the base class's save(), old style: no hook of its own.
+        models.Model.save(self, *args, **kwargs)
 
 
 class Tag(models.Model):

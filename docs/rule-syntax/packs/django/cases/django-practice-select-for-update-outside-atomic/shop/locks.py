@@ -1,5 +1,7 @@
 from contextlib import contextmanager
 
+from celery import shared_task
+
 from django.db import transaction
 
 from .models import Hold
@@ -23,6 +25,7 @@ def save_all(pks):
         Hold.objects.filter(pk__in=pks).update(seats=0)
 
 
+@shared_task
 def sloppy_save(pks):
     with locked_holds(pks):
         Hold.objects.filter(pk__in=pks).update(seats=0)

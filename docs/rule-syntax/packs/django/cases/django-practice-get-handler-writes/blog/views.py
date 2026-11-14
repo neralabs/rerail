@@ -1,5 +1,5 @@
 from django.db.models import F
-from django.shortcuts import render
+from django.shortcuts import get_object_or_404, render
 from django.views import View
 from django.views.decorators.http import require_GET, require_http_methods, require_POST, require_safe
 from django.views.generic import DetailView, ListView
@@ -113,3 +113,48 @@ def read_only(request, pk):
 
 def undecorated(request):
     Post.objects.create(title="x")
+
+
+@require_GET
+def remove(request, pk):  # caught
+    post = get_object_or_404(Post, pk=pk)
+    post.delete()
+    return render(request, "post.html")
+
+
+@require_GET
+def reset_all(request):  # caught
+    for post in Post.objects.all():
+        post.views = 0
+        post.save()
+    return render(request, "post.html")
+
+
+class PostCount(DetailView):
+    model = Post
+
+    def get(self, request, pk):  # caught
+        obj = self.get_object()
+        obj.views = 1
+        obj.save()
+        return render(request, "post.html")
+
+
+class PostQuerysetCount(DetailView):
+    queryset = Post.objects.filter(views__gt=0)
+
+    def get(self, request, pk):  # caught
+        obj = self.get_object()
+        obj.delete()
+        return render(request, "post.html")
+
+
+class Export(View):
+    """Django's View never routes a request to `list`: only DRF's viewsets do."""
+
+    def post(self, request):
+        self.list()
+        return render(request, "post.html")
+
+    def list(self):
+        Post.objects.create(title="export")

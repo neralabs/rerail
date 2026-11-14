@@ -20,7 +20,8 @@ def label_deleted(sender, instance, **kwargs):
 
 
 def label_saved(sender, instance, **kwargs):
-    pass
+    # The receiver itself writes in bulk, on purpose: no recursion.
+    Label.objects.filter(pk=instance.pk).update(name=instance.name.lower())
 
 
 pre_save.connect(label_saved, sender=Label)

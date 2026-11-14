@@ -13,22 +13,41 @@
 //                  dj_fk(c, x)                 field x of model c holds one related object (ForeignKey, OneToOneField,
 //                                              ParentalKey), so `obj.x_id` holds its key
 //                  dj_fk_class(t)              field class t (a dj_field's t) holds one related object
+//                  dj_model_super(c, b)        class b of the run is among model c's bases, directly or not
 //                  dj_has_field(c, x, call, t) as dj_field, for a field model c declares or inherits from a class of
 //                                              the run among its bases
 //                  dj_attname(c, a, call)      a row of model c holds field call's value in attribute a: the field's
 //                                              name, and `x_id` for a ForeignKey or OneToOneField x
+//                  dj_number_field(t)          field class t holds a number (IntegerField, DecimalField, ...)
 //                  dj_model_method(c, f, x)    f is method x defined directly in model c's body
 //   Querysets:     dj_manager(e)               e is `<X>.objects` (or `_default_manager`, `_base_manager`)
 //                  dj_qs(e)                    e is a queryset written as a chain from a manager: `Book.objects`,
 //                                              `Book.objects.filter(a=1).order_by("b")`, through dj_qs_method calls
 //                  dj_qs_call(c, m)            call c is `<dj_qs>.m(...)`, any method m
+//                  dj_qs_root(q, r)            queryset chain q starts at `r.objects`
 //                  dj_qs_model(q, c)           queryset q is a chain from `M.objects`, M model class c of the run
+//                  dj_qs_class(q, mq)          the same, by the class's qualified name mq
+//                  dj_qs_has(q, m)             queryset chain q calls method m somewhere along it
+//                  dj_row_method(m)            QuerySet method m returns one row: get, create, first, last, ...
+//   Instances:     dj_fetch_call(c, mq)        call c fetches one row of model class mq: `M.objects….get()`, `aget()`
+//                  dj_instance_class(r, h, mq) identifier r in scope h holds an instance of model class mq: `self` in
+//                                              its method, or a name bound to `M(...)` or a fetch, awaited or not
 //   Transactions:  dj_atomic(e)                e names django.db.transaction.atomic, bare or called
 //                  dj_atomic_with(w, b)        with-statement w opens `transaction.atomic(...)`; b is its body
 //                  dj_atomic_def(f)            function f is decorated with `@transaction.atomic` or `@atomic(...)`
 //                  dj_in_atomic(n, a)          n runs inside atomic region a (a with-body or an atomic def), with no
 //                                              nested def or class between them
 //                  dj_region_stop(k)           the node kinds whose code runs later: def, lambda, class
+//                  dj_atomic_like_with(w, b)   with-statement w calls a wrapper named like atomic; b is its body
+//                  dj_in_transaction(n)        n runs in atomic (dj_in_atomic) or in a dj_atomic_like_with body
+//                  dj_atomic_requests_value(v) v is the value a settings file gives ATOMIC_REQUESTS
+//                  dj_atomic_requests()        some settings file sets ATOMIC_REQUESTS to the literal True
+//   Side effects:  dj_side_effect(c, what)     call c enqueues a task or sends mail (`what` names it: ".delay()")
+//                  dj_task_waits_for_commit(c) task call c goes through a task class whose delay/apply_async waits
+//                                              for transaction.on_commit
+//                  dj_dispatch_in_failing_handler(c)
+//                                              side effect c is in an except handler that always re-raises
+//                  dj_dispatch_result_used(c)  `r = c` and the function reads r afterwards
 //   Views:         dj_view_class(c)            class c derives from django.views.View (generic views included) or a
 //                                              Django REST framework view, through the run's classes; a class
 //                                              deriving from their `…Mixin` classes alone is not one
@@ -46,6 +65,7 @@
 //                                              is not: `x > 0`, `x == 0`, `1 <= x`, ...
 //                  py_empty_test(x)            the number x is only tested for being 0: py_empty_cmp or py_truth
 //                  py_no_args(c)               call c passes no argument: `qs.count()`
+//                  py_reraising_handler(x)     every path through except clause x ends in `raise`
 //
 // Django background
 //   - A manager attribute (`objects`) is the usual way into a queryset; custom managers and related managers
@@ -147,6 +167,11 @@ dj_has_field(c, x, call, t) :- dj_model_super(c, b), dj_class_field(b, x, call, 
 .decl dj_attname(c: node, a: symbol, call: node)
 dj_attname(c, x, call) :- dj_has_field(c, x, call, _).
 dj_attname(c, cat(x, "_id"), call) :- dj_has_field(c, x, call, t), dj_fk_class(t).
+// dj_number_field(t): the field classes whose values are numbers a counter is kept in (DurationField aside).
+.decl dj_number_field(t: symbol)
+dj_number_field("IntegerField"). dj_number_field("SmallIntegerField"). dj_number_field("BigIntegerField").
+dj_number_field("PositiveIntegerField"). dj_number_field("PositiveSmallIntegerField").
+dj_number_field("PositiveBigIntegerField"). dj_number_field("DecimalField"). dj_number_field("FloatField").
 .decl dj_model_method(c: node, f: node, x: symbol)
 dj_model_method(c, f, x) :- dj_model(c), kind(f, "function_definition"), nearest(f, c, scope), field(c, "body", b),
     within(f, b), def_name(f, x).
@@ -170,15 +195,53 @@ dj_qs(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), dj_qs_me
 dj_qs(p) :- kind(p, "parenthesized_expression"), unparen(p, e), dj_qs(e).
 .decl dj_qs_call(c: node, m: symbol)
 dj_qs_call(c, m) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), dj_qs(o).
-// dj_qs_root(q, r): queryset chain q starts at the manager of expression r.
+// dj_qs_root(q, r): queryset chain q starts at the manager of expression r (through parentheses, as dj_qs).
 //   Book.objects.filter(a=1).all()                  dj_qs_root(<the chain>, <Book>)
+//   (Book.objects.filter(a=1)).first()             dj_qs_root(<(Book.objects.filter(a=1))>, <Book>)
 .decl dj_qs_root(q: node, r: node)
 dj_qs_root(q, o) :- dj_manager(q), attr_of(q, o, _).
 dj_qs_root(q, r) :- dj_qs(q), kind(q, "call"), field(q, "function", f), attr_of(f, o, _), dj_qs_root(o, r).
+dj_qs_root(p, r) :- kind(p, "parenthesized_expression"), unparen(p, e), dj_qs_root(e, r).
 // dj_qs_model(q, c): queryset chain q starts at `M.objects` with M model class c of the run, so its rows are c's.
-//   Book.objects.filter(a=1)                        dj_qs_model(<the chain>, <class Book>)
+// dj_qs_class(q, mq): the same, by the model class's qualified name.
+//   Book.objects.filter(a=1)                        dj_qs_model(<the chain>, <class Book>),
+//                                                   dj_qs_class(<the chain>, "shop.models.Book")
 .decl dj_qs_model(q: node, c: node)
 dj_qs_model(q, c) :- dj_qs_root(q, r), sym_of(r, mq), class_def(c, mq), dj_model(c).
+.decl dj_qs_class(q: node, mq: symbol)
+dj_qs_class(q, mq) :- dj_qs_model(q, c), class_def(c, mq).
+// dj_qs_has(q, m): queryset chain q calls method m somewhere along it (q's own last call included).
+//   Book.objects.values("id").filter(a=1)          dj_qs_has(<the chain>, "values"), dj_qs_has(_, "filter")
+.decl dj_qs_has(q: node, m: symbol)
+dj_qs_has(q, m) :- dj_qs_call(q, m), dj_qs(q).
+dj_qs_has(q, m) :- dj_qs(q), kind(q, "call"), field(q, "function", f), attr_of(f, o, _), dj_qs_has(o, m).
+// dj_row_method(m): QuerySet methods that return one row (a model instance, unless after values()).
+.decl dj_row_method(m: symbol)
+dj_row_method("get"). dj_row_method("create"). dj_row_method("first"). dj_row_method("last").
+dj_row_method("earliest"). dj_row_method("latest").
+
+// ---- instances ---------------------------------------------------------------------------------------------------
+// dj_fetch_call(c, mq): call c returns one row of model class mq from its manager: `M.objects….get()` (or
+// create, first, last, earliest, latest, and their async twins aget, acreate, ...).
+//   Book.objects.filter(a=1).afirst()               dj_fetch_call(<the call>, "shop.models.Book")
+.decl dj_fetch_call(c: node, mq: symbol)
+dj_fetch_call(c, mq) :- dj_qs_call(c, m), (dj_row_method(m) ; dj_row_method(b), m = cat("a", b)),
+    field(c, "function", fn), attr_of(fn, o, _), dj_qs_class(o, mq).
+// dj_instance_class(r, h, mq): identifier r, read in scope h, holds an instance of model class mq: `self` in a method
+// of mq, or a name h assigns from `MQ(...)` or from a fetch (dj_fetch_call), awaited or not. The type program
+// (python/types) does not know what a manager returns; this is what it misses.
+//   def touch(pk): book = Book.objects.get(pk=pk); book.save()   dj_instance_class(<book in book.save>, <touch>, "shop.models.Book")
+.decl dj_instance_class(r: node, h: node, mq: symbol)
+dj_instance_class(r, h, mq) :- kind(r, "identifier"), text(r, "self"), dj_model_method(k, h, _), look(r, "self", h),
+    class_def(k, mq).
+dj_instance_class(r, h, mq) :- kind(r, "identifier"), text(r, o), look(r, o, h), asg(h, o, v, _),
+    dj_instance_value(v, mq).
+// dj_instance_value(v, mq): expression v makes or fetches one instance of model class mq.
+.decl dj_instance_value(v: node, mq: symbol)
+dj_instance_value(v, mq) :- unparen(v, c), dj_fetch_call(c, mq).
+dj_instance_value(v, mq) :- unparen(v, w), kind(w, "await"), child(w, c, 0), dj_fetch_call(c, mq).
+dj_instance_value(v, mq) :- unparen(v, c), kind(c, "call"), field(c, "function", fn), sym_of(fn, mq), class_def(k, mq),
+    dj_model(k).
 
 // ---- transactions ------------------------------------------------------------------------------------------------
 .decl dj_atomic(e: node)
@@ -200,6 +263,119 @@ dj_region_stop("function_definition"). dj_region_stop("lambda"). dj_region_stop(
 .decl dj_in_atomic(n: node, a: node)
 dj_in_atomic(n, b) :- dj_atomic_with(_, b), within_stop(n, b, dj_region_stop).
 dj_in_atomic(n, f) :- dj_atomic_def(f), field(f, "body", b), within_stop(n, b, dj_region_stop).
+// dj_atomic_like_with(w, b): with-statement w's item calls a wrapper named like atomic, not atomic itself (Saleor's
+// `traced_atomic_transaction()`, label-studio's `conditional_atomic(...)`), which opens a transaction around b.
+.decl dj_atomic_like_with(w: node, b: node)
+dj_atomic_like_with(w, b) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wi, _),
+    kind(wi, "with_item"), field(wi, "value", v), unparen(v, e), kind(e, "call"), call_name(e, x),
+    contains("atomic", x), !dj_atomic(e), field(w, "body", b).
+// dj_in_transaction(n): n runs in a transaction opened in its own function: inside atomic (dj_in_atomic), or in the
+// body of a dj_atomic_like_with, with no nested def, lambda or class between.
+//   with traced_atomic_transaction(): order.save()   dj_in_transaction(<order.save()>)
+.decl dj_in_transaction(n: node)
+dj_in_transaction(n) :- dj_in_atomic(n, _).
+dj_in_transaction(n) :- dj_atomic_like_with(_, b), within_stop(n, b, dj_region_stop).
+// dj_atomic_requests_value(v): outside test code, v is the value a settings file gives a database's ATOMIC_REQUESTS:
+// a dict entry (`"ATOMIC_REQUESTS": True`), `DATABASES["default"]["ATOMIC_REQUESTS"] = v`, or `dict(ATOMIC_REQUESTS=v)`.
+// A top-level `ATOMIC_REQUESTS = True` is no Django setting.
+// dj_atomic_requests(): some such value is the literal True, so Django runs every sync view in a transaction.
+.decl dj_atomic_requests_value(v: node)
+dj_atomic_requests_value(v) :- kind(p, "pair"), field(p, "key", k), str(k, "ATOMIC_REQUESTS"), field(p, "value", v),
+    docof(p, d), !dj_test_doc(d).
+dj_atomic_requests_value(v) :- kind(a, "assignment"), field(a, "left", l), kind(l, "subscript"),
+    field(l, "subscript", s), str(s, "ATOMIC_REQUESTS"), field(a, "right", v), docof(a, d), !dj_test_doc(d).
+dj_atomic_requests_value(v) :- call_arg(_, -1, "ATOMIC_REQUESTS", v), docof(v, d), !dj_test_doc(d).
+.decl dj_atomic_requests()
+dj_atomic_requests() :- dj_atomic_requests_value(v), kind(v, "true").
+
+// ---- side effects ------------------------------------------------------------------------------------------------
+// What a transaction must not run before it commits: enqueuing a task, sending mail. The rules that report them
+// (enqueue-on-commit inside atomic, dispatch-in-atomic-request under ATOMIC_REQUESTS) agree through these relations on
+// what a dispatch is and which ones stay where they are.
+// dj_side_effect(c, what): call c enqueues a task or sends mail; what names it for a message: a Celery `.delay()`,
+// `.apply_async()`, `app.send_task()`, a Django 6 task `.enqueue()`/`.aenqueue()` on something that can be a task
+// (dj_task_ref), django-q's `async_task()`, django.core.mail's send_mail, send_mass_mail, mail_admins,
+// mail_managers, and an EmailMessage's `.send()`.
+//   notify_order.delay(order.pk)                    dj_side_effect(<the call>, ".delay()")
+//   client.delay(2.0)        (client a parameter)   not dj_side_effect: not known to be a task
+.decl dj_task_method(m: symbol)
+dj_task_method("delay"). dj_task_method("apply_async"). dj_task_method("send_task").
+dj_task_method("enqueue"). dj_task_method("aenqueue").
+.decl dj_mail_fn(q: symbol)
+dj_mail_fn("django.core.mail.send_mail"). dj_mail_fn("django.core.mail.send_mass_mail").
+dj_mail_fn("django.core.mail.mail_admins"). dj_mail_fn("django.core.mail.mail_managers").
+dj_mail_fn("django_q.tasks.async_task").
+.decl dj_message_class(q: symbol)
+dj_message_class("django.core.mail.EmailMessage"). dj_message_class("django.core.mail.EmailMultiAlternatives").
+dj_message_class("django.core.mail.message.EmailMessage").
+dj_message_class("django.core.mail.message.EmailMultiAlternatives").
+.decl dj_side_effect(c: node, what: symbol)
+dj_side_effect(c, cat(cat(".", m), "()")) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m),
+    dj_task_method(m), unparen(o, t), dj_task_ref(t).
+dj_side_effect(c, cat(x, "()")) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), dj_mail_fn(q),
+    split_dot(q, _, x).
+// `EmailMessage(...).send()`, or `.send()` on a name the same function binds to an EmailMessage.
+dj_side_effect(c, "EmailMessage.send()") :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "send"),
+    unparen(o, m), dj_message(m).
+dj_side_effect(c, "EmailMessage.send()") :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "send"),
+    kind(o, "identifier"), text(o, v), def_frame(c, fr), kind(a, "assignment"), field(a, "left", l), text(l, v),
+    field(a, "right", r), dj_message(r), def_frame(a, fr).
+.decl dj_message(m: node)
+dj_message(m) :- kind(m, "call"), field(m, "function", f), sym_of(f, q), dj_message_class(q).
+// dj_task_ref(t): t can be a task: a name that resolves through an import or a module attribute (`notify_order`,
+// `tasks.notify_order`, `current_app`), other than a plain function of the run with no decorator, or a call on one
+// (`notify_order.s(1)`, `task.using(priority=1)`). A parameter or local (`client.delay(2.0)`) is not one.
+.decl dj_task_ref(t: node)
+dj_task_ref(t) :- sym_of(t, q), !dj_plain_def(q).
+// An imported name, or an attribute of one, also when sym_of does not resolve it (a relative import of three dots or
+// more, `from .....order.tasks import t`, has no sym_of row).
+dj_task_ref(t) :- kind(t, "identifier"), text(t, x), look(t, x, s), binding(s, x, _, "import").
+dj_task_ref(t) :- attr_of(t, o, _), unparen(o, u), dj_task_ref(u).
+dj_task_ref(t) :- kind(t, "call"), field(t, "function", f), attr_of(f, o, _), unparen(o, u), dj_task_ref(u).
+.decl dj_plain_def(q: symbol)
+dj_plain_def(q) :- kind(g, "function_definition"), qualname(g, q), !decorator(g, _).
+// dj_task_waits_for_commit(c): c is `t.delay(...)`/`t.apply_async(...)` on a task t of the run whose decorator names
+// a task class `base=X`, where X's own (or inherited) apply_async or delay calls transaction.on_commit (pretix's
+// TransactionAwareTask); or the run's Celery app makes such a class every task's class (addons-server's AMOTask,
+// `Celery(..., task_cls=AMOTask)`). Such a call already waits for the commit.
+.decl dj_task_waits_for_commit(c: node)
+dj_task_waits_for_commit(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m),
+    (m = "delay" ; m = "apply_async"), sym_of(o, q), kind(g, "function_definition"), qualname(g, gq),
+    dj_same_name(q, gq), decorator(g, e), kind(e, "call"), call_arg(e, _, "base", bv), sym_of(bv, bq),
+    dj_deferring_task_class(cq), dj_same_name(bq, cq).
+dj_task_waits_for_commit(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m),
+    (m = "delay" ; m = "apply_async"), dj_app_defers(_).
+.decl dj_deferring_task_class(cq: symbol)
+dj_deferring_task_class(cq) :- mro_method(cq, m, h), (m = "delay" ; m = "apply_async"), kind(oc, "call"), within(oc, h),
+    field(oc, "function", of), sym_of(of, "django.db.transaction.on_commit").
+.decl dj_app_defers(k: node)
+dj_app_defers(k) :- kind(k, "call"), field(k, "function", f), sym_of(f, "celery.Celery"), call_arg(k, _, "task_cls", v),
+    sym_of(v, bq), dj_deferring_task_class(cq), dj_same_name(bq, cq).
+// dj_same_name(q, dq): the name q an import resolves to (a task, or a task class) denotes the definition named dq.
+// In a src layout the engine names a module by its path (`src.pretix.base.services.tasks`) while imports say
+// `pretix.base.services.tasks`, so dq may carry a leading package more.
+.decl dj_same_name(q: symbol, dq: symbol)
+dj_same_name(q, q) :- dj_task_name(q).
+dj_same_name(q, dq) :- dj_task_name(q), dj_def_name(dq), suffix(cat(".", q), dq).
+.decl dj_task_name(q: symbol)
+dj_task_name(q) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), (m = "delay" ; m = "apply_async"),
+    sym_of(o, q).
+dj_task_name(q) :- kind(e, "call"), call_arg(e, _, k, v), (k = "base" ; k = "task_cls"), sym_of(v, q).
+.decl dj_def_name(dq: symbol)
+dj_def_name(dq) :- kind(g, "function_definition"), qualname(g, dq).
+dj_def_name(dq) :- class_def(_, dq).
+// dj_dispatch_in_failing_handler(c): side effect c sits in an except handler that always re-raises
+// (py_reraising_handler): the transaction rolls back, so an on_commit callback would never run (a failure mail or
+// error task belongs there).
+.decl dj_dispatch_in_failing_handler(c: node)
+dj_dispatch_in_failing_handler(c) :- dj_side_effect(c, _), kind(x, "except_clause"), within(c, x),
+    py_reraising_handler(x).
+// dj_dispatch_result_used(c): `r = <task>.apply_async(...)` whose result r the same function reads afterwards (the
+// task id is stored on a row, or the result awaited): on_commit returns nothing, so the call cannot simply move there.
+.decl dj_dispatch_result_used(c: node)
+dj_dispatch_result_used(c) :- dj_side_effect(c, _), kind(a, "assignment"), field(a, "right", r), unparen(r, c),
+    field(a, "left", l), kind(l, "identifier"), text(l, v), def_frame(c, fr), kind(i, "identifier"), text(i, v),
+    def_frame(i, fr), i != l, earlier(l, i), !bind_only(i).
 
 // ---- views -------------------------------------------------------------------------------------------------------
 .decl dj_view_base(q: symbol)
@@ -291,3 +467,33 @@ py_empty_test(x) :- py_truth(x).
 py_no_args(c) :- kind(c, "call"), field(c, "arguments", al), !py_arg_item(al).
 .decl py_arg_item(al: node)
 py_arg_item(al) :- child(al, a, _), !kind(a, "comment").
+// py_reraising_handler(x): every path through except clause x's handler ends in `raise`, so the exception still
+// leaves the try (and rolls back an atomic block around it). A path is followed through the handler's last
+// statement: a `raise`, or an if/elif/else (with an else) all of whose branches end so; a raise inside a nested
+// try, with or match counts as not raising.
+//   except IntegrityError: log(e); raise                          py_reraising_handler
+//   except IntegrityError: if retry: raise  (no else)             not py_reraising_handler
+.decl py_reraising_handler(x: node)
+py_reraising_handler(x) :- kind(x, "except_clause"), child(x, hb, _), kind(hb, "block"), !py_may_end(hb).
+// py_raise_block(b): the blocks py_may_end judges: a handler's, and recursively the branches of an if that is the
+// last statement of one.
+.decl py_raise_block(b: node)
+py_raise_block(b) :- kind(x, "except_clause"), child(x, b, _), kind(b, "block").
+py_raise_block(b) :- py_raise_block(p), body_len(p, k), j = k - 1, body_stmt(p, s, j), kind(s, "if_statement"),
+    py_if_branch(s, b).
+// py_if_branch(s, b): b is a branch of if statement s: its consequence, an elif's, or the else body.
+.decl py_if_branch(s: node, b: node)
+py_if_branch(s, b) :- kind(s, "if_statement"), field(s, "consequence", b).
+py_if_branch(s, b) :- kind(s, "if_statement"), field(s, "alternative", e), kind(e, "elif_clause"),
+    field(e, "consequence", b).
+py_if_branch(s, b) :- kind(s, "if_statement"), field(s, "alternative", e), kind(e, "else_clause"), field(e, "body", b).
+.decl py_has_else(s: node)
+py_has_else(s) :- kind(s, "if_statement"), field(s, "alternative", e), kind(e, "else_clause").
+// py_may_end(b): block b can finish without raising: its last statement is not `raise` (nor an if), or is an if
+// that has no else, or one of whose branches can finish.
+.decl py_may_end(b: node)
+py_may_end(b) :- py_raise_block(b), body_len(b, k), j = k - 1, body_stmt(b, s, j), !kind(s, "raise_statement"),
+    !kind(s, "if_statement").
+py_may_end(b) :- py_raise_block(b), body_len(b, k), j = k - 1, body_stmt(b, s, j), kind(s, "if_statement"),
+    !py_has_else(s).
+py_may_end(b) :- py_raise_block(b), body_len(b, k), j = k - 1, body_stmt(b, s, j), py_if_branch(s, cb), py_may_end(cb).

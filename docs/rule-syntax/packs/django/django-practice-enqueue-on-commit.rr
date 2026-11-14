@@ -27,116 +27,14 @@
 #include "python/django.rr"
 
 .violation EnqueueInAtomic(at: node, what: symbol) "`{what}` runs inside transaction.atomic: a worker can pick the task up (or the mail goes out) before the transaction commits, so it may read rows that are not committed yet or act on changes that roll back. Run it after commit: `transaction.on_commit(partial(...))`, or Celery's `.delay_on_commit()`."
-EnqueueInAtomic(c, w) :- eoc_side_effect(c, w), eoc_region(c), !eoc_in_on_commit(c), !eoc_commit_aware(c),
-    !eoc_in_failing_handler(c), !eoc_result_used(c), docof(c, d), !dj_test_doc(d).
-
-// eoc_in_failing_handler(c): c sits in an except handler whose every path ends in `raise`: the block is rolling back,
-// so an on_commit callback would never run (a failure mail or error task belongs there).
-.decl eoc_in_failing_handler(c: node)
-eoc_in_failing_handler(c) :- eoc_side_effect(c, _), kind(x, "except_clause"), within(c, x), child(x, hb, _),
-    kind(hb, "block"), !eoc_may_end(hb).
-// eoc_may_end(b): block b (a handler's, or a branch of an if in one) can finish without raising: its last statement
-// is not `raise`, or is an if that has no else, or one of whose if/elif/else branches can finish.
-.decl eoc_raise_block(b: node)
-eoc_raise_block(b) :- kind(x, "except_clause"), child(x, b, _), kind(b, "block").
-eoc_raise_block(b) :- eoc_raise_block(p), body_len(p, k), j = k - 1, body_stmt(p, s, j), kind(s, "if_statement"),
-    eoc_branch(s, b).
-.decl eoc_branch(s: node, b: node)
-eoc_branch(s, b) :- kind(s, "if_statement"), field(s, "consequence", b).
-eoc_branch(s, b) :- kind(s, "if_statement"), field(s, "alternative", e), kind(e, "elif_clause"), field(e, "consequence", b).
-eoc_branch(s, b) :- kind(s, "if_statement"), field(s, "alternative", e), kind(e, "else_clause"), field(e, "body", b).
-.decl eoc_has_else(s: node)
-eoc_has_else(s) :- kind(s, "if_statement"), field(s, "alternative", e), kind(e, "else_clause").
-.decl eoc_may_end(b: node)
-eoc_may_end(b) :- eoc_raise_block(b), body_len(b, k), j = k - 1, body_stmt(b, s, j), !kind(s, "raise_statement"),
-    !kind(s, "if_statement").
-eoc_may_end(b) :- eoc_raise_block(b), body_len(b, k), j = k - 1, body_stmt(b, s, j), kind(s, "if_statement"),
-    !eoc_has_else(s).
-eoc_may_end(b) :- eoc_raise_block(b), body_len(b, k), j = k - 1, body_stmt(b, s, j), eoc_branch(s, cb), eoc_may_end(cb).
-
-// eoc_result_used(c): `r = <task>.apply_async(...)` whose result r the same function reads afterwards (the task id is
-// stored on a row, or the result awaited): on_commit returns nothing, so the call cannot simply move there.
-.decl eoc_result_used(c: node)
-eoc_result_used(c) :- eoc_side_effect(c, _), kind(a, "assignment"), field(a, "right", r), unparen(r, c),
-    field(a, "left", l), kind(l, "identifier"), text(l, v), def_frame(c, fr), kind(i, "identifier"), text(i, v),
-    def_frame(i, fr), i != l, earlier(l, i), !bind_only(i).
-
-// eoc_commit_aware(c): c is `t.delay(...)`/`t.apply_async(...)` on a task t of the run whose decorator names a task
-// class `base=X`, where X's own (or inherited) apply_async or delay calls transaction.on_commit; or the run's Celery
-// app makes such a class every task's class.
-.decl eoc_commit_aware(c: node)
-eoc_commit_aware(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), (m = "delay" ; m = "apply_async"),
-    sym_of(o, q), kind(g, "function_definition"), qualname(g, gq), eoc_same_name(q, gq), decorator(g, e),
-    kind(e, "call"), call_arg(e, _, "base", bv), sym_of(bv, bq), eoc_deferring_task_class(cq), eoc_same_name(bq, cq).
-.decl eoc_deferring_task_class(cq: symbol)
-eoc_deferring_task_class(cq) :- mro_method(cq, m, h), (m = "delay" ; m = "apply_async"), kind(oc, "call"), within(oc, h),
-    field(oc, "function", of), sym_of(of, "django.db.transaction.on_commit").
-eoc_commit_aware(c) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, m), (m = "delay" ; m = "apply_async"),
-    eoc_app_defers(_).
-.decl eoc_app_defers(k: node)
-eoc_app_defers(k) :- kind(k, "call"), field(k, "function", f), sym_of(f, "celery.Celery"), call_arg(k, _, "task_cls", v),
-    sym_of(v, bq), eoc_deferring_task_class(cq), eoc_same_name(bq, cq).
-// eoc_same_name(q, dq): the name q an import resolves to denotes the definition named dq. In a src layout the
-// engine names a module by its path (`src.pretix.base.services.tasks`) while imports say `pretix.base.services.tasks`,
-// so dq may carry a leading package more.
-.decl eoc_same_name(q: symbol, dq: symbol)
-eoc_same_name(q, q) :- eoc_task_name(q).
-eoc_same_name(q, dq) :- eoc_task_name(q), eoc_def_name(dq), suffix(cat(".", q), dq).
-.decl eoc_task_name(q: symbol)
-eoc_task_name(q) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m), (m = "delay" ; m = "apply_async"),
-    sym_of(o, q).
-eoc_task_name(q) :- kind(e, "call"), call_arg(e, _, k, v), (k = "base" ; k = "task_cls"), sym_of(v, q).
-.decl eoc_def_name(dq: symbol)
-eoc_def_name(dq) :- kind(g, "function_definition"), qualname(g, dq).
-eoc_def_name(dq) :- class_def(_, dq).
-
-// eoc_region(n): n runs in a transaction: inside atomic (python/django), or in the body of a with-statement whose
-// item calls a wrapper named like atomic (Saleor's `traced_atomic_transaction()`).
-.decl eoc_region(n: node)
-eoc_region(n) :- dj_in_atomic(n, _).
-eoc_region(n) :- kind(w, "with_statement"), child(w, wc, _), kind(wc, "with_clause"), child(wc, wi, _),
-    kind(wi, "with_item"), field(wi, "value", v), unparen(v, e), kind(e, "call"), call_name(e, x),
-    contains("atomic", x), !dj_atomic(e), field(w, "body", b), within_stop(n, b, dj_region_stop).
-
-// eoc_side_effect(c, what): call c enqueues a task or sends mail; what names it for the message.
-.decl eoc_task_method(m: symbol)
-eoc_task_method("delay"). eoc_task_method("apply_async"). eoc_task_method("send_task").
-eoc_task_method("enqueue"). eoc_task_method("aenqueue").
-.decl eoc_mail_fn(q: symbol)
-eoc_mail_fn("django.core.mail.send_mail"). eoc_mail_fn("django.core.mail.send_mass_mail").
-eoc_mail_fn("django.core.mail.mail_admins"). eoc_mail_fn("django.core.mail.mail_managers").
-eoc_mail_fn("django_q.tasks.async_task").
-.decl eoc_message_class(q: symbol)
-eoc_message_class("django.core.mail.EmailMessage"). eoc_message_class("django.core.mail.EmailMultiAlternatives").
-eoc_message_class("django.core.mail.message.EmailMessage").
-eoc_message_class("django.core.mail.message.EmailMultiAlternatives").
-.decl eoc_side_effect(c: node, what: symbol)
-eoc_side_effect(c, cat(cat(".", m), "()")) :- kind(c, "call"), field(c, "function", f), attr_of(f, o, m),
-    eoc_task_method(m), unparen(o, t), eoc_task_ref(t).
-// eoc_task_ref(t): t can be a task: a name that resolves through an import or a module attribute (`notify_order`,
-// `tasks.notify_order`, `current_app`), other than a plain function of the run with no decorator, or a call on one
-// (`notify_order.s(1)`, `task.using(priority=1)`). A parameter or local (`client.delay(2.0)`) is not one.
-.decl eoc_task_ref(t: node)
-eoc_task_ref(t) :- sym_of(t, q), !eoc_plain_def(q).
-// An imported name, or an attribute of one, also when sym_of does not resolve it (a relative import of three dots or
-// more, `from .....order.tasks import t`, has no sym_of row).
-eoc_task_ref(t) :- kind(t, "identifier"), text(t, x), look(t, x, s), binding(s, x, _, "import").
-eoc_task_ref(t) :- attr_of(t, o, _), unparen(o, u), eoc_task_ref(u).
-eoc_task_ref(t) :- kind(t, "call"), field(t, "function", f), attr_of(f, o, _), unparen(o, u), eoc_task_ref(u).
-.decl eoc_plain_def(q: symbol)
-eoc_plain_def(q) :- kind(g, "function_definition"), qualname(g, q), !decorator(g, _).
-eoc_side_effect(c, cat(x, "()")) :- kind(c, "call"), field(c, "function", f), sym_of(f, q), eoc_mail_fn(q),
-    split_dot(q, _, x).
-// `EmailMessage(...).send()`, or `.send()` on a name the same function binds to an EmailMessage.
-eoc_side_effect(c, "EmailMessage.send()") :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "send"),
-    unparen(o, m), eoc_message(m).
-eoc_side_effect(c, "EmailMessage.send()") :- kind(c, "call"), field(c, "function", f), attr_of(f, o, "send"),
-    kind(o, "identifier"), text(o, v), def_frame(c, fr), kind(a, "assignment"), field(a, "left", l), text(l, v),
-    field(a, "right", r), eoc_message(r), def_frame(a, fr).
-.decl eoc_message(m: node)
-eoc_message(m) :- kind(m, "call"), field(m, "function", f), sym_of(f, q), eoc_message_class(q).
+// What a dispatch is, and which ones stay (a task class that waits for the commit, a call in a handler that always
+// re-raises, a result the function reads), is python/django's side-effect vocabulary, shared with
+// django-practice-dispatch-in-atomic-request; the region is dj_in_transaction (atomic, or an `…atomic…()` wrapper).
+EnqueueInAtomic(c, w) :- dj_side_effect(c, w), dj_in_transaction(c), !eoc_in_on_commit(c),
+    !dj_task_waits_for_commit(c), !dj_dispatch_in_failing_handler(c), !dj_dispatch_result_used(c), docof(c, d),
+    !dj_test_doc(d).
 
 // eoc_in_on_commit(c): c is written inside a transaction.on_commit(...) call's arguments.
 .decl eoc_in_on_commit(c: node)
-eoc_in_on_commit(c) :- eoc_side_effect(c, _), kind(oc, "call"), within(c, oc), field(oc, "function", f),
+eoc_in_on_commit(c) :- dj_side_effect(c, _), kind(oc, "call"), within(c, oc), field(oc, "function", f),
     sym_of(f, "django.db.transaction.on_commit").

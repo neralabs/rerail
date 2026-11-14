@@ -34,13 +34,21 @@ async def safe(request):
     q = helpers.build_query()
     p = helpers.pure(2)
     later = helpers.later()
-    return a, b, c, d, e, f, g, h, q, p, later
+    deferred = helpers.defer()
+    return a, b, c, d, e, f, g, h, q, p, later, deferred
 
 
 async def direct(request):
-    # The sibling rule reports these: written in the async def itself.
-    n = Book.objects.count()
-    return n
+    # Queries written in the async def itself.
+    n = Book.objects.count()  # caught
+    first = Book.objects.filter(hits__gt=0).first()  # caught
+    for b in Book.objects.filter(hits__gt=0):  # caught
+        n += b.hits
+    async for b in Book.objects.filter(hits__gt=0):
+        n += b.hits
+    m = await Book.objects.acount()
+    run = await sync_to_async(lambda: Book.objects.count())()
+    return n, first, m, run
 
 
 async def fetched(request):
@@ -49,8 +57,8 @@ async def fetched(request):
     other = Book(title="x")
     other.bump()  # caught
     label = book.label()
-    # The sibling rule reports this one.
-    book.save()
+    book.save()  # caught
+    await book.asave()
     return label
 
 

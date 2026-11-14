@@ -16,3 +16,9 @@ class Named(models.Model):
     class Meta:
         abstract = True
         unique_together = ("name", "owner")
+
+
+class Plank(Named):
+    # Extends the base's Meta in the same module: keeps unique_together ("name", "owner").
+    class Meta(Named.Meta):
+        ordering = ["name"]

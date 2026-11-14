@@ -32,14 +32,11 @@
 // or in a base class of the run.
 .decl fir_has_fk(c: node, x: symbol)
 fir_has_fk(c, x) :- dj_has_field(c, x, call, t), dj_fk_class(t), !call_arg(call, _, "to_field", _).
-// fir_one(m): queryset methods that return one row.
-.decl fir_one(m: symbol)
-fir_one("get"). fir_one("first"). fir_one("last"). fir_one("latest"). fir_one("earliest"). fir_one("create").
 // fir_row(o, c): expression o (a name) is a row of model c.
 .decl fir_row(o: node, c: node)
 fir_row(s, c) :- kind(s, "identifier"), text(s, "self"), dj_model_method(c, f, _), param(f, "self", 0), within(s, f).
 fir_row(s, c) :- kind(s, "identifier"), latest_assign(s, x, a), field(a, "right", r), unparen(r, g),
-    dj_qs_call(g, m), fir_one(m), field(g, "function", gf), attr_of(gf, q, _), dj_qs_model(q, c),
+    dj_qs_call(g, m), dj_row_method(m), field(g, "function", gf), attr_of(gf, q, _), dj_qs_model(q, c),
     scope_node(s, sc), !fir_other_bind(sc, x).
 fir_row(s, c) :- kind(st, "for_statement"), field(st, "left", l), kind(l, "identifier"), text(l, x),
     field(st, "right", r), unparen(r, q), dj_qs(q), dj_qs_model(q, c), field(st, "body", b), within(s, b),

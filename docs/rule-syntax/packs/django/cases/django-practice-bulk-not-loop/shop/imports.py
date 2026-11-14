@@ -103,3 +103,24 @@ def per_field(value, fields):
     for field in fields:
         # another column each iteration
         Book.objects.filter(**{field: value}).first()
+
+
+def counters(books, n):
+    for book in books:
+        # a counter moved from its old value: read-modify-write gives the F() fix
+        book.hits -= 1
+        book.save()
+    for book in books:
+        book.hits = book.hits + n
+        book.save(update_fields=["hits"])
+    for book in books:
+        book.hits = n + 1
+        book.save()  # caught
+    for book in books:
+        # a string built on its old value is no counter: bulk_update is right
+        book.title = book.title + " (2nd ed.)"
+        book.save()  # caught
+    for book in books:
+        # price is a DecimalField of Book: a counter
+        book.price = book.price - n
+        book.save()

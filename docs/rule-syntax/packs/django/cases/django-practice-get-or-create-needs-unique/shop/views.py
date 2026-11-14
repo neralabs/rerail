@@ -1,6 +1,8 @@
 from django.contrib.auth.models import User
 
-from .models import Author, Book, Code, Config, Legacy, Loan, Profile, Setting, Shelf, Tag, Visit
+from .base import Plank
+
+from .models import Author, Bin, Book, Code, Config, Doc, Legacy, Loan, Page, Profile, Rack, Setting, Shelf, Tag, Visit
 
 
 def reported(request, a, kw):
@@ -49,3 +51,8 @@ def not_reported(request, a, kw, q):
     Loan.objects.get_or_create(key="k")  # caught
     Setting.objects.update_or_create(key="k")
     Setting.objects.get_or_create(key="k")  # caught
+    Bin.objects.get_or_create(name="n", owner=request.user)  # caught
+    Rack.objects.get_or_create(name="n", owner=request.user)
+    Page.objects.get_or_create(name="n")
+    Doc.objects.get_or_create(name="n")
+    Plank.objects.get_or_create(name="n", owner=request.user)

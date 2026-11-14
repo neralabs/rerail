@@ -22,6 +22,8 @@
 //   for a in authors: Book.objects.filter(author=a).order_by("-pk").first()
 //                                                     not reported: the newest row per key is a Subquery or window
 //                                                     query, not in_bulk
+//   for a in qs: a.hits -= 1; a.save()                not reported: a counter moved from its old value needs
+//                                                     `update(hits=F("hits") - 1)` (django-practice-read-modify-write)
 // Gaps: the commonest bulk_create shape, `book = Book(...); book.save()` (only the loop's own target's save() is
 // read); loops in helpers and `while` loops; per-row `.update()`, `.delete()` and `get_or_create()`; related-manager
 // `.create()`; a custom manager `create()` with another signature is matched.
@@ -34,10 +36,29 @@ QueryInLoop(c, "objects.create()", "`bulk_create()`") :- bnl_loop(_, body), dj_q
 // Model.save() takes no positional argument (Django 5.1 deprecated them): `form.save(state)` is some other save.
 QueryInLoop(c, ".save()", "`bulk_update()` (or `QuerySet.update()` when every row gets the same value)") :-
     bnl_loop(v, body), kind(c, "call"), field(c, "function", f), attr_of(f, o, "save"), kind(o, "identifier"),
-    text(o, v), within_stop(c, body, dj_region_stop), !posarg(c, 0, _), docof(c, d), !dj_test_doc(d).
+    text(o, v), within_stop(c, body, dj_region_stop), !posarg(c, 0, _), !bnl_counter(body, v), docof(c, d),
+    !dj_test_doc(d).
 QueryInLoop(c, cat(cat("objects.", m), "()"), "`in_bulk()` or one `filter(..__in=...)` query before the loop") :-
     bnl_loop(v, body), bnl_fetch(c, m), within_stop(c, body, dj_region_stop), bnl_uses(c, v), !bnl_model_is(c, body),
     !bnl_locks(c), docof(c, d), !dj_test_doc(d).
+
+// bnl_counter(body, v): the loop body moves a number field of v from its old value (`v.hits -= 1`,
+// `v.hits = v.hits + n`): bulk_update would write the Python-computed values and keep the lost update; the fix is
+// `QuerySet.update(hits=F("hits") - 1)`, which django-practice-read-modify-write gives, so this rule leaves it. A
+// number field: the step is a number literal, or some model of the run declares the field numeric. A string built
+// on its old value (`v.name = v.name + suffix`) stays reported.
+.decl bnl_counter(body: node, v: symbol)
+bnl_counter(body, v) :- bnl_loop(v, body), kind(a, "augmented_assignment"), within(a, body), (op(a, "+=") ; op(a, "-=")),
+    field(a, "left", l), attr_of(l, o, x), kind(o, "identifier"), text(o, v), field(a, "right", r), bnl_number(x, r).
+bnl_counter(body, v) :- bnl_loop(v, body), kind(a, "assignment"), within(a, body), field(a, "left", l),
+    attr_of(l, o, x), kind(o, "identifier"), text(o, v), text(l, lt), field(a, "right", rr), unparen(rr, r),
+    kind(r, "binary_operator"), (op(r, "+") ; op(r, "-")), child(r, e, _), text(e, lt), child(r, n, _), n != e,
+    bnl_number(x, n).
+// bnl_number(x, n): field x moved by step n is a number: n is an int or float literal, or a model of the run declares
+// x as a number field (python/django's dj_number_field).
+.decl bnl_number(x: symbol, n: node)
+bnl_number(x, n) :- attr_of(_, _, x), unparen(n, m), (kind(m, "integer") ; kind(m, "float")).
+bnl_number(x, n) :- attr_of(_, _, x), kind(n, _), dj_has_field(_, x, _, t), dj_number_field(t).
 
 // bnl_model_is(c, body): c's manager belongs to a name the loop that runs body binds each iteration, as its target
 // (`for model in models: model.objects.get(...)`) or in its body (`cls = apps.get_model(...)`): each iteration may

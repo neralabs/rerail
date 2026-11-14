@@ -10,7 +10,8 @@
 // subclass, through the run's classes in any file, of ModelForm, BaseModelForm, BaseModelFormSet,
 // BaseInlineFormSet, BaseGenericInlineFormSet, a ModelForm of django.contrib.auth/flatpages or wagtail, or another
 // package's `…ModelForm` / `…ModelFormSet` class, whose body has no call `super().clean()`,
-// `super(Cls, self).clean()` or `<Base>.clean(self)`. Test files are skipped.
+// `super(Cls, self).clean()` or `<Base>.clean(self)` (in a formset, `self.validate_unique()`, all that
+// BaseModelFormSet.clean() does, counts too). Test files are skipped.
 //   class BookForm(forms.ModelForm):
 //       def clean(self):                       reported
 //           if self.cleaned_data["title"] == "x":
@@ -25,9 +26,14 @@
 
 #include "python/django.rr"
 
-.violation ModelFormCleanSkipsSuper(at: node, c: symbol) "`{c}.clean()` never calls the parent class's clean(), so Django skips the model's unique, unique_together and constraint validation for this form and a duplicate fails at save() with an IntegrityError. Start it with `cleaned_data = super().clean()`."
-ModelFormCleanSkipsSuper(n, cn) :- mcs_clean(c, f), !mcs_calls_parent(f), param(f, "self", 0), docof(f, d),
-    !dj_test_doc(d), def_name(c, cn), field(f, "name", n).
+.violation ModelFormCleanSkipsSuper(at: node, c: symbol, skip: symbol, fix: symbol) "`{c}.clean()` never calls the parent class's clean(), so Django skips {skip} and a duplicate fails at save() with an IntegrityError. {fix}"
+ModelFormCleanSkipsSuper(n, cn, skip, fix) :- mcs_clean(c, f), !mcs_calls_parent(f), param(f, "self", 0), docof(f, d),
+    !dj_test_doc(d), def_name(c, cn), field(f, "name", n), mcs_skip(c, skip, fix).
+// mcs_skip(c, skip, fix): what model form c's parent clean() checks, and how to keep it.
+.decl mcs_skip(c: node, skip: symbol, fix: symbol)
+mcs_skip(c, "the model's unique, unique_together and constraint validation for this form",
+    "Start it with `cleaned_data = super().clean()`.") :- mcs_model_form(c), !mcs_formset(c).
+mcs_skip(c, "the uniqueness check across the formset's forms", "Call `super().clean()` in it.") :- mcs_formset(c).
 
 // mcs_clean(c, f): f is the clean() method written in model form c's body.
 .decl mcs_clean(c: node, f: node)
@@ -50,11 +56,16 @@ mcs_base(q) :- class_base(_, q), !class_def(_, q), split_dot(q, _, x),
     (suffix("ModelForm", x) ; suffix("ModelFormSet", x) ; prefix("django.", q), suffix("InlineFormSet", x)).
 .decl mcs_model_form(c: node)
 mcs_model_form(c) :- class_def(c, q), subclass(q, b), mcs_base(b).
+// mcs_formset(c): c is a model formset (a base whose name holds `FormSet`).
+.decl mcs_formset(c: node)
+mcs_formset(c) :- class_def(c, q), subclass(q, b), mcs_base(b), split_dot(b, _, x), contains("FormSet", x).
 
 // mcs_calls_parent(f): in f's own body, `super().clean(...)`, `super(C, self).clean(...)` or `X.clean(self, ...)`.
 .decl mcs_calls_parent(f: node)
 mcs_calls_parent(f) :- mcs_clean_call(f, _, o), kind(o, "call"), field(o, "function", s), text(s, "super").
 mcs_calls_parent(f) :- mcs_clean_call(f, k, _), posarg(k, 0, a), text(a, "self").
+mcs_calls_parent(f) :- mcs_clean(c, f), mcs_formset(c), kind(k, "call"), field(k, "function", fn),
+    attr_of(fn, o, "validate_unique"), text(o, "self"), nearest(k, f, "function_definition").
 // mcs_clean_call(f, k, o): call k is `o.clean(...)`, in def f's own body (not in a def nested in it).
 .decl mcs_clean_call(f: node, k: node, o: node)
 mcs_clean_call(f, k, o) :- kind(k, "call"), field(k, "function", fn), attr_of(fn, o, "clean"),
