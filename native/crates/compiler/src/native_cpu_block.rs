@@ -1906,6 +1906,40 @@ fn bytes_fn(func: &mut cranelift_codegen::ir::Function, bw: &crate::native_cpu_b
 /// the loop's calls (`ByteCall`): past the outputs.
 const TESTS_CALL: u16 = 0x8000;
 
+/// A long word's tail compare (`tail_fn`), its key in the loop's calls: past the outputs.
+const TAIL_CALL: u16 = 0x4000;
+
+/// A word past eight bytes, its other words compared (decision 0177): `(from, len, tail)` to
+/// 1 where each of its words past the first is its table row's (`RecordTables::tails`, `tail`
+/// the row), else 0. Seven words at most, straight-line; a function of its own, called on a
+/// hit's long flag, as the lean parser keeps its long words' compare out of its loop.
+fn tail_fn(func: &mut cranelift_codegen::ir::Function, tails: usize) -> Result<(), Error> {
+    let mut builder_context = FunctionBuilderContext::new();
+    let mut f = FunctionBuilder::new(func, &mut builder_context);
+    let entry = f.create_block();
+    f.append_block_params_for_function_params(entry);
+    f.switch_to_block(entry);
+    let p = f.block_params(entry).to_vec();
+    let (from, len, tail) = (p[0], p[1], p[2]);
+    let (fl, ro) = (MemFlags::trusted(), MemFlags::trusted().with_readonly());
+    let mut all = f.ins().iconst(types::I8, 1);
+    for j in 1..8i64 {
+        let past = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, len, 8 * j);
+        let chunk = f.ins().load(types::I64, fl, from, (8 * j) as i32);
+        let rest = f.ins().iadd_imm(len, -8 * j);
+        let chunk = cut_to(&mut f, chunk, rest);
+        let want = f.ins().load(types::I64, ro, tail, tails as i32 + 8 * (j as i32 - 1));
+        let same = f.ins().icmp(IntCC::Equal, chunk, want);
+        let ok = f.ins().bor(past, same);
+        all = f.ins().band(all, ok);
+    }
+    let all = f.ins().uextend(types::I64, all);
+    f.ins().return_(&[all]);
+    f.seal_all_blocks();
+    f.finalize();
+    crate::native_cpu_shape::check(func, &[], &[]).map_err(|r| Error::RefusedShape(format!("{r:?}")))
+}
+
 /// The count tests of a rule, fused: `(bytes, len, s, l)` to their hits at token `s..=l`, the
 /// marks' as `records::check_hits` (`At` and `After` bits), a refusal at bit 63. One loop over
 /// the token's words; each word's outputs from one window (`Bytewise::words`), each test's
@@ -3252,17 +3286,30 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let wi = f.ins().iadd_imm(word, -1);
     let toff = f.ins().imul_imm(wi, 56);
     let tail = f.ins().iadd(tables, toff);
-    let mut all = f.ins().iconst(types::I8, 1);
-    for j in 1..8i64 {
-        let past = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, len, 8 * j);
-        let chunk = f.ins().load(types::I64, fl, from, (8 * j) as i32);
-        let rest = f.ins().iadd_imm(len, -8 * j);
-        let chunk = cut_to(f, chunk, rest);
-        let want = f.ins().load(types::I64, ro, tail, t.tails as i32 + 8 * (j as i32 - 1));
-        let same = f.ins().icmp(IntCC::Equal, chunk, want);
-        let ok = f.ins().bor(past, same);
-        all = f.ins().band(all, ok);
-    }
+    // Out of the loop where it has the call (`tail_fn`); else straight-line here.
+    let all = match rd.calls.iter().find(|x| x.0 == TAIL_CALL) {
+        Some((_, id, sig)) => {
+            let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
+            let signature = f.import_signature(sig.clone());
+            let callee = f.import_function(cranelift_codegen::ir::ExtFuncData { name: cranelift_codegen::ir::ExternalName::user(name), signature, colocated: true });
+            let call = f.ins().call(callee, &[from, len, tail]);
+            f.inst_results(call)[0]
+        }
+        None => {
+            let mut all = f.ins().iconst(types::I8, 1);
+            for j in 1..8i64 {
+                let past = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, len, 8 * j);
+                let chunk = f.ins().load(types::I64, fl, from, (8 * j) as i32);
+                let rest = f.ins().iadd_imm(len, -8 * j);
+                let chunk = cut_to(f, chunk, rest);
+                let want = f.ins().load(types::I64, ro, tail, t.tails as i32 + 8 * (j as i32 - 1));
+                let same = f.ins().icmp(IntCC::Equal, chunk, want);
+                let ok = f.ins().bor(past, same);
+                all = f.ins().band(all, ok);
+            }
+            all
+        }
+    };
     let code2 = f.ins().select(all, code, no_word);
     f.ins().jump(coded, &[k.into(), next_after.into(), bad.into(), pending.into(), h[4].into(), h[5].into(), code2.into(), hits.into()]);
 
@@ -3989,6 +4036,15 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), sig.clone());
             tests_fn(&mut func, &bytewise, &tests, &carry_names)?;
             byte_calls.push((TESTS_CALL | k as u16, id, sig, func));
+        }
+        // The long words' tail compare (`tail_fn`), out of the loop.
+        if let Some((_, t, _)) = records {
+            let mut sig = words_signature(module, 3);
+            sig.returns.push(cranelift_codegen::ir::AbiParam::new(types::I64));
+            let id = module.declare_function(&format!("{name}_tail"), Linkage::Local, &sig).map_err(|_| Error::BackendFailure)?;
+            let mut func = cranelift_codegen::ir::Function::with_name_signature(cranelift_codegen::ir::UserFuncName::user(0, id.as_u32()), sig.clone());
+            tail_fn(&mut func, t.tails)?;
+            byte_calls.push((TAIL_CALL, id, sig, func));
         }
     }
     let byte_ids: Vec<ByteCall> = byte_calls.iter().map(|(o, id, sig, _)| (*o, *id, sig.clone())).collect();

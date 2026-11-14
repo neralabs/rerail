@@ -711,3 +711,17 @@ first byte neither fused rule has (a comment's `/` is its reader's).
 
 Measured (`jit_against_aot`): tier 1 ahead of time 212 instructions and 66 cycles a node,
 from 232; the JIT 285 and 75, from 331; tier 1 + 2 ahead of time 454.
+
+## A long word's compare is a call
+
+A word past eight bytes needs its other words compared with its table row. The loop did it
+inline: seven loads and compares, unrolled, in the loop's function, though almost no token
+takes it. The lean lexer keeps such work out of its loop.
+
+Now the compare is a function of its own (`tail_fn`), called where a hit's long flag is set.
+The loop's function holds only the call. Tier 1's Rust also checks, at compile time, that
+each of its functions is structured control, not the fallback loop over a `match`.
+
+Measured (`jit_against_aot`): tier 1 ahead of time 213 instructions a node, unchanged (the
+path is cold). The JIT went from 285 to 306: Cranelift's register allocator weighs a call in
+a cold block as one in the loop. That is open.

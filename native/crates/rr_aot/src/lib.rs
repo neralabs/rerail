@@ -8,6 +8,10 @@
 mod tier1_aot;
 mod tier2_aot;
 
+// Each of tier 1's functions is structured control, as rustc lays out a hand-written loop: none
+// is the irreducible fallback, a loop over a `match` (`clif_rust`).
+const _: () = assert!(tier1_aot::STRUCTURED.0 == tier1_aot::STRUCTURED.1, "a tier 1 function is irreducible: a loop over a match");
+
 use rerail_compiler::{clif_rust, native_cpu_block, native_cpu_stream, native_ir, rust_stream};
 
 /// Which tiers run the ahead-of-time build.

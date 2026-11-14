@@ -71,11 +71,16 @@ pub fn translate(funcs: &[(u32, ir::Function)], entries: &[(u32, &str)], address
     for (_, _, n) in addresses {
         writeln!(out, "/// An address of the running process's (set before the first call).\npub static {n}: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);\n").unwrap();
     }
-    out.push_str("#[inline(always)]\nfn sp() -> u64 {\n    let s: u64;\n    // SAFETY: reads the stack pointer.\n    unsafe { core::arch::asm!(\"mov {}, sp\", out(reg) s, options(nomem, nostack, preserves_flags)) };\n    s\n}\n\n");
     let mut structured = 0;
+    let mut bodies = String::new();
     for (id, f) in funcs {
-        structured += usize::from(function(&mut out, *id, f).map_err(|e| format!("u0:{id}: {e}"))?);
+        structured += usize::from(function(&mut bodies, *id, f).map_err(|e| format!("u0:{id}: {e}"))?);
     }
+    // The stack pointer's read, where a function takes it (`GetStackPointer`).
+    if bodies.contains("sp()") {
+        out.push_str("#[inline(always)]\nfn sp() -> u64 {\n    let s: u64;\n    // SAFETY: reads the stack pointer.\n    unsafe { core::arch::asm!(\"mov {}, sp\", out(reg) s, options(nomem, nostack, preserves_flags)) };\n    s\n}\n\n");
+    }
+    out.push_str(&bodies);
     writeln!(out, "/// The functions whose graph is structured control (the rest irreducible, a loop over a `match`).\npub const STRUCTURED: (usize, usize) = ({structured}, {});\n", funcs.len()).unwrap();
     for &(entry, n) in entries {
         let f = &funcs.iter().find(|(id, _)| *id == entry).ok_or("no entry")?.1;
