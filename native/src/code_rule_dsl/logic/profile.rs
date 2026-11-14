@@ -862,6 +862,52 @@ pub fn warm() -> bool {
     warm_mode() != Warm::Off
 }
 
+/// The writes a warm run may still make, by what the store's writer calls the job (`ContentStore::write_back`'s
+/// `what`), and why each is allowed: locks against another process's collection, and the timestamps by which
+/// collection judges recency. Nothing else is exempt from the warm check.
+///
+/// Changing this list needs the user's approval (decision 0197). `scripts/check/check-warm-mode.py` holds a copy
+/// and refuses a commit that changes one without the other.
+pub const WARM_WRITES_ALLOWED: &[(&str, &str)] = &[
+    ("the run's hold on its plans", "a lock: a lease on the run's plans against a collection in another process (decision 0053)"),
+    ("the run's hold released", "a lock: the lease's release"),
+    ("a source's pin", "a lock: a lease on a source the run reads, until its manifest names it (O95)"),
+    ("the combined program's pins released", "a lock: the release of the combined program's leases"),
+    ("the run's manifest", "a timestamp, only for a manifest identical to one stored: its last run and time move, by which collection keeps a root's last two. A new manifest is a fault (`warm_fault`, in the job)"),
+];
+
+/// Whether the store's writer may run a job called `what` in a warm run (`WARM_WRITES_ALLOWED`).
+pub fn warm_write_allowed(what: &str) -> bool {
+    WARM_WRITES_ALLOWED.iter().any(|(w, _)| *w == what)
+}
+
+thread_local! {
+    /// On the store's writer: whether a transaction is open for listed jobs (`warm_scope`), and whether every job
+    /// it ran so far is listed (`warm_job`).
+    static WARM_SCOPE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// While it lives, the commits on this thread are a listed write's (`WARM_WRITES_ALLOWED`) if every job named to
+/// `warm_job` inside it is listed; they are not a fault then. The store's writer holds one around each transaction.
+pub struct WarmScope(Option<bool>);
+
+pub fn warm_scope() -> WarmScope {
+    WarmScope(WARM_SCOPE.with(|s| s.replace(Some(true))))
+}
+
+impl Drop for WarmScope {
+    fn drop(&mut self) {
+        WARM_SCOPE.with(|s| s.set(self.0));
+    }
+}
+
+/// The store's writer runs the job called `what` in the open `warm_scope`.
+pub fn warm_job(what: &str) {
+    if warm() && !warm_write_allowed(what) {
+        WARM_SCOPE.with(|s| s.set(s.get().map(|_| false)));
+    }
+}
+
 /// The faults of a `RERAIL_WARM=list` run so far: by kind, how many and the first's detail.
 static WARM_FAULTS: std::sync::Mutex<BTreeMap<(&'static str, String), usize>> = std::sync::Mutex::new(BTreeMap::new());
 
@@ -973,7 +1019,7 @@ fn violation(when: &str, what: &str) -> ! {
 /// `db` is an open connection, and this runs on its thread inside its commit hook.
 pub unsafe fn warm_commit(db: *mut rusqlite::ffi::sqlite3) {
     use rusqlite::ffi;
-    if !warm() {
+    if !warm() || WARM_SCOPE.with(|s| s.get() == Some(true)) {
         return;
     }
     // SAFETY: the caller's connection.

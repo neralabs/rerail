@@ -1636,7 +1636,14 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
             sources.extend(late.lock().expect("the late sources").iter().copied());
             let recorded = store
                 .record_corpus_run_lane(&root, &sources, crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION), plan, &also, lane, now)
-                .and_then(|_| store.record_corpus_relations(plan, &relations));
+                .and_then(|new| {
+                    // A warm run may move an identical manifest's timestamps (`profile::WARM_WRITES_ALLOWED`), never
+                    // record a new one.
+                    if new {
+                        crate::code_rule_dsl::logic::profile::warm_fault("a new manifest recorded", || format!("{root}, {} sources", sources.len()));
+                    }
+                    store.record_corpus_relations(plan, &relations)
+                });
             // The manifest now protects the sources. Release before collection, including warm runs
             // that must resume a pass deferred by another active reader.
             drop(reading.take());
@@ -6827,14 +6834,21 @@ fn run_observed(
                         })
                         .collect::<Result<Vec<_>>>()?;
                     // A warm run's deltas are empty (`RERAIL_WARM`): an input's or stratum's rows gone or new, a maintained
-                    // relation's overdeleted or inserted rows.
+                    // relation's overdeleted or inserted rows. Read from memory alone, so the check changes nothing a run
+                    // does: the outcome's net deltas, and the delta relations the engine holds. A delta relation a SQL
+                    // stratum left in a table is not read (a statement inside the waves, which the strict mode refuses).
                     if crate::code_rule_dsl::logic::profile::warm() {
+                        for (rel, (gone, added)) in &got.deltas {
+                            if !gone.is_empty() || !added.is_empty() {
+                                crate::code_rule_dsl::logic::profile::warm_fault("a non-empty delta", || format!("{rel}: {} values gone, {} added", gone.len(), added.len()));
+                            }
+                        }
                         let derived_here: BTreeSet<&str> = part.program.rules.iter().map(|r| r.head.rel.as_str()).collect();
                         for (rel, cols) in &part.program.decls {
                             if cols.is_empty() || !derived_here.contains(rel.as_str()) || !["__minus", "__plus", "__del", "__ins", "__gone"].iter().any(|x| rel.ends_with(x)) {
                                 continue;
                             }
-                            let n = held_rows(&db, &got, rel, cols.len()).map(|r| r.len()).unwrap_or(0);
+                            let n = crate::code_rule_dsl::logic::native::component::derived(&db, rel).map_or(0, |h| h.len());
                             if n > 0 {
                                 crate::code_rule_dsl::logic::profile::warm_fault("a non-empty delta", || format!("{rel}: {n} rows"));
                             }

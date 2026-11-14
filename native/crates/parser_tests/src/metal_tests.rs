@@ -32,7 +32,7 @@ fn every_step_on_metal_equals_the_interpreter() {
 
 /// Tier 1 on Metal in segments (`block_program::serial`), over the corpus as one batch: GPU
 /// seconds (the fastest of `RERAIL_ITERS` runs, default 5), segments run again and checks, for
-/// `RERAIL_SEG` blocks a segment (default 29) and `RERAIL_WARM` warm-up blocks (default 1); the
+/// `RERAIL_SEG` blocks a segment (default 29) and `RERAIL_SEG_WARM` warm-up blocks (default 1); the
 /// outputs, positions and totals equal Cranelift's. `RERAIL_REPEAT` and `RERAIL_FORM` as in
 /// `json_metal_bench`.
 #[test]
@@ -47,7 +47,7 @@ fn json_metal_serial_bench() {
     (files, paths) = ((0..n).flat_map(|_| files.clone()).collect(), (0..n).flat_map(|_| paths.clone()).collect());
     let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
     let total: usize = files.iter().map(Vec::len).sum();
-    let segments = Segments { blocks: env("RERAIL_SEG", 29), warm: env("RERAIL_WARM", 1) };
+    let segments = Segments { blocks: env("RERAIL_SEG", 29), warm: env("RERAIL_SEG_WARM", 1) };
     println!("{} files, {} bytes, {segments:?}", files.len(), total);
     println!("form\tgpu_ms\tGB/s\tfirst_ms\tagain_ms\tsinks_ms\tsegments\treruns\trounds");
     for name in ["14-json", "15-jsonc"] {

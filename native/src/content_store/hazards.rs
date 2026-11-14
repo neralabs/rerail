@@ -42,3 +42,19 @@ pub(crate) unsafe fn warm_commit(db: *mut rusqlite::ffi::sqlite3) {
     // SAFETY: the caller's guarantee.
     unsafe { profile::warm_commit(db) };
 }
+
+/// A transaction of the store's writer (`profile::warm_scope`): its commit is not a fault of the warm check if every
+/// job it ran is one of the writes a warm run may make (`profile::WARM_WRITES_ALLOWED`).
+pub(crate) fn warm_scope() -> profile::WarmScope {
+    profile::warm_scope()
+}
+
+/// The writer runs the job `what` in its open `warm_scope`.
+pub(crate) fn warm_job(what: &str) {
+    profile::warm_job(what);
+}
+
+/// Whether a warm run may queue the job `what` (`profile::WARM_WRITES_ALLOWED`).
+pub(crate) fn warm_write_allowed(what: &str) -> bool {
+    profile::warm_write_allowed(what)
+}

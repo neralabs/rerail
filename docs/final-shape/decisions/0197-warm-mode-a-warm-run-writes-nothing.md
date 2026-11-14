@@ -36,6 +36,38 @@ the run that warmed the store.
 `list` prints each kind's first fault with its stack and each distinct fault once. When the process exits it
 prints the counts and exits with status 3.
 
+## What only the check reads
+
+The mode changes no computation and no write. Two things hold that, and `scripts/check/check-warm-mode.py` checks
+both before every commit (the commit hook runs it beside the cache and thread-state checks):
+
+- **Who reads it.** Only `profile.rs` (the mode itself), the maintained part's delta check in `corpus.rs` (it reads
+  deltas held in memory and faults) and `reuse::NOT_OUTPUTS` (left out of the cutoff's key) may read
+  `RERAIL_WARM`, call `warm()` or `warm_mode()`, or name `Warm::`. Each place has an approved count of reads. A
+  new reader fails the check. So does another read in a listed place. Functions also called `warm` that warm GPU
+  pipelines are not the mode. A fault's detail closure only formats what the caller already holds.
+- **What a warm run may still write.** `profile::WARM_WRITES_ALLOWED` lists them, each with its reason. The check
+  holds a copy, so the list cannot grow without the user's approval:
+
+  | Write (the writer's job) | Why |
+  |---|---|
+  | the run's hold on its plans | A lock: a lease on the run's plans against a collection in another process (0053) |
+  | the run's hold released | The lease's release |
+  | a source's pin | A lock: a lease on a source the run reads, until its manifest names it (O95) |
+  | the combined program's pins released | The release of the combined program's leases |
+  | the run's manifest | Timestamps, only for a manifest identical to one stored: its last run and time move, by which collection keeps a root's last two. A new manifest is a fault (`a new manifest recorded`) |
+
+  Neither the queued job nor its commit is a fault, and only when every job in the writer's transaction is
+  listed. The writer opens a scope around each transaction (`profile::warm_scope`), each job marks it
+  (`warm_job`), and the commit hook passes only a scope of listed jobs. A wait for the writer queues an empty job,
+  which writes nothing and is not a fault.
+
+  Not listed, and still faults: the frames' used marks, the run's atoms, a source the manifest names, and the
+  combined program's text. They are recency and content, not locks or timestamps.
+
+One name collided. The Metal segment benchmark (`parser_tests::metal_tests`) read `RERAIL_WARM` as its count of
+warm-up blocks, so turning the check on changed that benchmark. It is now `RERAIL_SEG_WARM`.
+
 ## First findings: the `dl1` batch
 
 These are from 44 data-layer policies over one Python file (`dl1`, decision 0183), `run-policies`, CPU, strict
@@ -104,8 +136,9 @@ and takes 6.7 G instructions and 0.58 s user, against 8.0 G and 0.72 s over `dl1
   them when they would change nothing is consistent with that path. Not bumping recency only costs a recomputation
   later, never a wrong result. Dropping the hold and pins changes how a run is guarded against another process's
   collection (decision 0053), so it is left for that design.
-- **`forget` is quadratic**: each named path is matched against every answer kept, so a root that churns costs paths ×
-  answers on every ask. A sorted map would make it a range per path.
+- **`forget` was quadratic**: it matched each named path against every answer kept, so a root that churns cost
+  paths × answers on every ask. Fixed: the answers and canonical forms are sorted by path (`BTreeMap`), and what
+  lies under a named path is one range from it (`forget_takes_what_is_under_a_path_and_no_sibling`).
 - **Choosing the widest stored root** for a path (`watch_above`) means one ask covers many reads, so there are fewer
   cookie waits. But a read near the top (a work tree's `.git`) makes the whole tree a root. The deepest root would name
   less, at the cost of more asks. Not measured.
