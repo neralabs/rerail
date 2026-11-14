@@ -259,11 +259,12 @@ describe("the engine service's idle close", () => {
   /**
    * A service over two started checkouts whose sessions are suspended after a minute of `clock` without an event;
    * `gitFirst` makes `first` a Git repository before it starts, as a checkout's identity is taken then. Sessions come
-   * from Claude Code unless `host` says otherwise.
+   * from Claude Code unless `host` says otherwise. With `noLock` the service can take no owner lock, as where the file
+   * system refuses one: a file sits where the owner locks' folder goes.
    */
   async function idleService(
     options: Partial<Parameters<typeof startEngineService>[0]> = {},
-    { gitFirst = false, host = "claude-code" }: { gitFirst?: boolean; host?: "claude-code" | "omp" } = {},
+    { gitFirst = false, host = "claude-code", noLock = false }: { gitFirst?: boolean; host?: "claude-code" | "omp"; noLock?: boolean } = {},
   ) {
     const root = await mkdtemp(join(tmpdir(), "rerail-idle-"));
     roots.push(root);
@@ -272,6 +273,10 @@ describe("the engine service's idle close", () => {
     for (const checkout of [first, second]) await mkdir(checkout);
     if (gitFirst) execFileSync("git", ["init", "--quiet"], { cwd: first });
     for (const checkout of [first, second]) startTestRepository(checkout, databasePath);
+    if (noLock) {
+      await mkdir(join(root, "locks"), { recursive: true });
+      await writeFile(join(root, "locks", "owners"), "");
+    }
     const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-idle-${process.pid}-${Date.now()}` : join(root, "engine.sock");
     const clock = { now: 1_000_000 };
     const service = await startEngineService({
@@ -932,7 +937,7 @@ describe("the engine service's idle close", () => {
   });
 
   /** `idleService` whose sessions' rule checks steer only when the test calls `steer`, as a scan finishing late does. */
-  async function steeringService() {
+  async function steeringService(setUp: { noLock?: boolean } = {}) {
     let delivery: RuleSteerDelivery | undefined;
     const service = await idleService({
       createAuditor: ({ steerDelivery }) => {
@@ -944,7 +949,7 @@ describe("the engine service's idle close", () => {
           close: async () => undefined,
         };
       },
-    });
+    }, setUp);
     const steer = async (sessionId: string, content: string) => await delivery!.requestSteer(sessionId, "steer", content, {
       revision: 0, scope: [], ruleIds: ["test:owed"], rules: [{ id: "test:owed", state: "steered" }],
     });
@@ -963,6 +968,28 @@ describe("the engine service's idle close", () => {
     expect(service.openRuntimes()).toBe(0);
     expect(ended("a")).toBeNull();
     expect((await prompt("a", "next morning")).map(delivery => delivery.content)).toEqual(["Fix a.py."]);
+  });
+
+  // A service that could take no owner lock writes owner rows that a later start can judge only by their pid, which
+  // another process can hold after a kill: a quiet session it kept open read as live and owned for good, a scan for it
+  // queued and never ran, and its next event was refused. It ends each quiet session at its idle close, as before, and
+  // what a session owed still waits in its ledger for its next event.
+  it("ends a quiet session at its idle close when the service could take no owner lock, and keeps what it owed for its next event", async () => {
+    const { clock, service, start, prompt, ended, live, steer } = await steeringService({ noLock: true });
+    await start("quiet");
+    await start("owing");
+    await steer("owing", "Fix owing.py.");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    expect([typeof ended("quiet"), live("quiet")]).toEqual(["number", false]);
+    expect([ended("owing"), live("owing")]).toEqual([null, true]);
+    await prompt("quiet", "back");
+    expect([ended("quiet"), live("quiet")]).toEqual([null, true]);
+    clock.now += 24 * 60 * 60_000;
+    await service.closeIdleSessions();
+    expect([typeof ended("owing"), live("owing")]).toEqual(["number", false]);
+    expect((await prompt("owing", "next morning")).map(delivery => delivery.content)).toEqual(["Fix owing.py."]);
+    expect([ended("owing"), live("owing")]).toEqual([null, true]);
   });
 
   // An end drops what the session owed. One from a repository stopped since dropped nothing: the ledger kept the steer,
