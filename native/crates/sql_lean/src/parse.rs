@@ -38,7 +38,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
     }
     // A leading byte order mark is skipped (tree-sitter's lexer skips it): the text starts after.
     let start = if src.starts_with("\u{feff}".as_bytes()) { 3 } else { 0 };
-    let mut p = P { src, b: Blocks::of(src), at: start, last_end: start, look: None, a: Arena::sized(src.len()), extras: Vec::new(), depth: 0, lower: [0; WORD_LEN], words_at: [usize::MAX; 2], words: [&[]; 2], memo: (usize::MAX, Tok { t: T::Eof, s: 0, e: 0 }) };
+    let mut p = P { src, b: Blocks::of(src), at: start, last_end: start, look: None, a: Arena::sized(src.len()), extras: Vec::new(), depth: 0, memo: (usize::MAX, Tok { t: T::Eof, s: 0, e: 0, w: 0 }) };
     let root = p.program()?;
     let mut widths = Widths::guess(src.len());
     loop {
@@ -86,7 +86,13 @@ struct Tok {
     t: T,
     s: usize,
     e: usize,
+    /// A word's keyword code (`KEYWORDS`; 0: no keyword's word), found once, as it is read.
+    w: u16,
 }
+
+/// The keyword switch (`rerail_simd8::words`) over every keyword word, case folded.
+static KEYWORDS: rerail_simd8::words::Words<{ rerail_simd8::words::slots_for(kinds::WORD_TEXT.len()) }, { rerail_simd8::words::buckets_for(kinds::WORD_TEXT.len()) }, true> =
+    rerail_simd8::words::Words::build(kinds::WORD_TEXT);
 
 #[inline(always)]
 fn is_blank(c: u8) -> bool {
@@ -337,52 +343,6 @@ impl Arena {
     }
 }
 
-/// `kinds::WORDS` by length and first byte (`bucket`): a word's keywords are a few compares in
-/// its bucket, not a search of all of them.
-struct WordIndex {
-    /// Bucket `b`'s words are `words[at[b]..at[b + 1]]`, sorted by word (a word of several keywords
-    /// is a run).
-    at: Vec<u32>,
-    words: Vec<(&'static str, K)>,
-    /// Each word's first 8 bytes (`prefix`): most compares are one.
-    heads: Vec<u64>,
-}
-
-/// A word's first 8 bytes, as one number (zeros past its end).
-#[inline]
-fn prefix(w: &[u8]) -> u64 {
-    let mut b = [0u8; 8];
-    let n = w.len().min(8);
-    b[..n].copy_from_slice(&w[..n]);
-    u64::from_le_bytes(b)
-}
-
-const WORD_LEN: usize = 48;
-
-/// A lower-case word's bucket: its length and its first byte's low five bits.
-#[inline]
-fn bucket(w: &[u8]) -> usize {
-    w.len() * 32 + usize::from(w[0] & 31)
-}
-
-fn word_index() -> &'static WordIndex {
-    static INDEX: std::sync::OnceLock<WordIndex> = std::sync::OnceLock::new();
-    INDEX.get_or_init(|| {
-        let mut words: Vec<(&'static str, K)> = kinds::WORDS.iter().copied().filter(|(w, _)| !w.is_empty() && w.len() <= WORD_LEN).collect();
-        words.sort_by_key(|&(w, _)| (bucket(w.as_bytes()), w));
-        let buckets = (WORD_LEN + 1) * 32;
-        let mut at = vec![0u32; buckets + 1];
-        for &(w, _) in &words {
-            at[bucket(w.as_bytes()) + 1] += 1;
-        }
-        for b in 0..buckets {
-            at[b + 1] += at[b];
-        }
-        let heads = words.iter().map(|(w, _)| prefix(w.as_bytes())).collect();
-        WordIndex { at, words, heads }
-    })
-}
-
 #[derive(Clone, Copy)]
 struct Saved {
     at: usize,
@@ -418,11 +378,6 @@ pub(crate) struct P<'s> {
     /// Comments, in order: (kind, start, end).
     extras: Vec<(K, u32, u32)>,
     depth: u32,
-    lower: [u8; WORD_LEN],
-    /// The keywords of the last two words looked up, at `words_at` (`words`): looked up once a token,
-    /// as the parser asks after several, and a look ahead goes between two.
-    words_at: [usize; 2],
-    words: [&'static [(&'static str, K)]; 2],
     /// The last token read (`lex`), and where its read started: read again from there, it is the
     /// same token. `restore` clears it (the extras it read may be gone).
     memo: (usize, Tok),
@@ -579,7 +534,7 @@ impl<'s> P<'s> {
         let from = self.at;
         let s = self.skip()?;
         let c = self.byte(s);
-        let tok = |t, e| Tok { t, s, e };
+        let tok = |t, e| Tok { t, s, e, w: 0 };
         let t = if s >= self.src.len() {
             tok(T::Eof, s)
         } else if is_word_start(c) {
@@ -594,7 +549,7 @@ impl<'s> P<'s> {
                 return self.refuse();
             } else {
                 self.check_word(s, e)?;
-                tok(T::Word, e)
+                Tok { t: T::Word, s, e, w: KEYWORDS.find(self.src, s, e) as u16 }
             }
         } else if c == b'"' {
             let mut e = s + 1;
@@ -722,34 +677,12 @@ impl<'s> P<'s> {
         self.look = None;
     }
 
-    /// The keywords the next token, a word, is (`kinds::WORDS`), lower case; empty for any other.
+    /// The keywords the next token, a word, is (`kinds::WORDS`); empty for any other.
+    #[inline]
     fn words(&mut self) -> R<&'static [(&'static str, K)]> {
         let t = self.peek()?;
-        if t.s == self.words_at[0] {
-            return Ok(self.words[0]);
-        }
-        if t.s == self.words_at[1] {
-            return Ok(self.words[1]);
-        }
-        if t.t != T::Word || t.e - t.s > self.lower.len() {
-            return Ok(&[]);
-        }
-        let n = t.e - t.s;
-        for i in 0..n {
-            self.lower[i] = self.src[t.s + i].to_ascii_lowercase();
-        }
-        let w = &self.lower[..n];
-        let index = word_index();
-        let b = bucket(w);
-        let at = index.at[b] as usize..index.at[b + 1] as usize;
-        let head = prefix(w);
-        let same = |i: usize| index.heads[i] == head && (n <= 8 || index.words[i].0.as_bytes()[8..] == w[8..]);
-        let lo = at.clone().find(|&i| same(i)).unwrap_or(at.end);
-        let hi = (lo..at.end).find(|&i| !same(i)).unwrap_or(at.end);
-        let found = &index.words[lo..hi];
-        self.words_at = [t.s, self.words_at[0]];
-        self.words = [found, self.words[0]];
-        Ok(found)
+        let (a, b) = kinds::WORD_AT[usize::from(t.w)];
+        Ok(&kinds::WORDS[usize::from(a)..usize::from(b)])
     }
 
     /// Whether the next token is keyword `k`.

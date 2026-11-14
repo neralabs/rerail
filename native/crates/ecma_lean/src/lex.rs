@@ -156,88 +156,14 @@ pub mod w {
     }
 }
 
-/// A word's first 8 bytes as one integer, little-endian, zeros past its end.
-const fn word_key(w: &[u8]) -> u64 {
-    let mut k = 0u64;
-    let mut i = 0;
-    while i < w.len() && i < 8 {
-        k |= (w[i] as u64) << (8 * i);
-        i += 1;
-    }
-    k
-}
+/// The keyword switch (`rerail_simd8::words`) over `w::TEXT`: a word's code is its index there.
+static WORDS: rerail_simd8::words::Words<{ rerail_simd8::words::slots_for(w::TEXT.len()) }, { rerail_simd8::words::buckets_for(w::TEXT.len()) }, false> =
+    rerail_simd8::words::Words::build(w::TEXT);
 
-/// A word's slot in `WORDS`, by its first 8 bytes and its length: a multiplier under which every
-/// word takes a slot of its own of 1,024 (a perfect hash; `WORDS` is refused at compile time where two
-/// share one).
-#[inline(always)]
-const fn word_slot(key: u64, len: usize) -> usize {
-    ((key ^ (len as u64).wrapping_mul(0x9e37_79b9)).wrapping_mul(HASH) >> 54) as usize
-}
-
-const HASH: u64 = find_hash();
-
-/// The first multiplier (of a fixed sequence) under which the words' slots are distinct.
-const fn find_hash() -> u64 {
-    let mut m = 0x8f58_640b_360e_7c81u64;
-    loop {
-        let mut used = [false; 1024];
-        let mut ok = true;
-        let mut i = 1;
-        while i < w::TEXT.len() {
-            let t = w::TEXT[i];
-            let s = ((word_key(t) ^ (t.len() as u64).wrapping_mul(0x9e37_79b9)).wrapping_mul(m) >> 54) as usize;
-            if used[s] {
-                ok = false;
-                break;
-            }
-            used[s] = true;
-            i += 1;
-        }
-        if ok {
-            return m;
-        }
-        m = m.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407) | 1;
-    }
-}
-
-/// Each slot's word: its first 8 bytes, its length (0: none), its code.
-static WORDS: [(u64, u8, u8); 1024] = {
-    let mut t = [(0u64, 0u8, 0u8); 1024];
-    let mut i = 1;
-    while i < w::TEXT.len() {
-        let text = w::TEXT[i];
-        assert!(text.len() <= 16);
-        let k = word_key(text);
-        let slot = word_slot(k, text.len());
-        assert!(t[slot].1 == 0, "two words in a slot");
-        t[slot] = (k, text.len() as u8, i as u8);
-        i += 1;
-    }
-    t
-};
-
-/// The word `src[i..end]`'s code: its first 8 bytes loaded as one integer, masked to its length,
-/// hashed to its one slot and compared once (and its tail, for the few words past 8 bytes).
+/// The word `src[i..end]`'s code (0: none), in its case: one probe of the keyword switch.
 #[inline(always)]
 pub fn word(src: &[u8], i: usize, end: usize) -> u8 {
-    let len = end - i;
-    if len.wrapping_sub(2) >= 15 {
-        return 0;
-    }
-    let raw = match src.get(i..i + 8) {
-        Some(b) => u64::from_le_bytes(b.try_into().expect("8 bytes")),
-        None => word_key(&src[i..end]),
-    };
-    let k = if len >= 8 { raw } else { raw & (u64::MAX >> (64 - 8 * len)) };
-    let (wk, wl, code) = WORDS[word_slot(k, len)];
-    if wk != k || usize::from(wl) != len {
-        return 0;
-    }
-    if len > 8 && &w::TEXT[usize::from(code)][8..] != &src[i + 8..end] {
-        return 0;
-    }
-    code
+    WORDS.find(src, i, end) as u8
 }
 
 /// A piece of a template, read in template mode.

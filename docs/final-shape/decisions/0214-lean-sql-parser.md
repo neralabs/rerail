@@ -186,7 +186,8 @@ tree-sitter-sql does not read.
 
 The lean tape costs a seventh of tree-sitter's in instructions, about a tenth in cycles.
 
-The keyword lookup is a bucket by length and first byte, its words compared by their first eight
+(The keyword lookup below is replaced by 0219's switch: one probe a word, in the lexer; 886
+instructions a node.) The keyword lookup was a bucket by length and first byte, its words compared by their first eight
 bytes, and cached for the last two words (a two-token look goes between them); a token read ahead
 and given back is not lexed again; the arena is sized from the text. The first build searched all
 517 words at each question and allocated in the automata walk: 1,769 instructions a node.

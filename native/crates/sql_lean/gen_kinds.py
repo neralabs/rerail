@@ -137,6 +137,22 @@ out += ['/// Each keyword\'s words, lower case, with its kind, sorted by word (t
         '/// keywords take is there twice, in the grammar\'s order.', 'pub static WORDS: &[(&str, K)] = &[']
 for (w,), v in words:
     out.append(f'    ("{w}", K::{v}),')
+out += ['];', '']
+# `WORD_TEXT`: each word once, its code its index (0: none), for the keyword switch
+# (`rerail_simd8::words`); `WORD_AT`: each code's run of `WORDS`.
+distinct, at = [''], [(0, 0)]
+for i, ((w,), v) in enumerate(words):
+    if w != distinct[-1]:
+        distinct.append(w)
+        at.append((i, i + 1))
+    else:
+        at[-1] = (at[-1][0], i + 1)
+out += ['/// Each keyword word once (`WORDS`\' words), its code its index; 0 is no word.', 'pub static WORD_TEXT: &[&[u8]] = &[']
+for i in range(0, len(distinct), 8):
+    out.append('    ' + ' '.join(f'b"{w}",' for w in distinct[i:i + 8]))
+out += ['];', '', '/// Each code\'s keywords: its run of `WORDS`.', 'pub static WORD_AT: &[(u16, u16)] = &[']
+for i in range(0, len(at), 8):
+    out.append('    ' + ' '.join(f'({a}, {b}),' for a, b in at[i:i + 8]))
 out += ['];', '', '/// The keywords of two words.', '#[allow(dead_code)] // read where the grammar takes them', 'pub static PHRASES: &[(&str, &str, K)] = &[']
 for a, v in phrases:
     out.append(f'    ("{a[0]}", "{a[1]}", K::{v}),')
