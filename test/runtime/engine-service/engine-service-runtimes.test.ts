@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm, writeFile, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -992,6 +992,30 @@ describe("the engine service's idle close", () => {
     expect([ended("owing"), live("owing")]).toEqual([null, true]);
   });
 
+  // A runtime that records its sessions in another database than the service's (an event's configuration names it)
+  // wrote rows naming the service's lock, whose file is only beside the service's own database: a later start read
+  // the lock as one that may still run, and no start sweeps that other database. Its quiet sessions stayed open after a
+  // kill, live and owned for good while a process had the dead daemon's pid. Such a runtime holds no lock and ends a
+  // quiet session at its idle close, as before.
+  it("ends a quiet session at its idle close when its runtime records it in another database than the service's", async () => {
+    const { clock, service, databasePath } = await idleService();
+    const elsewhere = join(dirname(databasePath), "elsewhere");
+    const checkout = join(elsewhere, "repo");
+    await mkdir(checkout, { recursive: true });
+    const otherDatabase = join(elsewhere, "rerail.sqlite");
+    startTestRepository(checkout, otherDatabase);
+    const configuration = { storageRoot: join(elsewhere, "state"), modelPath: resolve("model"), databasePath: otherDatabase, workspaceRoot: checkout };
+    const session = { host: "claude-code" as const, sessionId: "o", cwd: checkout };
+    await service.ingest({ kind: "session-start", eventId: "o:start", session }, configuration);
+    // A token under a lock is the lock's id, a dot and a fresh id; one under none is a fresh id alone.
+    expect(ownerTokenOf(otherDatabase, "o"), "its owner row's token").toMatch(/^[0-9a-f-]{36}$/u);
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    expect([typeof endedAt(otherDatabase, "o"), ownedLive(otherDatabase, "o")]).toEqual(["number", false]);
+    await service.ingest({ kind: "user-prompt", eventId: "o:back", sessionId: "o", session, text: "back" }, configuration);
+    expect([endedAt(otherDatabase, "o"), ownedLive(otherDatabase, "o")]).toEqual([null, true]);
+  });
+
   // An end drops what the session owed. One from a repository stopped since dropped nothing: the ledger kept the steer,
   // and the session's next start under the same id took it back.
   it.each([
@@ -1171,6 +1195,18 @@ function lastObservedAt(databasePath: string, sessionId: string): number {
     const row = database.prepare("SELECT observed_at AS at FROM events WHERE session_id = ? ORDER BY sequence DESC LIMIT 1").get(sessionId) as { at: number } | undefined;
     if (row === undefined) throw new Error(`no event of ${sessionId}`);
     return row.at;
+  } finally {
+    database.close();
+  }
+}
+
+/** The token of `sessionId`'s owner row, read through a connection of its own. */
+function ownerTokenOf(databasePath: string, sessionId: string): string {
+  const database = new Database(databasePath, { readonly: true });
+  try {
+    const row = database.prepare("SELECT token FROM policy_session_owners WHERE session_id = ?").get(sessionId) as { token: string } | undefined;
+    if (row === undefined) throw new Error(`no owner row of ${sessionId}`);
+    return row.token;
   } finally {
     database.close();
   }
