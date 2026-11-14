@@ -489,6 +489,7 @@ Each stage leaves the engine whole, its tests green, and dl1's findings the same
    - normalize, physical, `stated_apart` and lowering become derivations, maintained by `from`.
    The five whole-program digests become composed ones.
    - Measured: a warm run's program work, and a one-rule edit's, which should cost the rule.
+   - Its steps, below ("Stage 2, step by step").
 3. **The prepare passes.** Local passes move one at a time, each an edit, each checked against the tree pass it
    replaces on every pack program (as decision 0162's reader was checked against the statement reader). Non-local
    passes are written as rules (§9, §10).
@@ -641,6 +642,76 @@ The tree reader and `diff` are rewritten on these. So is a fold, which now copie
 - **Open.** An image's open now checks every node: 108 M instructions on the warm trace's 276 programs, against
   28 M for the regions alone. That is still 15× cheaper than parsing. The check could run once when an image is
   stored, with the store's sha256 guarding it after that.
+
+## Stage 2, step by step
+
+### Where a warm run's program work is
+
+The 44-policy dl1 batch, warm, was sampled every millisecond on the profiling build (2026-11-13, images required).
+It took 2,426 samples over all threads, 832 of them on the main thread under `run_policies`. Inclusive:
+
+| Work | ms | Stage |
+|---|---|---|
+| parsing the policies' texts (`rr::read_file`) | 172 | none |
+| bridging their facts (`bridge::facts`) | 127 | none |
+| combining them (`combine_keyed`: `hiding::hide`, `same_relations`) | 113 | none |
+| the memo's content statistics | 57 | none |
+| the prepared program, read from the store (`prepared::lookup`: two images, decoded) | 45 | 2 (E1) |
+| `merge_and_drop_repeats` | 27 | 3 |
+| the split's constants (`constant_relations`, `split_constants`) | 25 | 2 (E1, E2) |
+| the plan choices, read and decoded (`choices::Durable`) | 23 | 2 (E6) |
+| the session's maintained cross part and its cut | 25 | 2 (E3) |
+| the five whole-program digests | 20 | 2 |
+| the planner's own work (`plan::run`, across threads) | 70 | 2 (E5, E6) |
+
+So on dl1 warm, stage 2's sites are about 150 ms of the main thread's 830. Most of the rest is the front end:
+reading, bridging and combining the policies. No stage of this decision covers that; it is reported here as the
+largest program cost of a warm run.
+
+Two findings from the code shape the steps:
+
+- **Copies of trees are already light.** Since decision 0172 a rule's lists and names are shared, so `clone` and
+  `retain` of a program cost reference counts and maps, not rules. That is why E1 and E2 are small in the sample.
+- **A version pays only where its reader reads it.** Every consumer on the warm path ends in
+  `plan::run(&Program)`. Making the split's parts views while their readers still want trees adds decodes: three
+  where today there is one decode and two cheap clones.
+
+So stage 2 is built from the planner outward, bottom up. Each helper `plan::run` uses gets a form over a
+version, checked against its tree form on every sampled pack program, as decision 0162's reader was. `plan::run`
+moves when all of its helpers have moved. Its callers then pass versions, and E1 to E3 become views and overlays
+with nothing left that wants their trees.
+
+### The steps
+
+1. **The access layer** (§11). Built.
+2. **The whole-program analyses over a version:**
+   - `front::strata` (by `heads` and `readers`);
+   - `front::needed` (reachability from the outputs, by `heads`);
+   - `projections`;
+   - `answers::produced`;
+   - `compose::accepts`.
+
+   They are read-only, so this step is additive. Each is checked against its tree form.
+3. **The derivations** `sql_kernel::normalize` and `stated_apart`, as `Builder` edits of the input version, with
+   rules rewritten by `RuleBuilder`. Each output rule records the rule it came from (`from`). Checked against the
+   tree passes.
+4. **The model on handles:** `make_plan`, `plan_views` and `keeps::choose` read `RuleRef`s.
+   - `Run` is keyed by `RuleId`, and `Run.numbers` goes.
+   - The `Forms` arena's per-stratum programs become views of the run's version.
+5. **`plan::run` takes a version.** Its callers pass one:
+   - the split's parts as views with parts overlaid (E1);
+   - the run's edits as overlays (E2);
+   - the session's cut as an overlay (E3).
+
+   The trees on that path go.
+6. **Composed digests.** `memo::program_digest`, `retain::key`, `choices::key`, `prepared_key` and `cross_digest`
+   read `Version::digest`.
+   - The digest is a sum, so it does not see rule order.
+   - Each site is checked first for whether what it keys depends on order. `choices` keeps per-rule choices by
+     rule index today.
+
+- **Measured at each step:** the warm batch's program work (this table), and a one-rule edit's (decision 0130's
+  edit profile, `notes/t34`).
 
 ## The open questions, simulated
 
