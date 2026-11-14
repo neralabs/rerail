@@ -570,7 +570,7 @@ impl P<'_> {
             self.a.node(K::Limit, m);
         } else if self.is(K::KeywordOffset)? {
             self.offset()?;
-            if self.is(K::KeywordLimit)? || self.is(K::KeywordFetch)? {
+            if self.is(K::KeywordLimit)? {
                 return self.refuse();
             }
         }
@@ -943,14 +943,28 @@ impl P<'_> {
         Ok(())
     }
 
+    /// Whether `all` is followed by `tables`, `sequences`, `functions`, `procedures` or `routines`.
+    fn next_is_all_target(&mut self) -> R<bool> {
+        Ok(self.next_is(K::KeywordTables)? || self.next_is(K::KeywordSequences)? || self.next_is(K::KeywordFunctions)? || self.next_is(K::KeywordProcedures)? || self.next_is(K::KeywordRoutines)?)
+    }
+
     /// `insert into t [(columns)] values … | query`.
     fn insert(&mut self) -> R<()> {
         let m = self.a.mark();
         self.expect(K::KeywordInsert)?;
         self.expect(K::KeywordInto)?;
         self.object_reference(NONE, 0)?.map_or_else(|| self.refuse(), |_| Ok(()))?;
-        if self.is(K::KeywordAs)? || self.is(K::KeywordPartition)? || self.is(K::KeywordSet)? || self.is(K::KeywordDefault)? {
+        if self.is(K::KeywordAs)? || self.is(K::KeywordPartition)? || self.is(K::KeywordSet)? {
             return self.refuse();
+        }
+        if self.kw(K::KeywordDefault)?.is_some() {
+            // `default values`.
+            self.expect(K::KeywordValues)?;
+            if self.is(K::KeywordOn)? {
+                return self.refuse();
+            }
+            self.a.node(K::Insert, m);
+            return Ok(());
         }
         if self.at_punct(b"(")? {
             // A column list, or a query in parentheses.
@@ -1224,6 +1238,21 @@ impl P<'_> {
         }
         if self.at_punct(b"(")? {
             self.table_elements()?;
+            if self.kw(K::KeywordInherits)?.is_some() {
+                self.expect_punct(b"(", K::TLParen)?;
+                loop {
+                    if self.object_reference(NONE, 0)?.is_none() {
+                        return self.refuse();
+                    }
+                    if self.punct(b",", K::TComma)?.is_none() {
+                        break;
+                    }
+                }
+                self.expect_punct(b")", K::TRParen)?;
+            }
+            if self.is(K::KeywordPartition)? && self.next_is(K::KeywordBy)? {
+                self.table_partition()?;
+            }
             if self.is(K::KeywordWith)? {
                 self.storage_parameters()?;
             }
@@ -1249,6 +1278,45 @@ impl P<'_> {
             return self.refuse();
         }
         self.a.node(K::CreateTable, m);
+        Ok(())
+    }
+
+    /// `table_partition`: `partition by range | hash | list (key, …)`, a key a name, an invocation or
+    /// `(e)`, with an operator class. `collate` is refused.
+    fn table_partition(&mut self) -> R<()> {
+        let m = self.a.mark();
+        self.expect(K::KeywordPartition)?;
+        self.expect(K::KeywordBy)?;
+        if self.kw(K::KeywordRange)?.is_none() && self.kw(K::KeywordHash)?.is_none() {
+            self.expect(K::KeywordList)?;
+        }
+        self.expect_punct(b"(", K::TLParen)?;
+        loop {
+            if self.at_punct(b"(")? {
+                self.expect_punct(b"(", K::TLParen)?;
+                self.expr(0, 0)?;
+                self.expect_punct(b")", K::TRParen)?;
+            } else if self.is_call()? {
+                self.atom(false)?;
+                if self.a.nodes[*self.a.stack.last().expect("an atom") as usize].kind != K::Invocation {
+                    return self.refuse();
+                }
+            } else {
+                self.expect_ident(NONE, 0)?;
+            }
+            if self.is(K::KeywordCollate)? {
+                return self.refuse();
+            }
+            let t = self.peek()?;
+            if t.t == T::Word || t.t == T::Quoted {
+                self.expect_ident(NONE, f::OPCLASS)?;
+            }
+            if self.punct(b",", K::TComma)?.is_none() {
+                break;
+            }
+        }
+        self.expect_punct(b")", K::TRParen)?;
+        self.a.node(K::TablePartition, m);
         Ok(())
     }
 
@@ -1322,7 +1390,21 @@ impl P<'_> {
             loop {
                 let ws = self.words()?;
                 let starts: &[K] = &[K::KeywordConstraint, K::KeywordPrimary, K::KeywordUnique, K::KeywordCheck, K::KeywordForeign, K::KeywordExclude, K::KeywordLike];
-                if ws.iter().any(|&(_, k)| starts.contains(&k)) {
+                if ws.iter().any(|&(_, k)| k == K::KeywordLike) {
+                    // `like t [including | excluding what]…`: `table_like_clause`.
+                    let c = self.a.mark();
+                    self.expect(K::KeywordLike)?;
+                    if self.object_reference(NONE, 0)?.is_none() {
+                        return self.refuse();
+                    }
+                    while self.kw(K::KeywordIncluding)?.is_some() || self.kw(K::KeywordExcluding)?.is_some() {
+                        let ws = self.words()?;
+                        let what = [K::KeywordComments, K::KeywordCompression, K::KeywordConstraints, K::KeywordDefaults, K::KeywordIdentity, K::KeywordGenerated, K::KeywordIndexes, K::KeywordStatistics, K::KeywordStorage, K::KeywordAll];
+                        let Some(&(_, k)) = ws.iter().find(|&&(_, k)| what.contains(&k)) else { return self.refuse() };
+                        self.expect(k)?;
+                    }
+                    self.a.node(K::TableLikeClause, c);
+                } else if ws.iter().any(|&(_, k)| starts.contains(&k)) {
                     self.table_constraint()?;
                 } else {
                     self.column_definition()?;
@@ -2610,6 +2692,22 @@ impl P<'_> {
                     break;
                 }
             }
+        } else if ws.iter().any(|&(_, x)| x == K::KeywordAll) && self.next_is_all_target()? {
+            // `all tables | sequences | functions | procedures | routines in schema s, …`.
+            self.expect(K::KeywordAll)?;
+            let ws = self.words()?;
+            let Some(&(_, x)) = ws.iter().find(|&&(_, x)| matches!(x, K::KeywordTables | K::KeywordSequences | K::KeywordFunctions | K::KeywordProcedures | K::KeywordRoutines)) else {
+                return self.refuse();
+            };
+            self.expect(x)?;
+            self.expect(K::KeywordIn)?;
+            self.expect(K::KeywordSchema)?;
+            loop {
+                self.expect_ident(NONE, 0)?;
+                if self.punct(b",", K::TComma)?.is_none() {
+                    break;
+                }
+            }
         } else {
             if ws.iter().any(|&(_, x)| matches!(x, K::KeywordForeign | K::KeywordDomain | K::KeywordType | K::KeywordLarge | K::KeywordParameter | K::KeywordAll)) {
                 return self.refuse();
@@ -2982,7 +3080,7 @@ impl P<'_> {
     }
 
     /// Whether the token after the next is `(`.
-    fn next_is_paren(&mut self) -> R<bool> {
+    pub(super) fn next_is_paren(&mut self) -> R<bool> {
         let save = (self.at, self.last_end, self.look);
         let t = self.peek()?;
         self.take(t);

@@ -183,6 +183,10 @@ impl P<'_> {
                     } else if has(K::KeywordIs) {
                         (prec::IS, 1)
                     } else if has(K::KeywordIn) {
+                        if !self.next_is_paren()? {
+                            // `in` with no list after it is not this expression's: `position(a in b)`.
+                            break;
+                        }
                         (prec::IN, 2)
                     } else if has(K::KeywordLike) {
                         (prec::PATTERN, 3)
@@ -824,20 +828,30 @@ impl P<'_> {
             return self.refuse();
         }
         if self.unit_next()? {
-            // `extract(epoch from t)`: `unit: object_reference`, `from`, a term, by commas.
-            loop {
-                if !self.unit_next()? || self.object_reference(NONE, f::UNIT)?.is_none() {
-                    return self.refuse();
-                }
-                self.expect(K::KeywordFrom)?;
-                self.term()?;
-                if self.punct(b",", K::TComma)?.is_none() {
-                    break;
-                }
+            // `extract(epoch from t)`: `unit: object_reference`, `from`, a term, by commas. Where it
+            // does not hold (`substring(a from 1 for 2)`), the `from` form below.
+            let saved = self.save();
+            if self.unit_arguments().is_ok() {
+                return Ok(());
             }
+            self.restore(saved);
+        }
+        if self.is(K::KeywordBoth)? || self.is(K::KeywordLeading)? || self.is(K::KeywordTrailing)? {
+            // `trim(both [x] from y)`.
+            let ws = self.words()?;
+            let k = ws.iter().find(|&&(_, k)| matches!(k, K::KeywordBoth | K::KeywordLeading | K::KeywordTrailing)).expect("one").1;
+            self.expect(k)?;
+            if !self.is(K::KeywordFrom)? {
+                let id = self.term()?;
+                self.a.set_field(id, f::PARAMETER);
+            }
+            self.expect(K::KeywordFrom)?;
+            let id = self.term()?;
+            self.a.set_field(id, f::PARAMETER);
             self.expect_punct(b")", K::TRParen)?;
             return Ok(());
         }
+        let mut first = true;
         loop {
             // A named argument: `name => value`.
             let t = self.peek()?;
@@ -864,12 +878,41 @@ impl P<'_> {
             }
             // `count(distinct a)`, `string_agg(a, ', ' order by a)`: `distinct` before an argument,
             // an `order_by` after it.
-            self.kw(K::KeywordDistinct)?;
+            let distinct = self.kw(K::KeywordDistinct)?.is_some();
             if self.is(K::KeywordVariadic)? {
                 return self.refuse();
             }
             let id = self.term()?;
             self.a.set_field(id, f::PARAMETER);
+            if first && !distinct && (self.is(K::KeywordFrom)? || self.is(K::KeywordFor)? || self.is(K::KeywordIn)? || self.is(K::KeywordPlacing)?) {
+                // `substring(a [placing b] from i [for n])`, `substring(a for n [from i])`,
+                // `position(a in b)`.
+                if self.kw(K::KeywordIn)?.is_some() {
+                    let id = self.term()?;
+                    self.a.set_field(id, f::PARAMETER);
+                } else if self.kw(K::KeywordFor)?.is_some() {
+                    let id = self.term()?;
+                    self.a.set_field(id, f::PARAMETER);
+                    if self.kw(K::KeywordFrom)?.is_some() {
+                        let id = self.term()?;
+                        self.a.set_field(id, f::PARAMETER);
+                    }
+                } else {
+                    if self.kw(K::KeywordPlacing)?.is_some() {
+                        let id = self.term()?;
+                        self.a.set_field(id, f::PARAMETER);
+                    }
+                    self.expect(K::KeywordFrom)?;
+                    let id = self.term()?;
+                    self.a.set_field(id, f::PARAMETER);
+                    if self.kw(K::KeywordFor)?.is_some() {
+                        let id = self.term()?;
+                        self.a.set_field(id, f::PARAMETER);
+                    }
+                }
+                break;
+            }
+            first = false;
             if self.is(K::KeywordOrder)? {
                 self.order_by()?;
             }
@@ -881,6 +924,21 @@ impl P<'_> {
         }
         self.expect_punct(b")", K::TRParen)?;
         Ok(())
+    }
+
+    /// `unit from term, …)`.
+    fn unit_arguments(&mut self) -> R<()> {
+        loop {
+            if !self.unit_next()? || self.object_reference(NONE, f::UNIT)?.is_none() {
+                return self.refuse();
+            }
+            self.expect(K::KeywordFrom)?;
+            self.term()?;
+            if self.punct(b",", K::TComma)?.is_none() {
+                break;
+            }
+        }
+        self.expect_punct(b")", K::TRParen).map(|_| ())
     }
 
     /// Whether a name and `from` are next (an invocation's `unit from term`).

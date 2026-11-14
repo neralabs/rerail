@@ -112,8 +112,9 @@ These were found by the oracle, and the parser keeps each as tree-sitter reads i
 
 `select` (with CTEs, set operations, joins and lateral joins, subqueries, `group by` (with
 `rollup`, `cube`, `grouping sets`), `having`, `window`, `order by`,
-`limit`, `offset`, `fetch`, row locks: `for update … skip locked`), `values`, `insert` (with `on conflict`), `update`, `delete` (with `using`),
-`truncate`; `create table` (columns, column and table constraints, storage parameters),
+`limit`, `offset`, `fetch`, row locks: `for update … skip locked`), `values`, `insert` (with `on conflict`, `default values`), `update`, `delete` (with `using`),
+`truncate`; `create table` (columns, column and table constraints, `like`, `inherits`, `partition by`,
+storage parameters),
 `create index` (columns and function fields), `create view`, `create materialized view`,
 `create function`, `create trigger`, `create sequence`, `create extension`, `create schema`,
 `create type`, `create domain`, `create role`; `drop` (tables, views, materialized views, indexes, functions,
@@ -121,14 +122,15 @@ sequences); `refresh materialized view`; `alter table` (`only`; add and drop col
 `set`/`drop not null`, `set`/`drop default` and `type`, add, drop and validate constraints, `rename
 [column] … to`, `rename to`, `owner to`, `set schema`, `set (…)` and `reset (…)`),
 `alter sequence`, `alter function`, `alter extension`, `alter type` (values, rename, owner,
-schema); `drop type`; `lock table`; `explain [analyze] [verbose]`; `grant`, `revoke`; transactions; `set`,
+schema); `drop type`; `lock table`; `explain [analyze] [verbose]`; `grant`, `revoke` (with `on all tables in schema`); transactions; `set`,
 `reset`; `comment on`; `call`; `do`; psql meta-commands. Constraints take their attributes (`[not]
 deferrable`, `initially deferred`, `not valid`, …). Expressions: literals, strings with
 continuations, dollar-quoted strings, string casts, parameters (`$1`, `?`, `:name`), casts, `case`, `exists`, `in`,
 `like`, `between`, `is` forms, `collate`, arrays, `interval`, subscripts, window functions (`over`
 a name or a specification: `partition by`, `order by`, `rows`/`range`/`groups` frames), `filter`, an
 aggregate's `distinct` and `order by`, `extract(unit from …)`, `is [not] distinct from`, `at time
-zone`, `[not] similar to`, subscripts and slices, bit and hex strings. Columns: generated and
+zone`, `[not] similar to`, subscripts and slices, bit and hex strings,
+`position(a in b)`, `substring(a from i for n)`, `trim(both x from y)`. Columns: generated and
 identity columns; index fields with operator classes and `nulls first | last`; `update … set (a, b)
 = …`.
 
@@ -145,8 +147,8 @@ A file is refused where the lean parser does not read the construct exactly:
 - the statements not listed above: `create operator`, `operator class` and `family`, `aggregate`,
   `foreign data wrapper`, `transform`, `access method`; `alter operator`, `alter role`,
   `alter index`; `copy`, `load`, `prepare`, `execute`, `explain (…)` with options in parentheses, `merge`,
-  `vacuum`;
-- the clauses not listed above: a table's `partition by` and `inherits`, `tablesample`, index hints,
+  `vacuum`, `analyze`;
+- the clauses not listed above: `tablesample`, index hints,
   nested joins in parentheses, `exclude` frames, `is json`, `escape`, a parenthesized index field,
   an operator class's parameters, identity options;
 - forms of other dialects that tree-sitter-sql reads (backticks, `!`, Delta and Spark SQL);
@@ -165,7 +167,7 @@ tree-sitter's, line by line, over the 600 files:
 
 | | same | differ | refused |
 |---|---|---|---|
-| clean texts (224) | 128 | 0 | 96 |
+| clean texts (224) | 129 | 0 | 95 |
 | texts with errors (376) | — | 0 | 376 |
 
 **Hand-written files** (scratch, not in the repository; their forms are in the engine test below):
@@ -174,7 +176,10 @@ SQL as source code holds it: application queries (parameters, `distinct on`, `il
 `returning`, aggregates), migrations, JSON operators, lateral joins, `alter table`'s actions, and
 ORM-written queries (Rails', Django's, Hibernate's). Their tapes come from tree-sitter through
 `python_tape_expect`. All 11 are the same; Hibernate's `id=?` is a syntax error to tree-sitter
-(`=?` is one `op_other`), and is refused.
+(`=?` is one `op_other`), and is refused. Three more sets, a statement a file, of migrations
+(goose, Flyway, Rails), triggers and functions, row locks, enum and domain changes, and
+application queries: 21 of 21, 24 of 25 and 32 of 33 the same, none differ; `tablesample` and
+`vacuum` are refused.
 
 No tape differs. Of the texts with errors, 277 are sqlfluff's fixtures, many of other dialects
 (T-SQL, BigQuery, Snowflake, …); the rest are PostgreSQL's and TimescaleDB's tests, with forms
