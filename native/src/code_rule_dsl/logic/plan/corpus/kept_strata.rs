@@ -78,6 +78,8 @@ pub(in crate::code_rule_dsl) struct Kept<'s> {
     inputs: HashMap<String, Arc<dyn Source>>,
     pub(in crate::code_rule_dsl) loaded: Rc<RefCell<HashMap<String, Arc<dyn Source>>>>,
     digests: HashMap<String, u64>,
+    /// Each input's column types (`retain::types_of`): its digest is of its content (`Cells`, decision 0198).
+    types: HashMap<String, Vec<u8>>,
     puts: Vec<FramePut>,
     values: usize,
     gone: Vec<(FrameRel, i64)>,
@@ -87,7 +89,7 @@ pub(in crate::code_rule_dsl) struct Kept<'s> {
 }
 
 impl<'s> Kept<'s> {
-    pub(in crate::code_rule_dsl) fn new(store: &'s ContentStore, space: [u8; 32], program: [u8; 32], inputs: &[(String, Arc<dyn Source>)]) -> Self {
+    pub(in crate::code_rule_dsl) fn new(store: &'s ContentStore, space: [u8; 32], program: [u8; 32], inputs: &[(String, Arc<dyn Source>)], types: HashMap<String, Vec<u8>>) -> Self {
         Kept {
             store,
             space,
@@ -98,6 +100,7 @@ impl<'s> Kept<'s> {
             inputs: inputs.iter().map(|(r, s)| (r.clone(), Arc::clone(s))).collect(),
             loaded: Default::default(),
             digests: HashMap::new(),
+            types,
             puts: Vec::new(),
             values: 0,
             gone: Vec::new(),
@@ -156,7 +159,10 @@ impl KeptStrata for Kept<'_> {
             return Some(*d);
         }
         let source = self.inputs.get(rel).cloned().or_else(|| self.loaded.borrow().get(rel).cloned())?;
-        let d = super::retain::digest(source.as_ref());
+        let atoms = self.store.atoms_handle();
+        let width = source.columns().len();
+        let cells = self.types.get(rel).filter(|t| t.len() == width).map_or(crate::code_rule_dsl::logic::plan::Cells::plain(width), |t| crate::code_rule_dsl::logic::plan::Cells::new(&atoms, t));
+        let d = super::retain::digest(source.as_ref(), &cells);
         self.digests.insert(rel.to_owned(), d);
         Some(d)
     }
@@ -401,12 +407,13 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         let Some(reads) = part.cones.get(rel).map(|c| c.iter().map(|i| Some((i.clone(), *digests.get(i.as_str())?))).collect::<Option<Vec<(String, u64)>>>()).flatten() else { continue };
         let Some(rows) = held.live_rows() else { continue };
         let n = held.rows();
-        let digest = crate::code_rule_dsl::logic::plan::rows_digest(width, &rows, n);
+        // Its symbols typed as declared (the engine holds them as integers), so the writer maps them; its digest of
+        // its content (decision 0198).
+        let Some(types) = part.types.get(rel).filter(|t| t.len() == width).cloned() else { continue };
+        let digest = crate::code_rule_dsl::logic::plan::rows_digest(&crate::code_rule_dsl::logic::plan::Cells::new(&store.atoms_handle(), &types), &rows, n);
         if was.as_ref().is_some_and(|w| w.digest == digest && w.reads == reads) {
             continue;
         }
-        // Its symbols typed as declared (the engine holds them as integers), so the writer maps them.
-        let Some(types) = part.types.get(rel).filter(|t| t.len() == width).cloned() else { continue };
         written += n;
         puts.push(FramePut { rel: f.clone(), part: 0, digest, reads, rows: FrameRows { types, rows, n } });
     }

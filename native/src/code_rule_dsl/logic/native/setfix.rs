@@ -94,10 +94,10 @@ impl Interner {
     fn for_loading(shared: &RwLock<Self>) -> Self {
         Self { atoms: Arc::clone(&shared.read().unwrap().atoms), buf: String::new(), failed: None }
     }
-    /// The atom of `s` if there is one (`Atoms::get`): found as `id` finds it (in memory, or where interning reads
-    /// the store, there), but none is made.
+    /// The atom `id` would give `s`, if it would not make one (`Atoms::existing`): found as interning finds it, with
+    /// no read interning would not make.
     fn held(&self, s: &str) -> Option<i64> {
-        self.atoms.get(s).map(i64::from)
+        self.atoms.existing(s).map(i64::from)
     }
     fn id(&mut self, s: &str) -> i64 {
         match self.atoms.intern(s) {

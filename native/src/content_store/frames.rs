@@ -891,6 +891,10 @@ impl ContentStore {
         }
         let mut gone = gone;
         gone.extend(self.ended_deltas(&space, frames.iter().map(|f| (&f.rel, f.part))));
+        // Nothing to write is no write: a warm run's kept part queues no empty job (decision 0197).
+        if frames.is_empty() && delta_frames.is_empty() && retags.is_empty() && heads.is_empty() && gone.is_empty() && used.is_none() {
+            return;
+        }
         let mut keys: Vec<(super::write_back::Key, Option<Arc<dyn std::any::Any + Send + Sync>>)> = frames
             .iter()
             .map(|f| (frame_key(&space, &f.rel, f.part), Some(Arc::new(Some(Arc::clone(&f.frame))) as Arc<dyn std::any::Any + Send + Sync>)))
