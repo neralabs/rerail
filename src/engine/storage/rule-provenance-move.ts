@@ -84,7 +84,7 @@ export interface RuleProvenanceMoveOptions {
   readonly pause?: () => Promise<void>;
   /** The milliseconds that time each batch; tests pass their own. */
   readonly now?: () => number;
-  /** Stops the move before its next batch; what it moved stays moved. */
+  /** Stops the move before its next batch, or before the next try of one another connection is in the way of. */
   readonly signal?: AbortSignal;
   /** The time in epoch milliseconds, to which an older Rerail's last audit (`lastOlderWrite`) is compared; for tests. */
   readonly clock?: () => number;
@@ -145,8 +145,14 @@ const unreferencedSleep: MoveTimer = (ms, signal) => sleep(ms, undefined, { sign
 
 type Client = RerailDatabase["$client"];
 
-/** Runs a step on the move's connection, trying it again after a pause while another connection is in its way. */
-type Free = <T>(step: () => T) => Promise<T>;
+/** What `whenFree` gives back for a step a stop ended while another connection was in its way. */
+const STOPPED = Symbol("stopped");
+
+/**
+ * Runs a step on the move's connection, trying it again after a pause while another connection is in its way, and
+ * gives back `STOPPED` for a step a stop ended between two tries.
+ */
+type Free = <T>(step: () => T) => Promise<T | typeof STOPPED>;
 
 /**
  * Moves the provenance of every audit that held it inline when the file ran `audit-rule-provenance-once`, then empties
@@ -191,8 +197,8 @@ function batchingOf(options: RuleProvenanceMoveOptions, postponed: () => boolean
 
 /**
  * Moves the audits that started no later than `upTo`, a batch per write transaction with a pause before each, until
- * none is left, or `signal` or an older Rerail's audit (`postponed`) stops it: how many it moved, and whether none is
- * left. The first batch takes `FIRST_BATCH` audits, and each later one as many as the batch before moved in `BATCH_MS`
+ * none is left, or `signal` or an older Rerail's audit (`postponed`) stops it, `signal` also while a batch waits for
+ * another connection (`whenFree`): how many it moved, and whether none is left. The first batch takes `FIRST_BATCH` audits, and each later one as many as the batch before moved in `BATCH_MS`
  * (`nextBatchSize`), so a batch holds the write lock about that long however loaded the machine and however large each
  * audit's provenance.
  */
@@ -217,6 +223,7 @@ async function moveInBatches(
         took = now() - began;
       }
     });
+    if (batch === STOPPED) return { moved, ended: false };
     if (batch === undefined) return { moved, ended: true };
     moved += batch.moved;
     after = batch.last;
@@ -289,7 +296,7 @@ async function movedInWorker(data: MoveWorkerData, signal: AbortSignal | undefin
  * audit it waits for is not the one it named last: on its first pass, and on each later pass that finds another, as
  * while an older Rerail keeps recording. Then it sleeps on `timer` (Node's, unreferenced, unless a test passes its own)
  * until `wait.until` by `older.clock`, or `OLDER_WAIT_PASS_MS`, whichever comes first, so such a Rerail adds at most
- * one line an hour. False when `signal` ends the pass.
+ * one line an hour. False when `signal` ends the pass; what else ends the timer is the move's failure.
  */
 function olderPass(
   path: string,
@@ -305,8 +312,9 @@ function olderPass(
     try {
       await sleepFor(Math.min(Math.max(0, wait.until - older.clock()), OLDER_WAIT_PASS_MS), signal);
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      if (signal?.aborted === true) return false;
+      throw error;
     }
   };
 }
@@ -349,17 +357,24 @@ function movedBy(worker: Worker): Promise<number> {
 
 /**
  * What `step` returns, tried again after each `pause` while another connection is in its way (`isBusy`): a writer that
- * holds the lock, or a read that keeps a checkpoint from emptying the WAL. After `BUSY_TRIES` tries, or once `signal`
- * stops the move, it throws what the last try threw.
+ * holds the lock, or a read that keeps a checkpoint from emptying the WAL. After `BUSY_TRIES` tries it throws what the
+ * last try threw, as a connection that waits out its busy timeout fails. A stop that comes while it waits ends it
+ * before the next try with `STOPPED`, as a stop between two batches ends the move: the step's work is left for the
+ * next run, and the stop is not a failure.
  */
-async function whenFree<T>(step: () => T, pause: () => Promise<void>, signal: AbortSignal | undefined): Promise<T> {
+async function whenFree<T>(
+  step: () => T,
+  pause: () => Promise<void>,
+  signal: AbortSignal | undefined,
+): Promise<T | typeof STOPPED> {
   for (let tries = 1; ; tries += 1) {
     try {
       return step();
     } catch (error) {
-      if (!isBusy(error) || tries >= BUSY_TRIES || signal?.aborted === true) throw error;
+      if (!isBusy(error) || tries >= BUSY_TRIES) throw error;
     }
     await pause();
+    if (signal?.aborted === true) return STOPPED;
   }
 }
 
@@ -388,8 +403,8 @@ function emptyWal(client: Client): void {
 
 /**
  * Empties the WAL the move's batches filled (36 MB for 4,000 audits) into the file, so the file holds the zeroed pages
- * and the WAL takes no more disk than the daemon's own writes need. A read another connection holds through every try
- * leaves the WAL as it is: SQLite's later checkpoints write it once that read ends.
+ * and the WAL takes no more disk than the daemon's own writes need. A read another connection holds through every try,
+ * or a stop between two tries, leaves the WAL as it is: SQLite's later checkpoints write it once that read ends.
  */
 async function emptyWalAfterMove(client: Client, free: Free): Promise<void> {
   try {

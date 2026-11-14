@@ -669,6 +669,23 @@ describe("audit rule provenance", () => {
     expect(inlineAudits(path)).toBe(2);
   });
 
+  it("fails with what ended its wait for an older Rerail when that was not a stop", async () => {
+    const path = await fileOfTheBuildBefore();
+    writeInlineAudits(path, [provenanceOf("/home/dev/app", 20)]);
+    openRerailDatabase(path).$client.close();
+    recordAsOlder(path, "older-beside", provenanceOf("/home/dev/app", 20));
+    // The timer the wait sleeps on fails, and no stop came: the move fails with that, and the daemon logs it.
+    const broken = new Error("the timer failed");
+    const stderr = spyOnStderr();
+    try {
+      await expect(moveRuleProvenancesInWorker(path, new AbortController().signal, { timer: () => Promise.reject(broken) }))
+        .rejects.toBe(broken);
+    } finally {
+      stderr.restore();
+    }
+    expect(inlineAudits(path)).toBe(2);
+  });
+
   it("sizes each batch from how long the one before held the write lock", async () => {
     /** How many audits each batch of a move of 30 moved, timed by `now`. */
     const batchSizes = async (now: () => number): Promise<number[]> => {
@@ -783,6 +800,42 @@ describe("audit rule provenance", () => {
     // Nothing is left: the next run reads that and starts no thread.
     expect(await moveRuleProvenancesInWorker(path)).toBe(0);
   }, 60_000);
+
+  it("ends with what it moved once a stop comes while a batch waits for another connection's write lock, and a later run moves the rest", async () => {
+    const path = await fileOfTheBuildBefore();
+    const written = writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
+    const writer = new Database(path);
+    const stop = new AbortController();
+    let pauses = 0;
+    try {
+      // After the first batch another connection takes the write lock, so the second finds it held, and the stop comes
+      // in the pause before that batch's next try.
+      const moved = await move(path, {
+        perBatch: 10,
+        signal: stop.signal,
+        pause: () => {
+          pauses += 1;
+          if (pauses === 2) writer.exec("BEGIN IMMEDIATE");
+          if (pauses === 3) stop.abort();
+          return Promise.resolve();
+        },
+      });
+      expect(moved).toBe(10);
+      expect(pauses).toBe(3);
+      expect(inlineAudits(path)).toBe(20);
+    } finally {
+      if (writer.inTransaction) writer.exec("ROLLBACK");
+      writer.close();
+    }
+
+    expect(await move(path)).toBe(20);
+    const store = new SqliteAuditStore(path);
+    try {
+      for (const { auditId, text } of written) expect(JSON.stringify(store.get(auditId)?.ruleProvenance), auditId).toBe(text);
+    } finally {
+      store.close();
+    }
+  });
 
   it("empties the WAL between tries while another connection reads, never waiting inside SQLite, so its thread keeps running", async () => {
     const path = await fileOfTheBuildBefore();

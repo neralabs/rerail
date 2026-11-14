@@ -20,12 +20,24 @@ afterEach(async () => {
 const MOVE_MS = 45_000;
 const TEST_MS = MOVE_MS + 20_000;
 
-async function until(condition: () => boolean, timeoutMs = MOVE_MS): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
+async function until(condition: () => boolean, everyMs = 200): Promise<void> {
+  const deadline = Date.now() + MOVE_MS;
   while (!condition()) {
     if (Date.now() > deadline) throw new Error("timed out");
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await new Promise(resolve => setTimeout(resolve, everyMs));
   }
+}
+
+/** Spies on this thread's stderr, which is the daemon log: each write so far, read at any time. */
+function spyOnStderr(): { writes: () => string[] } {
+  const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+  cleanups.push(() => stderr.mockRestore());
+  return { writes: () => stderr.mock.calls.map(([chunk]) => String(chunk)) };
+}
+
+/** What the daemon wrote to its log about its move of audit rule provenance. */
+function moveLines(writes: readonly string[]): string[] {
+  return writes.filter(write => write.startsWith("rerail daemon: moving audit rule provenance"));
 }
 
 /** How many audits hold their rule provenance inline, and how many of the file's pages are free. */
@@ -40,15 +52,16 @@ function fileState(path: string): { inline: number; freePages: number } {
 }
 
 /**
- * A Rerail home whose database holds 20 audits as Rerail before the upgrade recorded them, with their provenance inline,
- * started before the file ran the step (`started_at` 1 to 20); the database's path.
+ * A Rerail home whose database holds `audits` audits as Rerail before the upgrade recorded them, each with the same
+ * provenance of `rules` rules inline, started before the file ran the step (`started_at` 1 up); the database's path and
+ * that provenance's text.
  */
-function databaseWithInlineAudits(): { home: string; databasePath: string } {
+function databaseWithInlineAudits({ audits = 20, rules = 300 } = {}): { home: string; databasePath: string; provenance: string } {
   const home = mkdtempSync(join(tmpdir(), "rerail-provenance-daemon-"));
   cleanups.push(() => removeFolder(home));
   const databasePath = join(home, "rerail.sqlite");
   openRerailDatabase(databasePath).$client.close();
-  const provenance = JSON.stringify(Array.from({ length: 300 }, (_, index) => ({
+  const provenance = JSON.stringify(Array.from({ length: rules }, (_, index) => ({
     ruleId: `typescript/rule-${index}`, revision: 1, payloadHash: `sha256:${index}`, applicability: "global", origin: "user",
   })));
   const older = new Database(databasePath);
@@ -56,12 +69,25 @@ function databaseWithInlineAudits(): { home: string; databasePath: string } {
     const insert = older.prepare(`INSERT INTO audits (audit_id, session_id, workspace_root, scope, mode, revision, catalog_revision,
       rule_revisions_json, rule_provenance_json, paths_json, started_at, finished_at, status, violations_json, failures_json)
       VALUES (?, 'session-a', '/home/dev/app', 'touched-files', 'steer', 1, 'catalog', '[]', ?, '[]', ?, ?, 'completed', '[]', '[]')`);
-    for (let index = 1; index <= 20; index += 1) insert.run(`older-${index}`, provenance, index, index + 1);
+    older.transaction(() => {
+      for (let index = 1; index <= audits; index += 1) insert.run(`older-${index}`, provenance, index, index + 1);
+    })();
   } finally {
     older.close();
   }
-  expect(fileState(databasePath).inline).toBe(20);
-  return { home, databasePath };
+  expect(fileState(databasePath).inline).toBe(audits);
+  return { home, databasePath, provenance };
+}
+
+/** How many audits name the stored copy of `provenance`: those the move took, each reading it as before. */
+function namingStoredCopy(path: string, provenance: string): number {
+  const database = new Database(path, { readonly: true });
+  try {
+    return database.prepare(`SELECT count(*) FROM audits JOIN audit_rule_provenances ON provenance_id = rule_provenance_id
+      WHERE audit_rule_provenances.rule_provenance_json = ?`).pluck().get(provenance) as number;
+  } finally {
+    database.close();
+  }
 }
 
 /** Whether every audit has moved and the move has emptied the WAL its batches filled: the move ended. */
@@ -123,5 +149,37 @@ describe("the daemon's move of audit rule provenance", () => {
     }
     expect(longest).toBeLessThan(2_000);
   }, TEST_MS);
+
+  it("stops quietly while a batch waits for the write lock another process holds, and the next start moves the rest", async () => {
+    const { home, databasePath, provenance } = databaseWithInlineAudits({ audits: 500, rules: 20 });
+    const log = spyOnStderr();
+    const other = new Database(databasePath);
+    cleanups.push(() => {
+      other.close();
+    });
+
+    const daemon = await RerailDaemon.start({ version: "test", databasePath, workspaceRoot: home, port: 0, remoteSink: false });
+    cleanups.push(() => daemon.close());
+    // Once the first batch has moved, another process takes the write lock before the next batch, which then finds it
+    // held and tries again after each pause; the daemon stops a second and a half into those tries.
+    await until(() => namingStoredCopy(databasePath, provenance) > 0, 10);
+    other.exec("BEGIN IMMEDIATE");
+    const left = fileState(databasePath).inline;
+    await new Promise(resolve => setTimeout(resolve, 1_500));
+    try {
+      await daemon.close();
+    } finally {
+      other.exec("ROLLBACK");
+    }
+
+    expect(moveLines(log.writes())).toEqual([]);
+    expect(left).toBeGreaterThan(0);
+    expect(fileState(databasePath).inline).toBe(left);
+    const next = await RerailDaemon.start({ version: "test", databasePath, workspaceRoot: home, port: 0, remoteSink: false });
+    cleanups.push(() => next.close());
+    await until(() => moved(databasePath));
+    expect(namingStoredCopy(databasePath, provenance)).toBe(500);
+    expect(moveLines(log.writes())).toEqual([]);
+  }, 2 * TEST_MS);
 });
 
