@@ -224,6 +224,11 @@ session opened from it never matched the one Git names `C:\…`: the session rea
 The same mismatch let `c:\users\me` past set-up's refusal of the home folder, and lost audit settings and presentation
 preferences saved under the other spelling.
 
+Rerail 0.1.4 and earlier saved a folder's audit settings under the JavaScript realpath of the folder as the session
+spelt it. Where the stored spelling has no audit settings, Rerail reads the row under that key (`earlierRealpath`) and
+leaves it in place, so an earlier version sharing the database keeps reading and writing its own. A change saved here
+goes under the stored spelling, starting from the settings it read.
+
 <details>
 <summary>Other places that compare Windows paths</summary>
 

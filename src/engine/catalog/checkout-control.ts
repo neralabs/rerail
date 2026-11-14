@@ -24,6 +24,15 @@ export function checkoutRealpath(path: string): string {
 }
 
 /**
+ * The realpath Rerail 0.1.4 and earlier keyed records by on every platform: the JS one, which on Windows keeps the
+ * letter case, drive letter and mapped drive the caller spelt. Only for finding a record those versions saved under the
+ * folder as its session spelt it; this build keys every record through {@link checkoutRealpath}.
+ */
+export function earlierRealpath(path: string): string {
+  return realpathOn("linux")(path);
+}
+
+/**
  * The canonical location of `path`: its deepest existing ancestor resolved through symlinks (as {@link checkoutRealpath}
  * does on `platform`), plus the part not yet created.
  */
