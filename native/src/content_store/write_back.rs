@@ -430,7 +430,10 @@ impl ContentStore {
                                 );
                                 w.shared.state.lock().expect("the writer's state").by_what.entry(*what).or_default().2 += thread_cpu() - c0;
                             }
-                            if bytes >= BATCH_BYTES {
+                            // A batch run again (rolled back below) whose first run took the job after it ends there
+                            // too: taking another would drop that one, and its count with it (`written` then waits for
+                            // ever).
+                            if bytes >= BATCH_BYTES || next.is_some() {
                                 return outcomes;
                             }
                             match rx.recv_timeout(BATCH_IDLE) {
@@ -698,6 +701,43 @@ mod tests {
         assert!(store.written().is_ok());
         assert_eq!(store.written_so_far().jobs, 2);
         drop((store, other));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A batch rolled back for a fork (decision 0170) runs again; the waits for the writer (`commit_now`) queued while
+    /// it first ran are each kept. One was lost when the second run took the next and overwrote the first's: the
+    /// queue's count then never reached zero, and `written` waited for ever (the hung warm runs).
+    #[test]
+    fn a_batch_run_again_after_a_fork_keeps_every_wait_queued_meanwhile() {
+        let (dir, store) = store("fork-waits");
+        store.intern_atoms(&["a"]).unwrap();
+        store.flush_atoms().unwrap();
+        // The job forks the batch midway, as another thread of the process does (it finds another process's atoms
+        // past this one's pending ones): its atoms are pending, and the store ends past them.
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let runs = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let r = Arc::clone(&runs);
+        store.write_back_syms(Syms::None, "forks", 0, vec![], Box::new(move |s| {
+            if r.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                go_rx.recv().unwrap();
+                s.intern_atoms(&["b"])?;
+                s.connection.lock().map_err(StoreError::Invalid)?.execute(
+                    "INSERT INTO atom_segment(first, ends, bytes) VALUES (2, x'01000000', CAST('z' AS BLOB))",
+                    [],
+                )?;
+            }
+            s.flush_atoms()
+        }));
+        store.commit_now();
+        store.commit_now();
+        go_tx.send(()).unwrap();
+        let (done_tx, done_rx) = mpsc::channel();
+        let other = ContentStore::open(&store.database_path).unwrap();
+        std::thread::spawn(move || done_tx.send(other.written().is_ok()).unwrap());
+        assert_eq!(done_rx.recv_timeout(Duration::from_secs(10)), Ok(true), "every queued job written");
+        assert!(store.atoms_handle().forked(), "the job forked the batch");
+        assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 2, "rolled back and run again");
+        drop(store);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
